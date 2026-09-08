@@ -1,0 +1,6 @@
+[app]
+id = "linnet.system.themes"
+version = 1
+title = "Themes"
+entry = "screen.tsx"
+capabilities = ["ui"]

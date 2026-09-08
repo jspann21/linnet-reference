@@ -1,0 +1,906 @@
+#include "kernel/runtime.h"
+#include "kernel/executive.h"
+#include "kernel/shell.h"
+#include "kernel/wheel_motion.h"
+#include "hal/pp5020/platform.h"
+#if !defined(LINNET_PROFILE_RELEASE)
+#include "kernel/runtime_render_timing.h"
+#endif
+#include "hal/pp5020/core.h"
+#include "hal/pp5020/input.h"
+#include "hal/pp5020/power.h"
+#include "hal/pp5020/display.h"
+#include "hal/pp5020/recovery.h"
+#if defined(LINNET_BATTERY_GUARD)
+#include "services/power/battery.h"
+static struct ln_battery_guard battery_guard;
+#endif
+#if defined(LINNET_PHOTOS)
+#include "services/photos/photos.h"
+static uint32_t photo_revision,photo_navigation,photo_wheel_mode;
+static bool photo_resume_loaded;
+#endif
+#if defined(LINNET_NATIVE_UI)
+#include "services/display/settings.h"
+#include "services/display/clock.h"
+#include "linnet_build.h"
+#endif
+#if defined(LINNET_AUDIO)
+#include "hal/pp5020/audio.h"
+#include "services/music/player.h"
+#include "services/music/controller.h"
+#include "services/music/artwork.h"
+#include "services/music/browser.h"
+#include "services/music/search.h"
+#include "services/music/queue_view.h"
+#endif
+#if !defined(LINNET_PROFILE_RELEASE)
+#include "hal/pp5020/recovery.h"
+#include "hal/pp5020/usb.h"
+#endif
+#if defined(LINNET_STORAGE)
+#include "services/storage/storage.h"
+#endif
+#if defined(LINNET_VIDEO)
+#include "services/video/video.h"
+static uint32_t video_revision;
+static bool video_requested,video_resume_loaded;
+#endif
+static ln_executive executive;
+static ln_arena scene_arena;
+static uint8_t scene_memory[2048] __attribute__((aligned(8)));
+static ln_shell *shell;
+static struct ln_input_state input;
+static struct ln_power_state power;
+static uint32_t last_injection, synthetic_flags, override_mask;
+static uint32_t sleep_count,wake_count,wake_at,animation_left,animation_at;
+static uint32_t brightness=100;
+static uint32_t backlight_deadline,backlight_timeout=30000000u;
+static bool backlight_idle;
+static struct ln_wheel_motion wheel_motion;
+static uint32_t wheel_scene, wheel_epoch;
+static uint32_t shutdown_deadline;
+static bool shutdown_tracking;
+#define LINNET_SHUTDOWN_HOLD_US 2000000u
+static bool sleeping, dirty, ready;
+static bool wake(void);
+static void backlight_activity(void){
+    if(sleeping&&!wake())return;
+    backlight_deadline=ln_time_us()+backlight_timeout;
+    if(backlight_idle){
+        backlight_idle=false;
+        ln_power_backlight(brightness!=0,(uint8_t)((brightness*255u+50u)/100u));
+    }
+}
+#if defined(LINNET_AUDIO)
+static uint32_t music_revision,music_phase,music_generation,music_progress_at,music_navigation;
+static uint32_t search_navigation,search_revision,search_library_status;
+#endif
+#if defined(LINNET_NATIVE_UI)
+static uint32_t display_settings_revision;
+static uint32_t update_status_at;
+/* Theme presentation tracking: publication needs a completed accepted frame,
+ * not merely a render into the CPU framebuffer. No storage calls here. */
+static struct {
+    uint32_t revision,theme,generation,submitted,completed,failures,resets;
+    bool armed,complete;
+} theme_frame;
+static void theme_frame_observe(void){
+    if(!theme_frame.armed||theme_frame.complete||ln_display_busy())return;
+    struct ln_display_presentation m;ln_display_presentation_snapshot(&m);
+    theme_frame.complete=m.generation==theme_frame.generation&&m.resets==theme_frame.resets&&
+        m.failures==theme_frame.failures&&m.frames_submitted==theme_frame.submitted&&
+        m.frames_completed==theme_frame.completed+1u;
+    if(!theme_frame.complete)theme_frame.armed=false;
+}
+static bool theme_frame_ready(void){
+    theme_frame_observe();
+    if(!theme_frame.armed||!theme_frame.complete||theme_frame.revision!=ln_display_theme_revision()||
+       theme_frame.theme!=ln_ui_theme_index())return false;
+    struct ln_display_presentation m;ln_display_presentation_snapshot(&m);
+    return m.generation==theme_frame.generation&&m.resets==theme_frame.resets&&m.failures==theme_frame.failures;
+}
+bool ln_display_theme_presented(uint32_t revision){
+    return theme_frame_ready()&&theme_frame.revision==revision;
+}
+static void theme_frame_submitted(uint32_t revision){
+    if(revision!=ln_display_theme_revision()||!shell->rendered||shell->drawn_theme!=ln_ui_theme_index())return;
+    if(theme_frame_ready())return; /* Later animation must not starve a completed theme. */
+    struct ln_display_presentation m;ln_display_presentation_snapshot(&m);
+    theme_frame.revision=revision;theme_frame.theme=shell->drawn_theme;
+    theme_frame.generation=m.generation;theme_frame.submitted=m.frames_submitted;
+    theme_frame.completed=m.frames_completed;theme_frame.failures=m.failures;theme_frame.resets=m.resets;
+    theme_frame.armed=true;theme_frame.complete=false;
+}
+static void theme_frame_request(void){
+    if(theme_frame_ready())return;
+    if(theme_frame.armed&&!theme_frame.complete&&ln_display_busy()&&
+       theme_frame.revision==ln_display_theme_revision()&&theme_frame.theme==ln_ui_theme_index())return;
+    /* API changes may keep the same effective colors outside the Themes scene.
+     * Every new revision still needs its own accepted, completed frame. */
+    if(!(shell->dirty&1u))ln_ui_refresh(shell);
+    dirty=true;
+}
+/* End theme presentation tracking. */
+static bool scene_is(const char *id){
+    if(!shell||shell->scene>=ln_ui_scene_count)return false;
+    const char *a=ln_ui_scenes[shell->scene].id;while(*a&&*a==*id){++a;++id;}return *a==*id;
+}
+#endif
+static uint32_t generation(void){
+#if defined(LINNET_PROFILE_RELEASE)
+    return 0;
+#else
+    return ln_recovery_generation();
+#endif
+}
+static uint32_t buttons(uint32_t value){
+    return ((value&LINNET_BUTTON_MENU)?LN_BUTTON_MENU:0u)|
+      ((value&LINNET_BUTTON_PLAY)?LN_BUTTON_PLAY:0u)|
+      ((value&LINNET_BUTTON_RIGHT)?LN_BUTTON_NEXT:0u)|
+      ((value&LINNET_BUTTON_LEFT)?LN_BUTTON_PREV:0u)|
+      ((value&LINNET_BUTTON_SELECT)?LN_BUTTON_SELECT:0u);
+}
+static bool reset_shell(void){
+#if defined(LINNET_NATIVE_UI)
+    theme_frame.armed=theme_frame.complete=false;
+#endif
+    ln_arena_ref ref;ln_arena_reset(&scene_arena);
+    if(!ln_arena_alloc(&scene_arena,sizeof(ln_shell),8,&ref))return false;
+    shell=ln_arena_get(&scene_arena,ref);if(!shell)return false;
+    ln_shell_init(shell);shell->hold=input.hold;shell->headphones=input.headphones;dirty=true;return true;
+}
+#if defined(LINNET_NATIVE_UI)
+static void retain_scene(void){
+    /* Preserve the bounded shell value and invalidate all prior arena refs. */
+    ln_shell next=*shell;ln_arena_ref ref;ln_arena_reset(&scene_arena);
+    if(!ln_arena_alloc(&scene_arena,sizeof next,8,&ref))ln_panic(30,9,0);
+    shell=ln_arena_get(&scene_arena,ref);if(!shell)ln_panic(30,10,0);*shell=next;
+}
+#endif
+#if defined(LINNET_AUDIO)
+static void browser_navigation(void){
+    if(!scene_is("linnet.system.music"))return;
+    uint32_t navigation=ln_music_browser_navigation();
+    if(navigation!=music_navigation){
+        shell->selected=0;shell->selections[shell->scene]=0;
+        music_navigation=navigation;ln_ui_refresh(shell);dirty=true;
+    }
+    uint32_t rows=ln_ui_visible_capacity(shell);if(!rows)rows=1;
+    ln_music_browser_window((shell->selected/rows)*rows);
+}
+#endif
+#if defined(LINNET_PHOTOS)
+static bool photo_scene(void){
+    return scene_is("linnet.system.photos")||scene_is("linnet.system.photos-grid")||
+        scene_is("linnet.system.photos-viewer")||scene_is("linnet.system.photos-options");
+}
+static void photo_save(void){
+    uint8_t raw[16];if(!photo_resume_loaded)return;
+    ln_photos_resume_get(raw);ln_display_settings_photo_set(raw);
+}
+static void photo_navigation_update(void){
+    if(!photo_scene())return;
+    if(!ln_photos_active())ln_photos_open();
+    uint32_t navigation=ln_photos_navigation();
+    if(navigation!=photo_navigation||(!scene_is("linnet.system.photos-options")&&
+       ((ln_photos_view()==LN_PHOTOS_VIEWER&&!scene_is("linnet.system.photos-viewer"))||
+        (ln_photos_view()==LN_PHOTOS_LIST&&!scene_is("linnet.system.photos-grid"))||
+        (ln_photos_view()==LN_PHOTOS_ALBUMS&&!scene_is("linnet.system.photos"))))){
+        const char *id=ln_photos_view()==LN_PHOTOS_VIEWER?"linnet.system.photos-viewer":
+            ln_photos_view()==LN_PHOTOS_LIST?"linnet.system.photos-grid":"linnet.system.photos";
+        if(ln_ui_show(shell,id))retain_scene();
+        shell->selected=ln_photos_selection();shell->selections[shell->scene]=shell->selected;
+        photo_navigation=navigation;photo_wheel_mode=0;ln_ui_refresh(shell);dirty=true;
+    }
+    if(ln_photos_view()!=LN_PHOTOS_VIEWER){
+        uint32_t count=ln_ui_visible_capacity(shell);if(!count)count=1;
+        ln_photos_window((shell->selected/count)*count,count);
+    }
+}
+#endif
+#if defined(LINNET_VIDEO)
+static bool video_scene(void){return scene_is("linnet.system.video-player")||scene_is("linnet.system.video-controls");}
+static void video_save(void){uint32_t raw[2];if(video_resume_loaded){ln_video_resume_get(raw);ln_video_resume_set(raw);ln_display_settings_video_set(raw);}}
+static bool stop_video(void){
+    video_requested=false;video_save();ln_video_stop();uint32_t started=ln_time_us();
+    while(ln_video_active()||ln_video_pending()){
+        ln_video_step();ln_storage_step();if(ln_time_us()-started>=30000000u)return false;
+    }return true;
+}
+#endif
+#if defined(LINNET_NATIVE_UI)
+static bool clock_save_presented;
+static const char *clock_admission(void){
+    if(!ready||sleeping||shutdown_tracking)return "Try again when the player is awake.";
+    if(shell->hold)return "Unlock Hold before saving.";
+#if defined(LINNET_AUDIO)
+    struct ln_audio_status a;ln_audio_snapshot(&a);
+    struct ln_player_status p;ln_player_snapshot(&p);
+    if(a.initialized||a.playing||a.paused||
+       (p.phase!=LN_PLAYER_IDLE&&p.phase!=LN_PLAYER_ERROR)||
+       (p.next_phase!=LN_PLAYER_NEXT_NONE&&p.next_phase!=LN_PLAYER_NEXT_FAILED))
+        return "Stop playback before setting the clock.";
+#endif
+#if defined(LINNET_VIDEO)
+    if(ln_video_active()||ln_video_pending())return "Stop video before setting the clock.";
+#endif
+#if defined(LINNET_PHOTOS)
+    if(ln_photos_pending())return "Wait for photos to finish.";
+#endif
+    if(ln_storage_busy())return "Storage busy. Try again.";
+    return 0;
+}
+bool ln_ui_clock_begin(void){
+    clock_save_presented=false;ln_clock_editor_cancel();
+    const char *blocked=clock_admission();if(blocked){ln_clock_editor_block(blocked);return false;}
+    struct ln_calendar calendar;
+    enum ln_calendar_read_result result=ln_power_calendar_read_status(&calendar);
+    ln_clock_editor_begin(&calendar,result==LN_CALENDAR_READ_VALID);
+    if(result==LN_CALENDAR_READ_UNAVAILABLE)ln_clock_editor_block("Clock unavailable. Edit, retry Save.");
+    return true;
+}
+static void clock_save_step(void){
+    if(!clock_save_presented)return;
+    if(!scene_is("linnet.system.clock-edit")){clock_save_presented=false;ln_clock_editor_cancel();return;}
+    if(ln_display_busy())return;
+    clock_save_presented=false;
+    struct ln_calendar requested;if(!ln_clock_editor_request(&requested))return;
+    const char *blocked=clock_admission();
+    if(blocked)ln_clock_editor_block(blocked);
+    else{
+        enum ln_calendar_result result=ln_power_calendar_set(&requested);
+        ln_clock_editor_result(result);
+        if(result==LN_CALENDAR_SAVED){if(ln_ui_show(shell,"linnet.system.clock"))retain_scene();}
+    }
+    ln_ui_refresh(shell);dirty=true;
+}
+#endif
+static void apply(uint32_t kind,int32_t value){
+    if((kind==LN_INPUT_WHEEL&&value&&!shell->hold)||
+       (kind==LN_INPUT_BUTTON&&!shell->hold&&(uint32_t)value!=shell->buttons)||
+       (kind==LN_INPUT_HOLD&&!value&&shell->hold))backlight_activity();
+#if defined(LINNET_NATIVE_UI)
+    uint32_t before=shell->scene;
+#endif
+    bool handled=false;
+#if defined(LINNET_VIDEO)
+    if(!shell->hold&&(video_scene()||scene_is("linnet.system.videos"))){
+        if(kind==LN_INPUT_BUTTON){uint32_t pressed=(uint32_t)value&~shell->buttons;
+            if(pressed){
+                if(scene_is("linnet.system.videos")){
+                    if(pressed&LN_BUTTON_SELECT){ln_music_stop();ln_photos_close();video_requested=true;(void)ln_ui_show(shell,"linnet.system.video-player");}
+                    else if(pressed&LN_BUTTON_MENU)(void)ln_ui_show(shell,"linnet.system.home");
+                }else if(pressed&LN_BUTTON_MENU){video_save();video_requested=false;ln_video_stop();(void)ln_ui_show(shell,"linnet.system.videos");}
+                else if(pressed&LN_BUTTON_PLAY)(void)ln_video_pause(!ln_video_paused());
+                else if(pressed&(LN_BUTTON_NEXT|LN_BUTTON_PREV))(void)ln_video_seek((pressed&LN_BUTTON_PREV)?-10:10);
+                else if(pressed&LN_BUTTON_SELECT)(void)ln_ui_show(shell,scene_is("linnet.system.video-player")?"linnet.system.video-controls":"linnet.system.video-player");
+                shell->buttons=(uint32_t)value;handled=true;dirty=true;ln_ui_refresh(shell);
+            }
+        }else if(kind==LN_INPUT_WHEEL&&video_scene()){struct ln_audio_status a;ln_audio_snapshot(&a);(void)ln_audio_volume(a.volume_db_tenths+value*10);handled=true;}
+    }
+    if((video_requested||ln_video_active()||ln_video_pending())&&!video_scene()&&!scene_is("linnet.system.videos")){
+        video_requested=false;video_save();ln_video_stop();if(kind==LN_INPUT_BUTTON){shell->buttons=(uint32_t)value;handled=true;}
+    }
+#endif
+#if defined(LINNET_PHOTOS)
+    if(photo_scene()&&!shell->hold){
+        if(kind==LN_INPUT_BUTTON){
+            uint32_t pressed=(uint32_t)value&~shell->buttons;
+            if(pressed){
+                if(scene_is("linnet.system.photos-options")){
+                    if(pressed&LN_BUTTON_MENU)(void)ln_ui_show(shell,"linnet.system.photos-viewer");
+                    else if(pressed&LN_BUTTON_SELECT){
+                        uint32_t choice=shell->selected;
+                        if(choice<3u)photo_wheel_mode=choice;
+                        else if(choice==3u)ln_photos_rotate();
+                        else if(choice==4u)ln_photos_slideshow(!ln_photos_slideshow_active());
+                        else if(choice==5u)ln_photos_zoom(-32);
+                        (void)ln_ui_show(shell,"linnet.system.photos-viewer");
+                    }
+                }else if(pressed&LN_BUTTON_MENU){
+                    if(!ln_photos_back()){ln_photos_close();(void)ln_ui_show(shell,"linnet.system.home");}
+                }else if(ln_photos_view()==LN_PHOTOS_VIEWER){
+                    if(pressed&LN_BUTTON_SELECT){ln_photos_slideshow(false);(void)ln_ui_show(shell,"linnet.system.photos-options");}
+                    else if(pressed&LN_BUTTON_PLAY)ln_photos_slideshow(!ln_photos_slideshow_active());
+                    else if(pressed&(LN_BUTTON_NEXT|LN_BUTTON_PREV))ln_photos_next((pressed&LN_BUTTON_PREV)?-1:1);
+                }else if(pressed&LN_BUTTON_SELECT)(void)ln_photos_select(shell->selected);
+                else if(pressed&(LN_BUTTON_NEXT|LN_BUTTON_PREV))
+                    (void)ln_shell_input(shell,LN_INPUT_WHEEL,(pressed&LN_BUTTON_PREV)?-3:3);
+                else if(pressed&LN_BUTTON_PLAY)ln_music_toggle();
+                shell->buttons=(uint32_t)value;handled=true;ln_ui_refresh(shell);dirty=true;
+                photo_navigation_update();photo_save();
+            }
+        }else if(kind==LN_INPUT_WHEEL&&scene_is("linnet.system.photos-viewer")){
+            if(photo_wheel_mode==1u)ln_photos_pan(value*16,0);
+            else if(photo_wheel_mode==2u)ln_photos_pan(0,value*16);
+            else ln_photos_zoom(value);
+            photo_save();handled=true;
+        }
+    }
+#endif
+#if defined(LINNET_NATIVE_UI)
+    if(kind==LN_INPUT_BUTTON&&!shell->hold&&(scene_is("linnet.system.display")||scene_is("linnet.system.battery"))){
+        uint32_t pressed=(uint32_t)value&~shell->buttons;
+        if(pressed&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV)){
+            if(scene_is("linnet.system.battery"))(void)ln_battery_capacity_adjust((pressed&LN_BUTTON_PREV)?-1:1);
+            else (void)ln_display_settings_adjust((pressed&LN_BUTTON_PREV)?-1:1);
+            shell->buttons=(uint32_t)value;ln_ui_refresh(shell);dirty=true;handled=true;
+        }else if(pressed&LN_BUTTON_MENU){
+            (void)ln_ui_show(shell,"linnet.system.settings");
+            shell->buttons=(uint32_t)value;dirty=true;handled=true;
+        }
+    }
+#endif
+#if defined(LINNET_AUDIO)
+    if(kind==LN_INPUT_HEADPHONE)ln_music_headphones(value!=0);
+    if(!handled&&kind==LN_INPUT_BUTTON&&!shell->hold){uint32_t pressed=(uint32_t)value&~shell->buttons;
+        if((pressed&LN_BUTTON_SELECT)&&scene_is("linnet.system.music")){
+            (void)ln_music_browser_select(shell->selected);browser_navigation();handled=true;
+            if(ln_music_browser_take_search()){
+                ln_music_search_open();if(ln_ui_show(shell,"linnet.system.music-search"))dirty=true;
+            }
+        }else if((pressed&LN_BUTTON_SELECT)&&scene_is("linnet.system.now-playing")){
+            if(ln_ui_show(shell,"linnet.system.music-options"))dirty=true;handled=true;
+        }else if((pressed&LN_BUTTON_SELECT)&&scene_is("linnet.system.music-options")){
+            if(shell->selected==7){ln_music_queue_open();(void)ln_ui_show(shell,"linnet.system.music-queue");}
+            else if(shell->selected==8){(void)ln_ui_show(shell,"linnet.system.music-sound");}
+            else (void)ln_music_option_select(shell->selected);
+            ln_ui_refresh(shell);dirty=true;handled=true;
+        }else if(scene_is("linnet.system.music-queue")&&(pressed&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV|LN_BUTTON_MENU))){
+            if(pressed&LN_BUTTON_MENU){ln_music_queue_close();(void)ln_ui_show(shell,"linnet.system.music-options");}
+            else {ln_music_queue_choose(shell->selected);
+                if(pressed&LN_BUTTON_NEXT)(void)ln_ui_show(shell,"linnet.system.music-queue-actions");
+                else (void)ln_music_queue_edit((pressed&LN_BUTTON_PREV)?1u:0u);}
+            ln_ui_refresh(shell);dirty=true;handled=true;
+        }else if(scene_is("linnet.system.music-queue-actions")&&(pressed&(LN_BUTTON_SELECT|LN_BUTTON_MENU))){
+            if(pressed&LN_BUTTON_SELECT)(void)ln_music_queue_edit(shell->selected);
+            (void)ln_ui_show(shell,"linnet.system.music-queue");ln_ui_refresh(shell);dirty=true;handled=true;
+        }else if(scene_is("linnet.system.music-sound")&&(pressed&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV))){
+            (void)ln_music_sound_adjust(shell->selected,(pressed&LN_BUTTON_PREV)?-1:1);ln_ui_refresh(shell);dirty=true;handled=true;
+        }else if(scene_is("linnet.system.music-sound")&&(pressed&LN_BUTTON_MENU)){
+            (void)ln_ui_show(shell,"linnet.system.music-options");dirty=true;handled=true;
+        }else if(scene_is("linnet.system.music-search")&&(pressed&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV|LN_BUTTON_MENU))){
+            if(pressed&LN_BUTTON_MENU){if(!ln_music_search_back())(void)ln_ui_show(shell,"linnet.system.music");}
+            else if(pressed&LN_BUTTON_NEXT)ln_music_search_right();
+            else if(pressed&LN_BUTTON_PREV)ln_music_search_left();
+            else (void)ln_music_search_select(shell->selected);
+            ln_ui_refresh(shell);dirty=true;handled=true;
+        }else if((pressed&LN_BUTTON_MENU)&&scene_is("linnet.system.music-options")){
+            if(ln_ui_show(shell,"linnet.system.now-playing"))dirty=true;handled=true;
+        }else if((pressed&LN_BUTTON_MENU)&&scene_is("linnet.system.music")){
+            handled=ln_music_browser_back();if(handled)browser_navigation();
+        }else if(pressed&LN_BUTTON_PLAY){
+            if(scene_is("linnet.system.music")&&ln_music_browser_queue_status()==LN_BROWSER_QUEUE_CAPACITY)
+                (void)ln_music_browser_select_single(shell->selected);
+            else ln_music_toggle();handled=true;
+        }
+        else if(scene_is("linnet.system.now-playing")&&(pressed&(LN_BUTTON_NEXT|LN_BUTTON_PREV))){
+            (void)ln_music_next((pressed&LN_BUTTON_PREV)!=0);handled=true;}
+        if(handled)shell->buttons=(uint32_t)value;
+    }
+    if(kind==LN_INPUT_WHEEL&&!shell->hold&&scene_is("linnet.system.now-playing")){ln_music_volume(value);handled=true;}
+#endif
+    if(!handled&&ln_shell_input(shell,kind,value))dirty=true;
+#if defined(LINNET_PHOTOS)
+    if(photo_scene())photo_navigation_update();
+    else if(ln_photos_active()){photo_save();ln_photos_close();}
+#endif
+#if defined(LINNET_NATIVE_UI)
+    if(before!=shell->scene){
+        retain_scene();
+    }
+#endif
+}
+static _Noreturn void shutdown_failed(uint32_t phase){
+    /* Restore independent recovery even if a terminal PMU request failed. */
+    ln_core_watchdog_arm();ln_panic(33,phase,0);
+}
+#if defined(LINNET_NATIVE_UI)
+#if defined(LINNET_PHOTOS)
+static bool stop_photos(void){
+    photo_save();ln_photos_close();uint32_t started=ln_time_us();
+    do {
+        ln_photos_step();
+        if(!ln_photos_pending())return true;
+        if(ln_time_us()-started>=30000000u)return false;
+        ln_storage_step();
+    }while(true);
+}
+#endif
+static bool save_display_settings(void){
+#if defined(LINNET_PHOTOS)
+    photo_save();
+#endif
+    uint32_t started=ln_time_us();
+    while(ln_display_settings_pending()){
+        ln_display_settings_step(true);
+        if(ln_time_us()-started>=30000000u)return false;
+        ln_storage_step();
+    }
+    return true;
+}
+#endif
+static _Noreturn void shutdown(bool save_settings){
+    (void)save_settings;
+    ready=false;shutdown_tracking=false;animation_left=0;
+#if defined(LINNET_VIDEO)
+    if(!stop_video())shutdown_failed(13);
+#endif
+#if defined(LINNET_PHOTOS)
+    if(!stop_photos())shutdown_failed(12);
+#endif
+#if defined(LINNET_AUDIO)
+    if(!ln_music_quiesce(save_settings))shutdown_failed(10);
+    if(!ln_audio_stop())shutdown_failed(9);
+#endif
+#if defined(LINNET_STORAGE)
+#if defined(LINNET_NATIVE_UI)
+    if(save_settings&&!save_display_settings())shutdown_failed(11);
+#endif
+    if(!ln_storage_quiesce())shutdown_failed(8);
+#endif
+    if(!ln_display_quiesce())shutdown_failed(1);
+    if(!ln_platform_audio_idle())shutdown_failed(2);
+#if !defined(LINNET_PROFILE_RELEASE)
+    if(!ln_usb_stop())shutdown_failed(3);
+#endif
+    ln_core_watchdog_disarm();
+    ln_platform_quiesce();
+    if(!ln_platform_dma_idle())shutdown_failed(4);
+    ln_power_backlight(false,0);
+    /* CHGWAK immediately restarts an externally powered PCF50605. Keep
+     * EXTONWAK enabled in both cases, and allow charger wake only unplugged. */
+    uint8_t wake_sources=LINNET_POWER_FIREWIRE;
+    if(!ln_power_sources())wake_sources|=LINNET_POWER_USB;
+    if(!ln_power_shutdown(wake_sources))shutdown_failed(5);
+    /* GOSTDBY removes CPU power. A successful bus write without power-down
+     * must not leave an apparently off device running indefinitely. */
+    for(uint32_t i=0;i<20u;++i)if(!ln_core_delay_us(10000u))shutdown_failed(6);
+    shutdown_failed(7);
+}
+static bool wake(void){
+    if(!sleeping)return true;
+#if defined(LINNET_STORAGE)
+    if(!ln_storage_resume())return false;
+#endif
+    if(!ln_power_wake())return false;
+    sleeping=false;++wake_count;wake_at=0;
+    backlight_idle=false;backlight_deadline=ln_time_us()+backlight_timeout;
+    ln_power_backlight(brightness!=0,(uint8_t)((brightness*255u+50u)/100u));
+    return true;
+}
+bool ln_runtime_init(void){
+#if !defined(LINNET_PROFILE_RELEASE)
+    rnd_init();
+#endif
+    LN_BOOT_STAMP(LN_BT_OS_RUNTIME);
+#if defined(LINNET_NATIVE_UI)
+    ln_display_settings_init();
+    display_settings_revision=ln_display_settings_revision();
+    update_status_at=0;
+    backlight_timeout=ln_display_backlight_timeout_us();
+#endif
+    ln_exec_init(&executive);ln_arena_init(&scene_arena,scene_memory,sizeof scene_memory);
+    if(!ln_core_init())ln_panic(30,1,0);
+    if(!ln_core_clock_set(80000000u)){
+        uint32_t cop[8];ln_display_cop_diagnostics(cop);
+        ln_panic(30,2,(ln_core_clock_failure()<<16)|cop[0]);
+    }
+    LN_BOOT_STAMP(LN_BT_OS_CLOCK);
+    /* Initialize large media buffers after the verified clock setup,
+     * before input, display providers or the first service step can use them. */
+#if defined(LINNET_VIDEO)
+    ln_video_init();video_revision=0;video_requested=video_resume_loaded=false;
+#endif
+#if defined(LINNET_PHOTOS)
+    ln_photos_init();photo_revision=photo_navigation=photo_wheel_mode=0;photo_resume_loaded=false;
+#endif
+    LN_BOOT_STAMP(LN_BT_OS_MEDIA);
+    if(!ln_input_init())ln_panic(30,3,0);
+    if(!ln_power_init())ln_panic(30,4,0);
+    if(!ln_display_init())ln_panic(30,5,0);
+#if defined(LINNET_AUDIO)
+    /* Correct the resident monitor before the first COP presentation. */
+    if(!ln_display_upgrade_monitor())ln_panic(30,12,ln_display_cop_error());
+#endif
+    ln_input_snapshot(&input);ln_power_snapshot(&power);
+    if(!reset_shell())ln_panic(30,6,0);
+    ln_power_backlight(true,255);
+    backlight_idle=false;backlight_deadline=ln_time_us()+backlight_timeout;
+#if defined(LINNET_NATIVE_UI)
+    uint32_t initial_theme_revision=ln_display_theme_revision();
+#endif
+    ln_shell_render(shell,ln_display_framebuffer());dirty=false;
+    if(!ln_display_present())ln_panic(30,7,0);
+#if defined(LINNET_NATIVE_UI)
+    theme_frame_submitted(initial_theme_revision);
+#endif
+    uint32_t start=ln_time_us();
+    while(ln_display_busy()){
+        if(!ln_display_service(256)||ln_time_us()-start>400000u)ln_panic(30,8,0);
+    }
+#if defined(LINNET_NATIVE_UI)
+    theme_frame_observe();
+#endif
+    LN_BOOT_STAMP(LN_BT_OS_FRAME);
+#if defined(LINNET_AUDIO)
+#if defined(LINNET_VIDEO)
+    /* Optional acceleration accepts only the preserved resident Boot worker.
+     * Unknown workers retain their existing display path. */
+    (void)ln_display_upgrade_blit();
+#endif
+    /* The decoder executes from SDRAM. Its instruction/data working set needs
+     * the CPU cache; scanout/audio DMA publish through uncached aliases. */
+    if(!ln_core_cache_enable())ln_panic(30,11,0);
+#if defined(LINNET_AUDIO_CACHE_DIAGNOSTIC)
+    *(volatile uint32_t *)(uintptr_t)0x11ffe098u=0xca0bu;
+#endif
+#endif
+    LN_BOOT_STAMP(LN_BT_OS_RUNTIME_END);
+    ready=true;return true;
+}
+int ln_runtime_inject(uint32_t kind,int32_t value,uint32_t sequence){
+    if(!ready||!sequence||sequence<=last_injection||kind<1||kind>4||
+       (kind==1&&(value < -64||value>64))||(kind==2&&(value<0||value>31))||
+       (kind>=3&&(value<0||value>1)))return 0;
+    ln_event event={kind,ln_time_us(),generation(),value};
+    if(!ln_exec_post(&executive,LN_SERVICE_INPUT,event))return 0;
+    ln_wheel_motion_reset(&wheel_motion);
+    last_injection=sequence;return 1;
+}
+void ln_runtime_step(void){
+    /* Storage drain callbacks may reenter here during shutdown or Sync.
+     * Once terminal cleanup starts, UI work must not reopen media. */
+    if(!ready)return;
+    uint32_t now=ln_time_us();uint32_t wakes=ln_core_take_wakes();
+#if defined(LINNET_AUDIO)
+    ln_music_browser_set_visible(scene_is("linnet.system.music"));
+#endif
+    /* Check fresh power before optional publications or new viewer work.
+     * A locked storage callback must return to its owner to finish draining. */
+    if((int32_t)(now-ln_power_next_deadline())>=0)(void)ln_power_poll(now,&power);
+#if defined(LINNET_BATTERY_GUARD)
+    bool battery_emergency=ln_battery_shutdown_due(&battery_guard,&power,ln_time_us());
+    if(battery_emergency&&!ln_storage_busy())shutdown(false);
+#endif
+#if defined(LINNET_AUDIO) && !defined(LINNET_PROFILE_RELEASE)
+    uint32_t timing_started=now;
+#endif
+#if defined(LINNET_NATIVE_UI)
+    bool settings_io=true;
+#if defined(LINNET_VIDEO)
+    settings_io=!ln_video_active()&&!ln_video_pending();
+    if(!video_resume_loaded){uint32_t raw[2];if(ln_display_settings_video_get(raw)){ln_video_resume_set(raw);video_resume_loaded=true;}}
+#endif
+#if defined(LINNET_AUDIO)
+    if(settings_io){
+        struct ln_audio_status settings_audio;ln_audio_snapshot(&settings_audio);
+        struct ln_player_status settings_player;ln_player_snapshot(&settings_player);
+        settings_io=!settings_audio.playing&&(settings_player.phase==LN_PLAYER_IDLE||settings_player.phase==LN_PLAYER_PAUSE||settings_player.phase==LN_PLAYER_ERROR);
+    }
+#endif
+#if defined(LINNET_BATTERY_GUARD)
+    settings_io=settings_io&&!battery_emergency;
+#endif
+    bool theme_presented=settings_io&&!sleeping&&theme_frame_ready();
+    ln_display_settings_step_ready(settings_io&&!sleeping,theme_presented,theme_frame.revision);
+#if defined(LINNET_PHOTOS)
+    if(!photo_resume_loaded){uint8_t raw[16];if(ln_display_settings_photo_get(raw)){
+        (void)ln_photos_resume_set(raw);photo_resume_loaded=true;
+    }}
+#endif
+    if(scene_is("linnet.system.update")&&(int32_t)(now-update_status_at)>=0){
+        uint32_t state[16];ln_storage_update_snapshot(state);
+        if(ln_display_update_status(LINNET_BUILD_ID,state,ln_storage_update_history())){ln_ui_refresh(shell);dirty=true;}
+        update_status_at=now+500000u;
+    }
+    uint32_t settings_revision=ln_display_settings_revision();
+    if(display_settings_revision!=settings_revision){
+        display_settings_revision=settings_revision;
+        backlight_timeout=ln_display_backlight_timeout_us();
+        if(!sleeping)backlight_activity();
+        if(scene_is("linnet.system.display")||scene_is("linnet.system.battery")||scene_is("linnet.system.themes")||shell->drawn_theme!=ln_ui_theme_index()){ln_ui_refresh(shell);dirty=true;}
+    }
+    theme_frame_request();
+#endif
+#if defined(LINNET_AUDIO)
+    ln_audio_service(now);
+    if(ln_music_take_now_playing()&&(scene_is("linnet.system.music")||scene_is("linnet.system.music-search")||scene_is("linnet.system.music-queue")||scene_is("linnet.system.music-queue-actions"))){
+        ln_music_queue_close();
+        if(ln_ui_show(shell,"linnet.system.now-playing")){retain_scene();dirty=true;}
+    }
+    browser_navigation();
+    if(scene_is("linnet.system.music-queue")){
+        uint32_t rows=ln_ui_visible_capacity(shell);if(!rows)rows=1;
+        ln_music_queue_view_window((shell->selected/rows)*rows);
+    }
+    if(scene_is("linnet.system.music-search")&&search_navigation!=ln_music_search_navigation()){
+        search_navigation=ln_music_search_navigation();shell->selected=0;shell->selections[shell->scene]=0;ln_ui_refresh(shell);dirty=true;
+    }
+#if defined(LINNET_VIDEO)
+    /* Video has its own presentation revision. Keep music caches untouched so
+     * the first callback after leaving video reconciles every deferred change. */
+    if(!video_scene())
+#endif
+    {
+    struct ln_player_status music;ln_player_snapshot(&music);
+    uint32_t current_search_revision=ln_music_search_revision(),current_library_status=ln_music_library_status();
+    if(scene_is("linnet.system.music-search")&&
+       (search_revision!=current_search_revision||search_library_status!=current_library_status)){
+        ln_ui_refresh_content(shell);dirty=true;
+    }
+    search_revision=current_search_revision;search_library_status=current_library_status;
+    uint32_t revision=ln_music_library_revision()+ln_music_art_revision()+ln_music_browser_revision()+ln_music_revision()+ln_music_search_revision()+ln_music_queue_view_revision();
+    if(revision!=music_revision||music.phase!=music_phase||music.generation!=music_generation){
+        if(scene_is("linnet.system.music")||scene_is("linnet.system.now-playing")||scene_is("linnet.system.music-options")||scene_is("linnet.system.music-sound")||scene_is("linnet.system.music-queue")||scene_is("linnet.system.music-queue-actions")){ln_ui_refresh(shell);dirty=true;}
+        music_revision=revision;music_phase=music.phase;music_generation=music.generation;
+    }
+    if(scene_is("linnet.system.now-playing")&&music.phase==LN_PLAYER_PLAY&&(int32_t)(now-music_progress_at)>=0){
+        shell->dirty|=8u;dirty=true;music_progress_at=now+250000u;
+    }
+    }
+#endif
+#if defined(LINNET_PHOTOS)
+    /* Scene changes can also originate from development controls. Close
+     * background media even when no further physical input arrives. */
+    if(!photo_scene()&&ln_photos_active()){photo_save();ln_photos_close();}
+    ln_photos_step();
+#if defined(LINNET_VIDEO)
+    if(!video_scene()){
+        video_requested=false;
+        if(ln_video_active()){video_save();ln_video_stop();}
+    }
+    if(video_requested&&!ln_player_busy()&&!ln_photos_pending()&&!ln_storage_busy()){
+        struct ln_audio_status a;ln_audio_snapshot(&a);
+        if(!a.initialized&&video_resume_loaded){video_requested=false;(void)ln_video_open("/LINNET/VIDEOS/CURRENT.PVD");}
+    }
+    ln_video_step();
+    if(video_scene()){
+        uint32_t revision=ln_video_revision();
+        if(revision!=video_revision){video_revision=revision;ln_ui_refresh(shell);dirty=true;}
+        if(ln_video_active()&&!ln_video_paused())backlight_activity();
+    }
+#endif
+    if(photo_scene()){
+        photo_navigation_update();uint32_t revision=ln_photos_revision();
+        if(revision!=photo_revision){photo_revision=revision;ln_ui_refresh(shell);dirty=true;photo_save();}
+    }
+#endif
+#if defined(LINNET_STORAGE) && !defined(LINNET_NATIVE_UI)
+    uint32_t previous_buttons=input.buttons;
+#endif
+    bool previous_touch=input.touched;
+    if((wakes&(LINNET_WAKE_INPUT|LINNET_WAKE_GPIO))&&ln_input_poll(&input)){
+        /* Count contact and sub-menu-step motion, but not idle sensor packets. */
+        if(!input.hold&&((input.touched&&!previous_touch)||input.wheel_delta))backlight_activity();
+#if defined(LINNET_STORAGE) && !defined(LINNET_NATIVE_UI)
+        if(!ln_storage_busy()&&!input.hold&&shell->scene==4&&input.buttons==LINNET_BUTTON_SELECT&&!(previous_buttons&LINNET_BUTTON_SELECT)){
+            if(!ln_storage_disk_mode())ln_panic(34,1,0);
+        }
+#endif
+        if(sleeping)(void)wake();
+        if(!(override_mask&1u))apply(LN_INPUT_HOLD,input.hold);
+        if(!(override_mask&2u))apply(LN_INPUT_HEADPHONE,input.headphones);
+        apply(LN_INPUT_BUTTON,(int32_t)buttons(input.buttons));
+        uint32_t epoch=0,count=0;
+#if defined(LINNET_NATIVE_UI)
+        epoch=shell->scene_epoch;count=ln_ui_focused_count(shell);
+#endif
+        if(wheel_scene!=shell->scene||wheel_epoch!=epoch||input.buttons){
+            ln_wheel_motion_reset(&wheel_motion);
+            wheel_scene=shell->scene;wheel_epoch=epoch;
+        }
+        int32_t steps=ln_wheel_motion_step(&wheel_motion,input.wheel_delta,
+            input.touched,input.hold,count,ln_time_us());
+        if(steps)apply(LN_INPUT_WHEEL,steps);
+    }
+    if(!input.hold&&input.buttons==LINNET_BUTTON_PLAY){
+        if(!shutdown_tracking){shutdown_tracking=true;shutdown_deadline=ln_time_us()+LINNET_SHUTDOWN_HOLD_US;}
+        else if((int32_t)(ln_time_us()-shutdown_deadline)>=0){
+#if defined(LINNET_STORAGE)
+            if(!ln_storage_busy())shutdown(true);
+#else
+            shutdown(true);
+#endif
+        }
+    }else shutdown_tracking=false;
+#if defined(LINNET_NATIVE_UI)
+    if(ln_ui_status_refresh(shell))dirty=true;
+#endif
+#if defined(LINNET_BATTERY_GUARD)
+    if(ln_battery_shutdown_due(&battery_guard,&power,ln_time_us())&&!ln_storage_busy())shutdown(false);
+#endif
+    ln_exec_due(&executive,now);
+    uint32_t owner;ln_event event;
+    for(uint32_t budget=0;budget<32&&ln_exec_take(&executive,ln_time_us(),&owner,&event);++budget){
+        if(event.generation!=generation())continue;
+        if(owner==LN_SERVICE_INPUT){
+            if(event.kind>=3){uint32_t bit=1u<<(event.kind-3u);override_mask|=bit;
+                if(event.value)synthetic_flags|=bit;else synthetic_flags&=~bit;}
+            apply(event.kind,event.value);
+        }else if(owner==LN_SERVICE_POWER)(void)wake();
+    }
+    if(sleeping&&wake_at&&(int32_t)(now-wake_at)>=0)(void)wake();
+    /* Identical idle policy on battery, USB and AC; background work is not input.
+     * Latch expiry so the wrapping microsecond clock cannot relight the panel. */
+    if(!sleeping&&!backlight_idle&&backlight_timeout&&
+       (int32_t)(ln_time_us()-backlight_deadline)>=0){
+        backlight_idle=true;
+        ln_power_backlight(false,(uint8_t)((brightness*255u+50u)/100u));
+    }
+#if defined(LINNET_NATIVE_UI)
+    if(shell->action==LINNET_UI_ACTION_SYNC&&!ln_storage_busy()){
+        ready=false;shutdown_tracking=false;animation_left=0;
+        (void)ln_shell_take_action(shell);
+#if defined(LINNET_VIDEO)
+        if(!stop_video())ln_panic(34,5,0);
+#endif
+#if defined(LINNET_PHOTOS)
+        if(!stop_photos())ln_panic(34,4,0);
+#endif
+#if defined(LINNET_AUDIO)
+        if(!ln_music_prepare_shutdown())ln_panic(34,2,0);
+#endif
+        if(!save_display_settings())ln_panic(34,3,0);
+        if(!ln_storage_disk_mode())ln_panic(34,1,0);
+    }
+#endif
+    if(!ln_display_service(256))ln_panic(32,0,0);
+#if defined(LINNET_NATIVE_UI)
+    theme_frame_observe();
+    clock_save_step();
+#endif
+    if(!sleeping&&!ln_display_busy()){
+#if defined(LINNET_NATIVE_UI)
+        uint32_t rendered_theme_revision=ln_display_theme_revision();
+#endif
+        if(dirty){
+#if !defined(LINNET_PROFILE_RELEASE)
+            struct rnd_span render_span=rnd_enter();
+#endif
+            ln_shell_render(shell,ln_display_framebuffer());dirty=false;
+#if !defined(LINNET_PROFILE_RELEASE)
+            rnd_rendered(&render_span);
+#endif
+            bool presented=ln_display_present();
+#if !defined(LINNET_PROFILE_RELEASE)
+            rnd_leave(&render_span,presented);
+#endif
+#if defined(LINNET_NATIVE_UI)
+            if(presented)theme_frame_submitted(rendered_theme_revision);
+            if(presented&&scene_is("linnet.system.clock-edit")&&ln_clock_editor_pending())clock_save_presented=true;
+#endif
+#if defined(LINNET_VIDEO)
+            if(presented&&video_scene())ln_video_presented();
+#else
+            (void)presented;
+#endif
+        }
+        else if(animation_left&&(int32_t)(now-animation_at)>=0){
+#if defined(LINNET_NATIVE_UI)
+            uint32_t paints=shell->paint_count;
+#endif
+            ln_shell_animate(shell,ln_display_framebuffer(),shell->animation+1u);
+            bool presented=ln_display_present();
+#if defined(LINNET_NATIVE_UI)
+            if(presented)theme_frame_submitted(rendered_theme_revision);
+            /* A scene without animation effects still consumes its deadline. */
+            if(shell->paint_count==paints)presented=true;
+#endif
+            if(presented){--animation_left;animation_at=now+33333u;}
+        }
+    }
+#if defined(LINNET_AUDIO) && !defined(LINNET_PROFILE_RELEASE)
+    ln_player_timing_runtime(ln_time_us()-timing_started);
+#endif
+}
+void ln_runtime_idle(void){
+#if !defined(LINNET_PROFILE_RELEASE)
+    if(ln_usb_rx_pending())return;
+#endif
+    uint32_t now=ln_time_us();
+    if(executive.used||dirty)return;
+    struct ln_display_metrics display;ln_display_get_metrics(&display);
+    /* CPU fallback must service its bounded worker; a live COP owns the LCD. */
+    if(ln_display_busy()&&!display.cop_active)return;
+    uint32_t next=now+200000u;
+#if defined(LINNET_VIDEO)
+    uint32_t video_due=ln_video_deadline(now);if((int32_t)(video_due-next)<0)next=video_due;
+#endif /* independent watchdog progress lease */
+#if defined(LINNET_PHOTOS)
+    uint32_t photo_due=ln_photos_deadline(now);if((int32_t)(photo_due-next)<0)next=photo_due;
+#endif
+    if(!sleeping&&!backlight_idle&&backlight_timeout&&(int32_t)(backlight_deadline-next)<0)next=backlight_deadline;
+#if defined(LINNET_AUDIO)
+    uint32_t music_due=ln_music_deadline(now);if((int32_t)(music_due-next)<0)next=music_due;
+#endif
+    if(shutdown_tracking&&(int32_t)(shutdown_deadline-next)<0)next=shutdown_deadline;
+    uint32_t power_due=ln_power_next_deadline();if((int32_t)(power_due-next)<0)next=power_due;
+    if(animation_left&&(int32_t)(animation_at-next)<0)next=animation_at;
+    if(sleeping&&wake_at&&(int32_t)(wake_at-next)<0)next=wake_at;
+    if(ln_display_busy()&&(int32_t)((now+1000u)-next)<0)next=now+1000u;
+#if defined(LINNET_STORAGE)
+    uint32_t storage_due=ln_storage_next_deadline(now);
+    if((int32_t)(storage_due-next)<0)next=storage_due;
+    if(ln_storage_busy())return;
+#endif
+    ln_core_idle_until(ln_exec_next(&executive,now,next));
+}
+int ln_runtime_control(uint32_t command,uint32_t argument){
+    if(!ready)return 0;
+    switch(command){
+    case LN_CONTROL_SLEEP:
+#if defined(LINNET_NATIVE_UI)
+        if(ln_display_settings_pending())return 0;
+#endif
+#if defined(LINNET_VIDEO)
+        if(video_requested||ln_video_active()||ln_video_pending())return 0;
+#endif
+#if defined(LINNET_PHOTOS)
+        if(ln_photos_active()||ln_photos_pending())return 0;
+#endif
+#if defined(LINNET_AUDIO)
+        {struct ln_audio_status audio;ln_audio_snapshot(&audio);if(audio.initialized||ln_player_busy())return 0;}
+#endif
+        if(argument<50u||argument>1000u||sleeping||ln_display_busy())return 0;
+        #if defined(LINNET_STORAGE)
+        if(!ln_storage_quiesce())return 0;
+        #endif
+        if(!ln_power_sleep()){
+#if defined(LINNET_STORAGE)
+            (void)ln_storage_resume();
+#endif
+            return 0;
+        }
+        sleeping=true;++sleep_count;wake_at=ln_time_us()+argument*1000u;
+        if(!ln_exec_schedule(&executive,LN_SERVICE_POWER,1,wake_at,(ln_event){0,wake_at,generation(),0})){
+            (void)ln_power_wake();
+#if defined(LINNET_STORAGE)
+            (void)ln_storage_resume();
+#endif
+            sleeping=false;wake_at=0;--sleep_count;return 0;
+        }
+        return 1;
+    case LN_CONTROL_WAKE:ln_exec_cancel(&executive,LN_SERVICE_POWER,1);return wake();
+    case LN_CONTROL_BACKLIGHT:
+        if(argument>100u)return 0;brightness=argument;
+        backlight_idle=false;backlight_deadline=ln_time_us()+backlight_timeout;
+        ln_power_backlight(!sleeping&&argument!=0,(uint8_t)((argument*255u+50u)/100u));return 1;
+    case LN_CONTROL_COP_RESET:
+        if(!ln_display_reset())return 0;dirty=true;return 1;
+    case LN_CONTROL_ANIMATION:
+        if(argument<1u||argument>120u||animation_left)return 0;
+        animation_left=argument;animation_at=ln_time_us();return 1;
+    case LN_CONTROL_CLEAR_SYNTHETIC:
+        override_mask=synthetic_flags=0;apply(LN_INPUT_HOLD,input.hold);apply(LN_INPUT_HEADPHONE,input.headphones);return 1;
+    case LN_CONTROL_RESET_SHELL:
+        if(executive.used||animation_left||sleeping)return 0;return reset_shell();
+    default:return 0;
+    }
+}
+uint32_t ln_runtime_state(uint32_t*out,uint32_t capacity){
+    if(!out||capacity<32u)return 0;
+    struct ln_display_metrics d;struct ln_core_status c;
+    ln_display_get_metrics(&d);ln_core_snapshot(&c);ln_input_snapshot(&input);ln_power_snapshot(&power);
+    uint32_t words[32]={0x3142504cu,generation(),(ready?1u:0u)|(sleeping?2u:0u)|(d.cop_active?4u:0u)|(input.packets?8u:0u)|(shutdown_tracking?16u:0u)|((power.backlight_on?brightness:0u)<<8),
+        shell?shell->selected:0,shell?shell->scene:0,executive.accepted,executive.processed,executive.dropped,executive.max_latency,
+        executive.high,executive.deadline_high,scene_arena.high,d.frames_submitted,d.frames_completed,d.max_present_us,d.head,d.tail,d.resets,
+        sleep_count,wake_count,c.idle_us,c.idle_count,buttons(input.buttons),input.hold,input.headphones,synthetic_flags,last_injection,
+        shell?shell->animation:0,c.clock_hz,power.battery_mv,power.flags,c.irq_max_us};
+    for(uint32_t i=0;i<32;++i)out[i]=words[i];return 32;
+}
+const uint16_t*ln_runtime_framebuffer(void){return ln_display_snapshot();}
+uint32_t ln_runtime_frame_crc(void){return ln_display_snapshot_crc32();}
+uint32_t ln_runtime_ui_state(uint32_t *out,uint32_t capacity){
+#if defined(LINNET_NATIVE_UI)
+    if(!ready||!out||capacity<16u)return 0;
+    uint32_t words[16]={0x3349554cu,1,shell->scene,shell->selected,shell->scene_epoch,
+        shell->transitions,shell->paint_count,shell->painted_pixels,shell->visible_items,
+        shell->dirty,shell->action,scene_arena.used,scene_arena.high,scene_arena.generation,
+        generation(),ln_ui_scene_count};
+    for(uint32_t i=0;i<16u;++i)out[i]=words[i];return 16;
+#else
+    (void)out;(void)capacity;return 0;
+#endif
+}

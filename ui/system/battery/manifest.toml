@@ -1,0 +1,6 @@
+[app]
+id = "linnet.system.battery"
+version = 1
+title = "Battery"
+entry = "screen.tsx"
+capabilities = ["ui"]

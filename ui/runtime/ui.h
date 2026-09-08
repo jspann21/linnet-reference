@@ -1,0 +1,107 @@
+#ifndef LINNET_UI_H
+#define LINNET_UI_H
+#include <stdint.h>
+#include <stdbool.h>
+#define LINNET_UI_WIDTH 220u
+#define LINNET_UI_HEIGHT 176u
+#define LINNET_UI_MAX_SCENES 32u
+#define LINNET_UI_ACTION_SYNC 0xfffffffeu
+enum ln_ui_kind { LN_UI_SCREEN=1,LN_UI_VIEW,LN_UI_TEXT,LN_UI_ICON,LN_UI_IMAGE,
+    LN_UI_VIRTUAL_LIST,LN_UI_MENU,LN_UI_GRID,LN_UI_SCROLLBAR,LN_UI_PROGRESS_BAR,
+    LN_UI_STATUS_BAR,LN_UI_DIALOG,LN_UI_TOAST,LN_UI_ALBUM_ART,LN_UI_PHOTO_SURFACE,
+    LN_UI_VIDEO_SURFACE,LN_UI_CANVAS_SURFACE };
+/* Semantic color references remain native constants; literal RGB565 is unchanged. */
+#define LN_UI_COLOR_TOKEN 0x10000u
+#define LN_UI_THEME_MONOCHROME 1u
+#define LN_UI_THEME_APPLE_PHOTO 2u
+/* Host-baked list geometry. Low six flags retain their existing meanings.
+ * Unmarked, reserved-bit, or incomplete encodings use runtime geometry. */
+#define LN_UI_GEOMETRY 0x80000000u
+#define LN_UI_GEOMETRY_RESERVED 0x70000000u
+#define LN_UI_GEOMETRY_ROW_SHIFT 6u
+#define LN_UI_GEOMETRY_COLUMNS_SHIFT 13u
+#define LN_UI_GEOMETRY_ROWS_SHIFT 16u
+#define LN_UI_GEOMETRY_WIDTH_SHIFT 20u
+enum ln_ui_color_role {LN_UI_FOREGROUND,LN_UI_BACKGROUND,LN_UI_ACCENT,LN_UI_MUTED,
+    LN_UI_PANEL,LN_UI_SELECTION_FG,LN_UI_SELECTION_BG,LN_UI_STATUS_FG,LN_UI_STATUS_BG,
+    LN_UI_BORDER,LN_UI_ARTWORK_BG,LN_UI_ARTWORK_FG,LN_UI_BATTERY,LN_UI_COLOR_COUNT};
+enum ln_ui_layout {LN_UI_LAYOUT_DEFAULT,LN_UI_LAYOUT_IPOD_PHOTO,LN_UI_LAYOUT_GRAPHITE,
+    LN_UI_LAYOUT_AURORA,LN_UI_LAYOUT_SUNSET,LN_UI_LAYOUT_BLUEPRINT};
+struct ln_ui_scene;
+struct ln_ui_font;
+struct ln_ui_theme {
+    const char *id,*name;uint16_t colors[LN_UI_COLOR_COUNT];uint32_t flags;
+    const struct ln_ui_scene *scenes;const struct ln_ui_font *font;
+    uint32_t row_height,padding,layout;
+};
+extern const struct ln_ui_theme ln_ui_themes[];
+extern const uint32_t ln_ui_theme_count,ln_ui_default_theme;
+uint16_t ln_ui_color(uint32_t value);
+uint32_t ln_ui_theme_index(void);
+uint32_t ln_ui_battery_status(void); /* percent0..100,bit8 charging,bit9 external; UINT32_MAX unknown */
+uint32_t ln_ui_clock_seconds(void); /* local RTC seconds since midnight, UINT32_MAX unknown */
+uint32_t ln_ui_playback_status(void); /*0 stopped,1 playing,2 paused*/
+/* Memory-only preference hooks; persistence belongs to display settings. */
+uint32_t ln_ui_theme_preference(void);
+void ln_ui_theme_changed(uint32_t index);
+const char *ln_ui_theme_status(void);
+struct ln_ui_canvas_context {
+    uint16_t *pixels;
+    int32_t x,y,w,h,clip_x,clip_y,clip_w,clip_h;
+    uint32_t frame;
+    uint16_t fg,bg;
+};
+typedef void (*ln_ui_canvas_fn)(const struct ln_ui_canvas_context *context);
+struct ln_ui_node {
+    uint32_t kind;int32_t x,y,w,h;uint32_t fg,bg,flags,count,resource,index;
+    const char *text;const char *const *items;const uint32_t *targets;
+    uint32_t item_count,deps;
+    ln_ui_canvas_fn canvas;
+};
+struct ln_ui_scene {const char *id,*title;const struct ln_ui_node *nodes;uint32_t count,focus_node;};
+struct ln_ui_asset {uint32_t width,height;const uint16_t *pixels;};
+/* Memory-only per-row assets for virtualized image grids. */
+const struct ln_ui_asset *ln_ui_dynamic_item_asset(const struct ln_ui_node *,uint32_t,const struct ln_ui_asset *);
+struct ln_ui_glyph {uint32_t offset;uint8_t x,y,w,h;};
+struct ln_ui_font {const uint8_t *alpha;uint32_t width,height,advance,first,count;const uint8_t *advances;const struct ln_ui_glyph *glyphs;};
+extern const struct ln_ui_scene *ln_ui_scenes;
+extern const uint32_t ln_ui_scene_count,ln_ui_enabled_scenes;
+extern const struct ln_ui_asset ln_ui_assets[];
+extern const uint32_t ln_ui_asset_count;
+extern struct ln_ui_font ln_ui_font;
+struct ln_ui_state {
+    uint32_t scene,selected,buttons,animation;
+    uint32_t selections[LINNET_UI_MAX_SCENES];
+    uint32_t drawn_scene,drawn_selected,drawn_flags,dirty,action,transitions;
+    uint32_t paint_count,painted_pixels,visible_items,scene_epoch,drawn_theme,drawn_status;
+    bool hold,headphones,rendered;
+};
+typedef void (*ln_ui_damage_fn)(int32_t x,int32_t y,int32_t w,int32_t h);
+void ln_ui_init(struct ln_ui_state *state);
+/* Clock editor bridge: labels/input are memory-only; begin is explicit foreground input. */
+bool ln_ui_clock_begin(void);
+bool ln_ui_clock_input(struct ln_ui_state *,uint32_t kind,int32_t value);
+void ln_ui_clock_cancel(void);
+const char *ln_ui_clock_text(const struct ln_ui_node *,uint32_t item,const char *fallback);
+
+/* Providers must be bounded memory-only reads: no storage, allocation or I/O.
+ * item UINT32_MAX requests node text; other values request a list/grid row.
+ * Default weak implementations return fallback unchanged. */
+uint32_t ln_ui_dynamic_count(const struct ln_ui_node *node,uint32_t fallback);
+uint32_t ln_ui_dynamic_value(const struct ln_ui_node *node,uint32_t fallback);
+const struct ln_ui_asset *ln_ui_dynamic_asset(const struct ln_ui_node *node,const struct ln_ui_asset *fallback);
+const char *ln_ui_dynamic_text(const struct ln_ui_node *node,uint32_t item,const char *fallback);
+void ln_ui_refresh(struct ln_ui_state *state);
+bool ln_ui_status_refresh(struct ln_ui_state *state);
+uint32_t ln_ui_visible_capacity(const struct ln_ui_state *state);
+uint32_t ln_ui_focused_count(const struct ln_ui_state *state);
+/* Compare bounded visible list/text content with the last painted frame.
+ * Scene changes and unsupported layouts retain full refresh semantics. */
+void ln_ui_refresh_content(struct ln_ui_state *state);
+bool ln_ui_show(struct ln_ui_state *state,const char *scene_id);
+/* Input kinds match the native input ABI: wheel1,buttons2,hold3,headphones4. */
+bool ln_ui_input(struct ln_ui_state *state,uint32_t kind,int32_t value);
+void ln_ui_render(struct ln_ui_state *state,uint16_t *pixels,ln_ui_damage_fn damage);
+void ln_ui_animate(struct ln_ui_state *state,uint16_t *pixels,uint32_t frame,ln_ui_damage_fn damage);
+uint32_t ln_ui_take_action(struct ln_ui_state *state);
+#endif

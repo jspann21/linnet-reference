@@ -1,0 +1,6 @@
+[app]
+id = "linnet.system.videos"
+version = 1
+title = "Videos"
+entry = "screen.tsx"
+capabilities = ["ui"]

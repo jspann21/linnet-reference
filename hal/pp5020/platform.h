@@ -1,0 +1,28 @@
+#ifndef LINNET_PP5020_PLATFORM_H
+#define LINNET_PP5020_PLATFORM_H
+#include <stdbool.h>
+#include <stdint.h>
+#define LINNET_LCD_WIDTH 220u
+#define LINNET_LCD_HEIGHT 176u
+uint32_t ln_time_us(void);
+bool ln_lcd_fill(uint16_t color);
+/* Bounded, standalone field fault display, including release Boot. */
+bool ln_lcd_fault(uint32_t reason,const uint8_t build_id[32]);
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_lcd_diagnostics(uint32_t output[8]);
+#endif
+void ln_platform_quiesce(void);
+bool ln_platform_dma_idle(void);
+bool ln_platform_audio_idle(void);
+#if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_BOOT)
+/* Early Boot only, before transport owns ARC/IRAM. Nonzero leaves clock policy
+ * unchanged. Known native USB state may use canonical enable/reset pulses;
+ * never gates module clocks off or touches USB descriptors. */
+/* 0 ready; BTT4 skip reason 7..20 otherwise. */
+uint32_t ln_platform_boot_clock_ready(void);
+#endif
+void ln_watchdog_feed(void);
+bool ln_watchdog_expired(void);
+_Noreturn void ln_panic(uint32_t reason, uint32_t pc, uint32_t status);
+_Noreturn void ln_main(void);
+#endif

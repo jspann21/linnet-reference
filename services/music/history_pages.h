@@ -1,0 +1,18 @@
+#ifndef LINNET_MUSIC_HISTORY_PAGES_H
+#define LINNET_MUSIC_HISTORY_PAGES_H
+#include "journal_pages.h"
+void ln_paged_history_pin_current(bool present,uint64_t id);
+void ln_paged_history_step(bool may_read,bool may_write);
+bool ln_paged_history_ready(void);
+int ln_paged_history_error(void);
+bool ln_paged_history_busy(void);
+bool ln_paged_history_io_pending(void);
+uint32_t ln_paged_history_deadline(uint32_t now,bool may_read,bool may_write);
+bool ln_paged_history_dirty(void);
+uint32_t ln_paged_history_version(void);
+bool ln_paged_history_prefetch(uint64_t);
+bool ln_paged_history_record_ready(uint64_t);
+int ln_paged_history_record_error(uint64_t);
+const struct ln_music_journal_record *ln_paged_history_get(uint64_t);
+bool ln_paged_history_put(const struct ln_music_journal_record *);
+#endif

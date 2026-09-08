@@ -1,0 +1,34 @@
+#ifndef LINNET_VIDEO_H
+#define LINNET_VIDEO_H
+#include <stdbool.h>
+#include <stdint.h>
+#include "ui/runtime/ui.h"
+/* Caller must stop and drain music/photos before admission. Storage buffers and
+ * audio ownership remain held until active() and pending() are both false. */
+void ln_video_init(void);
+bool ln_video_open(const char *path);
+void ln_video_step(void);
+void ln_video_stop(void);
+bool ln_video_active(void);
+bool ln_video_pending(void);
+void ln_video_pause(bool paused);
+bool ln_video_paused(void);
+bool ln_video_seek(int32_t seconds);
+uint32_t ln_video_progress(void); /* 0..1000 */
+const char *ln_video_title(void);
+const char *ln_video_status(void);
+const struct ln_ui_asset *ln_video_asset(void);
+uint32_t ln_video_revision(void);
+/* Acknowledge only after ln_display_present accepted the offered snapshot. */
+void ln_video_presented(void);
+void ln_video_resume_get(uint32_t out[2]);
+void ln_video_resume_set(const uint32_t in[2]);
+uint32_t ln_video_deadline(uint32_t now);
+void ln_video_diagnostics(uint32_t out[32]);
+#if !defined(LINNET_PROFILE_RELEASE)
+/* Arm one next-open measurement while inactive/drained: 0 disarm, 1 normal
+ * display, 2 consume due frames without display snapshots. Starts at frame0,
+ * stops after8s playback (or8s preparation), preserves saved resume. */
+bool ln_video_measurement_arm(uint32_t mode);
+#endif
+#endif

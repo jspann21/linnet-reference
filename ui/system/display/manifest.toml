@@ -1,0 +1,6 @@
+[app]
+id = "linnet.system.display"
+version = 1
+title = "Display backlight"
+entry = "screen.tsx"
+capabilities = ["ui"]

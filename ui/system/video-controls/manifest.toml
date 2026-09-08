@@ -1,0 +1,6 @@
+[app]
+id = "linnet.system.video-controls"
+version = 1
+title = "Video"
+entry = "screen.tsx"
+capabilities = ["ui"]

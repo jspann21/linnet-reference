@@ -1,0 +1,6 @@
+[app]
+id = "linnet.system.music-options"
+version = 1
+title = "Playback options"
+entry = "screen.tsx"
+capabilities = ["ui"]

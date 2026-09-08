@@ -1,0 +1,6 @@
+[app]
+id = "linnet.system.clock"
+version = 1
+title = "Clock"
+entry = "screen.tsx"
+capabilities = ["ui"]

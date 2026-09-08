@@ -1,0 +1,21 @@
+[system]
+name = "Linnet"
+version = "0.1.0"
+target = "photo4g-p98"
+profile = "release"
+
+[abi]
+boot = 1
+kernel = 1
+app = 1
+theme = 1
+
+[features]
+photos = false
+video = false
+files = false
+demo = false
+
+[ui]
+theme = "local.example.midnight"
+apps = ["linnet.system.home", "linnet.system.music", "linnet.system.photos", "linnet.system.videos", "linnet.system.files", "linnet.system.now-playing", "linnet.system.settings", "linnet.system.about", "local.example.notes", "linnet.system.display", "linnet.system.battery", "linnet.system.update", "linnet.system.themes", "linnet.system.extras", "linnet.system.clock", "linnet.system.clock-edit"]

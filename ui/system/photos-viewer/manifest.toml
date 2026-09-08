@@ -1,0 +1,6 @@
+[app]
+id = "linnet.system.photos-viewer"
+version = 1
+title = "Photo viewer"
+entry = "screen.tsx"
+capabilities = ["ui"]

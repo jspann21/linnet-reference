@@ -1,0 +1,6 @@
+[app]
+id = "linnet.system.music-queue-actions"
+version = 1
+title = "Queue actions"
+entry = "screen.tsx"
+capabilities = ["ui"]

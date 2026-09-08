@@ -1,0 +1,6 @@
+[app]
+id = "linnet.system.music"
+version = 1
+title = "Music"
+entry = "screen.tsx"
+capabilities = ["ui"]

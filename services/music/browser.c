@@ -1,0 +1,246 @@
+#include "browser.h"
+#include "library.h"
+
+enum view { CATEGORIES, GROUPS, TRACKS };
+enum job { NONE, RANGE, GROUP, MEMBER, QUEUE_MEMBER };
+struct row { char label[256]; uint32_t index,count; bool mapped,valid; };
+static struct {
+    struct row rows[LN_MUSIC_BROWSER_ROWS];
+    enum view view;
+    enum job job;
+    uint32_t kind,first,count,group,lower,lo,hi,mid,range_phase;
+    uint32_t epoch,job_epoch,job_row,revision,selection,track,navigation;
+    bool selecting,track_ready,was_ready;
+    bool suspended,search_ready;
+    bool visible;
+    char title[256];
+    struct ln_music_browser_queue queue;
+    uint32_t queue_next;int queue_status;bool single;
+} browser;
+static const char *const categories[]={"All Tracks","Artists","Albums","Genres",
+    "Composers","Years","Folders","Playlists","Search"};
+static void copy(char *out,const char *in)
+{ uint32_t i=0;while(i<255u&&in[i]){out[i]=in[i];i++;}out[i]=0; }
+static void changed(void){browser.revision++;}
+static void invalidate(void)
+{
+    browser.epoch++;browser.selecting=false;browser.queue_status=LN_BROWSER_QUEUE_IDLE;browser.track_ready=false;browser.single=false;
+    for(uint32_t i=0;i<LN_MUSIC_BROWSER_ROWS;i++){
+        browser.rows[i].valid=false;browser.rows[i].mapped=false;
+    }
+    changed();
+}
+void ln_music_browser_suspend(bool suspend){browser.suspended=suspend;}
+void ln_music_browser_set_visible(bool visible){browser.visible=visible;}
+bool ln_music_browser_window_needed(void){
+    return !browser.suspended&&browser.view==TRACKS&&(browser.visible||browser.selecting);
+}
+bool ln_music_browser_query_idle(void){return browser.job==NONE;}
+bool ln_music_browser_take_search(void){bool result=browser.search_ready;browser.search_ready=false;return result;}
+void ln_music_browser_init(void)
+{
+    unsigned char *p=(unsigned char *)&browser;
+    for(uint32_t i=0;i<sizeof(browser);i++)p[i]=0;
+    copy(browser.title,"Music");browser.revision=1;browser.visible=true;
+}
+uint32_t ln_music_browser_count(void)
+{return browser.view==CATEGORIES?9u:browser.count;}
+const char *ln_music_browser_title(void){
+    if(browser.queue_status==LN_BROWSER_QUEUE_CAPACITY)return "Too many: Play for one";
+    if(browser.queue_status==LN_BROWSER_QUEUE_INVALID)return "Cannot build queue";
+    if(browser.queue_status==LN_BROWSER_QUEUE_LOADING)return "Preparing queue";
+    return browser.title;
+}
+bool ln_music_browser_busy(void){
+    if(!browser.was_ready||browser.view==CATEGORIES)return false;
+    if(browser.job!=NONE||browser.selecting||browser.queue_status==LN_BROWSER_QUEUE_LOADING)return true;
+    if(browser.suspended||!browser.visible)return false;
+    if(browser.range_phase)return true;
+    for(uint32_t i=0;i<LN_MUSIC_BROWSER_ROWS&&browser.first+i<browser.count;++i)
+        if(!browser.rows[i].valid)return true;
+    return false;
+}
+uint32_t ln_music_browser_revision(void){return browser.revision;}
+uint32_t ln_music_browser_navigation(void){return browser.navigation;}
+const char *ln_music_browser_label(uint32_t row)
+{
+    if(row>=ln_music_browser_count())return "";
+    if(browser.view==CATEGORIES)return categories[row];
+    if(row<browser.first||row-browser.first>=LN_MUSIC_BROWSER_ROWS)return "Loading...";
+    return browser.rows[row-browser.first].valid?browser.rows[row-browser.first].label:"Loading...";
+}
+void ln_music_browser_window(uint32_t first)
+{
+    if(browser.view==CATEGORIES||first==browser.first)return;
+    if(!browser.count)first=0;
+    else if(first>=browser.count)first=browser.count-1u;
+    browser.first=first;invalidate();
+}
+static void groups(void)
+{
+    browser.navigation++;
+    browser.view=GROUPS;browser.count=0;browser.first=0;
+    browser.lo=0;browser.hi=ln_music_library_group_count();
+    browser.range_phase=1;copy(browser.title,categories[browser.kind]);invalidate();
+}
+bool ln_music_browser_select(uint32_t row)
+{
+    if(row>=ln_music_browser_count())return false;
+    browser.track_ready=false;browser.queue_status=LN_BROWSER_QUEUE_IDLE;browser.single=false;++browser.epoch;
+    if(browser.view==CATEGORIES){
+        if(!browser.was_ready)return false;
+        if(row==8u){browser.search_ready=true;changed();return true;}
+        browser.kind=row;
+        if(row)groups();
+        else {browser.view=TRACKS;browser.count=ln_music_library_count();browser.first=0;
+            browser.navigation++;
+            copy(browser.title,categories[0]);invalidate();}
+        return true;
+    }
+    if(row<browser.first||row-browser.first>=LN_MUSIC_BROWSER_ROWS)
+        ln_music_browser_window(row);
+    browser.selection=row;browser.selecting=true;
+    return true;
+}
+bool ln_music_browser_take_track(uint32_t *track)
+{
+    if(!track||!browser.track_ready)return false;
+    *track=browser.track;browser.track_ready=false;browser.queue_status=LN_BROWSER_QUEUE_IDLE;return true;
+}
+bool ln_music_browser_select_single(uint32_t row)
+{if(browser.view!=TRACKS||!ln_music_browser_select(row))return false;browser.single=true;return true;}
+int ln_music_browser_queue_status(void){return browser.queue_status;}
+bool ln_music_browser_take_queue(struct ln_music_browser_queue *out)
+{if(!out||browser.queue_status!=LN_BROWSER_QUEUE_READY)return false;*out=browser.queue;
+ browser.queue_status=LN_BROWSER_QUEUE_IDLE;browser.track_ready=false;return true;}
+static void queue_publish(void)
+{browser.queue_status=LN_BROWSER_QUEUE_READY;if(!browser.queue.source)browser.track=browser.queue.tracks[browser.queue.cursor];browser.track_ready=true;changed();}
+static void queue_begin(uint32_t track)
+{
+    browser.queue=(struct ln_music_browser_queue){0};
+    browser.queue.count=browser.single?1u:browser.count;
+    browser.queue.cursor=browser.single?0u:browser.selection;
+
+    if(!browser.queue.count||browser.queue.cursor>=browser.queue.count||!ln_music_library_identity(browser.queue.library_hash)){
+        browser.queue_status=LN_BROWSER_QUEUE_INVALID;changed();return;}
+    if(browser.queue.count>LINNET_QUEUE_SOURCE_MAX){browser.queue_status=LN_BROWSER_QUEUE_INVALID;changed();return;}
+    if(!browser.single&&browser.queue.count>LINNET_QUEUE_CAPACITY){
+        browser.queue.source=browser.kind?LN_QUEUE_GROUP:LN_QUEUE_ALL;browser.queue.source_group=browser.kind?browser.group:0;
+        browser.track=track;queue_publish();return;
+    }
+    if(browser.single){browser.queue.tracks[0]=track;queue_publish();return;}
+    if(!browser.kind){for(uint32_t i=0;i<browser.queue.count;++i)browser.queue.tracks[i]=i;queue_publish();return;}
+    browser.queue_next=0;browser.queue_status=LN_BROWSER_QUEUE_LOADING;changed();
+}
+bool ln_music_browser_back(void)
+{
+    if(browser.view==CATEGORIES)return false;
+    if(browser.view==TRACKS&&browser.kind)groups();
+    else {browser.view=CATEGORIES;browser.first=0;browser.count=0;
+        browser.navigation++;
+        browser.range_phase=0;copy(browser.title,"Music");invalidate();}
+    browser.track_ready=false;return true;
+}
+static void accept_selection(void)
+{
+    if(!browser.selecting||browser.selection<browser.first||
+       browser.selection-browser.first>=LN_MUSIC_BROWSER_ROWS)return;
+    struct row *r=&browser.rows[browser.selection-browser.first];
+    if(!r->valid)return;
+    browser.selecting=false;
+    if(browser.view==GROUPS){
+        browser.group=r->index;browser.count=r->count;copy(browser.title,r->label);
+        browser.navigation++;
+        browser.view=TRACKS;browser.first=0;invalidate();
+    }else if(browser.view==TRACKS)queue_begin(r->index);
+}
+void ln_music_browser_step(void)
+{
+    bool ready=ln_music_library_status()==LN_LIBRARY_READY;
+    if(!ready){
+        if(browser.was_ready){
+            browser.navigation++;
+            browser.view=CATEGORIES;browser.first=0;browser.count=0;
+            browser.range_phase=0;browser.track_ready=false;copy(browser.title,"Music");invalidate();
+        }
+        /* Library invalidates external queries on reload/cancel/error. */
+        browser.job=NONE;browser.was_ready=false;return;
+    }
+    if(!browser.was_ready){browser.was_ready=true;changed();}
+    if(browser.job!=NONE){
+        struct ln_music_group g;char name[256];uint32_t track=UINT32_MAX;
+        bool done=(browser.job==MEMBER||browser.job==QUEUE_MEMBER)?ln_music_library_take_member(&track):
+            ln_music_library_take_group(&g,name);
+        if(!done)return;
+        enum job completed=browser.job;browser.job=NONE;
+        /* Navigation never reuses a pending query buffer or consumes its result
+         * as the newer request. Drain first, then admit the new generation. */
+        if(browser.job_epoch!=browser.epoch)return;
+        if(completed==QUEUE_MEMBER){
+            if(browser.queue_status!=LN_BROWSER_QUEUE_LOADING)return;
+            if(track>=ln_music_library_count()){browser.queue_status=LN_BROWSER_QUEUE_INVALID;changed();return;}
+            browser.queue.tracks[browser.queue_next++]=track;
+            if(browser.queue_next==browser.queue.count)queue_publish();
+        }else if(completed==RANGE){
+            uint32_t target=browser.kind+(browser.range_phase==2u?1u:0u);
+            if(g.kind<target)browser.lo=browser.mid+1u;else browser.hi=browser.mid;
+        }else if(browser.job_row>=browser.first&&
+                 browser.job_row-browser.first<LN_MUSIC_BROWSER_ROWS){
+            struct row *r=&browser.rows[browser.job_row-browser.first];
+            if(completed==GROUP){
+                r->index=browser.lower+browser.job_row;r->count=g.count;
+                copy(r->label,g.kind==browser.kind?name:"Invalid group");
+                if(g.kind!=browser.kind)r->count=0;
+                r->mapped=true;r->valid=true;changed();
+            }else if(track<ln_music_library_count()){r->index=track;r->mapped=true;}
+        }
+        return;
+    }
+    if(browser.suspended)return;
+    if(!browser.visible&&!browser.selecting&&browser.queue_status!=LN_BROWSER_QUEUE_LOADING)return;
+    if(browser.queue_status==LN_BROWSER_QUEUE_LOADING){
+        if(ln_music_library_group_member(browser.group,browser.queue_next)){
+            browser.job=QUEUE_MEMBER;browser.job_epoch=browser.epoch;}
+        return;
+    }
+    if(browser.view==CATEGORIES)return;
+    if(browser.view==GROUPS&&browser.range_phase){
+        if(browser.lo==browser.hi){
+            if(browser.range_phase==1u){browser.lower=browser.lo;browser.range_phase=2;
+                browser.hi=ln_music_library_group_count();}
+            else {browser.count=browser.lo-browser.lower;browser.range_phase=0;changed();}
+            return;
+        }
+        browser.mid=browser.lo+(browser.hi-browser.lo)/2u;
+        if(ln_music_library_group(browser.mid)){browser.job=RANGE;browser.job_epoch=browser.epoch;}
+        return;
+    }
+    accept_selection();
+    if(browser.queue_status==LN_BROWSER_QUEUE_LOADING||(!browser.visible&&!browser.selecting))return;
+    for(uint32_t n=0;n<LN_MUSIC_BROWSER_ROWS;n++){
+        /* Resolve a selected row first, then fill the visible cache in order. */
+        uint32_t slot=n;
+        if(browser.selecting){
+            uint32_t chosen=browser.selection-browser.first;
+            if(chosen<LN_MUSIC_BROWSER_ROWS){
+                if(!n)slot=chosen;else if(n<=chosen)slot=n-1u;
+            }
+        }
+        if(browser.first>=browser.count||slot>=browser.count-browser.first)continue;
+        struct row *r=&browser.rows[slot];if(r->valid)continue;
+        uint32_t ordinal=browser.first+slot;
+        if(browser.view==GROUPS){
+            if(ln_music_library_group(browser.lower+ordinal))browser.job=GROUP;
+        }else if(!r->mapped){
+            if(!browser.kind){r->index=ordinal;r->mapped=true;}
+            else if(ln_music_library_group_member(browser.group,ordinal))browser.job=MEMBER;
+        }
+        if(browser.job!=NONE){browser.job_epoch=browser.epoch;browser.job_row=ordinal;return;}
+        if(browser.view==TRACKS&&r->mapped){
+            const struct ln_music_library_row *source=ln_music_library_row(r->index);
+            if(source){copy(r->label,source->title);r->valid=true;changed();}
+            else ln_music_library_window(r->index);
+        }
+        return;
+    }
+}

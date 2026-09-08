@@ -1,0 +1,103 @@
+#include "services/audio/flac/flac.h"
+static uint32_t be(const uint8_t*p,uint32_t n){uint32_t v=0;while(n--)v=(v<<8)|*p++;return v;}
+static uint64_t be64(const uint8_t*p){return ((uint64_t)be(p,4)<<32)|be(p+4,4);}
+static int fail(struct ln_flac*s,int e){return s->error=e;}
+static int read_bytes(struct ln_flac*s,uint64_t offset,uint8_t*out,uint32_t n)
+{
+    if(offset>s->file_size||n>s->file_size-offset)return fail(s,LN_PCM_FORMAT);
+    int result=s->read(s->context,offset,out,n);s->pending=result==0;
+    return result<0?fail(s,LN_PCM_IO):result;
+}
+void ln_flac_init(struct ln_flac*s,ln_pcm_read_fn read,void*context,uint64_t bytes)
+{
+    if(!s)return;*s=(struct ln_flac){0};s->read=read;s->context=context;s->file_size=bytes;
+    s->decoder.decoded[0]=s->samples[0];s->decoder.decoded[1]=s->samples[1];
+}
+static int finish_metadata(struct ln_flac*s)
+{
+    if(s->last_metadata){if(!s->sample_rate)return fail(s,LN_PCM_FORMAT);s->audio_offset=s->cursor;s->phase=4;return LN_PCM_READY;}
+    s->phase=1;return LN_PCM_PENDING;
+}
+int ln_flac_open_step(struct ln_flac*s)
+{
+    if(!s||!s->read)return LN_PCM_ARGUMENT;if(s->error)return s->error;
+    if(s->phase==4)return LN_PCM_READY;int result;
+    if(s->phase==0){result=read_bytes(s,0,s->header,4);if(result!=1)return result;
+        if(be(s->header,4)!=0x664c6143u)return fail(s,LN_PCM_FORMAT);s->cursor=4;s->phase=1;return 0;}
+    if(s->phase==1){result=read_bytes(s,s->cursor,s->header,4);if(result!=1)return result;
+        s->last_metadata=(s->header[0]&128u)!=0;s->metadata_type=s->header[0]&127u;s->metadata_left=be(s->header+1,3);s->cursor+=4;
+        if(s->metadata_left>s->file_size-s->cursor)return fail(s,LN_PCM_FORMAT);
+        if(!s->sample_rate&&s->metadata_type!=0)return fail(s,LN_PCM_FORMAT);
+        if(s->metadata_type==0){if(s->sample_rate||s->metadata_left!=34)return fail(s,LN_PCM_FORMAT);s->phase=2;}
+        else if(s->metadata_type==3){if(s->metadata_left%18u)return fail(s,LN_PCM_FORMAT);s->phase=3;}
+        else{s->cursor+=s->metadata_left;return finish_metadata(s);}return 0;}
+    if(s->phase==2){result=read_bytes(s,s->cursor,s->header,34);if(result!=1)return result;const uint8_t*p=s->header;
+        s->decoder.min_blocksize=(int)be(p,2);s->decoder.max_blocksize=(int)be(p+2,2);
+        s->decoder.min_framesize=(int)be(p+4,3);s->decoder.max_framesize=(int)be(p+7,3);
+        s->sample_rate=be(p+10,3)>>4;s->channels=((p[12]>>1)&7u)+1u;s->bits=(((p[12]&1u)<<4)|(p[13]>>4))+1u;
+        s->total_frames=((uint64_t)(p[13]&15u)<<32)|be(p+14,4);
+        if(!s->sample_rate||s->channels>2||s->bits<8||s->bits>24||
+           s->decoder.min_blocksize<16||s->decoder.max_blocksize<s->decoder.min_blocksize||
+           s->decoder.max_blocksize>MAX_BLOCKSIZE||s->decoder.max_framesize>MAX_FRAMESIZE)return fail(s,LN_PCM_UNSUPPORTED);
+        s->decoder.samplerate=(int)s->sample_rate;s->decoder.channels=(int)s->channels;s->decoder.bps=(int)s->bits;
+        s->cursor+=34;return finish_metadata(s);}
+    if(s->phase==3){
+        if(!s->metadata_left||s->seek_count==LINNET_FLAC_SEEK_POINTS){s->cursor+=s->metadata_left;s->metadata_left=0;return finish_metadata(s);}
+        result=read_bytes(s,s->cursor,s->header,18);if(result!=1)return result;
+        uint64_t sample=be64(s->header),offset=be64(s->header+8);
+        if(sample!=UINT64_MAX){if((s->total_frames&&sample>=s->total_frames)||
+            (s->seek_count&&(sample<=s->seek[s->seek_count-1u].sample||offset<s->seek[s->seek_count-1u].offset)))return fail(s,LN_PCM_FORMAT);
+            s->seek[s->seek_count++]=(struct ln_flac_point){sample,offset};}
+        s->cursor+=18;s->metadata_left-=18;return 0;
+    }return fail(s,LN_PCM_FORMAT);
+}
+static void yield_decoder(void){}
+static uint16_t crc16(const uint8_t*p,uint32_t n)
+{
+    uint32_t value=0;for(uint32_t i=0;i<n;++i){value^=(uint32_t)p[i]<<8;
+        for(uint32_t j=0;j<8;++j)value=((value<<1)^((value&0x8000u)?0x8005u:0))&0xffffu;}return(uint16_t)value;
+}
+int ln_flac_decode(struct ln_flac*s,int16_t*out,uint32_t capacity,uint32_t*frames)
+{
+    if(!s||!out||!frames||!capacity)return LN_PCM_ARGUMENT;*frames=0;
+    if(s->error)return s->error;if(s->phase!=4)return LN_PCM_PENDING;
+    if(s->decoded_cursor<s->decoded_frames){
+        uint32_t n=s->decoded_frames-s->decoded_cursor;if(n>capacity)n=capacity;
+        for(uint32_t i=0;i<n;++i){uint32_t index=s->decoded_cursor+i;
+            for(uint32_t ch=0;ch<2;++ch){int32_t raw=s->samples[s->channels==1?0:ch][index];
+                int32_t sample=raw>=0?raw/8192:-(int32_t)(((uint32_t)(-(int64_t)raw)+8191u)/8192u);
+                if(sample>32767)sample=32767;if(sample<-32768)sample=-32768;out[2u*i+ch]=(int16_t)sample;}}
+        s->decoded_cursor+=n;s->frame+=n;*frames=n;return LN_PCM_READY;
+    }
+    if(s->total_frames&&s->frame>=s->total_frames)return LN_PCM_EOF;
+    if(!s->have&&s->cursor==s->file_size){
+        /* A valid final frame CRC does not prove a complete stream. Require
+         * the declared sample count and any admitted seek target at EOF. */
+        if(s->total_frames&&s->frame<s->total_frames)return fail(s,LN_PCM_FORMAT);
+        if(s->frame<s->discard_to)return fail(s,LN_PCM_ARGUMENT);
+        return LN_PCM_EOF;
+    }
+    uint32_t target=s->decoder.max_framesize?(uint32_t)s->decoder.max_framesize:MAX_FRAMESIZE;
+    uint64_t available=s->file_size-s->cursor;if(available<target)target=(uint32_t)available;
+    if(s->have<target){uint32_t n=target-s->have;if(n>4096)n=4096;
+        int result=read_bytes(s,s->cursor+s->have,s->buffer+s->have,n);if(result!=1)return result;s->have+=n;return 0;}
+    if(s->have<MIN_FRAME_SIZE)return fail(s,LN_PCM_FORMAT);
+    int result=flac_decode_frame(&s->decoder,s->buffer,(int)s->have,yield_decoder);
+    uint32_t used=(uint32_t)s->decoder.framesize;
+    if(result<0||s->decoder.gb.error||!used||used>s->have||crc16(s->buffer,used))return fail(s,LN_PCM_FORMAT);
+    if(s->decoder.blocksize<1||s->decoder.blocksize>MAX_BLOCKSIZE)return fail(s,LN_PCM_FORMAT);
+    s->decoded_frames=(uint32_t)s->decoder.blocksize;s->decoded_cursor=0;
+    if(s->total_frames&&s->decoded_frames>s->total_frames-s->frame)return fail(s,LN_PCM_FORMAT);
+    s->cursor+=used;s->have-=used;for(uint32_t i=0;i<s->have;++i)s->buffer[i]=s->buffer[i+used];
+    if(s->discard_to>s->frame){uint64_t discard=s->discard_to-s->frame;uint32_t n=discard<s->decoded_frames?(uint32_t)discard:s->decoded_frames;
+        s->decoded_cursor=n;s->frame+=n;}
+    return LN_PCM_PENDING;
+}
+bool ln_flac_seek(struct ln_flac*s,uint64_t frame)
+{
+    if(!s||s->phase!=4||s->pending||s->error||(s->total_frames&&frame>s->total_frames))return false;
+    uint64_t sample=0,offset=0;
+    for(uint32_t i=0;i<s->seek_count&&s->seek[i].sample<=frame;++i){sample=s->seek[i].sample;offset=s->seek[i].offset;}
+    if(offset>s->file_size-s->audio_offset)return false;
+    s->cursor=s->audio_offset+offset;s->frame=sample;s->discard_to=frame;s->have=0;s->decoded_frames=s->decoded_cursor=0;return true;
+}

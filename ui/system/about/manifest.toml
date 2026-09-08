@@ -1,0 +1,6 @@
+[app]
+id = "linnet.system.about"
+version = 1
+title = "About"
+entry = "screen.tsx"
+capabilities = ["ui"]

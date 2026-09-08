@@ -1,0 +1,9 @@
+[toolchain]
+compiler = "clang"
+version = "18.1.3"
+target = "arm-none-eabi"
+cpu = "arm7tdmi"
+linker = "ld.lld"
+objcopy = "llvm-objcopy"
+nm = "llvm-nm"
+windows_wsl_distribution = "Ubuntu-24.04"

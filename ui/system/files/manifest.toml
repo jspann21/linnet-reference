@@ -1,0 +1,6 @@
+[app]
+id = "linnet.system.files"
+version = 1
+title = "Files"
+entry = "screen.tsx"
+capabilities = ["ui"]
