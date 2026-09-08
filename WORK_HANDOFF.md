@@ -1,21 +1,21 @@
 # Linnet work handoff
 
-Updated September 8, 2026 after B09 persistent qualification. This section
-supersedes the historical B08-B running-state details below.
+Updated September 8, 2026 after B14 persistent qualification. This section supersedes historical device-state entries below.
 
 ## Current device and artifacts
 
-- Persistent development OS B09, confirmed slot A, generation1, health31:
-  `98a95bd0028ce2b18b417e50d6be030603fbdd73b47c40f56fe992b640cbe3b7`.
-- Image SHA256: `209369339cc23e2e91abc548ed991ca5c9b8a6576395c16f980191bc43b0f270`.
-- Artifact: `out/dev/photo4g-p98/os/linnet-os-0.1.0-photo4g-p98-dev-98a95bd0028c.los`.
-- Healthy B08-B remains in slot B. Candidate255, pending0, storage clean,
-  empty crash. Device left at Home with audio/video idle.
-- Receipts: `out/b09-persistent-preflight.json`, `out/b09-persistent-install.json`,
-  `out/b09-persistent-device.json`. No Boot or video-asset publication this batch.
-- Serial remains `000000F7A765`; refresh helper session
-  `8d2e95de8d0e4b558de094a7640c1253` was checked alive/unpoisoned with its
-  existing b07-sprint plan. No additional UAC was needed.
+- Persistent B14 development OS in slot A, generation1 health31: `85b084e7bac6a36db8b52d2af38bb61a8babbb4c0968e69a7479c48f54070efc`.
+- Image SHA256 `8faabd6b90c57df5cc5c06e2a8ba683f3cc34a75d490dc58a4b107bfde2a9e22`; artifact `out/dev/photo4g-p98/os/linnet-os-0.1.0-photo4g-p98-dev-85b084e7bac6.los`.
+- B12 remains in slot B as fallback; B09 was replaced by B14. Home, media idle, synthetic controls clear, storage prepared/error0/quarantine0/pending0, crash empty. Candidate255, attempt pending0. Serial000000F7A765, COM6.
+- B14 includes B12 fixes, B13 corrected short-title search cache/SCD1 diagnostics, and AUD-05 CPU idle during proven hardware waits. Runnable FAT, completions and expired/queued work retain the veto; ATA is timer-polled, no ATA IRQ wake assumed.
+- Verified sequential dev/release builds and identity: dev headroom4648, release276192. Frozen sources `out/b14-freeze/source-hashes.json`; subsequent docs intentionally differ. Development text+252/BSS0 versus B13. Release excludes SCD1 while retaining actual idle policy.
+- Paired8-second playback: both353280 frames, zero underruns/silence/faults. Runtime calls2343→1340; measured idle950821→1162099us. Single observation with different boot/cache histories; no power or battery-life claim.
+- Existing storage campaign passed1MiB SHA readback,256 random reads, WORK growth16384→24576, exact settings restoration, all5 injected fault/recovery checks. `out/runs/20260908T123920Z-photo4g-p98-85b084e7bac6-0001/receipt.json`.
+- Final receipts: `out/b14-integration-outcome.json`, `out/b14-persistent-install.json`, `out/b14-persistent-identity.json`. No Boot update performed.
+- Root independently verified Luna gapless player harness dev/release5cases; no source bug. Actual codecs/queue/controller/DMA/listening remain open. `out/luna-gapless/root-review.json`.
+- Completed temporary search/gapless/root playback harness sources/binaries removed after verification; hashes retained in `out/b14-completed-harness-cleanup.json`. Staged candidate sources and result receipts retained.
+- Startup CRC candidate remains staged under `out/luna-startup-final`. Root requested correcting claims about nonexistent B12 Boot/alternate Boot slot and wrong headroom reference. Ordinary OS slots are distinct from installed Boot/native-bootstrap workflow. Do not use the original unrepaired candidate.
+- Initial local commit `e1c458c` remains last commit; subsequent changes are uncommitted. No push requested. Video paused. New work uses Luna Max under root review; no further Sol assignments.
 
 ## B09 changes and evidence
 
@@ -182,3 +182,19 @@ Root integrated combined AUD-04 v2/AUD-08 and corrected AUD-09 v2 plus host ejec
 Device currently runs B11 in RAM, generation2 health31, after bounded MP3 playback with zero underruns/silence/faults. Final read-only storage is prepared/error0/quarantine0/pending0, crash empty. See out/b11-post-playback-drained.json. B09 remains persistent; no B11 persistent install. Next root gate: cancellation/mutation/device qualification, including allocation worker final-source evidence. All four Sol Medium tasks continue staged work: combined-source fault review, AUD-05 schedule diagnostics, B09 video per-record diagnostics/host decoder, startup initial-dev-chainload CRC reuse. No diagnostics or startup candidate included in B11. Do not repeat physical checks already passed.
 
 User authorized one initial local Git commit after Sol tasks complete. Relevant production/project files form the first main-branch baseline; generated out/ and unintegrated Sol/Luna candidates are excluded. Git text normalization means a future fresh checkout may have different byte-based build identities from the retained Windows source freeze; current B11 identities and receipts remain authoritative for the tested images. No push requested. Video work remains paused. New work uses Luna Max subagents under root review.
+
+## B12 latest state (supersedes B11 RAM state)
+
+User requested retrieving/integrating ongoing Luna results. Root integrated photos.c fast tile-descriptor verification, FAAD specrec.c discarded-synthesis work reduction, power.c/h phase-age-preserving cancellation, and controller.c failed-volume100ms retry backoff (including clearing resolved deadlines). Source freeze out/b12-freeze/source-hashes.json; dev1219d6c50a3e35f5e456028a4ea10600b1b01db790665c89c295a050161e7dab SHA3b2c4f6ec35d98ca34913d9f97106e0487bfae525aa8b48e7db0bd702917768d. Release0bba10ed7c9bd018e690d2543ea9bad0a1c7d054df69a3075959266ef7f45104. Both verified builds/reconciliation pass; headroom7384dev/277328release. Post-build docs intentionally differ from source freeze.
+
+Device currently B12 RAM generation3 health31, Home, media stopped, controls cleared, storage prepared/error0/quarantine0/pending0, crash empty (out/b12-photo-cancel-device.json). B09 remains persistent and B08-B fallback retained. B12 exact AAC seek paired gains9-13%; photos+MP3 passed with exact viewer screenshot and no audio faults. The cancellation probe did not observe pending I/O: exit/next-owner evidence only. Fault-path power tests are native actual-C with MMIO mock, not physical bus-failure qualification. Original controller harness expectations and mock-time regression were corrected before acceptance. out/b12-integration-outcome.json and out/b12-device-comparison.json summarize evidence.
+
+Luna tasks: power_revision packaging integrated power/controller validation; luna_b11_review completed independent AAC and repaired staged startup checks, now reviews SCD1 diagnostics. No new Sol work; video paused. Startup repaired package out/sol-startup-review remains unintegrated; never apply original startup candidate (dropped size/alignment admission checks). Initial local commit e1c458c remains last commit; B12 changes are local uncommitted work. No push requested.
+
+
+### B12 storage campaign (2026-09-08)
+
+- [x] Existing device storage campaign passed: 1 MiB full SHA readback, 256 seeded random reads, settings publication with exact restoration, WORK creation/growth to 16384 bytes preserving prior data and zero extension, and five injected fault/recovery modes. Final storage prepared, error0/quarantine0/pending0. Receipt: `out/runs/20260908T114616Z-photo4g-p98-1219d6c50a3e-0001/receipt.json`.
+- [ ] Reset at every metadata publication stage and persistent crash rollback remain unqualified by this campaign; automated_passed does not mean complete hardware qualification.
+
+Root returned from B12 RAM to exact persistent B09 generation1 health31, clean storage/crash/update state. B12 alternate-slot publication is in progress; inspect update state before any repeat if interrupted. Preflight receipts out/b12-promotion-preflight.json and out/b12-persistent-base-preflight.json.

@@ -624,7 +624,11 @@ References identify the audited source lines.
   slideshow enable on an already loaded image. Verify delayed uncached loads,
   JPEG fallback and cached transitions each receive the full dwell interval.
 
-- [ ] **AUD-04 / P2 - Stop canceled media work after draining owned I/O.**
+- [x] **AUD-04 / P2 - Stop canceled media work after draining owned I/O.**
+  Implemented in B11 and included in local commit e1c458c. Completed block
+  results are consumed before cancel; real errors retain quarantine. Focused
+  host checks and linked builds passed. Device cancellation qualification remains
+  in the B11/B12 qualification gate below. Original finding follows.
   `services/storage/storage.c:297` only sets a flag; `:271-290` continues the
   whole operation before returning stale. A first read can include full FAT
   chain verification (`services/storage/fat32.c:429`). Superseded media retains
@@ -637,7 +641,9 @@ References identify the audited source lines.
 
 ### Firmware CPU, I/O and responsiveness
 
-- [ ] **AUD-05 / P2 - Idle the CPU during storage hardware waits.**
+- [x] **AUD-05 / P2 - Idle the CPU during storage hardware waits.**
+  Sol delivered diagnostics only under `out/sol-storage-schedule-diagnostics`;
+  no scheduler-policy change is integrated. Review, build and measurement remain.
   `kernel/runtime.c:823-826` obtains a storage deadline but returns whenever
   storage is busy. `hal/pp5020/ata.c:355` already exposes hardware wait deadlines.
   Mount/reset/pending read waits can keep the cooperative loop running.
@@ -670,7 +676,11 @@ References identify the audited source lines.
   output across supported subsampling/orientations, then measure native decode
   time. This gives the existing photo-speed gate a concrete CPU optimization.
 
-- [ ] **AUD-08 / P2 - Scan free FAT entries in bounded sector batches.**
+- [x] **AUD-08 / P2 - Scan free FAT entries in bounded sector batches.**
+  Implemented in B11 and included in local commit e1c458c. Final-source host
+  checks confirm at most 128 entries per scan poll and mirror/error quarantine;
+  linked dev/release builds pass. Device mutation qualification remains open.
+  Original finding follows.
   `services/storage/fat32.c:575` restarts allocation at cluster 2; `:599-604`
   calls `edit_fat` per occupied entry. `:256-262` submits mirrored reads and
   compares the whole sector again, up to 128 times per occupied sector.
@@ -680,14 +690,14 @@ References identify the audited source lines.
   ordering. Compare request/poll counts for occupied prefixes and fragmented
   space, and run existing mutation fault checks.
 
-- [ ] **AUD-09 / P2 - Bound battery/RTC work per runtime tick.**
-  `kernel/runtime.c:562` samples power inline. Bus-idle checks can spin for
-  5 ms each (`hal/pp5020/power.c:14-22`); retries and RTC reads add synchronous
-  work (`:106-109,203-227`). Slow/faulting I2C can delay other cooperative services.
-  Measure worst sampling duration and split periodic sampling into bounded
-  stages, preserving battery freshness, coherent RTC reads and fault recovery.
-  Verify stalled-bus retries/timeouts and safety-sample freshness; compare worst
-  tick duration and audio service gaps before claiming an improvement.
+- [x] **AUD-09 / P2 - Bound battery/RTC work per runtime tick.**
+  B12 preserves ADC/RTC phase age across cancellation and spaces failed codec
+  volume retries by 100 ms. Root reran actual-C power (15 scenarios) and
+  controller deadline checks; sequential dev/release builds and normal device
+  playback passed. One transfer attempt per sampler poll retains a worst bound
+  of 10 ms plus fixed work. Physical bus-failure and direct current measurement
+  remain separate open qualification; invalid readings are explicit fault outcomes.
+  Receipts: `out/b12-integration-outcome.json`, `out/luna-power-revision/`.
 
 - [x] **AUD-10 / P2 - Separate queue label invalidation from settings revisions.**
   Implemented in queue_view `78330b5d`, preserving title mappings and pending
@@ -871,3 +881,57 @@ Luna Max subagents now own bounded staged work: native queue transition qualific
 - [ ] Luna queue worker next investigates exact AAC seek performance; photo and independent B11 reviews continue. All candidate edits remain staged until root verification.
 
 Sol assignments are finished/stopped with final reports. AUD-05 schedule diagnostics and startup CRC reuse are frozen under `out/sol-storage-schedule-diagnostics` and `out/sol-startup-crc`; both remain unintegrated pending root review/full builds/device gates. No further Sol assignments. Initial local commit captures current B11 production and project baseline; generated/staged output excluded.
+
+### B12 follow-through (non-video)
+
+- [x] Root retrieved Luna photo/AAC/B11 review results and integrated the bounded photo tile-descriptor validation fast path. Existing descriptor validator, metadata CRC, split-record fallback and I/O ownership preserved. Host processing improvement is not a device loading-speed claim. Receipt: `out/luna-photo/root-integration-review.json`.
+- [ ] Fix newly found B11 repeated foreground I2C cancellation starvation. Initial Luna patch needs stronger RTC restart review; `power_revision` owns actual-C adversarial validation and staged revision. Invalid/fault publication must not be described as a guarantee of valid low-battery readings when the bus is unavailable.
+- [ ] Independently verify AAC skip-synthesis optimization before integration; `luna_b11_review` now reviews AAC under `out/luna-aac-review`.
+- B11 device baseline exact AAC seeks 6/10/2/8s: 2.860/1.984/1.312/2.860s, all exact paused positions. Receipt: `out/b12-aac-baseline-device.json`.
+- B11 first photo metadata readiness during MP3: 4.484s, zero underruns/silence/faults. Initial viewer check was invalid (frame_complete alone); corrected separate warm viewer check passes with frame_valid and frame_complete and inspected screenshot. Receipts: `out/b12-photo-baseline-device.json`, `out/b12-photo-baseline-warm-device.json`.
+
+- B12 root integrated AAC intermediate synthesis-skip optimization after independent recurrence/PCM review and root full M4A rerun (552132 frames, exact SHA1c66fb2c...). Integrated power revision preserves ADC/RTC phase age across cancellation and restarts RTC without redoing ADC; failed volume application retries wait100ms, successful/direct volume remains immediate, resolved mismatch clears retry deadline. Root actual-C power harness passes15 scenarios; controller harness expectation corrections remain pending. Source frozen for sequential builds; no device qualification/promotion yet.
+
+### B12 verified result
+
+- [x] Integrate photo descriptor fast path, exact AAC seek optimization, phase-preserving sampler restart, and failed-volume retry backoff. Root reviewed source and reran actual-C power/controller and AAC fixtures. `out/b12-integration-outcome.json` records scope/limitations.
+- [x] Sequential dev/release builds passed with no source drift and release exclusion passed. Dev build1219d6c50a3e, headroom7384; release0bba10ed7c9b, headroom277328. Receipt: `out/b12-build-reconciliation.json`.
+- [x] B12 RAM health31/generation3. Four exact paused AAC seeks improved9.4-13.1% in one paired device run (2.500/1.797/1.140/2.516s at6/10/2/8s). Photo metadata readiness4.344s versus4.484s baseline during MP3, zero audio underruns/silence/faults; this single photo observation is not a statistically established speed gain. Viewer screenshot exact baseline match. `out/b12-device-comparison.json`.
+- [x] Photo exit and subsequent MP3 owner passed cleanly; active pending I/O was not observed, so canceled-read hardware qualification remains open. `out/b12-photo-cancel-device.json`.
+- [ ] B12 persistent promotion and broader mutation/cancellation/fault qualification remain open. B09 remains persistent. No new physical interaction requested.
+- Startup CRC candidate: root found dropped short-payload/alignment checks and proof-consumption discrepancy; Luna delivered repaired staged package `out/sol-startup-review`. It remains excluded from B12 pending ARM/full builds/device proof. SCD1 diagnostics independent review continues; video remains paused.
+
+
+### B12 storage campaign (2026-09-08)
+
+- [x] Existing device storage campaign passed: 1 MiB full SHA readback, 256 seeded random reads, settings publication with exact restoration, WORK creation/growth to 16384 bytes preserving prior data and zero extension, and five injected fault/recovery modes. Final storage prepared, error0/quarantine0/pending0. Receipt: `out/runs/20260908T114616Z-photo4g-p98-1219d6c50a3e-0001/receipt.json`.
+- [ ] Reset at every metadata publication stage and persistent crash rollback remain unqualified by this campaign; automated_passed does not mean complete hardware qualification.
+
+- [x] B12 persistent installation and healthy boot passed in slot B; B09 retained in slot A. Post-install MP3 consumed353280 frames with zero underruns/silence/faults; storage clean and crash empty. `out/b12-persistent-identity.json`, `out/b12-persistent-playback.json`.
+- [ ] Next non-video batch: current-source SCD1 diagnostic validation and measured 100000-track search optimization; repaired startup CRC candidate remains staged. Root integrates after review and checks linked development headroom (B12 has7384 bytes).
+
+
+### B13 preparation (non-video)
+
+- [ ] Root review found that the first search key-cache candidate incorrectly assumed a32-byte database prefix limit; the public API accepts255 bytes. Luna is repairing long-prefix fallback and checking repeated queries after intervening reads. Do not integrate the original candidate.
+- [ ] SCD1 diagnostics need the saturation decoder correction and current FAT-source revalidation; scheduler policy remains unchanged until measurements support it.
+- [ ] Final independent startup CRC proof review is assigned to Luna Max, including current-source ARM checks and warm-reboot CRC preservation. Repaired candidate remains staged.
+- B12 idle/startup baseline captured in `out/b13-idle-baseline.json`; current persistent candidate CRC scan took1051905us for713468 payload bytes. This is a measured baseline, not an achieved startup saving.
+
+- [x] B13 root integrated corrected SCD1 diagnostics after source/decoder review and current-source ARM checks. Scheduler behavior unchanged; linked build/device gates pending. Receipt: `out/b13-integration/scd1-root-review.json`.
+
+- [x] B13 search cache integrated after root review/repair and independently rebuilt native harness:101016 checks plus matching/mismatching33/255-byte prefixes and long-title-to-short-title reuse pass. Direct repeated lookup saves2 reads; cold proof unchanged. Device75ms UI gate remains open. `out/b13-integration/search-root-review.json`.
+- [ ] B13 source freeze contains SCD1 diagnostics and bounded search cache only; startup CRC remains staged. Sequential dev/release builds and RAM device qualification follow.
+
+- [x] B13 verified dev/release builds and reconciliation pass; development headroom4872 bytes, release277056. RAM generation2 health31, MP3 zero underruns/silence/faults, SCD1 valid counters and250us completed cancellation span. Early post-stop check sampled preparation phase7; separate read-only followup confirmed phase6/prepared1, no crash. `out/b13-integration-outcome.json`.
+- [x] B13 normal-library search UI: query five returned Five O'Clock500; repeated result screenshot byte-identical; selecting played correct title, screenshot inspected. Returned Home with clean storage. 100000-track75ms device display target remains open.
+- [ ] B13 persistent promotion remains separate; B12 persistent retained. Next bounded Luna tasks: storage-idle policy safety, mixed-codec gapless transitions, final startup CRC proof review. Root verification required before integration.
+
+- [x] Root independently rebuilt actual-player gapless harness for dev/release: same-rate PCM order/retirement, rate-change drain/reinit, pending next stop/retarget and terminal config mismatch pass. No source bug reproduced. Actual codec, queue/controller integration and hardware/listening remain open. `out/luna-gapless/root-review.json`.
+- [ ] AUD-05 release-available storage-wait idle policy candidate received under `out/luna-storage-idle`; root source review begun, not integrated. Full builds and device before/after evidence required.
+
+- [x] B14 root integrated AUD-05 after independent source/timer review and rebuilt actual-C block/runtime harnesses. Busy storage sleep restricted to pending hardware waits; runnable work veto preserved. Corrected timer/endpoint evidence. Full build/device gates pending. `out/luna-storage-idle/root-review.json`.
+
+- [x] B14 AUD-05 linked dev/release builds and source reconciliation pass (headroom4648dev/276192release). RAM playback and all five storage fault/recovery modes pass; settings restored, storage clean. Persistently installed in slotA, exact identity/health31 verified; B12 fallback slotB retained. `out/b14-integration-outcome.json`.
+- Paired playback measured runtime calls2343→1340 and idle950821→1162099us for353280 frames each. Single observation, no measured power/battery-life conclusion. Direct current measurement and broader acceptance remain open.
+- Startup CRC reuse remains staged; root review requires accurate Boot deployment/fallback/map assumptions before any Boot write. Video remains paused.
