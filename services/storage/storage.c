@@ -57,6 +57,17 @@ static uint32_t publication_fault;
 /* SPT1: completed, inclusive spans. Nested means same-function reentry. */
 static struct {uint32_t epoch,flags,value[12],depth[2];} poll_timing;
 _Static_assert(sizeof(poll_timing)<=64u,"storage timing RAM budget");
+static struct schedule_diagnostics {
+    uint32_t epoch,flags,samples,state[5],wait_us,wait_max,overdue_us,overdue_max;
+    uint32_t gap_max,last_at,last_state,cancel_requests,cancel_terminals,cancel_polls;
+    uint32_t cancel_us,cancel_max,cancel_started,cancel_generation;
+    bool cancel_active;
+} schedule_timing;
+_Static_assert(sizeof(schedule_timing)<=96u,"schedule timing RAM budget");
+static void schedule_add(uint32_t *value,uint32_t amount){
+    if(amount>UINT32_MAX-*value){*value=UINT32_MAX;schedule_timing.flags|=0x80000000u;}
+    else *value+=amount;
+}
 static void timing_add(uint32_t index,uint32_t value){
     if(value>UINT32_MAX-poll_timing.value[index]){
         poll_timing.value[index]=UINT32_MAX;poll_timing.flags|=1u<<index;
@@ -85,6 +96,53 @@ void ln_storage_media_performance(uint32_t words[16]){
     words[0]=0x31545053u;words[1]=1u;words[2]=poll_timing.epoch;
     words[3]=poll_timing.flags|((poll_timing.depth[0]||poll_timing.depth[1])?1u<<28:0u);
     for(uint32_t i=0;i<12u;++i)words[i+4u]=poll_timing.value[i];
+}
+enum ln_storage_schedule ln_storage_schedule_state(uint32_t now,uint32_t *deadline){
+    uint32_t due;enum ln_block_schedule block=ln_block_schedule_state(now,&due);
+    if(deadline)*deadline=due;
+    if(!ln_storage_busy())return LN_STORAGE_SCHEDULE_IDLE;
+    if(pending||phase==1){
+        if(block==LN_BLOCK_SCHEDULE_COMPLETION)return LN_STORAGE_SCHEDULE_COMPLETION_RUNNABLE;
+        if(block==LN_BLOCK_SCHEDULE_RUNNABLE)return LN_STORAGE_SCHEDULE_BLOCK_RUNNABLE;
+        if(block==LN_BLOCK_SCHEDULE_WAITING)return LN_STORAGE_SCHEDULE_BLOCK_WAIT;
+    }
+    return LN_STORAGE_SCHEDULE_FAT_RUNNABLE;
+}
+void ln_storage_schedule_observe(uint32_t now){
+    uint32_t due;enum ln_storage_schedule state=ln_storage_schedule_state(now,&due);
+    schedule_add(&schedule_timing.samples,1u);schedule_add(&schedule_timing.state[state],1u);
+    if(schedule_timing.last_at){
+        uint32_t gap=now-schedule_timing.last_at;if(gap>schedule_timing.gap_max)schedule_timing.gap_max=gap;
+    }
+    schedule_timing.last_at=now;schedule_timing.last_state=(uint32_t)state;
+    if(state==LN_STORAGE_SCHEDULE_BLOCK_WAIT){
+        uint32_t offered=due-now;
+        if(offered>=0x80000000u)schedule_timing.flags|=2u;
+        else {schedule_add(&schedule_timing.wait_us,offered);if(offered>schedule_timing.wait_max)schedule_timing.wait_max=offered;}
+    }else if(state==LN_STORAGE_SCHEDULE_BLOCK_RUNNABLE&&(int32_t)(now-due)>0){
+        uint32_t overdue=now-due;schedule_add(&schedule_timing.overdue_us,overdue);
+        if(overdue>schedule_timing.overdue_max)schedule_timing.overdue_max=overdue;
+    }
+}
+void ln_storage_schedule_performance(uint32_t words[24]){
+    uint32_t block[4];ln_block_schedule_metrics(block);
+    words[0]=0x31444353u;words[1]=1u;words[2]=schedule_timing.epoch;
+    words[3]=schedule_timing.flags|block[3];words[4]=schedule_timing.samples;
+    for(uint32_t i=0;i<5u;++i)words[5u+i]=schedule_timing.state[i];
+    words[10]=schedule_timing.wait_us;words[11]=schedule_timing.wait_max;
+    words[12]=schedule_timing.overdue_us;words[13]=schedule_timing.overdue_max;
+    words[14]=schedule_timing.gap_max;words[15]=schedule_timing.last_state;
+    words[16]=block[0];words[17]=block[1];words[18]=block[2];
+    words[19]=schedule_timing.cancel_requests;words[20]=schedule_timing.cancel_terminals;
+    words[21]=schedule_timing.cancel_polls;words[22]=schedule_timing.cancel_us;
+    words[23]=schedule_timing.cancel_max;
+}
+static void schedule_cancel_complete(uint32_t generation){
+    if(!schedule_timing.cancel_active||schedule_timing.cancel_generation!=generation)return;
+    uint32_t elapsed=ln_time_us()-schedule_timing.cancel_started;
+    schedule_add(&schedule_timing.cancel_terminals,1u);schedule_add(&schedule_timing.cancel_us,elapsed);
+    if(elapsed>schedule_timing.cancel_max)schedule_timing.cancel_max=elapsed;
+    schedule_timing.cancel_active=false;
 }
 static int storage_fat_poll(void){
     uint32_t start=ln_time_us();int result=ln_fat32_poll(&volume);
@@ -170,6 +228,11 @@ void ln_storage_init(void){phase=1;error=found=opening=0;pending=locked=false;me
     poll_timing.flags=timing_flags;
     for(uint32_t i=0;i<12u;++i)poll_timing.value[i]=0;
     poll_timing.depth[0]=poll_timing.depth[1]=0;
+    uint32_t schedule_flags=schedule_timing.cancel_active?1u:0u;
+    uint32_t schedule_epoch=schedule_timing.epoch;
+    if(schedule_epoch==UINT32_MAX)schedule_flags|=0x80000000u;else ++schedule_epoch;
+    schedule_timing=(struct schedule_diagnostics){0};
+    schedule_timing.flags=schedule_flags;schedule_timing.epoch=schedule_epoch;
 #endif
     LN_STORAGE_STAMP(STORAGE);
 #if defined(LINNET_IMAGE_BOOT)
@@ -243,6 +306,12 @@ int ln_storage_prepare_writes(void){
     phase=7;return 0;
 }
 uint32_t ln_storage_next_deadline(uint32_t now){return ln_block_next_deadline(now);}
+bool ln_storage_idle_wait(uint32_t now,uint32_t *deadline){
+    /* FAT can have runnable CPU work between sector requests. Only a pending
+     * sector or phase-1 device initialization may delegate to block wait. */
+    if(!ln_storage_busy()||(!pending&&phase!=1u))return false;
+    return ln_block_idle_wait(now,deadline);
+}
 static int finish(void){
     uint32_t start=ln_time_us();int result;
     do{ln_storage_progress(0);result=storage_fat_poll();
@@ -308,6 +377,9 @@ static int media_poll(uint32_t generation,struct ln_fat32_file *file,uint32_t *t
     media_owner=0;locked=false;media_canceled=false;media_read_ahead=8u;
     goto complete;
 cancel:
+#if !defined(LINNET_PROFILE_RELEASE)
+    schedule_add(&schedule_timing.cancel_polls,1u);
+#endif
     /* A canceled read must not reenter FAT: consuming a canceled completion as
      * ordinary I/O would quarantine the mount, while another poll could submit
      * more sectors. Drain the exact block request here, then retire FAT state. */
@@ -329,6 +401,7 @@ cancel:
     media_owner=0;locked=false;media_canceled=false;media_read_ahead=8u;
 complete:
 #if !defined(LINNET_PROFILE_RELEASE)
+    schedule_cancel_complete(generation);
     timing_leave(0u,timing_depth,timing_start);
 #endif
     if(video_service)--video_media_poll_depth;
@@ -341,7 +414,14 @@ int ln_storage_media_poll_video(uint32_t generation,struct ln_fat32_file *file,
                                 uint32_t *transferred){
     return media_poll(generation,file,transferred,true);
 }
-void ln_storage_media_cancel(uint32_t generation){if(media_owner==generation)media_canceled=true;}
+void ln_storage_media_cancel(uint32_t generation){if(media_owner==generation){
+#if !defined(LINNET_PROFILE_RELEASE)
+    if(!media_canceled){schedule_add(&schedule_timing.cancel_requests,1u);
+        schedule_timing.cancel_started=ln_time_us();schedule_timing.cancel_generation=generation;
+        schedule_timing.cancel_active=true;}
+#endif
+    media_canceled=true;
+}}
 int ln_storage_read(uint32_t file,uint32_t offset,void *buffer,uint32_t length){
     if(!ln_storage_mounted()||locked||file>=STORAGE_FILE_COUNT||!(found&(1u<<file)))return 0;
     locked=true;if(!ln_fat32_read(&volume,&files[file],offset,buffer,length,next_generation())){locked=false;return 0;}return finish();

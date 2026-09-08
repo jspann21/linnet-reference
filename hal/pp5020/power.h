@@ -32,8 +32,9 @@ enum ln_calendar_result ln_power_calendar_set(const struct ln_calendar *requeste
 bool ln_power_init(void);
 /* Advances at most one periodic I2C transfer attempt. During a multi-step
  * sample, next_deadline requests prompt continuation. ADC work expires after
- * 100ms and RTC work after 60ms; samples/sampled_us change only when a complete
- * ADC result (success or terminal invalid/fault outcome) is published. */
+ * 100ms and RTC work after 60ms; cancellation retains the logical phase and
+ * age, restarting RTC at its pointer. samples/sampled_us change only when a
+ * complete ADC result (success or terminal invalid/fault outcome) is published. */
 bool ln_power_poll(uint32_t now, struct ln_power_state *out);
 void ln_power_snapshot(struct ln_power_state *out);
 uint32_t ln_power_next_deadline(void);

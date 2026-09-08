@@ -93,6 +93,18 @@ static int string_read(uint32_t at,uint32_t bytes,bool path){
 }
 static bool verify_bytes(uint32_t at,const uint8_t*b,uint32_t n){
     const struct ln_pimg_header*h=&p.header;
+    /* Tile descriptors carry no per-record CRC; once a read contains only
+     * aligned complete descriptors, validate them in place. The caller still
+     * performs the same metadata CRC over every byte, while split/partial
+     * records retain the existing scratch-buffer path. */
+    if(at>=h->tile_at&&at<=h->string_at&&n<=h->string_at-at&&
+       (at-h->tile_at)%8u==0&&n%8u==0){
+        uint32_t index=(at-h->tile_at)/8u;
+        for(uint32_t i=0;i<n;i+=8u){uint32_t offset,crc;
+            if(!ln_pimg_tile(h,b+i,index++,&offset,&crc))return false;
+        }
+        return true;
+    }
     for(uint32_t i=0;i<n;i++,at++){
         if(at<h->string_at){uint32_t base,width;
             if(at<h->photo_at){base=h->album_at;width=32;}else if(at<h->level_at){base=h->photo_at;width=64;}else if(at<h->tile_at){base=h->level_at;width=24;}else{base=h->tile_at;width=8;}

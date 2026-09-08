@@ -133,6 +133,7 @@ bool ln_music_db_search_at(struct ln_music_db *d,const char *prefix,uint32_t ord
 {
     if(!d||!prefix||!d->verified||d->busy||d->error)return false;
     uint32_t n=0;while(n<256&&prefix[n])n++;if(n==256||!utf8((const uint8_t *)prefix,n))return false;
+    d->search_prefix_length=n;
     bool cached=d->search_lower_valid,extension=d->search_lower_valid;
     /* An extended prefix cannot sort before its completed shorter prefix.
      * Compare before replacing the stored query; deletion/replacement resets. */
@@ -153,6 +154,7 @@ bool ln_music_db_search_at(struct ln_music_db *d,const char *prefix,uint32_t ord
 }
 static int search_step(struct ln_music_db *d)
 {
+    bool cached_title=false;
     if(d->query_phase==0){
         if(d->low==d->high){
             if(d->low==d->searches||d->search_ordinal>=d->searches-d->low){
@@ -161,13 +163,28 @@ static int search_step(struct ln_music_db *d)
             d->middle=d->low+d->search_ordinal;d->query_phase=3;}
         else{d->middle=d->low+((d->high-d->low)>>1);d->query_phase=1;}
     }
-    if(d->query_phase==1||d->query_phase==3){
+    if(d->query_phase==3&&d->search_cache_valid&&
+       d->search_prefix_length<=(uint32_t)sizeof(d->search_cache_key)-1u&&
+       d->search_cache_key[sizeof(d->search_cache_key)-1u]==0&&
+       d->search_cache_middle==d->middle){
+        d->member=d->search_cache_member;copy(d->text,d->search_cache_key,sizeof(d->search_cache_key));
+        d->query_phase=4;cached_title=true;
+    }else if(d->query_phase==1||d->query_phase==3){
         int r=read_bytes(d,d->search_offset+d->middle*8u,8);if(r!=1)return r;
         d->member=r32(d->buffer);
         if(d->member>=d->tracks||!string_start(d,r32(d->buffer+4)))return bad(d,LN_DB_FORMAT);
         d->query_phase++;return 0;
     }
-    int r=string_step(d);if(r!=1)return r;
+    int r=cached_title?1:string_step(d);if(r!=1)return r;
+    if(!cached_title){
+        uint32_t i=0;
+        for(;i<sizeof(d->search_cache_key);++i){
+            d->search_cache_key[i]=d->text[i];
+            if(!d->text[i]){++i;break;}
+        }
+        for(;i<sizeof(d->search_cache_key);++i)d->search_cache_key[i]=0;
+        d->search_cache_middle=d->middle;d->search_cache_member=d->member;d->search_cache_valid=true;
+    }
     int compare=prefix_compare(d->text,d->prefix);
     if(d->query_phase==4){
         if(!compare){d->search_index=d->middle;d->search_track=d->member;}

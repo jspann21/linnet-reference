@@ -35,6 +35,9 @@ bool ln_storage_prepared(void);
  * Starts bounded asynchronous proof work only with no active storage owner. */
 int ln_storage_prepare_writes(void);
 uint32_t ln_storage_next_deadline(uint32_t now);
+/* True only for a busy storage owner whose pending sector or initialization
+ * is waiting on a future block/ATA transition; output is that transition's deadline. */
+bool ln_storage_idle_wait(uint32_t now,uint32_t *deadline);
 void ln_storage_state(uint32_t words[24]);
 /* Fixed file IDs, never arbitrary raw disk addresses. One owner at a time. */
 int ln_storage_read(uint32_t file,uint32_t offset,void *buffer,uint32_t length);
@@ -57,6 +60,16 @@ int ln_storage_recover(void);
 int ln_storage_disk_mode(void);
 int ln_storage_restart(void);
 #if !defined(LINNET_PROFILE_RELEASE)
+enum ln_storage_schedule {LN_STORAGE_SCHEDULE_IDLE=0,LN_STORAGE_SCHEDULE_FAT_RUNNABLE=1,
+    LN_STORAGE_SCHEDULE_COMPLETION_RUNNABLE=2,LN_STORAGE_SCHEDULE_BLOCK_RUNNABLE=3,
+    LN_STORAGE_SCHEDULE_BLOCK_WAIT=4};
+/* Development-only read-only classification. BLOCK_WAIT is the only class
+ * governed solely by the returned future block/ATA deadline. */
+enum ln_storage_schedule ln_storage_schedule_state(uint32_t now,uint32_t *deadline);
+/* Records one existing runtime-idle decision without changing that decision. */
+void ln_storage_schedule_observe(uint32_t now);
+/* SCD1 v1: 24 words; sampled opportunity and latency diagnostics. */
+void ln_storage_schedule_performance(uint32_t words[24]);
 /* SPT1 v1: magic/version/init epoch/flags, then completed inclusive counters:
  * media poll calls/us/nested calls/us, progress calls/us/nested calls/us,
  * all storage-service FAT poll calls/us, progress runtime callback calls/us.

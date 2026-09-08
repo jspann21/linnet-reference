@@ -46,6 +46,7 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r){
 #if defined(LINNET_IMAGE_OS)
         else if(q->length==4u&&get32(q->payload)==4u){ln_runtime_render_timing(words);count=16u;}
 #endif
+        else if(q->length==4u&&get32(q->payload)==5u){ln_storage_schedule_performance(words);count=24u;}
 #endif
         else return 1;
         for(uint32_t i=0;i<count;++i)put32(ln_storage_reply+i*4,words[i]);r->length=(uint16_t)(count*4u);break;}

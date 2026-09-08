@@ -44,7 +44,20 @@ bool ln_block_recover(uint32_t now);
  * partition. Requires an empty queue; init defaults to the full physical disk
  * so the owner can discover MBR/GPT. No implicit partition selection. */
 bool ln_block_set_window(uint64_t first,uint64_t sectors);
+/* True only when block/ATA work exists but its next transition is governed by
+ * a future deadline. The output deadline is from the same classification.
+ * This policy seam is available in release; diagnostics remain development-only. */
+bool ln_block_idle_wait(uint32_t now,uint32_t *deadline);
 #if !defined(LINNET_PROFILE_RELEASE)
+enum ln_block_schedule {LN_BLOCK_SCHEDULE_IDLE=0,LN_BLOCK_SCHEDULE_RUNNABLE=1,
+    LN_BLOCK_SCHEDULE_WAITING=2,LN_BLOCK_SCHEDULE_COMPLETION=3};
+/* Read-only scheduler classification. RUNNABLE means another block step can
+ * change state now; WAITING is governed by the returned ATA/block deadline;
+ * COMPLETION means an untaken terminal slot exists. */
+enum ln_block_schedule ln_block_schedule_state(uint32_t now,uint32_t *deadline);
+/* count/total ready age/max ready age/flags for DONE-to-take wall time.
+ * This latency can overlap caller CPU work and is not device service time. */
+void ln_block_schedule_metrics(uint32_t out[4]);
 /* One-shot software fault at the next issued operation:1timeout beforeissue,
  * 2short result aftertransfer (read data withheld),3reset beforeissue,
  * 4stale completion rejection (callerdata withheld),5flush error.

@@ -369,6 +369,38 @@ class Session:
         result['counters_usable'] = words[3] == 0
         return result
 
+    def storage_schedule_diagnostics(self) -> dict:
+        """Read dev SCD1 scheduler opportunity/latency samples.
+
+        State counts are samples at the existing runtime-idle decision. Offered
+        wait windows can overlap decoder/render CPU and must not be summed as
+        elapsed or predicted idle time. Completion age is DONE-to-take wall time.
+        Compare only identical build/epoch endpoints with flags=0.
+        """
+        raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 5))
+        if len(raw) != 96:
+            raise ProtocolError('invalid storage schedule diagnostics length')
+        words = struct.unpack('<24I', raw)
+        if (words[0] != int.from_bytes(b'SCD1', 'little') or words[1] != 1 or
+                not words[2] or words[3] & ~0x80000003 or words[15] > 4 or
+                (not (words[3] & 0x80000000) and sum(words[5:10]) != words[4]) or
+                words[11] > words[10] or
+                words[13] > words[12] or words[18] > words[17] or
+                words[20] > words[19] or words[20] > words[21] or
+                words[23] > words[22]):
+            raise ProtocolError('invalid storage schedule diagnostics header')
+        names = ('magic', 'version', 'epoch', 'flags', 'samples', 'idle_samples',
+                 'fat_runnable_samples', 'completion_runnable_samples',
+                 'block_runnable_samples', 'block_wait_samples', 'offered_wait_us',
+                 'offered_wait_max_us', 'overdue_us', 'overdue_max_us',
+                 'observation_gap_max_us', 'last_state', 'completion_taken',
+                 'completion_ready_us', 'completion_ready_max_us', 'cancel_requests',
+                 'cancel_terminals', 'cancel_polls', 'cancel_us', 'cancel_max_us')
+        result = dict(zip(names, words))
+        result['saturated'] = bool(words[3] & 0x80000000)
+        result['counters_usable'] = words[3] == 0
+        return result
+
     def runtime_render_timing(self) -> dict:
         """Read RND1 dirty-render/publish inclusive wall time, not all runtime.
 

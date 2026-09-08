@@ -662,6 +662,8 @@ static uint8_t quant_to_spec_bands(NeAACDecHandle hDecoder,
     uint16_t width, bin, k, gindex, wa, wb;
     uint8_t error = 0; /* Init error flag */
     real_t scf;
+    struct ln_faad_workspace *workspace = ln_faad_current();
+    bool skip_synthesis = workspace && workspace->skip_synthesis;
 
     /* Only parser-bounded, pulse-free channels have provably zero bands.
      * Unusual section coverage retains the original arithmetic for all groups. */
@@ -708,8 +710,15 @@ static uint8_t quant_to_spec_bands(NeAACDecHandle hDecoder,
                 wa = gindex + j;
                 for (win = 0; win < ics->window_group_length[g]; win++)
                 {
-                    for (bin = 0; bin < width; bin++)
-                        spec_data[wa + bin] = 0;
+                    /* Intermediate seek AUs never enter the synthesis bank.
+                     * Their zero-band coefficients cannot affect persistent
+                     * decoder state, so avoid stores while retaining the
+                     * reference path for materialized and repaired AUs. */
+                    if (!skip_synthesis)
+                    {
+                        for (bin = 0; bin < width; bin++)
+                            spec_data[wa + bin] = 0;
+                    }
                     wa += win_inc;
                     k += width;
                     gincrease += width;
@@ -814,6 +823,12 @@ static uint8_t quant_to_spec(NeAACDecHandle hDecoder, ic_stream *ics,
     return quant_to_spec_dense(hDecoder,ics,quant_data,spec_data,frame_len);
 }
 
+static bool skip_synthesis_requested(void)
+{
+    struct ln_faad_workspace *workspace = ln_faad_current();
+    return workspace && workspace->skip_synthesis;
+}
+
 static uint8_t allocate_single_channel(NeAACDecHandle hDecoder, uint8_t channel,
                                        uint8_t output_channels)
 {
@@ -836,6 +851,7 @@ uint8_t reconstruct_single_channel(NeAACDecHandle hDecoder, ic_stream *ics,
                                    element *sce, int16_t *spec_data)
 {
     uint8_t retval, output_channels;
+    bool skip_synthesis = skip_synthesis_requested();
 
 #ifdef PROFILE
     int64_t count = faad_get_ts();
@@ -921,8 +937,9 @@ uint8_t reconstruct_single_channel(NeAACDecHandle hDecoder, ic_stream *ics,
 #endif
 
     /* tns decoding */
-    tns_decode_frame(ics, &(ics->tns), hDecoder->sf_index, hDecoder->object_type,
-        spec_coef1, hDecoder->frameLength);
+    if (!skip_synthesis)
+        tns_decode_frame(ics, &(ics->tns), hDecoder->sf_index, hDecoder->object_type,
+            spec_coef1, hDecoder->frameLength);
 
     /* drc decoding */
     if (hDecoder->drc->present)
@@ -1035,6 +1052,7 @@ uint8_t reconstruct_channel_pair(NeAACDecHandle hDecoder, ic_stream *ics1, ic_st
                                  element *cpe, int16_t *spec_data1, int16_t *spec_data2)
 {
     uint8_t retval;
+    bool skip_synthesis = skip_synthesis_requested();
 
 #ifdef PROFILE
     int64_t count = faad_get_ts();
@@ -1072,7 +1090,8 @@ uint8_t reconstruct_channel_pair(NeAACDecHandle hDecoder, ic_stream *ics1, ic_st
     }
 
     /* mid/side decoding */
-    ms_decode(ics1, ics2, spec_coef1, spec_coef2, hDecoder->frameLength);
+    if (!skip_synthesis)
+        ms_decode(ics1, ics2, spec_coef1, spec_coef2, hDecoder->frameLength);
 
 #if 0
     {
@@ -1091,7 +1110,8 @@ uint8_t reconstruct_channel_pair(NeAACDecHandle hDecoder, ic_stream *ics1, ic_st
 #endif
 
     /* intensity stereo decoding */
-    is_decode(ics1, ics2, spec_coef1, spec_coef2, hDecoder->frameLength);
+    if (!skip_synthesis)
+        is_decode(ics1, ics2, spec_coef1, spec_coef2, hDecoder->frameLength);
 
 #if 0
     {
@@ -1162,10 +1182,12 @@ uint8_t reconstruct_channel_pair(NeAACDecHandle hDecoder, ic_stream *ics1, ic_st
 #endif
 
     /* tns decoding */
-    tns_decode_frame(ics1, &(ics1->tns), hDecoder->sf_index, hDecoder->object_type,
-        spec_coef1, hDecoder->frameLength);
-    tns_decode_frame(ics2, &(ics2->tns), hDecoder->sf_index, hDecoder->object_type,
-        spec_coef2, hDecoder->frameLength);
+    if (!skip_synthesis) {
+        tns_decode_frame(ics1, &(ics1->tns), hDecoder->sf_index, hDecoder->object_type,
+            spec_coef1, hDecoder->frameLength);
+        tns_decode_frame(ics2, &(ics2->tns), hDecoder->sf_index, hDecoder->object_type,
+            spec_coef2, hDecoder->frameLength);
+    }
 
     /* drc decoding */
     if (hDecoder->drc->present)

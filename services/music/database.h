@@ -20,9 +20,14 @@ struct ln_music_db {
     uint32_t cursor,index,read_offset,read_size,low,high,middle,string_offset;
     uint32_t member,search_index,search_track,search_ordinal;
     /* One completed lower bound for prefix in this immutable DB generation.
-     * Ordinary record/string reads may reuse scratch without losing the key. */
-    uint32_t search_lower;
-    bool search_lower_valid;
+     * Ordinary record/string reads may reuse scratch without losing the key.
+     * The small key cache contains a fully validated title's first 32 bytes;
+     * cache hits are limited to <=32-byte prefixes and <=32-byte titles.
+     * Longer public prefixes or titles retain the full read and comparison
+     * path, so d->text remains a complete validated title. */
+    uint32_t search_lower,search_prefix_length,search_cache_middle,search_cache_member;
+    bool search_lower_valid,search_cache_valid;
+    char search_cache_key[33];
     uint8_t phase,operation,query_phase;bool verified,busy,pending;int error;
     uint8_t expected_hash[32];char text[256],prefix[256];
     struct ln_music_track track;struct ln_music_group group;struct ln_music_art art;

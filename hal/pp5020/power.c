@@ -17,12 +17,14 @@ enum ln_sample_transfer { LN_SAMPLE_TRANSFER_RETRY=0,LN_SAMPLE_TRANSFER_OK,
 static struct {
     enum ln_sample_stage stage;
     uint32_t started_us;
-    uint8_t attempts,flags,data[7],verify_second;
+    uint8_t attempts,flags,data[7],verify_second,age_valid,age_phase;
 } ln_sampler;
 #define LN_SAMPLE_STEP_DELAY_US 1000u
 #define LN_SAMPLE_PERIOD_US 1000000u
 #define LN_SAMPLE_ADC_MAX_AGE_US 100000u
 #define LN_SAMPLE_RTC_MAX_AGE_US 60000u
+#define LN_SAMPLE_AGE_ADC 0u
+#define LN_SAMPLE_AGE_RTC 1u
 uint8_t ln_power_sources(void)
 {
     return ((LINNET_MMIO(0x6000d03cu)&8u)?LINNET_POWER_USB:0u)|
@@ -82,6 +84,8 @@ static void ln_sample_next_cycle(void)
 {
     ln_sampler.stage=LN_SAMPLE_IDLE;
     ln_sampler.attempts=0;
+    ln_sampler.age_valid=0;
+    ln_sampler.age_phase=LN_SAMPLE_AGE_ADC;
     ln_power.next_sample_us=ln_time_us()+LN_SAMPLE_PERIOD_US;
 }
 static bool ln_sample_expired(uint32_t maximum)
@@ -97,8 +101,10 @@ static void ln_sample_adc_failed(void)
 }
 /* Any foreground bus owner cancels an unfinished pointer/data sequence first.
  * A completed battery publication remains valid; partial ADC/RTC bytes are
- * never published. Sampling restarts at an earlier retained deadline or within
- * 1ms; repeated foreground calls while idle cannot postpone that deadline. */
+ * never published. The aggregate age and logical phase survive cancellation.
+ * An RTC restart begins at its pointer, so an ADC success cannot renew the
+ * already-running RTC age. Sampling restarts at an earlier retained deadline
+ * or within 1ms; repeated foreground calls while idle cannot postpone it. */
 static void ln_sample_cancel(void)
 {
     if(ln_sampler.stage!=LN_SAMPLE_IDLE){
@@ -274,17 +280,29 @@ bool ln_power_poll(uint32_t now, struct ln_power_state *out)
     enum ln_sample_transfer transfer;
     uint8_t bytes[2];
     if(ln_sampler.stage==LN_SAMPLE_IDLE){
-        ln_sampler.started_us=ln_time_us();
-        ln_sampler.flags=ln_power_sources();
-        /* P98 GPO input requires a zero write before sampling the charging pin. */
-        LINNET_MMIO(0x70000088u)=0;
-        if(!(LINNET_MMIO(0x70000088u)&1u))ln_sampler.flags|=LINNET_POWER_CHARGING;
-        ln_sampler.stage=LN_SAMPLE_ADC_COMMAND;
+        if(!ln_sampler.age_valid){
+            ln_sampler.started_us=ln_time_us();
+            ln_sampler.age_valid=1;
+            ln_sampler.age_phase=LN_SAMPLE_AGE_ADC;
+        }
+        if(ln_sampler.age_phase==LN_SAMPLE_AGE_RTC){
+            /* The ADC result is already published; discard any partial RTC
+             * bytes and restart its complete sequence at the pointer. */
+            ln_sampler.stage=LN_SAMPLE_RTC_POINTER_TIME;
+        }else{
+            ln_sampler.flags=ln_power_sources();
+            /* P98 GPO input requires a zero write before sampling the charging pin. */
+            LINNET_MMIO(0x70000088u)=0;
+            if(!(LINNET_MMIO(0x70000088u)&1u))ln_sampler.flags|=LINNET_POWER_CHARGING;
+            ln_sampler.stage=LN_SAMPLE_ADC_COMMAND;
+        }
     }
-    if(ln_sampler.stage<=LN_SAMPLE_ADC_READ){
-        if(ln_sample_expired(LN_SAMPLE_ADC_MAX_AGE_US)){ln_sample_adc_failed();goto complete;}
-    }else if(ln_sample_expired(LN_SAMPLE_RTC_MAX_AGE_US)){
-        ln_clock.valid=false;ln_sample_next_cycle();goto complete;
+    if(ln_sampler.age_phase==LN_SAMPLE_AGE_RTC){
+        if(ln_sample_expired(LN_SAMPLE_RTC_MAX_AGE_US)){
+            ln_clock.valid=false;ln_sample_next_cycle();goto complete;
+        }
+    }else if(ln_sample_expired(LN_SAMPLE_ADC_MAX_AGE_US)){
+        ln_sample_adc_failed();goto complete;
     }
     switch(ln_sampler.stage){
     case LN_SAMPLE_ADC_COMMAND:
@@ -301,7 +319,8 @@ bool ln_power_poll(uint32_t now, struct ln_power_state *out)
         transfer=ln_sample_transfer(ln_sampler.data,2u,true,true);
         if(transfer==LN_SAMPLE_TRANSFER_RETRY)ln_sampler.stage=LN_SAMPLE_ADC_POINTER;
         if(transfer==LN_SAMPLE_TRANSFER_OK){
-            if(ln_sample_expired(LN_SAMPLE_ADC_MAX_AGE_US)){
+            if(ln_sample_expired(ln_sampler.age_phase==LN_SAMPLE_AGE_RTC?
+                LN_SAMPLE_RTC_MAX_AGE_US:LN_SAMPLE_ADC_MAX_AGE_US)){
                 ln_sample_adc_failed();break;
             }
             uint16_t raw=(uint16_t)(((uint16_t)ln_sampler.data[0]<<2)|(ln_sampler.data[1]&3u));
@@ -313,7 +332,10 @@ bool ln_power_poll(uint32_t now, struct ln_power_state *out)
             }else ++ln_power.failures;
             ++ln_power.samples;ln_power.sampled_us=ln_time_us();
             ln_sampler.stage=LN_SAMPLE_RTC_POINTER_TIME;
-            ln_sampler.started_us=ln_time_us();
+            if(ln_sampler.age_phase==LN_SAMPLE_AGE_ADC){
+                ln_sampler.started_us=ln_time_us();
+                ln_sampler.age_phase=LN_SAMPLE_AGE_RTC;
+            }
         }
         break;
     case LN_SAMPLE_RTC_POINTER_TIME:
@@ -354,7 +376,7 @@ bool ln_power_poll(uint32_t now, struct ln_power_state *out)
         break;
     }
     if(transfer==LN_SAMPLE_TRANSFER_FAILED){
-        if(ln_sampler.stage<=LN_SAMPLE_ADC_READ)ln_sample_adc_failed();
+        if(ln_sampler.age_phase==LN_SAMPLE_AGE_ADC)ln_sample_adc_failed();
         else {ln_clock.valid=false;ln_sample_next_cycle();}
     }else if(ln_sampler.stage!=LN_SAMPLE_IDLE)ln_sample_next_step();
 complete:

@@ -823,7 +823,14 @@ void ln_runtime_idle(void){
 #if defined(LINNET_STORAGE)
     uint32_t storage_due=ln_storage_next_deadline(now);
     if((int32_t)(storage_due-next)<0)next=storage_due;
-    if(ln_storage_busy())return;
+#if !defined(LINNET_PROFILE_RELEASE)
+    ln_storage_schedule_observe(now);
+#endif
+    if(ln_storage_busy()){
+        uint32_t wait_due;
+        if(!ln_storage_idle_wait(now,&wait_due))return;
+        if((int32_t)(wait_due-next)<0)next=wait_due;
+    }
 #endif
     ln_core_idle_until(ln_exec_next(&executive,now,next));
 }

@@ -32,6 +32,9 @@ static bool shutting_down,stepping,pause_captured;
 static bool queue_opened;
 static uint32_t queue_choice,queue_choice_version;
 static const char *notice;
+#define LN_MUSIC_VOLUME_RETRY_US 100000u
+static uint32_t volume_retry_at;
+static bool volume_retry_pending;
 static bool next_queue_cursor(uint32_t *cursor){
     if(!queue.count)return false;
     if(queue.repeat==LINNET_QUEUE_REPEAT_ONE)*cursor=queue.cursor;
@@ -110,7 +113,7 @@ bool ln_music_queue_edit(uint32_t action){
     if(accepted){notice=0;++revision;}else {notice="Queue edit unavailable";++revision;}
     return accepted;
 }
-void ln_music_init(void){restore_attempts=restore_retry_at=0;restore_revision=revision;ln_queue_init(&queue,ln_time_us());ln_music_profile_default(&profile);ln_music_library_init();ln_music_browser_init();ln_music_history_init();}
+void ln_music_init(void){restore_attempts=restore_retry_at=0;restore_revision=revision;volume_retry_pending=false;volume_retry_at=0;ln_queue_init(&queue,ln_time_us());ln_music_profile_default(&profile);ln_music_library_init();ln_music_browser_init();ln_music_history_init();}
 bool ln_music_take_now_playing(void){bool show=show_now_playing;show_now_playing=false;return show;}
 const struct ln_music_library_row *ln_music_current(void){return have_current?&current:0;}
 bool ln_music_queue_position(uint32_t *position,uint32_t *count){
@@ -160,7 +163,9 @@ uint32_t ln_music_deadline(uint32_t now){
     uint32_t next=ln_player_deadline(now),library=ln_music_library_deadline(now);
     if((int32_t)(library-next)<0)next=library;
     uint32_t history=ln_music_history_deadline(now);
-    return (int32_t)(history-next)<0?history:next;
+    if((int32_t)(history-next)<0)next=history;
+    if(volume_retry_pending&&(int32_t)(volume_retry_at-next)<0)next=volume_retry_at;
+    return next;
 }
 const char *ln_music_option_label(uint32_t index){
     const struct ln_music_journal_record *record=have_current?ln_music_history_get(current.track.id):0;
@@ -284,7 +289,7 @@ static void remember_position(void){
         (void)ln_music_history_set_resume(current.track.id,true,position);
         if(position!=queue.position_samples){queue.position_samples=position;++revision;}}
 }
-void ln_music_stop(void){if(shutting_down)return;remember_position();active=false;have_waiting=false;selecting=false;resolver_kind=0;discard_next(false);ln_player_stop();++revision;}
+void ln_music_stop(void){if(shutting_down)return;remember_position();active=false;have_waiting=false;selecting=false;resolver_kind=0;volume_retry_pending=false;volume_retry_at=0;discard_next(false);ln_player_stop();++revision;}
 bool ln_music_seek(uint64_t frame){
     if(shutting_down||!ln_player_seek(frame))return false;
     prefetching=next_ready=next_armed=next_failed=false;
@@ -351,7 +356,13 @@ void ln_music_volume(int32_t steps){
     if(next<-730)next=-730;if(next>0)next=0;
     queue.volume_db_tenths=(int32_t)next;++revision;
     struct ln_audio_status audio;ln_audio_snapshot(&audio);
-    if(audio.initialized)(void)ln_audio_volume(queue.volume_db_tenths);
+    if(audio.initialized){
+        if(ln_audio_volume(queue.volume_db_tenths)){
+            volume_retry_pending=false;volume_retry_at=0;
+        }else{
+            volume_retry_pending=true;volume_retry_at=ln_time_us()+LN_MUSIC_VOLUME_RETRY_US;
+        }
+    }else{volume_retry_pending=false;volume_retry_at=0;}
 }
 static void music_step(void){
     struct ln_player_status before,p;struct ln_audio_status audio;
@@ -512,7 +523,17 @@ static void music_step(void){
     bool history_read=stopped||(!audio.playing&&p.phase==LN_PLAYER_PRIME)||urgent||
         (audio.playing&&audio.queued>=read_runway);
     ln_music_history_service(history_read,history_headroom,audio.playing);
-    if(audio.initialized&&audio.volume_db_tenths!=queue.volume_db_tenths)(void)ln_audio_volume(queue.volume_db_tenths);
+    if(!audio.initialized){volume_retry_pending=false;volume_retry_at=0;}
+    else if(audio.volume_db_tenths!=queue.volume_db_tenths){
+        uint32_t retry_now=ln_time_us();
+        if(!volume_retry_pending||(int32_t)(retry_now-volume_retry_at)>=0){
+            if(ln_audio_volume(queue.volume_db_tenths)){
+                volume_retry_pending=false;volume_retry_at=0;
+            }else{
+                volume_retry_pending=true;volume_retry_at=ln_time_us()+LN_MUSIC_VOLUME_RETRY_US;
+            }
+        }
+    }else{volume_retry_pending=false;volume_retry_at=0;}
     /* Durability work is deferred until playback is stopped/paused and the
      * asynchronous media owner has drained. New UI input may supersede this
      * snapshot while storage progress runs; retain its dirty revision then. */

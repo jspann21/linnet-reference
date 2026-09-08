@@ -29,6 +29,9 @@ static struct block_performance {
     uint32_t calls,service,gaps,gap_us,max_gap,last_end,last_id;
     bool tracking,saturated;
 } perf;
+static struct block_schedule_performance {
+    uint32_t done_at[8],taken,ready_us,ready_max,flags;
+} schedule_perf;
 static void perf_add(uint32_t *value,uint32_t amount){
     if(amount>=UINT32_MAX-*value){*value=UINT32_MAX;perf.saturated=true;}
     else *value+=amount;
@@ -36,6 +39,10 @@ static void perf_add(uint32_t *value,uint32_t amount){
 static uint32_t perf_read_id(void){
     return active_count&&!recovering&&slots[active_slots[0]].op==LN_BLOCK_READ?
         slots[active_slots[0]].id:0u;
+}
+static void schedule_perf_add(uint32_t *value,uint32_t amount){
+    if(amount>=UINT32_MAX-*value){*value=UINT32_MAX;schedule_perf.flags|=0x80000000u;}
+    else *value+=amount;
 }
 #endif
 static void copy(uint8_t *to,const uint8_t *from,uint32_t bytes) {
@@ -48,6 +55,9 @@ static void copy(uint8_t *to,const uint8_t *from,uint32_t bytes) {
 static void complete(struct slot *s,uint32_t status,uint32_t sectors) {
     bool issued=s->state==ACTIVE;
     s->status=s->canceled?LN_ATA_CANCELED:status;s->transferred=sectors;s->state=DONE;
+#if !defined(LINNET_PROFILE_RELEASE)
+    schedule_perf.done_at[(uint32_t)(s-slots)]=ln_time_us();
+#endif
     ++metrics.completed;if(s->status==LN_ATA_CANCELED)++metrics.canceled;
     else if(s->status!=LN_ATA_OK)++metrics.failed;
     if(issued&&status!=LN_ATA_OK&&(s->op==LN_BLOCK_WRITE||s->op==LN_BLOCK_FLUSH||s->op==LN_BLOCK_STANDBY))barrier_failed=true;
@@ -66,6 +76,7 @@ void ln_block_init(uint32_t now) {
     idle_allowed=idle_retry_active=false;power_task=standby_at=idle_retry_at=0;last_activity=now;
 #if !defined(LINNET_PROFILE_RELEASE)
     injected=active_fault=0;perf=(struct block_performance){0};
+    schedule_perf=(struct block_schedule_performance){0};
 #endif
     ln_ata_init(now);
 }
@@ -326,6 +337,11 @@ bool ln_block_take(uint32_t generation,struct ln_block_completion *out) {
     if(!out)return false;
     for(uint32_t i=0;i<8u;++i){struct slot *s=&slots[i];
         if(s->state==DONE&&s->generation==generation){
+#if !defined(LINNET_PROFILE_RELEASE)
+            uint32_t ready=ln_time_us()-schedule_perf.done_at[i];
+            schedule_perf_add(&schedule_perf.taken,1u);schedule_perf_add(&schedule_perf.ready_us,ready);
+            if(ready>schedule_perf.ready_max)schedule_perf.ready_max=ready;
+#endif
             *out=(struct ln_block_completion){s->id,s->generation,s->status,s->transferred};s->state=FREE;return true;
         }
     }
@@ -358,6 +374,50 @@ uint32_t ln_block_next_deadline(uint32_t now) {
     }
     return next;
 }
+enum block_schedule_state {BLOCK_SCHEDULE_IDLE=0,BLOCK_SCHEDULE_RUNNABLE=1,
+    BLOCK_SCHEDULE_WAITING=2,BLOCK_SCHEDULE_COMPLETION=3};
+static enum block_schedule_state block_schedule_state(uint32_t now,uint32_t *deadline_out){
+    uint32_t next=ln_ata_next_deadline(now);bool queued=false,done=false,expired=false;
+    for(uint32_t i=0;i<8u;++i){
+        if(slots[i].state==QUEUED){queued=true;
+            if((int32_t)(slots[i].deadline-next)<0)next=slots[i].deadline;
+            if((int32_t)(now-slots[i].deadline)>=0)expired=true;
+        }
+        else if(slots[i].state==DONE)done=true;
+    }
+    if(recovering&&(int32_t)(active_deadline-next)<0)next=active_deadline;
+    if((quiesce_state==1u||quiesce_state==2u)&&
+       (int32_t)(quiesce_deadline-next)<0)next=quiesce_deadline;
+    if(deadline_out)*deadline_out=next;
+    if(done)return BLOCK_SCHEDULE_COMPLETION;
+    struct ln_ata_state device;ln_ata_state_snapshot(&device);
+    /* IDLE ATA with a block owner means the ATA result is ready to take. */
+    if((active_count&&!recovering&&!device.busy)||
+       (recovering&&(device.failed||device.initialized||(int32_t)(now-active_deadline)>=0))||
+       (power_task&&!device.initializing&&!device.busy)||
+       (quiesce_state==2u&&!device.busy)||
+       (quiesce_state==1u&&!queued&&!active_count&&!device.initializing&&!device.busy&&
+        (device.failed||metrics.quarantined||barrier_failed||!device.powered||device.initialized||
+         (int32_t)(now-quiesce_deadline)>=0))||
+       (queued&&!active_count&&!device.initializing&&!device.busy&&!power_task)||expired)
+        return BLOCK_SCHEDULE_RUNNABLE;
+    bool work=queued||active_count||recovering||power_task||device.initializing||device.busy||
+        quiesce_state==1u||quiesce_state==2u;
+    if(!work)return BLOCK_SCHEDULE_IDLE;
+    return (int32_t)(next-now)<=0?BLOCK_SCHEDULE_RUNNABLE:BLOCK_SCHEDULE_WAITING;
+}
+bool ln_block_idle_wait(uint32_t now,uint32_t *deadline){
+    return block_schedule_state(now,deadline)==BLOCK_SCHEDULE_WAITING;
+}
+#if !defined(LINNET_PROFILE_RELEASE)
+enum ln_block_schedule ln_block_schedule_state(uint32_t now,uint32_t *deadline_out){
+    return (enum ln_block_schedule)block_schedule_state(now,deadline_out);
+}
+void ln_block_schedule_metrics(uint32_t out[4]){
+    out[0]=schedule_perf.taken;out[1]=schedule_perf.ready_us;
+    out[2]=schedule_perf.ready_max;out[3]=schedule_perf.flags;
+}
+#endif
 void ln_block_allow_idle(bool allowed){idle_allowed=allowed;}
 uint32_t ln_block_request_timeout(void){
     struct ln_ata_state device;ln_ata_state_snapshot(&device);
