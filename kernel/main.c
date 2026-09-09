@@ -231,6 +231,9 @@ _Noreturn void ln_main(void)
         if(!ln_video_active()&&!ln_video_pending())
 #endif
         ln_music_step();
+#if defined(LINNET_VIDEO)
+        else {extern void ln_music_volume_sync(void);ln_music_volume_sync();}
+#endif
         LN_TIMING_END(music_started,0);
         LN_CACHE_FIRST_MARK(0xca13u);
 #endif

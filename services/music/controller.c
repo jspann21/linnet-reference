@@ -378,6 +378,22 @@ void ln_music_volume(int32_t steps){
         }
     }else{volume_retry_pending=false;volume_retry_at=0;}
 }
+/* Shared output gain also runs while video owns the audio sink. */
+void ln_music_volume_sync(void){
+    if(shutting_down)return;
+    struct ln_audio_status audio;ln_audio_snapshot(&audio);
+    if(!audio.initialized){volume_retry_pending=false;volume_retry_at=0;}
+    else if(audio.volume_db_tenths!=queue.volume_db_tenths){
+        uint32_t retry_now=ln_time_us();
+        if(!volume_retry_pending||(int32_t)(retry_now-volume_retry_at)>=0){
+            if(ln_audio_volume(queue.volume_db_tenths)){
+                volume_retry_pending=false;volume_retry_at=0;
+            }else{
+                volume_retry_pending=true;volume_retry_at=ln_time_us()+LN_MUSIC_VOLUME_RETRY_US;
+            }
+        }
+    }else{volume_retry_pending=false;volume_retry_at=0;}
+}
 static void music_step(void){
     struct ln_player_status before,p;struct ln_audio_status audio;
     bool expected=false;
@@ -559,17 +575,7 @@ static void music_step(void){
     bool history_read=stopped||(!audio.playing&&p.phase==LN_PLAYER_PRIME)||urgent||
         (audio.playing&&audio.queued>=read_runway&&!photo_priority);
     ln_music_history_service(history_read,history_headroom,audio.playing);
-    if(!audio.initialized){volume_retry_pending=false;volume_retry_at=0;}
-    else if(audio.volume_db_tenths!=queue.volume_db_tenths){
-        uint32_t retry_now=ln_time_us();
-        if(!volume_retry_pending||(int32_t)(retry_now-volume_retry_at)>=0){
-            if(ln_audio_volume(queue.volume_db_tenths)){
-                volume_retry_pending=false;volume_retry_at=0;
-            }else{
-                volume_retry_pending=true;volume_retry_at=ln_time_us()+LN_MUSIC_VOLUME_RETRY_US;
-            }
-        }
-    }else{volume_retry_pending=false;volume_retry_at=0;}
+    ln_music_volume_sync();
     /* Durability work is deferred until playback is stopped/paused and the
      * asynchronous media owner has drained. New UI input may supersede this
      * snapshot while storage progress runs; retain its dirty revision then. */

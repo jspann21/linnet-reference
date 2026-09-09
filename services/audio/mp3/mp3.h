@@ -32,11 +32,11 @@ void ln_mp3_init(struct ln_mp3 *,ln_mp3_read_fn,void *,uint64_t file_size);
  * No silence is inserted; total_frames is corrected before reporting EOF.
  * CRC-protected frames retain libmad verification. Only Layer III is exposed. */
 int ln_mp3_decode(struct ln_mp3 *,int16_t *stereo,uint32_t capacity,uint32_t *frames);
-/* Exact PCM-frame seek by restarting and incrementally decoding/discarding.
+/* Exact PCM-frame seek by scanning frames with a bounded decode preroll.
  * Positions use the trimmed timeline when gapless metadata exists. Admission
  * fails while read ownership is pending or target exceeds a known total.
  * Keep calling decode: seeking stays true and frames=0 until the target is
- * reached. Each call retains the ordinary bounded work; this is not fast seek.
+ * reached. Each call scans or decodes at most one MPEG frame.
  * Without a known total, reaching EOF before target reports ARGUMENT. */
 bool ln_mp3_seek(struct ln_mp3 *,uint64_t frame);
 #endif

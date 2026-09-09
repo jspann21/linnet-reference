@@ -86,3 +86,9 @@ frames also remains bit-identical; instructions fell from 8,314,775 to
 7,742,523 (6.9%). This subset is an instruction comparison, not a hardware
 cycle or whole-track performance claim. Reports:
 `out/b04-mp3-memory-host.json`, `out/b04-mp3-memory-arm.json`.
+
+Linnet adds `MAD_OPTION_SCAN` for MP3 resume: Layer III retains header/side
+information and CRC checks plus bit-reservoir maintenance while omitting
+spectral decoding for discarded frames. The facade counts trimmed samples
+and restores ordinary decoding and synthesis at least 4,608 samples before
+the seek target. Skipped spectral payloads are not Huffman-validated.

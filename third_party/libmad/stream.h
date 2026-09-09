@@ -82,6 +82,7 @@ struct mad_stream {
 };
 
 enum {
+  MAD_OPTION_SCAN           = 0x0004,   /* retain Layer III reservoir without PCM decode */
   MAD_OPTION_IGNORECRC      = 0x0001,   /* ignore CRC errors */
 # if 0  /* rockbox: unused */
   MAD_OPTION_HALFSAMPLERATE = 0x0002    /* generate PCM at 1/2 sample rate */

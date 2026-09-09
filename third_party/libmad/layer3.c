@@ -3052,9 +3052,10 @@ int mad_layer_III(struct mad_stream *stream, struct mad_frame *frame)
 
   frame_free = frame_space - frame_used;
 
+  /* A seek scan still checks side information/CRC and maintains the reservoir. */
   /* decode main_data */
 
-  if (result == 0) {
+  if (result == 0 && !(frame->options & MAD_OPTION_SCAN)) {
     error = III_decode(&ptr, frame, &si, nch);
     if (error) {
       stream->error = error;

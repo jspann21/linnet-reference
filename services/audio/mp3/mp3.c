@@ -151,6 +151,12 @@ int ln_mp3_decode(struct ln_mp3 *d,int16_t *output,uint32_t capacity,uint32_t *f
     if(d->gapless&&d->decoded_frames==d->total_frames)return finish(d);
     if(d->pcm_cursor<d->synth.pcm.length)return drain_pcm(d,output,capacity,frames);
     if(d->need_input)return refill(d);
+    /* Keep four full MPEG-1 frames of ordinary decoding before the target
+     * to rebuild both IMDCT overlap and synthesis history. Scanned frames
+     * retain the bit reservoir, CRC checks and exact trimmed sample count. */
+    bool scan=d->seeking&&d->first_frame_checked&&
+        d->seek_target-d->decoded_frames>5u*1152u;
+    d->stream.options=scan?MAD_OPTION_SCAN:0;
     if(mad_frame_decode(&d->frame,&d->stream)){
         if(d->stream.error==MAD_ERROR_BUFLEN){
             if(d->eof)return finish(d);
@@ -173,6 +179,16 @@ int ln_mp3_decode(struct ln_mp3 *d,int16_t *output,uint32_t capacity,uint32_t *f
         d->first_frame_checked=true;int metadata=first_frame(d);
         if(metadata<0)return fail(d,LN_MP3_FORMAT);
         if(metadata)return 0;
+    }
+    if(scan){
+        uint32_t samples=32u*MAD_NSBSAMPLES(&d->frame.header),skip=d->trim_remaining;
+        if(skip>samples)skip=samples;
+        d->trim_remaining-=skip;samples-=skip;
+        if(d->gapless&&samples>d->total_frames-d->decoded_frames)
+            samples=(uint32_t)(d->total_frames-d->decoded_frames);
+        d->decoded_frames+=samples;
+        d->synth.phase=(d->synth.phase+MAD_NSBSAMPLES(&d->frame.header))%16u;
+        d->synth.pcm.length=0;d->pcm_cursor=0;++d->compressed_frames;return 0;
     }
     mad_synth_frame(&d->synth,&d->frame);d->pcm_cursor=0;d->compressed_frames++;
     if(d->trim_remaining){
