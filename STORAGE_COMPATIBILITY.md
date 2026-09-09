@@ -51,24 +51,6 @@ especially `firmware/drivers/ata.c`, `firmware/export/ata.h`, and
 `6701604789`, `0aab6395f8`, and `cfe93e9b0c`. Linnet uses its own asynchronous
 implementation of these behaviors.
 
-Validation is intentionally light per the user's instruction. Evidence:
-`out/b02-iflash-light-wake.json`, `out/b02-media-mounted.json`, and the development,
-Boot and release build reports. No stress, repeated power-cycle, or destructive
-fault campaign was run. Native Boot installation plans remain explicitly pinned
-to the inspected physical disk and backup; they are not reusable generic images
-for another drive or partition layout.
-
-Boot `3dfc7bd0a7b1` and OS `1767aa1f5e02` are installed. The persistent OS
-confirmed its slot, reached health 31 and then powered the iFlash rail off after
-idle. The helper's original 60-second reconnect wait expired before completion;
-subsequent read-only inspection verified startup, and the host deadline is now
-180 seconds. Startup is still slow despite the reduction in physical reads.
-Installation evidence: `out/b02-storage-compatibility-complete.json`.
-
-The Batch 3 OS `3ac3673f2188` supersedes that OS and includes the final queued
-durability-barrier correction: after an issued durability operation fails,
-already queued write/flush/standby operations are rejected until explicit
-drained recovery clears the barrier. Strict builds and focused local dispatch
-checks passed. Persistent slot A, health 31 and zero storage errors are verified
-in `out/b03-persistent-verified.json`. Boot remains `3dfc7bd0a7b1`; no native Boot
-write or additional drive-fault campaign was needed for the UI update.
+Native Boot plans are pinned to the inspected disk and firmware backup; they
+are not reusable installers for another drive or partition layout. Broader
+hardware qualification is tracked in [PROJECT_TODO.md](PROJECT_TODO.md).

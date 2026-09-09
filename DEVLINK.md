@@ -9,10 +9,7 @@ this changes the protocol deadline, not the serial endpoint configuration.
 Linnet Link 1.0 is a development-only binary protocol. Host framing, an optional
 serial adapter, a bounded native framing codec and command dispatcher establish
 the development software contracts. The native PP5020 CDC ACM driver implements endpoint
-descriptors, control transfers and bulk DMA. The integrated controller/backend
-and RAM chainload paths passed the recorded Batch 0 board campaign. New Batch 3
-UI behavior is currently under device qualification. Serial
-port discovery is not evidence that a device implements Linnet Link.
+descriptors, control transfers and bulk DMA. Serial port discovery alone does not establish Linnet Link support.
 
 ## Frame layout
 
@@ -201,9 +198,7 @@ Commands 65..68 provide synthetic input, immutable screen capture and bounded
 platform controls for device comparison. UI_STATE adds paint and arena counters
 for detecting unnecessary redraws and scene lifecycle changes. Capture CRCs
 describe the framebuffer; simulator agreement cannot establish physical LCD
-quality or wheel feel. Batch 3 device qualification is in progress and its
-physical gate has not passed. The unrun Batch 2 stress, publication-fault and
-mount/sync campaign limitations remain unchanged.
+quality or wheel feel. Open qualification work is tracked in PROJECT_TODO.md.
 
 ## Upload and uncertainty
 
@@ -287,29 +282,10 @@ entry points, staging buffers, crash developer services and chainload code. The
 release verifier checks linked symbols and protocol magic. Host tools do not
 run on the device and are never packaged into the release image.
 
-On Windows, automatic unmount and restart uses the exact installed Boot plan:
-
-```powershell
-python linnet device eject --reboot --disk-number 4 --plan out/native-bootstrap-b02-03/plan.json --plan-sha256 c53f401c9f8765ae5c8dd3993c8005857851ba667485f880b5238c37a0079bf2
-```
-
-The command validates the plan, disk, and mounted volume before requesting
-any write. It uses an already elevated Windows process by default. Add
-`--allow-uac` to permit normal Windows consent for the existing reviewed Python
-refresh utility. This option requires `--reboot`; it does not start the
-experimental broker. It refreshes one identical 512-byte boot-directory sector with
-full firmware guards and readback, then ejects and verifies the returning Boot
-identity. Without `--allow-uac`, an unelevated invocation fails
-before refresh or eject. No firmware bytes
-change. A failed refresh never proceeds to eject; ambiguous operations are not
-replayed. Receipts remain under `out/disk-restart-*.json`.
-
-Plain `device eject --disk-number 4` only ejects. Apple Disk Mode may stay active
-after ordinary eject; `--wait-link` alone does not request a reboot. To enter
-Disk Mode from Linnet, use `python linnet device reboot --mode disk --port COM6`.
-Boot and reboot commands confirm matching HELLO and STATUS identities before
-sending the mutation. Disk/USB identity defaults name the inspected development
-iPod; automatic restart additionally requires its exact pinned installation plan.
+On Windows, automatic eject/restart requires the exact installed Boot plan and
+its SHA-256, plus the observed disk identity. See `python linnet device eject --help`
+for arguments and elevation options. Plain eject may leave Apple Disk Mode active;
+`--wait-link` alone does not request reboot. Never replay an ambiguous mutation.
 
 ## Batch 2 storage commands
 
@@ -437,30 +413,11 @@ checks this prerequisite before entering Disk Mode. Plain Shell eject remains
 available without elevation and only confirms storage removal; it does not
 promise a firmware restart.
 
-An experimental session broker was drafted to retain the initial elevated
-session. Windows Defender blocked its reflective PowerShell verification
-command as `Trojan:Win32/ClickFix.JIN!MTB` on September 6, 2026. The broker was
-not launched or installed, and that command performed no device writes.
-Its CLI integration was removed and its start function disabled. Do not restore
-blocked items or disable protection to qualify it. The recurring unattended
-restart problem was subsequently reproduced as a workflow error: plain eject
-had replaced the required directory refresh to avoid elevation. The original
-reviewed utility was run through normal Windows consent and automatically
-returned exact Boot `3dfc7bd0a7b1`, with storage disappearance and Link reconnect
-verified in `out/b04-restored-restart.json`. The explicit `--allow-uac` CLI
-option restores access to that path. Further unattended operations still need
-an already elevated process; one completed UAC child does not confer continuing
-privileges. Plain eject must not be substituted for a verified restart. Draft
-broker source remains disabled and for review only.
-
-
 Upload startup discovery now allows up to 180 seconds for the USB endpoint,
 then waits for matching healthy HELLO/STATUS before sending upload bytes.
 Cold Boot may disappear while handing off to the saved OS; a responsive Home
 screen can precede its serial endpoint. These waits repeat only discovery and
 read-only identity/status requests. An uncertain upload is never replayed.
-A second reviewed refresh/restart passed in
-`out/b04-full-codec-restart.json` after publishing two additional codec clips.
 
 
 ## Finite refresh sessions
@@ -473,12 +430,12 @@ refresh, and stop. It accepts no file paths, firmware payloads, shell commands,
 or executable code from clients. Each refresh rechecks the exact iPod and full
 firmware guards, closes its raw handle, and returns the existing strict receipt.
 Duplicate request IDs reuse a receipt; an unacknowledged write revokes further
-writes. The disabled experimental C# broker remains unchanged.
+writes.
 
 Prepare and inspect the local snapshot, then start it with normal consent:
 
 ```powershell
-python linnet device refresh-session prepare --plan out/native-bootstrap-b02-03/plan.json --plan-sha256 c53f401c9f8765ae5c8dd3993c8005857851ba667485f880b5238c37a0079bf2 --hours 24 > out/refresh-session-prepared.json
+python linnet device refresh-session prepare --plan <installed-plan.json> --plan-sha256 <plan-sha256> --hours 24 > out/refresh-session-prepared.json
 python linnet device refresh-session start --prepared out/refresh-session-prepared.json --allow-uac
 python linnet device refresh-session status
 ```
@@ -497,21 +454,7 @@ python linnet device refresh-session stop
 
 The process survives the launcher and individual CLI commands. It ends at the
 chosen expiry, explicit stop, or Windows logoff/restart; it is not an automatically
-starting Windows service. Initial elevated startup and independent CLI status
-passed on September 6 (`out/refresh-session-start.json`). The subsequent real
-refresh/restart verification is recorded below.
-
-
-The first real session refresh/restart passed with `--allow-uac` omitted:
-`out/refresh-session-first-restart.json`. Its receipt names the retained session,
-records one verified identical 512-byte write with zero changed bytes, and passes
-the full original firmware guards. Windows storage disappeared and exact Boot
-3dfc7bd0a7b1 reconnected. A subsequent ordinary CLI status confirms the same
-unrevoked server PID remains alive (`out/refresh-session-after-restart.json`).
-The live pipe ACL was read back with ordinary-user privileges and contains only
-System, Administrators, and the exact launching user. Protected source-directory
-ACL readback was not performed because the random protected path was not exposed
-by status; the explicit protected-DACL creation API succeeded at bootstrap.
+starting Windows service.
 
 ## Batch 5 photo diagnostic
 
@@ -525,8 +468,14 @@ before comparing). View values are albums 0, grid 1, viewer 2. Phase values
 follow `services/photos/photos.c`; idle is 3. The command is excluded from release
 firmware. Use `python linnet device photos-state --port COM6`.
 
-Batch 6 command122 VIDEO_STATE is a read-only128-byte VIT6 version2 diagnostic. Field order
-and meaning are recorded in VIDEO_IMPLEMENTATION.md; excluded from release.
+Read-only development command122 (`VIDEO_STATE`) returns128 bytes, magicVIT6,
+version2 (the host also reads version1/96 bytes). Fields: magic,version,phase,error,active,pending,paused,next_frame,
+frame_count,front_frame,read_ops,read_bytes,prepared,presented,late_frames,
+max_late_samples,max_prepare_us,queued_frames,max_queued_frames,audio_underruns,
+audio_silence_frames,audio_fault,submitted_samples,revision,max_io_us,
+max_record_read_us,max_record_crc_us,max_payload_crc_us,max_decode_us,
+max_frame_crc_us,max_step_us,min_audio_queued. `video-state` is
+available through the device CLI. Release firmware excludes this Link command.
 
 
 Development interrupted-startup records reuse the144-byte crash mailbox with

@@ -355,13 +355,21 @@ LDS1 and unwrapped legacy music records remain readable. Photo identity and
 indexes are validated against the catalog before restoring a view. Display and
 music writes preserve the photo record; photo changes preserve both other values.
 
-PVID video contract: see `PVID_FORMAT.md`. LDS3 shared resume packing and backward
-read compatibility: see `VIDEO_IMPLEMENTATION.md`. Both are under Batch 6 qualification.
+PVID video contract: see `PVID_FORMAT.md`.
 
-LDS4 battery capacity and shared settings layout: see
-`INTEGRATION_IMPLEMENTATION.md`. Capacity is at offset28, music begins at32,
-and the maximum444-byte music record fits a480-byte envelope including CRC.
-Older settings formats remain readable; older firmware cannot parse LDS4.
+LDS3 settings keep the existing 32-byte envelope overhead. Header bytes0..3 are
+LDS3;4..5 music payload length;6 timeout-choice index;7 zero. Bytes8..19 contain
+the photo identity32/index16/flags8/reserved8/pan32,20..27 video identity32/frame32,
+then music payload at28 and final CRC32. Old LDS1/LDS2 and unwrapped music records
+remain readable. The current maximum music payload444 gives476 bytes total.
+Photo flags pack zoom bits0..2, rotation3..4 and view5..6. Video identity is the
+validated PVID header CRC. Resume is saved on exit and normal shutdown; EOF resets
+the next starting position. Older firmware cannot interpret LDS3.
+
+LDS4 retains LDS3 fields through offset 27, adds u32 battery capacity at 28,
+and starts music at 32. The final CRC gives 36 bytes of envelope overhead;
+the maximum 444-byte music record fits the 480-byte store. LDS1/LDS2/LDS3 and
+legacy music remain readable; older firmware cannot parse LDS4.
 
 ## Optional rollback history (`LRH1`)
 

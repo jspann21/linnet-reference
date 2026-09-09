@@ -196,5 +196,4 @@ these instead of literal colors. Firmware preferences are memory-only hooks
 into the display settings owner; rendering never performs storage I/O.
 
 Optional `THEME0.BIN` and `THEME1.BIN` persist the selected stable theme ID.
-See `FORMATS.md` for their independent transactional record and
-`UI_IMPLEMENTATION.md` for provisioning and simulator evidence.
+See [binary contracts](../FORMATS.md) for their independent transactional record.
