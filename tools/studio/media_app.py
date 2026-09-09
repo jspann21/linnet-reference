@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import importlib.util
+import math
 from pathlib import Path
 import queue
 import shutil
@@ -128,6 +129,8 @@ class MediaApp:
         self.start_button.pack(side="left")
         self.scan_button = ttk.Button(actions, text="Scan again", command=self.scan)
         self.scan_button.pack(side="left", padx=8)
+        self.library_button = ttk.Button(actions, text="Browse & remove…", command=self.browse_library, state="disabled")
+        self.library_button.pack(side="left", padx=(0, 8))
         self.stop_button = ttk.Button(actions, text="Stop after current step", command=self.stop, state="disabled")
         self.stop_button.pack(side="left")
         self.report_button = ttk.Button(actions, text="Open report", command=self.open_report, state="disabled")
@@ -162,12 +165,32 @@ class MediaApp:
         self.log.see("end")
         self.log.configure(state="disabled")
 
+    def indeterminate_progress(self):
+        if str(self.progress.cget("mode")) != "indeterminate":
+            self.progress.stop()
+            self.progress.configure(mode="indeterminate", value=0)
+            if self.busy:
+                self.progress.start(12)
+
+    def video_progress(self, event):
+        percent = event.get("percent")
+        if isinstance(percent, (int, float)) and math.isfinite(percent):
+            self.progress.stop()
+            self.progress.configure(mode="determinate", maximum=100, value=max(0, min(100, percent)))
+        else:
+            self.indeterminate_progress()
+        message = str(event.get("message", "Preparing video…"))
+        if event.get("video_index") and event.get("video_total"):
+            message = f"Video {event['video_index']}/{event['video_total']} · {message}"
+        self.status.set(message)
+
     def set_busy(self, value):
         self.busy = value
         for button in (self.refresh_button, self.start_button, self.scan_button, self.add_files_button,
                        self.add_folder_button, self.remove_button, self.tools_button, self.add_videos_button):
             button.configure(state="disabled" if value else "normal")
         self.choose_videos_button.configure(state="disabled" if value or self.inventory is None else "normal")
+        self.library_button.configure(state="disabled" if value or self.inventory is None else "normal")
         self.start_button.configure(state="disabled" if value or self.inventory is None else "normal")
         for control in self.option_controls:
             control.configure(state="disabled" if value else "normal")
@@ -176,6 +199,8 @@ class MediaApp:
         self.stop_button.configure(state="normal" if value else "disabled")
         if value:
             self.stop_event.clear()
+            self.progress.stop()
+            self.progress.configure(mode="indeterminate", value=0)
             self.progress.start(12)
         else:
             self.progress.stop()
@@ -206,6 +231,25 @@ class MediaApp:
         if not 0 <= index < len(self.devices):
             raise ValueError("Connect the iPod in Disk Mode, then choose Find iPod.")
         return self.devices[index]
+
+    def browse_library(self):
+        if self.busy or self.inventory is None:
+            return
+        from tools.studio.media_library_app import LibraryWindow
+        def changed(result):
+            if result.get("receipt"):
+                self.receipt = result["receipt"]
+                self.report_button.configure(state="normal")
+            self.log_message(result["summary"])
+            self.inventory = None
+            self.start_button.configure(state="disabled")
+            self.choose_videos_button.configure(state="disabled")
+            for label in self.counts.values():
+                label.configure(text="Scan required")
+        dialog = LibraryWindow(self.window, self.identity(), changed)
+        self.window.wait_window(dialog.window)
+        if self.inventory is None:
+            self.scan()
 
     def update_video_summary(self):
         count = len(self.video_selection)
@@ -345,6 +389,7 @@ class MediaApp:
         verification = "full" if self.full_music.get() else "metadata"
         self.worker(lambda: media.run(identity, selected, pending,
                     progress=lambda text: self.events.put(("progress", text)), cancelled=self.stop_event.is_set,
+                    progress_detail=lambda event: self.events.put(("video_progress", event)),
                     photo_dimension=dimension, ffmpeg=self.ffmpeg, ffprobe=self.ffprobe, force=force,
                     music_verification=verification, video_selection=video_sources), "finished")
 
@@ -370,7 +415,11 @@ class MediaApp:
         try:
             for _ in range(100):
                 kind, value = self.events.get_nowait()
+                if kind == "video_progress":
+                    self.video_progress(value)
+                    continue
                 if kind == "progress":
+                    self.indeterminate_progress()
                     self.log_message(value)
                     continue
                 self.set_busy(False)
@@ -393,6 +442,7 @@ class MediaApp:
                     self.video_selection.intersection_update(self.inventory["Videos"].get("files", []))
                     self.update_video_summary()
                     self.choose_videos_button.configure(state="normal")
+                    self.library_button.configure(state="normal")
                     self.devices[self.device_choice.current()] = identity
                     self.device_status.set(f"{identity['drive']}  •  {size(identity['free_bytes'])} free  •  Originals stay in their folders.")
                     for folder, item in self.inventory.items():
@@ -415,7 +465,12 @@ class MediaApp:
                             self.after_scan_message += " Unchecked additions are still queued for a later update."
                         self.log_message("Update complete. Refreshing the folder counts…")
                     else:
-                        self.after_scan_message = "Update stopped or some folders could not finish. Review Open report before starting another update."
+                        self.after_scan_message = value.get("summary") or ("Update stopped. Completed work is retained." if value.get("stopped")
+                                                   else "Some folders could not finish.")
+                        if value.get("cleanup", {}).get("retained"):
+                            self.after_scan_message += " Leftover files need review; Open report lists their locations."
+                        else:
+                            self.after_scan_message += " Temporary preparation files cleaned up. Open report for details."
                         self.log_message(self.after_scan_message)
                     self.submitted = []
                     self.scan()

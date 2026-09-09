@@ -26,6 +26,34 @@ It avoids launching a separate metadata process for each common audio file.
    remain visible. **Open report** shows detailed receipts.
 5. Safely eject the iPod using Windows, then restart Linnet if Disk Mode remains.
 
+## Browse and remove content
+
+After scanning, choose **Browse & remove…**. Filter by folder or search names
+and paths. The list distinguishes original files, published libraries/videos on
+the iPod, missing video catalog entries, and prepared video copies on the computer.
+Select an item to see its exact location or open its containing folder.
+
+**Remove selected from iPod…** reviews the selection, removes video catalog
+entries, and moves selected device files to `LINNET/TRASH` with a recovery receipt.
+This is reversible file removal and does not reclaim disk space. Removing a video
+catalog entry pointing to an original retains that original unless its source row
+is also selected. Computer cache rows are read-only.
+
+After removing Music, Notes or Photos source files, update that folder to rebuild
+its published library. To clear a whole published library, select its **Entire
+published … library** row. This is also necessary when all source files have been
+removed, since updating an empty folder preserves the previous library. Updating
+a folder with its originals still present can recreate a removed library.
+
+Video conversion shows a percentage, converted/estimated-total frame count,
+elapsed time and an approximate time remaining for the current conversion.
+The progress bar fills as conversion advances, with the current video's position
+in the selection shown beside its status. Estimates settle after conversion
+starts and may change with scene complexity. Final validation has its own
+progress; copying/publication is a separate step. A stage only reaches 100%
+after it completes successfully. Before a total is available, the app shows
+frame counts and elapsed time instead of inventing a percentage or ETA.
+
 The app does not install firmware. Build/install the updated firmware using the
 existing device workflow before using existing music paths, Extras > Notes, or
 the multi-video list. Existing filenames, source documents and source media are
@@ -39,7 +67,7 @@ rename instruction; it is never overwritten automatically.
 | Music | Metadata, browse/search database and 64×64 artwork; references original audio in place | Up to 100,000 tracks; native codec support still determines playback |
 | Notes | UTF-8 or BOM-marked UTF-16 `.txt`, `.text`, `.md` to a prepared text catalog | 256 notes, 63-character display titles, 256 wrapped display lines per note |
 | Photos | Orientation, thumbnails and tiled RGB565 images with zoom levels | 65,535 images; standard maximum zoom dimension 640 pixels, high 2048 |
-| Videos | Native IPVF indexing or FFmpeg conversion to PVID, named playback files and a title catalog | 256 named videos; each file at most 2 GiB minus one byte |
+| Videos | Native IPVF indexing or conversion to IPVF, named playback files and a title catalog | 256 named videos; each file at most 2 GiB minus one byte |
 
 The Notes reader displays plain text, including Markdown source. Non-ASCII
 characters are adapted to the available font, with affected filenames listed in
@@ -49,7 +77,12 @@ scroll; Menu returns to the list.
 
 Music indexing resolves actual FAT short aliases for long Rockbox filenames.
 The firmware supports up to 16 path components and 255 path bytes. Paths with
-unavailable or unsupported aliases fail explicitly; aliases are never guessed.
+unsupported aliases get a verified compatibility copy under `LINNET/MUSIC`,
+while the original remains in place. This covers accented short names such as
+`BEYONCÉ`, which the native file reader cannot open. Only affected tracks are
+copied; compatible tracks continue to be indexed in place. The report lists
+these copies. Missing files and drive/alias lookup failures still stop the import;
+aliases are never guessed and originals are never renamed.
 In-place indexing does not decode every song on the host to count samples.
 Compressed duration starts unknown in the database until the native decoder
 provides it. Importing a codec does not establish that its playback is qualified.
@@ -86,6 +119,10 @@ hashes. Neither mode certifies the absence of source audio corruption.
 The host cache and receipts live under `%LOCALAPPDATA%\Linnet\Media`, separated
 by disk and volume identity. Source names, sizes and modification times identify
 unchanged folders; prepared device files are hash-checked before skipping work.
+Publication writes the prepared library to the iPod under `LINNET`; the computer
+cache is an additional reusable copy. Completion messages name the folders on
+the iPod and any folders that failed, so a photo error does not imply successful
+music or video publication was undone.
 Use **Rebuild unchanged content** if files were replaced while preserving their
 size and modification time. Video conversions also reuse prepared host files.
 Successfully published videos are cached individually, so retrying after one
@@ -99,11 +136,17 @@ prepared library. Automatic pruning and deletion are intentionally not part of
 this additive workflow.
 
 **Stop after current step** waits for the current compiler or verified
-publication operation to return. File copying stops between completed files. Leave
+publication operation to return. Video conversion and file copying can stop midstream;
+their partial scratch files are removed before the update finishes. Leave
 the window open until it finishes. Successfully completed content remains;
 interrupted copy paths and publication backups are recorded in receipts. A
 failed publication is not automatically retried. Resolve the reported error
-and inspect its receipt before starting another update.
+and inspect its receipt before starting another update. The log and Open report
+show cleanup results, exact locations of any remaining scratch or incomplete
+publication receipts, and the host cache directory. Completed prepared packages
+and the music metadata cache are retained to speed up retries. A forced app exit
+or disconnected drive can prevent cleanup; remaining host scratch is reported on
+the next update, without deleting files that might belong to another running job.
 
 Host checks and firmware builds do not replace an on-device qualification run.
 

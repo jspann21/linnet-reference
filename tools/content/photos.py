@@ -134,29 +134,32 @@ def compile_photos(source, output, *, max_dimension=640, fallback_paths=None):
             if fallback and (not FAT_PATH.fullmatch(fallback) or len(fallback) > 127 or
                              not fallback.endswith(('.JPG', '.JPEG'))):
                 raise ValueError('fallback path must be an absolute uppercase FAT8.3 JPEG path')
-            with Image.open(path) as original:
-                width, height = original.size
-                source_orientation = original.getexif().get(274, 1)
-                if source_orientation not in range(1, 9):
-                    raise ValueError(f'invalid EXIF orientation: {path.name}')
-                if not width or not height or max(width, height) > 16384 or width * height > 32_000_000:
-                    raise ValueError(f'image dimensions exceed the host decode bound: {path.name}')
-                if getattr(original, 'n_frames', 1) != 1:
-                    raise ValueError(f'animated/multiframe image is unsupported: {path.name}')
-                if fallback:
-                    fallback_bytes = path.stat().st_size
-                    if (original.format != 'JPEG' or original.mode not in ('RGB', 'L') or
-                        original.info.get('progressive') or original.info.get('progression') or
-                        fallback_bytes > 262144 or max(width, height) > 2048 or width * height > 4_000_000):
-                        raise ValueError('fallback JPEG exceeds baseline format/size bounds')
-                    orientation = source_orientation
-                    if orientation not in range(1, 9):
-                        raise ValueError('invalid EXIF fallback orientation')
-                    fallback_crc = _crc(path.read_bytes())
-                oriented = ImageOps.exif_transpose(original)
-                rgba = oriented.convert('RGBA')
-                image = Image.new('RGB', rgba.size, (0, 0, 0))
-                image.paste(rgba, mask=rgba.getchannel('A'))
+            try:
+                with Image.open(path) as original:
+                    width, height = original.size
+                    source_orientation = original.getexif().get(274, 1)
+                    if source_orientation not in range(1, 9):
+                        raise ValueError(f'invalid EXIF orientation: {path.name}')
+                    if not width or not height or max(width, height) > 16384 or width * height > 32_000_000:
+                        raise ValueError(f'image dimensions exceed the host decode bound: {path.name}')
+                    if getattr(original, 'n_frames', 1) != 1:
+                        raise ValueError(f'animated/multiframe image is unsupported: {path.name}')
+                    if fallback:
+                        fallback_bytes = path.stat().st_size
+                        if (original.format != 'JPEG' or original.mode not in ('RGB', 'L') or
+                            original.info.get('progressive') or original.info.get('progression') or
+                            fallback_bytes > 262144 or max(width, height) > 2048 or width * height > 4_000_000):
+                            raise ValueError('fallback JPEG exceeds baseline format/size bounds')
+                        orientation = source_orientation
+                        if orientation not in range(1, 9):
+                            raise ValueError('invalid EXIF fallback orientation')
+                        fallback_crc = _crc(path.read_bytes())
+                    oriented = ImageOps.exif_transpose(original)
+                    rgba = oriented.convert('RGBA')
+                    image = Image.new('RGB', rgba.size, (0, 0, 0))
+                    image.paste(rgba, mask=rgba.getchannel('A'))
+            except (OSError, ValueError, SyntaxError) as error:
+                raise ValueError(f'Could not prepare photo {path}: {error}') from error
             width, height = image.size
             thumb = Image.new('RGB', (THUMB, THUMB), (0, 0, 0))
             tw, th = _fit(width, height, THUMB, THUMB)

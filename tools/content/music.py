@@ -370,6 +370,10 @@ def safe_media_path(path: str) -> bool:
                     for part in parts[1:]))
 
 
+class UnsupportedMediaPath(ValueError):
+    """A resolved existing filename cannot be opened by firmware."""
+
+
 def device_media_path(path: Path, device_root: Path) -> str:
     """Resolve the real FAT alias; never invent short names for existing files."""
     from .publish import _plain
@@ -388,7 +392,7 @@ def device_media_path(path: Path, device_root: Path) -> str:
         path = Path(buffer.value)
     relative = "/" + path.relative_to(root).as_posix().upper()
     if not safe_media_path(relative):
-        raise ValueError(f"Existing file has no firmware-compatible FAT short path: {path}")
+        raise UnsupportedMediaPath(f"Existing file has no firmware-compatible FAT short path: {path}")
     return relative
 
 
@@ -547,8 +551,17 @@ def _compile_music_stage(source: Path, output: Path, *, ffprobe: str | None = No
         return index
 
     cache_hits = 0
+    compatibility_copies = []
     for number, path in enumerate(paths):
-        location = device_media_path(path, device_root) if device_root is not None else None
+        location = None
+        compatibility_reason = None
+        if device_root is not None:
+            try:
+                location = device_media_path(path, device_root)
+            except UnsupportedMediaPath as exc:
+                compatibility_reason = str(exc)
+        stage_audio = device_root is None or compatibility_reason is not None
+        hash_audio = verification == "full" or stage_audio
         relative = path.relative_to(source).as_posix()
         if path.is_symlink() or source not in path.resolve().parents:
             raise ValueError("audio paths must remain in the source directory")
@@ -570,15 +583,19 @@ def _compile_music_stage(source: Path, output: Path, *, ffprobe: str | None = No
         identity = _stable("track:" + relative)
         extension = {".aiff": "AIF", ".aifc": "AIF", ".flac": "FLC", ".opus": "OPS"}.get(path.suffix.lower(), path.suffix[1:].upper())
         name = f"{identity & 0xffffffff:08X}.{extension}"
-        if identity in stable_ids or (device_root is None and name in filenames):
+        if identity in stable_ids or (stage_audio and name in filenames):
             raise ValueError("stable track identifier or staged filename collision")
         stable_ids.add(identity)
-        filenames.add(name)
+        if stage_audio:
+            filenames.add(name)
         hasher = hashlib.sha256()
         temporary = output / "MUSIC" / (name + ".tmp")
-        if verification == "full":
+        if compatibility_reason is not None and progress:
+            progress(dict(phase="compatibility-copy", current=number, total=len(paths),
+                          file=str(path), cached=cached))
+        if hash_audio:
             with path.open("rb") as original:
-                staged = temporary.open("wb") if device_root is None else None
+                staged = temporary.open("wb") if stage_audio else None
                 try:
                     while chunk := original.read(1024 * 1024):
                         hasher.update(chunk)
@@ -593,9 +610,12 @@ def _compile_music_stage(source: Path, output: Path, *, ffprobe: str | None = No
             raise ValueError("audio source changed during compilation")
         if cache and not cached:
             cache.put(source, relative, before, metadata)
-        if device_root is None:
+        if stage_audio:
             temporary.replace(output / "MUSIC" / name)
         location = location or "/LINNET/MUSIC/" + name
+        if compatibility_reason is not None:
+            compatibility_copies.append(dict(source=relative, reason=compatibility_reason,
+                                            bytes=before.st_size, path=location))
         tags = metadata["tags"]
         title = _text(tags.get("title") or path.stem)
         artist = _text(tags.get("artist") or "Unknown Artist")
@@ -618,7 +638,7 @@ def _compile_music_stage(source: Path, output: Path, *, ffprobe: str | None = No
         struct.pack_into("<IIIIIIIIIIIi", record, 48, metadata["codec"], string(title), string(artist),
             string(album), string(location), string(genre), string(composer),
             year, track, disc, art_for(path), gain)
-        record[96:128] = hasher.digest() if verification == "full" else bytes(32)
+        record[96:128] = hasher.digest() if hash_audio else bytes(32)
         index = len(records)
         records.append(record)
         for kind, label, parent in ((1, artist, ""), (2, album, artist), (3, genre, ""),
@@ -626,11 +646,11 @@ def _compile_music_stage(source: Path, output: Path, *, ffprobe: str | None = No
                                     (6, path.parent.relative_to(source).as_posix(), "")):
             if label:
                 groups.setdefault((kind, label, parent), []).append(index)
-        entries.append(dict(source=relative, id=f"{identity:016x}", path=location, storage="existing" if device_root is not None else "staged",
+        entries.append(dict(source=relative, id=f"{identity:016x}", path=location, storage="staged" if stage_audio else "existing",
                             title=title, artist=artist, album=album, track=track, disc=disc,
-                            codec=metadata["codec"], integrity="sha256" if verification == "full" else "metadata", bytes=before.st_size,
+                            codec=metadata["codec"], integrity="sha256" if hash_audio else "metadata", bytes=before.st_size,
                             mtime_ns=before.st_mtime_ns,
-                            sha256=hasher.hexdigest() if verification == "full" else "0" * 64))
+                            sha256=hasher.hexdigest() if hash_audio else "0" * 64))
     lookup = {entry["source"]: index for index, entry in enumerate(entries)}
     for name, members in (playlists or {}).items():
         if len(members) > MAX_TRACKS:
@@ -684,6 +704,9 @@ def _compile_music_stage(source: Path, output: Path, *, ffprobe: str | None = No
     report = dict(format="PODB", version=1, integrity="sha256" if verification == "full" else "metadata", tracks=len(records), groups=len(groups),
                   artwork=len(artwork_records), bytes=len(database), sha256=hashlib.sha256(database).hexdigest(),
                   database=str(output / "LIBRARY.PDB"), entries=entries,
+                  compatibility_copies=compatibility_copies,
+                  compatibility_copy_count=len(compatibility_copies),
+                  compatibility_copy_bytes=sum(entry["bytes"] for entry in compatibility_copies),
                   cache=dict(hits=cache_hits, misses=len(records) - cache_hits,
                              status=cache.status if cache else "unused"),
                   limitations=["Codec metadata does not imply native decoder qualification.",
