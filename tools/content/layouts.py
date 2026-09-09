@@ -140,10 +140,12 @@ def refine_scene(scene,theme,body):
         for i,n in enumerate(texts):place(n,12,40+i*17,196,17);n['flags']=0
         place(listing,12,126,196,26)
     elif sid=='clock':
+        clock_h=2*fh+4
+        row_h=max(20,fh+6)
+        place(listing,x,y+clock_h+8,w,2*row_h)
         for n in texts:
-            if n['text']=='System clock':place(n,x+4,y+max(4,(h-5*fh-12)//2),w-8,2*fh+4);n['flags']=CENTER
-            elif n['text']=='Clock source':place(n,x+4,bottom-3*fh-8,w-8,2*fh);n['flags']=WRAP
-            else:place(n,x+4,bottom-fh,w-8,fh);n['flags']=CENTER
+            if n['text']=='System clock':place(n,x+4,y,w-8,clock_h);n['flags']=CENTER
+            elif n['text']=='Clock source':place(n,x+4,bottom-2*fh,w-8,2*fh);n['flags']=WRAP
     elif sid=='clock-edit':
         if style=='graphite':y=36;h=bottom-y
         field_h=24 if style=='graphite' else 22 if style=='ipod-photo' else max(18,fh+3)

@@ -40,6 +40,8 @@ uint16_t ln_ui_color(uint32_t value);
 uint32_t ln_ui_theme_index(void);
 uint32_t ln_ui_battery_status(void); /* percent0..100,bit8 charging,bit9 external; UINT32_MAX unknown */
 uint32_t ln_ui_clock_seconds(void); /* local RTC seconds since midnight, UINT32_MAX unknown */
+bool ln_ui_clock_12(void);
+void ln_ui_clock_toggle(void);
 uint32_t ln_ui_playback_status(void); /*0 stopped,1 playing,2 paused*/
 /* Memory-only preference hooks; persistence belongs to display settings. */
 uint32_t ln_ui_theme_preference(void);

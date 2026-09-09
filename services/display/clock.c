@@ -28,7 +28,8 @@ static void label(uint32_t field,const char *name,uint32_t value,uint32_t digits
 }
 static void refresh_labels(void){
     label(0,"Year",draft.year,4);label(1,"Month",draft.month,2);label(2,"Day",draft.day,2);
-    label(3,"Hour",draft.hour,2);label(4,"Minute",draft.minute,2);
+    label(3,"Hour",ln_ui_clock_12()?(draft.hour%12u?draft.hour%12u:12u):draft.hour,2);
+    if(ln_ui_clock_12()){uint32_t at=0;while(labels[3][at])++at;labels[3][at++]=' ';labels[3][at++]=draft.hour<12u?'A':'P';labels[3][at++]='M';labels[3][at]=0;}label(4,"Minute",draft.minute,2);
     copy(labels[5],sizeof(labels[5]),pending?"Saving...":"Save date and time");
 }
 void ln_clock_editor_begin(const struct ln_calendar *baseline,bool valid){

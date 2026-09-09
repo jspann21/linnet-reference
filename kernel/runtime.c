@@ -221,20 +221,6 @@ static bool clock_save_presented;
 static const char *clock_admission(void){
     if(!ready||sleeping||shutdown_tracking)return "Try again when the player is awake.";
     if(shell->hold)return "Unlock Hold before saving.";
-#if defined(LINNET_AUDIO)
-    struct ln_audio_status a;ln_audio_snapshot(&a);
-    struct ln_player_status p;ln_player_snapshot(&p);
-    if(a.initialized||a.playing||a.paused||
-       (p.phase!=LN_PLAYER_IDLE&&p.phase!=LN_PLAYER_ERROR)||
-       (p.next_phase!=LN_PLAYER_NEXT_NONE&&p.next_phase!=LN_PLAYER_NEXT_FAILED))
-        return "Stop playback before setting the clock.";
-#endif
-#if defined(LINNET_VIDEO)
-    if(ln_video_active()||ln_video_pending())return "Stop video before setting the clock.";
-#endif
-#if defined(LINNET_PHOTOS)
-    if(ln_photos_pending())return "Wait for photos to finish.";
-#endif
     /* The RTC uses the power chip I2C bus, independently of storage activity. */
     return 0;
 }

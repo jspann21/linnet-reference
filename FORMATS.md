@@ -371,6 +371,9 @@ and starts music at 32. The final CRC gives 36 bytes of envelope overhead;
 the maximum 444-byte music record fits the 480-byte store. LDS1/LDS2/LDS3 and
 legacy music remain readable; older firmware cannot parse LDS4.
 
+LDS5 retains the LDS4 layout and uses byte 7 for time format (0: 24-hour,
+1: 12-hour). Other values are invalid. Older envelopes default to 24-hour.
+
 ## Optional rollback history (`LRH1`)
 
 `/LINNET/UPDATE0.BIN` and `UPDATE1.BIN` are optional 512-byte LTS1 records.

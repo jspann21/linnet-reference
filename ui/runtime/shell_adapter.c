@@ -18,3 +18,6 @@ uint32_t ln_shell_take_action(ln_shell *state){return ln_ui_take_action(state);}
 bool ln_ui_clock_input(struct ln_ui_state*s,uint32_t kind,int32_t value){return ln_clock_editor_input(s,kind,value);}
 void ln_ui_clock_cancel(void){ln_clock_editor_cancel();}
 const char *ln_ui_clock_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){return ln_clock_editor_text(n,item,fallback);}
+
+bool ln_ui_clock_12(void){return ln_display_clock_12();}
+void ln_ui_clock_toggle(void){ln_display_clock_toggle();}

@@ -13,12 +13,14 @@ static char update_labels[5][32];
 static uint32_t update_history;
 static uint32_t update_snapshot[16];
 static bool update_known;
-static bool loaded,dirty;
+static bool loaded,dirty,clock_12;
 static uint8_t photo_resume[16];
 static uint32_t video_resume[2];
 static uint32_t get(const uint8_t*p){return(uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
 static void put(uint8_t*p,uint32_t v){for(uint32_t i=0;i<4;++i)p[i]=(uint8_t)(v>>(i*8));}
-void ln_display_settings_init(void){update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;video_resume[0]=video_resume[1]=0;revision=record_revision=0;loaded=dirty=false;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;}
+void ln_display_settings_init(void){clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;video_resume[0]=video_resume[1]=0;revision=record_revision=0;loaded=dirty=false;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;}
+bool ln_display_clock_12(void){return clock_12;}
+void ln_display_clock_toggle(void){clock_12=!clock_12;dirty=true;++revision;++record_revision;}
 uint32_t ln_display_backlight_timeout_us(void){return seconds[choice]*1000000u;}
 uint32_t ln_display_settings_revision(void){return revision;}
 uint32_t ln_display_theme_index(void){return theme_index;}
@@ -52,7 +54,7 @@ bool ln_battery_capacity_adjust(int32_t direction){
     battery_capacity=direction<0?battery_capacity-50u:battery_capacity+50u;
     dirty=true;++revision;++record_revision;return true;
 }
-/* LDS4 adds capacity at byte 28, music at 32, and a tail CRC. Its 36-byte
+/* LDS5 adds the clock format at byte 7 to LDS4 capacity/music layout. Its 36-byte
  * overhead leaves 444 bytes for the existing maximum music payload. */
 static bool valid_photo(const uint8_t *resume){
     uint32_t flags=get(resume+8);
@@ -62,21 +64,21 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
     uint32_t bytes=480;
     if(ln_storage_busy()||!ln_storage_mounted()||!ln_storage_settings(false,raw,&bytes))return 0;
     if(bytes>480)return -1;
-    uint32_t out_offset=0,out_length=bytes,saved_choice=choice,saved_capacity=1200;
+    uint32_t out_offset=0,out_length=bytes,saved_choice=choice,saved_capacity=1200;bool saved_clock_12=false;
     uint8_t saved_photo[16]={0};uint32_t saved_video[2]={0};
     uint32_t magic=bytes>=4?get(raw):0;
-    bool envelope=magic==0x3153444cu||magic==0x3253444cu||magic==0x3353444cu||magic==0x3453444cu;
+    bool envelope=magic==0x3153444cu||magic==0x3253444cu||magic==0x3353444cu||(magic==0x3453444cu||magic==0x3553444cu);
     if(envelope){
-        bool compact=magic==0x3353444cu||magic==0x3453444cu;
-        uint32_t overhead=magic==0x3153444cu?16u:(magic==0x3453444cu?36u:32u);
+        bool compact=magic==0x3353444cu||(magic==0x3453444cu||magic==0x3553444cu);
+        uint32_t overhead=magic==0x3153444cu?16u:((magic==0x3453444cu||magic==0x3553444cu)?36u:32u);
         if(bytes<overhead||get(raw+bytes-4)!=ln_crc32(raw,bytes-4))return -1;
         uint32_t n=compact?(uint32_t)raw[4]|((uint32_t)raw[5]<<8):get(raw+4);
         if(n!=bytes-overhead)return -1;
         saved_choice=7;
         if(compact){
             uint32_t f=raw[14];
-            if(raw[7]||raw[6]>6||raw[15]||(f&7u)>5||((f>>5)&3u)>2||(f&128u))return -1;
-            saved_choice=raw[6];
+            if((magic==0x3553444cu?raw[7]>1u:raw[7]!=0u)||raw[6]>6||raw[15]||(f&7u)>5||((f>>5)&3u)>2||(f&128u))return -1;
+            saved_choice=raw[6];saved_clock_12=magic==0x3553444cu&&raw[7]==1u;
             put(saved_photo,get(raw+8));put(saved_photo+4,(uint32_t)raw[12]|((uint32_t)raw[13]<<8));
             put(saved_photo+8,(f&7u)|(((f>>3)&3u)<<8)|(((f>>5)&3u)<<16));put(saved_photo+12,get(raw+16));
             saved_video[0]=get(raw+20);saved_video[1]=get(raw+24);
@@ -85,7 +87,7 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
             if(magic==0x3253444cu)for(uint32_t i=0;i<16;++i)saved_photo[i]=raw[12+i];
         }
         if(saved_choice==7||!valid_photo(saved_photo))return -1;
-        if(magic==0x3453444cu){
+        if((magic==0x3453444cu||magic==0x3553444cu)){
             saved_capacity=get(raw+28);
             if(saved_capacity<50u||saved_capacity>10000u||saved_capacity%50u)return -1;
         }
@@ -93,8 +95,8 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
     }
     /* Commit only after the complete envelope has passed validation. */
     if(!loaded){
-        if(!dirty&&(choice!=saved_choice||battery_capacity!=saved_capacity)){
-            choice=saved_choice;battery_capacity=saved_capacity;++revision;
+        if(!dirty&&(choice!=saved_choice||battery_capacity!=saved_capacity||clock_12!=saved_clock_12)){
+            choice=saved_choice;battery_capacity=saved_capacity;clock_12=saved_clock_12;++revision;
         }
         for(uint32_t i=0;i<16;++i)photo_resume[i]=saved_photo[i];
         video_resume[0]=saved_video[0];video_resume[1]=saved_video[1];
@@ -106,7 +108,7 @@ static int write_record(uint8_t raw[480],const uint8_t *data,uint32_t length){
     for(uint32_t i=length;i;--i)raw[32+i-1]=data[i-1];
     uint32_t index=get(photo_resume+4),flags=get(photo_resume+8);
     if(index>65535u||(flags&255u)>5u||((flags>>8)&255u)>3u||(flags>>16)>2u)return 0;
-    put(raw,0x3453444cu);raw[4]=(uint8_t)length;raw[5]=(uint8_t)(length>>8);raw[6]=(uint8_t)choice;raw[7]=0;
+    put(raw,0x3553444cu);raw[4]=(uint8_t)length;raw[5]=(uint8_t)(length>>8);raw[6]=(uint8_t)choice;raw[7]=clock_12?1u:0u;
     put(raw+8,get(photo_resume));raw[12]=(uint8_t)index;raw[13]=(uint8_t)(index>>8);
     raw[14]=(uint8_t)((flags&7u)|(((flags>>8)&3u)<<3)|(((flags>>16)&3u)<<5));raw[15]=0;
     put(raw+16,get(photo_resume+12));put(raw+20,video_resume[0]);put(raw+24,video_resume[1]);
@@ -149,8 +151,8 @@ int ln_display_settings_music(bool write,uint8_t *data,uint32_t *length){
     for(uint32_t i=0;i<bytes;++i)data[i]=raw[offset+i];
     *length=bytes;return 1;
 }
-/* Theme sidecars keep the established LDS4/music record byte-for-byte compatible
- * with older OS images. Optional or invalid sidecars never block shutdown. */
+/* Theme sidecars are independent of the settings/music envelope.
+ * Optional or invalid sidecars never block shutdown. */
 static bool theme_id_char(uint8_t c){return (c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='.'||c=='-';}
 static bool theme_id_valid(const uint8_t *id,uint32_t length){
     if(!length)return true;
