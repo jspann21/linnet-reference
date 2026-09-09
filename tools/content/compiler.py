@@ -112,7 +112,7 @@ def compile_system(root, output, configpath=None):
         if not isinstance(label,str) or not 1<=len(label)<=24 or any(ord(c)<32 or ord(c)>126 for c in label):
             raise ContentError('theme name must be 1..24 printable ASCII characters')
         style=metadata.get('style','standard')
-        if style not in ('standard','monochrome','apple-photo'): raise ContentError('unknown theme style')
+        if style not in ('standard','monochrome','apple-photo','album-art'): raise ContentError('unknown theme style')
         layout=metadata.get('layout','default')
         if layout not in LAYOUTS: raise ContentError('unknown theme layout')
         palette=spec.get('colors',{})
@@ -126,7 +126,7 @@ def compile_system(root, output, configpath=None):
         metrics=spec.get('metrics',{})
         if set(metrics)!={'row_height','padding'} or type(metrics['row_height']) is not int or not 16<=metrics['row_height']<=32 or type(metrics['padding']) is not int or not 0<=metrics['padding']<=12:
             raise ContentError('theme metrics require row_height16..32/padding0..12')
-        themes.append(dict(id=name,name=label,colors=palette,flags={'standard':0,'monochrome':1,'apple-photo':2}[style],layout=layout,metrics=metrics))
+        themes.append(dict(id=name,name=label,colors=palette,flags={'standard':0,'monochrome':1,'apple-photo':2,'album-art':4}[style],layout=layout,metrics=metrics))
         theme_specs[name]=spec
     theme_path=theme_manifests[theme_id]; theme=toml(theme_path)
     colors=themes[ordered.index(theme_id)]['colors']

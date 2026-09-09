@@ -48,6 +48,11 @@ uint32_t ln_ui_playback_status(void){
     struct ln_player_status p;ln_player_snapshot(&p);
     return p.phase==LN_PLAYER_PAUSE?2u:(p.phase==LN_PLAYER_PLAY||p.phase==LN_PLAYER_DRAIN)?1u:0u;
 }
+const struct ln_ui_asset *ln_ui_now_playing_art(uint32_t *revision){
+    static struct ln_ui_asset art={64,64,0};
+    *revision=ln_music_art_revision();art.pixels=ln_music_art_pixels();
+    return art.pixels?&art:0;
+}
 static bool in_scene(const struct ln_ui_node*n,const char*id){
     uintptr_t address=(uintptr_t)n;
     for(uint32_t i=0;i<ln_ui_scene_count;++i){const struct ln_ui_scene*s=&ln_ui_scenes[i];uintptr_t first=(uintptr_t)s->nodes;

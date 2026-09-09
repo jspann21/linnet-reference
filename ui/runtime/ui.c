@@ -16,7 +16,10 @@ __attribute__((weak)) uint32_t ln_ui_theme_preference(void){return session_theme
 __attribute__((weak)) void ln_ui_theme_changed(uint32_t index){session_theme=index;}
 __attribute__((weak)) const char *ln_ui_theme_status(void){return "Applied";}
 uint32_t ln_ui_theme_index(void){uint32_t index=ln_ui_theme_preference();return index<ln_ui_theme_count?index:ln_ui_default_theme;}
-uint16_t ln_ui_color(uint32_t value){return value>=LN_UI_COLOR_TOKEN&&value<LN_UI_COLOR_TOKEN+LN_UI_COLOR_COUNT?ln_ui_themes[active_theme].colors[value-LN_UI_COLOR_TOKEN]:(uint16_t)value;}
+static uint16_t album_colors[LN_UI_COLOR_COUNT];
+static bool album_colors_valid;
+__attribute__((weak)) const struct ln_ui_asset *ln_ui_now_playing_art(uint32_t *revision){*revision=0;return 0;}
+uint16_t ln_ui_color(uint32_t value){return value>=LN_UI_COLOR_TOKEN&&value<LN_UI_COLOR_TOKEN+LN_UI_COLOR_COUNT?((ln_ui_themes[active_theme].flags&LN_UI_THEME_ALBUM_ART)&&album_colors_valid?album_colors[value-LN_UI_COLOR_TOKEN]:ln_ui_themes[active_theme].colors[value-LN_UI_COLOR_TOKEN]):(uint16_t)value;}
 static void theme_sync(void){
     uint32_t next=ln_ui_theme_index();if(theme_ready&&next==active_theme)return;
     active_theme=next;ln_ui_scenes=ln_ui_themes[active_theme].scenes;ln_ui_font=*ln_ui_themes[active_theme].font;theme_ready=true;
@@ -52,6 +55,125 @@ static uint32_t divide(uint32_t numerator,uint32_t denominator){
  * numerator is 63*255+127=16192; this shift/add quotient is exact on that range. */
 static uint32_t blend_div255(uint32_t value){return (value+1u+(value>>8))>>8;}
 static uint16_t mix(uint16_t a,uint16_t b,uint32_t alpha){uint32_t z=255u-alpha;return(uint16_t)((blend_div255((a>>11)*alpha+(b>>11)*z+127u)<<11)|(blend_div255(((a>>5)&63u)*alpha+((b>>5)&63u)*z+127u)<<5)|blend_div255((a&31u)*alpha+(b&31u)*z+127u));}
+/* Album palette: bounded histogram and artwork-revision cache. Inspired by
+ * RockboxPhoto's dominant/accent extraction and 250 ms transition approach.
+ * https://github.com/jspann21/rockbox-ipod-photo/blob/main/apps/gui/skin_engine/skin_albumart_color.c
+ * No storage access, allocations or floating point on the rendering path. */
+static uint16_t album_from[LN_UI_COLOR_COUNT],album_target[LN_UI_COLOR_COUNT];
+static uint32_t album_revision,album_theme=UINT32_MAX,album_started;
+static bool album_fading,album_waiting;
+static uint32_t album_missing_at;
+/* Palette calculations adapted from Rockbox Photo skin_albumart_color.c.
+ * Copyright (C) 2026 Rockbox contributors. GPL-2.0-or-later.
+ * Keep 8-bit channel expansion, integer rounding and bucket traversal aligned
+ * with that implementation; RGB565 packing happens after channel averaging. */
+struct album_rgb {uint32_t r,g,b;};
+static struct album_rgb album_unpack(uint16_t c){
+    return (struct album_rgb){((c>>8)&248u)|(c>>13),((c>>3)&252u)|((c>>9)&3u),((c<<3)&248u)|((c>>2)&7u)};
+}
+static uint16_t album_pack(struct album_rgb c){return (uint16_t)(((c.r>>3)<<11)|((c.g>>2)<<5)|(c.b>>3));}
+static uint32_t album_luma(struct album_rgb c){return (c.r*77u+c.g*150u+c.b*29u)>>8;}
+static uint32_t album_bucket(uint16_t c){struct album_rgb v=album_unpack(c);return ((v.r>>4)<<8)|((v.g>>4)<<4)|(v.b>>4);}
+static struct album_rgb album_average(const struct ln_ui_asset*a,uint32_t bucket){
+    struct album_rgb sum={0,0,0};uint32_t count=0,size=a->width*a->height;
+    for(uint32_t i=0;i<size;i+=4u){if(album_bucket(a->pixels[i])!=bucket)continue;
+        struct album_rgb c=album_unpack(a->pixels[i]);sum.r+=c.r;sum.g+=c.g;sum.b+=c.b;++count;}
+    return (struct album_rgb){divide(sum.r,count),divide(sum.g,count),divide(sum.b,count)};
+}
+static uint32_t album_score(uint32_t bucket,uint32_t count){
+    uint32_t r=bucket>>8,g=(bucket>>4)&15u,b=bucket&15u;
+    uint32_t hi=(uint32_t)max((int32_t)r,max((int32_t)g,(int32_t)b));
+    uint32_t lo=(uint32_t)min((int32_t)r,min((int32_t)g,(int32_t)b));
+    uint32_t saturation=divide((hi-lo)*15u,hi);
+    return count*(saturation+8u)/8u;
+}
+static uint16_t album_lerp(uint16_t from,uint16_t to,uint32_t t){
+    struct album_rgb a=album_unpack(from),b=album_unpack(to);
+    return album_pack((struct album_rgb){
+        (uint32_t)((int32_t)a.r+(((int32_t)b.r-(int32_t)a.r)*(int32_t)t>>8)),
+        (uint32_t)((int32_t)a.g+(((int32_t)b.g-(int32_t)a.g)*(int32_t)t>>8)),
+        (uint32_t)((int32_t)a.b+(((int32_t)b.b-(int32_t)a.b)*(int32_t)t>>8))});
+}
+static void album_extract(const struct ln_ui_asset*a,uint16_t*out){
+    /* Static workspace avoids placing 8 KiB on the device's runtime stack. */
+    static uint16_t histogram[4096];
+    for(uint32_t i=0;i<4096u;++i)histogram[i]=0;
+    for(uint32_t i=0;i<a->width*a->height;i+=4u)++histogram[album_bucket(a->pixels[i])];
+    uint32_t dominant=0,best=0,fallback=0;
+    for(uint32_t i=0;i<4096u;++i){
+        if(!histogram[i])continue;
+        if(histogram[i]>histogram[fallback])fallback=i;
+        uint32_t r=i>>8,g=(i>>4)&15u,b=i&15u;
+        if((r<2u&&g<2u&&b<2u)||(r>13u&&g>13u&&b>13u)||((r*5u+g*9u+b*2u)>>4)<2u)continue;
+        uint32_t score=album_score(i,histogram[i]);if(score>best){best=score;dominant=i;}
+    }
+    if(!best)dominant=fallback;
+    struct album_rgb bg=album_average(a,dominant);uint32_t bg_luma=album_luma(bg);
+    uint32_t accent=UINT32_MAX;best=0;
+    for(uint32_t i=0;i<4096u;++i){
+        if(!histogram[i]||i==dominant)continue;
+        struct album_rgb approx={(i>>8)*17u,((i>>4)&15u)*17u,(i&15u)*17u};
+        uint32_t luma=album_luma(approx),contrast=luma>bg_luma?luma-bg_luma:bg_luma-luma;
+        if(luma<30u||contrast<100u)continue;
+        uint32_t score=album_score(i,histogram[i]);if(score>best){best=score;accent=i;}
+    }
+    uint32_t neutral=bg_luma<128u?255u:0u;
+    struct album_rgb fg=accent==UINT32_MAX?(struct album_rgb){neutral,neutral,neutral}:album_average(a,accent);
+    uint32_t fg_luma=album_luma(fg),contrast=fg_luma>bg_luma?fg_luma-bg_luma:bg_luma-fg_luma;
+    if(contrast<100u){
+        uint32_t target=bg_luma<128u?(uint32_t)min((int32_t)bg_luma+100,255):(uint32_t)max((int32_t)bg_luma-100,0);
+        if(fg_luma){uint32_t scale=divide(target*256u,fg_luma);
+            fg.r=(uint32_t)min((int32_t)(fg.r*scale>>8),255);fg.g=(uint32_t)min((int32_t)(fg.g*scale>>8),255);fg.b=(uint32_t)min((int32_t)(fg.b*scale>>8),255);
+        }else fg=(struct album_rgb){target,target,target};
+    }
+    uint16_t base=album_pack(bg),ink=album_pack(fg);
+    /* Rockbox maps canvas directly to dominant, text/selector to accent,
+     * selected text to dominant, separators to a quarter-strength accent.
+     * Its quiet widget surface is a 36/256 blend toward inverse canvas. */
+    uint16_t panel=album_lerp(base,(uint16_t)~base,36u);
+    out[LN_UI_BACKGROUND]=base;out[LN_UI_FOREGROUND]=ink;out[LN_UI_ACCENT]=ink;
+    out[LN_UI_PANEL]=panel;out[LN_UI_MUTED]=ink;
+    out[LN_UI_SELECTION_BG]=ink;out[LN_UI_SELECTION_FG]=base;
+    out[LN_UI_STATUS_BG]=base;out[LN_UI_STATUS_FG]=ink;
+    out[LN_UI_BORDER]=album_lerp(base,ink,64u);
+    out[LN_UI_ARTWORK_BG]=panel;out[LN_UI_ARTWORK_FG]=ink;out[LN_UI_BATTERY]=ink;
+}
+uint32_t ln_ui_palette_tick(struct ln_ui_state*s,uint32_t now){
+    if(!s)return UINT32_MAX;theme_sync();
+    if(!(ln_ui_themes[active_theme].flags&LN_UI_THEME_ALBUM_ART)){
+        album_theme=UINT32_MAX;album_colors_valid=false;album_fading=false;album_waiting=false;return UINT32_MAX;
+    }
+    uint32_t revision;const struct ln_ui_asset*a=ln_ui_now_playing_art(&revision);
+    bool entered=album_theme!=active_theme;
+    if(entered){
+        album_theme=active_theme;album_colors_valid=true;album_fading=false;
+        for(uint32_t i=0;i<LN_UI_COLOR_COUNT;++i)album_colors[i]=ln_ui_themes[active_theme].colors[i];
+    }
+    bool changed_art=entered||revision!=album_revision;
+    if(changed_art){
+        album_revision=revision;
+        album_waiting=!(a&&a->pixels&&a->width&&a->height&&a->width<=220u&&a->height<=176u);
+        album_missing_at=now;
+    }
+    /* Rockbox keeps the previous palette while the next cover loads, then
+     * falls back after one second if no artwork becomes available. */
+    bool missing_expired=album_waiting&&now-album_missing_at>=1000000u;
+    if((changed_art&&!album_waiting)||missing_expired){
+        album_waiting=false;
+        for(uint32_t i=0;i<LN_UI_COLOR_COUNT;++i){album_from[i]=album_colors[i];album_target[i]=ln_ui_themes[active_theme].colors[i];}
+        if(a&&a->pixels&&a->width&&a->height&&a->width<=220u&&a->height<=176u)album_extract(a,album_target);
+        album_started=now;album_fading=false;
+        for(uint32_t i=0;i<LN_UI_COLOR_COUNT;++i)if(album_from[i]!=album_target[i])album_fading=true;
+        if(entered)s->dirty|=1u;
+    }
+    if(!album_fading)return album_waiting?album_missing_at+1000000u:UINT32_MAX;
+    uint32_t elapsed=now-album_started,alpha=elapsed>=250000u?256u:divide(elapsed*256u,250000u);
+    bool changed=false;
+    for(uint32_t i=0;i<LN_UI_COLOR_COUNT;++i){uint16_t c=album_lerp(album_from[i],album_target[i],alpha);if(c!=album_colors[i])changed=true;album_colors[i]=c;}
+    if(changed)s->dirty|=1u; /* Palette affects every region, including empty space. */
+    if(elapsed>=250000u){album_fading=false;return album_waiting?album_missing_at+1000000u:UINT32_MAX;}
+    return now+25000u;
+}
 typedef uint32_t ln_fill_word __attribute__((may_alias));
 static void fill(struct painter*p,struct rect r,uint16_t c){r=intersect(r,p->clip);if(r.w<=0||r.h<=0)return;for(int32_t y=r.y;y<r.y+r.h;++y){uint16_t *dest=p->pixels+(uint32_t)y*220u+(uint32_t)r.x;int32_t left=r.w;uint32_t word=(uint32_t)c|((uint32_t)c<<16);if(left>0&&((uintptr_t)dest&3u)){*dest++=c;--left;}while(left>=2){*(ln_fill_word*)dest=word;dest+=2;left-=2;}if(left>0)*dest=c;}}
 static void border(struct painter*p,struct rect r,uint16_t c){fill(p,(struct rect){r.x,r.y,r.w,1},c);fill(p,(struct rect){r.x,r.y+r.h-1,r.w,1},c);fill(p,(struct rect){r.x,r.y,1,r.h},c);fill(p,(struct rect){r.x+r.w-1,r.y,1,r.h},c);}

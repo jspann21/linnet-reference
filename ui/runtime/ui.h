@@ -14,6 +14,7 @@ enum ln_ui_kind { LN_UI_SCREEN=1,LN_UI_VIEW,LN_UI_TEXT,LN_UI_ICON,LN_UI_IMAGE,
 #define LN_UI_COLOR_TOKEN 0x10000u
 #define LN_UI_THEME_MONOCHROME 1u
 #define LN_UI_THEME_APPLE_PHOTO 2u
+#define LN_UI_THEME_ALBUM_ART 4u
 /* Host-baked list geometry. Low six flags retain their existing meanings.
  * Unmarked, reserved-bit, or incomplete encodings use runtime geometry. */
 #define LN_UI_GEOMETRY 0x80000000u
@@ -96,6 +97,9 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node *node,uint32_t item,const
 void ln_ui_refresh(struct ln_ui_state *state);
 /* Returns the next text-scroll deadline, or UINT32_MAX when idle. */
 uint32_t ln_ui_scroll_tick(struct ln_ui_state *state,uint32_t now_us);
+/* Retained artwork only; revision changes when published pixels or availability change. */
+const struct ln_ui_asset *ln_ui_now_playing_art(uint32_t *revision);
+uint32_t ln_ui_palette_tick(struct ln_ui_state *state,uint32_t now_us);
 bool ln_ui_status_refresh(struct ln_ui_state *state);
 uint32_t ln_ui_visible_capacity(const struct ln_ui_state *state);
 uint32_t ln_ui_focused_count(const struct ln_ui_state *state);

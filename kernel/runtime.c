@@ -59,7 +59,7 @@ static struct ln_power_state power;
 static uint32_t last_injection, synthetic_flags, override_mask;
 static uint32_t sleep_count,wake_count,wake_at,animation_left,animation_at;
 #if defined(LINNET_NATIVE_UI)
-static uint32_t text_scroll_at=UINT32_MAX;
+static uint32_t text_scroll_at=UINT32_MAX,palette_at=UINT32_MAX;
 #endif
 static uint32_t brightness=100;
 static uint32_t backlight_deadline,backlight_timeout=30000000u;
@@ -744,6 +744,7 @@ void ln_runtime_step(void){
     }
 #if defined(LINNET_NATIVE_UI)
     text_scroll_at=(!sleeping&&!backlight_idle)?ln_ui_scroll_tick(shell,now):UINT32_MAX;
+    palette_at=(!sleeping&&!backlight_idle)?ln_ui_palette_tick(shell,now):UINT32_MAX;
     if(shell->dirty)dirty=true;
     if(shell->action==LINNET_UI_ACTION_SYNC&&!ln_storage_busy()){
         ready=false;shutdown_tracking=false;animation_left=0;
@@ -844,6 +845,7 @@ void ln_runtime_idle(void){
     uint32_t next=now+200000u;
 #if defined(LINNET_NATIVE_UI)
     if(text_scroll_at!=UINT32_MAX&&(int32_t)(text_scroll_at-next)<0)next=text_scroll_at;
+    if(palette_at!=UINT32_MAX&&(int32_t)(palette_at-next)<0)next=palette_at;
 #endif
 #if defined(LINNET_VIDEO)
     uint32_t video_due=ln_video_deadline(now);if((int32_t)(video_due-next)<0)next=video_due;

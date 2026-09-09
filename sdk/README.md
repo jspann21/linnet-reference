@@ -133,6 +133,17 @@ other layouts lower authored TSX into their own native rectangles. Assets compil
 to RGB565, at most 64 resources / 256 KiB combined.
 P3 PPM sources use range 255 and at most 220 by 176 pixels.
 
+The bundled `linnet.theme.album-colors` theme uses `[theme] style="album-art"`.
+All thirteen semantic colors follow the current music artwork on every screen,
+with a 250 ms transition. Rockbox Photo's 4,096-bucket, every-fourth-pixel
+histogram and saturation-weighted scoring select the unmodified background.
+The foreground uses its contrasting accent calculation, including the
+100-point luminance threshold and proportional channel scaling. Selection
+inverts those two roles; quiet surfaces blend toward the inverse background.
+Extraction is cached by artwork revision. Missing artwork keeps the previous
+palette for one second before returning to authored fallback colors. Actual
+photos/video retain their original pixels. Backgrounds can be light or dark.
+
 The checked-in LNF1 font is DejaVu Sans Mono, baked to 95 printable ASCII glyphs,
 8 by 14 alpha cells, advance 8. Its license is included in every compiled content
 package. Baking a replacement is an explicit host step requiring Pillow:
