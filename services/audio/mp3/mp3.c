@@ -19,7 +19,22 @@ bool ln_mp3_seek(struct ln_mp3 *d,uint64_t frame)
 }
 static int finish(struct ln_mp3 *d)
 {
-    if(!d->compressed_frames||(d->gapless&&d->decoded_frames!=d->total_frames))return fail(d,LN_MP3_FORMAT);
+    if(!d->compressed_frames)return fail(d,LN_MP3_FORMAT);
+    if(d->gapless&&d->decoded_frames!=d->total_frames){
+        uint32_t samples=(d->frame.header.flags&MAD_FLAG_LSF_EXT)?576u:1152u;
+        /* Some tagged files have lost their final MPEG frame. Only accept
+         * physical EOF with exactly that one frame absent, after all valid
+         * PCM has drained. Earlier resynchronization or a larger shortage
+         * still means corruption. Publish the actual length; never invent
+         * samples or abort the player's already queued audible tail. */
+        if(!d->eof||!d->decoded_frames||d->trim_remaining||
+           d->pcm_cursor!=d->synth.pcm.length||d->decoded_frames>=d->total_frames||
+           d->recoveries!=d->consecutive_recoveries||
+           d->total_frames+d->lead_trim+d->tail_trim!=((uint64_t)d->compressed_frames+1u)*samples||
+           d->decoded_frames+d->lead_trim!=(uint64_t)d->compressed_frames*samples)
+            return fail(d,LN_MP3_FORMAT);
+        d->total_frames=d->decoded_frames;
+    }
     if(d->seeking)return fail(d,LN_MP3_ARGUMENT);
     return LN_MP3_EOF;
 }

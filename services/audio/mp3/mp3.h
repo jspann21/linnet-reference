@@ -27,6 +27,9 @@ void ln_mp3_init(struct ln_mp3 *,ln_mp3_read_fn,void *,uint64_t file_size);
  * Reject after64KiB newly read without a valid frame, or65536 consecutive
  * recoverable errors. Initial ID3 bytes are excluded; a valid frame resets
  * both budgets. Large corrupt gaps require an explicit file repair.
+ * At physical EOF, a gapless stream missing exactly its final MPEG frame
+ * may finish at the actual decoded length if no earlier recovery occurred.
+ * No silence is inserted; total_frames is corrected before reporting EOF.
  * CRC-protected frames retain libmad verification. Only Layer III is exposed. */
 int ln_mp3_decode(struct ln_mp3 *,int16_t *stereo,uint32_t capacity,uint32_t *frames);
 /* Exact PCM-frame seek by restarting and incrementally decoding/discarding.
