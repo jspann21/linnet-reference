@@ -17,6 +17,8 @@ void ln_music_headphones(bool connected);
  * invoke from panic/crash recovery. False leaves admission frozen. */
 bool ln_music_prepare_shutdown(void);
 bool ln_music_quiesce(bool save_settings);
+uint32_t ln_music_option_action(uint32_t row);
+uint32_t ln_music_queue_action(uint32_t row);
 const char *ln_music_option_label(uint32_t index);
 bool ln_music_option_select(uint32_t index);
 uint32_t ln_music_revision(void);

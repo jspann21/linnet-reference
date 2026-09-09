@@ -12,7 +12,7 @@ import tomllib
 from .tsx import ContentError, compile_tsx, COLOR_ROLES
 from .layouts import apply_layout, gate_features
 
-LAYOUTS = ('default','ipod-photo','graphite','aurora','sunset','blueprint')
+LAYOUTS = ('default','ipod-photo','graphite','aurora','sunset','blueprint','minimal')
 
 def canonical(value):
     return (json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=True)+'\n').encode('ascii')

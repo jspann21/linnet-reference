@@ -170,6 +170,17 @@ uint32_t ln_music_deadline(uint32_t now){
     if(volume_retry_pending&&(int32_t)(volume_retry_at-next)<0)next=volume_retry_at;
     return next;
 }
+/* Menu rows map to stable service actions, shared by labels and selection. */
+uint32_t ln_music_option_action(uint32_t row){
+    /* Queue, playback settings, favorites/bookmarks, transport, stop. */
+    static const uint8_t actions[]={7,0,1,8,2,3,4,5,9,10,6};
+    return row<sizeof(actions)?actions[row]:UINT32_MAX;
+}
+uint32_t ln_music_queue_action(uint32_t row){
+    /* Play, move up/down, remove, clear. */
+    static const uint8_t actions[]={0,2,3,1,4};
+    return row<sizeof(actions)?actions[row]:UINT32_MAX;
+}
 const char *ln_music_option_label(uint32_t index){
     const struct ln_music_journal_record *record=have_current?ln_music_history_get(current.track.id):0;
     if(index==2||index==3){

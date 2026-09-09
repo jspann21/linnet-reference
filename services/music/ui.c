@@ -136,7 +136,7 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
 #endif
     if(in_scene(n,"linnet.system.music-options")){
         if(n->kind==LN_UI_STATUS_BAR)return "Playback options";
-        if(n->kind==LN_UI_VIRTUAL_LIST&&item<11)return ln_music_option_label(item);
+        if(n->kind==LN_UI_VIRTUAL_LIST&&item<11)return ln_music_option_label(ln_music_option_action(item));
     }
     if(in_scene(n,"linnet.system.music-sound")&&n->kind==LN_UI_VIRTUAL_LIST&&item<6)return ln_music_sound_label(item);
     if(in_scene(n,"linnet.system.music-queue")){
@@ -144,7 +144,7 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
         if(n->kind==LN_UI_VIRTUAL_LIST&&item!=UINT32_MAX)return ln_music_queue_view_label(item);
     }
     if(in_scene(n,"linnet.system.music-queue-actions")&&n->kind==LN_UI_VIRTUAL_LIST&&item<5){
-        static const char *const labels[]={"Play","Remove","Move up","Move down","Clear queue"};return labels[item];
+        static const char *const labels[]={"Play","Remove","Move up","Move down","Clear queue"};return labels[ln_music_queue_action(item)];
     }
     if(in_scene(n,"linnet.system.music-search")){
         if(n->kind==LN_UI_STATUS_BAR)return ln_music_search_title();

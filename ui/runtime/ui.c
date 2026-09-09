@@ -292,7 +292,7 @@ static void chrome(struct painter*p,struct ln_ui_state*s){
     }else if(layout()==LN_UI_LAYOUT_GRAPHITE||layout()==LN_UI_LAYOUT_SUNSET){
         fill(p,(struct rect){0,154,220,22},color(LN_UI_PANEL));
         symbol(p,10,159,ln_ui_playback_status(),ink);if(s->headphones)symbol(p,29,159,3,ink);if(s->hold)symbol(p,48,159,4,ink);
-        symbol(p,155,159,5,ink);fitted_text(p,170,156,clock,ink,48);
+        symbol(p,155,159,5,ink);fitted_text(p,170,154+max(0,(22-(int32_t)ln_ui_font.height)/2),clock,ink,48);
     }
 }
 static uint32_t status_signature(void){
@@ -388,7 +388,7 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
         if(layout()==LN_UI_LAYOUT_IPOD_PHOTO)gradient(p,bounds(n),color(LN_UI_BACKGROUND),bg);else fill(p,bounds(n),bg);
         fill(p,(struct rect){n->x,n->y+n->h-1,n->w,1},color(LN_UI_BORDER));
         int32_t left=n->x+5,right=n->x+n->w-5;
-        if(layout()!=LN_UI_LAYOUT_AURORA){
+        if(layout()!=LN_UI_LAYOUT_AURORA&&layout()!=LN_UI_LAYOUT_MINIMAL){
             battery(p,right-25,n->y+5,fg);right-=31;
             if(layout()==LN_UI_LAYOUT_IPOD_PHOTO){
                 uint32_t play=ln_ui_playback_status();if(play){symbol(p,left,n->y+5,play,mix(color(LN_UI_ACCENT),color(LN_UI_BACKGROUND),140));left+=13;}
@@ -398,9 +398,10 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
             else if(layout()==LN_UI_LAYOUT_DEFAULT){if(s->headphones){symbol(p,left,n->y+5,3,fg);left+=14;}if(s->hold){symbol(p,left,n->y+5,4,fg);left+=14;}}
             if(layout()==LN_UI_LAYOUT_DEFAULT||layout()==LN_UI_LAYOUT_BLUEPRINT){uint32_t play=ln_ui_playback_status();if(play){symbol(p,left,n->y+5,play,fg);left+=14;}}
         }
+        if(layout()==LN_UI_LAYOUT_MINIMAL){uint32_t play=ln_ui_playback_status();if(play){symbol(p,left,n->y+5,play,fg);left+=14;}if(s->hold){symbol(p,left,n->y+5,4,fg);left+=14;}}
         const char *title=node_text?node_text:ln_ui_scenes[s->scene].title;
         int32_t x=left;
-        if(layout()==LN_UI_LAYOUT_IPOD_PHOTO){
+        if(layout()==LN_UI_LAYOUT_IPOD_PHOTO||layout()==LN_UI_LAYOUT_BLUEPRINT){
             int32_t inset=max(left-n->x,n->x+n->w-right);
             left=n->x+inset;right=n->x+n->w-inset;
             x=left+max(0,(right-left-text_width(title))/2);
@@ -478,6 +479,12 @@ static void paint(struct ln_ui_state*s,uint16_t*pixels,struct rect r,ln_ui_damag
     }
     if(!covered)fill(&p,r,color(LN_UI_BACKGROUND));
     if(c)for(uint32_t i=first;i<c->count&&i<1024u;++i)draw_node(&p,&c->nodes[i],s,i==c->focus_node);
+    if(layout()==LN_UI_LAYOUT_MINIMAL){
+        uint32_t status=ln_ui_battery_status();
+        fill(&p,(struct rect){0,0,220,2},color(LN_UI_BACKGROUND));
+        if(status!=UINT32_MAX&&(status&255u)<=100u)
+            fill(&p,(struct rect){0,0,(int32_t)((status&255u)*220u/100u),2},color(LN_UI_BATTERY));
+    }
     s->painted_pixels+=(uint32_t)(r.w*r.h);if(damage)damage(r.x,r.y,r.w,r.h);
 }
 /* Count the same clipped cells as a full paint without rasterizing their text
@@ -634,6 +641,7 @@ void ln_ui_render(struct ln_ui_state*s,uint16_t*pixels,ln_ui_damage_fn damage){i
         if((s->dirty&16u)&&!content_damage(s,pixels,damage))paint(s,pixels,screen,damage);
         if(c)for(uint32_t i=0;i<c->count&&i<1024u;++i){const struct ln_ui_node*n=&c->nodes[i];bool selected=(s->dirty&2u)&&(i==c->focus_node||n->kind==LN_UI_SCROLLBAR||(n->deps&3u));bool status=(s->dirty&4u)&&(n->kind==LN_UI_STATUS_BAR||(n->deps&16u));bool animation=(s->dirty&8u)&&(n->deps&4u);if(selected&&!status&&!animation&&i==c->focus_node&&selection_damage(s,pixels,n,damage))continue;if(selected||status||animation)paint(s,pixels,bounds(n),damage);}
     }
+    if(layout()==LN_UI_LAYOUT_MINIMAL&&(s->dirty&4u)&&!(s->dirty&1u))paint(s,pixels,(struct rect){0,0,220,2},damage);
     if((s->dirty&32u)&&!(s->dirty&1u))paint_scrolling(s,pixels,c,damage);
     /* Report visible rows, not the subset repainted by incremental damage. */
     if((s->dirty&16u)&&content_layout(s)){const struct ln_ui_node*n=focus(s);uint32_t count=total(n),capacity=rows(n),first=first_row(s->selected,capacity);s->visible_items=count>first?min((int32_t)(count-first),(int32_t)capacity):0;}

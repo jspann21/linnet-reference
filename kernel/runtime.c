@@ -353,9 +353,10 @@ static void apply(uint32_t kind,int32_t value){
         }else if((pressed&LN_BUTTON_SELECT)&&scene_is("linnet.system.now-playing")){
             if(ln_ui_show(shell,"linnet.system.music-options"))dirty=true;handled=true;
         }else if((pressed&LN_BUTTON_SELECT)&&scene_is("linnet.system.music-options")){
-            if(shell->selected==7){ln_music_queue_open();(void)ln_ui_show(shell,"linnet.system.music-queue");}
-            else if(shell->selected==8){(void)ln_ui_show(shell,"linnet.system.music-sound");}
-            else (void)ln_music_option_select(shell->selected);
+            uint32_t action=ln_music_option_action(shell->selected);
+            if(action==7){ln_music_queue_open();(void)ln_ui_show(shell,"linnet.system.music-queue");}
+            else if(action==8){(void)ln_ui_show(shell,"linnet.system.music-sound");}
+            else (void)ln_music_option_select(action);
             ln_ui_refresh(shell);dirty=true;handled=true;
         }else if(scene_is("linnet.system.music-queue")&&(pressed&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV|LN_BUTTON_MENU))){
             if(pressed&LN_BUTTON_MENU){ln_music_queue_close();(void)ln_ui_show(shell,"linnet.system.music-options");}
@@ -364,7 +365,7 @@ static void apply(uint32_t kind,int32_t value){
                 else (void)ln_music_queue_edit((pressed&LN_BUTTON_PREV)?1u:0u);}
             ln_ui_refresh(shell);dirty=true;handled=true;
         }else if(scene_is("linnet.system.music-queue-actions")&&(pressed&(LN_BUTTON_SELECT|LN_BUTTON_MENU))){
-            if(pressed&LN_BUTTON_SELECT)(void)ln_music_queue_edit(shell->selected);
+            if(pressed&LN_BUTTON_SELECT)(void)ln_music_queue_edit(ln_music_queue_action(shell->selected));
             (void)ln_ui_show(shell,"linnet.system.music-queue");ln_ui_refresh(shell);dirty=true;handled=true;
         }else if(scene_is("linnet.system.music-sound")&&(pressed&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV))){
             (void)ln_music_sound_adjust(shell->selected,(pressed&LN_BUTTON_PREV)?-1:1);ln_ui_refresh(shell);dirty=true;handled=true;

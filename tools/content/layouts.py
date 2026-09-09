@@ -26,15 +26,17 @@ def text_node(template,text,x,y,w,h,flags=0,fg='foreground'):
 def apply_layout(scenes,theme):
     result=deepcopy(scenes)
     style=theme['layout']
-    if style=='default':
-        for scene in result:refine_scene(scene,theme,(4,24,212,148))
+    if style in ('default','minimal'):
+        for scene in result:
+            refine_scene(scene,theme,(4,26 if style=='minimal' else 24,212,146 if style=='minimal' else 148))
+            if style=='minimal':refine_minimal(scene,theme)
         return result
     font_h=theme['font']['height']
     # Each body rectangle is its own layout, not a recolor of the default shell.
     bodies={'ipod-photo':(0,22,220,154),'graphite':(10,42,200,108),
             'aurora':(34,38,178,132),'sunset':(12,46,196,104),'blueprint':(8,8,204,138)}
-    headers={'ipod-photo':(0,0,220,22),'graphite':(12,8,196,26),
-             'aurora':(34,7,178,25),'sunset':(12,8,196,30),'blueprint':(0,154,220,22)}
+    headers={'ipod-photo':(0,0,220,22),'graphite':(0,0,220,26),
+             'aurora':(34,7,178,25),'sunset':(0,0,220,30),'blueprint':(0,154,220,22)}
     bx,by,bw,bh=bodies[style]
     for scene in result:
         original=deepcopy(scene['nodes'])
@@ -217,6 +219,22 @@ def refine_scene(scene,theme,body):
     scene['count']=len(nodes)
 
 
+def refine_minimal(scene,theme):
+    nodes=scene['nodes'];fh=theme['font']['height']
+    for n in nodes:
+        if n['kind']==11:place(n,0,2,220,20)
+        elif n['kind'] in (4,5,14):n['flags']|=2
+        elif n['kind']==2:n['bg']=color('background');n['flags']&=~4
+    if scene['id']=='linnet.system.about':
+        for i,n in enumerate(n for n in nodes if n['kind']==3):place(n,8,34+i*28,204,fh)
+    if scene['id']=='linnet.system.now-playing':
+        for n in nodes:
+            if n['text']=='Sample track':place(n,8,34,204,2*fh);n['flags']=WRAP
+            elif n['text']=='Audio pending':place(n,8,68,204,2*fh);n['flags']=WRAP
+            elif n['text']=='Track album':place(n,8,102,204,fh)
+    scene['count']=len(nodes)
+
+
 def refine_ipod_photo(scene,theme):
     """Photo's 220x176 chrome and content grid, including Linnet extensions."""
     nodes=scene['nodes'];sid=scene['id'].rsplit('.',1)[-1]
@@ -243,16 +261,8 @@ def refine_ipod_photo(scene,theme):
             if n['kind'] in (2,5):n['flags']|=2
         for i,n in enumerate(texts):place(n,6,28+i*26,208,fh);n['flags']=0;n['fg']=color('foreground')
     elif sid=='settings' and listing:
-        pairs=list(zip(listing['items'],listing['targets']))
-        preferred=['About Linnet','Display','Clock','Battery','Themes','Update / Recovery','Sync / USB Disk Mode','Back to Home']
-        pairs.sort(key=lambda p:preferred.index(p[0]) if p[0] in preferred else len(preferred))
         labels={'About Linnet':'About','Display':'Backlight Timer','Clock':'Date & Time'}
-        listing['items']=[labels.get(label,label) for label,_ in pairs]
-        listing['targets']=[target for _,target in pairs]
-    elif sid=='extras' and listing:
-        pairs=list(zip(listing['items'],listing['targets']))
-        pairs.sort(key=lambda p:0 if p[0]=='Clock' else 1 if p[0]=='Notes' else 2)
-        listing['items']=[label for label,_ in pairs];listing['targets']=[target for _,target in pairs]
+        listing['items']=[labels.get(label,label) for label in listing['items']]
     elif sid=='now-playing':
         title=next(n for n in texts if n['text']=='Sample track')
         artist=next(n for n in texts if n['text']=='Audio pending')
