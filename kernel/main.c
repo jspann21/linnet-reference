@@ -237,7 +237,7 @@ _Noreturn void ln_main(void)
 #if defined(LINNET_STORAGE)
         LN_CACHE_FIRST_MARK(0xca14u);
         LN_TIMING_BEGIN(storage_started);
-        ln_storage_step();
+        ln_storage_step_deferred();
         ln_storage_boot();
 #if !defined(LINNET_PROFILE_RELEASE)
         if(!ln_storage_busy()){

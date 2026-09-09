@@ -60,7 +60,14 @@ struct ln_display_metrics {
 };
 
 bool ln_display_init(void);
+/* High byte: pause/fill/resume stage; lower bytes retain failure diagnostics. */
+uint32_t ln_display_init_error(void);
 uint16_t *ln_display_framebuffer(void); /* CPU-owned RGB565 draw buffer, 220x176. */
+/* Optional idle-only full-frame transaction. NULL retains ordinary rendering.
+ * On success, synchronously repaint all 220x176 pixels and call present before
+ * any other executive work. Ordinary framebuffer access and snapshots return
+ * NULL during the transaction. The next ordinary access imports this frame. */
+uint16_t *ln_display_direct_framebuffer(void);
 bool ln_display_damage(int32_t x, int32_t y, int32_t width, int32_t height);
 bool ln_display_present(void); /* Snapshot + publish; false when busy or no damage. */
 /* CPU fallback performs at most max_pairs steps (clamped to 256); COP mode
@@ -83,7 +90,8 @@ void ln_display_cop_diagnostics(uint32_t output[8]);
 bool ln_display_reset(void); /* Quiesce, discard pending jobs, queue a full redraw. */
 bool ln_display_quiesce(void);
 void ln_display_get_metrics(struct ln_display_metrics *output);
-const uint16_t *ln_display_snapshot(void); /* Immutable until next successful present. */
+/* Immutable until the next present or direct-frame transaction begins. */
+const uint16_t *ln_display_snapshot(void);
 uint32_t ln_display_snapshot_crc32(void);
 size_t ln_display_capture(uint8_t *output, size_t capacity);
 #endif

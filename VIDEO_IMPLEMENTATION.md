@@ -1,14 +1,32 @@
 # Linnet video implementation
 
+## Native IPVF playback
+
+The video service accepts validated Rockbox IPVF files directly alongside PVID.
+It validates the bounded superblock and key-only index, follows sector-aligned
+record chains, reconstructs raw, repeat, rectangle, independent LZ4, temporal
+XOR and translated-residual frames, converts RGB565 byte order for Linnet's
+display assets, and decodes silence, mono or stereo IMA ADPCM into the existing
+44.1 kHz audio ring. Rational frame boundaries provide the audio master clock
+for presentation, progress, resume and seek.
+
+Catalog version 2 stores bounded absolute FAT 8.3 paths. The media manager
+strictly validates IPVF content already under the iPod's Videos folder and
+publishes only that path and title, preserving the original without a duplicate
+PVID conversion. Version 1 PVID catalogs remain readable. IPVF uses two display
+slots and the enlarged third slot as bounded decompression scratch; PVID retains
+its three-slot pipeline. Direct playback still requires device throughput and
+A/V qualification for the exact Linnet build and content.
+
 ## September 7 spatial playback (bounded device runs; throughput gate open)
 
 The optional PVID version2 repacker reuses IPVF's independent raw LZ4 block
 approach while preserving PVID's little-endian RGB565 frames, exact48kHz PCM,
 and mandatory header/index/record/payload/decoded-frame CRCs. Version1 files
 remain readable and normal compilation still emits version1. Version2 adds
-independent type4 frames; older readers reject its header safely. Direct IPVF
-container support would additionally require its IMA audio, rational sample
-clock, byte order, index and integrity contracts, so it is not enabled here.
+independent type4 frames; older readers reject its header safely. Native IPVF
+uses its separate IMA audio, rational sample clock, byte order, key index and
+integrity contracts described above.
 
 `tools.content.video.repack_spatial(source, output)` validates a canonical v1
 file and atomically writes v2, replacing a record only when LZ4 saves complete
@@ -186,3 +204,51 @@ do not isolate a helper speedup from the other changes in that run.
 Local references: `../ipod/tools/ipvf/README.md`,
 `../ipod/tools/ipvf/qualification/2026-08-31-hardware-runs.md`, and
 `../ipod/tools/ipvf/qualification/2026-09-01-cached-spatial-copy-runs.tsv`.
+
+## Retained IPVF playback records
+
+IPVF now reserves STAGE while active or draining: LZ scratch occupies
+0x01000000..0x01020000, a 262144-frame stereo PCM ring occupies
+0x01020000..0x01120000, 80 additional decoded frame slots occupy the reserved
+0x01120000..0x01720000 range, and the raw byte FIFO occupies
+0x01720000..0x01800000. Up to 1024 descriptors associate retained bytes with
+their frame, file offset and record length. Both wrap fragments are bounded;
+video consumes a descriptor only after copying its bytes into decoder scratch.
+Development uploads and package validation reject STAGE writes while video owns it.
+
+The forward audio cursor reads and validates records once, retains their bytes,
+and decodes independent IMA blocks into PCM staging. It targets four seconds of
+combined staged/HAL audio and refills below four seconds, yielding to video after
+each record once playback starts. The existing HAL DMA ring and ATA modes are
+unchanged. Video reconstructs every temporal dependency from retained records;
+it does not repeat disk reads or temporal payload CRCs. Seek drains outstanding
+I/O, resets both rings, and rebuilds video from the indexed key while skipping
+audio before the requested target. EOF reaches the HAL only after PCM staging
+drains. Pause retains queued content; cancellation releases memory after I/O and
+audio have stopped.
+
+IPVF has 83 decoded slots including the three resident slots and targets 3.5
+seconds of decoded video, capped at 80 frames, before starting audio (or the
+remaining tail for a shorter clip/seek). The time bound prevents low-frame-rate
+clips from exhausting PCM capacity before the audio clock starts.
+This cushion absorbs bursts of storage and decoder work without discarding
+temporal frames. A due frame returns immediately to the renderer before another
+read/decode step. A temporary ownership bitmap avoids rescanning the queue for
+each candidate slot. PVID keeps its three resident slots and two-frame startup.
+
+Development VIDEO_STATE with no payload retains its VIT6/version2 layout.
+With a uint32 page payload it returns 128 bytes: pages 0/1 are the opened path,
+2 is the title, and 3 starts with VIM1, media ID, frame count, fps numerator,
+fps denominator, sample rate, file size and IPVF flag. Pages 4/5 contain phase
+microseconds/call counts; page 6 contains seven record-type decode times,
+seven call counts and total LZ time. Page 7 starts with VIP1, worst-late frame,
+maximum lateness in samples, queue depth at that peak, counts over one and two
+frame periods late, maximum presentation gap in microseconds, its frame,
+minimum ready queue before the tail, startup frame count, and slot count.
+These diagnostics are absent from release.
+For IPVF, VIT6 submitted_samples counts PCM staging admission; AUD4 submitted
+counts actual HAL admission. Consumed audio remains the presentation clock.
+
+Hardware iteration receipts for the exact `/Videos/IPVF/01-FIV~1.IPV` file
+(media ID a4ff0255, 7202 frames, 24 fps) are in `out/ipvf-fifo/`.
+Qualification results must be taken from the latest measurement receipt.

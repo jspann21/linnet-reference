@@ -6,7 +6,7 @@ struct slot {
     uint64_t lba;
     uint32_t sectors,generation,deadline,id,status,transferred,read_ahead;
     uint8_t *caller;
-    bool canceled;
+    bool canceled,direct;
     uint8_t data[4096] __attribute__((aligned(32)));
 };
 static struct slot slots[8];
@@ -81,12 +81,13 @@ void ln_block_init(uint32_t now) {
     ln_ata_init(now);
 }
 static bool submit(enum ln_block_op op,uint64_t lba,uint32_t sectors,void *bytes,
-    uint32_t generation,uint32_t limit,uint32_t read_ahead,uint32_t *id) {
+    uint32_t generation,uint32_t limit,uint32_t read_ahead,bool direct,uint32_t *id) {
     uint32_t now=ln_time_us();
     if(!id||frozen||metrics.quarantined||op<LN_BLOCK_READ||op>LN_BLOCK_WAKE||
         (int32_t)(limit-now)<=0||limit-now>30000000u)return false;
     bool data=op==LN_BLOCK_READ||op==LN_BLOCK_WRITE;
-    if(data&&(!bytes||!sectors||sectors>8u||lba>UINT64_MAX-sectors))return false;
+    if(data&&(!bytes||!sectors||sectors>(direct?192u:8u)||lba>UINT64_MAX-sectors))return false;
+    if(direct&&op!=LN_BLOCK_READ)return false;
     if(!data&&(bytes||sectors||lba))return false;
     struct ln_ata_state device;ln_ata_state_snapshot(&device);
     if((!device.initialized&&device.powered&&!device.initializing)||device.failed||!device.sectors||
@@ -98,7 +99,7 @@ static bool submit(enum ln_block_op op,uint64_t lba,uint32_t sectors,void *bytes
         if(++next_id==0)++next_id;
         s->op=op;s->lba=lba;s->sectors=sectors;s->generation=generation;s->deadline=limit;
         s->read_ahead=read_ahead;
-        s->id=next_id;s->caller=bytes;s->canceled=false;s->transferred=0;
+        s->id=next_id;s->caller=bytes;s->canceled=false;s->direct=direct;s->transferred=0;
         if(op==LN_BLOCK_WRITE)copy(s->data,bytes,sectors*512u);
         s->state=QUEUED;*id=s->id;++metrics.submitted;return true;
     }
@@ -106,17 +107,21 @@ static bool submit(enum ln_block_op op,uint64_t lba,uint32_t sectors,void *bytes
 }
 bool ln_block_submit(enum ln_block_op op,uint64_t lba,uint32_t sectors,void *bytes,
     uint32_t generation,uint32_t limit,uint32_t *id){
-    return submit(op,lba,sectors,bytes,generation,limit,8u,id);
+    return submit(op,lba,sectors,bytes,generation,limit,8u,false,id);
 }
 bool ln_block_submit_read(uint64_t lba,uint32_t sectors,void *bytes,uint32_t generation,
     uint32_t limit,uint32_t read_ahead,uint32_t *id){
     if(read_ahead!=1u&&read_ahead!=8u)return false;
-    return submit(LN_BLOCK_READ,lba,sectors,bytes,generation,limit,read_ahead,id);
+    return submit(LN_BLOCK_READ,lba,sectors,bytes,generation,limit,read_ahead,false,id);
+}
+bool ln_block_submit_direct_read(uint64_t lba,uint32_t sectors,void *bytes,
+    uint32_t generation,uint32_t limit,uint32_t *id){
+    return submit(LN_BLOCK_READ,lba,sectors,bytes,generation,limit,sectors,true,id);
 }
 static void active_complete(uint32_t status,uint32_t transferred) {
     last_activity=ln_time_us();standby_at=0;
     struct slot *first=&slots[active_slots[0]];
-    if(status==LN_ATA_OK&&first->op==LN_BLOCK_READ){
+    if(status==LN_ATA_OK&&first->op==LN_BLOCK_READ&&!first->direct){
         uint32_t way=cache_next;cache_next^=1u;
         cache_lba[way]=first->lba;cache_sectors[way]=active_sectors;
         copy(cache[way],transfer,active_sectors*512u);
@@ -125,7 +130,7 @@ static void active_complete(uint32_t status,uint32_t transferred) {
         struct slot *s=&slots[active_slots[i]];uint32_t offset=active_offsets[i];
         uint32_t count=transferred>offset?transferred-offset:0;
         if(count>s->sectors)count=s->sectors;
-        if(status==LN_ATA_OK&&!s->canceled&&s->op==LN_BLOCK_READ)
+        if(status==LN_ATA_OK&&!s->canceled&&s->op==LN_BLOCK_READ&&!s->direct)
             copy(s->caller,transfer+offset*512u,s->sectors*512u);
         complete(s,status,count);
     }
@@ -142,7 +147,7 @@ static bool issue(void) {
     struct slot *s=&slots[active_slots[0]];
     bool data=s->op==LN_BLOCK_READ||s->op==LN_BLOCK_WRITE;
     return ln_ata_start((enum ln_ata_op)s->op,s->lba,data?active_sectors:0,
-        data?transfer:0,active_deadline);
+        data?(s->direct?s->caller:transfer):0,active_deadline);
 }
 static void step_inner(uint32_t now) {
     if(idle_retry_active&&(int32_t)(now-idle_retry_at)>=0)idle_retry_active=false;
@@ -247,7 +252,7 @@ static void step_inner(uint32_t now) {
     if(device.initializing||device.busy)return;
     /* Two ways keep corresponding primary/mirror FAT sectors resident. Every
      * media write/reset/window change invalidates both, preserving readback. */
-    if(s->op==LN_BLOCK_READ)for(uint32_t way=0;way<2u;++way){
+    if(s->op==LN_BLOCK_READ&&!s->direct)for(uint32_t way=0;way<2u;++way){
         if(cache_sectors[way]&&s->lba>=cache_lba[way]&&
            s->lba-cache_lba[way]+s->sectors<=cache_sectors[way]){
             copy(s->caller,cache[way]+(uint32_t)(s->lba-cache_lba[way])*512u,s->sectors*512u);
@@ -270,7 +275,7 @@ static void step_inner(uint32_t now) {
     active_sectors=s->sectors;active_deadline=s->deadline;s->state=ACTIVE;
     active_retry=recovering=false;
     if(s->op==LN_BLOCK_WRITE){invalidate_cache();copy(transfer,s->data,s->sectors*512u);}
-    if(s->op==LN_BLOCK_READ||s->op==LN_BLOCK_WRITE){
+    if((s->op==LN_BLOCK_READ||s->op==LN_BLOCK_WRITE)&&!s->direct){
         uint32_t read_ahead=s->read_ahead;
         while(active_count<8u){
             int next=oldest(QUEUED);if(next<0)break;

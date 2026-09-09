@@ -87,7 +87,7 @@ static void verified_remember(struct ln_fat32*f,const struct ln_fat32_file*file)
     f->verified[0]=(struct ln_fat32_verified){file->cluster,file->size};
 }
 static int finish(struct ln_fat32*f,int result){
-    f->state=IDLE;f->result=result;
+    f->state=IDLE;f->result=result;f->verified_fat_sector=0;
     if(result<0&&f->operation==OP_SET)f->proof_base_valid=false;
     if(result<0&&f->mutation_started){f->mounted=2;f->write_proven=false;}
     if(result==LN_FAT32_IO||result==LN_FAT32_CORRUPT){
@@ -101,6 +101,8 @@ static int finish(struct ln_fat32*f,int result){
 static int io(struct ln_fat32*f,enum ln_fat32_io op,uint64_t lba,uint8_t*sector){
     if(op!=LN_FAT32_FLUSH&&(lba<f->partition||lba-f->partition>=f->partition_sectors))
         return LN_FAT32_BOUNDS;
+    /* Retire primary-buffer provenance before the adapter can overwrite it. */
+    if(op==LN_FAT32_READ&&sector==f->sector)f->verified_fat_sector=0;
     int result=f->config.io(f->config.context,op,lba,sector,f->generation);
     return result<0||result>1?LN_FAT32_IO:result;
 }
@@ -113,7 +115,7 @@ void ln_fat32_init(struct ln_fat32*f,const struct ln_fat32_config*c){
 void ln_fat32_abandon(struct ln_fat32*f){
     if(!f)return;
     f->mounted=0;f->state=0;f->result=LN_FAT32_IO;f->write_proven=false;
-    f->proof_base_valid=false;f->old_next=2;f->fat_phase=0;
+    f->proof_base_valid=false;f->old_next=2;f->fat_phase=0;f->verified_fat_sector=0;
     seek_maps_clear(f);
     if(++f->epoch==0)++f->epoch;
 }
@@ -121,6 +123,7 @@ static bool admit(struct ln_fat32*f,uint8_t op,uint16_t state,uint32_t generatio
     if(!f||f->state||!f->config.io||!generation)return false;
     f->operation=op;f->state=state;f->generation=generation;f->result=0;
     f->transferred=0;f->fat_phase=0;f->chain_steps=0;f->mutation_started=false;
+    f->verified_fat_sector=0;
     return true;
 }
 bool ln_fat32_mount(struct ln_fat32*f,uint64_t lba,uint64_t sectors,uint32_t generation){
@@ -316,7 +319,12 @@ static int next_cluster(struct ln_fat32*f){
             return LN_FAT32_CORRUPT;
         struct ln_fat32_cache*c=&f->cache[f->cluster%LN_FAT32_CACHE_SIZE];
         if(c->cluster==f->cluster){f->fat_value=c->next;return 1;}
-        f->fat_cluster=f->cluster;f->fat_phase=1;
+        f->fat_cluster=f->cluster;
+        /* Only this proof request may reuse the validated primary sector. */
+        if(f->state==VERIFY_CHAIN&&f->verified_fat_sector==f->cluster/128u+1u){
+            f->fat_value=u32(f->sector+(f->cluster%128u)*4u)&0x0fffffffu;
+            f->fat_phase=3;
+        }else f->fat_phase=1;
     }
     uint64_t sector=f->fat_start+(uint64_t)f->active_fat*f->fat_sectors+f->fat_cluster/128u;
     int result;
@@ -333,6 +341,8 @@ static int next_cluster(struct ln_fat32*f){
     }
     if(f->fat_value<EOC&&!cluster_valid(f,f->fat_value))return LN_FAT32_CORRUPT;
     if(f->fat_value==f->fat_cluster)return LN_FAT32_CORRUPT;
+    /* Phase3 follows the required full mirror comparison, or a proven hit. */
+    if(f->state==VERIFY_CHAIN)f->verified_fat_sector=f->fat_cluster/128u+1u;
     /* The whole sector (and mirror when enabled) is already validated. Fill
      * the existing cache with its aligned group of16 edges, so consecutive
      * clusters avoid repeated sector copies, mirror comparisons and polls.
@@ -471,6 +481,7 @@ int ln_fat32_poll(struct ln_fat32*f){
         }
         f->cluster=f->fat_value;f->directory_sector_index=0;f->state=DIRECTORY;return 0;
     case VERIFY_CHAIN:
+verify_chain_cached:
         /* Brent's cycle detector needs constant memory. Complete the entire
          * chain before touching file data: a cycle cannot make a write alias
          * an earlier logical offset. Chains longer than MAX_CHAIN are refused.
@@ -485,13 +496,16 @@ int ln_fat32_poll(struct ln_fat32*f){
             f->cluster=f->file.cluster;f->logical_cluster=0;
             seek_map_position(f,f->offset>>(9u+f->cluster_shift));
             f->skip=(f->offset>>(9u+f->cluster_shift))-f->logical_cluster;
-            f->chain_steps=0;f->state=POSITION;return 0;
+            f->chain_steps=0;f->verified_fat_sector=0;f->state=POSITION;return 0;
         }
         if(f->fat_value==f->cycle_anchor){result=LN_FAT32_CORRUPT;break;}
         if(++f->cycle_distance==f->cycle_power){
             f->cycle_anchor=f->fat_value;f->cycle_power*=2u;f->cycle_distance=0;
         }
-        f->cluster=f->fat_value;++f->verified_clusters;return 0;
+        f->cluster=f->fat_value;++f->verified_clusters;
+        if(++proof_edges<4u&&!f->fat_phase&&
+           f->cache[f->cluster%LN_FAT32_CACHE_SIZE].cluster==f->cluster)goto verify_chain_cached;
+        return 0;
     case SET_BEGIN:
         if(f->set_index==f->set_count+f->directory_count){
             f->proven_directory_count=f->directory_count;f->proof_base_valid=true;
@@ -562,6 +576,18 @@ set_chain_cached:
         f->io_lba=cluster_sector(f,f->cluster)+f->within/512u;
         index=f->within%512u;bytes=512u-index;
         if(bytes>f->length-f->transferred)bytes=f->length-f->transferred;
+        if(f->operation==OP_READ&&!index&&bytes==512u&&f->config.read_sectors){
+            uint32_t sectors=(f->length-f->transferred)/512u;
+            uint32_t cluster_sectors=(512u*f->sectors_per_cluster-f->within)/512u;
+            if(sectors>cluster_sectors)sectors=cluster_sectors;
+            if(sectors>192u)sectors=192u;
+            if(sectors){
+                result=f->config.read_sectors(f->config.context,f->io_lba,
+                    f->buffer+f->transferred,sectors,f->generation);
+                if(result!=1)break;
+                bytes=sectors*512u;f->transferred+=bytes;f->within+=bytes;return 0;
+            }
+        }
         if(f->operation==OP_READ||index||bytes<512){
             result=io(f,LN_FAT32_READ,f->io_lba,f->sector);if(result!=1)break;
         }
@@ -747,6 +773,6 @@ int ln_fat32_retire_read(struct ln_fat32*f,int result){
         f->seek_maps[f->seek_slot].first=0;
         f->seek_slot=LN_FAT32_SEEK_MAPS;
     }
-    f->state=IDLE;f->result=result;f->fat_phase=0;
+    f->state=IDLE;f->result=result;f->fat_phase=0;f->verified_fat_sector=0;
     f->buffer=NULL;return f->result;
 }

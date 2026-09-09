@@ -174,14 +174,29 @@ static void image_asset(struct painter*p,const struct ln_ui_node*n,const struct 
             /* Overlapping storage retains the original forward pixel order. */
             paired=source<target?target-source>=bytes:source-target>=220u*176u*2u;
         }
+#if defined(__arm__)
+        if(paired&&r.x==0&&r.w==220&&a->width==220u&&
+           !(((uintptr_t)a->pixels^(uintptr_t)p->pixels)&3u)){
+            /* Whole visible rows are contiguous in both bounded buffers. */
+            extern void ln_memory_copy(void *,const void *,uint32_t);
+            ln_memory_copy(p->pixels+(uint32_t)r.y*220u,
+                a->pixels+(uint32_t)(r.y-n->y)*220u,(uint32_t)r.h*440u);
+            return;
+        }
+#endif
         for(int32_t y=r.y;y<r.y+r.h;++y){
             const uint16_t *source=a->pixels+(uint32_t)(y-n->y)*a->width+(uint32_t)(r.x-n->x);
             uint16_t *dest=p->pixels+(uint32_t)y*220u+(uint32_t)r.x;
             if(paired&&!(((uintptr_t)source^(uintptr_t)dest)&3u)){
+#if defined(__arm__)
+                extern void ln_memory_copy(void *,const void *,uint32_t);
+                ln_memory_copy(dest,source,(uint32_t)r.w*2u);
+#else
                 int32_t left=r.w;
                 if((uintptr_t)dest&3u){*dest++=*source++;--left;}
                 while(left>=2){*(ln_image_word*)dest=*(const ln_image_word*)source;dest+=2;source+=2;left-=2;}
                 if(left>0)*dest=*source;
+#endif
                 continue;
             }
             if(decoration){for(int32_t x=0;x<r.w;++x)dest[x]=asset_pixel(source[x]);}
@@ -394,12 +409,21 @@ bool ln_ui_input(struct ln_ui_state*s,uint32_t kind,int32_t value){if(!s)return 
 }
 static void paint(struct ln_ui_state*s,uint16_t*pixels,struct rect r,ln_ui_damage_fn damage){
     r=intersect(r,screen);if(!r.w||!r.h)return;struct painter p={pixels,r};const struct ln_ui_scene*c=scene(s);
-    bool covered=false;
+    bool covered=false;uint32_t first=0;
     if(c&&c->nodes&&c->count&&c->count<=1024u){const struct ln_ui_node*n=&c->nodes[0];
         if(n->kind==LN_UI_SCREEN&&!(n->flags&2u)){struct rect cover=intersect(bounds(n),r);covered=cover.x==r.x&&cover.y==r.y&&cover.w==r.w&&cover.h==r.h;}
+        if(n->kind==LN_UI_SCREEN&&c->count>1u){const struct ln_ui_node*video=&c->nodes[1];
+            if(video->kind==LN_UI_VIDEO_SURFACE&&!(video->flags&2u)){
+                const struct ln_ui_asset*a=ln_ui_dynamic_asset(video,video->resource<ln_ui_asset_count?&ln_ui_assets[video->resource]:0);
+                struct rect cover=intersect(bounds(video),r);
+                /* This opaque video will overwrite the screen and chrome in
+                 * the entire damaged clip. Overlays still draw afterwards. */
+                if(cover.x==r.x&&cover.y==r.y&&cover.w==r.w&&cover.h==r.h&&video_covers(&p,video,a)){covered=true;first=1u;}
+            }
+        }
     }
     if(!covered)fill(&p,r,color(LN_UI_BACKGROUND));
-    if(c)for(uint32_t i=0;i<c->count&&i<1024u;++i)draw_node(&p,&c->nodes[i],s,i==c->focus_node);
+    if(c)for(uint32_t i=first;i<c->count&&i<1024u;++i)draw_node(&p,&c->nodes[i],s,i==c->focus_node);
     s->painted_pixels+=(uint32_t)(r.w*r.h);if(damage)damage(r.x,r.y,r.w,r.h);
 }
 /* Count the same clipped cells as a full paint without rasterizing their text

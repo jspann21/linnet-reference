@@ -12,6 +12,7 @@ MEMORY {
 #endif
 #ifndef LINNET_PROFILE_RELEASE
   SNAPSHOT (rw) : ORIGIN = 0x01e00000, LENGTH = 0x00100000
+  CAPTURE (rw) : ORIGIN = 0x01f00000, LENGTH = 0x00013000
   USB_DMA (rw) : ORIGIN = 0x4000c000, LENGTH = 0xe00
 #endif
 #if !defined(LINNET_PROFILE_RELEASE) || defined(LINNET_PLATFORM_CORE)
@@ -103,6 +104,8 @@ SECTIONS {
 #ifndef LINNET_PROFILE_RELEASE
   .dev_staging (NOLOAD) : { . += 0x00800000; } > STAGE
   .dev_snapshot (NOLOAD) : { . += 0x00100000; } > SNAPSHOT
+  .dev_capture (NOLOAD) : { *(.dev_capture) } > CAPTURE
+  ASSERT(SIZEOF(.dev_capture) <= LENGTH(CAPTURE), "Development screenshot exceeds diagnostic reservation")
   .dev_usb_dma (NOLOAD) : { . += 0xe00; } > USB_DMA
 #endif
 #if !defined(LINNET_PROFILE_RELEASE)

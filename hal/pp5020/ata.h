@@ -4,6 +4,7 @@
 #include <stdint.h>
 #define LINNET_ATA_SECTOR_BYTES 512u
 #define LINNET_ATA_MAX_SECTORS 8u
+#define LINNET_ATA_MAX_READ_SECTORS 192u
 enum ln_ata_op { LN_ATA_READ=1,LN_ATA_WRITE=2,LN_ATA_FLUSH=3,LN_ATA_STANDBY=4,LN_ATA_WAKE=5 };
 enum ln_ata_status { LN_ATA_OK=0,LN_ATA_TIMEOUT=1,LN_ATA_IO=2,LN_ATA_UNSUPPORTED=3,
     LN_ATA_RANGE=4,LN_ATA_OFFLINE=5,LN_ATA_CANCELED=6,LN_ATA_QUARANTINED=7 };
@@ -54,6 +55,7 @@ uint32_t ln_ata_next_deadline(uint32_t now);
  * unusable deltas. Timestamps wrap normally; reset epoch separates captures. */
 /* ACP1: cached IDENTIFY and guarded passive registers; no ATA commands. */
 void ln_ata_capabilities(uint32_t out[16]);
+void ln_ata_clock_diagnostics(uint32_t out[8]);
 void ln_ata_performance(uint32_t out[16]);
 #endif
 #endif

@@ -4,7 +4,11 @@
 #include "boot/include/linnet_boot.h"
 
 #define LINNET_PLATFORM_FRAME_BYTES (220u * 176u * 2u)
-static uint16_t ln_platform_capture[220u * 176u];
+/* Development screenshots have their own bounded diagnostic reservation.
+ * A capture is filled completely before its id becomes readable; no startup
+ * zeroing is required. Keep this separate from the recovery snapshot. */
+static uint16_t ln_platform_capture[220u * 176u]
+    __attribute__((section(".dev_capture"), aligned(32)));
 static uint32_t ln_platform_capture_id, ln_platform_capture_generation;
 static uint8_t ln_platform_reply[LINNET_LINK_MAX_PAYLOAD];
 

@@ -22,6 +22,7 @@ static uint8_t *buffer;
 static enum ln_ata_op operation;
 static uint64_t previous_capacity;
 static uint8_t flush_command;
+static uint8_t pio_mode;
 static uint32_t init_started;
 static bool lba_probe_required;
 static char previous_model[41],previous_serial[21],previous_firmware[9];
@@ -168,8 +169,8 @@ static void reset_begin(uint32_t now) {
     info.power_safe=0;
     info.initializing=1;info.initialized=info.failed=info.busy=info.sleeping=0;
     result_ready=false;done=0;deadline=now+30000000u;not_before=now+250000u;phase=POWER;
-    /* P98 rail/pin routing and conservative OF PIO0 timings, as documented
-     * by Rockbox ata-pp5020.c/power-ipod.c. No UDMA selection or DMA buffers. */
+    /* P98 rail/pin routing. Transfer mode is selected from IDENTIFY after the
+     * device is ready; reads remain PIO and require no DMA ownership. */
     R32(0x6000d124u)&=~4u;R32(0x6000d100u)&=~0xbfu;R32(0x6000d108u)&=~0x1fu;
     R32(0x6000600cu)|=0x02000000u;
     info.powered=1;
@@ -177,6 +178,17 @@ static void reset_begin(uint32_t now) {
 static void controller_setup(void) {
     R32(0xc3000400u)=(R32(0xc3000400u)|2u)&~1u;
     R32(0xc3000028u)=(R32(0xc3000028u)&~0x10008010u)|0x20u;
+    /* The PIO timing table below is Rockbox's pio80mhz table. Select its
+     * interface clock explicitly on our verified 80 MHz operating point;
+     * otherwise a native restart leaves slower inherited clocking in place.
+     * These are the independent clock/config writes from ata-pp5020.c.
+     * Transfer mode still comes from IDENTIFY, with DMA disabled above.
+     * Recovery Boot can run at a different PLL and keeps its existing setup. */
+    if((R32(0x60006020u)&65535u)==0x7777u&&R32(0x60006034u)==0x8a020a03u&&
+       (R32(0x6000600cu)&0x02000000u)&&!(R32(0x60006004u)&0x02000000u)&&!(R32(0xc3000400u)&1u)){
+        R32(0x600060c4u)=0xc0000000u;
+        R32(0xc3000028u)|=0x20000000u;
+    }
     R32(0xc3000000u)=0xc293u;R32(0xc3000004u)=0x80002150u;
 }
 void ln_ata_init(uint32_t now) { info=(struct ln_ata_info){0};previous_capacity=0;reset_begin(now); }
@@ -201,7 +213,9 @@ bool ln_ata_start(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *bytes
     if(!info.initialized||info.busy||result_ready||phase!=IDLE||op<LN_ATA_READ||op>LN_ATA_WAKE)return false;
     uint32_t now=ln_time_us();if((int32_t)(limit-now)<=0||(uint32_t)(limit-now)>30000000u)return false;
     bool data=op==LN_ATA_READ||op==LN_ATA_WRITE;
-    if(data&&(!bytes||!sectors||sectors>8u||lba>=info.sectors||sectors>info.sectors-lba))return false;
+    if(data&&(!bytes||!sectors||
+        sectors>(op==LN_ATA_READ?LINNET_ATA_MAX_READ_SECTORS:LINNET_ATA_MAX_SECTORS)||
+        lba>=info.sectors||sectors>info.sectors-lba))return false;
     if(!data&&(sectors||bytes))return false;
     if(op==LN_ATA_WRITE&&!info.can_flush)return false;
     if(op==LN_ATA_WAKE||data)info.power_safe=0;
@@ -257,7 +271,11 @@ void ln_ata_step(uint32_t now) {
     if(phase==IDENT_DONE){
         if(status&8u)return;
         if(!identify_valid()){fail(LN_ATA_UNSUPPORTED);return;}
-        ERROR=3u;COUNT=8u;command(0xefu);phase=MODE_DONE;return;
+        pio_mode=0;
+        if(identify[53]&2u){if(identify[64]&2u)pio_mode=4u;else if(identify[64]&1u)pio_mode=3u;}
+        static const uint32_t timings[5]={0xc293u,0x43a2u,0x11a1u,0x7232u,0x3131u};
+        R32(0xc3000000u)=timings[pio_mode];info.diagnostic[22]=pio_mode;
+        ERROR=3u;COUNT=(uint8_t)(8u+pio_mode);command(0xefu);phase=MODE_DONE;return;
     }
     if(phase==MODE_DONE&&info.apm_supported){
         if(status&8u){fail(LN_ATA_IO);return;}
@@ -274,7 +292,9 @@ void ln_ata_step(uint32_t now) {
         info.initializing=0;info.initialized=1;phase=IDLE;return;
     }
     if(phase==TRANSFER){
+        uint32_t service_started=ln_time_us(),serviced=0;
         if(!(status&8u))return;
+        for(;;){
         uint8_t *sector=buffer+done*512u;
         if(operation==LN_ATA_READ){
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -289,7 +309,16 @@ void ln_ata_step(uint32_t now) {
         else for(uint32_t i=0;i<256u;++i)
             DATA=(uint16_t)((uint16_t)sector[i*2u]|((uint16_t)sector[i*2u+1u]<<8));
         ++done;if(operation==LN_ATA_READ)++info.sectors_read;else ++info.sectors_written;
-        settle();not_before=ln_time_us()+1u;if(done==count)phase=FINISH;return;
+        settle();if(done==count){phase=FINISH;return;}
+        if(++serviced==LINNET_ATA_MAX_SECTORS||ln_time_us()-service_started>=500u)return;
+        /* A multi-sector command may already be presenting its next sector.
+         * Drain only an immediately ready clean DRQ; otherwise yield and let
+         * the ordinary deadline/error path inspect it on the next step. */
+        status=CONTROL;info.last_status=status;
+        if(!status||status==0xffu){fail(LN_ATA_OFFLINE);return;}
+        if(status&0x21u){fail(LN_ATA_IO);return;}
+        if(status&0x80u||!(status&8u))return;
+        }
     }
     if(status&8u){fail(LN_ATA_IO);return;}
     if(phase==STANDBY_FLUSH){if(!info.standby_supported){finish();return;}command(0xe0u);phase=FINISH;return;}
@@ -329,6 +358,12 @@ void ln_ata_diagnostics(uint32_t d[24]) {
     d[23]=HIGH|(uint32_t)ERROR<<8;
 }
 #if !defined(LINNET_PROFILE_RELEASE)
+void ln_ata_clock_diagnostics(uint32_t out[8]){
+    bool valid=info.powered&&(R32(0x6000600cu)&0x02000000u)&&!(R32(0x60006004u)&0x02000000u);
+    out[0]=0x31434941u;out[1]=1u;out[2]=valid;out[3]=R32(0x600060c4u);
+    out[4]=valid?R32(0xc3000028u):0u;out[5]=valid?R32(0xc3000000u):0u;
+    out[6]=info.initialized?pio_mode:0xffffffffu;out[7]=R32(0x60006020u);
+}
 void ln_ata_capabilities(uint32_t out[16]){
     uint32_t enabled=R32(0x6000600cu),reset=R32(0x60006004u);
     bool timing_valid=info.powered&&(enabled&0x02000000u)&&!(reset&0x02000000u);
@@ -357,4 +392,3 @@ uint32_t ln_ata_next_deadline(uint32_t now) {
     uint32_t next=now+100u;if((int32_t)(not_before-now)>0)next=not_before;
     return (int32_t)(deadline-next)<0?deadline:next;
 }
-

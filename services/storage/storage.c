@@ -30,16 +30,16 @@ static const char *const paths[STORAGE_FILE_COUNT]={"/LINNET/OS0.LOS","/LINNET/O
     "/LINNET/THEME0.BIN","/LINNET/THEME1.BIN"
 };
 static uint8_t mbr[512] __attribute__((aligned(32)));
-static uint32_t phase,error,found,opening,epoch=1,request,request_generation;
+static uint32_t phase,error,found,opening,epoch=1,request,request_generation,request_sectors;
 static bool pending,locked;
 static uint32_t media_owner;
 static uint32_t fixed_owner,fixed_started;
 static uint32_t media_read_ahead=8u;
 static bool media_canceled,media_opening;
 static bool background_running;
-/* Nonzero only while a video-owned media read poll is on the stack. This is a
+/* Nonzero only while a bounded deferred-runtime poll is on the stack. This is a
  * scoped scheduling hint, not a storage-owner or cancellation state. */
-static uint32_t video_media_poll_depth;
+static uint32_t deferred_runtime_poll_depth;
 static struct ln_state_store boot_store,settings_store,history_store,theme_store;
 static bool theme_available,theme_opened;
 static uint32_t history_summary=UINT32_MAX;
@@ -176,14 +176,29 @@ static int sector_io(void *context,enum ln_fat32_io operation,uint64_t lba,uint8
             ln_block_submit_read(lba,1,sector,generation,deadline,media_read_ahead,&request):
             ln_block_submit(op,lba,operation==LN_FAT32_FLUSH?0:1,sector,generation,deadline,&request);
         if(!admitted)return -1;
-        pending=true;request_generation=generation;return 0;
+        pending=true;request_generation=generation;
+        request_sectors=operation==LN_FAT32_FLUSH?0u:1u;return 0;
     }
     if(generation!=request_generation)return -1;
     struct ln_block_completion completion;
     if(!ln_block_take(generation,&completion))return 0;
     pending=false;
     return completion.request_id==request&&completion.status==LN_ATA_OK&&
-        completion.sectors_done==(operation==LN_FAT32_FLUSH?0u:1u)?1:-1;
+        completion.sectors_done==request_sectors?1:-1;
+}
+static int sector_read(void *context,uint64_t lba,uint8_t *buffer,uint32_t sectors,uint32_t generation){
+    (void)context;
+    if(!pending){
+        uint32_t deadline=ln_time_us()+ln_block_request_timeout();
+        if(!ln_block_submit_direct_read(lba,sectors,buffer,generation,deadline,&request))return -1;
+        pending=true;request_generation=generation;request_sectors=sectors;return 0;
+    }
+    if(generation!=request_generation)return -1;
+    struct ln_block_completion completion;
+    if(!ln_block_take(generation,&completion))return 0;
+    pending=false;
+    return completion.request_id==request&&completion.status==LN_ATA_OK&&
+        completion.sectors_done==request_sectors?1:-1;
 }
 void ln_storage_progress(void *context){
     (void)context;uint32_t now=ln_time_us();
@@ -201,7 +216,7 @@ void ln_storage_progress(void *context){
     ln_block_step(now);
 #if defined(LINNET_IMAGE_OS)
     if((int32_t)(now-background_at)>=0){background_at=now+1000u;
-    if(!video_media_poll_depth){background_running=true;
+    if(!deferred_runtime_poll_depth){background_running=true;
 #if !defined(LINNET_PROFILE_RELEASE)
         uint32_t runtime_start=ln_time_us();
 #endif
@@ -239,13 +254,18 @@ void ln_storage_init(void){phase=1;error=found=opening=0;pending=locked=false;me
     handoff[0]=0;
 #endif
     ln_block_init(ln_time_us());}
-void ln_storage_step(void){
-    ln_storage_progress(0);if(locked)return;
+static void storage_step(bool defer_runtime){
+    if(defer_runtime)++deferred_runtime_poll_depth;
+    ln_storage_progress(0);
+    if(defer_runtime)--deferred_runtime_poll_depth;
+    if(locked)return;
     if(phase==1){struct ln_block_info info;ln_block_snapshot(&info);
         if(info.initializing)return;
         if(!info.ready){error=1;phase=9;return;}
         LN_STORAGE_STAMP(BLOCK);
-        struct ln_fat32_config config={sector_io,0,info.sectors,true};ln_fat32_init(&volume,&config);phase=2;
+        struct ln_fat32_config config={.io=sector_io,.read_sectors=sector_read,
+            .context=0,.disk_sectors=info.sectors,.writable=true};
+        ln_fat32_init(&volume,&config);phase=2;
     }
     if(phase==2){int result=sector_io(0,LN_FAT32_READ,0,mbr,epoch);if(!result)return;
         if(result<0||mbr[510]!=0x55||mbr[511]!=0xaa){error=2;phase=9;return;}
@@ -289,6 +309,10 @@ void ln_storage_step(void){
         if(result<0){error=(uint32_t)-result+500;phase=9;return;}LN_STORAGE_STAMP(PROOF);phase=6;
     }
 }
+void ln_storage_step(void){storage_step(false);}
+/* The executive runs the full runtime after this bounded step. Other callers,
+ * including synchronous drains, retain ordinary recursive runtime service. */
+void ln_storage_step_deferred(void){storage_step(true);}
 bool ln_storage_busy(void){return locked||background_running||(phase>=1&&phase<6)||phase==7||phase==10;}
 bool ln_storage_mounted(void){return phase==6&&volume.mounted;}
 bool ln_storage_prepared(void){return ln_storage_mounted()&&volume.mounted==1&&volume.write_proven&&(found&127u)==127u&&files[0].size==0x800000u&&files[1].size==0x800000u&&
@@ -332,7 +356,7 @@ int ln_storage_media_open(const char *path,uint32_t generation){
 }
 int ln_storage_media_read(const struct ln_fat32_file *file,uint32_t offset,
                           void *buffer,uint32_t length,uint32_t generation){
-    if(!generation||!file||!buffer||!length||length>16384u)return -1;
+    if(!generation||!file||!buffer||!length||length>LN_STORAGE_MEDIA_MAX_READ)return -1;
     if(!ln_storage_mounted()||locked||media_owner)return 0;
     if(!ln_fat32_read(&volume,file,offset,buffer,length,next_generation()))return -1;
     /* Small random metadata benefits from exact sectors; bulk hashing and
@@ -341,9 +365,9 @@ int ln_storage_media_read(const struct ln_fat32_file *file,uint32_t offset,
     media_owner=generation;media_canceled=false;media_opening=false;locked=true;return 1;
 }
 static int media_poll(uint32_t generation,struct ln_fat32_file *file,uint32_t *transferred,
-                      bool video_service){
+                      bool defer_runtime){
     if(!media_owner||generation!=media_owner)return LN_FAT32_STALE;
-    if(video_service)++video_media_poll_depth;
+    if(defer_runtime)++deferred_runtime_poll_depth;
 #if !defined(LINNET_PROFILE_RELEASE)
     uint32_t timing_start=ln_time_us(),timing_depth=timing_enter(0u);
 #endif
@@ -404,7 +428,7 @@ complete:
     schedule_cancel_complete(generation);
     timing_leave(0u,timing_depth,timing_start);
 #endif
-    if(video_service)--video_media_poll_depth;
+    if(defer_runtime)--deferred_runtime_poll_depth;
     return result;
 }
 int ln_storage_media_poll(uint32_t generation,struct ln_fat32_file *file,uint32_t *transferred){
@@ -412,6 +436,10 @@ int ln_storage_media_poll(uint32_t generation,struct ln_fat32_file *file,uint32_
 }
 int ln_storage_media_poll_video(uint32_t generation,struct ln_fat32_file *file,
                                 uint32_t *transferred){
+    return ln_storage_media_poll_deferred(generation,file,transferred);
+}
+int ln_storage_media_poll_deferred(uint32_t generation,struct ln_fat32_file *file,
+                                   uint32_t *transferred){
     return media_poll(generation,file,transferred,true);
 }
 void ln_storage_media_cancel(uint32_t generation){if(media_owner==generation){
@@ -469,6 +497,11 @@ int ln_storage_async_poll(uint32_t ticket,uint32_t *transferred){
     fixed_owner=0;locked=false;
     if(result<0&&!expired)error=(uint32_t)-result+300;
     return result;
+}
+int ln_storage_async_poll_deferred(uint32_t ticket,uint32_t *transferred){
+    ++deferred_runtime_poll_depth;
+    int result=ln_storage_async_poll(ticket,transferred);
+    --deferred_runtime_poll_depth;return result;
 }
 int ln_storage_quiesce(void){
     if(locked||pending||ln_storage_busy())return 0;

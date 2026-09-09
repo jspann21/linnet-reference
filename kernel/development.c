@@ -24,6 +24,20 @@ static uint32_t usb_generation;
 static uint8_t receive_bytes[512];
 static uint8_t transmit_bytes[LINNET_LINK_MAX_FRAME];
 static int (*loader_read)(void *, uint16_t, uint8_t *, uint32_t *);
+#if defined(LINNET_VIDEO)
+#include "services/video/video.h"
+static int (*loader_begin)(void *, uint32_t);
+static int (*loader_write)(void *, uint32_t, const uint8_t *, uint32_t);
+/* Video owns STAGE until its outstanding storage request has drained. */
+static int stage_begin(void *context,uint32_t size) {
+    if(ln_video_active()||ln_video_pending())return 0;
+    return loader_begin(context,size);
+}
+static int stage_write(void *context,uint32_t offset,const uint8_t *data,uint32_t size) {
+    if(ln_video_active()||ln_video_pending())return 0;
+    return loader_write(context,offset,data,size);
+}
+#endif
 static int diagnostic_read(void *context, uint16_t command, uint8_t *output, uint32_t *length) {
     if(command==54){
         if(!output||!length||*length<192u)return 0;
@@ -109,6 +123,10 @@ int ln_development_init(void) {
     if (!ln_loader_init(&loader, &config, &backend)) return 0;
     loader_read = backend.read;
     backend.read = diagnostic_read;
+#if defined(LINNET_VIDEO)
+    loader_begin=backend.begin;backend.begin=stage_begin;
+    loader_write=backend.write;backend.write=stage_write;
+#endif
     ln_link_dispatch_init(&dispatcher, &backend);
     ln_link_parser_init(&parser);
     if (!ln_usb_init(LINNET_USB_SERIAL)) return 0;

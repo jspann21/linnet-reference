@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "services/storage/fat32.h"
+#define LN_STORAGE_MEDIA_MAX_READ 98304u
 
 /* One asynchronous read-only media operation shares the filesystem owner.
  * Admission returns1, busy0, invalid-1. Poll the same caller generation until
@@ -11,14 +12,19 @@
  * returns STALE without relabeling an error that FAT already observed. */
 int ln_storage_media_open(const char *path,uint32_t generation);
 /* Reads below512 bytes suppress speculative block read-ahead for this owner;
- * bulk requests retain streaming read-ahead. Exact requested bytes are unchanged. */
+ * bulk requests retain streaming read-ahead. The media bound fits the largest
+ * native video record and avoids restarting FAT positioning within a record. */
 int ln_storage_media_read(const struct ln_fat32_file *file,uint32_t offset,
                           void *buffer,uint32_t length,uint32_t generation);
 int ln_storage_media_poll(uint32_t generation,struct ln_fat32_file *file,
                           uint32_t *transferred);
-/* Video-owned reads use the same owner, generation and cancellation contract,
- * but their bounded poll defers only the recursive full runtime callback. Block
- * and ATA progress, recovery, USB and watchdog service still run. */
+/* Bounded callers that return to the executive may defer the recursive full
+ * runtime callback. Owner, generation and cancellation semantics are unchanged;
+ * block/ATA progress, recovery, USB and watchdog service still run. Synchronous
+ * drain loops must retain ordinary polling to service the runtime while waiting. */
+int ln_storage_media_poll_deferred(uint32_t generation,struct ln_fat32_file *file,
+                                   uint32_t *transferred);
+/* Existing video entry retains the same deferred-runtime behavior. */
 int ln_storage_media_poll_video(uint32_t generation,struct ln_fat32_file *file,
                                 uint32_t *transferred);
 void ln_storage_media_cancel(uint32_t generation);
@@ -28,6 +34,8 @@ enum ln_storage_file { LN_STORAGE_OS0=0,LN_STORAGE_OS1=1,LN_STORAGE_BOOT0=2,
     LN_STORAGE_THEME0=12,LN_STORAGE_THEME1=13 };
 void ln_storage_init(void);
 void ln_storage_step(void);
+/* Executive-only entry: full runtime must run after the bounded storage step. */
+void ln_storage_step_deferred(void);
 bool ln_storage_busy(void);
 bool ln_storage_mounted(void);
 bool ln_storage_prepared(void);
@@ -54,6 +62,8 @@ int ln_storage_async_read(uint32_t file,uint32_t offset,void *buffer,uint32_t le
 int ln_storage_async_write(uint32_t file,uint32_t offset,const void *buffer,uint32_t length,uint32_t *ticket);
 int ln_storage_async_flush(uint32_t *ticket);
 int ln_storage_async_poll(uint32_t ticket,uint32_t *transferred);
+/* Bounded executive poll; service runtime after returning to the caller. */
+int ln_storage_async_poll_deferred(uint32_t ticket,uint32_t *transferred);
 int ln_storage_quiesce(void);
 int ln_storage_resume(void);
 int ln_storage_recover(void);

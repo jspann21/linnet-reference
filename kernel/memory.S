@@ -14,29 +14,29 @@ __aeabi_memcpy8:
 __aeabi_memcpy:
     cmp r2, #0
     bxeq lr
-    /* ARM7 cannot load unaligned words. Match alignment before widening;
-     * mismatched addresses retain the byte path. Only caller-saved registers
-     * are touched, including by the generic EABI aliases. */
-    eor r3, r0, r1
-    tst r3, #3
-    bne .Lcopy_bytes
+    stmdb sp!, {r4-r10, lr}
+    /* Align the destination first. Source and destination often differ in
+     * alignment for LZ4 matches, so assemble those words from aligned loads
+     * instead of falling back to a byte-at-a-time copy. */
 .Lcopy_align:
     tst r0, #3
     beq .Lcopy_words
     ldrb r3, [r1], #1
     strb r3, [r0], #1
     subs r2, r2, #1
-    bxeq lr
+    beq .Lcopy_done
     b .Lcopy_align
 .Lcopy_words:
-    cmp r2, #8
+    ands r12, r1, #3
+    bne .Lcopy_shifted
+    cmp r2, #32
     blo .Lcopy_word_tail
-.Lcopy_pairs:
-    ldmia r1!, {r3, r12}
-    stmia r0!, {r3, r12}
-    sub r2, r2, #8
-    cmp r2, #8
-    bhs .Lcopy_pairs
+.Lcopy_blocks:
+    ldmia r1!, {r3-r10}
+    stmia r0!, {r3-r10}
+    sub r2, r2, #32
+    cmp r2, #32
+    bhs .Lcopy_blocks
 .Lcopy_word_tail:
     cmp r2, #4
     blo .Lcopy_tail
@@ -45,13 +45,43 @@ __aeabi_memcpy:
     sub r2, r2, #4
 .Lcopy_tail:
     cmp r2, #0
-    bxeq lr
+    beq .Lcopy_done
 .Lcopy_bytes:
     ldrb r3, [r1], #1
     strb r3, [r0], #1
     subs r2, r2, #1
     bne .Lcopy_bytes
-    bx lr
+    b .Lcopy_done
+.Lcopy_shifted:
+    /* Keep the logical byte pointer in r10. Only use a shifted word while at
+     * least eight requested bytes remain, so the second aligned load never
+     * reads beyond the caller's source range. */
+    mov r10, r1
+    bic r1, r1, #3
+    ldr r3, [r1], #4
+.Lcopy_shift_loop:
+    cmp r2, #8
+    blo .Lcopy_shift_tail
+    ldr r4, [r1], #4
+    cmp r12, #1
+    moveq r5, r3, lsr #8
+    orreq r5, r5, r4, lsl #24
+    cmp r12, #2
+    moveq r5, r3, lsr #16
+    orreq r5, r5, r4, lsl #16
+    cmp r12, #3
+    moveq r5, r3, lsr #24
+    orreq r5, r5, r4, lsl #8
+    str r5, [r0], #4
+    mov r3, r4
+    add r10, r10, #4
+    sub r2, r2, #4
+    b .Lcopy_shift_loop
+.Lcopy_shift_tail:
+    mov r1, r10
+    b .Lcopy_tail
+.Lcopy_done:
+    ldmia sp!, {r4-r10, pc}
 .size ln_memory_copy, .-ln_memory_copy
 .section .text.ln_memory_clear,"ax",%progbits
 .global ln_memory_clear

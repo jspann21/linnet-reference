@@ -23,6 +23,10 @@ enum ln_fat32_io { LN_FAT32_READ=1, LN_FAT32_WRITE=2, LN_FAT32_FLUSH=3 };
 struct ln_fat32_config {
     int (*io)(void *context, enum ln_fat32_io operation, uint64_t lba,
               uint8_t *sector, uint32_t generation);
+    /* Optional read-only contiguous transfer. It follows the same polling and
+     * buffer-ownership contract as io, but completes exactly sectors sectors. */
+    int (*read_sectors)(void *context, uint64_t lba, uint8_t *buffer,
+                        uint32_t sectors, uint32_t generation);
     void *context;
     uint64_t disk_sectors;
     bool writable;
@@ -62,6 +66,8 @@ struct ln_fat32 {
     uint64_t partition, partition_sectors, fat_start, data_start, io_lba;
     uint32_t total, fat_sectors, clusters, root, epoch, generation;
     uint32_t cluster, chain_steps, fat_cluster, fat_value, fat_phase;
+    /* Primary-buffer FAT page plus1; zero invalid, VERIFY_CHAIN request only. */
+    uint32_t verified_fat_sector;
     uint32_t offset, length, transferred, skip, within, component, path_cursor;
     uint32_t directory_sector_index, directory_entry_index;
     uint32_t cycle_anchor, cycle_power, cycle_distance, verified_clusters, logical_cluster;
@@ -126,8 +132,8 @@ bool ln_fat32_validate_set(struct ln_fat32 *,const struct ln_fat32_file *files,
  * retires the retained base. Pending is not a permanent read-only condition. */
 bool ln_fat32_proof_pending(const struct ln_fat32 *);
 bool ln_fat32_refresh_proof(struct ln_fat32 *,uint32_t generation);
-/* At most one I/O callback per poll. Set-proof polling may evaluate up to
- * four chain edges; additional edges must already be cached, and a terminal
+/* At most one I/O callback per poll. Read/write and set-proof polling may
+ * evaluate up to four chain edges; additional edges must already be cached, and a terminal
  * or chain boundary always yields. Other states perform one metadata step.
  * This bounds work count, not elapsed time; service runs between polls.
  * file holds the open result; transferred counts completed bytes after errors.

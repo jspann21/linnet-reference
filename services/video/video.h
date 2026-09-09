@@ -6,6 +6,11 @@
 /* Caller must stop and drain music/photos before admission. Storage buffers and
  * audio ownership remain held until active() and pending() are both false. */
 void ln_video_init(void);
+void ln_video_library_load(void);
+uint32_t ln_video_library_count(void);
+uint32_t ln_video_library_revision(void);
+const char *ln_video_library_label(uint32_t row);
+const char *ln_video_library_path(uint32_t row);
 bool ln_video_open(const char *path);
 void ln_video_step(void);
 void ln_video_stop(void);
@@ -30,5 +35,6 @@ void ln_video_diagnostics(uint32_t out[32]);
  * display, 2 consume due frames without display snapshots. Starts at frame0,
  * stops after8s playback (or8s preparation), preserves saved resume. */
 bool ln_video_measurement_arm(uint32_t mode);
+void ln_video_metadata(uint32_t page,uint8_t out[128]);
 #endif
 #endif
