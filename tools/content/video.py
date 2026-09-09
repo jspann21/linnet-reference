@@ -1,4 +1,4 @@
-"""PVID v1 streaming converter and strict bounded validator."""
+"""PVID streaming converter and strict bounded validator."""
 from __future__ import annotations
 
 import hashlib
@@ -178,7 +178,7 @@ def compile_video(source, output, *, fps=24, width=220, height=176,
                         if kind in (0, 3):
                             keyframe = count
                         body = payload + pcm
-                        record = struct.pack('<4s7I', b'FRM1', count, kind, len(payload),
+                        record = struct.pack('<4s7I', b'FRAM', count, kind, len(payload),
                                              count*samples, samples, _crc(frame), _crc(body)) + body
                         record += bytes(size-len(record))
                         records.write(record)
@@ -225,7 +225,7 @@ def compile_video(source, output, *, fps=24, width=220, height=176,
             with (tmp/'records').open('rb') as records:
                 shutil.copyfileobj(records, dest, 1024*1024)
             header = bytearray(HEADER)
-            struct.pack_into('<4sHH12I', header, 0, b'PVID', 1, HEADER, 0, dest.tell(),
+            struct.pack_into('<4s13I', header, 0, b'PVID', HEADER, 0, dest.tell(),
                              width, height, fps, RATE, count, HEADER, data_at, largest,
                              metadata_crc, key_interval)
             struct.pack_into('<I', header, 508, _crc(header[:508]))
@@ -253,10 +253,8 @@ def _inspect(path, frame_visitor=None):
     with path.open('rb') as f:
         header = f.read(HEADER)
         if (len(header) != HEADER or header[:4] != b'PVID' or
-            struct.unpack_from('<H', header, 4)[0] not in (1, 2) or
-            struct.unpack_from('<H', header, 6)[0] != HEADER):
+            struct.unpack_from('<I', header, 4)[0] != HEADER):
             raise ValueError('invalid PVID header')
-        version = struct.unpack_from('<H', header, 4)[0]
         flags, size, width, height, fps, rate, count, index_at, data_at, maximum, crc, interval = struct.unpack_from('<12I', header, 8)
         if (flags or size != length or not HEADER < size <= MAX_FILE or
             not 1 <= width <= 220 or not 1 <= height <= 176 or fps not in FPS or rate != RATE or
@@ -294,7 +292,7 @@ def _inspect(path, frame_visitor=None):
                 raise ValueError(f'record CRC mismatch {n}')
             magic, frame_no, kind, vbytes, first, nsamples, frame_crc, payload_crc = struct.unpack_from('<4s7I', record)
             end = 32+vbytes+samples*4
-            if (magic != b'FRM1' or frame_no != n or kind > (4 if version == 2 else 3) or first != n*samples or nsamples != samples or
+            if (magic != b'FRAM' or frame_no != n or kind > 4 or first != n*samples or nsamples != samples or
                 end > size or _align(end) != size or _crc(record[32:end]) != payload_crc or any(record[end:])):
                 raise ValueError(f'invalid record {n}')
             video = record[32:32+vbytes]
@@ -364,8 +362,8 @@ def _inspect(path, frame_visitor=None):
     with path.open('rb') as f:
         for block in iter(lambda: f.read(1024*1024), b''):
             digest.update(block)
-    names = ('raw', 'repeat', 'tile_delta', 'rle', 'lz4') if version == 2 else ('raw', 'repeat', 'tile_delta', 'rle')
-    return dict(path=str(path), format='PVID', version=version, file_bytes=length,
+    names = ('raw', 'repeat', 'tile_delta', 'rle', 'lz4')
+    return dict(path=str(path), format='PVID', file_bytes=length,
                 width=width, height=height, fps=fps, sample_rate=rate,
                 frames=count, samples=count*samples, duration_seconds=count/fps,
                 max_record_bytes=maximum, key_interval=interval,
@@ -374,7 +372,7 @@ def _inspect(path, frame_visitor=None):
 
 
 def repack_spatial(source, output):
-    """Repack canonical PVID v1 as v2 with exact RGB565/PCM and all CRCs.
+    """Compress PVID spatially with exact RGB565/PCM and all CRCs.
 
     Independent LZ4 frames replace source records only when they save sectors.
     This offline byte reduction is unqualified until measured on the device.
@@ -383,8 +381,6 @@ def repack_spatial(source, output):
     if source == output or not source.is_file():
         raise ValueError('source must exist and differ from output')
     original = inspect(source)
-    if original['version'] != 1:
-        raise ValueError('spatial repack requires PVID version 1')
     output.parent.mkdir(parents=True, exist_ok=True)
     count, fps = original['frames'], original['fps']
     data_at = _align(HEADER + count*INDEX)
@@ -438,7 +434,7 @@ def repack_spatial(source, output):
             dest.write(padding)
             metadata_crc = zlib.crc32(padding, metadata_crc) & 0xffffffff
             header = bytearray(HEADER)
-            struct.pack_into('<4sHH12I', header, 0, b'PVID', 2, HEADER, 0, file_bytes,
+            struct.pack_into('<4s13I', header, 0, b'PVID', HEADER, 0, file_bytes,
                              original['width'], original['height'], fps, RATE, count,
                              HEADER, data_at, largest, metadata_crc, original['key_interval'])
             struct.pack_into('<I', header, 508, _crc(header[:508]))

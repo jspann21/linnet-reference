@@ -34,7 +34,7 @@ static struct {
     struct ln_fat32_file file;struct ln_ui_asset asset;
     char path[256],title[128];
     uint32_t phase,error,epoch,working,generation,requested,revision;
-    uint32_t version,width,height,fps,count,data_at,max_record,key_interval,index_crc;
+    uint32_t width,height,fps,count,data_at,max_record,key_interval,index_crc;
     uint32_t fps_num,fps_den,rate,media_end,index_at,index_count,first_sectors,preroll;
     uint32_t time_frame[2],time_sample[2],time_clock,time_clock_frame,time_valid;
     uint32_t verify_at,verify_crc,verify_frame,verify_end,verify_key,verify_max;
@@ -440,8 +440,7 @@ static int read_index(uint32_t frame){
 }
 static bool pvid_header(void){
     const uint8_t*b=v.record.bytes;
-    v.version=r16(b+4);
-    if(r32(b)!=0x44495650u||(v.version!=1&&v.version!=2)||r16(b+6)!=512||r32(b+8)||r32(b+12)!=v.file.size||v.file.size>0x7fffffffu||r32(b+36)!=512||!zero(b+56,452)||checksum(b,508)!=r32(b+508))return false;
+    if(r32(b)!=0x44495650u||r32(b+4)!=512||r32(b+8)||r32(b+12)!=v.file.size||v.file.size>0x7fffffffu||r32(b+36)!=512||!zero(b+56,452)||checksum(b,508)!=r32(b+508))return false;
     v.width=r32(b+16);v.height=r32(b+20);v.fps=r32(b+24);v.count=r32(b+32);v.data_at=r32(b+40);v.max_record=r32(b+44);v.index_crc=r32(b+48);v.key_interval=r32(b+52);
     v.identity=r32(b+508);v.fps_num=v.fps;v.fps_den=1;v.rate=48000;
     if(!v.width||v.width>220||!v.height||v.height>176||(v.fps!=24&&v.fps!=25&&v.fps!=30&&v.fps!=60)||r32(b+28)!=48000||!v.count||v.count>1000000u||!v.key_interval||v.key_interval>v.fps*10u||v.max_record<512||v.max_record>PVID_RECORD||(v.max_record&511u))return false;
@@ -559,7 +558,7 @@ static void present(struct ln_audio_status*a){
 }
 static bool record_header(void){
     const uint8_t*b=v.record.bytes;v.type=r32(b+8);v.video_bytes=r32(b+12);v.frame_crc=r32(b+24);v.payload_crc=r32(b+28);
-    if(r32(b)!=0x314d5246u||r32(b+4)!=v.next||r32(b+16)!=v.sample||r32(b+20)!=v.samples||v.type>(v.version==2?4u:3u)||v.video_bytes>v.bytes-32||v.samples*4u>v.bytes-32-v.video_bytes)return false;
+    if(r32(b)!=0x4d415246u||r32(b+4)!=v.next||r32(b+16)!=v.sample||r32(b+20)!=v.samples||v.type>4u||v.video_bytes>v.bytes-32||v.samples*4u>v.bytes-32-v.video_bytes)return false;
     uint32_t used=32+v.video_bytes+v.samples*4u;if(((used+511u)&~511u)!=v.bytes||!zero(b+used,v.bytes-used))return false;
     bool key=v.type==0||v.type==3||v.type==4;
     if(key!=(v.key==v.next)||(!key&&v.previous==NONE))return false;
