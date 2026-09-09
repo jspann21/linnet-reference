@@ -58,19 +58,40 @@ static inline uint32_t readbits_16(alac_file *alac,int bits)
     uint32_t available=(uint32_t)(alac->input_end-alac->input_buffer)*8u-(uint32_t)alac->input_buffer_bitaccumulator;
     if((uint32_t)bits>available){alac->failed=1;return 0;}
     uint32_t value=0;
-    while(bits--){value=(value<<1)|((*alac->input_buffer>>(7-alac->input_buffer_bitaccumulator))&1u);
-        if(++alac->input_buffer_bitaccumulator==8){alac->input_buffer++;alac->input_buffer_bitaccumulator=0;}}
+    while(bits){
+        uint32_t remaining=8u-(uint32_t)alac->input_buffer_bitaccumulator;
+        uint32_t take=(uint32_t)bits<remaining?(uint32_t)bits:remaining;
+        value=(value<<take)|(((uint32_t)*alac->input_buffer>>(remaining-take))&((1u<<take)-1u));
+        bits-=(int)take;alac->input_buffer_bitaccumulator+=(int)take;
+        if(alac->input_buffer_bitaccumulator==8){alac->input_buffer++;alac->input_buffer_bitaccumulator=0;}
+    }
     return value;
 }
 static inline uint32_t readbits(alac_file *alac,int bits){return readbits_16(alac,bits);}
-static inline int readbit(alac_file *alac){return (int)readbits_16(alac,1);}
+static inline int readbit(alac_file *alac){
+    if(alac->failed){alac->failed=1;return 0;}
+    uint32_t available=(uint32_t)(alac->input_end-alac->input_buffer)*8u-(uint32_t)alac->input_buffer_bitaccumulator;
+    if(!available){alac->failed=1;return 0;}
+    int value=(int)((*alac->input_buffer>>(7-alac->input_buffer_bitaccumulator))&1u);
+    if(++alac->input_buffer_bitaccumulator==8){alac->input_buffer++;alac->input_buffer_bitaccumulator=0;}
+    return value;
+}
 static inline void unreadbits(alac_file *alac,int bits)
 {
     uint32_t position=(uint32_t)(alac->input_buffer-alac->input_start)*8u+(uint32_t)alac->input_buffer_bitaccumulator;
     if(bits<0||(uint32_t)bits>position){alac->failed=1;return;}
     position-=(uint32_t)bits;alac->input_buffer=alac->input_start+position/8u;alac->input_buffer_bitaccumulator=(int)(position%8u);
 }
-static inline int ln_alac_clz(uint32_t value){int count=0;if(!value)return 32;while(!(value&0x80000000u)){count++;value<<=1;}return count;}
+static inline int ln_alac_clz(uint32_t value){
+    if(!value)return 32;
+    int count=0;
+    if(!(value&0xffff0000u)){count+=16;value<<=16;}
+    if(!(value&0xff000000u)){count+=8;value<<=8;}
+    if(!(value&0xf0000000u)){count+=4;value<<=4;}
+    if(!(value&0xc0000000u)){count+=2;value<<=2;}
+    if(!(value&0x80000000u))++count;
+    return count;
+}
 #define count_leading_zeros(x) ln_alac_clz((uint32_t)(x))
 
 #define RICE_THRESHOLD 8 // maximum number of bits for a rice prefix.
@@ -411,7 +432,16 @@ static void predictor_decompress_fir_adapt(int32_t *error_buffer,
             int outval;
             int error_val = error_buffer[i];
 
-            for (j = 0; j < predictor_coef_num; j++)
+            if (predictor_coef_num == 6)
+            {
+                sum = (buffer_out[6] - buffer_out[0]) * predictor_coef_table[0]
+                    + (buffer_out[5] - buffer_out[0]) * predictor_coef_table[1]
+                    + (buffer_out[4] - buffer_out[0]) * predictor_coef_table[2]
+                    + (buffer_out[3] - buffer_out[0]) * predictor_coef_table[3]
+                    + (buffer_out[2] - buffer_out[0]) * predictor_coef_table[4]
+                    + (buffer_out[1] - buffer_out[0]) * predictor_coef_table[5];
+            }
+            else for (j = 0; j < predictor_coef_num; j++)
             {
                 sum += (buffer_out[predictor_coef_num-j] - buffer_out[0]) *
                        predictor_coef_table[j];

@@ -10,6 +10,9 @@
 #include "services/music/search.h"
 #include "services/music/queue_view.h"
 #include "services/storage/storage.h"
+#if defined(LINNET_PHOTOS)
+#include "services/photos/photos.h"
+#endif
 #include "services/state/store.h"
 #include "hal/pp5020/audio.h"
 #include "hal/pp5020/platform.h"
@@ -394,7 +397,23 @@ static void music_step(void){
     }
     bool urgent=ln_player_prefetch_urgent();
     uint32_t read_runway=ln_player_background_frames(audio.rate);
-    ln_music_library_pause(audio.initialized&&audio.playing&&!urgent&&audio.queued<read_runway);
+    bool photo_priority=false;
+#if defined(LINNET_PHOTOS)
+    /* Release speculative-read priority before the audible tail, not only
+     * after decode reaches EOF. Otherwise a photo/zoom can leave too little
+     * runway to resolve the following short track's metadata. */
+    uint64_t track_frames=p.frames?p.frames:current.track.frames;
+    uint64_t position=ln_player_position();
+    bool transition_soon=track_frames&&(position>=track_frames||
+        track_frames-position<=(uint64_t)audio.rate*3u);
+    photo_priority=active&&have_current&&!selecting&&!have_waiting&&!manual_next_pending&&
+        p.phase==LN_PLAYER_PLAY&&!urgent&&!transition_soon&&ln_photos_busy();
+#endif
+    /* Both services use the same PCM reserve. Let unfinished visible photos
+     * claim that window before speculative metadata consumes it repeatedly.
+     * Library/history service calls still drain their admitted operations. */
+    ln_music_library_pause(audio.initialized&&audio.playing&&!urgent&&
+        (audio.queued<read_runway||photo_priority));
     ln_music_browser_suspend(queue_opened||ln_music_queue_view_busy()||ln_music_search_active());
     ln_music_library_window_enable(ln_music_browser_window_needed());
     ln_music_library_step();
@@ -497,7 +516,7 @@ static void music_step(void){
             if(next_queue_cursor(&cursor)&&ln_queue_track_at(&queue,cursor,&next_ordinal))
                 (void)resolve_queue(next_ordinal,2);
         }
-        if(next_ready&&!next_armed&&(p.phase==LN_PLAYER_PRIME||p.phase==LN_PLAYER_PLAY||p.phase==LN_PLAYER_DRAIN)){
+        if(next_ready&&!next_armed&&!photo_priority&&(p.phase==LN_PLAYER_PRIME||p.phase==LN_PLAYER_PLAY||p.phase==LN_PLAYER_DRAIN)){
             uint32_t candidate=next_token+1u;if(!candidate)candidate=1;
             struct ln_dsp_config dsp;
             if(!ln_music_history_error()&&ln_music_history_ready()&&!ln_music_history_record_ready(upcoming.track.id)&&!ln_music_history_record_error(upcoming.track.id)){
@@ -518,10 +537,16 @@ static void music_step(void){
     /* Explicit selection can pass briefly through IDLE. Preserve history
      * loading and an already-started publication, but do not start optional
      * writes ahead of the replacement track's metadata and audio reads. */
-    bool history_headroom=(stopped||(audio.playing&&audio.queued>=LINNET_AUDIO_RING_FRAMES-2048u))&&
+    /* Finish an admitted page publication at the normal background reserve.
+     * Waiting for a full ring again after its write can strand FLUSH and block
+     * the following track's history lookup. Only FLUSH/CHECK/ACK qualify;
+     * returning to IDLE restores the stricter threshold for each new write. */
+    bool history_headroom=(stopped||(audio.playing&&
+        (audio.queued>=LINNET_AUDIO_RING_FRAMES-2048u||
+         (ln_music_history_finishing()&&audio.queued>=read_runway))))&&
         (!changing||!ln_music_history_ready()||ln_music_history_busy());
     bool history_read=stopped||(!audio.playing&&p.phase==LN_PLAYER_PRIME)||urgent||
-        (audio.playing&&audio.queued>=read_runway);
+        (audio.playing&&audio.queued>=read_runway&&!photo_priority);
     ln_music_history_service(history_read,history_headroom,audio.playing);
     if(!audio.initialized){volume_retry_pending=false;volume_retry_at=0;}
     else if(audio.volume_db_tenths!=queue.volume_db_tenths){

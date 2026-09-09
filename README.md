@@ -52,6 +52,40 @@ the remaining fault, watchdog and reboot checks. Its final command entered Apple
 Disk Mode. Receipts and firmware backups are local under `out/` and excluded from
 Git. Qualification applies to the exact image identities in those receipts.
 
+## Manage music, notes, photos and videos
+
+On Windows, double-click **Linnet Media.cmd**, or run `python linnet media`.
+Connect the iPod in Disk Mode. The desktop manager detects its identity and scans
+the existing **Music**, **Notes**, **Photos** and **Videos** folders. Choose which
+folders to update, optionally add files or folders from the computer, then click
+**Prepare & update iPod**. Safely eject when it finishes and restart Linnet.
+
+Existing music and native IPVF video are indexed in place; their media is not copied or transcoded. Photos
+and other video formats get prepared playback copies. Notes get a prepared read-only catalog
+available under Extras > Notes. Originals stay in their folders. Updated firmware
+is required for existing music paths, the Notes reader and multiple-video browsing.
+
+The manager needs Python with Tkinter, Pillow, and FFmpeg/FFprobe. It finds media
+tools on PATH or through **Locate FFmpeg**. See [the media guide](MEDIA_MANAGER.md)
+for format limits, caching, progress, and recovery details.
+Existing music uses fast metadata checks by default, with a resumable per-track
+cache. Optional Mutagen (`python -m pip install mutagen`) speeds up the first
+import. Video subfolders, including Rockbox IPVF sources, are included.
+
+## Prepare photos
+
+Prepare the folder containing your photos on the computer before publishing:
+
+```powershell
+python linnet photos compile --source "C:\Photos\Anna" --output out/anna.pimg
+python linnet photos inspect out/anna.pimg
+```
+
+Preparation preserves the originals and creates screen-sized images plus zoom
+levels up to 640 pixels. Use `--max-dimension 2048` for more zoom detail and a
+larger package. Select the actual photo folder to avoid including sibling folders
+of samples or fixtures.
+
 ## Build
 
 Requires Python 3.11+ and LLVM **18.1.3** (`clang`, `ld.lld`, `llvm-objcopy`,

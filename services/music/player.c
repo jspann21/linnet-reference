@@ -72,7 +72,7 @@ static int read_media(void *context,uint64_t offset,uint8_t *buffer,uint32_t len
         int r=ln_storage_media_read(&s->media,(uint32_t)offset,buffer,length,s->generation);if(r<=0)return r;
         io_owner=s;io_open=false;io_offset=(uint32_t)offset;io_length=length;io_buffer=buffer;
     }else if(io_open||io_offset!=offset||io_length!=length||io_buffer!=buffer)return -1;
-    uint32_t transferred=0;int r=ln_storage_media_poll(s->generation,0,&transferred);
+    uint32_t transferred=0;int r=ln_storage_media_poll_deferred(s->generation,0,&transferred);
     if(!r)return 0;io_owner=0;return r==1&&transferred==length?1:-1;
 }
 static void clear_slot(struct player_slot *s){
@@ -95,13 +95,13 @@ static void fail(uint32_t error){
     state.error=error;stop_requested=true;state.phase=LN_PLAYER_STOPPING;(void)ln_audio_stop();
     if(io_owner)ln_storage_media_cancel(io_owner->generation);
 }
-/* The pending owner alone polls storage. Calls may dispatch UI controls during
- * storage progress, so the outer player checks interruption before publishing. */
+/* The pending owner alone polls storage, returning to the executive after
+ * bounded work. Keep interruption checks for controls from other service paths. */
 static int slot_step(struct player_slot *s){
     if(s->phase==SLOT_OPEN){
         if(io_owner&&io_owner!=s)return 0;
         if(!io_owner){int r=ln_storage_media_open(s->path,s->generation);if(r<=0)return r;io_owner=s;io_open=true;}
-        int r=ln_storage_media_poll(s->generation,&s->media,0);if(!r)return 0;io_owner=0;
+        int r=ln_storage_media_poll_deferred(s->generation,&s->media,0);if(!r)return 0;io_owner=0;
         if(interrupted())return 0;
         if(r<0||(s->expected&&s->expected!=s->media.size))return -1;
         ln_decoder_init(&s->decoder,read_media,s,s->media.size);s->phase=SLOT_DECODE;return 0;
@@ -339,7 +339,11 @@ static void player_advance(void){
     else if(s->phase!=SLOT_EOF&&audio.free_frames>=1024u){
         int r=slot_step(s);if(interrupted())return;if(r<0){fail(13);return;}if(s->buffered&&!submit_slot(s))return;
     }
-    if(state.phase==LN_PLAYER_PRIME&&(s->submitted>=8192u||s->phase==SLOT_EOF)){
+    /* Start with the same bounded runway used for next-track I/O. Starting
+     * at 8192 frames leaves less than the photo reserve; with effects enabled,
+     * earning that reserve during playback can take many seconds. Short tracks
+     * still start at EOF, and a paused seek remains muted while priming. */
+    if(state.phase==LN_PLAYER_PRIME&&(s->submitted>=prefetch_frames(s->rate)||s->phase==SLOT_EOF)){
         if(submitted==consumed){(void)ln_audio_stop();audio_ready=false;clear_slot(s);state.phase=LN_PLAYER_IDLE;return;}
         /* A paused seek fills a fresh ring while muted. Resume starts DMA;
          * priming must not briefly expose audio before returning to pause. */

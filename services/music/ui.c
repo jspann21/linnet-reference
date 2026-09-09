@@ -6,6 +6,9 @@
 #include "services/music/browser.h"
 #include "services/music/search.h"
 #include "services/music/queue_view.h"
+#if defined(LINNET_NOTES)
+#include "services/notes/notes.h"
+#endif
 #if defined(LINNET_PHOTOS)
 #include "services/photos/photos.h"
 #endif
@@ -72,6 +75,12 @@ const struct ln_ui_asset *ln_ui_dynamic_item_asset(const struct ln_ui_node*n,uin
     return fallback;
 }
 uint32_t ln_ui_dynamic_count(const struct ln_ui_node*n,uint32_t fallback){
+#if defined(LINNET_NOTES)
+    if(in_scene(n,"linnet.system.notes")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_notes_count();
+#endif
+#if defined(LINNET_VIDEO)
+    if(in_scene(n,"linnet.system.videos")&&n->kind==LN_UI_VIRTUAL_LIST)return ln_video_library_count();
+#endif
 #if defined(LINNET_PHOTOS)
     if((in_scene(n,"linnet.system.photos")||in_scene(n,"linnet.system.photos-grid"))&&
        (n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_GRID||n->kind==LN_UI_SCROLLBAR))return ln_photos_count();
@@ -95,12 +104,19 @@ uint32_t ln_ui_dynamic_value(const struct ln_ui_node*n,uint32_t fallback){
     return fallback;
 }
 const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){
+#if defined(LINNET_NOTES)
+    if(in_scene(n,"linnet.system.notes")){
+        if(n->kind==LN_UI_STATUS_BAR)return ln_notes_title();
+        if(n->kind==LN_UI_VIRTUAL_LIST&&item!=UINT32_MAX)return ln_notes_label(item);
+    }
+#endif
     /* These are the only kinds handled below. Other nodes preserve their
      * fallback without repeating scene ownership scans or calling services. */
     if(n->kind!=LN_UI_TEXT&&n->kind!=LN_UI_STATUS_BAR&&n->kind!=LN_UI_VIRTUAL_LIST&&
        n->kind!=LN_UI_GRID&&n->kind!=LN_UI_VIDEO_SURFACE&&n->kind!=LN_UI_PHOTO_SURFACE&&
        n->kind!=LN_UI_ALBUM_ART)return fallback;
 #if defined(LINNET_VIDEO)
+    if(in_scene(n,"linnet.system.videos")&&n->kind==LN_UI_VIRTUAL_LIST&&item!=UINT32_MAX)return ln_video_library_label(item);
     if(in_scene(n,"linnet.system.video-player")||in_scene(n,"linnet.system.video-controls")){
         if(n->kind==LN_UI_VIDEO_SURFACE)return ln_video_asset()?"":ln_video_status();
         if(n->kind==LN_UI_STATUS_BAR)return ln_video_status();

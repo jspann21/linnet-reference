@@ -43,6 +43,7 @@ int ln_music_history_flush(void);
 bool ln_music_history_ready(void);
 int ln_music_history_error(void);
 bool ln_music_history_busy(void);
+bool ln_music_history_finishing(void);
 bool ln_music_history_dirty(void);
 uint32_t ln_music_history_version(void);
 /* Paged format returns UINT32_MAX (unknown) without scanning every page. */

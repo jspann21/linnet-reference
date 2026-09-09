@@ -62,7 +62,7 @@ device reader can stream the hash and retain only active records and strings.
 | 84 | u32 | Disc number; zero means unknown |
 | 88 | u32 | Artwork table index, or `0xffffffff` |
 | 92 | i32 | Track ReplayGain dB in Q16.16; `INT32_MIN` means unknown |
-| 96 | byte[32] | SHA-256 of the complete staged media file |
+| 96 | byte[32] | SHA-256 of complete media; all zero for metadata-only existing references |
 
 Codec IDs are 1 integer PCM little endian, 2 integer PCM big endian, 3 IEEE float
 little endian, 4 IEEE float big endian, 16 MP3, 17 AAC, 18 ALAC, 19 FLAC,
@@ -81,7 +81,18 @@ IDs; moving a source changes its ID. The compiler rejects ID and short-name
 collisions. The staged name is uppercase low-32-bit ID hex plus an extension of
 at most three characters, e.g. `/LINNET/MUSIC/7A31B298.WAV`. AIFF/AIFC use `AIF`,
 FLAC uses `FLC`, Opus uses `OPS`. Original relative paths are retained only in
-the host manifest. Staged media bytes are unchanged, and originals are never
+the host manifest. In-place imports instead reference the existing file using its
+actual FAT 8.3 alias, resolved on the mounted volume. Paths are absolute, at most
+255 characters and 16 components; each component is an uppercase FAT short name.
+The host manifest marks these entries `storage: "existing"`. Default fast imports
+use `integrity: "metadata"`, a zero digest, and recorded `bytes`/`mtime_ns`;
+publication checks file size and modification time without reading full audio.
+Explicit full verification uses `integrity: "sha256"` and complete file hashes.
+Legacy entries without an integrity field retain full SHA-256 verification.
+No audio is copied for either existing-reference mode. Compressed
+in-place entries use `frames=0` (unknown) to avoid full host decoding; native
+decoder frame counts take precedence during playback.
+Staged media bytes are unchanged, and originals are never
 modified. The device must reject unsafe paths and size/range mismatches before
 starting playback, and verify content hashes before claiming media integrity.
 

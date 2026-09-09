@@ -34,6 +34,7 @@ void ln_music_history_init(void)
 void ln_music_history_pin_current(bool present,uint64_t id){if(!history.frozen)ln_paged_history_pin_current(present,id);}
 void ln_music_history_freeze(void){history.frozen=true;}
 bool ln_music_history_ready(void){return history.initialized&&(paged?ln_paged_history_ready():history.loaded);}
+bool ln_music_history_finishing(void){return paged&&ln_paged_history_finishing();}
 int ln_music_history_error(void){return history.error?history.error:paged?ln_paged_history_error():0;}
 bool ln_music_history_busy(void)
 {return history.stepping||(paged?ln_paged_history_busy():(history.phase>=LOAD_A&&history.phase<=BIND)||(history.phase>=WRITE&&history.phase<=ACK));}

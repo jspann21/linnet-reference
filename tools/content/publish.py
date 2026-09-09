@@ -24,6 +24,7 @@ import subprocess
 import time
 import uuid
 import zlib
+from typing import Callable
 
 from .music import ART, HEADER, MAX_DATABASE, TRACK, validate_database
 
@@ -77,8 +78,20 @@ def _pool_string(database: bytes, pool: int, offset: int) -> str:
     return database[start:database.index(0, start)].decode("utf-8")
 
 
-def validate_stage(stage: Path) -> dict:
-    """Read-only full PODB/manifest/media/art validation on the host."""
+def _existing_stat(local: Path, root: Path, size: int, mtime_ns: int | None = None):
+    """Check referenced media without reading its audio payload."""
+    _plain(local, root)
+    info = local.stat()
+    if not stat.S_ISREG(info.st_mode) or info.st_size != size:
+        raise ValueError(f"existing iPod media type/size changed: {local}")
+    if mtime_ns is not None and info.st_mtime_ns != mtime_ns:
+        raise ValueError(f"existing iPod media timestamp changed: {local}")
+    return info
+
+
+def validate_stage(stage: Path, *, device_root: Path | None = None,
+                   progress: Callable[[str], None] | None = None) -> dict:
+    """Validate PODB, manifest and art; existing metadata references use stat checks."""
     stage = Path(os.path.abspath(stage))
     _plain(stage, Path(stage.anchor))
     stage = stage.resolve(strict=True)
@@ -101,7 +114,14 @@ def validate_stage(stage: Path) -> dict:
     track_offset, pool, art_offset = (struct.unpack_from("<I", database, offset)[0] for offset in (32, 48, 60))
     files: dict[str, dict] = {}
     sources = set()
+    external = []
+    external_paths = set()
+    if device_root is not None:
+        _plain(Path(os.path.abspath(device_root)), Path(Path(os.path.abspath(device_root)).anchor))
+        device_root = Path(device_root).resolve(strict=True)
     for index, entry in enumerate(entries):
+        if progress and (index % 100 == 0 or index + 1 == len(entries)):
+            progress(f"Checking music references {index + 1:,}/{len(entries):,}…")
         if not isinstance(entry, dict):
             raise ValueError("invalid manifest entry")
         offset = track_offset + index * TRACK
@@ -116,7 +136,16 @@ def validate_stage(stage: Path) -> dict:
             int.from_bytes(hashlib.sha256(("track:" + source).encode()).digest()[:8], "little") != identity):
             raise ValueError("manifest source identity mismatch")
         sources.add(source)
-        if Path(path).stem != f"{identity & 0xffffffff:08X}":
+        storage = entry.get("storage", "staged")
+        if storage not in ("staged", "existing"):
+            raise ValueError("unknown music storage mode")
+        integrity = entry.get("integrity", "sha256")
+        if integrity not in ("sha256", "metadata") or (integrity == "metadata" and storage != "existing"):
+            raise ValueError("invalid music integrity mode")
+        if integrity == "metadata" and (sha != "0" * 64 or type(entry.get("bytes")) is not int or
+                entry["bytes"] != size or type(entry.get("mtime_ns")) is not int or entry["mtime_ns"] < 0):
+            raise ValueError("invalid metadata-only music reference")
+        if storage == "staged" and Path(path).stem != f"{identity & 0xffffffff:08X}":
             raise ValueError("media short name does not match track identity")
         for field, position in (("title", 52), ("artist", 56), ("album", 60)):
             if entry.get(field) != _pool_string(database, pool, struct.unpack_from("<I", database, offset + position)[0]):
@@ -124,6 +153,22 @@ def validate_stage(stage: Path) -> dict:
         for field, position in (("codec", 48), ("track", 80), ("disc", 84)):
             if entry.get(field) != struct.unpack_from("<I", database, offset + position)[0]:
                 raise ValueError("manifest numeric metadata mismatch")
+        if storage == "existing":
+            if device_root is None:
+                raise ValueError("This library references existing iPod files; connect the iPod and supply device_root")
+            local = device_root / path.lstrip("/")
+            snapshot = _existing_stat(local, device_root, size,
+                                      entry["mtime_ns"] if integrity == "metadata" else None)
+            if integrity == "sha256" and _hash(local, size) != sha:
+                raise ValueError(f"existing iPod media hash mismatch: {path}")
+            if path in external_paths:
+                raise ValueError("duplicate existing media path")
+            external_paths.add(path)
+            external.append(dict(path=path, bytes=size, sha256=sha, kind="music", integrity=integrity,
+                                 mtime_ns=snapshot.st_mtime_ns, inode=snapshot.st_ino))
+            continue
+        if not re.fullmatch(r"/LINNET/MUSIC/[0-9A-F]{8}\.[A-Z0-9]{1,3}", path):
+            raise ValueError("staged media must use its managed short name")
         relative = path.removeprefix("/LINNET/")
         if relative in files:
             raise ValueError("duplicate staged media path")
@@ -150,7 +195,7 @@ def validate_stage(stage: Path) -> dict:
             raise ValueError("conflicting artwork short name")
         files[relative] = record
     return dict(stage=str(stage), database=expected, manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
-                files=list(files.values()), media_bytes=sum(item["bytes"] for item in files.values()))
+                files=list(files.values()), existing_files=external, media_bytes=sum(item["bytes"] for item in files.values()))
 
 
 def _volume_serial(value: str) -> str:
@@ -266,17 +311,18 @@ def _copy_verified(source: Path, destination: Path, item: dict, root: Path, guar
 
 
 def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
-                  expected_volume_serial: str, expected_drive: str | None = None) -> dict:
+                  expected_volume_serial: str, expected_drive: str | None = None,
+                  progress: Callable[[str], None] | None = None) -> dict:
     """Validate locally, guard the explicit iPod, then publish media before PODB.
 
     No elevation, cleanup deletions, raw writes, ejection, or reboot is performed.
     An exception after the final replace is an uncertain publication: inspect
     LIBRARY.PDB and retained LIBBAK backup; never automatically replay the call.
     """
-    inventory = validate_stage(stage)
-    stage = Path(inventory["stage"])
     identity = inspect_target(disk_number, expected_disk_serial, expected_volume_serial, expected_drive)
     root = Path(identity["root"])
+    inventory = validate_stage(stage, device_root=root, progress=progress)
+    stage = Path(inventory["stage"])
     if stage.drive.casefold() == root.drive.casefold():
         raise ValueError("local stage must reside on a different volume from the iPod")
     guard = lambda: _volume_guard(identity)
@@ -331,7 +377,9 @@ def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
         path.mkdir(exist_ok=True)
     receipt = dict(operation="publish-music", passed=False, phase="copying-media", identity=identity,
                    candidate_sha256=inventory["database"]["sha256"], previous=previous,
-                   copied=0, reused=0, started_at=time.time(), elevation=False,
+                   copied=0, reused=len(inventory["existing_files"]), started_at=time.time(), elevation=False,
+                   existing_metadata_checked=sum(item["integrity"] == "metadata" for item in inventory["existing_files"]),
+                   existing_sha256_checked=sum(item["integrity"] == "sha256" for item in inventory["existing_files"]),
                    durability="file fsync and readback; FAT rename is not a power-loss journal")
     # Receipt stays on the host; it records uncertainty without writing extra
     # mutable state beside the device's immutable database.
@@ -381,6 +429,13 @@ def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
             _hash(stage / "music-manifest.json") != inventory["manifest_sha256"]):
             raise RuntimeError("stage changed during publication")
         _same_target(identity, inspect_target(disk_number, expected_disk_serial, expected_volume_serial, expected_drive))
+        guard()
+        for index, item in enumerate(inventory["existing_files"]):
+            if progress and index % 100 == 0:
+                progress(f"Confirming music references {index + 1:,}/{len(inventory['existing_files']):,}…")
+            snapshot = _existing_stat(root / item["path"].lstrip("/"), root, item["bytes"], item["mtime_ns"])
+            if snapshot.st_ino != item["inode"]:
+                raise RuntimeError(f"existing iPod media replaced during publication: {item['path']}")
         guard()
         _plain(active, root)
         if previous:

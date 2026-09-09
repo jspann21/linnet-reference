@@ -222,7 +222,7 @@ bool ln_music_db_safe_path(const char *path)
         while(path[i]&&path[i]!='/'){
             char c=path[i++];if(i>255)return false;
             if(c=='.'){if(dot||!name)return false;dot=true;continue;}
-            if(!((c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='_'||c=='-'))return false;
+            if(!((c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='_'||c=='-'||c=='~'||c=='!'||c=='#'||c=='$'||c=='%'||c=='&'||c=='\''||c=='('||c==')'||c=='@'||c=='^'||c=='`'||c=='{'||c=='}'))return false;
             if(dot){if(++ext>3)return false;}else if(++name>8)return false;
         }
         if(!name||(dot&&!ext)||++components>16)return false;

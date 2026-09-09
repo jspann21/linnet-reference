@@ -7,6 +7,8 @@ bool ln_paged_history_ready(void);
 int ln_paged_history_error(void);
 bool ln_paged_history_busy(void);
 bool ln_paged_history_io_pending(void);
+/* A page write has completed; only flush, readback and acknowledgment remain. */
+bool ln_paged_history_finishing(void);
 uint32_t ln_paged_history_deadline(uint32_t now,bool may_read,bool may_write);
 bool ln_paged_history_dirty(void);
 uint32_t ln_paged_history_version(void);

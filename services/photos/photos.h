@@ -11,6 +11,8 @@ void ln_photos_open(void);
 void ln_photos_close(void);
 bool ln_photos_active(void);
 bool ln_photos_pending(void);
+/* Unfinished visible work takes precedence over speculative music metadata. */
+bool ln_photos_busy(void);
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_photos_diagnostics(uint32_t out[32]);
 #endif

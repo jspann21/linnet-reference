@@ -1,5 +1,6 @@
 #include "library.h"
 #include "services/storage/storage.h"
+#include "hal/pp5020/platform.h"
 
 enum job { JOB_NONE=0,JOB_WINDOW,JOB_SELECTION,JOB_SEARCH,JOB_GROUP,JOB_MEMBER,JOB_PREFETCH,JOB_QUEUE,JOB_VIEW,JOB_VIEW_GROUP };
 struct library {
@@ -85,7 +86,16 @@ static int read_database(void *context,uint64_t offset,uint8_t *buffer,uint32_t 
     if(library.io_active){
         if(library.io_offset!=(uint32_t)offset||library.io_size!=bytes||library.io_buffer!=buffer)return LN_DB_ARGUMENT;
         uint32_t transferred=0;
-        int result=ln_storage_media_poll(library.generation,0,&transferred);
+        int result=0;
+        /* A metadata page is at most 4 KiB. Group ready FAT/cache transitions
+         * without recursive runtime work between each sector; yield as soon
+         * as hardware really waits. Cancellation retains its ordinary drain. */
+        for(uint32_t step=0;step<4u;++step){
+            result=ln_storage_media_poll_deferred(library.generation,0,&transferred);
+            if(result)break;
+            uint32_t now=ln_time_us(),deadline;
+            if(ln_storage_idle_wait(now,&deadline)&&(int32_t)(deadline-now)>0)break;
+        }
         if(!result)return 0;
         library.io_active=false;library.io_buffer=0;
         library.generation=next_generation();
@@ -244,9 +254,7 @@ static bool request(enum ln_music_db_request operation,uint32_t index)
 }
 static void row_complete(void)
 {
-    static const char prefix[]="/LINNET/MUSIC/";
     if(!ln_music_db_safe_path(library.scratch.path)){fail(LN_DB_FORMAT);return;}
-    for(uint32_t i=0;i<sizeof(prefix)-1u;i++)if(library.scratch.path[i]!=prefix[i]){fail(LN_DB_FORMAT);return;}
     uint32_t index=library.scratch.index;
     if(index>=library.first&&index-library.first<LN_MUSIC_LIBRARY_ROWS){
         uint32_t slot=index-library.first;
@@ -281,6 +289,12 @@ static void row_step(void)
     else if(library.stage==7){
         text_copy(library.scratch.album,library.db.text);library.scratch.album_ready=true;
         if(request(LN_DB_STRING,library.scratch.track.path))library.stage=4;
+    }
+    else if(library.stage==8){
+        text_copy(library.scratch.album,library.db.text);library.scratch.album_ready=true;
+        if(library.scratch.track.art!=UINT32_MAX&&!library.scratch.art_path[0]){
+            if(request(LN_DB_ART,library.scratch.track.art))library.stage=5;
+        }else row_complete();
     }
     else if(library.stage==4){
         text_copy(library.scratch.path,library.db.text);
@@ -391,6 +405,15 @@ void ln_music_library_step(void)
             const struct ln_music_library_row *cached=ln_music_library_row(library.prefetch_index);
             if(cached&&cached->album_ready&&(cached->track.art==UINT32_MAX||cached->art_path[0])){library.prefetch=*cached;library.prefetch_pending=false;library.prefetch_ready=true;return;}
             library.job=JOB_PREFETCH;library.job_index=library.prefetch_index;library.job_token=library.prefetch_token;
+            if(cached){
+                /* Window rows already prove track, title, artist and media path.
+                 * Resolve only missing playback metadata under the same owner. */
+                library.scratch=*cached;
+                if(!cached->album_ready){
+                    if(request(LN_DB_STRING,cached->track.album))library.stage=8;
+                }else if(request(LN_DB_ART,cached->track.art))library.stage=5;
+                return;
+            }
         }else if(library.queue_pending){library.job=JOB_QUEUE;
             library.queue_job_group=library.queue_group;library.queue_job_ordinal=library.queue_ordinal;library.queue_job_token=library.queue_token;
         }else if(library.query_pending)library.job=library.query;

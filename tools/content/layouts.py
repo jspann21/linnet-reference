@@ -148,7 +148,7 @@ def refine_scene(scene,theme,body):
     nodes=scene['nodes'];sid=scene['id'].rsplit('.',1)[-1]
     texts=[n for n in nodes if n['kind']==3]
     listing=next((n for n in nodes if n['kind'] in (6,7,8)),None)
-    if sid=='notes':
+    if scene['id']=='local.example.notes':
         top_h=2*fh if style=='aurora' else fh
         for n in texts:place(n,x+4,y,w-8,top_h);n['flags']=WRAP
         toast_h=fh+6;dialog_h=fh+10;toast_y=bottom-toast_h;dialog_y=toast_y-4-dialog_h

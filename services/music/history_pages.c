@@ -1,6 +1,7 @@
 #include "history_pages.h"
 #include "history.h"
 #include "services/storage/storage.h"
+#include "hal/pp5020/platform.h"
 enum {SUPER_A,SUPER_B,IDLE,PAGE_A,PAGE_B,PUBLISH,FLUSH,CHECK,ACK,FAILED};
 static struct {
     struct ln_history_page cache[4];uint32_t age[4],clock,version;
@@ -17,6 +18,7 @@ int ln_paged_history_error(void){return h.error;}
 bool ln_paged_history_dirty(void){for(uint32_t i=0;i<4;i++)if(h.cache[i].ready&&(h.cache[i].staged||h.cache[i].version!=h.cache[i].durable_version))return true;return false;}
 bool ln_paged_history_busy(void){return !h.loaded||h.wanted||h.phase!=IDLE;}
 bool ln_paged_history_io_pending(void){return h.ticket!=0;}
+bool ln_paged_history_finishing(void){return h.phase>=FLUSH&&h.phase<=ACK;}
 uint32_t ln_paged_history_version(void){return h.version;}
 static int location(uint64_t id){
     if(!h.loaded)return -1;
@@ -91,7 +93,17 @@ void ln_paged_history_step(bool may_read,bool may_write){
     /* Admission policy can change while DMA owns a scratch buffer. Always
      * drain that exact ticket before applying the next operation's policy. */
     if(h.ticket){
-        uint32_t bytes=0;int result=ln_storage_async_poll(h.ticket,&bytes);if(!result)return;
+        bool read=h.phase==SUPER_A||h.phase==SUPER_B||h.phase==PAGE_A||h.phase==PAGE_B;
+        uint32_t bytes=0;int result=0;
+        /* Only catalog/page reads group ready transitions. Publications,
+         * flushes and their readback retain ordinary runtime service. */
+        for(uint32_t step=0;step<4u;++step){
+            result=read?ln_storage_async_poll_deferred(h.ticket,&bytes):ln_storage_async_poll(h.ticket,&bytes);
+            if(result||!read)break;
+            uint32_t now=ln_time_us(),deadline;
+            if(ln_storage_idle_wait(now,&deadline)&&(int32_t)(deadline-now)>0)break;
+        }
+        if(!result)return;
         h.ticket=0;if(result<0||bytes!=h.io_bytes){fail(h.io_error);return;}completed=true;
     }
     if(h.error)return;

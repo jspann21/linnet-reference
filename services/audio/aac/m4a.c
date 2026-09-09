@@ -151,6 +151,9 @@ int ln_aac_m4a_decode(struct ln_aac_m4a *d,int16_t *out,uint32_t capacity,uint32
     if(frames)*frames=0;if(!d||!out||!capacity||!frames)return LN_AAC_ARGUMENT;
     if(d->error)return d->error;
     if(!d->opened){int r=ln_aac_m4a_open_step(d);return r==1?0:r;}
+/* A ready packet may decode and publish in this call. Returning through this
+ * block still bounds work to one AU, including trimmed and seeking output. */
+emit_pcm:
     if(d->core.pcm_cursor<d->core.pcm_frames){
         uint32_t count=d->core.pcm_frames-d->core.pcm_cursor;
         if(d->seeking){
@@ -168,7 +171,7 @@ int ln_aac_m4a_decode(struct ln_aac_m4a *d,int16_t *out,uint32_t capacity,uint32
         int r=ln_m4a_read_packet(&d->container);d->pending=d->container.pending;
         if(r==2)return d->frame==d->total_frames&&!d->seeking?2:fail(d,LN_AAC_FORMAT);
         if(r!=1)return r<0?fail(d,demux_result(r)):r;
-        d->packet_ready=true;return 0;
+        d->packet_ready=true;
     }
     uint32_t count=d->container.current_packet_frames;
     uint32_t skip=d->lead_remaining;if(skip>count)skip=count;
@@ -184,7 +187,7 @@ int ln_aac_m4a_decode(struct ln_aac_m4a *d,int16_t *out,uint32_t capacity,uint32
     /* Keep the crossing AU materialized. A completely discarded AU advances
      * the trimmed timeline now, leaving no stale PCM across seek retargets. */
     if(discard){d->core.pcm_cursor=count;d->frame+=available;if(d->frame==d->seek_target)d->seeking=false;}
-    else d->core.pcm_cursor=skip;
+    else {d->core.pcm_cursor=skip;goto emit_pcm;}
     return 0;
 }
 bool ln_aac_m4a_seek(struct ln_aac_m4a *d,uint64_t frame)

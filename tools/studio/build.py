@@ -154,7 +154,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         if profile!='release':flags += ['-DLINNET_AUDIO_CACHE_DIAGNOSTIC=1']
         sources += [ROOT/'services/power/battery.c']
     if batch>=5 and kind=='os':
-        flags += ['-DLINNET_PHOTOS=1']
+        flags += ['-DLINNET_PHOTOS=1', '-DLINNET_NOTES=1']
+        sources += sorted((ROOT/'services/notes').glob('*.c'))
         sources += sorted((ROOT/'services/photos').glob('*.c'))
         sources += sorted((ROOT/'third_party/jpeg').glob('*.c'))
     objects = []

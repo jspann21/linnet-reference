@@ -15,6 +15,7 @@ def parser():
     cli = argparse.ArgumentParser(prog="linnet", description="Native open firmware for classic iPods")
     commands = cli.add_subparsers(dest="command", required=True)
     commands.add_parser("doctor")
+    commands.add_parser("media", help="Open the desktop iPod media manager")
     compile_ = commands.add_parser("build")
     compile_.add_argument("--target", default="photo4g-p98", type=target_id)
     compile_.add_argument("--profile", choices=("release", "dev", "trace"), required=True)
@@ -37,6 +38,9 @@ def parser():
     music_compile.add_argument('--source',type=Path,required=True)
     music_compile.add_argument('--output',type=Path,required=True)
     music_compile.add_argument('--ffprobe',help='Optional executable for compressed-source metadata')
+    music_compile.add_argument('--device-root',type=Path,help='Index existing files on this mounted iPod without copying audio')
+    music_compile.add_argument('--verification',choices=('metadata','full'),help='Existing music defaults to fast metadata checks; full reads complete audio files')
+    music_compile.add_argument('--refresh-metadata',action='store_true',help='Ignore cached metadata for this import')
     music_check=music.add_parser('inspect')
     music_check.add_argument('database',type=Path)
     music_publish=music.add_parser('publish',help='Publish verified staging to an explicitly identified mounted USB iPod')
@@ -61,10 +65,14 @@ def parser():
     video_publish.add_argument('--disk-serial',required=True)
     video_publish.add_argument('--volume-serial',required=True)
     video_publish.add_argument('--drive')
+    video_publish.add_argument('--library-key',help='Stable source-relative identity for a video in the browsable library')
+    video_publish.add_argument('--title',help='Video library display title')
     photos=commands.add_parser('photos').add_subparsers(dest='action',required=True)
     photo_compile=photos.add_parser('compile')
     photo_compile.add_argument('--source',type=Path,required=True)
     photo_compile.add_argument('--output',type=Path,required=True)
+    photo_compile.add_argument('--max-dimension',type=int,default=640,
+        help='Largest prepared zoom dimension, 220..2048 pixels (default: 640); originals are unchanged')
     photo_inspect=photos.add_parser('inspect')
     photo_inspect.add_argument('package',type=Path)
     photo_publish=photos.add_parser('publish')
@@ -201,6 +209,9 @@ def main():
             return subprocess.call(["wsl", "-d", "Ubuntu-24.04", "--cd", converted, "--", "python3", "linnet", *sys.argv[1:]])
         if args.command == "doctor":
             emit(dict(toolchain=toolchain(), python=sys.version.split()[0], target_id="photo4g-p98", hardware_qualified=False))
+        elif args.command == "media":
+            from tools.studio.media_app import launch
+            launch()
         elif args.command == "build":
             emit(build(args.profile, args.target, args.verify, args.kind, args.probe, args.device_serial, batch=args.batch,system_config=args.system))
         elif args.command == "ui":
@@ -212,7 +223,8 @@ def main():
                 from tools.content.publish import publish_music
                 emit(publish_music(args.stage,disk_number=args.disk_number,expected_disk_serial=args.disk_serial,
                                    expected_volume_serial=args.volume_serial,expected_drive=args.drive))
-            else:emit(compile_music(args.source,args.output,ffprobe=args.ffprobe) if args.action=='compile' else validate_database(args.database.read_bytes()))
+            else:emit(compile_music(args.source,args.output,ffprobe=args.ffprobe,device_root=args.device_root,
+                                   verification=args.verification,bypass_cache=args.refresh_metadata) if args.action=='compile' else validate_database(args.database.read_bytes()))
         elif args.command=='video':
             from tools.content.video import compile_video,inspect as inspect_video
             if args.action=='compile':
@@ -222,14 +234,15 @@ def main():
             else:
                 from tools.content.publish_video import publish_video
                 emit(publish_video(args.package,disk_number=args.disk_number,expected_disk_serial=args.disk_serial,
-                     expected_volume_serial=args.volume_serial,expected_drive=args.drive))
+                     expected_volume_serial=args.volume_serial,expected_drive=args.drive,
+                     library_key=args.library_key,title=args.title))
         elif args.command=='photos':
             from tools.content.photos import compile_photos,inspect as inspect_photos
             if args.action=='publish':
                 from tools.content.publish_photos import publish_photos
                 emit(publish_photos(args.package,disk_number=args.disk_number,expected_disk_serial=args.disk_serial,
                                     expected_volume_serial=args.volume_serial,expected_drive=args.drive))
-            else:emit(compile_photos(args.source,args.output) if args.action=='compile' else inspect_photos(args.package))
+            else:emit(compile_photos(args.source,args.output,max_dimension=args.max_dimension) if args.action=='compile' else inspect_photos(args.package))
         elif args.command == "simulator":
             from tools.simulator.runner import simulate
             emit(simulate(ROOT,args.output,args.tape,args.system))

@@ -5,12 +5,16 @@ does not confer device codec support. Staged copies preserve original files.
 """
 from __future__ import annotations
 
+import ctypes
+import os
+from typing import Callable
 import hashlib
 import json
 import math
 from pathlib import Path
 import re
 import shutil
+import sqlite3
 import struct
 import subprocess
 import threading
@@ -209,11 +213,14 @@ def _decoded_frames(path: Path, executable: str) -> int:
     return frames
 
 
-def _probe(path: Path, executable: str) -> dict:
+def _probe(path: Path, executable: str, *, exact_frames: bool = True) -> dict:
     # ffprobe is optional host metadata tooling, never a native decoder substitute.
     command = [executable, "-v", "error", "-show_entries",
                "stream=codec_name,codec_type,sample_rate,channels,bits_per_raw_sample:format_tags:stream_tags",
-               "-of", "json", str(path)]
+               "-of", "json"]
+    if not exact_frames:
+        command += ["-probesize", "262144", "-analyzeduration", "1000000"]
+    command.append(str(path))
     completed = subprocess.run(command, capture_output=True, timeout=30, check=True)
     if len(completed.stdout) > 1024 * 1024:
         raise ValueError("ffprobe metadata exceeds limit")
@@ -234,12 +241,162 @@ def _probe(path: Path, executable: str) -> dict:
     if bits > 64:
         raise ValueError("compressed source bit-depth bound")
     return dict(codec=codec, channels=channels, rate=rate, bits=bits,
-                frames=_decoded_frames(path, executable), data_offset=0,
+                frames=_decoded_frames(path, executable) if exact_frames else 0, data_offset=0,
                 data_bytes=path.stat().st_size, tags=tags)
 
 
+def _quick_metadata(path: Path) -> dict | None:
+    """Use optional in-process tag readers for well identified containers."""
+    try:
+        import mutagen
+    except ImportError:
+        return None
+    # Raw AAC needs probing; MP4 can contain different codecs or several streams.
+    if path.suffix.lower() not in (".mp3", ".flac", ".ogg", ".opus", ".wv"):
+        return None
+    try:
+        audio = mutagen.File(path, easy=True)
+        codec_name = {"MP3": "mp3", "EasyMP3": "mp3", "FLAC": "flac", "OggVorbis": "vorbis",
+                      "OggOpus": "opus", "WavPack": "wavpack"}.get(type(audio).__name__)
+        if codec_name is None:
+            return None
+        info = audio.info
+        rate = int(getattr(info, "sample_rate", 48000 if codec_name == "opus" else 0))
+        channels = int(info.channels)
+        bits = int(getattr(info, "bits_per_sample", 0))
+        if not 1 <= rate <= 384000 or not 1 <= channels <= 8 or not 0 <= bits <= 64:
+            return None
+        tags = {str(k).lower(): str(v[0]) if isinstance(v, list) and v else str(v)
+                for k, v in (audio.tags or {}).items()}
+        for key in ("track", "disc"):
+            if key + "number" in tags:
+                tags[key] = tags[key + "number"]
+        return dict(codec=CODECS[codec_name], channels=channels, rate=rate, bits=bits,
+                    frames=0, data_offset=0, data_bytes=path.stat().st_size, tags=tags)
+    except (mutagen.MutagenError, ValueError, AttributeError, TypeError):
+        return None
+
+
+class _MetadataCache:
+    """Disposable acceleration only; unreadable caches never block an import."""
+    def __init__(self, path: Path):
+        self.connection = None
+        self.status = "enabled"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self.connection = sqlite3.connect(path, timeout=1)
+            self.connection.execute("CREATE TABLE IF NOT EXISTS metadata "
+                "(source TEXT, relative TEXT, size INTEGER, mtime INTEGER, parser TEXT, "
+                "value TEXT, PRIMARY KEY(source, relative, parser))")
+            self.connection.commit()
+        except (OSError, sqlite3.Error):
+            self._disable()
+
+    def _disable(self):
+        self.status = "disabled: cache unavailable; metadata read directly"
+        self.close()
+
+    @staticmethod
+    def _valid(value, relative, stat):
+        if not isinstance(value, dict):
+            return False
+        limits = {"codec": (1, 255), "channels": (1, 8), "rate": (1, 384000),
+                  "bits": (0, 64), "frames": (0, 0xFFFFFFFFFFFFFFFF),
+                  "data_offset": (0, stat.st_size), "data_bytes": (0, stat.st_size)}
+        for key, (minimum, maximum) in limits.items():
+            item = value.get(key)
+            if type(item) is not int or not minimum <= item <= maximum:
+                return False
+        if value["codec"] not in CODECS.values() or value["codec"] == CODECS["unknown"]:
+            return False
+        if value["data_offset"] + value["data_bytes"] > stat.st_size:
+            return False
+        pcm = Path(relative).suffix.lower() in (".wav", ".aif", ".aiff", ".aifc")
+        if pcm:
+            if value["codec"] not in (1, 2, 3, 4) or value["bits"] not in (8, 16, 24, 32):
+                return False
+            align = value["channels"] * (value["bits"] // 8)
+            if value["frames"] * align != value["data_bytes"]:
+                return False
+        elif (value["codec"] < 16 or value["data_offset"] != 0 or
+              value["data_bytes"] != stat.st_size or value["frames"] != 0):
+            return False
+        tags = value.get("tags")
+        return (isinstance(tags, dict) and all(isinstance(k, str) and isinstance(v, str)
+                                             for k, v in tags.items()))
+
+    def get(self, source, relative, stat):
+        if self.connection is None:
+            return None
+        try:
+            row = self.connection.execute("SELECT value FROM metadata WHERE source=? "
+                "AND relative=? AND size=? AND mtime=? AND parser=?",
+                (str(source), relative, stat.st_size, stat.st_mtime_ns, "existing-v1")).fetchone()
+            if row is None:
+                return None
+            value = json.loads(row[0])
+            return value if self._valid(value, relative, stat) else None
+        except (ValueError, TypeError, OverflowError):
+            return None
+        except sqlite3.Error:
+            self._disable()
+            return None
+
+    def put(self, source, relative, stat, metadata):
+        if self.connection is None:
+            return
+        try:
+            self.connection.execute("INSERT OR REPLACE INTO metadata VALUES (?,?,?,?,?,?)",
+                (str(source), relative, stat.st_size, stat.st_mtime_ns, "existing-v1",
+                 json.dumps(metadata)))
+            self.connection.commit()
+        except sqlite3.Error:
+            self._disable()
+
+    def close(self):
+        if self.connection is not None:
+            try:
+                self.connection.close()
+            except sqlite3.Error:
+                pass
+            self.connection = None
+
+
+def safe_media_path(path: str) -> bool:
+    """Match the firmware's bounded FAT short-name path contract."""
+    parts = path.split("/")
+    return (path.startswith("/") and len(path) <= 255 and 1 <= len(parts) - 1 <= 16
+            and all(re.fullmatch(r"[A-Z0-9_~!#$%&'()@^`{}-]{1,8}(?:\.[A-Z0-9_~!#$%&'()@^`{}-]{1,3})?", part)
+                    for part in parts[1:]))
+
+
+def device_media_path(path: Path, device_root: Path) -> str:
+    """Resolve the real FAT alias; never invent short names for existing files."""
+    from .publish import _plain
+    root = Path(device_root).resolve(strict=True)
+    path = Path(path).absolute()
+    _plain(path, root)
+    path.resolve(strict=True).relative_to(root)
+    if os.name == "nt":
+        get_short = ctypes.windll.kernel32.GetShortPathNameW
+        get_short.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+        get_short.restype = ctypes.c_uint32
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = get_short(str(path), buffer, len(buffer))
+        if not length or length >= len(buffer):
+            raise ValueError(f"Cannot resolve the iPod FAT short name: {path}")
+        path = Path(buffer.value)
+    relative = "/" + path.relative_to(root).as_posix().upper()
+    if not safe_media_path(relative):
+        raise ValueError(f"Existing file has no firmware-compatible FAT short path: {path}")
+    return relative
+
+
 def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
-                  artwork: bool = True, playlists: dict[str, list[str]] | None = None) -> dict:
+                  artwork: bool = True, playlists: dict[str, list[str]] | None = None,
+                  device_root: Path | None = None, progress: Callable[[dict], None] | None = None,
+                  verification: str | None = None, cache_path: Path | None = None,
+                  bypass_cache: bool = False) -> dict:
     """Prepare and validate a complete stage before replacing the old directory.
 
     An interrupted directory swap leaves a sibling backup, restored on the next
@@ -251,6 +408,10 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
     if not source.is_dir() or output == source or source in output.parents or output in source.parents:
         raise ValueError("output must be outside the source music directory")
     output.parent.mkdir(parents=True, exist_ok=True)
+    verification = verification or ("metadata" if device_root is not None else "full")
+    if verification not in ("metadata", "full") or (device_root is None and verification != "full"):
+        raise ValueError("verification must be full for staged files, metadata or full for existing music")
+    cache = None
     backup = output.with_name(output.name + ".music-previous")
     if backup.exists() and not output.exists():
         backup.rename(output)
@@ -259,6 +420,13 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
     prepared = Path(tempfile.mkdtemp(prefix=output.name + ".music-prepare-", dir=output.parent))
     moved_previous = False
     try:
+        if device_root is not None:
+            cache_file = (Path(cache_path) if cache_path is not None else
+                          output.with_name(output.name + ".metadata.sqlite3")).resolve()
+            if any(cache_file == folder or folder in cache_file.parents or cache_file in folder.parents
+                   for folder in (source, output, Path(device_root).resolve())):
+                raise ValueError("metadata cache must be outside the iPod, source and staged output")
+            cache = _MetadataCache(cache_file)
         if output.exists():
             # Preserve unrelated staged content without copying obsolete music.
             managed = {"MUSIC", "ART", "LIBRARY.PDB", "LIBRARY.TMP", "music-manifest.json"}
@@ -266,10 +434,11 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
                             ignore=lambda directory, names: [name for name in names
                                 if Path(directory) == output and name in managed])
         report = _compile_music_stage(source, prepared, ffprobe=ffprobe,
-                                      artwork=artwork, playlists=playlists)
+                                      artwork=artwork, playlists=playlists, device_root=device_root, progress=progress,
+                                      verification=verification, cache=cache, bypass_cache=bypass_cache)
         report["database"] = str(output / "LIBRARY.PDB")
         (prepared / "music-manifest.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-        validate_stage(prepared)
+        validate_stage(prepared, device_root=device_root)
         try:
             if output.exists():
                 output.rename(backup)
@@ -288,12 +457,17 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
             shutil.rmtree(backup, ignore_errors=True)
         return report
     finally:
+        if cache is not None:
+            cache.close()
         if prepared.exists():
             shutil.rmtree(prepared, ignore_errors=True)
 
 
 def _compile_music_stage(source: Path, output: Path, *, ffprobe: str | None = None,
-                         artwork: bool = True, playlists: dict[str, list[str]] | None = None) -> dict:
+                         artwork: bool = True, playlists: dict[str, list[str]] | None = None,
+                  device_root: Path | None = None, progress: Callable[[dict], None] | None = None,
+                  verification: str = "full", cache: _MetadataCache | None = None,
+                  bypass_cache: bool = False) -> dict:
     """Stage source audio under MUSIC/8HEX.EXT and write LIBRARY.PDB.
 
     Install MUSIC and ART below /LINNET and LIBRARY.PDB at /LINNET/LIBRARY.PDB.
@@ -302,6 +476,9 @@ def _compile_music_stage(source: Path, output: Path, *, ffprobe: str | None = No
     source, output = source.resolve(), output.resolve()
     if not source.is_dir() or output == source or source in output.parents or output in source.parents:
         raise ValueError("output must be outside the source music directory")
+    if device_root is not None:
+        device_root = Path(device_root).resolve(strict=True)
+        source.relative_to(device_root)
     paths = []
     for path in source.rglob("*"):
         if path.is_file() and path.suffix.lower() in EXTENSIONS:
@@ -369,33 +546,56 @@ def _compile_music_stage(source: Path, output: Path, *, ffprobe: str | None = No
         art_indices[digest] = index
         return index
 
-    for path in paths:
+    cache_hits = 0
+    for number, path in enumerate(paths):
+        location = device_media_path(path, device_root) if device_root is not None else None
         relative = path.relative_to(source).as_posix()
         if path.is_symlink() or source not in path.resolve().parents:
             raise ValueError("audio paths must remain in the source directory")
         before = path.stat()
-        metadata = _pcm(path) if path.suffix.lower() in (".wav", ".aif", ".aiff", ".aifc") else (
-            _probe(path, ffprobe) if ffprobe else None)
+        metadata = cache.get(source, relative, before) if cache and not bypass_cache else None
+        cached = metadata is not None
+        cache_hits += int(cached)
+        if progress:
+            progress(dict(phase="music", current=number, total=len(paths), file=str(path), cached=cached))
+        if metadata is None:
+            if path.suffix.lower() in (".wav", ".aif", ".aiff", ".aifc"):
+                metadata = _pcm(path)
+            else:
+                metadata = _quick_metadata(path) if device_root is not None else None
+                if metadata is None and ffprobe:
+                    metadata = _probe(path, ffprobe, exact_frames=device_root is None)
         if metadata is None:
             raise ValueError(f"{relative}: compressed metadata requires explicit ffprobe executable")
         identity = _stable("track:" + relative)
         extension = {".aiff": "AIF", ".aifc": "AIF", ".flac": "FLC", ".opus": "OPS"}.get(path.suffix.lower(), path.suffix[1:].upper())
         name = f"{identity & 0xffffffff:08X}.{extension}"
-        if identity in stable_ids or name in filenames:
+        if identity in stable_ids or (device_root is None and name in filenames):
             raise ValueError("stable track identifier or staged filename collision")
         stable_ids.add(identity)
         filenames.add(name)
         hasher = hashlib.sha256()
         temporary = output / "MUSIC" / (name + ".tmp")
-        with path.open("rb") as original, temporary.open("wb") as staged:
-            while chunk := original.read(1024 * 1024):
-                hasher.update(chunk)
-                staged.write(chunk)
+        if verification == "full":
+            with path.open("rb") as original:
+                staged = temporary.open("wb") if device_root is None else None
+                try:
+                    while chunk := original.read(1024 * 1024):
+                        hasher.update(chunk)
+                        if staged:
+                            staged.write(chunk)
+                finally:
+                    if staged:
+                        staged.close()
         after = path.stat()
         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
             temporary.unlink(missing_ok=True)
             raise ValueError("audio source changed during compilation")
-        temporary.replace(output / "MUSIC" / name)
+        if cache and not cached:
+            cache.put(source, relative, before, metadata)
+        if device_root is None:
+            temporary.replace(output / "MUSIC" / name)
+        location = location or "/LINNET/MUSIC/" + name
         tags = metadata["tags"]
         title = _text(tags.get("title") or path.stem)
         artist = _text(tags.get("artist") or "Unknown Artist")
@@ -416,9 +616,9 @@ def _compile_music_stage(source: Path, output: Path, *, ffprobe: str | None = No
             metadata["data_offset"], metadata["data_bytes"], metadata["frames"],
             metadata["rate"], metadata["channels"], metadata["bits"])
         struct.pack_into("<IIIIIIIIIIIi", record, 48, metadata["codec"], string(title), string(artist),
-            string(album), string("/LINNET/MUSIC/" + name), string(genre), string(composer),
+            string(album), string(location), string(genre), string(composer),
             year, track, disc, art_for(path), gain)
-        record[96:128] = hasher.digest()
+        record[96:128] = hasher.digest() if verification == "full" else bytes(32)
         index = len(records)
         records.append(record)
         for kind, label, parent in ((1, artist, ""), (2, album, artist), (3, genre, ""),
@@ -426,9 +626,11 @@ def _compile_music_stage(source: Path, output: Path, *, ffprobe: str | None = No
                                     (6, path.parent.relative_to(source).as_posix(), "")):
             if label:
                 groups.setdefault((kind, label, parent), []).append(index)
-        entries.append(dict(source=relative, id=f"{identity:016x}", path="/LINNET/MUSIC/" + name,
+        entries.append(dict(source=relative, id=f"{identity:016x}", path=location, storage="existing" if device_root is not None else "staged",
                             title=title, artist=artist, album=album, track=track, disc=disc,
-                            codec=metadata["codec"], sha256=hasher.hexdigest()))
+                            codec=metadata["codec"], integrity="sha256" if verification == "full" else "metadata", bytes=before.st_size,
+                            mtime_ns=before.st_mtime_ns,
+                            sha256=hasher.hexdigest() if verification == "full" else "0" * 64))
     lookup = {entry["source"]: index for index, entry in enumerate(entries)}
     for name, members in (playlists or {}).items():
         if len(members) > MAX_TRACKS:
@@ -479,11 +681,13 @@ def _compile_music_stage(source: Path, output: Path, *, ffprobe: str | None = No
     temporary = output / "LIBRARY.TMP"
     temporary.write_bytes(database)
     temporary.replace(output / "LIBRARY.PDB")
-    report = dict(format="PODB", version=1, tracks=len(records), groups=len(groups),
+    report = dict(format="PODB", version=1, integrity="sha256" if verification == "full" else "metadata", tracks=len(records), groups=len(groups),
                   artwork=len(artwork_records), bytes=len(database), sha256=hashlib.sha256(database).hexdigest(),
                   database=str(output / "LIBRARY.PDB"), entries=entries,
+                  cache=dict(hits=cache_hits, misses=len(records) - cache_hits,
+                             status=cache.status if cache else "unused"),
                   limitations=["Codec metadata does not imply native decoder qualification.",
-                               "Compressed sample counts use bounded host decoding; native decoder counts take precedence. Gapless trim metadata and seek tables are not emitted.",
+                               "Existing compressed audio uses unknown sample counts to avoid full host decoding; staged imports use bounded decoding. Native decoder counts take precedence. Gapless trim metadata and seek tables are not emitted.",
                                "No cached FAT extents; paths are resolved by the device."])
     (output / "music-manifest.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     return report
@@ -534,7 +738,7 @@ def validate_database(data: bytes) -> dict:
         for offset in (title, artist, album, path, genre, composer):
             get_string(offset)
         location = get_string(path)
-        if not re.fullmatch(r"/LINNET/MUSIC/[0-9A-F]{8}\.[A-Z0-9]{1,3}", location):
+        if not safe_media_path(location):
             raise ValueError("track path")
         if codec not in CODECS.values() or codec == 255 or (art != NO_INDEX and art >= arts):
             raise ValueError("track codec/art")

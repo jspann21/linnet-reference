@@ -71,9 +71,10 @@ def _sizes(width, height, max_dimension):
     return result
 
 
-def compile_photos(source, output, *, max_dimension=2048, fallback_paths=None):
+def compile_photos(source, output, *, max_dimension=640, fallback_paths=None):
     """Prepare a folder into one .pimg; optional mapping names existing JPEG copies.
 
+    The default keeps zoom detail without a desktop-sized tile pyramid.
     fallback_paths maps source-relative filenames to their already-provisioned
     absolute FAT8.3 device paths. The compiler never copies or modifies originals.
     """
