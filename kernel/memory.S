@@ -43,6 +43,7 @@ __aeabi_memcpy:
     ldr r3, [r1], #4
     str r3, [r0], #4
     sub r2, r2, #4
+    b .Lcopy_word_tail
 .Lcopy_tail:
     cmp r2, #0
     beq .Lcopy_done
@@ -53,32 +54,56 @@ __aeabi_memcpy:
     bne .Lcopy_bytes
     b .Lcopy_done
 .Lcopy_shifted:
-    /* Keep the logical byte pointer in r10. Only use a shifted word while at
-     * least eight requested bytes remain, so the second aligned load never
-     * reads beyond the caller's source range. */
-    mov r10, r1
+    /* Select immediate shifts once. Keep enough requested bytes for the
+     * next aligned load, then reconstruct the logical pointer for the tail. */
+    cmp r2, #8
+    blo .Lcopy_tail
+    mov lr, r12
     bic r1, r1, #3
     ldr r3, [r1], #4
-.Lcopy_shift_loop:
+    cmp r12, #1
+    beq .Lcopy_shift_1
+    cmp r12, #2
+    beq .Lcopy_shift_2
+    b .Lcopy_shift_3
+
+.macro copy_shift alignment, right, left
+.Lcopy_shift_\alignment:
+    cmp r2, #20
+    blo .Lcopy_shift_word_\alignment
+.Lcopy_shift_block_\alignment:
+    ldmia r1!, {r4-r7}
+    mov r8, r3, lsr #\right
+    orr r8, r8, r4, lsl #\left
+    mov r9, r4, lsr #\right
+    orr r9, r9, r5, lsl #\left
+    mov r10, r5, lsr #\right
+    orr r10, r10, r6, lsl #\left
+    mov r12, r6, lsr #\right
+    orr r12, r12, r7, lsl #\left
+    stmia r0!, {r8-r10, r12}
+    mov r3, r7
+    sub r2, r2, #16
+    cmp r2, #20
+    bhs .Lcopy_shift_block_\alignment
+.Lcopy_shift_word_\alignment:
     cmp r2, #8
     blo .Lcopy_shift_tail
     ldr r4, [r1], #4
-    cmp r12, #1
-    moveq r5, r3, lsr #8
-    orreq r5, r5, r4, lsl #24
-    cmp r12, #2
-    moveq r5, r3, lsr #16
-    orreq r5, r5, r4, lsl #16
-    cmp r12, #3
-    moveq r5, r3, lsr #24
-    orreq r5, r5, r4, lsl #8
+    mov r5, r3, lsr #\right
+    orr r5, r5, r4, lsl #\left
     str r5, [r0], #4
     mov r3, r4
-    add r10, r10, #4
     sub r2, r2, #4
-    b .Lcopy_shift_loop
+    b .Lcopy_shift_word_\alignment
+.endm
+
+    copy_shift 1, 8, 24
+    copy_shift 2, 16, 16
+    copy_shift 3, 24, 8
 .Lcopy_shift_tail:
-    mov r1, r10
+    sub r1, r1, #4
+    add r1, r1, lr
     b .Lcopy_tail
 .Lcopy_done:
     ldmia sp!, {r4-r10, pc}

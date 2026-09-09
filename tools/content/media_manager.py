@@ -268,7 +268,7 @@ def run(identity, selected, pending=(), **options):
 
 def _run(identity, selected, pending=(), *, progress=lambda message: None, cancelled=lambda: False,
         photo_dimension=640, ffmpeg=None, ffprobe=None, force=False, music_verification="metadata",
-        video_selection=None):
+        video_selection=None, progress_detail=None):
     """Copy additions, prepare and publish selected folders; retain per-step receipts.
 
     Stop requests are honored between files and between compiler/publication calls.
@@ -292,7 +292,9 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         state = {}
     if not isinstance(state, dict):
         state = {}
-    report = dict(started=time.time(), identity=identity, steps=[], errors=[], complete=False)
+    report = dict(started=time.time(), identity=identity, steps=[], errors=[], complete=False,
+                  stopped=False, cache_directory=str(cache), cleanup=dict(removed=[], retained=[]))
+    owned_temporaries = []
     receipt = cache / ("session-" + uuid.uuid4().hex + ".json")
     report["receipt"] = str(receipt)
 
@@ -333,8 +335,9 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             record()
             digest = hashlib.sha256()
             with source.open("rb") as reader, temporary.open("xb") as writer:
+                owned_temporaries.append((temporary, root))
                 while chunk := reader.read(1024 * 1024):
-                    _volume_guard(identity)
+                    checkpoint()
                     writer.write(chunk)
                     digest.update(chunk)
                 writer.flush()
@@ -364,7 +367,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             if not item["count"]:
                 progress(f"{kind}: no supported files; existing prepared library retained.")
                 continue
-            option = photo_dimension if kind == "Photos" else music_verification if kind == "Music" else "ipvf-24-v1" if kind == "Videos" else "default"
+            option = photo_dimension if kind == "Photos" else music_verification if kind == "Music" else "ipvf-24-v2-realtime" if kind == "Videos" else "default"
             signature = f"{CACHE_VERSION}:{option}:{item['fingerprint']}"
             saved = state.get(kind, {})
             if not isinstance(saved, dict):
@@ -386,18 +389,22 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     def music_progress(event):
                         checkpoint()
                         now = time.monotonic()
-                        if now - last_progress[0] >= 0.2 or event['current'] + 1 == event['total']:
-                            action = "Using saved metadata" if event.get("cached") else "Reading metadata"
+                        if now - last_progress[0] >= 0.2 or event['current'] + 1 == event['total'] or event.get("phase") == "compatibility-copy":
+                            action = "Preparing compatible copy" if event.get("phase") == "compatibility-copy" else "Using saved metadata" if event.get("cached") else "Reading metadata"
                             progress(f"{action} {event['current']+1}/{event['total']}: {Path(event['file']).name}")
                             last_progress[0] = now
                     preparation = compile_music(folder, stage, ffprobe=ffprobe or shutil.which("ffprobe"), device_root=root,
                                   verification=music_verification, cache_path=cache / "music-metadata.sqlite3",
                                   bypass_cache=force, progress=music_progress)
-                    report["steps"].append(dict(kind=kind, metadata=preparation.get("cache"), integrity=music_verification))
+                    compatibility = preparation.get("compatibility_copies", [])
+                    report["steps"].append(dict(kind=kind, metadata=preparation.get("cache"), integrity=music_verification,
+                                               compatibility_copies=compatibility))
+                    if compatibility:
+                        progress(f"Music: {len(compatibility)} track(s) need compatible playback copies; originals stay in place.")
                     checkpoint()
                     progress("Publishing the music index and artwork…")
                     published.append(publish_music(stage, progress=progress, **target_args(identity)))
-                    output_paths = ["LINNET/LIBRARY.PDB"] + [
+                    output_paths = ["LINNET/LIBRARY.PDB"] + [entry["path"].lstrip("/") for entry in preparation["entries"] if entry["storage"] == "staged"] + [
                         "LINNET/ART/" + path.name for path in sorted((stage / "ART").glob("*.RGB"))]
                 elif kind == "Photos":
                     from .photos import compile_photos
@@ -439,7 +446,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             key = hashlib.sha256(relative.encode()).hexdigest()[:8].upper()
                             source_info = source.stat()
                             source_stamp = (source_info.st_size, source_info.st_mtime_ns)
-                            fingerprint = hashlib.sha256(f"{CACHE_VERSION}:ipvf-24-v1:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
+                            fingerprint = hashlib.sha256(f"{CACHE_VERSION}:ipvf-24-v2-realtime:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
                             label = video_title(relative)
                             cached = video_state.get(relative, {})
                             if not isinstance(cached, dict):
@@ -476,12 +483,23 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                 if native_ipvf:
                                     inspect_file(source)
                                     package.parent.mkdir(parents=True, exist_ok=True)
-                                    shutil.copyfile(source, package)
+                                    temporary = package.with_name(package.name + "." + uuid.uuid4().hex + ".tmp")
+                                    with source.open("rb") as reader, temporary.open("xb") as writer:
+                                        owned_temporaries.append((temporary, cache))
+                                        while chunk := reader.read(1024 * 1024):
+                                            checkpoint()
+                                            writer.write(chunk)
+                                        writer.flush()
+                                        os.fsync(writer.fileno())
+                                    inspect_file(temporary)
+                                    os.replace(temporary, package)
                                 else:
                                     encode_ipvf(source, package, title=label,
                                                 ffmpeg=ffmpeg or shutil.which("ffmpeg"),
                                                 ffprobe=ffprobe or shutil.which("ffprobe"),
-                                                progress=progress, cancelled=cancelled)
+                                                progress=progress, cancelled=cancelled,
+                                                progress_detail=(lambda event: progress_detail(dict(event,
+                                                    video_index=index+1, video_total=item['count']))) if progress_detail else None)
                             checkpoint()
                             after = source.stat()
                             if (after.st_size, after.st_mtime_ns) != source_stamp:
@@ -521,7 +539,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 state[kind] = dict(signature=signature, outputs=outputs)
                 _save(state_path, state)
                 report["steps"].append(dict(kind=kind, status="published", publications=published))
-                progress(f"{kind}: ready.")
+                progress(f"{kind}: published and verified on your iPod ({root / 'LINNET'}).")
                 record()
             except Cancelled:
                 raise
@@ -531,9 +549,55 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 record()
         report["complete"] = not report["errors"]
     except Exception as error:
+        report["stopped"] = isinstance(error, Cancelled) or cancelled()
         report["errors"].append(dict(message=str(error)))
         progress(str(error))
     finally:
+        for temporary, boundary in owned_temporaries:
+            try:
+                if boundary == root:
+                    _volume_guard(identity)
+                _plain(temporary, boundary)
+                if temporary.exists():
+                    temporary.unlink()
+                    report["cleanup"]["removed"].append(str(temporary))
+            except Exception as error:
+                report["cleanup"]["retained"].append(dict(path=str(temporary), reason=str(error)))
+        # Audit scratch locations without deleting files that could belong to another run.
+        for pattern in ("ipvf-encode-*", "music-prepare-*", "*.tmp"):
+            for path in cache.rglob(pattern):
+                report["cleanup"]["retained"].append(dict(path=str(path),
+                    reason="Preparation scratch remains; review before removing if another update is running."))
+        for path in cache.rglob("publish-*.json"):
+            try:
+                publication = json.loads(path.read_text(encoding="utf-8"))
+                if not publication.get("passed"):
+                    report["cleanup"]["retained"].append(dict(path=str(path),
+                        reason="Incomplete publication receipt: inspect its temporary and backup paths before cleanup."))
+            except (OSError, ValueError):
+                report["cleanup"]["retained"].append(dict(path=str(path), reason="Unreadable publication receipt; review required."))
+        count = len(report["cleanup"]["removed"])
+        progress(f"Cleanup: removed {count} temporary file(s).")
+        for item in report["cleanup"]["retained"]:
+            progress(f"Retained for review: {item['path']} — {item['reason']}")
+        if not report["cleanup"]["retained"]:
+            progress("Cleanup: no preparation scratch files remain.")
+        ready = [kind for kind in KINDS if any(step.get("kind") == kind and
+                 step.get("status") in ("published", "unchanged") for step in report["steps"])]
+        failed = list(dict.fromkeys(error["kind"] for error in report["errors"] if error.get("kind")))
+        summary = []
+        if ready:
+            summary.append(f"On your iPod ({root}): {', '.join(ready)}.")
+        if failed:
+            summary.append(f"Could not finish: {', '.join(failed)}. Open report for the errors.")
+        if report["stopped"]:
+            summary.append("Update stopped; completed work is retained on the iPod.")
+        elif report["errors"] and not failed:
+            summary.append("Update could not finish. Open report for the error.")
+        report["summary"] = " ".join(summary)
+        progress(f"Computer cache for faster retries (separate from the published iPod files): {cache}")
+        if report["summary"]:
+            progress(report["summary"])
         report["finished"] = time.time()
         record()
     return report

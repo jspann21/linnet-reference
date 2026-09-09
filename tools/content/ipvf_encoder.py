@@ -1275,6 +1275,78 @@ def _compress_record_if_smaller(
     return kind, rect_count, payload, decoded_size
 
 
+def _coalesce_lz4_matches(packed: bytes, raw: bytes, minimum: int = 12) -> bytes:
+    """Replace short matches with exact literals, retaining longer match offsets."""
+    output = bytearray()
+    cursor = position = anchor = 0
+
+    def length(value: int) -> None:
+        if value >= 15:
+            value -= 15
+            while value >= 255:
+                output.append(255)
+                value -= 255
+            output.append(value)
+
+    # The caller strictly decodes the bounded block before this token walk.
+    while cursor < len(packed):
+        token = packed[cursor]
+        cursor += 1
+        literals = token >> 4
+        if literals == 15:
+            while True:
+                extension = packed[cursor]
+                cursor += 1
+                literals += extension
+                if extension != 255:
+                    break
+        cursor += literals
+        position += literals
+        if cursor == len(packed):
+            break
+        offset = struct.unpack_from("<H", packed, cursor)[0]
+        cursor += 2
+        match = (token & 15) + 4
+        if token & 15 == 15:
+            while True:
+                extension = packed[cursor]
+                cursor += 1
+                match += extension
+                if extension != 255:
+                    break
+        if match >= minimum:
+            literals = position - anchor
+            output.append((min(literals, 15) << 4) | min(match - 4, 15))
+            length(literals)
+            output.extend(raw[anchor:position])
+            output.extend(struct.pack("<H", offset))
+            length(match - 4)
+            anchor = position + match
+        position += match
+    literals = position - anchor
+    output.append(min(literals, 15) << 4)
+    length(literals)
+    output.extend(raw[anchor:])
+    return bytes(output)
+
+
+def _realtime_record(record):
+    kind, rectangles, payload, decoded = record
+    if kind < TYPE_KEY_LZ4:
+        return record
+    prefix = 6 if kind == TYPE_MOTION_LZ4 else 4 if kind == TYPE_XOR_LZ4 else 0
+    raw = lz4_decompress(payload[prefix:], decoded)
+    coalesced = _coalesce_lz4_matches(payload[prefix:], raw)
+    # Compressed payloads, including their temporal prefix, must remain
+    # smaller than the decoded payload required by the format.
+    if len(coalesced) + prefix >= decoded:
+        return record
+    header = (payload[:2] if kind == TYPE_MOTION_LZ4 else b"")
+    if prefix:
+        header += struct.pack("<I", rockbox_crc32(coalesced))
+    return kind, rectangles, header + coalesced, decoded
+
+
 def choose_video_record(
     prev: bytes | None,
     cur: bytes,
@@ -1285,10 +1357,14 @@ def choose_video_record(
     lz4_mode: str = DEFAULT_LZ4_MODE,
 ):
     """Choose a video record by final sector count, with bounded tie costs."""
-    if video_mode not in ("current", "spatial", "balanced", "motion", "auto"):
+    if video_mode not in ("current", "spatial", "balanced", "motion", "auto", "realtime"):
         raise ValueError(
-            "video_mode must be current, spatial, balanced, motion, or auto"
+            "video_mode must be current, spatial, balanced, motion, auto, or realtime"
         )
+    if video_mode == "realtime":
+        return _realtime_record(choose_video_record(
+            prev, cur, audio_size, force_key, "balanced", max_rects, lz4_mode
+        ))
     if prev is None or force_key:
         return _compress_record_if_smaller(
             TYPE_KEY, 0, cur, audio_size, lz4_mode
@@ -1373,9 +1449,9 @@ def encode(
     # frames. Header finalization must not be the first point where a bad tag
     # can reject an otherwise complete long encode.
     encode_metadata(metadata)
-    if video_mode in ("balanced", "motion", "auto") and keyint == 0:
+    if video_mode in ("balanced", "motion", "auto", "realtime") and keyint == 0:
         raise ValueError("temporal mode requires a bounded keyframe interval")
-    if video_mode in ("balanced", "motion", "auto") and fps > 30:
+    if video_mode in ("balanced", "motion", "auto", "realtime") and fps > 30:
         raise ValueError("temporal mode is hardware-qualified only at <=30 fps")
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(output.name + ".tmp")

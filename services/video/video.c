@@ -36,6 +36,7 @@ static struct {
     uint32_t phase,error,epoch,working,generation,requested,revision;
     uint32_t version,width,height,fps,count,data_at,max_record,key_interval,index_crc;
     uint32_t fps_num,fps_den,rate,media_end,index_at,index_count,first_sectors,preroll;
+    uint32_t time_frame[2],time_sample[2],time_clock,time_clock_frame,time_valid;
     uint32_t verify_at,verify_crc,verify_frame,verify_end,verify_key,verify_max;
     uint32_t next,target,origin,offset,bytes,sample,samples,key,record_crc;
     uint32_t type,video_bytes,payload_crc,frame_crc,at,crc,record_edges_crc,decode_at,decode_pixel,tile_count,tile_last;
@@ -44,6 +45,8 @@ static struct {
     uint32_t video_next,video_offset,video_bytes_saved;
     bool audio_yield;
     uint32_t raw_head,raw_tail,raw_used,raw_first,raw_count;
+    const uint8_t *raw_view;
+    uint8_t *raw_write;
     uint32_t pcm_head,pcm_tail;
     struct {uint32_t frame,offset,bytes;} raw[RAW_ENTRIES];
     uint32_t rect_x,rect_y,rect_w,rect_h,rect_row,rect_data_at;int32_t motion_dx,motion_dy;
@@ -127,6 +130,7 @@ bool ln_video_measurement_arm(uint32_t mode){
     armed_measurement=mode;return true;
 }
 #endif
+static const uint8_t *record_source(void){return v.raw_write?v.raw_write:v.raw_view?v.raw_view:v.record.bytes;}
 static uint32_t r32(const uint8_t*b){return b[0]|(uint32_t)b[1]<<8|(uint32_t)b[2]<<16|(uint32_t)b[3]<<24;}
 static void catalog_step(void){
     if(!catalog.phase||catalog.phase==5||v.active||v.pending)return;
@@ -192,8 +196,7 @@ static void copy(void*d,const void*s,uint32_t n){
 }
 static uint16_t *frame_slot(uint32_t slot){return slot<2u?v.frame[slot]:slot==2u?v.third.pixels:slot<FRAME_SLOTS?VIDEO_BASE+(slot-3u)*PIXELS:0;}
 static bool zero(const uint8_t*p,uint32_t n){while(n--)if(*p++)return false;return true;}
-/* Host research candidate. Replaces the existing 1KiB byte table with4KiB.
- * Same reflected IEEE CRC state; little-endian PP5020. No production edits. */
+/* The two CRC tables share the existing audio IRAM reservation. */
 static const uint32_t crc_slice4_table[4][256]
 #if defined(__arm__)
 __attribute__((section(".audio_icode.video_crc_table"),aligned(4)))
@@ -362,22 +365,27 @@ static uint64_t divide64(uint64_t numerator,uint32_t denominator){
     for(uint32_t bit=64;bit;--bit){uint32_t carry=remainder>>31;remainder=(remainder<<1)|(uint32_t)((numerator>>(bit-1u))&1u);if(carry||remainder>=denominator){remainder-=denominator;quotient|=(uint64_t)1u<<(bit-1u);}}return quotient;
 }
 static uint32_t frame_sample(uint32_t frame){
-    return (uint32_t)divide64((uint64_t)frame*v.rate*v.fps_den+v.fps_num/2u,v.fps_num);
+    uint32_t slot=frame&1u,bit=1u<<slot;
+    if((v.time_valid&bit)&&v.time_frame[slot]==frame)return v.time_sample[slot];
+    uint32_t sample=(uint32_t)divide64((uint64_t)frame*v.rate*v.fps_den+v.fps_num/2u,v.fps_num);
+    v.time_frame[slot]=frame;v.time_sample[slot]=sample;v.time_valid|=bit;
+    return sample;
 }
 static uint32_t sample_frame(uint32_t sample){
-    return (uint32_t)divide64((uint64_t)sample*v.fps_num,v.rate*v.fps_den);
+    /* Audio advances in DMA blocks while decode/PCM steps run many times.
+     * Reuse exact timing conversions until their input changes. The cache
+     * is cleared with the stream, so seeks retain the same time base. */
+    if((v.time_valid&4u)&&v.time_clock==sample)return v.time_clock_frame;
+    v.time_clock=sample;v.time_clock_frame=(uint32_t)divide64((uint64_t)sample*v.fps_num,v.rate*v.fps_den);
+    v.time_valid|=4u;return v.time_clock_frame;
 }
-static const int16_t ima_steps[89]={7,8,9,10,11,12,13,14,16,17,19,21,23,25,28,31,
-    34,37,41,45,50,55,60,66,73,80,88,97,107,118,130,143,157,173,190,209,
-    230,253,279,307,337,371,408,449,494,544,598,658,724,796,876,963,1060,
-    1166,1282,1411,1552,1707,1878,2066,2272,2499,2749,3024,3327,3660,4026,
-    4428,4871,5358,5894,6484,7132,7845,8630,9493,10442,11487,12635,13899,
-    15289,16818,18500,20350,22385,24623,27086,29794,32767};
-static const int8_t ima_indices[16]={-1,-1,-1,-1,2,4,6,8,-1,-1,-1,-1,2,4,6,8};
+#include "ima_lookup.h"
 static inline __attribute__((always_inline)) int16_t ima_nibble(uint32_t code,int32_t*predictor,uint32_t*index){
-    int32_t step=ima_steps[*index],difference=step>>3;if(code&1u)difference+=step>>2;if(code&2u)difference+=step>>1;if(code&4u)difference+=step;
-    int32_t sample=*predictor+(code&8u?-difference:difference);if(sample>32767)sample=32767;if(sample< -32768)sample=-32768;
-    int32_t next=(int32_t)*index+ima_indices[code&15u];if(next<0)next=0;if(next>88)next=88;*predictor=sample;*index=(uint32_t)next;return (int16_t)sample;
+ uint32_t entry=ima_lookup[(*index<<3)|(code&7u)];
+ int32_t difference=(int32_t)(entry>>8);
+ int32_t sample=*predictor+(code&8u?-difference:difference);
+ if(sample>32767)sample=32767;if(sample< -32768)sample=-32768;
+ *predictor=sample;*index=entry&255u;return (int16_t)sample;
 }
 /* CRC(A || B) = shift(CRC(A), sizeof B) XOR CRC(B), for finalized
  * IEEE CRC32 values. All callers validate lengths against RECORD first.
@@ -418,7 +426,7 @@ static int io(uint32_t at,void*buf,uint32_t n,bool open){
     for(uint32_t polls=0;polls<(open?64u:256u);polls++){
         r=open?ln_storage_media_poll(v.generation,&v.file,&got):
             ln_storage_media_poll_video(v.generation,0,&got);
-        if(r||v.working!=v.epoch||ln_time_us()-started>=(open?250u:1500u))break;
+        if(r||v.working!=v.epoch||ln_time_us()-started>=(open?250u:4000u))break;
     }
     if(!r)return 0;v.pending=false;
     if(v.working!=v.epoch)return 0;if(r!=1||(!open&&got!=v.requested))return -1;
@@ -453,7 +461,7 @@ static void pump_ipvf_pcm(void){
 }
 static uint32_t submit_ipvf_pcm(void){
     uint32_t capacity=PCM_FRAMES-staged_pcm();if(!capacity)return 0;uint32_t frames=v.samples-v.at;if(frames>64u)frames=64u;if(frames>capacity)frames=capacity;
-    const uint8_t*source=v.record.bytes+16u+v.video_bytes;bool silence=!v.audio_bytes,mono=v.audio_bytes==4u+v.samples/2u;
+    const uint8_t*source=record_source()+16u+v.video_bytes;bool silence=!v.audio_bytes,mono=v.audio_bytes==4u+v.samples/2u;
     if(v.at==0u&&!silence){if((mono&&(source[3]||source[2]>88u))||(!mono&&(source[3]||source[7]||source[2]>88u||source[6]>88u)))return NONE;
         uint32_t left=r16(source);v.ima_left=left<0x8000u?(int32_t)left:(int32_t)left-0x10000;v.ima_left_index=source[2];
         if(mono){v.ima_right=v.ima_left;v.ima_right_index=v.ima_left_index;}else{uint32_t right=r16(source+4);v.ima_right=right<0x8000u?(int32_t)right:(int32_t)right-0x10000;v.ima_right_index=source[6];}}
@@ -562,42 +570,14 @@ static bool record_header(void){
     if(v.type==4&&(!v.video_bytes||v.video_bytes>=v.width*v.height*2u))return false;
     return true;
 }
-/* Independent raw LZ4 blocks, with IPVF's exact output/terminal bounds.
- * Both length scanning and copying yield after a finite byte budget. No
- * dictionary or scratch frame is needed; only the unoffered building slot is
- * written. decode_pixel counts bytes for this record type. */
-static int decode_lz4(void){
-    const uint8_t *in=v.record.bytes+v.lz_input_offset;
-    uint8_t *out=v.lz_output_slot==NONE?IPVF_LZ_SCRATCH:
-        v.lz_output_slot==2u?v.third.bytes:(uint8_t*)frame_slot(v.lz_output_slot);
-    uint32_t source=0,destination=0,size=v.lz_output_bytes,input_size=v.lz_input_bytes;bool matched=false;
-    if(!input_size)return -1;
-    for(;;){
-        if(source>=input_size)return -1;
-        uint32_t token=in[source++],literal=token>>4;
-        if(literal==15u){uint32_t extension;do{if(source>=input_size)return -1;extension=in[source++];if(extension>size||literal>size-extension)return -1;literal+=extension;}while(extension==255u);}
-        if(literal>input_size-source||literal>size-destination)return -1;
-        if(literal){
-            /* Avoid the bulk copier's register save/restore for tiny tokens. */
-            if(literal<=8u){for(uint32_t i=0;i<literal;++i)out[destination+i]=in[source+i];}
-            else copy(out+destination,in+source,literal);
-            source+=literal;destination+=literal;
-        }
-        if(source==input_size)return destination==size&&literal&&
-            (literal>=5u||(!matched&&size<5u))?1:-1;
-        if(input_size-source<2u)return -1;
-        uint32_t offset=r16(in+source);source+=2u;if(!offset||offset>destination)return -1;
-        uint32_t length=token&15u;
-        if(length==15u){uint32_t extension;do{if(source>=input_size)return -1;extension=in[source++];if(extension>size||length>size-extension)return -1;length+=extension;}while(extension==255u);}
-        if(size<4u||length>size-4u)return -1;length+=4u;
-        if(length>size-destination||size<12u||destination>size-12u)return -1;matched=true;
+#define VIDEO_LZ_CODE __attribute__((noinline))
+VIDEO_LZ_CODE void ln_video_lz_copy_long(uint8_t*write,uint32_t offset,uint32_t remaining){
         /* ARM7 cannot load unaligned words. Align only the destination,
          * then use aligned loads or explicit byte assembly for the source.
          * Each four-byte load completes before its store: offsets >=4 may
          * overlap across successive words, exactly as LZ forward copying. */
         typedef uint32_t match_word __attribute__((may_alias));
-        uint8_t*write=out+destination;const uint8_t*match=write-offset;
-        uint32_t remaining=length;
+        const uint8_t*match=write-offset;
         while(((uintptr_t)write&3u)&&remaining){*write++=*match++;--remaining;}
         if(offset<=2u||offset==4u){
             uint32_t pattern;
@@ -620,14 +600,83 @@ static int decode_lz4(void){
             if(!((uintptr_t)match&3u)){
                 while(remaining>=4u){*(match_word*)write=*(const match_word*)match;
                     write+=4u;match+=4u;remaining-=4u;}
+            }else if(!((uintptr_t)match&1u)){
+                typedef uint16_t match_half __attribute__((may_alias));
+                while(remaining>=4u){const match_half *halves=(const match_half*)match;
+                    uint32_t word=(uint32_t)halves[0]|((uint32_t)halves[1]<<16);
+                    *(match_word*)write=word;write+=4u;match+=4u;remaining-=4u;}
             }else{
                 while(remaining>=4u){uint32_t word=r32(match);*(match_word*)write=word;
                     write+=4u;match+=4u;remaining-=4u;}
             }
         }
         while(remaining){*write++=*match++;--remaining;}
+}
+/* Independent raw LZ4 blocks retain exact output and terminal bounds. Each
+ * bounded block is completed in one pass; the caller owns its output slot. */
+#if defined(__arm__)
+extern int ln_video_lz_decode_block(const uint8_t*,uint32_t,uint8_t*,uint32_t);
+#else
+static VIDEO_LZ_CODE int ln_video_lz_decode_block(const uint8_t *in,uint32_t input_size,uint8_t *out,uint32_t size){
+    const uint8_t *source=in,*input_end=in+input_size;
+    uint8_t *destination=out,*output_end=out+size;bool matched=false;
+    if(!input_size)return -1;
+    for(;;){
+        if(source>=input_end)return -1;
+        uint32_t token=*source++,literal=token>>4;
+        /* Common short sequences fit entirely inside the already bounded
+         * block. Validate their combined input/output spans once. */
+        if(literal<=2u&&(token&15u)<=4u&&(uint32_t)(input_end-source)>=literal+2u&&
+           (uint32_t)(output_end-destination)>=literal+12u){
+            uint32_t offset=r16(source+literal),length=4u+(token&15u);
+            if(!offset||offset>(uint32_t)(destination-out)+literal)return -1;
+            if(literal){destination[0]=source[0];if(literal==2u)destination[1]=source[1];}
+            source+=literal+2u;destination+=literal;
+            uint8_t*write=destination;const uint8_t*match=write-offset;
+            write[0]=match[0];write[1]=match[1];write[2]=match[2];write[3]=match[3];
+            if(length>4u)write[4]=match[4];
+            if(length>5u)write[5]=match[5];
+            if(length>6u)write[6]=match[6];
+            if(length>7u)write[7]=match[7];
+            destination+=length;matched=true;continue;
+        }
+        if(literal==15u){uint32_t extension;do{if(source>=input_end)return -1;extension=*source++;if(extension>size||literal>size-extension)return -1;literal+=extension;}while(extension==255u);}
+        if(literal>(uint32_t)(input_end-source)||literal>(uint32_t)(output_end-destination))return -1;
+        if(literal){
+            /* Avoid the bulk copier's register save/restore for tiny tokens. */
+            if(literal<=8u){for(uint32_t i=0;i<literal;++i)destination[i]=source[i];}
+            else copy(destination,source,literal);
+            source+=literal;destination+=literal;
+        }
+        if(source==input_end)return destination==output_end&&literal&&
+            (literal>=5u||(!matched&&size<5u))?1:-1;
+        if(input_end-source<2)return -1;
+        uint32_t offset=r16(source);source+=2u;if(!offset||offset>(uint32_t)(destination-out))return -1;
+        uint32_t length=token&15u;
+        if(length==15u){uint32_t extension;do{if(source>=input_end)return -1;extension=*source++;if(extension>size||length>size-extension)return -1;length+=extension;}while(extension==255u);}
+        if(size<4u||length>size-4u)return -1;length+=4u;
+        if(length>(uint32_t)(output_end-destination)||(uint32_t)(output_end-destination)<12u)return -1;matched=true;
+        /* Dense RGB565 footage produces mostly four-to-eight-byte matches.
+         * Copy these directly, in forward order even for offsets 1..3,
+         * without entering the alignment and bulk-copy machinery. */
+        if(length<=8u){
+            uint8_t*write=destination;const uint8_t*match=write-offset;
+            write[0]=match[0];write[1]=match[1];write[2]=match[2];write[3]=match[3];
+            if(length>4u)write[4]=match[4];
+            if(length>5u)write[5]=match[5];
+            if(length>6u)write[6]=match[6];
+            if(length>7u)write[7]=match[7];
+            destination+=length;continue;
+        }
+        ln_video_lz_copy_long(destination,offset,length);
         destination+=length;
     }
+}
+#endif
+static int decode_lz4(void){
+    uint8_t *out=v.lz_output_slot==NONE?IPVF_LZ_SCRATCH:
+        v.lz_output_slot==2u?v.third.bytes:(uint8_t*)frame_slot(v.lz_output_slot);
+    return ln_video_lz_decode_block(record_source()+v.lz_input_offset,v.lz_input_bytes,out,v.lz_output_bytes);
 }
 /* One bounded decode slice. Delta dependency always copies the immediately
  * previous prepared frame, even if its presentation deadline was missed. */
@@ -658,8 +707,8 @@ static int decode(void){
 static bool raw_room(uint32_t bytes){return bytes<=RAW_CAPACITY-v.raw_used&&v.raw_count<RAW_ENTRIES;}
 static void raw_store(void){
     uint32_t n=RAW_CAPACITY-v.raw_tail;if(n>v.bytes)n=v.bytes;
-    copy(RAW_BASE+v.raw_tail,v.record.bytes,n);
-    copy(RAW_BASE,v.record.bytes+n,v.bytes-n);
+    if(!v.raw_write){copy(RAW_BASE+v.raw_tail,v.record.bytes,n);
+        copy(RAW_BASE,v.record.bytes+n,v.bytes-n);}
     uint32_t slot=(v.raw_first+v.raw_count)%RAW_ENTRIES;
     v.raw[slot].frame=v.next;v.raw[slot].offset=v.offset;v.raw[slot].bytes=v.bytes;
     v.raw_tail=(v.raw_tail+v.bytes)%RAW_CAPACITY;v.raw_used+=v.bytes;++v.raw_count;
@@ -669,22 +718,35 @@ static bool raw_load(void){
     uint32_t slot=v.raw_first;
     if(v.raw[slot].frame!=v.next||v.raw[slot].offset!=v.offset||v.raw[slot].bytes!=v.bytes)return false;
     uint32_t n=RAW_CAPACITY-v.raw_head;if(n>v.bytes)n=v.bytes;
-    copy(v.record.bytes,RAW_BASE+v.raw_head,n);
-    copy(v.record.bytes+n,RAW_BASE,v.bytes-n);
-    v.raw_head=(v.raw_head+v.bytes)%RAW_CAPACITY;v.raw_used-=v.bytes;
-    v.raw_first=(v.raw_first+1u)%RAW_ENTRIES;--v.raw_count;return true;
+    if(n==v.bytes)v.raw_view=RAW_BASE+v.raw_head;
+    else{
+        copy(v.record.bytes,RAW_BASE+v.raw_head,n);
+        copy(v.record.bytes+n,RAW_BASE,v.bytes-n);
+        v.raw_view=v.record.bytes;
+    }
+    /* Retain the descriptor and ring bytes until all video phases finish. */
+    return true;
+}
+static void raw_release(void){
+    if(!v.raw_view)return;
+    uint32_t bytes=v.raw[v.raw_first].bytes;
+    v.raw_view=0;
+    v.raw_head=(v.raw_head+bytes)%RAW_CAPACITY;v.raw_used-=bytes;
+    v.raw_first=(v.raw_first+1u)%RAW_ENTRIES;--v.raw_count;
 }
 static void audio_cursor_reset(void){
+    v.raw_view=0;v.raw_write=0;
     v.prefetching=false;v.audio_yield=false;v.prefetched_frames=v.next;v.audio_offset=v.offset;v.audio_sectors=v.bytes/512u;
     v.raw_head=v.raw_tail=v.raw_used=v.raw_first=v.raw_count=0;
     v.pcm_head=v.pcm_tail=0;
 }
 static void audio_cursor_restore(void){
+    v.raw_view=0;v.raw_write=0;
     v.next=v.video_next;v.offset=v.video_offset;v.bytes=v.video_bytes_saved;
     v.prefetching=false;v.audio_yield=true;v.building=NONE;v.phase=INDEX;
 }
 static bool ipvf_record_header(void){
-    const uint8_t*b=v.record.bytes;uint64_t used;v.source_type=b[0];v.tile_count=b[1];v.next_sectors=r16(b+2);
+    const uint8_t*b=record_source();uint64_t used;v.source_type=b[0];v.tile_count=b[1];v.next_sectors=r16(b+2);
     v.video_bytes=r32(b+4);v.decoded_bytes=r32(b+8);v.audio_bytes=r32(b+12);
     v.sample=frame_sample(v.next);v.samples=frame_sample(v.next+1u)-v.sample;
     if(!v.samples||v.video_bytes>RECORD||v.decoded_bytes>IPVF_PAYLOAD)return false;
@@ -709,6 +771,9 @@ static bool ipvf_record_header(void){
     v.lz_state=v.lz_token=v.lz_remaining=v.lz_offset=v.lz_literal=v.lz_span=0;v.lz_matched=false;
     return true;
 }
+#if defined(__arm__)
+extern void ln_video_copy_rgb565(uint16_t*,const uint8_t*,uint32_t);
+#endif
 static int decode_ipvf(void){
     bool compressed=v.source_type>=3u;if(compressed&&!v.at){
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -719,7 +784,7 @@ static int decode_ipvf(void){
         v.lz_us+=ln_time_us()-started;
 #endif
         if(result<=0)return result;v.at=1;v.decode_at=v.decode_pixel=0;}
-    const uint8_t*payload=compressed?IPVF_LZ_SCRATCH:v.record.bytes+16;uint16_t*out=frame_slot(v.building),*previous=frame_slot(v.previous);
+    const uint8_t*payload=compressed?IPVF_LZ_SCRATCH:record_source()+16;uint16_t*out=frame_slot(v.building),*previous=frame_slot(v.previous);
     /* Rockbox completes one retained record in one decoder pass. IPVF's
      * strict 77,440-byte frame bound already limits this work; yielding for
      * every 2,048 pixels and every rectangle row inflated small updates into
@@ -736,8 +801,12 @@ static int decode_ipvf(void){
             for(uint32_t pair=0;pair<PIXELS/2u;++pair){uint32_t word=source[pair];
                 target[pair]=prediction[pair]^((word&0x00ff00ffu)<<8)^((word&0xff00ff00u)>>8);}
         }else{
+#if defined(__arm__)
+            ln_video_copy_rgb565(out,payload,PIXELS);
+#else
             for(uint32_t pair=0;pair<PIXELS/2u;++pair){uint32_t word=source[pair];
                 target[pair]=((word&0x00ff00ffu)<<8)|((word&0xff00ff00u)>>8);}
+#endif
             if(v.source_type==6u){
                 /* Residual-only borders predict zero. Intersect translated
                  * source bounds once, then XOR only valid row spans. */
@@ -774,11 +843,18 @@ static int decode_ipvf(void){
         v.decode_pixel=PIXELS;
     }
     if(v.type==2u)return 1;
+#if !defined(__arm__)
     typedef uint16_t rect_pixel __attribute__((may_alias));
     typedef uint32_t rect_pair __attribute__((may_alias));
+#endif
     while(v.tile_count){if(v.decode_at+8u>v.decoded_bytes)return -1;uint32_t x=payload[v.decode_at],y=payload[v.decode_at+1],w=payload[v.decode_at+2],h=payload[v.decode_at+3],bytes=r32(payload+v.decode_at+4);
         if(!w||!h||x+w>220u||y+h>176u||bytes!=w*h*2u||bytes>v.decoded_bytes-v.decode_at-8u)return -1;
         const uint8_t*source=payload+v.decode_at+8u;
+#if defined(__arm__)
+        if(w==220u)ln_video_copy_rgb565(out+y*220u,source,w*h);
+        else for(uint32_t row=0;row<h;++row)
+            ln_video_copy_rgb565(out+(y+row)*220u+x,source+row*w*2u,w);
+#else
         for(uint32_t row=0;row<h;++row){
             uint16_t*target=out+(y+row)*220u+x;
             const rect_pixel*input=(const rect_pixel*)(source+row*w*2u);uint32_t remaining=w;
@@ -797,6 +873,7 @@ static int decode_ipvf(void){
             }
             if(remaining){uint32_t pixel=*input;*(uint16_t*)pairs=(uint16_t)((pixel>>8)|(pixel<<8));}
         }
+#endif
         v.decode_at+=8u+bytes;--v.tile_count;
     }
     return v.decode_at==v.decoded_bytes?1:-1;
@@ -837,7 +914,7 @@ static void step(void){
         if(v.pending){ln_storage_media_cancel(v.generation);if(!ln_storage_media_poll_video(v.generation,0,0))return;v.pending=false;}
         v.working=v.epoch;
         if(!ln_audio_stop()){v.error=13;v.stopping=true;--v.working;return;}
-        v.pcm_head=v.pcm_tail=0;
+        v.pcm_head=v.pcm_tail=0;v.raw_view=0;v.raw_write=0;
         if(v.stopping){v.active=false;v.phase=IDLE;++v.revision;
 #if !defined(LINNET_PROFILE_RELEASE)
             v.measurement=0;
@@ -888,6 +965,8 @@ static void step(void){
         r=read_index(v.target);if(r<0){fail(7);return;}if(!r)return;if(!index_record(b,v.target)){fail(7);return;}
         v.next=r32(b+20);v.resume_frame=v.target;v.origin=frame_sample(v.target);if(!ln_audio_init(v.rate)){fail(13);return;}v.phase=INDEX;return;
     case INDEX:
+        /* Retire the previous video record before the audio producer runs. */
+        raw_release();v.raw_write=0;
         /* Audio owns a forward record cursor independently of render slots.
          * Retaining every scanned record keeps storage reads strictly forward.
          * Count both software staging and the HAL toward the four-second
@@ -903,7 +982,10 @@ static void step(void){
         if(v.next>=v.count){if(!v.finish&&(!v.ipvf||!staged_pcm())){ln_audio_finish();v.finish=true;}v.phase=WAIT;return;}
         if(!v.prefetching){v.building=free_slot();if(v.building==NONE)return;}
         if(!v.ipvf){r=read_index(v.next);if(r<0){fail(7);return;}if(!r)return;if(!index_record(b,v.next)){fail(7);return;}load_index(b);}v.at=0;v.read_time=0;clear(v.cpu,sizeof v.cpu);v.prepare_start=ln_time_us();v.phase=READ;return;
-    case READ:{if(v.ipvf&&!v.prefetching){
+    case READ:{if(v.ipvf&&v.prefetching){
+            if(!v.pending&&!v.at&&raw_room(v.bytes)&&v.bytes<=RAW_CAPACITY-v.raw_tail)v.raw_write=RAW_BASE+v.raw_tail;
+            if(v.raw_write)b=v.raw_write;
+        }if(v.ipvf&&!v.prefetching){
             if(!raw_load()){fail(8);return;}v.at=0;v.phase=CRC;return;
         }uint32_t n=v.bytes-v.at;r=io(v.offset+v.at,b+v.at,n,false);if(r<0){fail(8);return;}if(!r)return;v.at+=n;if(v.at==v.bytes){if(v.read_time>v.max_read_time)v.max_read_time=v.read_time;v.at=0;v.crc=~0u;v.phase=CRC;}return;}
     case CRC:{
@@ -973,7 +1055,7 @@ void ln_video_step(void){
         if(phase==DECODE&&v.ipvf&&v.source_type<7u){v.type_us[v.source_type]+=elapsed;++v.type_calls[v.source_type];}
 #endif
         if(stage!=NONE){v.cpu[stage]+=elapsed;if(v.cpu[stage]>v.max_cpu[stage])v.max_cpu[stage]=v.cpu[stage];}
-        if(!v.active||v.pending||v.offered||ln_time_us()-batch_started>=2000u)break;
+        if(!v.active||v.pending||v.offered||ln_time_us()-batch_started>=4000u)break;
         /* Copy/RLE/delta slices advance decoder cursors without changing at.
          * They are finite progress and may use the remaining batch budget. */
         if(phase==v.phase&&at==v.at&&next==v.next&&revision==v.revision&&epoch==v.epoch&&
