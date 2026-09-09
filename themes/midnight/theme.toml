@@ -1,6 +1,7 @@
 [theme]
 id = "local.example.midnight"
 version = 1
+font = "../../sdk/assets/font-compact13.json"
 
 [colors]
 foreground = "#e4e8f0"

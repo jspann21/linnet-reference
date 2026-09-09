@@ -4,7 +4,7 @@ name = "Sunset"
 version = 1
 style = "standard"
 layout = "sunset"
-font = "../../sdk/assets/font-serif13.json"
+font = "../../sdk/assets/font-compact13.json"
 
 [colors]
 foreground = "#482d28"
@@ -21,8 +21,8 @@ artwork_bg = "#efd4bf"
 artwork_fg = "#a74932"
 
 [metrics]
-row_height = 26
-padding = 8
+row_height = 22
+padding = 6
 
 [assets]
 music = "../default/music.ppm"

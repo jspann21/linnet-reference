@@ -92,6 +92,8 @@ uint32_t ln_ui_dynamic_value(const struct ln_ui_node *node,uint32_t fallback);
 const struct ln_ui_asset *ln_ui_dynamic_asset(const struct ln_ui_node *node,const struct ln_ui_asset *fallback);
 const char *ln_ui_dynamic_text(const struct ln_ui_node *node,uint32_t item,const char *fallback);
 void ln_ui_refresh(struct ln_ui_state *state);
+/* Returns the next text-scroll deadline, or UINT32_MAX when idle. */
+uint32_t ln_ui_scroll_tick(struct ln_ui_state *state,uint32_t now_us);
 bool ln_ui_status_refresh(struct ln_ui_state *state);
 uint32_t ln_ui_visible_capacity(const struct ln_ui_state *state);
 uint32_t ln_ui_focused_count(const struct ln_ui_state *state);

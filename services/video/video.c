@@ -1065,7 +1065,7 @@ void ln_video_step(void){
 }
 uint32_t ln_video_progress(void){if(v.completed)return 1000;if(!v.count||!v.fps)return 0;return v.resume_frame*1000u/v.count;}
 const char*ln_video_title(void){return v.title;}
-const char*ln_video_status(void){return v.error?"Video unavailable":v.stopping?"Stopping video":!v.active?"Finished":v.seeking?"Seeking":v.paused?"Paused":v.started?"Playing":"Loading video";}
+const char*ln_video_status(void){return v.error?"Video unavailable":v.stopping?"Stopping video":!v.active?"Finished":v.seeking?"Seeking":v.paused?"Paused":v.started?"Playing":"Loading video...";}
 const struct ln_ui_asset*ln_video_asset(void){
 #if !defined(LINNET_PROFILE_RELEASE)
     if(v.measurement_ran&&v.measurement!=1u)return 0;

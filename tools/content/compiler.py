@@ -266,6 +266,8 @@ def geometry_flags(node, theme, font):
         columns = 2 if layout == 'blueprint' and node['kind'] == 7 and node['h'] >= 90 else 1
     if node['text'] == 'Clock fields':
         height = 24 if layout == 'graphite' else 22 if layout == 'ipod-photo' else max(18, font['height'] + 3)
+    elif node['kind'] == 6:
+        height = max(18, font['height'] + 5)
     elif node['kind'] == 8:
         height = 38 if layout == 'ipod-photo' else max(1, node['h'] // 2)
     else:

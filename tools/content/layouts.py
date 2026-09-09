@@ -32,9 +32,9 @@ def apply_layout(scenes,theme):
     font_h=theme['font']['height']
     # Each body rectangle is its own layout, not a recolor of the default shell.
     bodies={'ipod-photo':(0,22,220,154),'graphite':(10,42,200,108),
-            'aurora':(52,38,160,132),'sunset':(12,46,196,104),'blueprint':(8,8,204,138)}
+            'aurora':(34,38,178,132),'sunset':(12,46,196,104),'blueprint':(8,8,204,138)}
     headers={'ipod-photo':(0,0,220,22),'graphite':(12,8,196,26),
-             'aurora':(52,7,160,25),'sunset':(12,8,196,30),'blueprint':(0,154,220,22)}
+             'aurora':(34,7,178,25),'sunset':(12,8,196,30),'blueprint':(0,154,220,22)}
     bx,by,bw,bh=bodies[style]
     for scene in result:
         original=deepcopy(scene['nodes'])
@@ -63,7 +63,7 @@ def apply_layout(scenes,theme):
                     node['x']=0;node['w']=210 if any(n['kind']==9 for n in original) else 220
                     if old['y']==24:node['h']=154 if old['h']>=148 else 132
                 elif style=='graphite':node['x']=10;node['w']=194 if any(n['kind']==9 for n in original) else 200
-                elif style=='aurora':node['x']=52;node['w']=154 if any(n['kind']==9 for n in original) else 160
+                elif style=='aurora':node['x']=34;node['w']=172 if any(n['kind']==9 for n in original) else 178
                 elif style=='sunset':node['x']=12;node['w']=190 if any(n['kind']==9 for n in original) else 196
                 elif style=='blueprint':node['x']=8;node['w']=196 if any(n['kind']==9 for n in original) else 204
             if kind==9:
@@ -93,46 +93,17 @@ def apply_layout(scenes,theme):
             foot=next(n for n in nodes if n['kind']==3)
             if style=='ipod-photo':place(listing,0,22,210,132);place(foot,6,156,208,18)
             elif style=='graphite':place(listing,10,36,194,90);place(foot,12,132,196,18)
-            elif style=='aurora':place(listing,52,36,154,104);place(foot,52,144,160,30)
+            elif style=='aurora':place(listing,34,36,172,104);place(foot,34,144,178,30)
             elif style=='sunset':place(listing,12,42,190,84);place(foot,12,132,196,20)
             elif style=='blueprint':place(listing,8,8,196,126);place(foot,8,136,204,16)
             foot['flags']=0
             bar=next(n for n in nodes if n['kind']==9);bar['y']=listing['y'];bar['h']=listing['h']
-        if scene['id']=='linnet.system.now-playing':
-            by_kind={}
-            for node in nodes:by_kind.setdefault(node['kind'],[]).append(node)
-            art=by_kind[14][0];title=next(n for n in nodes if n['text']=='Sample track')
-            artist=next(n for n in nodes if n['text']=='Audio pending')
-            status=next(n for n in nodes if n['text']=='Native playback shell')
-            icon=by_kind[4][0];bar=by_kind[10][0]
-            icon['flags']|=2
-            if style=='ipod-photo':
-                art['flags']|=2;status['flags']|=2
-                place(title,10,46,200,22);title['flags']=CENTER
-                place(artist,10,72,200,22);artist['flags']=CENTER;artist['fg']=color('foreground')
-                place(bar,10,134,200,12)
-                nodes.extend([text_node(title,'Track position',10,28,180,16),text_node(title,'Track album',10,98,200,22,CENTER),
-                    text_node(title,'Track elapsed',10,151,90,22),text_node(title,'Track remaining',120,151,90,22,RIGHT)])
-            elif style=='graphite':
-                place(art,12,46,88,88);place(title,112,44,96,42);title['flags']=WRAP
-                place(artist,112,90,96,40);artist['flags']=WRAP
-                place(bar,12,143,196,7);place(status,12,133,196,17);status['flags']|=2
-            elif style=='aurora':
-                place(art,96,38,72,72);place(title,52,114,160,20);title['flags']=CENTER
-                place(artist,52,135,160,20);artist['flags']=CENTER
-                place(bar,52,161,160,6);status['flags']|=2
-            elif style=='sunset':
-                place(art,144,46,64,64);place(title,12,45,122,48);title['flags']=WRAP
-                place(artist,12,116,196,21);place(bar,12,143,196,6);place(status,12,134,196,19);status['flags']|=2
-            elif style=='blueprint':
-                place(art,8,8,52,52);place(title,70,8,142,32);title['flags']=WRAP
-                place(artist,70,43,142,20);place(bar,8,84,204,14);place(status,8,126,204,20)
-                nodes.extend([text_node(title,'Track elapsed',8,104,95,18),text_node(title,'Track remaining',116,104,96,18,RIGHT)])
         if scene['id']=='linnet.system.video-controls':
             # Keep controls in their theme's chrome while video is fitted behind.
             for node in nodes:
                 if node['kind']==16:place(node,bx,by,bw,bh)
         refine_scene(scene,theme,(bx,by,bw,bh))
+        if style=='ipod-photo':refine_ipod_photo(scene,theme)
         # Fixed clipping bounds remain a compiler invariant for every variant.
         for node in nodes:
             node['w']=max(1,min(node['w'],220-node['x']))
@@ -148,6 +119,7 @@ def refine_scene(scene,theme,body):
     nodes=scene['nodes'];sid=scene['id'].rsplit('.',1)[-1]
     texts=[n for n in nodes if n['kind']==3]
     listing=next((n for n in nodes if n['kind'] in (6,7,8)),None)
+    if listing and listing['kind']==6:rh=max(18,fh+5)
     if scene['id']=='local.example.notes':
         top_h=2*fh if style=='aurora' else fh
         for n in texts:place(n,x+4,y,w-8,top_h);n['flags']=WRAP
@@ -202,34 +174,111 @@ def refine_scene(scene,theme,body):
         place(surface,x,y,w,max(16,h-fh-18))
         place(bar,x,bottom-fh-13,w,5)
         for n in texts:place(n,x,bottom-fh,w,fh);n['flags']=0
-    elif sid=='now-playing' and style not in ('ipod-photo','default'):
+    elif sid=='now-playing':
         title=next(n for n in texts if n['text']=='Sample track')
         artist=next(n for n in texts if n['text']=='Audio pending')
-        status=next(n for n in texts if n['text']=='Native playback shell');status['flags']|=2
-        art=next(n for n in nodes if n['kind']==14);bar=next(n for n in nodes if n['kind']==10)
-        if style=='graphite':
-            place(art,12,42,72,72);place(title,94,42,114,36);title['flags']=WRAP
-            place(artist,94,82,114,36);artist['flags']=WRAP
+        status=next(n for n in texts if n['text']=='Native playback shell')
+        art=next(n for n in nodes if n['kind']==14)
+        bar=next(n for n in nodes if n['kind']==10)
+        # Metadata owns stable lines; notices never displace it or disappear.
+        inset=6 if style=='ipod-photo' else 4
+        left=x+inset;width=w-2*inset;top=y+(2 if h<120 else 4)
+        if style=='ipod-photo':
+            # Photo-era composition: position above art, metadata to its right.
+            header=next(n for n in nodes if n['kind']==11);header['text']='Now Playing'
+            left=10;width=200
+            place(art,10,48,70,70)
+            nodes.append(text_node(title,'Track position',10,29,200,fh))
+            place(title,90,50,120,2*fh);title['flags']=WRAP
+            place(artist,90,86,120,fh);artist['flags']=0;artist['fg']=color('foreground')
+            nodes.append(text_node(title,'Track album',90,106,120,fh))
         elif style=='aurora':
-            place(art,104,38,56,56);place(title,52,99,160,fh);title['flags']=CENTER
-            place(artist,52,119,160,fh);artist['flags']=CENTER
-        elif style=='sunset':
-            place(art,144,46,64,64);place(title,12,46,124,2*fh+4);title['flags']=WRAP
-            place(artist,12,84,124,2*fh+4);artist['flags']=WRAP
-        elif style=='blueprint':
-            place(art,8,8,64,64);place(title,82,8,130,2*fh+4);title['flags']=WRAP
-            place(artist,82,44,130,2*fh+4);artist['flags']=WRAP
-            album=text_node(title,'Track album',8,84,204,fh,0,'muted');nodes.append(album)
-        place(bar,x,bottom-5,w,5)
-        elapsed=next((n for n in texts if n['text']=='Track elapsed'),None)
-        remaining=next((n for n in texts if n['text']=='Track remaining'),None)
-        if elapsed is None:elapsed=text_node(title,'Track elapsed',0,0,1,1);nodes.append(elapsed)
-        if remaining is None:remaining=text_node(title,'Track remaining',0,0,1,1);nodes.append(remaining)
-        place(elapsed,x,bottom-fh-11,(w-12)//2,fh);elapsed['flags']=0
-        place(remaining,x+(w+12)//2,bottom-fh-11,(w-12)//2,fh);remaining['flags']=RIGHT
+            place(art,left+(width-32)//2,top,32,32)
+            place(title,left,top+36,width,2*fh);title['flags']=WRAP
+            place(artist,left,top+38+2*fh,width,fh);artist['flags']=CENTER
+        else:
+            size=56 if h<120 else 64
+            lines=2 if h<120 else 3
+            place(art,left,top,size,size)
+            place(title,left+size+8,top,width-size-8,lines*fh);title['flags']=WRAP
+            place(artist,left+size+8,top+lines*fh+4,width-size-8,2*fh);artist['flags']=WRAP
+            if h>=138:
+                nodes.append(text_node(title,'Track album',left,top+size+8,width,fh,0,'muted'))
+        place(status,left,bottom-2*fh-14,width,fh);status['flags']=0;status['fg']=color('muted')
+        place(bar,left,bottom-fh-10,width,4)
+        if style=='ipod-photo':
+            place(status,left,124,width,fh)
+            place(bar,left,142,width,10)
+        nodes.extend([text_node(title,'Track elapsed',left,bottom-fh-2,(width-12)//2,fh),
+                      text_node(title,'Track remaining',left+(width+12)//2,bottom-fh-2,(width-12)//2,fh,RIGHT)])
     if listing:
         for n in nodes:
             if n['kind']==9:n['y']=listing['y'];n['h']=listing['h']
+    scene['count']=len(nodes)
+
+
+def refine_ipod_photo(scene,theme):
+    """Photo's 220x176 chrome and content grid, including Linnet extensions."""
+    nodes=scene['nodes'];sid=scene['id'].rsplit('.',1)[-1]
+    fh=theme['font']['height'];rh=22
+    texts=[n for n in nodes if n['kind']==3]
+    listing=next((n for n in nodes if n['kind'] in (6,7,8)),None)
+    scroll=next((n for n in nodes if n['kind']==9),None)
+    header=next((n for n in nodes if n['kind']==11),None)
+    if header:
+        place(header,0,0,220,20)
+        names={'home':'iPod','about':'About','display':'Backlight Timer',
+               'photos-options':'Slideshow Settings','music-sound':'EQ',
+               'clock-edit':'Date & Time','music-options':'Playback Options'}
+        if sid in names:header['text']=names[sid]
+    if listing:
+        # White edge at the right keeps the thumb and chevrons inside the LCD.
+        top=20 if listing['y']<=24 else listing['y']
+        bottom=min(174,listing['y']+listing['h'])
+        place(listing,0,top,210 if scroll else 220,max(rh,((bottom-top)//rh)*rh))
+        if listing['kind']==8:place(listing,0,22,220,152)
+    # No boxed dashboard cards or decorative artwork in stock information pages.
+    if sid=='about':
+        for n in nodes:
+            if n['kind'] in (2,5):n['flags']|=2
+        for i,n in enumerate(texts):place(n,6,28+i*26,208,fh);n['flags']=0;n['fg']=color('foreground')
+    elif sid=='settings' and listing:
+        pairs=list(zip(listing['items'],listing['targets']))
+        preferred=['About Linnet','Display','Clock','Battery','Themes','Update / Recovery','Sync / USB Disk Mode','Back to Home']
+        pairs.sort(key=lambda p:preferred.index(p[0]) if p[0] in preferred else len(preferred))
+        labels={'About Linnet':'About','Display':'Backlight Timer','Clock':'Date & Time'}
+        listing['items']=[labels.get(label,label) for label,_ in pairs]
+        listing['targets']=[target for _,target in pairs]
+    elif sid=='extras' and listing:
+        pairs=list(zip(listing['items'],listing['targets']))
+        pairs.sort(key=lambda p:0 if p[0]=='Clock' else 1 if p[0]=='Notes' else 2)
+        listing['items']=[label for label,_ in pairs];listing['targets']=[target for _,target in pairs]
+    elif sid=='now-playing':
+        title=next(n for n in texts if n['text']=='Sample track')
+        artist=next(n for n in texts if n['text']=='Audio pending')
+        album=next(n for n in texts if n['text']=='Track album')
+        # A single baseline for each field matches the original player layout.
+        for n,y in ((title,55),(artist,77),(album,99)):
+            place(n,88,y,122,fh);n['flags']=0;n['fg']=color('foreground')
+        position=next(n for n in texts if n['text']=='Track position');place(position,10,29,200,fh)
+        art=next(n for n in nodes if n['kind']==14);place(art,10,48,70,70)
+        notice=next(n for n in texts if n['text']=='Native playback shell');place(notice,10,119,200,fh)
+        bar=next(n for n in nodes if n['kind']==10);place(bar,10,138,200,11)
+        for n in texts:
+            if n['text']=='Track elapsed':place(n,10,156,94,fh)
+            elif n['text']=='Track remaining':place(n,116,156,94,fh)
+    elif sid=='themes' and listing:
+        place(listing,0,20,210,132)
+        for n in texts:place(n,6,155,208,fh)
+    elif sid in ('display','battery','music-queue','music-sound','music-search','clock-edit','clock'):
+        for n in texts:
+            n['x']=6;n['w']=208
+            n['h']=min(n['h'],172-n['y'])
+            if n['h']<fh:n['y']=172-fh;n['h']=fh
+    elif sid=='photos-viewer':
+        surface=next(n for n in nodes if n['kind']==15);place(surface,0,20,220,156)
+    if scroll and listing:
+        place(scroll,213,listing['y']+2,5,max(4,listing['h']-4))
     scene['count']=len(nodes)
 
 

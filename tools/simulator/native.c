@@ -23,7 +23,7 @@ static uint32_t sample_read=LN_CALENDAR_READ_VALID,sample_result=LN_CALENDAR_SAV
 static bool save_presented;
 bool ln_ui_clock_begin(void){
     ln_clock_editor_cancel();save_presented=false;
-    if(sample_busy){ln_clock_editor_block(sample_busy==1?"Stop playback before setting the clock.":"Storage busy. Try again.");return false;}
+    if(sample_busy==1){ln_clock_editor_block("Stop playback before setting the clock.");return false;}
     sample_calendar.hour=(uint8_t)(sample_clock<86400u?sample_clock/3600u:0);
     sample_calendar.minute=(uint8_t)(sample_clock<86400u?(sample_clock/60u)%60u:0);
     ln_clock_editor_begin(&sample_calendar,sample_read==LN_CALENDAR_READ_VALID);
@@ -37,7 +37,7 @@ static void clock_step(struct ln_ui_state*s){
     if(!save_presented)return;save_presented=false;
     struct ln_calendar requested;if(!ln_clock_editor_request(&requested))return;
     if(s->hold)ln_clock_editor_block("Unlock Hold before saving.");
-    else if(sample_busy)ln_clock_editor_block(sample_busy==1?"Stop playback before setting the clock.":"Storage busy. Try again.");
+    else if(sample_busy==1)ln_clock_editor_block("Stop playback before setting the clock.");
     else{
         ++save_calls;ln_clock_editor_result((enum ln_calendar_result)sample_result);
         if(sample_result==LN_CALENDAR_SAVED){sample_calendar=requested;sample_clock=(uint32_t)requested.hour*3600u+(uint32_t)requested.minute*60u;

@@ -4,26 +4,27 @@ name = "iPod Photo"
 version = 1
 style = "apple-photo"
 layout = "ipod-photo"
-font = "../../sdk/assets/font-sans13-bold.json"
+font = "../../sdk/assets/font-podium-sans16.json"
+font_license = "../../sdk/assets/PODIUM-SANS-NOTICE.txt"
 
 [colors]
-foreground = "#16191d"
+foreground = "#111111"
 background = "#ffffff"
 accent = "#2473cf"
 muted = "#626971"
-panel = "#e1e4e8"
+panel = "#e5e5e5"
 selection_fg = "#ffffff"
 selection_bg = "#2473cf"
-status_fg = "#16191d"
-status_bg = "#e1e4e8"
-border = "#9299a1"
+status_fg = "#111111"
+status_bg = "#dedede"
+border = "#999999"
 artwork_bg = "#edf0f4"
 artwork_fg = "#2473cf"
 battery = "#65b436"
 
 [metrics]
 row_height = 22
-padding = 8
+padding = 6
 
 [assets]
 music = "../default/music.ppm"

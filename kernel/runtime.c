@@ -58,6 +58,9 @@ static struct ln_input_state input;
 static struct ln_power_state power;
 static uint32_t last_injection, synthetic_flags, override_mask;
 static uint32_t sleep_count,wake_count,wake_at,animation_left,animation_at;
+#if defined(LINNET_NATIVE_UI)
+static uint32_t text_scroll_at=UINT32_MAX;
+#endif
 static uint32_t brightness=100;
 static uint32_t backlight_deadline,backlight_timeout=30000000u;
 static bool backlight_idle;
@@ -232,7 +235,7 @@ static const char *clock_admission(void){
 #if defined(LINNET_PHOTOS)
     if(ln_photos_pending())return "Wait for photos to finish.";
 #endif
-    if(ln_storage_busy())return "Storage busy. Try again.";
+    /* The RTC uses the power chip I2C bus, independently of storage activity. */
     return 0;
 }
 bool ln_ui_clock_begin(void){
@@ -753,6 +756,8 @@ void ln_runtime_step(void){
         ln_power_backlight(false,(uint8_t)((brightness*255u+50u)/100u));
     }
 #if defined(LINNET_NATIVE_UI)
+    text_scroll_at=(!sleeping&&!backlight_idle)?ln_ui_scroll_tick(shell,now):UINT32_MAX;
+    if(shell->dirty)dirty=true;
     if(shell->action==LINNET_UI_ACTION_SYNC&&!ln_storage_busy()){
         ready=false;shutdown_tracking=false;animation_left=0;
         (void)ln_shell_take_action(shell);
@@ -850,6 +855,9 @@ void ln_runtime_idle(void){
     /* CPU fallback must service its bounded worker; a live COP owns the LCD. */
     if(ln_display_busy()&&!display.cop_active)return;
     uint32_t next=now+200000u;
+#if defined(LINNET_NATIVE_UI)
+    if(text_scroll_at!=UINT32_MAX&&(int32_t)(text_scroll_at-next)<0)next=text_scroll_at;
+#endif
 #if defined(LINNET_VIDEO)
     uint32_t video_due=ln_video_deadline(now);if((int32_t)(video_due-next)<0)next=video_due;
 #endif /* independent watchdog progress lease */

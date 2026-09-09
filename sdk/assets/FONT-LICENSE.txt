@@ -76,3 +76,6 @@ License: GPL-2+
  On Debian systems, the full text of the GNU General Public
  License version 2 can be found in the file
  /usr/share/common-licenses/GPL-2'.
+
+font-compact13.json uses the font-sans12.json glyphs with the empty first
+and last scanlines removed. Glyph shapes and advances are unchanged.

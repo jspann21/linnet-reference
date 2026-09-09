@@ -4,7 +4,7 @@ name = "Blueprint"
 version = 1
 style = "standard"
 layout = "blueprint"
-font = "../../sdk/assets/font-sans12.json"
+font = "../../sdk/assets/font-compact13.json"
 
 [colors]
 foreground = "#e4f1ff"
