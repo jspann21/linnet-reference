@@ -894,12 +894,18 @@ bool ln_video_active(void){return v.active;}
 bool ln_video_pending(void){return v.pending||catalog.pending;}
 bool ln_video_paused(void){return v.paused;}
 void ln_video_pause(bool pause){if(!v.active||v.stopping)return;v.paused=pause;if(v.started){if(pause)ln_audio_pause();else if(!ln_audio_start())fail(13);}++v.revision;}
+/* A seek already stages PCM ahead of the video cursor. Requiring the full
+ * startup queue again holds a full audio ring muted for several seconds. */
+static void seek_preroll(void){
+    uint32_t frames=(v.fps_num+2u*v.fps_den-1u)/(2u*v.fps_den);
+    if(frames<2u)frames=2u;if(frames<v.preroll)v.preroll=frames;
+}
 bool ln_video_seek(int32_t seconds){
 #if !defined(LINNET_PROFILE_RELEASE)
     if(v.measurement)return false;
 #endif
-    if(!v.ready||v.stopping)return false;struct ln_audio_status a;ln_audio_snapshot(&a);int64_t frame=(int64_t)sample_frame(v.origin+a.consumed)+(int64_t)(seconds*(int32_t)v.fps_num/(int32_t)v.fps_den);
-    if(frame<0)frame=0;if(frame>=v.count)frame=v.count-1;v.target=(uint32_t)frame;v.seeking=true;++v.epoch;return true;
+    if(!v.ready||v.stopping)return false;struct ln_audio_status a;ln_audio_snapshot(&a);int64_t frame=(int64_t)(v.started&&v.working==v.epoch?sample_frame(v.origin+a.consumed):v.target)+(int64_t)(seconds*(int32_t)v.fps_num/(int32_t)v.fps_den);
+    if(frame<0)frame=0;if(frame>=v.count)frame=v.count-1;v.target=(uint32_t)frame;seek_preroll();v.seeking=true;++v.epoch;return true;
 }
 static void step(void){
     if(!v.active)return;
@@ -954,7 +960,7 @@ static void step(void){
 #if !defined(LINNET_PROFILE_RELEASE)
             if(v.measurement)resume=false;
 #endif
-            if(resume){v.target=saved_resume[1];v.seeking=true;v.seek_index=0;v.phase=SEEK;}
+            if(resume){v.target=saved_resume[1];seek_preroll();v.seeking=true;v.seek_index=0;v.phase=SEEK;}
             else {if(!ln_audio_init(v.rate)){fail(13);return;}v.next=0;v.offset=512;v.bytes=v.ipvf?v.first_sectors*512u:0;v.origin=0;
                 audio_cursor_reset();v.phase=INDEX;}}return;}
     case SEEK:

@@ -273,7 +273,7 @@ static void apply(uint32_t kind,int32_t value){
                 else if(pressed&LN_BUTTON_SELECT)(void)ln_ui_show(shell,scene_is("linnet.system.video-player")?"linnet.system.video-controls":"linnet.system.video-player");
                 shell->buttons=(uint32_t)value;handled=true;dirty=true;ln_ui_refresh(shell);
             }
-        }else if(kind==LN_INPUT_WHEEL&&video_scene()){struct ln_audio_status a;ln_audio_snapshot(&a);(void)ln_audio_volume(a.volume_db_tenths+value*10);handled=true;}
+        }else if(kind==LN_INPUT_WHEEL&&video_scene()){ln_music_volume(value);handled=true;}
     }
     if((video_requested||ln_video_active()||ln_video_pending())&&!video_scene()&&!scene_is("linnet.system.videos")){
         video_requested=false;video_save();ln_video_stop();if(kind==LN_INPUT_BUTTON){shell->buttons=(uint32_t)value;handled=true;}
