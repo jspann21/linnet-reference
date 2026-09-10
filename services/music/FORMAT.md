@@ -109,8 +109,15 @@ starting playback, and verify content hashes before claiming media integrity.
 | 20 | u32 | Reserved zero |
 | 24 | u64 | Stable group ID |
 
-Each member is a u32 track-table index. An album is keyed by artist and album
-name. Groups are sorted by kind, Unicode-casefolded name, casefolded parent name,
+Each member is a u32 track-table index. An album is keyed by album artist and album
+name. The compiler uses `album_artist`/`albumartist`, falling back to track artist;
+compilation tags (`1`, `true`, `yes`) use Various Artists when the owner would
+otherwise be the track artist. An explicit different album artist takes precedence.
+Trailing guest credits
+introduced by feat., ft. or featuring are removed from album ownership only.
+Track artist credits are preserved. Artist groups include tracks they perform
+or own as album artist, without repeating a track within a group.
+Groups are sorted by kind, Unicode-casefolded name, casefolded parent name,
 then the exact key for deterministic ties. Non-playlist members are sorted by
 disc, track number, casefolded title, then track index. Playlists preserve supplied
 order and repeats. Artist-to-album lookup follows album parent indexes; artist

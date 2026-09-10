@@ -54,6 +54,19 @@ def _number(value: object) -> int:
         return 0
 
 
+def _album_artist(tags: dict, artist: str) -> str:
+    """Album ownership is independent of the performing track artist."""
+    owner = _text(tags.get("album_artist") or tags.get("albumartist") or artist)
+    if (str(tags.get("compilation", "")).strip().casefold() in ("1", "true", "yes")
+            and owner.casefold() == artist.casefold()):
+        return "Various Artists"
+    # Guest credits sometimes leak into album-artist tags. Keep the primary
+    # artist as owner, while retaining the complete credit on the track.
+    owner = re.split(r"\s+(?:feat\.?|ft\.?|featuring)\s+", owner, maxsplit=1,
+                     flags=re.IGNORECASE)[0].rstrip()
+    return owner or artist
+
+
 def _stable(value: str) -> int:
     return int.from_bytes(hashlib.sha256(value.encode("utf-8")).digest()[:8], "little")
 
@@ -672,6 +685,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         title = _text(tags.get("title") or path.stem)
         artist = _text(tags.get("artist") or "Unknown Artist")
         album = _text(tags.get("album") or "Unknown Album")
+        album_artist = _album_artist(tags, artist)
         genre, composer = _text(tags.get("genre", "")), _text(tags.get("composer", ""))
         year = _number(str(tags.get("date", tags.get("year", "")))[:4])
         track, disc = _number(tags.get("track", "")), _number(tags.get("disc", ""))
@@ -693,11 +707,13 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         record[96:128] = hasher.digest() if hash_audio else bytes(32)
         index = len(records)
         records.append(record)
-        for kind, label, parent in ((1, artist, ""), (2, album, artist), (3, genre, ""),
+        for kind, label, parent in ((1, artist, ""), (2, album, album_artist), (3, genre, ""),
                                     (4, composer, ""), (5, str(year) if year else "", ""),
                                     (6, path.parent.relative_to(source).as_posix(), "")):
             if label:
                 groups.setdefault((kind, label, parent), []).append(index)
+        if album_artist != artist:
+            groups.setdefault((1, album_artist, ""), []).append(index)
         entries.append(dict(source=relative, id=f"{identity:016x}", path=location, storage="staged" if stage_audio else "existing",
                             title=title, artist=artist, album=album, track=track, disc=disc,
                             codec=metadata["codec"], integrity="sha256" if hash_audio else "metadata", bytes=before.st_size,

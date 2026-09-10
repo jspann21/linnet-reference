@@ -29,7 +29,9 @@ are adapted to the font and reported; oversized notes must be split. Select
 opens a note, wheel or Previous/Next scrolls, and Menu returns.
 
 Music indexing uses actual FAT short aliases, with limits of 16 path components
-and 255 path bytes. Unsupported aliases get verified compatibility copies under
+and 255 path bytes. Albums are grouped by album artist, with compilation and
+guest-credit handling; individual track artist credits are preserved.
+Unsupported aliases get verified compatibility copies under
 `LINNET/MUSIC`; originals remain. Missing files or alias lookup failures stop
 import. Compressed audio is decoded once on the computer to count samples for
 track duration and playback progress, including files without duration headers.
