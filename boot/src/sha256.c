@@ -15,10 +15,12 @@ static uint32_t rotate(uint32_t value, unsigned amount) {
 #define LN_SHA_COMPRESS_ATTR
 #define LN_SHA_COMPRESS_NAME compress_sdram
 #define LN_SHA_CONSTANTS constants
+#define LN_SHA_WORKSPACE uint32_t w[64]
 #include "sha256_compress.inc"
 #undef LN_SHA_COMPRESS_ATTR
 #undef LN_SHA_COMPRESS_NAME
 #undef LN_SHA_CONSTANTS
+#undef LN_SHA_WORKSPACE
 #if defined(LINNET_IMAGE_BOOT) && defined(LINNET_PLATFORM_CORE) && defined(LINNET_STORAGE)
 static const uint32_t boot_constants[64] __attribute__((section(".boot_hash.rodata"),aligned(4))) = {
     0x428a2f98u,0x71374491u,0xb5c0fbcfu,0xe9b5dba5u,0x3956c25bu,0x59f111f1u,0x923f82a4u,0xab1c5ed5u,
@@ -30,13 +32,19 @@ static const uint32_t boot_constants[64] __attribute__((section(".boot_hash.roda
     0x19a4c116u,0x1e376c08u,0x2748774cu,0x34b0bcb5u,0x391c0cb3u,0x4ed8aa4au,0x5b9cca4fu,0x682e6ff3u,
     0x748f82eeu,0x78a5636fu,0x84c87814u,0x8cc70208u,0x90befffau,0xa4506cebu,0xbef9a3f7u,0xc67178f2u
 };
+/* Boot compresses synchronously on the CPU, with no callbacks or SHA users in
+ * interrupt/COP handlers. Every block overwrites all 64 words before use.
+ * Keep this scratch beside the verified code; OS hashing retains its stack. */
+static uint32_t boot_schedule[64] __attribute__((section(".boot_hash.data"),aligned(4)));
 #define LN_SHA_COMPRESS_ATTR __attribute__((section(".boot_hash.text"),noinline))
 #define LN_SHA_COMPRESS_NAME compress_iram
 #define LN_SHA_CONSTANTS boot_constants
+#define LN_SHA_WORKSPACE uint32_t *w=boot_schedule
 #include "sha256_compress.inc"
 #undef LN_SHA_COMPRESS_ATTR
 #undef LN_SHA_COMPRESS_NAME
 #undef LN_SHA_CONSTANTS
+#undef LN_SHA_WORKSPACE
 static uint32_t boot_iram_ready;
 int ln_sha256_boot_iram_init(void){
     extern const uint32_t __boot_hash_load[],__boot_hash_begin[],__boot_hash_end[];

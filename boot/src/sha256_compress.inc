@@ -1,6 +1,6 @@
 /* Shared SHA compression implementation; intentionally included twice for Boot. */
 static LN_SHA_COMPRESS_ATTR void LN_SHA_COMPRESS_NAME(struct ln_sha256 *s,const uint8_t *block) {
-    uint32_t w[64];
+    LN_SHA_WORKSPACE;
     for (unsigned i=0;i<16;++i) {
         const uint8_t *p=block+4u*i;
         w[i]=((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3];

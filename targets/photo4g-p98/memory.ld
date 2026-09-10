@@ -41,7 +41,7 @@ SECTIONS {
   /* Separate Boot ownership, not an implicit reuse of the OS reservation. */
   .boot_hash ORIGIN(BOOT_HASH_IRAM) : ALIGN(4) {
     __boot_hash_begin = .;
-    KEEP(*(.boot_hash.text)) KEEP(*(.boot_hash.rodata))
+    KEEP(*(.boot_hash.text)) KEEP(*(.boot_hash.rodata)) KEEP(*(.boot_hash.data))
     . = ALIGN(4);
     __boot_hash_end = .;
   } > BOOT_HASH_IRAM AT> SDRAM
