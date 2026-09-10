@@ -149,6 +149,16 @@ the Batch 1 hardware gate.
 
 ## Batch 3 native UI inspection
 
+For panel timing, command 94 with u32 subcommand 7 returns sixteen u32 words:
+`DSY1`, version 1, synchronized frames, pulse timeouts, last wait us, maximum
+wait us, waiting flag, frame-pending flag, submitted frames, completed frames,
+LCD failures, pixel pairs written, maximum presentation us (including the
+sync wait), last transfer us, maximum transfer us, and snapshot tick.
+This is a passive development-only snapshot. P98 GPIO A0 was measured with
+an active-low pulse of approximately 579 us every 16,575 us. Presentation arms
+its interrupt only for a pending frame and falls back after 25 ms without a
+pulse. Screen captures still cannot establish physical tear-free scanout.
+
 Command 69, UI_STATE, takes an empty payload and returns 16 little-endian u32
 words in development/trace OS images built with the native UI. The command is
 read-only and uses the normal frame sequence and CRC rules. An older image

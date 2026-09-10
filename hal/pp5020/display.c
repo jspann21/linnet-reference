@@ -1,5 +1,6 @@
 #include "hal/pp5020/display.h"
 #include "hal/pp5020/platform.h"
+#include "hal/pp5020/core.h"
 #include "boot/include/linnet_boot.h"
 
 #define REG(address) (*(volatile uint32_t *)(uintptr_t)(address))
@@ -22,6 +23,34 @@ static bool direct_frame, draw_stale;
 static bool clock_park_owned;
 static uint32_t cop_error;
 static uint32_t init_error;
+static volatile bool sync_waiting;
+static uint32_t sync_head;
+static uint32_t sync_frames,sync_timeouts,sync_wait_us,sync_max_wait_us,transfer_started;
+static uint32_t transfer_us,transfer_max_us;
+
+/* P98 GPIO A0: observed active-low frame pulse, 579 us every 16575 us.
+ * Arm only while a frame is pending; idle display causes no extra IRQs. */
+static void sync_cancel(void) {
+    REG(0x6000d050u)&=~1u;
+    REG(0x6000d070u)=1u;
+    sync_waiting=false;
+}
+void ln_display_sync_irq(void) {
+    if(!sync_waiting || !(REG(0x6000d040u)&1u))return;
+    if(REG(0x6000d030u)&1u){
+        /* We armed during blanking. Wait for the next complete low pulse. */
+        REG(0x6000d060u)&=~1u;
+        REG(0x6000d070u)=1u;
+        return;
+    }
+    sync_cancel();
+    transfer_started=ln_time_us();
+    sync_wait_us=transfer_started-frame_started;
+    if(sync_wait_us>sync_max_wait_us)sync_max_wait_us=sync_wait_us;
+    ++sync_frames;
+    __asm__ volatile("" ::: "memory");
+    MB(LN_DISPLAY_HEAD)=sync_head;
+}
 
 static void barrier(void) { __asm__ volatile("" ::: "memory"); }
 static volatile uint16_t *scanout(void) {
@@ -267,6 +296,9 @@ bool ln_display_init(void) {
     for (uint32_t i=0;i<LINNET_DISPLAY_PIXELS;++i) { draw_buffer[i]=0; scanout()[i]=0; }
     damage_count=submitted=completed=frame_failures=max_present_us=0;
     frame_pending=direct_frame=draw_stale=false;
+    sync_cancel();
+    sync_frames=sync_timeouts=sync_wait_us=sync_max_wait_us=0;
+    transfer_us=transfer_max_us=0;
     if (!ln_lcd_fill(0)) {
         init_error=0x02000000u;
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -326,6 +358,11 @@ bool ln_display_damage(int32_t x,int32_t y,int32_t width,int32_t height) {
             uint32_t top=rectangle.y<other->y?rectangle.y:other->y;
             uint32_t end_x=rectangle.x+rectangle.width>other->x+other->width?rectangle.x+rectangle.width:other->x+other->width;
             uint32_t end_y=rectangle.y+rectangle.height>other->y+other->height?rectangle.y+rectangle.height:other->y+other->height;
+            /* A scrollbar touching a selection row must not expand that row
+             * into a full list transfer. Merge only when the bounding box
+             * costs no more pixels than the two existing jobs. */
+            if ((end_x-left)*(end_y-top)>
+                rectangle.width*rectangle.height+other->width*other->height) continue;
             *other=(struct rectangle){left,top,end_x-left,end_y-top};
             return true;
         }
@@ -375,18 +412,50 @@ bool ln_display_present(void) {
         }
 #endif
     }
-    uint32_t head=MB(LN_DISPLAY_HEAD);
-    for (uint32_t i=0;i<damage_count;++i) {
-        uint32_t slot=LN_DISPLAY_QUEUE+((head+i)&7u)*16u;
-        MB(slot)=damage[i].x;MB(slot+4)=damage[i].y;
-        MB(slot+8)=damage[i].width;MB(slot+12)=damage[i].height;
+    /* The panel reaches the right edge first. A narrow first strip must
+     * finish before that edge is scanned; subsequent strips follow it left.
+     * Keep large repaints contiguous to avoid extra command overhead. */
+    struct rectangle jobs[LINNET_DISPLAY_QUEUE_CAPACITY];
+    uint32_t job_count=0,eligible=0;
+    for(uint32_t i=0;i<damage_count;++i)
+        if(damage[i].width>64u&&damage[i].height<=64u)++eligible;
+    for(uint32_t i=0;i<damage_count;++i){
+        struct rectangle r=damage[i];uint32_t parts=1;
+        if(r.width>64u&&r.height<=64u){
+            parts+=(LINNET_DISPLAY_QUEUE_CAPACITY-damage_count-(job_count-i))/eligible;
+            --eligible;
+        }
+        uint32_t right=r.x+r.width,remaining=r.width;
+        for(uint32_t j=0;j<parts;++j){
+            uint32_t width=parts==1u?r.width:j==0u?8u:((remaining/2u)/(parts-j))*2u;
+            right-=width;remaining-=width;
+            jobs[job_count++]=(struct rectangle){right,r.y,width,r.height};
+        }
     }
-    if (damage_count>MB(LN_DISPLAY_HIGH_WATER)) MB(LN_DISPLAY_HIGH_WATER)=damage_count;
+    for(uint32_t i=1;i<job_count;++i){
+        struct rectangle r=jobs[i];uint32_t j=i;
+        while(j&&jobs[j-1u].x<r.x){jobs[j]=jobs[j-1u];--j;}
+        jobs[j]=r;
+    }
+    uint32_t head=MB(LN_DISPLAY_HEAD);
+    for (uint32_t i=0;i<job_count;++i) {
+        uint32_t slot=LN_DISPLAY_QUEUE+((head+i)&7u)*16u;
+        MB(slot)=jobs[i].x;MB(slot+4)=jobs[i].y;
+        MB(slot+8)=jobs[i].width;MB(slot+12)=jobs[i].height;
+    }
+    if (job_count>MB(LN_DISPLAY_HIGH_WATER)) MB(LN_DISPLAY_HIGH_WATER)=job_count;
     frame_failures=MB(LN_DISPLAY_FAILURES);
     frame_started=ln_time_us();
     frame_pending=true;submitted++;
     barrier();
-    MB(LN_DISPLAY_HEAD)=head+damage_count;
+    uint32_t irq=ln_core_irq_save();
+    sync_head=head+job_count;
+    sync_waiting=true;
+    REG(0x6000d060u)=(REG(0x6000d060u)&~1u)|((REG(0x6000d030u)&1u)?0u:1u);
+    REG(0x6000d070u)=1u;
+    REG(0x6000d050u)|=1u;
+    ln_core_input_rearm();
+    ln_core_irq_restore(irq);
     damage_count=0;
     direct_frame=false;
     return true;
@@ -394,12 +463,21 @@ bool ln_display_present(void) {
 
 bool ln_display_service(uint32_t max_pairs) {
     if (!initialized) return false;
+    /* A missing panel pulse must not stall display ownership or recovery. */
+    if(sync_waiting){
+        if(ln_time_us()-frame_started<25000u)return true;
+        uint32_t irq=ln_core_irq_save();
+        if(sync_waiting){sync_cancel();++sync_timeouts;transfer_started=ln_time_us();barrier();MB(LN_DISPLAY_HEAD)=sync_head;}
+        ln_core_irq_restore(irq);
+    }
     if (max_pairs>256u) max_pairs=256u;
     if (!cop_capable) for (uint32_t i=0;i<max_pairs && MB(LN_DISPLAY_HEAD)!=MB(LN_DISPLAY_TAIL);++i) cpu_step();
     if (frame_pending && MB(LN_DISPLAY_HEAD)==MB(LN_DISPLAY_TAIL)) {
         frame_pending=false;
         if (frame_failures!=MB(LN_DISPLAY_FAILURES)) { (void)ln_display_damage(0,0,220,176);return false; }
         uint32_t elapsed=ln_time_us()-frame_started;
+        transfer_us=ln_time_us()-transfer_started;
+        if(transfer_us>transfer_max_us)transfer_max_us=transfer_us;
         if (elapsed>max_present_us) max_present_us=elapsed;
         completed++;
     }
@@ -411,6 +489,7 @@ bool ln_display_cop_capable(void) { return cop_capable; }
 
 bool ln_display_quiesce(void) {
     if (!initialized) return true;
+    uint32_t irq=ln_core_irq_save();sync_cancel();ln_core_irq_restore(irq);
     if (!pause_worker(true)) return false;
     MB(LN_DISPLAY_ENABLED)=0;CONFIG=0;
     MB(LN_DISPLAY_STATE)=0;MB(LN_DISPLAY_TAIL)=MB(LN_DISPLAY_HEAD);
@@ -452,6 +531,18 @@ size_t ln_display_capture(uint8_t *output,size_t capacity) {
     }
     return LINNET_DISPLAY_BYTES;
 }
+
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_display_sync_diagnostics(uint32_t output[16]) {
+    uint32_t irq=ln_core_irq_save();
+    uint32_t words[16]={0x31595344u,1u,sync_frames,sync_timeouts,sync_wait_us,
+        sync_max_wait_us,sync_waiting,frame_pending,submitted,completed,
+        MB(LN_DISPLAY_FAILURES),MB(LN_DISPLAY_PAIRS),max_present_us,
+        transfer_us,transfer_max_us,ln_time_us()};
+    for(uint32_t i=0;i<16u;++i)output[i]=words[i];
+    ln_core_irq_restore(irq);
+}
+#endif
 
 /* Called before any RAM replacement, including panic recovery. */
 #if !defined(LINNET_PROFILE_RELEASE)

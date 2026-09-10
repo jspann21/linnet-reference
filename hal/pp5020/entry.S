@@ -434,9 +434,18 @@ ln_cop_display_pair:
     ldr r4, ln_cop_byte_mask
     mov lr, #0
 ln_cop_display_burst_pair:
+    /* Brief FIFO backpressure is cheaper to retry here than to re-enter
+     * the monitor and rebuild the source address. Bound each retry so a
+     * stalled LCD still returns to the lease/deadline checks. */
+    mov r7, #32
+ln_cop_display_burst_pair_wait:
     ldr r6, [r2]
     tst r6, #0x01000000
-    beq ln_cop_display_burst_commit
+    bne ln_cop_display_burst_pair_ready
+    subs r7, r7, #1
+    bne ln_cop_display_burst_pair_wait
+    b ln_cop_display_burst_commit
+ln_cop_display_burst_pair_ready:
     ldr r6, [r1], #4
     mov r7, r6, lsr #8
     and r7, r7, r4

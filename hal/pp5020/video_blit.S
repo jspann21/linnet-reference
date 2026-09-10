@@ -41,9 +41,18 @@ ln_video_blit_begin:
     ldr r4, .Lmask
     mov lr, #0
 .Lpair:
+    /* Brief FIFO backpressure is cheaper to retry here than to re-enter
+     * the monitor and rebuild the source address. Bound each retry so a
+     * stalled LCD still returns to the lease/deadline checks. */
+    mov r7, #32
+.Lpair_wait:
     ldr r6, [r2]
     tst r6, #0x01000000
-    beq .Lcommit
+    bne .Lpair_ready
+    subs r7, r7, #1
+    bne .Lpair_wait
+    b .Lcommit
+.Lpair_ready:
     ldr r6, [r1], #4
     mov r7, r6, lsr #8
     and r7, r7, r4

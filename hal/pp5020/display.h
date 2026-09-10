@@ -69,10 +69,15 @@ uint16_t *ln_display_framebuffer(void); /* CPU-owned RGB565 draw buffer, 220x176
  * NULL during the transaction. The next ordinary access imports this frame. */
 uint16_t *ln_display_direct_framebuffer(void);
 bool ln_display_damage(int32_t x, int32_t y, int32_t width, int32_t height);
-bool ln_display_present(void); /* Snapshot + publish; false when busy or no damage. */
+/* Snapshot and queue for the panel frame pulse; false when busy or no damage. */
+bool ln_display_present(void);
 /* CPU fallback performs at most max_pairs steps (clamped to 256); COP mode
- * observes completion only. No polling wait inside a presentation service. */
+ * handles sync timeout and observes completion. No polling wait inside service. */
 bool ln_display_service(uint32_t max_pairs);
+void ln_display_sync_irq(void);
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_display_sync_diagnostics(uint32_t output[16]);
+#endif
 bool ln_display_busy(void);
 bool ln_display_cop_capable(void);
 /* Upgrade the verified resident monitor's timer/progress race guard while it

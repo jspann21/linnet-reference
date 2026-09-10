@@ -1,5 +1,8 @@
 #include "hal/pp5020/core.h"
 #include "hal/pp5020/platform.h"
+#if defined(LINNET_IMAGE_OS)
+#include "hal/pp5020/display.h"
+#endif
 #if defined(LINNET_AUDIO)
 #include "hal/pp5020/audio.h"
 #endif
@@ -110,7 +113,12 @@ void ln_core_irq_dispatch(void)
         uint32_t high = LINNET_MMIO(0x60004100u);
         LINNET_MMIO(0x60004128u) = high;
         if (high & 0x100u) ln_wakes |= LINNET_WAKE_INPUT;
-        if (high & 1u) ln_wakes |= LINNET_WAKE_GPIO;
+        if (high & 1u) {
+#if defined(LINNET_IMAGE_OS)
+            ln_display_sync_irq();
+#endif
+            ln_wakes |= LINNET_WAKE_GPIO;
+        }
         if (high & ~0x101u) ++ln_status.unexpected_irq;
     }
     /* Timer2 belongs exclusively to recovery FIQ, including its enable bit. */
