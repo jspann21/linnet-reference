@@ -37,7 +37,7 @@ void ln_clock_editor_begin(const struct ln_calendar *baseline,bool valid){
     valid=valid&&valid_calendar(baseline);
     draft=valid?*baseline:(struct ln_calendar){.year=2000,.month=1,.day=1};
     source=valid?"Device clock":"Unverified draft";
-    copy(hint,sizeof(hint),valid?"Select: edit. Menu: cancel.":"Time unverified. Edit, then Save.");
+    copy(hint,sizeof(hint),valid?"Select: Edit  Menu: Cancel":"Time unverified. Edit, then Save.");
     refresh_labels();
 }
 void ln_clock_editor_cancel(void){
@@ -77,8 +77,8 @@ bool ln_clock_editor_input(struct ln_ui_state *state,uint32_t kind,int32_t value
     }
     state->buttons=(uint32_t)value;
     if(state->selected>5u)state->selected=5u;
-    if(editing){editing=false;state->selected=edit_field+1u;copy(hint,sizeof(hint),"Select: edit. Menu: cancel.");}
-    else if(state->selected<5u){editing=true;edit_field=state->selected;copy(hint,sizeof(hint),"Wheel: change. Select: done.");}
+    if(editing){editing=false;state->selected=edit_field+1u;copy(hint,sizeof(hint),"Select: Edit  Menu: Cancel");}
+    else if(state->selected<5u){editing=true;edit_field=state->selected;copy(hint,sizeof(hint),"Wheel: Change  Select: Done");}
     else {pending=true;copy(hint,sizeof(hint),"Saving date and time...");}
     if(state->scene<LINNET_UI_MAX_SCENES)state->selections[state->scene]=state->selected;
     refresh_labels();state->dirty|=1u;return true;

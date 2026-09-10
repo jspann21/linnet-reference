@@ -30,6 +30,7 @@ def apply_layout(scenes,theme):
         for scene in result:
             refine_scene(scene,theme,(4,26 if style=='minimal' else 24,212,146 if style=='minimal' else 148))
             if style=='minimal':refine_minimal(scene,theme)
+            refine_footers(scene,theme)
         return result
     font_h=theme['font']['height']
     # Each body rectangle is its own layout, not a recolor of the default shell.
@@ -106,12 +107,42 @@ def apply_layout(scenes,theme):
                 if node['kind']==16:place(node,bx,by,bw,bh)
         refine_scene(scene,theme,(bx,by,bw,bh))
         if style=='ipod-photo':refine_ipod_photo(scene,theme)
+        refine_footers(scene,theme)
         # Fixed clipping bounds remain a compiler invariant for every variant.
         for node in nodes:
             node['w']=max(1,min(node['w'],220-node['x']))
             node['h']=max(1,min(node['h'],176-node['y']))
         scene['count']=len(nodes)
     return result
+
+
+def refine_footers(scene,theme):
+    """Keep supporting text on one bottom grid, above each theme's chrome."""
+    sid=scene['id'].rsplit('.',1)[-1]
+    keys={'themes':{'Theme status'},'clock':{'Clock source'},
+          'clock-edit':{'Clock edit hint'},'music-search':{'Search controls'}}
+    texts=[n for n in scene['nodes'] if n['kind']==3]
+    if sid in keys:foot=[n for n in texts if n['text'] in keys[sid]]
+    elif sid in ('display','battery'):foot=texts[1:]
+    elif sid in ('music-queue','music-sound','video-controls'):foot=texts
+    else:return
+    if not foot:return
+    style=theme['layout']
+    x,w,bottom={'aurora':(38,170,172),'graphite':(14,192,150),
+                'sunset':(16,188,150),'blueprint':(8,204,150)}.get(style,(6,208,172))
+    if len(foot)>1:
+        foot[0]['text']='  '.join(n['text'] for n in foot)
+        for n in foot[1:]:n['flags']|=2
+    height=36 if sid in ('clock','clock-edit','music-search','display','battery') else 24
+    if sid=='themes':height=12
+    place(foot[0],x,bottom-height,w,height);foot[0]['flags']=64
+    for n in scene['nodes']:
+        if n['kind'] in (6,7) and n['y']<bottom-height and n['y']+n['h']>bottom-height-4:
+            n['h']=max(18,bottom-height-4-n['y'])
+    listing=next((n for n in scene['nodes'] if n['kind'] in (6,7)),None)
+    if listing:
+        for n in scene['nodes']:
+            if n['kind']==9:n['h']=min(n['h'],listing['h'])
 
 
 def refine_scene(scene,theme,body):

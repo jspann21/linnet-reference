@@ -276,7 +276,7 @@ uint32_t ln_photos_revision(void){return p.revision;}
 uint32_t ln_photos_navigation(void){return p.navigation;}
 uint32_t ln_photos_selection(void){return p.view==LN_PHOTOS_ALBUMS?(p.album<p.header.albums?p.album:0):p.view==LN_PHOTOS_LIST&&p.photo_index>=p.first&&p.photo_index-p.first<p.count?p.photo_index-p.first:0;}
 const char *ln_photos_title(void){return p.view==LN_PHOTOS_ALBUMS?"Photo albums":p.view==LN_PHOTOS_LIST?p.album_title:p.title;}
-const char *ln_photos_hint(void){return p.view==LN_PHOTOS_VIEWER?(p.slide?"Slideshow  Menu:back":"Wheel:zoom  Select:controls"):"Select:open  Menu:back";}
+const char *ln_photos_hint(void){return p.view==LN_PHOTOS_VIEWER?(p.slide?"Slideshow  Menu: Back":"Wheel: Zoom  Select: Controls"):"Select: Open  Menu: Back";}
 const char *ln_photos_status(void){return p.error?"Image unavailable":!p.ready?"Loading catalog":p.jpeg_mode&&!p.frame_valid?"Decoding JPEG":p.view==LN_PHOTOS_VIEWER&&!p.frame_valid?"Loading image":"";}
 void ln_photos_resume_get(uint8_t out[16]){
     if(p.resume_pending){copy(out,p.resume,16);return;}

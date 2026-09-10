@@ -71,7 +71,7 @@ const char *ln_music_search_label(uint32_t row){
     return ln_music_library_status()!=LN_LIBRARY_READY?"Library unavailable":"No matches";
 }
 const char *ln_music_search_prefix(void){return length?prefix:"Enter name prefix";}
-const char *ln_music_search_hint(void){return results?(in_group?"Select: play  Menu: results":"Select: open/play  Menu: edit"):"Select:add Left:erase Right:find";}
+const char *ln_music_search_hint(void){return results?(in_group?"Select: Play  Menu: Results":"Select: Open/Play  Menu: Edit"):"Select: Add  Left: Erase  Right: Find";}
 const char *ln_music_search_title(void){return in_group?group_title:results?"Search results":"Search music";}
 uint32_t ln_music_search_revision(void){return revision;}
 uint32_t ln_music_search_navigation(void){return navigation;}
