@@ -177,6 +177,28 @@ uint32_t ln_ui_palette_tick(struct ln_ui_state*s,uint32_t now){
 typedef uint32_t ln_fill_word __attribute__((may_alias));
 static void fill(struct painter*p,struct rect r,uint16_t c){r=intersect(r,p->clip);if(r.w<=0||r.h<=0)return;for(int32_t y=r.y;y<r.y+r.h;++y){uint16_t *dest=p->pixels+(uint32_t)y*220u+(uint32_t)r.x;int32_t left=r.w;uint32_t word=(uint32_t)c|((uint32_t)c<<16);if(left>0&&((uintptr_t)dest&3u)){*dest++=c;--left;}while(left>=2){*(ln_fill_word*)dest=word;dest+=2;left-=2;}if(left>0)*dest=c;}}
 static void border(struct painter*p,struct rect r,uint16_t c){fill(p,(struct rect){r.x,r.y,r.w,1},c);fill(p,(struct rect){r.x,r.y+r.h-1,r.w,1},c);fill(p,(struct rect){r.x,r.y,1,r.h},c);fill(p,(struct rect){r.x+r.w-1,r.y,1,r.h},c);}
+/* Consume one bounded UTF-8 character. Bad sequences consume only their lead
+ * byte, so a following ASCII character is never lost. */
+static uint32_t text_character(const char*s,uint32_t remaining,uint32_t*bytes){
+    uint32_t ch=(uint8_t)s[0],count=1;*bytes=1;
+    if(ch>=0xc2u&&ch<=0xdfu){count=2;ch&=0x1fu;}
+    else if(ch>=0xe0u&&ch<=0xefu){count=3;ch&=0x0fu;}
+    else if(ch>=0xf0u&&ch<=0xf4u){count=4;ch&=7u;}
+    else if(ch>=0x80u)return '?';
+    if(count>remaining)return '?';
+    for(uint32_t i=1;i<count;++i){uint32_t b=(uint8_t)s[i];if((b&0xc0u)!=0x80u)return '?';ch=(ch<<6)|(b&0x3fu);}
+    if((count==2&&ch<0x80u)||(count==3&&ch<0x800u)||(count==4&&ch<0x10000u)||
+       (ch>=0xd800u&&ch<=0xdfffu)||ch>0x10ffffu)return '?';
+    *bytes=count;
+    if(ch>=ln_ui_font.first&&ch-ln_ui_font.first<ln_ui_font.count)return ch;
+    /* Current font packs contain ASCII. Preserve metadata and substitute
+     * equivalent punctuation only when the font lacks the original glyph. */
+    if((ch>=0x2010u&&ch<=0x2015u)||ch==0x2212u||ch==0xfe63u||ch==0xff0du)return '-';
+    if(ch==0x2018u||ch==0x2019u||ch==0x201au||ch==0x201bu)return '\'';
+    if(ch>=0x201cu&&ch<=0x201fu)return '"';
+    if(ch==0xa0u||ch==0x202fu||(ch>=0x2000u&&ch<=0x200au))return ' ';
+    return ch;
+}
 static uint32_t advance(uint32_t ch){
     if(ch<ln_ui_font.first||ch-ln_ui_font.first>=ln_ui_font.count)ch='?';
     return ln_ui_font.advances&&ch>=ln_ui_font.first&&ch-ln_ui_font.first<ln_ui_font.count?ln_ui_font.advances[ch-ln_ui_font.first]:ln_ui_font.advance;
@@ -184,8 +206,9 @@ static uint32_t advance(uint32_t ch){
 /* Include visible overhang: glyph ink can extend beyond its advance. */
 static int32_t text_width(const char*s){
     int32_t pen=0,right=0;
-    if(s)for(uint32_t i=0;i<256u&&s[i]&&s[i]!='\n';++i){
-        uint32_t ch=(uint8_t)s[i];if(ch<ln_ui_font.first||ch-ln_ui_font.first>=ln_ui_font.count)ch='?';
+    if(s)for(uint32_t i=0;i<1024u&&s[i]&&s[i]!='\n';){
+        uint32_t bytes,ch=text_character(s+i,1024u-i,&bytes);i+=bytes;
+        if(ch<ln_ui_font.first||ch-ln_ui_font.first>=ln_ui_font.count)ch='?';
         int32_t ink=(int32_t)advance(ch);
         if(ln_ui_font.glyphs&&ch>=ln_ui_font.first&&ch-ln_ui_font.first<ln_ui_font.count){
             const struct ln_ui_glyph*g=&ln_ui_font.glyphs[ch-ln_ui_font.first];ink=(int32_t)g->x+g->w;
@@ -197,7 +220,7 @@ static int32_t text_width(const char*s){
 static void text_scaled(struct painter*p,int32_t x,int32_t y,const char*s,uint16_t c,uint32_t scale){
     if(!s||!ln_ui_font.alpha||!ln_ui_font.advance||!ln_ui_font.width||!ln_ui_font.height)return;
     int32_t start=x;uint32_t limit=0;
-    while(*s&&limit++<1024u){uint32_t ch=(uint8_t)*s++;if(ch=='\n'){x=start;y+=((int32_t)ln_ui_font.height+2)*(int32_t)scale;continue;}
+    while(limit<1024u&&*s){uint32_t bytes,ch=text_character(s,1024u-limit,&bytes);s+=bytes;limit+=bytes;if(ch=='\n'){x=start;y+=((int32_t)ln_ui_font.height+2)*(int32_t)scale;continue;}
         if(ch<ln_ui_font.first||ch-ln_ui_font.first>=ln_ui_font.count)ch='?';
         if(ch>=ln_ui_font.first&&ch-ln_ui_font.first<ln_ui_font.count){
             uint32_t glyph=ch-ln_ui_font.first,w=ln_ui_font.width,h=ln_ui_font.height,offset=glyph*w*h;
@@ -215,7 +238,11 @@ static void fitted_text(struct painter*p,int32_t x,int32_t y,const char*s,uint16
     if(!s||width<=0)return;
     if(text_width(s)<=width){text(p,x,y,s,fg);return;}
     char clipped[128];uint32_t length=0;int32_t used=0,ellipsis=text_width("...");
-    while(length<124u&&s[length]&&used+(int32_t)advance((uint8_t)s[length])+ellipsis<=width){clipped[length]=s[length];used+=(int32_t)advance((uint8_t)s[length]);++length;}
+    while(length<124u&&s[length]){
+        uint32_t bytes,ch=text_character(s+length,1024u-length,&bytes);
+        if(ch=='\n'||length+bytes>124u||used+(int32_t)advance(ch)+ellipsis>width)break;
+        used+=(int32_t)advance(ch);for(uint32_t i=0;i<bytes;++i){clipped[length]=s[length];++length;}
+    }
     if(ellipsis<=width){clipped[length++]='.';clipped[length++]='.';clipped[length++]='.';}clipped[length]=0;text(p,x,y,clipped,fg);
 }
 static const struct ln_ui_state *scroll_owner;
@@ -243,8 +270,12 @@ static void text_block(struct painter*p,const struct ln_ui_node*n,const char*s,u
     while(s[at]&&at<512u&&y+(int32_t)ln_ui_font.height<=n->y+n->h){
         if(y+2*(int32_t)ln_ui_font.height>n->y+n->h){fitted_text(p,n->x,y,s+at,fg,n->w);break;}
         char line[128];uint32_t len=0,last_space=0;int32_t width=0;
-        while(s[at+len]&&s[at+len]!='\n'&&len<127u&&width+(int32_t)advance((uint8_t)s[at+len])<=n->w){
-            line[len]=s[at+len];if(line[len]==' ')last_space=len+1;width+=(int32_t)advance((uint8_t)line[len]);++len;
+        while(len<127u&&at+len<512u&&s[at+len]&&s[at+len]!='\n'){
+            uint32_t bytes,ch=text_character(s+at+len,512u-at-len,&bytes);
+            if(len+bytes>127u||width+(int32_t)advance(ch)>n->w)break;
+            width+=(int32_t)advance(ch);
+            for(uint32_t i=0;i<bytes;++i){line[len]=s[at+len];++len;}
+            if(ch==' ')last_space=len;
         }
         if(s[at+len]&&s[at+len]!='\n'&&last_space)len=last_space;
         if(!len)break;line[len]=0;text(p,n->x,y,line,fg);at+=len;while(s[at]==' '||s[at]=='\n')++at;y+=(int32_t)ln_ui_font.height;
