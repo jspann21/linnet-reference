@@ -315,6 +315,7 @@ void ln_storage_step(void){storage_step(false);}
 void ln_storage_step_deferred(void){storage_step(true);}
 bool ln_storage_busy(void){return locked||background_running||(phase>=1&&phase<6)||phase==7||phase==10;}
 bool ln_storage_mounted(void){return phase==6&&volume.mounted;}
+bool ln_storage_startup_complete(void){return phase==6||phase==9;}
 bool ln_storage_prepared(void){return ln_storage_mounted()&&volume.mounted==1&&volume.write_proven&&(found&127u)==127u&&files[0].size==0x800000u&&files[1].size==0x800000u&&
     files[2].size==512&&files[3].size==512&&files[4].size==512&&files[5].size==512&&files[6].size==0x400000u;}
 uint32_t ln_storage_capacity(uint32_t file){return file<STORAGE_FILE_COUNT&&(found&(1u<<file))?files[file].size:0;}
@@ -740,7 +741,8 @@ int ln_storage_settings(bool write,uint8_t *data,uint32_t *length){
 }
 int ln_storage_theme(bool write,uint8_t *data,uint32_t *length){
     if(!data||!length)return -1;
-    if(ln_storage_busy()||!ln_storage_prepared()||!open_stores())return 0;
+    if(ln_storage_busy()||!ln_storage_prepared())return 0;
+    if(!open_stores())return -1;
     if(!theme_opened){theme_open();theme_opened=true;}
     if(!theme_available||!theme_store.ready||theme_store.poisoned)return -1;
     if(write){

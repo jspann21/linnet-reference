@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 void ln_display_settings_init(void);
+bool ln_display_settings_boot_ready(void);
 bool ln_display_clock_12(void);
 void ln_display_clock_toggle(void);
 /* Terminal shutdown/Sync flush bypasses theme presentation; normal runtime uses

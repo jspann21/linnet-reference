@@ -300,6 +300,7 @@ bool ln_display_init(void) {
     sync_cancel();
     sync_frames=sync_timeouts=sync_wait_us=sync_max_wait_us=0;
     transfer_us=transfer_max_us=0;
+#if !(defined(LINNET_NATIVE_UI) && defined(LINNET_STORAGE))
     if (!ln_lcd_fill(0)) {
         init_error=0x02000000u;
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -307,6 +308,7 @@ bool ln_display_init(void) {
 #endif
         return false;
     }
+#endif
     initialized=true;
     MB(LN_DISPLAY_ENABLED)=cop_capable?1u:0u;
     if (!pause_worker(false)) {init_error=0x03000000u|((MB(LN_DISPLAY_PAUSED)&255u)<<16)|cop_error;initialized=false;return false;}

@@ -208,7 +208,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     report = dict(**configuration, build_id=build_id, toolchain=chain, image=inspect(envelope),
                   source_files=[p.relative_to(ROOT).as_posix() for p in sources],
                   artifacts={key: str(path.relative_to(ROOT)) for key, path in dict(elf=elf, los=los, ipod=ipod, map=mapfile).items()},
-                  memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=4194304 if batch>=4 and kind=='os' else 1048576, retained_limit_bytes=4096),
+                  memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=4718592 if batch>=4 and kind=='os' else 1048576, retained_limit_bytes=4096),
                   release_exclusion=verification, hardware_qualified=False,
                   limitation=f"Integrated Batch {batch} candidate; physical USB, recovery and peripheral behavior require device qualification. FIQ watchdog depends on FIQ delivery; COP reset escalation requires a live COP monitor.")
     if ui_report is not None:report["ui"]=ui_report

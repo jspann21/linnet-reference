@@ -176,7 +176,8 @@ static uint16_t ln_fault_pixel(const char lines[8][33],uint32_t x,uint32_t y)
     return mask&(16u>>bit)?0xffffu:background;
 }
 
-static bool ln_lcd_draw(uint16_t color, const char (*fault_rows)[33], const uint16_t *runs)
+static bool ln_lcd_draw(uint16_t color, const char (*fault_rows)[33], const uint16_t *runs,
+    const uint32_t *palette)
 {
     uint32_t started = ln_time_us(), budget = 1000000u;
     uint32_t pairs_written = 0;
@@ -234,13 +235,9 @@ static bool ln_lcd_draw(uint16_t color, const char (*fault_rows)[33], const uint
             uint32_t span = bytes / 4u - pair;
             if (runs) {
                 if (!run_left) {
-                    /* Pre-swapped RGB565 pairs: navy paper, off-white ink. */
-                    static const uint32_t palette[4] = {
-                        0x83088308u, 0x83089defu, 0x9def8308u, 0x9def9defu
-                    };
                     uint16_t run = *runs++;
-                    run_left = run & 0x3fffu;
-                    pixel_pair = palette[run >> 14];
+                    run_left = run & 255u;
+                    pixel_pair = palette[run >> 8];
                 }
                 if (span > run_left) span = run_left;
                 run_left -= span;
@@ -299,9 +296,9 @@ failed:
     return false;
 }
 
-bool ln_lcd_fill(uint16_t color){return ln_lcd_draw(color,0,0);}
+bool ln_lcd_fill(uint16_t color){return ln_lcd_draw(color,0,0,0);}
 #if defined(LINNET_IMAGE_BOOT)
-bool ln_lcd_boot(void){return ln_lcd_draw(0x0883u,0,ln_boot_runs);}
+bool ln_lcd_boot(void){return ln_lcd_draw(0,0,ln_boot_runs,ln_boot_palette);}
 #endif
 bool ln_lcd_fault(uint32_t reason,const uint8_t build_id[32])
 {
@@ -311,7 +308,7 @@ bool ln_lcd_fault(uint32_t reason,const uint8_t build_id[32])
         "THEN CENTER + PLAY FOR","DISK MODE AND CONNECT USB"};
     for(uint32_t i=0;i<8u;i++)lines[1][5u+i]=hex[(reason>>(28u-i*4u))&15u];
     for(uint32_t i=0;i<8u;i++){lines[2][6u+i*2u]=hex[build_id[i]>>4];lines[2][7u+i*2u]=hex[build_id[i]&15u];}
-    return ln_lcd_draw(0x1800u,lines,0);
+    return ln_lcd_draw(0x1800u,lines,0,0);
 }
 
 void ln_platform_quiesce(void)

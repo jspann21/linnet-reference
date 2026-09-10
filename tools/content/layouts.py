@@ -133,9 +133,12 @@ def refine_scene(scene,theme,body):
             elif n['kind']==12:place(n,x if style=='aurora' else x+4,dialog_y,w if style=='aurora' else w-8,dialog_h)
             elif n['kind']==13:place(n,x+4,toast_y,w-8,toast_h)
     elif sid=='about':
-        for n in nodes:
-            if n['kind']==5:
-                size=min(n['w'],n['h']);place(n,n['x'],n['y'],size,size)
+        # Preserve theme chrome while centering the shared brand mask.
+        art_h=min(104,h-2*fh-14);art_w=art_h*68//104
+        art=next(n for n in nodes if n['kind']==17)
+        place(art,x+(w-art_w)//2,y+2,art_w,art_h)
+        for i,n in enumerate(texts):
+            place(n,x,y+art_h+7+i*(fh+4),w,fh);n['flags']=CENTER
     elif sid=='update' and style=='sunset':
         for i,n in enumerate(texts):place(n,12,40+i*17,196,17);n['flags']=0
         place(listing,12,126,196,26)
@@ -227,8 +230,6 @@ def refine_minimal(scene,theme):
         if n['kind']==11:place(n,0,2,220,20)
         elif n['kind'] in (4,5,14):n['flags']|=2
         elif n['kind']==2:n['bg']=color('background');n['flags']&=~4
-    if scene['id']=='linnet.system.about':
-        for i,n in enumerate(n for n in nodes if n['kind']==3):place(n,8,34+i*28,204,fh)
     if scene['id']=='linnet.system.now-playing':
         for n in nodes:
             if n['text']=='Sample track':place(n,8,34,204,2*fh);n['flags']=WRAP
@@ -257,12 +258,7 @@ def refine_ipod_photo(scene,theme):
         bottom=min(174,listing['y']+listing['h'])
         place(listing,0,top,210 if scroll else 220,max(rh,((bottom-top)//rh)*rh))
         if listing['kind']==8:place(listing,0,22,220,152)
-    # No boxed dashboard cards or decorative artwork in stock information pages.
-    if sid=='about':
-        for n in nodes:
-            if n['kind'] in (2,5):n['flags']|=2
-        for i,n in enumerate(texts):place(n,6,28+i*26,208,fh);n['flags']=0;n['fg']=color('foreground')
-    elif sid=='settings' and listing:
+    if sid=='settings' and listing:
         labels={'About Linnet':'About','Display':'Backlight Timer','Clock':'Date & Time'}
         listing['items']=[labels.get(label,label) for label in listing['items']]
     elif sid=='now-playing':

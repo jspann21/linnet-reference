@@ -3,4 +3,7 @@ id = "linnet.system.about"
 version = 1
 title = "About"
 entry = "screen.tsx"
-capabilities = ["ui"]
+capabilities = ["ui", "canvas"]
+
+[canvas]
+emblem = { source = "emblem.c", symbol = "ln_about_emblem" }

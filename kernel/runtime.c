@@ -64,6 +64,11 @@ static uint32_t text_scroll_at=UINT32_MAX,palette_at=UINT32_MAX;
 static uint32_t brightness=100;
 static uint32_t backlight_deadline,backlight_timeout=30000000u;
 static bool backlight_idle;
+static bool first_frame_ready;
+#if defined(LINNET_NATIVE_UI) && defined(LINNET_STORAGE)
+static bool boot_theme_waiting;
+#endif
+bool ln_runtime_first_frame_ready(void){return first_frame_ready;}
 static struct ln_wheel_motion wheel_motion;
 static uint32_t wheel_scene, wheel_epoch;
 static uint32_t shutdown_deadline;
@@ -478,6 +483,7 @@ static bool wake(void){
     return true;
 }
 bool ln_runtime_init(void){
+    first_frame_ready=false;
 #if !defined(LINNET_PROFILE_RELEASE)
     rnd_init();
 #endif
@@ -519,6 +525,11 @@ bool ln_runtime_init(void){
     if(!reset_shell())ln_panic(30,6,0);
     ln_power_backlight(true,255);
     backlight_idle=false;backlight_deadline=ln_time_us()+backlight_timeout;
+#if defined(LINNET_NATIVE_UI) && defined(LINNET_STORAGE)
+    /* Preserve the Boot panel until the saved theme has been resolved by the
+     * normal asynchronous storage/settings path. No extra disk read or delay. */
+    boot_theme_waiting=true;
+#else
 #if defined(LINNET_NATIVE_UI)
     uint32_t initial_theme_revision=ln_display_theme_revision();
 #endif
@@ -535,6 +546,8 @@ bool ln_runtime_init(void){
     theme_frame_observe();
 #endif
     LN_BOOT_STAMP(LN_BT_OS_FRAME);
+    first_frame_ready=true;
+#endif
 #if defined(LINNET_AUDIO)
     /* The decoder executes from SDRAM. Its instruction/data working set needs
      * the CPU cache; scanout/audio DMA publish through uncached aliases. */
@@ -591,6 +604,14 @@ void ln_runtime_step(void){
 #endif
     bool theme_presented=settings_io&&!sleeping&&theme_frame_ready();
     ln_display_settings_step_ready(settings_io&&!sleeping,theme_presented,theme_frame.revision);
+#if defined(LINNET_STORAGE)
+    if(boot_theme_waiting){
+        if(!ln_display_settings_boot_ready()&&
+           !(ln_storage_startup_complete()&&!ln_storage_prepared()))return;
+        boot_theme_waiting=false;
+        ln_ui_refresh(shell);dirty=true;
+    }
+#endif
 #if defined(LINNET_PHOTOS)
     if(!photo_resume_loaded){uint8_t raw[16];if(ln_display_settings_photo_get(raw)){
         (void)ln_photos_resume_set(raw);photo_resume_loaded=true;
@@ -767,6 +788,10 @@ void ln_runtime_step(void){
     if(!ln_display_service(256))ln_panic(32,0,0);
 #if defined(LINNET_NATIVE_UI)
     theme_frame_observe();
+    if(!first_frame_ready&&theme_frame_ready()){
+        first_frame_ready=true;
+        LN_BOOT_STAMP(LN_BT_OS_FRAME);
+    }
     clock_save_step();
 #endif
     if(!sleeping&&!ln_display_busy()){

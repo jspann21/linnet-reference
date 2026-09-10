@@ -7,6 +7,7 @@ static const char *const labels[]={"Timeout: Never","Timeout: 5 seconds","Timeou
 static uint32_t choice=4,revision,record_revision,battery_capacity=1200;
 static uint32_t theme_index=UINT32_MAX,theme_revision;
 static bool theme_loaded,theme_dirty,theme_available;
+bool ln_display_settings_boot_ready(void){return theme_loaded;}
 static bool step_busy;
 static char battery_label[25];
 static char update_labels[5][32];

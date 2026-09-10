@@ -193,7 +193,11 @@ class Session:
             'boot_c_to_first_frame': (0, 17), 'boot_c_to_confirmation': (0, 25)}
         intervals = {name: (words[8 + end] - words[8 + start]) & 0xffffffff
                      for name, (start, end) in pairs.items()
-                     if mask & (1 << start) and mask & (1 << end)}
+                     if mask & (1 << start) and mask & (1 << end)
+                     # A saved-theme first frame can finish after runtime setup.
+                     # Do not report that reversed legacy span as a timer wrap.
+                     and (name != 'os_monitor_cache' or
+                          ((words[8 + end] - words[8 + start]) & 0xffffffff) < 0x80000000)}
         counters = {}
         for index, name in enumerate(('image_read_us', 'image_sha_us',
                                       'image_los_validation_us', 'image_bytes',

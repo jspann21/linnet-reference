@@ -117,7 +117,9 @@ SECTIONS {
 #ifdef LINNET_AUDIO
   /* Native codec arenas share the low8 MiB OS region. The independent Boot
    * recovery snapshot at30 MiB still has its unchanged1 MiB payload limit. */
-  ASSERT(__stack_top <= 0x00400000, "Music resident image exceeds 4 MiB")
+  /* The metadata page cache and expanded browser rows fit below 4.5 MiB,
+   * within the existing 8 MiB OS region and below all staging reservations. */
+  ASSERT(__stack_top <= 0x00480000, "Music resident image exceeds 4.5 MiB")
 #else
   ASSERT(__stack_top <= 0x00100000, "Resident image exceeds 1 MiB")
 #endif

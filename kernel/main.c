@@ -182,7 +182,7 @@ _Noreturn void ln_main(void)
 #endif
 #endif
 #if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_OS)
-    bool first_frame = platform_ready;
+    bool first_frame = ln_runtime_first_frame_ready();
 #elif defined(LINNET_IMAGE_BOOT)
     bool first_frame = ln_lcd_boot();
 #else
@@ -242,7 +242,11 @@ _Noreturn void ln_main(void)
         LN_TIMING_BEGIN(storage_started);
         ln_storage_step_deferred();
         ln_storage_boot();
+#if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_OS)
+        first_frame=ln_runtime_first_frame_ready();
+#endif
 #if !defined(LINNET_PROFILE_RELEASE)
+        if(first_frame)readiness|=LINNET_BOOT_HEALTH_FIRST_FRAME;
         if(!ln_storage_busy()){
             readiness|=LINNET_BOOT_HEALTH_STORAGE_RESOLVED;ln_development_health(readiness);
             if(readiness==LINNET_BOOT_HEALTH_ALL)ln_recovery_mark_healthy();

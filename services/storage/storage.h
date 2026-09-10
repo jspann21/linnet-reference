@@ -38,6 +38,7 @@ void ln_storage_step(void);
 void ln_storage_step_deferred(void);
 bool ln_storage_busy(void);
 bool ln_storage_mounted(void);
+bool ln_storage_startup_complete(void);
 bool ln_storage_prepared(void);
 /* 1 writable,0 pending directory proof renewal,-1 unavailable/unsafe.
  * Starts bounded asynchronous proof work only with no active storage owner. */
