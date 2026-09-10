@@ -5,6 +5,11 @@
 enum job { JOB_NONE=0,JOB_WINDOW,JOB_SELECTION,JOB_SEARCH,JOB_GROUP,JOB_MEMBER,JOB_PREFETCH,JOB_QUEUE,JOB_VIEW,JOB_VIEW_GROUP };
 struct library {
     struct ln_music_db db;
+    /* Bounded shared page cache: titles, group/member tables and search indexes.
+     * Tags publish only after a complete read; reload clears the entire cache. */
+    uint8_t pages[32][4096];
+    uint32_t page_tags[32];
+    bool page_valid[32];
     struct ln_fat32_file file;
     struct ln_music_library_row rows[LN_MUSIC_LIBRARY_ROWS],scratch,selection,prefetch;
     struct ln_music_group group;
@@ -79,7 +84,7 @@ static void start(void)
     library.revision=revision;library.paused=paused;library.generation=next_generation();
 }
 void ln_music_library_init(void){clear(&library,sizeof(library));start();}
-static int read_database(void *context,uint64_t offset,uint8_t *buffer,uint32_t bytes)
+static int read_database_raw(void *context,uint64_t offset,uint8_t *buffer,uint32_t bytes)
 {
     (void)context;
     if(offset>UINT32_MAX||!bytes||bytes>4096u)return LN_DB_ARGUMENT;
@@ -106,6 +111,28 @@ static int read_database(void *context,uint64_t offset,uint8_t *buffer,uint32_t 
     if(result!=1)return result;
     library.io_active=true;library.io_offset=(uint32_t)offset;library.io_size=bytes;library.io_buffer=buffer;
     return 0;
+}
+static int read_database(void *context,uint64_t offset,uint8_t *buffer,uint32_t bytes)
+{
+    if(!ready())return read_database_raw(context,offset,buffer,bytes);
+    if(offset>library.file.size||!bytes||bytes>4096u||bytes>library.file.size-offset)return LN_DB_ARGUMENT;
+    uint32_t copied=0;
+    while(copied<bytes){
+        uint32_t address=(uint32_t)offset+copied,page=address/4096u,slot=page%32u;
+        uint32_t base=page*4096u,size=library.file.size-base;
+        if(size>4096u)size=4096u;
+        if(!library.page_valid[slot]||library.page_tags[slot]!=page){
+            library.page_valid[slot]=false;
+            int result=read_database_raw(context,base,library.pages[slot],size);
+            if(result!=1)return result;
+            library.page_tags[slot]=page;library.page_valid[slot]=true;
+        }
+        uint32_t within=address-base,count=size-within;
+        if(count>bytes-copied)count=bytes-copied;
+        for(uint32_t i=0;i<count;i++)buffer[copied+i]=library.pages[slot][within+i];
+        copied+=count;
+    }
+    return 1;
 }
 static void stop(bool reopen)
 {
@@ -361,7 +388,7 @@ static void query_step(void)
     if(library.job==JOB_GROUP){text_copy(library.group_name,library.db.text);query_complete(library.query_index);}
     else query_complete(library.db.member);
 }
-void ln_music_library_step(void)
+static void library_step_once(void)
 {
     if(library.status==LN_LIBRARY_DRAINING){
         if(library.io_active){
@@ -427,4 +454,12 @@ void ln_music_library_step(void)
     if(library.job==JOB_WINDOW||library.job==JOB_SELECTION||library.job==JOB_PREFETCH)row_step();
     else if(library.job==JOB_QUEUE)queue_step();
     else if(library.job!=JOB_NONE)query_step();
+}
+
+void ln_music_library_step(void)
+{
+    for(uint32_t step=0;step<32u;step++){
+        library_step_once();
+        if(!ready()||library.io_active||library.paused||library.job==JOB_NONE)break;
+    }
 }

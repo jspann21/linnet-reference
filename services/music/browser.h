@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include "queue.h"
 
-#define LN_MUSIC_BROWSER_ROWS 12u
+#define LN_MUSIC_BROWSER_ROWS 48u
 /* Singleton, allocator-free browser. The outer executive calls step separately
  * from library_step. All other functions inspect memory or record intent only.
  * Owns the library's external group/member query slot exclusively. Selection and

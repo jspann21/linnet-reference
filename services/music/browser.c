@@ -2,8 +2,8 @@
 #include "library.h"
 
 enum view { CATEGORIES, GROUPS, TRACKS };
-enum job { NONE, RANGE, GROUP, MEMBER, QUEUE_MEMBER };
-struct row { char label[256]; uint32_t index,count; bool mapped,valid; };
+enum job { NONE, RANGE, GROUP, TITLE, QUEUE_MEMBER };
+struct row { char label[256]; uint32_t index,count; bool valid; };
 static struct {
     struct row rows[LN_MUSIC_BROWSER_ROWS];
     enum view view;
@@ -26,14 +26,15 @@ static void invalidate(void)
 {
     browser.epoch++;browser.selecting=false;browser.queue_status=LN_BROWSER_QUEUE_IDLE;browser.track_ready=false;browser.single=false;
     for(uint32_t i=0;i<LN_MUSIC_BROWSER_ROWS;i++){
-        browser.rows[i].valid=false;browser.rows[i].mapped=false;
+        browser.rows[i].valid=false;
     }
     changed();
 }
 void ln_music_browser_suspend(bool suspend){browser.suspended=suspend;}
 void ln_music_browser_set_visible(bool visible){browser.visible=visible;}
 bool ln_music_browser_window_needed(void){
-    return !browser.suspended&&browser.view==TRACKS&&(browser.visible||browser.selecting);
+    /* Browsing uses title-only queries; full metadata is reserved for playback. */
+    return false;
 }
 bool ln_music_browser_query_idle(void){return browser.job==NONE;}
 bool ln_music_browser_take_search(void){bool result=browser.search_ready;browser.search_ready=false;return result;}
@@ -74,7 +75,16 @@ void ln_music_browser_window(uint32_t first)
     if(browser.view==CATEGORIES||first==browser.first)return;
     if(!browser.count)first=0;
     else if(first>=browser.count)first=browser.count-1u;
-    browser.first=first;invalidate();
+    uint32_t old=browser.first;
+    /* Keep overlapping labels and admitted queries in this navigation epoch. */
+    for(uint32_t n=0;n<LN_MUSIC_BROWSER_ROWS;n++){
+        uint32_t i=first>old?n:LN_MUSIC_BROWSER_ROWS-1u-n;
+        uint32_t row=first+i;
+        if(row>=old&&row-old<LN_MUSIC_BROWSER_ROWS)browser.rows[i]=browser.rows[row-old];
+        else browser.rows[i]=(struct row){0};
+    }
+    browser.first=first;browser.selecting=false;browser.queue_status=LN_BROWSER_QUEUE_IDLE;
+    browser.track_ready=false;browser.single=false;changed();
 }
 static void groups(void)
 {
@@ -169,7 +179,8 @@ void ln_music_browser_step(void)
     if(!browser.was_ready){browser.was_ready=true;changed();}
     if(browser.job!=NONE){
         struct ln_music_group g;char name[256];uint32_t track=UINT32_MAX;
-        bool done=(browser.job==MEMBER||browser.job==QUEUE_MEMBER)?ln_music_library_take_member(&track):
+        struct ln_music_library_search_row title;
+        bool done=browser.job==TITLE?ln_music_library_take_view_row(&title):browser.job==QUEUE_MEMBER?ln_music_library_take_member(&track):
             ln_music_library_take_group(&g,name);
         if(!done)return;
         enum job completed=browser.job;browser.job=NONE;
@@ -187,12 +198,15 @@ void ln_music_browser_step(void)
         }else if(browser.job_row>=browser.first&&
                  browser.job_row-browser.first<LN_MUSIC_BROWSER_ROWS){
             struct row *r=&browser.rows[browser.job_row-browser.first];
-            if(completed==GROUP){
+            if(completed==TITLE){
+                r->index=title.index;r->valid=true;
+                copy(r->label,title.index==UINT32_MAX?"Unavailable track":title.title);changed();
+            }else if(completed==GROUP){
                 r->index=browser.lower+browser.job_row;r->count=g.count;
                 copy(r->label,g.kind==browser.kind?name:"Invalid group");
                 if(g.kind!=browser.kind)r->count=0;
-                r->mapped=true;r->valid=true;changed();
-            }else if(track<ln_music_library_count()){r->index=track;r->mapped=true;}
+                r->valid=true;changed();
+            }
         }
         return;
     }
@@ -231,16 +245,8 @@ void ln_music_browser_step(void)
         uint32_t ordinal=browser.first+slot;
         if(browser.view==GROUPS){
             if(ln_music_library_group(browser.lower+ordinal))browser.job=GROUP;
-        }else if(!r->mapped){
-            if(!browser.kind){r->index=ordinal;r->mapped=true;}
-            else if(ln_music_library_group_member(browser.group,ordinal))browser.job=MEMBER;
-        }
+        }else if(ln_music_library_view_row(browser.kind?2u:1u,browser.group,ordinal))browser.job=TITLE;
         if(browser.job!=NONE){browser.job_epoch=browser.epoch;browser.job_row=ordinal;return;}
-        if(browser.view==TRACKS&&r->mapped){
-            const struct ln_music_library_row *source=ln_music_library_row(r->index);
-            if(source){copy(r->label,source->title);r->valid=true;changed();}
-            else ln_music_library_window(r->index);
-        }
         return;
     }
 }

@@ -47,7 +47,18 @@ void ln_music_queue_view_close(void){view.opened=false;invalidate();}
 void ln_music_queue_view_window(uint32_t first){
     if(!view.opened)return;
     if(first>=view.queue.count)first=view.queue.count?view.queue.count-1u:0;
-    if(view.first!=first){view.first=first;invalidate();}
+    if(view.first!=first){
+        uint32_t old=view.first;
+        for(uint32_t n=0;n<LN_QUEUE_VIEW_ROWS;n++){
+            uint32_t i=first>old?n:LN_QUEUE_VIEW_ROWS-1u-n,row=first+i;
+            if(row>=old&&row-old<LN_QUEUE_VIEW_ROWS){
+                uint32_t source=row-old;
+                for(uint32_t c=0;c<sizeof(view.labels[i]);c++)view.labels[i][c]=view.labels[source][c];
+                view.valid[i]=view.valid[source];
+            }else view.valid[i]=false;
+        }
+        view.first=first;view.action_ready=false;++view.revision;
+    }
 }
 uint32_t ln_music_queue_view_count(void){return view.opened?view.queue.count:0;}
 uint32_t ln_music_queue_view_revision(void){return view.revision;}

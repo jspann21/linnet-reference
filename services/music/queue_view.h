@@ -1,7 +1,7 @@
 #ifndef LINNET_MUSIC_QUEUE_VIEW_H
 #define LINNET_MUSIC_QUEUE_VIEW_H
 #include "queue.h"
-#define LN_QUEUE_VIEW_ROWS 12u
+#define LN_QUEUE_VIEW_ROWS 48u
 enum ln_queue_view_action {LN_QUEUE_VIEW_PLAY=0,LN_QUEUE_VIEW_REMOVE,LN_QUEUE_VIEW_MOVE_UP,LN_QUEUE_VIEW_MOVE_DOWN};
 /* Copies a bounded immutable queue snapshot; queue_version must change for
  * ordering/source/cursor changes. Providers and inputs perform no I/O. */
