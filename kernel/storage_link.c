@@ -54,6 +54,7 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r){
 #if defined(LINNET_IMAGE_OS)
         else if(q->length==4u&&get32(q->payload)==4u){ln_runtime_render_timing(words);count=16u;}
         else if(q->length==4u&&get32(q->payload)==7u){ln_display_sync_diagnostics(words);count=16u;}
+        else if(q->length==4u&&get32(q->payload)==8u){ln_display_blit_diagnostics(words);count=16u;}
 #endif
         else if(q->length==4u&&get32(q->payload)==5u){ln_storage_schedule_performance(words);count=24u;}
         else if(q->length==4u&&get32(q->payload)==6u){ln_ata_clock_diagnostics(words);count=8u;}

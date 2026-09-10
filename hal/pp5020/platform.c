@@ -212,7 +212,8 @@ static bool ln_lcd_draw(uint16_t color, const char (*fault_rows)[33], const uint
     /* Program the full panel window once. The panel cursor continues across
      * bridge blocks; restarting it for every row adds 176 command/flush cycles.
      * PP5020 blocks have a 16-bit byte count, so 220x176 needs 148 + 28 rows. */
-    if (!ln_lcd_command(0x12u, 0u, started, &budget) ||
+    if (!ln_lcd_command(0x18u, 6u, started, &budget) ||
+        !ln_lcd_command(0x12u, 0u, started, &budget) ||
         !ln_lcd_command(0x13u, LINNET_LCD_WIDTH - 1u, started, &budget) ||
         !ln_lcd_command(0x15u, LINNET_LCD_HEIGHT - 1u, started, &budget) ||
         !ln_lcd_command(0x16u, 0u, started, &budget)) goto failed;

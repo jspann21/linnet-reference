@@ -66,17 +66,21 @@ uint16_t *ln_display_framebuffer(void); /* CPU-owned RGB565 draw buffer, 220x176
 /* Optional idle-only full-frame transaction. NULL retains ordinary rendering.
  * On success, synchronously repaint all 220x176 pixels and call present before
  * any other executive work. Ordinary framebuffer access and snapshots return
- * NULL during the transaction. The next ordinary access imports this frame. */
+ * NULL during the transaction. Row scanout imports this frame on next access;
+ * column scanout transposes the cached draw buffer at publication. */
 uint16_t *ln_display_direct_framebuffer(void);
 bool ln_display_damage(int32_t x, int32_t y, int32_t width, int32_t height);
 /* Snapshot and queue for the panel frame pulse; false when busy or no damage. */
 bool ln_display_present(void);
+void ln_display_column_mode(bool enabled);
 /* CPU fallback performs at most max_pairs steps (clamped to 256); COP mode
  * handles sync timeout and observes completion. No polling wait inside service. */
 bool ln_display_service(uint32_t max_pairs);
 void ln_display_sync_irq(void);
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_display_sync_diagnostics(uint32_t output[16]);
+void ln_display_blit_diagnostics(uint32_t output[16]);
+uint32_t ln_display_column_mismatches(void);
 #endif
 bool ln_display_busy(void);
 bool ln_display_cop_capable(void);

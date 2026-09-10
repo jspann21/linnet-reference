@@ -15,6 +15,7 @@
 struct rectangle { uint32_t x, y, width, height; };
 static uint16_t draw_buffer[LINNET_DISPLAY_PIXELS] __attribute__((aligned(4)));
 static uint16_t scanout_buffer[LINNET_DISPLAY_PIXELS] __attribute__((aligned(32)));
+static bool column_mode;
 static struct rectangle damage[LINNET_DISPLAY_QUEUE_CAPACITY];
 static uint32_t damage_count, submitted, completed, frame_failures;
 static uint32_t frame_started, max_present_us;
@@ -335,10 +336,10 @@ uint16_t *ln_display_direct_framebuffer(void) {
        MB(LN_DISPLAY_HEAD)!=MB(LN_DISPLAY_TAIL))return NULL;
     /* A synchronous full repaint owns scanout until present publishes it.
      * Seed full damage even if the painter coalesces its own damage callbacks. */
-    direct_frame=draw_stale=true;
+    direct_frame=true;draw_stale=!column_mode;
     damage[0]=(struct rectangle){0,0,220,176};damage_count=1;
     barrier();
-    return (uint16_t *)(uintptr_t)scanout();
+    return column_mode?draw_buffer:(uint16_t *)(uintptr_t)scanout();
 }
 
 bool ln_display_damage(int32_t x,int32_t y,int32_t width,int32_t height) {
@@ -349,6 +350,7 @@ bool ln_display_damage(int32_t x,int32_t y,int32_t width,int32_t height) {
     if (height>176-y) height=176-y;
     uint32_t right=((uint32_t)(x+width)+1u)&~1u;
     x&=~1;
+    if(column_mode){uint32_t bottom=((uint32_t)(y+height)+1u)&~1u;y&=~1;height=(int32_t)bottom-y;}
     struct rectangle rectangle={(uint32_t)x,(uint32_t)y,right-(uint32_t)x,(uint32_t)height};
     for (uint32_t i=0;i<damage_count;++i) {
         struct rectangle *other=&damage[i];
@@ -373,6 +375,11 @@ bool ln_display_damage(int32_t x,int32_t y,int32_t width,int32_t height) {
     return true;
 }
 
+void ln_display_column_mode(bool enabled) {
+    column_mode=enabled;
+    MB(LN_DISPLAY_BUFFER)=(uint32_t)NATIVE(scanout_buffer);
+}
+
 bool ln_display_present(void) {
     if (!initialized || !damage_count || frame_pending || MB(LN_DISPLAY_HEAD)!=MB(LN_DISPLAY_TAIL)) return false;
     /* A reset/retry may publish without another ordinary UI render. */
@@ -380,7 +387,7 @@ bool ln_display_present(void) {
     /* The scanout buffer retains the previous complete frame. Publish only
      * damaged pixels while the COP is idle; small focus changes must not
      * copy an entire framebuffer through uncached SDRAM. */
-    for (uint32_t i=0;!direct_frame&&i<damage_count;++i) {
+    for (uint32_t i=0;!column_mode&&!direct_frame&&i<damage_count;++i) {
         const struct rectangle *r=&damage[i];
 #if defined(__arm__)
         /* The external assembly routine performs every store to the uncached
@@ -412,16 +419,35 @@ bool ln_display_present(void) {
         }
 #endif
     }
+    if(column_mode){
+        for(uint32_t i=0;i<damage_count;++i){
+            const struct rectangle *r=&damage[i];
+#if defined(__arm__)
+            extern void ln_memory_columns(void *,const void *,uint32_t,uint32_t);
+            ln_memory_columns((void *)(uintptr_t)(scanout()+(219u-r->x)*176u+r->y),
+                draw_buffer+r->y*220u+r->x,r->width,r->height);
+#else
+            volatile uint32_t *destination=(volatile uint32_t *)NATIVE(scanout_buffer);
+            for(uint32_t x=r->x;x<r->x+r->width;++x){
+                uint32_t out=((219u-x)*176u+r->y)/2u;
+                for(uint32_t y=r->y;y<r->y+r->height;y+=2u){
+                    uint32_t at=y*220u+x;
+                    destination[out++]=(uint32_t)draw_buffer[at]|((uint32_t)draw_buffer[at+220u]<<16);
+                }
+            }
+#endif
+        }
+    }
     /* The panel reaches the right edge first. A narrow first strip must
      * finish before that edge is scanned; subsequent strips follow it left.
      * Keep large repaints contiguous to avoid extra command overhead. */
     struct rectangle jobs[LINNET_DISPLAY_QUEUE_CAPACITY];
     uint32_t job_count=0,eligible=0;
     for(uint32_t i=0;i<damage_count;++i)
-        if(damage[i].width>64u&&damage[i].height<=64u)++eligible;
+        if(!column_mode&&damage[i].width>64u&&damage[i].height<=64u)++eligible;
     for(uint32_t i=0;i<damage_count;++i){
         struct rectangle r=damage[i];uint32_t parts=1;
-        if(r.width>64u&&r.height<=64u){
+        if(!column_mode&&r.width>64u&&r.height<=64u){
             parts+=(LINNET_DISPLAY_QUEUE_CAPACITY-damage_count-(job_count-i))/eligible;
             --eligible;
         }
@@ -522,17 +548,25 @@ void ln_display_get_metrics(struct ln_display_metrics *output) {
         max_present_us,MB(LN_DISPLAY_HEAD),MB(LN_DISPLAY_TAIL)};
 }
 
-const uint16_t *ln_display_snapshot(void) { return direct_frame?NULL:(const uint16_t *)NATIVE(scanout_buffer); }
+const uint16_t *ln_display_snapshot(void) { return direct_frame?NULL:column_mode?draw_buffer:(const uint16_t *)NATIVE(scanout_buffer); }
 uint32_t ln_display_snapshot_crc32(void) { const uint16_t *frame=ln_display_snapshot();return frame?ln_crc32((const uint8_t *)frame,LINNET_DISPLAY_BYTES):0; }
 size_t ln_display_capture(uint8_t *output,size_t capacity) {
     if (!initialized || direct_frame || !output || capacity<LINNET_DISPLAY_BYTES) return 0;
     for (uint32_t i=0;i<LINNET_DISPLAY_PIXELS;++i) {
-        uint16_t pixel=scanout()[i];output[2u*i]=(uint8_t)pixel;output[2u*i+1u]=(uint8_t)(pixel>>8);
+        uint16_t pixel=column_mode?scanout()[(219u-i%220u)*176u+i/220u]:scanout()[i];output[2u*i]=(uint8_t)pixel;output[2u*i+1u]=(uint8_t)(pixel>>8);
     }
     return LINNET_DISPLAY_BYTES;
 }
 
 #if !defined(LINNET_PROFILE_RELEASE)
+uint32_t ln_display_column_mismatches(void) {
+    if(!column_mode||direct_frame)return 0xffffffffu;
+    uint32_t mismatches=0;
+    for(uint32_t y=0;y<176u;++y)
+        for(uint32_t x=0;x<220u;++x)
+            if(scanout()[(219u-x)*176u+y]!=draw_buffer[y*220u+x])++mismatches;
+    return mismatches;
+}
 void ln_display_sync_diagnostics(uint32_t output[16]) {
     uint32_t irq=ln_core_irq_save();
     uint32_t words[16]={0x31595344u,1u,sync_frames,sync_timeouts,sync_wait_us,

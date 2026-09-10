@@ -159,6 +159,19 @@ an active-low pulse of approximately 579 us every 16,575 us. Presentation arms
 its interrupt only for a pending frame and falls back after 25 ms without a
 pulse. Screen captures still cannot establish physical tear-free scanout.
 
+Command 94 subcommand 8 returns sixteen u32 words: `BLT1`, version 1,
+helper byte count, live pixel hook, live command hook, expected command hook,
+first resident mismatch offset (`0xffffffff` when exact), expected and live
+words at that mismatch, column-buffer pixel mismatch count (`0xffffffff`
+when inactive or in a direct transaction), queue head, queue tail, LCD failures,
+and three reserved zeros. This passive development-only check compares the
+complete packed scanout with the logical draw buffer. Run it while navigation
+is idle; its full-frame comparison is diagnostic work, not a render-path cost.
+The column helper is installed only into the exact preserved Boot worker.
+It uses panel register 0x18 mode 0 and ascending native column coordinates,
+as observed in the local RetailOS image, with right-to-left logical columns.
+
+
 Command 69, UI_STATE, takes an empty payload and returns 16 little-endian u32
 words in development/trace OS images built with the native UI. The command is
 read-only and uses the normal frame sequence and CRC rules. An older image

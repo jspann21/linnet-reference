@@ -510,6 +510,10 @@ bool ln_runtime_init(void){
 #if defined(LINNET_AUDIO)
     /* Correct the resident monitor before the first COP presentation. */
     if(!ln_display_upgrade_monitor())ln_panic(30,12,ln_display_cop_error());
+#if defined(LINNET_VIDEO)
+    /* Select the buffer layout before the first presentation. */
+    ln_display_column_mode(ln_display_upgrade_blit());
+#endif
 #endif
     ln_input_snapshot(&input);ln_power_snapshot(&power);
     if(!reset_shell())ln_panic(30,6,0);
@@ -532,11 +536,6 @@ bool ln_runtime_init(void){
 #endif
     LN_BOOT_STAMP(LN_BT_OS_FRAME);
 #if defined(LINNET_AUDIO)
-#if defined(LINNET_VIDEO)
-    /* Optional acceleration accepts only the preserved resident Boot worker.
-     * Unknown workers retain their existing display path. */
-    (void)ln_display_upgrade_blit();
-#endif
     /* The decoder executes from SDRAM. Its instruction/data working set needs
      * the CPU cache; scanout/audio DMA publish through uncached aliases. */
     if(!ln_core_cache_enable())ln_panic(30,11,0);

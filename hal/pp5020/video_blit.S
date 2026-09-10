@@ -9,10 +9,10 @@
 /* Entered by the verified old worker's state-3 BEQ. That worker has already
  * saved {r0-r7,lr}, checked deadline, and charged one work-budget unit.
  * Never call SDRAM code or use registers r8-r12. Return through its saved PC.
- * Each invocation writes <=32 pairs and never crosses a scanline boundary. */
+ * Each invocation writes <=32 pairs and never crosses a column boundary. */
 ln_video_blit_begin:
-    ldr r5, [r0, #LN_DISPLAY_WIDTH]
-    ldr r6, [r0, #LN_DISPLAY_X_CURSOR]
+    ldr r5, [r0, #LN_DISPLAY_HEIGHT]
+    ldr r6, [r0, #LN_DISPLAY_Y_CURSOR]
     sub r5, r5, r6
     mov r5, r5, lsr #1
     cmp r5, #32
@@ -26,12 +26,15 @@ ln_video_blit_begin:
     movhi r5, r7
     cmp r5, #0
     beq .Lreturn
-    ldr r1, [r0, #LN_DISPLAY_Y]
-    ldr r7, [r0, #LN_DISPLAY_Y_CURSOR]
+    ldr r1, [r0, #LN_DISPLAY_X]
+    ldr r7, [r0, #LN_DISPLAY_WIDTH]
     add r1, r1, r7
-    mov r7, #220
+    rsb r1, r1, #220
+    ldr r7, [r0, #LN_DISPLAY_X_CURSOR]
+    add r1, r1, r7
+    mov r7, #176
     mul r2, r1, r7
-    ldr r7, [r0, #LN_DISPLAY_X]
+    ldr r7, [r0, #LN_DISPLAY_Y]
     add r2, r2, r7
     add r2, r2, r6
     ldr r1, [r0, #LN_DISPLAY_BUFFER]
@@ -65,15 +68,15 @@ ln_video_blit_begin:
 .Lcommit:
     cmp lr, #0
     beq .Lreturn
-    ldr r1, [r0, #LN_DISPLAY_X_CURSOR]
+    ldr r1, [r0, #LN_DISPLAY_Y_CURSOR]
     add r1, r1, lr, lsl #1
-    ldr r2, [r0, #LN_DISPLAY_WIDTH]
+    ldr r2, [r0, #LN_DISPLAY_HEIGHT]
     cmp r1, r2
     moveq r1, #0
-    ldreq r2, [r0, #LN_DISPLAY_Y_CURSOR]
+    ldreq r2, [r0, #LN_DISPLAY_X_CURSOR]
     addeq r2, r2, #1
-    streq r2, [r0, #LN_DISPLAY_Y_CURSOR]
-    str r1, [r0, #LN_DISPLAY_X_CURSOR]
+    streq r2, [r0, #LN_DISPLAY_X_CURSOR]
+    str r1, [r0, #LN_DISPLAY_Y_CURSOR]
     ldr r1, [r0, #LN_DISPLAY_PAIRS]
     add r1, r1, lr
     str r1, [r0, #LN_DISPLAY_PAIRS]
@@ -91,4 +94,56 @@ ln_video_blit_begin:
 .Lcontrol: .word 0x70008a20
 .Ldata: .word 0x70008b00
 .Lmask: .word 0x00ff00ff
+.global ln_video_command_begin
+ln_video_command_begin:
+    ldr r2, .Lport
+    ldr r3, [r2]
+    tst r3, #0x80000000
+    bne .Lreturn
+    ldr r1, [r0, #LN_DISPLAY_COMMAND]
+    cmp r1, #0
+    moveq r3, #0x18
+    beq .Lcommand_send
+    cmp r1, #1
+    moveq r3, #0
+    beq .Lcommand_send
+    cmp r1, #2
+    moveq r3, #0x12
+    beq .Lcommand_send
+    cmp r1, #3
+    ldreq r3, [r0, #LN_DISPLAY_Y]
+    beq .Lcommand_send
+    cmp r1, #4
+    moveq r3, #0x13
+    beq .Lcommand_send
+    cmp r1, #5
+    ldreq r3, [r0, #LN_DISPLAY_X]
+    ldreq r4, [r0, #LN_DISPLAY_WIDTH]
+    addeq r3, r3, r4
+    rsbeq r3, r3, #220
+    beq .Lcommand_send
+    cmp r1, #6
+    moveq r3, #0x15
+    beq .Lcommand_send
+    cmp r1, #7
+    ldreq r3, [r0, #LN_DISPLAY_Y]
+    ldreq r4, [r0, #LN_DISPLAY_HEIGHT]
+    addeq r3, r3, r4
+    subeq r3, r3, #1
+    beq .Lcommand_send
+    cmp r1, #8
+    moveq r3, #0x16
+    beq .Lcommand_send
+    ldr r3, [r0, #LN_DISPLAY_X]
+    rsb r3, r3, #219
+.Lcommand_send:
+    orr r3, r3, #0x80000000
+    str r3, [r2]
+    add r1, r1, #1
+    str r1, [r0, #LN_DISPLAY_COMMAND]
+    cmp r1, #10
+    moveq r1, #2
+    streq r1, [r0, #LN_DISPLAY_STATE]
+    b .Lreturn
+.Lport: .word 0x70008a0c
 ln_video_blit_end:
