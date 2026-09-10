@@ -8,6 +8,8 @@
  * after the browser has suspended and drained its existing query. */
 void ln_music_search_open(void);
 void ln_music_search_close(void);
+/* Resume the retained result page when shell navigation revisits search. */
+void ln_music_search_resume(void);
 void ln_music_search_step(void);
 bool ln_music_search_busy(void);
 bool ln_music_search_active(void);

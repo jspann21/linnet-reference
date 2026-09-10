@@ -45,7 +45,7 @@ int ln_music_db_open_step(struct ln_music_db *d)
     int r;uint8_t *b=d->buffer;
     if(d->phase==0){
         r=read_bytes(d,0,128);if(r!=1)return r;
-        if(b[0]!='P'||b[1]!='O'||b[2]!='D'||b[3]!='B'||r16(b+4)!=1||r16(b+6)!=128||
+        if(b[0]!='P'||b[1]!='O'||b[2]!='D'||b[3]!='B'||r16(b+4)!=2||r16(b+6)!=128||
            r32(b+8)!=d->size||r32(b+12)||ln_crc32(b,124)!=r32(b+124))return bad(d,LN_DB_FORMAT);
         for(uint32_t i=96;i<124;i++)if(b[i])return bad(d,LN_DB_FORMAT);
         d->tracks=r32(b+16);d->groups=r32(b+20);d->members=r32(b+24);d->searches=r32(b+28);
@@ -53,7 +53,8 @@ int ln_music_db_open_step(struct ln_music_db *d)
         d->search_offset=r32(b+44);d->pool_offset=r32(b+48);d->pool_bytes=r32(b+52);
         d->arts=r32(b+56);d->art_offset=r32(b+60);
         uint32_t cursor=128;
-        if(d->tracks>100000u||d->searches!=d->tracks||!d->pool_bytes||
+        if(d->tracks>100000u||d->searches<d->tracks||
+           d->searches-d->tracks>d->groups||!d->pool_bytes||
            !section(&cursor,d->track_offset,d->tracks,128,d->size)||
            !section(&cursor,d->group_offset,d->groups,32,d->size)||
            !section(&cursor,d->member_offset,d->members,4,d->size)||
@@ -172,7 +173,9 @@ static int search_step(struct ln_music_db *d)
     }else if(d->query_phase==1||d->query_phase==3){
         int r=read_bytes(d,d->search_offset+d->middle*8u,8);if(r!=1)return r;
         d->member=r32(d->buffer);
-        if(d->member>=d->tracks||!string_start(d,r32(d->buffer+4)))return bad(d,LN_DB_FORMAT);
+        bool group=(d->member&LN_MUSIC_SEARCH_GROUP)!=0;
+        if((group?(d->member&~LN_MUSIC_SEARCH_GROUP)>=d->groups:d->member>=d->tracks)||
+           !string_start(d,r32(d->buffer+4)))return bad(d,LN_DB_FORMAT);
         d->query_phase++;return 0;
     }
     int r=cached_title?1:string_step(d);if(r!=1)return r;

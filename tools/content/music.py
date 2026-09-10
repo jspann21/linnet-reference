@@ -1,4 +1,4 @@
-"""Deterministic, bounded PODB v1 compiler and host validator.
+"""Deterministic, bounded PODB compiler and host validator.
 
 WAV/AIFF PCM metadata is parsed without decoding audio. Optional ffprobe metadata
 does not confer device codec support. Staged copies preserve original files.
@@ -728,8 +728,10 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         group_records.append(struct.pack("<IIIIIIQ", kind, string(name), parent_index,
             len(members), len(indices), 0, identity))
         members.extend(indices)
-    search = sorted(range(len(entries)), key=lambda i: (entries[i]["title"].casefold(), i))
-    search_records = [struct.pack("<II", i, string(entries[i]["title"].casefold())) for i in search]
+    search = [(entry["title"].casefold(), i) for i, entry in enumerate(entries)]
+    search += [(key[1].casefold(), 0x80000000 | i) for i, key in enumerate(keys) if key[0] in (1, 2)]
+    search.sort()
+    search_records = [struct.pack("<II", reference, string(key)) for key, reference in search]
     track_offset = HEADER
     group_offset = track_offset + TRACK * len(records)
     member_offset = group_offset + GROUP * len(group_records)
@@ -743,7 +745,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     if HEADER + len(payload) > MAX_DATABASE:
         raise ValueError("database exceeds 128 MiB")
     header = bytearray(HEADER)
-    struct.pack_into("<4sHH14I", header, 0, b"PODB", 1, HEADER, HEADER + len(payload), 0,
+    struct.pack_into("<4sHH14I", header, 0, b"PODB", 2, HEADER, HEADER + len(payload), 0,
         len(records), len(group_records), len(members), len(search), track_offset, group_offset,
         member_offset, search_offset, string_offset, len(pool), len(artwork_records), art_offset)
     header[64:96] = hashlib.sha256(payload).digest()
@@ -753,7 +755,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     temporary = output / "LIBRARY.TMP"
     temporary.write_bytes(database)
     temporary.replace(output / "LIBRARY.PDB")
-    report = dict(format="PODB", version=1, integrity="sha256" if verification == "full" else "metadata", tracks=len(records), groups=len(groups),
+    report = dict(format="PODB", version=2, integrity="sha256" if verification == "full" else "metadata", tracks=len(records), groups=len(groups),
                   artwork=len(artwork_records), bytes=len(database), sha256=hashlib.sha256(database).hexdigest(),
                   database=str(output / "LIBRARY.PDB"), entries=entries,
                   compatibility_copies=compatibility_copies,
@@ -774,9 +776,9 @@ def validate_database(data: bytes) -> dict:
         raise ValueError("database size")
     magic, version, header_size, *fields = struct.unpack_from("<4sHH14I", data)
     size, flags, tracks, groups, members, searches, to, go, mo, so, po, ps, arts, ao = fields
-    if (magic, version, header_size, size, flags) != (b"PODB", 1, HEADER, len(data), 0):
+    if (magic, version, header_size, size, flags) != (b"PODB", 2, HEADER, len(data), 0):
         raise ValueError("database header")
-    if tracks > MAX_TRACKS or searches != tracks or any(data[96:124]):
+    if tracks > MAX_TRACKS or not tracks <= searches <= tracks + groups or any(data[96:124]):
         raise ValueError("database counts/reserved")
     if (to != HEADER or go != to + tracks * TRACK or mo != go + groups * GROUP or
         so != mo + members * 4 or ao != so + searches * 8 or po != ao + arts * ART or po + ps != size or not ps):
@@ -827,9 +829,12 @@ def validate_database(data: bytes) -> dict:
             raise ValueError("ReplayGain bound")
         titles.append(get_string(title))
     group_ids = set()
+    expected_search = [(title.casefold(), i) for i, title in enumerate(titles)]
     for index in range(groups):
         kind, name, parent, first, count, reserved, identity = struct.unpack_from("<IIIIIIQ", data, go + index * GROUP)
         get_string(name)
+        if kind in (1, 2):
+            expected_search.append((get_string(name).casefold(), 0x80000000 | index))
         if kind not in range(1, 8) or reserved or first > members or count > members - first:
             raise ValueError("group bounds")
         if identity in group_ids:
@@ -845,11 +850,9 @@ def validate_database(data: bytes) -> dict:
             raise ValueError("member track index")
     order = []
     for index in range(searches):
-        track, key = struct.unpack_from("<II", data, so + index * 8)
-        if track >= tracks or get_string(key) != titles[track].casefold():
-            raise ValueError("search key")
-        order.append(track)
-    if sorted(order) != list(range(tracks)) or order != sorted(order, key=lambda i: (titles[i].casefold(), i)):
+        reference, key = struct.unpack_from("<II", data, so + index * 8)
+        order.append((get_string(key), reference))
+    if order != sorted(expected_search):
         raise ValueError("search permutation/order")
     for index in range(arts):
         identity, path, width, height, encoding, count, crc, reserved = struct.unpack_from("<QIHHIIII", data, ao + index * ART)

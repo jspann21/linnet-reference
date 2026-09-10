@@ -104,7 +104,7 @@ def validate_stage(stage: Path, *, device_root: Path | None = None,
     manifest_bytes = _bounded(stage / "music-manifest.json", 128 * 1024 * 1024)
     manifest = json.loads(manifest_bytes)
     db_hash = hashlib.sha256(database).hexdigest()
-    expected = dict(format="PODB", version=1, tracks=info["tracks"], groups=info["groups"],
+    expected = dict(format="PODB", version=2, tracks=info["tracks"], groups=info["groups"],
                     artwork=info["artwork"], bytes=len(database), sha256=db_hash)
     if not isinstance(manifest, dict) or any(manifest.get(key) != value for key, value in expected.items()):
         raise ValueError("music manifest does not match the complete database")

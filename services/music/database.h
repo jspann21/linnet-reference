@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "boot/include/sha256.h"
+#define LN_MUSIC_SEARCH_GROUP 0x80000000u
 typedef int (*ln_music_db_read_fn)(void *,uint64_t,uint8_t *,uint32_t);
 enum ln_music_db_result { LN_DB_PENDING=0,LN_DB_READY=1,LN_DB_IO=-1,LN_DB_FORMAT=-2,LN_DB_ARGUMENT=-3 };
 enum ln_music_db_request { LN_DB_TRACK=1,LN_DB_GROUP,LN_DB_MEMBER,LN_DB_ART,LN_DB_STRING };
@@ -46,7 +47,8 @@ int ln_music_db_open_step(struct ln_music_db *);
 bool ln_music_db_request(struct ln_music_db *,enum ln_music_db_request,uint32_t index);
 int ln_music_db_step(struct ln_music_db *);
 /* Prefix must already be Unicode casefolded UTF-8; ASCII A-Z folding is accepted.
- * Result is the first matching title search index/track, or UINT32_MAX. */
+ * Result is the first matching search index/reference, or UINT32_MAX.
+ * Group references carry LN_MUSIC_SEARCH_GROUP. */
 bool ln_music_db_search(struct ln_music_db *,const char *prefix);
 /* Bounded lower-bound lookup plus ordinal; consecutive ordinals of the same
  * normalized prefix reuse its completed bound. Each result still validates

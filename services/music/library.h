@@ -66,7 +66,8 @@ bool ln_music_library_take_queue_member(uint32_t *track,uint32_t *token);
  * to a track. Results are consumed by the matching take function. Selection has
  * priority over an unstarted query; both have priority over cache filling. */
 bool ln_music_library_search(const char *prefix);
-struct ln_music_library_search_row { uint32_t index; char title[256]; };
+/* kind=0 is a track; 1/2 is an artist/album with a tagged group index. */
+struct ln_music_library_search_row { uint32_t index,kind,count; char title[256]; };
 bool ln_music_library_search_at(const char *prefix,uint32_t ordinal);
 /* index UINT32_MAX means no matching result at this ordinal. */
 bool ln_music_library_take_search_row(struct ln_music_library_search_row *out);

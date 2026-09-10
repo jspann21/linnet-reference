@@ -367,7 +367,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             if not item["count"]:
                 progress(f"{kind}: no supported files; existing prepared library retained.")
                 continue
-            option = photo_dimension if kind == "Photos" else f"{music_verification}-duration-v2" if kind == "Music" else "ipvf-24-v2-realtime" if kind == "Videos" else "default"
+            option = photo_dimension if kind == "Photos" else f"{music_verification}-duration-v2-search-names" if kind == "Music" else "ipvf-24-v2-realtime" if kind == "Videos" else "default"
             signature = f"{CACHE_VERSION}:{option}:{item['fingerprint']}"
             saved = state.get(kind, {})
             if not isinstance(saved, dict):

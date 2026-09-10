@@ -241,6 +241,8 @@ bool ln_music_library_take_search_row(struct ln_music_library_search_row *out)
 {
     if(!out||!ready()||library.query!=JOB_SEARCH||!library.query_ready)return false;
     out->index=library.query_result;text_copy(out->title,library.group_name);
+    out->kind=library.query_result!=UINT32_MAX&&(library.query_result&LN_MUSIC_SEARCH_GROUP)?library.group.kind:0;
+    out->count=out->kind?library.group.count:0;
     library.query_ready=false;return true;
 }
 bool ln_music_library_view_row(uint32_t source,uint32_t group,uint32_t ordinal)
@@ -254,6 +256,7 @@ bool ln_music_library_take_view_row(struct ln_music_library_search_row *out)
     if(!out||!ready()||!library.query_ready||
        (library.query!=JOB_VIEW&&library.query!=JOB_VIEW_GROUP))return false;
     out->index=library.query_result;text_copy(out->title,library.group_name);
+    out->kind=out->count=0;
     library.query_ready=false;return true;
 }
 bool ln_music_library_group(uint32_t index)
@@ -372,7 +375,15 @@ static void query_step(void)
         if(library.stage==1){
             library.query_result=library.db.search_track;library.group_name[0]=0;
             if(library.query_result==UINT32_MAX){query_complete(UINT32_MAX);return;}
+            if(library.query_result&LN_MUSIC_SEARCH_GROUP){
+                if(request(LN_DB_GROUP,library.query_result&~LN_MUSIC_SEARCH_GROUP))library.stage=5;
+                return;
+            }
             if(request(LN_DB_TRACK,library.query_result))library.stage=2;
+        }else if(library.stage==5){
+            library.group=library.db.group;
+            if(library.group.kind!=1&&library.group.kind!=2){fail(LN_DB_FORMAT);return;}
+            if(request(LN_DB_STRING,library.group.name))library.stage=3;
         }else if(library.stage==2){
             if(request(LN_DB_STRING,library.db.track.title))library.stage=3;
         }else {text_copy(library.group_name,library.db.text);query_complete(library.query_result);}

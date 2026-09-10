@@ -1,4 +1,4 @@
-# PODB version 1
+# PODB
 
 `tools/content/music.py` compiles an immutable library with at most 100,000 tracks
 and 128 MiB of database bytes. All integers are little endian. Offsets and sizes
@@ -11,14 +11,14 @@ The file is `/LINNET/LIBRARY.PDB`; media and artwork have FAT-compatible 8.3 nam
 | Offset | Type | Meaning |
 | --- | --- | --- |
 | 0 | char[4] | `PODB` |
-| 4 | u16 | Version 1 |
+| 4 | u16 | Format identifier, fixed at 2 |
 | 6 | u16 | Header bytes 128 |
 | 8 | u32 | Exact file size, at most 134217728 |
 | 12 | u32 | Flags, zero |
 | 16 | u32 | Track count, at most 100000 |
 | 20 | u32 | Group count |
 | 24 | u32 | Member count |
-| 28 | u32 | Search count, equal to track count |
+| 28 | u32 | Search count: tracks plus artist/album groups |
 | 32 | u32 | Track table offset, exactly 128 |
 | 36 | u32 | Group table offset |
 | 40 | u32 | Member table offset |
@@ -121,14 +121,21 @@ omitted. Folder names are source-relative POSIX paths (root is `.`).
 
 ## Search record: 8 bytes
 
-Each record contains u32 track index followed by u32 search-key string offset.
-The table is a permutation of all tracks sorted by Unicode-casefolded title,
-then track index. The stored key is that casefolded title. UTF-8 byte ordering
+Each record contains a u32 reference followed by a u32 search-key string offset.
+Bit 31 marks a group reference; otherwise the reference is a track index.
+For group references the remaining bits are the group index; only artist (1) and album (2)
+groups are admitted. Every track and every artist/album group appears exactly
+once. The table is sorted by Unicode-casefolded title or group name,
+then reference. The stored key is that casefolded name. UTF-8 byte ordering
 preserves Unicode scalar ordering. Readers can binary-search a casefolded prefix
 without transforming titles or scanning media. Full Unicode query folding is a
 host concern unless implemented on-device; an ASCII keyboard can fold A-Z only.
-This initial index covers track titles. Artist and album browse indexes are
-provided by groups; artist/album prefix search is not a separate v1 table.
+Artist and album results open their existing member lists. Search uses one
+cached binary lower bound and 12-row pages; it does not scan tracks or media.
+Only the current format is supported. Rebuild incompatible catalogs with the
+media manager. Its update signature includes name search so unchanged audio
+still receives the current index.
+
 
 ## Artwork record: 32 bytes
 
