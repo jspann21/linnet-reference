@@ -457,11 +457,10 @@ static void music_step(void){
     ln_music_search_step();
     if(queue_opened)ln_music_queue_view_update(&queue,revision);
     ln_music_queue_view_step(queue_opened&&!ln_music_search_active()&&ln_music_browser_query_idle());
-    uint32_t searched;
-    if(ln_music_search_take_track(&searched)&&ln_music_select(searched)){
+    struct ln_music_browser_queue browser_queue;
+    if(ln_music_search_take_queue(&browser_queue)&&select_queue(&browser_queue)){
         ln_music_search_close();show_now_playing=true;
     }
-    struct ln_music_browser_queue browser_queue;
     if(ln_music_browser_take_queue(&browser_queue)&&select_queue(&browser_queue))show_now_playing=true;
     ln_music_art_step(!audio.initialized||!audio.playing||audio.queued>=LINNET_AUDIO_RING_FRAMES-2048u);
     if(!restored&&ln_music_library_status()==LN_LIBRARY_READY&&!ln_storage_busy()&&

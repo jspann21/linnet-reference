@@ -2,6 +2,7 @@
 #define LINNET_MUSIC_SEARCH_H
 #include <stdint.h>
 #include <stdbool.h>
+struct ln_music_browser_queue;
 #define LN_MUSIC_SEARCH_PREFIX 32u
 #define LN_MUSIC_SEARCH_ROWS 12u
 /* Input/provider functions record intent only. step owns asynchronous queries
@@ -23,8 +24,11 @@ uint32_t ln_music_search_navigation(void);
 bool ln_music_search_select(uint32_t row);
 void ln_music_search_left(void);
 void ln_music_search_right(void);
-/* True means returned from results to editor; false means search closed. */
+/* True means moved up within search; false means search closed. */
 bool ln_music_search_back(void);
 void ln_music_search_window(uint32_t first);
-bool ln_music_search_take_track(uint32_t *track);
+/* Restore the parent highlight once its asynchronous row has arrived. */
+bool ln_music_search_take_selection(uint32_t *row);
+/* Group playback uses the full source and selected ordinal, independent of pages. */
+bool ln_music_search_take_queue(struct ln_music_browser_queue *queue);
 #endif

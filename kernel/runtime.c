@@ -87,6 +87,7 @@ static void backlight_activity(void){
 #if defined(LINNET_AUDIO)
 static uint32_t music_revision,music_phase,music_generation,music_progress_at,music_navigation;
 static uint32_t search_navigation,search_revision,search_library_status;
+static bool playback_from_search;
 #endif
 #if defined(LINNET_NATIVE_UI)
 static uint32_t display_settings_revision;
@@ -343,6 +344,10 @@ static void apply(uint32_t kind,int32_t value){
             }
         }else if((pressed&LN_BUTTON_SELECT)&&scene_is("linnet.system.now-playing")){
             if(ln_ui_show(shell,"linnet.system.music-options"))dirty=true;handled=true;
+        }else if((pressed&LN_BUTTON_MENU)&&scene_is("linnet.system.now-playing")){
+            if(playback_from_search)ln_music_search_resume();
+            if(ln_ui_show(shell,playback_from_search?"linnet.system.music-search":"linnet.system.music"))dirty=true;
+            handled=true;
         }else if((pressed&LN_BUTTON_SELECT)&&scene_is("linnet.system.music-options")){
             uint32_t action=ln_music_option_action(shell->selected);
             if(action==7){ln_music_queue_open();(void)ln_ui_show(shell,"linnet.system.music-queue");}
@@ -634,6 +639,8 @@ void ln_runtime_step(void){
 #if defined(LINNET_AUDIO)
     ln_audio_service(now);
     if(ln_music_take_now_playing()&&(scene_is("linnet.system.music")||scene_is("linnet.system.music-search")||scene_is("linnet.system.music-queue")||scene_is("linnet.system.music-queue-actions"))){
+        if(scene_is("linnet.system.music")||scene_is("linnet.system.music-search"))
+            playback_from_search=scene_is("linnet.system.music-search");
         ln_music_queue_close();
         if(ln_ui_show(shell,"linnet.system.now-playing")){retain_scene();dirty=true;}
     }
@@ -645,6 +652,12 @@ void ln_runtime_step(void){
     if(scene_is("linnet.system.music-search")&&!ln_music_search_active())ln_music_search_resume();
     if(scene_is("linnet.system.music-search")&&search_navigation!=ln_music_search_navigation()){
         search_navigation=ln_music_search_navigation();shell->selected=0;shell->selections[shell->scene]=0;ln_ui_refresh(shell);dirty=true;
+    }
+    if(scene_is("linnet.system.music-search")){
+        uint32_t restored_selection;
+        if(ln_music_search_take_selection(&restored_selection)){
+            shell->selected=restored_selection;ln_ui_refresh(shell);dirty=true;
+        }
     }
 #if defined(LINNET_VIDEO)
     /* Video has its own presentation revision. Keep music caches untouched so
