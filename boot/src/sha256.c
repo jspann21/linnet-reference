@@ -42,7 +42,7 @@ int ln_sha256_boot_iram_init(void){
     extern const uint32_t __boot_hash_load[],__boot_hash_begin[],__boot_hash_end[];
     boot_iram_ready=0;
     uintptr_t start=(uintptr_t)__boot_hash_begin,end=(uintptr_t)__boot_hash_end;
-    if(end<=start||end-start>0x800u||((start|end|(uintptr_t)__boot_hash_load)&3u))return 0;
+    if(end<=start||end-start>0x1000u||((start|end|(uintptr_t)__boot_hash_load)&3u))return 0;
     volatile uint32_t *destination=(volatile uint32_t *)start;
     uint32_t words=(uint32_t)((end-start)/4u);
     for(uint32_t i=0;i<words;++i)destination[i]=__boot_hash_load[i];
@@ -50,6 +50,7 @@ int ln_sha256_boot_iram_init(void){
     __asm__ volatile("" ::: "memory");
     boot_iram_ready=1;return 1;
 }
+int ln_sha256_boot_iram_active(void){return boot_iram_ready!=0;}
 #endif
 static void compress(struct ln_sha256*s,const uint8_t*block){
 #if defined(LINNET_IMAGE_BOOT) && defined(LINNET_PLATFORM_CORE) && defined(LINNET_STORAGE)
