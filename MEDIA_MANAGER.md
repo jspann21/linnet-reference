@@ -33,7 +33,7 @@ and 255 path bytes. Unsupported aliases get verified compatibility copies under
 `LINNET/MUSIC`; originals remain. Missing files or alias lookup failures stop
 import. Compressed audio is decoded once on the computer to count samples for
 track duration and playback progress, including files without duration headers.
-The count is cached for subsequent updates.
+Up to four tracks are processed concurrently, and counts are cached for subsequent updates.
 
 To prepare photos separately:
 

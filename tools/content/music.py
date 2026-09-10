@@ -6,6 +6,8 @@ does not confer device codec support. Staged copies preserve original files.
 from __future__ import annotations
 
 import ctypes
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 import os
 from typing import Callable
 import hashlib
@@ -171,7 +173,8 @@ def _pcm(path: Path) -> dict:
         return result
 
 
-def _decoded_frames(path: Path, executable: str, *, recover: bool = False) -> int:
+def _decoded_frames(path: Path, executable: str, *, recover: bool = False,
+                    codec: int | None = None) -> int:
     """Count decoded samples, never estimate duration from bitrate/container time.
 
     No PCM is emitted. Bound decoding to 30 seconds and probe output to 1 MiB;
@@ -179,12 +182,22 @@ def _decoded_frames(path: Path, executable: str, *, recover: bool = False) -> in
     packets, matching playback; count only samples actually decoded. Missing
     sample counts, fatal failures and exceeded budgets always reject the import.
     """
-    command = [executable, "-v", "fatal" if recover else "error", "-select_streams", "a:0",
+    command = [executable, "-v", "fatal" if recover else "error"]
+    # Tags can fool FFprobe's format sniffing (including MP3 misdetected as
+    # WAV). Use the MP3 identity already established by the metadata reader.
+    if codec == CODECS["mp3"]:
+        command += ["-f", "mp3"]
+    command += ["-select_streams", "a:0",
                "-show_entries", "frame=nb_samples:frame_side_data=",
                "-of", "csv=p=0", str(path)]
     with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT) as process:
-        timer = threading.Timer(30, lambda: process.kill() if process.poll() is None else None)
+        timed_out = threading.Event()
+        def expire():
+            if process.poll() is None:
+                timed_out.set()
+                process.kill()
+        timer = threading.Timer(30, expire)
         timer.daemon = True
         timer.start()
         output = bytearray()
@@ -192,9 +205,12 @@ def _decoded_frames(path: Path, executable: str, *, recover: bool = False) -> in
             while chunk := process.stdout.read(4096):
                 output.extend(chunk)
                 if len(output) > 1024 * 1024:
-                    raise ValueError("decoded sample-count output exceeds limit")
-            if process.wait():
-                raise ValueError("decoded sample-count probe failed or exceeded 30 seconds")
+                    raise ValueError(f"{path}: decoded sample-count output exceeds limit")
+            returncode = process.wait()
+            if timed_out.is_set():
+                raise ValueError(f"{path}: decoded sample-count probe exceeded 30 seconds")
+            if returncode:
+                raise ValueError(f"{path}: decoded sample-count probe failed (exit {returncode})")
         finally:
             timer.cancel()
             if process.poll() is None:
@@ -205,13 +221,13 @@ def _decoded_frames(path: Path, executable: str, *, recover: bool = False) -> in
         if not line:
             continue
         if not re.fullmatch(rb"[1-9][0-9]{0,6},?", line):
-            raise ValueError("invalid decoded sample count or audio decode error")
+            raise ValueError(f"{path}: invalid decoded sample count or audio decode error")
         samples = int(line.rstrip(b","))
         if samples > 1048576:
-            raise ValueError("decoded audio frame exceeds sample bound")
+            raise ValueError(f"{path}: decoded audio frame exceeds sample bound")
         frames += samples
     if not 0 < frames <= 0xFFFFFFFFFFFFFFFF:
-        raise ValueError("missing or oversized decoded sample count")
+        raise ValueError(f"{path}: missing or oversized decoded sample count")
     return frames
 
 
@@ -243,7 +259,7 @@ def _probe(path: Path, executable: str, *, exact_frames: bool = True) -> dict:
     if bits > 64:
         raise ValueError("compressed source bit-depth bound")
     return dict(codec=codec, channels=channels, rate=rate, bits=bits,
-                frames=_decoded_frames(path, executable) if exact_frames else 0, data_offset=0,
+                frames=_decoded_frames(path, executable, codec=codec) if exact_frames else 0, data_offset=0,
                 data_bytes=path.stat().st_size, tags=tags)
 
 
@@ -439,7 +455,8 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
             shutil.copytree(output, prepared, dirs_exist_ok=True, symlinks=True,
                             ignore=lambda directory, names: [name for name in names
                                 if Path(directory) == output and name in managed])
-        report = _compile_music_stage(source, prepared, ffprobe=ffprobe,
+        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="music-metadata") as metadata_pool:
+            report = _compile_music_stage(source, prepared, metadata_pool=metadata_pool, ffprobe=ffprobe,
                                       artwork=artwork, playlists=playlists, device_root=device_root, progress=progress,
                                       verification=verification, cache=cache, bypass_cache=bypass_cache)
         report["database"] = str(output / "LIBRARY.PDB")
@@ -469,7 +486,55 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
             shutil.rmtree(prepared, ignore_errors=True)
 
 
-def _compile_music_stage(source: Path, output: Path, *, ffprobe: str | None = None,
+def _read_metadata(path: Path, ffprobe: str | None, existing: bool) -> dict:
+    if path.suffix.lower() in (".wav", ".aif", ".aiff", ".aifc"):
+        return _pcm(path)
+    metadata = _quick_metadata(path) if existing else None
+    if metadata is None and ffprobe:
+        metadata = _probe(path, ffprobe, exact_frames=not existing)
+    if metadata is None:
+        raise ValueError(f"{path}: compressed metadata requires explicit ffprobe executable")
+    if not metadata["frames"]:
+        if not ffprobe:
+            raise ValueError(f"{path}: track duration requires explicit ffprobe executable")
+        metadata["frames"] = _decoded_frames(path, ffprobe, recover=existing, codec=metadata["codec"])
+    return metadata
+
+
+def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, progress):
+    # Keep SQLite and progress callbacks on the caller's thread. Bound both
+    # concurrent device reads and queued results, including on cancellation.
+    pending = deque()
+    iterator = iter(enumerate(paths))
+    def enqueue():
+        item = next(iterator, None)
+        if item is None:
+            return
+        number, path = item
+        if path.is_symlink() or source not in path.resolve().parents:
+            raise ValueError("audio paths must remain in the source directory")
+        before = path.stat()
+        relative = path.relative_to(source).as_posix()
+        metadata = cache.get(source, relative, before) if cache and not bypass_cache else None
+        future = pool.submit(_read_metadata, path, ffprobe, existing) if metadata is None else None
+        pending.append((number, path, before, metadata, future))
+    try:
+        for _ in range(4):
+            enqueue()
+        while pending:
+            number, path, before, metadata, future = pending.popleft()
+            cached = metadata is not None
+            if progress:
+                progress(dict(phase="music", current=number, total=len(paths), file=str(path), cached=cached))
+            yield number, path, before, metadata if cached else future.result(), cached
+            enqueue()
+    finally:
+        for _, _, _, _, future in pending:
+            if future is not None:
+                future.cancel()
+
+
+def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: str | None = None,
                          artwork: bool = True, playlists: dict[str, list[str]] | None = None,
                   device_root: Path | None = None, progress: Callable[[dict], None] | None = None,
                   verification: str = "full", cache: _MetadataCache | None = None,
@@ -554,7 +619,8 @@ def _compile_music_stage(source: Path, output: Path, *, ffprobe: str | None = No
 
     cache_hits = 0
     compatibility_copies = []
-    for number, path in enumerate(paths):
+    for number, path, before, metadata, cached in _metadata_rows(
+            paths, source, ffprobe, device_root is not None, cache, bypass_cache, metadata_pool, progress):
         location = None
         compatibility_reason = None
         if device_root is not None:
@@ -565,30 +631,7 @@ def _compile_music_stage(source: Path, output: Path, *, ffprobe: str | None = No
         stage_audio = device_root is None or compatibility_reason is not None
         hash_audio = verification == "full" or stage_audio
         relative = path.relative_to(source).as_posix()
-        if path.is_symlink() or source not in path.resolve().parents:
-            raise ValueError("audio paths must remain in the source directory")
-        before = path.stat()
-        metadata = cache.get(source, relative, before) if cache and not bypass_cache else None
-        cached = metadata is not None
         cache_hits += int(cached)
-        if progress:
-            progress(dict(phase="music", current=number, total=len(paths), file=str(path), cached=cached))
-        if metadata is None:
-            if path.suffix.lower() in (".wav", ".aif", ".aiff", ".aifc"):
-                metadata = _pcm(path)
-            else:
-                metadata = _quick_metadata(path) if device_root is not None else None
-                if metadata is None and ffprobe:
-                    metadata = _probe(path, ffprobe, exact_frames=device_root is None)
-                # Header-only readers cannot reliably supply duration (for
-                # example MP3 without Xing/LAME). Persist a decoded count for
-                # the firmware's Now Playing fallback, including in-place imports.
-                if metadata is not None and not metadata["frames"]:
-                    if not ffprobe:
-                        raise ValueError(f"{relative}: track duration requires explicit ffprobe executable")
-                    metadata["frames"] = _decoded_frames(path, ffprobe, recover=device_root is not None)
-        if metadata is None:
-            raise ValueError(f"{relative}: compressed metadata requires explicit ffprobe executable")
         identity = _stable("track:" + relative)
         extension = {".aiff": "AIF", ".aifc": "AIF", ".flac": "FLC", ".opus": "OPS"}.get(path.suffix.lower(), path.suffix[1:].upper())
         name = f"{identity & 0xffffffff:08X}.{extension}"
