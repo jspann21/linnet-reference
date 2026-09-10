@@ -31,7 +31,9 @@ opens a note, wheel or Previous/Next scrolls, and Menu returns.
 Music indexing uses actual FAT short aliases, with limits of 16 path components
 and 255 path bytes. Unsupported aliases get verified compatibility copies under
 `LINNET/MUSIC`; originals remain. Missing files or alias lookup failures stop
-import. Compressed duration may remain unknown until native playback.
+import. Compressed audio is decoded once on the computer to count samples for
+track duration and playback progress, including files without duration headers.
+The count is cached for subsequent updates.
 
 To prepare photos separately:
 
@@ -62,8 +64,9 @@ Cache and receipts live under `%LOCALAPPDATA%\Linnet\Media`, separated by device
 identity. Completed music metadata and prepared videos are reused on retry.
 Preparation needs additional host and device space.
 
-Fast music indexing checks paths, sizes and modification times, without hashing
-all existing audio. **Verify entire audio files (slow)** reads and hashes them.
+Fast music indexing checks paths, sizes and modification times and reuses cached
+sample counts, without hashing all existing audio. The first update reads compressed
+tracks to determine duration. **Verify entire audio files (slow)** also hashes them.
 Use **Rebuild unchanged content** when files changed without size/time changes.
 Prepared database/artwork and newly copied files are verified independently.
 

@@ -89,9 +89,10 @@ use `integrity: "metadata"`, a zero digest, and recorded `bytes`/`mtime_ns`;
 publication checks file size and modification time without reading full audio.
 Explicit full verification uses `integrity: "sha256"` and complete file hashes.
 Legacy entries without an integrity field retain full SHA-256 verification.
-No audio is copied for either existing-reference mode. Compressed
-in-place entries use `frames=0` (unknown) to avoid full host decoding; native
-decoder frame counts take precedence during playback.
+No audio is copied for either existing-reference mode. Compressed entries
+store host-decoded sample counts, cached between imports, so duration is available
+even without a native duration header. Native decoder frame counts take precedence
+during playback. Older databases may contain `frames=0` (unknown).
 Staged media bytes are unchanged, and originals are never
 modified. The device must reject unsafe paths and size/range mismatches before
 starting playback, and verify content hashes before claiming media integrity.

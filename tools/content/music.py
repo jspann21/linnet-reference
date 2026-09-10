@@ -171,13 +171,15 @@ def _pcm(path: Path) -> dict:
         return result
 
 
-def _decoded_frames(path: Path, executable: str) -> int:
+def _decoded_frames(path: Path, executable: str, *, recover: bool = False) -> int:
     """Count decoded samples, never estimate duration from bitrate/container time.
 
     No PCM is emitted. Bound decoding to 30 seconds and probe output to 1 MiB;
-    decode errors, missing sample counts and exceeded budgets reject the import.
+    Decode errors reject staged imports. Existing tracks may recover damaged
+    packets, matching playback; count only samples actually decoded. Missing
+    sample counts, fatal failures and exceeded budgets always reject the import.
     """
-    command = [executable, "-v", "error", "-select_streams", "a:0",
+    command = [executable, "-v", "fatal" if recover else "error", "-select_streams", "a:0",
                "-show_entries", "frame=nb_samples:frame_side_data=",
                "-of", "csv=p=0", str(path)]
     with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -319,7 +321,7 @@ class _MetadataCache:
             if value["frames"] * align != value["data_bytes"]:
                 return False
         elif (value["codec"] < 16 or value["data_offset"] != 0 or
-              value["data_bytes"] != stat.st_size or value["frames"] != 0):
+              value["data_bytes"] != stat.st_size or value["frames"] == 0):
             return False
         tags = value.get("tags")
         return (isinstance(tags, dict) and all(isinstance(k, str) and isinstance(v, str)
@@ -331,7 +333,7 @@ class _MetadataCache:
         try:
             row = self.connection.execute("SELECT value FROM metadata WHERE source=? "
                 "AND relative=? AND size=? AND mtime=? AND parser=?",
-                (str(source), relative, stat.st_size, stat.st_mtime_ns, "existing-v1")).fetchone()
+                (str(source), relative, stat.st_size, stat.st_mtime_ns, "existing-v2")).fetchone()
             if row is None:
                 return None
             value = json.loads(row[0])
@@ -347,7 +349,7 @@ class _MetadataCache:
             return
         try:
             self.connection.execute("INSERT OR REPLACE INTO metadata VALUES (?,?,?,?,?,?)",
-                (str(source), relative, stat.st_size, stat.st_mtime_ns, "existing-v1",
+                (str(source), relative, stat.st_size, stat.st_mtime_ns, "existing-v2",
                  json.dumps(metadata)))
             self.connection.commit()
         except sqlite3.Error:
@@ -578,6 +580,13 @@ def _compile_music_stage(source: Path, output: Path, *, ffprobe: str | None = No
                 metadata = _quick_metadata(path) if device_root is not None else None
                 if metadata is None and ffprobe:
                     metadata = _probe(path, ffprobe, exact_frames=device_root is None)
+                # Header-only readers cannot reliably supply duration (for
+                # example MP3 without Xing/LAME). Persist a decoded count for
+                # the firmware's Now Playing fallback, including in-place imports.
+                if metadata is not None and not metadata["frames"]:
+                    if not ffprobe:
+                        raise ValueError(f"{relative}: track duration requires explicit ffprobe executable")
+                    metadata["frames"] = _decoded_frames(path, ffprobe, recover=device_root is not None)
         if metadata is None:
             raise ValueError(f"{relative}: compressed metadata requires explicit ffprobe executable")
         identity = _stable("track:" + relative)
@@ -710,7 +719,7 @@ def _compile_music_stage(source: Path, output: Path, *, ffprobe: str | None = No
                   cache=dict(hits=cache_hits, misses=len(records) - cache_hits,
                              status=cache.status if cache else "unused"),
                   limitations=["Codec metadata does not imply native decoder qualification.",
-                               "Existing compressed audio uses unknown sample counts to avoid full host decoding; staged imports use bounded decoding. Native decoder counts take precedence. Gapless trim metadata and seek tables are not emitted.",
+                               "Compressed sample counts use bounded host decoding and are cached for existing media. Native decoder counts take precedence. Gapless trim metadata and seek tables are not emitted.",
                                "No cached FAT extents; paths are resolved by the device."])
     (output / "music-manifest.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     return report
