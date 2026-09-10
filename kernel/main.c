@@ -184,7 +184,7 @@ _Noreturn void ln_main(void)
 #if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_OS)
     bool first_frame = platform_ready;
 #elif defined(LINNET_IMAGE_BOOT)
-    bool first_frame = ln_lcd_fill(0x001fu);
+    bool first_frame = ln_lcd_boot();
 #else
     bool first_frame = ln_lcd_fill(0x07e0u);
     if (!first_frame) ln_panic(8,0,0);

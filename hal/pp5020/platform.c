@@ -1,4 +1,7 @@
 #include "hal/pp5020/platform.h"
+#if defined(LINNET_IMAGE_BOOT)
+#include "hal/pp5020/boot_wordmark.h"
+#endif
 
 /* Register addresses and bus protocol provenance: ARCHITECTURE.md. */
 #define LINNET_REG(a) (*(volatile uint32_t *)(uintptr_t)(a))
@@ -173,7 +176,7 @@ static uint16_t ln_fault_pixel(const char lines[8][33],uint32_t x,uint32_t y)
     return mask&(16u>>bit)?0xffffu:background;
 }
 
-static bool ln_lcd_draw(uint16_t color, const char (*fault_rows)[33])
+static bool ln_lcd_draw(uint16_t color, const char (*fault_rows)[33], const uint16_t *runs)
 {
     uint32_t started = ln_time_us(), budget = 1000000u;
     uint32_t pairs_written = 0;
@@ -217,6 +220,7 @@ static bool ln_lcd_draw(uint16_t color, const char (*fault_rows)[33])
     uint16_t bus_color = (uint16_t)((color << 8) | (color >> 8));
     uint32_t pixel_pair = (uint32_t)bus_color | ((uint32_t)bus_color << 16);
     uint32_t rows_left = LINNET_LCD_HEIGHT;
+    uint32_t run_left = 0;
     while (rows_left != 0u) {
         uint32_t rows = rows_left > 148u ? 148u : rows_left;
         uint32_t bytes = rows * LINNET_LCD_WIDTH * 2u;
@@ -224,24 +228,56 @@ static bool ln_lcd_draw(uint16_t color, const char (*fault_rows)[33])
         LINNET_LCD_CONFIG = 0xc0010000u | (bytes - 1u);
         LINNET_LCD_CONTROL = 0x34000000u;
         LINNET_LCD_RECORD(0, 5u | ((rows_left == LINNET_LCD_HEIGHT ? 1u : 2u) << 8));
-        for (uint32_t pair = 0; pair < bytes / 4u; ++pair) {
-            /* Check the deadline even when FIFO is continuously ready, with
-             * one timer read per 256 pairs rather than one per pixel write. */
-            if ((pair & 255u) == 0u && ln_time_us() - started >= LINNET_LCD_FRAME_TIMEOUT_US) {
-                LINNET_LCD_RECORD(1, 1u);
-                goto failed;
+        uint32_t pair = 0;
+        while (pair < bytes / 4u) {
+            uint32_t span = bytes / 4u - pair;
+            if (runs) {
+                if (!run_left) {
+                    /* Pre-swapped RGB565 pairs: navy paper, off-white ink. */
+                    static const uint32_t palette[4] = {
+                        0x83088308u, 0x83089defu, 0x9def8308u, 0x9def9defu
+                    };
+                    uint16_t run = *runs++;
+                    run_left = run & 0x3fffu;
+                    pixel_pair = palette[run >> 14];
+                }
+                if (span > run_left) span = run_left;
+                run_left -= span;
             }
-            if (!ln_lcd_wait(&LINNET_LCD_CONTROL, 0x01000000u, true, started, &budget)) goto failed;
-            if(fault_rows){
+            uint32_t end = pair + span;
+            if (!fault_rows) {
+                /* Keep span decoding and deadline reads outside the FIFO loop.
+                 * Bound every chunk by the original 256-pair deadline boundary. */
+                while (pair < end) {
+                    uint32_t chunk_end = (pair | 255u) + 1u;
+                    if (chunk_end > end) chunk_end = end;
+                    if (ln_time_us() - started >= LINNET_LCD_FRAME_TIMEOUT_US) {
+                        LINNET_LCD_RECORD(1, 1u);
+                        goto failed;
+                    }
+                    for (; pair < chunk_end; ++pair) {
+                        if (!ln_lcd_wait(&LINNET_LCD_CONTROL, 0x01000000u, true, started, &budget)) goto failed;
+                        LINNET_LCD_DATA = pixel_pair;
+                        ++pairs_written;
+                    }
+                }
+                continue;
+            }
+            for (; pair < end; ++pair) {
+                if ((pair & 255u) == 0u && ln_time_us() - started >= LINNET_LCD_FRAME_TIMEOUT_US) {
+                    LINNET_LCD_RECORD(1, 1u);
+                    goto failed;
+                }
+                if (!ln_lcd_wait(&LINNET_LCD_CONTROL, 0x01000000u, true, started, &budget)) goto failed;
                 uint32_t pixel=pairs_written*2u;
                 uint32_t row=pixel/LINNET_LCD_WIDTH,x=pixel%LINNET_LCD_WIDTH;
                 uint16_t a=ln_fault_pixel(fault_rows,x,row);
                 uint16_t b=ln_fault_pixel(fault_rows,x+1u,row);
                 pixel_pair=(uint32_t)(uint16_t)((a<<8)|(a>>8)) |
                     ((uint32_t)(uint16_t)((b<<8)|(b>>8))<<16);
+                LINNET_LCD_DATA = pixel_pair;
+                ++pairs_written;
             }
-            LINNET_LCD_DATA = pixel_pair;
-            ++pairs_written;
         }
         LINNET_LCD_RECORD(0, 6u | ((rows_left == LINNET_LCD_HEIGHT ? 1u : 2u) << 8));
         if (!ln_lcd_wait(&LINNET_LCD_CONTROL, 0x04000000u, true, started, &budget)) goto failed;
@@ -262,7 +298,10 @@ failed:
     return false;
 }
 
-bool ln_lcd_fill(uint16_t color){return ln_lcd_draw(color,0);}
+bool ln_lcd_fill(uint16_t color){return ln_lcd_draw(color,0,0);}
+#if defined(LINNET_IMAGE_BOOT)
+bool ln_lcd_boot(void){return ln_lcd_draw(0x0883u,0,ln_boot_runs);}
+#endif
 bool ln_lcd_fault(uint32_t reason,const uint8_t build_id[32])
 {
     static const char hex[]="0123456789ABCDEF";
@@ -271,7 +310,7 @@ bool ln_lcd_fault(uint32_t reason,const uint8_t build_id[32])
         "THEN CENTER + PLAY FOR","DISK MODE AND CONNECT USB"};
     for(uint32_t i=0;i<8u;i++)lines[1][5u+i]=hex[(reason>>(28u-i*4u))&15u];
     for(uint32_t i=0;i<8u;i++){lines[2][6u+i*2u]=hex[build_id[i]>>4];lines[2][7u+i*2u]=hex[build_id[i]&15u];}
-    return ln_lcd_draw(0x1800u,lines);
+    return ln_lcd_draw(0x1800u,lines,0);
 }
 
 void ln_platform_quiesce(void)
