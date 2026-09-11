@@ -31,7 +31,13 @@ struct library {
 static struct library library;
 static bool window_enabled=true;
 static uint32_t generation=0x10000000u;
-static void clear(void *memory,uint32_t count){uint8_t *p=memory;for(uint32_t i=0;i<count;i++)p[i]=0;}
+static void clear(void *memory,uint32_t count){
+#if defined(__arm__)
+    extern void ln_memory_clear(void *,uint32_t);ln_memory_clear(memory,count);
+#else
+    uint8_t *p=memory;for(uint32_t i=0;i<count;i++)p[i]=0;
+#endif
+}
 static void text_copy(char out[256],const char *in){uint32_t i=0;while(i<255&&in[i]){out[i]=in[i];i++;}out[i]=0;}
 static uint32_t next_generation(void){if(++generation>=0x20000000u)generation=0x10000000u;return generation;}
 static void changed(void){library.revision++;}
@@ -83,7 +89,7 @@ static void start(void)
     clear(&library,sizeof(library));library.status=LN_LIBRARY_OPENING;
     library.revision=revision;library.paused=paused;library.generation=next_generation();
 }
-void ln_music_library_init(void){clear(&library,sizeof(library));start();}
+void ln_music_library_init(void){start();}
 static int read_database_raw(void *context,uint64_t offset,uint8_t *buffer,uint32_t bytes)
 {
     (void)context;

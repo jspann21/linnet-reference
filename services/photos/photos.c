@@ -41,7 +41,13 @@ static struct {uint32_t view_started,frame_ready,io_started,max_open_us,max_read
 #define PHOTO_START() do {} while(0)
 #endif
 static const char package[]="/LINNET/PHOTOS/LIBRARY.PIM";
-static void clear(void*v,uint32_t n){uint8_t*b=v;while(n--)*b++=0;}
+static void clear(void*v,uint32_t n){
+#if defined(__arm__)
+    extern void ln_memory_clear(void *,uint32_t);ln_memory_clear(v,n);
+#else
+    uint8_t*b=v;while(n--)*b++=0;
+#endif
+}
 static void copy(void*d,const void*s,uint32_t n){uint8_t*a=d;const uint8_t*b=s;while(n--)*a++=*b++;}
 static uint32_t r32(const uint8_t*b){return b[0]|(uint32_t)b[1]<<8|(uint32_t)b[2]<<16|(uint32_t)b[3]<<24;}
 static void w32(uint8_t*b,uint32_t n){for(uint32_t i=0;i<4;i++)b[i]=(uint8_t)(n>>(8*i));}

@@ -184,7 +184,13 @@ static void catalog_step(void){
 }
 static uint32_t r16(const uint8_t*b){return b[0]|(uint32_t)b[1]<<8;}
 static uint64_t r64(const uint8_t*b){return r32(b)|(uint64_t)r32(b+4)<<32;}
-static void clear(void*p,uint32_t n){uint8_t*b=p;while(n--)*b++=0;}
+static void clear(void*p,uint32_t n){
+#if defined(__arm__)
+    extern void ln_memory_clear(void *,uint32_t);ln_memory_clear(p,n);
+#else
+    uint8_t*b=p;while(n--)*b++=0;
+#endif
+}
 static void copy(void*d,const void*s,uint32_t n){
 #if defined(__arm__)
     extern void ln_memory_copy(void *,const void *,uint32_t);ln_memory_copy(d,s,n);

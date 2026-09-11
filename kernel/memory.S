@@ -129,15 +129,25 @@ __aeabi_memclr:
     bxeq lr
     b .Lclear_align
 .Lclear_words:
-    cmp r1, #12
+    cmp r1, #32
     blo .Lclear_word_tail
+    /* Large runtime resets (video, photos and library state) are common and
+     * run after cache is enabled. Fill a 32-byte block per iteration;
+     * preserve the callee-saved zero registers for the short tail below. */
+    stmdb sp!, {r4-r8, lr}
     mov r3, #0
+    mov r4, #0
+    mov r5, #0
+    mov r6, #0
+    mov r7, #0
+    mov r8, #0
     mov r12, #0
-.Lclear_triples:
-    stmia r0!, {r2, r3, r12}
-    sub r1, r1, #12
-    cmp r1, #12
-    bhs .Lclear_triples
+.Lclear_blocks:
+    stmia r0!, {r2-r8, r12}
+    sub r1, r1, #32
+    cmp r1, #32
+    bhs .Lclear_blocks
+    ldmia sp!, {r4-r8, lr}
 .Lclear_word_tail:
     cmp r1, #4
     blo .Lclear_tail
