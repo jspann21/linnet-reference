@@ -22,6 +22,8 @@ struct ln_music_library_row {
  * from storage_progress. Missing/corrupt databases stop in ERROR until reload. */
 void ln_music_library_init(void);
 void ln_music_library_step(void);
+/* Ready memory work only; false while storage or audio reserve requires a yield. */
+bool ln_music_library_can_continue(void);
 uint32_t ln_music_library_deadline(uint32_t now);
 void ln_music_library_reload(void);
 void ln_music_library_cancel(void);
@@ -78,6 +80,8 @@ bool ln_music_library_view_row(uint32_t source,uint32_t group,uint32_t ordinal);
 bool ln_music_library_take_view_row(struct ln_music_library_search_row *out);
 bool ln_music_library_take_search(uint32_t *track_index);
 bool ln_music_library_group(uint32_t group_index);
+/* Range searches need the record kind, not its display name. */
+bool ln_music_library_group_record(uint32_t group_index);
 bool ln_music_library_take_group(struct ln_music_group *out,char name[256]);
 bool ln_music_library_group_member(uint32_t group_index,uint32_t ordinal);
 bool ln_music_library_take_member(uint32_t *track_index);

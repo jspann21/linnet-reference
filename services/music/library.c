@@ -2,13 +2,13 @@
 #include "services/storage/storage.h"
 #include "hal/pp5020/platform.h"
 
-enum job { JOB_NONE=0,JOB_WINDOW,JOB_SELECTION,JOB_SEARCH,JOB_GROUP,JOB_MEMBER,JOB_PREFETCH,JOB_QUEUE,JOB_VIEW,JOB_VIEW_GROUP };
+enum job { JOB_NONE=0,JOB_WINDOW,JOB_SELECTION,JOB_SEARCH,JOB_GROUP,JOB_MEMBER,JOB_PREFETCH,JOB_QUEUE,JOB_VIEW,JOB_VIEW_GROUP,JOB_GROUP_RECORD };
 struct library {
     struct ln_music_db db;
     /* Bounded shared page cache: titles, group/member tables and search indexes.
      * Tags publish only after a complete read; reload clears the entire cache. */
     uint8_t pages[32][4096];
-    uint32_t page_tags[32];
+    uint32_t page_tags[32],page_used[32],page_clock;
     bool page_valid[32];
     struct ln_fat32_file file;
     struct ln_music_library_row rows[LN_MUSIC_LIBRARY_ROWS],scratch,selection,prefetch;
@@ -118,7 +118,24 @@ static int read_database(void *context,uint64_t offset,uint8_t *buffer,uint32_t 
     if(offset>library.file.size||!bytes||bytes>4096u||bytes>library.file.size-offset)return LN_DB_ARGUMENT;
     uint32_t copied=0;
     while(copied<bytes){
-        uint32_t address=(uint32_t)offset+copied,page=address/4096u,slot=page%32u;
+        uint32_t address=(uint32_t)offset+copied,page=address/4096u,slot=32u;
+        /* Fully associative replacement keeps record and string pages together,
+         * even when their file offsets differ by a multiple of cache capacity. */
+        for(uint32_t i=0;i<32u;i++)
+            if(library.page_valid[i]&&library.page_tags[i]==page){slot=i;break;}
+        if(slot==32u){
+            if(library.io_active){
+                for(uint32_t i=0;i<32u;i++)if(library.io_buffer==library.pages[i]){slot=i;break;}
+                if(slot==32u)return LN_DB_ARGUMENT;
+            }else{
+                slot=0;
+                for(uint32_t i=0;i<32u;i++){
+                    if(!library.page_valid[i]){slot=i;break;}
+                    if((uint32_t)(library.page_clock-library.page_used[i])>
+                       (uint32_t)(library.page_clock-library.page_used[slot]))slot=i;
+                }
+            }
+        }
         uint32_t base=page*4096u,size=library.file.size-base;
         if(size>4096u)size=4096u;
         if(!library.page_valid[slot]||library.page_tags[slot]!=page){
@@ -127,6 +144,7 @@ static int read_database(void *context,uint64_t offset,uint8_t *buffer,uint32_t 
             if(result!=1)return result;
             library.page_tags[slot]=page;library.page_valid[slot]=true;
         }
+        library.page_used[slot]=++library.page_clock;
         uint32_t within=address-base,count=size-within;
         if(count>bytes-copied)count=bytes-copied;
         for(uint32_t i=0;i<count;i++)buffer[copied+i]=library.pages[slot][within+i];
@@ -263,9 +281,13 @@ bool ln_music_library_group(uint32_t index)
 {
     return ready()&&index<library.db.groups&&query_admit(JOB_GROUP,index,0);
 }
+bool ln_music_library_group_record(uint32_t index)
+{
+    return ready()&&index<library.db.groups&&query_admit(JOB_GROUP_RECORD,index,0);
+}
 bool ln_music_library_take_group(struct ln_music_group *out,char name[256])
 {
-    if(!out||!name||!ready()||library.query!=JOB_GROUP||!library.query_ready)return false;
+    if(!out||!name||!ready()||(library.query!=JOB_GROUP&&library.query!=JOB_GROUP_RECORD)||!library.query_ready)return false;
     *out=library.group;text_copy(name,library.group_name);library.query_ready=false;return true;
 }
 bool ln_music_library_group_member(uint32_t index,uint32_t ordinal)
@@ -344,7 +366,8 @@ static void row_step(void)
 static void query_complete(uint32_t result)
 {
     library.query_result=result;library.query_pending=false;library.query_ready=true;
-    library.job=JOB_NONE;changed();
+    library.job=JOB_NONE;
+    /* The consuming view publishes visible changes; offscreen prefetch must not repaint. */
 }
 static void query_step(void)
 {
@@ -391,6 +414,7 @@ static void query_step(void)
     }
     if(library.stage==1){
         library.group=library.db.group;
+        if(library.job==JOB_GROUP_RECORD){library.group_name[0]=0;query_complete(library.query_index);return;}
         if(library.job==JOB_GROUP){if(request(LN_DB_STRING,library.group.name))library.stage=2;}
         else if(library.query_ordinal>=library.group.count)query_complete(UINT32_MAX);
         else if(request(LN_DB_MEMBER,library.group.first+library.query_ordinal))library.stage=2;
@@ -473,4 +497,10 @@ void ln_music_library_step(void)
         library_step_once();
         if(!ready()||library.io_active||library.paused||library.job==JOB_NONE)break;
     }
+}
+
+/* Only the outer controller may pump additional metadata work. */
+bool ln_music_library_can_continue(void)
+{
+    return ready()&&!library.paused&&!library.io_active;
 }

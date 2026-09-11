@@ -180,6 +180,7 @@ static void browser_navigation(void){
         music_navigation=navigation;ln_ui_refresh(shell);dirty=true;
     }
     uint32_t rows=ln_ui_visible_capacity(shell);if(!rows)rows=1;
+    ln_music_browser_visible_rows(rows);
     ln_music_browser_window((shell->selected/rows)*rows);
 }
 #endif

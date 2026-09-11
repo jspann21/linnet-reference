@@ -23,6 +23,7 @@ void ln_music_browser_step(void);
 uint32_t ln_music_browser_count(void);
 const char *ln_music_browser_label(uint32_t row);
 void ln_music_browser_window(uint32_t first);
+void ln_music_browser_visible_rows(uint32_t rows);
 bool ln_music_browser_select(uint32_t row);
 bool ln_music_browser_take_track(uint32_t *track_index);
 struct ln_music_browser_queue {
