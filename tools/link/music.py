@@ -27,10 +27,11 @@ def command(session,identity,action,*,path=None,sample=None):
             elif (len(raw),version)!=(96,1):raise RuntimeError('Malformed video state reply')
         if action=='player-timing-state':
             version=struct.unpack_from('<I',raw,4)[0] if len(raw)>=8 else 0
-            if (len(raw),version) in ((48,2),(60,3),(80,4)):
+            if (len(raw),version) in ((48,2),(60,3),(80,4),(84,5)):
                 names+=('runtime_calls','runtime_us','runtime_max_us')
                 if version>=3:names+=('music_us','storage_us','link_us')
                 if version>=4:names+=('clock_hz','cache_control','cache_priority','idle_us','clock_source')
+                if version>=5:names+=('decoder_kind',)
             elif (len(raw),version)!=(36,1):
                 raise RuntimeError('Malformed player timing reply')
         if action=='audio-state':

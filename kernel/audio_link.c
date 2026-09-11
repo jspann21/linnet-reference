@@ -58,9 +58,9 @@ int ln_audio_link_dispatch(const ln_link_frame *q,ln_link_frame *r){
     }else if(q->command==120){
         if(q->length)return 1;struct ln_player_timing t;ln_player_timing_snapshot(&t);
         struct ln_core_status c;ln_core_snapshot(&c);
-        uint32_t words[20]={0x34544d50u,4,t.decode_calls,t.decode_us,t.decode_max_us,t.dsp_calls,t.dsp_frames,t.dsp_us,t.dsp_max_us,t.runtime_calls,t.runtime_us,t.runtime_max_us,t.music_us,t.storage_us,t.link_us,
-            c.clock_hz,c.cache_control,*(volatile uint32_t *)(uintptr_t)0x60006044u,c.idle_us,c.clock_source};
-        for(uint32_t n=0;n<20;n++)write32(reply+n*4,words[n]);r->length=80;
+        uint32_t words[21]={0x34544d50u,5,t.decode_calls,t.decode_us,t.decode_max_us,t.dsp_calls,t.dsp_frames,t.dsp_us,t.dsp_max_us,t.runtime_calls,t.runtime_us,t.runtime_max_us,t.music_us,t.storage_us,t.link_us,
+            c.clock_hz,c.cache_control,*(volatile uint32_t *)(uintptr_t)0x60006044u,c.idle_us,c.clock_source,ln_player_decoder_kind()};
+        for(uint32_t n=0;n<21;n++)write32(reply+n*4,words[n]);r->length=84;
     }else if(q->command==119){
         if(q->length)return 1;
         uint32_t words[8]={0x3442494cu,1,ln_music_library_status(),(uint32_t)ln_music_library_error(),

@@ -24,6 +24,7 @@ static struct ln_player_transition transition;
 static struct player_slot *io_owner;
 static uint32_t io_offset,io_length;static uint8_t *io_buffer;static bool io_open;
 static uint32_t audible,feed,generation_counter,last_consumed,join_underruns;
+uint32_t ln_player_decoder_kind(void){return slots[audible].decoder.kind;}
 static uint64_t consumed,submitted,audible_origin,join_boundary;
 static bool stop_requested,seek_requested,pause_requested,have_next,cancel_next;
 static bool skip_requested,seek_paused;

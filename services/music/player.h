@@ -53,6 +53,7 @@ bool ln_player_prefetch_urgent(void);
 #if !defined(LINNET_PROFILE_RELEASE)
 struct ln_player_timing {uint32_t decode_calls,decode_us,decode_max_us,dsp_calls,dsp_frames,dsp_us,dsp_max_us,runtime_calls,runtime_us,runtime_max_us,music_us,storage_us,link_us;};
 void ln_player_timing_snapshot(struct ln_player_timing *out);
+uint32_t ln_player_decoder_kind(void);
 void ln_player_timing_runtime(uint32_t elapsed);
 void ln_player_timing_stage(uint32_t stage,uint32_t elapsed);
 #endif
