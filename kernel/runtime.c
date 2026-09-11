@@ -648,6 +648,7 @@ void ln_runtime_step(void){
     browser_navigation();
     if(scene_is("linnet.system.music-queue")){
         uint32_t rows=ln_ui_visible_capacity(shell);if(!rows)rows=1;
+        ln_music_queue_view_visible_rows(rows);
         ln_music_queue_view_window((shell->selected/rows)*rows);
     }
     if(scene_is("linnet.system.music-search")&&!ln_music_search_active())ln_music_search_resume();

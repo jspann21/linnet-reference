@@ -5,6 +5,10 @@ and 128 MiB of database bytes. All integers are little endian. Offsets and sizes
 are checked with subtraction before reads; no file bytes are cast to C structs.
 Tables are contiguous in the order below, with no padding or trailing bytes.
 The file is `/LINNET/LIBRARY.PDB`; media and artwork have FAT-compatible 8.3 names.
+The compiler packs group names in browse order, followed by track titles, search
+keys and remaining deduplicated strings. All references use rewritten pool
+offsets; record IDs, ordering and format remain unchanged. Existing databases
+remain readable and acquire this layout on the next Media Manager music update.
 
 ## Header: 128 bytes
 

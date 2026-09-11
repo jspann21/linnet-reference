@@ -4,7 +4,7 @@ static struct {
     struct ln_queue queue;
     char labels[LN_QUEUE_VIEW_ROWS][259];
     bool valid[LN_QUEUE_VIEW_ROWS],opened,pending,action_ready,was_ready;
-    uint32_t version,first,epoch,revision,job_epoch,job_row;
+    uint32_t version,first,epoch,revision,job_epoch,job_row,visible_rows;
     uint32_t selected,action,action_version;
 } view;
 static void invalidate(void){
@@ -40,10 +40,15 @@ void ln_music_queue_view_update(const struct ln_queue *queue,uint32_t version){
 void ln_music_queue_view_open(const struct ln_queue *queue,uint32_t version){
     if(!queue)return;
     view.opened=true;view.queue=*queue;view.version=version;
+    if(!view.visible_rows)view.visible_rows=6u;
     view.was_ready=ln_music_library_status()==LN_LIBRARY_READY;
     view.first=queue->count?(queue->cursor/6u)*6u:0;invalidate();
 }
 void ln_music_queue_view_close(void){view.opened=false;invalidate();}
+void ln_music_queue_view_visible_rows(uint32_t rows){
+    view.visible_rows=rows?rows:1u;
+    if(view.visible_rows>LN_QUEUE_VIEW_ROWS)view.visible_rows=LN_QUEUE_VIEW_ROWS;
+}
 void ln_music_queue_view_window(uint32_t first){
     if(!view.opened)return;
     if(first>=view.queue.count)first=view.queue.count?view.queue.count-1u:0;
@@ -62,7 +67,12 @@ void ln_music_queue_view_window(uint32_t first){
 }
 uint32_t ln_music_queue_view_count(void){return view.opened?view.queue.count:0;}
 uint32_t ln_music_queue_view_revision(void){return view.revision;}
-bool ln_music_queue_view_busy(void){return view.pending;}
+bool ln_music_queue_view_busy(void){
+    if(view.pending)return true;
+    if(view.opened)for(uint32_t i=0;i<LN_QUEUE_VIEW_ROWS&&view.first+i<view.queue.count;i++)
+        if(!view.valid[i])return true;
+    return false;
+}
 const char *ln_music_queue_view_label(uint32_t row){
     if(!view.opened||row>=view.queue.count)return "";
     if(row<view.first||row-view.first>=LN_QUEUE_VIEW_ROWS||!view.valid[row-view.first])return "Loading...";
@@ -74,10 +84,11 @@ static void publish(uint32_t row,const char *title){
     out[0]=row==view.queue.cursor?'>':' ';out[1]=' ';
     uint32_t i=0;while(i<255u&&title[i]){out[i+2]=title[i];i++;}out[i+2]=0;
     view.valid[slot]=true;
-    /* Batch six visible rows to avoid redrawing an entire screen per title. */
-    uint32_t end=(slot/6u+1u)*6u;if(end>LN_QUEUE_VIEW_ROWS)end=LN_QUEUE_VIEW_ROWS;
-    bool complete=true;for(uint32_t n=slot/6u*6u;n<end&&view.first+n<view.queue.count;n++)if(!view.valid[n])complete=false;
-    if(complete)++view.revision;
+    /* Publish one complete viewport; speculative lookahead never repaints. */
+    if(slot>=view.visible_rows)return;
+    for(uint32_t n=0;n<view.visible_rows&&view.first+n<view.queue.count;n++)
+        if(!view.valid[n])return;
+    ++view.revision;
 }
 void ln_music_queue_view_step(bool allow_query){
     if(ln_music_library_status()!=LN_LIBRARY_READY){

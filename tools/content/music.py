@@ -748,6 +748,27 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     search += [(key[1].casefold(), 0x80000000 | i) for i, key in enumerate(keys) if key[0] in (1, 2)]
     search.sort()
     search_records = [struct.pack("<II", reference, string(key)) for key, reference in search]
+    # Pack browse labels in group order, then titles and search keys. Previously
+    # album names were scattered among each source file's paths and metadata,
+    # forcing unrelated page reads while traversing a sorted album list.
+    old_strings = {offset: value for value, offset in strings.items()}
+    offsets = [0]
+    offsets.extend(struct.unpack_from("<I", row, 4)[0] for row in group_records)
+    offsets.extend(struct.unpack_from("<I", row, 52)[0] for row in records)
+    offsets.extend(struct.unpack_from("<I", row, 4)[0] for row in search_records)
+    offsets.extend(old_strings)
+    remap, pool = {}, bytearray()
+    for old in offsets:
+        if old not in remap:
+            remap[old] = len(pool)
+            pool.extend(old_strings[old].encode("utf-8") + b"\0")
+    for table, fields in ((records, range(52, 76, 4)), (group_records, (4,)),
+                          (search_records, (4,)), (artwork_records, (8,))):
+        for index, packed in enumerate(table):
+            row = bytearray(packed)
+            for field in fields:
+                struct.pack_into("<I", row, field, remap[struct.unpack_from("<I", row, field)[0]])
+            table[index] = row
     track_offset = HEADER
     group_offset = track_offset + TRACK * len(records)
     member_offset = group_offset + GROUP * len(group_records)

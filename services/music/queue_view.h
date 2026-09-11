@@ -9,6 +9,7 @@ void ln_music_queue_view_open(const struct ln_queue *,uint32_t queue_version);
 void ln_music_queue_view_update(const struct ln_queue *,uint32_t queue_version);
 void ln_music_queue_view_close(void);
 void ln_music_queue_view_window(uint32_t first);
+void ln_music_queue_view_visible_rows(uint32_t rows);
 /* Root grants external query ownership only after browser suspension/drain and
  * search closure/drain. Pending viewer work always drains, even after close.
  * Root must wait !busy before granting the external slot to another service. */

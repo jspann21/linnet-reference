@@ -3,9 +3,14 @@
 
 enum view { CATEGORIES, GROUPS, TRACKS };
 enum job { NONE, RANGE, GROUP, TITLE, QUEUE_MEMBER };
-struct row { char label[256]; uint32_t index,count; bool valid; };
+/* Keep recently visited rows behind the viewport as well as lookahead.
+ * Absolute row tags prevent reuse across ring collisions; navigation clears it. */
+#define ROW_CACHE (LN_MUSIC_BROWSER_ROWS*2u)
+struct row { char label[256]; uint32_t index,count,ordinal; bool valid; };
 static struct {
-    struct row rows[LN_MUSIC_BROWSER_ROWS];
+    struct row rows[ROW_CACHE];
+    uint32_t group_lower[8],group_count[8];
+    bool group_range_ready[8];
     enum view view;
     enum job job;
     uint32_t kind,first,count,group,lower,lo,hi,mid,range_phase,visible_rows;
@@ -22,10 +27,14 @@ static const char *const categories[]={"All Tracks","Artists","Albums","Genres",
 static void copy(char *out,const char *in)
 { uint32_t i=0;while(i<255u&&in[i]){out[i]=in[i];i++;}out[i]=0; }
 static void changed(void){browser.revision++;}
+static struct row *row_slot(uint32_t ordinal){return &browser.rows[ordinal%ROW_CACHE];}
+static bool row_ready(uint32_t ordinal){
+    struct row *r=row_slot(ordinal);return r->valid&&r->ordinal==ordinal;
+}
 static void invalidate(void)
 {
     browser.epoch++;browser.selecting=false;browser.queue_status=LN_BROWSER_QUEUE_IDLE;browser.track_ready=false;browser.single=false;
-    for(uint32_t i=0;i<LN_MUSIC_BROWSER_ROWS;i++){
+    for(uint32_t i=0;i<ROW_CACHE;i++){
         browser.rows[i].valid=false;
     }
     changed();
@@ -58,7 +67,7 @@ bool ln_music_browser_busy(void){
     if(browser.suspended||!browser.visible)return false;
     if(browser.range_phase)return true;
     for(uint32_t i=0;i<LN_MUSIC_BROWSER_ROWS&&browser.first+i<browser.count;++i)
-        if(!browser.rows[i].valid)return true;
+        if(!row_ready(browser.first+i))return true;
     return false;
 }
 uint32_t ln_music_browser_revision(void){return browser.revision;}
@@ -68,7 +77,7 @@ const char *ln_music_browser_label(uint32_t row)
     if(row>=ln_music_browser_count())return "";
     if(browser.view==CATEGORIES)return categories[row];
     if(row<browser.first||row-browser.first>=LN_MUSIC_BROWSER_ROWS)return "Loading...";
-    return browser.rows[row-browser.first].valid?browser.rows[row-browser.first].label:"Loading...";
+    return row_ready(row)?row_slot(row)->label:"Loading...";
 }
 void ln_music_browser_visible_rows(uint32_t rows)
 { browser.visible_rows=rows?rows:1u; }
@@ -77,14 +86,7 @@ void ln_music_browser_window(uint32_t first)
     if(browser.view==CATEGORIES||first==browser.first)return;
     if(!browser.count)first=0;
     else if(first>=browser.count)first=browser.count-1u;
-    uint32_t old=browser.first;
-    /* Keep overlapping labels and admitted queries in this navigation epoch. */
-    for(uint32_t n=0;n<LN_MUSIC_BROWSER_ROWS;n++){
-        uint32_t i=first>old?n:LN_MUSIC_BROWSER_ROWS-1u-n;
-        uint32_t row=first+i;
-        if(row>=old&&row-old<LN_MUSIC_BROWSER_ROWS)browser.rows[i]=browser.rows[row-old];
-        else browser.rows[i]=(struct row){0};
-    }
+    /* Moving the viewport performs no label copies or cache invalidation. */
     browser.first=first;browser.selecting=false;browser.queue_status=LN_BROWSER_QUEUE_IDLE;
     browser.track_ready=false;browser.single=false;changed();
 }
@@ -93,7 +95,12 @@ static void groups(void)
     browser.navigation++;
     browser.view=GROUPS;browser.count=0;browser.first=0;
     browser.lo=0;browser.hi=ln_music_library_group_count();
-    browser.range_phase=1;copy(browser.title,categories[browser.kind]);invalidate();
+    browser.range_phase=1;
+    if(browser.group_range_ready[browser.kind]){
+        browser.lower=browser.group_lower[browser.kind];
+        browser.count=browser.group_count[browser.kind];browser.range_phase=0;
+    }
+    copy(browser.title,categories[browser.kind]);invalidate();
 }
 bool ln_music_browser_select(uint32_t row)
 {
@@ -157,8 +164,8 @@ static void accept_selection(void)
 {
     if(!browser.selecting||browser.selection<browser.first||
        browser.selection-browser.first>=LN_MUSIC_BROWSER_ROWS)return;
-    struct row *r=&browser.rows[browser.selection-browser.first];
-    if(!r->valid)return;
+    struct row *r=row_slot(browser.selection);
+    if(!row_ready(browser.selection))return;
     browser.selecting=false;
     if(browser.view==GROUPS){
         browser.group=r->index;browser.count=r->count;copy(browser.title,r->label);
@@ -170,6 +177,7 @@ void ln_music_browser_step(void)
 {
     bool ready=ln_music_library_status()==LN_LIBRARY_READY;
     if(!ready){
+        for(uint32_t i=0;i<8u;i++)browser.group_range_ready[i]=false;
         if(browser.was_ready){
             browser.navigation++;
             browser.view=CATEGORIES;browser.first=0;browser.count=0;
@@ -199,7 +207,8 @@ void ln_music_browser_step(void)
             if(g.kind<target)browser.lo=browser.mid+1u;else browser.hi=browser.mid;
         }else if(browser.job_row>=browser.first&&
                  browser.job_row-browser.first<LN_MUSIC_BROWSER_ROWS){
-            struct row *r=&browser.rows[browser.job_row-browser.first];
+            struct row *r=row_slot(browser.job_row);
+            r->ordinal=browser.job_row;
             if(completed==TITLE){
                 r->index=title.index;r->valid=true;
                 copy(r->label,title.index==UINT32_MAX?"Unavailable track":title.title);
@@ -225,7 +234,10 @@ void ln_music_browser_step(void)
         if(browser.lo==browser.hi){
             if(browser.range_phase==1u){browser.lower=browser.lo;browser.range_phase=2;
                 browser.hi=ln_music_library_group_count();}
-            else {browser.count=browser.lo-browser.lower;browser.range_phase=0;changed();}
+            else {browser.count=browser.lo-browser.lower;browser.range_phase=0;
+                browser.group_lower[browser.kind]=browser.lower;
+                browser.group_count[browser.kind]=browser.count;
+                browser.group_range_ready[browser.kind]=true;changed();}
             return;
         }
         browser.mid=browser.lo+(browser.hi-browser.lo)/2u;
@@ -244,8 +256,8 @@ void ln_music_browser_step(void)
             }
         }
         if(browser.first>=browser.count||slot>=browser.count-browser.first)continue;
-        struct row *r=&browser.rows[slot];if(r->valid)continue;
         uint32_t ordinal=browser.first+slot;
+        if(row_ready(ordinal))continue;
         if(browser.view==GROUPS){
             if(ln_music_library_group(browser.lower+ordinal))browser.job=GROUP;
         }else if(ln_music_library_view_row(browser.kind?2u:1u,browser.group,ordinal))browser.job=TITLE;
