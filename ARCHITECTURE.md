@@ -63,8 +63,15 @@ paged metadata and fixed caches; baseline JPEG fallback is bounded. New photo
 work is admitted according to available audio reserve.
 
 Video accepts PVID and native IPVF; IPVF includes LZ4/temporal reconstruction and
-IMA ADPCM audio. Presentation uses the audio clock. Sustained device throughput
-and A/V qualification remain open.
+IMA ADPCM audio. Presentation uses the audio clock. IPVF displays its validated
+first frame before scanning the seek index; audio waits for complete index
+verification and a 1.5-second decoded video cushion (bounded by the slot limit).
+Seeks retain the same cushion. The controls view keeps native video resolution
+and caches opaque control bands between data changes. Obsolete display frames
+are discarded; low audio reserve reduces display work while decoding every
+frame dependency and keeping presentation tied to the audio clock. Device timing
+and underrun counters support qualification across media; framebuffer captures
+cannot establish physical A/V quality.
 
 The UI compiler emits native C and simulator scenes from constrained TSX.
 The desktop simulator executes the native renderer; its output checks layout

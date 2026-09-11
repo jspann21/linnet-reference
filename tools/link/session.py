@@ -35,6 +35,17 @@ class Session:
             raise AmbiguousCommand("video measurement acknowledgement mismatch; inspect state before another mutation")
         return dict(generation=generation, mode=mode, playback_limit_seconds=8)
 
+    def video_startup_timing(self) -> dict:
+        """Read device-side open-to-first-presentation/index/audio latency in us."""
+        raw = self.request(Command.VIDEO_STATE, struct.pack('<I', 8))
+        if len(raw) != 128:
+            raise ProtocolError('invalid video startup timing length')
+        words = struct.unpack('<32I', raw)
+        if words[:2] != (int.from_bytes(b'VST1', 'little'), 1) or any(words[8:]):
+            raise ProtocolError('invalid video startup timing header')
+        return dict(zip(('magic', 'version', 'opened_us', 'first_frame_us',
+                         'index_ready_us', 'audio_start_us', 'start_ready_frames', 'dropped_frames'), words[:8]))
+
     def __init__(self, transport: Transport, timeout: float = 2.0):
         if not 0 < timeout <= 60:
             raise ValueError("timeout must be in (0, 60] seconds")

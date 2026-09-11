@@ -43,7 +43,7 @@ int ln_audio_link_dispatch(const ln_link_frame *q,ln_link_frame *r){
     }else if(q->command==122){
 #if defined(LINNET_VIDEO)
 #if !defined(LINNET_PROFILE_RELEASE)
-        if(q->length==4u&&read32(q->payload)<8u){
+        if(q->length==4u&&read32(q->payload)<9u){
             ln_video_metadata(read32(q->payload),reply);r->length=128;r->flags=LINNET_LINK_ACK;return 1;
         }
 #endif

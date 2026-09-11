@@ -101,10 +101,6 @@ def apply_layout(scenes,theme):
             elif style=='blueprint':place(listing,8,8,196,126);place(foot,8,136,204,16)
             foot['flags']=0
             bar=next(n for n in nodes if n['kind']==9);bar['y']=listing['y'];bar['h']=listing['h']
-        if scene['id']=='linnet.system.video-controls':
-            # Keep controls in their theme's chrome while video is fitted behind.
-            for node in nodes:
-                if node['kind']==16:place(node,bx,by,bw,bh)
         refine_scene(scene,theme,(bx,by,bw,bh))
         if style=='ipod-photo':refine_ipod_photo(scene,theme)
         refine_footers(scene,theme)
@@ -209,7 +205,9 @@ def refine_scene(scene,theme,body):
     elif sid=='video-controls':
         surface=next(n for n in nodes if n['kind']==16)
         bar=next(n for n in nodes if n['kind']==10)
-        place(surface,x,y,w,max(16,h-fh-18))
+        # Keep native 220x176 pixels behind the controls. Fitting this surface
+        # resamples every video frame on ARM7 and defeats direct presentation.
+        place(surface,0,0,220,176)
         place(bar,x,bottom-fh-13,w,5)
         for n in texts:place(n,x,bottom-fh,w,fh);n['flags']=0
     elif sid=='now-playing':

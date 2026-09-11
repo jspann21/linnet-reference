@@ -672,6 +672,69 @@ bool ln_ui_input(struct ln_ui_state*s,uint32_t kind,int32_t value){if(!s)return 
     if(kind!=1u||s->hold||!value)return false;const struct ln_ui_node*n=focus(s);uint32_t count=n?total(n):0;if(!count)return false;
     int64_t next=(int64_t)s->selected+value;if(next<0)next=0;if((uint64_t)next>=count)next=count-1u;if((uint32_t)next==s->selected)return false;s->selected=(uint32_t)next;s->selections[s->scene]=s->selected;s->dirty|=2u;return true;
 }
+#if defined(LINNET_VIDEO)
+/* Retain opaque video controls between data changes. Each band is bounded;
+ * unfamiliar layouts use normal painting. Never cache the moving video pixels. */
+static struct {
+    uint16_t pixels[220u*112u],colors[LN_UI_COLOR_COUNT];
+    uint32_t scene,epoch,theme,battery,playback,minute,progress,top,bottom;
+    bool valid,hold,headphones,clock12;
+    char status[128];
+} video_overlay;
+static void overlay_copy(uint16_t *to,const uint16_t *from,uint32_t pixels){
+#if defined(__arm__)
+    extern void ln_memory_copy(void *,const void *,uint32_t);
+    ln_memory_copy(to,from,pixels*2u);
+#else
+    for(uint32_t i=0;i<pixels;++i)to[i]=from[i];
+#endif
+}
+static bool paint_video_overlay(struct painter*p,struct ln_ui_state*s,const struct ln_ui_scene*c){
+    if(!same(c->id,"linnet.system.video-controls")||c->count!=5u||
+       c->nodes[2].kind!=LN_UI_STATUS_BAR||c->nodes[3].kind!=LN_UI_PROGRESS_BAR||c->nodes[4].kind!=LN_UI_TEXT||
+       p->clip.x||p->clip.y||p->clip.w!=220||p->clip.h!=176)return false;
+    uint32_t top=0,bottom=176;
+    for(uint32_t i=2;i<c->count;++i){const struct ln_ui_node*n=&c->nodes[i];
+        if(n->flags&2u||n->y<0||n->h<=0||n->y+n->h>176)return false;
+        if(n->y+n->h<=48){if((uint32_t)(n->y+n->h)>top)top=(uint32_t)(n->y+n->h);}
+        else if(n->y>=112){if((uint32_t)n->y<bottom)bottom=(uint32_t)n->y;}
+        else return false;
+    }
+    uint32_t battery=ln_ui_battery_status(),playback=ln_ui_playback_status(),minute=ln_ui_clock_seconds()/60u;
+    const struct ln_ui_node*bar=&c->nodes[3];
+    uint32_t count=ln_ui_dynamic_count(bar,bar->count?bar->count:100u),value=ln_ui_dynamic_value(bar,bar->index);
+    uint32_t progress=(uint32_t)fraction(value>count?count:value,(uint32_t)bar->w,count);
+    const char*status=ln_ui_dynamic_text(&c->nodes[2],UINT32_MAX,c->nodes[2].text);if(!status)status="";
+    uint32_t length=0;while(status[length]&&length<127u)++length;if(status[length])return false;
+    bool changed=!video_overlay.valid||video_overlay.scene!=s->scene||video_overlay.epoch!=s->scene_epoch||
+        video_overlay.theme!=active_theme||video_overlay.battery!=battery||video_overlay.playback!=playback||
+        video_overlay.minute!=minute||video_overlay.progress!=progress||video_overlay.top!=top||video_overlay.bottom!=bottom||
+        video_overlay.hold!=s->hold||video_overlay.headphones!=s->headphones||video_overlay.clock12!=ln_ui_clock_12()||
+        !same(video_overlay.status,status);
+    for(uint32_t i=0;i<LN_UI_COLOR_COUNT;++i)if(video_overlay.colors[i]!=color(i))changed=true;
+    /* The opaque bands replace these rows completely. Copy only the visible
+     * video rows instead of writing the covered pixels twice to scanout. */
+    struct rect clip=p->clip;p->clip=(struct rect){0,(int32_t)top,220,(int32_t)(bottom-top)};
+    draw_node(p,&c->nodes[1],s,false);p->clip=clip;
+    if(changed){
+        fill(p,(struct rect){0,0,220,(int32_t)top},color(LN_UI_PANEL));
+        fill(p,(struct rect){0,(int32_t)bottom,220,176-(int32_t)bottom},color(LN_UI_PANEL));
+        for(uint32_t i=2;i<c->count;++i)draw_node(p,&c->nodes[i],s,i==c->focus_node);
+        overlay_copy(video_overlay.pixels,p->pixels,top*220u);
+        overlay_copy(video_overlay.pixels+48u*220u,p->pixels+bottom*220u,(176u-bottom)*220u);
+        video_overlay.scene=s->scene;video_overlay.epoch=s->scene_epoch;video_overlay.theme=active_theme;
+        video_overlay.battery=battery;video_overlay.playback=playback;video_overlay.minute=minute;video_overlay.progress=progress;
+        video_overlay.top=top;video_overlay.bottom=bottom;video_overlay.hold=s->hold;video_overlay.headphones=s->headphones;
+        video_overlay.clock12=ln_ui_clock_12();for(uint32_t i=0;i<=length;++i)video_overlay.status[i]=status[i];
+        for(uint32_t i=0;i<LN_UI_COLOR_COUNT;++i)video_overlay.colors[i]=color(i);
+        video_overlay.valid=true;
+    }else{
+        overlay_copy(p->pixels,video_overlay.pixels,top*220u);
+        overlay_copy(p->pixels+bottom*220u,video_overlay.pixels+48u*220u,(176u-bottom)*220u);
+    }
+    return true;
+}
+#endif
 static void paint(struct ln_ui_state*s,uint16_t*pixels,struct rect r,ln_ui_damage_fn damage){
     r=intersect(r,screen);if(!r.w||!r.h)return;struct painter p={pixels,r};const struct ln_ui_scene*c=scene(s);
     bool covered=false;uint32_t first=0;
@@ -688,7 +751,12 @@ static void paint(struct ln_ui_state*s,uint16_t*pixels,struct rect r,ln_ui_damag
         }
     }
     if(!covered)fill(&p,r,color(LN_UI_BACKGROUND));
-    if(c)for(uint32_t i=first;i<c->count&&i<1024u;++i)draw_node(&p,&c->nodes[i],s,i==c->focus_node);
+    if(c)for(uint32_t i=first;i<c->count&&i<1024u;++i){
+#if defined(LINNET_VIDEO)
+        if(i==1u&&first==1u&&paint_video_overlay(&p,s,c))break;
+#endif
+        draw_node(&p,&c->nodes[i],s,i==c->focus_node);
+    }
     if(layout()==LN_UI_LAYOUT_MINIMAL){
         uint32_t status=ln_ui_battery_status();
         fill(&p,(struct rect){0,0,220,2},color(LN_UI_BACKGROUND));

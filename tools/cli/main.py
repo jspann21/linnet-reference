@@ -108,6 +108,8 @@ def parser():
     ui_state.add_argument("--port",required=True)
     startup_timing=device.add_parser("startup-timing",help="Read retained development startup stage timings")
     startup_timing.add_argument("--port",required=True)
+    video_timing=device.add_parser("video-startup-timing",help="Read video startup latency and dropped display frames")
+    video_timing.add_argument("--port",required=True)
     boot_timeline=device.add_parser("boot-timeline",help="Read native Boot and OS initialization timings")
     boot_timeline.add_argument("--port",required=True)
     for action in ('audio-state','player-state','player-timing-state','library-state','photos-state','video-state','player-open','player-pause','player-resume','player-stop','player-seek'):
@@ -362,6 +364,8 @@ def main():
                         emit(dict(port=args.port, identity=identity, status=decode(session.status())))
                     elif args.action == "startup-timing":
                         emit(dict(identity=identity,timing=session.startup_timing(identity['generation'])))
+                    elif args.action == "video-startup-timing":
+                        emit(dict(identity=identity,timing=session.video_startup_timing()))
                     elif args.action == "boot-timeline":
                         emit(dict(identity=identity,timing=session.boot_timeline(identity['generation'])))
                     elif args.action in ('audio-state','player-state','player-timing-state','library-state','photos-state','video-state','player-open','player-pause','player-resume','player-stop','player-seek'):

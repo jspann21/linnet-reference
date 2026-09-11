@@ -500,6 +500,17 @@ max_record_read_us,max_record_crc_us,max_payload_crc_us,max_decode_us,
 max_frame_crc_us,max_step_us,min_audio_queued. `video-state` is
 available through the device CLI. Release firmware excludes this Link command.
 
+`VIDEO_STATE` with u32 page 8 returns a 128-byte `VST1` record. Its first
+eight u32 words are magic, version 1, open timestamp, first accepted display
+presentation latency, index-verification latency, first audio-start latency,
+frames ready at audio start, and dropped display frames. Latencies are
+microseconds from video open; zero means the milestone has not occurred.
+Remaining words are zero.
+`python linnet device video-startup-timing --port COM6` or
+`Session.video_startup_timing()` reads this passive snapshot. A presentation
+acknowledges display submission, not the physical panel's scanout completion.
+IPVF decode work is reported in `max_decode_us`, including LZ4 and reconstruction;
+`max_payload_crc_us` applies to PVID's separate payload CRC phase.
 
 Development interrupted-startup records reuse the144-byte crash mailbox with
 reason`0xB0070001` and flags`2`. They are startup diagnostics, not CPU exception
