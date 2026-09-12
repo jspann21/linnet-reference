@@ -54,9 +54,16 @@ const struct ln_ui_asset *ln_ui_now_playing_art(uint32_t *revision){
     return art.pixels?&art:0;
 }
 static bool in_scene(const struct ln_ui_node*n,const char*id){
+    static const struct ln_ui_node *cached_node;
+    static const struct ln_ui_scene *cached_scenes,*cached_scene;
+    if(n==cached_node&&ln_ui_scenes==cached_scenes)
+        return cached_scene&&(cached_scene->id==id||equal(cached_scene->id,id));
     uintptr_t address=(uintptr_t)n;
     for(uint32_t i=0;i<ln_ui_scene_count;++i){const struct ln_ui_scene*s=&ln_ui_scenes[i];uintptr_t first=(uintptr_t)s->nodes;
-        if(address>=first&&address-first<(uintptr_t)s->count*sizeof(*n))return equal(s->id,id);}
+        if(address>=first&&address-first<(uintptr_t)s->count*sizeof(*n)){
+            cached_node=n;cached_scenes=ln_ui_scenes;cached_scene=s;
+            return s->id==id||equal(s->id,id);
+        }}
     return false;
 }
 const struct ln_ui_asset *ln_ui_dynamic_asset(const struct ln_ui_node*n,const struct ln_ui_asset*fallback){

@@ -791,9 +791,21 @@ static bool selection_damage(struct ln_ui_state*s,uint16_t*pixels,const struct l
     if(old_first!=new_first)return false;
     uint32_t indexes[2]={s->drawn_selected,s->selected};
     int32_t width=(int32_t)divide((uint32_t)n->w,cols),height=(int32_t)row_height(n);
+    struct rect cells[2];
     for(uint32_t i=0;i<2u;++i){uint32_t cell=indexes[i]-new_first,row=divide(cell,cols),column=cell-row*cols;
-        struct rect r={n->x+(int32_t)column*width,n->y+(int32_t)row*height,width,height};
-        paint(s,pixels,intersect(r,bounds(n)),damage);
+        cells[i]=(struct rect){n->x+(int32_t)column*width,n->y+(int32_t)row*height,width,height};
+    }
+    /* A normal wheel tick moves to an edge-adjacent cell. Paint its exact
+     * two-cell union once, avoiding a second scene traversal and damage span. */
+    bool horizontal=cells[0].y==cells[1].y&&(cells[0].x+cells[0].w==cells[1].x||cells[1].x+cells[1].w==cells[0].x);
+    bool vertical=cells[0].x==cells[1].x&&(cells[0].y+cells[0].h==cells[1].y||cells[1].y+cells[1].h==cells[0].y);
+    if(horizontal||vertical){
+        int32_t x=min(cells[0].x,cells[1].x),y=min(cells[0].y,cells[1].y);
+        int32_t right=max(cells[0].x+cells[0].w,cells[1].x+cells[1].w);
+        int32_t bottom=max(cells[0].y+cells[0].h,cells[1].y+cells[1].h);
+        paint(s,pixels,intersect((struct rect){x,y,right-x,bottom-y},bounds(n)),damage);
+    }else for(uint32_t i=0;i<2u;++i){
+        paint(s,pixels,intersect(cells[i],bounds(n)),damage);
     }
     return true;
 }
@@ -904,7 +916,7 @@ static void paint_scrolling(struct ln_ui_state*s,uint16_t*pixels,const struct ln
 void ln_ui_render(struct ln_ui_state*s,uint16_t*pixels,ln_ui_damage_fn damage){if(!s||!pixels)return;theme_sync();if(s->drawn_theme!=active_theme){s->dirty|=1u;++s->scene_epoch;}
     (void)ln_ui_status_refresh(s);if(!s->dirty)return;
     if(s->rendered&&!(s->dirty&1u)){if(s->selected==s->drawn_selected)s->dirty&=~2u;if(((s->hold?1u:0u)|(s->headphones?2u:0u))==s->drawn_flags&&status_signature()==s->drawn_status)s->dirty&=~4u;if(!s->dirty)return;}
-    uint32_t painted_before=s->painted_pixels;const struct ln_ui_scene*c=scene(s);s->visible_items=0;
+    uint32_t painted_before=s->painted_pixels,render_dirty=s->dirty;bool cached_selection=false;const struct ln_ui_scene*c=scene(s);s->visible_items=0;
     if(!s->rendered||(s->dirty&1u))paint(s,pixels,screen,damage);
     else if(s->dirty==4u&&!same(ln_ui_scenes[s->scene].id,"linnet.system.clock")&&
             (layout()==LN_UI_LAYOUT_AURORA||layout()==LN_UI_LAYOUT_GRAPHITE||layout()==LN_UI_LAYOUT_SUNSET)){
@@ -917,13 +929,22 @@ void ln_ui_render(struct ln_ui_state*s,uint16_t*pixels,ln_ui_damage_fn damage){i
     else if((s->dirty&4u)&&(layout()==LN_UI_LAYOUT_AURORA||layout()==LN_UI_LAYOUT_GRAPHITE||layout()==LN_UI_LAYOUT_SUNSET||same(ln_ui_scenes[s->scene].id,"linnet.system.clock")))paint(s,pixels,screen,damage);
     else {
         if((s->dirty&16u)&&!content_damage(s,pixels,damage))paint(s,pixels,screen,damage);
-        if(c)for(uint32_t i=0;i<c->count&&i<1024u;++i){const struct ln_ui_node*n=&c->nodes[i];bool selected=(s->dirty&2u)&&(i==c->focus_node||n->kind==LN_UI_SCROLLBAR||(n->deps&3u));bool status=(s->dirty&4u)&&(n->kind==LN_UI_STATUS_BAR||(n->deps&16u));bool animation=(s->dirty&8u)&&(n->deps&4u);if(selected&&!status&&!animation&&i==c->focus_node&&selection_damage(s,pixels,n,damage))continue;if(selected||status||animation)paint(s,pixels,bounds(n),damage);}
+        if(c)for(uint32_t i=0;i<c->count&&i<1024u;++i){const struct ln_ui_node*n=&c->nodes[i];
+            bool scrollbar_changed=n->kind!=LN_UI_SCROLLBAR;
+            if(!scrollbar_changed&&c->focus_node<c->count){const struct ln_ui_node*f=&c->nodes[c->focus_node];
+                if(f->kind==LN_UI_MENU||f->kind==LN_UI_VIRTUAL_LIST||f->kind==LN_UI_GRID){uint32_t capacity=rows(f)*columns(f);
+                    scrollbar_changed=first_row(s->drawn_selected,capacity)!=first_row(s->selected,capacity);}
+            }
+            bool selected=(s->dirty&2u)&&(i==c->focus_node||(n->kind==LN_UI_SCROLLBAR?scrollbar_changed:(n->deps&3u)));bool status=(s->dirty&4u)&&(n->kind==LN_UI_STATUS_BAR||(n->deps&16u));bool animation=(s->dirty&8u)&&(n->deps&4u);if(selected&&!status&&!animation&&i==c->focus_node&&selection_damage(s,pixels,n,damage)){cached_selection=render_dirty==2u;continue;}if(selected||status||animation)paint(s,pixels,bounds(n),damage);}
     }
     if(layout()==LN_UI_LAYOUT_MINIMAL&&(s->dirty&4u)&&!(s->dirty&1u))paint(s,pixels,(struct rect){0,0,220,2},damage);
     if((s->dirty&32u)&&!(s->dirty&1u))paint_scrolling(s,pixels,c,damage);
     /* Report visible rows, not the subset repainted by incremental damage. */
     if((s->dirty&16u)&&content_layout(s)){const struct ln_ui_node*n=focus(s);uint32_t count=total(n),capacity=rows(n),first=first_row(s->selected,capacity);s->visible_items=count>first?min((int32_t)(count-first),(int32_t)capacity):0;}
-    content_save(s);
+    /* Selection damage cannot alter provider text or the visible window. Keep
+     * the retained labels and advance only its selection marker. */
+    if(cached_selection&&content.valid&&content.owner==s&&content.scene==s->scene&&content.epoch==s->scene_epoch)content.selected=s->selected;
+    else content_save(s);
     s->drawn_status=status_signature();s->drawn_theme=active_theme;s->drawn_scene=s->scene;s->drawn_selected=s->selected;s->drawn_flags=(s->hold?1u:0u)|(s->headphones?2u:0u);s->dirty=0;s->rendered=true;if(s->painted_pixels!=painted_before)++s->paint_count;
 }
 void ln_ui_animate(struct ln_ui_state*s,uint16_t*pixels,uint32_t frame,ln_ui_damage_fn damage){if(!s)return;if(s->animation!=frame){s->animation=frame;const struct ln_ui_scene*c=scene(s);if(c)for(uint32_t i=0;i<c->count&&i<1024u;++i)if(c->nodes[i].deps&4u){s->dirty|=8u;break;}}ln_ui_render(s,pixels,damage);}

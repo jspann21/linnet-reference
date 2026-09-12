@@ -15,7 +15,7 @@ static struct {
     enum job job;
     uint32_t kind,first,count,group,lower,lo,hi,mid,range_phase,visible_rows;
     uint32_t epoch,job_epoch,job_row,revision,selection,track,navigation;
-    bool selecting,track_ready,was_ready;
+    bool selecting,track_ready,was_ready,window_ready;
     bool suspended,search_ready;
     bool visible;
     char title[256];
@@ -34,6 +34,7 @@ static bool row_ready(uint32_t ordinal){
 static void invalidate(void)
 {
     browser.epoch++;browser.selecting=false;browser.queue_status=LN_BROWSER_QUEUE_IDLE;browser.track_ready=false;browser.single=false;
+    browser.window_ready=false;
     for(uint32_t i=0;i<ROW_CACHE;i++){
         browser.rows[i].valid=false;
     }
@@ -66,6 +67,7 @@ bool ln_music_browser_busy(void){
     if(browser.job!=NONE||browser.selecting||browser.queue_status==LN_BROWSER_QUEUE_LOADING)return true;
     if(browser.suspended||!browser.visible)return false;
     if(browser.range_phase)return true;
+    if(browser.window_ready)return false;
     for(uint32_t i=0;i<LN_MUSIC_BROWSER_ROWS&&browser.first+i<browser.count;++i)
         if(!row_ready(browser.first+i))return true;
     return false;
@@ -86,9 +88,11 @@ void ln_music_browser_window(uint32_t first)
     if(browser.view==CATEGORIES||first==browser.first)return;
     if(!browser.count)first=0;
     else if(first>=browser.count)first=browser.count-1u;
-    /* Moving the viewport performs no label copies or cache invalidation. */
+    /* Moving the viewport changes only which cached rows providers expose.
+     * Selection damage already repaints a new page; resolved rows publish
+     * their own revisions, so a window move needs no redundant refresh. */
     browser.first=first;browser.selecting=false;browser.queue_status=LN_BROWSER_QUEUE_IDLE;
-    browser.track_ready=false;browser.single=false;changed();
+    browser.track_ready=false;browser.single=false;browser.window_ready=false;
 }
 static void groups(void)
 {
@@ -264,4 +268,7 @@ void ln_music_browser_step(void)
         if(browser.job!=NONE){browser.job_epoch=browser.epoch;browser.job_row=ordinal;return;}
         return;
     }
+    /* The bounded lookahead is complete. Avoid rescanning all 48 tags on
+     * every music-service wake until navigation invalidates the window. */
+    browser.window_ready=true;
 }

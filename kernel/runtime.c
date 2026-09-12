@@ -86,8 +86,9 @@ static void backlight_activity(void){
 }
 #if defined(LINNET_AUDIO)
 static uint32_t music_revision,music_phase,music_generation,music_progress_at,music_navigation;
+static uint32_t music_window_epoch=UINT32_MAX,music_window_selection=UINT32_MAX,music_window_navigation=UINT32_MAX;
 static uint32_t search_navigation,search_revision,search_library_status;
-static bool playback_from_search;
+static bool playback_from_search,music_window_pending;
 #endif
 #if defined(LINNET_NATIVE_UI)
 static uint32_t display_settings_revision;
@@ -179,9 +180,13 @@ static void browser_navigation(void){
         shell->selected=0;shell->selections[shell->scene]=0;
         music_navigation=navigation;ln_ui_refresh(shell);dirty=true;
     }
+    if(music_window_epoch==shell->scene_epoch&&music_window_selection==shell->selected&&
+       music_window_navigation==navigation)return;
     uint32_t rows=ln_ui_visible_capacity(shell);if(!rows)rows=1;
     ln_music_browser_visible_rows(rows);
     ln_music_browser_window((shell->selected/rows)*rows);
+    music_window_epoch=shell->scene_epoch;music_window_selection=shell->selected;
+    music_window_navigation=navigation;
 }
 #endif
 #if defined(LINNET_PHOTOS)
@@ -389,7 +394,15 @@ static void apply(uint32_t kind,int32_t value){
     }
     if(kind==LN_INPUT_WHEEL&&!shell->hold&&scene_is("linnet.system.now-playing")){ln_music_volume(value);handled=true;}
 #endif
-    if(!handled&&ln_shell_input(shell,kind,value))dirty=true;
+    if(!handled&&ln_shell_input(shell,kind,value)){
+        dirty=true;
+#if defined(LINNET_AUDIO)
+        /* Bind a newly selected music page before this input's frame renders.
+         * Cached pages then need no follow-up browser revision to replace
+         * provisional labels. */
+        if(kind==LN_INPUT_WHEEL&&scene_is("linnet.system.music"))music_window_pending=true;
+#endif
+    }
 #if defined(LINNET_PHOTOS)
     if(photo_scene())photo_navigation_update();
     else if(ln_photos_active()){photo_save();ln_photos_close();}
@@ -676,7 +689,8 @@ void ln_runtime_step(void){
     search_revision=current_search_revision;search_library_status=current_library_status;
     uint32_t revision=ln_music_library_revision()+ln_music_art_revision()+ln_music_browser_revision()+ln_music_revision()+ln_music_search_revision()+ln_music_queue_view_revision();
     if(revision!=music_revision||music.phase!=music_phase||music.generation!=music_generation){
-        if(scene_is("linnet.system.music")||scene_is("linnet.system.now-playing")||scene_is("linnet.system.music-options")||scene_is("linnet.system.music-sound")||scene_is("linnet.system.music-queue")||scene_is("linnet.system.music-queue-actions")){ln_ui_refresh(shell);dirty=true;}
+        if(scene_is("linnet.system.music")){ln_ui_refresh_content(shell);dirty=true;}
+        else if(scene_is("linnet.system.now-playing")||scene_is("linnet.system.music-options")||scene_is("linnet.system.music-sound")||scene_is("linnet.system.music-queue")||scene_is("linnet.system.music-queue-actions")){ln_ui_refresh(shell);dirty=true;}
         music_revision=revision;music_phase=music.phase;music_generation=music.generation;
     }
     if(scene_is("linnet.system.now-playing")&&music.phase==LN_PLAYER_PLAY&&(int32_t)(now-music_progress_at)>=0){
@@ -770,6 +784,11 @@ void ln_runtime_step(void){
             apply(event.kind,event.value);
         }else if(owner==LN_SERVICE_POWER)(void)wake();
     }
+#if defined(LINNET_AUDIO)
+    /* Accelerated and synthetic wheel bursts can update selection many times
+     * per callback. Bind only the final page that this frame will display. */
+    if(music_window_pending){music_window_pending=false;browser_navigation();}
+#endif
     if(sleeping&&wake_at&&(int32_t)(now-wake_at)>=0)(void)wake();
     /* Identical idle policy on battery, USB and AC; background work is not input.
      * Latch expiry so the wrapping microsecond clock cannot relight the panel. */
