@@ -39,4 +39,12 @@ int ln_mp3_decode(struct ln_mp3 *,int16_t *stereo,uint32_t capacity,uint32_t *fr
  * reached. Each call scans or decodes at most one MPEG frame.
  * Without a known total, reaching EOF before target reports ARGUMENT. */
 bool ln_mp3_seek(struct ln_mp3 *,uint64_t frame);
+#if !defined(LINNET_PROFILE_RELEASE)
+struct ln_mp3_timing {
+    uint32_t frame_calls,frame_us,frame_max_us;
+    uint32_t synth_calls,synth_us,synth_max_us;
+    uint32_t pcm_calls,pcm_frames,pcm_us,pcm_max_us;
+};
+void ln_mp3_timing_snapshot(struct ln_mp3_timing *);
+#endif
 #endif

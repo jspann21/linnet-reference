@@ -166,9 +166,13 @@ uint32_t ln_audio_submit(const int16_t *pcm,uint32_t frames)
 {
     if(!pcm||finishing)return 0;
     uint32_t free=ln_audio_capacity();if(frames>free)frames=free;
-    uint32_t cursor=head;
-    for(uint32_t i=0;i<frames;++i)native(ring)[(cursor+i)&MASK]=
-        (uint16_t)pcm[2u*i]|((uint32_t)(uint16_t)pcm[2u*i+1u]<<16);
+    uint32_t cursor=head,first=frames,offset=cursor&MASK;
+    if(first>LINNET_AUDIO_RING_FRAMES-offset)first=LINNET_AUDIO_RING_FRAMES-offset;
+    volatile uint32_t *out=native(ring)+offset;
+    const int16_t *in=pcm,*end=pcm+first*2u;
+    while(in!=end){uint32_t left=(uint16_t)*in++;*out++=left|((uint32_t)(uint16_t)*in++<<16);}
+    out=native(ring);end=pcm+frames*2u;
+    while(in!=end){uint32_t left=(uint16_t)*in++;*out++=left|((uint32_t)(uint16_t)*in++<<16);}
     __asm__ volatile("":::"memory");
     head=cursor+frames;state.submitted+=frames;return frames;
 }

@@ -1,5 +1,19 @@
 #include "mp3.h"
 #include "third_party/libmad/codeclib.h"
+#include "hal/pp5020/platform.h"
+#if !defined(LINNET_PROFILE_RELEASE)
+static struct ln_mp3_timing timing;
+static void timing_add(uint32_t *value,uint32_t amount)
+{*value=amount>UINT32_MAX-*value?UINT32_MAX:*value+amount;}
+static void timing_span(uint32_t *calls,uint32_t *total,uint32_t *maximum,uint32_t started)
+{uint32_t elapsed=ln_time_us()-started;timing_add(calls,1);timing_add(total,elapsed);if(elapsed>*maximum)*maximum=elapsed;}
+void ln_mp3_timing_snapshot(struct ln_mp3_timing *out){if(out)*out=timing;}
+#define MP3_TIME_BEGIN(name) uint32_t name=ln_time_us()
+#define MP3_TIME_END(name,calls,total,maximum) timing_span(&(calls),&(total),&(maximum),name)
+#else
+#define MP3_TIME_BEGIN(name)
+#define MP3_TIME_END(name,calls,total,maximum)
+#endif
 static int fail(struct ln_mp3 *d,int error){d->error=error;return error;}
 #define RESYNC_BYTES 65536u
 #define RESYNC_ERRORS 65536u
@@ -135,11 +149,20 @@ static int drain_pcm(struct ln_mp3 *d,int16_t *output,uint32_t capacity,uint32_t
             if(d->decoded_frames==d->seek_target)d->seeking=false;
             return 0;
         }
+        MP3_TIME_BEGIN(pcm_started);
         uint32_t count=d->synth.pcm.length-d->pcm_cursor;if(count>capacity)count=capacity;
-        for(uint32_t i=0;i<count;i++){
-            output[i*2]=pcm16(d->synth.pcm.samples[0][d->pcm_cursor+i]);
-            output[i*2+1]=d->channels==1?output[i*2]:pcm16(d->synth.pcm.samples[1][d->pcm_cursor+i]);
+        const mad_fixed_t *left=d->synth.pcm.samples[0]+d->pcm_cursor;
+        int16_t *out=output,*end=output+count*2u;
+        if(d->channels==1){
+            while(out!=end){int16_t sample=pcm16(*left++);*out++=sample;*out++=sample;}
+        }else{
+            const mad_fixed_t *right=d->synth.pcm.samples[1]+d->pcm_cursor;
+            while(out!=end){*out++=pcm16(*left++);*out++=pcm16(*right++);}
         }
+#if !defined(LINNET_PROFILE_RELEASE)
+        timing_add(&timing.pcm_frames,count);
+#endif
+        MP3_TIME_END(pcm_started,timing.pcm_calls,timing.pcm_us,timing.pcm_max_us);
         d->pcm_cursor+=count;d->decoded_frames+=count;*frames=count;return 1;
 }
 int ln_mp3_decode(struct ln_mp3 *d,int16_t *output,uint32_t capacity,uint32_t *frames)
@@ -157,7 +180,10 @@ int ln_mp3_decode(struct ln_mp3 *d,int16_t *output,uint32_t capacity,uint32_t *f
     bool scan=d->seeking&&d->first_frame_checked&&
         d->seek_target-d->decoded_frames>5u*1152u;
     d->stream.options=scan?MAD_OPTION_SCAN:0;
-    if(mad_frame_decode(&d->frame,&d->stream)){
+    MP3_TIME_BEGIN(frame_started);
+    int frame_result=mad_frame_decode(&d->frame,&d->stream);
+    MP3_TIME_END(frame_started,timing.frame_calls,timing.frame_us,timing.frame_max_us);
+    if(frame_result){
         if(d->stream.error==MAD_ERROR_BUFLEN){
             if(d->eof)return finish(d);
             d->need_input=true;return 0;
@@ -190,7 +216,10 @@ int ln_mp3_decode(struct ln_mp3 *d,int16_t *output,uint32_t capacity,uint32_t *f
         d->synth.phase=(d->synth.phase+MAD_NSBSAMPLES(&d->frame.header))%16u;
         d->synth.pcm.length=0;d->pcm_cursor=0;++d->compressed_frames;return 0;
     }
-    mad_synth_frame(&d->synth,&d->frame);d->pcm_cursor=0;d->compressed_frames++;
+    MP3_TIME_BEGIN(synth_started);
+    mad_synth_frame(&d->synth,&d->frame);
+    MP3_TIME_END(synth_started,timing.synth_calls,timing.synth_us,timing.synth_max_us);
+    d->pcm_cursor=0;d->compressed_frames++;
     if(d->trim_remaining){
         uint32_t skip=d->trim_remaining;if(skip>d->synth.pcm.length)skip=d->synth.pcm.length;
         d->pcm_cursor=skip;d->trim_remaining-=skip;

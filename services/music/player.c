@@ -4,10 +4,11 @@
 #include "services/audio/dsp.h"
 #include "hal/pp5020/audio.h"
 #include "hal/pp5020/platform.h"
+#define PLAYER_DECODE_FRAMES 1152u
 enum slot_phase {SLOT_EMPTY,SLOT_OPEN,SLOT_DECODE,SLOT_EOF,SLOT_FAILED};
 struct player_slot {
     struct ln_decoder decoder;struct ln_dsp dsp;struct ln_fat32_file media;
-    char path[LN_FAT32_PATH_MAX+1];int16_t pcm[2048];
+    char path[LN_FAT32_PATH_MAX+1];int16_t pcm[PLAYER_DECODE_FRAMES*2u];
     uint64_t expected,initial,position_base,submitted;
     uint32_t phase,generation,token,buffered,rate,config_rate;bool seek_initial;
 };
@@ -112,7 +113,7 @@ static int slot_step(struct player_slot *s){
 #if !defined(LINNET_PROFILE_RELEASE)
     uint32_t started=ln_time_us();
 #endif
-    int r=ln_decoder_decode(&s->decoder,s->pcm,1024,&frames);
+    int r=ln_decoder_decode(&s->decoder,s->pcm,PLAYER_DECODE_FRAMES,&frames);
 #if !defined(LINNET_PROFILE_RELEASE)
     uint32_t elapsed=ln_time_us()-started;timing_add(&timing.decode_calls,1);timing_add(&timing.decode_us,elapsed);
     if(elapsed>timing.decode_max_us)timing.decode_max_us=elapsed;
@@ -337,7 +338,7 @@ static void player_advance(void){
         if(s->phase==SLOT_EOF||audio.queued>=prefetch_frames(audio.rate))return;
     }
     if(s->buffered){if(!submit_slot(s))return;}
-    else if(s->phase!=SLOT_EOF&&audio.free_frames>=1024u){
+    else if(s->phase!=SLOT_EOF&&audio.free_frames>=PLAYER_DECODE_FRAMES){
         int r=slot_step(s);if(interrupted())return;if(r<0){fail(13);return;}if(s->buffered&&!submit_slot(s))return;
     }
     /* Start with the same bounded runway used for next-track I/O. Starting
@@ -385,7 +386,7 @@ uint32_t ln_player_deadline(uint32_t now){
     /* Decode and drain are separate bounded steps. Sleeping between them
      * caps MP3 production below44.1kHz even before accounting for compute. */
     if(stop_requested||seek_requested||cancel_next||pause_requested||skip_requested||
-       (state.phase==LN_PLAYER_PLAY&&ln_audio_capacity()>=1024u))return now;
+       (state.phase==LN_PLAYER_PLAY&&ln_audio_capacity()>=PLAYER_DECODE_FRAMES))return now;
     /* A settled pause has no decode work. Input IRQs and other service
      * deadlines still wake the executive; preserve the watchdog idle ceiling. */
     if(state.phase==LN_PLAYER_PAUSE)return now+200000u;

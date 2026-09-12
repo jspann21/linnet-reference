@@ -976,6 +976,7 @@ enum mad_error III_huffdecode(struct mad_bitptr *ptr, mad_fixed_t xrarr[576],
     union huffpair const   *table;
     unsigned int           linbits, startbits, rcount;
     mad_fixed_t            reqcache[16];
+    uint32_t               reqvalid;
     mad_fixed_t const      *xr_end, *xr_big_val;
 
     rcount     = 1;
@@ -986,6 +987,7 @@ enum mad_error III_huffdecode(struct mad_bitptr *ptr, mad_fixed_t xrarr[576],
     linbits    = startbits = 0; 
     table      = NULL;
     xr_big_val = xr + 2 * channel->big_values;
+    reqvalid   = 0;
 
     while(xr < xr_big_val)
     {
@@ -1015,8 +1017,7 @@ enum mad_error III_huffdecode(struct mad_bitptr *ptr, mad_fixed_t xrarr[576],
       if(exp != *expptr)
       {
         exp = *expptr;
-        /* clear cache */
-        memset(reqcache, 0, sizeof(reqcache));
+        reqvalid = 0;
       }
 
       ++expptr;
@@ -1077,10 +1078,12 @@ enum mad_error III_huffdecode(struct mad_bitptr *ptr, mad_fixed_t xrarr[576],
             }
             else
             {
-              if(reqcache[value])
+              if(reqvalid & (1u << value))
                 requantized = reqcache[value];
-              else
+              else {
                 requantized = reqcache[value] = III_requantize(value, exp);
+                reqvalid |= 1u << value;
+              }
             }
 
             xr[0] = MASK1BIT(bitcache, cachesz--) ? -requantized : requantized;
@@ -1110,10 +1113,12 @@ enum mad_error III_huffdecode(struct mad_bitptr *ptr, mad_fixed_t xrarr[576],
             }
             else
             {
-              if(reqcache[value])
+              if(reqvalid & (1u << value))
                 requantized = reqcache[value];
-              else
+              else {
                 requantized = reqcache[value] = III_requantize(value, exp);
+                reqvalid |= 1u << value;
+              }
             }
             xr[1] = MASK1BIT(bitcache, cachesz--) ? -requantized : requantized;
           }
@@ -1169,10 +1174,12 @@ enum mad_error III_huffdecode(struct mad_bitptr *ptr, mad_fixed_t xrarr[576],
             xr[0] = 0;
           else
           {
-            if(reqcache[value])
+            if(reqvalid & (1u << value))
               requantized = reqcache[value];
-            else
+            else {
               requantized = reqcache[value] = III_requantize(value, exp);
+              reqvalid |= 1u << value;
+            }
 
             xr[0] = MASK1BIT(bitcache, cachesz--) ? -requantized : requantized;
           }
@@ -1183,10 +1190,12 @@ enum mad_error III_huffdecode(struct mad_bitptr *ptr, mad_fixed_t xrarr[576],
             xr[1] = 0;
           else
           {
-            if(reqcache[value])
+            if(reqvalid & (1u << value))
               requantized = reqcache[value];
-            else
+            else {
               requantized = reqcache[value] = III_requantize(value, exp);
+              reqvalid |= 1u << value;
+            }
 
             xr[1] = MASK1BIT(bitcache, cachesz--) ? -requantized : requantized;
           }

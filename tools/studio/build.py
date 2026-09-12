@@ -174,7 +174,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
             # MP3 decoding dominates 44.1 kHz playback CPU time on ARM7.  Clang's
             # size-oriented default and -O2 both leave useful loop transforms on
             # the table in libmad's requantization and synthesis hot paths.
-            codec_flags=['-Ithird_party/libmad','-O3','-DCPU_ARM_CLASSIC=1']
+            codec_flags=['-Ithird_party/libmad','-O3','-fomit-frame-pointer','-DCPU_ARM_CLASSIC=1']
         run([chain['compiler']['path'], *flags, *codec_flags, "-c", source, "-o", obj])
         objects.append(obj)
     elf = dest / (prefix + ".elf")

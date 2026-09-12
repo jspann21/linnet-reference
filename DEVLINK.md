@@ -534,6 +534,9 @@ separately. Timestamps wrap at 32 bits; use unsigned bounded differences.
 IO start is meaningful only while pending. Frame_complete is PIMG-specific;
 JPEG completion is shown by frame_valid.
 
+PMT4 version 6 returns 124 bytes. It retains the version 5 timing, clock and
+decoder-kind fields and appends cumulative MP3 frame-decode calls/time/maximum,
+synthesis calls/time/maximum, and PCM conversion calls/frames/time/maximum.
 PMT4 version 5 returns 84 bytes. It retains the version 4 timing, clock and
 idle fields and appends `decoder_kind`, using the `LN_DEC_*` values in
 `services/music/decoder.h`. Zero means that no decoder is active. This makes

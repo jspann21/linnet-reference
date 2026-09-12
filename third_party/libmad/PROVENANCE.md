@@ -87,6 +87,16 @@ frames also remains bit-identical; instructions fell from 8,314,775 to
 cycle or whole-track performance claim. Reports:
 `out/b04-mp3-memory-host.json`, `out/b04-mp3-memory-arm.json`.
 
+ARM CPU cleanup dated 2026-09-11: MP3 objects omit the unused frame pointer so
+the register-heavy fixed-point paths may use r11, and the synthesis DCT remains
+out of line to reduce caller register pressure and code size. Layer III's
+requantization cache now tracks validity separately from cached values, avoiding
+repeated computation when a valid result is zero and replacing repeated cache
+clears with a bitmap reset. These transformations retain the existing fixed-point
+operations and PCM values. Development PMT4 version 6 separately accounts for
+frame decode, synthesis, and PCM conversion time; it confirmed synthesis as the
+largest remaining MP3 cost on the PP5020.
+
 Linnet adds `MAD_OPTION_SCAN` for MP3 resume: Layer III retains header/side
 information and CRC checks plus bit-reservoir maintenance while omitting
 spectral decoding for discarded frames. The facade counts trimmed samples
