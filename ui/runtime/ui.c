@@ -217,6 +217,22 @@ static int32_t text_width(const char*s){
     }
     return max(pen,right);
 }
+/* Width and ink extent only grow. Clipped labels can stop as soon as either
+ * crosses the available span instead of scanning the invisible suffix. */
+static bool text_fits(const char*s,int32_t width){
+    int32_t pen=0,right=0;
+    if(s)for(uint32_t i=0;i<1024u&&s[i]&&s[i]!='\n';){
+        uint32_t bytes,ch=text_character(s+i,1024u-i,&bytes);i+=bytes;
+        if(ch<ln_ui_font.first||ch-ln_ui_font.first>=ln_ui_font.count)ch='?';
+        uint32_t step=advance(ch);int32_t ink=(int32_t)step;
+        if(ln_ui_font.glyphs&&ch>=ln_ui_font.first&&ch-ln_ui_font.first<ln_ui_font.count){
+            const struct ln_ui_glyph*g=&ln_ui_font.glyphs[ch-ln_ui_font.first];ink=(int32_t)g->x+g->w;
+        }
+        right=max(right,pen+ink);pen+=(int32_t)step;
+        if(max(pen,right)>width)return false;
+    }
+    return true;
+}
 static void text_scaled(struct painter*p,int32_t x,int32_t y,const char*s,uint16_t c,uint32_t scale){
     if(!s||!ln_ui_font.alpha||!ln_ui_font.advance||!ln_ui_font.width||!ln_ui_font.height)return;
     int32_t start=x;uint32_t limit=0;
@@ -228,7 +244,18 @@ static void text_scaled(struct painter*p,int32_t x,int32_t y,const char*s,uint16
             if(ln_ui_font.glyphs){const struct ln_ui_glyph*g=&ln_ui_font.glyphs[glyph];gx+=(int32_t)(g->x*scale);gy+=(int32_t)(g->y*scale);w=g->w;h=g->h;offset=g->offset;}
             const uint8_t*a=ln_ui_font.alpha+offset;
             struct rect r=intersect((struct rect){gx,gy,(int32_t)(w*scale),(int32_t)(h*scale)},p->clip);
-            for(int32_t yy=r.y;yy<r.y+r.h;++yy)for(int32_t xx=r.x;xx<r.x+r.w;++xx){uint32_t pos=(uint32_t)yy*220u+(uint32_t)xx;uint32_t alpha=a[((uint32_t)(yy-gy)>>(scale-1u))*w+((uint32_t)(xx-gx)>>(scale-1u))];if(ln_ui_themes[active_theme].flags&LN_UI_THEME_MONOCHROME)alpha=alpha>=128u?255u:0u;if(alpha)p->pixels[pos]=alpha==255u?c:mix(c,p->pixels[pos],alpha);}
+            bool monochrome=(ln_ui_themes[active_theme].flags&LN_UI_THEME_MONOCHROME)!=0;
+            if(scale==1u)for(int32_t yy=r.y;yy<r.y+r.h;++yy){
+                uint16_t *dest=p->pixels+(uint32_t)yy*220u+(uint32_t)r.x;
+                const uint8_t *source=a+(uint32_t)(yy-gy)*w+(uint32_t)(r.x-gx);
+                for(int32_t left=r.w;left>0;--left){uint32_t alpha=*source++;if(monochrome)alpha=alpha>=128u?255u:0u;if(alpha)*dest=alpha==255u?c:mix(c,*dest,alpha);++dest;}
+            }else {uint32_t shift=scale-1u;
+                for(int32_t yy=r.y;yy<r.y+r.h;++yy){
+                    uint16_t *dest=p->pixels+(uint32_t)yy*220u+(uint32_t)r.x;
+                    const uint8_t *source=a+((uint32_t)(yy-gy)>>shift)*w;
+                    for(int32_t xx=r.x;xx<r.x+r.w;++xx){uint32_t alpha=source[(uint32_t)(xx-gx)>>shift];if(monochrome)alpha=alpha>=128u?255u:0u;if(alpha)*dest=alpha==255u?c:mix(c,*dest,alpha);++dest;}
+                }
+            }
         }
         x+=(int32_t)(advance(ch)*scale);
     }
@@ -236,7 +263,7 @@ static void text_scaled(struct painter*p,int32_t x,int32_t y,const char*s,uint16
 static void text(struct painter*p,int32_t x,int32_t y,const char*s,uint16_t c){text_scaled(p,x,y,s,c,1u);}
 static void fitted_text(struct painter*p,int32_t x,int32_t y,const char*s,uint16_t fg,int32_t width){
     if(!s||width<=0)return;
-    if(text_width(s)<=width){text(p,x,y,s,fg);return;}
+    if(text_fits(s,width)){text(p,x,y,s,fg);return;}
     char clipped[128];uint32_t length=0;int32_t used=0,ellipsis=text_width("...");
     while(length<124u&&s[length]){
         uint32_t bytes,ch=text_character(s+length,1024u-length,&bytes);
@@ -518,7 +545,7 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
             if(same(n->text,"Clock source"))node_text=ln_ui_clock_text(n,UINT32_MAX,ln_ui_clock_seconds()<86400u?"Device clock":"Clock unavailable");
             footer_text(p,n,node_text,fg);
         }else if(same(n->text,"System clock")){char clock[9];time_label(clock);if(ln_ui_clock_12()&&ln_ui_clock_seconds()<86400u){clock[5]=' ';clock[6]=ln_ui_clock_seconds()<43200u?'A':'P';clock[7]='M';clock[8]=0;}uint32_t scale=n->h>=(int32_t)(2u*ln_ui_font.height)?2u:1u;
-            if(text_width(clock)*(int32_t)scale>n->w)scale=1u;int32_t width=text_width(clock)*(int32_t)scale;text_scaled(p,n->x+max(0,(n->w-width)/2),n->y,clock,fg,scale);}
+            int32_t width=text_width(clock);if(width*(int32_t)scale>n->w)scale=1u;width*=scale;text_scaled(p,n->x+max(0,(n->w-width)/2),n->y,clock,fg,scale);}
         else if(same(n->text,"Clock source")){text_block(p,n,ln_ui_clock_text(n,UINT32_MAX,ln_ui_clock_seconds()<86400u?"Device clock":"Clock unavailable"),fg);}
         else if(same(n->text,"Theme status")){
             char status[32];uint32_t at=0;const char *part=ln_ui_theme_status();
