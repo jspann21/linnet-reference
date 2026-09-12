@@ -4,7 +4,8 @@ PVID stores prepared full-screen RGB565 video and the exact stereo signed 16-bit
 little-endian PCM interval associated with each displayed frame. All integers
 are unsigned little-endian unless stated otherwise. CRCs use CRC-32/ISO-HDLC
 (`zlib.crc32`). The host extension is `.pvid`; a device file can use the FAT name
-`/LINNET/VIDEOS/CURRENT.PVD`. Maximum file size is 2,147,483,647 bytes.
+`/LINNET/VIDEOS/<key>.PVD`, referenced by `/LINNET/VIDEOS/INDEX.VID`.
+Maximum file size is 2,147,483,647 bytes.
 
 ## Header — 512 bytes
 

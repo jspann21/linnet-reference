@@ -7,7 +7,7 @@ import uuid
 from . import media_manager as media, media_library as library
 from .publish import _plain, _volume_guard
 from .publish_photos import _exclusive
-from .publish_video import _read_catalog, _encode_catalog
+from .publish_video import _read_catalog, _encode_catalog, CATALOG_MAX_BYTES
 
 
 def batches(identity):
@@ -81,7 +81,7 @@ def recover(identity, token, *, erase=False):
         restore_entries = []
         if backup.exists():
             _plain(backup, trash)
-            if backup.stat().st_size > 16 + 256 * 416:
+            if backup.stat().st_size > CATALOG_MAX_BYTES:
                 raise ValueError('Unexpected catalog backup size.')
             old = _read_catalog(backup.read_bytes())
             selected_keys = {r.get('key') for r in report.get('selected', []) if r.get('category') == 'published'}

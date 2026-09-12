@@ -69,15 +69,16 @@ static struct {
 #endif
     bool active,pending,stepping,stopping,ready,started,paused,finish,seeking,offered,completed,ipvf,temporal,prefetching,startup_preview;
 } v;
-/* LVI1 rows are paged into two small caches. Drawing only reads retained
+/* Video catalog rows are paged into two small caches. Drawing only reads retained
  * memory and requests missing pages; catalog_step owns asynchronous storage. */
 #define CATALOG_ROWS 4u
-#define CATALOG_ROW_MAX 416u
+#define CATALOG_HEADER_SIZE 12u
+#define CATALOG_ROW_SIZE 416u
 static struct {
-    uint8_t header[16],pages[2][CATALOG_ROWS*CATALOG_ROW_MAX];
+    uint8_t header[CATALOG_HEADER_SIZE],pages[2][CATALOG_ROWS*CATALOG_ROW_SIZE];
     struct ln_fat32_file file;
-    uint32_t phase,count,revision,wanted,slot,first[2],rows[2],read_size,row_size,version;
-    bool pending,legacy,want_page;
+    uint32_t phase,count,revision,wanted,slot,first[2],rows[2],read_size;
+    bool pending,want_page;
     char selected[256];
 } catalog;
 #define CATALOG_GENERATION 0x73000001u
@@ -88,27 +89,22 @@ uint32_t ln_video_library_revision(void){return catalog.revision;}
 static const uint8_t *catalog_row(uint32_t row){
     for(uint32_t slot=0;slot<2u;++slot)
         if(row>=catalog.first[slot]&&row-catalog.first[slot]<catalog.rows[slot])
-            return catalog.pages[slot]+(row-catalog.first[slot])*catalog.row_size;
+            return catalog.pages[slot]+(row-catalog.first[slot])*CATALOG_ROW_SIZE;
     catalog.wanted=(row/CATALOG_ROWS)*CATALOG_ROWS;catalog.want_page=true;return 0;
 }
 const char *ln_video_library_label(uint32_t row){
     if(catalog.phase<4)return "Loading videos...";
     if(!catalog.count)return catalog.phase==5?"Video library unavailable":"Add videos with Linnet Sync";
     if(row>=catalog.count)return "";
-    if(catalog.legacy)return "Prepared video";
     const uint8_t*entry=catalog_row(row);
-    return entry?(const char*)entry+(catalog.version==2u?288u:48u):"Loading videos...";
+    return entry?(const char*)entry+288u:"Loading videos...";
 }
 const char *ln_video_library_path(uint32_t row){
     if((catalog.phase!=4&&catalog.phase!=6)||row>=catalog.count)return 0;
-    if(catalog.legacy)return "/LINNET/VIDEOS/CURRENT.PVD";
     const uint8_t*entry=catalog_row(row);if(!entry)return 0;
-    if(catalog.version==2u){const char*path=(const char*)entry+32u;uint32_t i=0;while(path[i]&&i<255u){catalog.selected[i]=path[i];++i;}catalog.selected[i]=0;return catalog.selected;}
-    const char*prefix="/LINNET/VIDEOS/";uint32_t i=0;
-    while(prefix[i]){catalog.selected[i]=prefix[i];++i;}
-    const char*name=(const char*)entry+32u;
-    for(uint32_t j=0;j<13u;++j)catalog.selected[i+j]=name[j];
-    return catalog.selected;
+    const char*path=(const char*)entry+32u;uint32_t i=0;
+    while(path[i]&&i<255u){catalog.selected[i]=path[i];++i;}
+    catalog.selected[i]=0;return catalog.selected;
 }
 static uint32_t saved_resume[2];
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -144,45 +140,40 @@ static void catalog_step(void){
         result=ln_storage_media_poll_deferred(CATALOG_GENERATION,&catalog.file,&transferred);
         if(!result)return;catalog.pending=false;
         if(result<0){
-            if(catalog.phase==1&&result==LN_FAT32_NOT_FOUND){catalog.phase=3;return;}
             catalog.phase=result==LN_FAT32_NOT_FOUND?4:5;++catalog.revision;return;
         }
-        if(catalog.phase==3){catalog.count=1;catalog.legacy=true;catalog.phase=4;++catalog.revision;return;}
         if(catalog.phase==1){
-            if(catalog.file.size<16||catalog.file.size>16u+256u*CATALOG_ROW_MAX){catalog.phase=5;++catalog.revision;return;}
+            if(catalog.file.size<CATALOG_HEADER_SIZE||catalog.file.size>CATALOG_HEADER_SIZE+256u*CATALOG_ROW_SIZE){catalog.phase=5;++catalog.revision;return;}
             catalog.phase=2;return;
         }
         if(catalog.phase==2){
-            const uint8_t*b=catalog.header;uint32_t count=r32(b+8),version=r32(b+4),row_size=r32(b+12);
-            bool valid=transferred==16u&&r32(b)==0x3149564cu&&(version==1u||version==2u)&&count<=256u&&row_size==(version==1u?176u:416u)&&catalog.file.size==16u+count*row_size;
-            catalog.version=version;catalog.row_size=row_size;
+            const uint8_t*b=catalog.header;uint32_t count=r32(b+4);
+            bool valid=transferred==CATALOG_HEADER_SIZE&&r32(b)==0x5849564cu&&count<=256u&&r32(b+8)==CATALOG_ROW_SIZE&&catalog.file.size==CATALOG_HEADER_SIZE+count*CATALOG_ROW_SIZE;
             catalog.count=valid?count:0;catalog.phase=valid?4:5;
             catalog.want_page=valid&&count;catalog.wanted=0;++catalog.revision;return;
         }
         bool valid=transferred==catalog.read_size;
-        uint32_t rows=catalog.read_size/catalog.row_size;
+        uint32_t rows=catalog.read_size/CATALOG_ROW_SIZE;
         for(uint32_t row=0;valid&&row<rows;++row){
-            const uint8_t*entry=catalog.pages[catalog.slot]+row*catalog.row_size;const uint8_t*name=entry+32;
-            if(catalog.version==1u){for(uint32_t j=0;j<8u;++j){uint8_t nibble=(entry[j/2u]>>(j%2u?0:4))&15u;if(name[j]!=(uint8_t)(nibble<10?'0'+nibble:'A'+nibble-10))valid=false;}
-                if(name[8]!='.'||name[9]!='P'||name[10]!='V'||name[11]!='D'||name[12]||!entry[48]||entry[175])valid=false;}
-            else {bool terminated=false;if(name[0]!='/')valid=false;for(uint32_t j=0;j<256u;++j)if(!name[j]){terminated=true;break;}if(!terminated||!entry[288]||entry[415])valid=false;}
+            const uint8_t*entry=catalog.pages[catalog.slot]+row*CATALOG_ROW_SIZE;const uint8_t*name=entry+32;
+            bool terminated=false;if(name[0]!='/')valid=false;for(uint32_t j=0;j<256u;++j)if(!name[j]){terminated=true;break;}if(!terminated||!entry[288]||entry[415])valid=false;
         }
         if(valid){catalog.rows[catalog.slot]=rows;catalog.phase=4;catalog.slot^=1u;}
         else{catalog.count=0;catalog.phase=5;catalog.rows[0]=catalog.rows[1]=0;}
         ++catalog.revision;return;
     }
     if(catalog.phase==4){
-        if(catalog.legacy||!catalog.want_page)return;
+        if(!catalog.want_page)return;
         uint32_t first=catalog.wanted;catalog.want_page=false;
         if(first>=catalog.count)return;
         for(uint32_t slot=0;slot<2u;++slot)if(catalog.rows[slot]&&catalog.first[slot]==first)return;
         catalog.first[catalog.slot]=first;catalog.rows[catalog.slot]=0;
         uint32_t rows=catalog.count-first;if(rows>CATALOG_ROWS)rows=CATALOG_ROWS;
-        catalog.read_size=rows*catalog.row_size;catalog.phase=6;
+        catalog.read_size=rows*CATALOG_ROW_SIZE;catalog.phase=6;
     }
-    if(catalog.phase==2)result=ln_storage_media_read(&catalog.file,0,catalog.header,16u,CATALOG_GENERATION);
-    else if(catalog.phase==6)result=ln_storage_media_read(&catalog.file,16u+catalog.first[catalog.slot]*catalog.row_size,catalog.pages[catalog.slot],catalog.read_size,CATALOG_GENERATION);
-    else result=ln_storage_media_open(catalog.phase==3?"/LINNET/VIDEOS/CURRENT.PVD":"/LINNET/VIDEOS/INDEX.VID",CATALOG_GENERATION);
+    if(catalog.phase==2)result=ln_storage_media_read(&catalog.file,0,catalog.header,CATALOG_HEADER_SIZE,CATALOG_GENERATION);
+    else if(catalog.phase==6)result=ln_storage_media_read(&catalog.file,CATALOG_HEADER_SIZE+catalog.first[catalog.slot]*CATALOG_ROW_SIZE,catalog.pages[catalog.slot],catalog.read_size,CATALOG_GENERATION);
+    else result=ln_storage_media_open("/LINNET/VIDEOS/INDEX.VID",CATALOG_GENERATION);
     if(result>0)catalog.pending=true;
     else if(result<0){catalog.count=0;catalog.phase=5;++catalog.revision;}
 }
@@ -806,6 +797,7 @@ static bool ipvf_record_header(void){
 }
 #if defined(__arm__)
 extern void ln_video_copy_rgb565(uint16_t*,const uint8_t*,uint32_t);
+extern void ln_video_xor_rgb565(uint16_t*,const uint8_t*,const uint16_t*,uint32_t);
 #endif
 static int decode_ipvf(void){
     bool compressed=v.source_type>=3u;if(compressed&&!v.at){
@@ -827,12 +819,20 @@ static int decode_ipvf(void){
          * both big-endian RGB565 pixels in each ARM word without unaligned
          * loads; may_alias also permits accessing the uint16_t render slots. */
         typedef uint32_t pixel_pair __attribute__((may_alias));
+#if !defined(__arm__)
         const pixel_pair*source=(const pixel_pair*)payload;
         pixel_pair*target=(pixel_pair*)out;
-        if(v.source_type==5u){
+#endif
+        /* Zero-displacement motion has the same prediction as XOR. Fuse
+         * byte swapping and prediction instead of walking the frame twice. */
+        if(v.source_type==5u||(v.source_type==6u&&!v.motion_dx&&!v.motion_dy)){
+#if defined(__arm__)
+            ln_video_xor_rgb565(out,payload,previous,PIXELS);
+#else
             const pixel_pair*prediction=(const pixel_pair*)previous;
             for(uint32_t pair=0;pair<PIXELS/2u;++pair){uint32_t word=source[pair];
                 target[pair]=prediction[pair]^((word&0x00ff00ffu)<<8)^((word&0xff00ff00u)>>8);}
+#endif
         }else{
 #if defined(__arm__)
             ln_video_copy_rgb565(out,payload,PIXELS);

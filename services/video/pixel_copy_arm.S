@@ -85,4 +85,37 @@ ln_video_copy_rgb565:
     pop {r4-r11, lr}
     bx lr
 .size ln_video_copy_rgb565, .-ln_video_copy_rgb565
+
+.section .text.ln_video_xor_rgb565,"ax",%progbits
+.global ln_video_xor_rgb565
+.type ln_video_xor_rgb565,%function
+/* r0=destination, r1=big-endian residual, r2=native prediction,
+ * r3=pixels. Internal full-frame path: all buffers are word aligned,
+ * disjoint, and the pixel count is a multiple of eight (220*176).
+ * Read each input and write each output once, in four-word bursts. */
+.macro xor_pair residual, prediction
+    and lr, \residual, r12
+    and \residual, r12, \residual, lsr #8
+    orr \residual, \residual, lr, lsl #8
+    eor \residual, \residual, \prediction
+.endm
+ln_video_xor_rgb565:
+    cmp r3, #0
+    bxeq lr
+    push {r4-r11, lr}
+    mov r12, #255
+    orr r12, r12, r12, lsl #16
+.Lxor_blocks:
+    ldmia r1!, {r4-r7}
+    ldmia r2!, {r8-r11}
+    xor_pair r4, r8
+    xor_pair r5, r9
+    xor_pair r6, r10
+    xor_pair r7, r11
+    stmia r0!, {r4-r7}
+    subs r3, r3, #8
+    bne .Lxor_blocks
+    pop {r4-r11, lr}
+    bx lr
+.size ln_video_xor_rgb565, .-ln_video_xor_rgb565
 .section .note.GNU-stack,"",%progbits

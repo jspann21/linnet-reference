@@ -18,7 +18,7 @@ import uuid
 from .publish import _plain, _hash, _same_target, _volume_guard, inspect_target
 
 KINDS = ("Music", "Notes", "Photos", "Videos")
-VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".mkv", ".avi", ".webm", ".mpg", ".mpeg", ".wmv", ".pvd", ".pvid", ".ipvf", ".ipv"}
+VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".mkv", ".avi", ".webm", ".mpg", ".mpeg", ".wmv", ".ipvf", ".ipv"}
 CACHE_VERSION = 2
 
 
@@ -367,8 +367,9 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             if not item["count"]:
                 progress(f"{kind}: no supported files; existing prepared library retained.")
                 continue
-            option = photo_dimension if kind == "Photos" else f"{music_verification}-duration-v2-search-names-album-owner" if kind == "Music" else "ipvf-24-v2-realtime" if kind == "Videos" else "default"
-            signature = f"{CACHE_VERSION}:{option}:{item['fingerprint']}"
+            option = photo_dimension if kind == "Photos" else f"{music_verification}-duration-v2-search-names-album-owner" if kind == "Music" else "default"
+            signature = (f"ipvf-24-realtime:{item['fingerprint']}" if kind == "Videos"
+                         else f"{CACHE_VERSION}:{option}:{item['fingerprint']}")
             saved = state.get(kind, {})
             if not isinstance(saved, dict):
                 saved = {}
@@ -446,7 +447,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             key = hashlib.sha256(relative.encode()).hexdigest()[:8].upper()
                             source_info = source.stat()
                             source_stamp = (source_info.st_size, source_info.st_mtime_ns)
-                            fingerprint = hashlib.sha256(f"{CACHE_VERSION}:ipvf-24-v2-realtime:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
+                            fingerprint = hashlib.sha256(f"ipvf-24-realtime:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
                             label = video_title(relative)
                             cached = video_state.get(relative, {})
                             if not isinstance(cached, dict):

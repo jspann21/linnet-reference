@@ -17,6 +17,7 @@ import os
 import struct
 import subprocess
 import tempfile
+import zlib
 from fractions import Fraction
 from pathlib import Path
 from typing import BinaryIO
@@ -170,26 +171,16 @@ IMA_STEP_TABLE = (
     18500, 20350, 22385, 24623, 27086, 29794, 32767,
 )
 
-def _make_rockbox_crc32_table() -> tuple[int, ...]:
-    table = []
-    for index in range(256):
-        crc = index << 24
-        for _ in range(8):
-            crc = ((crc << 1) ^ (0x04C11DB7 if crc & 0x80000000 else 0))
-            crc &= 0xFFFFFFFF
-        table.append(crc)
-    return tuple(table)
-
-
-ROCKBOX_CRC32_TABLE = _make_rockbox_crc32_table()
+_REVERSE_BITS = bytes(int(f"{value:08b}"[::-1], 2) for value in range(256))
 
 
 def rockbox_crc32(data: bytes, crc: int = 0xFFFFFFFF) -> int:
     """Match Rockbox's non-reflected crc_32 with no final XOR."""
-    for byte in data:
-        crc = (ROCKBOX_CRC32_TABLE[((crc >> 24) ^ byte) & 0xFF] ^
-               ((crc << 8) & 0xFFFFFFFF))
-    return crc
+    # Conjugate zlib's reflected CRC with bit reversal, including the seed
+    # and final state, so chunked media identities retain the exact contract.
+    seed = int.from_bytes(crc.to_bytes(4, "little").translate(_REVERSE_BITS), "big")
+    value = zlib.crc32(data.translate(_REVERSE_BITS), seed ^ 0xFFFFFFFF) ^ 0xFFFFFFFF
+    return int.from_bytes(value.to_bytes(4, "little").translate(_REVERSE_BITS), "big")
 
 
 def rockbox_crc32_file_range(
@@ -628,17 +619,17 @@ def bbox_diff(prev: bytes, cur: bytes):
     maxx = maxy = -1
     for y in range(H):
         row = y * W * 2
-        for x in range(W):
-            p = row + x * 2
-            if prev[p:p + 2] != cur[p:p + 2]:
-                if x < minx:
-                    minx = x
-                if x > maxx:
-                    maxx = x
-                if y < miny:
-                    miny = y
-                if y > maxy:
-                    maxy = y
+        # A row-sized integer compares the same RGB565 bits in C. Its first
+        # and last set bits locate the changed pixels without 220 Python
+        # slice comparisons; the rectangle still uses native pixel pairs.
+        difference = (int.from_bytes(prev[row:row + W * 2], "big") ^
+                      int.from_bytes(cur[row:row + W * 2], "big"))
+        if difference:
+            minx = min(minx, (W * 16 - difference.bit_length()) // 16)
+            last_bit = (difference & -difference).bit_length() - 1
+            maxx = max(maxx, W - 1 - last_bit // 16)
+            miny = min(miny, y)
+            maxy = y
     if maxx < 0:
         return None
     # The LCD2 RGB data port consumes two pixels per 32-bit write. Align delta
@@ -690,12 +681,17 @@ def multi_rect_diff(
 
     pair_columns = W // 2
     changed = set()
-    for y in range(H):
-        row = y * W * 2
-        for pair in range(pair_columns):
-            p = row + pair * 4
-            if prev[p:p + 4] != cur[p:p + 4]:
-                changed.add((pair // tile_pairs, y // tile_rows))
+    # Only tile membership is needed here. Compare each tile row as one
+    # byte slice and stop at its first change; tightening below remains exact.
+    for y in range(0, H, tile_rows):
+        for pair in range(0, pair_columns, tile_pairs):
+            start = pair * 4
+            end = min(pair_columns, pair + tile_pairs) * 4
+            for row in range(y, min(H, y + tile_rows)):
+                offset = row * W * 2
+                if prev[offset + start:offset + end] != cur[offset + start:offset + end]:
+                    changed.add((pair // tile_pairs, y // tile_rows))
+                    break
     if not changed:
         return []
 

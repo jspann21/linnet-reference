@@ -11,6 +11,9 @@ from .video import inspect
 from .publish import _plain, _hash, _copy_verified, _same_target, _volume_guard, inspect_target
 from .publish_photos import _exclusive
 MAX_FILE=0x7fffffff
+CATALOG_HEADER_SIZE = 12
+CATALOG_ROW_SIZE = 416
+CATALOG_MAX_BYTES = CATALOG_HEADER_SIZE + 256 * CATALOG_ROW_SIZE
 
 def publish_video(package, *, disk_number, expected_disk_serial,
                    expected_volume_serial, expected_drive=None, library_key=None, title=None):
@@ -52,36 +55,34 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
     def guard():
         _volume_guard(identity)
     linnet, directory = root/'LINNET', root/'LINNET'/'VIDEOS'
-    key = hashlib.sha256(str(library_key).encode('utf-8')).digest() if library_key is not None else None
+    key = hashlib.sha256(str(library_key if library_key is not None else package.stem).encode('utf-8')).digest()
     extension = '.IPV' if candidate.get('format') == 'IPVF' else '.PVD'
-    filename = (key.hex()[:8].upper() if key else 'CURRENT') + extension
+    filename = key.hex()[:8].upper() + extension
     active, backups = directory/filename, directory/'BACKUP'
     catalog = directory/'INDEX.VID'
     catalog_before = None
-    catalog_bytes = None
-    if key:
-        _plain(catalog, root)
-        entries = []
-        if catalog.exists():
-            if catalog.stat().st_size > 16+256*416:
-                raise ValueError('video catalog exceeds supported size')
-            catalog_before = catalog.read_bytes()
-            entries = _read_catalog(catalog_before)
-        path = '/LINNET/VIDEOS/' + filename
-        for entry in entries:
-            if entry[1].casefold() == path.casefold() and entry[0] != key:
-                raise ValueError('video library filename collision; use a different library key')
-        entries = [entry for entry in entries if entry[0] != key]
-        label = str(title or package.stem).strip()
-        label = ''.join(c if ord(c)>=32 else ' ' for c in label)
-        if not label:
-            label = 'Video'
-        label = label.encode('utf-8')[:127].decode('utf-8', errors='ignore')
-        entries.append((key, path, label))
-        if len(entries)>256:
-            raise ValueError('video library supports up to 256 videos')
-        entries.sort(key=lambda entry: (entry[2].casefold(), entry[1]))
-        catalog_bytes = _encode_catalog(entries)
+    _plain(catalog, root)
+    entries = []
+    if catalog.exists():
+        if catalog.stat().st_size > CATALOG_MAX_BYTES:
+            raise ValueError('video catalog exceeds supported size')
+        catalog_before = catalog.read_bytes()
+        entries = _read_catalog(catalog_before)
+    path = '/LINNET/VIDEOS/' + filename
+    for entry in entries:
+        if entry[1].casefold() == path.casefold() and entry[0] != key:
+            raise ValueError('video library filename collision; use a different library key')
+    entries = [entry for entry in entries if entry[0] != key]
+    label = str(title or package.stem).strip()
+    label = ''.join(c if ord(c)>=32 else ' ' for c in label)
+    if not label:
+        label = 'Video'
+    label = label.encode('utf-8')[:127].decode('utf-8', errors='ignore')
+    entries.append((key, path, label))
+    if len(entries)>256:
+        raise ValueError('video library supports up to 256 videos')
+    entries.sort(key=lambda entry: (entry[2].casefold(), entry[1]))
+    catalog_bytes = _encode_catalog(entries)
     guard()
     for path in (linnet, directory, active, backups):
         _plain(path, root)
@@ -151,34 +152,33 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
             os.fsync(writer.fileno())
         if _hash(active, candidate['bytes']) != candidate['sha256']:
             raise OSError('published video package readback mismatch')
-        if catalog_bytes is not None:
-            receipt['phase'] = 'publishing-catalog'
-            record()
-            _plain(catalog, root)
-            if (catalog.read_bytes() if catalog.exists() else None) != catalog_before:
-                raise RuntimeError('video catalog changed during publication')
-            if catalog_before is not None:
-                saved = backups/(hashlib.sha256(catalog_before).hexdigest()[:8].upper()+'.VID')
-                _plain(saved, root)
-                if saved.exists():
-                    if saved.read_bytes() != catalog_before:
-                        raise RuntimeError('video catalog backup collision')
-                else:
-                    with saved.open('xb') as writer:
-                        writer.write(catalog_before); writer.flush(); os.fsync(writer.fileno())
-                if saved.read_bytes()!=catalog_before:
-                    raise OSError('video catalog backup readback mismatch')
-            temp_index = directory/('I'+uuid.uuid4().hex[:7].upper()+'.TMP')
-            guard(); _plain(temp_index, root)
-            with temp_index.open('xb') as writer:
-                writer.write(catalog_bytes); writer.flush(); os.fsync(writer.fileno())
-            if temp_index.read_bytes()!=catalog_bytes:
-                raise OSError('video catalog readback mismatch')
-            guard(); _plain(catalog, root)
-            os.replace(temp_index, catalog)
-            if catalog.read_bytes()!=catalog_bytes:
-                raise OSError('published video catalog readback mismatch')
-            receipt['catalog'] = str(catalog)
+        receipt['phase'] = 'publishing-catalog'
+        record()
+        _plain(catalog, root)
+        if (catalog.read_bytes() if catalog.exists() else None) != catalog_before:
+            raise RuntimeError('video catalog changed during publication')
+        if catalog_before is not None:
+            saved = backups/(hashlib.sha256(catalog_before).hexdigest()[:8].upper()+'.VID')
+            _plain(saved, root)
+            if saved.exists():
+                if saved.read_bytes() != catalog_before:
+                    raise RuntimeError('video catalog backup collision')
+            else:
+                with saved.open('xb') as writer:
+                    writer.write(catalog_before); writer.flush(); os.fsync(writer.fileno())
+            if saved.read_bytes()!=catalog_before:
+                raise OSError('video catalog backup readback mismatch')
+        temp_index = directory/('I'+uuid.uuid4().hex[:7].upper()+'.TMP')
+        guard(); _plain(temp_index, root)
+        with temp_index.open('xb') as writer:
+            writer.write(catalog_bytes); writer.flush(); os.fsync(writer.fileno())
+        if temp_index.read_bytes()!=catalog_bytes:
+            raise OSError('video catalog readback mismatch')
+        guard(); _plain(catalog, root)
+        os.replace(temp_index, catalog)
+        if catalog.read_bytes()!=catalog_bytes:
+            raise OSError('published video catalog readback mismatch')
+        receipt['catalog'] = str(catalog)
         receipt.update(passed=True, phase='published', finished_at=time.time(), package=str(active),
                        frames=candidate['frames'])
         record()
@@ -257,7 +257,7 @@ def index_ipvf(source, *, disk_number, expected_disk_serial,
 
 
 def _encode_catalog(entries):
-    data = struct.pack('<4sIII', b'LVI1', 2, len(entries), 416)
+    data = struct.pack('<4sII', b'LVIX', len(entries), CATALOG_ROW_SIZE)
     for key, path, title in entries:
         raw_path = path.encode('ascii')
         raw_title = title.encode('utf-8')
@@ -269,22 +269,21 @@ def _encode_catalog(entries):
 
 def _read_catalog(data):
     """Validate the bounded firmware catalog before preserving existing entries."""
-    if len(data)<16:
+    if len(data)<CATALOG_HEADER_SIZE:
         raise ValueError('invalid video catalog header')
-    magic,version,count,size=struct.unpack_from('<4sIII', data)
-    if magic!=b'LVI1' or version not in (1,2) or count>256 or size!=(176 if version==1 else 416) or len(data)!=16+count*size:
+    magic,count,size=struct.unpack_from('<4sII', data)
+    if magic!=b'LVIX' or count>256 or size!=CATALOG_ROW_SIZE or len(data)!=CATALOG_HEADER_SIZE+count*size:
         raise ValueError('invalid video catalog layout')
     entries=[]
     names=set()
     keys=set()
-    for at in range(16,len(data),size):
+    for at in range(CATALOG_HEADER_SIZE,len(data),size):
         key=data[at:at+32]
-        raw_name=data[at+32:at+(48 if version==1 else 288)]
-        raw_title=data[at+(48 if version==1 else 288):at+size]
-        name=raw_name.split(b'\0',1)[0].decode('ascii')
+        raw_name=data[at+32:at+288]
+        raw_title=data[at+288:at+size]
+        path=raw_name.split(b'\0',1)[0].decode('ascii')
         title=raw_title.split(b'\0',1)[0].decode('utf-8')
-        path='/LINNET/VIDEOS/'+name if version==1 else name
-        valid_name = name==key.hex()[:8].upper()+'.PVD' if version==1 else path.startswith('/') and all(part and len(part.split('.')[0])<=8 and ('.' not in part or len(part.rsplit('.',1)[1])<=3) for part in path.split('/')[1:])
+        valid_name = path.startswith('/') and all(part and len(part.split('.')[0])<=8 and ('.' not in part or len(part.rsplit('.',1)[1])<=3) for part in path.split('/')[1:])
         if not valid_name or path.casefold() in names or key in keys or not title or b'\0' not in raw_title or b'\0' not in raw_name:
             raise ValueError('invalid video catalog entry')
         names.add(path.casefold()); keys.add(key)

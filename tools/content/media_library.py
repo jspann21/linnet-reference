@@ -11,7 +11,7 @@ import uuid
 from . import media_manager as manager
 from .publish import _plain, _volume_guard
 from .publish_photos import _exclusive
-from .publish_video import _read_catalog, _encode_catalog
+from .publish_video import _read_catalog, _encode_catalog, CATALOG_MAX_BYTES
 
 
 def _device_path(root, value):
@@ -32,7 +32,7 @@ def _catalog(root):
     _plain(path, root)
     if not path.exists():
         return path, None, []
-    if path.stat().st_size > 16 + 256 * 416:
+    if path.stat().st_size > CATALOG_MAX_BYTES:
         raise ValueError('Video catalog exceeds supported size')
     data = path.read_bytes()
     entries = _read_catalog(data)

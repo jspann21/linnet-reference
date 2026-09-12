@@ -24,11 +24,12 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
         if not isinstance(saved, dict):
             saved = {}
         published = [r for r in rows if r['kind'] == kind and r['category'] in ('library', 'published')]
-        option = photo_dimension if kind == 'Photos' else f'{verification}-duration-v2-search-names-album-owner' if kind == 'Music' else 'default'
-        signature = f"{media.CACHE_VERSION}:{option}:{inventory[kind]['fingerprint']}"
         if kind == 'Videos':
             readiness[kind] = f"{sum(r['status'] == 'Ready on iPod' for r in published)} in playback library"
-        elif saved.get('signature') == signature and saved.get('outputs') and media._outputs_match(root, saved['outputs']):
+            continue
+        option = photo_dimension if kind == 'Photos' else f'{verification}-duration-v2-search-names-album-owner' if kind == 'Music' else 'default'
+        signature = f"{media.CACHE_VERSION}:{option}:{inventory[kind]['fingerprint']}"
+        if saved.get('signature') == signature and saved.get('outputs') and media._outputs_match(root, saved['outputs']):
             readiness[kind] = 'Ready'
         elif published:
             readiness[kind] = 'Needs update' if inventory[kind]['count'] else 'Prepared library retained'

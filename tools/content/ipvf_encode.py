@@ -234,40 +234,11 @@ def encode_ipvf(source, destination, *, title=None, cancelled=None,
         return result
 
 
-def _pvid_intermediate(source, directory, ffmpeg):
-    from .video import _inspect
-    info = _inspect(source)
-    width, height = info["width"], info["height"]
-    frames, fps = info["frames"], info["fps"]
-    needed = math.ceil(frames * width * height * 4 + frames / fps * 48000 * 8) + 32 * 1024**2
-    if shutil.disk_usage(directory).free < needed:
-        raise ValueError(f"Preparing PVID needs about {needed / 1024**3:.1f} GB of free cache space")
-    raw, pcm, intermediate = directory / "frames.rgb", directory / "audio.pcm", directory / "source.mkv"
-    with raw.open("wb") as pixels, pcm.open("wb") as audio:
-        def visit(index, record, decoded):
-            video_bytes = struct.unpack_from("<I", record, 12)[0]
-            samples = struct.unpack_from("<I", record, 20)[0]
-            pixels.write(decoded)
-            audio.write(record[32 + video_bytes:32 + video_bytes + samples * 4])
-        _inspect(source, frame_visitor=visit)
-    subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-                    "-f", "rawvideo", "-pixel_format", "rgb565le", "-video_size", f"{width}x{height}",
-                    "-framerate", str(fps), "-i", str(raw), "-f", "s16le", "-ar", "48000",
-                    "-ac", "2", "-i", str(pcm), "-map", "0:v:0", "-map", "1:a:0",
-                    "-c:v", "ffv1", "-pix_fmt", "bgr0", "-c:a", "pcm_s16le", str(intermediate)],
-                   check=True)
-    raw.unlink()
-    pcm.unlink()
-    return intermediate
-
-
 def _worker(request):
     from . import ipvf_encoder as creator
     data = json.loads(Path(request).read_text(encoding="utf-8"))
     source, output = Path(data["source"]), Path(data["output"])
     source_name = source.stem
-    if source.suffix.lower() in (".pvid", ".pvd"):
-        source = _pvid_intermediate(source, output.parent, data["ffmpeg"])
     probe = subprocess.run([data["ffprobe"], "-v", "error", "-show_entries",
                             "format=duration:stream=codec_type,duration", "-of", "json", str(source)],
                            capture_output=True, text=True, check=True)

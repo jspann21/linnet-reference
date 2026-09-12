@@ -6,15 +6,15 @@ from pathlib import Path
 def catalog_contains(root, relative, title, path=None):
     """Check the small bounded device catalog before trusting a video cache hit."""
     from .publish import _plain
-    from .publish_video import _read_catalog
+    from .publish_video import _read_catalog, CATALOG_MAX_BYTES
     catalog = Path(root) / "LINNET" / "VIDEOS" / "INDEX.VID"
     try:
         _plain(catalog, Path(root))
-        if not catalog.is_file() or catalog.stat().st_size > 16 + 256 * 416:
+        if not catalog.is_file() or catalog.stat().st_size > CATALOG_MAX_BYTES:
             return False
         entries = _read_catalog(catalog.read_bytes())
         key = hashlib.sha256(relative.encode("utf-8")).digest()
-        expected = path or "/LINNET/VIDEOS/" + key.hex()[:8].upper() + ".PVD"
+        expected = path or "/LINNET/VIDEOS/" + key.hex()[:8].upper() + ".IPV"
         return (key, expected, title) in entries if path is not False else any(k == key and t == title for k, p, t in entries)
     except (OSError, ValueError):
         return False

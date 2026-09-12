@@ -21,7 +21,6 @@ MAX_RECORD = 90112
 MAX_FRAMES = 1_000_000
 RATE = 48000
 FPS = (24, 25, 30, 60)
-DEVICE_PATH = '/LINNET/VIDEOS/CURRENT.PVD'
 DEFAULT_COST = dict(read_us_per_byte=0.125, raw_us_per_pixel=0.025,
                     copy_us_per_pixel=0.025, rle_us_per_run=0.4,
                     delta_us_per_tile=4.0, fixed_us=400.0, present_us=3000.0,
