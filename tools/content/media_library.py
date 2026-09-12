@@ -41,8 +41,12 @@ def _catalog(root):
     return path, data, entries
 
 
-def _row(category, kind, title, path, status, **extra):
-    info = path.stat() if path.exists() else None
+def _row(category, kind, title, path, status, *, info=None, **extra):
+    if info is None:
+        try:
+            info = path.stat()
+        except FileNotFoundError:
+            pass
     return dict(id=category + ':' + str(extra.get('key', path)), category=category,
                 kind=kind, title=title, path=str(path), source='', status=status,
                 bytes=info.st_size if info else 0, mtime_ns=info.st_mtime_ns if info else None,
@@ -56,10 +60,11 @@ def list_items(identity):
     _, _, entries = _catalog(root)
     result = []
     for kind in manager.KINDS:
-        for path, _ in manager._file_records(root / kind):
-            if path.suffix.lower() in manager.extensions(kind):
+        allowed = manager.extensions(kind)
+        for path, info in manager._file_records(root / kind):
+            if path.suffix.lower() in allowed:
                 result.append(_row('original', kind, path.relative_to(root / kind).as_posix(), path,
-                    'Original on iPod', description='Removing this source requires updating its folder afterward.'))
+                    'Original on iPod', info=info, description='Removing this source requires updating its folder afterward.'))
     for kind, name in (('Music', 'LINNET/LIBRARY.PDB'), ('Photos', 'LINNET/PHOTOS/LIBRARY.PIM'), ('Notes', 'LINNET/NOTES/LIBRARY.NNT')):
         path = root / name
         _plain(path, root)

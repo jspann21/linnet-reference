@@ -491,5 +491,6 @@ def launch():
     if os.name != "nt":
         raise RuntimeError("The desktop media manager currently supports Windows Disk Mode.")
     window = tk.Tk()
-    MediaApp(window)
+    from .media_workspace import MediaWorkspace
+    MediaWorkspace(window)
     window.mainloop()

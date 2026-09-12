@@ -7,6 +7,8 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from tools.content import media_library
+from tools.content import media_trash
+from datetime import datetime
 
 
 class LibraryWindow:
@@ -14,8 +16,9 @@ class LibraryWindow:
         self.identity, self.on_change = identity, on_change
         self.rows, self.events, self.busy = {}, queue.Queue(), False
         self.operation_kind = None
+        self.search_timer = None
         self.window = tk.Toplevel(parent)
-        self.window.title("On my iPod · Library")
+        self.window.title("Linnet · Manage libraries & Trash")
         self.window.geometry("1100x660")
         self.window.minsize(850, 500)
         self.window.transient(parent)
@@ -24,17 +27,17 @@ class LibraryWindow:
         body = ttk.Frame(self.window, padding=16)
         body.pack(fill="both", expand=True)
         ttk.Label(body, text=f"Library on {identity['root']}", font=("Segoe UI", 18, "bold")).pack(anchor="w")
-        ttk.Label(body, text="See source files, prepared libraries and converted videos. Select an item to see its location.").pack(anchor="w", pady=5)
+        ttk.Label(body, text="Manage entire prepared libraries here. Browse individual media in the main workspace.").pack(anchor="w", pady=5)
         filters = ttk.Frame(body)
         filters.pack(fill="x", pady=8)
-        self.kind = tk.StringVar(value="All")
-        picker = ttk.Combobox(filters, textvariable=self.kind, values=("All", "Music", "Notes", "Photos", "Videos"), state="readonly", width=12)
+        self.kind = tk.StringVar(value="Prepared libraries")
+        picker = ttk.Combobox(filters, textvariable=self.kind, values=("Prepared libraries", "Trash"), state="readonly", width=22)
         picker.pack(side="left")
         picker.bind("<<ComboboxSelected>>", lambda _: self.render())
         ttk.Label(filters, text="Search").pack(side="left", padx=(16, 6))
         self.search = tk.StringVar()
         ttk.Entry(filters, textvariable=self.search).pack(side="left", fill="x", expand=True)
-        self.search.trace_add("write", lambda *_: self.render())
+        self.search.trace_add("write", self.schedule_search)
         self.refresh_button = ttk.Button(filters, text="Refresh", command=self.refresh)
         self.refresh_button.pack(side="left", padx=(8, 0))
         grid = ttk.Frame(body)
@@ -58,6 +61,8 @@ class LibraryWindow:
         self.open_button.pack(side="left")
         self.remove_button = ttk.Button(actions, text="Remove selected from iPod…", command=self.remove, state="disabled")
         self.remove_button.pack(side="left", padx=8)
+        self.restore_button = ttk.Button(actions, text="Restore batch", command=self.restore, state="disabled")
+        self.restore_button.pack(side="left", padx=8)
         ttk.Button(actions, text="Close", command=self.close).pack(side="right")
         self.status = tk.StringVar()
         ttk.Label(body, textvariable=self.status, wraplength=1000).pack(anchor="w", pady=(8, 0))
@@ -80,13 +85,27 @@ class LibraryWindow:
 
     def refresh(self):
         self.status.set("Reading the library…")
-        self.work(lambda: media_library.list_items(self.identity), "loaded")
+        def load():
+            rows = [r for r in media_library.list_items(self.identity) if r['category'] == 'library']
+            for batch in media_trash.batches(self.identity):
+                rows.append(dict(batch, category='trash', kind='Trash', status='Recoverable · ' + datetime.fromtimestamp(batch['started']).strftime('%b %d, %H:%M'), removable=True))
+            return rows
+        self.work(load, "loaded")
+
+    def schedule_search(self, *_):
+        if self.search_timer is not None:
+            self.window.after_cancel(self.search_timer)
+        self.search_timer = self.window.after(150, self.render)
 
     def render(self):
+        if self.search_timer is not None:
+            self.window.after_cancel(self.search_timer)
+            self.search_timer = None
         self.tree.delete(*self.tree.get_children())
         query = self.search.get().casefold()
+        kind = self.kind.get()
         for key, row in self.rows.items():
-            if self.kind.get() not in ("All", row["kind"]):
+            if (kind == 'Trash') != (row['category'] == 'trash'):
                 continue
             if query and query not in " ".join(str(row.get(field, "")) for field in ("title", "path", "source", "status")).casefold():
                 continue
@@ -98,6 +117,9 @@ class LibraryWindow:
     def selection(self, _=None):
         rows = [self.rows[key] for key in self.tree.selection()]
         self.remove_button.configure(state="normal" if rows and not self.busy and all(row.get("removable", False) for row in rows) else "disabled")
+        trash = bool(rows) and all(r['category'] == 'trash' for r in rows)
+        self.remove_button.configure(text='Permanently delete batch…' if self.kind.get() == 'Trash' else 'Remove prepared library…', state='normal' if rows and not self.busy and (not trash or len(rows) == 1) else 'disabled')
+        self.restore_button.configure(state='normal' if trash and len(rows) == 1 and not self.busy else 'disabled')
         self.open_button.configure(state="normal" if len(rows) == 1 else "disabled")
         if len(rows) == 1:
             row = rows[0]
@@ -119,6 +141,10 @@ class LibraryWindow:
         rows = [self.rows[key] for key in self.tree.selection()]
         if self.busy or not rows or not all(row.get("removable", False) for row in rows):
             return
+        if rows[0]['category'] == 'trash':
+            if len(rows) == 1 and messagebox.askokcancel('Permanently delete Trash batch', f"Permanently delete {rows[0]['title']}?\n\nThis frees {rows[0]['bytes'] / 1048576:,.1f} MB on the iPod. These files cannot be restored afterward.", parent=self.window):
+                self.work(lambda: media_trash.recover(self.identity, rows[0]['id'], erase=True), 'removed')
+            return
         names = "\n".join(row['title'] for row in rows[:8])
         if len(rows) > 8:
             names += f"\n… and {len(rows) - 8} more"
@@ -129,6 +155,12 @@ class LibraryWindow:
             return
         self.status.set("Removing selected items… Leave this window open.")
         self.work(lambda: media_library.remove_items(self.identity, rows), "removed")
+
+    def restore(self):
+        rows = [self.rows[key] for key in self.tree.selection()]
+        if len(rows) == 1 and rows[0]['category'] == 'trash' and not self.busy:
+            self.status.set('Restoring files and playback entries…')
+            self.work(lambda: media_trash.recover(self.identity, rows[0]['id']), 'removed')
 
     def drain(self):
         try:
@@ -141,7 +173,7 @@ class LibraryWindow:
             if kind == "loaded":
                 self.rows = {str(index): row for index, row in enumerate(result)}
                 self.render()
-                self.status.set(f"{len(result):,} items. Prepared on iPod and computer-only conversions are labeled separately.")
+                self.status.set('Removing a prepared library retains originals. Trash remains on the iPod until permanently deleted.')
             elif kind == "removed":
                 self.on_change(result)
                 messagebox.showinfo("Removal complete", result['summary'] + f"\n\nReport: {result['receipt']}", parent=self.window)
@@ -161,5 +193,8 @@ class LibraryWindow:
         if self.busy:
             self.status.set("Wait for the current library operation to finish before closing.")
             return
+        if self.search_timer is not None:
+            self.window.after_cancel(self.search_timer)
+            self.search_timer = None
         self.window.grab_release()
         self.window.destroy()

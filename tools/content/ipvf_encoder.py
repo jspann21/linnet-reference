@@ -1400,7 +1400,12 @@ def choose_video_record(
                     selected = candidate
                     selected_sectors = candidate_sectors
 
-    if video_mode in ("balanced", "motion", "auto"):
+    minimum_saving = (MOTION_MIN_SECTOR_SAVING
+                      if video_mode == "balanced" else 1)
+    # Even an empty residual needs its six-byte motion header. If that
+    # lower bound cannot win, prediction and compression cannot be selected.
+    if (video_mode in ("balanced", "motion", "auto") and
+            record_sectors(6, audio_size) + minimum_saving <= selected_sectors):
         dx, dy = estimate_translation(prev, cur)
         prediction = translate_frame(prev, dx, dy)
         residual = compress_lz4(xor_frames(prediction, cur), lz4_mode)
@@ -1408,8 +1413,6 @@ def choose_video_record(
             "<bbI", dx, dy, rockbox_crc32(residual)
         ) + residual
         motion_sectors = record_sectors(len(motion_payload), audio_size)
-        minimum_saving = (MOTION_MIN_SECTOR_SAVING
-                          if video_mode == "balanced" else 1)
         if ((video_mode in ("balanced", "motion") or (dx, dy) != (0, 0)) and
                 len(motion_payload) < FRAME_BYTES and
                 motion_sectors + minimum_saving <=
@@ -1417,7 +1420,8 @@ def choose_video_record(
             selected = TYPE_MOTION_LZ4, 0, motion_payload, FRAME_BYTES
             selected_sectors = motion_sectors
 
-    if video_mode == "auto":
+    if (video_mode == "auto" and
+            record_sectors(4, audio_size) < selected_sectors):
         temporal = compress_lz4(xor_frames(prev, cur), lz4_mode)
         temporal_payload = struct.pack(
             "<I", rockbox_crc32(temporal)

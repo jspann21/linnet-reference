@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import shutil
 import sqlite3
+import stat
 import struct
 import subprocess
 import threading
@@ -312,6 +313,7 @@ class _MetadataCache:
     """Disposable acceleration only; unreadable caches never block an import."""
     def __init__(self, path: Path):
         self.connection = None
+        self.pending_writes = 0
         self.status = "enabled"
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -325,6 +327,11 @@ class _MetadataCache:
 
     def _disable(self):
         self.status = "disabled: cache unavailable; metadata read directly"
+        if self.connection is not None:
+            try:
+                self.connection.rollback()
+            except sqlite3.Error:
+                pass
         self.close()
 
     @staticmethod
@@ -356,13 +363,34 @@ class _MetadataCache:
         return (isinstance(tags, dict) and all(isinstance(k, str) and isinstance(v, str)
                                              for k, v in tags.items()))
 
-    def get(self, source, relative, stat):
+    def prefetch(self, source, relatives):
+        """Fetch a bounded window without trusting cached file timestamps."""
+        if self.connection is None or not relatives:
+            return {}
+        if len(relatives) > 128:
+            raise ValueError("metadata cache window exceeds 128 tracks")
+        try:
+            placeholders = ",".join("?" for _ in relatives)
+            return {relative: (size, mtime, value) for relative, size, mtime, value in
+                    self.connection.execute(
+                        "SELECT relative,size,mtime,value FROM metadata WHERE source=? "
+                        f"AND parser=? AND relative IN ({placeholders})",
+                        (str(source), "existing-v2", *relatives))}
+        except sqlite3.Error:
+            self._disable()
+            return {}
+
+    def get(self, source, relative, stat, *, prefetched=None):
         if self.connection is None:
             return None
         try:
-            row = self.connection.execute("SELECT value FROM metadata WHERE source=? "
-                "AND relative=? AND size=? AND mtime=? AND parser=?",
-                (str(source), relative, stat.st_size, stat.st_mtime_ns, "existing-v2")).fetchone()
+            if prefetched is None:
+                row = self.connection.execute("SELECT value FROM metadata WHERE source=? "
+                    "AND relative=? AND size=? AND mtime=? AND parser=?",
+                    (str(source), relative, stat.st_size, stat.st_mtime_ns, "existing-v2")).fetchone()
+            else:
+                saved = prefetched.get(relative)
+                row = (saved[2],) if saved and saved[:2] == (stat.st_size, stat.st_mtime_ns) else None
             if row is None:
                 return None
             value = json.loads(row[0])
@@ -380,16 +408,26 @@ class _MetadataCache:
             self.connection.execute("INSERT OR REPLACE INTO metadata VALUES (?,?,?,?,?,?)",
                 (str(source), relative, stat.st_size, stat.st_mtime_ns, "existing-v2",
                  json.dumps(metadata)))
-            self.connection.commit()
+            self.pending_writes += 1
+            # The cache is disposable; amortize durable writes across tracks.
+            # close() also commits the final partial batch on cancellation.
+            if self.pending_writes >= 128:
+                self.connection.commit()
+                self.pending_writes = 0
         except sqlite3.Error:
             self._disable()
 
     def close(self):
         if self.connection is not None:
             try:
-                self.connection.close()
+                self.connection.commit()
             except sqlite3.Error:
                 pass
+            finally:
+                try:
+                    self.connection.close()
+                except sqlite3.Error:
+                    pass
             self.connection = None
 
 
@@ -407,8 +445,13 @@ class UnsupportedMediaPath(ValueError):
 
 def device_media_path(path: Path, device_root: Path) -> str:
     """Resolve the real FAT alias; never invent short names for existing files."""
-    from .publish import _plain
     root = Path(device_root).resolve(strict=True)
+    return _device_media_path(path, root)
+
+
+def _device_media_path(path: Path, root: Path) -> str:
+    """Resolve one file against the compiler's already-resolved device root."""
+    from .publish import _plain
     path = Path(path).absolute()
     _plain(path, root)
     path.resolve(strict=True).relative_to(root)
@@ -519,28 +562,38 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
     # concurrent device reads and queued results, including on cancellation.
     pending = deque()
     iterator = iter(enumerate(paths))
+    cache_rows = {}
+    cache_relatives = []
     def enqueue():
+        nonlocal cache_rows, cache_relatives
         item = next(iterator, None)
         if item is None:
             return
         number, path = item
-        if path.is_symlink() or source not in path.resolve().parents:
+        if cache and not bypass_cache and number % 128 == 0:
+            cache_relatives = [p.relative_to(source).as_posix()
+                               for p in paths[number:number+128]]
+            cache_rows = cache.prefetch(source, cache_relatives)
+        before = path.lstat()
+        if stat.S_ISLNK(before.st_mode) or source not in path.resolve().parents:
             raise ValueError("audio paths must remain in the source directory")
-        before = path.stat()
-        relative = path.relative_to(source).as_posix()
-        metadata = cache.get(source, relative, before) if cache and not bypass_cache else None
+        relative = (cache_relatives[number % 128] if cache and not bypass_cache
+                    else path.relative_to(source).as_posix())
+        metadata = cache.get(source, relative, before, prefetched=cache_rows) if cache and not bypass_cache else None
         future = pool.submit(_read_metadata, path, ffprobe, existing) if metadata is None else None
         pending.append((number, path, before, metadata, future))
     try:
         for _ in range(4):
             enqueue()
         while pending:
-            number, path, before, metadata, future = pending.popleft()
+            number, path, before, metadata, future = pending[0]
             cached = metadata is not None
             if progress:
                 progress(dict(phase="music", current=number, total=len(paths), file=str(path), cached=cached))
-            yield number, path, before, metadata if cached else future.result(), cached
+            metadata = metadata if cached else future.result()
+            pending.popleft()
             enqueue()
+            yield number, path, before, metadata, cached
     finally:
         for _, _, _, _, future in pending:
             if future is not None:
@@ -564,11 +617,18 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         device_root = Path(device_root).resolve(strict=True)
         source.relative_to(device_root)
     paths = []
-    for path in source.rglob("*"):
-        if path.is_file() and path.suffix.lower() in EXTENSIONS:
-            paths.append(path)
-            if len(paths) > MAX_TRACKS:
-                raise ValueError("library exceeds 100000 tracks")
+    directories = [source]
+    while directories:
+        with os.scandir(directories.pop()) as entries:
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False):
+                    # Match pathlib's traversal: never recurse into symlinks.
+                    if not entry.is_symlink():
+                        directories.append(entry.path)
+                elif Path(entry.name).suffix.lower() in EXTENSIONS and entry.is_file():
+                    paths.append(Path(entry.path))
+                    if len(paths) > MAX_TRACKS:
+                        raise ValueError("library exceeds 100000 tracks")
     paths.sort(key=lambda p: p.relative_to(source).as_posix())
     output.mkdir(parents=True, exist_ok=True)
     (output / "MUSIC").mkdir(exist_ok=True)
@@ -610,9 +670,8 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             if image.width * image.height > 16_000_000:
                 raise ValueError("cover dimensions exceed bound")
             image = ImageOps.fit(image.convert("RGB"), (64, 64))
-            pixels = bytearray()
-            for red, green, blue in image.getdata():
-                pixels.extend(struct.pack("<H", ((red >> 3) << 11) | ((green >> 2) << 5) | (blue >> 3)))
+            from .photos import _rgb565
+            pixels = _rgb565(image)
         digest = hashlib.sha256(pixels).digest()
         if digest in art_indices:
             art_cache[folder] = art_indices[digest]
@@ -638,7 +697,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         compatibility_reason = None
         if device_root is not None:
             try:
-                location = device_media_path(path, device_root)
+                location = _device_media_path(path, device_root)
             except UnsupportedMediaPath as exc:
                 compatibility_reason = str(exc)
         stage_audio = device_root is None or compatibility_reason is not None
@@ -730,12 +789,13 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     keys = sorted(groups, key=lambda key: (key[0], key[1].casefold(), key[2].casefold(), key))
     group_indices = {key: index for index, key in enumerate(keys)}
     group_records, members, group_ids = [], [], set()
+    track_order = [(entry["disc"], entry["track"], entry["title"].casefold(), i)
+                   for i, entry in enumerate(entries)]
     for key in keys:
         kind, name, parent = key
         indices = groups[key]
         if kind != 7:
-            indices = sorted(indices, key=lambda i: (entries[i]["disc"], entries[i]["track"],
-                                                      entries[i]["title"].casefold(), i))
+            indices = sorted(indices, key=track_order.__getitem__)
         parent_index = group_indices[(1, parent, "")] if kind == 2 else NO_INDEX
         identity = _stable("group:" + json.dumps([kind, parent, name], ensure_ascii=False, separators=(",", ":")))
         if identity in group_ids:
@@ -803,7 +863,6 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                   limitations=["Codec metadata does not imply native decoder qualification.",
                                "Compressed sample counts use bounded host decoding and are cached for existing media. Native decoder counts take precedence. Gapless trim metadata and seek tables are not emitted.",
                                "No cached FAT extents; paths are resolved by the device."])
-    (output / "music-manifest.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     return report
 
 

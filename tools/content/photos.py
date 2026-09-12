@@ -155,9 +155,12 @@ def compile_photos(source, output, *, max_dimension=640, fallback_paths=None):
                             raise ValueError('invalid EXIF fallback orientation')
                         fallback_crc = _crc(path.read_bytes())
                     oriented = ImageOps.exif_transpose(original)
-                    rgba = oriented.convert('RGBA')
-                    image = Image.new('RGB', rgba.size, (0, 0, 0))
-                    image.paste(rgba, mask=rgba.getchannel('A'))
+                    if 'A' not in oriented.getbands() and 'transparency' not in oriented.info:
+                        image = oriented.convert('RGB')
+                    else:
+                        rgba = oriented.convert('RGBA')
+                        image = Image.new('RGB', rgba.size, (0, 0, 0))
+                        image.paste(rgba, mask=rgba.getchannel('A'))
             except (OSError, ValueError, SyntaxError) as error:
                 raise ValueError(f'Could not prepare photo {path}: {error}') from error
             width, height = image.size
@@ -335,12 +338,18 @@ def inspect(path, *, verify_payloads=True):
             next_level += count
         if next_level != lc or next_tile != tc:
             raise ValueError('PIMG levels do not cover tile index exactly')
-        for index in range(tc):
-            offset, crc = struct.unpack('<II', read(to+index*TILE, TILE))
-            if offset != do+pc*8192+index*2048:
-                raise ValueError('noncanonical PIMG tile payload offset')
-            if verify_payloads and _crc(read(offset, 2048)) != crc:
-                raise ValueError('PIMG tile CRC mismatch')
+        # Batch the index and contiguous payloads to avoid two seeks per tile.
+        # Keep payload memory bounded to 1 MiB even for maximum-size libraries.
+        for first in range(0, tc, 512):
+            count = min(512, tc-first)
+            records = read(to+first*TILE, count*TILE)
+            base = do+pc*8192+first*2048
+            payload = memoryview(read(base, count*2048)) if verify_payloads else None
+            for ordinal, (offset, crc) in enumerate(struct.iter_unpack('<II', records)):
+                if offset != base+ordinal*2048:
+                    raise ValueError('noncanonical PIMG tile payload offset')
+                if verify_payloads and _crc(payload[ordinal*2048:(ordinal+1)*2048]) != crc:
+                    raise ValueError('PIMG tile CRC mismatch')
     with path.open('rb') as stream:
         digest = hashlib.file_digest(stream, 'sha256').hexdigest()
     return dict(format='PIMG', version=1, passed=True, photos=pc, albums=ac,
