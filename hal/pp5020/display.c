@@ -440,26 +440,13 @@ bool ln_display_present(void) {
 #endif
         }
     }
-    /* The panel reaches the right edge first. A narrow first strip must
-     * finish before that edge is scanned; subsequent strips follow it left.
-     * Keep large repaints contiguous to avoid extra command overhead. */
+    /* Keep every damaged rectangle contiguous. Partitioning wide selection
+     * rows made one logical highlight arrive as several visible strips and
+     * repeated the panel command setup for each piece. Multiple independent
+     * rectangles remain ordered from the panel's right edge toward the left. */
     struct rectangle jobs[LINNET_DISPLAY_QUEUE_CAPACITY];
-    uint32_t job_count=0,eligible=0;
-    for(uint32_t i=0;i<damage_count;++i)
-        if(!column_mode&&damage[i].width>64u&&damage[i].height<=64u)++eligible;
-    for(uint32_t i=0;i<damage_count;++i){
-        struct rectangle r=damage[i];uint32_t parts=1;
-        if(!column_mode&&r.width>64u&&r.height<=64u){
-            parts+=(LINNET_DISPLAY_QUEUE_CAPACITY-damage_count-(job_count-i))/eligible;
-            --eligible;
-        }
-        uint32_t right=r.x+r.width,remaining=r.width;
-        for(uint32_t j=0;j<parts;++j){
-            uint32_t width=parts==1u?r.width:j==0u?8u:((remaining/2u)/(parts-j))*2u;
-            right-=width;remaining-=width;
-            jobs[job_count++]=(struct rectangle){right,r.y,width,r.height};
-        }
-    }
+    uint32_t job_count=damage_count;
+    for(uint32_t i=0;i<damage_count;++i)jobs[i]=damage[i];
     for(uint32_t i=1;i<job_count;++i){
         struct rectangle r=jobs[i];uint32_t j=i;
         while(j&&jobs[j-1u].x<r.x){jobs[j]=jobs[j-1u];--j;}
