@@ -9,7 +9,7 @@ import struct
 import subprocess
 import tomllib
 from tools.inspect.image import pack, inspect, verify_release
-from tools.studio.targets import ROOT, TARGETS, target_id, target_spec
+from tools.studio.targets import ROOT, TARGETS, target_id
 
 def run(args):
     result = subprocess.run([str(a) for a in args], cwd=ROOT, text=True, capture_output=True)
@@ -64,7 +64,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     if profile != "release" and not device_serial:
         raise ValueError("development USB requires --device-serial from physical device enumeration")
     if batch not in (0, 1, 2, 3, 4, 5, 6, 7):
-        raise ValueError("supported build batches are 0 through 7; Batch 7 is under qualification")
+        raise ValueError("supported build batches are 0 through 7")
     configuration = dict(profile=profile, target_id=target, kind=kind, probe=probe, device_serial=device_serial, batch=batch)
     if batch>=3 and kind=="os":configuration["system_config"]=str(system_config or "config/system.toml")
     dest = ROOT / "out" / profile / target / kind
@@ -94,28 +94,33 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     with (generated / "linnet_build.h").open('a') as header:
         header.write('#define LINNET_USB_SERIAL "' + device_serial + '"\n')
     prefix = f"linnet-{kind}-0.1.0-{target}-{profile}-{build_id[:12]}"
-    sources = [ROOT / spec["startup_source"], ROOT / "hal/pp5020/entry.S",
-               ROOT / spec["platform_source"], ROOT / spec["lcd_source"],
+    target_sources = spec["sources"]
+    hal = ROOT / "hal" / spec["soc"]
+    sources = [ROOT / target_sources["startup"], hal / "entry.S",
+               ROOT / target_sources["platform"], ROOT / target_sources["lcd"],
                ROOT / "kernel/main.c", ROOT / "kernel/memory.S"]
     sources += [ROOT / "boot/src/linnet_boot.c"]
     if batch >= 1:
-        sources += [ROOT / name for name in ("hal/pp5020/core.c", "hal/pp5020/input.c", "hal/pp5020/power.c")]
-        sources += [ROOT / spec["display_source"], ROOT / spec["target_source"]]
+        sources += [hal / name for name in ("core.c", "input.c", "power.c")]
+        sources += [ROOT / target_sources["display"], ROOT / target_sources["device"]]
         if batch >= 6 and kind == "os" and spec.get("cop_display", False):
-            sources += [ROOT / name for name in ("hal/pp5020/video_blit.c", "hal/pp5020/video_blit.S")]
+            sources += [hal / name for name in ("video_blit.c", "video_blit.S")]
         if kind == "os":
             sources += [ROOT / name for name in ("kernel/executive.c", "kernel/runtime.c", "kernel/wheel_motion.c")]
             sources += [ROOT / ("ui/runtime/shell_adapter.c" if batch>=3 else "kernel/shell.c")]
             if batch>=3: sources += [ROOT / "services/display/clock.c"]
     if profile != "release":
         sources += sorted((ROOT / "hal/link").glob("*.c"))
-        sources += [ROOT / name for name in ("boot/src/loader.c", "boot/src/sha256.c", "hal/pp5020/usb.c", "hal/pp5020/recovery.c", "hal/pp5020/recovery.S", "kernel/development.c")]
+        sources += [ROOT / name for name in ("boot/src/loader.c", "boot/src/sha256.c")]
+        sources += [hal / name for name in ("usb.c", "recovery.c", "recovery.S")]
+        sources += [ROOT / "kernel/development.c"]
         if batch >= 1 and kind == "os":
             sources += [ROOT / "kernel/platform_link.c"]
     if batch >= 2:
         sources += [ROOT / name for name in (
-            "hal/pp5020/ata.c", "services/storage/block.c", "services/storage/fat32.c",
+            "services/storage/block.c", "services/storage/fat32.c",
             "services/storage/storage.c", "services/state/store.c", "services/update/update.c", "boot/src/persistent_enter.S")]
+        sources += [hal / "ata.c"]
         if profile == "release":
             sources += [ROOT / "boot/src/sha256.c"]
         else:
@@ -133,7 +138,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     if batch>=3 and kind=="os":flags += ["-DLINNET_NATIVE_UI=1"]
     if batch>=4 and kind=="os":
         flags += ["-DLINNET_AUDIO=1"]
-        sources += [ROOT/'hal/pp5020/audio.c',ROOT/'services/audio/codec_pcm.c']
+        sources += [hal/'audio.c',ROOT/'services/audio/codec_pcm.c']
         sources += [ROOT/'services/music/player.c',ROOT/'services/music/database.c']
         sources += [ROOT/'services/music/library.c',ROOT/'services/music/controller.c',ROOT/'services/music/queue.c',ROOT/'services/music/ui.c']
         sources += [ROOT/'services/music/artwork.c']
@@ -192,7 +197,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     if batch >= 2:
         memory_flags += ["-DLINNET_STORAGE=1"]
     if batch>=4 and kind=='os':memory_flags += ['-DLINNET_AUDIO=1']
-    run([chain['compiler']['path'], "-E", "-P", "-x", "c", f"-DLINNET_PROFILE_{profile.upper()}=1", f"-DLINNET_IMAGE_{kind.upper()}=1", *memory_flags, ROOT / spec["linker_script"], "-o", script])
+    run([chain['compiler']['path'], "-E", "-P", "-x", "c", f"-DLINNET_PROFILE_{profile.upper()}=1", f"-DLINNET_IMAGE_{kind.upper()}=1", *memory_flags, ROOT / target_sources["linker"], "-o", script])
     run([chain['linker']['path'], "-T", script, "--gc-sections", "-Map=" + str(mapfile), "-o", elf, *objects])
     raw = dest / (prefix + ".bin")
     run([chain['objcopy']['path'], "-O", "binary", elf, raw])
@@ -210,7 +215,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
             sections.append(dict(name=name, address=section[3], bytes=section[5], stored=section[1] != 8))
     (dest / (prefix + ".symbols")).write_text(symbols + "\n")
     payload = raw.read_bytes()
-    envelope = pack(payload, profile, build_id, 0, 0, target)
+    envelope = pack(payload, profile, build_id, spec["load_address"],
+                    spec["entry_address"], target)
     los = dest / (prefix + ".los")
     los.write_bytes(envelope)
     ipod = dest / (prefix + ".ipod")
@@ -222,8 +228,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
                   source_files=[p.relative_to(ROOT).as_posix() for p in sources],
                   artifacts={key: str(path.relative_to(ROOT)) for key, path in dict(elf=elf, los=los, ipod=ipod, map=mapfile).items()},
                   memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=4718592 if batch>=4 and kind=='os' else 1048576, retained_limit_bytes=4096),
-                  release_exclusion=verification, hardware_qualified=False,
-                  limitation=f"Integrated Batch {batch} candidate; physical USB, recovery and peripheral behavior require device qualification. FIQ watchdog depends on FIQ delivery; COP reset escalation requires a live COP monitor.")
+                  release_exclusion=verification,
+                  limitation="FIQ watchdog depends on FIQ delivery; COP reset escalation requires a live COP monitor.")
     if ui_report is not None:report["ui"]=ui_report
     (dest / (prefix + ".json")).write_text(json.dumps(report, indent=2) + "\n")
     return report

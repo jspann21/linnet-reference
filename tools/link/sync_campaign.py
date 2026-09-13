@@ -81,7 +81,7 @@ def cycle(root, image_path, port, disk_number, plan_path, plan_sha256, progress=
     receipt = dict(run_id=run_id, batch=2, campaign='host-USB-mount-write-sync-eject-reconnect',
                    image=image_id, plan=str(plan_path), plan_sha256=plan_sha256,
                    disk_number=disk_number, started_at=datetime.now(timezone.utc).isoformat(),
-                   passed=False, hardware_qualified=False, device_write_attempted=False,
+                   passed=False, device_write_attempted=False,
                    state_change_attempted=False, phase='identity', steps=[],
                    file=dict(path='LINNET/'+FILE_NAME, bytes=FILE_BYTES, sha256=expected_hash,
                              algorithm='SHA256("Linnet HOSTSYNC\\0" || LE32(index)), index0..32767'))

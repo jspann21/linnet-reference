@@ -4,7 +4,7 @@
  * these values and signed Q2.30 coefficients is below 5*2^58, safely in int64.
  * No negative signed left shift or overflowing signed arithmetic is used. */
 /* Keep this hot block loop in cached SDRAM. Dedicated IRAM placement did not
- * improve measured PP5020 throughput; the same arithmetic is qualified here. */
+ * improve measured PP5020 throughput; the same arithmetic is used here. */
 #define LN_DSP_ICODE
 #define GUARD 134217728
 #define Q30 1073741824LL

@@ -1,12 +1,14 @@
-# P98 static component target
+# Static UI compiler
 
-`photo4g-p98.json` records the 220x176 RGB565 pixel target, also known by its
-`ipod-photo` alias. The compiler emits the native interface in `ui/runtime/ui.h`.
+Each `targets/<target-id>/target.toml` describes the target's logical and physical
+display. P98 uses a 220 × 176 color display; Q21 uses a 160 × 128 monochrome
+display. See the [model porting guide](../targets/README.md) before adding a
+target. The compiler emits the native interface in `ui/runtime/ui.h`.
 
-Generated node kinds are1..17 in declaration order. Geometry is absolute and
+Generated node kinds are 1..17 in declaration order. Geometry is absolute and
 within the parent. Literal colors are numeric RGB565; standard semantic color references are
 0x10000 through 0x1000c in the role order declared in `ui/runtime/ui.h`. An absent resource is UINT32_MAX;
-targets are scene indices or0xfffffffe for Sync. Text and static label pointers
+targets are scene indices or 0xfffffffe for Sync. Text and static label pointers
 refer to immutable generated storage. Each scene includes the single initial
 focus node index, or UINT32_MAX.
 
@@ -24,8 +26,8 @@ by the Python API are informational and excluded from identity. No timestamps or
 host font discovery enter a normal build. Rebuilding the same input on Windows
 and Linux produces identical bytes.
 
-`FONT` JSON has bounded cell dimensions (at most 24 x 24), first32,
-count95, a glyph-major alpha array and the original font SHA256. Optional
+`FONT` JSON has bounded cell dimensions (at most 24 x 24), first 32,
+count 95, a glyph-major alpha array and the original font SHA256. Optional
 95-entry `advances` provides proportional spacing. Host inputs retain full
 alpha cells. Native generation crops each glyph to its nonzero bounding box,
 concatenates coverage bytes and emits offset/x/y/w/h descriptors. This is

@@ -187,4 +187,4 @@ This first contract implements PCM metadata, optional ffprobe compressed metadat
 track/group/title-search indexes, explicit playlists, track ReplayGain tags, and
 folder artwork. Exact compressed gapless trims, seek tables, cached FAT extents,
 album ReplayGain/peak, device scanning, and the mutable playback journal are
-separate work. No transcoding or codec qualification is implied by this compiler.
+separate work. This compiler does not transcode audio.

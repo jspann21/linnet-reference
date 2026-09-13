@@ -202,7 +202,7 @@ def cycle(root, image_path, scenario_path, port=None, crash_image=None, progress
     receipt = dict(run_id=run_id, image=image_id, scenario=suite,
                    scenario_sha256=hashlib.sha256(scenario_bytes).hexdigest(),
                    crash_image=crash_id, hang_image=hang_id,
-                   passed=False, hardware_qualified=False, started_at=datetime.now(timezone.utc).isoformat(),
+                   passed=False, started_at=datetime.now(timezone.utc).isoformat(),
                    phase='discovery', steps=[], device_write_attempted=False)
     completed = len(evidence['healthy']) if evidence else 0
     receipt['healthy_cycles_required'] = count
@@ -404,7 +404,6 @@ def cycle(root, image_path, scenario_path, port=None, crash_image=None, progress
         record('reboot-disk', disk=disk)
         receipt['phase'] = 'complete'
         receipt['passed'] = True
-        receipt['hardware_qualified'] = receipt['healthy_cycles_completed'] >= count >= 20
     except (ValueError, OSError, RuntimeError) as exc:
         receipt['failure'] = str(exc)
         record('failed', detail=str(exc))

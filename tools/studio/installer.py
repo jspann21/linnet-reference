@@ -262,7 +262,7 @@ def assess(identity):
         action, strategy = "install", "native-directory"
         summary = "Ready for a native, reversible installation with an original firmware backup."
     return dict(checked_at=_now(), identity=identity,
-                target=dict(id=target_id, name=spec["name"], qualification=spec.get("qualification"),
+                target=dict(id=target_id, name=spec["name"],
                             installer_enabled=install_spec["enabled"], boot_layout=install_spec["boot_layout"],
                             wrapper_model=expected_model),
                 retail_os=True, linnet=linnet, rockbox=rockbox, other_installations=others,

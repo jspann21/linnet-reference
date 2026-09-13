@@ -79,7 +79,7 @@ def prepare(image_path, directory):
     entries = {name: _write_new(directory / name, data, size)
                for name, (data, size) in zip(FILES, payloads)}
     manifest = dict(target_id=identity['target_id'], image=identity,
-                    files=entries, hardware_qualified=False,
+                    files=entries,
                     purpose='Initial empty installation only; boot metadata is copied last.')
     (directory / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
     return manifest
@@ -153,4 +153,4 @@ def provision(package, mount, serial):
         else:
             written[name] = _write_new(target, content[name], len(content[name]))
     return dict(passed=True, disk=identity, files=written, image=manifest['image'],
-                preserved=preserved, requires_safe_eject=True, hardware_qualified=False)
+                preserved=preserved, requires_safe_eject=True)

@@ -175,7 +175,7 @@ def plan(firmware_path, mbr_path, device_path, boot_path, output):
                     expected_storage_serial=storage["disk_serial"],
                     expected_linnet_usb_serial=device["linnet_usb_serial"],
                     firmware_backup=str(firmware_path), firmware_backup_sha256=sha(firmware),
-                    device_write_attempted=False, hardware_qualified=False,
+                    device_write_attempted=False,
                     tool_sha256=sha(Path(__file__).read_bytes()),
                     artifacts={name: dict(bytes=len(data), sha256=sha(data)) for name, data in artifacts.items()},
                     **details)
@@ -295,7 +295,7 @@ def execute(mode, plan_path, expected_sha, disk_number):
     receipt_path = plan_path.parent / (f"{mode}-receipt-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8] + ".json")
     receipt = dict(operation=mode, plan=str(plan_path), reviewed_plan_sha256=expected_sha,
                    started_at=datetime.now(timezone.utc).isoformat(), phase="validate-plan", passed=False,
-                   device_write_attempted=False, writes=[], hardware_qualified=False)
+                   device_write_attempted=False, writes=[])
     try:
         save_json(receipt_path, receipt)
         if mode not in ("apply", "restore"):

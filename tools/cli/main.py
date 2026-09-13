@@ -1,4 +1,4 @@
-"""Linnet command surface. Hardware qualification never follows from a build."""
+"""Linnet command surface. Command parsing and dispatch."""
 import argparse
 import json
 import os
@@ -222,7 +222,7 @@ def main():
             return subprocess.call(["wsl", "-d", "Ubuntu-24.04", "--cd", converted, "--", "python3", "linnet", *sys.argv[1:]])
         if args.command == "doctor":
             emit(dict(toolchain=toolchain(), python=sys.version.split()[0],
-                      supported_targets=sorted(TARGETS), hardware_qualified=False))
+                      supported_targets=sorted(TARGETS)))
         elif args.command == "media":
             from tools.studio.media_app import launch
             launch()

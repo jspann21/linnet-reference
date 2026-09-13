@@ -1,20 +1,93 @@
-"""Target manifest discovery shared by build, image and device tooling."""
-from pathlib import Path
-from pathlib import PurePosixPath
+"""Target manifest discovery shared by build, image, and device tooling."""
+from pathlib import Path, PurePosixPath
 import re
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCE_KEYS = ("startup_source", "linker_script", "platform_source", "lcd_source",
-               "display_source", "target_source")
-REQUIRED_KEYS = ("image_target", "target_define", "lcd_width", "lcd_height",
-                 "ui_width", "ui_height", "capabilities", "media_video_fps",
-                 "media_video_color", "retail", "installer", *SOURCE_KEYS)
+TARGETS_ROOT = ROOT / "targets"
+REQUIRED_KEYS = {
+    "id", "name", "aliases", "image_target", "target_define", "board_id",
+    "soc_id", "model_alias", "soc", "cpu", "architecture", "endianness",
+    "sdram_bytes", "lcd_width", "lcd_height", "lcd_format", "ui_width",
+    "ui_height", "capabilities", "media_video_fps", "media_video_color",
+    "cop_display", "entry_address", "load_address", "mailbox_address",
+    "mailbox_bytes", "retail", "installer",
+}
+OPTIONAL_KEYS = {"ui"}
+CAPABILITIES = {"photos", "video", "files", "demo", "themes"}
 
 
 def _valid_ascii_list(value):
     return (isinstance(value, list) and
             all(isinstance(item, str) and item and item.isascii() for item in value))
+
+
+def _target_sources(path, spec):
+    """Resolve the conventional source layout for one target."""
+    soc_root = ROOT / "hal" / spec["soc"]
+    target_root = path.parent
+    display = target_root / "display.c"
+    if not display.is_file():
+        display = soc_root / "display.c"
+    sources = {
+        "startup": soc_root / "startup.S",
+        "linker": soc_root / "memory.ld",
+        "platform": soc_root / "platform.c",
+        "lcd": target_root / "lcd.c",
+        "display": display,
+        "device": target_root / "device.c",
+    }
+    if any(not source.is_file() for source in sources.values()):
+        missing = ", ".join(
+            source.relative_to(ROOT).as_posix()
+            for source in sources.values()
+            if not source.is_file()
+        )
+        raise RuntimeError(f"missing target source for {path}: {missing}")
+    return {
+        name: source.relative_to(ROOT).as_posix()
+        for name, source in sources.items()
+    }
+
+
+def _validate_ui(path, spec):
+    ui = spec.get("ui")
+    if ui is None:
+        return
+    if not isinstance(ui, dict) or set(ui) != {"allowed_themes", "default_theme"}:
+        raise RuntimeError(f"invalid UI profile: {path}")
+    allowed = ui["allowed_themes"]
+    default = ui["default_theme"]
+    if (not isinstance(allowed, list) or not allowed or
+            len(allowed) != len(set(allowed)) or
+            any(not isinstance(theme, str) or not theme for theme in allowed) or
+            not isinstance(default, str) or default not in allowed):
+        raise RuntimeError(f"invalid UI profile: {path}")
+
+
+def _validate_identity(path, spec):
+    aliases = spec["aliases"]
+    dimensions = (spec["lcd_width"], spec["lcd_height"],
+                  spec["ui_width"], spec["ui_height"])
+    addresses = (spec["entry_address"], spec["load_address"],
+                 spec["mailbox_address"])
+    if (not isinstance(spec["name"], str) or not spec["name"] or
+            not isinstance(aliases, list) or
+            any(not isinstance(alias, str) or
+                not re.fullmatch(r"[a-z0-9][a-z0-9-]*", alias)
+                for alias in aliases) or
+            len(aliases) != len(set(aliases)) or
+            not isinstance(spec["soc"], str) or
+            not re.fullmatch(r"[a-z][a-z0-9-]*", spec["soc"]) or
+            not isinstance(spec["target_define"], str) or
+            not re.fullmatch(r"LINNET_TARGET_[A-Z0-9_]+", spec["target_define"]) or
+            any(type(value) is not int or value < 1 for value in dimensions) or
+            any(type(value) is not int or not 0 <= value <= 0xffffffff
+                for value in addresses) or
+            type(spec["mailbox_bytes"]) is not int or spec["mailbox_bytes"] < 1 or
+            spec["mailbox_address"] + spec["mailbox_bytes"] > 0x100000000 or
+            type(spec["cop_display"]) is not bool):
+        raise RuntimeError(f"invalid target identity: {path}")
 
 
 def _validate_profiles(path, spec):
@@ -56,28 +129,32 @@ def load_targets():
     targets = {}
     aliases = {}
     image_targets = {}
-    for path in sorted((ROOT / "targets").glob("*/target.toml")):
+    for path in sorted(TARGETS_ROOT.glob("*/target.toml")):
         spec = tomllib.loads(path.read_text(encoding="utf-8"))
         target = spec.get("id")
-        if (not isinstance(target, str) or path.parent.name != target or
-                any(key not in spec for key in REQUIRED_KEYS)):
+        if (not isinstance(target, str) or
+                not re.fullmatch(r"[a-z][a-z0-9-]*", target) or
+                path.parent.name != target or
+                not REQUIRED_KEYS <= set(spec) or
+                set(spec) - REQUIRED_KEYS - OPTIONAL_KEYS):
             raise RuntimeError(f"invalid target manifest: {path}")
+        _validate_identity(path, spec)
         number = spec["image_target"]
-        if (not isinstance(number, int) or not 0 <= number <= 0xffffffff or
-                number in image_targets or
+        if (type(number) is not int or not 0 <= number <= 0xffffffff or
+                number in image_targets or target in spec["aliases"] or
                 not isinstance(spec["capabilities"], dict) or
-                any(key not in ("photos", "video", "files", "demo", "themes") or type(value) is not bool
+                any(key not in CAPABILITIES or type(value) is not bool
                     for key, value in spec["capabilities"].items()) or
                 type(spec["media_video_fps"]) is not int or
                 not 4 <= spec["media_video_fps"] <= 30 or
-                spec["media_video_color"] not in ("rgb565", "gray4") or
-                any(not isinstance(spec[key], str) or not (ROOT / spec[key]).is_file()
-                    for key in SOURCE_KEYS)):
-            raise RuntimeError(f"invalid target identity or source path: {path}")
+                spec["media_video_color"] not in ("rgb565", "gray4")):
+            raise RuntimeError(f"invalid target identity: {path}")
         _validate_profiles(path, spec)
+        _validate_ui(path, spec)
         names = [target, *spec.get("aliases", [])]
-        if any(not isinstance(name, str) or name in aliases for name in names):
+        if any(name in aliases for name in names):
             raise RuntimeError(f"duplicate or invalid target alias: {path}")
+        spec["sources"] = _target_sources(path, spec)
         targets[target] = spec
         image_targets[number] = target
         aliases.update((name, target) for name in names)

@@ -138,4 +138,4 @@ def provision(mount, serial, expected_size, expected_confirmed_build):
     return dict(passed=True, disk=identity, confirmed_build=expected_confirmed_build,
                 created=written, preserved=[name for name in names if name not in written],
                 files={name: dict(bytes=512, sha256=hashlib.sha256(existing[name][0]).hexdigest()) for name in names},
-                requires_safe_eject=True, hardware_qualified=False)
+                requires_safe_eject=True)

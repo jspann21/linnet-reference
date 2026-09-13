@@ -874,7 +874,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                   compatibility_copy_bytes=sum(entry["bytes"] for entry in compatibility_copies),
                   cache=dict(hits=cache_hits, misses=len(records) - cache_hits,
                              status=cache.status if cache else "unused"),
-                  limitations=["Codec metadata does not imply native decoder qualification.",
+                  limitations=[
                                "Compressed sample counts use bounded host decoding and are cached for existing media. Native decoder counts take precedence. Gapless trim metadata and seek tables are not emitted.",
                                "No cached FAT extents; paths are resolved by the device."])
     return report

@@ -88,7 +88,7 @@ def prepare(plan, plan_sha256, outpath):
         firmware_final_sha256=final_hash.hex(),candidate_disk_offset=manifest['candidate_disk_offset'],
         directory_disk_offset=manifest['directory_disk_offset'],
         before_state_policy='candidate extent zero and original directory active',
-        device_write_attempted=False,hardware_qualified=False)
+        device_write_attempted=False)
     with outpath.open('xb') as stream:stream.write(package)
     if outpath.read_bytes()!=package:raise OSError('local package readback mismatch')
     with report_path.open('x',encoding='utf-8') as stream:stream.write(json.dumps(report,indent=2)+'\n')

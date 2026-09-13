@@ -116,8 +116,8 @@ zero and fixed length 32 at offset 4. Every embedded record has its own CRC.
 
 - Music databases use `PODB` with a reserved-zero header field.
 - Photo packages use `PIMG` with a reserved-zero header field; see
-  [PIMG_FORMAT.md](PIMG_FORMAT.md).
-- Video packages use `PVID`; see [PVID_FORMAT.md](PVID_FORMAT.md).
+  [photo-format.md](photo-format.md).
+- Video packages use `PVID`; see [video-format.md](video-format.md).
 - DSP profiles use `LDSP` with a reserved-zero header field.
 - Notes use `NOTE` with a reserved-zero header field.
 - Baked fonts identify themselves as `FONT`.
@@ -125,4 +125,4 @@ zero and fixed length 32 at offset 4. Every embedded record has its own CRC.
   `APPL` and `CNTN`.
 
 Development wire framing and diagnostic record layouts are documented in
-[DEVLINK.md](DEVLINK.md).
+[device-link.md](device-link.md).

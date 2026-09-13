@@ -584,7 +584,7 @@ class Session:
 
     def work_read(self, offset: int, length: int) -> bytes:
         if not 1<=length<=1008 or not 0<=offset<=0x100000-length:
-            raise ValueError('WORK read outside qualification bounds')
+            raise ValueError('WORK read outside scratch-work bounds')
         reply=self.request(Command.WORK_READ,struct.pack('<II',offset,length),timeout=45)
         if len(reply)!=length+4 or reply[:4]!=struct.pack('<I',offset):
             raise ProtocolError('WORK read offset/length mismatch')
@@ -592,7 +592,7 @@ class Session:
 
     def work_write(self, generation: int, offset: int, data: bytes):
         if not 1<=len(data)<=1008 or not 0<=offset<=0x100000-len(data):
-            raise ValueError('WORK write outside qualification bounds')
+            raise ValueError('WORK write outside scratch-work bounds')
         self._storage_ack(Command.WORK_WRITE,generation,struct.pack('<I',offset)+data,offset+len(data))
 
     def reboot_persistent(self, generation: int):

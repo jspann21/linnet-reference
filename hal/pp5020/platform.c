@@ -1,6 +1,6 @@
 #include "hal/pp5020/platform.h"
 
-/* Register addresses and bus protocol provenance: ARCHITECTURE.md. */
+/* Register addresses and bus protocol provenance: docs/architecture.md. */
 #define LINNET_REG(a) (*(volatile uint32_t *)(uintptr_t)(a))
 static uint32_t ln_last_progress;
 
@@ -36,7 +36,7 @@ uint32_t ln_platform_boot_clock_ready(void)
         LINNET_REG(0x7000002cu)|=0x03000000u;
         LINNET_REG(0x6000600cu)|=modules;
         if((LINNET_REG(0x6000600cu)&modules)!=modules)return 16u;
-        /* Match the native-qualified transport's separate reset pulses. Do
+        /* Match the native transport's separate reset pulses. Do
          * not infer held reset from a write or require USB0 assertion to latch. */
         LINNET_REG(0x60006004u)|=8u;
         LINNET_REG(0x60006004u)&=~8u;
@@ -149,6 +149,6 @@ bool ln_platform_audio_idle(void)
         ln_codec_write(0x1au, 0) && ln_codec_write(0x19u, 0);
 }
 
-/* Cooperative progress detector only; independent reset watchdog unqualified. */
+/* Cooperative progress detector. */
 void ln_watchdog_feed(void) { ln_last_progress = ln_time_us(); }
 bool ln_watchdog_expired(void) { return ln_time_us() - ln_last_progress >= 500000u; }

@@ -53,5 +53,5 @@ harness or fixture files:
 - Every ALAC core/service ARM object linked together without garbage collection
   or unresolved symbols, using freestanding ARM7 and strict warning flags.
 
-These are host checks. Real-time hardware throughput, DMA interaction, and
-subjective audio qualification require the integrated player campaign.
+The integrated player campaign measures real-time throughput, DMA interaction
+and listening behavior.

@@ -3,7 +3,7 @@
 #include "hal/pp5020/boot_wordmark.h"
 #endif
 
-/* Register addresses and bus protocol provenance: ARCHITECTURE.md. */
+/* Register addresses and bus protocol provenance: docs/architecture.md. */
 #define LINNET_REG(a) (*(volatile uint32_t *)(uintptr_t)(a))
 #define LINNET_LCD_PORT LINNET_REG(0x70008a0cu)
 #define LINNET_LCD_CONTROL LINNET_REG(0x70008a20u)

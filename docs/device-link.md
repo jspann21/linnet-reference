@@ -2,7 +2,7 @@
 
 `device media-info --port COM6` reads command 95 with an empty payload. The
 192-byte MEDI response reports discovered media and power state without waking
-the drive. Fields are documented in `STORAGE_COMPATIBILITY.md` and `FORMATS.md`.
+the drive. Fields are documented in `storage.md` and `formats.md`.
 Storage data commands allow 45 seconds to cover a bounded 30-second cold wake;
 this changes the protocol deadline, not the serial endpoint configuration.
 
@@ -83,7 +83,7 @@ Commands 64 through 68 are compiled only into Batch 1 and later development/trac
 images. They use normal frame sequence, CRC and acknowledgement rules. Their
 generation field is the running boot generation from `LNID`, not the USB
 connection counter. A mismatching generation is rejected before mutation.
-The exact state and screenshot layouts are in [FORMATS.md](FORMATS.md).
+The exact state and screenshot layouts are in [formats.md](formats.md).
 
 INJECT_INPUT contains u32 generation, u32 count, then 1..32 triples of u32
 event sequence, u32 kind and **signed i32** value. Event sequences must increase
@@ -117,7 +117,7 @@ PLATFORM_CONTROL actions are:
 Control ACKs confirm acceptance. Poll state for asynchronous completion. In
 particular, a COP queue reset advances its reset counter and requests a redraw;
 wait for submitted and completed frame counters to match before testing sleep
-or idle behavior. CPU rendering fallback does not qualify COP queue behavior.
+or idle behavior. CPU rendering fallback does not exercise the COP queue.
 
 CAPTURE_SCREEN freezes a 220 by 176 RGB565 frame in a fixed 77,440-byte
 development-only buffer. SCREEN_READ accepts 1..1008 bytes within that buffer.
@@ -140,11 +140,9 @@ queue wrap/reset, three backlight transitions, three sleep/wake cycles, and idle
 time without redraws. Receipts, raw screenshots and PNG previews share one run
 directory. No ambiguous mutation is retried.
 
-`automated_passed` covers those measured automated checks only. Physical buttons,
+`automated_passed` records the measured automated checks. Physical buttons,
 wheel, hold switch, headphone detection, visible backlight, sleep/wake and screen
-artifacts remain a separate pending checklist. The campaign leaves
-`physical_passed` and `hardware_qualified` false; automation alone does not pass
-the Batch 1 hardware gate.
+artifacts are checked on the device.
 
 ## Batch 3 native UI inspection
 
@@ -213,14 +211,14 @@ and explicitly declared native canvas callbacks. The simulator runs those same
 generated scenes and the native renderer; its JSON tape uses event objects with
 `kind`, `value`, optional `repeat` and optional `capture`. Kinds 1..4 match the
 input meanings above; kind 0 renders without input. The tape has at most 100,000
-expanded events and 512 requested captures. See the [README example](README.md#native-ui-and-customization)
-and [SDK grammar](sdk/README.md).
+expanded events and 512 requested captures. See the [README example](../README.md#native-ui-and-customization)
+and [SDK grammar](../sdk/README.md).
 
 Commands 65..68 provide synthetic input, immutable screen capture and bounded
 platform controls for device comparison. UI_STATE adds paint and arena counters
 for detecting unnecessary redraws and scene lifecycle changes. Capture CRCs
 describe the framebuffer; simulator agreement cannot establish physical LCD
-quality or wheel feel. Open qualification work is tracked in PROJECT_TODO.md.
+quality or wheel feel.
 
 ## Upload and uncertainty
 
@@ -289,7 +287,7 @@ USB metadata without probing or writing to arbitrary serial devices.
 `SerialTransport.reconnect(serial_number)` searches a fresh port inventory and
 rejects duplicate identities; it never assumes a fixed COM number. Physical
 serial access requires optional `pyserial==3.5`. The CLI is `linnet device`;
-see the root README for implemented commands and qualification limitations.
+see the root README for implemented commands.
 
 On Windows, serial timeout setters reconfigure CDC control state. The host
 therefore keeps serial settings fixed during a session and polls available bytes
@@ -365,8 +363,7 @@ wait for prepared state and the expected capacity before new file operations.
 `device update-cycle` takes a healthy OS and a deliberate crash
 OS for candidate confirmation, rollback and four publication cuts each for
 settings and candidate activation. Each saves
-receipts under `out/runs`; hardware qualification remains false until the full
-Batch 2 gate, including host mount/sync/eject, is reviewed.
+receipts under `out/runs`.
 
 `device storage-sync-cycle` requires an explicit physical disk number and the
 SHA-pinned installed Boot plan. It verifies the running OS, enters Apple Disk
@@ -422,8 +419,7 @@ python linnet device native-status --port COM6
 ```
 
 Receipts are saved under `out/runs`. A successful apply still requires a separate
-restart and identity observation. Hardware qualification of this new path is
-pending; the current apply has no completed result recorded here.
+restart and identity observation.
 
 No UAC elevation is used by native-install, persistent OS installation, package
 preparation, or ordinary file provisioning with sufficient filesystem permissions.

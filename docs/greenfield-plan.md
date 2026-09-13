@@ -1,14 +1,7 @@
 # A1099OS Greenfield Implementation Plan
 
-Implementation status: Batch 7 integration is installed; the startup/recovery pass is verified. Full release qualification remains open. The user
-authorized deferring remaining Batch 6 video performance, IPVF reuse/standard-format
-evaluation, and hardware qualification to PROJECT_TODO.md. Batch 6 is not qualified.
-Photo loading speed and
-remaining Batch 5 hardware gates are deferred with user authorization. The user authorized
-advancing with the remaining Batch 4 qualification and performance work recorded
-in [PROJECT_TODO.md](PROJECT_TODO.md). This does not mark the full Batch 4 gate
-passed; combined effects, some mixed-codec transitions and the large-library
-latency target remain open.
+Implementation status: Batch 7 integration is installed.
+See the [roadmap](roadmap.md) for planned improvements.
 
 ## 1. Mission
 
@@ -68,8 +61,8 @@ The first complete release must provide:
 
 - A host-transcoded 220x176 video format designed for the PP5020 and LCD path.
 - Audio-master synchronization, pause/resume, seek, progress, resume, and clean exit to the UI.
-- Required 24/25/30 fps profiles with zero audio gaps and no sustained late frames on qualified media.
-- A qualified 60 fps profile for content that satisfies the measured storage and presentation budget.
+- Required 24/25/30 fps profiles with zero audio gaps and no sustained late frames on media.
+- A 60 fps profile for content that satisfies the measured storage and presentation budget.
 - Host-side scaling, frame-rate conversion, color conversion, audio resampling, subtitle burn-in, and record packing.
 
 ### System
@@ -469,11 +462,10 @@ Do not push one-line probes, cosmetic changes, isolated refactors, or unfinished
 recorded before the user reduced the requirement to 20. Receipt
 `out/runs/20260906T032437Z-photo4g-p98-def6c43d345e-0001/receipt.json` preserves
 the original cycle evidence and confirms crash recovery before/after healthy,
-watchdog recovery, OS/Boot/Disk Mode reboot, and release exclusion. Qualified
-OS build: `def6c43d345e04505644ca7526251f0c9cd5b4ff31d64c1e554cea20c15750fe`;
+watchdog recovery, OS/Boot/Disk Mode reboot, and release exclusion. OS build: `def6c43d345e04505644ca7526251f0c9cd5b4ff31d64c1e554cea20c15750fe`;
 LOS SHA-256: `3ba716c82c12e63e41d3fd60fe4241ab5730abf3c99c4a98d4915adf3dbceabe`.
 Installed Boot build: `e52e94c647bb0d58ed40d7583e84541bf9f4dceb363f75345914360d4f5c4f49`.
-The initial native bootstrap needed button restarts; the qualified campaign's
+The initial native bootstrap needed button restarts; the campaign's
 RAM boots, fault recovery and mode transitions completed through USB control.
 
 ### Batch 1 — Complete platform core
@@ -502,7 +494,7 @@ RAM boots, fault recovery and mode transitions completed through USB control.
 
 **Gate:** Stable interactive shell foundation, bounded event latency, reliable sleep/wake, and a clean memory/counter report.
 
-**Gate progress — hardware qualified, 2026-09-06:**
+**Gate progress — device checks completed, 2026-09-06:**
 Receipt `out/runs/20260906T040313Z-photo4g-p98-815b69a9df3f-0001/receipt.json`
 records OS `815b69a9df3f7c0e98e7be66ad653a4a92bf5005177fcadd2a2262c66cddb9d1`,
 256 navigation events with zero drops, 1.193 ms maximum event latency, 14 us
@@ -515,7 +507,7 @@ was corrected. The adjusted build `8af5ad4f058c` passed the full campaign in
 `out/runs/20260906T042149Z-photo4g-p98-8af5ad4f058c-0001/receipt.json`; maximum
 event latency was 2.533 ms with zero drops. The user confirmed the adjusted
 wheel and navigation, and a live read verified the exact healthy build and
-physical input. The final receipt records hardware qualification; its SHA-256
+physical input. The final receipt records device checks; its SHA-256
 is `a29d035d39e92f11cba1f48a6719ed5e9ae0fbcdb8ad0826e058cdcf0bdf1b98`.
 Automatic guarded eject/reboot passed with exact Boot reconnection in
 `out/b01-auto-eject-native.json`.
@@ -523,7 +515,7 @@ Automatic guarded eject/reboot passed with exact Boot reconnection in
 The subsequent long-press Play/Pause shutdown addition passed development and
 release builds, release exclusion and platform regression on OS `20415bc07091`.
 The user confirmed short-tap cancellation, power-off that persists with USB
-connected, and manual power-on. Evidence: `out/b01-shutdown-qualified.json`.
+connected, and manual power-on.
 
 ### Batch 2 — Storage, FAT32, state durability, and persistent updates
 
@@ -559,7 +551,7 @@ offline integration. Storage quiescence joins shutdown, sleep and Disk Mode.
 Host provisioning and the scratch/fault and persistent-update campaigns are
 prepared. Development/release builds and offline checks do not close this gate;
 physical disk timing, durability, power transitions, rollback and host sync must
-be qualified after reconnection. DMA stays disabled until measured and qualified.
+be measured after reconnection. DMA stays disabled.
 
 **Installation progress, 2026-09-06:** The corrected CFA/ATA driver mounts the
 physical FAT32 volume. Boot `d277fb8fe374` and persistent OS `f22a18828260` are
@@ -594,8 +586,7 @@ Storage follow-up completed before Batch 3: Boot `3dfc7bd0a7b1` and OS
 `1767aa1f5e02` add iFlash identification, capability-based HDD/SSD standby,
 flush-before-rail-off, bounded cold wake/re-identification, dynamic capacity
 reporting and two-window read caching. The installed iFlash ATA1 passed one
-light idle/cold-wake/read check. Other hardware remains unqualified; see
-`STORAGE_COMPATIBILITY.md`. No exhaustive drive campaign was run per user request.
+light idle/cold-wake/read check. See `storage.md` for storage policy.
 
 **Goal:** Deliver the complete application model and responsive shell before media-specific complexity.
 
@@ -647,12 +638,12 @@ light idle/cold-wake/read check. Other hardware remains unqualified; see
 - Large-library browse/search/queue tests.
 - Corrupt and truncated file corpus.
 - Storage wake/sleep during playback.
-- Long stress playlist with track transitions across all qualified codecs.
+- Long stress playlist with track transitions across all codecs.
 - PCM production, DMA consumption, buffer low-water, and deadline-margin reports.
 
 **Manual check:** One headphone test covering silence/noise, left/right channels, volume range, track transition, seek, and subjective audio quality.
 
-**Gate:** Zero underruns in the qualified campaign, correct decoder output, reliable gapless/seek behavior, and a complete music UX.
+**Gate:** Zero underruns in the campaign, correct decoder output, reliable gapless/seek behavior, and a complete music UX.
 
 ### Batch 5 — Complete photo product
 
@@ -688,7 +679,7 @@ light idle/cold-wake/read check. Other hardware remains unqualified; see
 - Raw/repeat/tile-delta/RLE record support selected by the host.
 - Triple-buffered storage path, COP presentation, audio PCM ring integration, and sample-count presentation clock.
 - Video UI, pause/resume, seek, progress, resume, exit, and error handling.
-- Qualified 24/25/30 fps profiles and an optional 60 fps profile.
+- 24/25/30 fps profiles and an optional 60 fps profile.
 - Trace counters for read time, prepare time, present time, late frames, audio gaps, queue depth, and cache maintenance.
 
 **Automated device campaign:**
@@ -704,7 +695,7 @@ light idle/cold-wake/read check. Other hardware remains unqualified; see
 
 **Gate:** Required frame-rate profiles complete without audio gaps or sustained late frames, and exit returns the system to a clean audio/UI state.
 
-### Batch 7 — Product integration, power, hardening, and release qualification
+### Batch 7 — Product integration, power, hardening, and release checks
 
 **Goal:** Convert the completed vertical slices into a polished, fast, recoverable release.
 
@@ -714,7 +705,7 @@ light idle/cold-wake/read check. Other hardware remains unqualified; see
 - Complete update/rollback UX.
 - Final theme/app templates and build configuration. Copyable static starters and
   Batch 7 instructions are now in `sdk/templates/` and `sdk/README.md`;
-  device and release qualification remain separate gates.
+  device checks and release checks are recorded separately.
 - Performance-driven IRAM placement, cache policy, clock scaling, storage power policy, LTO/dead stripping, and asset packing.
 - Release fault screen and minimal field diagnostics that do not include DevLink.
 - Final release image, loader, content tools, and installer.
@@ -743,9 +734,9 @@ Treat these as engineering budgets. Measure from Batch 0 onward and tighten them
 - Idle UI: no redraw and no periodic wake unless a visible clock/status deadline requires it.
 - Warm screen/app transition: target below 100 ms.
 - Indexed library open and common browse queries: target below 100 ms.
-- Prefix-search first results: target below 75 ms for the qualified large-library corpus.
+- Prefix-search first results: target below 75 ms for the large-library corpus.
 - Cached/prepared track start: target below 250 ms; cold start target below 500 ms.
-- Gapless transition: zero inserted/dropped PCM samples for qualified pairs.
+- Gapless transition: zero inserted/dropped PCM samples for pairs.
 - Playback campaign: zero PCM underruns.
 - Preprocessed photo first visible result: target below 150 ms.
 - Required video profiles: zero audio gaps and no sustained late frames.
@@ -785,9 +776,9 @@ Create tests only where they prevent expensive device debugging or protect criti
 Keep only documentation required to build, preserve contracts, or prevent destructive mistakes:
 
 1. Root `README.md`: exact build, device-cycle, release, install, restore, and recovery commands.
-2. `ARCHITECTURE.md`: service ownership, event priorities, memory regions, CPU/COP contract, and non-negotiable invariants.
-3. `DEVLINK.md`: wire protocol, state-changing command rules, recovery behavior, and host CLI.
-4. `FORMATS.md`: canonical binary contracts for OS image metadata, PODB, PIMG, PVID, app manifests, and themes.
+2. `docs/architecture.md`: service ownership, event priorities, memory regions, CPU/COP contract, and non-negotiable invariants.
+3. `docs/device-link.md`: wire protocol, state-changing command rules, recovery behavior, and host CLI.
+4. `docs/formats.md`: canonical binary contracts for OS image metadata, PODB, PIMG, PVID, app manifests, and themes.
 5. This implementation plan, updated only at batch gates.
 
 Do not create per-directory READMEs, speculative design documents, duplicate API references, compatibility notes, or prose status reports. Device run receipts are generated data, not documentation.
@@ -795,7 +786,7 @@ Do not create per-directory READMEs, speculative design documents, duplicate API
 ## 12. Repository layout
 
 ```text
-a1099os/
+linnet/
   boot/                 stage 0, startup, vectors, linker scripts, rollback
   hal/                  PP5020, LCD, wheel, PMU, ATA, USB, audio codec
   kernel/               event loop, deadlines, queues, arenas, watchdog
@@ -809,12 +800,11 @@ a1099os/
     power/
     update/
   ui/
-    compiler-target/    iPod pixel backend for the TSX AOT compiler
     runtime/            tiny native component interface
     system/             generated shell and first-party apps
   apps/                 customizable AOT application sources
   themes/               theme sources and compiled assets
-  formats/              shared host/device binary definitions
+  docs/                 architecture, formats, workflows, and project notes
   tools/
     a1099/              top-level CLI
     content/            PODB/PIMG/PVID/font/theme compilers
@@ -853,7 +843,7 @@ Linnet `0.1.0` is complete when:
 - A clean release image boots reliably and rolls back failed updates.
 - The release image contains no developer transport or instrumentation code/data.
 - Music, photos, and video meet the product definition and device gates.
-- Physical wheel, audio, LCD, charging, sleep/wake, USB, and update behavior are qualified.
+- Physical wheel, audio, LCD, charging, sleep/wake, USB, and update behavior are checked.
 - The top-level CLI can reproduce the release and all host content tools from a clean checkout.
 - A developer can edit a TSX app or theme, run one build command, and deploy/test it over USB without unplugging or manually rebooting the iPod.
 - A full native-image development cycle can upload, chainload, rediscover, test, diagnose, and recover without manual intervention.

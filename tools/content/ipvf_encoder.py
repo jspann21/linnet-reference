@@ -1470,7 +1470,7 @@ def encode(
     if video_mode in ("balanced", "motion", "auto", "realtime") and keyint == 0:
         raise ValueError("temporal mode requires a bounded keyframe interval")
     if video_mode in ("balanced", "motion", "auto", "realtime") and fps > 30:
-        raise ValueError("temporal mode is hardware-qualified only at <=30 fps")
+        raise ValueError("temporal mode is supported only at <=30 fps")
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(output.name + ".tmp")
     audio_temp: Path | None = None

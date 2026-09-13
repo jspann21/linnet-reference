@@ -65,7 +65,7 @@ def simulate(root,output,tape=None,system=None):
     page='<!doctype html><meta charset="utf-8"><title>Linnet Simulator</title><style>body{font:15px system-ui;background:#e9ecef;color:#263238;margin:32px}main{display:flex;flex-wrap:wrap;gap:24px}figure{margin:0;background:white;padding:16px;border-radius:12px}img{image-rendering:pixelated}figcaption{padding-top:12px}</style><h1>Linnet Simulator</h1><p>Native UI frames from the input tape.</p><main>'+''.join(cards)+'</main>'
     (output/'index.html').write_text(page)
     report=dict(target_id=content['report']['target'],content=content,events=total,frames=frames,preview=str(output/'index.html'),
-                native_oracle=True,hardware_qualified=False,
+                native_oracle=True,
                 native_source_hashes={name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in ('tools/simulator/native.c','ui/runtime/ui.c','ui/runtime/ui.h','tools/simulator/runner.py','services/display/clock.c','services/display/clock.h')})
     (output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
     return report

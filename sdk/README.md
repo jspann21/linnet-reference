@@ -51,8 +51,7 @@ python linnet simulator --output out/simulator-starter
 
 The simulator writes `index.html`, rendered frames, and `report.json` for the
 native desktop UI. Navigate to Starter with an input tape using `--tape` if
-needed; the default preview starts at Home. Desktop rendering does not qualify
-device behavior. Rebuild the OS to include changes; compiling `.lapp` or `.ltheme`
+needed; the default preview starts at Home. Use physical-device checks for runtime behavior. Rebuild the OS to include changes; compiling `.lapp` or `.ltheme`
 files alone does not install them. Device installation uses the project's
 existing verified update/recovery workflow.
 
@@ -116,7 +115,7 @@ animated canvas. These declarations drive bounded native damage updates.
 App `manifest.toml` contains `[app]` with `id`, `title`,
 `entry`, and `capabilities=["ui"]`. IDs are dot-separated lowercase identifiers.
 An optional `[assets]` table maps names to P3 PPM files relative to the manifest;
-use the qualified `app.id.assetname` in TSX. Paths must remain inside the source
+use the full identifier `app.id.assetname` in TSX. Paths must remain inside the source
 repository. Selected files are hashed in the content manifest.
 
 Themes live in `themes/*/theme.toml`. `linnet.theme.default` and
@@ -207,4 +206,4 @@ these instead of literal colors. Firmware preferences are memory-only hooks
 into the display settings owner; rendering never performs storage I/O.
 
 Optional `THEME0.BIN` and `THEME1.BIN` persist the selected stable theme ID.
-See [binary contracts](../FORMATS.md) for their independent transactional record.
+See [binary contracts](../docs/formats.md) for their independent transactional record.

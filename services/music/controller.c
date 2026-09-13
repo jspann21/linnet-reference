@@ -575,7 +575,7 @@ static void music_step(void){
      * writes ahead of the replacement track's metadata and audio reads. */
     /* Finish an admitted page publication at the normal background reserve.
      * Waiting for a full ring again after its write can strand FLUSH and block
-     * the following track's history lookup. Only FLUSH/CHECK/ACK qualify;
+     * the following track's history lookup. Only FLUSH/CHECK/ACK apply;
      * returning to IDLE restores the stricter threshold for each new write. */
     bool history_headroom=(stopped||(audio.playing&&
         (audio.queued>=LINNET_AUDIO_RING_FRAMES-2048u||

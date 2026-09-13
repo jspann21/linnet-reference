@@ -11,7 +11,7 @@ the mounted iPod from its RetailOS hardware records, USB identity and storage
 geometry, then chooses the build target automatically. Current targets are the
 iPod Photo A1099 (`photo4g-p98`) and iPod 4G MP102 (`ipod4g-q21`).
 Additional compatible models are discovered from their target manifests; see
-[adding a target](targets/README.md).
+[adding a target](../targets/README.md).
 
 The review shows Apple software, Rockbox, iPodLinux/Podzilla markers and any
 existing or incomplete Linnet installation before enabling installation. With
@@ -66,7 +66,7 @@ separate.
 | Music | Indexes original audio, metadata and 64×64 artwork; up to 100,000 tracks. Native codec support determines playback. |
 | Notes | UTF-8 or BOM-marked UTF-16 `.txt`, `.text`, `.md`; 256 notes, 63-character titles, 256 wrapped lines per note. |
 | Photos | JPEG, PNG, BMP, TIFF and WebP via Pillow; orientation, thumbnails and tiled RGB565 copies. Up to 65,535 images; zoom dimension 640 pixels by default or 2048 for higher detail. |
-| Videos | Indexes native IPVF in place; converts FFmpeg-readable video to IPVF or copies validated PVID/PVD. Up to 256 named videos; each under 2 GiB. Device playback qualification remains open. |
+| Videos | Indexes native IPVF in place; converts FFmpeg-readable video to IPVF or copies validated PVID/PVD. Up to 256 named videos; each under 2 GiB. |
 
 Notes display plain text, including Markdown source. Unsupported characters
 are adapted to the font and reported; oversized notes must be split. Select

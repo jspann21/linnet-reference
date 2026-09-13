@@ -68,8 +68,7 @@ def cycle(root, image_path, scenario_path, port, progress=None):
         raise ValueError('storage campaign requires all five ordered fault modes')
     run_id,directory=_run_directory(root,identity)
     receipt=dict(run_id=run_id,batch=2,image=identity,scenario=suite,
-        scenario_sha256=hashlib.sha256(scenario_raw).hexdigest(),steps=[],automated_passed=False,
-        hardware_qualified=False,settings_restored=False,device_write_attempted=False,
+        scenario_sha256=hashlib.sha256(scenario_raw).hexdigest(),steps=[],automated_passed=False,settings_restored=False,device_write_attempted=False,
         settings_restoration=dict(attempted=False,last_attempt_verified=False,last_attempt_uncertain=False),
         started_at=datetime.now(timezone.utc).isoformat(),
         pending_gates=['reset-at-every-metadata-publication-stage','persistent-candidate-success-and-crash-rollback',
@@ -198,7 +197,7 @@ def update_cycle(root, image_path, crash_path, port, progress=None):
     if good_sha==bad_sha:raise ValueError('crash image must differ from healthy image')
     run_id,directory=_run_directory(root,identity);path=directory/'receipt.json'
     receipt=dict(run_id=run_id,batch=2,campaign='persistent-update',image=identity,crash_image=crash_identity,
-        good_sha256=good_sha,crash_sha256=bad_sha,steps=[],automated_passed=False,hardware_qualified=False,
+        good_sha256=good_sha,crash_sha256=bad_sha,steps=[],automated_passed=False,
         device_write_attempted=False,settings_restored=False,started_at=datetime.now(timezone.utc).isoformat(),
         settings_restoration=dict(attempted=False,last_attempt_verified=False,last_attempt_uncertain=False))
     _save(path,receipt);session=None;original=None;observed=None;serial=None

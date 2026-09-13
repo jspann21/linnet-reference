@@ -56,7 +56,7 @@ def cycle(root, image_path, scenario_path, port, progress=None):
     receipt = dict(run_id=run_id,batch=1,image=image_id,scenario=suite,
                    scenario_sha256=hashlib.sha256(raw_scenario).hexdigest(),
                    started_at=datetime.now(timezone.utc).isoformat(),steps=[],automated_passed=False,
-                   physical_passed=False,hardware_qualified=False,device_write_attempted=False,
+                   physical_passed=False,device_write_attempted=False,
                    physical_checks_pending=['buttons','wheel','hold-switch','headphone-detection',
                                             'backlight-visibility','sleep-wake','screen-artifacts'])
     receipt_path = directory/'receipt.json'
@@ -173,7 +173,7 @@ def cycle(root, image_path, scenario_path, port, progress=None):
 
         base=settled()
         if not base['flags']&4:
-            raise RuntimeError('COP is unavailable; CPU fallback cannot qualify the COP queue')
+            raise RuntimeError('COP is unavailable; CPU fallback cannot exercise the COP queue')
         control(5,suite['animation_frames'])
         animated=wait(lambda s:s['frames_completed']>=base['frames_completed']+suite['animation_frames'],15)
         if not animated['flags']&4:

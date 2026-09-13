@@ -19,14 +19,7 @@ ui_height = 176
 capabilities = { video = true }
 media_video_fps = 24
 media_video_color = "rgb565"
-startup_source = "targets/photo4g-p98/startup.S"
-linker_script = "targets/photo4g-p98/memory.ld"
-platform_source = "hal/pp5020/platform.c"
-lcd_source = "targets/photo4g-p98/lcd.c"
-display_source = "hal/pp5020/display.c"
-target_source = "targets/photo4g-p98/device.c"
 cop_display = true
-qualification = "unqualified-ram-probe"
 entry_address = 0
 load_address = 0
 mailbox_address = 33550336

@@ -8,12 +8,12 @@ volume with 512-byte logical sectors. 512e media is reported correctly; native
 4K logical sectors, GPT and exFAT are rejected rather than reinterpreted. These
 filesystem limits are separate from the ATA addressing limit.
 
-| Media | Identification and policy | Physical evidence |
-| --- | --- | --- |
-| iFlash ATA1 currently installed | Exact model `iFlash-Platform iPod Adapters`; firmware `iFlash85`; solid-state profile. Five seconds idle, successful flush, two-second delay, then rail off. ATA standby is not sent when unsupported. | 125,042,688 sectors; idle rail-off and one cold wake/read passed, approximately 0.59 seconds. |
-| Mechanical ATA drive | Reported rotation rate selects rotating media. Ten seconds idle; flush then supported standby. Known rotating media with PM can power off after two seconds. | Original spinning drive is not connected; behavior is implemented but not physically qualified. |
-| Other identified SSD/CF media | Reported nonrotating media and separate PM capabilities determine policy. Supported standby is used; rail removal requires a proven safe completion. | Not physically qualified. |
-| Unidentified adapters or older drives without a rotation-rate field | Preserve unknown classification. Use advertised PM standby; retain rail power when a safe rail policy is not established. | No claim of universal adapter compatibility. |
+| Media | Identification and policy |
+| --- | --- |
+| iFlash ATA1 currently installed | Exact model `iFlash-Platform iPod Adapters`; firmware `iFlash85`; solid-state profile. Five seconds idle, successful flush, two-second delay, then rail off. ATA standby is not sent when unsupported. |
+| Mechanical ATA drive | Reported rotation rate selects rotating media. Ten seconds idle; flush then supported standby. Known rotating media with PM can power off after two seconds. |
+| Other identified SSD/CF media | Reported nonrotating media and separate PM capabilities determine policy. Supported standby is used; rail removal requires a proven safe completion. |
+| Unidentified adapters or older drives without a rotation-rate field | Preserve unknown classification. Use advertised PM standby; retain rail power when a safe rail policy is not established. |
 
 The exact iFlash profile is independent of card capacity and serial number. A
 CFA claim alone does not identify iFlash. The installed adapter's malformed LBA
@@ -32,10 +32,8 @@ ABRT is recorded, while transfer-mode errors remain failures.
 
 ATA metadata does not establish a drive's actual current draw. Linnet uses the
 board's existing storage supply and a conservative settling delay; it does not
-raise USB charging current based on an adapter name or card capacity. Physical
-spin-up current and timing on the original drive still need measurement when
-that drive is available. PIO remains enabled for reads and writes; no unqualified
-DMA policy is inferred from SSD identification.
+raise USB charging current based on an adapter name or card capacity. PIO remains enabled for reads and writes;
+SSD identification does not select a DMA policy.
 
 `python linnet device media-info --port COM6` reports identity, capacity, sector
 sizes, capabilities, profile quirks, rail/standby state, wake and power-off counts,
@@ -52,5 +50,4 @@ especially `firmware/drivers/ata.c`, `firmware/export/ata.h`, and
 implementation of these behaviors.
 
 Native Boot plans are pinned to the inspected disk and firmware backup; they
-are not reusable installers for another drive or partition layout. Broader
-hardware qualification is tracked in [PROJECT_TODO.md](PROJECT_TODO.md).
+are not reusable installers for another drive or partition layout.

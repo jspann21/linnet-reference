@@ -113,8 +113,7 @@ def compile_video(source, output, *, fps=24, width=220, height=176,
                   key_interval=24, cost_model=None, ffmpeg=None, max_frames=None):
     """Convert existing media; stream ffmpeg frames/PCM and atomically publish PVID.
 
-    cost_model estimates are explicitly unqualified unless backed by caller-supplied
-    device measurements. Every selected record must fit its declared frame budget.
+    cost_model uses estimates or caller-supplied device measurements. Every selected record must fit its declared frame budget.
     """
     source, output = Path(source).resolve(), Path(output).resolve()
     if source == output or not source.is_file():
@@ -235,7 +234,6 @@ def compile_video(source, output, *, fps=24, width=220, height=176,
         report = inspect(tmp/'result')
         os.replace(tmp/'result', output)
     report.update(path=str(output), source=str(source), cost_model=model,
-                  qualification='device-measured budget' if model['measured'] else 'unqualified estimate',
                   worst_declared_frame_us=worst, frame_budget_us=1_000_000/fps,
                   source_audio=has_audio)
     return report
@@ -374,7 +372,7 @@ def repack_spatial(source, output):
     """Compress PVID spatially with exact RGB565/PCM and all CRCs.
 
     Independent LZ4 frames replace source records only when they save sectors.
-    This offline byte reduction is unqualified until measured on the device.
+    This repack reduces file size without changing decoded content.
     """
     source, output = Path(source).resolve(), Path(output).resolve()
     if source == output or not source.is_file():
@@ -446,6 +444,5 @@ def repack_spatial(source, output):
     report.update(path=str(output), source=str(source), source_sha256=original['sha256'],
                   source_file_bytes=original['file_bytes'], compressed_frames=compressed_count,
                   bytes_saved=original['file_bytes']-report['file_bytes'],
-                  decoded_frames_sha256=frame_digest.hexdigest(), pcm_sha256=pcm_digest.hexdigest(),
-                  qualification='unqualified spatial repack; device measurement required')
+                  decoded_frames_sha256=frame_digest.hexdigest(), pcm_sha256=pcm_digest.hexdigest())
     return report

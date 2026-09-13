@@ -120,10 +120,7 @@ presentation. The cheapest eligible encoding is selected; conversion rejects
 any selected frame costing more than `1000000 / fps` microseconds. Keyframes
 only select raw or RLE. Repeat and delta include prior-frame copy cost.
 
-Default values are estimates, and their report is **unqualified estimate**.
+Default cost-model values are estimates.
 `measured=True` requires every model parameter and a nonempty `measurement_id`
-identifying device evidence. Passing this declared model alone does not qualify
-the product's zero-gap audio, drift, tearing, storage wake, or sustained playback
-gates. Profiles 24/25/30 and optional 60 remain unqualified until their device
-campaigns pass. The current container has no embedded performance certificate;
+identifying device measurements. The container has no embedded performance certificate;
 the conversion report retains the model and worst declared frame cost.

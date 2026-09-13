@@ -116,24 +116,22 @@ def compile_system(root, output, configpath=None, target_override=None):
     target=target_override if target_override is not None else (system.get('target') if isinstance(system,dict) else None)
     if not isinstance(target,str) or not re.fullmatch(r'[a-z][a-z0-9-]{0,63}',target):
         raise ContentError(f'invalid UI target: {target!r}')
-    target_path=f'ui/compiler-target/{target}.json'
-    try: target_spec=json.loads(read(target_path))
-    except (ContentError,ValueError) as exc: raise ContentError(f'unsupported UI target: {target}') from exc
-    width,height=target_spec.get('width'),target_spec.get('height')
+    target_path=f'targets/{target}/target.toml'
+    try: target_manifest=toml(target_path)
+    except (ContentError,tomllib.TOMLDecodeError) as exc: raise ContentError(f'unsupported UI target: {target}') from exc
+    width,height=target_manifest.get('ui_width'),target_manifest.get('ui_height')
     if (type(width) is not int or type(height) is not int or
         not 1<=width<=DESIGN_WIDTH or not 1<=height<=DESIGN_HEIGHT):
         raise ContentError('UI target dimensions must fit the 220x176 design canvas')
-    physical=target_spec.get('physical_display',{})
-    monochrome=isinstance(physical,dict) and str(physical.get('pixel_format','')).startswith('gray')
-    physical_width=physical.get('width',width) if isinstance(physical,dict) else width
-    physical_height=physical.get('height',height) if isinstance(physical,dict) else height
+    monochrome=str(target_manifest.get('lcd_format','')).startswith('gray')
+    physical_width=target_manifest.get('lcd_width')
+    physical_height=target_manifest.get('lcd_height')
     if type(physical_width) is not int or type(physical_height) is not int or physical_width<1 or physical_height<1:
         raise ContentError('invalid physical display dimensions')
     features=config.get('features',{})
     if not isinstance(features,dict) or any(type(features[key]) is not bool for key in ('photos','video','files','demo','themes') if key in features):
         raise ContentError('photos, video, files, demo and themes feature flags must be booleans')
     features=dict(features)
-    target_manifest=toml(f'targets/{target}/target.toml')
     capabilities=target_manifest.get('capabilities',{})
     if not isinstance(capabilities,dict) or any(key not in ('photos','video','files','demo','themes') or type(value) is not bool for key,value in capabilities.items()):
         raise ContentError('target capabilities must be photos, video, files, demo or themes booleans')
@@ -167,17 +165,17 @@ def compile_system(root, output, configpath=None, target_override=None):
             if target not in compatible_targets:
                 continue
         theme_manifests[name]=path
-    theme_profile=target_spec.get('theme_profile')
+    theme_profile=target_manifest.get('ui')
     if theme_profile is not None:
-        if not isinstance(theme_profile,dict) or set(theme_profile)!={'allowed','default'}:
-            raise ContentError('target theme_profile requires allowed and default')
-        allowed=theme_profile['allowed']
+        if not isinstance(theme_profile,dict) or set(theme_profile)!={'allowed_themes','default_theme'}:
+            raise ContentError('target UI profile requires allowed_themes and default_theme')
+        allowed=theme_profile['allowed_themes']
         if not isinstance(allowed,list) or not allowed or len(allowed)!=len(set(allowed)):
-            raise ContentError('target theme_profile allowed must be a nonempty distinct list')
+            raise ContentError('target allowed_themes must be a nonempty distinct list')
         allowed=[identifier(name) for name in allowed]
-        default_theme=identifier(theme_profile['default'])
+        default_theme=identifier(theme_profile['default_theme'])
         if default_theme not in allowed or any(name not in theme_manifests for name in allowed):
-            raise ContentError('target theme_profile references an unavailable theme')
+            raise ContentError('target UI profile references an unavailable theme')
         theme_manifests={name:theme_manifests[name] for name in allowed}
         theme_id=default_theme
     if theme_id not in theme_manifests: raise ContentError(f'theme unavailable: {theme_id}')

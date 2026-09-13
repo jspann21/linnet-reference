@@ -19,18 +19,15 @@ ui_height = 128
 capabilities = { video = false, themes = false }
 media_video_fps = 12
 media_video_color = "gray4"
-startup_source = "targets/photo4g-p98/startup.S"
-linker_script = "targets/photo4g-p98/memory.ld"
-platform_source = "hal/pp5020/platform.c"
-lcd_source = "targets/ipod4g-q21/lcd.c"
-display_source = "targets/ipod4g-q21/display.c"
-target_source = "targets/ipod4g-q21/device.c"
 cop_display = false
-qualification = "unqualified-mp102-bringup"
 entry_address = 0
 load_address = 0
 mailbox_address = 33550336
 mailbox_bytes = 4096
+
+[ui]
+allowed_themes = ["linnet.theme.ipod4g-mono"]
+default_theme = "linnet.theme.ipod4g-mono"
 
 [retail]
 usb_vid = 1452
