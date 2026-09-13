@@ -43,8 +43,8 @@ def install(mount, image, envelope, expected_original):
     checksum_seed = install_spec['wrapper_checksum_seed']
     _original_payload, original_model = ipod_payload(original, expected_model, checksum_seed)
     candidate=image.read_bytes();payload, candidate_model=ipod_payload(candidate, expected_model, checksum_seed)
-    if payload!=los[128:] or candidate_model != original_model or identity['profile']=='release':
-        raise ValueError('bootstrap requires matching development Boot envelope and wrapper')
+    if payload!=los[128:] or candidate_model != original_model:
+        raise ValueError('bootstrap requires matching Boot envelope and wrapper')
     report_path=image.with_suffix('.json')
     report=json.loads(report_path.read_text())
     if report.get('kind')!='boot' or report.get('build_id')!=identity['build_id']:

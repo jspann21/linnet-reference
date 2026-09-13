@@ -84,7 +84,7 @@ class MediaWorkspace(MediaApp):
         ttk.Label(top, text='Your library. Ready to go.', style='Title.TLabel').pack(side='left')
         self.refresh_button = ttk.Button(top, text='Find iPod', command=self.find)
         self.refresh_button.pack(side='right')
-        self.installer_button = ttk.Button(top, text='Install or restore Linnet…', command=self.open_installer)
+        self.installer_button = ttk.Button(top, text='Install / switch build…', command=self.open_installer)
         self.installer_button.pack(side='right', padx=8)
         device = ttk.Frame(body)
         device.pack(fill='x', pady=(12, 3))
@@ -227,7 +227,7 @@ class MediaWorkspace(MediaApp):
             identity = self.identity()
         except ValueError:
             pass
-        InstallerWindow(self.window, identity)
+        InstallerWindow(self.window, identity, on_changed=self.scan)
 
     def make_tree(self, parent, columns, labels, widths, height, expand=True):
         frame = ttk.Frame(parent)
@@ -599,8 +599,10 @@ class MediaWorkspace(MediaApp):
                              f"{profile['video_fps']} fps, four-level grayscale"
                              if profile['video_color'] == 'gray4'
                              else f"{profile['video_fps']} fps, full color")
+                    from tools.studio.installer import build_description
+                    firmware = build_description(identity["linnet"])
                     self.device_status.set(
-                        f"{identity['target_name']} · {size(identity['free_bytes'])} available · "
+                        f"Linnet: {firmware} · {identity['target_name']} · {size(identity['free_bytes'])} available · "
                         f"Video: {video} · Originals are preserved during preparation"
                     )
                     self.library_button.configure(state='normal')

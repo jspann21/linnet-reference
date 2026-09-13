@@ -23,7 +23,12 @@ static enum ln_ata_op operation;
 static uint64_t previous_capacity;
 static uint8_t flush_command;
 static uint8_t pio_mode;
+#if !defined(LINNET_PROFILE_RELEASE)
 static uint32_t init_started;
+#define ATA_RECORD(index, value) (info.diagnostic[(index)] = (value))
+#else
+#define ATA_RECORD(index, value) ((void)0)
+#endif
 static bool lba_probe_required;
 static char previous_model[41],previous_serial[21],previous_firmware[9];
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -51,7 +56,7 @@ static void ata_string(char *out,uint32_t first,uint32_t length) {
 static bool same_string(const char*a,const char*b,uint32_t n){for(uint32_t i=0;i<n;++i)if(a[i]!=b[i])return false;return true;}
 static void settle(void) { for(uint32_t i=0;i<4u;++i)(void)CONTROL; }
 static void command(uint8_t value) {
-    info.diagnostic[3]=value;
+    ATA_RECORD(3, value);
     COMMAND=value;settle();not_before=ln_time_us()+1u;++info.commands;
 }
 static void read_sector(uint8_t *sector) {
@@ -78,9 +83,9 @@ static void read_sector(uint8_t *sector) {
 }
 static void fail(uint32_t status) {
     info.power_safe=0;
-    info.diagnostic[1]=(uint32_t)phase;info.diagnostic[2]=status;
-    uint32_t failed_at=ln_time_us();info.diagnostic[4]=failed_at-init_started;
+    ATA_RECORD(1, (uint32_t)phase);ATA_RECORD(2, status);
 #if !defined(LINNET_PROFILE_RELEASE)
+    uint32_t failed_at=ln_time_us();ATA_RECORD(4, failed_at-init_started);
     perf_end(failed_at);
 #endif
     info.last_status=COMMAND;info.last_error=ERROR;
@@ -104,9 +109,9 @@ static bool identify_valid(void) {
      * documents848a (traditional CF) and844a (Delkin). */
     bool compact_flash=identify[0]==0x848au||identify[0]==0x844au||
         (identify[83]&0xc004u)==0x4004u;
-    info.diagnostic[21]=1;
+    ATA_RECORD(21, 1);
     if((identify[0]&0x8000u)&&!compact_flash)return false;
-    info.diagnostic[21]=2;
+    ATA_RECORD(21, 2);
     /* The installed CFA adapter reports valid LBA capacities/CFA support but
      * a malformed word49 (0x6c61). Rockbox uses the capacity words directly.
      * Admit that CFA shape only provisionally; READ VERIFY with SELECT_LBA
@@ -117,11 +122,11 @@ static bool identify_valid(void) {
     info.quirks=(lba_probe_required?1u:0u)|(compact_flash?4u:0u);
     info.logical_sector_bytes=512u;info.physical_sector_bytes=512u;
     if((identify[106]&0xe000u)==0x6000u)info.physical_sector_bytes=512u<<(identify[106]&15u);
-    info.diagnostic[21]=3;
+    ATA_RECORD(21, 3);
     if((identify[106]&0xd000u)==0x5000u&&
         (identify[117]!=256u||identify[118]))return false;
     if((identify[255]&255u)==0xa5u){
-        info.diagnostic[21]=4;
+        ATA_RECORD(21, 4);
         uint32_t sum=0;for(uint32_t i=0;i<256u;++i)sum+=(identify[i]&255u)+(identify[i]>>8);
         if(sum&255u)return false;
     }
@@ -129,14 +134,14 @@ static bool identify_valid(void) {
     info.lba48=(identify[83]&0xc400u)==0x4400u;
     if(info.lba48){
         uint64_t extended=(uint64_t)identify[100]|((uint64_t)identify[101]<<16)|((uint64_t)identify[102]<<32);
-        info.diagnostic[21]=5;if(identify[103])return false;
-        info.diagnostic[21]=6;if(!extended)return false;
+        ATA_RECORD(21, 5);if(identify[103])return false;
+        ATA_RECORD(21, 6);if(!extended)return false;
         sectors=extended;
-    }else {info.diagnostic[21]=7;if(sectors>0x10000000u)return false;}
-    info.diagnostic[21]=8;if(!sectors)return false;
-    info.diagnostic[21]=9;if(previous_capacity&&sectors!=previous_capacity)return false;
+    }else {ATA_RECORD(21, 7);if(sectors>0x10000000u)return false;}
+    ATA_RECORD(21, 8);if(!sectors)return false;
+    ATA_RECORD(21, 9);if(previous_capacity&&sectors!=previous_capacity)return false;
     ata_string(info.model,27u,40u);ata_string(info.serial,10u,20u);ata_string(info.firmware,23u,8u);
-    info.diagnostic[21]=10;
+    ATA_RECORD(21, 10);
     if(previous_capacity&&(!same_string(previous_model,info.model,41u)||!same_string(previous_serial,info.serial,21u)||!same_string(previous_firmware,info.firmware,9u)))return false;
     info.sectors=sectors;
     bool iflash=same_string(info.model,"iFlash-Platform iPod Adapters",30u);
@@ -161,15 +166,15 @@ static bool identify_valid(void) {
     if(iflash&&info.can_flush)info.can_power_off=1;
     flush_command=(info.lba48&&(identify[83]&0x2000u))?0xeau:0xe7u;
     info.capabilities=(info.lba48?1u:0u)|(info.can_flush?2u:0u)|(info.standby_supported?4u:0u)|(info.apm_supported?8u:0u)|(info.write_cache_enabled?16u:0u);
-    info.diagnostic[21]=0;
+    ATA_RECORD(21, 0);
     return true;
 }
 static void reset_begin(uint32_t now) {
 #if !defined(LINNET_PROFILE_RELEASE)
     /* A reset invalidates cross-epoch deltas, including an interrupted read. */
     perf.active=false;perf_add(&perf.epoch,1u);
-#endif
     init_started=now;for(uint32_t i=0;i<24u;++i)info.diagnostic[i]=0;
+#endif
     for(uint32_t i=0;i<256u;++i)identify[i]=0;
     info.power_safe=0;
     info.initializing=1;info.initialized=info.failed=info.busy=info.sleeping=0;
@@ -279,7 +284,7 @@ void ln_ata_step(uint32_t now) {
         pio_mode=0;
         if(identify[53]&2u){if(identify[64]&2u)pio_mode=4u;else if(identify[64]&1u)pio_mode=3u;}
         static const uint32_t timings[5]={0xc293u,0x43a2u,0x11a1u,0x7232u,0x3131u};
-        R32(0xc3000000u)=timings[pio_mode];info.diagnostic[22]=pio_mode;
+        R32(0xc3000000u)=timings[pio_mode];ATA_RECORD(22, pio_mode);
         ERROR=3u;COUNT=(uint8_t)(8u+pio_mode);command(0xefu);phase=MODE_DONE;return;
     }
     if(phase==MODE_DONE&&info.apm_supported){
@@ -347,6 +352,7 @@ void ln_ata_state_snapshot(struct ln_ata_state *out) {
     out->idle_timeout_us=info.idle_timeout_us;
 }
 
+#if !defined(LINNET_PROFILE_RELEASE)
 void ln_ata_diagnostics(uint32_t d[24]) {
     if(!d)return;
     for(uint32_t i=0;i<24u;++i)d[i]=info.diagnostic[i];
@@ -362,7 +368,6 @@ void ln_ata_diagnostics(uint32_t d[24]) {
     d[22]=SELECT|(uint32_t)COUNT<<8|(uint32_t)LOW<<16|(uint32_t)MID<<24;
     d[23]=HIGH|(uint32_t)ERROR<<8;
 }
-#if !defined(LINNET_PROFILE_RELEASE)
 void ln_ata_clock_diagnostics(uint32_t out[8]){
     bool valid=info.powered&&(R32(0x6000600cu)&0x02000000u)&&!(R32(0x60006004u)&0x02000000u);
     out[0]=0x464e4941u;out[1]=0u;out[2]=valid;out[3]=R32(0x600060c4u);

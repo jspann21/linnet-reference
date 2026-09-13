@@ -116,8 +116,8 @@ def derive(firmware, mbr, image, device):
     identity = inspect(image)
     if identity["target_id"] != device["target_id"]:
         raise ValueError("Boot image target differs from detected device target")
-    if identity["profile"] == "release" or identity["load_address"] != 0 or identity["entry_address"] != 0:
-        raise ValueError("initial bootstrap requires a development image linked at zero")
+    if identity["load_address"] != 0 or identity["entry_address"] != 0:
+        raise ValueError("initial bootstrap requires an image linked at zero")
     payload = image[128:]
     if not 32 <= len(payload) <= 0x100000:
         raise ValueError("Boot payload exceeds the one MiB bootstrap bound")
@@ -158,9 +158,9 @@ def plan(firmware_path, mbr_path, device_path, boot_path, output):
     report = json.loads(report_bytes)
     if ((report.get("kind"), report.get("probe"), report.get("device_serial"),
          report.get("target_id"), report.get("build_id")) !=
-            ("boot", "frame", device["linnet_usb_serial"], device["target_id"], details["image"]["build_id"]) or
+            ("boot", "frame", "" if details["image"]["profile"] == "release" else device["linnet_usb_serial"], device["target_id"], details["image"]["build_id"]) or
             report.get("batch", 0) < 2 or report.get("image", {}).get("sha256") != sha(image)):
-        raise ValueError("matching development storage Boot build report is required")
+        raise ValueError("matching storage Boot build report is required")
     if output.exists() and any(output.iterdir()):
         raise ValueError("plan output directory must be empty")
     output.mkdir(parents=True, exist_ok=True)

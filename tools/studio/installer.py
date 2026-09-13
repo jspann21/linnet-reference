@@ -83,7 +83,20 @@ def _wrapper(path, install_spec):
         return None
 
 
-def _linnet_state(root, target_id):
+BUILD_LABELS = {"release": "User build", "dev": "Developer build", "trace": "Developer trace build"}
+
+
+def build_description(state):
+    if state.get("state") == "installed":
+        label = BUILD_LABELS.get(state.get("profile"), "Unknown build")
+        pending = " · candidate pending" if state.get("candidate_pending") else ""
+        return f"{label} · {state['build_id'][:12]}{pending}"
+    return {"absent": "Not installed", "incomplete": "Incomplete installation",
+            "invalid": "Installation needs attention"}.get(state.get("state"), "Unknown installation")
+
+
+def installed_state(root, target_id):
+    root = Path(root)
     directory = root / "LINNET"
     present = [name for name in CORE_FILES if (directory / name).exists()]
     if not present:
@@ -94,10 +107,16 @@ def _linnet_state(root, target_id):
     try:
         from tools.studio.update_history import _boot_record
         records = [_boot_record(directory / name) for name in ("BOOT0.BIN", "BOOT1.BIN")]
+        if records[0][1] == records[1][1] and records[0][0] != records[1][0]:
+            raise ValueError("conflicting boot records at the same generation")
         selected = max(records, key=lambda item: item[1])
         build_id = selected[2]
+        confirmed_slot = selected[0][52]
+        metadata_offset = 68 + confirmed_slot * 72
+        expected_length, expected_profile = struct.unpack_from("<II", selected[0], metadata_offset)
+        expected_sha = selected[0][metadata_offset + 40:metadata_offset + 72].hex()
         images = []
-        for name in ("OS0.LOS", "OS1.LOS"):
+        for slot, name in enumerate(("OS0.LOS", "OS1.LOS")):
             path = directory / name
             with path.open("rb") as reader:
                 header = reader.read(128)
@@ -110,12 +129,17 @@ def _linnet_state(root, target_id):
             identity = inspect_image(image)
             if identity["target_id"] != target_id:
                 raise ValueError("installed Linnet image targets a different device")
+            identity["slot"] = slot
             images.append(identity)
-        confirmed = next((item for item in images if item["build_id"] == build_id), None)
+        confirmed = next((item for item in images if item["slot"] == confirmed_slot), None)
         if confirmed is None:
             raise ValueError("confirmed Linnet image is missing")
+        if (confirmed["build_id"] != build_id or confirmed["payload_bytes"] + 128 != expected_length or
+                ("release", "dev", "trace").index(confirmed["profile"]) != expected_profile or
+                confirmed["sha256"] != expected_sha):
+            raise ValueError("confirmed image differs from boot metadata")
         return dict(state="installed", present=len(present), required=len(CORE_FILES),
-                    build_id=build_id, profile=confirmed["profile"], images=images,
+                    build_id=build_id, profile=confirmed["profile"], build="user" if confirmed["profile"] == "release" else "dev", images=images,
                     candidate_pending=bool(selected[3]))
     except (ValueError, OSError, KeyError, struct.error) as error:
         return dict(state="invalid", present=len(present), required=len(CORE_FILES), detail=str(error))
@@ -171,7 +195,7 @@ def assess(identity):
     spec = TARGETS[target_id]
     install_spec = spec["installer"]
     expected_model = install_spec["wrapper_model"]
-    linnet = _linnet_state(root, target_id)
+    linnet = installed_state(root, target_id)
     resume = None
     rockbox_file = root.joinpath(*install_spec["file_loader"].split("/"))
     wrapper = _wrapper(rockbox_file, install_spec)
@@ -216,7 +240,7 @@ def assess(identity):
     if linnet["state"] != "absent" and marker:
         action, strategy = "replace", marker["strategy"]
         if linnet["state"] == "installed":
-            summary = f"Linnet is installed ({linnet['profile']} {linnet['build_id'][:12]}) and can be freshly reinstalled."
+            summary = f"{build_description(linnet)} is installed. Switch builds or reinstall, including the same version."
         else:
             summary = "The existing Linnet files use another layout and can be preserved before a fresh install."
     elif resume:
@@ -224,7 +248,7 @@ def assess(identity):
         summary = "A matching interrupted Linnet installation is ready to resume."
     elif linnet["state"] == "installed":
         action, strategy = "installed", "existing"
-        summary = f"Linnet is installed ({linnet['profile']} {linnet['build_id'][:12]}), but no installer recovery record is available."
+        summary = f"{build_description(linnet)} is installed, but no installer recovery record is available."
     elif linnet["state"] in ("incomplete", "invalid"):
         action, strategy = "attention", None
         summary = linnet.get("detail", "The existing Linnet installation needs inspection.")
@@ -271,8 +295,11 @@ def build_artifacts(identity, progress=lambda _message: None, build="user"):
         os_arguments += ["--device-serial", serial]
     os_report = _run_build(os_arguments)
     progress("Building the recoverable device loader…")
-    boot_report = _run_build(["--batch", "7", "--target", target, "--profile", "dev",
-                              "--kind", "boot", "--device-serial", serial])
+    boot_arguments = ["--batch", "7", "--target", target, "--profile", os_profile,
+                      "--kind", "boot", "--verify"]
+    if os_profile == "dev":
+        boot_arguments += ["--device-serial", serial]
+    boot_report = _run_build(boot_arguments)
     def artifact(report, name):
         path = ROOT / report["artifacts"][name]
         return path.resolve(strict=True)
@@ -296,12 +323,12 @@ def _validate_artifacts(identity, artifacts):
     os_identity, boot_identity = inspect_image(os_data), inspect_image(boot_data)
     build = artifacts.get("build")
     expected_profile = "release" if build == "user" else "dev" if build == "dev" else None
-    if expected_profile != artifacts.get("os_profile"):
+    if expected_profile is None or expected_profile != artifacts.get("os_profile"):
         raise ValueError("installer artifact build selection is invalid")
     if ((os_identity["target_id"], os_identity["profile"], os_identity["build_id"]) !=
             (identity["target_id"], expected_profile, artifacts["os_build_id"]) or
             (boot_identity["target_id"], boot_identity["profile"], boot_identity["build_id"]) !=
-            (identity["target_id"], "dev", artifacts["boot_build_id"])):
+            (identity["target_id"], expected_profile, artifacts["boot_build_id"])):
         raise ValueError("installer image identity does not match the detected iPod")
     from tools.studio.bootstrap import ipod_payload
     wrapped, _model = ipod_payload(paths["boot_wrapper"].read_bytes(),
@@ -314,12 +341,15 @@ def _validate_artifacts(identity, artifacts):
         if report_path.stat().st_size > 64 * 1024 * 1024:
             raise ValueError("installer build report exceeds its bound")
         report = json.loads(report_path.read_text(encoding="utf-8"))
-        expected_serial = "" if kind == "os" and build == "user" else identity["linnet_usb_serial"]
-        if (report.get("kind") != kind or report.get("target_id") != identity["target_id"] or
+        expected_serial = "" if build == "user" else identity["linnet_usb_serial"]
+        if (report.get("kind") != kind or report.get("profile") != expected_profile or
+                report.get("target_id") != identity["target_id"] or
                 report.get("device_serial") != expected_serial or
                 report.get("build_id") != image_identity["build_id"] or
                 report.get("image", {}).get("sha256") != image_identity["sha256"]):
             raise ValueError("installer build report does not match its image")
+        if build == "user" and (report.get("release_exclusion") or {}).get("passed") is not True:
+            raise ValueError("user installer artifacts require release exclusion verification")
 
 
 def _same_device(expected, observed):
@@ -331,15 +361,15 @@ def _same_device(expected, observed):
 
 
 def _transaction(identity, artifacts):
-    return cache_root(identity) / "transactions" / f"{artifacts['build']}-{artifacts['os_build_id'][:16]}"
+    return cache_root(identity) / "transactions" / f"{artifacts['build']}-{artifacts['os_build_id'][:16]}-{uuid.uuid4().hex}"
 
 
 def _persist_artifacts(artifacts, transaction):
     destination = transaction / "artifacts"
     destination.mkdir(parents=True, exist_ok=True)
     names = {"os_image": "operating-system.los", "os_report": "operating-system.json",
-             "boot_image": "development-boot.los", "boot_wrapper": "development-boot.ipod",
-             "boot_report": "development-boot.json"}
+             "boot_image": "boot.los", "boot_wrapper": "boot.ipod",
+             "boot_report": "boot.json"}
     persisted = dict(artifacts)
     for key, name in names.items():
         source, target = Path(artifacts[key]).resolve(strict=True), destination / name
@@ -393,9 +423,8 @@ def _journal(identity, artifacts, strategy, transaction, extra=None):
     return value
 
 
-def _install_rockbox(identity, artifacts, progress):
+def _install_rockbox(identity, artifacts, progress, transaction):
     from tools.studio import bootstrap
-    transaction = _transaction(identity, artifacts)
     transaction.mkdir(parents=True, exist_ok=True)
     progress("Preparing Linnet’s transactional storage files…")
     storage_receipt = _package_storage(identity, artifacts, transaction)
@@ -526,7 +555,7 @@ def install(identity, progress=lambda _message: None, build="user"):
         receipt["phase"] = "device-transaction"
         _save(receipt_path, receipt)
         if reviewed["strategy"] == "rockbox-file":
-            result = _install_rockbox(identity, artifacts, progress)
+            result = _install_rockbox(identity, artifacts, progress, transaction)
         else:
             progress("Requesting administrator access to back up and update the iPod boot partition…")
             job = dict(mode="install", identity=identity, artifacts=artifacts,

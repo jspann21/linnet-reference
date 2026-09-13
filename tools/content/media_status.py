@@ -10,6 +10,8 @@ from . import media_library
 def inspect(identity, photo_dimension=640, verification="metadata"):
     identity = media.refresh(identity)
     root = Path(identity['root'])
+    from tools.studio.installer import installed_state
+    identity['linnet'] = installed_state(root, identity['target_id'])
     inventory = media.scan(root)
     rows = media_library.list_items(identity)
     try:

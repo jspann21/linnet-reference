@@ -37,14 +37,17 @@ static const uint8_t ln_build_id[32] = LINNET_BUILD_ID_BYTES;
 #define LN_CACHE_FIRST_MARK(phase) do { } while(0)
 #endif
 
+#if !defined(LINNET_PROFILE_RELEASE)
 static volatile uint8_t ln_crash_mailbox[LINNET_CRASH_MAILBOX_SIZE]
     __attribute__((section(".noinit.crash"), used));
+#endif
 
 _Noreturn void ln_panic(uint32_t reason, uint32_t pc, uint32_t status)
 {
     uint32_t masked_status;
     __asm__ volatile("mrs %0, cpsr\n\torr %0, %0, #0xc0\n\tmsr cpsr_c, %0"
                      : "=&r"(masked_status) :: "memory");
+#if !defined(LINNET_PROFILE_RELEASE)
     struct ln_crash_record record;
     uint8_t encoded[LINNET_CRASH_MAILBOX_SIZE];
     record.sequence = 0; /* Persistent boot sequence is not integrated yet. */
@@ -55,11 +58,7 @@ _Noreturn void ln_panic(uint32_t reason, uint32_t pc, uint32_t status)
     record.flags = 1; /* Bit 0: partial capture; only fault PC and CPSR valid. */
     for (unsigned i = 0; i < sizeof record.build_id; ++i)
         record.build_id[i] = ln_build_id[i];
-#if defined(LINNET_PROFILE_RELEASE)
-    record.boot_generation = 0;
-#else
     record.boot_generation = ln_recovery_generation();
-#endif
     record.active_service = 0;
     record.last_event = 0;
     if (ln_crash_encode(&record, encoded, sizeof encoded)) {
@@ -72,6 +71,10 @@ _Noreturn void ln_panic(uint32_t reason, uint32_t pc, uint32_t status)
         __asm__ volatile("" ::: "memory");
         for (unsigned i = 0; i < 4; ++i) mailbox[i] = encoded[i];
     }
+#else
+    (void)pc;
+    (void)status;
+#endif
 #if defined(LINNET_PROFILE_RELEASE)
 #if defined(LINNET_PLATFORM_CORE) && (defined(LINNET_IMAGE_OS) || defined(LINNET_STORAGE))
     ln_core_watchdog_arm();

@@ -40,7 +40,10 @@ static bool background_running;
 /* Nonzero only while a bounded deferred-runtime poll is on the stack. This is a
  * scoped scheduling hint, not a storage-owner or cancellation state. */
 static uint32_t deferred_runtime_poll_depth;
-static struct ln_state_store boot_store,settings_store,history_store,theme_store;
+static struct ln_state_store boot_store,settings_store,theme_store;
+#if !defined(LINNET_PROFILE_RELEASE)
+static struct ln_state_store history_store;
+#endif
 static bool theme_available,theme_opened;
 static uint32_t history_summary=UINT32_MAX;
 static struct ln_update updater;
@@ -593,6 +596,7 @@ static uint32_t image_capacity(void *context,uint32_t slot){(void)context;return
  * or blocks one merely because the sidecars are absent or their records corrupt.
  * Invalid FAT allocation still fails the shared write-safety proof. */
 static void history_open(void){
+#if !defined(LINNET_PROFILE_RELEASE)
     history_summary=UINT32_MAX;
     if(ln_storage_capacity(LN_STORAGE_UPDATE0)!=512u||ln_storage_capacity(LN_STORAGE_UPDATE1)!=512u)return;
     struct ln_state_io io={(void *)(uintptr_t)LN_STORAGE_UPDATE0,state_read,state_write,flush_callback};
@@ -605,6 +609,7 @@ static void history_open(void){
         history_store.ready=0;return;
     }
     history_summary=read32(p+8)|(read32(p+12)<<8);
+#endif
 }
 uint32_t ln_storage_update_history(void){return history_summary;}
 static void theme_open(void){
@@ -617,6 +622,7 @@ static void theme_open(void){
 #if defined(LINNET_IMAGE_BOOT)
 static void history_save(uint32_t reason,uint32_t failed,uint32_t fallback,
                          uint32_t attempt,uint32_t generation,const uint8_t build[32]){
+#if !defined(LINNET_PROFILE_RELEASE)
     if(history_summary==UINT32_MAX||!history_store.ready||history_store.poisoned)return;
     uint8_t payload[60]={0};uint32_t words[7]={0x4b424c52u,0,reason,failed,fallback,attempt,generation};
     for(uint32_t i=0;i<7;++i)for(uint32_t j=0;j<4;++j)payload[4*i+j]=(uint8_t)(words[i]>>(8*j));
@@ -625,6 +631,10 @@ static void history_save(uint32_t reason,uint32_t failed,uint32_t fallback,
      * remains poisoned and is never retried during this execution. */
     if(ln_state_publish(&history_store,payload,sizeof(payload)))history_summary=reason|(failed<<8);
     else history_summary=UINT32_MAX;
+#else
+    (void)reason; (void)failed; (void)fallback;
+    (void)attempt; (void)generation; (void)build;
+#endif
 }
 #endif
 static int open_stores(void){

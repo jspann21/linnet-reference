@@ -9,7 +9,14 @@
 #define LCD_TIMEOUT_US 250000u
 
 static bool ready;
+#if !defined(LINNET_PROFILE_RELEASE)
 static uint32_t trace[8];
+#define LCD_RECORD(index, value) (trace[(index)] = (value))
+#define LCD_RECORD_FAILURE() do { if (!trace[1]) trace[1] = 4u; } while (0)
+#else
+#define LCD_RECORD(index, value) ((void)0)
+#define LCD_RECORD_FAILURE() ((void)0)
+#endif
 static bool draw(uint16_t color,const char (*lines)[24]);
 
 static bool delay_us(uint32_t delay)
@@ -24,7 +31,7 @@ static bool wait_ready(uint32_t started, uint32_t *budget)
 {
     while (LCD_CONTROL & LCD_BUSY) {
         if (!*budget || ln_time_us() - started >= LCD_TIMEOUT_US) {
-            trace[1] = *budget ? 1u : 2u;
+            LCD_RECORD(1, *budget ? 1u : 2u);
             return false;
         }
         --*budget;
@@ -34,7 +41,7 @@ static bool wait_ready(uint32_t started, uint32_t *budget)
 
 static bool prepare(uint32_t command, uint32_t started, uint32_t *budget)
 {
-    trace[0] = 3u | (command << 16);
+    LCD_RECORD(0, 3u | (command << 16));
     if (!wait_ready(started, budget)) return false;
     LCD_COMMAND = 0;
     if (!wait_ready(started, budget)) return false;
@@ -54,19 +61,23 @@ static bool command_data(uint32_t command, uint32_t value,
 
 static void finish(uint32_t started, uint32_t budget, uint32_t blocks)
 {
-    trace[2] = ln_time_us() - started;
-    trace[3] = blocks;
-    trace[4] = budget;
-    trace[5] = LCD_CONTROL;
-    trace[6] = LCD_COMMAND;
-    trace[7] = LCD_DATA;
+#if !defined(LINNET_PROFILE_RELEASE)
+    LCD_RECORD(2, ln_time_us() - started);
+    LCD_RECORD(3, blocks);
+    LCD_RECORD(4, budget);
+    LCD_RECORD(5, LCD_CONTROL);
+    LCD_RECORD(6, LCD_COMMAND);
+    LCD_RECORD(7, LCD_DATA);
+#else
+    (void)started; (void)budget; (void)blocks;
+#endif
 }
 
 bool ln_q21_lcd_init(void)
 {
     if (ready) return true;
     uint32_t started = ln_time_us(), budget = 1000000u;
-    trace[0] = 1; trace[1] = 0;
+    LCD_RECORD(0, 1); LCD_RECORD(1, 0);
     /* Apple Disk Mode can leave the PP5020 mono bridge accepting writes while
      * still presenting its inherited scanout.  Acquire the bridge explicitly
      * before programming the HD66753.  This is the same enable/reset ordering
@@ -74,17 +85,17 @@ bool ln_q21_lcd_init(void)
     REG(0x6000600cu) |= 0x04000000u;
     REG(0x60006004u) |= 0x04000000u;
     if (!delay_us(1u)) {
-        trace[1] = 4u; finish(started, budget, 0); return false;
+        LCD_RECORD(1, 4u); finish(started, budget, 0); return false;
     }
     REG(0x60006004u) &= ~0x04000000u;
     if (!(REG(0x6000600cu) & 0x04000000u) ||
         (REG(0x60006004u) & 0x04000000u)) {
-        trace[1] = 3u;
+        LCD_RECORD(1, 3u);
         finish(started, budget, 0);
         return false;
     }
     if (!delay_us(1000u)) {
-        trace[1] = 4u; finish(started, budget, 0); return false;
+        LCD_RECORD(1, 4u); finish(started, budget, 0); return false;
     }
     LCD_CONTROL = 0x0084u;
     /* A persistent boot can inherit a powered but sleeping HD66753. Its GRAM
@@ -96,7 +107,7 @@ bool ln_q21_lcd_init(void)
         !command_data(0x03u, 0x1200u, started, &budget) ||
         !delay_us(1000u) ||
         !command_data(0x03u, 0x120cu, started, &budget)) {
-        if (!trace[1]) trace[1] = 4u;
+        LCD_RECORD_FAILURE();
         finish(started, budget, 0); return false;
     }
     static const uint16_t setup[][2] = {
@@ -184,7 +195,7 @@ static uint8_t text_pixel(const char (*lines)[24],uint32_t x,uint32_t y)
 
 static bool draw(uint16_t color,const char (*lines)[24])
 {
-    uint32_t started=ln_time_us(),blocks=0;trace[1]=0;
+    uint32_t started=ln_time_us(),blocks=0;LCD_RECORD(1, 0);
     if(!ln_q21_lcd_init())return false;
     uint8_t solid=shade(color);
     for(uint32_t y=0;y<LINNET_LCD_HEIGHT;++y){

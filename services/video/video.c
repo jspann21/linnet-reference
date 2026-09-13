@@ -1,3 +1,8 @@
+#if !defined(LINNET_PROFILE_RELEASE)
+#define LN_VIDEO_RECORD(...) do { __VA_ARGS__; } while (0)
+#else
+#define LN_VIDEO_RECORD(...) ((void)0)
+#endif
 #include "video.h"
 #include <stddef.h>
 #include "services/storage/storage.h"
@@ -418,7 +423,7 @@ static uint32_t submit_pcm(const uint8_t *bytes,uint32_t frames){
 static void fail(uint32_t e){v.error=e;v.stopping=true;++v.epoch;++v.revision;}
 static uint32_t generation(void){if(++v.generation>=0x78000000u)v.generation=0x71000001u;return v.generation;}
 static int io(uint32_t at,void*buf,uint32_t n,bool open){
-    if(!v.pending){int r=open?ln_storage_media_open(v.path,generation()):ln_storage_media_read(&v.file,at,buf,n,generation());if(r<=0)return r;v.pending=true;v.requested=n;v.io_started=ln_time_us();return 0;}
+    if(!v.pending){int r=open?ln_storage_media_open(v.path,generation()):ln_storage_media_read(&v.file,at,buf,n,generation());if(r<=0)return r;v.pending=true;v.requested=n;LN_VIDEO_RECORD(v.io_started=ln_time_us());return 0;}
     uint32_t got=0,started=ln_time_us();int r=0;
     /* FAT advances one small state/sector per poll, including cache hits.
      * Drain a bounded burst locally rather than paying a complete executive
@@ -431,8 +436,8 @@ static int io(uint32_t at,void*buf,uint32_t n,bool open){
     }
     if(!r)return 0;v.pending=false;
     if(v.working!=v.epoch)return 0;if(r!=1||(!open&&got!=v.requested))return -1;
-    uint32_t elapsed=ln_time_us()-v.io_started;if(elapsed>v.max_io)v.max_io=elapsed;
-    if(!open){++v.reads;v.read_bytes+=got;if(v.phase==READ)v.read_time+=elapsed;}return 1;
+    LN_VIDEO_RECORD(uint32_t elapsed=ln_time_us()-v.io_started;if(elapsed>v.max_io)v.max_io=elapsed;
+        if(!open){++v.reads;v.read_bytes+=got;if(v.phase==READ)v.read_time+=elapsed;});return 1;
 }
 static int read_index(uint32_t frame){
     uint32_t offset=512+frame*32,page=offset&~511u;
@@ -913,7 +918,7 @@ static int decode_ipvf(void){
 }
 /* Frame/record buffers are overwritten before use; reset only ownership and
  * stream state when switching videos. Index-page ownership is invalidated below. */
-void ln_video_init(void){clear(&v.file,sizeof v - offsetof(__typeof__(v),file));v.generation=0x71000000u;v.front=v.previous=v.building=v.index_page_at=NONE;v.min_audio=NONE;v.preroll=2u;}
+void ln_video_init(void){clear(&v.file,sizeof v - offsetof(__typeof__(v),file));v.generation=0x71000000u;v.front=v.previous=v.building=v.index_page_at=NONE;LN_VIDEO_RECORD(v.min_audio=NONE);v.preroll=2u;}
 bool ln_video_open(const char*path){
     if(v.active||v.pending||catalog.pending||!path||path[0]!='/')return false;uint32_t n=0;while(path[n]&&n<255)n++;if(!n||n==255)return false;
     uint32_t gen=v.generation,revision=v.revision;ln_video_init();v.generation=gen;v.revision=revision+1;copy(v.path,path,n+1);
@@ -964,7 +969,7 @@ static void step(void){
     }
     pump_ipvf_pcm();
     struct ln_audio_status a;ln_audio_snapshot(&a);
-    if(v.started){v.resume_frame=sample_frame(v.origin+a.consumed);if(v.resume_frame>=v.count)v.resume_frame=v.count-1;v.audio_gaps=a.underruns;v.audio_silence=a.silence_frames;v.audio_fault=a.fault;if(a.queued<v.min_audio)v.min_audio=a.queued;if(a.fault){fail(13);return;}}
+    if(v.started){v.resume_frame=sample_frame(v.origin+a.consumed);if(v.resume_frame>=v.count)v.resume_frame=v.count-1;LN_VIDEO_RECORD(v.audio_gaps=a.underruns;v.audio_silence=a.silence_frames;v.audio_fault=a.fault;if(a.queued<v.min_audio)v.min_audio=a.queued);if(a.fault){fail(13);return;}}
     present(&a);
     /* Hand a due frame to the renderer before starting another read/decode. */
     if(v.offered)return;
@@ -1030,13 +1035,13 @@ static void step(void){
         v.audio_yield=false;
         if(v.next>=v.count){if(!v.finish&&(!v.ipvf||!staged_pcm())){ln_audio_finish();v.finish=true;}v.phase=WAIT;return;}
         if(!v.prefetching){v.building=free_slot();if(v.building==NONE)return;}
-        if(!v.ipvf){r=read_index(v.next);if(r<0){fail(7);return;}if(!r)return;if(!index_record(b,v.next)){fail(7);return;}load_index(b);}v.at=0;v.read_time=0;clear(v.cpu,sizeof v.cpu);v.prepare_start=ln_time_us();v.phase=READ;return;
+        if(!v.ipvf){r=read_index(v.next);if(r<0){fail(7);return;}if(!r)return;if(!index_record(b,v.next)){fail(7);return;}load_index(b);}v.at=0;LN_VIDEO_RECORD(v.read_time=0;clear(v.cpu,sizeof v.cpu);v.prepare_start=ln_time_us());v.phase=READ;return;
     case READ:{if(v.ipvf&&v.prefetching){
             if(!v.pending&&!v.at&&raw_room(v.bytes)&&v.bytes<=RAW_CAPACITY-v.raw_tail)v.raw_write=RAW_BASE+v.raw_tail;
             if(v.raw_write)b=v.raw_write;
         }if(v.ipvf&&!v.prefetching&&!v.startup_preview){
             if(!raw_load()){fail(8);return;}v.at=0;v.phase=CRC;return;
-        }uint32_t n=v.bytes-v.at;r=io(v.offset+v.at,b+v.at,n,false);if(r<0){fail(8);return;}if(!r)return;v.at+=n;if(v.at==v.bytes){if(v.read_time>v.max_read_time)v.max_read_time=v.read_time;v.at=0;v.crc=~0u;v.phase=CRC;}return;}
+        }uint32_t n=v.bytes-v.at;r=io(v.offset+v.at,b+v.at,n,false);if(r<0){fail(8);return;}if(!r)return;v.at+=n;if(v.at==v.bytes){LN_VIDEO_RECORD(if(v.read_time>v.max_read_time)v.max_read_time=v.read_time);v.at=0;v.crc=~0u;v.phase=CRC;}return;}
     case CRC:{
         if(v.ipvf){if(!ipvf_record_header()){fail(9);return;}
             /* The preview already decoded frame zero. The audio pass still
@@ -1072,14 +1077,14 @@ static void step(void){
         if(v.ipvf){}
         else if(v.type==1){if(v.frame_crc!=v.previous_crc){fail(12);return;}}
         else {uint32_t n=v.width*v.height*2-v.at;if(n>4096)n=4096;v.crc=crc_update(v.crc,(uint8_t*)frame_slot(v.building)+v.at,n);v.at+=n;if(v.at!=v.width*v.height*2)return;if((v.crc^~0u)!=v.frame_crc){fail(12);return;}}
-        v.previous_crc=v.frame_crc;v.previous=v.building;++v.prepared;
-        uint32_t elapsed=ln_time_us()-v.prepare_start;if(elapsed>v.max_prepare)v.max_prepare=elapsed;
+        v.previous_crc=v.frame_crc;v.previous=v.building;LN_VIDEO_RECORD(++v.prepared);
+        LN_VIDEO_RECORD(uint32_t elapsed=ln_time_us()-v.prepare_start;if(elapsed>v.max_prepare)v.max_prepare=elapsed);
         if(v.seeking&&v.next<v.target){if(v.ipvf){v.offset+=v.bytes;v.bytes=v.next_sectors*512u;}++v.next;v.phase=INDEX;return;}
         v.seeking=false;v.at=0;v.phase=PCM;return;}
     case PCM:{
         if(v.ipvf&&v.startup_preview){
             v.slot_frame[v.building]=v.next;v.queue[(v.qhead+v.qcount)%FRAME_SLOTS]=v.building;++v.qcount;
-            if(v.qcount>v.max_queue)v.max_queue=v.qcount;
+            LN_VIDEO_RECORD(if(v.qcount>v.max_queue)v.max_queue=v.qcount);
             v.offset+=v.bytes;v.bytes=v.next_sectors*512u;++v.next;v.phase=VERIFY;return;
         }
         uint32_t sent;
@@ -1092,7 +1097,7 @@ static void step(void){
             /* Once audio runs, return to video after each retained record. */
             if(v.next<v.count&&queued.queued+staged_pcm()<4u*v.rate&&raw_room(v.bytes)&&!v.started){v.phase=INDEX;return;}
             audio_cursor_restore();return;}
-        v.slot_frame[v.building]=v.next;v.queue[(v.qhead+v.qcount)%FRAME_SLOTS]=v.building;++v.qcount;if(v.qcount>v.max_queue)v.max_queue=v.qcount;
+        v.slot_frame[v.building]=v.next;v.queue[(v.qhead+v.qcount)%FRAME_SLOTS]=v.building;++v.qcount;LN_VIDEO_RECORD(if(v.qcount>v.max_queue)v.max_queue=v.qcount);
         if(v.ipvf){v.offset+=v.bytes;v.bytes=v.next_sectors*512u;}++v.next;v.phase=INDEX;return;}
     case WAIT:if(v.started&&!v.paused&&!a.queued&&!staged_pcm()&&!v.qcount&&!v.offered){if(!ln_audio_stop()){fail(13);return;}v.resume_frame=0;v.completed=true;v.active=false;v.phase=IDLE;++v.revision;
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -1106,22 +1111,26 @@ void ln_video_step(void){
     catalog_step();
     if(v.stepping)return;v.stepping=true;uint32_t batch_started=ln_time_us();
     for(uint32_t slices=0;slices<64u;slices++){
-        uint32_t started=ln_time_us(),phase=v.phase,at=v.at,next=v.next,revision=v.revision,epoch=v.epoch;
+        uint32_t phase=v.phase,at=v.at,next=v.next,revision=v.revision,epoch=v.epoch;
         uint32_t decode_at=v.decode_at,decode_pixel=v.decode_pixel,tile_count=v.tile_count;
-        uint32_t stage=phase==CRC?0:phase==DECODE?(v.ipvf?2u:v.at<v.video_bytes+v.samples*4u?1u:2u):phase==FRAME_CRC?3:NONE;
-        step();uint32_t elapsed=ln_time_us()-started;
 #if !defined(LINNET_PROFILE_RELEASE)
+        uint32_t started=ln_time_us();
+        uint32_t stage=phase==CRC?0:phase==DECODE?(v.ipvf?2u:v.at<v.video_bytes+v.samples*4u?1u:2u):phase==FRAME_CRC?3:NONE;
+#endif
+        step();
+#if !defined(LINNET_PROFILE_RELEASE)
+        uint32_t elapsed=ln_time_us()-started;
         if(phase<=SEEK){v.phase_us[phase]+=elapsed;++v.phase_calls[phase];}
         if(phase==DECODE&&v.ipvf&&v.source_type<7u){v.type_us[v.source_type]+=elapsed;++v.type_calls[v.source_type];}
-#endif
         if(stage!=NONE){v.cpu[stage]+=elapsed;if(v.cpu[stage]>v.max_cpu[stage])v.max_cpu[stage]=v.cpu[stage];}
+#endif
         if(!v.active||v.pending||v.offered||ln_time_us()-batch_started>=4000u)break;
         /* Copy/RLE/delta slices advance decoder cursors without changing at.
          * They are finite progress and may use the remaining batch budget. */
         if(phase==v.phase&&at==v.at&&next==v.next&&revision==v.revision&&epoch==v.epoch&&
            decode_at==v.decode_at&&decode_pixel==v.decode_pixel&&tile_count==v.tile_count)break;
     }
-    uint32_t elapsed=ln_time_us()-batch_started;if(elapsed>v.max_step)v.max_step=elapsed;
+    LN_VIDEO_RECORD(uint32_t elapsed=ln_time_us()-batch_started;if(elapsed>v.max_step)v.max_step=elapsed);
     v.stepping=false;
 }
 uint32_t ln_video_progress(void){if(v.completed)return 1000;if(!v.count||!v.fps)return 0;return v.resume_frame*1000u/v.count;}
@@ -1139,7 +1148,9 @@ void ln_video_presented(void){
 #if !defined(LINNET_PROFILE_RELEASE)
     if(!v.presented)v.first_present_us=ln_time_us()-v.measurement_opened;
 #endif
-    v.offered=false;++v.presented;
+    v.offered=false;
+#if !defined(LINNET_PROFILE_RELEASE)
+    ++v.presented;
     if(v.started){struct ln_audio_status a;ln_audio_snapshot(&a);uint32_t clock=v.origin+a.consumed,sample=frame_sample(v.slot_frame[v.front]);
         if(clock>sample){uint32_t late=clock-sample;++v.late;
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -1153,6 +1164,7 @@ void ln_video_presented(void){
         v.last_present_us=now;if(v.next<v.count&&v.qcount<v.min_ready)v.min_ready=v.qcount;
 #endif
     }
+#endif
 }
 void ln_video_resume_get(uint32_t out[2]){
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -1175,4 +1187,7 @@ uint32_t ln_video_deadline(uint32_t now){
 }
 /* submitted is decoded audio admitted to software staging for IPVF;
  * the audio HAL diagnostics retain the count actually admitted to DMA. */
+#if !defined(LINNET_PROFILE_RELEASE)
 void ln_video_diagnostics(uint32_t out[32]){uint32_t a[32]={0x53444956u,0,v.phase,v.error,v.active,v.pending,v.paused,v.next,v.count,v.front==NONE?NONE:v.slot_frame[v.front],v.reads,v.read_bytes,v.prepared,v.presented,v.late,v.max_late,v.max_prepare,v.qcount,v.max_queue,v.audio_gaps,v.audio_silence,v.audio_fault,v.submitted,v.revision,v.max_io,v.max_read_time,v.max_cpu[0],v.max_cpu[1],v.max_cpu[2],v.max_cpu[3],v.max_step,v.min_audio};for(uint32_t i=0;i<32;i++)out[i]=a[i];}
+
+#endif

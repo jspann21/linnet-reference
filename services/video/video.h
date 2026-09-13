@@ -29,7 +29,9 @@ void ln_video_presented(void);
 void ln_video_resume_get(uint32_t out[2]);
 void ln_video_resume_set(const uint32_t in[2]);
 uint32_t ln_video_deadline(uint32_t now);
+#if !defined(LINNET_PROFILE_RELEASE)
 void ln_video_diagnostics(uint32_t out[32]);
+#endif
 #if !defined(LINNET_PROFILE_RELEASE)
 /* Arm one next-open measurement while inactive/drained: 0 disarm, 1 normal
  * display, 2 consume due frames without display snapshots. Starts at frame0,

@@ -27,7 +27,9 @@ struct ln_ata_info {
      * packed16bit IDENTIFY pairs:0/49,60/61,83/80,100/101,102/103,
      * 106/117,118/255; IDEcfg,timing0,timing1,DEVen,DEVreset,GPIOJout,
      * GPIOIenable,GPIOKenable,ALTstatus,identifyreject,taskfile0,taskfile1. */
+#if !defined(LINNET_PROFILE_RELEASE)
     uint32_t diagnostic[24];
+#endif
 };
 struct ln_ata_result { uint32_t status,sectors_done; };
 /* Single executive owner. Init/recover and start only issue bounded register
@@ -52,7 +54,9 @@ struct ln_ata_state {
 };
 void ln_ata_state_snapshot(struct ln_ata_state *out);
 
+#if !defined(LINNET_PROFILE_RELEASE)
 void ln_ata_diagnostics(uint32_t out[24]);
+#endif
 uint32_t ln_ata_next_deadline(uint32_t now);
 #if !defined(LINNET_PROFILE_RELEASE)
 /* Read-only SIOP components; cumulative new counters saturate, bit31 signals

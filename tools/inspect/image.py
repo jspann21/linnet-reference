@@ -44,7 +44,8 @@ def verify_release(data, symbols):
     if identity["profile"] != "release":
         raise ValueError("release verifier requires release profile")
     forbidden = (b"LINK", b"LNID", b"linnet-link", b"ln_link_", b"ln_development_", b"ln_recovery_", b"devlink_", b"trace_",
-                 b"inject_", b"screenshot_", b"chainload", b".dev_staging", b".dev_trace")
+                 b"inject_", b"screenshot_", b"chainload", b".dev_staging", b".dev_trace", b"ln_usb_", b"ln_crash_mailbox", b"ln_crash_encode", b"ln_crash_decode",
+                 b"ln_lcd_diagnostics", b"ln_ata_diagnostics", b"history_store")
     haystack = data[128:] + symbols.encode("utf-8")
     hits = [item.decode() for item in forbidden if item in haystack]
     if hits:

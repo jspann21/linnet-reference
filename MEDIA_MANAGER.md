@@ -25,8 +25,10 @@ publishes one directory sector last.
 
 Before installing, choose **User build** for the normal release OS without
 developer transport or instrumentation, or **Developer build** for the
-device-bound development OS with Linnet Link. The recovery loader is bound to
-the detected iPod in either case.
+device-bound development OS with Linnet Link. The bootloader uses the same
+profile as the OS: user installs exclude USB Link, crash capture, and diagnostic
+logging from both images; developer installs bind both images to the detected
+iPod. User builds retain boot rollback state and the on-screen fault/reset path.
 
 Interrupted file preparation is resumable only when every existing Linnet file
 matches the same build byte-for-byte. When a saved recovery record is available,
@@ -119,3 +121,13 @@ file copying can stop midstream; leave the window open while partial files are
 cleaned up. Completed content remains. After errors or disconnection, inspect
 **Open report** for incomplete publication, backups and scratch files before
 retrying. Failed publication is not automatically replayed.
+
+Media Manager shows the confirmed installed OS as **User build**, **Developer
+build**, or **Developer trace build**, with its build ID and any pending candidate.
+Choose **Install / switch build…**, select the desired build, then choose
+**Switch to User build** or **Switch to Developer build**. Switching is available
+even when the version is unchanged; selecting the current profile also allows a
+reinstall. This uses the same reversible fresh-install process described above,
+including archiving the previous Linnet folder. A saved boot recovery record is
+required to replace an existing installation. Interrupted installs must resume
+with their original profile before switching.

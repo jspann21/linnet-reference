@@ -12,12 +12,14 @@ from tools.studio import installer
 
 
 class InstallerWindow:
-    def __init__(self, parent, identity=None):
+    def __init__(self, parent, identity=None, on_changed=None):
         self.window = tk.Toplevel(parent)
-        self.window.title("Linnet · Install or restore")
+        self.window.title("Linnet · Install, switch build or restore")
         self.window.geometry("720x600")
         self.window.minsize(680, 590)
         self.window.transient(parent)
+        self.window.grab_set()
+        self.on_changed = on_changed
         self.identity = identity
         self.review = None
         self.events = queue.Queue()
@@ -61,7 +63,8 @@ class InstallerWindow:
                 ("user", "User build (recommended)", "For everyday use. Developer tools are left out."),
                 ("dev", "Developer build", "For diagnostics and Linnet Link. Bound to this iPod.")):
             row = len(self.build_buttons)
-            button = ttk.Radiobutton(build, text=title, value=value, variable=self.build_choice)
+            button = ttk.Radiobutton(build, text=title, value=value, variable=self.build_choice,
+                                     command=self._update_install_label)
             button.grid(row=row, column=0, sticky="nw", pady=2)
             ttk.Label(build, text=detail, style="Muted.TLabel", wraplength=380).grid(
                 row=row, column=1, sticky="w", padx=(12, 0), pady=2)
@@ -87,15 +90,23 @@ class InstallerWindow:
         self.status.set(text)
         self.status_label.configure(style="InstallerError.TLabel" if error else "Muted.TLabel")
 
+    def _update_install_label(self):
+        action = self.review["action"] if self.review else None
+        current = self.review.get("linnet", {}).get("build") if self.review else None
+        selected = self.build_choice.get()
+        if action == "replace" and current and current != selected:
+            label = "User" if selected == "user" else "Developer"
+            text = f"Switch to {label} build"
+        else:
+            text = {"replace": "Reinstall selected build", "resume": "Resume installation"}.get(action, "Install Linnet")
+        self.install_button.configure(text=text)
+
     def _set_busy(self, value):
         self.busy = value
         state = "disabled" if value else "normal"
         self.refresh_button.configure(state=state)
         self.install_button.configure(state="disabled" if value or not self.review or self.review["action"] not in ("install", "resume", "replace") else "normal")
-        if self.review and self.review["action"] == "replace":
-            self.install_button.configure(text="Fresh reinstall")
-        else:
-            self.install_button.configure(text="Install Linnet")
+        self._update_install_label()
         build_state = "disabled" if value or (self.review and self.review["action"] == "resume") else "normal"
         for button in self.build_buttons:
             button.configure(state=build_state)
@@ -138,14 +149,15 @@ class InstallerWindow:
         self.review = review
         if review["action"] == "resume" and review.get("resume", {}).get("build") in ("user", "dev"):
             self.build_choice.set(review["resume"]["build"])
+        elif review["linnet"].get("build") in ("user", "dev"):
+            self.build_choice.set(review["linnet"]["build"])
         identity, target = review["identity"], review["target"]
         model = identity.get("regulatory_model") or identity.get("model_number") or target["id"]
         self.fields["model"].set(f"{target['name']} · {model}")
         self.fields["identity"].set(f"{identity['drive']} · disk {identity['disk_number']} · {identity['disk_serial']}")
         software = ["Apple iPod software", *review["other_installations"]]
         self.fields["software"].set(", ".join(dict.fromkeys(software)))
-        state = review["linnet"]["state"]
-        self.fields["linnet"].set(review["summary"] if state != "absent" else "Not installed")
+        self.fields["linnet"].set(installer.build_description(review["linnet"]))
         methods = {"rockbox-file": "Use existing Rockbox loader; reversible file replacement",
                    "native-directory": "Verified native boot redirect; administrator approval required",
                    "existing": "Existing installation"}
@@ -159,7 +171,7 @@ class InstallerWindow:
         if self.review["action"] == "resume":
             verb = "Resume the matching interrupted Linnet installation"
         elif self.review["action"] == "replace":
-            verb = "Restore the saved previous boot, preserve the old Linnet folder, and freshly install Linnet 0.1.0"
+            verb = "Install the selected build, even if it is the same version, after restoring the saved boot and archiving the old Linnet folder"
         else:
             verb = "Install the verified target-specific Linnet build"
         build = self.build_choice.get()
@@ -205,10 +217,14 @@ class InstallerWindow:
                     self._set_busy(False)
                     messagebox.showinfo("Linnet installed", "Installation completed and was verified. Safely eject the iPod, then restart it.", parent=self.window)
                     self.refresh()
+                    if self.on_changed:
+                        self.on_changed()
                 elif kind == "restored":
                     self._set_busy(False)
                     messagebox.showinfo("Previous boot restored", "The previous boot software was restored. Safely eject the iPod before restarting it.", parent=self.window)
                     self.refresh()
+                    if self.on_changed:
+                        self.on_changed()
                 elif kind == "error":
                     self._set_busy(False)
                     self._set_status(str(value), error=True)
