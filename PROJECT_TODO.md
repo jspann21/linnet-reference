@@ -26,8 +26,8 @@ complete; broader workloads still need qualification.
 - Fault-inject the initial USB re-enumeration recovery trigger.
 - Complete parser/transaction fault coverage, memory-pressure and performance
   acceptance using existing checks where available.
-- Complete release installer and release-only device journeys after media and
-  power blockers are resolved.
+- Qualify the new Media installer on each physical target and complete the
+  release-only device journeys after media and power blockers are resolved.
 
 Storage compatibility beyond the inspected iFlash remains unqualified. Keep
 storage checks bounded; exhaustive drive stress is outside the current scope.

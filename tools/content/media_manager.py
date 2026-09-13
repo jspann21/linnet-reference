@@ -19,7 +19,6 @@ from .publish import _plain, _hash, _same_target, _volume_guard, inspect_target
 
 KINDS = ("Music", "Notes", "Photos", "Videos")
 VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".mkv", ".avi", ".webm", ".mpg", ".mpeg", ".wmv", ".ipvf", ".ipv"}
-CACHE_VERSION = 2
 
 
 def extensions(kind):
@@ -59,7 +58,35 @@ ConvertTo-Json -InputObject $items -Compress
     if result.returncode:
         raise RuntimeError("Could not find the iPod: " + result.stderr.strip())
     items = json.loads(result.stdout.lstrip("\ufeff") or "[]")
-    return [inspect_target(item["number"], item["serial"], item["volume"], item["drive"]) for item in items]
+    return [_identify(inspect_target(item["number"], item["serial"], item["volume"], item["drive"])) for item in items]
+
+
+def _identify(identity):
+    """Bind Disk Mode storage identity to one target manifest."""
+    from tools.inspect.retail_device import detect
+    from tools.studio.targets import TARGETS
+    detected = detect(identity["root"])
+    storage = detected["storage"]
+    if (detected["device_id"] != identity["disk_serial"] or
+            storage["disk_number"] != identity["disk_number"] or
+            storage["disk_bytes"] != identity["disk_bytes"] or
+            storage["partition_offset"] != identity["partition_offset"]):
+        raise RuntimeError("RetailOS and mounted storage identities disagree")
+    spec = TARGETS[detected["target_id"]]
+    enabled = spec.get("capabilities", {}).get("video", True)
+    fps, color = spec.get("media_video_fps", 24), spec.get("media_video_color", "rgb565")
+    if type(enabled) is not bool or type(fps) is not int or not 4 <= fps <= 30 or color not in ("rgb565", "gray4"):
+        raise RuntimeError(f"invalid media profile in target manifest: {detected['target_id']}")
+    return dict(identity, target_id=detected["target_id"], target_name=spec["name"],
+                model_number=detected["retail_os"].get("model_number"),
+                regulatory_model=(spec["retail"]["regulatory_models"] or [None])[0],
+                media_profile=dict(video_enabled=enabled, video_fps=fps, video_color=color))
+
+
+def supported_kinds(identity):
+    """Return the media services declared by the resolved device target."""
+    profile = identity.get("media_profile", {})
+    return tuple(kind for kind in KINDS if kind != "Videos" or profile.get("video_enabled", True))
 
 
 def target_args(identity):
@@ -68,9 +95,19 @@ def target_args(identity):
 
 
 def refresh(identity):
-    current = inspect_target(**target_args(identity))
+    current = _identify(inspect_target(**target_args(identity)))
     _same_target(identity, current)
+    if current["target_id"] != identity.get("target_id"):
+        raise RuntimeError("iPod target identity changed during media operation")
     return current
+
+
+def source_folders(root, kind):
+    root = Path(root)
+    folders = [root / kind]
+    if kind == "Music":
+        folders.append(root / "iPod_Control" / "Music")
+    return [folder for folder in folders if folder.is_dir()]
 
 
 def _file_records(folder):
@@ -105,15 +142,15 @@ def scan(root, kinds=KINDS):
     for kind in kinds:
         if kind not in KINDS:
             raise ValueError("Unknown media folder")
-        folder = root / kind
-        records = _file_records(folder)
+        folders = source_folders(root, kind)
+        records = [record for folder in folders for record in _file_records(folder)]
         files = [path for path, info in records]
         supported = [p for p in files if p.suffix.lower() in extensions(kind)]
         rows = []
         supported_bytes = 0
         allowed = extensions(kind)
         for path, info in records:
-            rows.append((path.relative_to(folder).as_posix(), info.st_size, info.st_mtime_ns))
+            rows.append((path.relative_to(root).as_posix(), info.st_size, info.st_mtime_ns))
             if path.suffix.lower() in allowed:
                 supported_bytes += info.st_size
         result[kind] = dict(count=len(supported), bytes=supported_bytes,
@@ -274,13 +311,18 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
     Stop requests are honored between files and between compiler/publication calls.
     Failed publication is never retried automatically.
     """
-    selected = tuple(kind for kind in KINDS if kind in selected)
+    requested = tuple(kind for kind in KINDS if kind in selected)
+    unsupported = tuple(kind for kind in requested if kind not in supported_kinds(identity))
+    if unsupported:
+        raise ValueError(f"{', '.join(unsupported)} playback is unavailable on this iPod model.")
+    selected = requested
     if not selected:
         raise ValueError("Select at least one media folder to prepare.")
     identity = refresh(identity)
     if music_verification not in ("metadata", "full"):
         raise ValueError("Music verification must be metadata or full")
     root = Path(identity["root"])
+    media_profile = identity["media_profile"]
     cache = cache_root(identity)
     if cache.drive.casefold() == root.drive.casefold():
         raise ValueError("The preparation cache must be on the computer, not the iPod.")
@@ -367,9 +409,9 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             if not item["count"]:
                 progress(f"{kind}: no supported files; existing prepared library retained.")
                 continue
-            option = photo_dimension if kind == "Photos" else f"{music_verification}-duration-v2-search-names-album-owner" if kind == "Music" else "default"
-            signature = (f"ipvf-24-realtime:{item['fingerprint']}" if kind == "Videos"
-                         else f"{CACHE_VERSION}:{option}:{item['fingerprint']}")
+            option = photo_dimension if kind == "Photos" else f"{music_verification}-duration-search-names-album-owner" if kind == "Music" else "default"
+            signature = (f"ipvf-{media_profile['video_fps']}-{media_profile['video_color']}-realtime:{item['fingerprint']}" if kind == "Videos"
+                         else f"{option}:{item['fingerprint']}")
             saved = state.get(kind, {})
             if not isinstance(saved, dict):
                 saved = {}
@@ -394,9 +436,10 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             action = "Preparing compatible copy" if event.get("phase") == "compatibility-copy" else "Using saved metadata" if event.get("cached") else "Reading metadata"
                             progress(f"{action} {event['current']+1}/{event['total']}: {Path(event['file']).name}")
                             last_progress[0] = now
-                    preparation = compile_music(folder, stage, ffprobe=ffprobe or shutil.which("ffprobe"), device_root=root,
+                    roots = source_folders(root, "Music")
+                    preparation = compile_music(root, stage, ffprobe=ffprobe or shutil.which("ffprobe"), device_root=root,
                                   verification=music_verification, cache_path=cache / "music-metadata.sqlite3",
-                                  bypass_cache=force, progress=music_progress)
+                                  bypass_cache=force, progress=music_progress, include_roots=roots)
                     compatibility = preparation.get("compatibility_copies", [])
                     report["steps"].append(dict(kind=kind, metadata=preparation.get("cache"), integrity=music_verification,
                                                compatibility_copies=compatibility))
@@ -447,7 +490,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             key = hashlib.sha256(relative.encode()).hexdigest()[:8].upper()
                             source_info = source.stat()
                             source_stamp = (source_info.st_size, source_info.st_mtime_ns)
-                            fingerprint = hashlib.sha256(f"ipvf-24-realtime:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
+                            profile_key = f"{media_profile['video_fps']}-{media_profile['video_color']}-realtime"
+                            fingerprint = hashlib.sha256(f"ipvf-{profile_key}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
                             label = video_title(relative)
                             cached = video_state.get(relative, {})
                             if not isinstance(cached, dict):
@@ -498,6 +542,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                     encode_ipvf(source, package, title=label,
                                                 ffmpeg=ffmpeg or shutil.which("ffmpeg"),
                                                 ffprobe=ffprobe or shutil.which("ffprobe"),
+                                                fps=media_profile["video_fps"],
+                                                color_depth=media_profile["video_color"],
                                                 progress=progress, cancelled=cancelled,
                                                 progress_detail=(lambda event: progress_detail(dict(event,
                                                     video_index=index+1, video_total=item['count']))) if progress_detail else None)

@@ -31,7 +31,7 @@ void ln_dsp_init(struct ln_dsp *dsp);
  * to1..1048576 (16x); inputs<=-96dB use the1LSB floor. Exp2 interpolation
  * contributes <0.003dB error before Q16 rounding. No floating-point/runtime. */
 uint32_t ln_dsp_gain_from_db(int32_t db_q16);
-/* DSP1 bytes: magic0,versionu16@4=1,sizeu16@6=160,rateu32@8,
+/* LDSP bytes: magic0,reservedu16@4=0,sizeu16@6=160,rateu32@8,
  * flagsu32@12=0,reserved16..27=0; gainu32@28,ReplayGainu32@32,
  * balancei32@36,modeu32@40,bandcountu32@44,five(b0,b1,b2,a1,a2)i32
  * records@48,amountu32@148,lowpassu32@152,CRC32/ISO-HDLC@156 over0..155.

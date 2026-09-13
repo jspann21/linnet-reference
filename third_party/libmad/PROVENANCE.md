@@ -93,8 +93,8 @@ out of line to reduce caller register pressure and code size. Layer III's
 requantization cache now tracks validity separately from cached values, avoiding
 repeated computation when a valid result is zero and replacing repeated cache
 clears with a bitmap reset. These transformations retain the existing fixed-point
-operations and PCM values. Development PMT4 version 6 separately accounts for
-frame decode, synthesis, and PCM conversion time; it confirmed synthesis as the
+operations and PCM values. Development timing diagnostics separately account
+for frame decode, synthesis, and PCM conversion time; they confirmed synthesis as the
 largest remaining MP3 cost on the PP5020.
 
 Linnet adds `MAD_OPTION_SCAN` for MP3 resume: Layer III retains header/side

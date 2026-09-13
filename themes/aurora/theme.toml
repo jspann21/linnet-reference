@@ -1,7 +1,6 @@
 [theme]
 id = "linnet.theme.aurora"
 name = "Aurora"
-version = 1
 style = "standard"
 layout = "aurora"
 font = "../../sdk/assets/font-compact13.json"

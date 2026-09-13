@@ -115,7 +115,7 @@ def _elevated_refresh(executable: str, arguments: str, directory: str, *, allow_
 def eject_reboot(disk_number: int, plan_path: Path, plan_sha256: str,
                  expected_os: dict | None = None, *, allow_prompt: bool = True) -> dict:
     """Refresh/eject once; verify reviewed Boot or an explicitly expected OS."""
-    from tools.studio.native_bootstrap_v3 import load_reviewed_plan as load_plan
+    from tools.studio.native_bootstrap import load_plan
     if os.name != "nt" or disk_number < 0:
         raise ValueError("eject --reboot requires Windows and an explicit valid disk number")
     plan_path = Path(plan_path).resolve()
@@ -126,7 +126,7 @@ def eject_reboot(disk_number: int, plan_path: Path, plan_sha256: str,
     inspect_target(disk_number, manifest['expected_storage_serial'], '3D9E4E60')
     if expected_os is not None:
         if (not isinstance(expected_os, dict) or expected_os.get('target_id') != manifest['image']['target_id'] or
-            expected_os.get('boot_abi') != 1 or expected_os.get('profile') not in ('dev', 'trace') or
+            expected_os.get('profile') not in ('dev', 'trace') or
             any(not isinstance(expected_os.get(key), str) or not re.fullmatch('[0-9a-f]{64}', expected_os[key])
                 for key in ('build_id', 'sha256'))):
             raise ValueError('expected OS must be a validated development LOS identity')
@@ -183,7 +183,7 @@ def eject_reboot(disk_number: int, plan_path: Path, plan_sha256: str,
                         if (identity.get('build_id') != expected_os['build_id'] or
                                 identity.get('image_sha256') != expected_os['sha256'] or
                                 any(identity.get(key) != expected_os[key]
-                                    for key in ('target_id', 'boot_abi', 'profile'))):
+                                    for key in ('target_id', 'profile'))):
                             raise ValueError('post-eject OS identity or hash mismatch')
                         if os_generation is None:
                             os_generation = identity['generation']
@@ -194,7 +194,7 @@ def eject_reboot(disk_number: int, plan_path: Path, plan_sha256: str,
                                 status.get('build_id') != expected_os['build_id'] or
                                 status.get('image_sha256') != expected_os['sha256'] or
                                 any(status.get(key) != expected_os[key]
-                                    for key in ('target_id', 'boot_abi', 'profile'))):
+                                    for key in ('target_id', 'profile'))):
                             raise ValueError('post-eject OS identity or hash mismatch')
                         if status['generation'] != os_generation:
                             raise RuntimeError('OS generation changed during post-eject verification')
@@ -276,7 +276,6 @@ do {
     if ($currentPartition.Offset -ne $originalPartition.Offset -or $currentPartition.Size -ne $originalPartition.Size -or
         $currentPartition.DriveLetter -ne $originalPartition.DriveLetter) { throw 'Selected partition changed while confirming eject' }
     $volume = Get-Volume -Partition $currentPartition
-    if ($volume.UniqueId -cne $originalVolume.UniqueId) { throw 'Selected volume changed while confirming eject' }
     $operational = @($volume.OperationalStatus | ForEach-Object { [string]$_ })
     if ($operational -contains 'Offline' -or
         ([string]$volume.FileSystemType -eq 'Unknown' -and $operational -contains 'Unknown')) {
@@ -285,6 +284,7 @@ do {
            filesystem=[string]$volume.FileSystemType; operational_status=$operational } | ConvertTo-Json -Compress
         exit 0
     }
+    if ($volume.UniqueId -cne $originalVolume.UniqueId) { throw 'Selected volume changed while confirming eject' }
 } while ($clock.Elapsed.TotalSeconds -lt 20)
 throw 'Eject requested once, but storage removal or media unavailability was not confirmed'
 } catch {
@@ -313,7 +313,7 @@ throw 'Eject requested once, but storage removal or media unavailability was not
             session, device, identity = connect(serial_number=link_serial,
                                                 deadline_seconds=20)
         except (OSError, RuntimeError) as exc:
-            raise RuntimeError("Storage ejection confirmed, but Linnet Link did not reconnect; firmware may require a physical restart") from exc
+            raise RuntimeError("Storage ejection confirmed, but Linnet Link did not reconnect; Apple Disk Mode requires a physical Menu+Select restart") from exc
         try:
             report["identity"] = identity
             report["link_serial"] = device["serial_number"]

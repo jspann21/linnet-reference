@@ -4,6 +4,42 @@ Open **Linnet Media.cmd** on Windows or run `python linnet media`.
 Requires Python 3.11+ with Tkinter, Pillow and FFmpeg/FFprobe. Use **Locate FFmpeg**
 if the tools are not on PATH. Optional Mutagen speeds up music metadata imports.
 
+## Install or restore Linnet
+
+Select **Install or restore Linnet…** in Linnet Media. The installer identifies
+the mounted iPod from its RetailOS hardware records, USB identity and storage
+geometry, then chooses the build target automatically. Current targets are the
+iPod Photo A1099 (`photo4g-p98`) and iPod 4G MP102 (`ipod4g-q21`).
+Additional compatible models are discovered from their target manifests; see
+[adding a target](targets/README.md).
+
+The review shows Apple software, Rockbox, iPodLinux/Podzilla markers and any
+existing or incomplete Linnet installation before enabling installation. With
+a compatible Rockbox file loader, Linnet uses that reversible boot path. Other
+supported devices use a verified native directory redirect after normal Windows
+administrator approval. Both paths preserve the existing filesystem, partitions,
+media and Apple firmware payload. The native path saves the original MBR and
+firmware partition under `%LOCALAPPDATA%\Linnet\Installer`, verifies all Linnet
+storage files, writes a new loader only into an unused firmware extent, and
+publishes one directory sector last.
+
+Interrupted file preparation is resumable only when every existing Linnet file
+matches the same build byte-for-byte. When a saved recovery record is available,
+**Fresh reinstall** first restores the previous boot, renames the old `LINNET`
+folder to the first free `LNETOLD0` through `LNETOLD9` archive, and installs a
+clean current copy. It does not translate old Linnet state or touch the media
+folders. **Restore previous boot** restores the recorded Rockbox file or original
+native directory; it leaves media and the `LINNET` data folder in place. Always
+use **Eject iPod** before restarting.
+
+The same workflow is available from the command line:
+
+```powershell
+python linnet installer inspect --mount E:\
+python linnet installer install --mount E:\
+python linnet installer restore --mount E:\
+```
+
 ## Update content
 
 1. Connect in Disk Mode and select **Find iPod**.

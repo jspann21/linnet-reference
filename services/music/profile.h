@@ -15,7 +15,7 @@ bool ln_music_profile_valid(const struct ln_music_profile *);
  * Apply through configured player admission, before that slot produces PCM. */
 bool ln_music_profile_configure(const struct ln_music_profile *,uint32_t rate,
                                int32_t track_replaygain,struct ln_dsp_config *out);
-/* Independent MSP1 record: magic@0,versionu16@4=1,lengthu16@6=32,
+/* Independent PROF record: magic@0,reservedu16@4=0,lengthu16@6=32,
  * flagsu32@8 (ReplayGain1,crossfeed2),presetu32@12,modeu32@16,
  * balancei32@20,preampQ16dBi32@24,CRC32@28 over bytes0..27. Little endian.
  * Embed alongside queue state in the caller's shared settings envelope. */

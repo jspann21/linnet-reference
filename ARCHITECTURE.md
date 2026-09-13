@@ -19,13 +19,16 @@ There is no runtime JavaScript VM or general-purpose allocator.
 | `scenarios/` | Existing device verification scenarios |
 | `third_party/` | Codec dependencies, licenses and provenance |
 
-Use `photo4g-p98` for the target ID, `dev`, `trace` or `release` for build
-profiles, and `boot` or `os` for image kind. Application/theme identifiers and
+Use a manifest target ID such as `photo4g-p98` or `ipod4g-q21`, `dev`, `trace`
+or `release` for build profiles, and `boot` or `os` for image kind. Application/theme identifiers and
 configuration keys are defined by their manifests and compiler validation.
+RetailOS detection and installation metadata are also target-owned. See
+[adding a target](targets/README.md); compatible new models do not require
+installer code changes.
 
 ## Boot and updates
 
-Boot validates target, ABI, memory bounds and image integrity before entry.
+Boot validates target, memory bounds and image integrity before entry.
 Persistent updates write the inactive slot and publish transactional state;
 a candidate becomes confirmed only after memory, core services, storage
 resolution, first UI frame and audio-idle readiness. An unconfirmed candidate

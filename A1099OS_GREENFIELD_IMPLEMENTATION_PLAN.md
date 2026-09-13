@@ -43,7 +43,7 @@ The implementation may use all existing hardware knowledge, measured behavior, a
 The first complete release must provide:
 
 - MP3, AAC-LC/M4A, ALAC, FLAC, Vorbis, WAV, and AIFF playback.
-- A uniform native codec ABI with build-time selection and an optional fixed codec arena for nonresident codecs.
+- A uniform native codec interface with build-time selection and an optional fixed codec arena for nonresident codecs.
 - Gapless playback, accurate seek, pause/resume, next/previous, fast track changes, shuffle, repeat, queue editing, playlists, bookmarks, and playback resume.
 - ReplayGain, fixed-point equalizer, balance, volume, channel modes, and optional crossfeed when performance permits.
 - Album, artist, track, genre, composer, year, playlist, recently played, favorites, and folder views.
@@ -208,7 +208,7 @@ The device runtime contains only:
 - Dirty-bit dependency masks.
 - Generated event handlers.
 - Generated paint/update functions.
-- A compact fixed component ABI.
+- A compact fixed component interface.
 
 There is no runtime parser, dynamic dependency tracker, virtual DOM, CSS engine, or JavaScript execution.
 
@@ -361,7 +361,7 @@ Required commands:
 
 Protocol requirements:
 
-- Versioned frame header.
+- Fixed frame header.
 - Monotonic sequence numbers.
 - Per-frame CRC and complete-image identity.
 - Explicit state-changing acknowledgements.
@@ -381,7 +381,7 @@ Reserve a small retained crash mailbox containing:
 - Active service and last event ID.
 - Stack bounds and a bounded stack snapshot.
 - Last storage request, audio counters, and DevLink command.
-- CRC and version.
+- CRC and reserved validation fields.
 
 On reset, the developer loader exposes this mailbox before booting another image. A crashing RAM-loaded image must return to a known developer image after watchdog reset without cable removal or user input.
 
@@ -790,7 +790,7 @@ Keep only documentation required to build, preserve contracts, or prevent destru
 4. `FORMATS.md`: canonical binary contracts for OS image metadata, PODB, PIMG, PVID, app manifests, and themes.
 5. This implementation plan, updated only at batch gates.
 
-Do not create per-directory READMEs, speculative design documents, duplicate API references, migration guides, compatibility notes, or prose status reports. Device run receipts are generated data, not documentation.
+Do not create per-directory READMEs, speculative design documents, duplicate API references, compatibility notes, or prose status reports. Device run receipts are generated data, not documentation.
 
 ## 12. Repository layout
 
@@ -810,7 +810,7 @@ a1099os/
     update/
   ui/
     compiler-target/    iPod pixel backend for the TSX AOT compiler
-    runtime/            tiny native component ABI
+    runtime/            tiny native component interface
     system/             generated shell and first-party apps
   apps/                 customizable AOT application sources
   themes/               theme sources and compiled assets
@@ -848,7 +848,7 @@ Avoid a generic `common` dumping ground. Every source file must belong to a clea
 
 ## 14. Definition of done
 
-A1099OS v1 is complete when:
+Linnet `0.1.0` is complete when:
 
 - A clean release image boots reliably and rolls back failed updates.
 - The release image contains no developer transport or instrumentation code/data.

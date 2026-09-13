@@ -13,7 +13,7 @@ filesystem limits are separate from the ATA addressing limit.
 | iFlash ATA1 currently installed | Exact model `iFlash-Platform iPod Adapters`; firmware `iFlash85`; solid-state profile. Five seconds idle, successful flush, two-second delay, then rail off. ATA standby is not sent when unsupported. | 125,042,688 sectors; idle rail-off and one cold wake/read passed, approximately 0.59 seconds. |
 | Mechanical ATA drive | Reported rotation rate selects rotating media. Ten seconds idle; flush then supported standby. Known rotating media with PM can power off after two seconds. | Original spinning drive is not connected; behavior is implemented but not physically qualified. |
 | Other identified SSD/CF media | Reported nonrotating media and separate PM capabilities determine policy. Supported standby is used; rail removal requires a proven safe completion. | Not physically qualified. |
-| Unidentified adapters or legacy drives without a rotation-rate field | Preserve unknown classification. Use advertised PM standby; retain rail power when a safe rail policy is not established. | No claim of universal adapter compatibility. |
+| Unidentified adapters or older drives without a rotation-rate field | Preserve unknown classification. Use advertised PM standby; retain rail power when a safe rail policy is not established. | No claim of universal adapter compatibility. |
 
 The exact iFlash profile is independent of card capacity and serial number. A
 CFA claim alone does not identify iFlash. The installed adapter's malformed LBA

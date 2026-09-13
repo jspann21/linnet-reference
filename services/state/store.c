@@ -13,12 +13,12 @@ static int blank(const uint8_t*p,uint32_t n){for(uint32_t i=0;i<n;++i)if(p[i])re
 int ln_state_encode(uint8_t r[512],uint32_t generation,const uint8_t *payload,uint32_t n){
     if(!r||!generation||n>480||(!payload&&n))return 0;
     for(unsigned i=0;i<512;++i)r[i]=0;
-    put32(r,0x3153544cu);put32(r+4,1);put32(r+8,generation);put32(r+12,n);
+    put32(r,0x54415453u);put32(r+4,0);put32(r+8,generation);put32(r+12,n);
     for(uint32_t i=0;i<n;++i)r[28+i]=payload[i];
     put32(r+508,ln_crc32(r,508));return 1;
 }
 int ln_state_decode(const uint8_t r[512],uint32_t *generation,uint32_t *length){
-    if(!r||!generation||!length||get32(r)!=0x3153544cu||get32(r+4)!=1||!get32(r+8)||
+    if(!r||!generation||!length||get32(r)!=0x54415453u||get32(r+4)||!get32(r+8)||
        get32(r+12)>480||!blank(r+16,12)||ln_crc32(r,508)!=get32(r+508))return 0;
     uint32_t n=get32(r+12);if(!blank(r+28+n,480-n))return 0;
     *generation=get32(r+8);*length=n;return 1;

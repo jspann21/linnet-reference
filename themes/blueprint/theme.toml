@@ -1,7 +1,6 @@
 [theme]
 id = "linnet.theme.blueprint"
 name = "Blueprint"
-version = 1
 style = "standard"
 layout = "blueprint"
 font = "../../sdk/assets/font-compact13.json"

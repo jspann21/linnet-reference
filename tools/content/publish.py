@@ -29,6 +29,34 @@ from typing import Callable
 from .music import ART, HEADER, MAX_DATABASE, TRACK, validate_database
 
 CHUNK = 1024 * 1024
+HISTORY_PAGE_BYTES = 4096
+HISTORY_PAGE_COUNT = 1024
+HISTORY_PAGE_RECORDS = 125
+HISTORY_BANK_BYTES = (HISTORY_PAGE_COUNT + 1) * HISTORY_PAGE_BYTES
+
+
+def _history_superblock(data: bytes) -> bytes:
+    expected = (b'HIST', 0, 64, HISTORY_BANK_BYTES, HISTORY_PAGE_COUNT, HISTORY_PAGE_RECORDS, 32)
+    if len(data) != HISTORY_PAGE_BYTES or struct.unpack_from('<4sHHIIII', data) != expected or any(data[40:4092]):
+        raise ValueError('invalid music history geometry or reserved bytes')
+    if struct.unpack_from('<I', data, 4092)[0] != zlib.crc32(data[:4092]):
+        raise ValueError('invalid music history superblock CRC')
+    return data[24:40]
+
+
+def _empty_history_bank(epoch: bytes) -> bytes:
+    if len(epoch) != 16:
+        raise ValueError('music history epoch must be 16 bytes')
+    bank = bytearray(HISTORY_BANK_BYTES)
+    struct.pack_into('<4sHHIIII16s', bank, 0, b'HIST', 0, 64, HISTORY_BANK_BYTES,
+                     HISTORY_PAGE_COUNT, HISTORY_PAGE_RECORDS, 32, epoch)
+    struct.pack_into('<I', bank, 4092, zlib.crc32(bank[:4092]))
+    for index in range(HISTORY_PAGE_COUNT):
+        start = (index + 1) * HISTORY_PAGE_BYTES
+        struct.pack_into('<4sHHIIII', bank, start, b'HPGE', 0, 64, index, 0, 0, 0)
+        bank[start + 40:start + 56] = epoch
+        struct.pack_into('<I', bank, start + 4092, zlib.crc32(bank[start:start + 4092]))
+    return bytes(bank)
 
 
 def _plain(path: Path, boundary: Path) -> None:
@@ -104,7 +132,7 @@ def validate_stage(stage: Path, *, device_root: Path | None = None,
     manifest_bytes = _bounded(stage / "music-manifest.json", 128 * 1024 * 1024)
     manifest = json.loads(manifest_bytes)
     db_hash = hashlib.sha256(database).hexdigest()
-    expected = dict(format="PODB", version=2, tracks=info["tracks"], groups=info["groups"],
+    expected = dict(format="PODB", tracks=info["tracks"], groups=info["groups"],
                     artwork=info["artwork"], bytes=len(database), sha256=db_hash)
     if not isinstance(manifest, dict) or any(manifest.get(key) != value for key, value in expected.items()):
         raise ValueError("music manifest does not match the complete database")
@@ -347,17 +375,16 @@ def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
         raise ValueError('Incomplete music journal pair; inspect existing state before publication')
     if all(journal_exists):
         sizes=[p.stat().st_size for p in journals]
-        if sizes!=[4608,4608]:
-            from .history import BANK_BYTES, validate_superblock
-            if sizes!=[BANK_BYTES,BANK_BYTES]:
-                raise ValueError('Unexpected/mismatched music journal sizes; preserving existing state')
-            epochs=[]
-            for journal in journals:
-                guard()
-                with journal.open('rb') as reader:epochs.append(validate_superblock(reader.read(4096)))
-            if epochs[0]!=epochs[1]:
-                raise ValueError('Music journal epoch mismatch; preserving existing state')
-    needed+=2*65536
+        if sizes!=[HISTORY_BANK_BYTES,HISTORY_BANK_BYTES]:
+            raise ValueError('Unexpected/mismatched music history sizes; preserving existing state')
+        epochs=[]
+        for journal in journals:
+            guard()
+            with journal.open('rb') as reader:epochs.append(_history_superblock(reader.read(HISTORY_PAGE_BYTES)))
+        if epochs[0]!=epochs[1]:
+            raise ValueError('Music history epoch mismatch; preserving existing state')
+    else:
+        needed += 2 * HISTORY_BANK_BYTES
     _plain(active, root)
     previous = None
     if active.exists():
@@ -402,17 +429,14 @@ def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
         receipt["phase"] = "media-verified"
         record()
         if not any(journal_exists):
-            bank=bytearray(4608)
-            struct.pack_into('<4sHHII',bank,0,b'JRN1',1,64,0,0)
-            bank[16:48]=_bounded(stage/'LIBRARY.PDB',MAX_DATABASE)[64:96]
-            struct.pack_into('<I',bank,4604,zlib.crc32(bank[:4604]))
+            bank=_empty_history_bank(uuid.uuid4().bytes)
             digest=hashlib.sha256(bank).hexdigest()
             receipt['phase']='initializing-music-state';record()
             for journal in journals:
                 guard();_plain(journal,root)
                 with journal.open('xb') as writer:
                     writer.write(bank);writer.flush();os.fsync(writer.fileno())
-                if _hash(journal,4608)!=digest:raise OSError('Music journal initialization readback mismatch')
+                if _hash(journal,HISTORY_BANK_BYTES)!=digest:raise OSError('Music history initialization readback mismatch')
             receipt['initialized_music_state']=True
         # Preserve previous published bytes before replacing the active entry.
         if previous:

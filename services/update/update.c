@@ -20,7 +20,7 @@ static int usable(struct ln_update*u){return u&&u->ready&&u->store->ready&&!u->s
 int ln_update_metadata_encode(const struct ln_update*u,uint8_t p[184]){
     if(!u||!p)return 0;
     for(unsigned i=0;i<184;++i)p[i]=0;
-    put32(p,0x3150554cu);put32(p+4,1);
+    put32(p,0x54445055u);put32(p+4,0);
     if(!ln_boot_state_encode(&u->boot,p+8,32))return 0;
     for(unsigned s=0;s<2;++s){uint8_t*r=p+40+s*72;const struct ln_update_image*i=&u->image[s];
         put32(r,i->length);put32(r+4,i->profile);
@@ -36,7 +36,7 @@ int ln_update_open(struct ln_update*u,struct ln_state_store*store,const struct l
     clear_image(&u->image[0]);clear_image(&u->image[1]);ln_boot_state_init(&u->boot,255);
     if(!store->generation){u->ready=1;return 1;}
     const uint8_t*p=store->payload;
-    if(store->length!=184||get32(p)!=0x3150554cu||get32(p+4)!=1||!ln_boot_state_decode(&u->boot,p+8,32))return 0;
+    if(store->length!=184||get32(p)!=0x54445055u||get32(p+4)||!ln_boot_state_decode(&u->boot,p+8,32))return 0;
     for(unsigned s=0;s<2;++s){const uint8_t*r=p+40+s*72;struct ln_update_image*i=&u->image[s];
         i->length=get32(r);i->profile=get32(r+4);
         if(!i->length){if(!zero(r,72))return 0;continue;}

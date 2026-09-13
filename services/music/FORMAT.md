@@ -92,7 +92,7 @@ The host manifest marks these entries `storage: "existing"`. Default fast import
 use `integrity: "metadata"`, a zero digest, and recorded `bytes`/`mtime_ns`;
 publication checks file size and modification time without reading full audio.
 Explicit full verification uses `integrity: "sha256"` and complete file hashes.
-Legacy entries without an integrity field retain full SHA-256 verification.
+Entries without an integrity shortcut receive full SHA-256 verification.
 No audio is copied for either existing-reference mode. Compressed entries
 store host-decoded sample counts, cached between imports, so duration is available
 even without a native duration header. Native decoder frame counts take precedence
@@ -166,7 +166,7 @@ SHA-256 bytes as hex. The compiler optionally uses Pillow to crop/resize a folde
 `cover.png`, `cover.jpg`, `folder.jpg`, or `Folder.jpg`. It bounds input file size
 to 32 MiB and decoded dimensions to 16 million pixels. Missing artwork uses the
 sentinel, and name collisions are rejected. Embedded artwork extraction is not
-implemented in this version.
+implemented in the current player.
 
 ## String pool and publication
 

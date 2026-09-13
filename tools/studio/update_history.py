@@ -11,8 +11,8 @@ from tools.studio.storage import SLOT_BYTES, _mount_identity, _write_new, record
 def _decode_record(data):
     if len(data) != 512:
         raise ValueError('transactional record must contain exactly 512 bytes')
-    magic, version, generation, length = struct.unpack_from('<4sIII', data)
-    if (magic != b'LTS1' or version != 1 or not generation or length > 480
+    magic, reserved, generation, length = struct.unpack_from('<4sIII', data)
+    if (magic != b'STAT' or reserved or not generation or length > 480
             or any(data[16:28]) or any(data[28 + length:508])
             or zlib.crc32(data[:508]) != struct.unpack_from('<I', data, 508)[0]):
         raise ValueError('invalid transactional record')
@@ -29,10 +29,10 @@ def _read_record(path):
 
 def _boot_record(path):
     data, generation, payload = _read_record(path)
-    if len(payload) != 184 or struct.unpack_from('<4sI', payload) != (b'LUP1', 1):
+    if len(payload) != 184 or struct.unpack_from('<4sI', payload) != (b'UPDT', 0):
         raise ValueError('invalid boot metadata: ' + path.name)
     boot = payload[8:40]
-    if (struct.unpack_from('<4sI', boot) != (b'LBS1', 1) or any(boot[19:28])
+    if (struct.unpack_from('<4sI', boot) != (b'BOOT', 0) or any(boot[19:28])
             or zlib.crc32(boot[:28]) != struct.unpack_from('<I', boot, 28)[0]):
         raise ValueError('invalid boot state: ' + path.name)
     confirmed, candidate, pending = boot[16:19]
@@ -68,8 +68,8 @@ def _history_record(path):
     if payload:
         if len(payload) != 60:
             raise ValueError('invalid rollback history payload size: ' + path.name)
-        magic, version, reason, failed, fallback, attempt, boot_generation = struct.unpack_from('<4s6I', payload)
-        if (magic != b'LRH1' or version != 1 or reason not in (1, 2)
+        magic, reserved, reason, failed, fallback, attempt, boot_generation = struct.unpack_from('<4s6I', payload)
+        if (magic != b'RLBK' or reserved or reason not in (1, 2)
                 or failed not in (0, 1) or fallback not in (0, 1, 255)):
             raise ValueError('invalid rollback history payload: ' + path.name)
     return data, generation

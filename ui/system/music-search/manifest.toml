@@ -1,6 +1,5 @@
 [app]
 id = "linnet.system.music-search"
-version = 1
 title = "Search music"
 entry = "screen.tsx"
 capabilities = ["ui"]

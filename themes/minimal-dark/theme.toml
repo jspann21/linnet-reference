@@ -1,7 +1,6 @@
 [theme]
 id = "linnet.theme.minimal-dark"
 name = "Minimal Dark"
-version = 1
 layout = "minimal"
 font = "../../sdk/assets/font-compact13.json"
 

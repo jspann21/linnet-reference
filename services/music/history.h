@@ -2,7 +2,7 @@
 #define LINNET_MUSIC_HISTORY_H
 #include <stdbool.h>
 #include <stdint.h>
-#include "services/music/journal.h"
+#include "services/music/history_record.h"
 enum ln_music_history_error {
     LN_HISTORY_OK=0,LN_HISTORY_MISSING=-1,LN_HISTORY_CAPACITY=-2,
     LN_HISTORY_READ_A=-3,LN_HISTORY_READ_B=-4,LN_HISTORY_BOTH_CORRUPT=-5,
@@ -13,8 +13,8 @@ enum ln_music_history_error {
 /* Boot-only, idempotent initialization. A latched error cannot be cleared by
  * another init call. Missing banks are never silently created or zeroed.
  * Step belongs to the outer executive; it guards recursive calls from storage
- * progress. Legacy journal writes require stopped playback. Paged journal I/O
- * is asynchronous: headroom gates admission, and admitted requests always drain.
+ * progress. History I/O is asynchronous: headroom gates admission, and admitted
+ * requests always drain.
  * The caller owns storage/device lifecycle and freezes mutations before shutdown.
  * After initial load, flushing remains possible after library cancellation;
  * the last verified library binding is retained for this shutdown snapshot. */
@@ -23,13 +23,12 @@ void ln_music_history_init(void);
  * across upcoming prefetches; an uncached pin is reacquired when admission is
  * available. Set on current-track admission/promotion, release after final resume
  * capture or replace at next admission. Dirty pages still require normal flush.
- * JRN1 needs no eviction protection. Pin changes are rejected after freeze. */
+ * Pin changes are rejected after freeze. */
 void ln_music_history_pin_current(bool present,uint64_t id);
 /* Terminal normal-shutdown barrier: reject new events while draining writes. */
 void ln_music_history_freeze(void);
 void ln_music_history_step(bool may_write);
-/* Paged reads/writes may start with playback headroom. Legacy journal writes
- * remain disabled while playback is true. Each call advances bounded work. */
+/* Reads and writes may start with playback headroom. Each call advances bounded work. */
 void ln_music_history_service(bool may_read,bool may_write,bool playback);
 /* Uses the latest service permissions: admitted I/O stays immediate; eligible
  * metadata/publication phases receive a short deadline between operations. */
@@ -45,13 +44,13 @@ int ln_music_history_error(void);
 bool ln_music_history_busy(void);
 bool ln_music_history_finishing(void);
 bool ln_music_history_dirty(void);
-uint32_t ln_music_history_version(void);
-/* Paged format returns UINT32_MAX (unknown) without scanning every page. */
+uint32_t ln_music_history_revision(void);
+/* Returns UINT32_MAX because counting would require scanning every page. */
 uint32_t ln_music_history_count(void);
 bool ln_music_history_prefetch(uint64_t id);
 /* Distinguishes a proven missing record from uncached data. One prefetch may
  * be active; callers retry admission/intent once ready. Cache pointers expire
- * at the next step. JRN1 returns loaded=true for every ID. */
+ * at the next step. */
 bool ln_music_history_record_ready(uint64_t id);
 /* Per-ID capacity failure does not poison already accepted dirty records. */
 int ln_music_history_record_error(uint64_t id);

@@ -45,7 +45,7 @@ int ln_music_db_open_step(struct ln_music_db *d)
     int r;uint8_t *b=d->buffer;
     if(d->phase==0){
         r=read_bytes(d,0,128);if(r!=1)return r;
-        if(b[0]!='P'||b[1]!='O'||b[2]!='D'||b[3]!='B'||r16(b+4)!=2||r16(b+6)!=128||
+        if(b[0]!='P'||b[1]!='O'||b[2]!='D'||b[3]!='B'||r16(b+4)!=0||r16(b+6)!=128||
            r32(b+8)!=d->size||r32(b+12)||ln_crc32(b,124)!=r32(b+124))return bad(d,LN_DB_FORMAT);
         for(uint32_t i=96;i<124;i++)if(b[i])return bad(d,LN_DB_FORMAT);
         d->tracks=r32(b+16);d->groups=r32(b+20);d->members=r32(b+24);d->searches=r32(b+28);

@@ -170,20 +170,20 @@ void ln_about_emblem(const struct ln_ui_canvas_context *c) {
     }
     for (int32_t y = 0; y < c->h; ++y) {
         int32_t py = c->y + y;
-        if (py < 0 || py >= 176 || py < c->clip_y || py-c->clip_y >= c->clip_h) continue;
+        if (py < 0 || py >= (int32_t)LINNET_UI_HEIGHT || py < c->clip_y || py-c->clip_y >= c->clip_h) continue;
         unsigned sy = (unsigned)y * (LN_EMBLEM_HEIGHT-1) * 256u / (unsigned)(c->h > 1 ? c->h-1 : 1);
         unsigned row = sy >> 8, fy = sy & 255;
         unsigned next_row = row+1 < LN_EMBLEM_HEIGHT ? row+1 : row;
         for (int32_t x = 0; x < c->w; ++x) {
             int32_t px = c->x + x;
-            if (px < 0 || px >= 220 || px < c->clip_x || px-c->clip_x >= c->clip_w) continue;
+            if (px < 0 || px >= (int32_t)LINNET_UI_WIDTH || px < c->clip_x || px-c->clip_x >= c->clip_w) continue;
             unsigned sx = (unsigned)x * (LN_EMBLEM_WIDTH-1) * 256u / (unsigned)(c->w > 1 ? c->w-1 : 1);
             unsigned col = sx >> 8, fx = sx & 255;
             unsigned next_col = col+1 < LN_EMBLEM_WIDTH ? col+1 : col;
             unsigned top = coverage(col,row)*(256-fx) + coverage(next_col,row)*fx;
             unsigned bottom = coverage(col,next_row)*(256-fx) + coverage(next_col,next_row)*fx;
             unsigned a = (top*(256-fy) + bottom*fy + 32768u) >> 16;
-            c->pixels[(unsigned)py * 220u + (unsigned)px] = tones[a];
+            c->pixels[(unsigned)py * LINNET_UI_WIDTH + (unsigned)px] = tones[a];
         }
     }
 }

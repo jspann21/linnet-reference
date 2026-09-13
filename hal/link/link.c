@@ -30,8 +30,8 @@ static uint32_t crc32(const uint8_t *p, uint32_t size) {
 
 static int valid_header(const uint8_t *p) {
     uint16_t flags = read16(p + 6);
-    return p[0] == 'L' && p[1] == 'N' && p[2] == 'K' && p[3] == '1' &&
-           p[4] == 1 && p[5] == 0 && (flags == 0 || flags == 1 || flags == 3) &&
+    return p[0] == 'L' && p[1] == 'I' && p[2] == 'N' && p[3] == 'K' &&
+           p[4] == 0 && p[5] == 0 && (flags == 0 || flags == 1 || flags == 3) &&
            read16(p + 10) == 0 && read32(p + 12) != 0 &&
            read32(p + 16) <= LINNET_LINK_MAX_PAYLOAD;
 }
@@ -74,8 +74,8 @@ size_t ln_link_encode(const ln_link_frame *frame, uint8_t *output, size_t capaci
         (frame->length != 0 && frame->payload == NULL)) return 0;
     size_t total = LINNET_LINK_HEADER_SIZE + frame->length + 4u;
     if (capacity < total) return 0;
-    output[0] = 'L'; output[1] = 'N'; output[2] = 'K'; output[3] = '1';
-    output[4] = 1; output[5] = 0;
+    output[0] = 'L'; output[1] = 'I'; output[2] = 'N'; output[3] = 'K';
+    output[4] = 0; output[5] = 0;
     write16(output + 6, frame->flags);
     write16(output + 8, frame->command);
     write16(output + 10, 0);

@@ -38,12 +38,19 @@ On Linux use `python3 linnet`. Build artifacts go under `out/<profile>/<target>/
 Use `python linnet --help` and subcommand `--help` for available operations.
 Device Link access requires `pyserial==3.5` and the observed device identity.
 
+On Windows, **Linnet Media.cmd** includes a target-aware, non-wiping installer.
+It recognizes supported iPod hardware and existing Linnet, Rockbox and common
+iPodLinux installations, preserves media and the original boot path, and keeps
+verified recovery receipts. See [Linnet Media](MEDIA_MANAGER.md) for the UI and
+CLI workflows.
+
 Select apps and the default theme in `config/system.toml`. Applications use
 constrained TSX compiled ahead of time to native C. Start with the
 [SDK guide](sdk/README.md) and `sdk/templates/`.
 
-Firmware installation is device-specific. Native Boot plans require a matching
-firmware backup, disk identity and pinned hashes; they are not general installers.
+Firmware installation remains device-specific. The Media installer creates and
+applies the matching backup-bound plan for the detected target; low-level native
+Boot commands still require a matching firmware backup, disk identity and pinned hashes.
 RAM boot does not install a persistent image. See [architecture](ARCHITECTURE.md)
 and [Linnet Link](DEVLINK.md) before working on boot or device updates.
 

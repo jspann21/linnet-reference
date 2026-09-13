@@ -69,8 +69,8 @@ static int directory_valid(uint64_t candidate,uint32_t length){
 static int validate(void){
     static const uint8_t original_sha[32]={0x0e,0x21,0xc2,0xbc,0x8c,0xba,0xbd,0xee,0xd6,0xe3,0xd6,0xa0,0x34,0xea,0xcc,0x8e,0x3c,0xa7,0xd6,0xfb,0x04,0xcd,0x2d,0x5d,0x1b,0x4c,0xfc,0x5f,0xd8,0x5d,0x96,0x11};
     static const uint8_t serial[16]="JQ5081G3SAY",usb[16]=LINNET_USB_SERIAL;
-    const uint8_t *p=package;uint64_t candidate=u64(p+32);uint32_t n=u32(p+44),span=u32(p+40),version=u32(p+4);
-    if(u32(p)!=0x32424e4cu||(version!=1&&version!=2)||(version==1&&package_size!=68096u)||u32(p+8)!=package_size||u32(p+12)!=98||u32(p+16)!=1||
+    const uint8_t *p=package;uint64_t candidate=u64(p+32);uint32_t n=u32(p+44),span=u32(p+40);
+    if(u32(p)!=0x4b504e4cu||u32(p+4)||u32(p+8)!=package_size||u32(p+12)!=98||u32(p+16)||
        u32(p+20)!=41094144u||u64(p+24)!=32256u||span!=package_size-2560u||n<32||n>span||
        u64(p+48)!=49152u||u64(p+56)!=21003776u||u32(p+64)!=1549256u||
        u32(p+68)>2||u64(p+72)!=64021856256ull||
@@ -83,7 +83,7 @@ static int validate(void){
     const uint8_t *mbr=p+512;if(mbr[510]!=0x55||mbr[511]!=0xaa||mbr[450]||u32(mbr+454)!=63||u32(mbr+458)!=80262)return 0;
     uint8_t *image=(uint8_t *)(uintptr_t)0x01000000u;
     for(uint32_t i=0;i<128;++i)image[i]=p[2048+i];for(uint32_t i=0;i<n;++i)image[128+i]=p[2560+i];
-    struct ln_image_policy policy={98,1,7,0,0x100000};struct ln_image_info info;
+    struct ln_image_policy policy={98,7,0,0x100000};struct ln_image_info info;
     return matches(image,n+128,p+368)&&ln_image_validate_progress(image,n+128,&policy,&info,ln_storage_progress,0)==LINNET_IMAGE_OK&&
         info.load_address==0&&info.entry_address==0&&info.payload_size==n&&info.profile==u32(p+68)&&equal(info.build_id,p+400,32);
 }

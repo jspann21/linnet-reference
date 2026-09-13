@@ -23,7 +23,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 STATE = ROOT / 'out' / 'refresh-session.json'
 SOURCES = ('tools/link/refresh_session.py', 'tools/studio/native_bootstrap.py',
-           'tools/inspect/image.py', 'tools/studio/native_bootstrap_v2.py', 'tools/studio/native_bootstrap_v3.py')
+           'tools/inspect/image.py', 'tools/studio/targets.py')
 MAX_MESSAGE = 65536
 
 
@@ -150,21 +150,17 @@ class Windows:
 
 def prepare(plan_path, plan_sha256, *, hours=8, install_reviewed_boot=False):
     """Read-only device preparation; creates local immutable-content snapshot."""
-    from tools.studio.native_bootstrap_v3 import load_reviewed_plan as load_plan
+    from tools.studio.native_bootstrap import load_plan
     if type(hours) is not int or not 1 <= hours <= 24:
         raise ValueError('session duration must be 1..24 hours')
     plan_path = Path(plan_path).resolve()
     manifest, artifacts, original = load_plan(plan_path, plan_sha256)
-    # The loader shares predecessor objects in a DAG. Serialize each exact
-    # ancestor once rather than expanding its nested history exponentially.
     artifacts=dict(artifacts)
-    artifacts['_predecessors']=[(prior,{k:v for k,v in data.items() if k!='_predecessors'})
-        for prior,data in artifacts.get('_predecessors',[])]
     sid, _ = Windows().token()
     session_id = uuid.uuid4().hex
     directory = ROOT / 'out' / 'refresh-sessions' / session_id
     directory.mkdir(parents=True)
-    config = dict(version=1, session_id=session_id, owner_sid=sid, seconds=hours * 3600,
+    config = dict(session_id=session_id, owner_sid=sid, seconds=hours * 3600,
                   install_reviewed_boot=bool(install_reviewed_boot),
                   plan=str(plan_path), plan_sha256=plan_sha256,
                   interpreter=str(Path(sys.executable).resolve()),
@@ -245,12 +241,15 @@ def serve(snapshot):
     config = json.loads(Path(snapshot).read_text(encoding='utf-8'))
     # These imports are from the protected closure, before the pipe exists.
     sys.path.insert(0, str(ROOT))
-    from tools.studio import native_bootstrap_v3 as native
+    from tools.studio import native_bootstrap as native
     manifest, artifacts, original = config['manifest'], _unpack(config['artifacts']), _unpack(config['original'])
-    derived, candidate, old_directory, new_directory = native.derive(original, artifacts['mbr.bin'], artifacts['boot.los'], artifacts.get('_predecessors', []))
+    device = json.loads(artifacts['device.json'])
+    derived, candidate, old_directory, new_directory = native.derive(
+        original, artifacts['mbr.bin'], artifacts['boot.los'], device)
     if (candidate, old_directory, new_directory) != (artifacts['candidate.bin'], artifacts['directory-original.bin'], artifacts['directory-candidate.bin']):
         raise ValueError('snapshot candidate derivation mismatch')
-    if len(new_directory) != 512 or manifest['directory_disk_offset'] != native.PARTITION_LBA * 512 + native.DIRECTORY_OFFSET:
+    if (len(new_directory) != 512 or manifest['directory_disk_offset'] !=
+            manifest['partition_lba'] * 512 + manifest['directory_partition_offset']):
         raise ValueError('snapshot directory bounds mismatch')
     pipe = r'\\.\pipe\LinnetRefresh-' + config['session_id']
     attributes, descriptor = win.security(config['owner_sid'])
@@ -263,7 +262,7 @@ def serve(snapshot):
         win.k.LocalFree(descriptor)
     directory = Path(snapshot).parent
     expires = time.monotonic() + config['seconds']
-    status = dict(version=1, session_id=config['session_id'], plan=config['plan'], plan_sha256=config['plan_sha256'],
+    status = dict(session_id=config['session_id'], plan=config['plan'], plan_sha256=config['plan_sha256'],
                   install_reviewed_boot=config.get('install_reviewed_boot') is True,
                   pid=os.getpid(), owner_sid=config['owner_sid'], poisoned=False,
                   started_at=datetime.now(timezone.utc).isoformat(), seconds=config['seconds'])

@@ -25,7 +25,6 @@ const char *ln_music_browser_label(uint32_t row);
 void ln_music_browser_window(uint32_t first);
 void ln_music_browser_visible_rows(uint32_t rows);
 bool ln_music_browser_select(uint32_t row);
-bool ln_music_browser_take_track(uint32_t *track_index);
 struct ln_music_browser_queue {
     uint8_t library_hash[32];
     uint32_t count,cursor,tracks[LINNET_QUEUE_CAPACITY];
@@ -36,8 +35,7 @@ enum ln_music_browser_queue_status { LN_BROWSER_QUEUE_IDLE=0,LN_BROWSER_QUEUE_LO
 /* Select normally requests the full group including tracks before cursor.
  * Groups over64 publish a virtual source descriptor, bounded at100000 members.
  * tracks[] is populated only for source0; select_single explicitly requests one.
- * Window/navigation/new selection cancels and drains pending snapshot work.
- * take_queue and legacy take_track consume the same ready publication. */
+ * Window/navigation/new selection cancels and drains pending snapshot work. */
 bool ln_music_browser_select_single(uint32_t row);
 int ln_music_browser_queue_status(void);
 bool ln_music_browser_take_queue(struct ln_music_browser_queue *out);

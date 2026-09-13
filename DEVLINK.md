@@ -1,12 +1,12 @@
 # Linnet Link Protocol
 
 `device media-info --port COM6` reads command 95 with an empty payload. The
-192-byte LMD2 response reports discovered media and power state without waking
+192-byte MEDI response reports discovered media and power state without waking
 the drive. Fields are documented in `STORAGE_COMPATIBILITY.md` and `FORMATS.md`.
 Storage data commands allow 45 seconds to cover a bounded 30-second cold wake;
 this changes the protocol deadline, not the serial endpoint configuration.
 
-Linnet Link 1.0 is a development-only binary protocol. Host framing, an optional
+Linnet Link is a development-only binary protocol. Host framing, an optional
 serial adapter, a bounded native framing codec and command dispatcher establish
 the development software contracts. The native PP5020 CDC ACM driver implements endpoint
 descriptors, control transfers and bulk DMA. Serial port discovery alone does not establish Linnet Link support.
@@ -18,9 +18,8 @@ All integers are unsigned little endian. Frames have a 20-byte header, zero to
 
 | Offset | Bytes | Field |
 | --- | --- | --- |
-| 0 | 4 | ASCII `LNK1` |
-| 4 | 1 | Major version, 1 |
-| 5 | 1 | Minor version, 0 |
+| 0 | 4 | ASCII `LINK` |
+| 4 | 2 | Reserved, must be zero |
 | 6 | 2 | Flags: request 0, acknowledgement 1, rejected acknowledgement 3 |
 | 8 | 2 | Command |
 | 10 | 2 | Reserved, must be zero |
@@ -29,7 +28,7 @@ All integers are unsigned little endian. Frames have a 20-byte header, zero to
 | 20 | variable | Payload |
 | 20 + length | 4 | CRC32 |
 
-The receiver rejects unknown versions, reserved fields, illegal flags, zero or
+The receiver rejects nonzero reserved fields, illegal flags, zero or
 repeated sequences, oversized payloads and incorrect CRCs. Sequence increases
 monotonically per connection; wrap requires a new connection. Acknowledgements
 echo the command and sequence. Framing corruption invalidates the session; there
@@ -59,15 +58,15 @@ before dispatching mutation. A new session does not authorize replaying old work
 | 50 | READ_CRASH | Empty / bounded crash record |
 | 51 | CLEAR_CRASH | Empty / accepted acknowledgement |
 | 52 | CRASH | u32 mode, currently zero only / accepted acknowledgement before deliberate fault |
-| 64 | PLATFORM_STATE | Empty / 128-byte `LPB1` state record |
+| 64 | PLATFORM_STATE | Empty / 128-byte `PLAT` state record |
 | 65 | INJECT_INPUT | Boot generation, count, event triples / generation and accepted count |
 | 66 | CAPTURE_SCREEN | Boot generation / 28-byte immutable snapshot descriptor |
 | 67 | SCREEN_READ | Capture ID, boot generation, offset, length / capture ID, generation, offset, pixel bytes |
 | 68 | PLATFORM_CONTROL | Boot generation, action, argument / same three words on acceptance |
-| 69 | UI_STATE | Empty / 64-byte `LUI3` native UI record (Batch 3) |
+| 69 | UI_STATE | Empty / 64-byte `UIST` native UI record |
 
 HELLO, INFO and STATUS return the same 96-byte native identity record:
-`LNI1` at offset 0; u32 target ID at 4, boot ABI at 8, profile at 12, image kind
+`LNID` at offset 0; u32 target ID at 4, reserved zero at 8, profile at 12, image kind
 at 16 (OS 0, Boot 1), health flags at 20, boot generation at 24 and capabilities
 at 28; raw build ID[32] at 32 and image SHA256[32] at 64. Capability bits are
 upload 1, RAM boot 2, deliberate crash 4, OS reboot 8, Boot reboot 16 and disk
@@ -82,7 +81,7 @@ subscription is not implemented.
 
 Commands 64 through 68 are compiled only into Batch 1 and later development/trace OS
 images. They use normal frame sequence, CRC and acknowledgement rules. Their
-generation field is the running boot generation from `LNI1`, not the USB
+generation field is the running boot generation from `LNID`, not the USB
 connection counter. A mismatching generation is rejected before mutation.
 The exact state and screenshot layouts are in [FORMATS.md](FORMATS.md).
 
@@ -150,7 +149,7 @@ the Batch 1 hardware gate.
 ## Batch 3 native UI inspection
 
 For panel timing, command 94 with u32 subcommand 7 returns sixteen u32 words:
-`DSY1`, version 1, synchronized frames, pulse timeouts, last wait us, maximum
+`DSYN`, reserved zero, synchronized frames, pulse timeouts, last wait us, maximum
 wait us, waiting flag, frame-pending flag, submitted frames, completed frames,
 LCD failures, pixel pairs written, maximum presentation us (including the
 sync wait), last transfer us, maximum transfer us, and snapshot tick.
@@ -159,7 +158,7 @@ an active-low pulse of approximately 579 us every 16,575 us. Presentation arms
 its interrupt only for a pending frame and falls back after 25 ms without a
 pulse. Screen captures still cannot establish physical tear-free scanout.
 
-Command 94 subcommand 8 returns sixteen u32 words: `BLT1`, version 1,
+Command 94 subcommand 8 returns sixteen u32 words: `BLIT`, reserved zero,
 helper byte count, live pixel hook, live command hook, expected command hook,
 first resident mismatch offset (`0xffffffff` when exact), expected and live
 words at that mismatch, column-buffer pixel mismatch count (`0xffffffff`
@@ -174,13 +173,13 @@ as observed in the local RetailOS image, with right-to-left logical columns.
 
 Command 69, UI_STATE, takes an empty payload and returns 16 little-endian u32
 words in development/trace OS images built with the native UI. The command is
-read-only and uses the normal frame sequence and CRC rules. An older image
-without native UI state rejects it. The reply has these word indices:
+read-only and uses the normal frame sequence and CRC rules. An image without
+native UI state rejects it. The reply has these word indices:
 
 | Word | Meaning |
 | --- | --- |
-| 0 | ASCII `LUI3` |
-| 1 | Version, 1 |
+| 0 | ASCII `UIST` |
+| 1 | Reserved, zero |
 | 2 | Current scene index |
 | 3 | Selected item index |
 | 4 | Scene lifecycle epoch |
@@ -234,7 +233,7 @@ acknowledgements. A streaming window therefore covers up to 4080 bytes without
 waiting between individual writes. Upload completion checks full-image CRC32
 and SHA256. These hashes detect corruption and identify content; they are not
 signatures or authentication. VERIFY must additionally validate the image
-container and compatibility before BOOT_RAM is allowed.
+container and target constraints before BOOT_RAM is allowed.
 
 No transaction is automatically retried. Missing, corrupt, out-of-order or
 wrong-command acknowledgements poison the host session and raise
@@ -336,14 +335,14 @@ never chosen by the wire. Commands are excluded from release builds.
 | 97 | WORK_READ | Offset, length 1..1008 / offset, bytes |
 | 98 | WORK_WRITE | Generation, offset, 1..1008 bytes / generation, end offset |
 
-STORAGE_STATE words: `LSB2`, phase, error, available-file bitmask, prepared,
+STORAGE_STATE words: `STOR`, phase, error, available-file bitmask, prepared,
 capacity low/high, ready, quarantined, pending, completed, submitted, retries,
 failed, canceled, coalesced, cache hits, read-ahead sectors, maximum block step
 microseconds, partition LBA, partition sectors, clusters, operation generation,
 WORK file capacity. Phase 6 is mounted; 9 is failure. Prepared additionally requires exact
 file capacities, writable volume and disjoint allocation proof.
 
-UPDATE_STATUS words: `LUP2`, available, ready, record generation, boot-state
+UPDATE_STATUS words: `USTA`, available, ready, record generation, boot-state
 generation, confirmed slot, candidate slot, attempt pending, attempts, slot 0
 length, slot 1 length, upload active, upload slot, upload offset, poisoned, error.
 Slot 255 means absent. Completion is never inferred from an acceptance ACK alone.
@@ -381,7 +380,7 @@ checking any transient Boot against its installed plan.
 ## Native Boot maintenance commands
 
 These commands are available in the development Batch 2 OS. They consume a
-fixed LNB2 package, never a caller-selected raw-sector operation. Mutations begin
+fixed LNPK package, never a caller-selected raw-sector operation. Mutations begin
 with the current boot generation and use the normal sequence/CRC rules.
 
 | ID | Command | Request / successful reply |
@@ -391,7 +390,7 @@ with the current boot generation and use the normal sequence/CRC rules.
 | 102 | NATIVE_APPLY | Generation / generation, zero after complete durable verification |
 | 103 | NATIVE_STATUS | Empty / 16 little-endian u32 words |
 
-Status words 0..7 contain `LNB2`, phase, error, received package offset, writes
+Status words 0..7 contain `LNPK`, phase, error, received package offset, writes
 bitmask, disk bytes read, elapsed microseconds, and block request generation.
 Words 8..15 contain the 32-byte observed SHA-256 in byte order. The block request
 generation is independent of the boot generation. Phase 10 means complete;
@@ -400,12 +399,11 @@ bit 1 records that directory writing was attempted. These bits alone do not prov
 durability. The host requires phase 10, error zero, writes mask 3, the complete
 package offset and the exact expected final firmware hash before reporting success.
 
-The fixed package pins target 98, ABI 1, storage serial `JQ5081G3SAY`, USB serial
-`000000F7A765`, capacity and reviewed partition geometry. The host first re-derives
-the package from the hash-pinned plan and all predecessor artifacts. Its exact
-before-state assumes every pinned predecessor payload is installed, the latest
-predecessor directory is active, and the new candidate region is zero. A different
-full firmware hash is rejected before writing.
+The fixed package pins target 98, storage serial `JQ5081G3SAY`, USB serial
+`000000F7A765`, capacity and reviewed partition geometry. The host re-derives
+the package from the hash-pinned plan. Its exact before-state assumes the original
+firmware is installed and the new candidate region is zero. A different full
+firmware hash is rejected before writing.
 
 Apply validates the package and reconstructed Boot LOS, acquires exclusive storage
 maintenance ownership after quiescing FAT activity, and checks MBR, original OSOS
@@ -479,66 +477,22 @@ The process survives the launcher and individual CLI commands. It ends at the
 chosen expiry, explicit stop, or Windows logoff/restart; it is not an automatically
 starting Windows service.
 
-## Batch 5 photo diagnostic
+## Media diagnostics
 
-Development command 121 (`PHOTOS_STATE`) is read-only and returns 20 little-endian
-32-bit words (80 bytes). The magic is `PHT5`, version 1. Fields in order:
-magic, version, phase, error, active, ready, pending, view, file size, metadata
-verification offset, data offset, running CRC, expected metadata CRC, verified
-photos, verified levels, verified tiles, current photo index, visible tiles,
-revision, navigation. The running CRC is unfinalized (XOR with `0xffffffff`
-before comparing). View values are albums 0, grid 1, viewer 2. Phase values
-follow `services/photos/photos.c`; idle is 3. The command is excluded from release
-firmware. Use `python linnet device photos-state --port COM6`.
+Development command 121 (`PHOTOS_STATE`) is read-only and returns 32
+little-endian words. Its `PHOT` header is followed by the complete current photo
+state and timing snapshot documented by `tools/link/music.py`. The running CRC
+is unfinalized and must be XORed with `0xffffffff` before comparison. View values
+are albums 0, grid 1, viewer 2. Release firmware excludes this command.
 
-Read-only development command122 (`VIDEO_STATE`) returns128 bytes, magicVIT6,
-version2 (the host also reads version1/96 bytes). Fields: magic,version,phase,error,active,pending,paused,next_frame,
-frame_count,front_frame,read_ops,read_bytes,prepared,presented,late_frames,
-max_late_samples,max_prepare_us,queued_frames,max_queued_frames,audio_underruns,
-audio_silence_frames,audio_fault,submitted_samples,revision,max_io_us,
-max_record_read_us,max_record_crc_us,max_payload_crc_us,max_decode_us,
-max_frame_crc_us,max_step_us,min_audio_queued. `video-state` is
-available through the device CLI. Release firmware excludes this Link command.
+Development command 122 (`VIDEO_STATE`) returns exactly 128 bytes with a `VIDS`
+header and the complete current playback, storage, audio and timing snapshot.
+Passing page 8 returns exactly 128 bytes with a `VMEA` header for startup
+milestones. Latencies are measured from video open; zero means the milestone has
+not occurred. `python linnet device video-startup-timing --port COM6` reads the
+passive snapshot.
 
-`VIDEO_STATE` with u32 page 8 returns a 128-byte `VST1` record. Its first
-eight u32 words are magic, version 1, open timestamp, first accepted display
-presentation latency, index-verification latency, first audio-start latency,
-frames ready at audio start, and dropped display frames. Latencies are
-microseconds from video open; zero means the milestone has not occurred.
-Remaining words are zero.
-`python linnet device video-startup-timing --port COM6` or
-`Session.video_startup_timing()` reads this passive snapshot. A presentation
-acknowledges display submission, not the physical panel's scanout completion.
-IPVF decode work is reported in `max_decode_us`, including LZ4 and reconstruction;
-`max_payload_crc_us` applies to PVID's separate payload CRC phase.
-
-Development interrupted-startup records reuse the144-byte crash mailbox with
-reason`0xB0070001` and flags`2`. They are startup diagnostics, not CPU exception
-register captures. Words0..3 of the register array hold trace phase, image bytes,
-status and elapsed microseconds; `last_event` holds the last startup marker.
-The host decoder exposes these separately as `startup_trace`. Existing valid
-crash records take precedence over this fallback diagnostic.
-
-
-PHT5 version 2 returns 128 bytes. First 20 words retain v1 order (version=2).
-Added words: frame_valid, frame_complete, slide_armed, slide_at_us, now_us,
-view_started_us, frame_ready_us, io_started_us, max_open_us, max_read_us,
-render_us, jpeg_us. Host accepts exact v1/v2 length/version pairs. Added
-storage and timing calls are development only. Open/read maxima measure from
-accepted submission return through completed poll, including scheduling waits;
-submission-call work and epoch-canceled work are omitted. Render/JPEG accumulate
-step intervals for the selected image, reset by begin_view. They exclude
-scheduling waits, but are not isolated CPU counters. Frame_ready records latest
-software render publication, not LCD completion; use platform frame completion
-separately. Timestamps wrap at 32 bits; use unsigned bounded differences.
-IO start is meaningful only while pending. Frame_complete is PIMG-specific;
-JPEG completion is shown by frame_valid.
-
-PMT4 version 6 returns 124 bytes. It retains the version 5 timing, clock and
-decoder-kind fields and appends cumulative MP3 frame-decode calls/time/maximum,
-synthesis calls/time/maximum, and PCM conversion calls/frames/time/maximum.
-PMT4 version 5 returns 84 bytes. It retains the version 4 timing, clock and
-idle fields and appends `decoder_kind`, using the `LN_DEC_*` values in
-`services/music/decoder.h`. Zero means that no decoder is active. This makes
-CPU/idle measurements attributable to the active codec without touching media
-or changing playback state.
+Player timing uses the fixed 124-byte `TIME` record. It includes clock and
+decoder identity plus cumulative MP3 decode, synthesis and PCM conversion
+counters. These records are exact current layouts: any other header or length is
+rejected.

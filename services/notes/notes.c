@@ -37,7 +37,7 @@ void ln_notes_step(struct ln_ui_state*s){
         else if(phase==1){phase=2;}
         else if(phase==2){
             count=word(header+8);
-            if(transferred!=16u||word(header)!=0x31544e4eu||word(header+4)!=1u||count>NOTES_MAX||word(header+12)!=NOTES_RECORD||file.size!=16u+count*(64u+NOTES_RECORD))fail();
+            if(transferred!=16u||word(header)!=0x45544f4eu||word(header+4)||count>NOTES_MAX||word(header+12)!=NOTES_RECORD||file.size!=16u+count*(64u+NOTES_RECORD))fail();
             else{phase=0;status="No Notes - add text files";++revision;}
         }else if(phase==3||phase==5){
             uint32_t stride=phase==3?64u:32u;bool valid=transferred==request_count*stride;

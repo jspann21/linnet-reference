@@ -1,6 +1,5 @@
 [app]
 id = "linnet.system.photos"
-version = 1
 title = "Photos"
 entry = "screen.tsx"
 capabilities = ["ui"]

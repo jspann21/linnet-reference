@@ -1,7 +1,6 @@
 [theme]
 id = "linnet.theme.ipod-photo"
 name = "iPod Photo"
-version = 1
 style = "apple-photo"
 layout = "ipod-photo"
 font = "../../sdk/assets/font-podium-sans16.json"

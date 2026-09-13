@@ -34,6 +34,7 @@ class MediaApp:
         self.inventory = None
         self.pending = []
         self.video_selection = set()
+        self.video_enabled = True
         self.video_summary = tk.StringVar(value="No iPod videos selected")
         self.receipt = None
         self.submitted = []
@@ -66,6 +67,7 @@ class MediaApp:
         library = ttk.LabelFrame(outer, text="1. Choose what to update", padding=8)
         library.pack(fill="x")
         self.counts = {}
+        self.media_checks = {}
         descriptions = {
             "Music": "Index existing audio in place and prepare cover art.",
             "Notes": "Prepare text and Markdown files for the Notes reader.",
@@ -76,6 +78,7 @@ class MediaApp:
             checkbox = ttk.Checkbutton(library, text=kind, variable=self.selected[kind])
             checkbox.grid(row=row, column=0, sticky="w", pady=2)
             self.option_controls.append(checkbox)
+            self.media_checks[kind] = checkbox
             label = ttk.Label(library, text="Not scanned", width=25)
             label.grid(row=row, column=1, sticky="w", padx=12)
             self.counts[kind] = label
@@ -189,11 +192,20 @@ class MediaApp:
         for button in (self.refresh_button, self.start_button, self.scan_button, self.add_files_button,
                        self.add_folder_button, self.remove_button, self.tools_button, self.add_videos_button):
             button.configure(state="disabled" if value else "normal")
+        if hasattr(self, "installer_button"):
+            self.installer_button.configure(state="disabled" if value else "normal")
         self.choose_videos_button.configure(state="disabled" if value or self.inventory is None else "normal")
         self.library_button.configure(state="disabled" if value or self.inventory is None else "normal")
         self.start_button.configure(state="disabled" if value or self.inventory is None else "normal")
         for control in self.option_controls:
             control.configure(state="disabled" if value else "normal")
+        if not self.video_enabled:
+            check = getattr(self, "media_checks", {}).get("Videos") or getattr(self, "update_checks", {}).get("Videos")
+            if check:
+                check.configure(state="disabled")
+            self.choose_videos_button.configure(state="disabled")
+            if self.add_videos_button is not self.add_files_button:
+                self.add_videos_button.configure(state="disabled")
         for control in (self.device_choice, self.kind_choice, self.photo_choice):
             control.configure(state="disabled" if value else "readonly")
         self.stop_button.configure(state="normal" if value else "disabled")
@@ -429,7 +441,7 @@ class MediaApp:
                     self.start_button.configure(state="disabled")
                     for label in self.counts.values():
                         label.configure(text="Not scanned")
-                    self.device_choice["values"] = [f"{d['drive']}  Apple iPod · {d['disk_serial']} · {size(d['free_bytes'])} free" for d in value]
+                    self.device_choice["values"] = [f"{d['drive']}  {d['target_name']} · {d.get('regulatory_model') or d.get('model_number')} · {size(d['free_bytes'])} free" for d in value]
                     if value:
                         self.device_choice.current(0)
                         self.scan()
@@ -439,12 +451,23 @@ class MediaApp:
                         self.log_message("Waiting for the iPod.")
                 elif kind == "inventory":
                     identity, self.inventory = value
+                    profile = identity["media_profile"]
+                    self.video_enabled = profile.get("video_enabled", True)
+                    self.selected["Videos"].set(self.video_enabled)
+                    self.media_checks["Videos"].configure(state="normal" if self.video_enabled else "disabled")
+                    if not self.video_enabled:
+                        self.video_selection.clear()
                     self.video_selection.intersection_update(self.inventory["Videos"].get("files", []))
                     self.update_video_summary()
-                    self.choose_videos_button.configure(state="normal")
+                    self.choose_videos_button.configure(state="normal" if self.video_enabled else "disabled")
+                    if self.add_videos_button is not self.add_files_button:
+                        self.add_videos_button.configure(state="normal" if self.video_enabled else "disabled")
                     self.library_button.configure(state="normal")
                     self.devices[self.device_choice.current()] = identity
-                    self.device_status.set(f"{identity['drive']}  •  {size(identity['free_bytes'])} free  •  Originals stay in their folders.")
+                    video = ("unavailable on this model" if not self.video_enabled else
+                             f"{profile['video_fps']} fps, four-level grayscale" if profile['video_color'] == 'gray4'
+                             else f"{profile['video_fps']} fps, full color")
+                    self.device_status.set(f"{identity['target_name']} ({identity.get('regulatory_model') or identity.get('model_number')})  •  {size(identity['free_bytes'])} free  •  Video: {video}  •  Originals stay in their folders.")
                     for folder, item in self.inventory.items():
                         self.counts[folder].configure(text=f"{item['count']:,} files · {size(item['bytes'])}")
                         if item["ignored"]:

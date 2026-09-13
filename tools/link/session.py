@@ -41,9 +41,9 @@ class Session:
         if len(raw) != 128:
             raise ProtocolError('invalid video startup timing length')
         words = struct.unpack('<32I', raw)
-        if words[:2] != (int.from_bytes(b'VST1', 'little'), 1) or any(words[8:]):
+        if words[:2] != (int.from_bytes(b'VMEA', 'little'), 0) or any(words[8:]):
             raise ProtocolError('invalid video startup timing header')
-        return dict(zip(('magic', 'version', 'opened_us', 'first_frame_us',
+        return dict(zip(('magic', 'reserved', 'opened_us', 'first_frame_us',
                          'index_ready_us', 'audio_start_us', 'start_ready_frames', 'dropped_frames'), words[:8]))
 
     def __init__(self, transport: Transport, timeout: float = 2.0):
@@ -134,8 +134,8 @@ class Session:
         words = struct.unpack('<16I', raw)
         if not any(words):
             return dict(available=False)
-        magic, version, observed, size, mask = words[:5]
-        if (magic != int.from_bytes(b'STT1', 'little') or version != 1 or
+        magic, reserved, observed, size, mask = words[:5]
+        if (magic != int.from_bytes(b'STUP', 'little') or reserved or
                 not 32 <= size <= 0x800000 or mask > 255 or mask & (mask + 1) or
                 any(words[13:]) or (generation is not None and observed != generation)):
             raise ProtocolError('invalid startup timing identity or mask')
@@ -153,25 +153,23 @@ class Session:
         intervals = {name: (words[5 + end] - words[5 + start]) & 0xffffffff
                      for name, (start, end) in pairs.items()
                      if mask & (1 << start) and mask & (1 << end)}
-        return dict(available=True, version=version, generation=observed,
+        return dict(available=True, generation=observed,
                     payload_bytes=size, valid_mask=mask, ticks_us=ticks,
                     intervals_us=intervals, complete=mask == 255)
 
     def boot_timeline(self, generation=None) -> dict:
-        """Read BTT1; intervals require both stamps and use modulo32 ticks."""
+        """Read the boot timeline; intervals require both stamps and use modulo32 ticks."""
         raw = self.request(Command.BOOT_TIMELINE)
         if len(raw) != 192:
             raise ProtocolError('invalid boot timeline length')
         words = struct.unpack('<48I', raw)
         if not any(words):
             return dict(available=False)
-        magic, version, observed, mask = words[:4]
-        if (magic != int.from_bytes(b'BTT1', 'little') or version not in (1, 2, 3, 4, 5) or
-                mask >> 28 or words[7] > (3 if version >= 5 else 1) or words[40] > 31 or
-                (version < 3 and any(words[36:40])) or
-                (version >= 3 and not words[46] and any(words[36:40])) or
-                (version == 1 and any(words[46:])) or
-                (version >= 2 and (words[46] > (4 if version == 2 else 14 if version == 3 else 20) or (not words[46] and words[47]))) or
+        magic, reserved, observed, mask = words[:4]
+        if (magic != int.from_bytes(b'BTIM', 'little') or reserved or
+                mask >> 28 or words[7] > 3 or words[40] > 31 or
+                (not words[46] and any(words[36:40])) or
+                (words[46] > 20 or (not words[46] and words[47])) or
                 (generation is not None and observed != generation)):
             raise ProtocolError('invalid boot timeline identity or mask')
         names = ('boot_c', 'boot_recovery', 'boot_usb', 'boot_storage',
@@ -206,7 +204,7 @@ class Session:
                      for name, (start, end) in pairs.items()
                      if mask & (1 << start) and mask & (1 << end)
                      # A saved-theme first frame can finish after runtime setup.
-                     # Do not report that reversed legacy span as a timer wrap.
+                     # Do not report that reversed span as a timer wrap.
                      and (name != 'os_monitor_cache' or
                           ((words[8 + end] - words[8 + start]) & 0xffffffff) < 0x80000000)}
         counters = {}
@@ -219,7 +217,7 @@ class Session:
                 raise ProtocolError('unpublished boot counter')
         if words[7] & 1 and (mask & 0xfff) != 0xfff:
             raise ProtocolError('incomplete native boot timeline')
-        return dict(available=True, version=version, generation=observed,
+        return dict(available=True, generation=observed,
                     native_boot=bool(words[7] & 1), valid_mask=mask,
                     boot_sha_iram=bool(words[7] & 2),
                     inherited_registers=dict(clock_source=words[4], pll=words[5],
@@ -235,11 +233,10 @@ class Session:
                                             'skip_usb_phy_ready', 'skip_usb_phy_settle',
                                             'skip_usb_xmb_readback')[words[46]],
                                     observed_clock_source=words[47],
-                                    usb_registers=(dict(device_enable=words[36],
+                                    usb_registers=dict(device_enable=words[36],
                                                         device_reset=words[37],
                                                         device_init2=words[38],
-                                                        usb_clock=words[39])
-                                                   if version >= 3 else None)),
+                                                        usb_clock=words[39])),
                     ticks_us=ticks, intervals_us=intervals, counters=counters,
                     saturated_counters=[name for name, value in counters.items()
                                         if value == 0xffffffff])
@@ -317,7 +314,8 @@ class Session:
         if len(descriptor) != 28:
             raise ProtocolError('invalid screenshot descriptor')
         capture, observed, width, height, format_id, size, crc = struct.unpack('<7I', descriptor)
-        if not capture or observed != generation or (width,height,format_id,size) != (220,176,1,77440):
+        if (not capture or observed != generation or format_id != 1 or
+            not 1<=width<=220 or not 1<=height<=176 or size != width*height*2):
             raise ProtocolError('invalid screenshot identity or dimensions')
         pixels = bytearray()
         for offset in range(0,size,1008):
@@ -333,12 +331,12 @@ class Session:
 
     def storage_state(self) -> tuple[int, ...]:
         reply = self.request(Command.STORAGE_STATE, timeout=15)
-        if len(reply) != 96 or reply[:4] != b'LSB2':
+        if len(reply) != 96 or reply[:4] != b'STOR':
             raise ProtocolError('invalid storage state')
         return struct.unpack('<24I', reply)
 
     def storage_performance(self) -> dict:
-        """Read dev SIO1; no I/O, reset or arming. Timings overlap, not additive.
+        """Read storage performance; no I/O, reset or arming. Timings overlap, not additive.
 
         New counters saturate (flags bit31). Compare same-identity/epoch idle
         endpoints for the bounded run; pending attempts bias terminal wall averages.
@@ -347,9 +345,9 @@ class Session:
         if len(raw) != 128:
             raise ProtocolError('invalid storage performance length')
         words = struct.unpack('<32I', raw)
-        if words[0] != int.from_bytes(b'SIO1', 'little') or words[1] != 1 or words[3] & ~0x8000000f:
+        if words[0] != int.from_bytes(b'SIOP', 'little') or words[1] or words[3] & ~0x8000000f:
             raise ProtocolError('invalid storage performance header')
-        names = ('magic', 'version', 'snapshot_us', 'flags', 'ata_commands', 'ata_sectors_read',
+        names = ('magic', 'reserved', 'snapshot_us', 'flags', 'ata_commands', 'ata_sectors_read',
                  'ata_read_commands', 'ata_read_terminal_attempts', 'ata_read_wall_us', 'ata_read_wall_max_us',
                  'ata_sector_service_us', 'ata_sector_service_max_us', 'ata_read_status_polls',
                  'ata_busy_observations', 'ata_no_drq_observations', 'ata_reset_epoch',
@@ -363,20 +361,20 @@ class Session:
         return result
 
     def storage_poll_timing(self) -> dict:
-        """Read dev SPT1 inclusive storage-function timing; no reset or I/O.
+        """Read inclusive storage-function timing; no reset or I/O.
 
         Nested means reentry into the same storage function. Callback, FAT,
         progress and poll intervals overlap and must not be added. Deltas need
-        identical boot/epoch, overflow_mask=0 at both endpoints, and paired SIO1
-        idle/ATA-epoch checks. Bracket with host times/SIO1 snapshot timestamps.
+        identical boot/epoch, overflow_mask=0 at both endpoints, and paired
+        idle/ATA-epoch checks. Bracket with host times and snapshot timestamps.
         """
         raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 2))
         if len(raw) != 64:
             raise ProtocolError('invalid storage poll timing length')
         words = struct.unpack('<16I', raw)
-        if words[0] != int.from_bytes(b'SPT1', 'little') or words[1] != 1:
+        if words[0] != int.from_bytes(b'POLL', 'little') or words[1]:
             raise ProtocolError('invalid storage poll timing header')
-        names = ('magic', 'version', 'epoch', 'overflow_mask', 'poll_calls', 'poll_us',
+        names = ('magic', 'reserved', 'epoch', 'overflow_mask', 'poll_calls', 'poll_us',
                  'poll_nested_calls', 'poll_nested_us', 'progress_calls', 'progress_us',
                  'progress_nested_calls', 'progress_nested_us', 'fat_calls', 'fat_us',
                  'runtime_callback_calls', 'runtime_callback_us')
@@ -385,7 +383,7 @@ class Session:
         return result
 
     def storage_schedule_diagnostics(self) -> dict:
-        """Read dev SCD1 scheduler opportunity/latency samples.
+        """Read scheduler opportunity/latency samples.
 
         State counts are samples at the existing runtime-idle decision. Offered
         wait windows can overlap decoder/render CPU and must not be summed as
@@ -396,7 +394,7 @@ class Session:
         if len(raw) != 96:
             raise ProtocolError('invalid storage schedule diagnostics length')
         words = struct.unpack('<24I', raw)
-        if (words[0] != int.from_bytes(b'SCD1', 'little') or words[1] != 1 or
+        if (words[0] != int.from_bytes(b'SCHD', 'little') or words[1] or
                 not words[2] or words[3] & ~0x80000003 or words[15] > 4 or
                 (not (words[3] & 0x80000000) and sum(words[5:10]) != words[4]) or
                 words[11] > words[10] or
@@ -404,7 +402,7 @@ class Session:
                 words[20] > words[19] or words[20] > words[21] or
                 words[23] > words[22]):
             raise ProtocolError('invalid storage schedule diagnostics header')
-        names = ('magic', 'version', 'epoch', 'flags', 'samples', 'idle_samples',
+        names = ('magic', 'reserved', 'epoch', 'flags', 'samples', 'idle_samples',
                  'fat_runnable_samples', 'completion_runnable_samples',
                  'block_runnable_samples', 'block_wait_samples', 'offered_wait_us',
                  'offered_wait_max_us', 'overdue_us', 'overdue_max_us',
@@ -417,7 +415,7 @@ class Session:
         return result
 
     def runtime_render_timing(self) -> dict:
-        """Read RND1 dirty-render/publish inclusive wall time, not all runtime.
+        """Read dirty-render/publish inclusive wall time, not all runtime.
 
         Animation-only calls excluded. Match identity/epoch and idle flags=0
         endpoints. Reentry overlaps totals; maxima are lifetime, not deltas.
@@ -426,13 +424,13 @@ class Session:
         if len(raw) != 64:
             raise ProtocolError('invalid render timing length')
         w = struct.unpack('<16I', raw)
-        if (w[0] != int.from_bytes(b'RND1', 'little') or w[1] != 1 or not w[2] or
+        if (w[0] != int.from_bytes(b'RNDR', 'little') or w[1] or not w[2] or
                 w[3] & ~0x8000001f or any(w[6:8]) or
                 bool(w[3] & 0x80000000) != bool(w[5])):
             raise ProtocolError('invalid render timing header')
         if not w[3] and (w[8] != w[11] or w[14] > w[11] or w[15] > w[8]):
             raise ProtocolError('invalid render timing counts')
-        names = ('magic', 'version', 'epoch', 'flags', 'snapshot_us', 'active_depth',
+        names = ('magic', 'reserved', 'epoch', 'flags', 'snapshot_us', 'active_depth',
                  'reserved0', 'reserved1', 'render_calls', 'render_us', 'render_max_us',
                  'publish_calls', 'publish_us', 'publish_max_us', 'accepted', 'reentry_calls')
         result = dict(zip(names, w))
@@ -440,15 +438,15 @@ class Session:
         return result
 
     def ata_capabilities(self) -> dict:
-        """Read dev ACP1 cached IDENTIFY and passive controller/clock registers."""
+        """Read cached IDENTIFY and passive controller/clock registers."""
         raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 3))
         if len(raw) != 64:
             raise ProtocolError('invalid ATA capabilities length')
         words = struct.unpack('<16I', raw)
-        if (words[0] != int.from_bytes(b'ACP1', 'little') or words[1] != 1 or
+        if (words[0] != int.from_bytes(b'ACAP', 'little') or words[1] or
                 words[3] & ~63 or any(value > 65535 for value in words[4:8])):
             raise ProtocolError('invalid ATA capabilities header')
-        names = ('magic', 'version', 'snapshot_us', 'flags', 'identify_53',
+        names = ('magic', 'reserved', 'snapshot_us', 'flags', 'identify_53',
                  'identify_64', 'identify_67', 'identify_68', 'ide_config',
                  'ide_timing0', 'ide_timing1', 'device_enable', 'device_reset',
                  'cpu_clock_source', 'pll_control', 'ata_reset_epoch')
@@ -459,7 +457,7 @@ class Session:
 
     def media_info(self) -> dict:
         reply=self.request(Command.MEDIA_INFO,timeout=15)
-        if (len(reply)!=192 or reply[:4]!=b'LMD2' or struct.unpack_from('<I',reply,4)[0]!=1 or
+        if (len(reply)!=192 or reply[:4]!=b'MEDI' or struct.unpack_from('<I',reply,4)[0] or
             any(reply[132:])):
             raise ProtocolError('invalid media telemetry header/size/reserved bytes')
         sectors=struct.unpack_from('<Q',reply,8)[0]
@@ -475,7 +473,7 @@ class Session:
             if (separator and any(padding)) or any(byte<32 or byte>126 for byte in meaningful):
                 raise ProtocolError('invalid media ASCII identity field')
             result[key]=meaningful.decode('ascii').rstrip(' ')
-        result.update(format='LMD2',version=1,sectors=sectors,
+        result.update(format='MEDI',sectors=sectors,
                       power_state_name=('off','active','standby','transition')[result['power_state']],
                       media_kind_name=('unknown','rotating','solid_state')[result['media_kind']],
                       capability_names=[name for bit,name in enumerate(('lba48','flush','power_management','apm','write_cache_enabled'))
@@ -521,6 +519,11 @@ class Session:
             raise ValueError('publication stage must be1..4')
         if len(image)>0x800000:
             raise ValueError('persistent image exceeds8MiB slot')
+        storage=self.storage_state()
+        update=self.update_status()
+        if (storage[4]!=1 or update[1]!=1 or update[2]!=1 or update[7] or
+                update[11] or update[14] or update[15]):
+            raise DeviceError('persistent update preflight requires prepared storage and a clean idle updater')
         digest=hashlib.sha256(image).digest()
         self._storage_ack(Command.UPDATE_BEGIN,generation,struct.pack('<I',len(image))+digest)
         for offset in range(0,len(image),1008):
@@ -536,7 +539,7 @@ class Session:
 
     def update_status(self) -> tuple[int, ...]:
         reply = self.request(Command.UPDATE_STATUS, timeout=15)
-        if len(reply) != 64 or reply[:4] != b'LUP2':
+        if len(reply) != 64 or reply[:4] != b'USTA':
             raise ProtocolError('invalid persistent update status')
         return struct.unpack('<16I',reply)
 
@@ -550,15 +553,15 @@ class Session:
 
     def native_status(self) -> dict:
         reply=self.request(Command.NATIVE_STATUS,timeout=15)
-        if len(reply)!=64 or reply[:4]!=b'LNB2':
+        if len(reply)!=64 or reply[:4]!=b'LNPK':
             raise ProtocolError('invalid native updater status')
         words=struct.unpack('<8I',reply[:32])
         return dict(zip(('magic','phase','error','offset','writes','bytes_read','elapsed_us','request_generation'),words),
                     observed_sha256=reply[32:].hex())
 
     def native_install(self, generation: int, package: bytes, progress=None) -> dict:
-        if not 68096<=len(package)<=133632 or (len(package)-2560)%512 or package[:4]!=b'LNB2' or zlib.crc32(package[:508])!=struct.unpack_from('<I',package,508)[0]:
-            raise ValueError('invalid bounded LNB2 package')
+        if not 68096<=len(package)<=133632 or (len(package)-2560)%512 or package[:4]!=b'LNPK' or zlib.crc32(package[:508])!=struct.unpack_from('<I',package,508)[0]:
+            raise ValueError('invalid bounded native package')
         digest=hashlib.sha256(package).digest()
         self._storage_ack(Command.NATIVE_BEGIN,generation,struct.pack('<I',len(package))+digest)
         for offset in range(0,len(package),1008):

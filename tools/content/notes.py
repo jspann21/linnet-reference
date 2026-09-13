@@ -89,7 +89,7 @@ def compile_notes(source, output):
         titles += title.encode('ascii').ljust(TITLE, b'\0')
         record = struct.pack('<I', len(lines)) + b''.join(line.encode('ascii').ljust(LINE, b'\0') for line in lines)
         records += record.ljust(RECORD, b'\0')
-    data = struct.pack('<4sIII', b'NNT1', 1, len(files), RECORD) + titles + records
+    data = struct.pack('<4sIII', b'NOTE', 0, len(files), RECORD) + titles + records
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(data)
     report = inspect(output)
@@ -104,8 +104,8 @@ def inspect(path):
     data = path.read_bytes()
     if len(data) < 16:
         raise ValueError('Notes header is missing')
-    magic, version, count, record = struct.unpack_from('<4sIII', data)
-    if magic != b'NNT1' or version != 1 or count > MAX_NOTES or record != RECORD or len(data) != 16 + count * (TITLE + RECORD):
+    magic, reserved, count, record = struct.unpack_from('<4sIII', data)
+    if magic != b'NOTE' or reserved or count > MAX_NOTES or record != RECORD or len(data) != 16 + count * (TITLE + RECORD):
         raise ValueError('Invalid Notes package')
     def string(raw):
         if 0 not in raw or any(c and not 32 <= c <= 126 for c in raw):

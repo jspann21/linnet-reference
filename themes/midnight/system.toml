@@ -4,12 +4,6 @@ version = "0.1.0"
 target = "photo4g-p98"
 profile = "release"
 
-[abi]
-boot = 1
-kernel = 1
-app = 1
-theme = 1
-
 [features]
 photos = false
 video = false

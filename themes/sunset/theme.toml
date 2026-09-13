@@ -1,7 +1,6 @@
 [theme]
 id = "linnet.theme.sunset"
 name = "Sunset"
-version = 1
 style = "standard"
 layout = "sunset"
 font = "../../sdk/assets/font-compact13.json"

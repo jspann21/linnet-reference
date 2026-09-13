@@ -1,6 +1,5 @@
 [app]
 id = "linnet.system.settings"
-version = 1
 title = "Settings"
 entry = "screen.tsx"
 capabilities = ["ui"]

@@ -18,7 +18,7 @@ def record(payload, generation=1):
     if len(payload) > 480 or not 1 <= generation <= 0xffffffff:
         raise ValueError('invalid transactional record')
     data = bytearray(512)
-    struct.pack_into('<4sIII', data, 0, b'LTS1', 1, generation, len(payload))
+    struct.pack_into('<4sIII', data, 0, b'STAT', 0, generation, len(payload))
     data[28:28 + len(payload)] = payload
     struct.pack_into('<I', data, 508, zlib.crc32(data[:508]))
     return bytes(data)
@@ -29,10 +29,10 @@ def initial_metadata(image):
     if len(image) > SLOT_BYTES or identity['load_address'] != 0:
         raise ValueError('persistent image exceeds the RAM staging policy')
     boot = bytearray(32)
-    struct.pack_into('<4sIII3B', boot, 0, b'LBS1', 1, 0, 0, 0, 255, 0)
+    struct.pack_into('<4sIII3B', boot, 0, b'BOOT', 0, 0, 0, 0, 255, 0)
     struct.pack_into('<I', boot, 28, zlib.crc32(boot[:28]))
     payload = bytearray(184)
-    struct.pack_into('<4sI', payload, 0, b'LUP1', 1)
+    struct.pack_into('<4sI', payload, 0, b'UPDT', 0)
     payload[8:40] = boot
     struct.pack_into('<II', payload, 40, len(image), ('release', 'dev', 'trace').index(identity['profile']))
     payload[48:80] = bytes.fromhex(identity['build_id'])
@@ -78,7 +78,7 @@ def prepare(image_path, directory):
                 (record(b''), 512), (b'', 4 * 1024 * 1024), (metadata, 512), (metadata, 512))
     entries = {name: _write_new(directory / name, data, size)
                for name, (data, size) in zip(FILES, payloads)}
-    manifest = dict(schema_version=1, target_id='photo4g-p98', image=identity,
+    manifest = dict(target_id=identity['target_id'], image=identity,
                     files=entries, hardware_qualified=False,
                     purpose='Initial empty installation only; boot metadata is copied last.')
     (directory / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
@@ -107,9 +107,11 @@ def _mount_identity(mount, serial):
 
 
 def provision(package, mount, serial):
+    from tools.content.publish import _plain
     package = package.resolve(strict=True)
     manifest = json.loads((package / 'manifest.json').read_text())
-    if manifest.get('schema_version') != 1 or manifest.get('target_id') != 'photo4g-p98' or set(manifest.get('files', {})) != set(FILES):
+    if (manifest.get('target_id') != manifest.get('image', {}).get('target_id') or
+            set(manifest.get('files', {})) != set(FILES)):
         raise ValueError('invalid provisioning manifest')
     content = {}
     for name in FILES:
@@ -132,16 +134,23 @@ def provision(package, mount, serial):
         raise ValueError('initial state/scratch content mismatch')
     root, identity = _mount_identity(mount, serial)
     destination = root / 'LINNET'
+    _plain(destination, root)
     if destination.exists() and (destination.is_symlink() or destination.resolve().parent != root):
         raise ValueError('unsafe LINNET directory')
-    if any((destination / name).exists() for name in FILES):
-        raise ValueError('existing Batch 2 files require inspection; initial provisioning never overwrites')
     destination.mkdir(exist_ok=True)
     written = {}
+    preserved = {}
     for name in FILES:  # boot records last: unpublished partial preparation remains unbootable
         _, current = _mount_identity(mount, serial)
         if current != identity:
             raise ValueError('disk identity changed during provisioning')
-        written[name] = _write_new(destination / name, content[name], len(content[name]))
+        target = destination / name
+        _plain(target, root)
+        if target.exists() or target.is_symlink():
+            if target.is_symlink() or not target.is_file() or target.read_bytes() != content[name]:
+                raise ValueError('existing installation file differs; refusing to overwrite: ' + name)
+            preserved[name] = manifest['files'][name]
+        else:
+            written[name] = _write_new(target, content[name], len(content[name]))
     return dict(passed=True, disk=identity, files=written, image=manifest['image'],
-                requires_safe_eject=True, hardware_qualified=False)
+                preserved=preserved, requires_safe_eject=True, hardware_qualified=False)

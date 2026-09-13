@@ -375,7 +375,7 @@ class _MetadataCache:
                     self.connection.execute(
                         "SELECT relative,size,mtime,value FROM metadata WHERE source=? "
                         f"AND parser=? AND relative IN ({placeholders})",
-                        (str(source), "existing-v2", *relatives))}
+                        (str(source), "existing", *relatives))}
         except sqlite3.Error:
             self._disable()
             return {}
@@ -387,7 +387,7 @@ class _MetadataCache:
             if prefetched is None:
                 row = self.connection.execute("SELECT value FROM metadata WHERE source=? "
                     "AND relative=? AND size=? AND mtime=? AND parser=?",
-                    (str(source), relative, stat.st_size, stat.st_mtime_ns, "existing-v2")).fetchone()
+                    (str(source), relative, stat.st_size, stat.st_mtime_ns, "existing")).fetchone()
             else:
                 saved = prefetched.get(relative)
                 row = (saved[2],) if saved and saved[:2] == (stat.st_size, stat.st_mtime_ns) else None
@@ -406,7 +406,7 @@ class _MetadataCache:
             return
         try:
             self.connection.execute("INSERT OR REPLACE INTO metadata VALUES (?,?,?,?,?,?)",
-                (str(source), relative, stat.st_size, stat.st_mtime_ns, "existing-v2",
+                (str(source), relative, stat.st_size, stat.st_mtime_ns, "existing",
                  json.dumps(metadata)))
             self.pending_writes += 1
             # The cache is disposable; amortize durable writes across tracks.
@@ -474,7 +474,8 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
                   artwork: bool = True, playlists: dict[str, list[str]] | None = None,
                   device_root: Path | None = None, progress: Callable[[dict], None] | None = None,
                   verification: str | None = None, cache_path: Path | None = None,
-                  bypass_cache: bool = False) -> dict:
+                  bypass_cache: bool = False,
+                  include_roots: list[Path] | tuple[Path, ...] | None = None) -> dict:
     """Prepare and validate a complete stage before replacing the old directory.
 
     An interrupted directory swap leaves a sibling backup, restored on the next
@@ -485,6 +486,17 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
     source, output = Path(source).resolve(), Path(output).resolve()
     if not source.is_dir() or output == source or source in output.parents or output in source.parents:
         raise ValueError("output must be outside the source music directory")
+    roots = None
+    if include_roots is not None:
+        roots = []
+        for value in include_roots:
+            folder = Path(value).resolve(strict=True)
+            if not folder.is_dir() or not (folder == source or source in folder.parents):
+                raise ValueError("included music root must be a directory inside the source")
+            if folder not in roots:
+                roots.append(folder)
+        if not roots:
+            raise ValueError("at least one included music root is required")
     output.parent.mkdir(parents=True, exist_ok=True)
     verification = verification or ("metadata" if device_root is not None else "full")
     if verification not in ("metadata", "full") or (device_root is None and verification != "full"):
@@ -514,7 +526,8 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
         with ThreadPoolExecutor(max_workers=4, thread_name_prefix="music-metadata") as metadata_pool:
             report = _compile_music_stage(source, prepared, metadata_pool=metadata_pool, ffprobe=ffprobe,
                                       artwork=artwork, playlists=playlists, device_root=device_root, progress=progress,
-                                      verification=verification, cache=cache, bypass_cache=bypass_cache)
+                                      verification=verification, cache=cache, bypass_cache=bypass_cache,
+                                      include_roots=roots)
         report["database"] = str(output / "LIBRARY.PDB")
         (prepared / "music-manifest.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         validate_stage(prepared, device_root=device_root)
@@ -604,7 +617,8 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                          artwork: bool = True, playlists: dict[str, list[str]] | None = None,
                   device_root: Path | None = None, progress: Callable[[dict], None] | None = None,
                   verification: str = "full", cache: _MetadataCache | None = None,
-                  bypass_cache: bool = False) -> dict:
+                  bypass_cache: bool = False,
+                  include_roots: list[Path] | None = None) -> dict:
     """Stage source audio under MUSIC/8HEX.EXT and write LIBRARY.PDB.
 
     Install MUSIC and ART below /LINNET and LIBRARY.PDB at /LINNET/LIBRARY.PDB.
@@ -617,7 +631,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         device_root = Path(device_root).resolve(strict=True)
         source.relative_to(device_root)
     paths = []
-    directories = [source]
+    directories = list(include_roots or [source])
     while directories:
         with os.scandir(directories.pop()) as entries:
             for entry in entries:
@@ -842,7 +856,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     if HEADER + len(payload) > MAX_DATABASE:
         raise ValueError("database exceeds 128 MiB")
     header = bytearray(HEADER)
-    struct.pack_into("<4sHH14I", header, 0, b"PODB", 2, HEADER, HEADER + len(payload), 0,
+    struct.pack_into("<4sHH14I", header, 0, b"PODB", 0, HEADER, HEADER + len(payload), 0,
         len(records), len(group_records), len(members), len(search), track_offset, group_offset,
         member_offset, search_offset, string_offset, len(pool), len(artwork_records), art_offset)
     header[64:96] = hashlib.sha256(payload).digest()
@@ -852,7 +866,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     temporary = output / "LIBRARY.TMP"
     temporary.write_bytes(database)
     temporary.replace(output / "LIBRARY.PDB")
-    report = dict(format="PODB", version=2, integrity="sha256" if verification == "full" else "metadata", tracks=len(records), groups=len(groups),
+    report = dict(format="PODB", integrity="sha256" if verification == "full" else "metadata", tracks=len(records), groups=len(groups),
                   artwork=len(artwork_records), bytes=len(database), sha256=hashlib.sha256(database).hexdigest(),
                   database=str(output / "LIBRARY.PDB"), entries=entries,
                   compatibility_copies=compatibility_copies,
@@ -870,9 +884,9 @@ def validate_database(data: bytes) -> dict:
     """Strict full host validation; firmware may validate by bounded reads."""
     if len(data) < HEADER or len(data) > MAX_DATABASE:
         raise ValueError("database size")
-    magic, version, header_size, *fields = struct.unpack_from("<4sHH14I", data)
+    magic, reserved, header_size, *fields = struct.unpack_from("<4sHH14I", data)
     size, flags, tracks, groups, members, searches, to, go, mo, so, po, ps, arts, ao = fields
-    if (magic, version, header_size, size, flags) != (b"PODB", 2, HEADER, len(data), 0):
+    if (magic, reserved, header_size, size, flags) != (b"PODB", 0, HEADER, len(data), 0):
         raise ValueError("database header")
     if tracks > MAX_TRACKS or not tracks <= searches <= tracks + groups or any(data[96:124]):
         raise ValueError("database counts/reserved")

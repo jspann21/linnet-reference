@@ -4,7 +4,7 @@ from enum import IntEnum
 import struct
 import zlib
 
-MAGIC = b"LNK1"
+MAGIC = b"LINK"
 HEADER = struct.Struct("<4sBBHHHII")
 MAX_PAYLOAD = 1024
 MAX_FRAME = HEADER.size + MAX_PAYLOAD + 4
@@ -37,6 +37,7 @@ class Command(IntEnum):
     SCREEN_READ = 67
     PLATFORM_CONTROL = 68
     UI_STATE = 69
+    INPUT_STATE = 70
     AUDIO_STATE = 112
     AUDIO_CONFIG = 113
     AUDIO_PCM = 114
@@ -91,7 +92,7 @@ class Frame:
             raise ProtocolError("sequence outside 1..UINT32_MAX")
         if self.flags not in (0, ACK, ACK | ERROR):
             raise ProtocolError("invalid frame flags")
-        packet = HEADER.pack(MAGIC, 1, 0, self.flags, self.command, 0,
+        packet = HEADER.pack(MAGIC, 0, 0, self.flags, self.command, 0,
                              self.sequence, len(self.payload)) + self.payload
         return packet + struct.pack("<I", zlib.crc32(packet))
 
@@ -109,8 +110,8 @@ class Parser:
             for byte in data:
                 self.buffer.append(byte)
                 if len(self.buffer) == HEADER.size:
-                    magic, major, minor, flags, command, reserved, seq, length = HEADER.unpack(self.buffer)
-                    if (magic != MAGIC or (major, minor) != (1, 0) or reserved
+                    magic, reserved8a, reserved8b, flags, command, reserved, seq, length = HEADER.unpack(self.buffer)
+                    if (magic != MAGIC or reserved8a or reserved8b or reserved
                             or flags not in (0, ACK, ACK | ERROR) or not seq
                             or length > MAX_PAYLOAD):
                         raise ProtocolError("invalid Linnet Link frame header")

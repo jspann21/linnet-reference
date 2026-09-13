@@ -42,12 +42,12 @@ static uint32_t crc(const uint8_t *p){uint32_t x=UINT32_MAX;
 }
 bool ln_music_profile_encode(const struct ln_music_profile *p,uint8_t out[LN_MUSIC_PROFILE_BYTES]){
     if(!out||!ln_music_profile_valid(p))return false;
-    put(out,0x3150534du);put(out+4,0x00200001u);put(out+8,(p->replaygain?1u:0u)|(p->crossfeed?2u:0u));
+    put(out,0x464f5250u);put(out+4,0x00200000u);put(out+8,(p->replaygain?1u:0u)|(p->crossfeed?2u:0u));
     put(out+12,p->preset);put(out+16,p->mode);put(out+20,(uint32_t)p->balance);put(out+24,(uint32_t)p->preamp_db_q16);put(out+28,crc(out));return true;
 }
 static int32_t signed32(uint32_t x){return x<=INT32_MAX?(int32_t)x:-1-(int32_t)(~x);}
 bool ln_music_profile_decode(struct ln_music_profile *p,const uint8_t *data,uint32_t bytes){
-    if(!p||!data||bytes!=32||get(data)!=0x3150534du||get(data+4)!=0x00200001u||
+    if(!p||!data||bytes!=32||get(data)!=0x464f5250u||get(data+4)!=0x00200000u||
        (get(data+8)&~3u)||get(data+28)!=crc(data))return false;
     uint32_t flags=get(data+8);struct ln_music_profile candidate={get(data+12),get(data+16),signed32(get(data+20)),signed32(get(data+24)),(flags&1u)!=0,(flags&2u)!=0};
     if(!ln_music_profile_valid(&candidate))return false;*p=candidate;return true;

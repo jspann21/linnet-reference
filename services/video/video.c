@@ -117,7 +117,7 @@ void ln_video_metadata(uint32_t page,uint8_t out[128]){
         for(uint32_t i=0;i<15u;++i)for(uint32_t j=0;j<4u;++j)out[i*4u+j]=(uint8_t)(words[i]>>(j*8u));}
     else if(page==7u){uint32_t words[11]={0x31504956u,v.worst_frame,v.max_late,v.worst_queue,v.late_one,v.late_two,v.max_gap_us,v.gap_frame,v.min_ready,v.start_ready,FRAME_SLOTS};
         for(uint32_t i=0;i<11u;++i)for(uint32_t j=0;j<4u;++j)out[i*4u+j]=(uint8_t)(words[i]>>(j*8u));}
-    else if(page==8u){uint32_t words[8]={0x31545356u,1u,v.measurement_opened,v.first_present_us,v.index_ready_us,
+    else if(page==8u){uint32_t words[8]={0x41454d56u,0u,v.measurement_opened,v.first_present_us,v.index_ready_us,
             v.measurement_started?v.measurement_started-v.measurement_opened:0u,v.start_ready,v.dropped_frames};
         for(uint32_t i=0;i<8u;++i)for(uint32_t j=0;j<4u;++j)out[i*4u+j]=(uint8_t)(words[i]>>(j*8u));}
     else if(page>=4u){const uint32_t*words=page==4u?v.phase_us:v.phase_calls;
@@ -1175,4 +1175,4 @@ uint32_t ln_video_deadline(uint32_t now){
 }
 /* submitted is decoded audio admitted to software staging for IPVF;
  * the audio HAL diagnostics retain the count actually admitted to DMA. */
-void ln_video_diagnostics(uint32_t out[32]){uint32_t a[32]={0x36544956u,2,v.phase,v.error,v.active,v.pending,v.paused,v.next,v.count,v.front==NONE?NONE:v.slot_frame[v.front],v.reads,v.read_bytes,v.prepared,v.presented,v.late,v.max_late,v.max_prepare,v.qcount,v.max_queue,v.audio_gaps,v.audio_silence,v.audio_fault,v.submitted,v.revision,v.max_io,v.max_read_time,v.max_cpu[0],v.max_cpu[1],v.max_cpu[2],v.max_cpu[3],v.max_step,v.min_audio};for(uint32_t i=0;i<32;i++)out[i]=a[i];}
+void ln_video_diagnostics(uint32_t out[32]){uint32_t a[32]={0x53444956u,0,v.phase,v.error,v.active,v.pending,v.paused,v.next,v.count,v.front==NONE?NONE:v.slot_frame[v.front],v.reads,v.read_bytes,v.prepared,v.presented,v.late,v.max_late,v.max_prepare,v.qcount,v.max_queue,v.audio_gaps,v.audio_silence,v.audio_fault,v.submitted,v.revision,v.max_io,v.max_read_time,v.max_cpu[0],v.max_cpu[1],v.max_cpu[2],v.max_cpu[3],v.max_step,v.min_audio};for(uint32_t i=0;i<32;i++)out[i]=a[i];}

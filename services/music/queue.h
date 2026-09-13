@@ -32,25 +32,22 @@ bool ln_queue_select_at(struct ln_queue *,uint32_t playback_ordinal);
 bool ln_queue_set_source(struct ln_queue *,uint32_t source,uint32_t group,uint32_t count,uint32_t ordinal);
 void ln_queue_init(struct ln_queue *queue,uint32_t seed);
 bool ln_queue_add(struct ln_queue *queue,uint32_t track);
-/* Legacy track-based operations target the first occurrence in original order. */
 bool ln_queue_select_occurrence(struct ln_queue *queue,uint32_t occurrence);
 bool ln_queue_remove_occurrence(struct ln_queue *queue,uint32_t occurrence);
 bool ln_queue_move_occurrence(struct ln_queue *queue,uint32_t occurrence,uint32_t index);
-bool ln_queue_remove(struct ln_queue *queue,uint32_t track);
-bool ln_queue_move(struct ln_queue *queue,uint32_t track,uint32_t index);
-bool ln_queue_select(struct ln_queue *queue,uint32_t track);
 bool ln_queue_current(const struct ln_queue *queue,uint32_t *track);
 bool ln_queue_next(struct ln_queue *queue,bool manual);
 bool ln_queue_previous(struct ln_queue *queue);
 void ln_queue_shuffle(struct ln_queue *queue,bool enabled);
 bool ln_queue_set_repeat(struct ln_queue *queue,uint32_t repeat);
 /* Encode returns bytes written or zero. Decode is atomic on invalid records.
- * Explicit v1 maximum is400 bytes. Virtual v2 is108+4*excluded_count, max236.
- * Both fit the480-byte durable settings payload. Existing v1 records still decode.
- * V2 retains common fields0..75;76source,80group,84stride,88offset,92inverse,
+ * Explicit state is at most400 bytes. Virtual state is108+4*excluded_count,
+ * at most236 bytes. Both fit the480-byte durable settings payload.
+ * Bytes0..3 are QUEU; byte4 selects explicit0 or virtual1 storage.
+ * Common fields occupy0..75;76source,80group,84stride,88offset,92inverse,
  * 96source_count,100excluded_count,104 source ordinals; final4 bytes CRC32.
  * Format carries fixed fields plus original order and byte-index permutation;
- * explicit little endian, version, exact length, and CRC32. */
+ * explicit little endian, exact length, and CRC32. */
 uint32_t ln_queue_encode(const struct ln_queue *queue,uint8_t *out,uint32_t capacity);
 bool ln_queue_decode(struct ln_queue *queue,const uint8_t *data,uint32_t length);
 #endif

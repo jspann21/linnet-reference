@@ -248,7 +248,7 @@ bool ln_photos_active(void){return p.active;}
 bool ln_photos_pending(void){return p.pending;}
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_photos_diagnostics(uint32_t out[32]){
-    const uint32_t values[32]={0x35544850u,2,p.phase,(uint32_t)p.error,p.active,p.ready,p.pending,p.view,
+    const uint32_t values[32]={0x544f4850u,0,p.phase,(uint32_t)p.error,p.active,p.ready,p.pending,p.view,
         p.file.size,p.verify_at,p.header.data_at,p.verify_crc,p.header.metadata_crc,p.v_photos,p.v_levels,p.v_tiles,
         p.photo_index,p.visible_count,p.revision,p.navigation,
         p.frame_valid,p.frame_complete,p.slide_armed,p.slide_at,ln_time_us(),timing.view_started,timing.frame_ready,

@@ -211,7 +211,7 @@ uint32_t ln_core_clock_failure(void) { return ln_clock_failure; }
 
 #if defined(LINNET_AUDIO)
 #if defined(LINNET_AUDIO_CACHE_DIAGNOSTIC)
-/* Reserved diagnostic phases travel through the existing retained trace ABI.
+/* Reserved diagnostic phases travel through the retained trace interface.
  * Only enable emits them; later clean/disable must preserve the last milestone.
  * r9/r10 are scratch exclusively in this instrumented stub. */
 #define LN_CACHE_MARK(phase) "cmp r4,#2\nbne 99f\nldr r9,=0x11ffe000\nmov r10,#" #phase "\norr r10,r10,#0xca00\nstr r10,[r9,#152]\n99:\n"

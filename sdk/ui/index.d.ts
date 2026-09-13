@@ -1,4 +1,4 @@
-/** Linnet UI ABI1: host-only static TSX declarations. No JavaScript runtime. */
+/** Linnet UI: host-only static TSX declarations. No JavaScript runtime. */
 export interface NodeProps {
   x?: number; y?: number; w?: number; h?: number;
   fg?: string; bg?: string; flags?: number; count?: number; index?: number;

@@ -27,8 +27,8 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
         if kind == 'Videos':
             readiness[kind] = f"{sum(r['status'] == 'Ready on iPod' for r in published)} in playback library"
             continue
-        option = photo_dimension if kind == 'Photos' else f'{verification}-duration-v2-search-names-album-owner' if kind == 'Music' else 'default'
-        signature = f"{media.CACHE_VERSION}:{option}:{inventory[kind]['fingerprint']}"
+        option = photo_dimension if kind == 'Photos' else f'{verification}-duration-search-names-album-owner' if kind == 'Music' else 'default'
+        signature = f"{option}:{inventory[kind]['fingerprint']}"
         if saved.get('signature') == signature and saved.get('outputs') and media._outputs_match(root, saved['outputs']):
             readiness[kind] = 'Ready'
         elif published:
@@ -40,6 +40,9 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
 
 def plan(identity, pending, selected, videos):
     identity = media.refresh(identity)
+    unsupported = [kind for kind in selected if kind not in media.supported_kinds(identity)]
+    if unsupported:
+        raise ValueError(f"{', '.join(unsupported)} playback is unavailable on this iPod model.")
     root = Path(identity['root'])
     included = [p for p in pending if p[0] in selected]
     copies = media.additions(root, [p for p in included if p[0] != 'Videos'])

@@ -1,7 +1,6 @@
 [theme]
 id = "linnet.theme.album-colors"
 name = "Album Colors"
-version = 1
 style = "album-art"
 font = "../../sdk/assets/font-compact13.json"
 

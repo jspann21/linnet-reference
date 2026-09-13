@@ -55,8 +55,8 @@ bool ln_battery_capacity_adjust(int32_t direction){
     battery_capacity=direction<0?battery_capacity-50u:battery_capacity+50u;
     dirty=true;++revision;++record_revision;return true;
 }
-/* LDS5 adds the clock format at byte 7 to LDS4 capacity/music layout. Its 36-byte
- * overhead leaves 444 bytes for the existing maximum music payload. */
+/* SETT stores display, photo, video, battery and music state in one current
+ * envelope. Its 36-byte overhead leaves 444 bytes for the music payload. */
 static bool valid_photo(const uint8_t *resume){
     uint32_t flags=get(resume+8);
     return get(resume+4)<=65535u&&(flags&255u)<=5u&&((flags>>8)&255u)<=3u&&(flags>>16)<=2u;
@@ -65,35 +65,20 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
     uint32_t bytes=480;
     if(ln_storage_busy()||!ln_storage_mounted()||!ln_storage_settings(false,raw,&bytes))return 0;
     if(bytes>480)return -1;
-    uint32_t out_offset=0,out_length=bytes,saved_choice=choice,saved_capacity=1200;bool saved_clock_12=false;
+    if(!bytes){*offset=*length=0;loaded=true;return 1;}
+    uint32_t out_offset=0,out_length=0,saved_choice=choice,saved_capacity=1200;bool saved_clock_12=false;
     uint8_t saved_photo[16]={0};uint32_t saved_video[2]={0};
-    uint32_t magic=bytes>=4?get(raw):0;
-    bool envelope=magic==0x3153444cu||magic==0x3253444cu||magic==0x3353444cu||(magic==0x3453444cu||magic==0x3553444cu);
-    if(envelope){
-        bool compact=magic==0x3353444cu||(magic==0x3453444cu||magic==0x3553444cu);
-        uint32_t overhead=magic==0x3153444cu?16u:((magic==0x3453444cu||magic==0x3553444cu)?36u:32u);
-        if(bytes<overhead||get(raw+bytes-4)!=ln_crc32(raw,bytes-4))return -1;
-        uint32_t n=compact?(uint32_t)raw[4]|((uint32_t)raw[5]<<8):get(raw+4);
-        if(n!=bytes-overhead)return -1;
-        saved_choice=7;
-        if(compact){
-            uint32_t f=raw[14];
-            if((magic==0x3553444cu?raw[7]>1u:raw[7]!=0u)||raw[6]>6||raw[15]||(f&7u)>5||((f>>5)&3u)>2||(f&128u))return -1;
-            saved_choice=raw[6];saved_clock_12=magic==0x3553444cu&&raw[7]==1u;
-            put(saved_photo,get(raw+8));put(saved_photo+4,(uint32_t)raw[12]|((uint32_t)raw[13]<<8));
-            put(saved_photo+8,(f&7u)|(((f>>3)&3u)<<8)|(((f>>5)&3u)<<16));put(saved_photo+12,get(raw+16));
-            saved_video[0]=get(raw+20);saved_video[1]=get(raw+24);
-        }else{
-            for(uint32_t i=0;i<7;++i)if(seconds[i]==get(raw+8))saved_choice=i;
-            if(magic==0x3253444cu)for(uint32_t i=0;i<16;++i)saved_photo[i]=raw[12+i];
-        }
-        if(saved_choice==7||!valid_photo(saved_photo))return -1;
-        if((magic==0x3453444cu||magic==0x3553444cu)){
-            saved_capacity=get(raw+28);
-            if(saved_capacity<50u||saved_capacity>10000u||saved_capacity%50u)return -1;
-        }
-        out_offset=overhead-4;out_length=bytes-overhead;
-    }
+    if(bytes<36||get(raw)!=0x54544553u||get(raw+bytes-4)!=ln_crc32(raw,bytes-4))return -1;
+    uint32_t n=(uint32_t)raw[4]|((uint32_t)raw[5]<<8),f=raw[14];
+    if(n!=bytes-36||raw[7]>1u||raw[6]>6||raw[15]||(f&7u)>5||((f>>5)&3u)>2||(f&128u))return -1;
+    saved_choice=raw[6];saved_clock_12=raw[7]==1u;
+    put(saved_photo,get(raw+8));put(saved_photo+4,(uint32_t)raw[12]|((uint32_t)raw[13]<<8));
+    put(saved_photo+8,(f&7u)|(((f>>3)&3u)<<8)|(((f>>5)&3u)<<16));put(saved_photo+12,get(raw+16));
+    saved_video[0]=get(raw+20);saved_video[1]=get(raw+24);
+    if(!valid_photo(saved_photo))return -1;
+    saved_capacity=get(raw+28);
+    if(saved_capacity<50u||saved_capacity>10000u||saved_capacity%50u)return -1;
+    out_offset=32;out_length=bytes-36;
     /* Commit only after the complete envelope has passed validation. */
     if(!loaded){
         if(!dirty&&(choice!=saved_choice||battery_capacity!=saved_capacity||clock_12!=saved_clock_12)){
@@ -109,14 +94,14 @@ static int write_record(uint8_t raw[480],const uint8_t *data,uint32_t length){
     for(uint32_t i=length;i;--i)raw[32+i-1]=data[i-1];
     uint32_t index=get(photo_resume+4),flags=get(photo_resume+8);
     if(index>65535u||(flags&255u)>5u||((flags>>8)&255u)>3u||(flags>>16)>2u)return 0;
-    put(raw,0x3553444cu);raw[4]=(uint8_t)length;raw[5]=(uint8_t)(length>>8);raw[6]=(uint8_t)choice;raw[7]=clock_12?1u:0u;
+    put(raw,0x54544553u);raw[4]=(uint8_t)length;raw[5]=(uint8_t)(length>>8);raw[6]=(uint8_t)choice;raw[7]=clock_12?1u:0u;
     put(raw+8,get(photo_resume));raw[12]=(uint8_t)index;raw[13]=(uint8_t)(index>>8);
     raw[14]=(uint8_t)((flags&7u)|(((flags>>8)&3u)<<3)|(((flags>>16)&3u)<<5));raw[15]=0;
     put(raw+16,get(photo_resume+12));put(raw+20,video_resume[0]);put(raw+24,video_resume[1]);
     put(raw+28,battery_capacity);put(raw+32+length,ln_crc32(raw,32+length));
-    uint32_t bytes=length+36,version=record_revision;
+    uint32_t bytes=length+36,snapshot_revision=record_revision;
     if(!ln_storage_settings(true,raw,&bytes))return 0;
-    if(record_revision==version)dirty=false;return 1;
+    if(record_revision==snapshot_revision)dirty=false;return 1;
 }
 bool ln_display_settings_photo_get(uint8_t out[16]){
     if(!loaded||!out)return false;
@@ -173,7 +158,7 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
         theme_loaded=true;theme_available=result==1;
         uint32_t saved=UINT32_MAX;
         if(theme_available&&length){
-            if(length<9u||length>89u||get(payload)!=0x3148544cu||get(payload+4)!=1u||payload[length-1])theme_available=false;
+            if(length<9u||length>89u||get(payload)!=0x534d4854u||get(payload+4)!=0u||payload[length-1])theme_available=false;
             if(theme_available){
                 if(!theme_id_valid(payload+8,length-9u))theme_available=false;
             }
@@ -204,17 +189,17 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
     const char *id=theme_index==UINT32_MAX?"":ln_ui_themes[theme_index].id;
     uint32_t count=0;while(id[count]&&count<80u&&theme_id_char((uint8_t)id[count]))++count;
     if(id[count]){theme_available=false;theme_dirty=false;++revision;return;}
-    put(payload,0x3148544cu);put(payload+4,1);
+    put(payload,0x534d4854u);put(payload+4,0);
     for(uint32_t i=0;i<count;++i)payload[8+i]=(uint8_t)id[i];payload[8+count]=0;
-    length=9u+count;uint32_t version=theme_revision;
+    length=9u+count;uint32_t snapshot_revision=theme_revision;
     int result=ln_storage_theme(true,payload,&length);
     if(result<0){theme_available=false;theme_dirty=false;++revision;}
-    else if(result==1&&version==theme_revision){theme_dirty=false;++revision;}
+    else if(result==1&&snapshot_revision==theme_revision){theme_dirty=false;++revision;}
 }
 static void settings_work(bool may_write,bool presented,uint32_t presented_revision,bool flush){
     if(!may_write||((loaded&&!dirty)&&(theme_loaded&&!theme_dirty))||ln_storage_busy()||!ln_storage_mounted())return;
     /* Once loading is complete, a theme waiting for its first frame must not
-     * start disk write preparation. Independent LDS4 work may still proceed. */
+     * start disk write preparation. Independent settings work may still proceed. */
     if(loaded&&!dirty&&theme_loaded&&theme_dirty&&!flush&&
        (!presented||theme_revision!=presented_revision))return;
     /* Discovery is complete once mounted; absent optional records need no write

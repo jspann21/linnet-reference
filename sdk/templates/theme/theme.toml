@@ -1,6 +1,5 @@
 [theme]
 id = "local.example.starter-theme"
-version = 1
 font = "../../sdk/assets/font.json"
 font_license = "../../sdk/assets/FONT-LICENSE.txt"
 

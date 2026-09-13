@@ -102,10 +102,10 @@ bool ln_core_cop_pause(bool pause) {
     if (clock_park_owned) { cop_error=3;return false; }
     if (REG(0x60007004)&0x80000000u) return true;
     if (!cop_probe()) return false;
-    /* Fresh Boot v2 initializes ENABLED but may inherit an arbitrary STATE
+    /* Boot initializes ENABLED but may inherit an arbitrary STATE
      * word before the OS calls display_init. A proven, disabled worker is
      * paused first, then its dormant state is normalized before clock park.
-     * This handshake works with the already resident v2 instructions. */
+     * This handshake works with the resident worker instructions. */
     if (MB(LN_DISPLAY_ENABLED)!=1u) {
         MB(LN_DISPLAY_PAUSE)=1;
         uint32_t prepare_start=ln_time_us();
@@ -143,7 +143,7 @@ bool ln_core_cop_pause(bool pause) {
 uint32_t ln_display_cop_error(void) { return cop_error; }
 static bool monitor_signature(uint32_t *branch)
 {
-    /* Boot v2 header copied from ln_cop_begin to0x40001000. These offsets are
+    /* Boot header copied from ln_cop_begin to0x40001000. These offsets are
      * bounded to its first184 bytes and were checked against installed Boot
      * 3dfc7bd0a7b1. Reject any other layout rather than scanning or relocating
      * an executing resident worker. The branch displacement stays unchanged. */
@@ -558,7 +558,7 @@ uint32_t ln_display_column_mismatches(void) {
 }
 void ln_display_sync_diagnostics(uint32_t output[16]) {
     uint32_t irq=ln_core_irq_save();
-    uint32_t words[16]={0x31595344u,1u,sync_frames,sync_timeouts,sync_wait_us,
+    uint32_t words[16]={0x4e595344u,0u,sync_frames,sync_timeouts,sync_wait_us,
         sync_max_wait_us,sync_waiting,frame_pending,submitted,completed,
         MB(LN_DISPLAY_FAILURES),MB(LN_DISPLAY_PAIRS),max_present_us,
         transfer_us,transfer_max_us,ln_time_us()};

@@ -1,4 +1,4 @@
-# PIMG version 1
+# PIMG photo package
 
 PIMG is Linnet's prepared photo library. Host files use `.pimg`; the initial
 device package is `/LINNET/PHOTOS/LIBRARY.PIM`. All integer fields are unsigned
@@ -14,7 +14,7 @@ The device does not need to retain the complete catalog or tile index.
 | Offset | Type | Meaning |
 | --- | --- | --- |
 | 0 | char[4] | `PIMG` |
-| 4 | u16 | Version1 |
+| 4 | u16 | Reserved zero |
 | 6 | u16 | Header size512 |
 | 8 | u32 | Flags0 |
 | 12 | u32 | Exact file bytes |
@@ -108,7 +108,7 @@ Each record contains an absolute u32 payload offset followed by its u32 CRC.
 All payloads are exactly2048 bytes:32 rows of32 RGB565 pixels. Tiles are ordered
 row-major within each level. Edge padding is black. Tile `i` starts at
 `payload_start + photo_count*8192 + i*2048`. The file ends immediately after the
-last tile. There are no overlapping, compressed, sparse or indirect payloads in v1.
+last tile. There are no overlapping, compressed, sparse or indirect payloads.
 The reader requests only visible tiles at the selected prepared level.
 
 ## Strings and validation

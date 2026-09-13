@@ -12,7 +12,7 @@ def _theme_record(path):
     data, generation, payload = _read_record(path)
     if payload:
         if (not 9 <= len(payload) <= 89
-                or struct.unpack_from('<4sI', payload) != (b'LTH1', 1)
+                or struct.unpack_from('<4sI', payload) != (b'THMS', 0)
                 or payload[-1] != 0
                 or (payload[8:-1] and not re.fullmatch(
                     rb'[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+', payload[8:-1]))):
@@ -23,8 +23,8 @@ def _theme_record(path):
 def provision(mount, serial, expected_size, expected_confirmed_build):
     """Create missing THEME copies without modifying existing installation files.
 
-    Empty records use the system theme. A valid generation-one selection is
-    copied when repairing a missing partner so equal generations never conflict.
+    Empty records use the system theme. A valid selection is copied when repairing
+    a missing partner so equal transaction generations never conflict.
     """
     if (isinstance(expected_size, bool) or not isinstance(expected_size, int)
             or expected_size <= 0 or expected_size % 512):

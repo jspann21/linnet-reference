@@ -1,6 +1,5 @@
 [app]
 id = "local.example.notes"
-version = 1
 title = "UI Demo"
 entry = "screen.tsx"
 capabilities = ["ui", "canvas"]

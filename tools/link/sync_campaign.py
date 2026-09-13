@@ -12,7 +12,7 @@ import struct
 import subprocess
 
 from tools.inspect.image import inspect
-from tools.studio.native_bootstrap_v3 import load_reviewed_plan as load_plan
+from tools.studio.native_bootstrap import load_plan
 from tools.studio.storage import _mount_identity
 from .campaign import connect, _check_healthy_identity, _run_directory, _save
 from .eject import eject_reboot, _token_elevated
@@ -50,7 +50,7 @@ def _fat_partition(mbr):
 
 def _pattern():
     # A fixed algorithm/seed makes this receipt independently reproducible.
-    return b''.join(hashlib.sha256(b'Linnet HOSTSYNC v1\0' + struct.pack('<I', index)).digest()
+    return b''.join(hashlib.sha256(b'Linnet HOSTSYNC\0' + struct.pack('<I', index)).digest()
                     for index in range(FILE_BYTES // 32))
 
 
@@ -84,7 +84,7 @@ def cycle(root, image_path, port, disk_number, plan_path, plan_sha256, progress=
                    passed=False, hardware_qualified=False, device_write_attempted=False,
                    state_change_attempted=False, phase='identity', steps=[],
                    file=dict(path='LINNET/'+FILE_NAME, bytes=FILE_BYTES, sha256=expected_hash,
-                             algorithm='SHA256("Linnet HOSTSYNC v1\\0" || LE32(index)), index0..32767'))
+                             algorithm='SHA256("Linnet HOSTSYNC\\0" || LE32(index)), index0..32767'))
     _save(receipt_path, receipt)
     session = None
 

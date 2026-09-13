@@ -67,7 +67,7 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r){
         for(uint32_t i=0;i<192u;++i)ln_storage_reply[i]=0;
         uint32_t state=(!a.powered?0u:a.sleeping?2u:1u);
         if(a.initializing||b.power_transition)state=3u;
-        uint32_t words[16]={0x32444d4cu,1,(uint32_t)a.sectors,(uint32_t)(a.sectors>>32),
+        uint32_t words[16]={0x4944454du,0,(uint32_t)a.sectors,(uint32_t)(a.sectors>>32),
             a.media_kind,a.rotation_rpm,a.logical_sector_bytes,a.physical_sector_bytes,
             a.capabilities,a.quirks,state,a.idle_timeout_us,a.wake_timeout_us,a.poweroffs,a.spinups,b.idle_failures};
         for(uint32_t i=0;i<16u;++i)put32(ln_storage_reply+i*4,words[i]);

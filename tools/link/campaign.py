@@ -154,7 +154,7 @@ def _check_healthy_identity(identity, image_id):
     if (identity.get('image_kind') != 'os' or identity.get('healthy') is not True or
             identity.get('health_flags') != 31 or identity.get('build_id') != image_id['build_id'] or
             identity.get('image_sha256') != image_id['sha256'] or
-            any(identity.get(key) != image_id[key] for key in ('target_id', 'boot_abi', 'profile'))):
+            any(identity.get(key) != image_id[key] for key in ('target_id', 'profile'))):
         raise ValueError('resume healthy identity, hash or health mismatch')
 
 
@@ -179,7 +179,7 @@ def cycle(root, image_path, scenario_path, port=None, crash_image=None, progress
     if not isinstance(suite, dict):
         raise ValueError('Batch 0 scenario must be an object')
     count = suite.get('healthy_cycles')
-    if suite.get('schema_version') != 1 or suite.get('target_id') != image_id['target_id'] or suite.get('batch') != 0 or type(count) is not int or not 1 <= count <= 500:
+    if suite.get('target_id') != image_id['target_id'] or suite.get('batch') != 0 or type(count) is not int or not 1 <= count <= 500:
         raise ValueError('invalid Batch 0 scenario or cycle count')
     crash_bytes = crash_image.read_bytes() if crash_image else None
     crash_id = inspect(crash_bytes) if crash_bytes else None

@@ -133,7 +133,7 @@ bool ln_display_upgrade_blit(void){
 
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_display_blit_diagnostics(uint32_t out[16]){
-    out[0]=0x31544c42u;out[1]=1u;
+    out[0]=0x54494c42u;out[1]=0u;
     out[2]=(uint32_t)((uintptr_t)ln_video_blit_end-(uintptr_t)ln_video_blit_begin);
     out[3]=REG(RESIDENT+HOOK);out[4]=REG(RESIDENT+COMMAND_HOOK);
     out[5]=command_branch();out[6]=0xffffffffu;out[7]=out[8]=0;

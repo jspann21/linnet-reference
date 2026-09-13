@@ -1,6 +1,5 @@
 [app]
 id = "local.example.starter"
-version = 1
 title = "Starter"
 entry = "screen.tsx"
 capabilities = ["ui"]

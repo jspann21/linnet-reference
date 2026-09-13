@@ -84,8 +84,8 @@ static uint32_t read32(const uint8_t *p)
 {return p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);}
 bool ln_dsp_profile_decode(const uint8_t *data,uint32_t bytes,uint32_t rate,struct ln_dsp_config *out)
 {
-    if(!data||!out||bytes!=160||rate<8000||rate>192000||data[0]!='D'||data[1]!='S'||data[2]!='P'||data[3]!='1'||
-       data[4]!=1||data[5]||data[6]!=160||data[7]||read32(data+8)!=rate||read32(data+12))return false;
+    if(!data||!out||bytes!=160||rate<8000||rate>192000||data[0]!='L'||data[1]!='D'||data[2]!='S'||data[3]!='P'||
+       data[4]||data[5]||data[6]!=160||data[7]||read32(data+8)!=rate||read32(data+12))return false;
     for(uint32_t i=16;i<28;i++)if(data[i])return false;
     uint32_t crc=UINT32_MAX;
     for(uint32_t i=0;i<156;i++){crc^=data[i];for(uint32_t bit=0;bit<8;bit++)crc=(crc>>1)^((0u-(crc&1u))&0xedb88320u);}

@@ -1,4 +1,4 @@
-"""Compile explicit host DSP settings to the160-byte DSP1 profile.
+"""Compile explicit host DSP settings to the 160-byte DSP profile.
 
 RBJ peaking EQ equations: https://www.w3.org/TR/audio-eq-cookbook/ . Coefficients
 are normalized by a0, quantized to signedQ2.30, and checked using the same strict
@@ -6,7 +6,7 @@ Jury inequalities as the native runtime. Unrepresentable or unstable results are
 rejected, never clipped into a different filter. No EQ/crossfeed is enabled by
 default; preamp and ReplayGain are unity, channel mode stereo, balance centered.
 
-DSP1 layout (little endian): magic0;u16version1@4;u16size160@6;u32sample_rate@8;
+DSP layout (little endian): magic0;u16reserved0@4;u16size160@6;u32sample_rate@8;
 u32flags0@12;reservedzero16..27;u32gainQ16@28;u32ReplayGainQ16@32;i32balance@36;
 u32mode@40;u32band_count@44;five20-byte signedQ2.30(b0,b1,b2,a1,a2)@48;
 u32crossfeed_amountQ16@148;u32lowpass_coefficientQ16@152;CRC32/ISO-HDLC@156.
@@ -124,7 +124,7 @@ def design_profile(settings: dict) -> tuple[bytes, dict]:
         if not 0 < cutoff < rate / 2:
             raise ValueError("crossfeed cutoff must lie below Nyquist")
     profile = bytearray(PROFILE_BYTES)
-    struct.pack_into("<4sHHI", profile, 0, b"DSP1", 1, PROFILE_BYTES, rate)
+    struct.pack_into("<4sHHI", profile, 0, b"LDSP", 0, PROFILE_BYTES, rate)
     struct.pack_into("<IIiII", profile, 28, gain_from_db(preamp), 65536, balance, MODES[mode], len(coefficients))
     for index, band in enumerate(coefficients):
         struct.pack_into("<5i", profile, 48 + index * 20, *band)
@@ -132,7 +132,7 @@ def design_profile(settings: dict) -> tuple[bytes, dict]:
     struct.pack_into("<I", profile, 156, zlib.crc32(profile[:156]))
     result = bytes(profile)
     validated = validate_profile(result, rate)
-    report = dict(format="DSP1", version=1, sample_rate=rate, sha256=hashlib.sha256(result).hexdigest(),
+    report = dict(format="LDSP", sample_rate=rate, sha256=hashlib.sha256(result).hexdigest(),
                   bytes=PROFILE_BYTES, settings=settings, native=validated,
                   coefficient_source="https://www.w3.org/TR/audio-eq-cookbook/",
                   replaygain="unity; apply track gain separately before that track produces PCM")
@@ -141,17 +141,17 @@ def design_profile(settings: dict) -> tuple[bytes, dict]:
 
 def validate_profile(data: bytes, actual_rate: int) -> dict:
     if len(data) != PROFILE_BYTES:
-        raise ValueError("DSP1 profile must be160 bytes")
-    magic, version, size, rate = struct.unpack_from("<4sHHI", data)
-    if (magic, version, size) != (b"DSP1", 1, PROFILE_BYTES) or rate != actual_rate or not 8000 <= rate <= 192000 or any(data[12:28]):
-        raise ValueError("DSP1 header/sample rate mismatch")
+        raise ValueError("DSP profile must be160 bytes")
+    magic, reserved, size, rate = struct.unpack_from("<4sHHI", data)
+    if (magic, reserved, size) != (b"LDSP", 0, PROFILE_BYTES) or rate != actual_rate or not 8000 <= rate <= 192000 or any(data[12:28]):
+        raise ValueError("DSP header/sample rate mismatch")
     if zlib.crc32(data[:156]) != struct.unpack_from("<I", data, 156)[0]:
-        raise ValueError("DSP1 CRC mismatch")
+        raise ValueError("DSP CRC mismatch")
     gain, replaygain, balance, mode, count = struct.unpack_from("<IIiII", data, 28)
     amount, coefficient = struct.unpack_from("<II", data, 148)
     if (gain > 16 * 65536 or replaygain > 16 * 65536 or not -1000 <= balance <= 1000 or mode > 4 or count > 5 or
         amount > 32768 or coefficient > 65535 or (amount and not coefficient)):
-        raise ValueError("DSP1 configuration bounds")
+        raise ValueError("DSP configuration bounds")
     bands = []
     for index in range(5):
         band = struct.unpack_from("<5i", data, 48 + index * 20)
@@ -159,13 +159,13 @@ def validate_profile(data: bytes, actual_rate: int) -> dict:
             _jury(band)
             bands.append(band)
         elif any(band):
-            raise ValueError("DSP1 inactive band must be zero")
+            raise ValueError("DSP inactive band must be zero")
     return dict(gain_q16=gain, replaygain_q16=replaygain, balance=balance, mode=mode,
                 bands=bands, crossfeed_amount_q16=amount, crossfeed_coefficient_q16=coefficient)
 
 
 def compile_profile(settings: dict, output: Path) -> dict:
-    """Write a localDSP1 binary and adjacent JSON provenance report."""
+    """Write a local DSP binary and adjacent JSON provenance report."""
     data, report = design_profile(settings)
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)

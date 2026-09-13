@@ -10,7 +10,7 @@ void ln_display_clock_toggle(void);
  * step_ready below. Paused/stopped audio admission remains required for all I/O. */
 void ln_display_settings_step(bool may_write);
 /* Normal runtime: theme publication requires the completed frame's revision.
- * Loading and unrelated LDS4 settings are independent of theme presentation. */
+ * Loading and unrelated settings are independent of theme presentation. */
 void ln_display_settings_step_ready(bool may_write,bool theme_presented,uint32_t presented_revision);
 uint32_t ln_display_theme_revision(void);
 /* Bounded memory-only final frame check after storage preparation/read callbacks.

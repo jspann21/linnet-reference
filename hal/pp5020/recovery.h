@@ -1,6 +1,6 @@
 #ifndef LINNET_RECOVERY_H
 #define LINNET_RECOVERY_H
-#define LN_STARTUP_TIMING_MAGIC 0x31545453
+#define LN_STARTUP_TIMING_MAGIC 0x50555453
 #define LN_STARTUP_TIMING_BASE 192
 #define LN_STARTUP_TIMING_MASK 208
 #define LN_STARTUP_TIMING_TICKS 212
@@ -37,23 +37,22 @@ int ln_recovery_init(int loader);
 int ln_recovery_ready(void);
 int ln_recovery_image_identity(uint8_t build[32], uint8_t image_sha[32]);
 void ln_recovery_diagnostics(uint32_t output[8]);
-/* Dev-only STT1: magic/version/generation/payload bytes/valid mask, eight raw
+/* Dev-only startup timing: magic/reserved/generation/payload bytes/valid mask, eight raw
  * microsecond ticks (CRC start/end, copy dispatch, OS entry, BSS start/end,
  * IRAM end, C entry), then three zero reserved words. Subtract ticks modulo
  * 2^32 only when both corresponding mask bits exist. All zero means unavailable.
  * Native Boot mount/LOS validation and later OS runtime/USB are not timed. */
 void ln_recovery_startup_diagnostics(uint32_t output[16]);
-/* BTT1 command54: 48 words at256..447, independent of STT1. Header has
- * magic/version/generation/stamp mask and inherited clock-source/PLL/cache/flags.
+/* Boot timeline command54: 48 words at256..447, independent of startup timing. Header has
+ * magic/reserved/generation/stamp mask and inherited clock-source/PLL/cache/flags.
  * Then32 raw ticks, counter mask/read-us/SHA-us/LOS-CRC-us/bytes/read-calls and
- * v1 two reserved zero words; v2 Boot clock status/observed clock-source.
  * Clock status:0 unobserved,1 skipped,2 attempting,3 verified80MHz,4 failed.
- * v3 words36..39 report Boot device enable/reset/init2/USB clock registers;
+ * Words36..39 report Boot device enable/reset/init2/USB clock registers;
  * clock status5..14 distinguishes individual skipped preconditions.
- * v4 status15..20 covers native USB ownership reset/enable/release/PHY/settle/XMB.
+ * Status15..20 covers native USB ownership reset/enable/release/PHY/settle/XMB.
  * Stamps publish once; elapsed counters saturate.
  * Flags bit0 means native Boot prepare was observed, not a RAM upload.
- * v5 flag bit1 records verified Boot SHA IRAM copy; no reply-size change. */
+ * Flag bit1 records verified Boot SHA IRAM copy. */
 enum ln_boot_timeline_stage {
     LN_BT_BOOT_C, LN_BT_BOOT_RECOVERY, LN_BT_BOOT_USB, LN_BT_BOOT_STORAGE,
     LN_BT_BOOT_BLOCK, LN_BT_BOOT_FAT, LN_BT_BOOT_FILES, LN_BT_BOOT_PROOF,

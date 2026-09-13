@@ -67,7 +67,7 @@ void ln_block_schedule_metrics(uint32_t out[4]);
  * 4stale completion rejection (callerdata withheld),5flush error.
  * These exercise owner error paths; they do not emulate electrical faults. */
 bool ln_block_inject(uint32_t fault);
-/* SIO1 read-only snapshot,32words. New cumulative counters saturate; bit31
+/* SIOP read-only snapshot,32words. New cumulative counters saturate; bit31
  * invalidates deltas. Use same-reset-epoch idle/drained endpoints for totals. */
 void ln_block_performance(uint32_t out[32]);
 #endif

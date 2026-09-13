@@ -1,6 +1,5 @@
 [app]
 id = "linnet.system.notes"
-version = 1
 title = "Notes"
 entry = "screen.tsx"
 capabilities = ["ui"]

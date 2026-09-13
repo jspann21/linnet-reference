@@ -4,7 +4,7 @@
 #include "hal/pp5020/platform.h"
 enum {SUPER_A,SUPER_B,IDLE,PAGE_A,PAGE_B,PUBLISH,FLUSH,CHECK,ACK,FAILED};
 static struct {
-    struct ln_history_page cache[4];uint32_t age[4],clock,version;
+    struct ln_history_page cache[4];uint32_t age[4],clock,revision;
     uint8_t a[4096],b[4096],epoch[16];
     uint32_t phase,index,probe,slot;int error;bool loaded,wanted;
     uint32_t ticket,io_bytes;int io_error;
@@ -15,11 +15,11 @@ static bool same(const uint8_t *a,const uint8_t *b,uint32_t n){for(uint32_t i=0;
 static void fail(int error){h.error=error;h.phase=FAILED;}
 bool ln_paged_history_ready(void){return h.loaded;}
 int ln_paged_history_error(void){return h.error;}
-bool ln_paged_history_dirty(void){for(uint32_t i=0;i<4;i++)if(h.cache[i].ready&&(h.cache[i].staged||h.cache[i].version!=h.cache[i].durable_version))return true;return false;}
+bool ln_paged_history_dirty(void){for(uint32_t i=0;i<4;i++)if(h.cache[i].ready&&(h.cache[i].staged||h.cache[i].revision!=h.cache[i].durable_revision))return true;return false;}
 bool ln_paged_history_busy(void){return !h.loaded||h.wanted||h.phase!=IDLE;}
 bool ln_paged_history_io_pending(void){return h.ticket!=0;}
 bool ln_paged_history_finishing(void){return h.phase>=FLUSH&&h.phase<=ACK;}
-uint32_t ln_paged_history_version(void){return h.version;}
+uint32_t ln_paged_history_revision(void){return h.revision;}
 static int location(uint64_t id){
     if(!h.loaded)return -1;
     for(uint32_t i=0;i<4;i++)if(ln_history_page_get(&h.cache[i],id))return (int)i;
@@ -45,8 +45,8 @@ bool ln_paged_history_prefetch(uint64_t id){
 }
 bool ln_paged_history_put(const struct ln_music_journal_record *r){
     if(h.error||!r)return false;int slot=location(r->id);if(slot<0)return false;
-    uint32_t before=h.cache[slot].version;if(!ln_history_page_put(&h.cache[slot],r))return false;
-    if(before!=h.cache[slot].version)h.version++;h.age[slot]=++h.clock;return true;
+    uint32_t before=h.cache[slot].revision;if(!ln_history_page_put(&h.cache[slot],r))return false;
+    if(before!=h.cache[slot].revision)h.revision++;h.age[slot]=++h.clock;return true;
 }
 static void resolve(void){
     struct ln_history_page *p=&h.cache[h.slot];
@@ -57,9 +57,9 @@ static void resolve(void){
             uint32_t candidate=(proof+i)&3u;
             if(!h.proofs[candidate].valid||!h.pinned||h.proofs[candidate].id!=h.pinned_id||h.id==h.pinned_id){proof=candidate;break;}
         }
-        h.proofs[proof]=(typeof(h.proofs[0])){h.id,h.slot,p->index,true};h.wanted=false;h.version++;return;
+        h.proofs[proof]=(typeof(h.proofs[0])){h.id,h.slot,p->index,true};h.wanted=false;h.revision++;return;
     }
-    if(++h.probe>=1024){h.full=true;h.full_id=h.id;h.wanted=false;h.version++;return;}h.index=(h.index+1)&1023u;
+    if(++h.probe>=1024){h.full=true;h.full_id=h.id;h.wanted=false;h.revision++;return;}h.index=(h.index+1)&1023u;
 }
 static void start_io(uint32_t operation,uint32_t file,uint32_t offset,uint8_t *buffer,int error){
     int result=operation==LN_FAT32_FLUSH?ln_storage_async_flush(&h.ticket):
@@ -82,7 +82,7 @@ uint32_t ln_paged_history_deadline(uint32_t now,bool may_read,bool may_write){
     if(!h.wanted)return idle;
     for(uint32_t i=0;i<4;i++){
         if(!h.cache[i].ready||h.cache[i].index==h.index)return now+1000u;
-        if(!pinned_slot(i)&&!h.cache[i].staged&&h.cache[i].version==h.cache[i].durable_version)return now+1000u;
+        if(!pinned_slot(i)&&!h.cache[i].staged&&h.cache[i].revision==h.cache[i].durable_revision)return now+1000u;
     }
     /* A read waiting for a clean victim cannot advance while write admission
      * is withheld. Let playback refill its ring instead of keeping us hot. */
@@ -119,14 +119,14 @@ void ln_paged_history_step(bool may_read,bool may_write){
         if(!completed){start_io(LN_FAT32_READ,LN_STORAGE_MUSIC1,0,h.b,LN_HISTORY_READ_B);return;}
         uint8_t e[16];bool a=ln_history_superblock(h.a,h.epoch),b=ln_history_superblock(h.b,e);
         if(!a&&!b){fail(LN_HISTORY_BOTH_CORRUPT);return;}if(a&&b&&!same(e,h.epoch,16)){fail(LN_HISTORY_CONFLICT);return;}
-        if(!a)for(uint32_t i=0;i<16;i++)h.epoch[i]=e[i];h.loaded=true;h.version=1;h.phase=IDLE;return;
+        if(!a)for(uint32_t i=0;i<16;i++)h.epoch[i]=e[i];h.loaded=true;h.revision=1;h.phase=IDLE;return;
     }
     case IDLE:
         if(h.pinned&&!h.wanted&&location(h.pinned_id)<0)(void)ln_paged_history_prefetch(h.pinned_id);
         if(h.wanted&&may_read){
             for(uint32_t i=0;i<4;i++)if(h.cache[i].ready&&h.cache[i].index==h.index){h.slot=i;h.age[i]=++h.clock;resolve();return;}
             h.slot=4;for(uint32_t i=0;i<4;i++){if(!h.cache[i].ready){h.slot=i;break;}
-                if(!pinned_slot(i)&&!h.cache[i].staged&&h.cache[i].version==h.cache[i].durable_version&&(h.slot==4||h.age[i]<h.age[h.slot]))h.slot=i;}
+                if(!pinned_slot(i)&&!h.cache[i].staged&&h.cache[i].revision==h.cache[i].durable_revision&&(h.slot==4||h.age[i]<h.age[h.slot]))h.slot=i;}
             if(h.slot<4){
                 h.cache[h.slot].ready=false;for(uint32_t i=0;i<4;i++)if(h.proofs[i].slot==h.slot)h.proofs[i].valid=false;
                 h.phase=PAGE_A;return;
@@ -135,7 +135,7 @@ void ln_paged_history_step(bool may_read,bool may_write){
         /* Dirty pages are never evicted. Under pressure publish the oldest
          * unpinned page first, then admit the waiting read before more writes. */
         if(!may_write)return;
-        h.slot=4;for(uint32_t i=0;i<4;i++)if(h.cache[i].ready&&!h.cache[i].staged&&h.cache[i].version!=h.cache[i].durable_version){
+        h.slot=4;for(uint32_t i=0;i<4;i++)if(h.cache[i].ready&&!h.cache[i].staged&&h.cache[i].revision!=h.cache[i].durable_revision){
             if(h.slot==4||(!pinned_slot(i)&&pinned_slot(h.slot))||
                (pinned_slot(i)==pinned_slot(h.slot)&&h.age[i]<h.age[h.slot]))h.slot=i;
         }

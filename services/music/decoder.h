@@ -7,7 +7,7 @@
 #include "services/audio/aac/aac.h"
 #include "services/audio/aac/m4a.h"
 /* The independently imported codec headers have different alignment macros.
- * Their already-declared structures retain each codec's original ABI. */
+ * Their already-declared structures retain each codec's native layout. */
 #undef MEM_ALIGN_ATTR
 #include "services/audio/vorbis/vorbis.h"
 enum ln_decoder_kind {LN_DEC_UNKNOWN=0,LN_DEC_PCM,LN_DEC_MP3,LN_DEC_FLAC,LN_DEC_ALAC,LN_DEC_ADTS,LN_DEC_AAC_M4A,LN_DEC_VORBIS};

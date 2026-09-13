@@ -1,6 +1,5 @@
 [app]
 id = "linnet.system.video-player"
-version = 1
 title = "Video"
 entry = "screen.tsx"
 capabilities = ["ui"]

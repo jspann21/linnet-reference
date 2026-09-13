@@ -1,4 +1,4 @@
-/* RND1 dev OS: only dirty render/present attempts, inclusive wall time.
+/* RNDR dev OS: only dirty render/present attempts, inclusive wall time.
  * No timer/accounting work on idle callbacks or animation-only publications.
  * Single CPU task context. IRQ/FIQ/COP must not write these counters.
  */
@@ -32,7 +32,7 @@ static void rnd_leave(const struct rnd_span *span,bool accepted){
     if(rnd.depth)--rnd.depth;else rnd.flags|=16u;
 }
 void ln_runtime_render_timing(uint32_t words[16]){
-    words[0]=0x31444e52u;words[1]=1u;words[2]=rnd.epoch;
+    words[0]=0x52444e52u;words[1]=0u;words[2]=rnd.epoch;
     words[3]=rnd.flags|(rnd.depth?0x80000000u:0u);words[4]=ln_time_us();
     words[5]=rnd.depth;words[6]=words[7]=0;
     for(uint32_t i=0;i<8u;++i)words[8u+i]=rnd.value[i];

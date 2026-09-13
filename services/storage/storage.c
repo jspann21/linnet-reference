@@ -54,7 +54,7 @@ static uint32_t background_at;
 #endif
 #if !defined(LINNET_PROFILE_RELEASE)
 static uint32_t publication_fault;
-/* SPT1: completed, inclusive spans. Nested means same-function reentry. */
+/* POLL: completed, inclusive spans. Nested means same-function reentry. */
 static struct {uint32_t epoch,flags,value[12],depth[2];} poll_timing;
 _Static_assert(sizeof(poll_timing)<=64u,"storage timing RAM budget");
 static struct schedule_diagnostics {
@@ -93,7 +93,7 @@ static void timing_leave(uint32_t index,uint32_t depth,uint32_t start){
     poll_timing.depth[index]=depth;
 }
 void ln_storage_media_performance(uint32_t words[16]){
-    words[0]=0x31545053u;words[1]=1u;words[2]=poll_timing.epoch;
+    words[0]=0x4c4c4f50u;words[1]=0u;words[2]=poll_timing.epoch;
     words[3]=poll_timing.flags|((poll_timing.depth[0]||poll_timing.depth[1])?1u<<28:0u);
     for(uint32_t i=0;i<12u;++i)words[i+4u]=poll_timing.value[i];
 }
@@ -126,7 +126,7 @@ void ln_storage_schedule_observe(uint32_t now){
 }
 void ln_storage_schedule_performance(uint32_t words[24]){
     uint32_t block[4];ln_block_schedule_metrics(block);
-    words[0]=0x31444353u;words[1]=1u;words[2]=schedule_timing.epoch;
+    words[0]=0x44484353u;words[1]=0u;words[2]=schedule_timing.epoch;
     words[3]=schedule_timing.flags|block[3];words[4]=schedule_timing.samples;
     for(uint32_t i=0;i<5u;++i)words[5u+i]=schedule_timing.state[i];
     words[10]=schedule_timing.wait_us;words[11]=schedule_timing.wait_max;
@@ -163,7 +163,7 @@ void ln_state_publication_step(uint32_t stage){
     for(;;)__asm__ volatile("nop");
 }
 #endif
-/* Explicitly reserved in memory.ld; copied Boot/OS code shares this ABI. */
+/* Explicitly reserved in memory.ld; copied Boot/OS code shares this layout. */
 static volatile uint32_t *const handoff=(volatile uint32_t *)(uintptr_t)0x11fff100u;
 static uint32_t read32(const uint8_t *p){return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
 static uint32_t next_generation(void){if(++epoch==0)++epoch;return epoch;}
@@ -570,7 +570,7 @@ int ln_storage_restart(void){
 }
 void ln_storage_state(uint32_t words[24]){
     struct ln_block_info b;ln_block_snapshot(&b);
-    uint32_t values[24]={0x3242534cu,phase,error,found,ln_storage_prepared(),(uint32_t)b.sectors,(uint32_t)(b.sectors>>32),
+    uint32_t values[24]={0x524f5453u,phase,error,found,ln_storage_prepared(),(uint32_t)b.sectors,(uint32_t)(b.sectors>>32),
         b.ready,b.quarantined,b.pending,b.completed,b.submitted,b.retries,b.failed,b.canceled,b.coalesced,b.cache_hits,
         b.read_ahead_sectors,b.max_service_us,(uint32_t)volume.partition,(uint32_t)volume.partition_sectors,volume.clusters,epoch,ln_storage_capacity(LN_STORAGE_WORK)};
     for(uint32_t i=0;i<24;++i)words[i]=values[i];
@@ -589,7 +589,7 @@ static int image_write(void *context,uint32_t slot,uint32_t offset,const uint8_t
     (void)context;return slot<2?ln_storage_write(slot,offset,data,length):0;
 }
 static uint32_t image_capacity(void *context,uint32_t slot){(void)context;return slot<2?ln_storage_capacity(slot):0;}
-/* Optional history is independent of LUP1 and LDS4. It never authorizes a boot
+/* Optional history is independent of boot metadata and settings. It never authorizes a boot
  * or blocks one merely because the sidecars are absent or their records corrupt.
  * Invalid FAT allocation still fails the shared write-safety proof. */
 static void history_open(void){
@@ -599,7 +599,7 @@ static void history_open(void){
     if(ln_state_open(&history_store,&io)<0)return;
     if(!history_store.length){history_summary=0;return;}
     const uint8_t *p=history_store.payload;
-    if(history_store.length!=60u||read32(p)!=0x3148524cu||read32(p+4)!=1u||
+    if(history_store.length!=60u||read32(p)!=0x4b424c52u||read32(p+4)!=0u||
        read32(p+8)<1u||read32(p+8)>2u||read32(p+12)>1u||
        (read32(p+16)>1u&&read32(p+16)!=255u)){
         history_store.ready=0;return;
@@ -618,7 +618,7 @@ static void theme_open(void){
 static void history_save(uint32_t reason,uint32_t failed,uint32_t fallback,
                          uint32_t attempt,uint32_t generation,const uint8_t build[32]){
     if(history_summary==UINT32_MAX||!history_store.ready||history_store.poisoned)return;
-    uint8_t payload[60]={0};uint32_t words[7]={0x3148524cu,1,reason,failed,fallback,attempt,generation};
+    uint8_t payload[60]={0};uint32_t words[7]={0x4b424c52u,0,reason,failed,fallback,attempt,generation};
     for(uint32_t i=0;i<7;++i)for(uint32_t j=0;j<4;++j)payload[4*i+j]=(uint8_t)(words[i]>>(8*j));
     for(uint32_t i=0;i<32;++i)payload[28+i]=build[i];
     /* Required boot metadata is already durable. A history publication failure
@@ -633,7 +633,7 @@ static int open_stores(void){
     struct ln_state_io sio={(void *)(uintptr_t)LN_STORAGE_STATE0,state_read,state_write,flush_callback};
     if(ln_state_open(&boot_store,&bio)!=1||ln_state_open(&settings_store,&sio)!=1){error=400;return 0;}
     struct ln_update_io io={0,image_read,image_write,flush_callback,image_capacity,ln_storage_progress};
-    struct ln_image_policy policy={98,1,
+    struct ln_image_policy policy={LINNET_TARGET_NUMBER,
 #if defined(LINNET_PROFILE_RELEASE)
         1,
 #else
@@ -665,7 +665,7 @@ void ln_storage_boot(void){
     LN_BOOT_STAMP(LN_BT_BOOT_VALIDATED);
     uint8_t bytes[80]={0};
     for(uint32_t i=0;i<32;++i){bytes[8+i]=info.build_id[i];bytes[40+i]=updater.image[slot].sha256[i];}
-    bytes[0]='L';bytes[1]='P';bytes[2]='H';bytes[3]='2';bytes[4]=slot;
+    bytes[0]='H';bytes[1]='A';bytes[2]='N';bytes[3]='D';bytes[4]=slot;
     uint32_t crc=ln_crc32(bytes,76);for(uint32_t i=0;i<4;++i)bytes[76+i]=(uint8_t)(crc>>(i*8));
     handoff[0]=0;for(uint32_t i=1;i<20;++i)handoff[i]=read32(bytes+4*i);handoff[0]=read32(bytes);
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -693,7 +693,7 @@ void ln_storage_healthy(uint32_t readiness){
        (readiness&LINNET_BOOT_HEALTH_ALL)!=LINNET_BOOT_HEALTH_ALL)return;
     if(health_open_attempts&&(int32_t)(ln_time_us()-health_retry_at)<0)return;
     uint8_t bytes[80];for(uint32_t i=0;i<20;++i){uint32_t v=handoff[i];for(uint32_t j=0;j<4;++j)bytes[i*4+j]=(uint8_t)(v>>(j*8));}
-    if(read32(bytes)!=0x3248504cu||bytes[4]>1||ln_crc32(bytes,76)!=read32(bytes+76)){
+    if(read32(bytes)!=0x444e4148u||bytes[4]>1||ln_crc32(bytes,76)!=read32(bytes+76)){
         health_checked=true;handoff[0]=0;return;
     }
     const uint8_t build[32]=LINNET_BUILD_ID_BYTES;
@@ -715,7 +715,11 @@ void ln_storage_healthy(uint32_t readiness){
 #endif
 }
 int ln_storage_update(uint32_t action,const uint8_t *data,uint32_t length,uint32_t offset){
-    if(!open_stores())return 0;
+    /* Directory discovery can invalidate the FAT write proof after stores were
+     * opened.  Recheck it before every update action; otherwise UPDATE_BEGIN
+     * could poison the cached state store when its publication is refused by
+     * the lower write guard. */
+    if(!ln_storage_prepared()||!open_stores())return 0;
     if(action==1)return data&&ln_update_begin(&updater,length,data);
     if(action==2)return ln_update_write(&updater,offset,data,length);
     if(action==3)return ln_update_finish(&updater,(uint8_t *)(uintptr_t)0x01000000,0x800000);
@@ -724,7 +728,7 @@ int ln_storage_update(uint32_t action,const uint8_t *data,uint32_t length,uint32
 void ln_storage_update_snapshot(uint32_t words[16]){
     if(!words)return;
     int available=stores_ready&&ln_storage_prepared();
-    uint32_t v[16]={0x3250554cu,(uint32_t)available,updater.ready,boot_store.generation,updater.boot.generation,
+    uint32_t v[16]={0x41545355u,(uint32_t)available,updater.ready,boot_store.generation,updater.boot.generation,
         updater.boot.confirmed_slot,updater.boot.candidate_slot,updater.boot.attempt_pending,updater.boot.attempts,
         updater.image[0].length,updater.image[1].length,updater.upload_active,updater.upload_slot,updater.upload_offset,boot_store.poisoned,error};
     for(uint32_t i=0;i<16;++i)words[i]=v[i];

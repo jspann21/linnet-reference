@@ -20,7 +20,7 @@ def validate_package(path, expected_sha):
     report_path=path.with_suffix(path.suffix+'.json')
     if report_path.stat().st_size>65536:raise ValueError('native package provenance exceeds bound')
     report=json.loads(report_path.read_text())
-    if (report.get('format')!='LNB2' or report.get('version') not in (1,2) or report.get('bytes')!=len(package) or
+    if (report.get('format')!='LNPK' or report.get('bytes')!=len(package) or
         report.get('sha256')!=expected_sha.lower()):
         raise ValueError('native package provenance mismatch')
     # Re-run all pinned plan/artifact/backup checks before opening a serial port.
@@ -50,7 +50,8 @@ def install(root,package_path,expected_sha,port,progress=None):
         status=decode(session.status())
         if any(status[key]!=identity[key] for key in ('target_id','build_id','generation')):
             raise RuntimeError('running image changed during native install preflight')
-        if status['target_id']!='photo4g-p98' or status['profile']=='release' or status['image_kind']!='os':
+        if (status['target_id'] != provenance['image']['target_id'] or
+                status['profile']=='release' or status['image_kind']!='os'):
             raise RuntimeError('native install requires the authorized development RAM OS')
         receipt['before']=dict(identity=status,endpoint=endpoint);_save(path,receipt)
         result=session.native_install(status['generation'],package,record)

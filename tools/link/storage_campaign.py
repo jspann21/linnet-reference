@@ -17,7 +17,7 @@ FIELDS=('magic','phase','error','files','prepared','sectors_low','sectors_high',
 
 def _wait_healthy_os(session, observed, expected, generation=None, deadline=None):
     """Refresh startup readiness on one session, with no mutation or reconnect."""
-    bound = dict(target_id=expected['target_id'], boot_abi=expected['boot_abi'],
+    bound = dict(target_id=expected['target_id'],
                  profile=expected['profile'], image_kind='os', build_id=expected['build_id'],
                  image_sha256=expected['sha256'],
                  generation=observed['generation'] if generation is None else generation)
@@ -58,7 +58,7 @@ def _finalize_receipt(session, receipt, path):
 def cycle(root, image_path, scenario_path, port, progress=None):
     image=image_path.read_bytes(); identity=inspect(image)
     scenario_raw=scenario_path.read_bytes(); suite=json.loads(scenario_raw)
-    if identity['profile']=='release' or suite.get('batch')!=2 or suite.get('schema_version')!=1 or suite.get('target_id')!=identity['target_id']:
+    if identity['profile']=='release' or suite.get('batch')!=2 or suite.get('target_id')!=identity['target_id']:
         raise ValueError('storage campaign requires matching Batch2 development image/scenario')
     for key,low,high in [('scratch_bytes',65536,0x400000),('random_reads',32,4096),('seed',0,0xffffffff)]:
         if type(suite.get(key)) is not int or not low<=suite[key]<=high:

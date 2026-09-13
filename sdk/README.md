@@ -113,7 +113,7 @@ status 16. Lists, menus, grids and scrollbars default to 3. Set `deps={16}` on a
 status bar that should change with hold/headphone state, or `deps={4}` on an
 animated canvas. These declarations drive bounded native damage updates.
 
-App `manifest.toml` contains `[app]` with `id`, integer `version=1`, `title`,
+App `manifest.toml` contains `[app]` with `id`, `title`,
 `entry`, and `capabilities=["ui"]`. IDs are dot-separated lowercase identifiers.
 An optional `[assets]` table maps names to P3 PPM files relative to the manifest;
 use the qualified `app.id.assetname` in TSX. Paths must remain inside the source
@@ -144,7 +144,7 @@ Extraction is cached by artwork revision. Missing artwork keeps the previous
 palette for one second before returning to authored fallback colors. Actual
 photos/video retain their original pixels. Backgrounds can be light or dark.
 
-The checked-in LNF1 font is DejaVu Sans Mono, baked to 95 printable ASCII glyphs,
+The checked-in FONT pack is DejaVu Sans Mono, baked to 95 printable ASCII glyphs,
 8 by 14 alpha cells, advance 8. Its license is included in every compiled content
 package. Baking a replacement is an explicit host step requiring Pillow:
 
@@ -161,7 +161,7 @@ Theme fonts may use cells up to 24 by 24 pixels and an optional 95-entry
 fonts and losslessly crops each glyph to its nonzero alpha rectangle. An
 8-byte glyph descriptor stores the packed alpha offset and original cell
 `x,y,w,h`; empty glyphs have zero width and height. The renderer restores those
-coordinates while preserving the font's cell height and advance. Baked LNF1
+coordinates while preserving the font's cell height and advance. Baked FONT
 JSON retains its full alpha cells. No quantization or runtime allocation is used.
 
 Canvas callbacks are trusted native code, statically linked into the generated

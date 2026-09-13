@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 from tools.inspect.image import inspect, verify_release
-from tools.studio.build import ROOT, build, target_id, toolchain
+from tools.studio.build import ROOT, TARGETS, build, target_id, toolchain
 
 def emit(value):
     print(json.dumps(value, indent=2))
@@ -16,6 +16,11 @@ def parser():
     commands = cli.add_subparsers(dest="command", required=True)
     commands.add_parser("doctor")
     commands.add_parser("media", help="Open the desktop iPod media manager")
+    installer = commands.add_parser("installer", help="Inspect, install, or restore Linnet without erasing media")
+    installer_actions = installer.add_subparsers(dest="installer_action", required=True)
+    for action in ("inspect", "install", "restore"):
+        entry = installer_actions.add_parser(action)
+        entry.add_argument("--mount", type=Path, required=True)
     compile_ = commands.add_parser("build")
     compile_.add_argument("--target", default="photo4g-p98", type=target_id)
     compile_.add_argument("--profile", choices=("release", "dev", "trace"), required=True)
@@ -100,6 +105,9 @@ def parser():
     theme_provision.add_argument("--disk-bytes",type=int,required=True)
     theme_provision.add_argument("--confirmed-build",required=True)
     device = commands.add_parser("device").add_subparsers(dest="action", required=True)
+    retail = device.add_parser("detect-retail", help="Identify a mounted RetailOS iPod and its Linnet target")
+    retail.add_argument("--mount", type=Path, required=True)
+    retail.add_argument("--output", type=Path)
     info = device.add_parser("info")
     info.add_argument("--port")
     media_info=device.add_parser("media-info")
@@ -210,10 +218,17 @@ def main():
             converted = subprocess.run(["wsl", "-d", "Ubuntu-24.04", "--", "wslpath", "-a", ROOT.as_posix()], capture_output=True, text=True, check=True).stdout.strip()
             return subprocess.call(["wsl", "-d", "Ubuntu-24.04", "--cd", converted, "--", "python3", "linnet", *sys.argv[1:]])
         if args.command == "doctor":
-            emit(dict(toolchain=toolchain(), python=sys.version.split()[0], target_id="photo4g-p98", hardware_qualified=False))
+            emit(dict(toolchain=toolchain(), python=sys.version.split()[0],
+                      supported_targets=sorted(TARGETS), hardware_qualified=False))
         elif args.command == "media":
             from tools.studio.media_app import launch
             launch()
+        elif args.command == "installer":
+            from tools.studio.installer import assess, identity_for_mount, install, restore
+            identity = identity_for_mount(args.mount)
+            emit(assess(identity) if args.installer_action == "inspect" else
+                 install(identity, lambda message: print(message, file=sys.stderr))
+                 if args.installer_action == "install" else restore(identity))
         elif args.command == "build":
             emit(build(args.profile, args.target, args.verify, args.kind, args.probe, args.device_serial, batch=args.batch,system_config=args.system))
         elif args.command == "ui":
@@ -259,6 +274,14 @@ def main():
             if not args.run_id or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-TZ" for c in args.run_id):
                 raise ValueError("invalid run ID")
             emit(json.loads((ROOT / "out/runs" / args.run_id / "receipt.json").read_text()))
+        elif args.command == "device" and args.action == "detect-retail":
+            from tools.inspect.retail_device import detect
+            result = detect(args.mount)
+            if args.output:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+                result["configuration"] = str(args.output.resolve())
+            emit(result)
         elif args.command == "device" and args.action == "refresh-session":
             from tools.link import refresh_session
             if args.session_action == "prepare":
@@ -377,8 +400,8 @@ def main():
                         import struct
                         from tools.link.protocol import Command
                         raw=session.request(Command.UI_STATE)
-                        if len(raw)!=64 or raw[:4]!=b'LUI3':raise RuntimeError('Invalid native UI report')
-                        names=('magic','version','scene','selected','scene_epoch','transitions','paints','painted_pixels','visible_items','dirty','action','arena_used','arena_high','arena_generation','generation','scenes')
+                        if len(raw)!=64 or raw[:8]!=b'UIST\0\0\0\0':raise RuntimeError('Invalid native UI report')
+                        names=('magic','reserved','scene','selected','scene_epoch','transitions','paints','painted_pixels','visible_items','dirty','action','arena_used','arena_high','arena_generation','generation','scenes')
                         emit(dict(identity=identity,ui=dict(zip(names,struct.unpack('<16I',raw)))))
                     elif args.action=="native-status":
                         emit(dict(identity=identity,native=session.native_status()))

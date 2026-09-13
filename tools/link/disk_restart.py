@@ -7,7 +7,7 @@ import argparse
 from datetime import datetime, timezone
 import json
 from pathlib import Path
-from tools.studio.native_bootstrap_v3 import load_reviewed_plan as load_plan, identify_disk, guard_device, write_verified, save_json
+from tools.studio.native_bootstrap import load_plan, identify_disk, guard_device, write_verified, save_json
 
 
 def refresh(plan_path, plan_sha256, disk_number, receipt_path):
@@ -19,7 +19,7 @@ def refresh(plan_path, plan_sha256, disk_number, receipt_path):
     try:
         save_json(receipt_path, receipt)
         manifest, artifacts, original = load_plan(Path(plan_path).resolve(), plan_sha256)
-        receipt["device"] = identify_disk(disk_number)
+        receipt["device"] = identify_disk(disk_number, manifest)
         with open(r"\\.\PhysicalDrive" + str(disk_number), "r+b", buffering=0) as device:
             receipt["before"] = guard_device(device, manifest, artifacts, original)
             if receipt["before"]["directory"] != "candidate":

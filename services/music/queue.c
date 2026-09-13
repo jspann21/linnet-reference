@@ -36,8 +36,6 @@ bool ln_queue_select_occurrence(struct ln_queue *q,uint32_t occurrence)
  if(occurrence>=q->source_count||find(q->excluded,q->excluded_count,occurrence)!=q->excluded_count)return false;
  uint32_t rank=raw_rank(q,occurrence),at=rank;for(uint32_t i=0;i<q->excluded_count;i++)if(raw_rank(q,q->excluded[i])<rank)at--;
  return ln_queue_select_at(q,at);}if(occurrence>=q->count)return false;uint32_t i=find(q->order,q->count,occurrence);if(i==q->count)return false;q->cursor=i;q->position_samples=0;return true;}
-bool ln_queue_select(struct ln_queue *q,uint32_t track)
-{return q&&!q->source&&ln_queue_select_occurrence(q,find(q->tracks,q->count,track));}
 bool ln_queue_remove_occurrence(struct ln_queue *q,uint32_t occurrence)
 {
     if(!q)return false;
@@ -58,8 +56,6 @@ bool ln_queue_remove_occurrence(struct ln_queue *q,uint32_t occurrence)
     else if(play==q->cursor){q->position_samples=0;if(q->cursor&&q->cursor==q->count)--q->cursor;}
     q->tracks[q->count]=q->order[q->count]=0;return true;
 }
-bool ln_queue_remove(struct ln_queue *q,uint32_t track)
-{return q&&!q->source&&ln_queue_remove_occurrence(q,find(q->tracks,q->count,track));}
 bool ln_queue_move_occurrence(struct ln_queue *q,uint32_t old,uint32_t index)
 {
     if(!q||q->source||old>=q->count||index>=q->count)return false;
@@ -73,8 +69,6 @@ bool ln_queue_move_occurrence(struct ln_queue *q,uint32_t old,uint32_t index)
     if(!q->shuffled){for(uint32_t i=0;i<q->count;++i)q->order[i]=i;q->cursor=current;}
     return true;
 }
-bool ln_queue_move(struct ln_queue *q,uint32_t track,uint32_t index)
-{return q&&!q->source&&ln_queue_move_occurrence(q,find(q->tracks,q->count,track),index);}
 bool ln_queue_next(struct ln_queue *q,bool manual)
 {
     if(!q||!q->count)return false;
@@ -152,7 +146,7 @@ uint32_t ln_queue_encode(const struct ln_queue *q,uint8_t *out,uint32_t capacity
 {
     if(!q||!out||!valid(q))return 0;
     uint32_t length=q->source?108u+4u*q->excluded_count:80u+q->count*5u;if(capacity<length)return 0;
-    put(out,0x31514e4cu);put(out+4,q->source?2u:1u);put(out+8,length);put(out+12,q->count);
+    put(out,0x55455551u);put(out+4,q->source?1u:0u);put(out+8,length);put(out+12,q->count);
     put(out+16,q->cursor);put(out+20,q->repeat);put(out+24,q->seed);put(out+28,q->shuffled?1u:0u);
     put(out+32,(uint32_t)q->position_samples);put(out+36,(uint32_t)(q->position_samples>>32));
     put(out+40,(uint32_t)q->volume_db_tenths);
@@ -163,9 +157,9 @@ uint32_t ln_queue_encode(const struct ln_queue *q,uint8_t *out,uint32_t capacity
 }
 bool ln_queue_decode(struct ln_queue *q,const uint8_t *data,uint32_t length)
 {
-    if(!q||!data||length<80u||length>LINNET_QUEUE_RESUME_MAX||get(data)!=0x31514e4cu||
-       (get(data+4)!=1&&get(data+4)!=2)||get(data+8)!=length||
-       (get(data+4)==1?(get(data+12)>LINNET_QUEUE_CAPACITY||length!=80u+get(data+12)*5u):(length<108u||length>236u))||get(data+28)>1u||get(data+length-4u)!=crc(data,length-4u))return false;
+    if(!q||!data||length<80u||length>LINNET_QUEUE_RESUME_MAX||get(data)!=0x55455551u||
+       get(data+4)>1u||get(data+8)!=length||
+       (!get(data+4)?(get(data+12)>LINNET_QUEUE_CAPACITY||length!=80u+get(data+12)*5u):(length<108u||length>236u))||get(data+28)>1u||get(data+length-4u)!=crc(data,length-4u))return false;
     struct ln_queue candidate={0};candidate.count=get(data+12);candidate.cursor=get(data+16);
     candidate.repeat=get(data+20);candidate.seed=get(data+24);candidate.shuffled=get(data+28)!=0;
     candidate.position_samples=get(data+32)|((uint64_t)get(data+36)<<32);
@@ -173,7 +167,7 @@ bool ln_queue_decode(struct ln_queue *q,const uint8_t *data,uint32_t length)
     if(volume&&volume<0xfffffd26u)return false;
     candidate.volume_db_tenths=volume?-(int32_t)(~volume+1u):0;
     for(uint32_t i=0;i<32u;++i)candidate.library_identity[i]=data[44u+i];
-    if(get(data+4)==2){candidate.source=get(data+76);candidate.source_group=get(data+80);
+    if(get(data+4)==1){candidate.source=get(data+76);candidate.source_group=get(data+80);
         candidate.stride=get(data+84);candidate.offset=get(data+88);candidate.inverse=get(data+92);candidate.source_count=get(data+96);candidate.excluded_count=get(data+100);
         if(candidate.excluded_count>32||length!=108u+4u*candidate.excluded_count)return false;
         for(uint32_t i=0;i<candidate.excluded_count;i++)candidate.excluded[i]=get(data+104+4*i);

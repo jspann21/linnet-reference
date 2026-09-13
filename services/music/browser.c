@@ -125,11 +125,6 @@ bool ln_music_browser_select(uint32_t row)
     browser.selection=row;browser.selecting=true;
     return true;
 }
-bool ln_music_browser_take_track(uint32_t *track)
-{
-    if(!track||!browser.track_ready)return false;
-    *track=browser.track;browser.track_ready=false;browser.queue_status=LN_BROWSER_QUEUE_IDLE;return true;
-}
 bool ln_music_browser_select_single(uint32_t row)
 {if(browser.view!=TRACKS||!ln_music_browser_select(row))return false;browser.single=true;return true;}
 int ln_music_browser_queue_status(void){return browser.queue_status;}

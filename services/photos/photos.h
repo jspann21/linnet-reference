@@ -39,7 +39,7 @@ const char *ln_photos_status(void);
 /* 16-byte resume: catalog identity, photo index, zoom/rotation/view, packed pan.
  * Photo index65535 is outside every valid PIMG photo range and denotes an empty
  * album: zoom/rotation are zero, view is albums/list, and the pan word is the
- * album index. This fits the existing LDS4 compact 16-bit index unchanged.
+ * album index. This fits the compact 16-bit index.
  * Restore validates catalog identity, album bounds and its empty record first. */
 void ln_photos_resume_get(uint8_t out[16]);
 bool ln_photos_resume_set(const uint8_t in[16]);

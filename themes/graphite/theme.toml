@@ -1,7 +1,6 @@
 [theme]
 id = "linnet.theme.graphite"
 name = "Graphite"
-version = 1
 style = "standard"
 layout = "graphite"
 font = "../../sdk/assets/font-compact13.json"

@@ -109,7 +109,7 @@ def prepare(plan_path, plan_sha256, volume_serial='3D9E4E60'):
         raise RuntimeError('Restart helper compilation failed: ' + result.stdout + result.stderr)
     with socket.socket() as temporary:
         temporary.bind(('127.0.0.1', 0)); port = temporary.getsockname()[1]
-    state = dict(version=1, session_id=directory.name, recipe=str(recipe_path), executable=str(executable),
+    state = dict(session_id=directory.name, recipe=str(recipe_path), executable=str(executable),
                  recipe_sha256=sha(recipe_path.read_bytes()), executable_sha256=sha(executable.read_bytes()),
                  plan_sha256=plan_sha256, plan=str(Path(plan_path).resolve()),
                  token=secrets.token_hex(32), port=port)

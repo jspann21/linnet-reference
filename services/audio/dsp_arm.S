@@ -9,7 +9,7 @@
  * This program is free software under the GNU General Public License,
  * version 2 or (at your option) any later version; provided AS IS without
  * warranty. The full license is in third_party/libmad/COPYING.
- * Linnet adaptation: ABI, fixed Q8/Q2.30 scaling, bounded stride loops,
+ * Linnet adaptation: calling interface, fixed Q8/Q2.30 scaling, bounded stride loops,
  * rounding, guarding and clip counting below.
  *
  * Exact portable DSP semantics: symmetric nearest/ties-away rounding, +/-2^27

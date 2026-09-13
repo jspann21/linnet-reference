@@ -79,15 +79,15 @@ enum ln_storage_schedule {LN_STORAGE_SCHEDULE_IDLE=0,LN_STORAGE_SCHEDULE_FAT_RUN
 enum ln_storage_schedule ln_storage_schedule_state(uint32_t now,uint32_t *deadline);
 /* Records one existing runtime-idle decision without changing that decision. */
 void ln_storage_schedule_observe(uint32_t now);
-/* SCD1 v1: 24 words; sampled opportunity and latency diagnostics. */
+/* Scheduler diagnostics: 24 words of sampled opportunity and latency data. */
 void ln_storage_schedule_performance(uint32_t words[24]);
-/* SPT1 v1: magic/version/init epoch/flags, then completed inclusive counters:
+/* Poll timing: magic/reserved/init epoch/flags, then completed inclusive counters:
  * media poll calls/us/nested calls/us, progress calls/us/nested calls/us,
  * all storage-service FAT poll calls/us, progress runtime callback calls/us.
  * Media polls exclude stale owners. Nested is same-function reentry only.
  * Flags: bits0..11 counter saturation,28 active span,29 depth/reset anomaly,
  * 30 elapsed >=2^31 us,31 exhausted epoch. Reject flagged snapshots/deltas;
- * compare only same epoch, with SIO1 ATA epoch and host time brackets.
+ * compare only same epoch, with SIOP ATA epoch and host time brackets.
  * Spans overlap; total minus nested is top-level inclusive, not CPU time. */
 void ln_storage_media_performance(uint32_t words[16]);
 int ln_storage_publication_fault(uint32_t stage);

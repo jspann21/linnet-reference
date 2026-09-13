@@ -60,14 +60,14 @@ int ln_audio_link_dispatch(const ln_link_frame *q,ln_link_frame *r){
         if(q->length)return 1;struct ln_player_timing t;ln_player_timing_snapshot(&t);
         struct ln_mp3_timing m;ln_mp3_timing_snapshot(&m);
         struct ln_core_status c;ln_core_snapshot(&c);
-        uint32_t words[31]={0x34544d50u,6,t.decode_calls,t.decode_us,t.decode_max_us,t.dsp_calls,t.dsp_frames,t.dsp_us,t.dsp_max_us,t.runtime_calls,t.runtime_us,t.runtime_max_us,t.music_us,t.storage_us,t.link_us,
+        uint32_t words[31]={0x454d4954u,0,t.decode_calls,t.decode_us,t.decode_max_us,t.dsp_calls,t.dsp_frames,t.dsp_us,t.dsp_max_us,t.runtime_calls,t.runtime_us,t.runtime_max_us,t.music_us,t.storage_us,t.link_us,
             c.clock_hz,c.cache_control,*(volatile uint32_t *)(uintptr_t)0x60006044u,c.idle_us,c.clock_source,ln_player_decoder_kind(),
             m.frame_calls,m.frame_us,m.frame_max_us,m.synth_calls,m.synth_us,m.synth_max_us,
             m.pcm_calls,m.pcm_frames,m.pcm_us,m.pcm_max_us};
         for(uint32_t n=0;n<31;n++)write32(reply+n*4,words[n]);r->length=124;
     }else if(q->command==119){
         if(q->length)return 1;
-        uint32_t words[8]={0x3442494cu,1,ln_music_library_status(),(uint32_t)ln_music_library_error(),
+        uint32_t words[8]={0x5342494cu,0,ln_music_library_status(),(uint32_t)ln_music_library_error(),
             ln_music_library_count(),ln_music_library_group_count(),ln_music_library_verified_bytes(),ln_music_library_revision()};
         for(uint32_t i=0;i<8;++i)write32(reply+i*4,words[i]);
         for(uint32_t i=32;i<64;++i)reply[i]=0;
@@ -75,7 +75,7 @@ int ln_audio_link_dispatch(const ln_link_frame *q,ln_link_frame *r){
     }else if(q->command==116){
         if(q->length)return 1;struct ln_player_status p;ln_player_snapshot(&p);
         uint64_t position=ln_player_position();
-        uint32_t words[16]={0x34524c50u,p.phase,p.error,p.generation,p.rate,p.decoded,p.rendered,p.underruns,(uint32_t)p.frames,(uint32_t)(p.frames>>32),
+        uint32_t words[16]={0x52594c50u,p.phase,p.error,p.generation,p.rate,p.decoded,p.rendered,p.underruns,(uint32_t)p.frames,(uint32_t)(p.frames>>32),
             p.next_phase,p.next_error,p.gapless_joins,p.missed_joins,(uint32_t)position,(uint32_t)(position>>32)};
         for(uint32_t i=0;i<16;++i)write32(reply+i*4,words[i]);r->length=64;
     }else if(q->command==117){
@@ -93,7 +93,7 @@ int ln_audio_link_dispatch(const ln_link_frame *q,ln_link_frame *r){
         write32(reply+4,action);
     }else if(q->command==112){
         if(q->length)return 1;
-        uint32_t words[20]={0x34445541u,2,a.rate,a.queued,a.free_frames,a.consumed,a.submitted,
+        uint32_t words[20]={0x53445541u,0,a.rate,a.queued,a.free_frames,a.consumed,a.submitted,
             a.interrupts,a.underruns,a.silence_frames,a.fault,a.playing,a.paused,a.initialized,
             a.last_irq_us,a.max_irq_us,(uint32_t)a.volume_db_tenths,
             a.fifo_empty_irqs,a.max_completion_interval_us,a.max_completion_late_us};

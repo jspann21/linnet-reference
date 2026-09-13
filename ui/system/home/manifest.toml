@@ -1,6 +1,5 @@
 [app]
 id = "linnet.system.home"
-version = 1
 title = "Home"
 entry = "screen.tsx"
 capabilities = ["ui"]

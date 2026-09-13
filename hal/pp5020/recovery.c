@@ -19,28 +19,28 @@ struct ln_recovery_control {
     uint32_t candidate_crc, candidate_healthy;
     uint32_t trace_magic, trace_phase, trace_generation, trace_size;
     uint32_t trace_status, trace_started, trace_elapsed, trace_failure;
-    /* Offset 160 is also accessed directly by the COP display ABI. */
+    /* Offset 160 is also accessed directly by the COP display mailbox. */
     uint32_t reserved_156, display_capability, reserved_164_188[7];
     uint32_t startup[16];
     uint32_t timeline[48];
 };
-_Static_assert(offsetof(struct ln_recovery_control, progress) == 16, "COP progress ABI");
-_Static_assert(offsetof(struct ln_recovery_control, armed) == 20, "COP armed ABI");
-_Static_assert(offsetof(struct ln_recovery_control, cop_cookie) == 24, "COP cookie ABI");
-_Static_assert(offsetof(struct ln_recovery_control, cop_tick) == 28, "COP tick ABI");
+_Static_assert(offsetof(struct ln_recovery_control, progress) == 16, "COP progress layout");
+_Static_assert(offsetof(struct ln_recovery_control, armed) == 20, "COP armed layout");
+_Static_assert(offsetof(struct ln_recovery_control, cop_cookie) == 24, "COP cookie layout");
+_Static_assert(offsetof(struct ln_recovery_control, cop_tick) == 28, "COP tick layout");
 _Static_assert(sizeof(struct ln_recovery_control) <= 4096, "Recovery control capacity");
-_Static_assert(offsetof(struct ln_recovery_control, trace_phase) == 128, "Entry trace ABI");
-_Static_assert(offsetof(struct ln_recovery_control, trace_failure) == 152, "COP trace ABI");
-_Static_assert(offsetof(struct ln_recovery_control, display_capability) == 160, "COP display capability ABI");
-_Static_assert(offsetof(struct ln_recovery_control, startup) == LN_STARTUP_TIMING_BASE, "Startup trailer ABI");
-_Static_assert(offsetof(struct ln_recovery_control, startup[4]) == LN_STARTUP_TIMING_MASK, "Startup mask ABI");
-_Static_assert(offsetof(struct ln_recovery_control, startup[5]) == LN_STARTUP_TIMING_TICKS, "Startup ticks ABI");
-_Static_assert(offsetof(struct ln_recovery_control, timeline) == LN_BOOT_TIMELINE_BASE, "Boot timeline ABI");
+_Static_assert(offsetof(struct ln_recovery_control, trace_phase) == 128, "Entry trace layout");
+_Static_assert(offsetof(struct ln_recovery_control, trace_failure) == 152, "COP trace layout");
+_Static_assert(offsetof(struct ln_recovery_control, display_capability) == 160, "COP display capability layout");
+_Static_assert(offsetof(struct ln_recovery_control, startup) == LN_STARTUP_TIMING_BASE, "Startup trailer layout");
+_Static_assert(offsetof(struct ln_recovery_control, startup[4]) == LN_STARTUP_TIMING_MASK, "Startup mask layout");
+_Static_assert(offsetof(struct ln_recovery_control, startup[5]) == LN_STARTUP_TIMING_TICKS, "Startup ticks layout");
+_Static_assert(offsetof(struct ln_recovery_control, timeline) == LN_BOOT_TIMELINE_BASE, "Boot timeline layout");
 static volatile struct ln_recovery_control *const ln_control =
     (volatile struct ln_recovery_control *)(uintptr_t)0x11ffe000u;
 static int ln_running_loader;
 static int ln_timeline_native_pending;
-#define LN_BOOT_TIMELINE_MAGIC 0x31545442u
+#define LN_BOOT_TIMELINE_MAGIC 0x4d495442u
 extern const uint8_t __image_end[], ln_copy_trampoline_begin[], ln_copy_trampoline_end[];
 
 __attribute__((weak)) int ln_recovery_transport_stop(void) { return 1; }
@@ -90,7 +90,7 @@ void ln_recovery_startup_diagnostics(uint32_t output[16])
 {
     if(!output)return;
     for(uint32_t i=0;i<16u;++i)output[i]=0;
-    if(ln_control->startup[0]!=LN_STARTUP_TIMING_MAGIC||ln_control->startup[1]!=1u||
+    if(ln_control->startup[0]!=LN_STARTUP_TIMING_MAGIC||ln_control->startup[1]!=0u||
        ln_control->startup[2]!=ln_control->generation||
        ln_control->startup[3]!=ln_control->candidate_size)return;
     for(uint32_t i=0;i<16u;++i)output[i]=ln_control->startup[i];
@@ -107,7 +107,7 @@ static void ln_timeline_reset(void)
     ln_timeline_native_pending=0;
     ln_control->timeline[0]=0;
     for(uint32_t i=1;i<48u;++i)ln_control->timeline[i]=0;
-    ln_control->timeline[1]=5u;
+    ln_control->timeline[1]=0u;
     ln_control->timeline[2]=ln_control->generation;
     ln_control->timeline[4]=LINNET_MMIO(0x60006020u);
     ln_control->timeline[5]=LINNET_MMIO(0x60006034u);
@@ -129,7 +129,7 @@ void ln_recovery_timeline_begin(int loader,uint32_t c_entry)
     /* An OS can inherit only a newly dispatched generation. Old Boot and direct
      * launches produce an OS-only record, never stale native-startup numbers. */
     if(loader||ln_control->timeline[0]!=LN_BOOT_TIMELINE_MAGIC||
-       (ln_control->timeline[1]<1u||ln_control->timeline[1]>5u)||ln_control->timeline[2]!=ln_control->generation||
+       ln_control->timeline[1]!=0u||ln_control->timeline[2]!=ln_control->generation||
        !(ln_control->timeline[3]&(1u<<LN_BT_CHAINLOAD))||
        (ln_control->timeline[3]&(1u<<LN_BT_OS_C)))ln_timeline_reset();
     uint32_t stage=loader?LN_BT_BOOT_C:LN_BT_OS_C;
@@ -151,7 +151,7 @@ void ln_recovery_timeline_clock(uint32_t status)
 {
     if(!ln_running_loader||ln_control->timeline[0]!=LN_BOOT_TIMELINE_MAGIC||
        ln_control->timeline[2]!=ln_control->generation)return;
-    ln_control->timeline[1]=5u;
+    ln_control->timeline[1]=0u;
     ln_control->timeline[36]=LINNET_MMIO(0x6000600cu);
     ln_control->timeline[37]=LINNET_MMIO(0x60006004u);
     ln_control->timeline[38]=LINNET_MMIO(0x70000020u);
@@ -168,7 +168,7 @@ void ln_recovery_timeline_diagnostics(uint32_t output[48])
     if(!output)return;
     for(uint32_t i=0;i<48u;++i)output[i]=0;
     if(ln_control->timeline[0]!=LN_BOOT_TIMELINE_MAGIC||
-       (ln_control->timeline[1]<1u||ln_control->timeline[1]>5u)||
+       ln_control->timeline[1]!=0u||
        ln_control->timeline[2]!=ln_control->generation)return;
     for(uint32_t i=0;i<48u;++i)output[i]=ln_control->timeline[i];
 }
@@ -415,7 +415,7 @@ int ln_recovery_chainload(void *context, const uint8_t *payload, uint32_t size,
     ln_control->candidate_entry = entry;
     ln_control->startup[0]=0;
     for(uint32_t i=1;i<16u;++i)ln_control->startup[i]=0;
-    ln_control->startup[1]=1u;
+    ln_control->startup[1]=0u;
     ln_control->startup[2]=next_generation;
     ln_control->startup[3]=size;
     ln_control->startup[0]=LN_STARTUP_TIMING_MAGIC;

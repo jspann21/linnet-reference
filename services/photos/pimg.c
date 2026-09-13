@@ -18,7 +18,7 @@ uint32_t ln_pimg_crc_update(uint32_t crc,const uint8_t*p,uint32_t n){
 }
 bool ln_pimg_header(const uint8_t*b,uint32_t size,struct ln_pimg_header*h){
     if(!b||!h||size<512||size>0x7fffffffu||b[0]!='P'||b[1]!='I'||b[2]!='M'||b[3]!='G'||
-       r16(b+4)!=1||r16(b+6)!=512||r32(b+8)||r32(b+12)!=size||
+       r16(b+4)!=0||r16(b+6)!=512||r32(b+8)||r32(b+12)!=size||
        r16(b+64)!=64||r16(b+66)!=64||r16(b+68)!=32||r16(b+70)!=1||
        !zero(b+72,436)||ln_crc32(b,508)!=r32(b+508))return false;
     *h=(struct ln_pimg_header){size,r32(b+16),r32(b+20),r32(b+24),r32(b+28),r32(b+32),r32(b+36),r32(b+40),r32(b+44),r32(b+48),r32(b+52),r32(b+56),r32(b+60),r32(b+508)};

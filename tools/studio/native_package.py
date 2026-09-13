@@ -1,12 +1,11 @@
-"""Build rigid LNB2 maintenance packages from a hash-pinned native Boot plan.
+"""Build rigid Linnet native maintenance packages from a hash-pinned Boot plan.
 
-No device access. The exact before-state assumes every pinned predecessor was
-installed and the latest predecessor directory remains active. The device must
-reject any different full firmware SHA before writing a sector.
+No device access. The exact before-state requires the original directory and an
+empty candidate extent. The device rejects any different full firmware SHA
+before writing a sector.
 
 Layout: header512, MBR512, old directory512, new directory512, LOS header128
-plus zero padding384, then the reviewed64..128KiB candidate extent. Version1
-retains its65536-byte extent; version2 encodes the exact sector-aligned size.
+plus zero padding384, then the reviewed64..128KiB candidate extent.
 All integer fields are little-endian.
 """
 import argparse
@@ -15,7 +14,7 @@ import json
 from pathlib import Path
 import struct
 import zlib
-from tools.studio.native_bootstrap_v3 import load_reviewed_plan as load_plan
+from tools.studio.native_bootstrap import load_plan
 
 HEADER_BYTES=512
 CANDIDATE_BYTES=65536
@@ -40,23 +39,14 @@ def prepare(plan, plan_sha256, outpath):
     candidate=artifacts['candidate.bin'];image=artifacts['boot.los']
     candidate_bytes=len(candidate)
     package_bytes=2560+candidate_bytes
-    version=1 if candidate_bytes==CANDIDATE_BYTES else 2
     if not CANDIDATE_BYTES<=candidate_bytes<=131072 or candidate_bytes%512 or manifest['candidate_write_bytes']!=candidate_bytes:
-        raise ValueError('LNB2 requires a reviewed sector-aligned64..128KiB candidate extent')
+        raise ValueError('native package requires a reviewed sector-aligned64..128KiB candidate extent')
     payload=image[128:]
     if not 32<=len(payload)<=candidate_bytes or candidate!=payload+bytes(candidate_bytes-len(payload)):
         raise ValueError('candidate must be the exact zero-padded Boot LOS payload')
     start=manifest['candidate_partition_offset'];directory=manifest['directory_partition_offset']
-    before=bytearray(original);assumptions=[]
+    before=bytearray(original)
     old_directory=artifacts['directory-original.bin']
-    for prior,prior_artifacts in artifacts.get('_predecessors',[]):
-        offset=prior['candidate_partition_offset'];data=prior_artifacts['candidate.bin']
-        if any(before[offset:offset+len(data)]):
-            raise ValueError('predecessor extents overlap or original staging is not empty')
-        before[offset:offset+len(data)]=data
-        old_directory=prior_artifacts['directory-candidate.bin']
-        assumptions.append(dict(build_id=prior['image']['build_id'],offset=offset,
-                                bytes=len(data),sha256=_digest(data).hex()))
     if any(before[start:start+candidate_bytes]):
         raise ValueError('new candidate extent is not empty in the expected before-state')
     before[directory:directory+512]=old_directory
@@ -73,7 +63,7 @@ def prepare(plan, plan_sha256, outpath):
     if len(body)!=package_bytes-HEADER_BYTES:
         raise ValueError('unexpected fixed package component length')
     header=bytearray(HEADER_BYTES)
-    struct.pack_into('<4s5I',header,0,b'LNB2',version,package_bytes,98,1,len(original))
+    struct.pack_into('<4s5I',header,0,b'LNPK',0,package_bytes,98,0,len(original))
     partition_start=manifest['partition_lba']*512
     struct.pack_into('<QQIIQQIIQ',header,24,partition_start,manifest['candidate_disk_offset'],
                      candidate_bytes,len(payload),manifest['directory_disk_offset'],partition_start+old_start,
@@ -91,14 +81,13 @@ def prepare(plan, plan_sha256, outpath):
     outpath=Path(outpath).resolve();report_path=outpath.with_suffix(outpath.suffix+'.json')
     if outpath.exists() or report_path.exists():raise ValueError('package output already exists; use a new path')
     outpath.parent.mkdir(parents=True,exist_ok=True)
-    report=dict(format='LNB2',version=version,package=str(outpath),bytes=len(package),sha256=_digest(package).hex(),
+    report=dict(format='LNPK',package=str(outpath),bytes=len(package),sha256=_digest(package).hex(),
         plan=str(plan),plan_sha256=plan_sha256.lower(),image=manifest['image'],
         expected_storage_serial=manifest['expected_storage_serial'],expected_linnet_usb_serial=manifest['expected_linnet_usb_serial'],
         firmware_before_sha256=before_hash.hex(),firmware_staged_sha256=staged_hash.hex(),
         firmware_final_sha256=final_hash.hex(),candidate_disk_offset=manifest['candidate_disk_offset'],
         directory_disk_offset=manifest['directory_disk_offset'],
-        assumed_installed_predecessors=assumptions,
-        before_state_policy='all pinned predecessor payloads installed; latest predecessor directory active; new candidate extent zero',
+        before_state_policy='candidate extent zero and original directory active',
         device_write_attempted=False,hardware_qualified=False)
     with outpath.open('xb') as stream:stream.write(package)
     if outpath.read_bytes()!=package:raise OSError('local package readback mismatch')

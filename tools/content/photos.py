@@ -1,4 +1,4 @@
-"""Deterministic PIMG v1 compiler and bounded, streaming package validator."""
+"""Deterministic PIMG compiler and bounded, streaming package validator."""
 from __future__ import annotations
 
 import hashlib
@@ -220,7 +220,7 @@ def compile_photos(source, output, *, max_dimension=640, fallback_paths=None):
         metadata.extend(strings)
         metadata.extend(bytes(data_offset - HEADER - len(metadata)))
         header = bytearray(HEADER)
-        struct.pack_into('<4sHH14I4H', header, 0, b'PIMG', 1, HEADER, 0, total,
+        struct.pack_into('<4sHH14I4H', header, 0, b'PIMG', 0, HEADER, 0, total,
                          len(albums), len(photos), len(levels), len(tile_crcs),
                          album_offset, photo_offset, level_offset, tile_offset,
                          string_offset, len(strings), _crc(metadata), data_offset,
@@ -263,7 +263,7 @@ def inspect(path, *, verify_payloads=True):
                 raise ValueError('truncated PIMG')
             return data
         header = read(0, HEADER)
-        if (header[:4] != b'PIMG' or struct.unpack_from('<HH', header, 4) != (1, HEADER) or
+        if (header[:4] != b'PIMG' or struct.unpack_from('<HH', header, 4) != (0, HEADER) or
             _crc(header[:508]) != struct.unpack_from('<I', header, 508)[0] or any(header[72:508])):
             raise ValueError('invalid PIMG header identity/CRC/reserved bytes')
         flags, total, ac, pc, lc, tc, ao, po, lo, to, so, sb, mc, do = struct.unpack_from('<14I', header, 8)
@@ -352,6 +352,6 @@ def inspect(path, *, verify_payloads=True):
                     raise ValueError('PIMG tile CRC mismatch')
     with path.open('rb') as stream:
         digest = hashlib.file_digest(stream, 'sha256').hexdigest()
-    return dict(format='PIMG', version=1, passed=True, photos=pc, albums=ac,
+    return dict(format='PIMG', passed=True, photos=pc, albums=ac,
                 levels=lc, tiles=tc, bytes=size, sha256=digest,
                 album_titles=album_titles, payloads_verified=bool(verify_payloads))

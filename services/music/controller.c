@@ -33,7 +33,7 @@ static uint32_t resolver_kind,resolver_token,resolver_ordinal,next_ordinal,curre
 static bool show_now_playing;
 static bool shutting_down,stepping,pause_captured;
 static bool queue_opened;
-static uint32_t queue_choice,queue_choice_version;
+static uint32_t queue_choice,queue_choice_revision;
 static const char *notice;
 #define LN_MUSIC_VOLUME_RETRY_US 100000u
 static uint32_t volume_retry_at;
@@ -80,9 +80,9 @@ void ln_music_queue_open(void){
     ln_music_queue_view_open(&queue,revision);
 }
 void ln_music_queue_close(void){queue_opened=false;ln_music_queue_view_close();}
-void ln_music_queue_choose(uint32_t row){queue_choice=row;queue_choice_version=revision;}
+void ln_music_queue_choose(uint32_t row){queue_choice=row;queue_choice_revision=revision;}
 bool ln_music_queue_edit(uint32_t action){
-    if(shutting_down||manual_next_pending||selecting||have_waiting||resolver_kind==1||queue_choice_version!=revision||queue_choice>=queue.count||action>4)return false;
+    if(shutting_down||manual_next_pending||selecting||have_waiting||resolver_kind==1||queue_choice_revision!=revision||queue_choice>=queue.count||action>4)return false;
     if(action==4){int32_t volume=queue.volume_db_tenths;uint32_t repeat=queue.repeat;
         ln_music_stop();ln_queue_init(&queue,ln_time_us());(void)ln_music_library_identity(queue.library_identity);queue.volume_db_tenths=volume;queue.repeat=repeat;++revision;return true;}
     remember_position();uint32_t occurrence;
@@ -124,7 +124,7 @@ bool ln_music_queue_position(uint32_t *position,uint32_t *count){
        !queue.count||queue.cursor>=queue.count||current_cursor!=queue.cursor)return false;
     *position=queue.cursor+1u;*count=queue.count;return true;
 }
-uint32_t ln_music_revision(void){return revision+ln_music_history_version();}
+uint32_t ln_music_revision(void){return revision+ln_music_history_revision();}
 const char *ln_music_sound_label(uint32_t index){
     static char balance[24],preamp[24];
     static const char *const modes[]={"Channels: Stereo","Channels: Mono","Channels: Left","Channels: Right","Channels: Karaoke"};
@@ -187,8 +187,7 @@ const char *ln_music_option_label(uint32_t index){
         if(ln_music_history_error())return "History unavailable";
         if(!ln_music_history_ready())return "History loading";
         if(have_current&&!ln_music_history_record_ready(current.track.id))return "History loading";
-        uint32_t used=ln_music_history_count();
-        if(have_current&&(ln_music_history_record_error(current.track.id)||(!record&&used!=UINT32_MAX&&used>=LN_MUSIC_JOURNAL_CAPACITY)))
+        if(have_current&&ln_music_history_record_error(current.track.id))
             return "History full";
     }
     switch(index){
@@ -322,10 +321,10 @@ static bool persist(void){
         if(ln_storage_prepare_writes()<0)persist_failed=true;
         return false;
     }
-    uint32_t version=revision,length=ln_music_settings_encode(&queue,&profile,resume,sizeof resume);
+    uint32_t snapshot_revision=revision,length=ln_music_settings_encode(&queue,&profile,resume,sizeof resume);
     if(!length)return false;
     if(!ln_display_settings_music(true,resume,&length)){persist_failed=true;return false;}
-    if(revision==version)saved_revision=version;return true;
+    if(revision==snapshot_revision)saved_revision=snapshot_revision;return true;
 }
 bool ln_music_prepare_shutdown(void){return ln_music_quiesce(true);}
 bool ln_music_quiesce(bool save_settings){
@@ -479,7 +478,7 @@ static void music_step(void){
         /* A user edit made while waiting wins over the older saved queue. */
         if(revision!=restore_revision||active||selecting||have_waiting||resolver_kind==1){restored=true;}
         else {
-            uint8_t identity[32];uint32_t length=sizeof resume,version=revision;
+            uint8_t identity[32];uint32_t length=sizeof resume,snapshot_revision=revision;
             int result=ln_music_library_identity(identity)?ln_display_settings_music_restore(resume,&length):0;
             if(result==0&&revision==restore_revision&&!active&&!selecting&&!have_waiting&&resolver_kind!=1){
                 if(++restore_attempts<3u)restore_retry_at=ln_time_us()+1000000u;
@@ -491,14 +490,14 @@ static void music_step(void){
             }else {
                 if(result==1){
                     struct ln_queue saved;struct ln_music_profile saved_profile;
-                    if(ln_music_settings_decode(&saved,&saved_profile,resume,length)&&revision==version&&revision==restore_revision&&!active&&!selecting&&!have_waiting&&resolver_kind!=1){
+                    if(ln_music_settings_decode(&saved,&saved_profile,resume,length)&&revision==snapshot_revision&&revision==restore_revision&&!active&&!selecting&&!have_waiting&&resolver_kind!=1){
                         profile=saved_profile;
                         bool valid=true;
                         if(!same(saved.library_identity,identity))valid=false;
                         if(saved.source==LN_QUEUE_ALL)valid=valid&&saved.source_count==ln_music_library_count();
                         else if(saved.source==LN_QUEUE_GROUP)valid=valid&&saved.source_group<ln_music_library_group_count();
                         else for(uint32_t i=0;i<saved.count;++i)if(saved.tracks[i]>=ln_music_library_count())valid=false;
-                        if(valid&&revision==version&&revision==restore_revision&&!active&&!selecting&&!have_waiting&&resolver_kind!=1){queue=saved;profile=saved_profile;}
+                        if(valid&&revision==snapshot_revision&&revision==restore_revision&&!active&&!selecting&&!have_waiting&&resolver_kind!=1){queue=saved;profile=saved_profile;}
                     }
                 }
                 restored=true;

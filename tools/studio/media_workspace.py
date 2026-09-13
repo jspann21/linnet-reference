@@ -23,10 +23,12 @@ class MediaWorkspace(MediaApp):
         self.devices, self.pending, self.submitted = [], [], []
         self.inventory = self.receipt = self.after_scan_message = None
         self.video_selection = set()
+        self.video_enabled = True
         self.rows, self.readiness = [], {}
         self.option_controls = []
         self.ffmpeg, self.ffprobe = shutil.which('ffmpeg'), shutil.which('ffprobe')
         self.selected = {k: tk.BooleanVar(value=True) for k in media.KINDS}
+        self.update_checks = {}
         self.video_summary = tk.StringVar(value='Select source videos below to make them playable.')
         self.force, self.full_music = tk.BooleanVar(), tk.BooleanVar()
         self.search, self.filter = tk.StringVar(), tk.StringVar(value='All states')
@@ -82,6 +84,8 @@ class MediaWorkspace(MediaApp):
         ttk.Label(top, text='Your library. Ready to go.', style='Title.TLabel').pack(side='left')
         self.refresh_button = ttk.Button(top, text='Find iPod', command=self.find)
         self.refresh_button.pack(side='right')
+        self.installer_button = ttk.Button(top, text='Install or restore Linnet…', command=self.open_installer)
+        self.installer_button.pack(side='right', padx=8)
         device = ttk.Frame(body)
         device.pack(fill='x', pady=(12, 3))
         self.device_choice = ttk.Combobox(device, state='readonly', width=54)
@@ -171,6 +175,7 @@ class MediaWorkspace(MediaApp):
             cb = ttk.Checkbutton(opts, text=kind, variable=self.selected[kind], command=self.schedule_plan)
             cb.pack(side='left', padx=(0, 10))
             self.option_controls.append(cb)
+            self.update_checks[kind] = cb
         self.tools_button = ttk.Button(opts, text='Settings', command=self.settings)
         self.tools_button.pack(side='right')
         self.tools_status = tk.StringVar()
@@ -215,6 +220,15 @@ class MediaWorkspace(MediaApp):
         self.result_view.insert('end', self.results.get())
         self.result_view.configure(state='disabled')
 
+    def open_installer(self):
+        from tools.studio.installer_app import InstallerWindow
+        identity = None
+        try:
+            identity = self.identity()
+        except ValueError:
+            pass
+        InstallerWindow(self.window, identity)
+
     def make_tree(self, parent, columns, labels, widths, height, expand=True):
         frame = ttk.Frame(parent)
         frame.pack(fill='both' if expand else 'x', expand=expand)
@@ -246,10 +260,13 @@ class MediaWorkspace(MediaApp):
             indicator.configure(background='#245cdb' if kind == self.current_kind else '#c8d2df')
         self.kind_choice.set(self.current_kind)
         self.heading.set(self.current_kind)
-        if self.current_kind == 'Videos':
+        if self.current_kind == 'Videos' and self.video_enabled:
             self.choose_videos_button.pack(side='right')
         else:
             self.choose_videos_button.pack_forget()
+        available = self.current_kind != 'Videos' or self.video_enabled
+        self.add_files_button.configure(state='normal' if available and not self.busy else 'disabled')
+        self.add_folder_button.configure(state='normal' if available and not self.busy else 'disabled')
         self.update_video_summary()
         self.render()
 
@@ -260,7 +277,8 @@ class MediaWorkspace(MediaApp):
         return 'break'
 
     def update_video_summary(self):
-        self.video_summary.set(f'{len(self.video_selection)} device videos included in next update. Select originals above to include them.' if self.current_kind == 'Videos' else {'Music': 'Add files or a folder to queue new songs. To refresh songs or cover art changed in the iPod’s Music folder, choose Refresh library, then Update iPod. Adding a different file with the same name does not overwrite it.', 'Photos': 'Add photos to the queue, then Update iPod to create browsing and zoom copies. Originals are kept.', 'Notes': 'Add text or Markdown files to the queue, then Update iPod to make them readable in Linnet.'}[self.current_kind])
+        self.video_summary.set(('Video playback is unavailable on this iPod model; original files remain visible and untouched.' if not self.video_enabled else
+            f'{len(self.video_selection)} device videos included in next update. Select originals above to include them.') if self.current_kind == 'Videos' else {'Music': 'Add files or a folder to queue new songs. To refresh songs or cover art changed in the iPod’s Music folder, choose Refresh library, then Update iPod. Adding a different file with the same name does not overwrite it.', 'Photos': 'Add photos to the queue, then Update iPod to create browsing and zoom copies. Originals are kept.', 'Notes': 'Add text or Markdown files to the queue, then Update iPod to make them readable in Linnet.'}[self.current_kind])
 
     def schedule_search(self, *_):
         if self.search_timer:
@@ -313,7 +331,7 @@ class MediaWorkspace(MediaApp):
         removable = enabled and all(r['removable'] for r in rows)
         self.delete_button.configure(state='normal' if removable else 'disabled')
         self.open_button.configure(state='normal' if len(rows) == 1 and not self.busy else 'disabled')
-        self.choose_videos_button.configure(state='normal' if enabled and all(r['kind'] == 'Videos' and r['category'] == 'original' for r in rows) else 'disabled')
+        self.choose_videos_button.configure(state='normal' if self.video_enabled and enabled and all(r['kind'] == 'Videos' and r['category'] == 'original' for r in rows) else 'disabled')
         if rows:
             self.details.set(rows[0]['path'] if len(rows) == 1 else f'{len(rows)} selected · {size(sum(r["bytes"] for r in rows))}')
         else:
@@ -329,7 +347,7 @@ class MediaWorkspace(MediaApp):
                 self.status.set(str(error))
 
     def include_videos(self):
-        if self.busy:
+        if self.busy or not self.video_enabled:
             return
         self.video_selection.update(r['path'] for r in self.selected_rows() if r['category'] == 'original' and r['kind'] == 'Videos')
         self.selected['Videos'].set(True)
@@ -342,6 +360,9 @@ class MediaWorkspace(MediaApp):
         if not paths:
             return
         kind = self.kind_choice.get()
+        if kind == 'Videos' and not self.video_enabled:
+            self.status.set('Video playback is unavailable on this iPod model.')
+            return
         for path in paths:
             if (kind, path) not in self.pending:
                 self.pending.append((kind, path))
@@ -551,7 +572,11 @@ class MediaWorkspace(MediaApp):
                 self.set_busy(False)
                 if kind == 'devices':
                     self.devices = value
-                    self.device_choice['values'] = [f"{d['drive']} · Apple iPod · {d['disk_serial']}" for d in value]
+                    self.device_choice['values'] = [
+                        f"{d['drive']} · {d['target_name']} · "
+                        f"{d.get('regulatory_model') or d.get('model_number')}"
+                        for d in value
+                    ]
                     if value:
                         self.device_choice.current(0)
                         self.scan()
@@ -563,10 +588,24 @@ class MediaWorkspace(MediaApp):
                 elif kind == 'inspected':
                     identity, self.inventory, self.rows, self.readiness = value
                     self.devices[self.device_choice.current()] = identity
+                    profile = identity['media_profile']
+                    self.video_enabled = profile.get('video_enabled', True)
+                    self.selected['Videos'].set(self.video_enabled)
+                    self.update_checks['Videos'].configure(state='normal' if self.video_enabled else 'disabled')
+                    if not self.video_enabled:
+                        self.video_selection.clear()
                     self.video_selection.intersection_update(self.inventory['Videos']['files'])
-                    self.device_status.set(f"{identity['drive']} · {size(identity['free_bytes'])} available · Originals are preserved during preparation")
+                    video = ('unavailable on this model' if not self.video_enabled else
+                             f"{profile['video_fps']} fps, four-level grayscale"
+                             if profile['video_color'] == 'gray4'
+                             else f"{profile['video_fps']} fps, full color")
+                    self.device_status.set(
+                        f"{identity['target_name']} · {size(identity['free_bytes'])} available · "
+                        f"Video: {video} · Originals are preserved during preparation"
+                    )
                     self.library_button.configure(state='normal')
                     self.eject_button.configure(state='normal')
+                    self.change_kind()
                     self.update_video_summary()
                     self.render()
                     self.status.set('Library refreshed. Review your next update below.')
@@ -579,9 +618,9 @@ class MediaWorkspace(MediaApp):
                     self.set_busy(False)
                     self.render()
                     self.render_queue()
-                    self.device_status.set('iPod safely ejected. You can disconnect it and restart Linnet.')
-                    self.results.set('Windows confirmed ejection. Your iPod can now be disconnected.')
-                    self.plan_text.set('Reconnect your iPod and choose Find iPod to continue.')
+                    self.device_status.set('iPod safely ejected. Hold Menu+Select to restart Linnet.')
+                    self.results.set('Windows confirmed ejection. Restart the iPod with Menu+Select.')
+                    self.plan_text.set('Restart Linnet, or reconnect in Disk Mode for another media update.')
                 elif kind in ('finished', 'removed'):
                     self.receipt = value['receipt']
                     self.report_button.configure(state='normal')
@@ -599,7 +638,7 @@ class MediaWorkspace(MediaApp):
                         if value['complete']:
                             self.pending = [p for p in self.pending if p not in self.submitted]
                             self.video_selection.difference_update(getattr(self, 'submitted_videos', set()))
-                            lines.append('Update complete. Choose Eject iPod, then disconnect it and restart Linnet.')
+                            lines.append('Update complete. Choose Eject iPod, then hold Menu+Select to restart Linnet.')
                             if self.pending or self.video_selection:
                                 lines.append('Excluded selections are still queued; they were not included in this update.')
                         elif value.get('stopped'):

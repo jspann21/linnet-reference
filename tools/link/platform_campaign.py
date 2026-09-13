@@ -15,7 +15,7 @@ FIELDS = ('magic','generation','flags','selected','scene','events_accepted','eve
           'frames_completed','lcd_max_us','cop_head','cop_tail','cop_resets','sleep_count','wake_count',
           'idle_us','idle_entries','physical_buttons','physical_hold','physical_headphones',
           'synthetic_flags','last_injection','animation_frame','clock_hz','battery_mv','charge_flags','irq_max_us')
-MAGIC = int.from_bytes(b'LPB1','little')
+MAGIC = int.from_bytes(b'PLAT','little')
 
 
 def _state(session, generation):
@@ -43,7 +43,7 @@ def cycle(root, image_path, scenario_path, port, progress=None):
     image_id = inspect(image)
     raw_scenario = scenario_path.read_bytes()
     suite = json.loads(raw_scenario)
-    if image_id['profile'] == 'release' or suite.get('schema_version') != 1 or suite.get('batch') != 1 or suite.get('target_id') != image_id['target_id']:
+    if image_id['profile'] == 'release' or suite.get('batch') != 1 or suite.get('target_id') != image_id['target_id']:
         raise ValueError('platform campaign requires matching Batch1 development image/scenario')
     limits = {'navigation_events':(32,4096),'animation_frames':(17,120),
               'idle_observe_ms':(100,5000),'sleep_ms':(50,1000)}

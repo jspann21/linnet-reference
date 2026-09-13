@@ -327,7 +327,7 @@ void ln_block_step(uint32_t now) {
 void ln_block_performance(uint32_t out[32]){
     /* Fill the shared output directly; avoid two nested64-byte snapshots. */
     ln_ata_performance(out+4);
-    out[0]=0x314f4953u;out[1]=1u;out[2]=out[19];
+    out[0]=0x504f4953u;out[1]=0u;out[2]=out[19];
     out[3]=out[18]|(recovering?4u:0u)|(perf.saturated?0x80000000u:0u);
     out[30]=out[16];out[31]=out[17];
     out[16]=perf.calls;out[17]=perf.service;out[18]=metrics.max_service_us;
