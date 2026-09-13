@@ -21,6 +21,9 @@ def parser():
     for action in ("inspect", "install", "restore"):
         entry = installer_actions.add_parser(action)
         entry.add_argument("--mount", type=Path, required=True)
+        if action == "install":
+            entry.add_argument("--build", choices=("user", "dev"), default="user",
+                               help="OS build to install (default: user)")
     compile_ = commands.add_parser("build")
     compile_.add_argument("--target", default="photo4g-p98", type=target_id)
     compile_.add_argument("--profile", choices=("release", "dev", "trace"), required=True)
@@ -227,7 +230,7 @@ def main():
             from tools.studio.installer import assess, identity_for_mount, install, restore
             identity = identity_for_mount(args.mount)
             emit(assess(identity) if args.installer_action == "inspect" else
-                 install(identity, lambda message: print(message, file=sys.stderr))
+                 install(identity, progress=lambda message: print(message, file=sys.stderr), build=args.build)
                  if args.installer_action == "install" else restore(identity))
         elif args.command == "build":
             emit(build(args.profile, args.target, args.verify, args.kind, args.probe, args.device_serial, batch=args.batch,system_config=args.system))

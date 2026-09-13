@@ -23,6 +23,11 @@ firmware partition under `%LOCALAPPDATA%\Linnet\Installer`, verifies all Linnet
 storage files, writes a new loader only into an unused firmware extent, and
 publishes one directory sector last.
 
+Before installing, choose **User build** for the normal release OS without
+developer transport or instrumentation, or **Developer build** for the
+device-bound development OS with Linnet Link. The recovery loader is bound to
+the detected iPod in either case.
+
 Interrupted file preparation is resumable only when every existing Linnet file
 matches the same build byte-for-byte. When a saved recovery record is available,
 **Fresh reinstall** first restores the previous boot, renames the old `LINNET`
@@ -36,7 +41,8 @@ The same workflow is available from the command line:
 
 ```powershell
 python linnet installer inspect --mount E:\
-python linnet installer install --mount E:\
+python linnet installer install --mount E:\ --build user
+python linnet installer install --mount E:\ --build dev
 python linnet installer restore --mount E:\
 ```
 

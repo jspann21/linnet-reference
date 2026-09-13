@@ -15,8 +15,8 @@ class InstallerWindow:
     def __init__(self, parent, identity=None):
         self.window = tk.Toplevel(parent)
         self.window.title("Linnet · Install or restore")
-        self.window.geometry("720x570")
-        self.window.minsize(640, 520)
+        self.window.geometry("720x670")
+        self.window.minsize(640, 620)
         self.identity = identity
         self.review = None
         self.events = queue.Queue()
@@ -50,6 +50,19 @@ class InstallerWindow:
                               "Linnet adds its own folder, verifies every written file, backs up the current boot path, "
                               "and publishes the new loader only after preparation succeeds."),
                   wraplength=650).pack(anchor="w")
+        build = ttk.LabelFrame(body, text="Build to install", padding=14)
+        build.pack(fill="x", pady=(0, 14))
+        self.build_choice = tk.StringVar(value="user")
+        self.build_buttons = []
+        for value, title, detail in (
+                ("user", "User build", "Normal listening build; developer transport and instrumentation are excluded."),
+                ("dev", "Developer build", "Device-bound diagnostics and Linnet Link are included for development.")):
+            row = ttk.Frame(build)
+            row.pack(fill="x", pady=2)
+            button = ttk.Radiobutton(row, text=title, value=value, variable=self.build_choice)
+            button.pack(side="left", anchor="n")
+            ttk.Label(row, text=detail, style="Muted.TLabel", wraplength=470).pack(side="left", padx=(10, 0))
+            self.build_buttons.append(button)
         self.status = tk.StringVar(value="Inspecting the connected iPod…")
         ttk.Label(body, textvariable=self.status, style="Muted.TLabel", wraplength=660).pack(anchor="w", pady=(2, 8))
         self.progress = ttk.Progressbar(body, mode="indeterminate")
@@ -75,6 +88,9 @@ class InstallerWindow:
             self.install_button.configure(text="Fresh reinstall")
         else:
             self.install_button.configure(text="Install Linnet")
+        build_state = "disabled" if value or (self.review and self.review["action"] == "resume") else "normal"
+        for button in self.build_buttons:
+            button.configure(state=build_state)
         recoverable = bool(self.review and self.review.get("recovery", {}).get("phase") == "installed")
         self.restore_button.configure(state="disabled" if value or not recoverable else "normal")
         if value:
@@ -107,6 +123,8 @@ class InstallerWindow:
 
     def _show(self, review):
         self.review = review
+        if review["action"] == "resume" and review.get("resume", {}).get("build") in ("user", "dev"):
+            self.build_choice.set(review["resume"]["build"])
         identity, target = review["identity"], review["target"]
         model = identity.get("regulatory_model") or identity.get("model_number") or target["id"]
         self.fields["model"].set(f"{target['name']} · {model}")
@@ -131,13 +149,17 @@ class InstallerWindow:
             verb = "Restore the saved previous boot, preserve the old Linnet folder, and freshly install Linnet 0.1.0"
         else:
             verb = "Install the verified target-specific Linnet build"
+        build = self.build_choice.get()
+        label = "User build" if build == "user" else "Developer build"
         if not messagebox.askyesno("Install Linnet", verb + " on this iPod?\n\n"
-                                  "Existing media and other software will be preserved. Keep the iPod connected until completion.",
+                                  + label + " will be installed. Existing media and other software will be preserved. "
+                                  "Keep the iPod connected until completion.",
                                   parent=self.window):
             return
         identity = self.review["identity"]
         self.status.set("Preparing the target-specific Linnet build…")
-        self._work(lambda: installer.install(identity, lambda value: self.events.put(("progress", value))), "installed")
+        self._work(lambda: installer.install(
+            identity, progress=lambda value: self.events.put(("progress", value)), build=build), "installed")
 
     def restore(self):
         if self.busy or not self.review:

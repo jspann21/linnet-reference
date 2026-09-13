@@ -135,9 +135,12 @@ def _resume_context(identity, linnet):
             context = json.loads(context_path.read_text(encoding="utf-8"))
             if (context.get("target_id") != identity["target_id"] or
                     context.get("device_id") != identity["disk_serial"] or
-                    context.get("strategy") not in ("rockbox-file", "native-directory")):
+                    context.get("strategy") not in ("rockbox-file", "native-directory") or
+                    context.get("build") not in ("user", "dev")):
                 continue
             artifacts = context["artifacts"]
+            if artifacts.get("build") != context["build"]:
+                continue
             if any(not Path(artifacts[name]).is_file() for name in ("os_image", "boot_image", "boot_wrapper")):
                 continue
             manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
@@ -256,11 +259,17 @@ def _run_build(arguments):
         raise RuntimeError("Linnet build returned an unreadable report") from error
 
 
-def build_artifacts(identity, progress=lambda _message: None):
+def build_artifacts(identity, progress=lambda _message: None, build="user"):
+    if build not in ("user", "dev"):
+        raise ValueError("installer build must be user or dev")
     target, serial = identity["target_id"], identity["linnet_usb_serial"]
-    progress(f"Building Linnet OS for {TARGETS[target]['name']}…")
-    os_report = _run_build(["--batch", "7", "--target", target, "--profile", "release",
-                            "--kind", "os", "--verify"])
+    os_profile = "release" if build == "user" else "dev"
+    progress(f"Building the Linnet {build} OS for {TARGETS[target]['name']}…")
+    os_arguments = ["--batch", "7", "--target", target, "--profile", os_profile,
+                    "--kind", "os", "--verify"]
+    if os_profile == "dev":
+        os_arguments += ["--device-serial", serial]
+    os_report = _run_build(os_arguments)
     progress("Building the recoverable device loader…")
     boot_report = _run_build(["--batch", "7", "--target", target, "--profile", "dev",
                               "--kind", "boot", "--device-serial", serial])
@@ -272,7 +281,8 @@ def build_artifacts(identity, progress=lambda _message: None):
     artifacts = dict(os_image=str(os_image), os_report=str(os_image.with_suffix(".json")),
                      boot_image=str(boot_image), boot_wrapper=str(boot_wrapper),
                      boot_report=str(boot_image.with_suffix(".json")),
-                     os_build_id=os_report["build_id"], boot_build_id=boot_report["build_id"])
+                     build=build, os_profile=os_profile, os_build_id=os_report["build_id"],
+                     boot_build_id=boot_report["build_id"])
     _validate_artifacts(identity, artifacts)
     return artifacts
 
@@ -284,8 +294,12 @@ def _validate_artifacts(identity, artifacts):
              ("os_image", "os_report", "boot_image", "boot_wrapper", "boot_report")}
     os_data, boot_data = paths["os_image"].read_bytes(), paths["boot_image"].read_bytes()
     os_identity, boot_identity = inspect_image(os_data), inspect_image(boot_data)
+    build = artifacts.get("build")
+    expected_profile = "release" if build == "user" else "dev" if build == "dev" else None
+    if expected_profile != artifacts.get("os_profile"):
+        raise ValueError("installer artifact build selection is invalid")
     if ((os_identity["target_id"], os_identity["profile"], os_identity["build_id"]) !=
-            (identity["target_id"], "release", artifacts["os_build_id"]) or
+            (identity["target_id"], expected_profile, artifacts["os_build_id"]) or
             (boot_identity["target_id"], boot_identity["profile"], boot_identity["build_id"]) !=
             (identity["target_id"], "dev", artifacts["boot_build_id"])):
         raise ValueError("installer image identity does not match the detected iPod")
@@ -300,7 +314,9 @@ def _validate_artifacts(identity, artifacts):
         if report_path.stat().st_size > 64 * 1024 * 1024:
             raise ValueError("installer build report exceeds its bound")
         report = json.loads(report_path.read_text(encoding="utf-8"))
+        expected_serial = "" if kind == "os" and build == "user" else identity["linnet_usb_serial"]
         if (report.get("kind") != kind or report.get("target_id") != identity["target_id"] or
+                report.get("device_serial") != expected_serial or
                 report.get("build_id") != image_identity["build_id"] or
                 report.get("image", {}).get("sha256") != image_identity["sha256"]):
             raise ValueError("installer build report does not match its image")
@@ -315,13 +331,13 @@ def _same_device(expected, observed):
 
 
 def _transaction(identity, artifacts):
-    return cache_root(identity) / "transactions" / artifacts["os_build_id"][:16]
+    return cache_root(identity) / "transactions" / f"{artifacts['build']}-{artifacts['os_build_id'][:16]}"
 
 
 def _persist_artifacts(artifacts, transaction):
     destination = transaction / "artifacts"
     destination.mkdir(parents=True, exist_ok=True)
-    names = {"os_image": "release-os.los", "os_report": "release-os.json",
+    names = {"os_image": "operating-system.los", "os_report": "operating-system.json",
              "boot_image": "development-boot.los", "boot_wrapper": "development-boot.ipod",
              "boot_report": "development-boot.json"}
     persisted = dict(artifacts)
@@ -357,6 +373,7 @@ def _package_storage(identity, artifacts, transaction):
 def _journal(identity, artifacts, strategy, transaction, extra=None):
     value = dict(target_id=identity["target_id"], device_id=identity["disk_serial"],
                  linnet_usb_serial=identity["linnet_usb_serial"], strategy=strategy,
+                 build=artifacts["build"],
                  os_build_id=artifacts["os_build_id"], boot_build_id=artifacts["boot_build_id"],
                  transaction=str(transaction), installed_at=_now(), phase="installed")
     if extra:
@@ -453,7 +470,9 @@ def _archive_linnet(root, destination):
     return str(destination)
 
 
-def install(identity, progress=lambda _message: None):
+def install(identity, progress=lambda _message: None, build="user"):
+    if build not in ("user", "dev"):
+        raise ValueError("installer build must be user or dev")
     reviewed = assess(identity)
     if reviewed["action"] not in ("install", "resume", "replace"):
         raise ValueError(reviewed["summary"])
@@ -462,17 +481,19 @@ def install(identity, progress=lambda _message: None):
     if reviewed["action"] == "resume":
         progress("Verifying the saved interrupted installation…")
         artifacts = reviewed["resume"]["artifacts"]
+        if reviewed["resume"].get("build") != build or artifacts.get("build") != build:
+            raise ValueError("resume must use the build selected by the saved installation")
         transaction = Path(reviewed["resume"]["transaction"])
         _validate_artifacts(identity, artifacts)
     else:
-        artifacts = build_artifacts(identity, progress)
+        artifacts = build_artifacts(identity, progress=progress, build=build)
         transaction = _transaction(identity, artifacts)
     transaction.mkdir(parents=True, exist_ok=True)
     if reviewed["action"] != "resume":
         artifacts = _persist_artifacts(artifacts, transaction)
         _validate_artifacts(identity, artifacts)
     context = dict(target_id=identity["target_id"], device_id=identity["disk_serial"],
-                   strategy=reviewed["strategy"], artifacts=artifacts)
+                   strategy=reviewed["strategy"], build=build, artifacts=artifacts)
     context_path = transaction / "context.json"
     if context_path.exists():
         if json.loads(context_path.read_text(encoding="utf-8")) != context:
@@ -481,7 +502,8 @@ def install(identity, progress=lambda _message: None):
         _save(context_path, context, replace=False)
     receipt_path = transaction / ("install-" + uuid.uuid4().hex + ".json")
     receipt = dict(operation="install-linnet", started_at=_now(), passed=False,
-                   strategy=reviewed["strategy"], identity=identity, artifacts=artifacts,
+                   strategy=reviewed["strategy"], build=build,
+                   identity=identity, artifacts=artifacts,
                    preservation=reviewed["preservation"], device_write_attempted=False)
     _save(receipt_path, receipt)
     try:
@@ -667,6 +689,8 @@ def main():
     for name in ("inspect", "install", "restore"):
         command = commands.add_parser(name)
         command.add_argument("--mount", type=Path, required=True)
+        if name == "install":
+            command.add_argument("--build", choices=("user", "dev"), default="user")
     args = cli.parse_args()
     if args.worker or args.worker_token:
         worker_path = args.worker or Path(base64.b64decode(args.worker_token).decode("utf-8"))
@@ -675,7 +699,9 @@ def main():
         if not args.command:
             cli.error("choose inspect, install, or restore")
         identity = identity_for_mount(args.mount)
-        result = assess(identity) if args.command == "inspect" else install(identity, print) if args.command == "install" else restore(identity)
+        result = (assess(identity) if args.command == "inspect" else
+                  install(identity, progress=print, build=args.build)
+                  if args.command == "install" else restore(identity))
     print(json.dumps(result, indent=2))
     return 0 if result.get("passed", True) else 2
 
