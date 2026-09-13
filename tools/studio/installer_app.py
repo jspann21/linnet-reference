@@ -15,8 +15,9 @@ class InstallerWindow:
     def __init__(self, parent, identity=None):
         self.window = tk.Toplevel(parent)
         self.window.title("Linnet · Install or restore")
-        self.window.geometry("720x670")
-        self.window.minsize(640, 620)
+        self.window.geometry("720x600")
+        self.window.minsize(680, 590)
+        self.window.transient(parent)
         self.identity = identity
         self.review = None
         self.events = queue.Queue()
@@ -28,56 +29,63 @@ class InstallerWindow:
         self.window.after(150, self.refresh)
 
     def _build(self):
-        body = ttk.Frame(self.window, padding=24)
+        style = ttk.Style(self.window)
+        style.configure("InstallerError.TLabel", foreground="#a12622")
+        body = ttk.Frame(self.window, padding=(22, 18))
         body.pack(fill="both", expand=True)
-        ttk.Label(body, text="Linnet installation", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(body, text="Install the build made for this exact iPod, or restore its previous boot software.",
-                  style="Muted.TLabel", wraplength=660).pack(anchor="w", pady=(4, 16))
-        card = ttk.LabelFrame(body, text="Connected iPod", padding=14)
+        ttk.Label(body, text="Install Linnet", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(body, text="Choose a build for this iPod, or restore its previous boot software.",
+                  style="Muted.TLabel", wraplength=640).pack(anchor="w", pady=(2, 12))
+        card = ttk.LabelFrame(body, text="Connected iPod", padding=(12, 8))
         card.pack(fill="x")
-        for name, label in (("model", "Model"), ("identity", "Device identity"),
-                            ("software", "Detected software"), ("linnet", "Linnet"),
-                            ("method", "Install method")):
-            row = ttk.Frame(card)
-            row.pack(fill="x", pady=3)
-            ttk.Label(row, text=label, width=18).pack(side="left", anchor="nw")
+        card.columnconfigure(1, weight=1)
+        for row, (name, label) in enumerate((("model", "Model"), ("identity", "Device identity"),
+                                             ("software", "Detected software"), ("linnet", "Linnet"),
+                                             ("method", "Install method"))):
+            ttk.Label(card, text=label, width=17).grid(row=row, column=0, sticky="nw", pady=2)
             value = tk.StringVar(value="Checking…")
-            ttk.Label(row, textvariable=value, wraplength=470).pack(side="left", fill="x", expand=True)
+            ttk.Label(card, textvariable=value, wraplength=490).grid(
+                row=row, column=1, sticky="ew", pady=2)
             self.fields[name] = value
-        safe = ttk.LabelFrame(body, text="What the installer changes", padding=14)
-        safe.pack(fill="x", pady=14)
-        ttk.Label(safe, text=("Your music, photos, notes, videos, iTunes database, partitions, and filesystem are preserved. "
-                              "Linnet adds its own folder, verifies every written file, backs up the current boot path, "
-                              "and publishes the new loader only after preparation succeeds."),
-                  wraplength=650).pack(anchor="w")
-        build = ttk.LabelFrame(body, text="Build to install", padding=14)
-        build.pack(fill="x", pady=(0, 14))
+        safe = ttk.LabelFrame(body, text="Your data stays intact", padding=(12, 8))
+        safe.pack(fill="x", pady=(10, 0))
+        ttk.Label(safe, text=("The installer preserves your music, photos, notes, videos, iTunes database, partitions, "
+                              "and filesystem. It backs up the current boot path and verifies every write before "
+                              "switching loaders."), wraplength=640).pack(anchor="w")
+        build = ttk.LabelFrame(body, text="Choose a build", padding=(12, 8))
+        build.pack(fill="x", pady=(10, 0))
+        build.columnconfigure(1, weight=1)
         self.build_choice = tk.StringVar(value="user")
         self.build_buttons = []
         for value, title, detail in (
-                ("user", "User build", "Normal listening build; developer transport and instrumentation are excluded."),
-                ("dev", "Developer build", "Device-bound diagnostics and Linnet Link are included for development.")):
-            row = ttk.Frame(build)
-            row.pack(fill="x", pady=2)
-            button = ttk.Radiobutton(row, text=title, value=value, variable=self.build_choice)
-            button.pack(side="left", anchor="n")
-            ttk.Label(row, text=detail, style="Muted.TLabel", wraplength=470).pack(side="left", padx=(10, 0))
+                ("user", "User build (recommended)", "For everyday use. Developer tools are left out."),
+                ("dev", "Developer build", "For diagnostics and Linnet Link. Bound to this iPod.")):
+            row = len(self.build_buttons)
+            button = ttk.Radiobutton(build, text=title, value=value, variable=self.build_choice)
+            button.grid(row=row, column=0, sticky="nw", pady=2)
+            ttk.Label(build, text=detail, style="Muted.TLabel", wraplength=380).grid(
+                row=row, column=1, sticky="w", padx=(12, 0), pady=2)
             self.build_buttons.append(button)
         self.status = tk.StringVar(value="Inspecting the connected iPod…")
-        ttk.Label(body, textvariable=self.status, style="Muted.TLabel", wraplength=660).pack(anchor="w", pady=(2, 8))
+        self.status_label = ttk.Label(body, textvariable=self.status, style="Muted.TLabel", wraplength=640)
+        self.status_label.pack(anchor="w", pady=(12, 0))
         self.progress = ttk.Progressbar(body, mode="indeterminate")
-        self.progress.pack(fill="x")
-        actions = ttk.Frame(body)
-        actions.pack(fill="x", pady=(16, 0))
-        self.refresh_button = ttk.Button(actions, text="Check again", command=self.refresh)
+        self.actions = ttk.Frame(body)
+        self.actions.pack(fill="x", pady=(12, 0))
+        self.refresh_button = ttk.Button(self.actions, text="Check again", command=self.refresh)
         self.refresh_button.pack(side="left")
-        self.restore_button = ttk.Button(actions, text="Restore previous boot", command=self.restore, state="disabled")
-        self.restore_button.pack(side="left", padx=8)
-        self.report_button = ttk.Button(actions, text="Open receipt", command=self.open_receipt, state="disabled")
-        self.report_button.pack(side="right")
-        self.install_button = ttk.Button(actions, text="Install Linnet", style="Accent.TButton",
+        self.report_button = ttk.Button(self.actions, text="Open receipt", command=self.open_receipt, state="disabled")
+        self.report_button.pack(side="left", padx=8)
+        self.install_button = ttk.Button(self.actions, text="Install Linnet", style="Accent.TButton",
                                          command=self.install, state="disabled")
-        self.install_button.pack(side="right", padx=8)
+        self.install_button.pack(side="right")
+        self.restore_button = ttk.Button(
+            self.actions, text="Restore previous boot", command=self.restore, state="disabled")
+        self.restore_button.pack(side="right", padx=8)
+
+    def _set_status(self, text, error=False):
+        self.status.set(text)
+        self.status_label.configure(style="InstallerError.TLabel" if error else "Muted.TLabel")
 
     def _set_busy(self, value):
         self.busy = value
@@ -93,10 +101,13 @@ class InstallerWindow:
             button.configure(state=build_state)
         recoverable = bool(self.review and self.review.get("recovery", {}).get("phase") == "installed")
         self.restore_button.configure(state="disabled" if value or not recoverable else "normal")
+        self.report_button.configure(state="disabled" if value or not self.receipt else "normal")
         if value:
+            self.progress.pack(fill="x", pady=(8, 0), before=self.actions)
             self.progress.start(12)
         else:
             self.progress.stop()
+            self.progress.pack_forget()
 
     def _work(self, callback, kind):
         self._set_busy(True)
@@ -104,19 +115,21 @@ class InstallerWindow:
             try:
                 self.events.put((kind, callback()))
             except BaseException as error:
-                self.events.put(("error", f"{type(error).__name__}: {error}"))
+                self.events.put(("error", str(error) or type(error).__name__))
         threading.Thread(target=run, daemon=True).start()
 
     def refresh(self):
         if self.busy:
             return
-        self.status.set("Identifying the iPod, its target, and installed software…")
+        self._set_status("Identifying the iPod, its target, and installed software…")
         def inspect():
             identity = self.identity
             if identity is None:
                 devices = media.discover()
-                if len(devices) != 1:
-                    raise ValueError("Connect exactly one supported iPod in Disk Mode, then check again.")
+                if not devices:
+                    raise ValueError("Connect a supported iPod in Disk Mode, then check again.")
+                if len(devices) > 1:
+                    raise ValueError("More than one supported iPod is connected. Leave one connected, then check again.")
                 identity = devices[0]
             return installer.assess(identity)
         self._work(inspect, "review")
@@ -137,7 +150,7 @@ class InstallerWindow:
                    "native-directory": "Verified native boot redirect; administrator approval required",
                    "existing": "Existing installation"}
         self.fields["method"].set(methods.get(review["strategy"], "Unavailable until the issue above is resolved"))
-        self.status.set(review["summary"])
+        self._set_status(review["summary"])
         self._set_busy(False)
 
     def install(self):
@@ -157,7 +170,7 @@ class InstallerWindow:
                                   parent=self.window):
             return
         identity = self.review["identity"]
-        self.status.set("Preparing the target-specific Linnet build…")
+        self._set_status("Preparing the target-specific Linnet build…")
         self._work(lambda: installer.install(
             identity, progress=lambda value: self.events.put(("progress", value)), build=build), "installed")
 
@@ -167,7 +180,7 @@ class InstallerWindow:
         if not messagebox.askyesno("Restore previous boot", "Restore the boot software saved before Linnet was installed?\n\n"
                                   "Media and Linnet’s data folder will remain on the iPod.", parent=self.window):
             return
-        self.status.set("Restoring the verified previous boot state…")
+        self._set_status("Restoring the verified previous boot state…")
         self._work(lambda: installer.restore(self.review["identity"]), "restored")
 
     def open_receipt(self):
@@ -182,7 +195,7 @@ class InstallerWindow:
             for _ in range(50):
                 kind, value = self.events.get_nowait()
                 if kind == "progress":
-                    self.status.set(str(value))
+                    self._set_status(str(value))
                 elif kind == "review":
                     self.identity = value["identity"]
                     self._show(value)
@@ -198,7 +211,7 @@ class InstallerWindow:
                     self.refresh()
                 elif kind == "error":
                     self._set_busy(False)
-                    self.status.set("Needs attention · " + str(value))
+                    self._set_status(str(value), error=True)
                     messagebox.showerror("Linnet installer", str(value), parent=self.window)
         except queue.Empty:
             pass
