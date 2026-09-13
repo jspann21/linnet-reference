@@ -1,13 +1,15 @@
 #include "kernel/platform_link.h"
 #include "kernel/runtime.h"
 #include "hal/pp5020/recovery.h"
+#include "hal/pp5020/input.h"
 #include "boot/include/linnet_boot.h"
+#include "linnet_target.h"
 
-#define LINNET_PLATFORM_FRAME_BYTES (220u * 176u * 2u)
+#define LINNET_PLATFORM_FRAME_BYTES (LINNET_UI_WIDTH * LINNET_UI_HEIGHT * 2u)
 /* Development screenshots have their own bounded diagnostic reservation.
  * A capture is filled completely before its id becomes readable; no startup
  * zeroing is required. Keep this separate from the recovery snapshot. */
-static uint16_t ln_platform_capture[220u * 176u]
+static uint16_t ln_platform_capture[LINNET_UI_WIDTH * LINNET_UI_HEIGHT]
     __attribute__((section(".dev_capture"), aligned(32)));
 static uint32_t ln_platform_capture_id, ln_platform_capture_generation;
 static uint8_t ln_platform_reply[LINNET_LINK_MAX_PAYLOAD];
@@ -56,7 +58,7 @@ static void write32(uint8_t *p, uint32_t value) {
 }
 
 int ln_platform_link_dispatch(const ln_link_frame *request, ln_link_frame *response) {
-    if (request->command < 64 || request->command > 69) return 0;
+    if (request->command < 64 || request->command > 70) return 0;
     if (request->flags || !request->sequence || request->length > LINNET_LINK_MAX_PAYLOAD ||
         (request->length && !request->payload)) return 0;
     uint32_t generation=ln_recovery_generation();
@@ -64,7 +66,10 @@ int ln_platform_link_dispatch(const ln_link_frame *request, ln_link_frame *respo
     response->flags=LINNET_LINK_ACK|LINNET_LINK_ERROR;
     response->payload=ln_platform_reply; response->length=8;
     write32(ln_platform_reply, generation); write32(ln_platform_reply+4, 0);
-    if (request->command == 69) {
+    if (request->command == 70) {
+        if(request->length)return 1;uint32_t words[16];ln_input_diagnostics(words);
+        for(uint32_t i=0;i<16u;++i)write32(ln_platform_reply+i*4,words[i]);response->length=64;
+    } else if (request->command == 69) {
         if(request->length)return 1;uint32_t words[16];
         if(ln_runtime_ui_state(words,16)!=16)return 1;
         for(uint32_t i=0;i<16u;++i)write32(ln_platform_reply+i*4,words[i]);response->length=64;
@@ -102,14 +107,14 @@ int ln_platform_link_dispatch(const ln_link_frame *request, ln_link_frame *respo
         /* Copy and checksum together; no second uncached full-frame pass.
          * The executive owns rendering, so this bounded dispatch snapshot
          * cannot interleave another render with the captured pixels. */
-        for (unsigned i=0;i<220u*176u;++i) {
+        for (unsigned i=0;i<LINNET_UI_WIDTH*LINNET_UI_HEIGHT;++i) {
             uint16_t pixel=frame[i];
             ln_platform_capture[i]=pixel;
             crc=(crc>>8)^ln_platform_crc_table[(crc^(uint8_t)pixel)&255u];
             crc=(crc>>8)^ln_platform_crc_table[(crc^(uint8_t)(pixel>>8))&255u];
         }
         ++ln_platform_capture_id; ln_platform_capture_generation=generation;
-        uint32_t info[7]={ln_platform_capture_id,generation,220,176,1,LINNET_PLATFORM_FRAME_BYTES,
+        uint32_t info[7]={ln_platform_capture_id,generation,LINNET_UI_WIDTH,LINNET_UI_HEIGHT,1,LINNET_PLATFORM_FRAME_BYTES,
                          crc^0xffffffffu};
         for(unsigned i=0;i<7;++i)write32(ln_platform_reply+i*4,info[i]);
         response->length=28;
@@ -126,7 +131,7 @@ int ln_platform_link_dispatch(const ln_link_frame *request, ln_link_frame *respo
     } else {
         if(request->length!=12 || read32(request->payload)!=generation) return 1;
         uint32_t action=read32(request->payload+4), argument=read32(request->payload+8);
-        if(action<1 || action>7 || !ln_runtime_control(action,argument))return 1;
+        if(action<1 || action>8 || !ln_runtime_control(action,argument))return 1;
         write32(ln_platform_reply+4,action);write32(ln_platform_reply+8,argument);response->length=12;
     }
     response->flags=LINNET_LINK_ACK;

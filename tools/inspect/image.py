@@ -2,13 +2,15 @@
 import hashlib
 import struct
 import zlib
+from tools.studio.targets import TARGET_IDS_BY_NUMBER as TARGETS, TARGET_NUMBERS
 
-TARGET = "photo4g-p98"
 PROFILES = ("release", "dev", "trace")
 
-def pack(payload, profile, build_id, load, entry):
+def pack(payload, profile, build_id, load, entry, target="photo4g-p98"):
+    if target not in TARGET_NUMBERS:
+        raise ValueError(f"unsupported image target: {target}")
     header = bytearray(128)
-    struct.pack_into("<4sHH7I", header, 0, b"LOS1", 1, 128, 98, 1,
+    struct.pack_into("<4sHH7I", header, 0, b"LNOS", 0, 128, TARGET_NUMBERS[target], 0,
                      PROFILES.index(profile), len(payload), load, entry,
                      zlib.crc32(payload))
     build_digest = bytes.fromhex(build_id)
@@ -21,9 +23,9 @@ def pack(payload, profile, build_id, load, entry):
 def inspect(data):
     if len(data) < 128:
         raise ValueError("truncated LOS header")
-    magic, version, size, target, abi, profile, length, load, entry, crc = struct.unpack_from("<4sHH7I", data)
-    if (magic, version, size, target, abi) != (b"LOS1", 1, 128, 98, 1):
-        raise ValueError("unsupported image identity or ABI")
+    magic, reserved16, size, target, reserved32, profile, length, load, entry, crc = struct.unpack_from("<4sHH7I", data)
+    if (magic, reserved16, size, reserved32) != (b"LNOS", 0, 128, 0) or target not in TARGETS:
+        raise ValueError("unsupported image identity")
     if profile >= len(PROFILES) or any(data[68:124]):
         raise ValueError("invalid profile or reserved bytes")
     if len(data) != 128 + length or length < 4:
@@ -32,7 +34,7 @@ def inspect(data):
         raise ValueError("image CRC mismatch")
     if load % 4 or entry % 4 or not (0 <= load <= entry <= load + length - 4 and load + length <= 0x01fff000):
         raise ValueError("invalid image address range")
-    return dict(target_id=TARGET, boot_abi=abi, profile=PROFILES[profile],
+    return dict(target_id=TARGETS[target], profile=PROFILES[profile],
                 build_id=data[36:68].hex(), payload_bytes=length,
                 load_address=load, entry_address=entry,
                 sha256=hashlib.sha256(data).hexdigest())
@@ -41,7 +43,7 @@ def verify_release(data, symbols):
     identity = inspect(data)
     if identity["profile"] != "release":
         raise ValueError("release verifier requires release profile")
-    forbidden = (b"LNK1", b"LNI1", b"linnet-link", b"ln_link_", b"ln_development_", b"ln_recovery_", b"devlink_", b"trace_",
+    forbidden = (b"LINK", b"LNID", b"linnet-link", b"ln_link_", b"ln_development_", b"ln_recovery_", b"devlink_", b"trace_",
                  b"inject_", b"screenshot_", b"chainload", b".dev_staging", b".dev_trace")
     haystack = data[128:] + symbols.encode("utf-8")
     hits = [item.decode() for item in forbidden if item in haystack]

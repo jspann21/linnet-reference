@@ -41,7 +41,7 @@ static int32_t min(int32_t a,int32_t b){return a<b?a:b;}
 static int32_t max(int32_t a,int32_t b){return a>b?a:b;}
 static struct rect intersect(struct rect a,struct rect b){int32_t x=max(a.x,b.x),y=max(a.y,b.y),r=min(a.x+a.w,b.x+b.w),d=min(a.y+a.h,b.y+b.h);return(struct rect){x,y,max(0,r-x),max(0,d-y)};}
 static struct rect bounds(const struct ln_ui_node*n){return(struct rect){n->x,n->y,n->w,n->h};}
-static const struct rect screen={0,0,220,176};
+static const struct rect screen={0,0,(int32_t)LINNET_UI_WIDTH,(int32_t)LINNET_UI_HEIGHT};
 /* Bounded shift/subtract quotient; ARM7 has no hardware divide. Small layout
  * operands avoid walking all 32 bits, with no compiler division runtime. */
 static uint32_t divide(uint32_t numerator,uint32_t denominator){
@@ -175,7 +175,7 @@ uint32_t ln_ui_palette_tick(struct ln_ui_state*s,uint32_t now){
     return now+25000u;
 }
 typedef uint32_t ln_fill_word __attribute__((may_alias));
-static void fill(struct painter*p,struct rect r,uint16_t c){r=intersect(r,p->clip);if(r.w<=0||r.h<=0)return;for(int32_t y=r.y;y<r.y+r.h;++y){uint16_t *dest=p->pixels+(uint32_t)y*220u+(uint32_t)r.x;int32_t left=r.w;uint32_t word=(uint32_t)c|((uint32_t)c<<16);if(left>0&&((uintptr_t)dest&3u)){*dest++=c;--left;}while(left>=2){*(ln_fill_word*)dest=word;dest+=2;left-=2;}if(left>0)*dest=c;}}
+static void fill(struct painter*p,struct rect r,uint16_t c){r=intersect(r,p->clip);if(r.w<=0||r.h<=0)return;for(int32_t y=r.y;y<r.y+r.h;++y){uint16_t *dest=p->pixels+(uint32_t)y*LINNET_UI_WIDTH+(uint32_t)r.x;int32_t left=r.w;uint32_t word=(uint32_t)c|((uint32_t)c<<16);if(left>0&&((uintptr_t)dest&3u)){*dest++=c;--left;}while(left>=2){*(ln_fill_word*)dest=word;dest+=2;left-=2;}if(left>0)*dest=c;}}
 static void border(struct painter*p,struct rect r,uint16_t c){fill(p,(struct rect){r.x,r.y,r.w,1},c);fill(p,(struct rect){r.x,r.y+r.h-1,r.w,1},c);fill(p,(struct rect){r.x,r.y,1,r.h},c);fill(p,(struct rect){r.x+r.w-1,r.y,1,r.h},c);}
 /* Consume one bounded UTF-8 character. Bad sequences consume only their lead
  * byte, so a following ASCII character is never lost. */
@@ -246,12 +246,12 @@ static void text_scaled(struct painter*p,int32_t x,int32_t y,const char*s,uint16
             struct rect r=intersect((struct rect){gx,gy,(int32_t)(w*scale),(int32_t)(h*scale)},p->clip);
             bool monochrome=(ln_ui_themes[active_theme].flags&LN_UI_THEME_MONOCHROME)!=0;
             if(scale==1u)for(int32_t yy=r.y;yy<r.y+r.h;++yy){
-                uint16_t *dest=p->pixels+(uint32_t)yy*220u+(uint32_t)r.x;
+                uint16_t *dest=p->pixels+(uint32_t)yy*LINNET_UI_WIDTH+(uint32_t)r.x;
                 const uint8_t *source=a+(uint32_t)(yy-gy)*w+(uint32_t)(r.x-gx);
                 for(int32_t left=r.w;left>0;--left){uint32_t alpha=*source++;if(monochrome)alpha=alpha>=128u?255u:0u;if(alpha)*dest=alpha==255u?c:mix(c,*dest,alpha);++dest;}
             }else {uint32_t shift=scale-1u;
                 for(int32_t yy=r.y;yy<r.y+r.h;++yy){
-                    uint16_t *dest=p->pixels+(uint32_t)yy*220u+(uint32_t)r.x;
+                    uint16_t *dest=p->pixels+(uint32_t)yy*LINNET_UI_WIDTH+(uint32_t)r.x;
                     const uint8_t *source=a+((uint32_t)(yy-gy)>>shift)*w;
                     for(int32_t xx=r.x;xx<r.x+r.w;++xx){uint32_t alpha=source[(uint32_t)(xx-gx)>>shift];if(monochrome)alpha=alpha>=128u?255u:0u;if(alpha)*dest=alpha==255u?c:mix(c,*dest,alpha);++dest;}
                 }
@@ -349,7 +349,7 @@ static void footer_text(struct painter*p,const struct ln_ui_node*n,const char*s,
     ln_ui_font=saved;
 }
 static void gradient(struct painter*p,struct rect r,uint16_t top,uint16_t bottom){
-    if((uint32_t)r.x<=220u&&(uint32_t)r.y<=176u&&(uint32_t)r.w<=220u&&(uint32_t)r.h<=176u){struct rect v=intersect(r,p->clip);if(v.w<=0||v.h<=0)return;}
+    if((uint32_t)r.x<=LINNET_UI_WIDTH&&(uint32_t)r.y<=LINNET_UI_HEIGHT&&(uint32_t)r.w<=LINNET_UI_WIDTH&&(uint32_t)r.h<=LINNET_UI_HEIGHT){struct rect v=intersect(r,p->clip);if(v.w<=0||v.h<=0)return;}
     if(r.h<=0)return;uint32_t denominator=(uint32_t)max(1,r.h-1),step=divide(255u,denominator),remainder=255u-step*denominator,alpha=0,error=0;
     for(int32_t y=0;y<r.h;++y){fill(p,(struct rect){r.x,r.y+y,r.w,1},mix(bottom,top,alpha));alpha+=step;error+=remainder;if(error>=denominator){error-=denominator;++alpha;}}
 }
@@ -392,7 +392,7 @@ static uint16_t asset_pixel(uint16_t value){
 }
 struct sample_axis {uint32_t index,error,step,remainder,denominator;};
 static bool sample_axis_begin(struct sample_axis*axis,uint32_t source,uint32_t destination,uint32_t start,uint32_t count){
-    /* Bound products/remainders; unsupported metadata keeps legacy arithmetic. */
+    /* Bound products and remainders; unsupported metadata keeps basic arithmetic. */
     if(!source||source>65535u||!destination||destination>65535u||start>=destination||count>destination-start)return false;
     axis->denominator=destination;axis->step=divide(source,destination);
     axis->remainder=source-axis->step*destination;
@@ -414,28 +414,28 @@ static void image_asset(struct painter*p,const struct ln_ui_node*n,const struct 
         else{fitted.w=(int32_t)divide(a->width*(uint32_t)n->h,a->height);fitted.x+=(n->w-fitted.w)/2;}
         if(fitted.w<=0||fitted.h<=0)return;n=&fitted;
     }
-    struct rect r=intersect(bounds(n),p->clip);uint32_t source_x[220];bool decoration=decorative_asset(n,a);
+    struct rect r=intersect(bounds(n),p->clip);uint32_t source_x[LINNET_UI_WIDTH];bool decoration=decorative_asset(n,a);
     if(!r.w||!r.h)return;
     if(a->width==(uint32_t)n->w&&a->height==(uint32_t)n->h){
-        bool paired=!decoration&&a->width<=220u&&a->height<=176u;
+        bool paired=!decoration&&a->width<=LINNET_UI_WIDTH&&a->height<=LINNET_UI_HEIGHT;
         if(paired){uintptr_t source=(uintptr_t)a->pixels,target=(uintptr_t)p->pixels;
             uint32_t bytes=a->width*a->height*2u;
             /* Overlapping storage retains the original forward pixel order. */
-            paired=source<target?target-source>=bytes:source-target>=220u*176u*2u;
+            paired=source<target?target-source>=bytes:source-target>=LINNET_UI_WIDTH*LINNET_UI_HEIGHT*2u;
         }
 #if defined(__arm__)
-        if(paired&&r.x==0&&r.w==220&&a->width==220u&&
+        if(paired&&r.x==0&&r.w==(int32_t)LINNET_UI_WIDTH&&a->width==LINNET_UI_WIDTH&&
            !(((uintptr_t)a->pixels^(uintptr_t)p->pixels)&3u)){
             /* Whole visible rows are contiguous in both bounded buffers. */
             extern void ln_memory_copy(void *,const void *,uint32_t);
-            ln_memory_copy(p->pixels+(uint32_t)r.y*220u,
-                a->pixels+(uint32_t)(r.y-n->y)*220u,(uint32_t)r.h*440u);
+            ln_memory_copy(p->pixels+(uint32_t)r.y*LINNET_UI_WIDTH,
+                a->pixels+(uint32_t)(r.y-n->y)*LINNET_UI_WIDTH,(uint32_t)r.h*LINNET_UI_WIDTH*2u);
             return;
         }
 #endif
         for(int32_t y=r.y;y<r.y+r.h;++y){
             const uint16_t *source=a->pixels+(uint32_t)(y-n->y)*a->width+(uint32_t)(r.x-n->x);
-            uint16_t *dest=p->pixels+(uint32_t)y*220u+(uint32_t)r.x;
+            uint16_t *dest=p->pixels+(uint32_t)y*LINNET_UI_WIDTH+(uint32_t)r.x;
             if(paired&&!(((uintptr_t)source^(uintptr_t)dest)&3u)){
 #if defined(__arm__)
                 extern void ln_memory_copy(void *,const void *,uint32_t);
@@ -456,28 +456,30 @@ static void image_asset(struct painter*p,const struct ln_ui_node*n,const struct 
     for(int32_t x=r.x;x<r.x+r.w;++x)source_x[x-r.x]=fast?sample_axis_next(&axis):divide((uint32_t)(x-n->x)*a->width,(uint32_t)n->w);
     fast=sample_axis_begin(&axis,a->height,(uint32_t)n->h,(uint32_t)r.y-(uint32_t)n->y,(uint32_t)r.h);
     for(int32_t y=r.y;y<r.y+r.h;++y){uint32_t sy=fast?sample_axis_next(&axis):divide((uint32_t)(y-n->y)*a->height,(uint32_t)n->h);
-        for(int32_t x=r.x;x<r.x+r.w;++x){uint16_t value=a->pixels[sy*a->width+source_x[x-r.x]];p->pixels[(uint32_t)y*220u+(uint32_t)x]=decoration?asset_pixel(value):value;}
+        for(int32_t x=r.x;x<r.x+r.w;++x){uint16_t value=a->pixels[sy*a->width+source_x[x-r.x]];p->pixels[(uint32_t)y*LINNET_UI_WIDTH+(uint32_t)x]=decoration?asset_pixel(value):value;}
     }
 }
 static void image(struct painter*p,const struct ln_ui_node*n){image_asset(p,n,ln_ui_dynamic_asset(n,n->resource<ln_ui_asset_count?&ln_ui_assets[n->resource]:0));}
 static bool video_covers(const struct painter*p,const struct ln_ui_node*n,const struct ln_ui_asset*a){
-    if(!a||!a->pixels||n->w<=0||n->w>220||n->h<=0||n->h>176||
-       !a->width||a->width>220u||!a->height||a->height>176u||
+    if(!a||!a->pixels||n->w<=0||n->w>(int32_t)LINNET_UI_WIDTH||n->h<=0||n->h>(int32_t)LINNET_UI_HEIGHT||
+       !a->width||a->width>LINNET_UI_WIDTH||!a->height||a->height>LINNET_UI_HEIGHT||
        a->width*(uint32_t)n->h!=a->height*(uint32_t)n->w)return false;
     /* Equal bounded aspect ratios make image_asset cover the whole node.
      * Preserve background writes if source storage aliases the framebuffer. */
     uintptr_t source=(uintptr_t)a->pixels,target=(uintptr_t)p->pixels;
     uint32_t bytes=a->width*a->height*2u;
-    return source<target?target-source>=bytes:source-target>=220u*176u*2u;
+    return source<target?target-source>=bytes:source-target>=LINNET_UI_WIDTH*LINNET_UI_HEIGHT*2u;
 }
 #include "ui/runtime/symbols.h"
 /* Blend coverage into the actual surface (including gradients and sidebars).
  * Fixed masks share optical centers and never allocate or scale on device. */
 static void symbol_mask(struct painter*p,int32_t x,int32_t y,int32_t w,int32_t h,const uint8_t*mask,uint16_t ink){
     struct rect r=intersect((struct rect){x,y,w,h},p->clip);
+    bool monochrome=(ln_ui_themes[active_theme].flags&LN_UI_THEME_MONOCHROME)!=0;
     for(int32_t yy=r.y;yy<r.y+r.h;++yy)for(int32_t xx=r.x;xx<r.x+r.w;++xx){
         uint32_t i=(uint32_t)((yy-y)*w+xx-x),a=(mask[i>>1]>>((i&1u)?0:4))&15u;
-        if(a){uint16_t*dest=&p->pixels[(uint32_t)yy*220u+(uint32_t)xx];*dest=a==15u?ink:mix(ink,*dest,a*17u);}
+        if(monochrome)a=a>=8u?15u:0u;
+        if(a){uint16_t*dest=&p->pixels[(uint32_t)yy*LINNET_UI_WIDTH+(uint32_t)xx];*dest=a==15u?ink:mix(ink,*dest,a*17u);}
     }
 }
 static void symbol(struct painter*p,int32_t x,int32_t y,uint32_t kind,uint16_t ink){
@@ -966,8 +968,12 @@ void ln_ui_render(struct ln_ui_state*s,uint16_t*pixels,ln_ui_damage_fn damage){i
     }
     if(layout()==LN_UI_LAYOUT_MINIMAL&&(s->dirty&4u)&&!(s->dirty&1u))paint(s,pixels,(struct rect){0,0,220,2},damage);
     if((s->dirty&32u)&&!(s->dirty&1u))paint_scrolling(s,pixels,c,damage);
-    /* Report visible rows, not the subset repainted by incremental damage. */
-    if((s->dirty&16u)&&content_layout(s)){const struct ln_ui_node*n=focus(s);uint32_t count=total(n),capacity=rows(n),first=first_row(s->selected,capacity);s->visible_items=count>first?min((int32_t)(count-first),(int32_t)capacity):0;}
+    /* Report the retained viewport, not only the rows touched by an
+     * incremental selection or content repaint. */
+    if(c&&c->focus_node<c->count){const struct ln_ui_node*n=&c->nodes[c->focus_node];
+        if(n->kind==LN_UI_MENU||n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_GRID)
+            s->visible_items=visible_cells(s,c);
+    }
     /* Selection damage cannot alter provider text or the visible window. Keep
      * the retained labels and advance only its selection marker. */
     if(cached_selection&&content.valid&&content.owner==s&&content.scene==s->scene&&content.epoch==s->scene_epoch)content.selected=s->selected;

@@ -43,12 +43,12 @@ static void clock_step(struct ln_ui_state*s){
     }
     ln_ui_refresh(s);
 }
-static uint16_t pixels[220*176];
+static uint16_t pixels[LINNET_UI_WIDTH*LINNET_UI_HEIGHT];
 static uint32_t damage_count;
 static void damage(int32_t x,int32_t y,int32_t w,int32_t h){(void)x;(void)y;(void)w;(void)h;++damage_count;}
 static uint32_t crc(void){
     uint32_t c=0xffffffffu;
-    for(uint32_t i=0;i<220u*176u;++i)for(unsigned j=0;j<2;++j){
+    for(uint32_t i=0;i<LINNET_UI_WIDTH*LINNET_UI_HEIGHT;++i)for(unsigned j=0;j<2;++j){
         c^=(pixels[i]>>(j*8))&255u;for(unsigned b=0;b<8;++b)c=(c>>1)^((0u-(c&1u))&0xedb88320u);
     }
     return c^0xffffffffu;
@@ -56,7 +56,7 @@ static uint32_t crc(void){
 static int snapshot(const struct ln_ui_state *state,const char *directory,uint32_t index){
     char name[4096];if(snprintf(name,sizeof name,"%s/frame-%05u.rgb565",directory,index)>=(int)sizeof name)return 0;
     FILE *file=fopen(name,"wb");if(!file)return 0;
-    for(uint32_t i=0;i<220u*176u;++i){unsigned char p[2]={(unsigned char)pixels[i],(unsigned char)(pixels[i]>>8)};if(fwrite(p,1,2,file)!=2){fclose(file);return 0;}}
+    for(uint32_t i=0;i<LINNET_UI_WIDTH*LINNET_UI_HEIGHT;++i){unsigned char p[2]={(unsigned char)pixels[i],(unsigned char)(pixels[i]>>8)};if(fwrite(p,1,2,file)!=2){fclose(file);return 0;}}
     if(fclose(file))return 0;
     printf("{\"frame\":%u,\"theme\":%u,\"battery\":%u,\"clock\":%u,\"playback\":%u,\"scene\":%u,\"selected\":%u,\"crc32\":%u,\"paint_count\":%u,\"painted_pixels\":%u,\"visible_items\":%u,\"scene_epoch\":%u,\"transitions\":%u,\"damage_count\":%u,\"action\":%u,\"clock_save_calls\":%u}\n",
         index,ln_ui_theme_index(),sample_battery,sample_clock,sample_playback,state->scene,state->selected,crc(),state->paint_count,state->painted_pixels,state->visible_items,state->scene_epoch,state->transitions,damage_count,state->action,save_calls);

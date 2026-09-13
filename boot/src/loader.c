@@ -48,8 +48,8 @@ static int read_response(void *context,uint16_t command,uint8_t *output,uint32_t
     count(&s->metrics[6]);
     if(command==1||command==2||command==3) {
         if(*size<LINNET_LOADER_IDENTITY_SIZE)return 0;
-        output[0]='L';output[1]='N';output[2]='I';output[3]='1';
-        write32(output+4,s->config.policy.target);write32(output+8,s->config.policy.abi);
+        output[0]='L';output[1]='N';output[2]='I';output[3]='D';
+        write32(output+4,s->config.policy.target);write32(output+8,0);
         write32(output+12,s->config.profile);write32(output+16,s->config.image_kind);
         write32(output+20,s->config.health_flags);write32(output+24,s->config.generation);
         write32(output+28,s->config.capabilities);

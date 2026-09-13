@@ -131,8 +131,9 @@ def _stop(process):
 
 
 def encode_ipvf(source, destination, *, title=None, cancelled=None,
-                progress=None, progress_detail=None, ffmpeg=None, ffprobe=None):
-    """Create validated 220x176, 24-fps IPVF with 44.1-kHz adaptive IMA audio.
+                progress=None, progress_detail=None, ffmpeg=None, ffprobe=None,
+                fps=24, color_depth="rgb565"):
+    """Create validated 220x176 IPVF with 44.1-kHz adaptive IMA audio.
 
     Callbacks are ``cancelled() -> bool``, ``progress(message)``, and optional
     ``progress_detail(dict)`` (stage, percent, message, frames, total_frames,
@@ -142,6 +143,10 @@ def encode_ipvf(source, destination, *, title=None, cancelled=None,
     FFmpeg and FFprobe are required; liblz4 is optional (built-in fallback).
     """
     source, destination = Path(source).resolve(), Path(destination).resolve()
+    if type(fps) is not int or not 4 <= fps <= 30:
+        raise ValueError("IPVF media profile fps must be an integer from 4 through 30")
+    if color_depth not in ("rgb565", "gray4"):
+        raise ValueError("IPVF media profile color depth is unsupported")
     cancelled = cancelled or (lambda: False)
     progress = progress or (lambda message: None)
     if cancelled():
@@ -164,7 +169,8 @@ def encode_ipvf(source, destination, *, title=None, cancelled=None,
         request = directory / "request.json"
         request.write_text(json.dumps({"source": str(source), "output": str(encoded),
                                       "ffmpeg": executable, "ffprobe": probe,
-                                      "title": title}), encoding="utf-8")
+                                      "title": title, "fps": fps,
+                                      "color_depth": color_depth}), encoding="utf-8")
         conversion = _StageProgress("convert", source.name, progress, progress_detail)
         conversion.emit()
         options = ({"creationflags": subprocess.CREATE_NO_WINDOW}
@@ -255,10 +261,14 @@ def _worker(request):
     duration = finite_duration(video.get("duration")) or format_duration
     if duration is None:
         raise ValueError("Video must have a known finite duration")
-    print("IPVF_METADATA:" + json.dumps({"total_frames": math.ceil(duration * 24)}), flush=True)
+    fps = data.get("fps", 24)
+    color_depth = data.get("color_depth", "rgb565")
+    if type(fps) is not int or not 4 <= fps <= 30 or color_depth not in ("rgb565", "gray4"):
+        raise ValueError("Invalid IPVF media profile")
+    print("IPVF_METADATA:" + json.dumps({"total_frames": math.ceil(duration * fps)}), flush=True)
     # Full PCM and the bounded encoded file coexist; decoded video is streamed.
     needed = math.ceil(max(duration, format_duration or duration) * 44100 * 4) + min(
-        creator.DEVICE_FILE_SIZE_MAX, math.ceil(duration * 24 * 98304)) + 32 * 1024**2
+        creator.DEVICE_FILE_SIZE_MAX, math.ceil(duration * fps * 98304)) + 32 * 1024**2
     if shutil.disk_usage(output.parent).free < needed:
         raise ValueError(f"IPVF conversion needs about {needed / 1024**3:.1f} GB of free cache space")
     metadata = creator.probe_source_metadata(source, data["ffprobe"])
@@ -266,7 +276,8 @@ def _worker(request):
     # Format metadata has byte limits; truncate on UTF-8 character boundaries.
     metadata = {key: value.encode("utf-8")[:120].decode("utf-8", "ignore")
                 for key, value in metadata.items() if value}
-    creator.encode(source, output, 24, 120, data["ffmpeg"], video_mode="realtime",
+    creator.encode(source, output, fps, fps * 5, data["ffmpeg"], video_mode="realtime",
+                   color_depth=color_depth,
                    metadata=metadata,
                    source_has_audio=creator.probe_source_has_audio(source, data["ffprobe"]))
     with output.open("rb") as encoded:

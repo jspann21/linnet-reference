@@ -5,6 +5,35 @@
 static struct ln_input_state ln_input;
 static int32_t ln_last_wheel = -1;
 static bool ln_input_ready;
+#if !defined(LINNET_PROFILE_RELEASE)
+static uint32_t ln_input_polls,ln_input_ready_reads,ln_input_last_packet,ln_input_last_status;
+#endif
+
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+static void ln_q21_opto_wake(void)
+{
+    /* A cold handoff from the Apple ROM can leave the Q21 optical ASIC
+     * waiting for its serial configuration command. The ordinary Rockbox
+     * runtime init assumes its bootloader already performed this exchange. */
+    LINNET_MMIO(0x6000d004u) &= ~0x80u;
+    LINNET_MMIO(0x7000c104u) |= 0x0c000000u;
+    LINNET_MMIO(0x7000c120u) = 0x8000023au;
+    LINNET_MMIO(0x7000c100u) |= 0x80000000u;
+    LINNET_MMIO(0x6000d024u) &= ~0x10u;
+    LINNET_MMIO(0x6000d014u) |= 0x10u;
+    uint32_t start=ln_time_us();
+    while((LINNET_MMIO(0x7000c104u)&0x80000000u)&&ln_time_us()-start<1500u){}
+    LINNET_MMIO(0x7000c100u) &= ~0x80000000u;
+    LINNET_MMIO(0x6000d004u) |= 0x80u;
+    LINNET_MMIO(0x6000d024u) |= 0x10u;
+    LINNET_MMIO(0x6000d014u) &= ~0x10u;
+    LINNET_MMIO(0x7000c104u) |= 0x0c000000u;
+    LINNET_MMIO(0x7000c100u) |= 0x60000000u;
+    start=ln_time_us();
+    while(!(LINNET_MMIO(0x7000c104u)&0x04000000u)&&ln_time_us()-start<1500u){}
+    if(LINNET_MMIO(0x7000c104u)&0x04000000u)(void)LINNET_MMIO(0x7000c140u);
+}
+#endif
 
 static void ln_switch_rearm(uint32_t sample)
 {
@@ -20,6 +49,9 @@ bool ln_input_init(void)
     if (!ln_core_delay_us(5u)) return false;
     LINNET_MMIO(0x60006004u) &= ~0x10000u;
     LINNET_MMIO(0x70000010u) |= 0x40000u;
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+    ln_q21_opto_wake();
+#endif
     LINNET_MMIO(0x7000c100u) = 0xc00a1f00u;
     LINNET_MMIO(0x7000c104u) = 0x01000000u;
     LINNET_MMIO(0x7000c100u) &= ~0x60000000u;
@@ -43,6 +75,10 @@ bool ln_input_init(void)
 bool ln_input_poll(struct ln_input_state *out)
 {
     if (!ln_input_ready || !out) return false;
+#if !defined(LINNET_PROFILE_RELEASE)
+    ++ln_input_polls;
+    ln_input_last_status=LINNET_MMIO(0x7000c104u);
+#endif
     struct ln_input_state next = ln_input;
     next.wheel_delta = 0;
     uint32_t pins = LINNET_MMIO(0x6000d030u);
@@ -52,6 +88,9 @@ bool ln_input_poll(struct ln_input_state *out)
         /* The established Photo handler gives the optical bus 50 us settle. */
         if (!ln_core_delay_us(50u)) return false;
         uint32_t packet = LINNET_MMIO(0x7000c140u);
+#if !defined(LINNET_PROFILE_RELEASE)
+        ++ln_input_ready_reads;ln_input_last_packet=packet;
+#endif
         if ((packet & 0x800000ffu) == 0x8000001au &&
             (!(packet & 0x40000000u) || ((packet >> 16) & 0x7fu) < 96u)) {
             ++next.packets;
@@ -91,3 +130,17 @@ bool ln_input_poll(struct ln_input_state *out)
     return changed;
 }
 void ln_input_snapshot(struct ln_input_state *out) { if (out) *out = ln_input; }
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_input_diagnostics(uint32_t output[16])
+{
+    if(!output)return;
+    output[0]=0x31504e49u;output[1]=ln_input_polls;output[2]=ln_input_ready_reads;
+    output[3]=ln_input.packets;output[4]=ln_input.invalid_packets;
+    output[5]=ln_input_last_status;output[6]=ln_input_last_packet;
+    output[7]=(uint32_t)ln_last_wheel;
+    output[8]=LINNET_MMIO(0x6000600cu);output[9]=LINNET_MMIO(0x60006004u);
+    output[10]=LINNET_MMIO(0x70000010u);output[11]=LINNET_MMIO(0x7000c100u);
+    output[12]=LINNET_MMIO(0x7000c104u);output[13]=LINNET_MMIO(0x7000c120u);
+    output[14]=LINNET_MMIO(0x60004120u);output[15]=LINNET_MMIO(0x60004100u);
+}
+#endif

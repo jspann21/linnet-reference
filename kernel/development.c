@@ -84,8 +84,7 @@ int ln_development_init(void) {
     const uint8_t build_id[32] = LINNET_BUILD_ID_BYTES;
     config.stage = (uint8_t *)(uintptr_t)LINNET_STAGE_ADDRESS;
     config.capacity = LINNET_STAGE_CAPACITY;
-    config.policy.target = LINNET_IMAGE_TARGET_PHOTO4G_P98;
-    config.policy.abi = LINNET_IMAGE_ABI_VERSION;
+    config.policy.target = LINNET_TARGET_NUMBER;
     config.policy.allowed_profiles = 6u;
     config.policy.ram_start = 0;
     config.policy.ram_size = LINNET_OS_CAPACITY;

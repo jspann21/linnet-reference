@@ -1,14 +1,15 @@
 #ifndef LINNET_PP5020_DISPLAY_H
 #define LINNET_PP5020_DISPLAY_H
+#include "linnet_target.h"
 
 #define LINNET_DISPLAY_MAILBOX 0x11ffd000
 #define LINNET_DISPLAY_CAPABILITY 0x3244434c
 #define LINNET_DISPLAY_MAGIC 0x31505344
 #define LINNET_DISPLAY_QUEUE_CAPACITY 8
-#define LINNET_DISPLAY_PIXELS 38720
-#define LINNET_DISPLAY_BYTES 77440
+#define LINNET_DISPLAY_PIXELS (LINNET_UI_WIDTH * LINNET_UI_HEIGHT)
+#define LINNET_DISPLAY_BYTES (LINNET_DISPLAY_PIXELS * 2u)
 
-/* Fixed uncached mailbox ABI shared with the resident COP assembly worker. */
+/* Fixed uncached mailbox layout shared with the resident COP assembly worker. */
 #define LN_DISPLAY_MAGIC 0
 #define LN_DISPLAY_GENERATION 4
 #define LN_DISPLAY_HEAD 8
@@ -62,9 +63,9 @@ struct ln_display_metrics {
 bool ln_display_init(void);
 /* High byte: pause/fill/resume stage; lower bytes retain failure diagnostics. */
 uint32_t ln_display_init_error(void);
-uint16_t *ln_display_framebuffer(void); /* CPU-owned RGB565 draw buffer, 220x176. */
+uint16_t *ln_display_framebuffer(void); /* CPU-owned target-native RGB565 draw buffer. */
 /* Optional idle-only full-frame transaction. NULL retains ordinary rendering.
- * On success, synchronously repaint all 220x176 pixels and call present before
+ * On success, synchronously repaint the target framebuffer and call present before
  * any other executive work. Ordinary framebuffer access and snapshots return
  * NULL during the transaction. Row scanout imports this frame on next access;
  * column scanout transposes the cached draw buffer at publication. */

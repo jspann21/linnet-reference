@@ -1,6 +1,7 @@
 #include "hal/pp5020/power.h"
 #include "hal/pp5020/core.h"
 #include "hal/pp5020/platform.h"
+#include "hal/pp5020/target.h"
 #define LINNET_MMIO(a) (*(volatile uint32_t *)(uintptr_t)(a))
 #define LINNET_MMIO8(a) (*(volatile uint8_t *)(uintptr_t)(a))
 static struct ln_power_state ln_power;
@@ -179,7 +180,7 @@ static bool ln_clock_bcd(uint8_t raw,uint8_t maximum,uint8_t *value)
 static bool calendar_decode(const uint8_t raw[7],struct ln_calendar *c);
 static bool calendar_raw(uint32_t deadline,uint8_t raw[7]);
 /* RTC editing is an explicit foreground operation, independent of power poll. */
-_Static_assert(sizeof(struct ln_calendar)==8u,"Calendar ABI");
+_Static_assert(sizeof(struct ln_calendar)==8u,"Calendar layout");
 static uint8_t calendar_days(uint16_t year,uint8_t month){
     static const uint8_t days[]={31,28,31,30,31,30,31,31,30,31,30,31};
     return days[month-1u]+(month==2u&&!(year&3u));
@@ -291,9 +292,7 @@ bool ln_power_poll(uint32_t now, struct ln_power_state *out)
             ln_sampler.stage=LN_SAMPLE_RTC_POINTER_TIME;
         }else{
             ln_sampler.flags=ln_power_sources();
-            /* P98 GPO input requires a zero write before sampling the charging pin. */
-            LINNET_MMIO(0x70000088u)=0;
-            if(!(LINNET_MMIO(0x70000088u)&1u))ln_sampler.flags|=LINNET_POWER_CHARGING;
+            if(ln_target_battery_charging())ln_sampler.flags|=LINNET_POWER_CHARGING;
             ln_sampler.stage=LN_SAMPLE_ADC_COMMAND;
         }
     }

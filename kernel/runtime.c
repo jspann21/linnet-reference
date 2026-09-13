@@ -71,6 +71,7 @@ static bool boot_theme_waiting;
 bool ln_runtime_first_frame_ready(void){return first_frame_ready;}
 static struct ln_wheel_motion wheel_motion;
 static uint32_t wheel_scene, wheel_epoch;
+__attribute__((weak)) bool ln_display_diagnostic(uint32_t pattern){(void)pattern;return false;}
 static uint32_t shutdown_deadline;
 static bool shutdown_tracking;
 #define LINNET_SHUTDOWN_HOLD_US 2000000u
@@ -734,7 +735,7 @@ void ln_runtime_step(void){
     uint32_t previous_buttons=input.buttons;
 #endif
     bool previous_touch=input.touched;
-    if((wakes&(LINNET_WAKE_INPUT|LINNET_WAKE_GPIO))&&ln_input_poll(&input)){
+    if((wakes&(LINNET_WAKE_INPUT|LINNET_WAKE_GPIO|LINNET_WAKE_TIMER))&&ln_input_poll(&input)){
         /* Count contact and sub-menu-step motion, but not idle sensor packets. */
         if(!input.hold&&((input.touched&&!previous_touch)||input.wheel_delta))backlight_activity();
 #if defined(LINNET_STORAGE) && !defined(LINNET_NATIVE_UI)
@@ -987,6 +988,8 @@ int ln_runtime_control(uint32_t command,uint32_t argument){
         override_mask=synthetic_flags=0;apply(LN_INPUT_HOLD,input.hold);apply(LN_INPUT_HEADPHONE,input.headphones);return 1;
     case LN_CONTROL_RESET_SHELL:
         if(executive.used||animation_left||sleeping)return 0;return reset_shell();
+    case LN_CONTROL_DISPLAY_DIAGNOSTIC:
+        return ln_display_diagnostic(argument);
     default:return 0;
     }
 }
@@ -994,7 +997,7 @@ uint32_t ln_runtime_state(uint32_t*out,uint32_t capacity){
     if(!out||capacity<32u)return 0;
     struct ln_display_metrics d;struct ln_core_status c;
     ln_display_get_metrics(&d);ln_core_snapshot(&c);ln_input_snapshot(&input);ln_power_snapshot(&power);
-    uint32_t words[32]={0x3142504cu,generation(),(ready?1u:0u)|(sleeping?2u:0u)|(d.cop_active?4u:0u)|(input.packets?8u:0u)|(shutdown_tracking?16u:0u)|((power.backlight_on?brightness:0u)<<8),
+    uint32_t words[32]={0x54414c50u,generation(),(ready?1u:0u)|(sleeping?2u:0u)|(d.cop_active?4u:0u)|(input.packets?8u:0u)|(shutdown_tracking?16u:0u)|((power.backlight_on?brightness:0u)<<8),
         shell?shell->selected:0,shell?shell->scene:0,executive.accepted,executive.processed,executive.dropped,executive.max_latency,
         executive.high,executive.deadline_high,scene_arena.high,d.frames_submitted,d.frames_completed,d.max_present_us,d.head,d.tail,d.resets,
         sleep_count,wake_count,c.idle_us,c.idle_count,buttons(input.buttons),input.hold,input.headphones,synthetic_flags,last_injection,
@@ -1006,7 +1009,7 @@ uint32_t ln_runtime_frame_crc(void){return ln_display_snapshot_crc32();}
 uint32_t ln_runtime_ui_state(uint32_t *out,uint32_t capacity){
 #if defined(LINNET_NATIVE_UI)
     if(!ready||!out||capacity<16u)return 0;
-    uint32_t words[16]={0x3349554cu,1,shell->scene,shell->selected,shell->scene_epoch,
+    uint32_t words[16]={0x54534955u,0,shell->scene,shell->selected,shell->scene_epoch,
         shell->transitions,shell->paint_count,shell->painted_pixels,shell->visible_items,
         shell->dirty,shell->action,scene_arena.used,scene_arena.high,scene_arena.generation,
         generation(),ln_ui_scene_count};

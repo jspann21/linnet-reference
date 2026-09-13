@@ -1,6 +1,7 @@
-"""Linnet Link v1 running-image identity; shared by discovery and campaigns."""
+"""Linnet Link running-image identity shared by discovery and campaigns."""
 import struct
 import zlib
+from tools.studio.targets import TARGET_IDS_BY_NUMBER as TARGETS
 
 IDENTITY = struct.Struct("<4s7I32s32s")
 CAP_UPLOAD = 1
@@ -14,10 +15,10 @@ HEALTHY = 31
 def decode(data):
     if len(data) != IDENTITY.size:
         raise ValueError("invalid Linnet identity response length")
-    magic, target, abi, profile, kind, health, generation, capabilities, build, sha = IDENTITY.unpack(data)
-    if magic != b"LNI1" or target != 98 or abi != 1 or profile > 2 or kind > 1 or health & ~HEALTHY or capabilities & ~63:
+    magic, target, reserved, profile, kind, health, generation, capabilities, build, sha = IDENTITY.unpack(data)
+    if magic != b"LNID" or target not in TARGETS or reserved or profile > 2 or kind > 1 or health & ~HEALTHY or capabilities & ~63:
         raise ValueError("unsupported Linnet identity")
-    return dict(target_id="photo4g-p98", boot_abi=abi, profile=("release", "dev", "trace")[profile],
+    return dict(target_id=TARGETS[target], profile=("release", "dev", "trace")[profile],
                 image_kind=("os", "boot")[kind], health_flags=health, healthy=(health & HEALTHY) == HEALTHY,
                 generation=generation, capabilities=capabilities, build_id=build.hex(), image_sha256=sha.hex())
 
@@ -25,7 +26,7 @@ def decode(data):
 def decode_crash(data):
     if len(data) != 144:
         raise ValueError("invalid Linnet crash response length")
-    if struct.unpack_from('<4sHH', data) != (b'LRC1', 1, 144) or any(data[132:140]):
+    if struct.unpack_from('<4sHH', data) != (b'CRSH', 0, 144) or any(data[132:140]):
         raise ValueError("invalid Linnet crash header or reserved bytes")
     if zlib.crc32(data[:140]) != struct.unpack_from('<I', data, 140)[0]:
         raise ValueError("Linnet crash CRC mismatch")

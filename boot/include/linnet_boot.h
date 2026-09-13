@@ -6,7 +6,7 @@
 
 #define LINNET_IMAGE_HEADER_SIZE 128u
 #define LINNET_IMAGE_TARGET_PHOTO4G_P98 98u
-#define LINNET_IMAGE_ABI_VERSION 1u
+#define LINNET_IMAGE_TARGET_IPOD4G_Q21 8u
 #define LINNET_BOOT_STATE_SIZE 32u
 #define LINNET_CRASH_MAILBOX_SIZE 144u
 #define LINNET_BOOT_NO_SLOT 255u
@@ -19,13 +19,12 @@
 
 enum ln_image_result {
     LINNET_IMAGE_OK = 0, LINNET_IMAGE_ARGUMENT, LINNET_IMAGE_TRUNCATED,
-    LINNET_IMAGE_FORMAT, LINNET_IMAGE_TARGET, LINNET_IMAGE_ABI,
+    LINNET_IMAGE_FORMAT, LINNET_IMAGE_TARGET,
     LINNET_IMAGE_PROFILE, LINNET_IMAGE_RANGE, LINNET_IMAGE_CHECKSUM
 };
 
 struct ln_image_policy {
     uint32_t target;
-    uint32_t abi;
     uint32_t allowed_profiles; /* Bit 0 release, bit 1 dev, bit 2 trace. */
     uint32_t ram_start;
     uint32_t ram_size; /* Executable staging window, excluding loader/mailbox. */

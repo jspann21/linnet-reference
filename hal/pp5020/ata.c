@@ -100,7 +100,7 @@ static void finish(void) {
     result=(struct ln_ata_result){LN_ATA_OK,done};result_ready=true;info.busy=0;phase=IDLE;
 }
 static bool identify_valid(void) {
-    /* ATA's packet-device bit has legacy CFA exceptions; Linux ata_id_is_cfa
+    /* ATA's packet-device bit has CFA exceptions; Linux ata_id_is_cfa
      * documents848a (traditional CF) and844a (Delkin). */
     bool compact_flash=identify[0]==0x848au||identify[0]==0x844au||
         (identify[83]&0xc004u)==0x4004u;
@@ -143,12 +143,17 @@ static bool identify_valid(void) {
     if(iflash)info.quirks|=8u;
     info.rotation_rpm=identify[217]>=0x401u&&identify[217]!=0xffffu?identify[217]:0u;
     info.media_kind=(iflash||identify[217]==1u)?LN_ATA_MEDIA_SOLID_STATE:(info.rotation_rpm?LN_ATA_MEDIA_ROTATING:LN_ATA_MEDIA_UNKNOWN);
+    bool identify_media_known=info.media_kind!=LN_ATA_MEDIA_UNKNOWN;
+    if(!identify_media_known)ln_target_ata_classify(info.model,&info.media_kind,&info.rotation_rpm);
     bool commands_valid=(identify[83]&0xc000u)==0x4000u;
     bool enabled_valid=(identify[87]&0xc000u)==0x4000u;
     info.standby_supported=commands_valid&&enabled_valid&&(identify[82]&identify[85]&8u);
     info.apm_supported=commands_valid&&(identify[83]&8u);
     info.write_cache_enabled=commands_valid&&enabled_valid&&(identify[82]&identify[85]&32u);
-    info.can_power_off=info.media_kind!=LN_ATA_MEDIA_UNKNOWN&&info.standby_supported;
+    /* A fallback target classification improves diagnostics and policy timing,
+     * but does not by itself authorize rail removal.  Keep that dependent on
+     * an ATA-native media claim (or the separately handled exact iFlash case). */
+    info.can_power_off=identify_media_known&&info.standby_supported;
     info.idle_timeout_us=info.media_kind==LN_ATA_MEDIA_SOLID_STATE?5000000u:10000000u;
     info.wake_timeout_us=30000000u;
     info.can_flush=((identify[83]&0xc000u)==0x4000u&&(identify[83]&0x3000u))||
@@ -360,14 +365,14 @@ void ln_ata_diagnostics(uint32_t d[24]) {
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_ata_clock_diagnostics(uint32_t out[8]){
     bool valid=info.powered&&(R32(0x6000600cu)&0x02000000u)&&!(R32(0x60006004u)&0x02000000u);
-    out[0]=0x31434941u;out[1]=1u;out[2]=valid;out[3]=R32(0x600060c4u);
+    out[0]=0x464e4941u;out[1]=0u;out[2]=valid;out[3]=R32(0x600060c4u);
     out[4]=valid?R32(0xc3000028u):0u;out[5]=valid?R32(0xc3000000u):0u;
     out[6]=info.initialized?pio_mode:0xffffffffu;out[7]=R32(0x60006020u);
 }
 void ln_ata_capabilities(uint32_t out[16]){
     uint32_t enabled=R32(0x6000600cu),reset=R32(0x60006004u);
     bool timing_valid=info.powered&&(enabled&0x02000000u)&&!(reset&0x02000000u);
-    out[0]=0x31504341u;out[1]=1u;out[2]=ln_time_us();
+    out[0]=0x50414341u;out[1]=0u;out[2]=ln_time_us();
     out[3]=(info.initialized?1u:0u)|(info.initializing?2u:0u)|(info.busy?4u:0u)|
         (info.powered?8u:0u)|(info.failed?16u:0u)|(timing_valid?32u:0u);
     out[4]=info.initialized?identify[53]:0u;out[5]=info.initialized?identify[64]:0u;

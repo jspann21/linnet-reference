@@ -81,6 +81,9 @@ CREATOR_PROFILES = {
 
 COLOR_FILTERS = {
     "rgb565": None,
+    "gray4": (
+        "format=gray,lut=y='round(val*3/255)*255/3',format=rgb24"
+    ),
     "rgb555": (
         "format=rgb24,lutrgb=r='floor(val/8)*8':"
         "g='floor(val/8)*8':b='floor(val/8)*8',format=bgr0"
@@ -1184,7 +1187,22 @@ def ffmpeg_frames(
                 break
             if len(chunks) != FRAME_BYTES:
                 raise RuntimeError("ffmpeg ended with a partial frame")
-            yield bytes(chunks)
+            frame = bytes(chunks)
+            if color_depth == "gray4":
+                # Make the compressed pixels exactly match Q21's four physical
+                # shades. FFmpeg's gray-to-RGB conversion can otherwise leave
+                # several adjacent RGB565 values for the same visible shade.
+                palette = (0x0000, 0x52AA, 0xAD55, 0xFFFF)
+                canonical = bytearray(FRAME_BYTES)
+                for offset in range(0, FRAME_BYTES, 2):
+                    color = (frame[offset] << 8) | frame[offset + 1]
+                    r, g, b = (color >> 11) & 31, (color >> 5) & 63, color & 31
+                    luma = (r * 77 * 255 // 31 + g * 150 * 255 // 63 +
+                            b * 29 * 255 // 31) >> 8
+                    shade = palette[(luma * 3 + 127) // 255]
+                    canonical[offset], canonical[offset + 1] = shade >> 8, shade & 255
+                frame = bytes(canonical)
+            yield frame
     finally:
         proc.stdout.close()
         rc = proc.wait()

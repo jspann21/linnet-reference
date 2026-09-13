@@ -2,8 +2,7 @@
 #define LINNET_PP5020_PLATFORM_H
 #include <stdbool.h>
 #include <stdint.h>
-#define LINNET_LCD_WIDTH 220u
-#define LINNET_LCD_HEIGHT 176u
+#include "linnet_target.h"
 uint32_t ln_time_us(void);
 bool ln_lcd_fill(uint16_t color);
 #if defined(LINNET_IMAGE_BOOT)

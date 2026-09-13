@@ -1,0 +1,53 @@
+id = "ipod4g-q21"
+name = "Linnet for iPod 4G MP102"
+aliases = ["ipod4g", "ipod-4g", "ipod4g-gray", "mp102", "q21", "pe435a"]
+image_target = 8
+target_define = "LINNET_TARGET_IPOD4G_Q21"
+board_id = "q21"
+soc_id = "pp5020"
+model_alias = "mp102"
+soc = "pp5020"
+cpu = "arm7tdmi"
+architecture = "armv4t"
+endianness = "little"
+sdram_bytes = 33554432
+lcd_width = 160
+lcd_height = 128
+lcd_format = "gray2-horizontal"
+ui_width = 160
+ui_height = 128
+capabilities = { video = false, themes = false }
+media_video_fps = 12
+media_video_color = "gray4"
+startup_source = "targets/photo4g-p98/startup.S"
+linker_script = "targets/photo4g-p98/memory.ld"
+platform_source = "hal/pp5020/platform.c"
+lcd_source = "targets/ipod4g-q21/lcd.c"
+display_source = "targets/ipod4g-q21/display.c"
+target_source = "targets/ipod4g-q21/device.c"
+cop_display = false
+qualification = "unqualified-mp102-bringup"
+entry_address = 0
+load_address = 0
+mailbox_address = 33550336
+mailbox_bytes = 4096
+
+[retail]
+usb_vid = 1452
+usb_pid = 4611
+board_names = ["iPod Q21"]
+model_numbers = ["PE435A"]
+regulatory_models = ["MP102"]
+
+[installer]
+enabled = true
+boot_layout = "ipod-directory"
+file_loader = ".rockbox/rockbox.ipod"
+wrapper_model = "ip4g"
+wrapper_checksum_seed = 2
+firmware_header_magic = "5d69685b"
+firmware_header_field = 3
+firmware_partition_types = [0]
+media_partition_types = [6, 11, 12, 14]
+firmware_entry_type = "soso"
+max_firmware_bytes = 268435456

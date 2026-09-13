@@ -1,7 +1,7 @@
 # P98 static component target
 
 `photo4g-p98.json` records the 220x176 RGB565 pixel target, also known by its
-`ipod-photo` alias. The compiler emits the ABI in `ui/runtime/ui.h`.
+`ipod-photo` alias. The compiler emits the native interface in `ui/runtime/ui.h`.
 
 Generated node kinds are1..17 in declaration order. Geometry is absolute and
 within the parent. Literal colors are numeric RGB565; standard semantic color references are
@@ -10,21 +10,21 @@ targets are scene indices or0xfffffffe for Sync. Text and static label pointers
 refer to immutable generated storage. Each scene includes the single initial
 focus node index, or UINT32_MAX.
 
-`LNU1` JSON contains target/ABI, dimensions, selected theme, runtime `themes` layout registry and
+`LNUI` JSON contains target, dimensions, selected theme, runtime `themes` layout registry and
 `default_theme` index, per-theme scenes/fonts/metrics, ordered base scenes,
-RGB565 asset arrays, baked alpha font, and declared native source paths. `LNA1`
-is one lowered scene. `LNT1` contains the selected theme, packed assets, font and
+RGB565 asset arrays, baked alpha font, and declared native source paths. `APPL`
+is one lowered scene. `THME` contains the selected theme, packed assets, font and
 license. These formats are canonical ASCII JSON (sorted keys, compact separators,
 one trailing newline); they are host artifacts, not device-parsed input.
 
-`LNC1` lists SHA256 and byte length for every generated artifact plus selected
+`CNTN` lists SHA256 and byte length for every generated artifact plus selected
 source hashes. Its content ID hashes source provenance and the scene-document
 hash. Paths in manifests are repository-relative; generated host paths returned
 by the Python API are informational and excluded from identity. No timestamps or
 host font discovery enter a normal build. Rebuilding the same input on Windows
 and Linux produces identical bytes.
 
-`LNF1` font JSON has bounded cell dimensions (at most 24 x 24), first32,
+`FONT` JSON has bounded cell dimensions (at most 24 x 24), first32,
 count95, a glyph-major alpha array and the original font SHA256. Optional
 95-entry `advances` provides proportional spacing. Host inputs retain full
 alpha cells. Native generation crops each glyph to its nonzero bounding box,

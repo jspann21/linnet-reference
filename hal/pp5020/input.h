@@ -15,4 +15,7 @@ struct ln_input_state {
 bool ln_input_init(void);
 bool ln_input_poll(struct ln_input_state *out);
 void ln_input_snapshot(struct ln_input_state *out);
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_input_diagnostics(uint32_t output[16]);
+#endif
 #endif

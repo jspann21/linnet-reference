@@ -1,15 +1,16 @@
-"""Explicit host font baking; normal content builds use the checked-in LNF1 pack.
+"""Explicit host font baking; normal content builds use the checked-in FONT pack.
 
 Requires Pillow. Supply a redistributable font and retain its license alongside
 the output. Default baking retains the original fixed 8x14 glyph cell;
 proportional packs store bounded ASCII glyph cells and individual advances.
+Monochrome baking asks FreeType to hint directly onto the target pixel grid.
 """
 import argparse
 import hashlib
 import json
 from pathlib import Path
 
-def bake(font_path, output, size=11, proportional=False, height=14):
+def bake(font_path, output, size=11, proportional=False, height=14, monochrome=False):
     from PIL import Image, ImageDraw, ImageFont
     source=Path(font_path).read_bytes()
     import io
@@ -30,29 +31,33 @@ def bake(font_path, output, size=11, proportional=False, height=14):
         alpha=[]
         for char in glyphs:
             cell=Image.new('L',(cell_width,height))
-            ImageDraw.Draw(cell).text((-left,y),char,font=font,fill=255)
+            draw=ImageDraw.Draw(cell)
+            if monochrome: draw.fontmode='1'
+            draw.text((-left,y),char,font=font,fill=255)
             alpha.extend(cell.tobytes())
-        value=dict(format='LNF1',width=cell_width,height=height,advance=max(advances),
+        value=dict(format='FONT',width=cell_width,height=height,advance=max(advances),
                    advances=advances,first=32,count=95,alpha=alpha,
                    source_sha256=hashlib.sha256(source).hexdigest())
     else:
-        value=_fixed(font,height,source)
+        value=_fixed(font,height,source,monochrome)
     Path(output).parent.mkdir(parents=True,exist_ok=True)
     Path(output).write_text(json.dumps(value,sort_keys=True,separators=(',',':'))+'\n',encoding='ascii')
     return value
 
 
-def _fixed(font,height,source):
+def _fixed(font,height,source,monochrome=False):
     from PIL import Image, ImageDraw
     alpha=[]
     for code in range(32,127):
         cell=Image.new('L',(8,height))
         width=max(8,int(font.getlength(chr(code))+1))
         glyph=Image.new('L',(width,height))
-        ImageDraw.Draw(glyph).text((0,0),chr(code),font=font,fill=255)
+        draw=ImageDraw.Draw(glyph)
+        if monochrome: draw.fontmode='1'
+        draw.text((0,0),chr(code),font=font,fill=255)
         if width>8: glyph=glyph.resize((8,height),Image.Resampling.LANCZOS)
         cell.paste(glyph,(0,0)); alpha.extend(cell.tobytes())
-    return dict(format='LNF1',width=8,height=height,advance=8,first=32,count=95,
+    return dict(format='FONT',width=8,height=height,advance=8,first=32,count=95,
                alpha=alpha,source_sha256=hashlib.sha256(source).hexdigest())
 
 if __name__=='__main__':
@@ -62,4 +67,5 @@ if __name__=='__main__':
     parser.add_argument('--size',type=int,default=11)
     parser.add_argument('--height',type=int,default=14)
     parser.add_argument('--proportional',action='store_true')
-    args=parser.parse_args(); bake(args.font,args.output,args.size,args.proportional,args.height)
+    parser.add_argument('--monochrome',action='store_true')
+    args=parser.parse_args(); bake(args.font,args.output,args.size,args.proportional,args.height,args.monochrome)

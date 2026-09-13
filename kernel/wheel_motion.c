@@ -23,8 +23,8 @@ int32_t ln_wheel_motion_step(struct ln_wheel_motion *motion,int32_t delta,
     motion->direction=direction;motion->last_motion_us=now_us;
     /* Widen before adding so even malformed caller deltas cannot overflow. */
     int64_t accumulated=(int64_t)motion->remainder+delta;
-    int32_t steps=(int32_t)(accumulated/8);
-    motion->remainder=(int32_t)(accumulated-(int64_t)steps*8);
+    int32_t steps=(int32_t)(accumulated/4);
+    motion->remainder=(int32_t)(accumulated-(int64_t)steps*4);
     if(!steps)return 0;
     if(!motion->streak||(uint32_t)(now_us-motion->last_detent_us)>FAST_DETENT_US)
         motion->streak=1;

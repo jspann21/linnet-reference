@@ -23,12 +23,13 @@ def text_node(template,text,x,y,w,h,flags=0,fg='foreground'):
                 flags=flags,count=0,resource=0xffffffff,index=0,text=text,items=[],targets=[],item_count=0,deps=4,canvas='')
     return node
 
-def apply_layout(scenes,theme):
+def apply_layout(scenes,theme,compact=False):
     result=deepcopy(scenes)
     style=theme['layout']
     if style in ('default','minimal'):
+        body=(0,20,220,156) if compact else (4,26 if style=='minimal' else 24,212,146 if style=='minimal' else 148)
         for scene in result:
-            refine_scene(scene,theme,(4,26 if style=='minimal' else 24,212,146 if style=='minimal' else 148))
+            refine_scene(scene,theme,body)
             if style=='minimal':refine_minimal(scene,theme)
             refine_footers(scene,theme)
         return result
@@ -326,6 +327,7 @@ def gate_features(scenes,features):
         'demo':{'local.example.notes'},
         'photos':{'linnet.system.photos','linnet.system.photos-grid','linnet.system.photos-viewer','linnet.system.photos-options'},
         'video':{'linnet.system.videos','linnet.system.video-player','linnet.system.video-controls'},
+        'themes':{'linnet.system.themes'},
     }
     disabled={sid for feature,ids in groups.items() if not features.get(feature,feature!='demo') for sid in ids}
     enabled=[scene['id'] not in disabled for scene in scenes]

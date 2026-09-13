@@ -1,10 +1,11 @@
 id = "photo4g-p98"
 name = "Linnet for iPod Photo"
+aliases = ["photo4g", "ipod-photo", "a1099", "photo4g-a1099", "p98"]
+image_target = 98
+target_define = "LINNET_TARGET_PHOTO4G_P98"
 board_id = "p98"
 soc_id = "pp5020"
 model_alias = "a1099"
-boot_abi = 1
-app_abi = 1
 soc = "pp5020"
 cpu = "arm7tdmi"
 architecture = "armv4t"
@@ -13,8 +14,40 @@ sdram_bytes = 33554432
 lcd_width = 220
 lcd_height = 176
 lcd_format = "rgb565-swapped"
+ui_width = 220
+ui_height = 176
+capabilities = { video = true }
+media_video_fps = 24
+media_video_color = "rgb565"
+startup_source = "targets/photo4g-p98/startup.S"
+linker_script = "targets/photo4g-p98/memory.ld"
+platform_source = "hal/pp5020/platform.c"
+lcd_source = "targets/photo4g-p98/lcd.c"
+display_source = "hal/pp5020/display.c"
+target_source = "targets/photo4g-p98/device.c"
+cop_display = true
 qualification = "unqualified-ram-probe"
 entry_address = 0
 load_address = 0
 mailbox_address = 33550336
 mailbox_bytes = 4096
+
+[retail]
+usb_vid = 1452
+usb_pid = 4612
+board_names = ["iPod P98"]
+model_numbers = []
+regulatory_models = ["A1099"]
+
+[installer]
+enabled = true
+boot_layout = "ipod-directory"
+file_loader = ".rockbox/rockbox.ipod"
+wrapper_model = "ipco"
+wrapper_checksum_seed = 3
+firmware_header_magic = "5d69685b"
+firmware_header_field = 3
+firmware_partition_types = [0]
+media_partition_types = [6, 11, 12, 14]
+firmware_entry_type = "soso"
+max_firmware_bytes = 268435456

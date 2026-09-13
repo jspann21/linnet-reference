@@ -13,6 +13,7 @@ from .tsx import ContentError, compile_tsx, COLOR_ROLES
 from .layouts import apply_layout, gate_features
 
 LAYOUTS = ('default','ipod-photo','graphite','aurora','sunset','blueprint','minimal')
+DESIGN_WIDTH, DESIGN_HEIGHT = 220, 176
 
 def canonical(value):
     return (json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=True)+'\n').encode('ascii')
@@ -49,6 +50,41 @@ def crop_font(font):
         else:glyphs.append((offset,0,0,0,0))
     return alpha,glyphs
 
+def scale_font(font,x_numerator,x_denominator,y_numerator,y_denominator):
+    """Bake logical pixels so one glyph pixel maps to one physical LCD pixel."""
+    old_width,old_height=font['width'],font['height']
+    width=(old_width*x_numerator+x_denominator-1)//x_denominator
+    height=(old_height*y_numerator+y_denominator-1)//y_denominator
+    alpha=[]
+    for glyph in range(font['count']):
+        start=glyph*old_width*old_height
+        for y in range(height):
+            sy=min(old_height-1,y*y_denominator//y_numerator)
+            for x in range(width):
+                sx=min(old_width-1,x*x_denominator//x_numerator)
+                alpha.append(font['alpha'][start+sy*old_width+sx])
+    result=dict(font,width=width,height=height,alpha=alpha,
+                advance=max(1,(font['advance']*x_numerator+x_denominator-1)//x_denominator))
+    if 'advances' in font:
+        result['advances']=[max(1,(value*x_numerator+x_denominator-1)//x_denominator)
+                            for value in font['advances']]
+    return result
+
+def scale_layout(scenes,width,height):
+    """Lower the shared 220x176 design canvas to a target-native framebuffer."""
+    if (width,height)==(DESIGN_WIDTH,DESIGN_HEIGHT): return scenes
+    for scene in scenes:
+        for node in scene['nodes']:
+            left=node['x']*width//DESIGN_WIDTH
+            top=node['y']*height//DESIGN_HEIGHT
+            right=(node['x']+node['w'])*width+DESIGN_WIDTH-1
+            bottom=(node['y']+node['h'])*height+DESIGN_HEIGHT-1
+            right=right//DESIGN_WIDTH;bottom=bottom//DESIGN_HEIGHT
+            node.update(x=min(left,width-1),y=min(top,height-1),
+                        w=max(1,min(width,right)-min(left,width-1)),
+                        h=max(1,min(height,bottom)-min(top,height-1)))
+    return scenes
+
 def ppm(data):
     """Strict bounded P3 RGB image; source does not depend on host image libraries."""
     if len(data)>1024*1024: raise ContentError('asset source exceeds 1 MiB')
@@ -64,7 +100,7 @@ def ppm(data):
     if any(value<0 or value>255 for value in pixels): raise ContentError('PPM sample outside 0..255')
     return dict(width=width,height=height,pixels=[rgb565(*pixels[i:i+3]) for i in range(0,len(pixels),3)])
 
-def compile_system(root, output, configpath=None):
+def compile_system(root, output, configpath=None, target_override=None):
     root=Path(root).resolve(); output=Path(output).resolve(); sources={}
     def read(path):
         path=bounded_path(root,path); data=path.read_bytes()
@@ -73,14 +109,36 @@ def compile_system(root, output, configpath=None):
         return data
     def toml(path):
         return tomllib.loads(read(path).decode('utf-8'))
-    for source in ('tools/content/compiler.py','tools/content/tsx.py','tools/content/layouts.py','ui/runtime/ui.h','ui/compiler-target/photo4g-p98.json'):
+    for source in ('tools/content/compiler.py','tools/content/tsx.py','tools/content/layouts.py','ui/runtime/ui.h'):
         read(source)
     config=toml(configpath or 'config/system.toml')
     system=config.get('system',{})
-    if not isinstance(system,dict) or system.get('target')!='photo4g-p98': raise ContentError('UI target must be photo4g-p98')
+    target=target_override if target_override is not None else (system.get('target') if isinstance(system,dict) else None)
+    if not isinstance(target,str) or not re.fullmatch(r'[a-z][a-z0-9-]{0,63}',target):
+        raise ContentError(f'invalid UI target: {target!r}')
+    target_path=f'ui/compiler-target/{target}.json'
+    try: target_spec=json.loads(read(target_path))
+    except (ContentError,ValueError) as exc: raise ContentError(f'unsupported UI target: {target}') from exc
+    width,height=target_spec.get('width'),target_spec.get('height')
+    if (type(width) is not int or type(height) is not int or
+        not 1<=width<=DESIGN_WIDTH or not 1<=height<=DESIGN_HEIGHT):
+        raise ContentError('UI target dimensions must fit the 220x176 design canvas')
+    physical=target_spec.get('physical_display',{})
+    monochrome=isinstance(physical,dict) and str(physical.get('pixel_format','')).startswith('gray')
+    physical_width=physical.get('width',width) if isinstance(physical,dict) else width
+    physical_height=physical.get('height',height) if isinstance(physical,dict) else height
+    if type(physical_width) is not int or type(physical_height) is not int or physical_width<1 or physical_height<1:
+        raise ContentError('invalid physical display dimensions')
     features=config.get('features',{})
-    if not isinstance(features,dict) or any(type(features[key]) is not bool for key in ('photos','video','files','demo') if key in features):
-        raise ContentError('photos, video, files and demo feature flags must be booleans')
+    if not isinstance(features,dict) or any(type(features[key]) is not bool for key in ('photos','video','files','demo','themes') if key in features):
+        raise ContentError('photos, video, files, demo and themes feature flags must be booleans')
+    features=dict(features)
+    target_manifest=toml(f'targets/{target}/target.toml')
+    capabilities=target_manifest.get('capabilities',{})
+    if not isinstance(capabilities,dict) or any(key not in ('photos','video','files','demo','themes') or type(value) is not bool for key,value in capabilities.items()):
+        raise ContentError('target capabilities must be photos, video, files, demo or themes booleans')
+    for name,available in capabilities.items():
+        if not available:features[name]=False
     ui=config.get('ui',{})
     if not isinstance(ui,dict): raise ContentError('ui must be a table')
     if set(ui)-{'theme','apps'}: raise ContentError('unknown UI system setting')
@@ -91,12 +149,37 @@ def compile_system(root, output, configpath=None):
     if len(selected)!=len(set(selected)):
         raise ContentError('ui.apps must select 1..32 distinct app IDs')
     theme_id=identifier(ui.get('theme'))
-    theme_manifests={}
+    theme_manifests={}; seen_theme_ids=set()
     for path in sorted((root/'themes').glob('*/theme.toml')):
         manifest=tomllib.loads(path.read_text(encoding='utf-8'))
-        name=identifier(manifest.get('theme',{}).get('id'))
-        if name in theme_manifests: raise ContentError('duplicate theme ID')
+        metadata=manifest.get('theme',{})
+        name=identifier(metadata.get('id'))
+        if name in seen_theme_ids: raise ContentError('duplicate theme ID')
+        seen_theme_ids.add(name)
+        compatible_targets=metadata.get('targets')
+        if compatible_targets is not None:
+            if (not isinstance(compatible_targets,list) or not compatible_targets or
+                len(compatible_targets)!=len(set(compatible_targets))):
+                raise ContentError('theme targets must be a nonempty distinct list')
+            for compatible_target in compatible_targets:
+                if not isinstance(compatible_target,str) or not re.fullmatch(r'[a-z][a-z0-9-]{0,63}',compatible_target):
+                    raise ContentError('invalid theme target ID')
+            if target not in compatible_targets:
+                continue
         theme_manifests[name]=path
+    theme_profile=target_spec.get('theme_profile')
+    if theme_profile is not None:
+        if not isinstance(theme_profile,dict) or set(theme_profile)!={'allowed','default'}:
+            raise ContentError('target theme_profile requires allowed and default')
+        allowed=theme_profile['allowed']
+        if not isinstance(allowed,list) or not allowed or len(allowed)!=len(set(allowed)):
+            raise ContentError('target theme_profile allowed must be a nonempty distinct list')
+        allowed=[identifier(name) for name in allowed]
+        default_theme=identifier(theme_profile['default'])
+        if default_theme not in allowed or any(name not in theme_manifests for name in allowed):
+            raise ContentError('target theme_profile references an unavailable theme')
+        theme_manifests={name:theme_manifests[name] for name in allowed}
+        theme_id=default_theme
     if theme_id not in theme_manifests: raise ContentError(f'theme unavailable: {theme_id}')
     preferred=('linnet.theme.default','local.example.midnight','linnet.theme.ipod-photo',
                'linnet.theme.graphite','linnet.theme.aurora','linnet.theme.sunset','linnet.theme.blueprint')
@@ -105,9 +188,8 @@ def compile_system(root, output, configpath=None):
     themes=[]; theme_specs={}
     for name in ordered:
         spec=toml(theme_manifests[name]); metadata=spec['theme']
-        if set(spec)-{'theme','colors','metrics','assets'} or set(metadata)-{'id','version','font','font_license','name','style','layout'}:
+        if set(spec)-{'theme','colors','metrics','assets'} or set(metadata)-{'id','font','font_license','name','style','layout','targets'}:
             raise ContentError('unknown theme field')
-        if metadata.get('version')!=1: raise ContentError('theme version must be 1')
         label=metadata.get('name',{'linnet.theme.default':'Linnet','local.example.midnight':'Midnight'}.get(name,name.rsplit('.',1)[-1]))
         if not isinstance(label,str) or not 1<=len(label)<=24 or any(ord(c)<32 or ord(c)>126 for c in label):
             raise ContentError('theme name must be 1..24 printable ASCII characters')
@@ -115,6 +197,7 @@ def compile_system(root, output, configpath=None):
         if style not in ('standard','monochrome','apple-photo','album-art'): raise ContentError('unknown theme style')
         layout=metadata.get('layout','default')
         if layout not in LAYOUTS: raise ContentError('unknown theme layout')
+        if monochrome or (width,height)!=(DESIGN_WIDTH,DESIGN_HEIGHT): layout='default'
         palette=spec.get('colors',{})
         if not {'foreground','background','accent','muted','panel'}<=set(palette): raise ContentError('theme lacks required color tokens')
         for key,value in palette.items():
@@ -123,10 +206,21 @@ def compile_system(root, output, configpath=None):
         for key,fallback in {'selection_fg':'background','selection_bg':'accent','status_fg':'foreground',
                              'status_bg':'panel','border':'muted','artwork_bg':'panel','artwork_fg':'accent','battery':'accent'}.items():
             palette.setdefault(key,palette[fallback])
+        if monochrome:
+            palette.update(foreground='#000000',background='#ffffff',accent='#000000',muted='#000000',
+                           panel='#ffffff',selection_fg='#ffffff',selection_bg='#000000',
+                           status_fg='#000000',status_bg='#ffffff',border='#000000',
+                           artwork_bg='#ffffff',artwork_fg='#000000',battery='#000000')
         metrics=spec.get('metrics',{})
         if set(metrics)!={'row_height','padding'} or type(metrics['row_height']) is not int or not 16<=metrics['row_height']<=32 or type(metrics['padding']) is not int or not 0<=metrics['padding']<=12:
             raise ContentError('theme metrics require row_height16..32/padding0..12')
-        themes.append(dict(id=name,name=label,colors=palette,flags={'standard':0,'monochrome':1,'apple-photo':2,'album-art':4}[style],layout=layout,metrics=metrics))
+        # Physical monochrome targets need binary coverage for every selectable
+        # theme.  Retaining a color theme's style flag here made text, status
+        # symbols and decorative assets pass through antialias blends before
+        # the LCD driver quantized them to four shades, producing ragged gray
+        # fringes on the passive-matrix panel.
+        flags=1 if monochrome else {'standard':0,'monochrome':1,'apple-photo':2,'album-art':4}[style]
+        themes.append(dict(id=name,name=label,colors=palette,flags=flags,layout=layout,metrics=metrics))
         theme_specs[name]=spec
     theme_path=theme_manifests[theme_id]; theme=toml(theme_path)
     colors=themes[ordered.index(theme_id)]['colors']
@@ -147,10 +241,10 @@ def compile_system(root, output, configpath=None):
     for app_id in selected:
         if app_id not in manifests: raise ContentError(f'app unavailable: {app_id}')
         path=manifests[app_id]; manifest=toml(path); app=manifest.get('app',{})
-        if set(manifest)-{'app','assets','canvas'} or set(app)-{'id','version','title','entry','capabilities'}:
+        if set(manifest)-{'app','assets','canvas'} or set(app)-{'id','title','entry','capabilities'}:
             raise ContentError('unknown app manifest field')
         capabilities=['ui','canvas'] if manifest.get('canvas') else ['ui']
-        if app.get('version')!=1 or app.get('capabilities')!=capabilities: raise ContentError('app capability list must match ui and any declared canvas')
+        if app.get('capabilities')!=capabilities: raise ContentError('app capability list must match ui and any declared canvas')
         title=app.get('title','')
         if not isinstance(title,str) or not 1<=len(title)<=40 or any(ord(c)<32 or ord(c)>126 for c in title):
             raise ContentError('app title must be 1..40 printable ASCII characters')
@@ -178,9 +272,9 @@ def compile_system(root, output, configpath=None):
             if node['canvas'] and node['canvas'] not in callbacks: raise ContentError('undeclared native canvas callback')
             node['canvas']=callbacks.get(node['canvas'],'')
             targets=[]
-            for target in node['targets']:
-                if target!='@sync' and target not in selected: raise ContentError(f'unknown/unselected target {target}')
-                targets.append(0xfffffffe if target=='@sync' else selected.index(target))
+            for navigation_target in node['targets']:
+                if navigation_target!='@sync' and navigation_target not in selected: raise ContentError(f'unknown/unselected target {navigation_target}')
+                targets.append(0xfffffffe if navigation_target=='@sync' else selected.index(navigation_target))
             node['targets']=targets; node['item_count']=len(node['items'])
     fonts=[]; font_ids={}; licenses={}; font_paths={}
     for variant in themes:
@@ -190,7 +284,7 @@ def compile_system(root, output, configpath=None):
         font_license_path=directory/metadata.get('font_license','../../sdk/assets/FONT-LICENSE.txt')
         font=json.loads(read(font_path))
         required={'format','width','height','advance','first','count','alpha','source_sha256'}
-        if not required<=set(font) or set(font)-required-{'advances'} or font['format']!='LNF1':
+        if not required<=set(font) or set(font)-required-{'advances'} or font['format']!='FONT':
             raise ContentError('invalid baked font')
         if any(type(font[key]) is not int or not 1<=font[key]<=24 for key in ('width','height','advance')) or any(type(font[key]) is not int for key in ('first','count')) or (font['first'],font['count'])!=(32,95):
             raise ContentError('font cell/advance must be 1..24 with 95 printable ASCII glyphs')
@@ -211,7 +305,11 @@ def compile_system(root, output, configpath=None):
         license_data=read(font_license_path)
         licenses[variant['font_index']]=license_data
         font_paths[variant['id']]=bounded_path(root,font_license_path).relative_to(root).as_posix()
-        variant['scenes']=apply_layout(scenes,variant)
+        variant['scenes']=scale_layout(apply_layout(scenes,variant,compact=monochrome),width,height)
+        if (width,height)!=(DESIGN_WIDTH,DESIGN_HEIGHT):
+            variant['metrics']=dict(
+                row_height=max(font['height'],(variant['metrics']['row_height']*height+DESIGN_HEIGHT//2)//DESIGN_HEIGHT),
+                padding=(variant['metrics']['padding']*width+DESIGN_WIDTH//2)//DESIGN_WIDTH)
         enabled_scenes=gate_features(variant['scenes'],features)
         if not enabled_scenes&1:
             raise ContentError('the first UI scene must be enabled')
@@ -223,40 +321,46 @@ def compile_system(root, output, configpath=None):
             if scene['focus_node']!=0xffffffff and not 0<=scene['focus_node']<scene['count']:
                 raise ContentError('theme layout focus invalid')
             for node in scene['nodes']:
-                if any(type(node[key]) is not int for key in ('x','y','w','h')) or node['x']<0 or node['y']<0 or node['w']<1 or node['h']<1 or node['x']+node['w']>220 or node['y']+node['h']>176:
+                if any(type(node[key]) is not int for key in ('x','y','w','h')) or node['x']<0 or node['y']<0 or node['w']<1 or node['h']<1 or node['x']+node['w']>width or node['y']+node['h']>height:
                     raise ContentError(f'theme layout rectangle escapes target: {variant["id"]}/{scene["id"]}')
-    # Bake a compact footer face once; runtime text needs no resampling.
-    hint=json.loads(read(root/'sdk/assets/font-compact13.json'))
-    old_w,old_h=hint['width'],hint['height'];new_h=11
-    new_w=max(1,(old_w*new_h+old_h-1)//old_h)
-    pixels=[]
-    for glyph in range(hint['count']):
-        for y in range(new_h):
-            for x in range(new_w):
-                value=weight=0
-                for sy in range(y*old_h//new_h,min(old_h,((y+1)*old_h+new_h-1)//new_h)):
-                    wy=min((y+1)*old_h,(sy+1)*new_h)-max(y*old_h,sy*new_h)
-                    for sx in range(x*old_w//new_w,min(old_w,((x+1)*old_w+new_w-1)//new_w)):
-                        wx=min((x+1)*old_w,(sx+1)*new_w)-max(x*old_w,sx*new_w)
-                        value+=hint['alpha'][(glyph*old_h+sy)*old_w+sx]*wx*wy;weight+=wx*wy
-                pixels.append((value+weight//2)//weight)
-    hint.update(width=new_w,height=new_h,alpha=pixels,
-                advance=max(1,(hint['advance']*new_h+old_h//2)//old_h))
-    if 'advances' in hint:hint['advances']=[max(1,(a*new_h+old_h//2)//old_h) for a in hint['advances']]
-    hint_index=len(fonts);fonts.append(hint)
     chosen=themes[ordered.index(theme_id)]
+    if monochrome:
+        # Native bitmap targets use the same pixel-grid face for supporting
+        # text. Resampling a second antialiased face recreates the fringe that
+        # the target-specific font is intended to avoid.
+        hint_index=chosen['font_index']
+    else:
+        # Bake a compact footer face once; runtime text needs no resampling.
+        hint=json.loads(read(root/'sdk/assets/font-compact13.json'))
+        old_w,old_h=hint['width'],hint['height'];new_h=11
+        new_w=max(1,(old_w*new_h+old_h-1)//old_h)
+        pixels=[]
+        for glyph in range(hint['count']):
+            for y in range(new_h):
+                for x in range(new_w):
+                    value=weight=0
+                    for sy in range(y*old_h//new_h,min(old_h,((y+1)*old_h+new_h-1)//new_h)):
+                        wy=min((y+1)*old_h,(sy+1)*new_h)-max(y*old_h,sy*new_h)
+                        for sx in range(x*old_w//new_w,min(old_w,((x+1)*old_w+new_w-1)//new_w)):
+                            wx=min((x+1)*old_w,(sx+1)*new_w)-max(x*old_w,sx*new_w)
+                            value+=hint['alpha'][(glyph*old_h+sy)*old_w+sx]*wx*wy;weight+=wx*wy
+                    pixels.append((value+weight//2)//weight)
+        hint.update(width=new_w,height=new_h,alpha=pixels,
+                    advance=max(1,(hint['advance']*new_h+old_h//2)//old_h))
+        if 'advances' in hint:hint['advances']=[max(1,(a*new_h+old_h//2)//old_h) for a in hint['advances']]
+        hint_index=len(fonts);fonts.append(hint)
     font=chosen['font'];scenes=chosen['scenes'];license_data=licenses[chosen['font_index']]
-    document=dict(format='LNU1',abi=1,enabled_scenes=enabled_scenes,target='photo4g-p98',width=220,height=176,theme=theme,themes=themes,default_theme=ordered.index(theme_id),scenes=scenes,assets=assets,font=font,fonts=fonts,native_sources=native_sources)
+    document=dict(format='LNUI',enabled_scenes=enabled_scenes,target=target,width=width,height=height,theme=theme,themes=themes,default_theme=ordered.index(theme_id),scenes=scenes,assets=assets,font=font,fonts=fonts,native_sources=native_sources)
     document['hint_font_index']=hint_index
     files={'scenes.json':canonical(document),'font-license.txt':license_data}
     for index,data in licenses.items(): files[f'font-license-{index}.txt']=data
     packed_fonts=[crop_font(font) for font in fonts]
     files['linnet_ui.c']=generate_c(document,packed_fonts).encode('ascii')
-    files[theme_id+'.ltheme']=canonical(dict(format='LNT1',abi=1,theme=theme,assets=assets,font=font,font_license=license_data.decode('utf-8')))
+    files[theme_id+'.ltheme']=canonical(dict(format='THME',theme=theme,assets=assets,font=font,font_license=license_data.decode('utf-8')))
     for scene in scenes:
-        files[scene['id']+'.lapp']=canonical(dict(format='LNA1',abi=1,scene=scene))
+        files[scene['id']+'.lapp']=canonical(dict(format='APPL',scene=scene))
     identity=digest(canonical(dict(sources=sources,document_sha256=digest(files['scenes.json']))))
-    manifest=dict(format='LNC1',version=1,target='photo4g-p98',content_id=identity,
+    manifest=dict(format='CNTN',target=target,content_id=identity,
                   source_hashes=sources,files={name:dict(bytes=len(data),sha256=digest(data)) for name,data in sorted(files.items())},
                   themes=len(themes),scenes=len(scenes),nodes=sum(len(s['nodes']) for s in scenes),assets=len(assets),
                   layout_nodes=sum(len(scene['nodes']) for variant in themes for scene in variant['scenes']),fonts=len(fonts),
@@ -267,10 +371,10 @@ def compile_system(root, output, configpath=None):
     output.mkdir(parents=True,exist_ok=True)
     for name,data in files.items(): (output/name).write_bytes(data)
     return dict(content_id=identity,source=str(output/'linnet_ui.c'),scenes=str(output/'scenes.json'),
-                manifest=str(output/'content-manifest.json'),report=manifest)
+                manifest=str(output/'content-manifest.json'),report=manifest,features=dict(features))
 
 def geometry_flags(node, theme, font):
-    """Pack native list geometry without changing source flags or node ABI.
+    """Pack native list geometry without changing source flags or node layout.
 
     Low six flag bits retain their existing meaning. Bit 31 marks geometry:
     row height [6:12], columns [13:15], rows [16:19], cell width [20:27].
