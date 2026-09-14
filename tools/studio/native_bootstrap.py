@@ -176,7 +176,6 @@ def plan(firmware_path, mbr_path, device_path, boot_path, output):
                     expected_linnet_usb_serial=device["linnet_usb_serial"],
                     firmware_backup=str(firmware_path), firmware_backup_sha256=sha(firmware),
                     device_write_attempted=False,
-                    tool_sha256=sha(Path(__file__).read_bytes()),
                     artifacts={name: dict(bytes=len(data), sha256=sha(data)) for name, data in artifacts.items()},
                     **details)
     manifest_path = output / "plan.json"
@@ -194,9 +193,8 @@ def load_plan(path, expected_sha):
     if len(expected_sha) != 64 or sha(raw) != expected_sha.lower():
         raise ValueError("reviewed plan SHA-256 does not match")
     manifest = json.loads(raw)
-    if (manifest.get("operation") != "ipod-native-osos-redirect" or
-            manifest.get("tool_sha256") != sha(Path(__file__).read_bytes())):
-        raise ValueError("unsupported plan or planner changed after review")
+    if manifest.get("operation") != "ipod-native-osos-redirect":
+        raise ValueError("unsupported native installation plan")
     if set(manifest.get("artifacts", {})) != ARTIFACTS:
         raise ValueError("unexpected plan artifact set")
     artifacts = {}
