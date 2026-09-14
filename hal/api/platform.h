@@ -1,9 +1,11 @@
-#ifndef LINNET_PP5020_PLATFORM_H
-#define LINNET_PP5020_PLATFORM_H
+#ifndef LINNET_HAL_PLATFORM_H
+#define LINNET_HAL_PLATFORM_H
 #include <stdbool.h>
 #include <stdint.h>
 #include "linnet_target.h"
 uint32_t ln_time_us(void);
+/* Return a CPU address that bypasses cache for target SDRAM, when required. */
+uintptr_t ln_platform_uncached_address(uintptr_t address);
 bool ln_lcd_fill(uint16_t color);
 #if defined(LINNET_IMAGE_BOOT)
 bool ln_lcd_boot(void);

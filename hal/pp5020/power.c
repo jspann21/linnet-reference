@@ -1,6 +1,6 @@
-#include "hal/pp5020/power.h"
-#include "hal/pp5020/core.h"
-#include "hal/pp5020/platform.h"
+#include "hal/api/power.h"
+#include "hal/api/core.h"
+#include "hal/api/platform.h"
 #include "hal/pp5020/target.h"
 #define LINNET_MMIO(a) (*(volatile uint32_t *)(uintptr_t)(a))
 #define LINNET_MMIO8(a) (*(volatile uint8_t *)(uintptr_t)(a))

@@ -1,8 +1,8 @@
 #include "kernel/development.h"
 #include "boot/include/loader.h"
-#include "hal/pp5020/platform.h"
-#include "hal/pp5020/usb.h"
-#include "hal/pp5020/recovery.h"
+#include "hal/api/platform.h"
+#include "hal/api/usb.h"
+#include "hal/api/recovery.h"
 #include "linnet_build.h"
 #if defined(LINNET_AUDIO)
 #include "kernel/audio_link.h"
@@ -88,9 +88,9 @@ int ln_development_init(void) {
     config.policy.allowed_profiles = 6u;
     config.policy.ram_start = 0;
     config.policy.ram_size = LINNET_OS_CAPACITY;
-    config.crash_mailbox = (volatile uint8_t *)(uintptr_t)0x01fff000u;
+    config.crash_mailbox = (volatile uint8_t *)(uintptr_t)LINNET_MAILBOX_ADDRESS;
 #if defined(LINNET_AUDIO)
-    config.crash_mailbox = (volatile uint8_t *)(uintptr_t)0x11fff000u;
+    config.crash_mailbox = (volatile uint8_t *)ln_platform_uncached_address(LINNET_MAILBOX_ADDRESS);
 #endif
 #if defined(LINNET_PROFILE_TRACE)
     config.profile = 2;

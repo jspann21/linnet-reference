@@ -60,6 +60,7 @@ def parser():
     video_compile=video.add_parser('compile')
     video_compile.add_argument('--source',type=Path,required=True)
     video_compile.add_argument('--output',type=Path,required=True)
+    video_compile.add_argument('--target',default='photo4g-p98',type=target_id)
     video_compile.add_argument('--fps',type=int,choices=(24,25,30,60),default=24)
     video_compile.add_argument('--max-frames',type=int)
     video_compile.add_argument('--ffmpeg')
@@ -78,8 +79,9 @@ def parser():
     photo_compile=photos.add_parser('compile')
     photo_compile.add_argument('--source',type=Path,required=True)
     photo_compile.add_argument('--output',type=Path,required=True)
+    photo_compile.add_argument('--target',default='photo4g-p98',type=target_id)
     photo_compile.add_argument('--max-dimension',type=int,default=640,
-        help='Largest prepared zoom dimension, 220..2048 pixels (default: 640); originals are unchanged')
+        help='Largest prepared zoom dimension (default: 640); originals are unchanged')
     photo_inspect=photos.add_parser('inspect')
     photo_inspect.add_argument('package',type=Path)
     photo_publish=photos.add_parser('publish')
@@ -249,7 +251,11 @@ def main():
             from tools.content.video import compile_video,inspect as inspect_video
             if args.action=='compile':
                 model=json.loads(args.cost_model.read_text()) if args.cost_model else None
-                emit(compile_video(args.source,args.output,fps=args.fps,max_frames=args.max_frames,ffmpeg=args.ffmpeg,cost_model=model))
+                spec=TARGETS[args.target]
+                emit(compile_video(args.source,args.output,fps=args.fps,
+                    width=spec['media_video_width'],height=spec['media_video_height'],
+                    max_record=spec['storage_max_read_sectors']*512-8192,
+                    max_frames=args.max_frames,ffmpeg=args.ffmpeg,cost_model=model))
             elif args.action=='inspect':emit(inspect_video(args.package))
             else:
                 from tools.content.publish_video import publish_video
@@ -262,7 +268,12 @@ def main():
                 from tools.content.publish_photos import publish_photos
                 emit(publish_photos(args.package,disk_number=args.disk_number,expected_disk_serial=args.disk_serial,
                                     expected_volume_serial=args.volume_serial,expected_drive=args.drive))
-            else:emit(compile_photos(args.source,args.output,max_dimension=args.max_dimension) if args.action=='compile' else inspect_photos(args.package))
+            else:
+                if args.action=='compile':
+                    spec=TARGETS[args.target]
+                    emit(compile_photos(args.source,args.output,max_dimension=args.max_dimension,
+                        viewport_width=spec['media_photo_width'],viewport_height=spec['media_photo_height']))
+                else:emit(inspect_photos(args.package))
         elif args.command == "simulator":
             from tools.simulator.runner import simulate
             emit(simulate(ROOT,args.output,args.tape,args.system))

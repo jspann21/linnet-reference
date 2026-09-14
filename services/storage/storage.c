@@ -1,9 +1,9 @@
 #include "services/storage/storage.h"
 #include "services/storage/block.h"
 #include "services/storage/fat32.h"
-#include "hal/pp5020/platform.h"
-#include "hal/pp5020/core.h"
-#include "hal/pp5020/recovery.h"
+#include "hal/api/platform.h"
+#include "hal/api/core.h"
+#include "hal/api/recovery.h"
 #if defined(LINNET_IMAGE_BOOT)
 #define LN_STORAGE_STAMP(name) LN_BOOT_STAMP(LN_BT_BOOT_##name)
 #else
@@ -15,8 +15,8 @@
 #include "kernel/runtime.h"
 #endif
 #if !defined(LINNET_PROFILE_RELEASE)
-#include "hal/pp5020/recovery.h"
-#include "hal/pp5020/usb.h"
+#include "hal/api/recovery.h"
+#include "hal/api/usb.h"
 #endif
 
 static struct ln_fat32 volume;
@@ -666,9 +666,9 @@ void ln_storage_boot(void){
     /* A recovered Boot stays available for inspection after rollback. */
     if(ln_recovery_generation()!=0)return;
 #endif
-    uint8_t *scratch=(uint8_t *)(uintptr_t)0x01000000u;struct ln_image_info info;
+    uint8_t *scratch=(uint8_t *)(uintptr_t)LINNET_STAGE_ADDRESS;struct ln_image_info info;
     LN_BOOT_STAMP(LN_BT_BOOT_VALIDATE);
-    uint8_t slot=ln_update_prepare_boot(&updater,scratch,0x800000,&info);
+    uint8_t slot=ln_update_prepare_boot(&updater,scratch,LINNET_STAGE_CAPACITY,&info);
     if(slot<=1u&&updater.ready&&!boot_store.poisoned&&updater.rejected_slot<=1u)history_save(2,updater.rejected_slot,slot,
         updater.boot.attempts,updater.boot.generation,updater.image[updater.rejected_slot].build_id);
     if(slot>1){error=402;return;}
@@ -732,7 +732,8 @@ int ln_storage_update(uint32_t action,const uint8_t *data,uint32_t length,uint32
     if(!ln_storage_prepared()||!open_stores())return 0;
     if(action==1)return data&&ln_update_begin(&updater,length,data);
     if(action==2)return ln_update_write(&updater,offset,data,length);
-    if(action==3)return ln_update_finish(&updater,(uint8_t *)(uintptr_t)0x01000000,0x800000);
+    if(action==3)return ln_update_finish(&updater,
+        (uint8_t *)(uintptr_t)LINNET_STAGE_ADDRESS,LINNET_STAGE_CAPACITY);
     return 0;
 }
 void ln_storage_update_snapshot(uint32_t words[16]){

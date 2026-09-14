@@ -1,9 +1,11 @@
 .syntax unified
 .cpu arm7tdmi
 .arm
-#include "hal/pp5020/recovery.h"
+#include "hal/api/recovery.h"
+#include "hal/pp5020/recovery_internal.h"
 #if defined(LINNET_PLATFORM_CORE)
-#include "hal/pp5020/display.h"
+#include "hal/api/display.h"
+#include "hal/pp5020/display_internal.h"
 #endif
 .section .text.startup,"ax",%progbits
 .global ln_platform_reset
@@ -284,18 +286,18 @@ ln_cop_display_begin:
     add r2, r0, r2, lsl #4
     add r2, r2, #LN_DISPLAY_QUEUE
     ldmia r2, {r3-r6}
-    cmp r3, #220
+    cmp r3, #LINNET_LCD_WIDTH_ASM
     bhs ln_cop_display_bad_rectangle
-    cmp r4, #176
+    cmp r4, #LINNET_LCD_HEIGHT_ASM
     bhs ln_cop_display_bad_rectangle
     cmp r5, #0
     beq ln_cop_display_bad_rectangle
     cmp r6, #0
     beq ln_cop_display_bad_rectangle
-    rsb r7, r3, #220
+    rsb r7, r3, #LINNET_LCD_WIDTH_ASM
     cmp r5, r7
     bhi ln_cop_display_bad_rectangle
-    rsb r7, r4, #176
+    rsb r7, r4, #LINNET_LCD_HEIGHT_ASM
     cmp r6, r7
     bhi ln_cop_display_bad_rectangle
     orr r7, r3, r5
@@ -346,7 +348,7 @@ ln_cop_display_command:
     beq ln_cop_display_send_command
     cmp r1, #3
     ldreq r3, [r0, #LN_DISPLAY_X]
-    rsbeq r3, r3, #219
+    rsbeq r3, r3, #(LINNET_LCD_WIDTH_ASM - 1)
     beq ln_cop_display_send_command
     cmp r1, #4
     moveq r3, #0x15
@@ -363,7 +365,7 @@ ln_cop_display_command:
     ldr r3, [r0, #LN_DISPLAY_X]
     ldr r4, [r0, #LN_DISPLAY_WIDTH]
     add r3, r3, r4
-    rsb r3, r3, #220
+    rsb r3, r3, #LINNET_LCD_WIDTH_ASM
 ln_cop_display_send_command:
     orr r3, r3, #0x80000000
     str r3, [r2]
@@ -422,7 +424,7 @@ ln_cop_display_pair:
     ldr r1, [r0, #LN_DISPLAY_Y]
     ldr r7, [r0, #LN_DISPLAY_Y_CURSOR]
     add r1, r1, r7
-    mov r7, #220
+    mov r7, #LINNET_LCD_WIDTH_ASM
     mul r2, r1, r7
     ldr r7, [r0, #LN_DISPLAY_X]
     add r2, r2, r7

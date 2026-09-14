@@ -120,7 +120,8 @@ class Parser:
         x=self.integer(props,'x',0,0,219); y=self.integer(props,'y',0,0,175)
         w=self.integer(props,'w',parent_w-x,1,220); h=self.integer(props,'h',parent_h-y,1,176)
         if x+w>parent_w or y+h>parent_h: self.fail('rectangle escapes parent bounds')
-        if parent is None and (x,y,w,h)!=(0,0,220,176): self.fail('Screen must cover the 220x176 target')
+        if parent is None and (x,y,w,h)!=(0,0,220,176):
+            self.fail('Screen must cover the 220x176 authoring canvas')
         node=dict(kind=KINDS.index(name)+1,component=name,x=x+parent_x,y=y+parent_y,w=w,h=h,
                   fg=self.color(props.get('fg','theme.foreground')),bg=self.color(props.get('bg','theme.background')),
                   flags=self.integer(props,'flags',1 if name in ('Menu','VirtualList','Grid') else 0,0,7),

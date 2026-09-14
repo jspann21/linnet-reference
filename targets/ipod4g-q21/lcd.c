@@ -1,4 +1,4 @@
-#include "hal/pp5020/platform.h"
+#include "hal/api/platform.h"
 #include "targets/ipod4g-q21/lcd.h"
 
 #define REG(a) (*(volatile uint32_t *)(uintptr_t)(a))

@@ -1,7 +1,7 @@
 #include "services/update/native.h"
 #include "services/storage/storage.h"
 #include "services/storage/block.h"
-#include "hal/pp5020/platform.h"
+#include "hal/api/platform.h"
 #include "boot/include/linnet_boot.h"
 #include "boot/include/sha256.h"
 #include "linnet_build.h"
@@ -81,7 +81,7 @@ static int validate(void){
        !matches(p+512,512,p+240)||!matches(p+1024,512,p+304)||!matches(p+1536,512,p+336)||
        !matches(p+2560,span,p+272)||!zero(p+2176,384)||!zero(p+2560+n,span-n)||!directory_valid(candidate,n))return 0;
     const uint8_t *mbr=p+512;if(mbr[510]!=0x55||mbr[511]!=0xaa||mbr[450]||u32(mbr+454)!=63||u32(mbr+458)!=80262)return 0;
-    uint8_t *image=(uint8_t *)(uintptr_t)0x01000000u;
+    uint8_t *image=(uint8_t *)(uintptr_t)LINNET_STAGE_ADDRESS;
     for(uint32_t i=0;i<128;++i)image[i]=p[2048+i];for(uint32_t i=0;i<n;++i)image[128+i]=p[2560+i];
     struct ln_image_policy policy={98,7,0,0x100000};struct ln_image_info info;
     return matches(image,n+128,p+368)&&ln_image_validate_progress(image,n+128,&policy,&info,ln_storage_progress,0)==LINNET_IMAGE_OK&&

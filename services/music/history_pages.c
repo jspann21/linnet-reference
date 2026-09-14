@@ -1,7 +1,7 @@
 #include "history_pages.h"
 #include "history.h"
 #include "services/storage/storage.h"
-#include "hal/pp5020/platform.h"
+#include "hal/api/platform.h"
 enum {SUPER_A,SUPER_B,IDLE,PAGE_A,PAGE_B,PUBLISH,FLUSH,CHECK,ACK,FAILED};
 static struct {
     struct ln_history_page cache[4];uint32_t age[4],clock,revision;

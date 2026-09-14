@@ -2,8 +2,9 @@
 #define LINNET_UPDATE_H
 #include "services/state/store.h"
 #include "boot/include/linnet_boot.h"
+#include "linnet_target.h"
 #define LN_UPDATE_METADATA_SIZE 184u
-#define LN_UPDATE_IMAGE_MAX 0x00800000u
+#define LN_UPDATE_IMAGE_MAX LINNET_OS_CAPACITY
 #define LN_UPDATE_CHUNK_MAX 4096u
 struct ln_update_image {uint32_t length,profile;uint8_t build_id[32],sha256[32];};
 struct ln_update_io {

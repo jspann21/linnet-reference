@@ -1,6 +1,7 @@
-#include "hal/pp5020/display.h"
-#include "hal/pp5020/platform.h"
-#include "hal/pp5020/core.h"
+#include "hal/api/display.h"
+#include "hal/pp5020/display_internal.h"
+#include "hal/api/platform.h"
+#include "hal/api/core.h"
 #include "boot/include/linnet_boot.h"
 #include "targets/ipod4g-q21/lcd.h"
 

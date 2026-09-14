@@ -119,8 +119,9 @@ particular, a COP queue reset advances its reset counter and requests a redraw;
 wait for submitted and completed frame counters to match before testing sleep
 or idle behavior. CPU rendering fallback does not exercise the COP queue.
 
-CAPTURE_SCREEN freezes a 220 by 176 RGB565 frame in a fixed 77,440-byte
-development-only buffer. SCREEN_READ accepts 1..1008 bytes within that buffer.
+CAPTURE_SCREEN freezes the target-native RGB565 frame in a development-only
+buffer sized from the target display. Its descriptor reports width, height and
+byte length. SCREEN_READ accepts 1..1008 bytes within that buffer.
 Every chunk echoes the capture ID, boot generation and offset. The frozen bytes
 remain unchanged during animation until another capture replaces them or the
 image restarts. A stale capture ID, changed boot generation or out-of-range read

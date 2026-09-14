@@ -1,8 +1,8 @@
 #include "services/update/update.h"
 #include "boot/include/sha256.h"
 #if defined(LINNET_IMAGE_BOOT) && !defined(LINNET_PROFILE_RELEASE)
-#include "hal/pp5020/platform.h"
-#include "hal/pp5020/recovery.h"
+#include "hal/api/platform.h"
+#include "hal/api/recovery.h"
 #define LN_VALIDATE_START(name) uint32_t name=ln_time_us()
 #define LN_VALIDATE_TIME(index,name) ln_recovery_timeline_add(index,ln_time_us()-name)
 #define LN_VALIDATE_COUNT(index,value) ln_recovery_timeline_add(index,value)

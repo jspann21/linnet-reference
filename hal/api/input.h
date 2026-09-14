@@ -1,5 +1,5 @@
-#ifndef LINNET_PP5020_INPUT_H
-#define LINNET_PP5020_INPUT_H
+#ifndef LINNET_HAL_INPUT_H
+#define LINNET_HAL_INPUT_H
 #include <stdbool.h>
 #include <stdint.h>
 #define LINNET_BUTTON_SELECT 1u

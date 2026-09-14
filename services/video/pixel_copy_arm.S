@@ -91,7 +91,7 @@ ln_video_copy_rgb565:
 .type ln_video_xor_rgb565,%function
 /* r0=destination, r1=big-endian residual, r2=native prediction,
  * r3=pixels. Internal full-frame path: all buffers are word aligned,
- * disjoint, and the pixel count is a multiple of eight (220*176).
+ * disjoint, and the target video pixel count is a multiple of eight.
  * Read each input and write each output once, in four-word bursts. */
 .macro xor_pair residual, prediction
     and lr, \residual, r12

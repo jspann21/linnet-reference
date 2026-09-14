@@ -1,6 +1,6 @@
 #include "mp3.h"
 #include "third_party/libmad/codeclib.h"
-#include "hal/pp5020/platform.h"
+#include "hal/api/platform.h"
 #if !defined(LINNET_PROFILE_RELEASE)
 static struct ln_mp3_timing timing;
 static void timing_add(uint32_t *value,uint32_t amount)

@@ -1,13 +1,13 @@
-#include "hal/pp5020/core.h"
-#include "hal/pp5020/platform.h"
+#include "hal/api/core.h"
+#include "hal/api/platform.h"
 #if defined(LINNET_IMAGE_OS)
-#include "hal/pp5020/display.h"
+#include "hal/api/display.h"
 #endif
 #if defined(LINNET_AUDIO)
-#include "hal/pp5020/audio.h"
+#include "hal/api/audio.h"
 #endif
 #if !defined(LINNET_PROFILE_RELEASE)
-#include "hal/pp5020/recovery.h"
+#include "hal/api/recovery.h"
 #endif
 #define LINNET_MMIO(a) (*(volatile uint32_t *)(uintptr_t)(a))
 static struct ln_core_status ln_status;

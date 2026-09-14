@@ -96,9 +96,12 @@ presentation. There is no best-effort playback of a corrupt record.
 ## Host API and budget model
 
 `tools.content.video.compile_video(source, output, *, fps=24, width=220,
-height=176, key_interval=24, cost_model=None, ffmpeg=None, max_frames=None)`
+height=176, key_interval=24, max_record=90112, cost_model=None, ffmpeg=None,
+max_frames=None)`
 streams ffmpeg video and PCM through bounded frame buffers, spools records and
 index locally, validates the complete result, then atomically replaces output.
+The Linnet CLI supplies width, height and record size from the selected target;
+the shown values are the library's backward-compatible defaults.
 `inspect(path)` validates all records and reconstructs every frame without
 retaining the complete movie. Reports include SHA256 and counts by record type.
 

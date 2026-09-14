@@ -13,7 +13,7 @@ from .tsx import ContentError, compile_tsx, COLOR_ROLES
 from .layouts import apply_layout, gate_features
 
 LAYOUTS = ('default','ipod-photo','graphite','aurora','sunset','blueprint','minimal')
-DESIGN_WIDTH, DESIGN_HEIGHT = 220, 176
+REFERENCE_WIDTH, REFERENCE_HEIGHT = 220, 176
 
 def canonical(value):
     return (json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=True)+'\n').encode('ascii')
@@ -71,15 +71,15 @@ def scale_font(font,x_numerator,x_denominator,y_numerator,y_denominator):
     return result
 
 def scale_layout(scenes,width,height):
-    """Lower the shared 220x176 design canvas to a target-native framebuffer."""
-    if (width,height)==(DESIGN_WIDTH,DESIGN_HEIGHT): return scenes
+    """Scale the device-independent authoring space to the target framebuffer."""
+    if (width,height)==(REFERENCE_WIDTH,REFERENCE_HEIGHT): return scenes
     for scene in scenes:
         for node in scene['nodes']:
-            left=node['x']*width//DESIGN_WIDTH
-            top=node['y']*height//DESIGN_HEIGHT
-            right=(node['x']+node['w'])*width+DESIGN_WIDTH-1
-            bottom=(node['y']+node['h'])*height+DESIGN_HEIGHT-1
-            right=right//DESIGN_WIDTH;bottom=bottom//DESIGN_HEIGHT
+            left=node['x']*width//REFERENCE_WIDTH
+            top=node['y']*height//REFERENCE_HEIGHT
+            right=(node['x']+node['w'])*width+REFERENCE_WIDTH-1
+            bottom=(node['y']+node['h'])*height+REFERENCE_HEIGHT-1
+            right=right//REFERENCE_WIDTH;bottom=bottom//REFERENCE_HEIGHT
             node.update(x=min(left,width-1),y=min(top,height-1),
                         w=max(1,min(width,right)-min(left,width-1)),
                         h=max(1,min(height,bottom)-min(top,height-1)))
@@ -95,7 +95,7 @@ def ppm(data):
     try: values=[int(token) for token in tokens[1:]]
     except ValueError as exc: raise ContentError('invalid PPM integer') from exc
     width,height,maximum=values[:3]; pixels=values[3:]
-    if not 1<=width<=220 or not 1<=height<=176 or maximum!=255 or len(pixels)!=width*height*3:
+    if not 1<=width<=1024 or not 1<=height<=1024 or width*height>131072 or maximum!=255 or len(pixels)!=width*height*3:
         raise ContentError('invalid PPM dimensions/range/length')
     if any(value<0 or value>255 for value in pixels): raise ContentError('PPM sample outside 0..255')
     return dict(width=width,height=height,pixels=[rgb565(*pixels[i:i+3]) for i in range(0,len(pixels),3)])
@@ -119,10 +119,10 @@ def compile_system(root, output, configpath=None, target_override=None):
     target_path=f'targets/{target}/target.toml'
     try: target_manifest=toml(target_path)
     except (ContentError,tomllib.TOMLDecodeError) as exc: raise ContentError(f'unsupported UI target: {target}') from exc
-    width,height=target_manifest.get('ui_width'),target_manifest.get('ui_height')
+    width,height=target_manifest.get('lcd_width'),target_manifest.get('lcd_height')
     if (type(width) is not int or type(height) is not int or
-        not 1<=width<=DESIGN_WIDTH or not 1<=height<=DESIGN_HEIGHT):
-        raise ContentError('UI target dimensions must fit the 220x176 design canvas')
+        not 1<=width<=1024 or not 1<=height<=1024 or width*height>131072):
+        raise ContentError('UI target dimensions exceed the supported framebuffer bound')
     monochrome=str(target_manifest.get('lcd_format','')).startswith('gray')
     physical_width=target_manifest.get('lcd_width')
     physical_height=target_manifest.get('lcd_height')
@@ -195,7 +195,7 @@ def compile_system(root, output, configpath=None, target_override=None):
         if style not in ('standard','monochrome','apple-photo','album-art'): raise ContentError('unknown theme style')
         layout=metadata.get('layout','default')
         if layout not in LAYOUTS: raise ContentError('unknown theme layout')
-        if monochrome or (width,height)!=(DESIGN_WIDTH,DESIGN_HEIGHT): layout='default'
+        if monochrome: layout='default'
         palette=spec.get('colors',{})
         if not {'foreground','background','accent','muted','panel'}<=set(palette): raise ContentError('theme lacks required color tokens')
         for key,value in palette.items():
@@ -304,10 +304,10 @@ def compile_system(root, output, configpath=None, target_override=None):
         licenses[variant['font_index']]=license_data
         font_paths[variant['id']]=bounded_path(root,font_license_path).relative_to(root).as_posix()
         variant['scenes']=scale_layout(apply_layout(scenes,variant,compact=monochrome),width,height)
-        if (width,height)!=(DESIGN_WIDTH,DESIGN_HEIGHT):
+        if (width,height)!=(REFERENCE_WIDTH,REFERENCE_HEIGHT):
             variant['metrics']=dict(
-                row_height=max(font['height'],(variant['metrics']['row_height']*height+DESIGN_HEIGHT//2)//DESIGN_HEIGHT),
-                padding=(variant['metrics']['padding']*width+DESIGN_WIDTH//2)//DESIGN_WIDTH)
+                row_height=max(font['height'],(variant['metrics']['row_height']*height+REFERENCE_HEIGHT//2)//REFERENCE_HEIGHT),
+                padding=(variant['metrics']['padding']*width+REFERENCE_WIDTH//2)//REFERENCE_WIDTH)
         enabled_scenes=gate_features(variant['scenes'],features)
         if not enabled_scenes&1:
             raise ContentError('the first UI scene must be enabled')

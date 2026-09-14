@@ -97,10 +97,10 @@ provision those original files automatically.
 Each dimension is1..2048 and no greater than its oriented original. Tile counts
 are `ceil(width/32)` by `ceil(height/32)`. Level intervals cover the tile index
 exactly once in photo/level order. Dimensions increase monotonically; duplicate
-levels are invalid. Level0 fits at most220×176; the current compiler uses220×156
-for the viewer below its status/header area. Successive levels approximately
-double, without upscaling, until the original or selected maximum long edge
-(default2048) is reached. Small originals may have one level.
+levels are invalid. Level0 fits the target's configured photo viewport and is
+bounded to 131,072 pixels. Successive levels approximately double, without
+upscaling, until the original or selected maximum long edge (default2048) is
+reached. Small originals may have one level.
 
 ## Tile record — 8 bytes
 

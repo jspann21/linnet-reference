@@ -1,6 +1,6 @@
 #include <stdbool.h>
 #include <stdint.h>
-#include "hal/pp5020/ata.h"
+#include "hal/api/ata.h"
 
 #define REG(a) (*(volatile uint32_t *)(uintptr_t)(a))
 

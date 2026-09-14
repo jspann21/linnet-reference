@@ -1,38 +1,8 @@
-#ifndef LINNET_RECOVERY_H
-#define LINNET_RECOVERY_H
-#define LN_STARTUP_TIMING_MAGIC 0x50555453
-#define LN_STARTUP_TIMING_BASE 192
-#define LN_STARTUP_TIMING_MASK 208
-#define LN_STARTUP_TIMING_TICKS 212
-#define LN_BOOT_TIMELINE_BASE 256
-#if defined(__ASSEMBLER__)
-#if defined(LINNET_IMAGE_OS) && !defined(LINNET_PROFILE_RELEASE)
-/* Private scratch r7-r9 only; no lease renewal or work inside progress loops.
- * Requiring the preceding mask prevents reusing a completed stale trailer. */
-.macro LN_STARTUP_STAMP index, bit
-    ldr r7, =0x11ffe000
-    ldr r8, [r7, #LN_STARTUP_TIMING_BASE]
-    ldr r9, =LN_STARTUP_TIMING_MAGIC
-    cmp r8, r9
-    bne 99f
-    ldr r8, [r7, #LN_STARTUP_TIMING_MASK]
-    cmp r8, #(\bit - 1)
-    bne 99f
-    ldr r9, =0x60005010
-    ldr r9, [r9]
-    str r9, [r7, #(LN_STARTUP_TIMING_TICKS + 4 * \index)]
-    orr r8, r8, #\bit
-    str r8, [r7, #LN_STARTUP_TIMING_MASK]
-99:
-.endm
-#endif
-#else
+#ifndef LINNET_HAL_RECOVERY_H
+#define LINNET_HAL_RECOVERY_H
+#if !defined(__ASSEMBLER__)
 #include <stdint.h>
-#define LINNET_OS_CAPACITY 0x00800000u
-#define LINNET_STAGE_ADDRESS 0x01000000u
-#define LINNET_STAGE_CAPACITY 0x00800000u
-#define LINNET_LOADER_SNAPSHOT 0x01e00000u
-#define LINNET_LOADER_CAPACITY 0x00100000u
+#include "linnet_target.h"
 int ln_recovery_init(int loader);
 int ln_recovery_ready(void);
 int ln_recovery_image_identity(uint8_t build[32], uint8_t image_sha[32]);

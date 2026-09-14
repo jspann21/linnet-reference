@@ -1,6 +1,6 @@
-#include "hal/pp5020/input.h"
-#include "hal/pp5020/core.h"
-#include "hal/pp5020/platform.h"
+#include "hal/api/input.h"
+#include "hal/api/core.h"
+#include "hal/api/platform.h"
 #define LINNET_MMIO(a) (*(volatile uint32_t *)(uintptr_t)(a))
 static struct ln_input_state ln_input;
 static int32_t ln_last_wheel = -1;

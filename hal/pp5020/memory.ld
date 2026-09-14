@@ -1,3 +1,4 @@
+#include "linnet_target.h"
 #if defined(LINNET_IMAGE_BOOT) && defined(LINNET_PLATFORM_CORE) && defined(LINNET_STORAGE)
 #define LINNET_BOOT_HASH_IRAM 1
 #ifdef LINNET_AUDIO
@@ -6,20 +7,20 @@
 #endif
 ENTRY(ln_start)
 MEMORY {
-  SDRAM (rwx) : ORIGIN = 0, LENGTH = 0x00800000
+  SDRAM (rwx) : ORIGIN = LINNET_LOAD_ADDRESS, LENGTH = LINNET_OS_CAPACITY
 #if !defined(LINNET_PROFILE_RELEASE) || defined(LINNET_STORAGE)
-  STAGE (rw) : ORIGIN = 0x01000000, LENGTH = 0x00800000
+  STAGE (rw) : ORIGIN = LINNET_STAGE_ADDRESS, LENGTH = LINNET_STAGE_CAPACITY
 #endif
 #ifndef LINNET_PROFILE_RELEASE
-  SNAPSHOT (rw) : ORIGIN = 0x01e00000, LENGTH = 0x00100000
-  CAPTURE (rw) : ORIGIN = 0x01f00000, LENGTH = 0x00013000
+  SNAPSHOT (rw) : ORIGIN = LINNET_LOADER_SNAPSHOT, LENGTH = LINNET_LOADER_CAPACITY
+  CAPTURE (rw) : ORIGIN = LINNET_LOADER_SNAPSHOT + LINNET_LOADER_CAPACITY, LENGTH = LINNET_LCD_WIDTH_ASM * LINNET_LCD_HEIGHT_ASM * 2
   USB_DMA (rw) : ORIGIN = 0x4000c000, LENGTH = 0xe00
 #endif
 #if !defined(LINNET_PROFILE_RELEASE) || defined(LINNET_PLATFORM_CORE)
-  CONTROL (rw) : ORIGIN = 0x01ffe000, LENGTH = 0x1000
+  CONTROL (rw) : ORIGIN = LINNET_MAILBOX_ADDRESS - 0x1000, LENGTH = 0x1000
 #endif
 #ifdef LINNET_PLATFORM_CORE
-  COP_MAILBOX (rw) : ORIGIN = 0x01ffd000, LENGTH = 0x1000
+  COP_MAILBOX (rw) : ORIGIN = LINNET_MAILBOX_ADDRESS - 0x2000, LENGTH = 0x1000
   COP_IRAM (rwx) : ORIGIN = 0x40001000, LENGTH = 0x2000
 #ifdef LINNET_BOOT_HASH_IRAM
   BOOT_HASH_IRAM (rwx) : ORIGIN = 0x40003000, LENGTH = 0x1000
@@ -31,7 +32,7 @@ MEMORY {
 #endif
   CACHE_STACK (rw) : ORIGIN = 0x4000e000, LENGTH = 0x1000
 #endif
-  MAILBOX (rw) : ORIGIN = 0x01fff000, LENGTH = 0x1000
+  MAILBOX (rw) : ORIGIN = LINNET_MAILBOX_ADDRESS, LENGTH = LINNET_MAILBOX_BYTES
 }
 SECTIONS {
   .vectors : { KEEP(*(.vectors)) } > SDRAM
@@ -86,7 +87,7 @@ SECTIONS {
   } > SDRAM
   .noinit (NOLOAD) : { KEEP(*(.noinit*)) } > MAILBOX
 #ifdef LINNET_STORAGE
-  .persistent_handoff 0x01fff100 (NOLOAD) : { . += 0x80; } > MAILBOX
+  .persistent_handoff (LINNET_MAILBOX_ADDRESS + 0x100) (NOLOAD) : { . += 0x80; } > MAILBOX
   ASSERT(SIZEOF(.noinit) <= 0x100, "Retained crash record overlaps persistent handoff")
 #endif
 #ifdef LINNET_PLATFORM_CORE
@@ -99,11 +100,11 @@ SECTIONS {
   .cache_stack (NOLOAD) : { . += 0x1000; } > CACHE_STACK
 #endif
 #if defined(LINNET_STORAGE) && defined(LINNET_PROFILE_RELEASE)
-  .update_staging (NOLOAD) : { . += 0x00800000; } > STAGE
+  .update_staging (NOLOAD) : { . += LINNET_STAGE_CAPACITY; } > STAGE
 #endif
 #ifndef LINNET_PROFILE_RELEASE
-  .dev_staging (NOLOAD) : { . += 0x00800000; } > STAGE
-  .dev_snapshot (NOLOAD) : { . += 0x00100000; } > SNAPSHOT
+  .dev_staging (NOLOAD) : { . += LINNET_STAGE_CAPACITY; } > STAGE
+  .dev_snapshot (NOLOAD) : { . += LINNET_LOADER_CAPACITY; } > SNAPSHOT
   .dev_capture (NOLOAD) : { *(.dev_capture) } > CAPTURE
   ASSERT(SIZEOF(.dev_capture) <= LENGTH(CAPTURE), "Development screenshot exceeds diagnostic reservation")
   .dev_usb_dma (NOLOAD) : { . += 0xe00; } > USB_DMA
@@ -124,4 +125,6 @@ SECTIONS {
   ASSERT(__stack_top <= 0x00100000, "Resident image exceeds 1 MiB")
 #endif
   ASSERT(SIZEOF(.vectors) == 32, "ARM vector table must be 32 bytes")
+  ASSERT(LINNET_MAILBOX_ADDRESS + LINNET_MAILBOX_BYTES <= LINNET_SDRAM_BYTES,
+         "Retained mailbox exceeds target SDRAM")
 }

@@ -1,6 +1,7 @@
-#include "hal/pp5020/display.h"
-#include "hal/pp5020/platform.h"
-#include "hal/pp5020/core.h"
+#include "hal/api/display.h"
+#include "hal/pp5020/display_internal.h"
+#include "hal/api/platform.h"
+#include "hal/api/core.h"
 #include "boot/include/linnet_boot.h"
 
 #define REG(address) (*(volatile uint32_t *)(uintptr_t)(address))
@@ -208,8 +209,9 @@ static void cpu_step(void) {
         uint32_t slot = LN_DISPLAY_QUEUE + (tail & 7u) * 16u;
         uint32_t x = MB(slot), y = MB(slot + 4), width = MB(slot + 8), height = MB(slot + 12);
         uint32_t buffer = MB(LN_DISPLAY_BUFFER);
-        if (x >= 220u || y >= 176u || !width || !height || width > 220u-x ||
-            height > 176u-y || ((x | width) & 1u) || (buffer & 3u) ||
+        if (x >= LINNET_UI_WIDTH || y >= LINNET_UI_HEIGHT || !width || !height ||
+            width > LINNET_UI_WIDTH-x || height > LINNET_UI_HEIGHT-y ||
+            ((x | width) & 1u) || (buffer & 3u) ||
             buffer < 0x10000000u || buffer > 0x10800000u-LINNET_DISPLAY_BYTES) { fail_job(4); return; }
         MB(LN_DISPLAY_X) = x; MB(LN_DISPLAY_Y) = y;
         MB(LN_DISPLAY_WIDTH) = width; MB(LN_DISPLAY_HEIGHT) = height;
@@ -229,11 +231,11 @@ static void cpu_step(void) {
         if (command == 0) value = 0x12u;
         else if (command == 1) value = MB(LN_DISPLAY_Y);
         else if (command == 2) value = 0x13u;
-        else if (command == 3) value = 219u-MB(LN_DISPLAY_X);
+        else if (command == 3) value = LINNET_UI_WIDTH-1u-MB(LN_DISPLAY_X);
         else if (command == 4) value = 0x15u;
         else if (command == 5) value = MB(LN_DISPLAY_Y)+MB(LN_DISPLAY_HEIGHT)-1u;
         else if (command == 6) value = 0x16u;
-        else value = 220u-MB(LN_DISPLAY_X)-MB(LN_DISPLAY_WIDTH);
+        else value = LINNET_UI_WIDTH-MB(LN_DISPLAY_X)-MB(LN_DISPLAY_WIDTH);
         PORT = 0x80000000u | value;
         MB(LN_DISPLAY_COMMAND) = command+1u;
         if (command == 7) MB(LN_DISPLAY_STATE) = 2;
@@ -252,7 +254,7 @@ static void cpu_step(void) {
     }
     if (state == 3) {
         if (!(CONTROL & 0x01000000u)) return;
-        uint32_t offset = (MB(LN_DISPLAY_Y)+MB(LN_DISPLAY_Y_CURSOR))*220u +
+        uint32_t offset = (MB(LN_DISPLAY_Y)+MB(LN_DISPLAY_Y_CURSOR))*LINNET_UI_WIDTH +
                           MB(LN_DISPLAY_X)+MB(LN_DISPLAY_X_CURSOR);
         const volatile uint16_t *pixels = (const volatile uint16_t *)(uintptr_t)MB(LN_DISPLAY_BUFFER);
         uint16_t first = pixels[offset], second = pixels[offset+1u];
@@ -312,7 +314,7 @@ bool ln_display_init(void) {
     initialized=true;
     MB(LN_DISPLAY_ENABLED)=cop_capable?1u:0u;
     if (!pause_worker(false)) {init_error=0x03000000u|((MB(LN_DISPLAY_PAUSED)&255u)<<16)|cop_error;initialized=false;return false;}
-    return ln_display_damage(0,0,220,176);
+    return ln_display_damage(0,0,LINNET_UI_WIDTH,LINNET_UI_HEIGHT);
 }
 uint32_t ln_display_init_error(void){return init_error;}
 
@@ -339,17 +341,18 @@ uint16_t *ln_display_direct_framebuffer(void) {
     /* A synchronous full repaint owns scanout until present publishes it.
      * Seed full damage even if the painter coalesces its own damage callbacks. */
     direct_frame=true;draw_stale=!column_mode;
-    damage[0]=(struct rectangle){0,0,220,176};damage_count=1;
+    damage[0]=(struct rectangle){0,0,LINNET_UI_WIDTH,LINNET_UI_HEIGHT};damage_count=1;
     barrier();
     return column_mode?draw_buffer:(uint16_t *)(uintptr_t)scanout();
 }
 
 bool ln_display_damage(int32_t x,int32_t y,int32_t width,int32_t height) {
-    if (!initialized || width<=0 || height<=0 || x>=220 || y>=176) return false;
+    if (!initialized || width<=0 || height<=0 ||
+        x>=(int32_t)LINNET_UI_WIDTH || y>=(int32_t)LINNET_UI_HEIGHT) return false;
     if (x<0) { if (x<=-width) return false; width+=x; x=0; }
     if (y<0) { if (y<=-height) return false; height+=y; y=0; }
-    if (width>220-x) width=220-x;
-    if (height>176-y) height=176-y;
+    if (width>(int32_t)LINNET_UI_WIDTH-x) width=(int32_t)LINNET_UI_WIDTH-x;
+    if (height>(int32_t)LINNET_UI_HEIGHT-y) height=(int32_t)LINNET_UI_HEIGHT-y;
     uint32_t right=((uint32_t)(x+width)+1u)&~1u;
     x&=~1;
     if(column_mode){uint32_t bottom=((uint32_t)(y+height)+1u)&~1u;y&=~1;height=(int32_t)bottom-y;}
@@ -372,7 +375,7 @@ bool ln_display_damage(int32_t x,int32_t y,int32_t width,int32_t height) {
         }
     }
     if (damage_count==LINNET_DISPLAY_QUEUE_CAPACITY) {
-        damage[0]=(struct rectangle){0,0,220,176};damage_count=1;
+        damage[0]=(struct rectangle){0,0,LINNET_UI_WIDTH,LINNET_UI_HEIGHT};damage_count=1;
     } else damage[damage_count++]=rectangle;
     return true;
 }
@@ -397,19 +400,19 @@ bool ln_display_present(void) {
          * remains with the CPU until the existing mailbox head publication. */
         extern void ln_memory_copy(void *,const void *,uint32_t);
         barrier();
-        if(r->x==0u&&r->width==220u){
-            uint32_t begin=r->y*220u;
+        if(r->x==0u&&r->width==LINNET_UI_WIDTH){
+            uint32_t begin=r->y*LINNET_UI_WIDTH;
             ln_memory_copy((void *)(uintptr_t)(scanout()+begin),
-                draw_buffer+begin,r->height*440u);
+                draw_buffer+begin,r->height*LINNET_UI_WIDTH*2u);
         }else for(uint32_t y=r->y;y<r->y+r->height;++y){
-            uint32_t begin=y*220u+r->x;
+            uint32_t begin=y*LINNET_UI_WIDTH+r->x;
             ln_memory_copy((void *)(uintptr_t)(scanout()+begin),
                 draw_buffer+begin,r->width*2u);
         }
         barrier();
 #else
         for(uint32_t y=r->y;y<r->y+r->height;++y) {
-            uint32_t begin=y*220u+r->x, remaining=r->width;
+            uint32_t begin=y*LINNET_UI_WIDTH+r->x, remaining=r->width;
             /* Both buffers are word aligned. Keep scalar edges so this copy
              * also remains exact if a future damage producer uses odd spans. */
             if((begin&1u)&&remaining){scanout()[begin]=draw_buffer[begin];++begin;--remaining;}
@@ -426,15 +429,17 @@ bool ln_display_present(void) {
             const struct rectangle *r=&damage[i];
 #if defined(__arm__)
             extern void ln_memory_columns(void *,const void *,uint32_t,uint32_t);
-            ln_memory_columns((void *)(uintptr_t)(scanout()+(219u-r->x)*176u+r->y),
-                draw_buffer+r->y*220u+r->x,r->width,r->height);
+            ln_memory_columns((void *)(uintptr_t)(scanout()+
+                (LINNET_UI_WIDTH-1u-r->x)*LINNET_UI_HEIGHT+r->y),
+                draw_buffer+r->y*LINNET_UI_WIDTH+r->x,r->width,r->height);
 #else
             volatile uint32_t *destination=(volatile uint32_t *)NATIVE(scanout_buffer);
             for(uint32_t x=r->x;x<r->x+r->width;++x){
-                uint32_t out=((219u-x)*176u+r->y)/2u;
+                uint32_t out=((LINNET_UI_WIDTH-1u-x)*LINNET_UI_HEIGHT+r->y)/2u;
                 for(uint32_t y=r->y;y<r->y+r->height;y+=2u){
-                    uint32_t at=y*220u+x;
-                    destination[out++]=(uint32_t)draw_buffer[at]|((uint32_t)draw_buffer[at+220u]<<16);
+                    uint32_t at=y*LINNET_UI_WIDTH+x;
+                    destination[out++]=(uint32_t)draw_buffer[at]|
+                        ((uint32_t)draw_buffer[at+LINNET_UI_WIDTH]<<16);
                 }
             }
 #endif
@@ -489,7 +494,9 @@ bool ln_display_service(uint32_t max_pairs) {
     if (!cop_capable) for (uint32_t i=0;i<max_pairs && MB(LN_DISPLAY_HEAD)!=MB(LN_DISPLAY_TAIL);++i) cpu_step();
     if (frame_pending && MB(LN_DISPLAY_HEAD)==MB(LN_DISPLAY_TAIL)) {
         frame_pending=false;
-        if (frame_failures!=MB(LN_DISPLAY_FAILURES)) { (void)ln_display_damage(0,0,220,176);return false; }
+        if (frame_failures!=MB(LN_DISPLAY_FAILURES)) {
+            (void)ln_display_damage(0,0,LINNET_UI_WIDTH,LINNET_UI_HEIGHT);return false;
+        }
         uint32_t elapsed=ln_time_us()-frame_started;
         transfer_us=ln_time_us()-transfer_started;
         if(transfer_us>transfer_max_us)transfer_max_us=transfer_us;
@@ -519,7 +526,7 @@ bool ln_display_reset(void) {
     damage_count=0;
     MB(LN_DISPLAY_ENABLED)=cop_capable?1u:0u;
     if (!pause_worker(false)) return false;
-    return ln_display_damage(0,0,220,176);
+    return ln_display_damage(0,0,LINNET_UI_WIDTH,LINNET_UI_HEIGHT);
 }
 
 void ln_display_presentation_snapshot(struct ln_display_presentation *output) {
@@ -542,7 +549,9 @@ uint32_t ln_display_snapshot_crc32(void) { const uint16_t *frame=ln_display_snap
 size_t ln_display_capture(uint8_t *output,size_t capacity) {
     if (!initialized || direct_frame || !output || capacity<LINNET_DISPLAY_BYTES) return 0;
     for (uint32_t i=0;i<LINNET_DISPLAY_PIXELS;++i) {
-        uint16_t pixel=column_mode?scanout()[(219u-i%220u)*176u+i/220u]:scanout()[i];output[2u*i]=(uint8_t)pixel;output[2u*i+1u]=(uint8_t)(pixel>>8);
+        uint16_t pixel=column_mode?scanout()[(LINNET_UI_WIDTH-1u-i%LINNET_UI_WIDTH)*
+            LINNET_UI_HEIGHT+i/LINNET_UI_WIDTH]:scanout()[i];
+        output[2u*i]=(uint8_t)pixel;output[2u*i+1u]=(uint8_t)(pixel>>8);
     }
     return LINNET_DISPLAY_BYTES;
 }
@@ -551,9 +560,10 @@ size_t ln_display_capture(uint8_t *output,size_t capacity) {
 uint32_t ln_display_column_mismatches(void) {
     if(!column_mode||direct_frame)return 0xffffffffu;
     uint32_t mismatches=0;
-    for(uint32_t y=0;y<176u;++y)
-        for(uint32_t x=0;x<220u;++x)
-            if(scanout()[(219u-x)*176u+y]!=draw_buffer[y*220u+x])++mismatches;
+    for(uint32_t y=0;y<LINNET_UI_HEIGHT;++y)
+        for(uint32_t x=0;x<LINNET_UI_WIDTH;++x)
+            if(scanout()[(LINNET_UI_WIDTH-1u-x)*LINNET_UI_HEIGHT+y]!=
+               draw_buffer[y*LINNET_UI_WIDTH+x])++mismatches;
     return mismatches;
 }
 void ln_display_sync_diagnostics(uint32_t output[16]) {

@@ -1,8 +1,9 @@
-#include "hal/pp5020/recovery.h"
-#include "hal/pp5020/platform.h"
+#include "hal/api/recovery.h"
+#include "hal/pp5020/recovery_internal.h"
+#include "hal/api/platform.h"
 #include "boot/include/linnet_boot.h"
 #if defined(LINNET_AUDIO)
-#include "hal/pp5020/core.h"
+#include "hal/api/core.h"
 #endif
 
 #if defined(LINNET_STORAGE)

@@ -1,12 +1,12 @@
 #include "kernel/storage_link.h"
 #include "services/storage/storage.h"
 #include "services/storage/block.h"
-#include "hal/pp5020/recovery.h"
-#include "hal/pp5020/platform.h"
+#include "hal/api/recovery.h"
+#include "hal/api/platform.h"
 #if defined(LINNET_IMAGE_OS)
 #include "services/update/native.h"
 #include "kernel/runtime.h"
-#include "hal/pp5020/display.h"
+#include "hal/api/display.h"
 #endif
 #if defined(LINNET_VIDEO)
 #include "services/video/video.h"

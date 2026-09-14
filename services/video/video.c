@@ -6,29 +6,32 @@
 #include "video.h"
 #include <stddef.h>
 #include "services/storage/storage.h"
-#include "hal/pp5020/audio.h"
-#include "hal/pp5020/platform.h"
-#define PIXELS (220u*176u)
+#include "hal/api/audio.h"
+#include "hal/api/platform.h"
+#define PIXELS (LINNET_VIDEO_WIDTH*LINNET_VIDEO_HEIGHT)
 #define FRAME_BYTES (PIXELS*2u)
 #define IPVF_PAYLOAD (FRAME_BYTES+4096u)
-#define PVID_RECORD 90112u
-#define RECORD 98304u
-#define IPVF_LZ_SCRATCH ((uint8_t *)(uintptr_t)0x01000000u)
+#define RECORD LN_STORAGE_MEDIA_MAX_READ
+#define PVID_RECORD (RECORD-8192u)
+#define IPVF_LZ_SCRATCH ((uint8_t *)(uintptr_t)LINNET_STAGE_ADDRESS)
 /* Reserved STAGE: LZ scratch, stereo PCM, decoded video, then raw records.
  * The HAL continues to own its existing DMA ring. */
-#define PCM_BASE ((uint32_t *)(uintptr_t)0x01020000u)
+#define PCM_BASE ((uint32_t *)(uintptr_t)(LINNET_STAGE_ADDRESS+0x00020000u))
 #define PCM_FRAMES 262144u
-#define VIDEO_BASE ((uint16_t *)(uintptr_t)0x01120000u)
-#define FRAME_SLOTS 83u
-#define VIDEO_PREROLL 80u
-#define RAW_BASE ((uint8_t *)(uintptr_t)0x01720000u)
+#define VIDEO_BASE ((uint16_t *)(uintptr_t)(LINNET_STAGE_ADDRESS+0x00120000u))
+#define VIDEO_STAGING_BYTES (LINNET_STAGE_CAPACITY-0x00200000u)
+#define FRAME_SLOT_CAPACITY (3u+VIDEO_STAGING_BYTES/FRAME_BYTES)
+#define FRAME_SLOTS (FRAME_SLOT_CAPACITY<96u?FRAME_SLOT_CAPACITY:96u)
+#define VIDEO_PREROLL (FRAME_SLOTS-3u<80u?FRAME_SLOTS-3u:80u)
+#define RAW_BASE ((uint8_t *)(uintptr_t)(LINNET_STAGE_ADDRESS+LINNET_STAGE_CAPACITY-0x000e0000u))
 #define RAW_CAPACITY 0x000e0000u
 #define RAW_ENTRIES 1024u
 #define NONE 0xffffffffu
 #include "crc_shift_table.h"
-_Static_assert(RECORD<(1u<<17),"video CRC shift length bound");
+_Static_assert(RECORD<(1u<<20),"video CRC shift length bound");
+_Static_assert(RECORD>=FRAME_BYTES+16384u,"target media read window is too small for a video frame");
 _Static_assert((PCM_FRAMES&(PCM_FRAMES-1u))==0u&&PCM_FRAMES*4u==0x00100000u,"video PCM staging bounds");
-_Static_assert((FRAME_SLOTS-3u)*FRAME_BYTES<=0x00600000u,"decoded video staging bounds");
+_Static_assert((FRAME_SLOTS-3u)*FRAME_BYTES<=VIDEO_STAGING_BYTES,"decoded video staging bounds");
 _Static_assert(VIDEO_PREROLL<FRAME_SLOTS,"decoded video preroll bounds");
 _Static_assert(FRAME_SLOTS<=96u,"decoded slot ownership bitmap bounds");
 enum phase {IDLE,OPEN,HEADER,VERIFY,INDEX,READ,CRC,DECODE,FRAME_CRC,PCM,WAIT,SEEK};
@@ -395,7 +398,7 @@ static inline __attribute__((always_inline)) int16_t ima_nibble(uint32_t code,in
 }
 /* CRC(A || B) = shift(CRC(A), sizeof B) XOR CRC(B), for finalized
  * IEEE CRC32 values. All callers validate lengths against RECORD first.
- * Host-generated powers bound this to 17 matrices of at most 32 bits. */
+ * Host-generated powers bound this to 20 matrices of at most 32 bits. */
 static uint32_t crc_shift(uint32_t crc,uint32_t bytes){
     for(uint32_t power=0;bytes;bytes>>=1,++power){
         if(bytes&1u){
@@ -449,7 +452,7 @@ static bool pvid_header(void){
     if(r32(b)!=0x44495650u||r32(b+4)!=512||r32(b+8)||r32(b+12)!=v.file.size||v.file.size>0x7fffffffu||r32(b+36)!=512||!zero(b+56,452)||checksum(b,508)!=r32(b+508))return false;
     v.width=r32(b+16);v.height=r32(b+20);v.fps=r32(b+24);v.count=r32(b+32);v.data_at=r32(b+40);v.max_record=r32(b+44);v.index_crc=r32(b+48);v.key_interval=r32(b+52);
     v.identity=r32(b+508);v.fps_num=v.fps;v.fps_den=1;v.rate=48000;
-    if(!v.width||v.width>220||!v.height||v.height>176||(v.fps!=24&&v.fps!=25&&v.fps!=30&&v.fps!=60)||r32(b+28)!=48000||!v.count||v.count>1000000u||!v.key_interval||v.key_interval>v.fps*10u||v.max_record<512||v.max_record>PVID_RECORD||(v.max_record&511u))return false;
+    if(!v.width||v.width>LINNET_VIDEO_WIDTH||!v.height||v.height>LINNET_VIDEO_HEIGHT||(v.fps!=24&&v.fps!=25&&v.fps!=30&&v.fps!=60)||r32(b+28)!=48000||!v.count||v.count>1000000u||!v.key_interval||v.key_interval>v.fps*10u||v.max_record<512||v.max_record>PVID_RECORD||(v.max_record&511u))return false;
     return v.data_at==((512u+v.count*32u+511u)&~511u)&&v.data_at<v.file.size&&v.count<=UINT32_MAX/(48000u/v.fps);
 }
 static uint32_t staged_pcm(void){return v.pcm_head-v.pcm_tail;}
@@ -511,9 +514,9 @@ static bool ipvf_index_record(const uint8_t*b){
 static bool ipvf_header(void){
     const uint8_t*b=v.record.bytes;uint32_t flags=r32(b+20),metadata=r16(b+66),metadata_at=r32(b+68);
     uint64_t media_end=r64(b+44),index_at=r64(b+52),index_bytes=(uint64_t)r32(b+60)*16u;
-    if(r32(b)!=0x46565049u||r16(b+4)!=80u||r16(b+6)!=220u||r16(b+8)!=176u||
+    if(r32(b)!=0x46565049u||r16(b+4)!=80u||r16(b+6)!=LINNET_VIDEO_WIDTH||r16(b+8)!=LINNET_VIDEO_HEIGHT||
        !r16(b+10)||!r16(b+12)||r16(b+10)<4u*r16(b+12)||r16(b+10)>240u*r16(b+12)||
-       !r32(b+16)||(flags!=11u&&flags!=27u)||r32(b+24)!=512u||!r16(b+14)||r16(b+14)>192u||
+       !r32(b+16)||(flags!=11u&&flags!=27u)||r32(b+24)!=512u||!r16(b+14)||r16(b+14)>LINNET_STORAGE_MAX_READ_SECTORS||
        r16(b+28)!=2u||r16(b+30)!=2u||r16(b+32)!=16u||r32(b+34)!=44100u||r16(b+42)||
        media_end<=512u||media_end>0x7fffffffu||index_at!=media_end||index_at>v.file.size||
        !r32(b+60)||r32(b+60)>r32(b+16)||r16(b+64)!=16u||metadata_at!=80u||metadata>432u||
@@ -524,7 +527,7 @@ static bool ipvf_header(void){
         if(tag<1u||tag>3u||!n||(tags&(1u<<tag))||n>end-at-2u)return false;tags|=1u<<tag;
         if(tag==1u){uint32_t take=n<127u?n:127u;copy(v.title,b+at+2u,take);v.title[take]=0;}at+=2u+n;}
     if(!zero(b+end,512u-end))return false;
-    v.ipvf=true;v.temporal=(flags&16u)!=0;v.width=220;v.height=176;v.fps_num=r16(b+10);v.fps_den=r16(b+12);v.fps=v.fps_num/v.fps_den;
+    v.ipvf=true;v.temporal=(flags&16u)!=0;v.width=LINNET_VIDEO_WIDTH;v.height=LINNET_VIDEO_HEIGHT;v.fps_num=r16(b+10);v.fps_den=r16(b+12);v.fps=v.fps_num/v.fps_den;
     /* Keep a 1.5-second video cushion for expensive scenes; the audio
      * producer continues targeting four seconds independently. */
     v.preroll=(3u*v.fps_num+2u*v.fps_den-1u)/(2u*v.fps_den);
@@ -793,7 +796,7 @@ static bool ipvf_record_header(void){
        (temporal&&(!v.temporal||v.next==0u||v.video_bytes<(v.source_type==6u?7u:5u))))return false;
     v.lz_input_offset=16u;v.lz_input_bytes=v.video_bytes;v.lz_output_bytes=v.decoded_bytes;v.lz_output_slot=NONE;v.motion_dx=v.motion_dy=0;
     if(temporal){const uint8_t*p=b+16;if(v.source_type==6u){v.motion_dx=(int8_t)p[0];v.motion_dy=(int8_t)p[1];
-            if(v.motion_dx<=-220||v.motion_dx>=220||v.motion_dy<=-176||v.motion_dy>=176)return false;v.lz_input_offset+=2u;v.lz_input_bytes-=2u;p+=2;}
+            if(v.motion_dx<=-(int32_t)v.width||v.motion_dx>=(int32_t)v.width||v.motion_dy<=-(int32_t)v.height||v.motion_dy>=(int32_t)v.height)return false;v.lz_input_offset+=2u;v.lz_input_bytes-=2u;p+=2;}
         uint32_t expected=r32(p);v.lz_input_offset+=4u;v.lz_input_bytes-=4u;/* The FIFO retains immutable bytes already checked by the audio scan. */
         if(v.prefetching&&rockbox_crc(~0u,b+v.lz_input_offset,v.lz_input_bytes)!=expected)return false;}
     v.decode_at=v.decode_pixel=v.rect_row=0;v.rect_data_at=NONE;v.at=compressed?0u:1u;
@@ -849,12 +852,12 @@ static int decode_ipvf(void){
                 /* Residual-only borders predict zero. Intersect translated
                  * source bounds once, then XOR only valid row spans. */
                 uint32_t first_x=v.motion_dx>0?(uint32_t)v.motion_dx:0u;
-                uint32_t last_x=v.motion_dx<0?(uint32_t)(220+v.motion_dx):220u;
+                uint32_t last_x=v.motion_dx<0?(uint32_t)((int32_t)v.width+v.motion_dx):v.width;
                 uint32_t first_y=v.motion_dy>0?(uint32_t)v.motion_dy:0u;
-                uint32_t last_y=v.motion_dy<0?(uint32_t)(176+v.motion_dy):176u;
+                uint32_t last_y=v.motion_dy<0?(uint32_t)((int32_t)v.height+v.motion_dy):v.height;
                 for(uint32_t row=first_y;row<last_y;++row){
-                    uint16_t*span=out+row*220u+first_x;
-                    const uint16_t*prediction=previous+(uint32_t)((int32_t)row-v.motion_dy)*220u+
+                    uint16_t*span=out+row*v.width+first_x;
+                    const uint16_t*prediction=previous+(uint32_t)((int32_t)row-v.motion_dy)*v.width+
                         (uint32_t)((int32_t)first_x-v.motion_dx);
                     uint32_t width=last_x-first_x;
                     if(!(v.motion_dx&1)){
@@ -871,12 +874,12 @@ static int decode_ipvf(void){
         /* For one validated full-width rectangle, initialize only rows that
          * its conversion will leave untouched. The normal parser still runs. */
         bool full_width=v.type==1u&&v.tile_count==1u&&v.decoded_bytes>=8u&&
-            !payload[0]&&payload[2]==220u&&payload[3]&&payload[1]+payload[3]<=176u&&
-            v.decoded_bytes==8u+440u*payload[3]&&r32(payload+4u)==440u*payload[3];
+            !payload[0]&&(uint32_t)payload[2]==v.width&&payload[3]&&payload[1]+payload[3]<=v.height&&
+            v.decoded_bytes==8u+v.width*2u*payload[3]&&r32(payload+4u)==v.width*2u*payload[3];
         if(full_width){
             uint32_t top=payload[1],bottom=top+payload[3];
-            if(top)copy(out,previous,top*440u);
-            if(bottom<176u)copy(out+bottom*220u,previous+bottom*220u,(176u-bottom)*440u);
+            if(top)copy(out,previous,top*v.width*2u);
+            if(bottom<v.height)copy(out+bottom*v.width,previous+bottom*v.width,(v.height-bottom)*v.width*2u);
         }else copy(out,previous,FRAME_BYTES);
         v.decode_pixel=PIXELS;
     }
@@ -886,15 +889,15 @@ static int decode_ipvf(void){
     typedef uint32_t rect_pair __attribute__((may_alias));
 #endif
     while(v.tile_count){if(v.decode_at+8u>v.decoded_bytes)return -1;uint32_t x=payload[v.decode_at],y=payload[v.decode_at+1],w=payload[v.decode_at+2],h=payload[v.decode_at+3],bytes=r32(payload+v.decode_at+4);
-        if(!w||!h||x+w>220u||y+h>176u||bytes!=w*h*2u||bytes>v.decoded_bytes-v.decode_at-8u)return -1;
+        if(!w||!h||x+w>v.width||y+h>v.height||bytes!=w*h*2u||bytes>v.decoded_bytes-v.decode_at-8u)return -1;
         const uint8_t*source=payload+v.decode_at+8u;
 #if defined(__arm__)
-        if(w==220u)ln_video_copy_rgb565(out+y*220u,source,w*h);
+        if(w==v.width)ln_video_copy_rgb565(out+y*v.width,source,w*h);
         else for(uint32_t row=0;row<h;++row)
-            ln_video_copy_rgb565(out+(y+row)*220u+x,source+row*w*2u,w);
+            ln_video_copy_rgb565(out+(y+row)*v.width+x,source+row*w*2u,w);
 #else
         for(uint32_t row=0;row<h;++row){
-            uint16_t*target=out+(y+row)*220u+x;
+            uint16_t*target=out+(y+row)*v.width+x;
             const rect_pixel*input=(const rect_pixel*)(source+row*w*2u);uint32_t remaining=w;
             /* Rectangle headers and pixels preserve halfword alignment.
              * Peel one destination pixel, then store aligned pixel pairs. */

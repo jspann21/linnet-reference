@@ -2,7 +2,7 @@
 #define LINNET_DISPLAY_CLOCK_H
 #include <stdbool.h>
 #include <stdint.h>
-#include "hal/pp5020/power.h"
+#include "hal/api/power.h"
 struct ln_ui_state;
 struct ln_ui_node;
 /* Memory-only draft controller. Caller owns admission and every RTC operation. */

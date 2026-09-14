@@ -1,6 +1,6 @@
 #include "library.h"
 #include "services/storage/storage.h"
-#include "hal/pp5020/platform.h"
+#include "hal/api/platform.h"
 
 enum job { JOB_NONE=0,JOB_WINDOW,JOB_SELECTION,JOB_SEARCH,JOB_GROUP,JOB_MEMBER,JOB_PREFETCH,JOB_QUEUE,JOB_VIEW,JOB_VIEW_GROUP,JOB_GROUP_RECORD };
 struct library {

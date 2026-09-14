@@ -1,6 +1,6 @@
 #ifndef LINNET_BLOCK_H
 #define LINNET_BLOCK_H
-#include "hal/pp5020/ata.h"
+#include "hal/api/ata.h"
 #define LINNET_BLOCK_QUEUE 8u
 enum ln_block_op { LN_BLOCK_READ=1,LN_BLOCK_WRITE=2,LN_BLOCK_FLUSH=3,LN_BLOCK_STANDBY=4,LN_BLOCK_WAKE=5 };
 struct ln_block_completion { uint32_t request_id,generation,status,sectors_done; };

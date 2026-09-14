@@ -1,7 +1,8 @@
 .syntax unified
 .cpu arm7tdmi
 .arm
-#include "hal/pp5020/recovery.h"
+#include "hal/api/recovery.h"
+#include "hal/pp5020/recovery_internal.h"
 .section .vectors,"ax",%progbits
 .global ln_start
 ln_start:

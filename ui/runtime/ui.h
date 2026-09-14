@@ -2,15 +2,7 @@
 #define LINNET_UI_H
 #include <stdint.h>
 #include <stdbool.h>
-#if defined(__has_include)
-#if __has_include("linnet_target.h")
 #include "linnet_target.h"
-#endif
-#endif
-#ifndef LINNET_UI_WIDTH
-#define LINNET_UI_WIDTH 220u
-#define LINNET_UI_HEIGHT 176u
-#endif
 #define LINNET_UI_MAX_SCENES 32u
 #define LINNET_UI_ACTION_SYNC 0xfffffffeu
 enum ln_ui_kind { LN_UI_SCREEN=1,LN_UI_VIEW,LN_UI_TEXT,LN_UI_ICON,LN_UI_IMAGE,

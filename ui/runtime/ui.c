@@ -1,4 +1,6 @@
 #include "ui/runtime/ui.h"
+#define UI_X(value) ((int32_t)((value)*LINNET_UI_WIDTH/220u))
+#define UI_Y(value) ((int32_t)((value)*LINNET_UI_HEIGHT/176u))
 static uint32_t session_theme=UINT32_MAX,active_theme;
 static bool theme_ready;
 static bool session_clock_12;
@@ -152,7 +154,7 @@ uint32_t ln_ui_palette_tick(struct ln_ui_state*s,uint32_t now){
     bool changed_art=entered||revision!=album_revision;
     if(changed_art){
         album_revision=revision;
-        album_waiting=!(a&&a->pixels&&a->width&&a->height&&a->width<=220u&&a->height<=176u);
+        album_waiting=!(a&&a->pixels&&a->width&&a->height&&a->width<=LINNET_UI_WIDTH&&a->height<=LINNET_UI_HEIGHT);
         album_missing_at=now;
     }
     /* Rockbox keeps the previous palette while the next cover loads, then
@@ -161,7 +163,7 @@ uint32_t ln_ui_palette_tick(struct ln_ui_state*s,uint32_t now){
     if((changed_art&&!album_waiting)||missing_expired){
         album_waiting=false;
         for(uint32_t i=0;i<LN_UI_COLOR_COUNT;++i){album_from[i]=album_colors[i];album_target[i]=ln_ui_themes[active_theme].colors[i];}
-        if(a&&a->pixels&&a->width&&a->height&&a->width<=220u&&a->height<=176u)album_extract(a,album_target);
+        if(a&&a->pixels&&a->width&&a->height&&a->width<=LINNET_UI_WIDTH&&a->height<=LINNET_UI_HEIGHT)album_extract(a,album_target);
         album_started=now;album_fading=false;
         for(uint32_t i=0;i<LN_UI_COLOR_COUNT;++i)if(album_from[i]!=album_target[i])album_fading=true;
         if(entered)s->dirty|=1u;
@@ -516,15 +518,15 @@ static void vertical_battery(struct painter*p,int32_t x,int32_t y,uint16_t ink){
 static void chrome(struct painter*p,struct ln_ui_state*s){
     uint16_t ink=color(LN_UI_MUTED);char clock[6];time_label(clock);
     if(layout()==LN_UI_LAYOUT_AURORA){
-        fill(p,(struct rect){0,0,26,176},color(LN_UI_PANEL));fill(p,(struct rect){25,0,1,176},color(LN_UI_BORDER));
-        vertical_battery(p,7,10,ink);symbol(p,7,47,ln_ui_playback_status(),ink);
-        if(s->headphones)symbol(p,7,77,3,ink);if(s->hold)symbol(p,7,107,4,ink);
-        clock[2]=0;text(p,max(1,(25-text_width(clock))/2),142,clock,ink);
-        text(p,max(1,(25-text_width(clock+3))/2),157,clock+3,ink);
+        fill(p,(struct rect){0,0,UI_X(26),LINNET_UI_HEIGHT},color(LN_UI_PANEL));fill(p,(struct rect){UI_X(25),0,1,LINNET_UI_HEIGHT},color(LN_UI_BORDER));
+        vertical_battery(p,UI_X(7),UI_Y(10),ink);symbol(p,UI_X(7),UI_Y(47),ln_ui_playback_status(),ink);
+        if(s->headphones)symbol(p,UI_X(7),UI_Y(77),3,ink);if(s->hold)symbol(p,UI_X(7),UI_Y(107),4,ink);
+        clock[2]=0;text(p,max(1,(UI_X(25)-text_width(clock))/2),UI_Y(142),clock,ink);
+        text(p,max(1,(UI_X(25)-text_width(clock+3))/2),UI_Y(157),clock+3,ink);
     }else if(layout()==LN_UI_LAYOUT_GRAPHITE||layout()==LN_UI_LAYOUT_SUNSET){
-        fill(p,(struct rect){0,154,220,22},color(LN_UI_PANEL));
-        symbol(p,10,159,ln_ui_playback_status(),ink);if(s->headphones)symbol(p,29,159,3,ink);if(s->hold)symbol(p,48,159,4,ink);
-        symbol(p,155,159,5,ink);fitted_text(p,170,154+max(0,(22-(int32_t)ln_ui_font.height)/2),clock,ink,48);
+        fill(p,(struct rect){0,UI_Y(154),LINNET_UI_WIDTH,LINNET_UI_HEIGHT-UI_Y(154)},color(LN_UI_PANEL));
+        symbol(p,UI_X(10),UI_Y(159),ln_ui_playback_status(),ink);if(s->headphones)symbol(p,UI_X(29),UI_Y(159),3,ink);if(s->hold)symbol(p,UI_X(48),UI_Y(159),4,ink);
+        symbol(p,UI_X(155),UI_Y(159),5,ink);fitted_text(p,UI_X(170),UI_Y(154)+max(0,(UI_Y(22)-(int32_t)ln_ui_font.height)/2),clock,ink,UI_X(48));
     }
 }
 static uint32_t status_signature(void){
@@ -705,7 +707,7 @@ bool ln_ui_input(struct ln_ui_state*s,uint32_t kind,int32_t value){if(!s)return 
 /* Retain opaque video controls between data changes. Each band is bounded;
  * unfamiliar layouts use normal painting. Never cache the moving video pixels. */
 static struct {
-    uint16_t pixels[220u*112u],colors[LN_UI_COLOR_COUNT];
+    uint16_t pixels[LINNET_UI_WIDTH*LINNET_UI_HEIGHT],colors[LN_UI_COLOR_COUNT];
     uint32_t scene,epoch,theme,battery,playback,minute,progress,top,bottom;
     bool valid,hold,headphones,clock12;
     char status[128];
@@ -721,12 +723,12 @@ static void overlay_copy(uint16_t *to,const uint16_t *from,uint32_t pixels){
 static bool paint_video_overlay(struct painter*p,struct ln_ui_state*s,const struct ln_ui_scene*c){
     if(!same(c->id,"linnet.system.video-controls")||c->count!=5u||
        c->nodes[2].kind!=LN_UI_STATUS_BAR||c->nodes[3].kind!=LN_UI_PROGRESS_BAR||c->nodes[4].kind!=LN_UI_TEXT||
-       p->clip.x||p->clip.y||p->clip.w!=220||p->clip.h!=176)return false;
-    uint32_t top=0,bottom=176;
+       p->clip.x||p->clip.y||p->clip.w!=(int32_t)LINNET_UI_WIDTH||p->clip.h!=(int32_t)LINNET_UI_HEIGHT)return false;
+    uint32_t top=0,bottom=LINNET_UI_HEIGHT;
     for(uint32_t i=2;i<c->count;++i){const struct ln_ui_node*n=&c->nodes[i];
-        if(n->flags&2u||n->y<0||n->h<=0||n->y+n->h>176)return false;
-        if(n->y+n->h<=48){if((uint32_t)(n->y+n->h)>top)top=(uint32_t)(n->y+n->h);}
-        else if(n->y>=112){if((uint32_t)n->y<bottom)bottom=(uint32_t)n->y;}
+        if(n->flags&2u||n->y<0||n->h<=0||n->y+n->h>(int32_t)LINNET_UI_HEIGHT)return false;
+        if((uint32_t)(n->y+n->h)<=LINNET_UI_HEIGHT*48u/176u){if((uint32_t)(n->y+n->h)>top)top=(uint32_t)(n->y+n->h);}
+        else if((uint32_t)n->y>=LINNET_UI_HEIGHT*112u/176u){if((uint32_t)n->y<bottom)bottom=(uint32_t)n->y;}
         else return false;
     }
     uint32_t battery=ln_ui_battery_status(),playback=ln_ui_playback_status(),minute=ln_ui_clock_seconds()/60u;
@@ -743,14 +745,14 @@ static bool paint_video_overlay(struct painter*p,struct ln_ui_state*s,const stru
     for(uint32_t i=0;i<LN_UI_COLOR_COUNT;++i)if(video_overlay.colors[i]!=color(i))changed=true;
     /* The opaque bands replace these rows completely. Copy only the visible
      * video rows instead of writing the covered pixels twice to scanout. */
-    struct rect clip=p->clip;p->clip=(struct rect){0,(int32_t)top,220,(int32_t)(bottom-top)};
+    struct rect clip=p->clip;p->clip=(struct rect){0,(int32_t)top,LINNET_UI_WIDTH,(int32_t)(bottom-top)};
     draw_node(p,&c->nodes[1],s,false);p->clip=clip;
     if(changed){
-        fill(p,(struct rect){0,0,220,(int32_t)top},color(LN_UI_PANEL));
-        fill(p,(struct rect){0,(int32_t)bottom,220,176-(int32_t)bottom},color(LN_UI_PANEL));
+        fill(p,(struct rect){0,0,LINNET_UI_WIDTH,(int32_t)top},color(LN_UI_PANEL));
+        fill(p,(struct rect){0,(int32_t)bottom,LINNET_UI_WIDTH,LINNET_UI_HEIGHT-(int32_t)bottom},color(LN_UI_PANEL));
         for(uint32_t i=2;i<c->count;++i)draw_node(p,&c->nodes[i],s,i==c->focus_node);
-        overlay_copy(video_overlay.pixels,p->pixels,top*220u);
-        overlay_copy(video_overlay.pixels+48u*220u,p->pixels+bottom*220u,(176u-bottom)*220u);
+        overlay_copy(video_overlay.pixels,p->pixels,top*LINNET_UI_WIDTH);
+        overlay_copy(video_overlay.pixels+bottom*LINNET_UI_WIDTH,p->pixels+bottom*LINNET_UI_WIDTH,(LINNET_UI_HEIGHT-bottom)*LINNET_UI_WIDTH);
         video_overlay.scene=s->scene;video_overlay.epoch=s->scene_epoch;video_overlay.theme=active_theme;
         video_overlay.battery=battery;video_overlay.playback=playback;video_overlay.minute=minute;video_overlay.progress=progress;
         video_overlay.top=top;video_overlay.bottom=bottom;video_overlay.hold=s->hold;video_overlay.headphones=s->headphones;
@@ -758,8 +760,8 @@ static bool paint_video_overlay(struct painter*p,struct ln_ui_state*s,const stru
         for(uint32_t i=0;i<LN_UI_COLOR_COUNT;++i)video_overlay.colors[i]=color(i);
         video_overlay.valid=true;
     }else{
-        overlay_copy(p->pixels,video_overlay.pixels,top*220u);
-        overlay_copy(p->pixels+bottom*220u,video_overlay.pixels+48u*220u,(176u-bottom)*220u);
+        overlay_copy(p->pixels,video_overlay.pixels,top*LINNET_UI_WIDTH);
+        overlay_copy(p->pixels+bottom*LINNET_UI_WIDTH,video_overlay.pixels+bottom*LINNET_UI_WIDTH,(LINNET_UI_HEIGHT-bottom)*LINNET_UI_WIDTH);
     }
     return true;
 }
@@ -788,9 +790,9 @@ static void paint(struct ln_ui_state*s,uint16_t*pixels,struct rect r,ln_ui_damag
     }
     if(layout()==LN_UI_LAYOUT_MINIMAL){
         uint32_t status=ln_ui_battery_status();
-        fill(&p,(struct rect){0,0,220,2},color(LN_UI_BACKGROUND));
+        fill(&p,(struct rect){0,0,LINNET_UI_WIDTH,2},color(LN_UI_BACKGROUND));
         if(status!=UINT32_MAX&&(status&255u)<=100u)
-            fill(&p,(struct rect){0,0,(int32_t)((status&255u)*220u/100u),2},color(LN_UI_BATTERY));
+            fill(&p,(struct rect){0,0,(int32_t)((status&255u)*LINNET_UI_WIDTH/100u),2},color(LN_UI_BATTERY));
     }
     s->painted_pixels+=(uint32_t)(r.w*r.h);if(damage)damage(r.x,r.y,r.w,r.h);
 }
@@ -949,7 +951,7 @@ void ln_ui_render(struct ln_ui_state*s,uint16_t*pixels,ln_ui_damage_fn damage){i
     if(!s->rendered||(s->dirty&1u))paint(s,pixels,screen,damage);
     else if(s->dirty==4u&&!same(ln_ui_scenes[s->scene].id,"linnet.system.clock")&&
             (layout()==LN_UI_LAYOUT_AURORA||layout()==LN_UI_LAYOUT_GRAPHITE||layout()==LN_UI_LAYOUT_SUNSET)){
-        paint(s,pixels,layout()==LN_UI_LAYOUT_AURORA?(struct rect){0,0,26,176}:(struct rect){0,154,220,22},damage);
+        paint(s,pixels,layout()==LN_UI_LAYOUT_AURORA?(struct rect){0,0,UI_X(26),LINNET_UI_HEIGHT}:(struct rect){0,UI_Y(154),LINNET_UI_WIDTH,LINNET_UI_HEIGHT-UI_Y(154)},damage);
         for(uint32_t i=0;c&&i<c->count&&i<1024u;++i){const struct ln_ui_node*n=&c->nodes[i];
             if(n->kind==LN_UI_STATUS_BAR||(n->deps&16u))paint(s,pixels,bounds(n),damage);
         }
@@ -966,7 +968,7 @@ void ln_ui_render(struct ln_ui_state*s,uint16_t*pixels,ln_ui_damage_fn damage){i
             }
             bool selected=(s->dirty&2u)&&(i==c->focus_node||(n->kind==LN_UI_SCROLLBAR?scrollbar_changed:(n->deps&3u)));bool status=(s->dirty&4u)&&(n->kind==LN_UI_STATUS_BAR||(n->deps&16u));bool animation=(s->dirty&8u)&&(n->deps&4u);if(selected&&!status&&!animation&&i==c->focus_node&&selection_damage(s,pixels,n,damage)){cached_selection=render_dirty==2u;continue;}if(selected||status||animation)paint(s,pixels,bounds(n),damage);}
     }
-    if(layout()==LN_UI_LAYOUT_MINIMAL&&(s->dirty&4u)&&!(s->dirty&1u))paint(s,pixels,(struct rect){0,0,220,2},damage);
+    if(layout()==LN_UI_LAYOUT_MINIMAL&&(s->dirty&4u)&&!(s->dirty&1u))paint(s,pixels,(struct rect){0,0,LINNET_UI_WIDTH,2},damage);
     if((s->dirty&32u)&&!(s->dirty&1u))paint_scrolling(s,pixels,c,damage);
     /* Report the retained viewport, not only the rows touched by an
      * incremental selection or content repaint. */

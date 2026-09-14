@@ -76,6 +76,9 @@ def inspect_file(
     path: Path,
     on_frame=None,
     cancelled=None,
+    expected_width=None,
+    expected_height=None,
+    max_record_sectors=1024,
 ) -> dict:
     file_size = path.stat().st_size
     verify_audio = True
@@ -87,6 +90,11 @@ def inspect_file(
         header_size, width, height, fps_num, fps_den, first_sectors, \
             frame_count, \
             flags, data_offset = struct.unpack_from("<HHHHHHIII", header, 4)
+        _require(expected_width is None or width == expected_width,
+                 "video width does not match the target")
+        _require(expected_height is None or height == expected_height,
+                 "video height does not match the target")
+        ipvf.configure_geometry(width, height, max_record_sectors)
         audio_format, channels, bits, sample_rate, audio_frames = \
             struct.unpack_from("<HHHII", header, 28)
         pre_media_reserved = struct.unpack_from("<H", header, 42)[0]
@@ -369,6 +377,8 @@ def inspect_file(
         "fps": fps_num if fps_den == 1 else f"{fps_num}/{fps_den}",
         "fps_num": fps_num,
         "fps_den": fps_den,
+        "width": width,
+        "height": height,
         "duration_seconds": frame_count * fps_den / fps_num,
         "counts": dict(sorted(counts.items())),
         "stored_video_bytes": stored_video_total,

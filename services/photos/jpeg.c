@@ -1,4 +1,5 @@
 #include "jpeg.h"
+#include "linnet_target.h"
 extern void ln_jpeg_idct8(unsigned char *,int *,int *,int);
 static const uint8_t zigzag[64]={0,1,8,16,9,2,3,10,17,24,32,25,18,11,4,5,
  12,19,26,33,40,48,41,34,27,20,13,6,7,14,21,28,35,42,49,56,
@@ -179,7 +180,7 @@ int ln_photo_jpeg_init(struct ln_photo_jpeg*j,const uint8_t*source,uint32_t byte
     uint32_t width,uint32_t height,uint32_t stride,uint32_t orientation){
     if(!j)return LN_PHOTO_JPEG_ARGUMENT;
     uint8_t*p=(uint8_t*)j;for(uint32_t i=0;i<sizeof(*j);++i)p[i]=0;
-    if(!source||!surface||!width||width>220||!height||height>176||stride<width||stride>220||orientation<1||orientation>8)return fail(j,LN_PHOTO_JPEG_ARGUMENT);
+    if(!source||!surface||!width||width>LINNET_PHOTO_WIDTH||!height||height>LINNET_PHOTO_HEIGHT||stride<width||stride>LINNET_PHOTO_WIDTH||orientation<1||orientation>8)return fail(j,LN_PHOTO_JPEG_ARGUMENT);
     if(bytes>LN_PHOTO_JPEG_MAX_BYTES)return fail(j,LN_PHOTO_JPEG_UNSUPPORTED);
     if(bytes<4||source[0]!=255||source[1]!=0xd8)return fail(j,LN_PHOTO_JPEG_CORRUPT);
     j->source=source;j->bytes=bytes;j->surface=surface;j->output_width=width;j->output_height=height;j->stride=stride;j->orientation=orientation;j->cursor=2;j->phase=1;return 0;

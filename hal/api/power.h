@@ -1,5 +1,5 @@
-#ifndef LINNET_PP5020_POWER_H
-#define LINNET_PP5020_POWER_H
+#ifndef LINNET_HAL_POWER_H
+#define LINNET_HAL_POWER_H
 #include <stdbool.h>
 #include <stdint.h>
 #define LINNET_POWER_USB 1u

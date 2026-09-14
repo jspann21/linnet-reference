@@ -1,10 +1,11 @@
-#include "hal/pp5020/platform.h"
+#include "hal/api/platform.h"
 
 /* Register addresses and bus protocol provenance: docs/architecture.md. */
 #define LINNET_REG(a) (*(volatile uint32_t *)(uintptr_t)(a))
 static uint32_t ln_last_progress;
 
 uint32_t ln_time_us(void) { return LINNET_REG(0x60005010u); }
+uintptr_t ln_platform_uncached_address(uintptr_t address) { return address | 0x10000000u; }
 
 /* Both elapsed time and instruction-count bounds: a stopped timer cannot hang
  * an LCD operation. One budget covers the complete frame, including commands. */

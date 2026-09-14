@@ -1,5 +1,5 @@
-#ifndef LINNET_PP5020_CORE_H
-#define LINNET_PP5020_CORE_H
+#ifndef LINNET_HAL_CORE_H
+#define LINNET_HAL_CORE_H
 #include <stdbool.h>
 #include <stdint.h>
 #define LINNET_WAKE_TIMER 1u

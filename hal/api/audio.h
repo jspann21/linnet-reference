@@ -1,5 +1,5 @@
-#ifndef LINNET_PP5020_AUDIO_H
-#define LINNET_PP5020_AUDIO_H
+#ifndef LINNET_HAL_AUDIO_H
+#define LINNET_HAL_AUDIO_H
 #include <stdint.h>
 #include <stdbool.h>
 /* Covers bounded next-file chain verification while current audio continues.

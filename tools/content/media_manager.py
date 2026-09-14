@@ -75,12 +75,19 @@ def _identify(identity):
     spec = TARGETS[detected["target_id"]]
     enabled = spec.get("capabilities", {}).get("video", True)
     fps, color = spec.get("media_video_fps", 24), spec.get("media_video_color", "rgb565")
-    if type(enabled) is not bool or type(fps) is not int or not 4 <= fps <= 30 or color not in ("rgb565", "gray4"):
+    photo_size=(spec.get("media_photo_width"),spec.get("media_photo_height"))
+    video_size=(spec.get("media_video_width"),spec.get("media_video_height"))
+    if (type(enabled) is not bool or type(fps) is not int or not 4 <= fps <= 30 or
+            color not in ("rgb565", "gray4") or
+            any(type(value) is not int or value < 1 for value in (*photo_size,*video_size))):
         raise RuntimeError(f"invalid media profile in target manifest: {detected['target_id']}")
     return dict(identity, target_id=detected["target_id"], target_name=spec["name"],
                 model_number=detected["retail_os"].get("model_number"),
                 regulatory_model=(spec["retail"]["regulatory_models"] or [None])[0],
-                media_profile=dict(video_enabled=enabled, video_fps=fps, video_color=color))
+                media_profile=dict(video_enabled=enabled, video_fps=fps, video_color=color,
+                    photo_width=photo_size[0],photo_height=photo_size[1],
+                    video_width=video_size[0],video_height=video_size[1],
+                    max_read_sectors=spec["storage_max_read_sectors"]))
 
 
 def supported_kinds(identity):
@@ -454,7 +461,9 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     from .photos import compile_photos
                     from .publish_photos import publish_photos
                     package = cache / "photos.pimg"
-                    compile_photos(folder, package, max_dimension=photo_dimension)
+                    compile_photos(folder, package, max_dimension=photo_dimension,
+                                   viewport_width=media_profile["photo_width"],
+                                   viewport_height=media_profile["photo_height"])
                     checkpoint()
                     progress("Publishing prepared photos…")
                     published.append(publish_photos(package, **target_args(identity)))
@@ -490,7 +499,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             key = hashlib.sha256(relative.encode()).hexdigest()[:8].upper()
                             source_info = source.stat()
                             source_stamp = (source_info.st_size, source_info.st_mtime_ns)
-                            profile_key = f"{media_profile['video_fps']}-{media_profile['video_color']}-realtime"
+                            profile_key = (f"{media_profile['video_width']}x{media_profile['video_height']}-"
+                                           f"{media_profile['video_fps']}-{media_profile['video_color']}-realtime")
                             fingerprint = hashlib.sha256(f"ipvf-{profile_key}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
                             label = video_title(relative)
                             cached = video_state.get(relative, {})
@@ -521,12 +531,16 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             reusable = package.exists() and not force
                             if reusable:
                                 try:
-                                    inspect_file(package)
+                                    inspect_file(package,expected_width=media_profile["video_width"],
+                                                 expected_height=media_profile["video_height"],
+                                                 max_record_sectors=media_profile["max_read_sectors"])
                                 except (OSError, ValueError):
                                     reusable = False
                             if not reusable:
                                 if native_ipvf:
-                                    inspect_file(source)
+                                    inspect_file(source,expected_width=media_profile["video_width"],
+                                                 expected_height=media_profile["video_height"],
+                                                 max_record_sectors=media_profile["max_read_sectors"])
                                     package.parent.mkdir(parents=True, exist_ok=True)
                                     temporary = package.with_name(package.name + "." + uuid.uuid4().hex + ".tmp")
                                     with source.open("rb") as reader, temporary.open("xb") as writer:
@@ -536,7 +550,9 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                             writer.write(chunk)
                                         writer.flush()
                                         os.fsync(writer.fileno())
-                                    inspect_file(temporary)
+                                    inspect_file(temporary,expected_width=media_profile["video_width"],
+                                                 expected_height=media_profile["video_height"],
+                                                 max_record_sectors=media_profile["max_read_sectors"])
                                     os.replace(temporary, package)
                                 else:
                                     encode_ipvf(source, package, title=label,
@@ -544,6 +560,9 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                                 ffprobe=ffprobe or shutil.which("ffprobe"),
                                                 fps=media_profile["video_fps"],
                                                 color_depth=media_profile["video_color"],
+                                                width=media_profile["video_width"],
+                                                height=media_profile["video_height"],
+                                                max_record_sectors=media_profile["max_read_sectors"],
                                                 progress=progress, cancelled=cancelled,
                                                 progress_detail=(lambda event: progress_detail(dict(event,
                                                     video_index=index+1, video_total=item['count']))) if progress_detail else None)

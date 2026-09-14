@@ -5,15 +5,15 @@
 #if defined(LINNET_NOTES)
 #include "services/notes/notes.h"
 #endif
-#include "hal/pp5020/platform.h"
+#include "hal/api/platform.h"
 #if !defined(LINNET_PROFILE_RELEASE)
 #include "kernel/runtime_render_timing.h"
 #endif
-#include "hal/pp5020/core.h"
-#include "hal/pp5020/input.h"
-#include "hal/pp5020/power.h"
-#include "hal/pp5020/display.h"
-#include "hal/pp5020/recovery.h"
+#include "hal/api/core.h"
+#include "hal/api/input.h"
+#include "hal/api/power.h"
+#include "hal/api/display.h"
+#include "hal/api/recovery.h"
 #if defined(LINNET_BATTERY_GUARD)
 #include "services/power/battery.h"
 static struct ln_battery_guard battery_guard;
@@ -29,7 +29,7 @@ static bool photo_resume_loaded;
 #include "linnet_build.h"
 #endif
 #if defined(LINNET_AUDIO)
-#include "hal/pp5020/audio.h"
+#include "hal/api/audio.h"
 #include "services/music/player.h"
 #include "services/music/controller.h"
 #include "services/music/artwork.h"
@@ -38,8 +38,8 @@ static bool photo_resume_loaded;
 #include "services/music/queue_view.h"
 #endif
 #if !defined(LINNET_PROFILE_RELEASE)
-#include "hal/pp5020/recovery.h"
-#include "hal/pp5020/usb.h"
+#include "hal/api/recovery.h"
+#include "hal/api/usb.h"
 #endif
 #if defined(LINNET_STORAGE)
 #include "services/storage/storage.h"
@@ -843,11 +843,11 @@ void ln_runtime_step(void){
             if(video_scene()){
                 const struct ln_ui_asset *asset=ln_video_asset();
                 const struct ln_ui_scene *c=&ln_ui_scenes[shell->scene];
-                if(asset&&asset->pixels&&asset->width==220u&&asset->height==176u&&c->nodes){
+                if(asset&&asset->pixels&&asset->width==LINNET_VIDEO_WIDTH&&asset->height==LINNET_VIDEO_HEIGHT&&c->nodes){
                     for(uint32_t i=0;i<c->count&&i<1024u;++i){
                         const struct ln_ui_node *n=&c->nodes[i];
                         if(n->kind==LN_UI_VIDEO_SURFACE&&!(n->flags&2u)&&
-                           n->x==0&&n->y==0&&n->w==220&&n->h==176){
+                           n->x==0&&n->y==0&&n->w==(int32_t)LINNET_UI_WIDTH&&n->h==(int32_t)LINNET_UI_HEIGHT){
                             render_pixels=ln_display_direct_framebuffer();
                             if(render_pixels)shell->dirty|=1u;
                             break;

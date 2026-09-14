@@ -1,5 +1,5 @@
 #include "services/storage/block.h"
-#include "hal/pp5020/platform.h"
+#include "hal/api/platform.h"
 enum slot_state { FREE,QUEUED,ACTIVE,DONE };
 struct slot {
     enum slot_state state;enum ln_block_op op;

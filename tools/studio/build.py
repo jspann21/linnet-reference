@@ -9,7 +9,7 @@ import struct
 import subprocess
 import tomllib
 from tools.inspect.image import pack, inspect, verify_release
-from tools.studio.targets import ROOT, TARGETS, target_id
+from tools.studio.targets import LCD_FORMATS, ROOT, TARGETS, target_id
 
 def run(args):
     result = subprocess.run([str(a) for a in args], cwd=ROOT, text=True, capture_output=True)
@@ -72,13 +72,43 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     generated = dest / "generated"
     generated.mkdir(exist_ok=True)
     target_header = [
+        "#ifndef LINNET_TARGET_H",
+        "#define LINNET_TARGET_H",
         f'#define LINNET_TARGET_ID "{target}"',
+        f'#define LINNET_TARGET_NAME "{spec["name"]}"',
+        f'#define LINNET_BOARD_ID "{spec["board_id"]}"',
+        f'#define LINNET_MODEL_ALIAS "{spec["model_alias"]}"',
+        f'#define LINNET_SOC_ID "{spec["soc"]}"',
+        f'#define LINNET_CPU_ID "{spec["cpu"]}"',
+        f'#define LINNET_ARCHITECTURE_ID "{spec["architecture"]}"',
         f'#define LINNET_TARGET_NUMBER {spec["image_target"]}u',
         f'#define LINNET_LCD_WIDTH {spec["lcd_width"]}u',
         f'#define LINNET_LCD_HEIGHT {spec["lcd_height"]}u',
-        f'#define LINNET_UI_WIDTH {spec["ui_width"]}u',
-        f'#define LINNET_UI_HEIGHT {spec["ui_height"]}u',
+        f'#define LINNET_LCD_FORMAT {LCD_FORMATS[spec["lcd_format"]]}u',
+        f'#define LINNET_LCD_WIDTH_ASM {spec["lcd_width"]}',
+        f'#define LINNET_LCD_HEIGHT_ASM {spec["lcd_height"]}',
+        f'#define LINNET_UI_WIDTH {spec["lcd_width"]}u',
+        f'#define LINNET_UI_HEIGHT {spec["lcd_height"]}u',
+        f'#define LINNET_PHOTO_WIDTH {spec["media_photo_width"]}u',
+        f'#define LINNET_PHOTO_HEIGHT {spec["media_photo_height"]}u',
+        f'#define LINNET_VIDEO_WIDTH {spec["media_video_width"]}u',
+        f'#define LINNET_VIDEO_HEIGHT {spec["media_video_height"]}u',
+        f'#define LINNET_VIDEO_FPS {spec["media_video_fps"]}u',
+        f'#define LINNET_VIDEO_COLOR_GRAY4 {int(spec["media_video_color"] == "gray4")}u',
+        f'#define LINNET_STORAGE_MAX_READ_SECTORS {spec["storage_max_read_sectors"]}u',
+        f'#define LINNET_COP_DISPLAY {int(spec["cop_display"])}u',
+        f'#define LINNET_SDRAM_BYTES {spec["sdram_bytes"]}',
+        f'#define LINNET_LOAD_ADDRESS {spec["load_address"]}',
+        f'#define LINNET_ENTRY_ADDRESS {spec["entry_address"]}',
+        f'#define LINNET_OS_CAPACITY {spec["os_capacity_bytes"]}',
+        f'#define LINNET_STAGE_ADDRESS {spec["stage_address"]}',
+        f'#define LINNET_STAGE_CAPACITY {spec["stage_bytes"]}',
+        f'#define LINNET_LOADER_SNAPSHOT {spec["recovery_snapshot_address"]}',
+        f'#define LINNET_LOADER_CAPACITY {spec["recovery_snapshot_bytes"]}',
+        f'#define LINNET_MAILBOX_ADDRESS {spec["mailbox_address"]}',
+        f'#define LINNET_MAILBOX_BYTES {spec["mailbox_bytes"]}',
         f'#define {spec["target_define"]} 1',
+        "#endif",
     ]
     (generated / "linnet_target.h").write_text("\n".join(target_header) + "\n")
     ui_report = None
@@ -128,7 +158,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
             sources += [ROOT / "services/update/native.c"]
     if kind == "os":
         sources += [ROOT/"ui/runtime/ui.c",generated/"linnet_ui.c",ROOT/"services/display/settings.c"]
-    flags = ["--target=arm-none-eabi", "-mcpu=arm7tdmi", "-marm", "-mfloat-abi=soft", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-ffunction-sections", "-fdata-sections", "-Os", "-Wall", "-Wextra", "-Werror", "-I.", "-Iboot/include", f"-DLINNET_PROFILE_{profile.upper()}=1", f"-DLINNET_IMAGE_{kind.upper()}=1", f'-D{spec["target_define"]}=1']
+    compiler_target = "arm-none-eabi" if spec["endianness"] == "little" else "armeb-none-eabi"
+    flags = [f"--target={compiler_target}", f'-mcpu={spec["cpu"]}', f'-march={spec["architecture"]}', "-marm", "-mfloat-abi=soft", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-ffunction-sections", "-fdata-sections", "-Os", "-Wall", "-Wextra", "-Werror", "-I.", "-Iboot/include", f"-DLINNET_PROFILE_{profile.upper()}=1", f"-DLINNET_IMAGE_{kind.upper()}=1", f'-D{spec["target_define"]}=1']
     flags += ["-I" + str(generated), f"-DLINNET_PROBE_CRASH={int(probe == 'crash')}", f"-DLINNET_PROBE_HANG={int(probe == 'hang')}"]
     flags += ["-DLINNET_PLATFORM_CORE=1", "-DLINNET_STORAGE=1"]
     if kind == "os":
@@ -192,7 +223,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     memory_flags = ["-DLINNET_PLATFORM_CORE=1", "-DLINNET_STORAGE=1"]
     if kind == 'os':
         memory_flags += ['-DLINNET_AUDIO=1']
-    run([chain['compiler']['path'], "-E", "-P", "-x", "c", f"-DLINNET_PROFILE_{profile.upper()}=1", f"-DLINNET_IMAGE_{kind.upper()}=1", *memory_flags, ROOT / target_sources["linker"], "-o", script])
+    run([chain['compiler']['path'], "-E", "-P", "-x", "c", "-I" + str(generated), f"-DLINNET_PROFILE_{profile.upper()}=1", f"-DLINNET_IMAGE_{kind.upper()}=1", *memory_flags, ROOT / target_sources["linker"], "-o", script])
     run([chain['linker']['path'], "-T", script, "--gc-sections", "-Map=" + str(mapfile), "-o", elf, *objects])
     raw = dest / (prefix + ".bin")
     run([chain['objcopy']['path'], "-O", "binary", elf, raw])
@@ -222,7 +253,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     report = dict(**configuration, build_id=build_id, toolchain=chain, image=inspect(envelope),
                   source_files=[p.relative_to(ROOT).as_posix() for p in sources],
                   artifacts={key: str(path.relative_to(ROOT)) for key, path in dict(elf=elf, los=los, ipod=ipod, map=mapfile).items()},
-                  memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=4718592 if kind=='os' else 1048576, retained_limit_bytes=4096),
+                  memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=4718592 if kind=='os' else 1048576, retained_limit_bytes=spec['mailbox_bytes']),
                   release_exclusion=verification,
                   limitation="FIQ watchdog depends on FIQ delivery; COP reset escalation requires a live COP monitor.")
     if ui_report is not None:report["ui"]=ui_report

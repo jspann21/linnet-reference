@@ -86,7 +86,8 @@ export default function Scene() {
 All 17 components share static `x`, `y`, `w`, `h`, `fg`, `bg`, `flags`, `count`,
 `index`, `text`, `resource`, `items`, `targets`, `deps`, and `focus` properties.
 Coordinates are relative to the parent and lowered to absolute rectangles. The
-root covers 220 by 176 pixels. Rectangles must remain inside their parent.
+root covers the 220 by 176 authoring canvas and is scaled to the selected target
+display during compilation. Rectangles must remain inside their parent.
 Numbers use `{123}`, booleans `{true}` / `{false}`, and strings use quotes.
 Arrays contain quoted strings only. Strings are printable ASCII, maximum 160
 characters. JSX text is accepted inside `Text`; entities such as `&amp;` are
@@ -130,7 +131,8 @@ standard roles for UI that should follow every theme. Theme metrics permit
 row_height16..32 and padding0..12. The default layout retains row_height22/padding4;
 other layouts lower authored TSX into their own native rectangles. Assets compile
 to RGB565, at most 64 resources / 256 KiB combined.
-P3 PPM sources use range 255 and at most 220 by 176 pixels.
+P3 PPM sources use range 255, dimensions up to 1024 per side and no more than
+131,072 pixels. Assets must still fit the combined 256 KiB pack limit.
 
 The bundled `linnet.theme.album-colors` theme uses `[theme] style="album-art"`.
 All thirteen semantic colors follow the current music artwork on every screen,

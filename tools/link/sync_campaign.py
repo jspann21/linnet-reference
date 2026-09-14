@@ -1,4 +1,4 @@
-"""Explicit Batch2 host FAT32 write/sync/eject/reconnect campaign.
+"""Explicit host FAT32 write/sync/eject/reconnect campaign.
 
 Importing this module performs no device access. The fixed HOSTSYNC.BIN file
 is created exclusively and retained as evidence; an existing file is refused.

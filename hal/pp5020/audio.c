@@ -2,10 +2,10 @@
  * Rockbox firmware/target/arm/pp/{pcm-pp,i2s-pp}.c and drivers/audio/wm8975.c,
  * wmcodec-pp.c and export/pp5020.h. Independent implementation.
  * DMA owns only channel 0 and ordinary IRQ 26; recovery retains all FIQ state. */
-#include "hal/pp5020/audio.h"
-#include "hal/pp5020/core.h"
-#include "hal/pp5020/platform.h"
-#include "hal/pp5020/power.h"
+#include "hal/api/audio.h"
+#include "hal/api/core.h"
+#include "hal/api/platform.h"
+#include "hal/api/power.h"
 #define REG(a) (*(volatile uint32_t *)(uintptr_t)(a))
 #define IRQ (1u<<26)
 #define CMD REG(0x6000b000u)

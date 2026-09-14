@@ -1,25 +1,25 @@
 #if defined(LINNET_IMAGE_BOOT) && defined(LINNET_PLATFORM_CORE) && defined(LINNET_STORAGE)
 #include "boot/include/sha256.h"
 #endif
-#include "hal/pp5020/platform.h"
+#include "hal/api/platform.h"
 #include "boot/include/linnet_boot.h"
 #include "linnet_build.h"
 #if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_BOOT)
-#include "hal/pp5020/core.h"
+#include "hal/api/core.h"
 #endif
 #if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_OS)
 #include "kernel/runtime.h"
-#include "hal/pp5020/core.h"
-#include "hal/pp5020/display.h"
-#include "hal/pp5020/usb.h"
+#include "hal/api/core.h"
+#include "hal/api/display.h"
+#include "hal/api/usb.h"
 #endif
 #if !defined(LINNET_PROFILE_RELEASE)
-#include "hal/pp5020/recovery.h"
+#include "hal/api/recovery.h"
 #include "kernel/development.h"
 #endif
 #if defined(LINNET_STORAGE)
 #include "services/storage/storage.h"
-#include "hal/pp5020/core.h"
+#include "hal/api/core.h"
 #endif
 static const uint8_t ln_build_id[32] = LINNET_BUILD_ID_BYTES;
 #if defined(LINNET_AUDIO) && !defined(LINNET_PROFILE_RELEASE)

@@ -12,7 +12,9 @@ There is no runtime JavaScript VM or general-purpose allocator.
 | --- | --- |
 | `boot/` | Image validation, slot selection, recovery and loader |
 | `kernel/` | Executive, deadlines and service integration |
-| `hal/`, `targets/` | Hardware drivers and board configuration |
+| `hal/api/` | Portable hardware interfaces used by kernel, services and UI |
+| `hal/<soc>/` | SoC implementations, startup and linker contracts |
+| `targets/` | Target manifests and board-specific device/LCD code |
 | `services/` | Storage, media, settings and other native services |
 | `apps/`, `ui/`, `themes/` | Applications, renderer and static layouts |
 | `config/`, `sdk/` | Build configuration and app/theme authoring |
@@ -78,9 +80,11 @@ frame dependency and keeping presentation tied to the audio clock. Device timing
 and underrun counters measure playback across media; framebuffer captures
 cannot establish physical A/V quality.
 
-The UI compiler emits native C and simulator scenes from constrained TSX.
-The desktop simulator executes the native renderer; its output checks layout
-and pixels; use device measurements for hardware timing. See the [SDK](../sdk/README.md).
+The UI compiler emits native C and simulator scenes from constrained TSX. TSX
+uses a 220 x 176 reference coordinate space which is scaled to the target LCD;
+runtime buffers and prepared media use target-native dimensions. The desktop
+simulator executes the native renderer; its output checks layout and pixels;
+use device measurements for hardware timing. See the [SDK](../sdk/README.md).
 
 Binary layouts live in [formats.md](formats.md), [photo-format.md](photo-format.md),
 [video-format.md](video-format.md) and [the music format](music-format.md).

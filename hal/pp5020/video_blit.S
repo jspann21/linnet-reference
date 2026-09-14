@@ -1,7 +1,8 @@
 .syntax unified
 .cpu arm7tdmi
 .arm
-#include "hal/pp5020/display.h"
+#include "hal/api/display.h"
+#include "hal/pp5020/display_internal.h"
 .section .text.ln_video_blit_blob,"ax",%progbits
 .balign 4
 .global ln_video_blit_begin
@@ -29,10 +30,10 @@ ln_video_blit_begin:
     ldr r1, [r0, #LN_DISPLAY_X]
     ldr r7, [r0, #LN_DISPLAY_WIDTH]
     add r1, r1, r7
-    rsb r1, r1, #220
+    rsb r1, r1, #LINNET_LCD_WIDTH_ASM
     ldr r7, [r0, #LN_DISPLAY_X_CURSOR]
     add r1, r1, r7
-    mov r7, #176
+    mov r7, #LINNET_LCD_HEIGHT_ASM
     mul r2, r1, r7
     ldr r7, [r0, #LN_DISPLAY_Y]
     add r2, r2, r7
@@ -120,7 +121,7 @@ ln_video_command_begin:
     ldreq r3, [r0, #LN_DISPLAY_X]
     ldreq r4, [r0, #LN_DISPLAY_WIDTH]
     addeq r3, r3, r4
-    rsbeq r3, r3, #220
+    rsbeq r3, r3, #LINNET_LCD_WIDTH_ASM
     beq .Lcommand_send
     cmp r1, #6
     moveq r3, #0x15
@@ -135,7 +136,7 @@ ln_video_command_begin:
     moveq r3, #0x16
     beq .Lcommand_send
     ldr r3, [r0, #LN_DISPLAY_X]
-    rsb r3, r3, #219
+    rsb r3, r3, #(LINNET_LCD_WIDTH_ASM - 1)
 .Lcommand_send:
     orr r3, r3, #0x80000000
     str r3, [r2]

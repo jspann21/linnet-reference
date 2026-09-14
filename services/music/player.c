@@ -2,8 +2,8 @@
 #include "services/music/decoder.h"
 #include "services/storage/storage.h"
 #include "services/audio/dsp.h"
-#include "hal/pp5020/audio.h"
-#include "hal/pp5020/platform.h"
+#include "hal/api/audio.h"
+#include "hal/api/platform.h"
 #define PLAYER_DECODE_FRAMES 1152u
 enum slot_phase {SLOT_EMPTY,SLOT_OPEN,SLOT_DECODE,SLOT_EOF,SLOT_FAILED};
 struct player_slot {

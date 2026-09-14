@@ -1,13 +1,13 @@
 """Independent raw LZ4 blocks for bounded PVID RGB565 frames.
 
 No LZ4 frame wrapper, dictionary or optional decoded-size inference is used.
-Decoded input/output is bounded by the native panel's 77,440 pixel bytes.
+Decoded input/output is bounded by the supported target framebuffer size.
 The encoder may return a slightly larger literal block; callers retain raw
 records unless compression saves sectors.
 """
 from collections import deque
 
-MAX_BYTES = 220 * 176 * 2
+MAX_BYTES = 131072 * 2
 
 
 def compress(data):

@@ -14,8 +14,8 @@
 #include "services/photos/photos.h"
 #endif
 #include "services/state/store.h"
-#include "hal/pp5020/audio.h"
-#include "hal/pp5020/platform.h"
+#include "hal/api/audio.h"
+#include "hal/api/platform.h"
 static struct ln_queue queue;
 static struct ln_music_profile profile;
 static struct ln_music_library_row current,waiting;

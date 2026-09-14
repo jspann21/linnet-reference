@@ -2,8 +2,9 @@
 #define LINNET_STORAGE_SERVICE_H
 #include <stdbool.h>
 #include <stdint.h>
+#include "linnet_target.h"
 #include "services/storage/fat32.h"
-#define LN_STORAGE_MEDIA_MAX_READ 98304u
+#define LN_STORAGE_MEDIA_MAX_READ (LINNET_STORAGE_MAX_READ_SECTORS * 512u)
 
 /* One asynchronous read-only media operation shares the filesystem owner.
  * Admission returns1, busy0, invalid-1. Poll the same caller generation until

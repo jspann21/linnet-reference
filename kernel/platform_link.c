@@ -1,7 +1,7 @@
 #include "kernel/platform_link.h"
 #include "kernel/runtime.h"
-#include "hal/pp5020/recovery.h"
-#include "hal/pp5020/input.h"
+#include "hal/api/recovery.h"
+#include "hal/api/input.h"
 #include "boot/include/linnet_boot.h"
 #include "linnet_target.h"
 

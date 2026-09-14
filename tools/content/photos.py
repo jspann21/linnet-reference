@@ -56,9 +56,9 @@ def _fit(width, height, bound_w, bound_h):
     return max(1, int(width * scale)), max(1, int(height * scale))
 
 
-def _sizes(width, height, max_dimension):
+def _sizes(width, height, max_dimension, viewport_width, viewport_height):
     largest = _fit(width, height, max_dimension, max_dimension)
-    result = [_fit(width, height, 220, 156)]
+    result = [_fit(width, height, viewport_width, viewport_height)]
     while result[-1] != largest:
         previous = result[-1]
         bound = min(2 * max(previous), max(largest))
@@ -71,7 +71,8 @@ def _sizes(width, height, max_dimension):
     return result
 
 
-def compile_photos(source, output, *, max_dimension=640, fallback_paths=None):
+def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
+                   viewport_height=156, fallback_paths=None):
     """Prepare a folder into one .pimg; optional mapping names existing JPEG copies.
 
     The default keeps zoom detail without a desktop-sized tile pyramid.
@@ -80,8 +81,12 @@ def compile_photos(source, output, *, max_dimension=640, fallback_paths=None):
     """
     from PIL import Image, ImageOps
     source, output = Path(source).resolve(), Path(output).resolve()
-    if not source.is_dir() or not 220 <= max_dimension <= 2048:
-        raise ValueError('photos require a source directory and maximum dimension 220..2048')
+    minimum = max(viewport_width, viewport_height)
+    if (not source.is_dir() or type(viewport_width) is not int or
+            type(viewport_height) is not int or not 1 <= viewport_width <= 1024 or
+            not 1 <= viewport_height <= 1024 or viewport_width*viewport_height > 131072 or
+            not minimum <= max_dimension <= 2048):
+        raise ValueError('invalid photo source, viewport, or maximum dimension')
     if output.suffix.lower() not in ('.pimg', '.pim'):
         raise ValueError('photo output must have .pimg or .pim extension')
     paths = []
@@ -170,7 +175,7 @@ def compile_photos(source, output, *, max_dimension=640, fallback_paths=None):
             raw_thumb = _rgb565(thumb)
             thumbs.write(raw_thumb)
             first_level = len(levels)
-            for lw, lh in _sizes(width, height, max_dimension):
+            for lw, lh in _sizes(width, height, max_dimension, viewport_width, viewport_height):
                 tx, ty = (lw+EDGE-1)//EDGE, (lh+EDGE-1)//EDGE
                 first_tile, count = len(tile_crcs), tx * ty
                 if first_tile + count > MAX_TILES or ((len(paths)*8192)+(first_tile+count)*2048) > MAX_FILE:
@@ -330,7 +335,7 @@ def inspect(path, *, verify_payloads=True):
                 photo, w, h, x, y, first_tile, tiles = struct.unpack('<I4H2I', record(lo+(first+ordinal)*LEVEL, LEVEL)[:-4])
                 if (photo != index or not 1 <= w <= min(width, 2048) or not 1 <= h <= min(height, 2048) or
                     x != (w+31)//32 or y != (h+31)//32 or tiles != x*y or first_tile != next_tile or tiles > tc-first_tile or
-                    (ordinal == 0 and (w > 220 or h > 176)) or
+                    (ordinal == 0 and w*h > 131072) or
                     (previous and (w < previous[0] or h < previous[1] or (w, h) == previous))):
                     raise ValueError('invalid PIMG level/tile range')
                 previous = (w, h)

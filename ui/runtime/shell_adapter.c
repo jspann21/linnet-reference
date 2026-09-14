@@ -1,8 +1,8 @@
 #include "kernel/shell.h"
-#include "hal/pp5020/display.h"
+#include "hal/api/display.h"
 #include "services/display/settings.h"
 #include "services/display/clock.h"
-#include "hal/pp5020/power.h"
+#include "hal/api/power.h"
 uint32_t ln_ui_battery_status(void){struct ln_power_state p;ln_power_snapshot(&p);return (p.flags&LINNET_POWER_BATTERY_VALID)?p.battery_percent|((p.flags&LINNET_POWER_CHARGING)?256u:0u)|((p.flags&(LINNET_POWER_USB|LINNET_POWER_FIREWIRE))?512u:0u):UINT32_MAX;}
 uint32_t ln_ui_clock_seconds(void){struct ln_clock_state c;ln_power_clock_snapshot(&c);return c.valid?(uint32_t)c.hour*3600u+(uint32_t)c.minute*60u+c.second:UINT32_MAX;}
 uint32_t ln_ui_theme_preference(void){return ln_display_theme_index();}

@@ -1,5 +1,6 @@
-#include "hal/pp5020/display.h"
-#include "hal/pp5020/core.h"
+#include "hal/api/display.h"
+#include "hal/pp5020/display_internal.h"
+#include "hal/api/core.h"
 #include <stdint.h>
 /* Exact 1392-byte resident worker from preserved Boot
  * 5dc70355df8d2097cd79923da3bf767af5244bd7e874d4fa315e738131cf58a0.

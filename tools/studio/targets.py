@@ -6,15 +6,20 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[2]
 TARGETS_ROOT = ROOT / "targets"
 REQUIRED_KEYS = {
-    "id", "name", "aliases", "image_target", "target_define", "board_id",
-    "soc_id", "model_alias", "soc", "cpu", "architecture", "endianness",
-    "sdram_bytes", "lcd_width", "lcd_height", "lcd_format", "ui_width",
-    "ui_height", "capabilities", "media_video_fps", "media_video_color",
+    "id", "name", "aliases", "image_target", "board_id", "model_alias",
+    "soc", "cpu", "architecture", "endianness", "sdram_bytes",
+    "os_capacity_bytes", "stage_address", "stage_bytes",
+    "recovery_snapshot_address", "recovery_snapshot_bytes",
+    "storage_max_read_sectors", "lcd_width",
+    "lcd_height", "lcd_format", "capabilities", "media_photo_width",
+    "media_photo_height", "media_video_width", "media_video_height",
+    "media_video_fps", "media_video_color",
     "cop_display", "entry_address", "load_address", "mailbox_address",
     "mailbox_bytes", "retail", "installer",
 }
 OPTIONAL_KEYS = {"ui"}
 CAPABILITIES = {"photos", "video", "files", "demo", "themes"}
+LCD_FORMATS = {"rgb565-swapped": 1, "gray2-horizontal": 2, "rgb565": 3}
 
 
 def _valid_ascii_list(value):
@@ -68,22 +73,54 @@ def _validate_ui(path, spec):
 def _validate_identity(path, spec):
     aliases = spec["aliases"]
     dimensions = (spec["lcd_width"], spec["lcd_height"],
-                  spec["ui_width"], spec["ui_height"])
+                  spec["media_photo_width"], spec["media_photo_height"],
+                  spec["media_video_width"], spec["media_video_height"])
     addresses = (spec["entry_address"], spec["load_address"],
+                 spec["stage_address"], spec["recovery_snapshot_address"],
                  spec["mailbox_address"])
+    regions = ((spec["load_address"], spec["os_capacity_bytes"]),
+               (spec["stage_address"], spec["stage_bytes"]),
+               (spec["recovery_snapshot_address"], spec["recovery_snapshot_bytes"]),
+               (spec["mailbox_address"], spec["mailbox_bytes"]))
     if (not isinstance(spec["name"], str) or not spec["name"] or
             not isinstance(aliases, list) or
             any(not isinstance(alias, str) or
                 not re.fullmatch(r"[a-z0-9][a-z0-9-]*", alias)
                 for alias in aliases) or
             len(aliases) != len(set(aliases)) or
+            not isinstance(spec["board_id"], str) or
+            not re.fullmatch(r"[a-z0-9][a-z0-9-]*", spec["board_id"]) or
+            not isinstance(spec["model_alias"], str) or
+            not re.fullmatch(r"[a-z0-9][a-z0-9-]*", spec["model_alias"]) or
             not isinstance(spec["soc"], str) or
             not re.fullmatch(r"[a-z][a-z0-9-]*", spec["soc"]) or
-            not isinstance(spec["target_define"], str) or
-            not re.fullmatch(r"LINNET_TARGET_[A-Z0-9_]+", spec["target_define"]) or
+            not isinstance(spec["cpu"], str) or
+            not re.fullmatch(r"[a-z0-9][a-z0-9-]*", spec["cpu"]) or
             any(type(value) is not int or value < 1 for value in dimensions) or
+            spec["lcd_width"] > 1024 or spec["lcd_height"] > 1024 or
+            spec["lcd_width"] * spec["lcd_height"] > 131072 or
+            spec["media_photo_width"] > spec["lcd_width"] or
+            spec["media_photo_height"] > spec["lcd_height"] or
+            spec["media_video_width"] > spec["lcd_width"] or
+            spec["media_video_height"] > spec["lcd_height"] or
+            spec["lcd_format"] not in LCD_FORMATS or
+            spec["architecture"] not in {"armv4t", "armv5te", "armv6"} or
+            spec["endianness"] not in {"little", "big"} or
+            type(spec["sdram_bytes"]) is not int or spec["sdram_bytes"] < 8 * 1024 * 1024 or
             any(type(value) is not int or not 0 <= value <= 0xffffffff
                 for value in addresses) or
+            any(type(size) is not int or size < 4096 for _, size in regions) or
+            spec["stage_bytes"] < 8 * 1024 * 1024 or
+            any(address + size > spec["sdram_bytes"] for address, size in regions) or
+            any(a0 < a1+s1 and a1 < a0+s0 for index,(a0,s0) in enumerate(regions)
+                for a1,s1 in regions[index+1:]) or
+            spec["mailbox_address"] < 8192 or
+            spec["recovery_snapshot_address"] + spec["recovery_snapshot_bytes"] +
+                spec["lcd_width"] * spec["lcd_height"] * 2 > spec["mailbox_address"] - 8192 or
+            spec["entry_address"] < spec["load_address"] or
+            spec["entry_address"] >= spec["load_address"] + spec["os_capacity_bytes"] or
+            type(spec["storage_max_read_sectors"]) is not int or
+            not 8 <= spec["storage_max_read_sectors"] <= 1024 or
             type(spec["mailbox_bytes"]) is not int or spec["mailbox_bytes"] < 1 or
             spec["mailbox_address"] + spec["mailbox_bytes"] > 0x100000000 or
             type(spec["cop_display"]) is not bool):
@@ -139,6 +176,7 @@ def load_targets():
                 set(spec) - REQUIRED_KEYS - OPTIONAL_KEYS):
             raise RuntimeError(f"invalid target manifest: {path}")
         _validate_identity(path, spec)
+        spec["target_define"] = "LINNET_TARGET_" + target.upper().replace("-", "_")
         number = spec["image_target"]
         if (type(number) is not int or not 0 <= number <= 0xffffffff or
                 number in image_targets or target in spec["aliases"] or
@@ -147,7 +185,10 @@ def load_targets():
                     for key, value in spec["capabilities"].items()) or
                 type(spec["media_video_fps"]) is not int or
                 not 4 <= spec["media_video_fps"] <= 30 or
-                spec["media_video_color"] not in ("rgb565", "gray4")):
+                spec["media_video_color"] not in ("rgb565", "gray4") or
+                (spec["capabilities"].get("video", True) and
+                 spec["storage_max_read_sectors"] * 512 <
+                 spec["media_video_width"] * spec["media_video_height"] * 2 + 16384)):
             raise RuntimeError(f"invalid target identity: {path}")
         _validate_profiles(path, spec)
         _validate_ui(path, spec)

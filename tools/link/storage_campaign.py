@@ -118,7 +118,7 @@ def cycle(root, image_path, scenario_path, port, progress=None):
             if session.scratch_read(offset,length)!=pattern[offset:offset+length]:
                 raise RuntimeError(f'random scratch read mismatch at{offset}+{length}')
         record('random-readback',count=suite['random_reads'],seed=seed)
-        replacement=b'Linnet Batch2 settings '+hashlib.sha256(pattern).digest()
+        replacement=b'Linnet storage check '+hashlib.sha256(pattern).digest()
         changed=True;session.settings_put(generation,replacement)
         session.close();session=None
         session,_,observed=connect(serial_number=serial);observed=check_identity(observed)

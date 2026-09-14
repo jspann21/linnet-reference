@@ -1,9 +1,9 @@
 # Adapted from the owned ipod/tools/ipvf/encode.py canonical creator.
 #!/usr/bin/env python3
-"""Encode video and audio for the iPod Photo/Color native IPVF viewer.
+"""Encode video and audio for Linnet's target-native IPVF viewer.
 
-IPVF stores exact 220x176 RGB565 big-endian pixels (the byte layout used by
-Rockbox RGB565SWAPPED), lossless bounding-rectangle deltas, and one independent
+IPVF stores target-sized RGB565 big-endian pixels, lossless bounding-rectangle
+deltas, and one independent
 44.1 kHz silence, mono IMA, or stereo IMA payload after each frame's video.
 Video and matching audio remain together in one sector-aligned disk read.
 """
@@ -78,6 +78,20 @@ CREATOR_PROFILES = {
         "description": "20 fps with full RGB565 precision",
     },
 }
+
+
+def configure_geometry(width: int, height: int, max_record_sectors: int = 192) -> None:
+    """Select the target media geometry before encoding any records."""
+    global W, H, FRAME_BYTES, MAX_RECORD_SECTORS
+    if (type(width) is not int or type(height) is not int or
+            not 1 <= width <= 1024 or not 1 <= height <= 1024 or
+            width * height > 131072 or width * height % 2 or
+            type(max_record_sectors) is not int or
+            not 8 <= max_record_sectors <= 1024):
+        raise ValueError("invalid IPVF target geometry")
+    W, H = width, height
+    FRAME_BYTES = width * height * 2
+    MAX_RECORD_SECTORS = max_record_sectors
 
 COLOR_FILTERS = {
     "rgb565": None,
@@ -1387,18 +1401,24 @@ def choose_video_record(
     rect = bbox_diff(prev, cur)
     if rect is None:
         return TYPE_REPEAT, 0, b"", 0
-    delta = rect_payload(cur, rect)
-    if len(delta) < FRAME_BYTES:
-        selected = _compress_record_if_smaller(
-            TYPE_RECTS, 1, delta, audio_size, lz4_mode
-        )
+    byte_geometry = W <= 255 and H <= 255
+    if byte_geometry:
+        delta = rect_payload(cur, rect)
+        if len(delta) < FRAME_BYTES:
+            selected = _compress_record_if_smaller(
+                TYPE_RECTS, 1, delta, audio_size, lz4_mode
+            )
+        else:
+            selected = _compress_record_if_smaller(
+                TYPE_KEY, 0, cur, audio_size, lz4_mode
+            )
     else:
         selected = _compress_record_if_smaller(
             TYPE_KEY, 0, cur, audio_size, lz4_mode
         )
     selected_sectors = record_sectors(len(selected[2]), audio_size)
 
-    if video_mode in ("spatial", "balanced", "motion", "auto"):
+    if byte_geometry and video_mode in ("spatial", "balanced", "motion", "auto"):
         rectangles = multi_rect_diff(prev, cur, max_rects=max_rects)
         if len(rectangles) > 1:
             multi_payload = rects_payload(cur, rectangles)

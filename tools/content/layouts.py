@@ -206,7 +206,7 @@ def refine_scene(scene,theme,body):
     elif sid=='video-controls':
         surface=next(n for n in nodes if n['kind']==16)
         bar=next(n for n in nodes if n['kind']==10)
-        # Keep native 220x176 pixels behind the controls. Fitting this surface
+        # Keep the full authoring canvas behind the controls. Scaling this surface
         # resamples every video frame on ARM7 and defeats direct presentation.
         place(surface,0,0,220,176)
         place(bar,x,bottom-fh-13,w,5)
@@ -269,7 +269,7 @@ def refine_minimal(scene,theme):
 
 
 def refine_ipod_photo(scene,theme):
-    """Photo's 220x176 chrome and content grid, including Linnet extensions."""
+    """Photo-style chrome and content grid in the authoring coordinate space."""
     nodes=scene['nodes'];sid=scene['id'].rsplit('.',1)[-1]
     fh=theme['font']['height'];rh=22
     texts=[n for n in nodes if n['kind']==3]

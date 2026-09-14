@@ -28,7 +28,7 @@ struct ln_photo_jpeg {
  * until READY/error. No allocation, source copy, I/O, globals or hidden yield.
  * Engine must finish/cancel its load before initialization or buffer reuse.
  * Each step handles one bounded marker, one entropy/IDCT block (<=64 coeffs),
- * one MCU setup, or <=220 output pixels. Call only in the photo scheduler's
+ * one MCU setup, or one target-width output span. Call only in the photo scheduler's
  * admitted budget; simply stop stepping to suspend/cancel. Output is centered
  * aspect-fit with black margins, no upscale, and explicit EXIF orientation1..8.
  * Baseline 8-bit grayscale/YCbCr one interleaved scan, 1x1/2x1/1x2/2x2 luma;

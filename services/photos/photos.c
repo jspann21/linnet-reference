@@ -3,13 +3,13 @@
 #include "jpeg.h"
 #include "services/storage/storage.h"
 #include "services/music/player.h"
-#include "hal/pp5020/audio.h"
-#include "hal/pp5020/platform.h"
+#include "hal/api/audio.h"
+#include "hal/api/platform.h"
 #include "boot/include/linnet_boot.h"
 #define ROWS 20u
 #define TILES 64u
-#define WIDTH 220u
-#define HEIGHT 156u
+#define WIDTH LINNET_PHOTO_WIDTH
+#define HEIGHT LINNET_PHOTO_HEIGHT
 #define EMPTY_ALBUM_RESUME 65535u
 enum phase {OPEN,HEADER,VERIFY,IDLE,RECORD,TITLE,THUMB,LEVEL,TILE_RECORD,TILE_DATA,SOURCE,JPEG_OPEN,JPEG_LOAD,JPEG_DECODE,TILE_COMMIT};
 struct row {uint32_t index;bool valid,album,thumb;char title[192];union {struct ln_pimg_album a;struct ln_pimg_photo p;} data;struct ln_ui_asset asset;};
@@ -168,7 +168,7 @@ static bool verify_bytes(uint32_t at,const uint8_t*b,uint32_t n){
                 p.pixels.photo_info[index]=(photo.width-1u)|((photo.height-1u)<<14)|((photo.levels-1u)<<28);}
             else if(width==24){struct ln_pimg_level l;if(!ln_pimg_level(h,p.verify_record,index,&l)||l.photo!=p.v_photo||l.first!=p.v_tiles||p.v_photo>=h->photos)return false;
                 uint32_t info=p.pixels.photo_info[p.v_photo],w=(info&16383u)+1u,height=((info>>14)&16383u)+1u,levels=(info>>28)+1u;
-                if(l.width>w||l.height>height||(!p.v_level&&(l.width>220||l.height>176))||(p.v_level&&(l.width<p.v_width||l.height<p.v_height||(l.width==p.v_width&&l.height==p.v_height))))return false;
+                if(l.width>w||l.height>height||(!p.v_level&&(l.width>WIDTH||l.height>HEIGHT))||(p.v_level&&(l.width<p.v_width||l.height<p.v_height||(l.width==p.v_width&&l.height==p.v_height))))return false;
                 p.v_width=l.width;p.v_height=l.height;p.v_tiles+=l.count;if(++p.v_level==levels){++p.v_photo;p.v_level=0;}}
             else {uint32_t offset,crc;if(!ln_pimg_tile(h,p.verify_record,index,&offset,&crc))return false;}
         }else if(at<h->string_at+h->string_bytes){uint32_t c=b[i];
@@ -406,7 +406,7 @@ static void photo_step(void){
         for(p.level_count=0;p.level_count<p.photo.levels;++p.level_count){
         struct ln_pimg_level*l=&p.levels[p.level_count];
         if(!ln_pimg_level(&p.header,p.scratch+p.level_count*24u,p.photo.first+p.level_count,l)||l->photo!=p.photo_index||
-           l->width>p.photo.width||l->height>p.photo.height||(!p.level_count&&(l->width>220||l->height>176))||
+           l->width>p.photo.width||l->height>p.photo.height||(!p.level_count&&(l->width>WIDTH||l->height>HEIGHT))||
            (p.level_count&&(l->width<p.levels[p.level_count-1].width||l->height<p.levels[p.level_count-1].height||(l->width==p.levels[p.level_count-1].width&&l->height==p.levels[p.level_count-1].height)||l->first!=p.levels[p.level_count-1].first+p.levels[p.level_count-1].count))){image_fail(9);return;}
         }
         p.view_loaded=true;p.phase=IDLE;

@@ -38,6 +38,19 @@ AUDIO_SAMPLE_RATE = 44_100
 AUDIO_FRAME_BYTES = 4
 MIN_FPS = 4
 MAX_FPS = 240
+
+
+def configure_geometry(width: int, height: int, max_record_sectors: int = 1024) -> None:
+    global W, H, FRAME_BYTES, MAX_RECORD_SECTORS
+    if (type(width) is not int or type(height) is not int or
+            not 1 <= width <= 1024 or not 1 <= height <= 1024 or
+            width * height > 131072 or width * height % 2 or
+            type(max_record_sectors) is not int or
+            not 8 <= max_record_sectors <= 1024):
+        raise ValueError("invalid IPVF target geometry")
+    W, H = width, height
+    FRAME_BYTES = width * height * 2
+    MAX_RECORD_SECTORS = max_record_sectors
 INDEX_ENTRY_SIZE = 16
 INDEX_FLAG_KEY_LZ4 = 1
 METADATA_OFFSET = HEADER_SIZE

@@ -1,9 +1,10 @@
 # Static UI compiler
 
-Each `targets/<target-id>/target.toml` describes the target's logical and physical
-display. P98 uses a 220 × 176 color display; Q21 uses a 160 × 128 monochrome
-display. See the [model porting guide](../targets/README.md) before adding a
-target. The compiler emits the native interface in `ui/runtime/ui.h`.
+Each `targets/<target-id>/target.toml` describes the target's physical display.
+P98 uses a 220 × 176 color display; Q21 uses a 160 × 128 monochrome display.
+Screens are authored on the shared 220 × 176 coordinate canvas and compiled to
+the target dimensions. See the [model porting guide](../targets/README.md) before
+adding a target. The compiler emits the native interface in `ui/runtime/ui.h`.
 
 Generated node kinds are 1..17 in declaration order. Geometry is absolute and
 within the parent. Literal colors are numeric RGB565; standard semantic color references are

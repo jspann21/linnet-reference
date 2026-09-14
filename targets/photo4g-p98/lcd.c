@@ -1,4 +1,4 @@
-#include "hal/pp5020/platform.h"
+#include "hal/api/platform.h"
 #if defined(LINNET_IMAGE_BOOT)
 #include "hal/pp5020/boot_wordmark.h"
 #endif

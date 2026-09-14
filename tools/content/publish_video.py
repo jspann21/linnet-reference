@@ -15,6 +15,26 @@ CATALOG_HEADER_SIZE = 12
 CATALOG_ROW_SIZE = 416
 CATALOG_MAX_BYTES = CATALOG_HEADER_SIZE + 256 * CATALOG_ROW_SIZE
 
+
+def _target_profile(root):
+    from tools.inspect.retail_device import detect
+    from tools.studio.targets import TARGETS
+    detected = detect(root)
+    spec = TARGETS[detected["target_id"]]
+    return (spec["media_video_width"], spec["media_video_height"],
+            spec["storage_max_read_sectors"])
+
+
+def _target_check(candidate, root):
+    width, height, sectors = _target_profile(root)
+    if (candidate.get("width"), candidate.get("height")) != (width, height):
+        raise ValueError("video geometry does not match the selected iPod target")
+    maximum = candidate.get("max_record_sectors")
+    if maximum is None:
+        maximum = (candidate.get("max_record_bytes", 0) + 511) // 512
+    if not 1 <= maximum <= sectors:
+        raise ValueError("video record size exceeds the selected iPod target")
+
 def publish_video(package, *, disk_number, expected_disk_serial,
                    expected_volume_serial, expected_drive=None, library_key=None, title=None):
     """Validate all local bytes, preserve the previous package, publish last.
@@ -44,6 +64,7 @@ def publish_video(package, *, disk_number, expected_disk_serial,
         raise ValueError('video package changed during reference validation')
     identity = inspect_target(disk_number, expected_disk_serial, expected_volume_serial, expected_drive)
     root = Path(identity['root'])
+    _target_check(candidate, root)
     if package.drive.casefold() == root.drive.casefold():
         raise ValueError('video package must be staged on a different volume from the iPod')
     with _exclusive(identity):
@@ -205,6 +226,7 @@ def index_ipvf(source, *, disk_number, expected_disk_serial,
         raise ValueError('native IPVF source must already be on this iPod')
     before = source.stat()
     candidate = inspect_file(source)
+    _target_check(candidate, root)
     after = source.stat()
     if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
         raise ValueError('IPVF changed during validation')

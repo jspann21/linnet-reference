@@ -1,10 +1,10 @@
-#include "hal/pp5020/usb.h"
-#include "hal/pp5020/platform.h"
+#include "hal/api/usb.h"
+#include "hal/api/platform.h"
 #if !defined(LINNET_PROFILE_RELEASE)
-#include "hal/pp5020/recovery.h"
+#include "hal/api/recovery.h"
 #endif
 #if defined(LINNET_IMAGE_OS) && defined(LINNET_AUDIO) && !defined(LINNET_PROFILE_RELEASE)
-#include "hal/pp5020/power.h"
+#include "hal/api/power.h"
 #define LINNET_USB_NEGOTIATED_CHARGE 1
 #define LINNET_USB_MAX_POWER 250u /* bMaxPower uses 2mA units. */
 #else

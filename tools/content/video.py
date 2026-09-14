@@ -17,7 +17,7 @@ from . import pvid_lz4
 HEADER = 512
 INDEX = 32
 MAX_FILE = 0x7fffffff
-MAX_RECORD = 90112
+MAX_RECORD = 1024 * 512 - 8192
 MAX_FRAMES = 1_000_000
 RATE = 48000
 FPS = (24, 25, 30, 60)
@@ -110,7 +110,8 @@ def _cost(model, kind, bytes_, work, pixels):
 
 
 def compile_video(source, output, *, fps=24, width=220, height=176,
-                  key_interval=24, cost_model=None, ffmpeg=None, max_frames=None):
+                  key_interval=24, max_record=90112, cost_model=None,
+                  ffmpeg=None, max_frames=None):
     """Convert existing media; stream ffmpeg frames/PCM and atomically publish PVID.
 
     cost_model uses estimates or caller-supplied device measurements. Every selected record must fit its declared frame budget.
@@ -118,9 +119,10 @@ def compile_video(source, output, *, fps=24, width=220, height=176,
     source, output = Path(source).resolve(), Path(output).resolve()
     if source == output or not source.is_file():
         raise ValueError('source must exist and differ from output')
-    if any(type(v) is not int for v in (fps, width, height, key_interval)):
+    if any(type(v) is not int for v in (fps, width, height, key_interval, max_record)):
         raise ValueError('dimensions, frame rate and key interval must be integers')
-    if fps not in FPS or not 1 <= width <= 220 or not 1 <= height <= 176:
+    if (fps not in FPS or not 1 <= width <= 1024 or not 1 <= height <= 1024 or
+            width*height > 131072 or not 512 <= max_record <= MAX_RECORD or max_record%512):
         raise ValueError('unsupported dimensions or frame rate')
     if not 1 <= key_interval <= fps*10 or (max_frames is not None and (type(max_frames) is not int or max_frames < 1)):
         raise ValueError('invalid key interval or frame limit')
@@ -171,7 +173,7 @@ def compile_video(source, output, *, fps=24, width=220, height=176,
                             size = _align(32+len(payload)+len(pcm))
                             choices.append((_cost(model, kind, size, work, width*height), kind, payload, size))
                         cost, kind, payload, size = min(choices, key=lambda c: (c[0], c[3], c[1]))
-                        if cost > 1_000_000/fps or size > MAX_RECORD:
+                        if cost > 1_000_000/fps or size > max_record:
                             raise ValueError(f'frame {count} exceeds declared frame budget: {cost:.1f} us')
                         if kind in (0, 3):
                             keyframe = count
@@ -254,7 +256,8 @@ def _inspect(path, frame_visitor=None):
             raise ValueError('invalid PVID header')
         flags, size, width, height, fps, rate, count, index_at, data_at, maximum, crc, interval = struct.unpack_from('<12I', header, 8)
         if (flags or size != length or not HEADER < size <= MAX_FILE or
-            not 1 <= width <= 220 or not 1 <= height <= 176 or fps not in FPS or rate != RATE or
+            not 1 <= width <= 1024 or not 1 <= height <= 1024 or width*height > 131072 or
+            fps not in FPS or rate != RATE or
             not 1 <= count <= MAX_FRAMES or index_at != HEADER or data_at != _align(HEADER+count*INDEX) or
             data_at >= size or maximum > MAX_RECORD or maximum < 512 or maximum % 512 or
             not 1 <= interval <= fps*10 or count*(RATE//fps) > 0xffffffff or
