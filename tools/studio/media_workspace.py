@@ -15,8 +15,8 @@ class MediaWorkspace(MediaApp):
     def __init__(self, window):
         self.window = window
         window.title('Linnet · Media library')
-        window.geometry('1180x850')
-        window.minsize(980, 740)
+        window.geometry('1280x960')
+        window.minsize(1100, 800)
         self.events = queue.Queue()
         self.stop_event = threading.Event()
         self.busy = False
@@ -72,12 +72,26 @@ class MediaWorkspace(MediaApp):
         canvas = tk.Canvas(shell, background='#f3f5f8', highlightthickness=0)
         scroll = ttk.Scrollbar(shell, orient='vertical', command=canvas.yview)
         canvas.configure(yscrollcommand=scroll.set)
-        scroll.pack(side='right', fill='y')
-        canvas.pack(side='left', fill='both', expand=True)
+        shell.rowconfigure(0, weight=1)
+        shell.columnconfigure(0, weight=1)
+        canvas.grid(row=0, column=0, sticky='nsew')
+        scroll.grid(row=0, column=1, sticky='ns')
+        scroll.grid_remove()
         body = ttk.Frame(canvas, padding=(22, 18, 10, 6))
         content = canvas.create_window(0, 0, window=body, anchor='nw')
-        body.bind('<Configure>', lambda _: canvas.configure(scrollregion=canvas.bbox('all')))
-        canvas.bind('<Configure>', lambda e: canvas.itemconfigure(content, width=e.width))
+
+        def resize_library(_=None):
+            canvas.itemconfigure(content, width=canvas.winfo_width())
+            bounds = canvas.bbox('all')
+            canvas.configure(scrollregion=bounds)
+            if bounds and bounds[3] - bounds[1] > canvas.winfo_height():
+                scroll.grid()
+            else:
+                scroll.grid_remove()
+                canvas.yview_moveto(0)
+
+        body.bind('<Configure>', resize_library)
+        canvas.bind('<Configure>', resize_library)
         self.window.bind('<MouseWheel>', lambda e: canvas.yview_scroll(-int(e.delta / 120), 'units') if e.widget.winfo_class() != 'Treeview' else None, add='+')
         top = ttk.Frame(body)
         top.pack(fill='x')
