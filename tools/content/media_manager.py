@@ -82,6 +82,7 @@ def _identify(identity):
             any(type(value) is not int or value < 1 for value in (*photo_size,*video_size))):
         raise RuntimeError(f"invalid media profile in target manifest: {detected['target_id']}")
     return dict(identity, target_id=detected["target_id"], target_name=spec["name"],
+                linnet_usb_serial=detected["linnet_usb_serial"],
                 model_number=detected["retail_os"].get("model_number"),
                 regulatory_model=(spec["retail"]["regulatory_models"] or [None])[0],
                 media_profile=dict(video_enabled=enabled, video_fps=fps, video_color=color,
