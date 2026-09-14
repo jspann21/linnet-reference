@@ -19,7 +19,13 @@ static uint16_t scanout_buffer[LINNET_DISPLAY_PIXELS] __attribute__((aligned(32)
 static bool column_mode;
 static struct rectangle damage[LINNET_DISPLAY_QUEUE_CAPACITY];
 static uint32_t damage_count, submitted, completed, frame_failures;
-static uint32_t frame_started, max_present_us;
+static uint32_t frame_started;
+#if !defined(LINNET_PROFILE_RELEASE)
+static uint32_t max_present_us;
+#define DISPLAY_RECORD(...) do { __VA_ARGS__; } while (0)
+#else
+#define DISPLAY_RECORD(...) ((void)0)
+#endif
 static bool initialized, cop_capable, frame_pending;
 static bool direct_frame, draw_stale;
 static bool clock_park_owned;
@@ -27,8 +33,10 @@ static uint32_t cop_error;
 static uint32_t init_error;
 static volatile bool sync_waiting;
 static uint32_t sync_head;
+#if !defined(LINNET_PROFILE_RELEASE)
 static uint32_t sync_frames,sync_timeouts,sync_wait_us,sync_max_wait_us,transfer_started;
 static uint32_t transfer_us,transfer_max_us;
+#endif
 
 /* P98 GPIO A0: observed active-low frame pulse, 579 us every 16575 us.
  * Arm only while a frame is pending; idle display causes no extra IRQs. */
@@ -46,10 +54,10 @@ void ln_display_sync_irq(void) {
         return;
     }
     sync_cancel();
-    transfer_started=ln_time_us();
+    DISPLAY_RECORD(transfer_started=ln_time_us();
     sync_wait_us=transfer_started-frame_started;
     if(sync_wait_us>sync_max_wait_us)sync_max_wait_us=sync_wait_us;
-    ++sync_frames;
+    ++sync_frames);
     __asm__ volatile("" ::: "memory");
     MB(LN_DISPLAY_HEAD)=sync_head;
 }
@@ -297,11 +305,12 @@ bool ln_display_init(void) {
     MB(LN_DISPLAY_BUFFER)=(uint32_t)NATIVE(scanout_buffer);
     MB(LN_DISPLAY_MAGIC)=LINNET_DISPLAY_MAGIC;
     for (uint32_t i=0;i<LINNET_DISPLAY_PIXELS;++i) { draw_buffer[i]=0; scanout()[i]=0; }
-    damage_count=submitted=completed=frame_failures=max_present_us=0;
+    damage_count=submitted=completed=frame_failures=0;
+    DISPLAY_RECORD(max_present_us=0);
     frame_pending=direct_frame=draw_stale=false;
     sync_cancel();
-    sync_frames=sync_timeouts=sync_wait_us=sync_max_wait_us=0;
-    transfer_us=transfer_max_us=0;
+    DISPLAY_RECORD(sync_frames=sync_timeouts=sync_wait_us=sync_max_wait_us=0;
+    transfer_us=transfer_max_us=0);
 #if !(defined(LINNET_NATIVE_UI) && defined(LINNET_STORAGE))
     if (!ln_lcd_fill(0)) {
         init_error=0x02000000u;
@@ -487,7 +496,7 @@ bool ln_display_service(uint32_t max_pairs) {
     if(sync_waiting){
         if(ln_time_us()-frame_started<25000u)return true;
         uint32_t irq=ln_core_irq_save();
-        if(sync_waiting){sync_cancel();++sync_timeouts;transfer_started=ln_time_us();barrier();MB(LN_DISPLAY_HEAD)=sync_head;}
+        if(sync_waiting){sync_cancel();DISPLAY_RECORD(++sync_timeouts;transfer_started=ln_time_us());barrier();MB(LN_DISPLAY_HEAD)=sync_head;}
         ln_core_irq_restore(irq);
     }
     if (max_pairs>256u) max_pairs=256u;
@@ -497,10 +506,10 @@ bool ln_display_service(uint32_t max_pairs) {
         if (frame_failures!=MB(LN_DISPLAY_FAILURES)) {
             (void)ln_display_damage(0,0,LINNET_UI_WIDTH,LINNET_UI_HEIGHT);return false;
         }
-        uint32_t elapsed=ln_time_us()-frame_started;
+        DISPLAY_RECORD(uint32_t elapsed=ln_time_us()-frame_started;
         transfer_us=ln_time_us()-transfer_started;
         if(transfer_us>transfer_max_us)transfer_max_us=transfer_us;
-        if (elapsed>max_present_us) max_present_us=elapsed;
+        if (elapsed>max_present_us) max_present_us=elapsed);
         completed++;
     }
     return true;
@@ -541,7 +550,12 @@ void ln_display_get_metrics(struct ln_display_metrics *output) {
         MB(LN_DISPLAY_HIGH_WATER),MB(LN_DISPLAY_FAILURES),MB(LN_DISPLAY_ERROR),MB(LN_DISPLAY_RESETS),
         MB(LN_DISPLAY_GENERATION),MB(LN_DISPLAY_HEAD)-MB(LN_DISPLAY_TAIL),cop_capable,
         cop_capable && MB(LN_DISPLAY_ENABLED) && !MB(LN_DISPLAY_PAUSED),
-        max_present_us,MB(LN_DISPLAY_HEAD),MB(LN_DISPLAY_TAIL)};
+#if !defined(LINNET_PROFILE_RELEASE)
+        max_present_us,
+#else
+        0,
+#endif
+        MB(LN_DISPLAY_HEAD),MB(LN_DISPLAY_TAIL)};
 }
 
 const uint16_t *ln_display_snapshot(void) { return direct_frame?NULL:column_mode?draw_buffer:(const uint16_t *)NATIVE(scanout_buffer); }

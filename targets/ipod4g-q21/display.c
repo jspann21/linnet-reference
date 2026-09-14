@@ -12,7 +12,10 @@ static uint16_t frame[LINNET_DISPLAY_PIXELS] __attribute__((aligned(32)));
 static bool initialized,dirty,pending,direct_frame,clock_park_owned,cop_capable;
 static bool startup_rewake_armed,startup_rewake_done;
 static uint32_t cursor,submitted,completed,failures,resets,generation;
-static uint32_t started,max_present_us,cop_error,startup_rewake_at;
+static uint32_t cop_error,startup_rewake_at;
+#if !defined(LINNET_PROFILE_RELEASE)
+static uint32_t started,max_present_us;
+#endif
 
 static void barrier(void){__asm__ volatile("":::"memory");}
 
@@ -158,7 +161,10 @@ bool ln_display_upgrade_blit(void){return false;}
 bool ln_display_present(void)
 {
     if(!initialized||!dirty||pending)return false;
-    pending=true;dirty=false;direct_frame=false;cursor=0;started=ln_time_us();++submitted;
+    pending=true;dirty=false;direct_frame=false;cursor=0;++submitted;
+#if !defined(LINNET_PROFILE_RELEASE)
+    started=ln_time_us();
+#endif
     return true;
 }
 
@@ -191,8 +197,11 @@ bool ln_display_service(uint32_t max_blocks)
         ++cursor;
     }
     if(cursor==total){
-        pending=false;++completed;uint32_t elapsed=ln_time_us()-started;
+        pending=false;++completed;
+#if !defined(LINNET_PROFILE_RELEASE)
+        uint32_t elapsed=ln_time_us()-started;
         if(elapsed>max_present_us)max_present_us=elapsed;
+#endif
         if(!startup_rewake_done&&!startup_rewake_armed){
             startup_rewake_armed=true;startup_rewake_at=ln_time_us()+500000u;
         }
@@ -236,7 +245,13 @@ void ln_display_get_metrics(struct ln_display_metrics *output)
 {
     if(output)*output=(struct ln_display_metrics){submitted,completed,completed,
         completed*(LINNET_LCD_WIDTH*LINNET_LCD_HEIGHT/2u),1u,failures,failures?1u:0u,resets,
-        generation,pending?1u:0u,0u,0u,max_present_us,submitted,completed};
+        generation,pending?1u:0u,0u,0u,
+#if !defined(LINNET_PROFILE_RELEASE)
+        max_present_us,
+#else
+        0,
+#endif
+        submitted,completed};
 }
 const uint16_t *ln_display_snapshot(void){return direct_frame?0:frame;}
 uint32_t ln_display_snapshot_crc32(void)

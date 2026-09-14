@@ -110,7 +110,8 @@ def _validate_identity(path, spec):
             any(type(value) is not int or not 0 <= value <= 0xffffffff
                 for value in addresses) or
             any(type(size) is not int or size < 4096 for _, size in regions) or
-            spec["stage_bytes"] < 8 * 1024 * 1024 or
+            spec["stage_bytes"] < spec["os_capacity_bytes"] or
+            spec["os_capacity_bytes"] % 512 or
             any(address + size > spec["sdram_bytes"] for address, size in regions) or
             any(a0 < a1+s1 and a1 < a0+s0 for index,(a0,s0) in enumerate(regions)
                 for a1,s1 in regions[index+1:]) or

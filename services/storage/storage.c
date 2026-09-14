@@ -319,14 +319,14 @@ void ln_storage_step_deferred(void){storage_step(true);}
 bool ln_storage_busy(void){return locked||background_running||(phase>=1&&phase<6)||phase==7||phase==10;}
 bool ln_storage_mounted(void){return phase==6&&volume.mounted;}
 bool ln_storage_startup_complete(void){return phase==6||phase==9;}
-bool ln_storage_prepared(void){return ln_storage_mounted()&&volume.mounted==1&&volume.write_proven&&(found&127u)==127u&&files[0].size==0x800000u&&files[1].size==0x800000u&&
+bool ln_storage_prepared(void){return ln_storage_mounted()&&volume.mounted==1&&volume.write_proven&&(found&127u)==127u&&files[0].size==LINNET_OS_CAPACITY&&files[1].size==LINNET_OS_CAPACITY&&
     files[2].size==512&&files[3].size==512&&files[4].size==512&&files[5].size==512&&files[6].size==0x400000u;}
 uint32_t ln_storage_capacity(uint32_t file){return file<STORAGE_FILE_COUNT&&(found&(1u<<file))?files[file].size:0;}
 int ln_storage_prepare_writes(void){
     if(ln_storage_busy())return 0;
     if(ln_storage_prepared())return 1;
     if(!ln_storage_mounted()||volume.mounted!=1||(found&127u)!=127u||
-       files[0].size!=0x800000u||files[1].size!=0x800000u||files[2].size!=512||files[3].size!=512||
+       files[0].size!=LINNET_OS_CAPACITY||files[1].size!=LINNET_OS_CAPACITY||files[2].size!=512||files[3].size!=512||
        files[4].size!=512||files[5].size!=512||files[6].size!=0x400000u||
        !ln_fat32_proof_pending(&volume))return -1;
     if(pending||media_owner)return 0;
@@ -649,7 +649,7 @@ static int open_stores(void){
 #else
         7,
 #endif
-        0,0x800000};
+        LINNET_LOAD_ADDRESS,LINNET_OS_CAPACITY};
     if(!ln_update_open(&updater,&boot_store,&io,&policy)){error=401;return 0;}
     stores_ready=true;theme_opened=false;history_open();return 1;
 }

@@ -230,9 +230,10 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     symbols = run([chain['nm']['path'], "-S", "--size-sort", elf])
     sections = []
     raw_elf = elf.read_bytes()
-    section_offset = struct.unpack_from("<I", raw_elf, 32)[0]
-    section_size, section_count, string_index = struct.unpack_from("<HHH", raw_elf, 46)
-    section_headers = [struct.unpack_from("<10I", raw_elf, section_offset + i * section_size) for i in range(section_count)]
+    byte_order = "<" if spec["endianness"] == "little" else ">"
+    section_offset = struct.unpack_from(byte_order + "I", raw_elf, 32)[0]
+    section_size, section_count, string_index = struct.unpack_from(byte_order + "HHH", raw_elf, 46)
+    section_headers = [struct.unpack_from(byte_order + "10I", raw_elf, section_offset + i * section_size) for i in range(section_count)]
     strings_header = section_headers[string_index]
     strings = raw_elf[strings_header[4]:strings_header[4] + strings_header[5]]
     for section in section_headers:

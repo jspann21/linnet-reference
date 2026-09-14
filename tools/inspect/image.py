@@ -2,7 +2,7 @@
 import hashlib
 import struct
 import zlib
-from tools.studio.targets import TARGET_IDS_BY_NUMBER as TARGETS, TARGET_NUMBERS
+from tools.studio.targets import TARGET_IDS_BY_NUMBER as TARGETS, TARGET_NUMBERS, TARGETS as TARGET_SPECS
 
 PROFILES = ("release", "dev", "trace")
 
@@ -32,7 +32,9 @@ def inspect(data):
         raise ValueError("invalid payload size")
     if zlib.crc32(data[:124]) != struct.unpack_from("<I", data, 124)[0] or zlib.crc32(data[128:]) != crc:
         raise ValueError("image CRC mismatch")
-    if load % 4 or entry % 4 or not (0 <= load <= entry <= load + length - 4 and load + length <= 0x01fff000):
+    spec = TARGET_SPECS[TARGETS[target]]
+    if load % 4 or entry % 4 or not (spec["load_address"] <= load <= entry <= load + length - 4 and
+                                      load + length <= spec["load_address"] + spec["os_capacity_bytes"]):
         raise ValueError("invalid image address range")
     return dict(target_id=TARGETS[target], profile=PROFILES[profile],
                 build_id=data[36:68].hex(), payload_bytes=length,
@@ -45,7 +47,7 @@ def verify_release(data, symbols):
         raise ValueError("release verifier requires release profile")
     forbidden = (b"LINK", b"LNID", b"linnet-link", b"ln_link_", b"ln_development_", b"ln_recovery_", b"devlink_", b"trace_",
                  b"inject_", b"screenshot_", b"chainload", b".dev_staging", b".dev_trace", b"ln_usb_", b"ln_crash_mailbox", b"ln_crash_encode", b"ln_crash_decode",
-                 b"ln_lcd_diagnostics", b"ln_ata_diagnostics", b"history_store")
+                 b"ln_lcd_diagnostics", b"ln_ata_diagnostics", b"history_store", b"sync_max_wait_us", b"transfer_max_us", b"max_present_us")
     haystack = data[128:] + symbols.encode("utf-8")
     hits = [item.decode() for item in forbidden if item in haystack]
     if hits:

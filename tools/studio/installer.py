@@ -178,8 +178,6 @@ def _resume_context(identity, linnet):
                     matches = False
                     break
             if not matches:
-                if linnet["state"] == "incomplete":
-                    raise ValueError("partial Linnet files differ from the saved install transaction")
                 continue
             return dict(context, transaction=str(transaction))
         except (KeyError, OSError, json.JSONDecodeError):

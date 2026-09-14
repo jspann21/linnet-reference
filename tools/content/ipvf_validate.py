@@ -42,7 +42,7 @@ def _require(condition: bool, message: str) -> None:
         raise ValueError(message)
 
 
-def _apply_rects(previous: bytes, payload: bytes, count: int) -> bytes:
+def _apply_rects(previous: bytes, payload: bytes, count: int, frame_width: int, frame_height: int) -> bytes:
     current = bytearray(previous)
     position = 0
     for index in range(count):
@@ -54,7 +54,7 @@ def _apply_rects(previous: bytes, payload: bytes, count: int) -> bytes:
         position += 8
         _require(width > 0 and height > 0,
                  f"rectangle {index}: empty geometry")
-        _require(x + width <= ipvf.W and y + height <= ipvf.H,
+        _require(x + width <= frame_width and y + height <= frame_height,
                  f"rectangle {index}: geometry out of bounds")
         _require((x & 1) == 0 and (width & 1) == 0,
                  f"rectangle {index}: non-native pixel-pair alignment")
@@ -64,7 +64,7 @@ def _apply_rects(previous: bytes, payload: bytes, count: int) -> bytes:
                  f"rectangle {index}: truncated pixels")
         for row in range(height):
             source = position + row * width * 2
-            target = ((y + row) * ipvf.W + x) * 2
+            target = ((y + row) * frame_width + x) * 2
             current[target:target + width * 2] = \
                 payload[source:source + width * 2]
         position += data_size
@@ -94,7 +94,11 @@ def inspect_file(
                  "video width does not match the target")
         _require(expected_height is None or height == expected_height,
                  "video height does not match the target")
-        ipvf.configure_geometry(width, height, max_record_sectors)
+        _require(1 <= width <= 1024 and 1 <= height <= 1024 and
+                 width * height <= 131072 and width * height % 2 == 0 and
+                 type(max_record_sectors) is int and 8 <= max_record_sectors <= 1024,
+                 "invalid IPVF target geometry")
+        frame_bytes = width * height * 2
         audio_format, channels, bits, sample_rate, audio_frames = \
             struct.unpack_from("<HHHII", header, 28)
         pre_media_reserved = struct.unpack_from("<H", header, 42)[0]
@@ -108,7 +112,6 @@ def inspect_file(
         media_id = struct.unpack_from("<I", header, 76)[0]
 
         _require(header_size == ipvf.HEADER_SIZE, "invalid logical header size")
-        _require((width, height) == (ipvf.W, ipvf.H), "invalid geometry")
         _require(fps_num > 0 and fps_den > 0, "unsupported frame rate")
         rate = Fraction(fps_num, fps_den)
         _require(ipvf.MIN_FPS <= rate <= ipvf.MAX_FPS,
@@ -119,7 +122,7 @@ def inspect_file(
                  "invalid flags")
         temporal_flag = (flags & ipvf.FLAG_TEMPORAL_XOR) != 0
         _require(data_offset == ipvf.DATA_OFFSET, "invalid data offset")
-        _require(1 <= first_sectors <= ipvf.MAX_RECORD_SECTORS,
+        _require(1 <= first_sectors <= max_record_sectors,
                  "invalid first record size")
         _require((audio_format, channels, bits, sample_rate) == (
             ipvf.AUDIO_FORMAT_IMA_ADPCM,
@@ -165,7 +168,7 @@ def inspect_file(
         stored_video_total = 0
         audio_total = 0
         padding_total = 0
-        max_record_sectors = 0
+        largest_record_sectors = 0
         decoded_audio_crc = 0xFFFFFFFF
         calculated_media_id = 0xFFFFFFFF
         keyframe_entries: list[tuple[int, int, int, int]] = []
@@ -174,7 +177,7 @@ def inspect_file(
         for frame in range(frame_count):
             if cancelled is not None and cancelled():
                 raise RuntimeError("Update cancelled")
-            _require(1 <= current_sectors <= ipvf.MAX_RECORD_SECTORS,
+            _require(1 <= current_sectors <= max_record_sectors,
                      f"frame {frame}: invalid sector chain")
             record_size = current_sectors * ipvf.RECORD_SECTOR_SIZE
             record_offset = position
@@ -266,14 +269,14 @@ def inspect_file(
                 payload = stored
 
             if kind in (ipvf.TYPE_KEY, ipvf.TYPE_KEY_LZ4):
-                _require(rect_count == 0 and decoded_size == ipvf.FRAME_BYTES,
+                _require(rect_count == 0 and decoded_size == frame_bytes,
                          f"frame {frame}: invalid keyframe")
                 current = payload
             elif kind in (ipvf.TYPE_RECTS, ipvf.TYPE_RECTS_LZ4):
                 _require(previous is not None and rect_count > 0 and
                          decoded_size > 0,
                          f"frame {frame}: invalid rectangle record")
-                current = _apply_rects(previous, payload, rect_count)
+                current = _apply_rects(previous, payload, rect_count, width, height)
             elif kind == ipvf.TYPE_REPEAT:
                 _require(previous is not None and rect_count == 0 and
                          stored_size == 0 and decoded_size == 0,
@@ -281,18 +284,18 @@ def inspect_file(
                 current = previous
             elif kind == ipvf.TYPE_XOR_LZ4:
                 _require(previous is not None and rect_count == 0 and
-                         decoded_size == ipvf.FRAME_BYTES,
+                         decoded_size == frame_bytes,
                          f"frame {frame}: invalid temporal record")
                 current = bytes(a ^ b for a, b in zip(previous, payload))
             else:
                 _require(previous is not None and rect_count == 0 and
-                         decoded_size == ipvf.FRAME_BYTES,
+                         decoded_size == frame_bytes,
                          f"frame {frame}: invalid motion record")
                 dx, dy = struct.unpack_from("<bb", stored)
-                prediction = ipvf.translate_frame(previous, dx, dy)
+                prediction = ipvf.translate_frame(previous, dx, dy, width=width, height=height)
                 current = bytes(a ^ b for a, b in zip(prediction, payload))
 
-            _require(len(current) == ipvf.FRAME_BYTES,
+            _require(len(current) == frame_bytes,
                      f"frame {frame}: reconstructed size mismatch")
             if kind in (ipvf.TYPE_KEY, ipvf.TYPE_KEY_LZ4):
                 keyframe_entries.append((
@@ -309,7 +312,7 @@ def inspect_file(
             stored_video_total += stored_size
             audio_total += audio_size
             padding_total += record_size - used_size
-            max_record_sectors = max(max_record_sectors, current_sectors)
+            largest_record_sectors = max(largest_record_sectors, current_sectors)
             position += record_size
             current_sectors = next_sectors
 
@@ -343,7 +346,7 @@ def inspect_file(
             _require(offset >= ipvf.DATA_OFFSET and
                      offset % ipvf.RECORD_SECTOR_SIZE == 0,
                      f"index entry {entry_number}: invalid record offset")
-            _require(1 <= sectors <= ipvf.MAX_RECORD_SECTORS,
+            _require(1 <= sectors <= max_record_sectors,
                      f"index entry {entry_number}: invalid record sectors")
             _require(offset + sectors * ipvf.RECORD_SECTOR_SIZE <=
                      media_end_offset,
@@ -389,7 +392,7 @@ def inspect_file(
         ),
         "padding_bytes": padding_total,
         "record_bytes": media_end_offset - ipvf.DATA_OFFSET,
-        "max_record_sectors": max_record_sectors,
+        "max_record_sectors": largest_record_sectors,
         "final_crc": f"{final_crc:08x}",
         "source_verified": False,
         "media_end_offset": media_end_offset,

@@ -40,17 +40,6 @@ MIN_FPS = 4
 MAX_FPS = 240
 
 
-def configure_geometry(width: int, height: int, max_record_sectors: int = 1024) -> None:
-    global W, H, FRAME_BYTES, MAX_RECORD_SECTORS
-    if (type(width) is not int or type(height) is not int or
-            not 1 <= width <= 1024 or not 1 <= height <= 1024 or
-            width * height > 131072 or width * height % 2 or
-            type(max_record_sectors) is not int or
-            not 8 <= max_record_sectors <= 1024):
-        raise ValueError("invalid IPVF target geometry")
-    W, H = width, height
-    FRAME_BYTES = width * height * 2
-    MAX_RECORD_SECTORS = max_record_sectors
 INDEX_ENTRY_SIZE = 16
 INDEX_FLAG_KEY_LZ4 = 1
 METADATA_OFFSET = HEADER_SIZE
@@ -253,19 +242,18 @@ def lz4_decompress(data: bytes, expected_size: int | None = None) -> bytes:
     return bytes(output)
 
 
-def translate_frame(previous: bytes, dx: int, dy: int) -> bytes:
-    if len(previous) != FRAME_BYTES:
+def translate_frame(previous: bytes, dx: int, dy: int, *, width: int = W, height: int = H) -> bytes:
+    if len(previous) != width * height * 2:
         raise ValueError("frame must match the native IPVF geometry")
-    if abs(dx) >= W or abs(dy) >= H:
+    if abs(dx) >= width or abs(dy) >= height:
         raise ValueError("translation leaves no overlapping pixels")
-    predicted = bytearray(FRAME_BYTES)
+    predicted = bytearray(width * height * 2)
     source_x, target_x = max(0, -dx), max(0, dx)
     source_y, target_y = max(0, -dy), max(0, dy)
-    width, height = W - abs(dx), H - abs(dy)
-    row_bytes = width * 2
-    for row in range(height):
-        source = ((source_y + row) * W + source_x) * 2
-        target = ((target_y + row) * W + target_x) * 2
+    row_bytes = (width - abs(dx)) * 2
+    for row in range(height - abs(dy)):
+        source = ((source_y + row) * width + source_x) * 2
+        target = ((target_y + row) * width + target_x) * 2
         predicted[target:target + row_bytes] = \
             previous[source:source + row_bytes]
     return bytes(predicted)
