@@ -1109,7 +1109,7 @@ static void step(void){
 }
 void ln_video_step(void){
     catalog_step();
-    if(v.stepping)return;v.stepping=true;uint32_t batch_started=ln_time_us();
+    if(v.stepping)return;v.stepping=true;uint32_t step_started=ln_time_us();
     for(uint32_t slices=0;slices<64u;slices++){
         uint32_t phase=v.phase,at=v.at,next=v.next,revision=v.revision,epoch=v.epoch;
         uint32_t decode_at=v.decode_at,decode_pixel=v.decode_pixel,tile_count=v.tile_count;
@@ -1124,13 +1124,13 @@ void ln_video_step(void){
         if(phase==DECODE&&v.ipvf&&v.source_type<7u){v.type_us[v.source_type]+=elapsed;++v.type_calls[v.source_type];}
         if(stage!=NONE){v.cpu[stage]+=elapsed;if(v.cpu[stage]>v.max_cpu[stage])v.max_cpu[stage]=v.cpu[stage];}
 #endif
-        if(!v.active||v.pending||v.offered||ln_time_us()-batch_started>=4000u)break;
+        if(!v.active||v.pending||v.offered||ln_time_us()-step_started>=4000u)break;
         /* Copy/RLE/delta slices advance decoder cursors without changing at.
-         * They are finite progress and may use the remaining batch budget. */
+         * They are finite progress and may use the remaining step budget. */
         if(phase==v.phase&&at==v.at&&next==v.next&&revision==v.revision&&epoch==v.epoch&&
            decode_at==v.decode_at&&decode_pixel==v.decode_pixel&&tile_count==v.tile_count)break;
     }
-    LN_VIDEO_RECORD(uint32_t elapsed=ln_time_us()-batch_started;if(elapsed>v.max_step)v.max_step=elapsed);
+    LN_VIDEO_RECORD(uint32_t elapsed=ln_time_us()-step_started;if(elapsed>v.max_step)v.max_step=elapsed);
     v.stepping=false;
 }
 uint32_t ln_video_progress(void){if(v.completed)return 1000;if(!v.count||!v.fps)return 0;return v.resume_frame*1000u/v.count;}

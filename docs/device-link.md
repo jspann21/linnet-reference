@@ -53,7 +53,7 @@ before dispatching mutation. A new session does not authorize replaying old work
 | 32 | REBOOT_NORMAL | Empty / accepted acknowledgement |
 | 33 | REBOOT_RECOVERY | Empty / accepted acknowledgement |
 | 34 | REBOOT_DISK | Empty / accepted acknowledgement |
-| 48 | READ_LOG | Empty / 96-byte Batch 0 completion and recovery diagnostic snapshot |
+| 48 | READ_LOG | Empty / 96-byte completion and recovery diagnostic snapshot |
 | 49 | READ_METRICS | Empty / bounded metrics data |
 | 50 | READ_CRASH | Empty / bounded crash record |
 | 51 | CLEAR_CRASH | Empty / accepted acknowledgement |
@@ -77,10 +77,10 @@ an unsupported operation must reject explicitly, never report success. The
 implemented storage and installation commands are described below; log
 subscription is not implemented.
 
-## Batch 1 platform commands
+## Platform commands
 
-Commands 64 through 68 are compiled only into Batch 1 and later development/trace OS
-images. They use normal frame sequence, CRC and acknowledgement rules. Their
+Commands 64 through 68 are available in development and trace OS images. They
+use normal frame sequence, CRC and acknowledgement rules. Their
 generation field is the running boot generation from `LNID`, not the USB
 connection counter. A mismatching generation is rejected before mutation.
 The exact state and screenshot layouts are in [formats.md](formats.md).
@@ -94,11 +94,11 @@ Next 4, Previous 8 and Select 16; zero releases all buttons. These are synthetic
 events, not physical observations. Physical switch and headphone readings remain
 separate in the state record.
 
-Input shapes are checked before applying the batch. A successful ACK contains
+Input shapes are checked before applying the request. A successful ACK contains
 generation and count. If the runtime rejects a later event, the error ACK
 contains generation and the accepted prefix count; it does not undo that prefix.
 Stop and inspect state, including the last accepted event sequence, before a new
-decision. Never replay the batch automatically. Other platform error ACKs contain
+decision. Never replay the request automatically. Other platform error ACKs contain
 generation and zero. An input ACK means queued acceptance; observe processed
 counters and display completion before asserting a visible result.
 
@@ -130,7 +130,7 @@ preview; capture proves framebuffer contents, not physical LCD appearance.
 Run the production platform campaign against the intended `.los` image:
 
 ```powershell
-python linnet device platform-cycle --port COM6 --image <batch1-os.los> --scenario scenarios/b01-platform.json
+python linnet device platform-cycle --port COM6 --image <development-os.los> --scenario scenarios/platform.json
 ```
 
 The port is selected explicitly and reconnects use its physical serial identity.
@@ -144,7 +144,7 @@ directory. No ambiguous mutation is retried.
 wheel, hold switch, headphone detection, visible backlight, sleep/wake and screen
 artifacts are checked on the device.
 
-## Batch 3 native UI inspection
+## Native UI inspection
 
 For panel timing, command 94 with u32 subcommand 7 returns sixteen u32 words:
 `DSYN`, reserved zero, synchronized frames, pulse timeouts, last wait us, maximum
@@ -200,7 +200,7 @@ The CLI verifies the size and magic and prints named fields alongside the
 HELLO identity:
 
 ```powershell
-python linnet build --batch 3 --profile dev --device-serial 000000F7A765 --verify
+python linnet build --profile dev --device-serial 000000F7A765 --verify
 python linnet device ui-state --port COM6
 python linnet ui compile --system themes/midnight/system.toml --output out/ui-midnight
 python linnet simulator --system themes/midnight/system.toml --tape out/ui-tape.json --output out/simulator-midnight
@@ -307,7 +307,7 @@ its SHA-256, plus the observed disk identity. See `python linnet device eject --
 for arguments and elevation options. Plain eject may leave Apple Disk Mode active;
 `--wait-link` alone does not request reboot. Never replay an ambiguous mutation.
 
-## Batch 2 storage commands
+## Storage commands
 
 All integers are little-endian u32. State-changing requests start with the
 current boot generation. Ordinary successful mutation replies contain generation
@@ -355,7 +355,7 @@ Cuts reset without the normal flush barrier and are used only by the explicit
 crash-consistency campaign. Ambiguous commands require reconnect and inspection;
 none are automatically replayed.
 
-`device storage-cycle` uses `scenarios/b02-storage.json` for deterministic
+`device storage-cycle` uses `scenarios/storage.json` for deterministic
 scratch writes, full readback hashes, random reads, settings restoration and
 fault recovery, plus `WORK.BIN` creation/growth with preserved old contents and
 zeroed extensions. Resize returns after publication and starts a remount; callers
@@ -369,14 +369,14 @@ receipts under `out/runs`.
 SHA-pinned installed Boot plan. It verifies the running OS, enters Apple Disk
 Mode, writes/fsyncs/readbacks a new deterministic 1 MiB `LINNET/HOSTSYNC.BIN`,
 then uses the guarded directory refresh/eject mechanism and verifies the exact
-healthy OS returns. Existing evidence files are refused. For Batch 2 auto-boot,
+healthy OS returns. Existing evidence files are refused. For automatic boot,
 the eject helper can explicitly expect a validated OS identity while also
 checking any transient Boot against its installed plan.
 
 
 ## Native Boot maintenance commands
 
-These commands are available in the development Batch 2 OS. They consume a
+These commands are available in the development OS. They consume a
 fixed LNPK package, never a caller-selected raw-sector operation. Mutations begin
 with the current boot generation and use the normal sequence/CRC rules.
 

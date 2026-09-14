@@ -338,7 +338,7 @@ def inspect(path, *, verify_payloads=True):
             next_level += count
         if next_level != lc or next_tile != tc:
             raise ValueError('PIMG levels do not cover tile index exactly')
-        # Batch the index and contiguous payloads to avoid two seeks per tile.
+        # Group the index and contiguous payloads to avoid two seeks per tile.
         # Keep payload memory bounded to 1 MiB even for maximum-size libraries.
         for first in range(0, tc, 512):
             count = min(512, tc-first)

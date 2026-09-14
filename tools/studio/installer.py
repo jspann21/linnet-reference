@@ -289,13 +289,13 @@ def build_artifacts(identity, progress=lambda _message: None, build="user"):
     target, serial = identity["target_id"], identity["linnet_usb_serial"]
     os_profile = "release" if build == "user" else "dev"
     progress(f"Building the Linnet {build} OS for {TARGETS[target]['name']}…")
-    os_arguments = ["--batch", "7", "--target", target, "--profile", os_profile,
+    os_arguments = ["--target", target, "--profile", os_profile,
                     "--kind", "os", "--verify"]
     if os_profile == "dev":
         os_arguments += ["--device-serial", serial]
     os_report = _run_build(os_arguments)
     progress("Building the recoverable device loader…")
-    boot_arguments = ["--batch", "7", "--target", target, "--profile", os_profile,
+    boot_arguments = ["--target", target, "--profile", os_profile,
                       "--kind", "boot", "--verify"]
     if os_profile == "dev":
         boot_arguments += ["--device-serial", serial]

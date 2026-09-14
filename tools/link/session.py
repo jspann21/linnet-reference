@@ -294,7 +294,7 @@ class Session:
 
     def platform_input(self, generation: int, events: list[tuple[int, int, int]]) -> None:
         if not 1 <= len(events) <= 32:
-            raise ValueError('synthetic input batch requires 1..32 events')
+            raise ValueError('synthetic input request requires 1..32 events')
         payload = struct.pack('<II', generation, len(events))
         payload += b''.join(struct.pack('<IIi', sequence, kind, value) for sequence, kind, value in events)
         reply = self.request(Command.INJECT_INPUT, payload)

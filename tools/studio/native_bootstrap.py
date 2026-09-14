@@ -159,7 +159,7 @@ def plan(firmware_path, mbr_path, device_path, boot_path, output):
     if ((report.get("kind"), report.get("probe"), report.get("device_serial"),
          report.get("target_id"), report.get("build_id")) !=
             ("boot", "frame", "" if details["image"]["profile"] == "release" else device["linnet_usb_serial"], device["target_id"], details["image"]["build_id"]) or
-            report.get("batch", 0) < 2 or report.get("image", {}).get("sha256") != sha(image)):
+            report.get("image", {}).get("sha256") != sha(image)):
         raise ValueError("matching storage Boot build report is required")
     if output.exists() and any(output.iterdir()):
         raise ValueError("plan output directory must be empty")

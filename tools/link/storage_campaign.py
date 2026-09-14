@@ -1,4 +1,4 @@
-"""Measured Batch2 scratch/state/fault campaign; no implicit OS installation."""
+"""Measured storage scratch/state/fault campaign; no implicit OS installation."""
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -58,8 +58,10 @@ def _finalize_receipt(session, receipt, path):
 def cycle(root, image_path, scenario_path, port, progress=None):
     image=image_path.read_bytes(); identity=inspect(image)
     scenario_raw=scenario_path.read_bytes(); suite=json.loads(scenario_raw)
-    if identity['profile']=='release' or suite.get('batch')!=2 or suite.get('target_id')!=identity['target_id']:
-        raise ValueError('storage campaign requires matching Batch2 development image/scenario')
+    required={'target_id','scratch_bytes','random_reads','seed','fault_modes'}
+    if (not isinstance(suite,dict) or set(suite)!=required or
+            identity['profile']=='release' or suite.get('target_id')!=identity['target_id']):
+        raise ValueError('storage campaign requires a matching development image and scenario')
     for key,low,high in [('scratch_bytes',65536,0x400000),('random_reads',32,4096),('seed',0,0xffffffff)]:
         if type(suite.get(key)) is not int or not low<=suite[key]<=high:
             raise ValueError('invalid storage scenario '+key)
@@ -67,7 +69,7 @@ def cycle(root, image_path, scenario_path, port, progress=None):
     if faults!=[1,2,3,4,5]:
         raise ValueError('storage campaign requires all five ordered fault modes')
     run_id,directory=_run_directory(root,identity)
-    receipt=dict(run_id=run_id,batch=2,image=identity,scenario=suite,
+    receipt=dict(run_id=run_id,image=identity,scenario=suite,
         scenario_sha256=hashlib.sha256(scenario_raw).hexdigest(),steps=[],automated_passed=False,settings_restored=False,device_write_attempted=False,
         settings_restoration=dict(attempted=False,last_attempt_verified=False,last_attempt_uncertain=False),
         started_at=datetime.now(timezone.utc).isoformat(),
@@ -196,7 +198,7 @@ def update_cycle(root, image_path, crash_path, port, progress=None):
     good_sha=hashlib.sha256(good).hexdigest();bad_sha=hashlib.sha256(bad).hexdigest()
     if good_sha==bad_sha:raise ValueError('crash image must differ from healthy image')
     run_id,directory=_run_directory(root,identity);path=directory/'receipt.json'
-    receipt=dict(run_id=run_id,batch=2,campaign='persistent-update',image=identity,crash_image=crash_identity,
+    receipt=dict(run_id=run_id,campaign='persistent-update',image=identity,crash_image=crash_identity,
         good_sha256=good_sha,crash_sha256=bad_sha,steps=[],automated_passed=False,
         device_write_attempted=False,settings_restored=False,started_at=datetime.now(timezone.utc).isoformat(),
         settings_restoration=dict(attempted=False,last_attempt_verified=False,last_attempt_uncertain=False))

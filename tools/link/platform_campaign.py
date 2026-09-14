@@ -1,4 +1,4 @@
-"""Batch1 hardware campaign: synthetic automation plus separately pending physical checks."""
+"""Platform campaign: synthetic automation plus separately pending physical checks."""
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -43,8 +43,12 @@ def cycle(root, image_path, scenario_path, port, progress=None):
     image_id = inspect(image)
     raw_scenario = scenario_path.read_bytes()
     suite = json.loads(raw_scenario)
-    if image_id['profile'] == 'release' or suite.get('batch') != 1 or suite.get('target_id') != image_id['target_id']:
-        raise ValueError('platform campaign requires matching Batch1 development image/scenario')
+    required = {'target_id', 'navigation_events', 'animation_frames',
+                'idle_observe_ms', 'sleep_ms'}
+    if (not isinstance(suite, dict) or set(suite) != required or
+            image_id['profile'] == 'release' or
+            suite.get('target_id') != image_id['target_id']):
+        raise ValueError('platform campaign requires a matching development image and scenario')
     limits = {'navigation_events':(32,4096),'animation_frames':(17,120),
               'idle_observe_ms':(100,5000),'sleep_ms':(50,1000)}
     for key,(low,high) in limits.items():
@@ -53,7 +57,7 @@ def cycle(root, image_path, scenario_path, port, progress=None):
     if suite['navigation_events'] % 2:
         raise ValueError('navigation storm requires an even event count for balanced wheel pairs')
     run_id,directory = _run_directory(root,image_id)
-    receipt = dict(run_id=run_id,batch=1,image=image_id,scenario=suite,
+    receipt = dict(run_id=run_id,image=image_id,scenario=suite,
                    scenario_sha256=hashlib.sha256(raw_scenario).hexdigest(),
                    started_at=datetime.now(timezone.utc).isoformat(),steps=[],automated_passed=False,
                    physical_passed=False,device_write_attempted=False,

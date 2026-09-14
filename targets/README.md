@@ -137,9 +137,9 @@ python -c "from tools.studio.targets import TARGETS; print('\n'.join(TARGETS))"
 python linnet doctor
 python linnet ui compile --system out/new-model-system.toml --output out/ui-new-model
 python linnet simulator --system out/new-model-system.toml --output out/simulator-new-model
-python linnet build --batch 7 --target NEW_TARGET --profile release --kind os --verify
-python linnet build --batch 7 --target NEW_TARGET --profile dev --kind boot --device-serial YOUR_SERIAL --verify
-python linnet build --batch 7 --target NEW_TARGET --profile dev --kind os --device-serial YOUR_SERIAL --verify
+python linnet build --target NEW_TARGET --profile release --kind os --verify
+python linnet build --target NEW_TARGET --profile dev --kind boot --device-serial YOUR_SERIAL --verify
+python linnet build --target NEW_TARGET --profile dev --kind os --device-serial YOUR_SERIAL --verify
 ```
 
 If using a custom system configuration, also pass

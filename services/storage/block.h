@@ -22,7 +22,7 @@ bool ln_block_submit(enum ln_block_op op,uint64_t lba,uint32_t sectors,void *buf
     uint32_t generation,uint32_t deadline_us,uint32_t *request_id);
 /* Read-ahead ceiling is1 (no speculative sectors) or8 (streaming default).
  * Captured with the request; coalesced explicit sectors always remain covered.
- * A batch uses its most restrictive ceiling and never expands past the window. */
+ * A request group uses its most restrictive ceiling and never expands past the window. */
 bool ln_block_submit_read(uint64_t lba,uint32_t sectors,void *buffer,
     uint32_t generation,uint32_t deadline_us,uint32_t read_ahead,uint32_t *request_id);
 /* Direct reads transfer up to 192 contiguous sectors into the caller buffer

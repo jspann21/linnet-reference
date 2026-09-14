@@ -5,13 +5,13 @@ to native C. `ui/system/` contains the shell and media scenes. `apps/notes/` is 
 UI Demo application with a native waveform canvas. It demonstrates components;
 it does not provide note editing or note storage. Its stable ID remains
 `local.example.notes`. Set `[features] demo = true` in an explicit system
-configuration to expose UI Demo in Home and Extras. Demo is hidden by default. Batch 7 integrates native
-audio, photo, video, settings, and recovery services; static TSX describes their
+configuration to expose UI Demo in Home and Extras. Demo is hidden by default.
+The firmware integrates native audio, photo, video, settings, and recovery services; static TSX describes their
 presentation, while the linked native runtime owns service behavior.
 
 Edit `config/system.toml` to select ordered application IDs and a theme. The first
 application is the home scene. Every menu destination must be in that selected
-set. Build with `python linnet build --profile dev --kind os --batch 7
+set. Build with `python linnet build --profile dev --kind os
 --device-serial YOUR_SERIAL --verify` (on one line). Compile content alone with:
 
 ```console

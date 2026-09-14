@@ -410,7 +410,7 @@ class _MetadataCache:
                  json.dumps(metadata)))
             self.pending_writes += 1
             # The cache is disposable; amortize durable writes across tracks.
-            # close() also commits the final partial batch on cancellation.
+            # close() also commits the final partial group on cancellation.
             if self.pending_writes >= 128:
                 self.connection.commit()
                 self.pending_writes = 0

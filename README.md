@@ -56,14 +56,14 @@ inside WSL too when running the compiler or simulator there.
 
 ```powershell
 python linnet doctor
-python linnet build --batch 7 --target photo4g-p98 --profile dev --device-serial YOUR_SERIAL --verify
-python linnet build --batch 7 --target photo4g-p98 --profile release --verify
+python linnet build --target photo4g-p98 --profile dev --device-serial YOUR_SERIAL --verify
+python linnet build --target photo4g-p98 --profile release --verify
 python linnet simulator --output out/simulator
 ```
 
 `YOUR_SERIAL` is the serial observed from the physical device; development and
-trace builds require it. Release builds do not. `--batch 7` selects the current
-integrated firmware; omitting it selects the early Batch 0 build.
+trace builds require it. Release builds do not. Every build contains the current
+integrated firmware for its selected target, profile and image kind.
 
 On Linux use `python3 linnet`. Build artifacts go under `out/<profile>/<target>/<kind>/`.
 Use `python linnet --help` and subcommand `--help` for available operations.

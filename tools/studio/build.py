@@ -53,7 +53,7 @@ def source_identity(configuration, chain):
     digest.update(json.dumps({k: {field: v[field] for field in ('version', 'sha256')} for k, v in chain.items()}, sort_keys=True).encode())
     return digest.hexdigest()
 
-def build(profile, target, verify=False, kind="os", probe="frame", device_serial="", batch=0, system_config=None):
+def build(profile, target, verify=False, kind="os", probe="frame", device_serial="", system_config=None):
     target = target_id(target)
     spec = TARGETS[target]
     chain = toolchain()
@@ -63,10 +63,10 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         raise ValueError("device serial must be 1..32 letters, digits or hyphens")
     if profile != "release" and not device_serial:
         raise ValueError("development USB requires --device-serial from physical device enumeration")
-    if batch not in (0, 1, 2, 3, 4, 5, 6, 7):
-        raise ValueError("supported build batches are 0 through 7")
-    configuration = dict(profile=profile, target_id=target, kind=kind, probe=probe, device_serial=device_serial, batch=batch)
-    if batch>=3 and kind=="os":configuration["system_config"]=str(system_config or "config/system.toml")
+    configuration = dict(profile=profile, target_id=target, kind=kind,
+                         probe=probe, device_serial=device_serial)
+    if kind == "os":
+        configuration["system_config"] = str(system_config or "config/system.toml")
     dest = ROOT / "out" / profile / target / kind
     dest.mkdir(parents=True, exist_ok=True)
     generated = dest / "generated"
@@ -82,7 +82,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     ]
     (generated / "linnet_target.h").write_text("\n".join(target_header) + "\n")
     ui_report = None
-    if batch >= 3 and kind == "os":
+    if kind == "os":
         from tools.content.compiler import compile_system
         ui_report = compile_system(ROOT, generated, Path(system_config) if system_config else None,
                                    target_override=target)
@@ -100,43 +100,39 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
                ROOT / target_sources["platform"], ROOT / target_sources["lcd"],
                ROOT / "kernel/main.c", ROOT / "kernel/memory.S"]
     sources += [ROOT / "boot/src/linnet_boot.c"]
-    if batch >= 1:
-        sources += [hal / name for name in ("core.c", "input.c", "power.c")]
-        sources += [ROOT / target_sources["display"], ROOT / target_sources["device"]]
-        if batch >= 6 and kind == "os" and spec.get("cop_display", False):
-            sources += [hal / name for name in ("video_blit.c", "video_blit.S")]
-        if kind == "os":
-            sources += [ROOT / name for name in ("kernel/executive.c", "kernel/runtime.c", "kernel/wheel_motion.c")]
-            sources += [ROOT / ("ui/runtime/shell_adapter.c" if batch>=3 else "kernel/shell.c")]
-            if batch>=3: sources += [ROOT / "services/display/clock.c"]
+    sources += [hal / name for name in ("core.c", "input.c", "power.c")]
+    sources += [ROOT / target_sources["display"], ROOT / target_sources["device"]]
+    if kind == "os" and spec.get("cop_display", False):
+        sources += [hal / name for name in ("video_blit.c", "video_blit.S")]
+    if kind == "os":
+        sources += [ROOT / name for name in
+                    ("kernel/executive.c", "kernel/runtime.c", "kernel/wheel_motion.c")]
+        sources += [ROOT / "ui/runtime/shell_adapter.c", ROOT / "services/display/clock.c"]
     if profile != "release":
         sources += sorted((ROOT / "hal/link").glob("*.c"))
         sources += [ROOT / name for name in ("boot/src/loader.c", "boot/src/sha256.c")]
         sources += [hal / name for name in ("usb.c", "recovery.c", "recovery.S")]
         sources += [ROOT / "kernel/development.c"]
-        if batch >= 1 and kind == "os":
+        if kind == "os":
             sources += [ROOT / "kernel/platform_link.c"]
-    if batch >= 2:
-        sources += [ROOT / name for name in (
-            "services/storage/block.c", "services/storage/fat32.c",
-            "services/storage/storage.c", "services/state/store.c", "services/update/update.c", "boot/src/persistent_enter.S")]
-        sources += [hal / "ata.c"]
-        if profile == "release":
-            sources += [ROOT / "boot/src/sha256.c"]
-        else:
-            sources += [ROOT / "kernel/storage_link.c"]
-            if kind == "os":
-                sources += [ROOT / "services/update/native.c"]
-    if batch>=3 and kind=="os":
+    sources += [ROOT / name for name in (
+        "services/storage/block.c", "services/storage/fat32.c",
+        "services/storage/storage.c", "services/state/store.c",
+        "services/update/update.c", "boot/src/persistent_enter.S")]
+    sources += [hal / "ata.c"]
+    if profile == "release":
+        sources += [ROOT / "boot/src/sha256.c"]
+    else:
+        sources += [ROOT / "kernel/storage_link.c"]
+        if kind == "os":
+            sources += [ROOT / "services/update/native.c"]
+    if kind == "os":
         sources += [ROOT/"ui/runtime/ui.c",generated/"linnet_ui.c",ROOT/"services/display/settings.c"]
     flags = ["--target=arm-none-eabi", "-mcpu=arm7tdmi", "-marm", "-mfloat-abi=soft", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-ffunction-sections", "-fdata-sections", "-Os", "-Wall", "-Wextra", "-Werror", "-I.", "-Iboot/include", f"-DLINNET_PROFILE_{profile.upper()}=1", f"-DLINNET_IMAGE_{kind.upper()}=1", f'-D{spec["target_define"]}=1']
     flags += ["-I" + str(generated), f"-DLINNET_PROBE_CRASH={int(probe == 'crash')}", f"-DLINNET_PROBE_HANG={int(probe == 'hang')}"]
-    if batch >= 1:
-        flags += ["-DLINNET_PLATFORM_CORE=1"]
-    if batch >= 2:
-        flags += ["-DLINNET_STORAGE=1"]
-    if batch>=3 and kind=="os":flags += ["-DLINNET_NATIVE_UI=1"]
-    if batch>=4 and kind=="os":
+    flags += ["-DLINNET_PLATFORM_CORE=1", "-DLINNET_STORAGE=1"]
+    if kind == "os":
+        flags += ["-DLINNET_NATIVE_UI=1"]
         flags += ["-DLINNET_AUDIO=1"]
         sources += [hal/'audio.c',ROOT/'services/audio/codec_pcm.c']
         sources += [ROOT/'services/music/player.c',ROOT/'services/music/database.c']
@@ -159,15 +155,15 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         sources += [ROOT/'third_party/libmad'/name for name in ('bit.c','frame.c','huffman.c','layer12.c','layer3.c','stream.c','synth.c','imdct_l_arm.S','synth_full_arm.S')]
         flags += ['-fwrapv']
         if profile!='release':sources += [ROOT/'kernel/audio_link.c']
-    if batch>=6 and kind=='os' and (ui_report is None or ui_report['features'].get('video',True)):
+    if kind == 'os' and ui_report['features'].get('video', True):
         flags += ['-DLINNET_VIDEO=1']
         sources += sorted((ROOT/'services/video').glob('*.c'))
         sources += sorted((ROOT/'services/video').glob('*.S'))
-    if batch>=7 and kind=='os':
+    if kind == 'os':
         flags += ['-DLINNET_BATTERY_GUARD=1']
         if profile!='release':flags += ['-DLINNET_AUDIO_CACHE_DIAGNOSTIC=1']
         sources += [ROOT/'services/power/battery.c']
-    if batch>=5 and kind=='os':
+    if kind == 'os':
         flags += ['-DLINNET_PHOTOS=1', '-DLINNET_NOTES=1']
         sources += sorted((ROOT/'services/notes').glob('*.c'))
         sources += sorted((ROOT/'services/photos').glob('*.c'))
@@ -193,10 +189,9 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     elf = dest / (prefix + ".elf")
     mapfile = dest / (prefix + ".map")
     script = generated / "memory.ld"
-    memory_flags = ["-DLINNET_PLATFORM_CORE=1"] if batch >= 1 else []
-    if batch >= 2:
-        memory_flags += ["-DLINNET_STORAGE=1"]
-    if batch>=4 and kind=='os':memory_flags += ['-DLINNET_AUDIO=1']
+    memory_flags = ["-DLINNET_PLATFORM_CORE=1", "-DLINNET_STORAGE=1"]
+    if kind == 'os':
+        memory_flags += ['-DLINNET_AUDIO=1']
     run([chain['compiler']['path'], "-E", "-P", "-x", "c", f"-DLINNET_PROFILE_{profile.upper()}=1", f"-DLINNET_IMAGE_{kind.upper()}=1", *memory_flags, ROOT / target_sources["linker"], "-o", script])
     run([chain['linker']['path'], "-T", script, "--gc-sections", "-Map=" + str(mapfile), "-o", elf, *objects])
     raw = dest / (prefix + ".bin")
@@ -227,7 +222,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     report = dict(**configuration, build_id=build_id, toolchain=chain, image=inspect(envelope),
                   source_files=[p.relative_to(ROOT).as_posix() for p in sources],
                   artifacts={key: str(path.relative_to(ROOT)) for key, path in dict(elf=elf, los=los, ipod=ipod, map=mapfile).items()},
-                  memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=4718592 if batch>=4 and kind=='os' else 1048576, retained_limit_bytes=4096),
+                  memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=4718592 if kind=='os' else 1048576, retained_limit_bytes=4096),
                   release_exclusion=verification,
                   limitation="FIQ watchdog depends on FIQ delivery; COP reset escalation requires a live COP monitor.")
     if ui_report is not None:report["ui"]=ui_report

@@ -199,7 +199,7 @@ _Noreturn void ln_main(void)
     readiness &= ~LINNET_BOOT_HEALTH_STORAGE_RESOLVED;
 #endif
     if (first_frame) readiness |= LINNET_BOOT_HEALTH_FIRST_FRAME;
-    /* Storage is explicitly unavailable in Batch 0. Codec power-down must
+    /* Storage-disabled configurations cannot publish readiness. Codec power-down must
      * succeed before the audio-idle condition can be published. */
     if (audio_idle) readiness |= LINNET_BOOT_HEALTH_AUDIO_IDLE;
     ln_development_health(readiness);

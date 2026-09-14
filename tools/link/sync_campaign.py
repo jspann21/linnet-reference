@@ -67,8 +67,8 @@ def cycle(root, image_path, port, disk_number, plan_path, plan_sha256, progress=
     image_id = inspect(image)
     build = json.loads(image_path.with_suffix('.json').read_text())
     if (image_id['profile'] == 'release' or image_id['load_address'] != 0 or len(image) > 0x800000 or
-        build.get('kind') != 'os' or build.get('batch') != 2 or build.get('build_id') != image_id['build_id']):
-        raise ValueError('host sync requires the matching Batch2 development OS and build report')
+        build.get('kind') != 'os' or build.get('build_id') != image_id['build_id']):
+        raise ValueError('host sync requires the matching development OS and build report')
     plan, artifacts, _ = load_plan(plan_path, plan_sha256)
     plan_sha256 = plan_sha256.lower()
     if image_id['target_id'] != plan['image']['target_id']:
@@ -78,7 +78,7 @@ def cycle(root, image_path, port, disk_number, plan_path, plan_sha256, progress=
     expected_hash = hashlib.sha256(pattern).hexdigest()
     run_id, directory = _run_directory(root, image_id)
     receipt_path = directory / 'receipt.json'
-    receipt = dict(run_id=run_id, batch=2, campaign='host-USB-mount-write-sync-eject-reconnect',
+    receipt = dict(run_id=run_id, campaign='host-USB-mount-write-sync-eject-reconnect',
                    image=image_id, plan=str(plan_path), plan_sha256=plan_sha256,
                    disk_number=disk_number, started_at=datetime.now(timezone.utc).isoformat(),
                    passed=False, device_write_attempted=False,

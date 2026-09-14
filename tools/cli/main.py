@@ -31,8 +31,7 @@ def parser():
     compile_.add_argument("--kind", choices=("os", "boot"), default="os")
     compile_.add_argument("--probe", choices=("frame", "crash", "hang"), default="frame")
     compile_.add_argument("--device-serial", default="")
-    compile_.add_argument("--batch", type=int, choices=(0,1,2,3,4,5,6,7), default=0)
-    compile_.add_argument("--system",type=Path,help="Batch 3 system.toml configuration")
+    compile_.add_argument("--system", type=Path, help="system.toml configuration")
     ui=commands.add_parser("ui").add_subparsers(dest="action",required=True)
     ui_compile=ui.add_parser("compile")
     ui_compile.add_argument("--output",type=Path,default=Path('out/ui'))
@@ -233,7 +232,8 @@ def main():
                  install(identity, progress=lambda message: print(message, file=sys.stderr), build=args.build)
                  if args.installer_action == "install" else restore(identity))
         elif args.command == "build":
-            emit(build(args.profile, args.target, args.verify, args.kind, args.probe, args.device_serial, batch=args.batch,system_config=args.system))
+            emit(build(args.profile, args.target, args.verify, args.kind, args.probe,
+                       args.device_serial, system_config=args.system))
         elif args.command == "ui":
             from tools.content.compiler import compile_system
             emit(compile_system(ROOT,args.output,args.system))

@@ -19,7 +19,7 @@ map and [open work](docs/roadmap.md) for known limitations.
 
 Run the relevant existing commands from the repository root. Setup and pinned
 LLVM requirements are in the README. For firmware, run `python linnet doctor`
-and build the affected target/profile with `--batch 7 --verify`. Development
+and build the affected target/profile with `--verify`. Development
 builds require the observed device serial. For UI changes, compile content and
 inspect native simulator output using the SDK workflow. For model additions,
 use the fuller validation sequence in the porting guide.

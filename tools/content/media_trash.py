@@ -1,4 +1,4 @@
-"""Guarded recovery and permanent removal of media removal batches."""
+"""Guarded recovery and permanent deletion of removed media."""
 import json
 import os
 from pathlib import Path
@@ -10,7 +10,7 @@ from .publish_photos import _exclusive
 from .publish_video import _read_catalog, _encode_catalog, CATALOG_MAX_BYTES
 
 
-def batches(identity):
+def removals(identity):
     root = Path(identity['root']).resolve(strict=True)
     found = []
     for receipt in media.cache_root(identity).glob('remove-*.json'):
@@ -36,11 +36,11 @@ def recover(identity, token, *, erase=False):
     identity = media.refresh(identity)
     with _exclusive(identity):
         root = Path(identity['root']).resolve(strict=True)
-        batch = next((b for b in batches(identity) if b['id'] == token), None)
-        if batch is None:
-            raise ValueError('This Trash batch changed. Refresh before continuing.')
-        trash = Path(batch['path'])
-        receipt = Path(batch['receipt'])
+        removal = next((item for item in removals(identity) if item['id'] == token), None)
+        if removal is None:
+            raise ValueError('This Trash removal changed. Refresh before continuing.')
+        trash = Path(removal['path'])
+        receipt = Path(removal['receipt'])
         report = json.loads(receipt.read_text())
         if erase:
             # Enumerate guarded ordinary files before deleting any of them.
@@ -61,9 +61,9 @@ def recover(identity, token, *, erase=False):
             trash.rmdir()
             report['trash_emptied'] = True
             media._save(receipt, report)
-            return dict(receipt=str(receipt), summary='Trash batch permanently deleted. Its storage is now available.')
+            return dict(receipt=str(receipt), summary='Trash removal permanently deleted. Its storage is now available.')
         moves = []
-        # Derive destinations from the guarded batch tree, never trust absolute receipt paths.
+        # Derive destinations from the guarded removal tree; never trust absolute receipt paths.
         for source, info in media._file_records(trash):
             relative = source.relative_to(trash)
             if relative.as_posix() == 'INDEX.VID.before':

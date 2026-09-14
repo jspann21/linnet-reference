@@ -61,7 +61,7 @@ class LibraryWindow:
         self.open_button.pack(side="left")
         self.remove_button = ttk.Button(actions, text="Remove selected from iPod…", command=self.remove, state="disabled")
         self.remove_button.pack(side="left", padx=8)
-        self.restore_button = ttk.Button(actions, text="Restore batch", command=self.restore, state="disabled")
+        self.restore_button = ttk.Button(actions, text="Restore removal", command=self.restore, state="disabled")
         self.restore_button.pack(side="left", padx=8)
         ttk.Button(actions, text="Close", command=self.close).pack(side="right")
         self.status = tk.StringVar()
@@ -87,8 +87,8 @@ class LibraryWindow:
         self.status.set("Reading the library…")
         def load():
             rows = [r for r in media_library.list_items(self.identity) if r['category'] == 'library']
-            for batch in media_trash.batches(self.identity):
-                rows.append(dict(batch, category='trash', kind='Trash', status='Recoverable · ' + datetime.fromtimestamp(batch['started']).strftime('%b %d, %H:%M'), removable=True))
+            for removal in media_trash.removals(self.identity):
+                rows.append(dict(removal, category='trash', kind='Trash', status='Recoverable · ' + datetime.fromtimestamp(removal['started']).strftime('%b %d, %H:%M'), removable=True))
             return rows
         self.work(load, "loaded")
 
@@ -118,7 +118,7 @@ class LibraryWindow:
         rows = [self.rows[key] for key in self.tree.selection()]
         self.remove_button.configure(state="normal" if rows and not self.busy and all(row.get("removable", False) for row in rows) else "disabled")
         trash = bool(rows) and all(r['category'] == 'trash' for r in rows)
-        self.remove_button.configure(text='Permanently delete batch…' if self.kind.get() == 'Trash' else 'Remove prepared library…', state='normal' if rows and not self.busy and (not trash or len(rows) == 1) else 'disabled')
+        self.remove_button.configure(text='Permanently delete removal…' if self.kind.get() == 'Trash' else 'Remove prepared library…', state='normal' if rows and not self.busy and (not trash or len(rows) == 1) else 'disabled')
         self.restore_button.configure(state='normal' if trash and len(rows) == 1 and not self.busy else 'disabled')
         self.open_button.configure(state="normal" if len(rows) == 1 else "disabled")
         if len(rows) == 1:
@@ -142,7 +142,7 @@ class LibraryWindow:
         if self.busy or not rows or not all(row.get("removable", False) for row in rows):
             return
         if rows[0]['category'] == 'trash':
-            if len(rows) == 1 and messagebox.askokcancel('Permanently delete Trash batch', f"Permanently delete {rows[0]['title']}?\n\nThis frees {rows[0]['bytes'] / 1048576:,.1f} MB on the iPod. These files cannot be restored afterward.", parent=self.window):
+            if len(rows) == 1 and messagebox.askokcancel('Permanently delete removal', f"Permanently delete {rows[0]['title']}?\n\nThis frees {rows[0]['bytes'] / 1048576:,.1f} MB on the iPod. These files cannot be restored afterward.", parent=self.window):
                 self.work(lambda: media_trash.recover(self.identity, rows[0]['id'], erase=True), 'removed')
             return
         names = "\n".join(row['title'] for row in rows[:8])

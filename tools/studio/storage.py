@@ -1,4 +1,4 @@
-"""Batch 2 file provisioning. Native Boot installation is a separate transaction."""
+"""File provisioning. Native Boot installation is a separate transaction."""
 import hashlib
 import json
 import os
@@ -69,8 +69,8 @@ def prepare(image_path, directory):
     image = image_path.read_bytes()
     identity = inspect(image)
     build = json.loads(image_path.with_suffix('.json').read_text())
-    if build.get('kind') != 'os' or build.get('batch',0) < 2 or build.get('build_id') != identity['build_id']:
-        raise ValueError('initial provisioning requires the matching Batch 2 OS build report')
+    if build.get('kind') != 'os' or build.get('build_id') != identity['build_id']:
+        raise ValueError('initial provisioning requires the matching OS build report')
     metadata = initial_metadata(image)
     directory = directory.resolve()
     directory.mkdir(parents=True, exist_ok=False)

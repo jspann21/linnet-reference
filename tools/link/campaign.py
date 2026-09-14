@@ -176,11 +176,12 @@ def cycle(root, image_path, scenario_path, port=None, crash_image=None, progress
         raise ValueError('device campaign requires a development transport image')
     scenario_bytes = scenario_path.read_bytes()
     suite = json.loads(scenario_bytes)
-    if not isinstance(suite, dict):
-        raise ValueError('Batch 0 scenario must be an object')
+    if (not isinstance(suite, dict) or
+            set(suite) != {'target_id', 'healthy_cycles', 'required_invariants'}):
+        raise ValueError('invalid recovery scenario structure')
     count = suite.get('healthy_cycles')
-    if suite.get('target_id') != image_id['target_id'] or suite.get('batch') != 0 or type(count) is not int or not 1 <= count <= 500:
-        raise ValueError('invalid Batch 0 scenario or cycle count')
+    if suite.get('target_id') != image_id['target_id'] or type(count) is not int or not 1 <= count <= 500:
+        raise ValueError('invalid recovery scenario or cycle count')
     crash_bytes = crash_image.read_bytes() if crash_image else None
     crash_id = inspect(crash_bytes) if crash_bytes else None
     hang_bytes = hang_image.read_bytes() if hang_image else None
@@ -189,7 +190,7 @@ def cycle(root, image_path, scenario_path, port=None, crash_image=None, progress
         if identity and (identity['profile'] == 'release' or identity['target_id'] != image_id['target_id']):
             raise ValueError(f'{name} image must be a matching development image')
         if identity and (len(payload) > 0x800000 or identity['load_address'] != 0 or identity['payload_bytes'] < 32):
-            raise ValueError(f'{name} image does not fit the Batch 0 fixed staging and entry policy')
+            raise ValueError(f'{name} image does not fit the fixed staging and entry policy')
     identities = [item['build_id'] for item in (image_id, crash_id, hang_id) if item]
     if len(set(identities)) != len(identities):
         raise ValueError('healthy, crash and watchdog probes must have distinct build identities')
@@ -360,10 +361,10 @@ def cycle(root, image_path, scenario_path, port=None, crash_image=None, progress
         crash = capture_crash('crash-after-healthy', image_id, current['generation'], 1)
         record('crash-after-healthy-recovered', identity=recovered, crash=crash)
         if not crash_bytes:
-            raise RuntimeError('before-healthy crash image required to complete Batch 0; supply --crash-image')
+            raise RuntimeError('before-healthy crash image is required; supply --crash-image')
         fault_probe('crash-before-healthy', crash_bytes, crash_id, 1)
         if not hang_bytes:
-            raise RuntimeError('watchdog hang image required for complete Batch 0; supply --hang-image')
+            raise RuntimeError('watchdog hang image is required; supply --hang-image')
         fault_probe('watchdog-hang-before-healthy', hang_bytes, hang_id, 9)
         receipt['phase'] = 'reboot-modes'
         current = boot_bytes(image, image_id)
@@ -386,7 +387,7 @@ def cycle(root, image_path, scenario_path, port=None, crash_image=None, progress
         # A disk-mode reboot must produce a real host mass-storage observation.
         # It is deliberately last because Apple disk mode leaves Linnet Link.
         if release_result is None:
-            raise RuntimeError('release image and symbol report are required for complete Batch 0 verification')
+            raise RuntimeError('release image and symbol report are required for complete verification')
         record('release-exclusion', result=release_result)
         from .storage_observation import disks, wait_for_disk
         existing_disks = [disk for disk in disks() if serial_number.casefold() in
