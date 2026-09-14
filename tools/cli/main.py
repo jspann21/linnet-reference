@@ -61,10 +61,9 @@ def parser():
     video_compile.add_argument('--source',type=Path,required=True)
     video_compile.add_argument('--output',type=Path,required=True)
     video_compile.add_argument('--target',default='photo4g-p98',type=target_id)
-    video_compile.add_argument('--fps',type=int,choices=(24,25,30,60),default=24)
-    video_compile.add_argument('--max-frames',type=int)
+    video_compile.add_argument('--fps',type=int,choices=range(4,31),help='Defaults to the target video frame rate')
     video_compile.add_argument('--ffmpeg')
-    video_compile.add_argument('--cost-model',type=Path)
+    video_compile.add_argument('--ffprobe')
     video_inspect=video.add_parser('inspect')
     video_inspect.add_argument('package',type=Path)
     video_publish=video.add_parser('publish')
@@ -248,15 +247,21 @@ def main():
             else:emit(compile_music(args.source,args.output,ffprobe=args.ffprobe,device_root=args.device_root,
                                    verification=args.verification,bypass_cache=args.refresh_metadata) if args.action=='compile' else validate_database(args.database.read_bytes()))
         elif args.command=='video':
-            from tools.content.video import compile_video,inspect as inspect_video
             if args.action=='compile':
-                model=json.loads(args.cost_model.read_text()) if args.cost_model else None
+                from tools.content.ipvf_encode import encode_ipvf
                 spec=TARGETS[args.target]
-                emit(compile_video(args.source,args.output,fps=args.fps,
+                if not spec['capabilities'].get('video',True):
+                    raise ValueError('video is disabled for the selected target')
+                if args.output.suffix.lower() not in ('.ipvf','.ipv'):
+                    raise ValueError('video output must use .ipvf or .ipv')
+                emit(encode_ipvf(args.source,args.output,fps=args.fps or spec['media_video_fps'],
                     width=spec['media_video_width'],height=spec['media_video_height'],
-                    max_record=spec['storage_max_read_sectors']*512-8192,
-                    max_frames=args.max_frames,ffmpeg=args.ffmpeg,cost_model=model))
-            elif args.action=='inspect':emit(inspect_video(args.package))
+                    color_depth=spec['media_video_color'],
+                    max_record_sectors=spec['storage_max_read_sectors'],
+                    ffmpeg=args.ffmpeg,ffprobe=args.ffprobe))
+            elif args.action=='inspect':
+                from tools.content.ipvf_validate import inspect_file
+                emit(inspect_file(args.package))
             else:
                 from tools.content.publish_video import publish_video
                 emit(publish_video(args.package,disk_number=args.disk_number,expected_disk_serial=args.disk_serial,

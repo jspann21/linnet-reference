@@ -7,7 +7,7 @@ import ctypes
 from pathlib import Path
 import time
 import uuid
-from .video import inspect
+from .ipvf_validate import inspect_file
 from .publish import _plain, _hash, _copy_verified, _same_target, _volume_guard, inspect_target
 from .publish_photos import _exclusive
 MAX_FILE=0x7fffffff
@@ -29,9 +29,7 @@ def _target_check(candidate, root):
     width, height, sectors = _target_profile(root)
     if (candidate.get("width"), candidate.get("height")) != (width, height):
         raise ValueError("video geometry does not match the selected iPod target")
-    maximum = candidate.get("max_record_sectors")
-    if maximum is None:
-        maximum = (candidate.get("max_record_bytes", 0) + 511) // 512
+    maximum = candidate["max_record_sectors"]
     if not 1 <= maximum <= sectors:
         raise ValueError("video record size exceeds the selected iPod target")
 
@@ -47,16 +45,9 @@ def publish_video(package, *, disk_number, expected_disk_serial,
     _plain(package, Path(package.anchor))
     package = package.resolve(strict=True)
     digest = _hash(package)
-    with package.open('rb') as reader:
-        magic = reader.read(4)
-    if magic == b'IPVF':
-        from .ipvf_validate import inspect_file
-        candidate = inspect_file(package)
-        candidate['sha256'] = digest
-        candidate['format'] = 'IPVF'
-    else:
-        candidate = inspect(package)
-        candidate['format'] = 'PVID'
+    candidate = inspect_file(package)
+    candidate['sha256'] = digest
+    candidate['format'] = 'IPVF'
     candidate['bytes']=candidate['file_bytes']
     if candidate['sha256'] != digest:
         raise ValueError('video package changed during validation')
@@ -77,8 +68,7 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
         _volume_guard(identity)
     linnet, directory = root/'LINNET', root/'LINNET'/'VIDEOS'
     key = hashlib.sha256(str(library_key if library_key is not None else package.stem).encode('utf-8')).digest()
-    extension = '.IPV' if candidate.get('format') == 'IPVF' else '.PVD'
-    filename = key.hex()[:8].upper() + extension
+    filename = key.hex()[:8].upper() + '.IPV'
     active, backups = directory/filename, directory/'BACKUP'
     catalog = directory/'INDEX.VID'
     catalog_before = None

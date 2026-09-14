@@ -5,7 +5,7 @@
 
 /* MSB-first polynomial 0x04c11db7, with caller-supplied state and no
  * final XOR, matching Rockbox crc_32. Slice k advances a byte by k+1
- * positions. The two video CRC tables fill the reserved 8 KiB audio IRAM.
+ * positions. The video CRC table uses 4 KiB of the reserved audio IRAM.
  */
 static const uint32_t rockbox_crc_slice4_table[4][256]
 #if defined(__arm__)

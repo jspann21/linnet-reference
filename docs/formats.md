@@ -117,7 +117,7 @@ zero and fixed length 32 at offset 4. Every embedded record has its own CRC.
 - Music databases use `PODB` with a reserved-zero header field.
 - Photo packages use `PIMG` with a reserved-zero header field; see
   [photo-format.md](photo-format.md).
-- Video packages use `PVID`; see [video-format.md](video-format.md).
+- Video packages use `IPVF`; see [video-format.md](video-format.md).
 - DSP profiles use `LDSP` with a reserved-zero header field.
 - Notes use `NOTE` with a reserved-zero header field.
 - Baked fonts identify themselves as `FONT`.

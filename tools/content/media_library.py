@@ -18,7 +18,7 @@ def _device_path(root, value):
     parts = PurePosixPath(value).parts
     if not value.startswith('/') or value.startswith('//') or '\\' in value or ':' in value or any(p in ('..', '.') for p in value.split('/')):
         raise ValueError('Unsafe catalog path')
-    if len(parts) < 3 or parts[1].casefold() not in ('videos', 'linnet') or PurePosixPath(value).suffix.lower() not in ('.ipv', '.ipvf', '.pvd', '.pvid'):
+    if len(parts) < 3 or parts[1].casefold() not in ('videos', 'linnet') or PurePosixPath(value).suffix.lower() not in ('.ipv', '.ipvf'):
         raise ValueError('Unsupported catalog media path')
     path = root.joinpath(*parts[1:])
     _plain(path, root)

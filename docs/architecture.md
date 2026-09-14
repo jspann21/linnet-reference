@@ -69,7 +69,7 @@ share the service budget with media reads. Photos use host-prepared RGB565 tiles
 paged metadata and fixed caches; baseline JPEG fallback is bounded. New photo
 work is admitted according to available audio reserve.
 
-Video accepts PVID and native IPVF; IPVF includes LZ4/temporal reconstruction and
+Video uses native IPVF, including LZ4/temporal reconstruction and
 IMA ADPCM audio. Presentation uses the audio clock. IPVF displays its validated
 first frame before scanning the seek index; audio waits for complete index
 verification and a 1.5-second decoded video cushion (bounded by the slot limit).
