@@ -97,6 +97,7 @@ def build_description(state):
 
 def installed_state(root, target_id):
     root = Path(root)
+    capacity = TARGETS[target_id]["os_capacity_bytes"]
     directory = root / "LINNET"
     present = [name for name in CORE_FILES if (directory / name).exists()]
     if not present:
@@ -106,7 +107,7 @@ def installed_state(root, target_id):
                     detail="An interrupted Linnet file transaction is present and can only be resumed with the same build.")
     try:
         from tools.studio.update_history import _boot_record
-        records = [_boot_record(directory / name) for name in ("BOOT0.BIN", "BOOT1.BIN")]
+        records = [_boot_record(directory / name, capacity) for name in ("BOOT0.BIN", "BOOT1.BIN")]
         if records[0][1] == records[1][1] and records[0][0] != records[1][0]:
             raise ValueError("conflicting boot records at the same generation")
         selected = max(records, key=lambda item: item[1])
@@ -123,7 +124,7 @@ def installed_state(root, target_id):
                 if not any(header):
                     continue
                 length = struct.unpack_from("<I", header, 20)[0]
-                if not 4 <= length <= 8 * 1024 * 1024 - 128:
+                if not 4 <= length <= capacity - 128:
                     raise ValueError("invalid installed image length")
                 image = header + reader.read(length)
             identity = inspect_image(image)
@@ -321,6 +322,8 @@ def _validate_artifacts(identity, artifacts):
              ("os_image", "os_report", "boot_image", "boot_wrapper", "boot_report")}
     os_data, boot_data = paths["os_image"].read_bytes(), paths["boot_image"].read_bytes()
     os_identity, boot_identity = inspect_image(os_data), inspect_image(boot_data)
+    if len(os_data) > spec["os_capacity_bytes"] or len(boot_data) > spec["os_capacity_bytes"]:
+        raise ValueError("installer image exceeds the target OS capacity")
     build = artifacts.get("build")
     expected_profile = "release" if build == "user" else "dev" if build == "dev" else None
     if expected_profile is None or expected_profile != artifacts.get("os_profile"):

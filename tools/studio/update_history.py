@@ -5,7 +5,8 @@ import re
 import struct
 import zlib
 
-from tools.studio.storage import SLOT_BYTES, _mount_identity, _write_new, record
+from tools.studio.storage import _mount_identity, _write_new, record
+from tools.studio.targets import TARGETS
 
 
 def _decode_record(data):
@@ -27,7 +28,9 @@ def _read_record(path):
     return data, generation, payload
 
 
-def _boot_record(path):
+def _boot_record(path, image_capacity=None):
+    if image_capacity is None:
+        image_capacity = max(spec['os_capacity_bytes'] for spec in TARGETS.values())
     data, generation, payload = _read_record(path)
     if len(payload) != 184 or struct.unpack_from('<4sI', payload) != (b'UPDT', 0):
         raise ValueError('invalid boot metadata: ' + path.name)
@@ -45,7 +48,7 @@ def _boot_record(path):
         image = payload[40 + slot * 72:112 + slot * 72]
         length, profile = struct.unpack_from('<II', image)
         if ((not length and any(image))
-                or (length and (length < 132 or length > SLOT_BYTES or profile > 2))):
+                or (length and (length < 132 or length > image_capacity or profile > 2))):
             raise ValueError('invalid boot image metadata: ' + path.name)
         images.append((length, image[8:40].hex()))
     if not images[confirmed][0] or (candidate != 255 and not images[candidate][0]):

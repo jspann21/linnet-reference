@@ -8,10 +8,18 @@ import struct
 import subprocess
 import zlib
 from tools.inspect.image import inspect
+from tools.studio.targets import TARGETS
 
-SLOT_BYTES = 8 * 1024 * 1024
+SCRATCH_BYTES = 4 * 1024 * 1024
 FILES = ('OS0.LOS', 'OS1.LOS', 'STATE0.BIN', 'STATE1.BIN',
          'SCRATCH.BIN', 'BOOT0.BIN', 'BOOT1.BIN')
+
+
+def image_capacity(target_id):
+    try:
+        return TARGETS[target_id]['os_capacity_bytes']
+    except KeyError as error:
+        raise ValueError('persistent image uses an unsupported target') from error
 
 
 def record(payload, generation=1):
@@ -26,7 +34,7 @@ def record(payload, generation=1):
 
 def initial_metadata(image):
     identity = inspect(image)
-    if len(image) > SLOT_BYTES or identity['load_address'] != 0:
+    if len(image) > image_capacity(identity['target_id']) or identity['load_address'] != 0:
         raise ValueError('persistent image exceeds the RAM staging policy')
     boot = bytearray(32)
     struct.pack_into('<4sIII3B', boot, 0, b'BOOT', 0, 0, 0, 0, 255, 0)
@@ -69,16 +77,21 @@ def prepare(image_path, directory):
     image = image_path.read_bytes()
     identity = inspect(image)
     build = json.loads(image_path.with_suffix('.json').read_text())
-    if build.get('kind') != 'os' or build.get('build_id') != identity['build_id']:
+    if (build.get('kind') != 'os' or build.get('target_id') != identity['target_id'] or
+            build.get('profile') != identity['profile'] or
+            build.get('build_id') != identity['build_id'] or
+            build.get('image', {}).get('sha256') != identity['sha256']):
         raise ValueError('initial provisioning requires the matching OS build report')
+    slot_bytes = image_capacity(identity['target_id'])
     metadata = initial_metadata(image)
     directory = directory.resolve()
     directory.mkdir(parents=True, exist_ok=False)
-    payloads = ((image, SLOT_BYTES), (b'', SLOT_BYTES), (record(b''), 512),
-                (record(b''), 512), (b'', 4 * 1024 * 1024), (metadata, 512), (metadata, 512))
+    payloads = ((image, slot_bytes), (b'', slot_bytes), (record(b''), 512),
+                (record(b''), 512), (b'', SCRATCH_BYTES), (metadata, 512), (metadata, 512))
     entries = {name: _write_new(directory / name, data, size)
                for name, (data, size) in zip(FILES, payloads)}
-    manifest = dict(target_id=identity['target_id'], image=identity,
+    manifest = dict(target_id=identity['target_id'], os_capacity_bytes=slot_bytes,
+                    scratch_bytes=SCRATCH_BYTES, image=identity,
                     files=entries,
                     purpose='Initial empty installation only; boot metadata is copied last.')
     (directory / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
@@ -113,6 +126,10 @@ def provision(package, mount, serial):
     if (manifest.get('target_id') != manifest.get('image', {}).get('target_id') or
             set(manifest.get('files', {})) != set(FILES)):
         raise ValueError('invalid provisioning manifest')
+    slot_bytes = image_capacity(manifest['target_id'])
+    if (manifest.get('os_capacity_bytes') != slot_bytes or
+            manifest.get('scratch_bytes') != SCRATCH_BYTES):
+        raise ValueError('provisioning manifest uses stale target capacities')
     content = {}
     for name in FILES:
         path = package / name
@@ -120,7 +137,7 @@ def provision(package, mount, serial):
             raise ValueError('package links are unsupported')
         data = path.read_bytes()
         entry = manifest['files'][name]
-        expected_size = SLOT_BYTES if name.startswith('OS') else 4 * 1024 * 1024 if name == 'SCRATCH.BIN' else 512
+        expected_size = slot_bytes if name.startswith('OS') else SCRATCH_BYTES if name == 'SCRATCH.BIN' else 512
         if len(data) != expected_size or entry != dict(bytes=expected_size, sha256=hashlib.sha256(data).hexdigest()):
             raise ValueError('package identity mismatch: ' + name)
         content[name] = data

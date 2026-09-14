@@ -514,11 +514,12 @@ class Session:
 
     def persistent_install(self, generation: int, image: bytes, publication_stage: int | None = None) -> dict:
         from tools.inspect.image import inspect
+        from tools.studio.targets import TARGETS
         identity=inspect(image)
         if publication_stage is not None and publication_stage not in range(1,5):
             raise ValueError('publication stage must be1..4')
-        if len(image)>0x800000:
-            raise ValueError('persistent image exceeds8MiB slot')
+        if len(image)>TARGETS[identity['target_id']]['os_capacity_bytes']:
+            raise ValueError('persistent image exceeds target OS capacity')
         storage=self.storage_state()
         update=self.update_status()
         if (storage[4]!=1 or update[1]!=1 or update[2]!=1 or update[7] or
