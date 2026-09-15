@@ -52,9 +52,16 @@ $items=@(Get-Disk | Where-Object {$_.BusType -eq 'USB' -and $_.FriendlyName -eq 
 })
 ConvertTo-Json -InputObject $items -Compress
 """
-    result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
-                            capture_output=True, text=True, timeout=30,
-                            creationflags=subprocess.CREATE_NO_WINDOW)
+    try:
+        result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                                capture_output=True, text=True, timeout=30,
+                                creationflags=subprocess.CREATE_NO_WINDOW)
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            "Windows did not finish reading the iPod's storage identity within 30 seconds. "
+            "Disconnect it, resolve the disk or cable problem, then reconnect it in Disk Mode "
+            "and choose Find iPod."
+        ) from error
     if result.returncode:
         raise RuntimeError("Could not find the iPod: " + result.stderr.strip())
     items = json.loads(result.stdout.lstrip("\ufeff") or "[]")
