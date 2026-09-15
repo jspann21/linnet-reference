@@ -15,8 +15,8 @@ class InstallerWindow:
     def __init__(self, parent, identity=None, on_changed=None):
         self.window = tk.Toplevel(parent)
         self.window.title("Linnet · Choose default boot")
-        self.window.geometry("740x690")
-        self.window.minsize(700, 650)
+        self.window.geometry("760x850")
+        self.window.minsize(720, 780)
         self.window.transient(parent)
         self.window.grab_set()
         self.on_changed = on_changed
@@ -60,6 +60,12 @@ class InstallerWindow:
         self.boot_choice = tk.StringVar(value="linnet:user")
         self.boot_choices = choices
         self.boot_buttons = []
+        methods = ttk.LabelFrame(body, text="Linnet installation method", padding=(12, 8))
+        methods.pack(fill="x", pady=(10, 0))
+        methods.columnconfigure(1, weight=1)
+        self.install_choice = tk.StringVar(value="rockbox-loader")
+        self.method_choices = methods
+        self.method_buttons = []
         self.status = tk.StringVar(value="Inspecting the connected iPod…")
         self.status_label = ttk.Label(body, textvariable=self.status, style="Muted.TLabel", wraplength=640)
         self.status_label.pack(anchor="w", pady=(12, 0))
@@ -84,14 +90,28 @@ class InstallerWindow:
         return next((item for item in self.review.get("boot_options", [])
                      if item["id"] == self.boot_choice.get()), None)
 
+    def _selected_method(self):
+        if not self.review:
+            return None
+        return next((item for item in self.review.get("installation_methods", [])
+                     if item["id"] == self.install_choice.get()), None)
+
     def _update_action(self):
         option = self._selected_option()
         if not option:
             self.apply_button.configure(text="Set as default boot", state="disabled")
             return
+        if option["kind"] != "linnet":
+            self.fields["method"].set("Not used when restoring another boot option")
         if option.get("active") and not option.get("selectable"):
             text = "Already the default boot"
         elif option["kind"] == "linnet":
+            method = self._selected_method()
+            if not method or not method.get("enabled"):
+                self.fields["method"].set("Choose an available Linnet installation method")
+                self.apply_button.configure(text="Choose installation method", state="disabled")
+                return
+            self.fields["method"].set(method["label"])
             action = self.review["action"]
             current = self.review.get("linnet", {}).get("build")
             if action == "resume":
@@ -125,7 +145,7 @@ class InstallerWindow:
             title = option["label"] + (" · current default" if option.get("active") else "")
             button = ttk.Radiobutton(
                 self.boot_choices, text=title, value=option["id"], variable=self.boot_choice,
-                command=self._update_action,
+                command=self._render_installation_methods,
                 state="normal" if option.get("selectable") or option.get("active") else "disabled")
             button.grid(row=row, column=0, sticky="nw", pady=2)
             detail = option["detail"]
@@ -134,6 +154,28 @@ class InstallerWindow:
             ttk.Label(self.boot_choices, text=detail, style="Muted.TLabel", wraplength=400).grid(
                 row=row, column=1, sticky="w", padx=(12, 0), pady=2)
             self.boot_buttons.append(button)
+        self._render_installation_methods()
+
+    def _render_installation_methods(self):
+        for child in self.method_choices.winfo_children():
+            child.destroy()
+        self.method_buttons = []
+        methods = self.review.get("installation_methods", []) if self.review else []
+        ids = {item["id"] for item in methods}
+        if self.install_choice.get() not in ids:
+            self.install_choice.set(self.review.get("default_installation_method", "rockbox-loader"))
+        option = self._selected_option()
+        choosing_linnet = bool(option and option.get("kind") == "linnet")
+        for row, method in enumerate(methods):
+            button = ttk.Radiobutton(
+                self.method_choices, text=method["label"], value=method["id"],
+                variable=self.install_choice, command=self._update_action,
+                state="normal" if choosing_linnet and method.get("enabled") and not self.busy else "disabled")
+            button.grid(row=row, column=0, sticky="nw", pady=2)
+            detail = method["detail"] + ("" if method.get("enabled") else " Unavailable.")
+            ttk.Label(self.method_choices, text=detail, style="Muted.TLabel", wraplength=400).grid(
+                row=row, column=1, sticky="w", padx=(12, 0), pady=2)
+            self.method_buttons.append(button)
         self._update_action()
 
     def _set_busy(self, value):
@@ -143,6 +185,10 @@ class InstallerWindow:
         for button, option in zip(self.boot_buttons, self.review.get("boot_options", []) if self.review else []):
             enabled = option.get("selectable") or option.get("active")
             button.configure(state="disabled" if value or not enabled else "normal")
+        selected = self._selected_option()
+        choosing_linnet = bool(selected and selected.get("kind") == "linnet")
+        for button, method in zip(self.method_buttons, self.review.get("installation_methods", []) if self.review else []):
+            button.configure(state="normal" if not value and choosing_linnet and method.get("enabled") else "disabled")
         self._update_action()
         self.report_button.configure(state="disabled" if value or not self.receipt else "normal")
         if value:
@@ -186,10 +232,7 @@ class InstallerWindow:
         software = ["Apple iPod software", *review["other_installations"]]
         self.fields["software"].set(", ".join(dict.fromkeys(software)))
         self.fields["linnet"].set(installer.build_description(review["linnet"]))
-        methods = {"rockbox-file": "Use existing Rockbox loader; reversible file replacement",
-                   "native-directory": "Verified native boot redirect; administrator approval required",
-                   "existing": "Existing installation"}
-        self.fields["method"].set(methods.get(review["strategy"], "Unavailable until the issue above is resolved"))
+        self.install_choice.set(review.get("default_installation_method", "rockbox-loader"))
         self._render_boot_options()
         self._set_status(review["summary"])
         self._set_busy(False)
@@ -200,18 +243,22 @@ class InstallerWindow:
             return
         identity = self.review["identity"]
         if option["kind"] == "linnet":
+            method = self._selected_method()
+            if not method or not method.get("enabled"):
+                return
             action = self.review["action"]
             verb = ("Resume the matching interrupted Linnet installation" if action == "resume" else
                     "Reinstall the selected Linnet build" if action == "replace" and option.get("active") else
                     f"Make {option['label']} the default boot")
-            if not messagebox.askyesno("Choose default boot", verb + " on this iPod?\n\n"
+            if not messagebox.askyesno("Choose default boot", verb + " on this iPod using:\n\n" +
+                                      method["label"] + "\n\n" +
                                       "Existing media and other detected software will be preserved. "
                                       "Keep the iPod connected until completion.", parent=self.window):
                 return
             self._set_status(f"Preparing {option['label']}…")
             self._work(lambda: installer.install(
                 identity, progress=lambda value: self.events.put(("progress", value)),
-                build=option["build"]), "installed")
+                build=option["build"], installation_method=method["id"]), "installed")
             return
         if option["kind"] != "previous" or option.get("active"):
             return

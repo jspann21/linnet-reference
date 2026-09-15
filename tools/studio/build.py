@@ -53,7 +53,8 @@ def source_identity(configuration, chain):
     digest.update(json.dumps({k: {field: v[field] for field in ('version', 'sha256')} for k, v in chain.items()}, sort_keys=True).encode())
     return digest.hexdigest()
 
-def build(profile, target, verify=False, kind="os", probe="frame", device_serial="", system_config=None):
+def build(profile, target, verify=False, kind="os", probe="frame", device_serial="", system_config=None,
+          boot_selector="none"):
     target = target_id(target)
     spec = TARGETS[target]
     chain = toolchain()
@@ -63,8 +64,14 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         raise ValueError("device serial must be 1..32 letters, digits or hyphens")
     if profile != "release" and not device_serial:
         raise ValueError("development USB requires --device-serial from physical device enumeration")
+    if boot_selector not in ("none", "rockbox"):
+        raise ValueError("boot selector must be none or rockbox")
+    if kind != "boot" and boot_selector != "none":
+        raise ValueError("a startup selector is valid only for Boot images")
     configuration = dict(profile=profile, target_id=target, kind=kind,
-                         probe=probe, device_serial=device_serial)
+                          probe=probe, device_serial=device_serial)
+    if kind == "boot":
+        configuration["boot_selector"] = boot_selector
     if kind == "os":
         configuration["system_config"] = str(system_config or "config/system.toml")
     dest = ROOT / "out" / profile / target / kind
@@ -107,6 +114,9 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         f'#define LINNET_LOADER_CAPACITY {spec["recovery_snapshot_bytes"]}',
         f'#define LINNET_MAILBOX_ADDRESS {spec["mailbox_address"]}',
         f'#define LINNET_MAILBOX_BYTES {spec["mailbox_bytes"]}',
+        f'#define LINNET_FILE_WRAPPER_MODEL "{spec["installer"]["wrapper_model"]}"',
+        f'#define LINNET_FILE_WRAPPER_CHECKSUM_SEED {spec["installer"]["wrapper_checksum_seed"]}u',
+        f'#define LINNET_BOOT_SELECTOR_ROCKBOX {int(boot_selector == "rockbox")}',
         f'#define {spec["target_define"]} 1',
         "#endif",
     ]

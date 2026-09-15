@@ -229,6 +229,23 @@ failed:
 bool ln_lcd_fill(uint16_t color){return ln_lcd_draw(color,0,0,0);}
 #if defined(LINNET_IMAGE_BOOT)
 bool ln_lcd_boot(void){return ln_lcd_draw(0,0,ln_boot_runs,ln_boot_palette);}
+#if LINNET_BOOT_SELECTOR_ROCKBOX
+bool ln_lcd_boot_selector(bool rockbox,bool starting)
+{
+    char lines[8][33]={"CHOOSE STARTUP","","","MENU: CHANGE","CENTER: START",
+        "AUTO: LINNET IN 5 SEC"};
+    if(starting){
+        const char *message=rockbox?"STARTING ROCKBOX":"STARTING LINNET";
+        for(uint32_t i=0;message[i];++i)lines[2][i]=message[i];
+    }else{
+        const char *first=rockbox?"LINNET":"SELECT LINNET";
+        const char *second=rockbox?"SELECT ROCKBOX":"ROCKBOX";
+        for(uint32_t i=0;first[i];++i)lines[1][i]=first[i];
+        for(uint32_t i=0;second[i];++i)lines[2][i]=second[i];
+    }
+    return ln_lcd_draw(0x1800u,lines,0,0);
+}
+#endif
 #endif
 bool ln_lcd_fault(uint32_t reason,const uint8_t build_id[32])
 {

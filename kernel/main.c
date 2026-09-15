@@ -4,6 +4,9 @@
 #include "hal/api/platform.h"
 #include "boot/include/linnet_boot.h"
 #include "linnet_build.h"
+#if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_SELECTOR_ROCKBOX
+#include "hal/api/input.h"
+#endif
 #if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_BOOT)
 #include "hal/api/core.h"
 #endif
@@ -186,6 +189,11 @@ _Noreturn void ln_main(void)
 #endif
 #if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_OS)
     bool first_frame = ln_runtime_first_frame_ready();
+#elif defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_SELECTOR_ROCKBOX
+    if(!ln_input_init())ln_panic(30,3,0);
+    bool selector_rockbox=false,selector_done=false;
+    uint32_t selector_buttons=0,selector_started=ln_time_us();
+    bool first_frame = ln_lcd_boot_selector(false,false);
 #elif defined(LINNET_IMAGE_BOOT)
     bool first_frame = ln_lcd_boot();
 #else
@@ -225,6 +233,25 @@ _Noreturn void ln_main(void)
     LN_CACHE_FIRST_MARK(0xca11u);
 #endif
     for (;;) {
+#if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_SELECTOR_ROCKBOX
+        if(!selector_done){
+            struct ln_input_state input;
+            if(ln_input_poll(&input)){
+                uint32_t pressed=input.buttons&~selector_buttons;
+                selector_buttons=input.buttons;
+                if(pressed&(LINNET_BUTTON_MENU|LINNET_BUTTON_LEFT|LINNET_BUTTON_RIGHT|LINNET_BUTTON_PLAY)){
+                    selector_rockbox=!selector_rockbox;
+                    (void)ln_lcd_boot_selector(selector_rockbox,false);
+                }
+                if(pressed&LINNET_BUTTON_SELECT)selector_done=true;
+            }
+            if(ln_time_us()-selector_started>=5000000u){selector_rockbox=false;selector_done=true;}
+            if(selector_done){
+                (void)ln_lcd_boot_selector(selector_rockbox,true);
+                ln_storage_boot_choice(selector_rockbox?2u:1u);
+            }
+        }
+#endif
 #if defined(LINNET_AUDIO)
         LN_CACHE_FIRST_MARK(0xca12u);
         LN_TIMING_BEGIN(music_started);

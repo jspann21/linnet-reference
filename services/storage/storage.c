@@ -48,6 +48,9 @@ static bool theme_available,theme_opened;
 static uint32_t history_summary=UINT32_MAX;
 static struct ln_update updater;
 static bool stores_ready,boot_checked,health_checked;
+#if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_SELECTOR_ROCKBOX
+static uint32_t boot_choice;
+#endif
 #if defined(LINNET_IMAGE_OS)
 static uint32_t health_open_attempts,health_retry_at;
 #endif
@@ -653,8 +656,71 @@ static int open_stores(void){
     if(!ln_update_open(&updater,&boot_store,&io,&policy)){error=401;return 0;}
     stores_ready=true;theme_opened=false;history_open();return 1;
 }
+#if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_SELECTOR_ROCKBOX
+void ln_storage_boot_choice(uint32_t choice){if(!boot_choice&&(choice==1u||choice==2u))boot_choice=choice;}
+static int selector_open(const char *path,struct ln_fat32_file *file){
+    if(!ln_fat32_open(&volume,path,next_generation()))return 0;
+    locked=true;if(!finish())return 0;*file=volume.file;return 1;
+}
+static int selector_read(const struct ln_fat32_file *file,uint32_t offset,uint8_t *data,uint32_t length){
+    if(!length||length>LN_STORAGE_MEDIA_MAX_READ||!ln_fat32_read(&volume,file,offset,data,length,next_generation()))return 0;
+    locked=true;return finish();
+}
+static int selector_rockbox(void){
+    struct ln_fat32_file config_file,rockbox_file;
+    uint8_t config[512],header[8];char path[LN_FAT32_PATH_MAX+1];
+    if(!selector_open("/LINNET/RBPATH.CFG",&config_file)||config_file.size!=sizeof(config) ||
+       !selector_read(&config_file,0,config,sizeof(config)))return 0;
+    static const uint8_t magic[8]={'R','B','P','A','T','H','1',0};
+    for(uint32_t i=0;i<8u;++i)if(config[i]!=magic[i])return 0;
+    if(ln_crc32(config,508u)!=read32(config+508u))return 0;
+    uint32_t path_length=read32(config+8u);
+    if(!path_length||path_length>LN_FAT32_PATH_MAX||12u+path_length>=508u||
+       config[12u]!='/'||config[12u+path_length])return 0;
+    for(uint32_t i=0;i<=path_length;++i)path[i]=(char)config[12u+i];
+    if(!selector_open(path,&rockbox_file)||rockbox_file.size<40u||
+       rockbox_file.size-8u>LINNET_STAGE_CAPACITY||
+       !selector_read(&rockbox_file,0,header,sizeof(header)))return 0;
+    static const char model[]=LINNET_FILE_WRAPPER_MODEL;
+    for(uint32_t i=0;i<4u;++i)if(header[4u+i]!=(uint8_t)model[i])return 0;
+    uint32_t expected=((uint32_t)header[0]<<24)|((uint32_t)header[1]<<16)|
+        ((uint32_t)header[2]<<8)|header[3];
+    uint8_t *payload=(uint8_t *)(uintptr_t)LINNET_STAGE_ADDRESS;
+    uint32_t payload_size=rockbox_file.size-8u,offset=0,sum=LINNET_FILE_WRAPPER_CHECKSUM_SEED;
+    while(offset<payload_size){
+        uint32_t chunk=payload_size-offset;
+        if(chunk>LN_STORAGE_MEDIA_MAX_READ)chunk=LN_STORAGE_MEDIA_MAX_READ;
+        if(!selector_read(&rockbox_file,offset+8u,payload+offset,chunk))return 0;
+        for(uint32_t i=0;i<chunk;++i)sum+=payload[offset+i];
+        offset+=chunk;
+    }
+    static const uint8_t rockbox[8]={'R','o','c','k','b','o','x',1};
+    if(sum!=expected||payload_size<40u)return 0;
+    for(uint32_t i=0;i<8u;++i)if(payload[32u+i]!=rockbox[i])return 0;
+    extern const uint8_t ln_persistent_enter_begin[],ln_persistent_enter_end[];
+    uint32_t trampoline=(uint32_t)(ln_persistent_enter_end-ln_persistent_enter_begin);
+    if(trampoline>256u||!ln_storage_quiesce()||!ln_platform_audio_idle())return 0;
+    ln_core_watchdog_disarm();ln_platform_quiesce();
+    if(!ln_platform_dma_idle()){ln_core_watchdog_arm();return 0;}
+    volatile uint8_t *iram=(volatile uint8_t *)(uintptr_t)0x40000000u;
+    for(uint32_t i=0;i<trampoline;++i)iram[i]=ln_persistent_enter_begin[i];
+    ((void (*)(const uint8_t *,uint32_t,uint32_t,uint32_t))(uintptr_t)0x40000000u)
+        (payload,payload_size,0x10000000u,0x10000000u);
+    return 0;
+}
+#endif
 void ln_storage_boot(void){
 #if defined(LINNET_IMAGE_BOOT)
+#if LINNET_BOOT_SELECTOR_ROCKBOX
+    if(!boot_choice)return;
+    if(boot_choice==2u){
+        boot_choice=1u;
+        (void)selector_rockbox();
+        error=404u;
+        if(!ln_storage_recover()){error=405u;return;}
+        return;
+    }
+#endif
     if(boot_checked||ln_storage_busy())return;boot_checked=true;
     if(!open_stores())return;
     LN_BOOT_STAMP(LN_BT_BOOT_STORES);

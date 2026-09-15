@@ -24,6 +24,8 @@ def parser():
         if action == "install":
             entry.add_argument("--build", choices=("user", "dev"), default="user",
                                help="OS build to install (default: user)")
+            entry.add_argument("--method", choices=("rockbox-loader", "native-preserve", "native-selector"),
+                               help="boot installation method (default: recommended detected method)")
     compile_ = commands.add_parser("build")
     compile_.add_argument("--target", default="photo4g-p98", type=target_id)
     compile_.add_argument("--profile", choices=("release", "dev", "trace"), required=True)
@@ -31,6 +33,7 @@ def parser():
     compile_.add_argument("--kind", choices=("os", "boot"), default="os")
     compile_.add_argument("--probe", choices=("frame", "crash", "hang"), default="frame")
     compile_.add_argument("--device-serial", default="")
+    compile_.add_argument("--boot-selector", choices=("none", "rockbox"), default="none")
     compile_.add_argument("--system", type=Path, help="system.toml configuration")
     ui=commands.add_parser("ui").add_subparsers(dest="action",required=True)
     ui_compile=ui.add_parser("compile")
@@ -240,11 +243,13 @@ def main():
             from tools.studio.installer import assess, identity_for_mount, install, restore
             identity = identity_for_mount(args.mount)
             emit(assess(identity) if args.installer_action == "inspect" else
-                 install(identity, progress=lambda message: print(message, file=sys.stderr), build=args.build)
+                 install(identity, progress=lambda message: print(message, file=sys.stderr), build=args.build,
+                         installation_method=args.method)
                  if args.installer_action == "install" else restore(identity))
         elif args.command == "build":
             emit(build(args.profile, args.target, args.verify, args.kind, args.probe,
-                       args.device_serial, system_config=args.system))
+                       args.device_serial, system_config=args.system,
+                       boot_selector=args.boot_selector))
         elif args.command == "ui":
             from tools.content.compiler import compile_system
             emit(compile_system(ROOT,args.output,args.system))

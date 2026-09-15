@@ -14,14 +14,30 @@ Additional compatible models are discovered from their target manifests; see
 [adding a target](../targets/README.md).
 
 The review shows Apple software, Rockbox, iPodLinux/Podzilla markers and any
-existing or incomplete Linnet installation before enabling installation. With
-a compatible Rockbox file loader, Linnet uses that reversible boot path. Other
-supported devices use a verified native directory redirect after normal Windows
-administrator approval. Both paths preserve the existing filesystem, partitions,
-media and Apple firmware payload. The native path saves the original MBR and
-firmware partition under `%LOCALAPPDATA%\Linnet\Installer`, verifies all Linnet
-storage files, writes a new loader only into an unused firmware extent, and
-publishes one directory sector last.
+existing or incomplete Linnet installation before enabling installation. For a
+Linnet build, it then offers the installation methods that are valid for the
+connected iPod:
+
+- **Use the existing Rockbox bootloader** replaces `.rockbox/rockbox.ipod`
+  reversibly. Linnet depends on the Rockbox bootloader and the saved Rockbox
+  file is the restoration path.
+- **Native Linnet; preserve Rockbox dormant** boots Linnet directly. The
+  `.rockbox` folder stays unchanged, but Rockbox cannot start until its
+  bootloader is restored or Linnet is reinstalled with the selector.
+- **Native Linnet + Rockbox startup selector** boots a native Linnet loader and
+  presents Linnet and the existing Rockbox image on the iPod for five seconds.
+  Menu, Previous, Next, or Play/Pause changes the choice; Select starts it.
+  Linnet is the timeout default. A missing, changed, corrupt, or oversized
+  Rockbox image falls back to Linnet.
+
+The native methods require normal Windows administrator approval. All methods
+preserve the existing filesystem, partitions, media and Apple firmware payload.
+The native path saves the original MBR and firmware partition under
+`%LOCALAPPDATA%\Linnet\Installer`, verifies all Linnet storage files, writes a
+new loader only into an unused firmware extent, and publishes one directory
+sector last. The startup selector reads Rockbox separately from its preserved
+file; Linnet's `OS0.LOS` and `OS1.LOS` remain dedicated to Linnet updates and
+rollback.
 
 Before installing, choose **User build** for the normal release OS without
 developer transport or instrumentation, or **Developer build** for the
@@ -38,9 +54,10 @@ Rockbox-based installation, or the original firmware directory for a native
 installation. Detected software without a verified activation path remains
 visible as unavailable.
 
-Rockbox files can remain after its bootloader is removed. In that state Rockbox
-is shown as detected but unavailable, with instructions to install its
-first-stage bootloader through Rockbox Utility before making it the default.
+Rockbox files can remain after its bootloader is removed. They are dormant with
+the plain native method and remain bootable through the native startup selector.
+Making Rockbox the sole default again still requires its first-stage bootloader
+through Rockbox Utility or restoration of a saved Rockbox-based installation.
 
 The supported default-boot transitions are:
 
@@ -77,7 +94,9 @@ The same workflow is available from the command line:
 ```powershell
 python linnet installer inspect --mount E:\
 python linnet installer install --mount E:\ --build user
-python linnet installer install --mount E:\ --build dev
+python linnet installer install --mount E:\ --build user --method native-preserve
+python linnet installer install --mount E:\ --build user --method native-selector
+python linnet installer install --mount E:\ --build dev --method rockbox-loader
 python linnet installer restore --mount E:\
 ```
 
