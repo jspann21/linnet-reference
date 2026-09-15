@@ -1193,7 +1193,11 @@ def probe_source_metadata(source: Path, ffprobe: str) -> dict[str, str]:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError as error:
         raise RuntimeError("ffprobe returned invalid metadata JSON") from error
+    return metadata_from_probe(payload)
 
+
+def metadata_from_probe(payload: dict) -> dict[str, str]:
+    """Select supported tags from an existing FFprobe result."""
     metadata: dict[str, str] = {}
     candidates = payload.get("streams", [])
     if isinstance(candidates, list):

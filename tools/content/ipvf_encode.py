@@ -258,7 +258,9 @@ def _worker(request):
     source, output = Path(data["source"]), Path(data["output"])
     source_name = source.stem
     probe = subprocess.run([data["ffprobe"], "-v", "error", "-show_entries",
-                            "format=duration:stream=codec_type,duration", "-of", "json", str(source)],
+                            "format=duration:stream=codec_type,duration:"
+                            "format_tags=title,artist,album:stream_tags=title,artist,album",
+                            "-of", "json", str(source)],
                            capture_output=True, text=True, check=True,
                            creationflags=NO_WINDOW)
     information = json.loads(probe.stdout)
@@ -287,7 +289,7 @@ def _worker(request):
         math.ceil(duration * fps * creator.MAX_RECORD_SECTORS * 512)) + 32 * 1024**2
     if shutil.disk_usage(output.parent).free < needed:
         raise ValueError(f"IPVF conversion needs about {needed / 1024**3:.1f} GB of free cache space")
-    metadata = creator.probe_source_metadata(source, data["ffprobe"])
+    metadata = creator.metadata_from_probe(information)
     metadata["title"] = data["title"] or metadata.get("title") or source_name
     # Format metadata has byte limits; truncate on UTF-8 character boundaries.
     metadata = {key: value.encode("utf-8")[:120].decode("utf-8", "ignore")
@@ -295,7 +297,8 @@ def _worker(request):
     creator.encode(source, output, fps, fps * 5, data["ffmpeg"], video_mode="realtime",
                    color_depth=color_depth,
                    metadata=metadata,
-                   source_has_audio=creator.probe_source_has_audio(source, data["ffprobe"]))
+                   source_has_audio=any(stream.get("codec_type") == "audio"
+                                        for stream in information.get("streams", [])))
     with output.open("rb") as encoded:
         header = encoded.read(20)
     print(f"IPVF_PROGRESS:{struct.unpack_from('<I', header, 16)[0]}", flush=True)
