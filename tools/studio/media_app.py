@@ -48,6 +48,7 @@ class MediaApp:
             style.theme_use("vista")
         style.configure("Title.TLabel", font=("Segoe UI", 23, "bold"))
         style.configure("Sub.TLabel", font=("Segoe UI", 10))
+        style.configure("DefaultBoot.TLabel", foreground="#1749b8", font=("Segoe UI", 11, "bold"))
         style.configure("TButton", padding=(10, 5))
         outer = ttk.Frame(window, padding=18)
         outer.pack(fill="both", expand=True)
@@ -62,6 +63,8 @@ class MediaApp:
         self.device_choice.bind("<<ComboboxSelected>>", self.device_changed)
         self.refresh_button = ttk.Button(device_row, text="Find iPod", command=self.find)
         self.refresh_button.pack(side="left", padx=(10, 0))
+        self.default_boot = tk.StringVar(value="Default boot: Connect an iPod to check")
+        ttk.Label(outer, textvariable=self.default_boot, style="DefaultBoot.TLabel").pack(anchor="w", pady=(5, 0))
         self.device_status = tk.StringVar(value="Connect your iPod in Disk Mode to get started.")
         ttk.Label(outer, textvariable=self.device_status, wraplength=820).pack(anchor="w", pady=(5, 8))
         library = ttk.LabelFrame(outer, text="1. Choose what to update", padding=8)
@@ -447,6 +450,7 @@ class MediaApp:
                         self.scan()
                     else:
                         self.device_choice.set("")
+                        self.default_boot.set("Default boot: No iPod connected")
                         self.device_status.set("No mounted iPod found. Connect it in Disk Mode, then choose Find iPod.")
                         self.log_message("Waiting for the iPod.")
                 elif kind == "inventory":
@@ -467,7 +471,12 @@ class MediaApp:
                     video = ("unavailable on this model" if not self.video_enabled else
                              f"{profile['video_fps']} fps, four-level grayscale" if profile['video_color'] == 'gray4'
                              else f"{profile['video_fps']} fps, full color")
-                    self.device_status.set(f"{identity['target_name']} ({identity.get('regulatory_model') or identity.get('model_number')})  •  {size(identity['free_bytes'])} free  •  Video: {video}  •  Originals stay in their folders.")
+                    default = identity['default_boot']
+                    self.default_boot.set(f"Default boot: {default['label']}")
+                    from tools.studio.installer import build_description
+                    linnet_state = ("" if default['id'].startswith('linnet:') else
+                                    f"Linnet files: {build_description(identity['linnet'])}  •  ")
+                    self.device_status.set(f"{linnet_state}{identity['target_name']} ({identity.get('regulatory_model') or identity.get('model_number')})  •  {size(identity['free_bytes'])} free  •  Video: {video}  •  Originals stay in their folders.")
                     for folder, item in self.inventory.items():
                         self.counts[folder].configure(text=f"{item['count']:,} files · {size(item['bytes'])}")
                         if item["ignored"]:
@@ -483,7 +492,7 @@ class MediaApp:
                         self.pending_list.delete(0, "end")
                         for folder, path in self.pending:
                             self.pending_list.insert("end", f"{folder}  ←  {path}")
-                        self.after_scan_message = "Update complete. Safely eject the iPod and restart Linnet."
+                        self.after_scan_message = "Update complete. Safely eject and restart the iPod."
                         if self.pending:
                             self.after_scan_message += " Unchecked additions are still queued for a later update."
                         self.log_message("Update complete. Refreshing the folder counts…")

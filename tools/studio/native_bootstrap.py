@@ -239,7 +239,95 @@ def read_at(device, offset, length):
     return data
 
 
-def guard_device(device, manifest, artifacts, original):
+def _directory_records(directory):
+    records = []
+    for offset in range(0, SECTOR - 39, 40):
+        entry = directory[offset:offset + 40]
+        if entry[:4] == bytes(4):
+            break
+        if entry[:4] != b"!ATA":
+            raise RuntimeError("firmware directory contains an unknown entry")
+        values = struct.unpack_from("<8I", entry, 8)
+        records.append(dict(offset=offset, type=entry[4:8], id=values[0],
+                            dev_offset=values[1], length=values[2], address=values[3],
+                            entry_offset=values[4], checksum=values[5],
+                            header_field=values[6], load_address=values[7]))
+    return records
+
+
+def _rockbox_uninstalled_residue(observed, manifest, artifacts, original, directory):
+    """Validate ipodpatcher's install-then-delete transformation over native Linnet."""
+    old = _directory_records(artifacts["directory-original.bin"])
+    candidate = _directory_records(artifacts["directory-candidate.bin"])
+    current = _directory_records(directory)
+    if len(old) < 2 or len(current) != len(old) or len(candidate) != len(old):
+        return None
+    expected_osos, current_osos = candidate[0], current[0]
+    aligned_linnet = align(expected_osos["length"])
+    osos_fields = ("type", "id", "dev_offset", "address", "entry_offset", "checksum",
+                   "header_field", "load_address")
+    if (any(current_osos[key] != expected_osos[key] for key in osos_fields) or
+            current_osos["length"] != aligned_linnet):
+        return None
+    deltas = []
+    stable_fields = ("type", "id", "length", "address", "entry_offset", "checksum",
+                     "header_field", "load_address")
+    for prior, moved in zip(old[1:], current[1:]):
+        if any(moved[key] != prior[key] for key in stable_fields):
+            return None
+        deltas.append(moved["dev_offset"] - prior["dev_offset"])
+    if not deltas or len(set(deltas)) != 1 or deltas[0] <= 0 or deltas[0] % SECTOR:
+        return None
+    delta = deltas[0]
+    source_start = old[1]["dev_offset"]
+    source_end = old[-1]["dev_offset"] + SECTOR + align(old[-1]["length"])
+    destination_start, destination_end = source_start + delta, source_end + delta
+    stage = manifest["candidate_partition_offset"]
+    bootloader_start = stage + aligned_linnet
+    if (source_start < SECTOR or source_end <= source_start or
+            destination_start <= bootloader_start or destination_end > len(original)):
+        return None
+    if (observed[source_start:source_end] != original[source_start:source_end] or
+            observed[destination_start:destination_end] != original[source_start:source_end] or
+            observed[stage:bootloader_start] != artifacts["candidate.bin"][:aligned_linnet] or
+            not any(observed[bootloader_start:destination_start])):
+        return None
+    normalized = bytearray(observed)
+    normalized[stage:destination_end] = original[stage:destination_end]
+    normalized[manifest["directory_partition_offset"]:
+               manifest["directory_partition_offset"] + SECTOR] = artifacts["directory-original.bin"]
+    if normalized != original:
+        return None
+    return dict(kind="rockbox-uninstalled-over-native-linnet", start=stage,
+                end=destination_end, source_start=source_start, source_end=source_end,
+                destination_start=destination_start, destination_end=destination_end,
+                shift_bytes=delta)
+
+
+def _validate_residue(observed, original, residue):
+    required = {"kind", "start", "end", "source_start", "source_end",
+                "destination_start", "destination_end", "shift_bytes"}
+    if (not isinstance(residue, dict) or set(residue) != required or
+            residue.get("kind") != "rockbox-uninstalled-over-native-linnet"):
+        raise RuntimeError("compatible firmware residue record is invalid")
+    start, end = residue["start"], residue["end"]
+    source_start, source_end = residue["source_start"], residue["source_end"]
+    destination_start, destination_end = residue["destination_start"], residue["destination_end"]
+    if (any(type(residue[key]) is not int for key in required - {"kind"}) or
+            not 0 <= start < end <= len(original) or
+            not 0 <= source_start < source_end <= len(original) or
+            destination_end - destination_start != source_end - source_start or
+            destination_start - source_start != residue["shift_bytes"] or
+            observed[source_start:source_end] != original[source_start:source_end] or
+            observed[destination_start:destination_end] != original[source_start:source_end]):
+        raise RuntimeError("compatible firmware residue changed after validation")
+    normalized = bytearray(observed)
+    normalized[start:end] = original[start:end]
+    return normalized
+
+
+def guard_device(device, manifest, artifacts, original, *, allow_rockbox_uninstalled=False,
+                 compatible_residue=None):
     if read_at(device, 0, SECTOR) != artifacts["mbr.bin"]:
         raise RuntimeError("device MBR changed")
     partition_start = manifest["partition_lba"] * SECTOR
@@ -247,27 +335,38 @@ def guard_device(device, manifest, artifacts, original):
     directory_offset = manifest["directory_partition_offset"]
     directory = observed[directory_offset:directory_offset + SECTOR]
     allowed_directories = [artifacts["directory-original.bin"], artifacts["directory-candidate.bin"]]
+    residue = compatible_residue
     if directory not in allowed_directories:
-        raise RuntimeError("firmware directory differs from both reviewed states")
+        residue = (_rockbox_uninstalled_residue(observed, manifest, artifacts, original, directory)
+                   if allow_rockbox_uninstalled and compatible_residue is None else None)
+        if residue is None:
+            raise RuntimeError("firmware directory differs from both reviewed states")
     stage, span = manifest["candidate_partition_offset"], manifest["candidate_write_bytes"]
     staged = observed[stage:stage + span]
-    if staged not in (bytes(span), artifacts["candidate.bin"]):
+    if residue is None and staged not in (bytes(span), artifacts["candidate.bin"]):
         raise RuntimeError("staging region differs from both reviewed states")
-    if directory == artifacts["directory-candidate.bin"] and staged != artifacts["candidate.bin"]:
+    if residue is None and directory == artifacts["directory-candidate.bin"] and staged != artifacts["candidate.bin"]:
         raise RuntimeError("published directory references absent candidate bytes")
     normalized = bytearray(observed)
     normalized[stage:stage + span] = bytes(span)
     normalized[directory_offset:directory_offset + SECTOR] = artifacts["directory-original.bin"]
+    if residue is not None:
+        normalized = _validate_residue(observed, original, residue)
+        normalized[directory_offset:directory_offset + SECTOR] = artifacts["directory-original.bin"]
     if normalized != original:
         raise RuntimeError("firmware changed outside the reviewed regions")
     old = manifest["original_osos"]
     if sha(observed[old["payload_offset"]:old["payload_offset"] + old["payload_bytes"]]) != old["payload_sha256"]:
         raise RuntimeError("original RetailOS payload is no longer intact")
-    directory_state = "candidate" if directory == artifacts["directory-candidate.bin"] else (
-        "original" if directory == artifacts["directory-original.bin"] else "unknown")
-    return dict(directory=directory_state,
-                staging="candidate" if staged == artifacts["candidate.bin"] else "zero",
-                original_payload_intact=True)
+    directory_state = ("candidate" if directory == artifacts["directory-candidate.bin"] else
+                       "original" if directory == artifacts["directory-original.bin"] else
+                       "candidate-rockbox-uninstalled")
+    staging_state = ("candidate-rockbox-residue" if residue is not None else
+                     "candidate" if staged == artifacts["candidate.bin"] else "zero")
+    result = dict(directory=directory_state, staging=staging_state, original_payload_intact=True)
+    if residue is not None:
+        result["compatible_residue"] = residue
+    return result
 
 
 def write_verified(device, offset, payload, receipt, receipt_path, phase):
@@ -301,7 +400,9 @@ def execute(mode, plan_path, expected_sha, disk_number):
         manifest, artifacts, original = load_plan(plan_path, expected_sha)
         receipt["device"] = identify_disk(disk_number, manifest)
         with open(r"\\.\PhysicalDrive" + str(disk_number), "r+b", buffering=0) as device:
-            receipt["before"] = guard_device(device, manifest, artifacts, original)
+            receipt["before"] = guard_device(
+                device, manifest, artifacts, original,
+                allow_rockbox_uninstalled=mode == "restore")
             if mode == "apply":
                 if receipt["before"]["staging"] != "candidate":
                     write_verified(device, manifest["candidate_disk_offset"], artifacts["candidate.bin"],
@@ -313,7 +414,9 @@ def execute(mode, plan_path, expected_sha, disk_number):
             elif receipt["before"]["directory"] != "original":
                 write_verified(device, manifest["directory_disk_offset"], artifacts["directory-original.bin"],
                                receipt, receipt_path, "restore-directory")
-            receipt["after"] = guard_device(device, manifest, artifacts, original)
+            receipt["after"] = guard_device(
+                device, manifest, artifacts, original,
+                compatible_residue=receipt["before"].get("compatible_residue"))
             expected = "candidate" if mode == "apply" else "original"
             if receipt["after"]["directory"] != expected:
                 raise RuntimeError("directory did not reach the requested state")

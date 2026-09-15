@@ -54,6 +54,7 @@ class MediaWorkspace(MediaApp):
         style.configure('Title.TLabel', font=('Segoe UI', 25, 'bold'))
         style.configure('Heading.TLabel', font=('Segoe UI', 15, 'bold'))
         style.configure('Muted.TLabel', foreground='#52677d')
+        style.configure('DefaultBoot.TLabel', foreground='#1749b8', font=('Segoe UI', 11, 'bold'))
         style.configure('TButton', padding=(12, 7), background='#ffffff', borderwidth=1)
         style.map('TButton', background=[('active', '#e5edf6')], foreground=[('disabled', '#83909e')])
         style.configure('Accent.TButton', background='#245cdb', foreground='white', font=('Segoe UI', 10, 'bold'))
@@ -107,6 +108,8 @@ class MediaWorkspace(MediaApp):
         self.device_choice.bind('<<ComboboxSelected>>', self.device_changed)
         self.scan_button = ttk.Button(device, text='Refresh library', command=self.scan)
         self.scan_button.pack(side='left', padx=8)
+        self.default_boot = tk.StringVar(value='Default boot: Connect an iPod to check')
+        ttk.Label(body, textvariable=self.default_boot, style='DefaultBoot.TLabel').pack(anchor='w', pady=(4, 0))
         self.device_status = tk.StringVar(value='Connect your iPod in Disk Mode to get started.')
         ttk.Label(body, textvariable=self.device_status, style='Muted.TLabel').pack(anchor='w', pady=(2, 12))
         self.library_panel = tk.Frame(body, background='#f3f5f8', highlightbackground='#c8d2df', highlightthickness=1, borderwidth=0)
@@ -596,6 +599,7 @@ class MediaWorkspace(MediaApp):
                         self.scan()
                     else:
                         self.device_choice.set('')
+                        self.default_boot.set('Default boot: No iPod connected')
                         self.device_status.set('No iPod found. Connect in Disk Mode, then choose Find iPod.')
                         self.status.set('Waiting for your iPod.')
                         self.plan_text.set('Connect an iPod to review an update.')
@@ -615,8 +619,12 @@ class MediaWorkspace(MediaApp):
                              else f"{profile['video_fps']} fps, full color")
                     from tools.studio.installer import build_description
                     firmware = build_description(identity["linnet"])
+                    default = identity['default_boot']
+                    self.default_boot.set(f"Default boot: {default['label']}")
+                    linnet_state = ("" if default['id'].startswith('linnet:') else
+                                    f"Linnet files: {firmware} · ")
                     self.device_status.set(
-                        f"Linnet: {firmware} · {identity['target_name']} · {size(identity['free_bytes'])} available · "
+                        f"{linnet_state}{identity['target_name']} · {size(identity['free_bytes'])} available · "
                         f"Video: {video} · Originals are preserved during preparation"
                     )
                     self.library_button.configure(state='normal')
@@ -634,9 +642,10 @@ class MediaWorkspace(MediaApp):
                     self.set_busy(False)
                     self.render()
                     self.render_queue()
-                    self.device_status.set('iPod safely ejected. Hold Menu+Select to restart Linnet.')
+                    self.default_boot.set('Default boot: Device disconnected')
+                    self.device_status.set('iPod safely ejected. Hold Menu+Select to restart it.')
                     self.results.set('Windows confirmed ejection. Restart the iPod with Menu+Select.')
-                    self.plan_text.set('Restart Linnet, or reconnect in Disk Mode for another media update.')
+                    self.plan_text.set('Restart the iPod, or reconnect in Disk Mode for another media update.')
                 elif kind in ('finished', 'removed'):
                     self.receipt = value['receipt']
                     self.report_button.configure(state='normal')
@@ -654,7 +663,7 @@ class MediaWorkspace(MediaApp):
                         if value['complete']:
                             self.pending = [p for p in self.pending if p not in self.submitted]
                             self.video_selection.difference_update(getattr(self, 'submitted_videos', set()))
-                            lines.append('Update complete. Choose Eject iPod, then hold Menu+Select to restart Linnet.')
+                            lines.append('Update complete. Choose Eject iPod, then hold Menu+Select to restart it.')
                             if self.pending or self.video_selection:
                                 lines.append('Excluded selections are still queued; they were not included in this update.')
                         elif value.get('stopped'):

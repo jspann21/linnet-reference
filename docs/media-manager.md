@@ -6,7 +6,7 @@ if the tools are not on PATH. Optional Mutagen speeds up music metadata imports.
 
 ## Install or restore Linnet
 
-Select **Install or restore Linnet…** in Linnet Media. The installer identifies
+Select **Install / switch build…** in Linnet Media. The installer identifies
 the mounted iPod from its RetailOS hardware records, USB identity and storage
 geometry, then chooses the build target automatically. Current targets are the
 iPod Photo A1099 (`photo4g-p98`) and iPod 4G MP102 (`ipod4g-q21`).
@@ -30,6 +30,39 @@ profile as the OS: user installs exclude USB Link, crash capture, and diagnostic
 logging from both images; developer installs bind both images to the detected
 iPod. User builds retain boot rollback state and the on-screen fault/reset path.
 
+Choosing either Linnet build makes that build the default boot. The same list
+also shows the Apple software, Rockbox, iPodLinux and Podzilla installations
+found on the mounted iPod. A detected installation can be selected when Linnet
+has a verified recovery path for it: the saved Rockbox boot file for a
+Rockbox-based installation, or the original firmware directory for a native
+installation. Detected software without a verified activation path remains
+visible as unavailable.
+
+Rockbox files can remain after its bootloader is removed. In that state Rockbox
+is shown as detected but unavailable, with instructions to install its
+first-stage bootloader through Rockbox Utility before making it the default.
+
+The supported default-boot transitions are:
+
+| Current boot state | Selected default | Installer action |
+| --- | --- | --- |
+| Apple software | Linnet | Back up the firmware partition and publish the native Linnet directory redirect. |
+| Rockbox | Linnet | Back up and replace `.rockbox/rockbox.ipod`; retain Rockbox as the recoverable predecessor. |
+| Native Linnet | Apple software | Restore the saved original Apple directory sector. |
+| Linnet through Rockbox | Rockbox | Restore the saved Rockbox boot file. |
+| Rockbox installed and then removed over native Linnet | Apple software | Verify Rockbox's moved payload copies and bounded residue, then restore the saved Apple directory sector. |
+
+Rockbox installed over native Linnet is detected as the current default when its
+valid file, Rockbox Utility bootloader record and timestamps supersede Linnet's
+older journal. Removing that Rockbox bootloader exposes native Linnet again;
+Rockbox's files remain detected but inactive.
+
+If Rockbox Utility installs a valid Rockbox file and records a bootloader update
+after Linnet's native installation, the scan identifies Rockbox as the current
+default instead of trusting Linnet's older recovery journal. Switching back to
+Linnet then preserves the old `LINNET` folder and adopts Rockbox's reversible
+file-loader path.
+
 Interrupted file preparation is resumable only when every existing Linnet file
 matches the same build byte-for-byte. When a saved recovery record is available,
 **Fresh reinstall** first restores the previous boot, renames the old `LINNET`
@@ -49,6 +82,11 @@ python linnet installer restore --mount E:\
 ```
 
 ## Update content
+
+The main window shows **Default boot** beneath the connected-iPod selector. It
+reports the verified active Linnet build, Rockbox, Apple iPod software, or
+Unknown when the scan cannot establish one. When another system is the default,
+the installed Linnet build is shown separately as inactive files on the device.
 
 1. Connect in Disk Mode and select **Find iPod**.
 2. Select the root Music, Notes, Photos or Videos folders to update. Subfolders
@@ -124,10 +162,11 @@ retrying. Failed publication is not automatically replayed.
 
 Media Manager shows the confirmed installed OS as **User build**, **Developer
 build**, or **Developer trace build**, with its build ID and any pending candidate.
-Choose **Install / switch build…**, select the desired build, then choose
-**Switch to User build** or **Switch to Developer build**. Switching is available
-even when the version is unchanged; selecting the current profile also allows a
-reinstall. This uses the same reversible fresh-install process described above,
-including archiving the previous Linnet folder. A saved boot recovery record is
-required to replace an existing installation. Interrupted installs must resume
-with their original profile before switching.
+Choose **Install / switch build…**, select the desired boot software, then choose
+the default-boot action. Linnet User and Developer builds are available alongside
+the detected boot software. Selecting the current Linnet profile also allows a
+reinstall. Switching to another installation restores its saved, verified boot
+path; switching back to Linnet uses the same reversible fresh-install process
+described above, including archiving the previous Linnet folder. A saved boot
+recovery record is required to replace an existing installation. Interrupted
+installs must resume with their original profile before switching.

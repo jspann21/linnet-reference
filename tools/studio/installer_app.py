@@ -14,9 +14,9 @@ from tools.studio import installer
 class InstallerWindow:
     def __init__(self, parent, identity=None, on_changed=None):
         self.window = tk.Toplevel(parent)
-        self.window.title("Linnet · Install, switch build or restore")
-        self.window.geometry("720x600")
-        self.window.minsize(680, 590)
+        self.window.title("Linnet · Choose default boot")
+        self.window.geometry("740x690")
+        self.window.minsize(700, 650)
         self.window.transient(parent)
         self.window.grab_set()
         self.on_changed = on_changed
@@ -35,8 +35,8 @@ class InstallerWindow:
         style.configure("InstallerError.TLabel", foreground="#a12622")
         body = ttk.Frame(self.window, padding=(22, 18))
         body.pack(fill="both", expand=True)
-        ttk.Label(body, text="Install Linnet", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(body, text="Choose a build for this iPod, or restore its previous boot software.",
+        ttk.Label(body, text="Choose default boot", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(body, text="Choose Linnet or another detected installation to start by default.",
                   style="Muted.TLabel", wraplength=640).pack(anchor="w", pady=(2, 12))
         card = ttk.LabelFrame(body, text="Connected iPod", padding=(12, 8))
         card.pack(fill="x")
@@ -54,21 +54,12 @@ class InstallerWindow:
         ttk.Label(safe, text=("The installer preserves your music, photos, notes, videos, iTunes database, partitions, "
                               "and filesystem. It backs up the current boot path and verifies every write before "
                               "switching loaders."), wraplength=640).pack(anchor="w")
-        build = ttk.LabelFrame(body, text="Choose a build", padding=(12, 8))
-        build.pack(fill="x", pady=(10, 0))
-        build.columnconfigure(1, weight=1)
-        self.build_choice = tk.StringVar(value="user")
-        self.build_buttons = []
-        for value, title, detail in (
-                ("user", "User build (recommended)", "For everyday use. Developer tools are left out."),
-                ("dev", "Developer build", "For diagnostics and Linnet Link. Bound to this iPod.")):
-            row = len(self.build_buttons)
-            button = ttk.Radiobutton(build, text=title, value=value, variable=self.build_choice,
-                                     command=self._update_install_label)
-            button.grid(row=row, column=0, sticky="nw", pady=2)
-            ttk.Label(build, text=detail, style="Muted.TLabel", wraplength=380).grid(
-                row=row, column=1, sticky="w", padx=(12, 0), pady=2)
-            self.build_buttons.append(button)
+        choices = ttk.LabelFrame(body, text="Boot software", padding=(12, 8))
+        choices.pack(fill="x", pady=(10, 0))
+        choices.columnconfigure(1, weight=1)
+        self.boot_choice = tk.StringVar(value="linnet:user")
+        self.boot_choices = choices
+        self.boot_buttons = []
         self.status = tk.StringVar(value="Inspecting the connected iPod…")
         self.status_label = ttk.Label(body, textvariable=self.status, style="Muted.TLabel", wraplength=640)
         self.status_label.pack(anchor="w", pady=(12, 0))
@@ -79,39 +70,80 @@ class InstallerWindow:
         self.refresh_button.pack(side="left")
         self.report_button = ttk.Button(self.actions, text="Open receipt", command=self.open_receipt, state="disabled")
         self.report_button.pack(side="left", padx=8)
-        self.install_button = ttk.Button(self.actions, text="Install Linnet", style="Accent.TButton",
-                                         command=self.install, state="disabled")
-        self.install_button.pack(side="right")
-        self.restore_button = ttk.Button(
-            self.actions, text="Restore previous boot", command=self.restore, state="disabled")
-        self.restore_button.pack(side="right", padx=8)
+        self.apply_button = ttk.Button(self.actions, text="Set as default boot", style="Accent.TButton",
+                                       command=self.apply_selection, state="disabled")
+        self.apply_button.pack(side="right")
 
     def _set_status(self, text, error=False):
         self.status.set(text)
         self.status_label.configure(style="InstallerError.TLabel" if error else "Muted.TLabel")
 
-    def _update_install_label(self):
-        action = self.review["action"] if self.review else None
-        current = self.review.get("linnet", {}).get("build") if self.review else None
-        selected = self.build_choice.get()
-        if action == "replace" and current and current != selected:
-            label = "User" if selected == "user" else "Developer"
-            text = f"Switch to {label} build"
+    def _selected_option(self):
+        if not self.review:
+            return None
+        return next((item for item in self.review.get("boot_options", [])
+                     if item["id"] == self.boot_choice.get()), None)
+
+    def _update_action(self):
+        option = self._selected_option()
+        if not option:
+            self.apply_button.configure(text="Set as default boot", state="disabled")
+            return
+        if option.get("active") and not option.get("selectable"):
+            text = "Already the default boot"
+        elif option["kind"] == "linnet":
+            action = self.review["action"]
+            current = self.review.get("linnet", {}).get("build")
+            if action == "resume":
+                text = "Resume Linnet installation"
+            elif action == "replace" and current == option.get("build"):
+                text = "Reinstall selected build"
+            elif action == "replace":
+                text = f"Switch to {option['label']}"
+            elif action == "adopt":
+                text = f"Switch to {option['label']}"
+            else:
+                text = f"Install {option['label']}"
+        elif option.get("active"):
+            text = "Already the default boot"
         else:
-            text = {"replace": "Reinstall selected build", "resume": "Resume installation"}.get(action, "Install Linnet")
-        self.install_button.configure(text=text)
+            text = f"Set {option['label']} as default"
+        enabled = option.get("selectable", False) and (not option.get("active") or option["kind"] == "linnet")
+        self.apply_button.configure(text=text, state="normal" if enabled and not self.busy else "disabled")
+
+    def _render_boot_options(self):
+        for child in self.boot_choices.winfo_children():
+            child.destroy()
+        self.boot_buttons = []
+        options = self.review.get("boot_options", []) if self.review else []
+        selected = next((item for item in options if item.get("active")), None)
+        if not selected:
+            selected = next((item for item in options if item.get("selectable")), None)
+        if selected:
+            self.boot_choice.set(selected["id"])
+        for row, option in enumerate(options):
+            title = option["label"] + (" · current default" if option.get("active") else "")
+            button = ttk.Radiobutton(
+                self.boot_choices, text=title, value=option["id"], variable=self.boot_choice,
+                command=self._update_action,
+                state="normal" if option.get("selectable") or option.get("active") else "disabled")
+            button.grid(row=row, column=0, sticky="nw", pady=2)
+            detail = option["detail"]
+            if not option.get("selectable") and not option.get("active"):
+                detail += " Unavailable."
+            ttk.Label(self.boot_choices, text=detail, style="Muted.TLabel", wraplength=400).grid(
+                row=row, column=1, sticky="w", padx=(12, 0), pady=2)
+            self.boot_buttons.append(button)
+        self._update_action()
 
     def _set_busy(self, value):
         self.busy = value
         state = "disabled" if value else "normal"
         self.refresh_button.configure(state=state)
-        self.install_button.configure(state="disabled" if value or not self.review or self.review["action"] not in ("install", "resume", "replace") else "normal")
-        self._update_install_label()
-        build_state = "disabled" if value or (self.review and self.review["action"] == "resume") else "normal"
-        for button in self.build_buttons:
-            button.configure(state=build_state)
-        recoverable = bool(self.review and self.review.get("recovery", {}).get("phase") == "installed")
-        self.restore_button.configure(state="disabled" if value or not recoverable else "normal")
+        for button, option in zip(self.boot_buttons, self.review.get("boot_options", []) if self.review else []):
+            enabled = option.get("selectable") or option.get("active")
+            button.configure(state="disabled" if value or not enabled else "normal")
+        self._update_action()
         self.report_button.configure(state="disabled" if value or not self.receipt else "normal")
         if value:
             self.progress.pack(fill="x", pady=(8, 0), before=self.actions)
@@ -147,10 +179,6 @@ class InstallerWindow:
 
     def _show(self, review):
         self.review = review
-        if review["action"] == "resume" and review.get("resume", {}).get("build") in ("user", "dev"):
-            self.build_choice.set(review["resume"]["build"])
-        elif review["linnet"].get("build") in ("user", "dev"):
-            self.build_choice.set(review["linnet"]["build"])
         identity, target = review["identity"], review["target"]
         model = identity.get("regulatory_model") or identity.get("model_number") or target["id"]
         self.fields["model"].set(f"{target['name']} · {model}")
@@ -162,38 +190,37 @@ class InstallerWindow:
                    "native-directory": "Verified native boot redirect; administrator approval required",
                    "existing": "Existing installation"}
         self.fields["method"].set(methods.get(review["strategy"], "Unavailable until the issue above is resolved"))
+        self._render_boot_options()
         self._set_status(review["summary"])
         self._set_busy(False)
 
-    def install(self):
-        if self.busy or not self.review or self.review["action"] not in ("install", "resume", "replace"):
-            return
-        if self.review["action"] == "resume":
-            verb = "Resume the matching interrupted Linnet installation"
-        elif self.review["action"] == "replace":
-            verb = "Install the selected build, even if it is the same version, after restoring the saved boot and archiving the old Linnet folder"
-        else:
-            verb = "Install the verified target-specific Linnet build"
-        build = self.build_choice.get()
-        label = "User build" if build == "user" else "Developer build"
-        if not messagebox.askyesno("Install Linnet", verb + " on this iPod?\n\n"
-                                  + label + " will be installed. Existing media and other software will be preserved. "
-                                  "Keep the iPod connected until completion.",
-                                  parent=self.window):
+    def apply_selection(self):
+        option = self._selected_option()
+        if self.busy or not option or not option.get("selectable"):
             return
         identity = self.review["identity"]
-        self._set_status("Preparing the target-specific Linnet build…")
-        self._work(lambda: installer.install(
-            identity, progress=lambda value: self.events.put(("progress", value)), build=build), "installed")
-
-    def restore(self):
-        if self.busy or not self.review:
+        if option["kind"] == "linnet":
+            action = self.review["action"]
+            verb = ("Resume the matching interrupted Linnet installation" if action == "resume" else
+                    "Reinstall the selected Linnet build" if action == "replace" and option.get("active") else
+                    f"Make {option['label']} the default boot")
+            if not messagebox.askyesno("Choose default boot", verb + " on this iPod?\n\n"
+                                      "Existing media and other detected software will be preserved. "
+                                      "Keep the iPod connected until completion.", parent=self.window):
+                return
+            self._set_status(f"Preparing {option['label']}…")
+            self._work(lambda: installer.install(
+                identity, progress=lambda value: self.events.put(("progress", value)),
+                build=option["build"]), "installed")
             return
-        if not messagebox.askyesno("Restore previous boot", "Restore the boot software saved before Linnet was installed?\n\n"
-                                  "Media and Linnet’s data folder will remain on the iPod.", parent=self.window):
+        if option["kind"] != "previous" or option.get("active"):
             return
-        self._set_status("Restoring the verified previous boot state…")
-        self._work(lambda: installer.restore(self.review["identity"]), "restored")
+        if not messagebox.askyesno("Choose default boot", f"Make {option['label']} the default boot?\n\n"
+                                  "Media and Linnet’s data folder will remain on the iPod. "
+                                  "Keep the iPod connected until completion.", parent=self.window):
+            return
+        self._set_status(f"Making {option['label']} the default boot…")
+        self._work(lambda: installer.restore(self.review["identity"], expected=option["id"]), "restored")
 
     def open_receipt(self):
         if self.receipt:
@@ -215,13 +242,13 @@ class InstallerWindow:
                     self.receipt = value.get("receipt")
                     self.report_button.configure(state="normal" if self.receipt else "disabled")
                     self._set_busy(False)
-                    messagebox.showinfo("Linnet installed", "Installation completed and was verified. Safely eject the iPod, then restart it.", parent=self.window)
+                    messagebox.showinfo("Default boot updated", "Linnet is now the default boot. Safely eject the iPod, then restart it.", parent=self.window)
                     self.refresh()
                     if self.on_changed:
                         self.on_changed()
                 elif kind == "restored":
                     self._set_busy(False)
-                    messagebox.showinfo("Previous boot restored", "The previous boot software was restored. Safely eject the iPod before restarting it.", parent=self.window)
+                    messagebox.showinfo("Default boot updated", "The selected software is now the default boot. Safely eject the iPod before restarting it.", parent=self.window)
                     self.refresh()
                     if self.on_changed:
                         self.on_changed()

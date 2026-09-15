@@ -83,6 +83,38 @@ def _wrapper(path, install_spec):
         return None
 
 
+def _rockbox_bootloader_record(root):
+    """Return bounded Rockbox Utility evidence that its iPod bootloader was installed."""
+    log = Path(root) / ".rockbox" / "rbutil.log"
+    try:
+        if log.is_symlink() or not log.is_file() or log.stat().st_size > 4 * 1024 * 1024:
+            return False
+        section = None
+        for raw in log.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw.strip()
+            if line.startswith("[") and line.endswith("]"):
+                section = line[1:-1].strip().lower()
+            elif section == "bootloader" and re.fullmatch(
+                    r"bootloader-[a-z0-9_-]+\.ipod\s*=\s*.+", line, re.IGNORECASE):
+                return True
+    except OSError:
+        pass
+    return False
+
+
+def _newer_rockbox_install(root, rockbox_file, marker):
+    """Recognize a Rockbox Utility install performed after Linnet's saved boot state."""
+    if (not marker or marker.get("phase") != "installed" or
+            marker.get("strategy") == "rockbox-file" or not _rockbox_bootloader_record(root)):
+        return False
+    try:
+        installed_at = datetime.fromisoformat(marker["installed_at"]).timestamp()
+        log = Path(root) / ".rockbox" / "rbutil.log"
+        return min(rockbox_file.stat().st_mtime, log.stat().st_mtime) > installed_at + 1
+    except (KeyError, OSError, TypeError, ValueError):
+        return False
+
+
 BUILD_LABELS = {"release": "User build", "dev": "Developer build", "trace": "Developer trace build"}
 
 
@@ -185,6 +217,79 @@ def _resume_context(identity, linnet):
     return None
 
 
+def _boot_options(linnet, rockbox, others, marker, action, resume, active_override=None):
+    """Describe detected boot software and the verified ways to activate it."""
+    active_linnet = linnet.get("state") == "installed" and (
+        marker is None or marker.get("phase") == "installed") and active_override is None
+    resume_build = resume.get("build") if action == "resume" and resume else None
+    linnet_selectable = action in ("install", "replace", "adopt")
+    options = []
+    for build, label, detail in (
+            ("user", "Linnet · User build", "Everyday firmware without developer tools."),
+            ("dev", "Linnet · Developer build", "Diagnostics and Linnet Link, bound to this iPod.")):
+        options.append(dict(
+            id=f"linnet:{build}", label=label, detail=detail, kind="linnet", build=build,
+            detected=linnet.get("state") != "absent",
+            active=active_linnet and linnet.get("build") == build,
+            selectable=linnet_selectable or (action == "resume" and resume_build == build)))
+
+    previous = None
+    if active_override is None and marker and marker.get("strategy") == "rockbox-file":
+        previous = "rockbox"
+    elif active_override is None and marker and marker.get("strategy") == "native-directory":
+        previous = "apple"
+    previous_active = bool(marker and marker.get("phase") == "restored")
+    previous_selectable = bool(marker and marker.get("phase") in ("installed", "restored"))
+
+    rockbox_detected = bool(rockbox.get("present"))
+    rockbox_active = active_override == "rockbox" or (previous == "rockbox" and previous_active)
+    if not marker and linnet.get("state") == "absent" and rockbox.get("compatible"):
+        rockbox_active = True
+    if rockbox_detected:
+        if active_override == "rockbox":
+            rockbox_detail = ("Current valid Rockbox loader; Rockbox Utility's bootloader record is "
+                              "newer than Linnet's saved boot state.")
+        elif previous == "rockbox":
+            rockbox_detail = "Saved Rockbox boot file can be restored and verified."
+        elif rockbox.get("compatible") and rockbox.get("bootloader_recorded") is False:
+            rockbox_detail = ("Valid Rockbox files are present, but the Rockbox bootloader is not installed. "
+                              "Install it with Rockbox Utility before making Rockbox the default.")
+        else:
+            rockbox_detail = "Detected, but no verified saved Rockbox boot file is available."
+        options.append(dict(
+            id="rockbox", label="Rockbox", kind="previous", detected=True,
+            active=rockbox_active, selectable=previous == "rockbox" and previous_selectable,
+            detail=rockbox_detail))
+
+    apple_active = previous == "apple" and previous_active
+    if not marker and linnet.get("state") == "absent" and not rockbox_active:
+        apple_active = True
+    options.append(dict(
+        id="apple", label="Apple iPod software", kind="previous", detected=True,
+        active=apple_active, selectable=previous == "apple" and previous_selectable,
+        detail=("Saved original firmware directory can be restored and verified."
+                if previous == "apple" else
+                "Detected; no verified route is saved for making it the default boot.")))
+
+    for name in others:
+        if name == "Rockbox":
+            continue
+        options.append(dict(
+            id="detected:" + name.lower(), label=name, kind="unsupported", detected=True,
+            active=False, selectable=False,
+            detail="Detected; default-boot switching is not yet supported for this installation."))
+    return options
+
+
+def default_boot(review):
+    """Return the single boot option currently established as the default."""
+    active = [item for item in review.get("boot_options", []) if item.get("active")]
+    if len(active) == 1:
+        item = active[0]
+        return dict(id=item["id"], label=item["label"], detail=item["detail"])
+    return dict(id="unknown", label="Unknown", detail="The current default boot could not be verified.")
+
+
 def assess(identity):
     """Inspect a mounted device without changing it."""
     from tools.content.media_manager import refresh
@@ -227,6 +332,9 @@ def assess(identity):
                                   strategy="rockbox-file", phase=phase, recovered_from="BOOTSTRAP.JSON")
             except (ValueError, OSError):
                 pass
+    external_rockbox = bool(rockbox["compatible"] and _newer_rockbox_install(root, rockbox_file, marker))
+    rockbox["bootloader_recorded"] = _rockbox_bootloader_record(root)
+    rockbox["supersedes_linnet_recovery"] = external_rockbox
     if marker is None or marker.get("phase") == "restored":
         resume = _resume_context(identity, linnet)
     others = []
@@ -236,7 +344,11 @@ def assess(identity):
             others.append(name)
     if rockbox["present"]:
         others.insert(0, "Rockbox")
-    if linnet["state"] != "absent" and marker:
+    if external_rockbox and linnet["state"] != "absent":
+        action, strategy = "adopt", "rockbox-file"
+        summary = ("Rockbox is the current default boot. The existing Linnet files can be "
+                   "preserved before switching back to Linnet.")
+    elif linnet["state"] != "absent" and marker:
         action, strategy = "replace", marker["strategy"]
         if linnet["state"] == "installed":
             summary = f"{build_description(linnet)} is installed. Switch builds or reinstall, including the same version."
@@ -260,11 +372,15 @@ def assess(identity):
     else:
         action, strategy = "install", "native-directory"
         summary = "Ready for a native, reversible installation with an original firmware backup."
+    boot_options = _boot_options(
+        linnet, rockbox, others, marker, action, resume,
+        active_override="rockbox" if external_rockbox else None)
     return dict(checked_at=_now(), identity=identity,
                 target=dict(id=target_id, name=spec["name"],
                             installer_enabled=install_spec["enabled"], boot_layout=install_spec["boot_layout"],
                             wrapper_model=expected_model),
                 retail_os=True, linnet=linnet, rockbox=rockbox, other_installations=others,
+                boot_options=boot_options,
                 recovery=marker, resume=resume, action=action, strategy=strategy, summary=summary,
                 preservation=dict(formats_disk=False, repartitions_disk=False, deletes_media=False,
                                   overwrites_existing_linnet_files=False, archives_previous_linnet=True,
@@ -466,7 +582,10 @@ exit $p.ExitCode
         raise RuntimeError(detail or "administrator approval was cancelled or the installer worker did not finish")
     response = json.loads(response_path.read_text(encoding="utf-8"))
     if not response.get("passed"):
-        raise RuntimeError(response.get("failure", "native installation failed; inspect its receipt"))
+        failure = str(response.get("failure", "native installation failed; inspect its receipt"))
+        while failure.startswith("RuntimeError: "):
+            failure = failure[len("RuntimeError: "):]
+        raise RuntimeError(failure)
     return response
 
 
@@ -504,10 +623,11 @@ def install(identity, progress=lambda _message: None, build="user"):
     if build not in ("user", "dev"):
         raise ValueError("installer build must be user or dev")
     reviewed = assess(identity)
-    if reviewed["action"] not in ("install", "resume", "replace"):
+    if reviewed["action"] not in ("install", "resume", "replace", "adopt"):
         raise ValueError(reviewed["summary"])
     identity = reviewed["identity"]
-    archive = _archive_destination(identity["root"]) if reviewed["action"] == "replace" else None
+    archive = (_archive_destination(identity["root"])
+               if reviewed["action"] in ("replace", "adopt") else None)
     if reviewed["action"] == "resume":
         progress("Verifying the saved interrupted installation…")
         artifacts = reviewed["resume"]["artifacts"]
@@ -552,6 +672,15 @@ def install(identity, progress=lambda _message: None, build="user"):
             current = assess(identity)
             if current["action"] != "install" or current["strategy"] != reviewed["strategy"]:
                 raise RuntimeError("fresh installation state differs after preserving the previous Linnet folder")
+        elif reviewed["action"] == "adopt":
+            receipt["device_write_attempted"] = True
+            receipt["phase"] = "preserve-superseded-install"
+            progress("Preserving the previous Linnet folder before using the current Rockbox boot path…")
+            receipt["previous_linnet_archive"] = _archive_linnet(identity["root"], archive)
+            _save(receipt_path, receipt)
+            current = assess(identity)
+            if current["action"] != "install" or current["strategy"] != "rockbox-file":
+                raise RuntimeError("Rockbox installation changed while preserving the previous Linnet folder")
         receipt["device_write_attempted"] = True
         receipt["phase"] = "device-transaction"
         _save(receipt_path, receipt)
@@ -670,11 +799,16 @@ def _native_worker(job):
                 boot=applied, recovery=marker, requires_safe_eject=True)
 
 
-def restore(identity):
+def restore(identity, expected=None):
     reviewed = assess(identity)
     marker = reviewed.get("recovery")
     if not marker or marker.get("phase") not in ("installed", "restored"):
         raise ValueError("no Linnet installation with a verified recovery journal was found")
+    expected_strategy = {"rockbox": "rockbox-file", "apple": "native-directory"}.get(expected)
+    if expected is not None and expected_strategy is None:
+        raise ValueError("unsupported default boot selection")
+    if expected_strategy is not None and marker.get("strategy") != expected_strategy:
+        raise RuntimeError("the saved default boot choice changed after review; check the iPod again")
     if marker["strategy"] == "rockbox-file":
         from tools.studio.bootstrap import restore as restore_file
         result = restore_file(Path(reviewed["identity"]["root"]))
