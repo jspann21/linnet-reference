@@ -255,7 +255,10 @@ static void text_scaled(struct painter*p,int32_t x,int32_t y,const char*s,uint16
                 for(int32_t yy=r.y;yy<r.y+r.h;++yy){
                     uint16_t *dest=p->pixels+(uint32_t)yy*LINNET_UI_WIDTH+(uint32_t)r.x;
                     const uint8_t *source=a+((uint32_t)(yy-gy)>>shift)*w;
-                    for(int32_t xx=r.x;xx<r.x+r.w;++xx){uint32_t alpha=source[(uint32_t)(xx-gx)>>shift];if(monochrome)alpha=alpha>=128u?255u:0u;if(alpha)*dest=alpha==255u?c:mix(c,*dest,alpha);++dest;}
+                    /* Enlarged glyphs land on whole LCD pixels. Keeping the
+                     * source antialiasing doubles its soft fringe and makes
+                     * the clock look blurred, so snap scaled coverage once. */
+                    for(int32_t xx=r.x;xx<r.x+r.w;++xx){uint32_t alpha=source[(uint32_t)(xx-gx)>>shift];alpha=alpha>=128u?255u:0u;if(alpha)*dest=c;++dest;}
                 }
             }
         }
