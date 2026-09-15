@@ -218,8 +218,18 @@ def main():
     args = parser().parse_args()
     try:
         if os.name == "nt" and args.command in ("build", "doctor", "simulator"):
-            converted = subprocess.run(["wsl", "-d", "Ubuntu-24.04", "--", "wslpath", "-a", ROOT.as_posix()], capture_output=True, text=True, check=True).stdout.strip()
-            return subprocess.call(["wsl", "-d", "Ubuntu-24.04", "--cd", converted, "--", "python3", "linnet", *sys.argv[1:]])
+            no_window = subprocess.CREATE_NO_WINDOW
+            converted = subprocess.run(
+                ["wsl", "-d", "Ubuntu-24.04", "--", "wslpath", "-a", ROOT.as_posix()],
+                capture_output=True, text=True, check=True, creationflags=no_window).stdout.strip()
+            completed = subprocess.run(
+                ["wsl", "-d", "Ubuntu-24.04", "--cd", converted, "--", "python3", "linnet", *sys.argv[1:]],
+                capture_output=True, text=True, creationflags=no_window)
+            if completed.stdout and sys.stdout is not None:
+                sys.stdout.write(completed.stdout)
+            if completed.stderr and sys.stderr is not None:
+                sys.stderr.write(completed.stderr)
+            return completed.returncode
         if args.command == "doctor":
             emit(dict(toolchain=toolchain(), python=sys.version.split()[0],
                       supported_targets=sorted(TARGETS)))

@@ -129,21 +129,28 @@ def audio_boundary(frame: int, fps: int | Fraction) -> int:
     return (numerator + rate.numerator // 2) // rate.numerator
 
 
+# Independent decoder transitions, derived only from the format's IMA tables.
+_IMA_TRANSITIONS = tuple(
+    tuple((
+        ((step >> 3) + ((step >> 2) if code & 1 else 0) +
+         ((step >> 1) if code & 2 else 0) + (step if code & 4 else 0)) *
+        (-1 if code & 8 else 1),
+        max(0, min(88, index + IMA_INDEX_TABLE[code])),
+    ) for code in range(16))
+    for index, step in enumerate(IMA_STEP_TABLE)
+)
+
+
 def _ima_step(predictor: int, index: int, code: int) -> tuple[int, int]:
     if not 0 <= index <= 88:
         raise ValueError("invalid IMA ADPCM step index")
-    step = IMA_STEP_TABLE[index]
-    delta = step >> 3
-    if code & 1:
-        delta += step >> 2
-    if code & 2:
-        delta += step >> 1
-    if code & 4:
-        delta += step
-    predictor = predictor - delta if code & 8 else predictor + delta
-    predictor = max(-32768, min(32767, predictor))
-    index += IMA_INDEX_TABLE[code & 0x0F]
-    return predictor, max(0, min(88, index))
+    delta, index = _IMA_TRANSITIONS[index][code & 0x0F]
+    predictor += delta
+    if predictor < -32768:
+        predictor = -32768
+    elif predictor > 32767:
+        predictor = 32767
+    return predictor, index
 
 
 def decode_ima_adpcm(data: bytes, frames: int) -> bytes:
@@ -231,10 +238,14 @@ def lz4_decompress(data: bytes, expected_size: int | None = None) -> bytes:
             raise ValueError("LZ4 decoded size exceeds expected size")
         last_match_start = len(output)
         source = len(output) - offset
-        while match_length:
-            count = min(match_length, len(output) - source)
-            output.extend(output[source:source + count])
-            match_length -= count
+        if match_length <= offset:
+            output.extend(output[source:source + match_length])
+        else:
+            # An overlapping copy repeats the already decoded offset bytes.
+            pattern = output[source:]
+            repeats, remainder = divmod(match_length, offset)
+            output.extend(pattern * repeats)
+            output.extend(pattern[:remainder])
     if expected_size is not None and len(output) != expected_size:
         raise ValueError("LZ4 decoded size mismatch")
     if last_match_start is not None and len(output) - last_match_start < 12:

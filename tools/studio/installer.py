@@ -388,14 +388,26 @@ def assess(identity):
 
 
 def _run_build(arguments):
-    command = [sys.executable, str(ROOT / "linnet"), "build", *arguments]
-    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
+    creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    if os.name == "nt":
+        converted = subprocess.run(
+            ["wsl", "-d", "Ubuntu-24.04", "--", "wslpath", "-a", ROOT.as_posix()],
+            text=True, capture_output=True, check=True,
+            creationflags=creationflags).stdout.strip()
+        command = ["wsl", "-d", "Ubuntu-24.04", "--cd", converted, "--",
+                   "python3", "linnet", "build", *arguments]
+    else:
+        command = [sys.executable, str(ROOT / "linnet"), "build", *arguments]
+    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True,
+                            creationflags=creationflags)
     if result.returncode:
         raise RuntimeError((result.stderr or result.stdout).strip() or "Linnet build failed")
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as error:
-        raise RuntimeError("Linnet build returned an unreadable report") from error
+        detail = (result.stderr or result.stdout).strip()
+        suffix = f": {detail[:500]}" if detail else ": the build produced no output"
+        raise RuntimeError("Linnet build returned an unreadable report" + suffix) from error
 
 
 def build_artifacts(identity, progress=lambda _message: None, build="user"):

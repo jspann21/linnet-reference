@@ -286,14 +286,16 @@ def inspect_file(
                 _require(previous is not None and rect_count == 0 and
                          decoded_size == frame_bytes,
                          f"frame {frame}: invalid temporal record")
-                current = bytes(a ^ b for a, b in zip(previous, payload))
+                current = (int.from_bytes(previous, "big") ^
+                           int.from_bytes(payload, "big")).to_bytes(frame_bytes, "big")
             else:
                 _require(previous is not None and rect_count == 0 and
                          decoded_size == frame_bytes,
                          f"frame {frame}: invalid motion record")
                 dx, dy = struct.unpack_from("<bb", stored)
                 prediction = ipvf.translate_frame(previous, dx, dy, width=width, height=height)
-                current = bytes(a ^ b for a, b in zip(prediction, payload))
+                current = (int.from_bytes(prediction, "big") ^
+                           int.from_bytes(payload, "big")).to_bytes(frame_bytes, "big")
 
             _require(len(current) == frame_bytes,
                      f"frame {frame}: reconstructed size mismatch")

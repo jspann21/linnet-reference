@@ -791,6 +791,13 @@ def multi_rect_diff(
     if not changed:
         return []
 
+    if W % 2 == 0:
+        xs, ys = zip(*changed)
+        if len(changed) == (max(xs) - min(xs) + 1) * (max(ys) - min(ys) + 1):
+            # A filled tile rectangle is already one connected component.
+            # Its tightened bounds are exactly the whole-frame difference.
+            return [bbox_diff(prev, cur)]
+
     components = []
     remaining = set(changed)
     while remaining:
@@ -913,8 +920,10 @@ def estimate_translation(
         raise ValueError("invalid translation search bounds")
 
     score_cache: dict[tuple[int, int], tuple[int, int]] = {}
+    current_samples = {}
+    previous_samples = {}
 
-    def score(dx: int, dy: int) -> tuple[int, int]:
+    def score(dx: int, dy: int, ceiling=None) -> tuple[int, int]:
         cached = score_cache.get((dx, dy))
         if cached is not None:
             return cached
@@ -924,25 +933,45 @@ def estimate_translation(
         y1 = min(H, H + dy)
         total = 0
         columns = len(range(x0, x1, sample_step))
-        stride = sample_step * 2
-        for y in range(y0, y1, sample_step):
-            current_offset = (y * W + x0) * 2
-            previous_offset = ((y - dy) * W + x0 - dx) * 2
-            current_end = current_offset + (x1 - x0) * 2
-            previous_end = previous_offset + (x1 - x0) * 2
-            a = (current[current_offset:current_end:stride] +
-                 current[current_offset + 1:current_end:stride])
-            b = (previous[previous_offset:previous_end:stride] +
-                 previous[previous_offset + 1:previous_end:stride])
-            total += sum(map(abs, map(sub, a, b)))
         count = columns * len(range(y0, y1, sample_step))
+        stride = sample_step * 2
+        current_key = (x0, x1)
+        previous_key = (x0 - dx, x1 - dx)
+        current_rows = current_samples.get(current_key)
+        if current_rows is None:
+            current_rows = current_samples[current_key] = [None] * H
+        previous_rows = previous_samples.get(previous_key)
+        if previous_rows is None:
+            previous_rows = previous_samples[previous_key] = [None] * H
+        for y in range(y0, y1, sample_step):
+            a = current_rows[y]
+            if a is None:
+                current_offset = (y * W + x0) * 2
+                current_end = current_offset + (x1 - x0) * 2
+                a = current_rows[y] = (
+                    current[current_offset:current_end:stride] +
+                    current[current_offset + 1:current_end:stride])
+            b = previous_rows[y - dy]
+            if b is None:
+                previous_offset = ((y - dy) * W + x0 - dx) * 2
+                previous_end = previous_offset + (x1 - x0) * 2
+                b = previous_rows[y - dy] = (
+                    previous[previous_offset:previous_end:stride] +
+                    previous[previous_offset + 1:previous_end:stride])
+            total += sum(map(abs, map(sub, a, b)))
+            if ceiling is not None and total * ceiling[1] > ceiling[0] * count:
+                # Remaining terms are nonnegative. This lower bound already
+                # loses, and every future best score can only get smaller.
+                # It is safe to cache it; a winning score is always complete.
+                break
         result = total, count
         score_cache[(dx, dy)] = result
         return result
 
     def better(candidate: tuple[int, int], best: tuple[int, int]) -> bool:
-        candidate_score, candidate_count = score(*candidate)
         best_score, best_count = score(*best)
+        candidate_score, candidate_count = score(
+            *candidate, ceiling=(best_score, best_count))
         left = candidate_score * best_count
         right = best_score * candidate_count
         return (left, abs(candidate[0]) + abs(candidate[1]), candidate) < \
@@ -1487,6 +1516,8 @@ def choose_video_record(
         )
         return _realtime_record(selected, cur) if realtime else selected
 
+    if prev == cur:
+        return TYPE_REPEAT, 0, b"", 0
     rect = bbox_diff(prev, cur)
     if rect is None:
         return TYPE_REPEAT, 0, b"", 0
