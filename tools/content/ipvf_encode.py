@@ -17,6 +17,8 @@ from contextlib import contextmanager
 
 from .ipvf_validate import inspect_file
 
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
 
 @contextmanager
 def _scratch_directory(parent, progress):
@@ -257,7 +259,8 @@ def _worker(request):
     source_name = source.stem
     probe = subprocess.run([data["ffprobe"], "-v", "error", "-show_entries",
                             "format=duration:stream=codec_type,duration", "-of", "json", str(source)],
-                           capture_output=True, text=True, check=True)
+                           capture_output=True, text=True, check=True,
+                           creationflags=NO_WINDOW)
     information = json.loads(probe.stdout)
     def finite_duration(value):
         try:

@@ -38,6 +38,7 @@ CODECS = {"pcm_le": 1, "pcm_be": 2, "float_le": 3, "float_be": 4,
           "vorbis": 20, "opus": 21, "wavpack": 22, "unknown": 255}
 EXTENSIONS = {".wav", ".aif", ".aiff", ".aifc", ".mp3", ".m4a",
               ".aac", ".flac", ".ogg", ".opus", ".wv"}
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
 def _text(value: object) -> str:
@@ -205,7 +206,7 @@ def _decoded_frames(path: Path, executable: str, *, recover: bool = False,
                "-show_entries", "frame=nb_samples:frame_side_data=",
                "-of", "csv=p=0", str(path)]
     with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT) as process:
+                          stderr=subprocess.STDOUT, creationflags=NO_WINDOW) as process:
         timed_out = threading.Event()
         def expire():
             if process.poll() is None:
@@ -253,7 +254,8 @@ def _probe(path: Path, executable: str, *, exact_frames: bool = True) -> dict:
     if not exact_frames:
         command += ["-probesize", "262144", "-analyzeduration", "1000000"]
     command.append(str(path))
-    completed = subprocess.run(command, capture_output=True, timeout=30, check=True)
+    completed = subprocess.run(command, capture_output=True, timeout=30, check=True,
+                               creationflags=NO_WINDOW)
     if len(completed.stdout) > 1024 * 1024:
         raise ValueError("ffprobe metadata exceeds limit")
     info = json.loads(completed.stdout)
