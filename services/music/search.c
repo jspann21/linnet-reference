@@ -2,16 +2,23 @@
 #include "library.h"
 #include "browser.h"
 static const char alphabet[]="abcdefghijklmnopqrstuvwxyz0123456789 -'.";
-static struct ln_music_library_search_row rows[LN_MUSIC_SEARCH_ROWS];
+struct cached_row { struct ln_music_library_search_row value; uint32_t ordinal; bool valid; };
+static struct cached_row rows[LN_MUSIC_SEARCH_ROWS*2u];
 static char prefix[LN_MUSIC_SEARCH_PREFIX+1],character[2],group_title[256],label[272];
-static uint32_t length,first,filled,revision,navigation,epoch,admitted_epoch,selected_track;
+static uint32_t length,first,known,total,revision,navigation,epoch,admitted_epoch,pending_ordinal,selected_track;
 static uint32_t group_index,group_count,search_first,search_row,selected_ordinal,restore_row;
 static bool restore_selection;
-static bool opened,closing,results,pending,complete,more,track_ready,in_group,pending_group;
-static void reset_page(uint32_t start){first=start;filled=0;complete=more=false;restore_selection=false;++epoch;++revision;}
+static bool opened,closing,results,pending,complete,track_ready,in_group,pending_group;
+static struct cached_row *row_slot(uint32_t ordinal){return &rows[ordinal%(LN_MUSIC_SEARCH_ROWS*2u)];}
+static bool row_ready(uint32_t ordinal){struct cached_row *r=row_slot(ordinal);return r->valid&&r->ordinal==ordinal;}
+static void reset_results(uint32_t start){
+    first=start;known=total=0;complete=false;restore_selection=false;
+    for(uint32_t i=0;i<LN_MUSIC_SEARCH_ROWS*2u;++i)rows[i].valid=false;
+    ++epoch;++revision;
+}
 void ln_music_search_open(void){
     opened=true;closing=false;results=false;track_ready=false;in_group=false;
-    ln_music_browser_suspend(true);reset_page(0);++navigation;
+    ln_music_browser_suspend(true);reset_results(0);++navigation;
 }
 void ln_music_search_close(void){opened=false;closing=true;track_ready=false;++epoch;++revision;}
 void ln_music_search_resume(void){
@@ -22,7 +29,7 @@ void ln_music_search_resume(void){
 void ln_music_search_step(void){
     if(!opened&&!closing)return;
     if(ln_music_library_status()!=LN_LIBRARY_READY){
-        pending=false;complete=true;more=false;
+        pending=false;complete=true;total=known;
         if(closing){ln_music_browser_suspend(false);closing=false;}
         return;
     }
@@ -31,15 +38,23 @@ void ln_music_search_step(void){
         if(pending_group?!ln_music_library_take_view_row(&row):!ln_music_library_take_search_row(&row))return;
         pending=false;
         if(admitted_epoch==epoch&&opened&&results){
-            if(row.index==UINT32_MAX)complete=true;
-            else if(filled<LN_MUSIC_SEARCH_ROWS)rows[filled++]=row;
-            else {more=true;complete=true;}
+            if(row.index==UINT32_MAX){complete=true;total=pending_ordinal;}
+            else {
+                struct cached_row *cached=row_slot(pending_ordinal);
+                cached->value=row;cached->ordinal=pending_ordinal;cached->valid=true;
+                if(pending_ordinal>=known)known=pending_ordinal+1u;
+            }
             ++revision;
         }
     }
     if(closing){ln_music_browser_suspend(false);closing=false;return;}
-    if(!results||!length||complete||!ln_music_browser_query_idle())return;
-    if(in_group?ln_music_library_view_row(2,group_index,first+filled):ln_music_library_search_at(prefix,first+filled)){
+    if(!results||!length||!ln_music_browser_query_idle())return;
+    uint32_t limit=first+LN_MUSIC_SEARCH_ROWS,ordinal=first;
+    if(complete&&limit>total)limit=total;
+    while(ordinal<limit&&row_ready(ordinal))++ordinal;
+    if(ordinal>=limit)return;
+    if(in_group?ln_music_library_view_row(2,group_index,ordinal):ln_music_library_search_at(prefix,ordinal)){
+        pending_ordinal=ordinal;
         pending=true;pending_group=in_group;admitted_epoch=epoch;
     }
 }
@@ -47,7 +62,8 @@ bool ln_music_search_busy(void){return closing||pending||(opened&&results&&lengt
 bool ln_music_search_active(void){return opened||closing;}
 uint32_t ln_music_search_count(void){
     if(!results)return sizeof alphabet;
-    return (first?1u:0u)+filled+(!complete||more?1u:0u)+(complete&&!filled?1u:0u);
+    if(complete)return total?total:1u;
+    return known+1u;
 }
 const char *ln_music_search_label(uint32_t row){
     if(!results){
@@ -56,59 +72,60 @@ const char *ln_music_search_label(uint32_t row){
         if(alphabet[row]==' ')return "[space]";
         character[0]=alphabet[row];return character;
     }
-    if(first){if(!row)return "< Previous results";--row;}
-    if(row<filled){
-        if(!rows[row].kind)return rows[row].title;
-        const char *tag=rows[row].kind==1?"Artist: ":"Album: ";
+    if(complete&&!total)return row?"":ln_music_library_status()!=LN_LIBRARY_READY?"Library unavailable":"No matches";
+    if(row>=known)return !complete&&row==known?"Searching...":"";
+    if(!row_ready(row))return "Loading...";
+    const struct ln_music_library_search_row *result=&row_slot(row)->value;
+    {
+        if(!result->kind)return result->title;
+        const char *tag=result->kind==1?"Artist: ":"Album: ";
         uint32_t n=0,i=0;
         while(tag[i])label[n++]=tag[i++];
-        i=0;while(rows[row].title[i])label[n++]=rows[row].title[i++];label[n]=0;
+        i=0;while(result->title[i])label[n++]=result->title[i++];label[n]=0;
         return label;
     }
-    if(row!=filled)return "";
-    if(!complete)return "Searching...";
-    if(more)return "More results >";
-    return ln_music_library_status()!=LN_LIBRARY_READY?"Library unavailable":"No matches";
 }
 const char *ln_music_search_prefix(void){return length?prefix:"Enter name prefix";}
 const char *ln_music_search_hint(void){return results?(in_group?"Select: Play  Menu: Results":"Select: Open/Play  Menu: Edit"):"Select: Add  Left: Erase  Right: Find";}
 const char *ln_music_search_title(void){return in_group?group_title:results?"Search results":"Search music";}
 uint32_t ln_music_search_revision(void){return revision;}
 uint32_t ln_music_search_navigation(void){return navigation;}
-void ln_music_search_right(void){if(opened&&length&&!results){results=true;reset_page(0);++navigation;}}
+void ln_music_search_right(void){if(opened&&length&&!results){results=true;reset_results(0);++navigation;}}
 void ln_music_search_left(void){
     if(!opened)return;
     if(results){(void)ln_music_search_back();return;}
-    if(length){prefix[--length]=0;reset_page(0);}
+    if(length){prefix[--length]=0;reset_results(0);}
 }
 bool ln_music_search_select(uint32_t row){
     if(!opened)return false;
     if(!results){
         if(row==sizeof alphabet-1u){ln_music_search_right();return length!=0;}
         if(row>=sizeof alphabet-1u||length==LN_MUSIC_SEARCH_PREFIX)return false;
-        prefix[length++]=alphabet[row];prefix[length]=0;reset_page(0);return true;
+        prefix[length++]=alphabet[row];prefix[length]=0;reset_results(0);return true;
     }
-    if(first){if(!row){reset_page(first-LN_MUSIC_SEARCH_ROWS);++navigation;return true;}--row;}
-    if(row<filled){
-        if(rows[row].kind){
-            search_first=first;search_row=row+(first?1u:0u);
-            group_index=rows[row].index&~LN_MUSIC_SEARCH_GROUP;group_count=rows[row].count;in_group=true;
-            uint32_t i=0;do{group_title[i]=rows[row].title[i];}while(rows[row].title[i++]&&i<256u);
-            reset_page(0);++navigation;return true;
+    if(row<known&&row_ready(row)){
+        const struct ln_music_library_search_row *result=&row_slot(row)->value;
+        if(result->kind){
+            search_first=first;search_row=row;
+            group_index=result->index&~LN_MUSIC_SEARCH_GROUP;group_count=result->count;in_group=true;
+            uint32_t i=0;do{group_title[i]=result->title[i];}while(result->title[i++]&&i<256u);
+            reset_results(0);++navigation;return true;
         }
-        selected_track=rows[row].index;selected_ordinal=first+row;track_ready=true;return true;
+        selected_track=result->index;selected_ordinal=row;track_ready=true;return true;
     }
-    if(row==filled&&complete&&more){reset_page(first+LN_MUSIC_SEARCH_ROWS);++navigation;return true;}
     return false;
 }
 bool ln_music_search_back(void){
-    if(in_group){in_group=false;reset_page(search_first);restore_row=search_row;restore_selection=true;++navigation;return true;}
-    if(results){results=false;reset_page(0);++navigation;return true;}
+    if(in_group){in_group=false;reset_results(search_first);restore_row=search_row;known=restore_row+1u;restore_selection=true;++navigation;return true;}
+    if(results){results=false;reset_results(0);++navigation;return true;}
     ln_music_search_close();return false;
 }
-void ln_music_search_window(uint32_t first_visible){(void)first_visible;}
+void ln_music_search_window(uint32_t first_visible){
+    if(!results||first_visible==first)return;
+    first=first_visible;++epoch;++revision;
+}
 bool ln_music_search_take_selection(uint32_t *row){
-    if(!row||!restore_selection||restore_row>=filled+(first?1u:0u))return false;
+    if(!row||!restore_selection)return false;
     *row=restore_row;restore_selection=false;return true;
 }
 bool ln_music_search_take_queue(struct ln_music_browser_queue *queue){

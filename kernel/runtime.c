@@ -670,6 +670,8 @@ void ln_runtime_step(void){
         search_navigation=ln_music_search_navigation();shell->selected=0;shell->selections[shell->scene]=0;ln_ui_refresh(shell);dirty=true;
     }
     if(scene_is("linnet.system.music-search")){
+        uint32_t rows=ln_ui_visible_capacity(shell);if(!rows)rows=1;
+        ln_music_search_window((shell->selected/rows)*rows);
         uint32_t restored_selection;
         if(ln_music_search_take_selection(&restored_selection)){
             shell->selected=restored_selection;ln_ui_refresh(shell);dirty=true;
