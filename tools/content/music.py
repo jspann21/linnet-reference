@@ -274,7 +274,75 @@ def _probe(path: Path, executable: str, *, exact_frames: bool = True) -> dict:
         raise ValueError("compressed source bit-depth bound")
     return dict(codec=codec, channels=channels, rate=rate, bits=bits,
                 frames=_decoded_frames(path, executable, codec=codec) if exact_frames else 0, data_offset=0,
-                data_bytes=path.stat().st_size, tags=tags)
+                 data_bytes=path.stat().st_size, tags=tags)
+
+
+def _mp3_header_frames(path: Path, info) -> int:
+    """Read an exact Xing/Info or VBRI sample count without scanning the MP3."""
+    rate = int(info.sample_rate)
+    # Mutagen only assigns a known bitrate mode after finding a Xing/Info or
+    # VBRI header. Headerless MP3s retain the full FFprobe scan fallback.
+    if not int(getattr(info, "bitrate_mode", 0)):
+        return 0
+    if getattr(info, "encoder_info", "") == "FhG":
+        return round(float(info.length) * rate)
+    if int(getattr(info, "layer", 0)) != 3:
+        return 0
+    version, mode = float(info.version), int(info.mode)
+    side = (21 if mode == 3 else 36) if version == 1 else (13 if mode == 3 else 21)
+    with path.open("rb") as stream:
+        stream.seek(int(info.frame_offset) + side)
+        marker = stream.read(4)
+        if marker not in (b"Xing", b"Info"):
+            return 0
+        flags_raw = stream.read(4)
+        if len(flags_raw) != 4:
+            return 0
+        flags = int.from_bytes(flags_raw, "big")
+        if not flags & 1:
+            return 0
+        frames_raw = stream.read(4)
+        if len(frames_raw) != 4:
+            return 0
+        frame_count = int.from_bytes(frames_raw, "big")
+        byte_count = None
+        if flags & 2:
+            raw = stream.read(4)
+            if len(raw) != 4:
+                return 0
+            byte_count = int.from_bytes(raw, "big")
+        if flags & 4:
+            if len(stream.read(100)) != 100:
+                return 0
+        if flags & 8:
+            if len(stream.read(4)) != 4:
+                return 0
+        encoder, extension = stream.read(9), stream.read(27)
+    samples_per_frame = 1152 if version == 1 else 576
+    samples = frame_count * samples_per_frame
+    # A LAME-compatible extension carries gapless delay and padding. Validate
+    # its declared audio length before trusting those fields; FFmpeg's Lavc
+    # encoder writes the same extension with a different encoder label.
+    if (len(encoder) == 9 and len(extension) == 27 and extension[0] >> 4 == 0
+            and byte_count and int.from_bytes(extension[19:23], "big") == byte_count):
+        delay = (extension[12] << 4) | (extension[13] >> 4)
+        padding = ((extension[13] & 15) << 8) | extension[14]
+        if delay + padding < samples:
+            samples -= delay + padding
+    return samples if 0 < samples <= 0xFFFFFFFFFFFFFFFF else 0
+
+
+def _quick_frames(path: Path, info, codec_name: str, rate: int) -> int:
+    """Return exact container/header samples, or zero to request full probing."""
+    if codec_name == "flac":
+        frames = int(getattr(info, "total_samples", 0))
+    elif codec_name == "mp3":
+        frames = _mp3_header_frames(path, info)
+    else:
+        # Ogg uses the final granule position and WavPack uses its total-sample
+        # header (or block indices), all of which Mutagen exposes as length.
+        frames = round(float(getattr(info, "length", 0)) * rate)
+    return frames if 0 < frames <= 0xFFFFFFFFFFFFFFFF else 0
 
 
 def _quick_metadata(path: Path) -> dict | None:
@@ -304,8 +372,9 @@ def _quick_metadata(path: Path) -> dict | None:
             if key + "number" in tags:
                 tags[key] = tags[key + "number"]
         return dict(codec=CODECS[codec_name], channels=channels, rate=rate, bits=bits,
-                    frames=0, data_offset=0, data_bytes=path.stat().st_size, tags=tags)
-    except (mutagen.MutagenError, ValueError, AttributeError, TypeError):
+                    frames=_quick_frames(path, info, codec_name, rate), data_offset=0,
+                    data_bytes=path.stat().st_size, tags=tags)
+    except (mutagen.MutagenError, ValueError, AttributeError, TypeError, struct.error):
         return None
 
 
@@ -475,7 +544,8 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
                   device_root: Path | None = None, progress: Callable[[dict], None] | None = None,
                   verification: str | None = None, cache_path: Path | None = None,
                   bypass_cache: bool = False,
-                  include_roots: list[Path] | tuple[Path, ...] | None = None) -> dict:
+                  include_roots: list[Path] | tuple[Path, ...] | None = None,
+                  excluded: set[str] | tuple[str, ...] | None = None) -> dict:
     """Prepare and validate a complete stage before replacing the old directory.
 
     An interrupted directory swap leaves a sibling backup, restored on the next
@@ -526,8 +596,8 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
         with ThreadPoolExecutor(max_workers=4, thread_name_prefix="music-metadata") as metadata_pool:
             report = _compile_music_stage(source, prepared, metadata_pool=metadata_pool, ffprobe=ffprobe,
                                       artwork=artwork, playlists=playlists, device_root=device_root, progress=progress,
-                                      verification=verification, cache=cache, bypass_cache=bypass_cache,
-                                      include_roots=roots)
+                                       verification=verification, cache=cache, bypass_cache=bypass_cache,
+                                       include_roots=roots, excluded=excluded)
         report["database"] = str(output / "LIBRARY.PDB")
         (prepared / "music-manifest.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         validate_stage(prepared, device_root=device_root)
@@ -616,9 +686,10 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
 def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: str | None = None,
                          artwork: bool = True, playlists: dict[str, list[str]] | None = None,
                   device_root: Path | None = None, progress: Callable[[dict], None] | None = None,
-                  verification: str = "full", cache: _MetadataCache | None = None,
-                  bypass_cache: bool = False,
-                  include_roots: list[Path] | None = None) -> dict:
+                   verification: str = "full", cache: _MetadataCache | None = None,
+                   bypass_cache: bool = False,
+                   include_roots: list[Path] | None = None,
+                   excluded: set[str] | tuple[str, ...] | None = None) -> dict:
     """Stage source audio under MUSIC/8HEX.EXT and write LIBRARY.PDB.
 
     Install MUSIC and ART below /LINNET and LIBRARY.PDB at /LINNET/LIBRARY.PDB.
@@ -630,6 +701,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     if device_root is not None:
         device_root = Path(device_root).resolve(strict=True)
         source.relative_to(device_root)
+    excluded = {Path(value).as_posix().casefold() for value in (excluded or ())}
     paths = []
     directories = list(include_roots or [source])
     while directories:
@@ -640,7 +712,10 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                     if not entry.is_symlink():
                         directories.append(entry.path)
                 elif Path(entry.name).suffix.lower() in EXTENSIONS and entry.is_file():
-                    paths.append(Path(entry.path))
+                    path = Path(entry.path)
+                    if path.relative_to(source).as_posix().casefold() in excluded:
+                        continue
+                    paths.append(path)
                     if len(paths) > MAX_TRACKS:
                         raise ValueError("library exceeds 100000 tracks")
     paths.sort(key=lambda p: p.relative_to(source).as_posix())

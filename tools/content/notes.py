@@ -49,7 +49,7 @@ def _ascii(text):
     return normalized.encode('ascii', 'replace').decode('ascii')
 
 
-def compile_notes(source, output):
+def compile_notes(source, output, *, excluded=None):
     from .publish import _plain
     original_source = Path(os.path.abspath(source))
     _plain(original_source, Path(original_source.anchor))
@@ -58,7 +58,11 @@ def compile_notes(source, output):
         raise ValueError('Notes source must be a folder')
     if output.is_relative_to(source):
         raise ValueError('Stage the Notes package outside the source folder')
-    files = sorted((p for p in source.rglob('*') if p.is_file() and p.suffix.lower() in EXTENSIONS), key=lambda p: p.as_posix().casefold())
+    excluded = {Path(value).as_posix().casefold() for value in (excluded or ())}
+    files = sorted((p for p in source.rglob('*')
+                    if p.is_file() and p.suffix.lower() in EXTENSIONS
+                    and p.relative_to(source).as_posix().casefold() not in excluded),
+                   key=lambda p: p.as_posix().casefold())
     if len(files) > MAX_NOTES:
         raise ValueError(f'Notes supports at most {MAX_NOTES} documents; found {len(files)}')
     titles, records, changed = bytearray(), bytearray(), []

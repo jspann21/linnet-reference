@@ -6,7 +6,7 @@ if the tools are not on PATH. Optional Mutagen speeds up music metadata imports.
 
 ## Install or restore Linnet
 
-Select **Install / switch build…** in Linnet Media. The installer identifies
+Select **Linnet installation…** in Linnet Media. The installer identifies
 the mounted iPod from its RetailOS hardware records, USB identity and storage
 geometry, then chooses the build target automatically. Current targets are the
 iPod Photo A1099 (`photo4g-p98`) and iPod 4G MP102 (`ipod4g-q21`).
@@ -89,14 +89,29 @@ Unknown when the scan cannot establish one. When another system is the default,
 the installed Linnet build is shown separately as inactive files on the device.
 
 1. Connect in Disk Mode and select **Find iPod**.
-2. Select the root Music, Notes, Photos or Videos folders to update. Subfolders
-   are included. **Add files** / **Add folder** queues additions from the computer.
-3. Select **Prepare & update iPod**. Progress shows preparation and publication;
-   **Open report** provides details when an operation fails.
-4. Safely eject, then restart Linnet if Disk Mode remains active.
+2. Review all four media types in the preparation overview. Each shows the
+   number of source files and its readiness for Linnet. Music, Notes and Photos
+   are prepared as complete libraries; individual file browsing is not needed.
+3. Check the types to prepare. Uncheck a type to skip it without removing files.
+   Use **Choose music…** to select audio files from the computer to copy into the
+   iPod's Music folder and include in the prepared song library.
+   Use **Choose videos…** to open one video preparation window. Select originals
+   already in the iPod's Videos folder for conversion, or add videos from the
+   computer to the conversion list. Native `.ipv` and `.ipvf` files already on
+   the iPod are shown separately, cannot be selected for conversion, and are
+   added to the playback library automatically.
+4. Select **Prepare selected media**. Unchanged content is reused. **View report**
+   provides operation details. If a specific file fails, Media Manager skips it
+   automatically and finishes the rest of the update. Select it in **Files that
+   need attention** to open its folder or retry it after fixing it. Settings
+   contains preparation options and library recovery.
+5. Select **Eject iPod**, then restart Linnet if Disk Mode remains active.
 
-Original files are preserved. A conflicting destination file stops additions
-and asks for a rename. The manager prepares content; firmware installation is
+The main window is a fixed preparation overview with no page scrollbar. Place
+source media in the Music, Notes, Photos and Videos folders on the iPod, then
+choose **Check readiness** to detect changes.
+
+Original files are preserved during preparation. Firmware installation is
 separate.
 
 | Folder | Preparation and limits |
@@ -132,7 +147,8 @@ Menu goes back, and Select opens pan/rotation/fit controls.
 
 ## Remove content
 
-Choose **Browse & remove…**, select entries and review **Remove selected from iPod…**.
+Use **Settings… → Prepared library recovery…** to remove an entire prepared
+library or restore previous removals. Manage original files in Windows Explorer.
 Device files move to `LINNET/TRASH` with a recovery receipt; this does not reclaim
 space. Removing a video catalog entry retains its original unless that source
 is also selected. Computer cache entries are read-only.
@@ -148,6 +164,11 @@ Cache and receipts live under `%LOCALAPPDATA%\Linnet\Media`, separated by device
 identity. Completed music metadata and prepared videos are reused on retry.
 Preparation needs additional host and device space.
 
+Files skipped after an error remain in their original folders but are omitted
+from future prepared libraries. Each media row shows the skipped count. Retry a
+file from **Files that need attention**, or use **Settings… → Files skipped during
+preparation** to include it again without immediately updating.
+
 Fast music indexing checks paths, sizes and modification times and reuses cached
 sample counts, without hashing all existing audio. The first update reads compressed
 tracks to determine duration. **Verify entire audio files (slow)** also hashes them.
@@ -162,7 +183,7 @@ retrying. Failed publication is not automatically replayed.
 
 Media Manager shows the confirmed installed OS as **User build**, **Developer
 build**, or **Developer trace build**, with its build ID and any pending candidate.
-Choose **Install / switch build…**, select the desired boot software, then choose
+Choose **Linnet installation…**, select the desired boot software, then choose
 the default-boot action. Linnet User and Developer builds are available alongside
 the detected boot software. Selecting the current Linnet profile also allows a
 reinstall. Switching to another installation restores its saved, verified boot

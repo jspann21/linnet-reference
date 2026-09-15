@@ -7,6 +7,19 @@ from . import media_manager as media
 from . import media_library
 
 
+def _video_readiness(inventory, published):
+    ready = [row for row in published if row['status'] == 'Ready on iPod']
+    missing = [row for row in published if row['status'] != 'Ready on iPod']
+    native = {str(Path(value).resolve()).casefold() for value in inventory['files']
+              if Path(value).suffix.lower() in ('.ipv', '.ipvf')}
+    cataloged = {str(Path(row['path']).resolve()).casefold() for row in ready}
+    if missing or not native.issubset(cataloged):
+        return 'Needs update'
+    if ready:
+        return 'Ready'
+    return 'Not prepared' if inventory['count'] else 'No content yet'
+
+
 def inspect(identity, photo_dimension=640, verification="metadata"):
     from tools.studio import installer
     boot_review = installer.assess(identity)
@@ -14,14 +27,15 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     root = Path(identity['root'])
     identity['linnet'] = boot_review['linnet']
     identity['default_boot'] = installer.default_boot(boot_review)
-    inventory = media.scan(root)
-    rows = media_library.list_items(identity)
     try:
         state = json.loads((media.cache_root(identity) / 'state.json').read_text())
         if not isinstance(state, dict):
             state = {}
     except (OSError, ValueError):
         state = {}
+    skipped = {kind: media._skipped_paths(state, kind) for kind in media.KINDS}
+    inventory = media.scan(root, skipped=skipped)
+    rows = media_library.list_items(identity)
     readiness = {}
     for kind in media.KINDS:
         saved = state.get(kind, {})
@@ -29,7 +43,7 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
             saved = {}
         published = [r for r in rows if r['kind'] == kind and r['category'] in ('library', 'published')]
         if kind == 'Videos':
-            readiness[kind] = f"{sum(r['status'] == 'Ready on iPod' for r in published)} in playback library"
+            readiness[kind] = _video_readiness(inventory[kind], published)
             continue
         option = photo_dimension if kind == 'Photos' else f'{verification}-duration-search-names-album-owner' if kind == 'Music' else 'default'
         signature = f"{option}:{inventory[kind]['fingerprint']}"
@@ -48,9 +62,19 @@ def plan(identity, pending, selected, videos):
     if unsupported:
         raise ValueError(f"{', '.join(unsupported)} playback is unavailable on this iPod model.")
     root = Path(identity['root'])
+    try:
+        state = json.loads((media.cache_root(identity) / 'state.json').read_text())
+        if not isinstance(state, dict):
+            state = {}
+    except (OSError, ValueError):
+        state = {}
+    skipped = {kind: media._skipped_paths(state, kind) for kind in media.KINDS}
+    videos = [value for value in videos
+              if Path(value).resolve().relative_to(root).as_posix().casefold()
+              not in skipped['Videos']]
     included = [p for p in pending if p[0] in selected]
     copies = media.additions(root, [p for p in included if p[0] != 'Videos'])
-    jobs = media.video_jobs(root, included, videos) if 'Videos' in selected else []
+    jobs = media.video_jobs(root, included, videos, skipped=skipped['Videos']) if 'Videos' in selected else []
     previews = {}
     for kind, name in included:
         source = Path(name)
@@ -64,7 +88,7 @@ def plan(identity, pending, selected, videos):
     if needed + 1048576 > identity['free_bytes']:
         raise ValueError('Not enough iPod space for these originals. Remove additions from the queue.')
     if 'Notes' in selected:
-        total = media.scan(root, ('Notes',))['Notes']['count'] + sum(p['kind'] == 'Notes' and Path(p['source']).suffix.lower() in media.extensions('Notes') for p in copies)
+        total = media.scan(root, ('Notes',), skipped=skipped)['Notes']['count'] + sum(p['kind'] == 'Notes' and Path(p['source']).suffix.lower() in media.extensions('Notes') for p in copies)
         if total > 256:
             raise ValueError(f'Notes supports 256 files; this update includes {total}.')
     cache = media.cache_root(identity)

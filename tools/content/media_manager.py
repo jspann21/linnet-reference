@@ -144,14 +144,41 @@ def _files(folder):
     return [path for path, info in _file_records(folder)]
 
 
-def scan(root, kinds=KINDS):
+def _skipped_paths(state, kind):
+    skipped = state.get("skipped_files", {}) if isinstance(state, dict) else {}
+    values = skipped.get(kind, []) if isinstance(skipped, dict) else []
+    if not isinstance(values, list):
+        return set()
+    result = set()
+    prefixes = {(kind.casefold(),)}
+    if kind == "Music":
+        prefixes.add(("ipod_control", "music"))
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        path = Path(value)
+        parts = tuple(part.casefold() for part in path.parts)
+        if (path.is_absolute() or path.drive or ".." in path.parts or
+                not any(parts[:len(prefix)] == prefix for prefix in prefixes)):
+            continue
+        result.add(path.as_posix().casefold())
+    return result
+
+
+def scan(root, kinds=KINDS, skipped=None):
     root = Path(root).resolve(strict=True)
+    skipped = skipped or {}
     result = {}
     for kind in kinds:
         if kind not in KINDS:
             raise ValueError("Unknown media folder")
         folders = source_folders(root, kind)
+        excluded = {Path(value).as_posix().casefold() for value in skipped.get(kind, ())}
         records = [record for folder in folders for record in _file_records(folder)]
+        skipped_records = [record for record in records
+                           if record[0].relative_to(root).as_posix().casefold() in excluded]
+        records = [record for record in records
+                   if record[0].relative_to(root).as_posix().casefold() not in excluded]
         files = [path for path, info in records]
         supported = [p for p in files if p.suffix.lower() in extensions(kind)]
         rows = []
@@ -163,8 +190,101 @@ def scan(root, kinds=KINDS):
                 supported_bytes += info.st_size
         result[kind] = dict(count=len(supported), bytes=supported_bytes,
                             ignored=len(files)-len(supported), files=[str(p) for p in supported],
+                            skipped=len(skipped_records),
                             fingerprint=hashlib.sha256(json.dumps(rows).encode()).hexdigest())
     return result
+
+
+def skip_files(identity, items):
+    """Persist supported iPod source files that should be omitted from preparation."""
+    identity = refresh(identity)
+    root = Path(identity["root"]).resolve(strict=True)
+    state_path = cache_root(identity) / "state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    if not isinstance(state, dict):
+        state = {}
+    skipped = state.setdefault("skipped_files", {})
+    if not isinstance(skipped, dict):
+        skipped = state["skipped_files"] = {}
+    added = []
+    for kind, value in items:
+        if kind not in KINDS:
+            raise ValueError("Unknown media folder")
+        path = Path(value).resolve(strict=True)
+        if not path.is_file() or path.suffix.lower() not in extensions(kind):
+            raise ValueError(f"This is not a supported {kind.lower()} file: {path}")
+        if not any(path.is_relative_to(folder.resolve()) for folder in source_folders(root, kind)):
+            raise ValueError(f"The file is outside this iPod's {kind} sources: {path}")
+        relative = path.relative_to(root).as_posix()
+        values = skipped.setdefault(kind, [])
+        if not isinstance(values, list):
+            values = skipped[kind] = []
+        if relative.casefold() not in {Path(item).as_posix().casefold() for item in values if isinstance(item, str)}:
+            values.append(relative)
+            added.append(relative)
+        state.pop(kind, None)
+        if kind == "Videos":
+            video_state = state.get("video_files", {})
+            if isinstance(video_state, dict):
+                video_state.pop(path.relative_to(root / "Videos").as_posix(), None)
+    _save(state_path, state)
+    return added
+
+
+def list_skipped_files(identity):
+    """Return cached skip entries with their current source locations."""
+    root = Path(identity["root"]).resolve()
+    state_path = cache_root(identity) / "state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    skipped = state.get("skipped_files", {}) if isinstance(state, dict) else {}
+    if not isinstance(skipped, dict):
+        return []
+    result = []
+    for kind in KINDS:
+        values = skipped.get(kind, [])
+        if not isinstance(values, list):
+            continue
+        allowed = _skipped_paths(state, kind)
+        for relative in sorted((Path(value).as_posix() for value in values
+                                if isinstance(value, str) and Path(value).as_posix().casefold() in allowed),
+                               key=str.casefold):
+            result.append(dict(kind=kind, relative=relative, source=str(root / Path(relative))))
+    return result
+
+
+def restore_skipped_files(identity, items):
+    """Remove files from the persistent preparation skip list."""
+    identity = refresh(identity)
+    root = Path(identity["root"]).resolve(strict=True)
+    state_path = cache_root(identity) / "state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    if not isinstance(state, dict):
+        state = {}
+    skipped = state.get("skipped_files", {})
+    if not isinstance(skipped, dict):
+        return []
+    restored = []
+    for kind, value in items:
+        relative = Path(value).as_posix()
+        values = skipped.get(kind, [])
+        if not isinstance(values, list):
+            continue
+        kept = [item for item in values if not isinstance(item, str) or Path(item).as_posix().casefold() != relative.casefold()]
+        if len(kept) != len(values):
+            skipped[kind] = kept
+            restored.append(relative)
+            state.pop(kind, None)
+    _save(state_path, state)
+    return restored
 
 
 def additions(root, pending):
@@ -243,11 +363,14 @@ class Cancelled(Exception):
     pass
 
 
-def video_jobs(root, pending=(), selection=None):
-    """Resolve explicit iPod selections and host additions without copying originals."""
+def video_jobs(root, pending=(), selection=None, skipped=()):
+    """Resolve selected conversions plus every native IPVF already on the iPod."""
     root = Path(root).resolve(strict=True)
     folder = root / "Videos"
-    chosen = scan(root, ("Videos",))["Videos"]["files"] if selection is None else selection
+    available = scan(root, ("Videos",), skipped={"Videos": skipped})["Videos"]["files"]
+    native = [name for name in available if Path(name).suffix.lower() in {".ipvf", ".ipv"}]
+    chosen = available if selection is None else selection
+    chosen = list(dict.fromkeys([*native, *chosen]))
     jobs = {}
 
     def include(source, relative):
@@ -275,7 +398,7 @@ def video_jobs(root, pending=(), selection=None):
         _plain(source, Path(source.anchor))
         source = source.resolve(strict=True)
         if source.is_relative_to(root):
-            raise ValueError("Use Choose iPod videos for files already on this iPod.")
+            raise ValueError("Use Choose videos and select this file under Videos on this iPod.")
         is_folder = source.is_dir()
         for path in _files(source) if is_folder else [source]:
             if is_folder and path.suffix.lower() not in VIDEO_EXTENSIONS:
@@ -302,18 +425,82 @@ def _video_inventory(jobs):
                 fingerprint=hashlib.sha256(json.dumps(rows).encode()).hexdigest())
 
 
+def _error_record(kind, error, inventory, root):
+    """Attach a concrete source when a compiler identifies one in its error."""
+    message = str(error)
+    folded = message.casefold()
+    matches = [Path(value) for value in inventory.get("files", []) if str(value).casefold() in folded]
+    record = dict(kind=kind, message=message)
+    if len(matches) == 1:
+        source = matches[0]
+        record.update(file=source.relative_to(root).as_posix(), source=str(source))
+    return record
+
+
 def run(identity, selected, pending=(), **options):
     from .publish_photos import _exclusive
     # The same Windows mutex is recursive for nested publishers on this thread.
     # A second manager must not overwrite the first manager's cache or catalog.
     identity = refresh(identity)
     with _exclusive(identity):
-        return _run(identity, selected, pending, **options)
+        root = Path(identity["root"]).resolve(strict=True)
+        automatically_skipped = []
+        skipped_keys = set()
+        excluded_sources = set()
+        while True:
+            current_options = dict(options, excluded_sources=excluded_sources)
+            report = _run(identity, selected, pending, **current_options)
+            remaining = []
+            newly_skipped = []
+            for error in report["errors"]:
+                kind, source_value = error.get("kind"), error.get("source")
+                if not kind or not source_value or report.get("stopped"):
+                    remaining.append(error)
+                    continue
+                source = Path(source_value).resolve()
+                key = (kind, str(source).casefold())
+                if key in skipped_keys:
+                    remaining.append(error)
+                    continue
+                try:
+                    if source.is_relative_to(root):
+                        if not skip_files(identity, [(kind, str(source))]):
+                            remaining.append(error)
+                            continue
+                    else:
+                        if kind != "Videos" or source.suffix.lower() not in VIDEO_EXTENSIONS:
+                            remaining.append(error)
+                            continue
+                        excluded_sources.add(str(source).casefold())
+                except (OSError, ValueError):
+                    remaining.append(error)
+                    continue
+                skipped_keys.add(key)
+                skipped = dict(error, status="skipped")
+                newly_skipped.append(skipped)
+                automatically_skipped.append(skipped)
+                options.get("progress", lambda message: None)(
+                    f"Skipped problem file and continuing: {source}"
+                )
+            if not newly_skipped:
+                report["errors"] = automatically_skipped + remaining
+                report["auto_skipped"] = automatically_skipped
+                report["complete"] = not remaining and not report.get("stopped")
+                if automatically_skipped:
+                    count = len(automatically_skipped)
+                    report["summary"] = (
+                        f"Update finished with {count} problem file{'s' if count != 1 else ''} skipped. "
+                        "Select a skipped file in Media Manager if you want to retry it."
+                    )
+                    if remaining:
+                        report["summary"] += " Some non-file errors still need attention."
+                _save(Path(report["receipt"]), report)
+                return report
 
 
 def _run(identity, selected, pending=(), *, progress=lambda message: None, cancelled=lambda: False,
         photo_dimension=640, ffmpeg=None, ffprobe=None, force=False, music_verification="metadata",
-        video_selection=None, progress_detail=None):
+        video_selection=None, progress_detail=None, excluded_sources=None):
     """Copy additions, prepare and publish selected folders; retain per-step receipts.
 
     Stop requests are honored between files and between compiler/publication calls.
@@ -342,6 +529,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         state = {}
     if not isinstance(state, dict):
         state = {}
+    skipped = {kind: _skipped_paths(state, kind) for kind in KINDS}
     report = dict(started=time.time(), identity=identity, steps=[], errors=[], complete=False,
                   stopped=False, cache_directory=str(cache), cleanup=dict(removed=[], retained=[]))
     owned_temporaries = []
@@ -358,11 +546,17 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
 
     record()
     try:
-        videos = video_jobs(root, pending, video_selection) if "Videos" in selected else []
+        if video_selection is not None:
+            video_selection = [value for value in video_selection
+                               if Path(value).resolve().relative_to(root).as_posix().casefold()
+                               not in skipped["Videos"]]
+        videos = video_jobs(root, pending, video_selection, skipped=skipped["Videos"]) if "Videos" in selected else []
+        excluded_sources = {str(Path(value).resolve()).casefold() for value in (excluded_sources or ())}
+        videos = [job for job in videos if str(Path(job["source"]).resolve()).casefold() not in excluded_sources]
         plan = additions(root, [item for item in pending if item[0] in selected and item[0] != "Videos"])
         for kind, maximum in (("Notes", 256),):
             if kind in selected:
-                existing = scan(root, (kind,))[kind]["count"]
+                existing = scan(root, (kind,), skipped=skipped)[kind]["count"]
                 added = sum(item["kind"] == kind and Path(item["source"]).suffix.lower() in extensions(kind) for item in plan)
                 if existing + added > maximum:
                     raise ValueError(f"{kind} supports {maximum} files; this selection contains {existing + added}. Choose a smaller source folder.")
@@ -406,7 +600,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             record()
         checkpoint()
         progress("Scanning the iPod folders…")
-        inventory = scan(root, selected)
+        inventory = scan(root, selected, skipped=skipped)
         if "Videos" in selected:
             inventory["Videos"] = _video_inventory(videos)
         for kind in KINDS:
@@ -447,7 +641,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     roots = source_folders(root, "Music")
                     preparation = compile_music(root, stage, ffprobe=ffprobe or shutil.which("ffprobe"), device_root=root,
                                   verification=music_verification, cache_path=cache / "music-metadata.sqlite3",
-                                  bypass_cache=force, progress=music_progress, include_roots=roots)
+                                  bypass_cache=force, progress=music_progress, include_roots=roots,
+                                  excluded=skipped["Music"])
                     compatibility = preparation.get("compatibility_copies", [])
                     report["steps"].append(dict(kind=kind, metadata=preparation.get("cache"), integrity=music_verification,
                                                compatibility_copies=compatibility))
@@ -464,7 +659,9 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     package = cache / "photos.pimg"
                     compile_photos(folder, package, max_dimension=photo_dimension,
                                    viewport_width=media_profile["photo_width"],
-                                   viewport_height=media_profile["photo_height"])
+                                   viewport_height=media_profile["photo_height"],
+                                   excluded={Path(value).relative_to("Photos").as_posix()
+                                             for value in skipped["Photos"]})
                     checkpoint()
                     progress("Publishing prepared photos…")
                     published.append(publish_photos(package, **target_args(identity)))
@@ -473,7 +670,9 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     from .notes import compile_notes
                     from .publish_notes import publish_notes
                     package = cache / "notes.pnot"
-                    preparation = compile_notes(folder, package)
+                    preparation = compile_notes(folder, package,
+                        excluded={Path(value).relative_to("Notes").as_posix()
+                                  for value in skipped["Notes"]})
                     report["steps"].append(dict(kind=kind, preparation=preparation))
                     if preparation.get("ascii_converted"):
                         progress("Notes: non-ASCII text was adapted for the iPod font; originals are unchanged. See the report.")
@@ -591,7 +790,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             video_state.pop(relative, None)
                             state.pop(kind, None)
                             _save(state_path, state)
-                            report["errors"].append(dict(kind=kind, file=relative, message=str(error)))
+                            report["errors"].append(dict(kind=kind, file=relative,
+                                                         source=str(source), message=str(error)))
                             progress(f"Video could not finish, continuing with the next file: {relative}: {error}")
                             record()
                     if failed:
@@ -599,7 +799,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                         continue
                 checkpoint()
                 # Do not mark a changed source tree up to date.
-                current = _video_inventory(videos) if kind == "Videos" else scan(root, (kind,))[kind]
+                current = (_video_inventory(videos) if kind == "Videos" else
+                           scan(root, (kind,), skipped=skipped)[kind])
                 if current["fingerprint"] != item["fingerprint"]:
                     raise ValueError(f"{kind} changed during processing. Scan again before updating.")
                 outputs = [(name, _hash(root / name)) for name in output_paths]
@@ -611,7 +812,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             except Cancelled:
                 raise
             except Exception as error:
-                report["errors"].append(dict(kind=kind, message=str(error)))
+                report["errors"].append(_error_record(kind, error, item, root))
                 progress(f"{kind} could not finish: {error}")
                 record()
         report["complete"] = not report["errors"]

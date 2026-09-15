@@ -72,7 +72,7 @@ def _sizes(width, height, max_dimension, viewport_width, viewport_height):
 
 
 def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
-                   viewport_height=156, fallback_paths=None):
+                   viewport_height=156, fallback_paths=None, excluded=None):
     """Prepare a folder into one .pimg; optional mapping names existing JPEG copies.
 
     The default keeps zoom detail without a desktop-sized tile pyramid.
@@ -89,9 +89,11 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
         raise ValueError('invalid photo source, viewport, or maximum dimension')
     if output.suffix.lower() not in ('.pimg', '.pim'):
         raise ValueError('photo output must have .pimg or .pim extension')
+    excluded = {Path(value).as_posix().casefold() for value in (excluded or ())}
     paths = []
     for path in source.rglob('*'):
-        if path.is_file() and path.suffix.lower() in EXTENSIONS:
+        relative = path.relative_to(source).as_posix().casefold()
+        if path.is_file() and path.suffix.lower() in EXTENSIONS and relative not in excluded:
             if path.is_symlink() or not path.resolve().is_relative_to(source):
                 raise ValueError('photo source links may not escape or alias the source tree')
             paths.append(path)
