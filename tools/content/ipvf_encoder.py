@@ -14,6 +14,7 @@ import ctypes
 import ctypes.util
 import json
 import os
+from operator import sub
 import struct
 import subprocess
 import tempfile
@@ -60,6 +61,7 @@ METADATA_OFFSET = HEADER_SIZE
 METADATA_CAPACITY = DATA_OFFSET - METADATA_OFFSET
 METADATA_TAGS = {"title": 1, "artist": 2, "album": 3}
 METADATA_NAMES = {tag: name for name, tag in METADATA_TAGS.items()}
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 CREATOR_PROFILES = {
     "native": {
@@ -364,6 +366,39 @@ def _ima_code(predictor: int, target: int, index: int) -> tuple[int, int]:
     return code, max(0, min(88, index + IMA_INDEX_TABLE[code]))
 
 
+def _ima_encode_step(predictor: int, target: int, index: int) -> tuple[int, int, int]:
+    # Block entry points validate the index. Combine code selection and
+    # predictor reconstruction so their step arithmetic is only done once.
+    step = IMA_STEP_TABLE[index]
+    diff = target - predictor
+    code = 0
+    if diff < 0:
+        code = 8
+        diff = -diff
+    delta = step >> 3
+    if diff >= step:
+        code |= 4
+        diff -= step
+        delta += step
+    half = step >> 1
+    if diff >= half:
+        code |= 2
+        diff -= half
+        delta += half
+    quarter = step >> 2
+    if diff >= quarter:
+        code |= 1
+        delta += quarter
+    predictor += -delta if code & 8 else delta
+    if predictor < -32768:
+        predictor = -32768
+    elif predictor > 32767:
+        predictor = 32767
+    index += IMA_INDEX_TABLE[code]
+    index = 0 if index < 0 else 88 if index > 88 else index
+    return code, predictor, index
+
+
 def encode_ima_adpcm_stateful(
     pcm: bytes,
     frames: int,
@@ -388,11 +423,8 @@ def encode_ima_adpcm_stateful(
     ri = right_index
     for frame in range(1, frames):
         target_l, target_r = struct.unpack_from("<hh", pcm, frame * AUDIO_FRAME_BYTES)
-        old_li, old_ri = li, ri
-        code_l, _ = _ima_code(lp, target_l, old_li)
-        code_r, _ = _ima_code(rp, target_r, old_ri)
-        lp, li = _ima_step(lp, old_li, code_l)
-        rp, ri = _ima_step(rp, old_ri, code_r)
+        code_l, lp, li = _ima_encode_step(lp, target_l, li)
+        code_r, rp, ri = _ima_encode_step(rp, target_r, ri)
         out.append(code_l | (code_r << 4))
     return bytes(out), li, ri
 
@@ -415,8 +447,7 @@ def encode_ima_mono_stateful(
                                            frame * AUDIO_FRAME_BYTES)
         if target != right:
             raise ValueError("PCM is not dual mono")
-        code, _ = _ima_code(predictor, target, index)
-        predictor, index = _ima_step(predictor, index, code)
+        code, predictor, index = _ima_encode_step(predictor, target, index)
         if (frame - 1) & 1:
             out.append(pending | (code << 4))
         else:
@@ -436,10 +467,7 @@ def encode_adaptive_ima(
         raise ValueError("invalid initial IMA ADPCM index")
     if pcm == bytes(len(pcm)):
         return b"", left_index, right_index, "silence"
-    dual_mono = all(
-        pcm[offset:offset + 2] == pcm[offset + 2:offset + 4]
-        for offset in range(0, len(pcm), AUDIO_FRAME_BYTES)
-    )
+    dual_mono = pcm[0::4] == pcm[2::4] and pcm[1::4] == pcm[3::4]
     if dual_mono:
         payload, index = encode_ima_mono_stateful(pcm, frames, left_index)
         return payload, index, index, "mono"
@@ -463,12 +491,25 @@ def lz4_compress(data: bytes) -> bytes:
     # Search enough prior candidates to improve compression without making a
     # high-motion 77 KiB frame expensive to scan.  The chain is deterministic.
     max_chain = 32
-    previous = [-1] * n
     heads: dict[int, int] = {}
+    # Unpack all overlapping four-byte keys in four C passes. Every source
+    # position uses the same exact key as before, without allocating slices
+    # and hashing their bytes in the insertion loop.
+    keys = [0] * max(0, n - 3)
+    for alignment in range(min(4, len(keys))):
+        count = (n - alignment) // 4
+        keys[alignment::4] = struct.unpack_from(f"={count}I", data, alignment)
+    # Each link depends only on earlier positions, so build the complete
+    # history once instead of updating it inside the matching hot loop.
+    previous = []
+    for position, key in enumerate(keys):
+        previous.append(heads.get(key, -1))
+        heads[key] = position
+    del keys, heads
     out = bytearray()
     anchor = 0
     i = 0
-    preinserted = -1
+    deferred_match = None
 
     def emit_length(length: int) -> None:
         if length < 15:
@@ -479,81 +520,119 @@ def lz4_compress(data: bytes) -> bytes:
             length -= 255
         out.append(length)
 
-    def insert(position: int) -> None:
-        if position + 4 > n:
-            return
-        key = int.from_bytes(data[position:position + 4], "little")
-        previous[position] = heads.get(key, -1)
-        heads[key] = position
-
     def best_match(position: int) -> tuple[int, int]:
         # Standard LZ4 blocks reserve five terminal literals.  A match may
         # only start at least twelve bytes before the source end.
         if position + 4 > n - 5:
             return 0, -1
-        sample = data[position:position + 4]
         ref = previous[position]
-        best_length = 0
-        best_ref = -1
+        short_length = 0
+        short_ref = -1
         friendly_length = 0
         friendly_ref = -1
-        candidates = 0
-        while ref >= 0 and candidates < max_chain:
+        limit = n - 5 - position
+        # Chains use exact four-byte keys, so every candidate already matches
+        # the first four bytes (there are no hash-bucket collisions to check).
+        for _ in range(max_chain):
+            if ref < 0:
+                break
             offset = position - ref
             if offset > 65535:
                 break
-            if data[ref:ref + 4] == sample:
-                limit = n - 5 - position
-                length = 4
-                while length < limit and data[ref + length] == data[position + length]:
-                    length += 1
-                if length > best_length:
-                    best_length, best_ref = length, ref
-                if offset >= 8 and length > friendly_length:
-                    friendly_length, friendly_ref = length, ref
-                if length == limit:
+            # A candidate must improve at least one retained match. A
+            # mismatch at that length proves it cannot do so, without
+            # scanning the common prefix again.
+            threshold = friendly_length if offset >= 8 else short_length
+            if (threshold >= 4 and
+                    data[ref + threshold] != data[position + threshold]):
+                ref = previous[ref]
+                continue
+            length = 4
+            if threshold >= 8:
+                if (data[ref + 4:ref + threshold] !=
+                        data[position + 4:position + threshold]):
+                    ref = previous[ref]
+                    continue
+                # The prefix and its following byte both match. Continue
+                # after them instead of scanning them a second time.
+                length = threshold + 1
+            while (length < limit and length < 12 and
+                   data[ref + length] == data[position + length]):
+                length += 1
+            if length >= 12:
+                # Long equal runs use C byte comparisons; binary search
+                # finds the exact first difference in the final span.
+                span = 16
+                while length < limit:
+                    count = min(span, limit - length)
+                    if (data[ref + length:ref + length + count] ==
+                            data[position + length:position + length + count]):
+                        length += count
+                        span *= 2
+                        continue
+                    low, high = 0, count
+                    while low + 1 < high:
+                        middle = (low + high) // 2
+                        if (data[ref + length:ref + length + middle] ==
+                                data[position + length:position + length + middle]):
+                            low = middle
+                        else:
+                            high = middle
+                    length += low
                     break
+            # References are visited newest first: short offsets come before
+            # all friendly offsets. Keep their winners separately, then apply
+            # the same one-byte preference at the end of the search.
+            if offset >= 8:
+                if length > friendly_length:
+                    friendly_length, friendly_ref = length, ref
+            elif length > short_length:
+                short_length, short_ref = length, ref
+            if length == limit:
+                break
             ref = previous[ref]
-            candidates += 1
 
         # Small offsets require more overlapping copy steps in the target
         # decoder. Prefer an offset >= 8 when it costs at most one byte.
-        if friendly_ref >= 0 and friendly_length + 1 >= best_length:
+        if friendly_ref >= 0 and friendly_length + 1 >= short_length:
             return friendly_length, friendly_ref
-        return best_length, best_ref
+        return short_length, short_ref
 
     while i + 12 <= n:
-        if i != preinserted:
-            insert(i)
-        preinserted = -1
-        match_len, ref = best_match(i)
+        if previous[i] < 0:
+            i += 1
+            continue
+        if deferred_match is None:
+            match_len, ref = best_match(i)
+        else:
+            # Lazy matching already searched this position in the same history.
+            match_len, ref = deferred_match
+            deferred_match = None
         if match_len < 4:
             i += 1
             continue
 
         # Lazy matching avoids committing to a locally shorter match.
-        lazy_inserted = -1
-        if i + 1 + 12 <= n:
-            insert(i + 1)
-            lazy_inserted = i + 1
-            next_len, _ = best_match(i + 1)
+        if i + 1 + 12 <= n and previous[i + 1] >= 0:
+            next_len, next_ref = best_match(i + 1)
             if next_len > match_len + 1:
-                preinserted = i + 1
+                deferred_match = next_len, next_ref
                 i += 1
                 continue
 
         literal_len = i - anchor
         encoded_match_len = match_len - 4
-        out.append((min(literal_len, 15) << 4) | min(encoded_match_len, 15))
-        emit_length(literal_len)
+        out.append(((literal_len if literal_len < 15 else 15) << 4) |
+                   (encoded_match_len if encoded_match_len < 15 else 15))
+        if literal_len >= 15:
+            emit_length(literal_len)
         out.extend(data[anchor:i])
-        out.extend(struct.pack("<H", i - ref))
-        emit_length(encoded_match_len)
+        offset = i - ref
+        out.append(offset & 255)
+        out.append(offset >> 8)
+        if encoded_match_len >= 15:
+            emit_length(encoded_match_len)
 
-        # Add positions within the match so later searches see useful history.
-        for position in range(i + 1, i + match_len):
-            if position != lazy_inserted:
-                insert(position)
         i += match_len
         anchor = i
 
@@ -740,15 +819,18 @@ def multi_rect_diff(
         for y in range(min_ty * tile_rows,
                        min(H, (max_ty + 1) * tile_rows)):
             row = y * W * 2
-            for pair in range(min_tx * tile_pairs,
-                              min(pair_columns,
-                                  (max_tx + 1) * tile_pairs)):
-                p = row + pair * 4
-                if prev[p:p + 4] != cur[p:p + 4]:
-                    min_pair = min(min_pair, pair)
-                    max_pair = max(max_pair, pair)
-                    min_y = min(min_y, y)
-                    max_y = max(max_y, y)
+            first = min_tx * tile_pairs
+            end = min(pair_columns, (max_tx + 1) * tile_pairs)
+            start_byte, end_byte = row + first * 4, row + end * 4
+            # The first and last set bits locate the changed four-byte words.
+            difference = (int.from_bytes(prev[start_byte:end_byte], "big") ^
+                          int.from_bytes(cur[start_byte:end_byte], "big"))
+            if difference:
+                min_pair = min(min_pair, end - (difference.bit_length() + 31) // 32)
+                last_bit = (difference & -difference).bit_length() - 1
+                max_pair = max(max_pair, end - 1 - last_bit // 32)
+                min_y = min(min_y, y)
+                max_y = y
         if max_pair >= 0:
             components.append((min_pair * 2, min_y,
                                (max_pair - min_pair + 1) * 2,
@@ -794,7 +876,8 @@ def multi_rect_diff(
 def xor_frames(prev: bytes, cur: bytes) -> bytes:
     if len(prev) != FRAME_BYTES or len(cur) != FRAME_BYTES:
         raise ValueError("frames must match the native IPVF geometry")
-    return bytes(a ^ b for a, b in zip(prev, cur))
+    return (int.from_bytes(prev, "little") ^
+            int.from_bytes(cur, "little")).to_bytes(FRAME_BYTES, "little")
 
 
 def translate_frame(previous: bytes, dx: int, dy: int) -> bytes:
@@ -840,17 +923,19 @@ def estimate_translation(
         y0 = max(0, dy)
         y1 = min(H, H + dy)
         total = 0
-        count = 0
+        columns = len(range(x0, x1, sample_step))
+        stride = sample_step * 2
         for y in range(y0, y1, sample_step):
             current_offset = (y * W + x0) * 2
             previous_offset = ((y - dy) * W + x0 - dx) * 2
-            for _x in range(x0, x1, sample_step):
-                total += abs(current[current_offset] - previous[previous_offset])
-                total += abs(current[current_offset + 1] -
-                             previous[previous_offset + 1])
-                count += 1
-                current_offset += sample_step * 2
-                previous_offset += sample_step * 2
+            current_end = current_offset + (x1 - x0) * 2
+            previous_end = previous_offset + (x1 - x0) * 2
+            a = (current[current_offset:current_end:stride] +
+                 current[current_offset + 1:current_end:stride])
+            b = (previous[previous_offset:previous_end:stride] +
+                 previous[previous_offset + 1:previous_end:stride])
+            total += sum(map(abs, map(sub, a, b)))
+        count = columns * len(range(y0, y1, sample_step))
         result = total, count
         score_cache[(dx, dy)] = result
         return result
@@ -1029,6 +1114,7 @@ def probe_source_fps(source: Path, ffprobe: str) -> Fraction:
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        creationflags=NO_WINDOW,
     )
     if result.returncode:
         raise RuntimeError(
@@ -1067,6 +1153,7 @@ def probe_source_metadata(source: Path, ffprobe: str) -> dict[str, str]:
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        creationflags=NO_WINDOW,
     )
     if result.returncode:
         raise RuntimeError(
@@ -1124,6 +1211,7 @@ def probe_source_has_audio(source: Path, ffprobe: str) -> bool:
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        creationflags=NO_WINDOW,
     )
     if result.returncode:
         raise RuntimeError(
@@ -1187,7 +1275,7 @@ def ffmpeg_frames(
         "rawvideo",
         "-",
     ]
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, creationflags=NO_WINDOW)
     assert proc.stdout is not None
     try:
         while True:
@@ -1246,7 +1334,7 @@ def decode_audio(source: Path, destination: Path, ffmpeg: str) -> None:
         "s16le",
         str(destination),
     ]
-    rc = subprocess.run(cmd, check=False).returncode
+    rc = subprocess.run(cmd, check=False, creationflags=NO_WINDOW).returncode
     if rc:
         raise RuntimeError("ffmpeg could not decode the first audio stream")
 
@@ -1316,7 +1404,7 @@ def _coalesce_lz4_matches(packed: bytes, raw: bytes, minimum: int = 12) -> bytes
                 value -= 255
             output.append(value)
 
-    # The caller strictly decodes the bounded block before this token walk.
+    # The caller supplies the exact raw payload for this bounded block.
     while cursor < len(packed):
         token = packed[cursor]
         cursor += 1
@@ -1358,12 +1446,13 @@ def _coalesce_lz4_matches(packed: bytes, raw: bytes, minimum: int = 12) -> bytes
     return bytes(output)
 
 
-def _realtime_record(record):
+def _realtime_record(record, raw=None):
     kind, rectangles, payload, decoded = record
     if kind < TYPE_KEY_LZ4:
         return record
     prefix = 6 if kind == TYPE_MOTION_LZ4 else 4 if kind == TYPE_XOR_LZ4 else 0
-    raw = lz4_decompress(payload[prefix:], decoded)
+    if raw is None:
+        raw = lz4_decompress(payload[prefix:], decoded)
     coalesced = _coalesce_lz4_matches(payload[prefix:], raw)
     # Compressed payloads, including their temporal prefix, must remain
     # smaller than the decoded payload required by the format.
@@ -1389,22 +1478,24 @@ def choose_video_record(
         raise ValueError(
             "video_mode must be current, spatial, balanced, motion, auto, or realtime"
         )
-    if video_mode == "realtime":
-        return _realtime_record(choose_video_record(
-            prev, cur, audio_size, force_key, "balanced", max_rects, lz4_mode
-        ))
+    realtime = video_mode == "realtime"
+    if realtime:
+        video_mode = "balanced"
     if prev is None or force_key:
-        return _compress_record_if_smaller(
+        selected = _compress_record_if_smaller(
             TYPE_KEY, 0, cur, audio_size, lz4_mode
         )
+        return _realtime_record(selected, cur) if realtime else selected
 
     rect = bbox_diff(prev, cur)
     if rect is None:
         return TYPE_REPEAT, 0, b"", 0
     byte_geometry = W <= 255 and H <= 255
+    selected_raw = cur
     if byte_geometry:
         delta = rect_payload(cur, rect)
         if len(delta) < FRAME_BYTES:
+            selected_raw = delta
             selected = _compress_record_if_smaller(
                 TYPE_RECTS, 1, delta, audio_size, lz4_mode
             )
@@ -1432,6 +1523,7 @@ def choose_video_record(
                 )
                 if candidate_sectors < selected_sectors:
                     selected = candidate
+                    selected_raw = multi_payload
                     selected_sectors = candidate_sectors
 
     minimum_saving = (MOTION_MIN_SECTOR_SAVING
@@ -1442,7 +1534,8 @@ def choose_video_record(
             record_sectors(6, audio_size) + minimum_saving <= selected_sectors):
         dx, dy = estimate_translation(prev, cur)
         prediction = translate_frame(prev, dx, dy)
-        residual = compress_lz4(xor_frames(prediction, cur), lz4_mode)
+        residual_raw = xor_frames(prediction, cur)
+        residual = compress_lz4(residual_raw, lz4_mode)
         motion_payload = struct.pack(
             "<bbI", dx, dy, rockbox_crc32(residual)
         ) + residual
@@ -1452,6 +1545,7 @@ def choose_video_record(
                 motion_sectors + minimum_saving <=
                 selected_sectors):
             selected = TYPE_MOTION_LZ4, 0, motion_payload, FRAME_BYTES
+            selected_raw = residual_raw
             selected_sectors = motion_sectors
 
     if (video_mode == "auto" and
@@ -1465,7 +1559,7 @@ def choose_video_record(
                 temporal_sectors < selected_sectors):
             selected = TYPE_XOR_LZ4, 0, temporal_payload, FRAME_BYTES
 
-    return selected
+    return _realtime_record(selected, selected_raw) if realtime else selected
 
 
 def encode(
