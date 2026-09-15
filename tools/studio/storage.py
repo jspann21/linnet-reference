@@ -115,7 +115,8 @@ def _mount_identity(mount, serial):
     @{{disk_number=$p.DiskNumber;serial=$w.SerialNumber.Trim();size=$d.Size;partition_offset=$p.Offset;partition_size=$p.Size;volume_id=$v.UniqueId}} | ConvertTo-Json -Compress
     """
     result = subprocess.run(['powershell', '-NoProfile', '-Command', script],
-                            capture_output=True, text=True, timeout=15, check=True)
+                            capture_output=True, text=True, timeout=15, check=True,
+                            creationflags=subprocess.CREATE_NO_WINDOW)
     return resolved, json.loads(result.stdout)
 
 

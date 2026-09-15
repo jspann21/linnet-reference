@@ -221,7 +221,8 @@ def identify_disk(number, manifest):
     script = (f"$d=Get-Disk -Number {number} -ErrorAction Stop; "
               "$d | Select-Object Number,FriendlyName,SerialNumber,Size,BusType,LogicalSectorSize | ConvertTo-Json -Compress")
     result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                            text=True, capture_output=True, timeout=15, check=True)
+                            text=True, capture_output=True, timeout=15, check=True,
+                            creationflags=subprocess.CREATE_NO_WINDOW)
     disk = json.loads(result.stdout)
     observed = (disk.get("Number"), str(disk.get("SerialNumber", "")).strip(),
                 int(disk.get("Size", 0)), int(disk.get("LogicalSectorSize", 0)))

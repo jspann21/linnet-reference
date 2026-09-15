@@ -741,7 +741,8 @@ exit $p.ExitCode
 """
     encoded = base64.b64encode(ps.encode("utf-16le")).decode("ascii")
     result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-                            capture_output=True, text=True)
+                            capture_output=True, text=True,
+                            creationflags=subprocess.CREATE_NO_WINDOW)
     job_value = json.loads(job_path.read_text(encoding="utf-8"))
     response_path = Path(job_value["result"])
     if not response_path.is_file():

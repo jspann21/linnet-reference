@@ -295,7 +295,8 @@ throw 'Eject requested once, but storage removal or media unavailability was not
     encoded = base64.b64encode(script.encode("utf-16-le")).decode()
     result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive",
                              "-EncodedCommand", encoded], capture_output=True,
-                            text=True, timeout=35)
+                            text=True, timeout=35,
+                            creationflags=subprocess.CREATE_NO_WINDOW)
     if result.returncode:
         try:
             detail = json.loads(result.stdout)["error"]
