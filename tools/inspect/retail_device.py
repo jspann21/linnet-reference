@@ -37,8 +37,9 @@ partition_offset=[long]$p.Offset;partition_bytes=[long]$p.Size;drive='{letter}:'
 volume_label=$v.FileSystemLabel;filesystem=$v.FileSystem;volume_id=$v.UniqueId}} | ConvertTo-Json -Compress
 """
     try:
-        result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                                text=True, capture_output=True, timeout=15, check=True)
+        result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                                text=True, capture_output=True, timeout=15, check=True,
+                                creationflags=subprocess.CREATE_NO_WINDOW)
     except subprocess.CalledProcessError as error:
         detail = (error.stderr or error.stdout or "Windows storage query failed").strip()
         raise RuntimeError("Could not inspect the mounted iPod: " + detail) from error
@@ -63,7 +64,7 @@ def detect(mount):
         raise ValueError("iPod USB identity is unavailable")
     vid, pid = int(match.group(1), 16), int(match.group(2), 16)
     usb_serial = match.group(3).upper()
-    if not re.fullmatch(r"[0-9A-F]{6,15}", usb_serial):
+    if not re.fullmatch(r"[0-9A-F]{6,16}", usb_serial):
         raise ValueError("iPod USB serial identity is unavailable")
     matches = []
     for target, spec in TARGETS.items():
