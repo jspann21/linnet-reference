@@ -23,6 +23,24 @@ static enum ln_ata_op operation;
 static uint64_t previous_capacity;
 static uint8_t flush_command;
 static uint8_t pio_mode;
+static uint32_t hdd_idle_us,standby_started;
+static bool recent_standby;
+/* Back off repeated short rests, but forget the backoff after two minutes
+ * asleep. Expire in step as well as on wake so the microsecond clock can wrap. */
+static void hdd_idle_expire(uint32_t now) {
+    if(recent_standby&&now-standby_started>=120000000u){
+        recent_standby=false;hdd_idle_us=10000000u;
+        if(info.media_kind==LN_ATA_MEDIA_ROTATING)info.idle_timeout_us=hdd_idle_us;
+    }
+}
+static void hdd_wake(uint32_t now) {
+    hdd_idle_expire(now);
+    if(info.media_kind==LN_ATA_MEDIA_ROTATING&&recent_standby){
+        hdd_idle_us=hdd_idle_us<30000000u?hdd_idle_us*2u:60000000u;
+        info.idle_timeout_us=hdd_idle_us;
+    }
+    recent_standby=false;
+}
 #if !defined(LINNET_PROFILE_RELEASE)
 static uint32_t init_started;
 #define ATA_RECORD(index, value) (info.diagnostic[(index)] = (value))
@@ -82,6 +100,7 @@ static void read_sector(uint8_t *sector) {
         : [port] "r"((uintptr_t)0xc30001e0u) : "cc", "memory");
 }
 static void fail(uint32_t status) {
+    recent_standby=false;
     info.power_safe=0;
     ATA_RECORD(1, (uint32_t)phase);ATA_RECORD(2, status);
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -98,6 +117,9 @@ static void finish(void) {
     if(perf.active)perf_end(ln_time_us());
 #endif
     if(operation==LN_ATA_STANDBY){
+        if(info.media_kind==LN_ATA_MEDIA_ROTATING&&info.standby_supported){
+            standby_started=ln_time_us();recent_standby=true;
+        }
         if(info.standby_supported)info.sleeping=1;
         info.power_safe=info.can_power_off&&(info.standby_supported||info.can_flush);
     }
@@ -159,7 +181,8 @@ static bool identify_valid(void) {
      * but does not by itself authorize rail removal.  Keep that dependent on
      * an ATA-native media claim (or the separately handled exact iFlash case). */
     info.can_power_off=identify_media_known&&info.standby_supported;
-    info.idle_timeout_us=info.media_kind==LN_ATA_MEDIA_SOLID_STATE?5000000u:10000000u;
+    info.idle_timeout_us=info.media_kind==LN_ATA_MEDIA_SOLID_STATE?5000000u:
+        info.media_kind==LN_ATA_MEDIA_ROTATING?hdd_idle_us:10000000u;
     info.wake_timeout_us=30000000u;
     info.can_flush=((identify[83]&0xc000u)==0x4000u&&(identify[83]&0x3000u))||
         (identify[80]!=0xffffu&&(identify[80]&0x7fe0u));
@@ -201,7 +224,10 @@ static void controller_setup(void) {
     }
     R32(0xc3000000u)=0xc293u;R32(0xc3000004u)=0x80002150u;
 }
-void ln_ata_init(uint32_t now) { info=(struct ln_ata_info){0};previous_capacity=0;reset_begin(now); }
+void ln_ata_init(uint32_t now) {
+    info=(struct ln_ata_info){0};previous_capacity=0;
+    hdd_idle_us=10000000u;recent_standby=false;reset_begin(now);
+}
 void ln_ata_recover(uint32_t now) {
     previous_capacity=info.sectors;
     for(uint32_t i=0;i<41u;++i)previous_model[i]=info.model[i];
@@ -217,7 +243,7 @@ bool ln_ata_power_off(void) {
 }
 bool ln_ata_power_on(uint32_t now) {
     if(info.powered||info.busy||info.initializing||result_ready||!info.sectors)return false;
-    ++info.spinups;ln_ata_recover(now);return true;
+    hdd_wake(now);++info.spinups;ln_ata_recover(now);return true;
 }
 bool ln_ata_start(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *bytes,uint32_t limit) {
     if(!info.initialized||info.busy||result_ready||phase!=IDLE||op<LN_ATA_READ||op>LN_ATA_WAKE)return false;
@@ -229,7 +255,7 @@ bool ln_ata_start(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *bytes
     if(!data&&(sectors||bytes))return false;
     if(op==LN_ATA_WRITE&&!info.can_flush)return false;
     if(op==LN_ATA_WAKE||data)info.power_safe=0;
-    if(info.sleeping&&(op==LN_ATA_WAKE||data))++info.spinups;
+    if(info.sleeping&&(op==LN_ATA_WAKE||data)){hdd_wake(now);++info.spinups;}
     operation=op;buffer=bytes;count=sectors;done=0;deadline=limit;info.busy=1;
     CONTROL=2u;SELECT=0xe0u;settle();
     if(!data){
@@ -252,6 +278,7 @@ bool ln_ata_start(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *bytes
     command(op==LN_ATA_READ?(extended?0x24u:0x20u):(extended?0x34u:0x30u));phase=TRANSFER;return true;
 }
 void ln_ata_step(uint32_t now) {
+    hdd_idle_expire(now);
     if(phase==OFF||phase==IDLE)return;
     if((int32_t)(now-deadline)>=0){fail(LN_ATA_TIMEOUT);return;}
     if((int32_t)(now-not_before)<0)return;
@@ -350,6 +377,7 @@ void ln_ata_state_snapshot(struct ln_ata_state *out) {
     out->can_power_off=info.can_power_off;
     out->power_safe=info.power_safe;
     out->idle_timeout_us=info.idle_timeout_us;
+    out->media_kind=info.media_kind;
 }
 
 #if !defined(LINNET_PROFILE_RELEASE)

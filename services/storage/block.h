@@ -2,6 +2,7 @@
 #define LINNET_BLOCK_H
 #include "hal/api/ata.h"
 #define LINNET_BLOCK_QUEUE 8u
+#define LN_BLOCK_READ_AHEAD_DEFAULT 32u
 enum ln_block_op { LN_BLOCK_READ=1,LN_BLOCK_WRITE=2,LN_BLOCK_FLUSH=3,LN_BLOCK_STANDBY=4,LN_BLOCK_WAKE=5 };
 struct ln_block_completion { uint32_t request_id,generation,status,sectors_done; };
 struct ln_block_info {
@@ -20,13 +21,14 @@ void ln_block_init(uint32_t now);
  * including already queued requests, until explicit recovery. */
 bool ln_block_submit(enum ln_block_op op,uint64_t lba,uint32_t sectors,void *buffer,
     uint32_t generation,uint32_t deadline_us,uint32_t *request_id);
-/* Read-ahead ceiling is1 (no speculative sectors) or8 (streaming default).
+/* Read-ahead ceiling is1 (no speculation),8, or32 (hardware-tuned default).
+ * Rotating media grows from8 to32 sectors only when continuing a cached run.
  * Captured with the request; coalesced explicit sectors always remain covered.
  * A request group uses its most restrictive ceiling and never expands past the window. */
 bool ln_block_submit_read(uint64_t lba,uint32_t sectors,void *buffer,
     uint32_t generation,uint32_t deadline_us,uint32_t read_ahead,uint32_t *request_id);
 /* Direct reads transfer up to 192 contiguous sectors into the caller buffer
- * without the 8-sector cache/bounce buffer. They are never speculative. */
+ * without the cache/bounce buffer. They are never speculative. */
 bool ln_block_submit_direct_read(uint64_t lba,uint32_t sectors,void *buffer,
     uint32_t generation,uint32_t deadline_us,uint32_t *request_id);
 void ln_block_step(uint32_t now);

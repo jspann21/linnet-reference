@@ -10,8 +10,8 @@ struct slot {
     uint8_t data[4096] __attribute__((aligned(32)));
 };
 static struct slot slots[8];
-static uint8_t transfer[4096] __attribute__((aligned(32)));
-static uint8_t cache[2][4096] __attribute__((aligned(32)));
+static uint8_t transfer[LN_BLOCK_READ_AHEAD_DEFAULT*512u] __attribute__((aligned(32)));
+static uint8_t cache[2][LN_BLOCK_READ_AHEAD_DEFAULT*512u] __attribute__((aligned(32)));
 static uint64_t cache_lba[2];
 static uint64_t window_first,window_count;
 static uint32_t cache_sectors[2],cache_next,next_id,active_count,active_sectors,active_deadline;
@@ -107,11 +107,11 @@ static bool submit(enum ln_block_op op,uint64_t lba,uint32_t sectors,void *bytes
 }
 bool ln_block_submit(enum ln_block_op op,uint64_t lba,uint32_t sectors,void *bytes,
     uint32_t generation,uint32_t limit,uint32_t *id){
-    return submit(op,lba,sectors,bytes,generation,limit,8u,false,id);
+    return submit(op,lba,sectors,bytes,generation,limit,LN_BLOCK_READ_AHEAD_DEFAULT,false,id);
 }
 bool ln_block_submit_read(uint64_t lba,uint32_t sectors,void *bytes,uint32_t generation,
     uint32_t limit,uint32_t read_ahead,uint32_t *id){
-    if(read_ahead!=1u&&read_ahead!=8u)return false;
+    if(read_ahead!=1u&&read_ahead!=8u&&read_ahead!=LN_BLOCK_READ_AHEAD_DEFAULT)return false;
     return submit(LN_BLOCK_READ,lba,sectors,bytes,generation,limit,read_ahead,false,id);
 }
 bool ln_block_submit_direct_read(uint64_t lba,uint32_t sectors,void *bytes,
@@ -277,11 +277,20 @@ static void step_inner(uint32_t now) {
     if(s->op==LN_BLOCK_WRITE){invalidate_cache();copy(transfer,s->data,s->sectors*512u);}
     if((s->op==LN_BLOCK_READ||s->op==LN_BLOCK_WRITE)&&!s->direct){
         uint32_t read_ahead=s->read_ahead;
+        uint32_t capacity=s->op==LN_BLOCK_READ&&device.media_kind==LN_ATA_MEDIA_ROTATING?
+            LN_BLOCK_READ_AHEAD_DEFAULT:8u;
+        /* Start random access with the existing small window. Expand only at
+         * the end of a resident run; exact-sector callers keep their ceiling. */
+        bool sequential=false;
+        for(uint32_t way=0;way<2u;++way)
+            if(cache_sectors[way]&&cache_lba[way]+cache_sectors[way]==s->lba)sequential=true;
+        uint32_t ceiling=sequential?capacity:8u;
+        if(read_ahead>ceiling)read_ahead=ceiling;
         while(active_count<8u){
             int next=oldest(QUEUED);if(next<0)break;
             struct slot *candidate=&slots[(uint32_t)next];
-            if(candidate->op!=s->op||candidate->generation!=s->generation||
-                candidate->lba!=s->lba+active_sectors||candidate->sectors>8u-active_sectors)break;
+            if(candidate->op!=s->op||candidate->direct||candidate->generation!=s->generation||
+                candidate->lba!=s->lba+active_sectors||candidate->sectors>capacity-active_sectors)break;
             active_slots[active_count]=(uint32_t)next;active_offsets[active_count]=active_sectors;
             if(s->op==LN_BLOCK_WRITE)copy(transfer+active_sectors*512u,candidate->data,candidate->sectors*512u);
             active_sectors+=candidate->sectors;candidate->state=ACTIVE;++active_count;++metrics.coalesced;

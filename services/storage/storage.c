@@ -34,7 +34,7 @@ static uint32_t phase,error,found,opening,epoch=1,request,request_generation,req
 static bool pending,locked;
 static uint32_t media_owner;
 static uint32_t fixed_owner,fixed_started;
-static uint32_t media_read_ahead=8u;
+static uint32_t media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
 static bool media_canceled,media_opening;
 static bool background_running;
 /* Nonzero only while a bounded deferred-runtime poll is on the stack. This is a
@@ -241,7 +241,7 @@ void ln_storage_progress(void *context){
     ln_core_watchdog_feed();
 #endif
 }
-void ln_storage_init(void){phase=1;error=found=opening=0;pending=locked=false;media_read_ahead=8u;
+void ln_storage_init(void){phase=1;error=found=opening=0;pending=locked=false;media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
 #if !defined(LINNET_PROFILE_RELEASE)
     uint32_t timing_flags=(poll_timing.depth[0]||poll_timing.depth[1])?1u<<29:0u;
     if(poll_timing.epoch==UINT32_MAX)timing_flags|=1u<<31;
@@ -358,7 +358,7 @@ int ln_storage_media_open(const char *path,uint32_t generation){
     if(!generation||!path)return -1;
     if(!ln_storage_mounted()||locked||media_owner)return 0;
     if(!ln_fat32_open(&volume,path,next_generation()))return -1;
-    media_read_ahead=8u;
+    media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
     media_owner=generation;media_canceled=false;media_opening=true;locked=true;return 1;
 }
 int ln_storage_media_read(const struct ln_fat32_file *file,uint32_t offset,
@@ -366,9 +366,9 @@ int ln_storage_media_read(const struct ln_fat32_file *file,uint32_t offset,
     if(!generation||!file||!buffer||!length||length>LN_STORAGE_MEDIA_MAX_READ)return -1;
     if(!ln_storage_mounted()||locked||media_owner)return 0;
     if(!ln_fat32_read(&volume,file,offset,buffer,length,next_generation()))return -1;
-    /* Small random metadata benefits from exact sectors; bulk hashing and
-     * compressed/PCM streaming retain the existing eight-sector read-ahead. */
-    media_read_ahead=length<512u?1u:8u;
+    /* Small random metadata benefits from exact sectors; larger reads allow
+     * the block owner to choose read-ahead for the identified medium. */
+    media_read_ahead=length<512u?1u:LN_BLOCK_READ_AHEAD_DEFAULT;
     media_owner=generation;media_canceled=false;media_opening=false;locked=true;return 1;
 }
 static int media_poll(uint32_t generation,struct ln_fat32_file *file,uint32_t *transferred,
@@ -405,7 +405,7 @@ static int media_poll(uint32_t generation,struct ln_fat32_file *file,uint32_t *t
     if(!result)goto complete;
     if(transferred)*transferred=volume.transferred;
     if(result==LN_FAT32_DONE&&media_opening&&file)*file=volume.file;
-    media_owner=0;locked=false;media_canceled=false;media_read_ahead=8u;
+    media_owner=0;locked=false;media_canceled=false;media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
     goto complete;
 cancel:
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -429,7 +429,7 @@ cancel:
             (completion.status==LN_ATA_OK&&completion.sectors_done==1u);
         result=ln_fat32_retire_read(&volume,matching&&clean?LN_FAT32_STALE:LN_FAT32_IO);
     }else result=ln_fat32_retire_read(&volume,LN_FAT32_STALE);
-    media_owner=0;locked=false;media_canceled=false;media_read_ahead=8u;
+    media_owner=0;locked=false;media_canceled=false;media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
 complete:
 #if !defined(LINNET_PROFILE_RELEASE)
     schedule_cancel_complete(generation);

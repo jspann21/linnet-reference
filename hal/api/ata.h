@@ -52,6 +52,7 @@ struct ln_ata_state {
     uint64_t sectors;
     uint32_t initialized,initializing,busy,sleeping,failed,can_flush;
     uint32_t powered,standby_supported,can_power_off,power_safe,idle_timeout_us;
+    uint32_t media_kind;
 };
 void ln_ata_state_snapshot(struct ln_ata_state *out);
 
