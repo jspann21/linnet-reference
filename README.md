@@ -9,7 +9,7 @@ persistent updates. See the [roadmap](docs/roadmap.md) for planned improvements.
 | Target ID | Model | Status |
 | --- | --- | --- |
 | `photo4g-p98` | iPod Photo A1099, 220 × 176 color | Primary development target. |
-| `ipod4g-q21` | iPod 4G MP102, 160 × 128 monochrome | Video and theme selection disabled. |
+| `ipod4g-q21` | iPod 4G MP102, 160 × 128 monochrome | Photos, video and theme selection disabled. |
 
 Installer profiles exist for both targets.
 

@@ -9,7 +9,7 @@ follow fixed paths, so adding a model does not require another build table.
 | Target | Hardware and display | Status |
 | --- | --- | --- |
 | `photo4g-p98` | iPod Photo A1099, PP5020, 220 × 176 color | Primary development target |
-| `ipod4g-q21` | iPod 4G MP102, PP5020, 160 × 128 monochrome | Video and theme selection disabled by the manifest |
+| `ipod4g-q21` | iPod 4G MP102, PP5020, 160 × 128 monochrome | Photos, video and theme selection disabled by the manifest |
 
 Both targets support installation through the Media Manager.
 
