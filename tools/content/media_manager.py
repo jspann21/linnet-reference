@@ -618,7 +618,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             if not item["count"]:
                 progress(f"{kind}: no supported files; existing prepared library retained.")
                 continue
-            option = photo_dimension if kind == "Photos" else f"{music_verification}-duration-search-names-album-owner-title-order1-art2-{identity['target_id']}" if kind == "Music" else "default"
+            art_version = "art3" if identity["target_id"] == "ipod4g-q21" else "art2"
+            option = photo_dimension if kind == "Photos" else f"{music_verification}-duration-search-names-album-owner-title-order1-{art_version}-{identity['target_id']}" if kind == "Music" else "default"
             signature = (f"ipvf-{media_profile['video_fps']}-{media_profile['video_color']}-realtime:{item['fingerprint']}" if kind == "Videos"
                          else f"{option}:{item['fingerprint']}")
             saved = state.get(kind, {})

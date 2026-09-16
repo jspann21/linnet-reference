@@ -90,6 +90,32 @@ def _embedded_cover(path: Path) -> bytes | None:
         return None
 
 
+def _mp102_cover(image):
+    from PIL import Image, ImageOps
+    gray = image.convert("L")
+    # A small contrast lift retains the cover's tone without stretching every
+    # shadow/highlight. Half-strength diffusion reduces speckle on the LCD.
+    gray = Image.blend(gray, ImageOps.autocontrast(gray, cutoff=1), 0.25)
+    width, height = gray.size
+    source = list(gray.getdata())
+    result = bytearray(width * height)
+    errors = [0.0] * (width + 2)
+    for y in range(height):
+        following = [0.0] * (width + 2)
+        step = 1 if y % 2 == 0 else -1
+        for x in range(width) if step == 1 else range(width - 1, -1, -1):
+            value = max(0.0, min(255.0, source[y * width + x] + errors[x + 1]))
+            level = int(value / 85.0 + 0.5) * 85
+            result[y * width + x] = level
+            error = (value - level) * 0.5
+            errors[x + 1 + step] += error * 7 / 16
+            following[x + 1 - step] += error * 3 / 16
+            following[x + 1] += error * 5 / 16
+            following[x + 1 + step] += error / 16
+        errors = following
+    return Image.frombytes("L", gray.size, bytes(result)).convert("RGB")
+
+
 def _cover_pixels(cover, target: str | None = None) -> bytes:
     from PIL import Image, ImageOps
     with Image.open(cover) as image:
@@ -97,9 +123,7 @@ def _cover_pixels(cover, target: str | None = None) -> bytes:
             raise ValueError("cover dimensions exceed bound")
         image = ImageOps.fit(image.convert("RGB"), (64, 64))
         if target == "ipod4g-q21":
-            palette = Image.new("P", (1, 1))
-            palette.putpalette([v for gray in (0, 85, 170, 255) for v in (gray, gray, gray)] + [255] * 756)
-            image = image.convert("L").convert("RGB").quantize(palette=palette, dither=Image.Dither.FLOYDSTEINBERG).convert("RGB")
+            image = _mp102_cover(image)
         from .photos import _rgb565
         return _rgb565(image)
 
