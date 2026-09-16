@@ -186,8 +186,9 @@ def refine_scene(scene,theme,body):
     elif sid in ('display','battery','shutdown'):
         list_h=max(50,2*rh) if sid=='shutdown' else rh
         place(listing,x,y,w,list_h)
+        note_gap=max(50,2*rh)-2*rh+8
         for i,n in enumerate(texts):
-            top=y+list_h+8 if i==0 else bottom-(len(texts)-i)*(fh+5)
+            top=y+(2*rh if sid=='shutdown' else rh)+note_gap if i==0 else bottom-(len(texts)-i)*(fh+5)
             place(n,x+4,top,w-8,fh);n['flags']=0
     elif sid in ('music-sound','music-queue'):
         footer_h=fh if sid=='music-sound' else 2*fh
