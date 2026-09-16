@@ -222,7 +222,10 @@ static bool ln_lcd_draw(uint16_t color, const char (*fault_rows)[33], const uint
                         goto failed;
                     }
                     for (; pair < chunk_end; ++pair) {
-                        if (!ln_lcd_wait(&LINNET_LCD_CONTROL, 0x01000000u, true, started, &budget)) goto failed;
+                        /* Avoid out-of-line polling overhead for a ready FIFO,
+                         * especially while Boot runs from uncached SDRAM. */
+                        if (!(LINNET_LCD_CONTROL & 0x01000000u) &&
+                            !ln_lcd_wait(&LINNET_LCD_CONTROL, 0x01000000u, true, started, &budget)) goto failed;
                         LINNET_LCD_DATA = pixel_pair;
                         ++pairs_written;
                     }
