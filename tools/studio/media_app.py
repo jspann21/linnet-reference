@@ -159,7 +159,7 @@ class MediaApp:
             import PIL  # noqa: F401
         except ImportError:
             missing.append("Pillow (install with: python -m pip install Pillow)")
-        ready = "Tools ready · Fast music tags enabled." if importlib.util.find_spec("mutagen") else "Tools ready · Optional Mutagen speeds up music."
+        ready = "Tools ready · Fast music tags enabled." if importlib.util.find_spec("mutagen") else "Tools ready · Optional Mutagen enables embedded covers and faster music tags."
         self.tools_status.set(ready if not missing else "Missing: " + ", ".join(missing))
 
     def log_message(self, message):

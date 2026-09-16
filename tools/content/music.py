@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 from typing import Callable
 import hashlib
+import io
 import json
 import math
 from pathlib import Path
@@ -54,6 +55,53 @@ def _number(value: object) -> int:
         return number if 0 <= number <= 0xFFFFFFFF else 0
     except (ValueError, TypeError):
         return 0
+
+
+def _embedded_cover(path: Path) -> bytes | None:
+    """Read a front cover from native audio tags, without decoding the audio."""
+    try:
+        import mutagen
+    except ImportError:
+        return None
+    try:
+        audio = mutagen.File(path)
+        if audio is None:
+            return None
+        tags = audio.tags or {}
+        pictures = list(getattr(audio, "pictures", ()))
+        if hasattr(tags, "getall"):
+            pictures += tags.getall("APIC")
+        if pictures:
+            picture = next((p for p in pictures if p.type == 3), pictures[0])
+            data = picture.data
+        elif tags.get("covr"):
+            data = bytes(tags["covr"][0])
+        elif tags.get("metadata_block_picture"):
+            import base64
+            from mutagen.flac import Picture
+            encoded = tags["metadata_block_picture"][0]
+            if len(encoded) > 44 * 1024 * 1024:
+                return None
+            data = Picture(base64.b64decode(encoded)).data
+        else:
+            return None
+        return data if 0 < len(data) <= 32 * 1024 * 1024 else None
+    except (mutagen.MutagenError, ValueError, TypeError, AttributeError, KeyError, IndexError, struct.error):
+        return None
+
+
+def _cover_pixels(cover, target: str | None = None) -> bytes:
+    from PIL import Image, ImageOps
+    with Image.open(cover) as image:
+        if image.width * image.height > 16_000_000:
+            raise ValueError("cover dimensions exceed bound")
+        image = ImageOps.fit(image.convert("RGB"), (64, 64))
+        if target == "ipod4g-q21":
+            palette = Image.new("P", (1, 1))
+            palette.putpalette([v for gray in (0, 85, 170, 255) for v in (gray, gray, gray)] + [255] * 756)
+            image = image.convert("L").convert("RGB").quantize(palette=palette, dither=Image.Dither.FLOYDSTEINBERG).convert("RGB")
+        from .photos import _rgb565
+        return _rgb565(image)
 
 
 def _album_artist(tags: dict, artist: str) -> str:
@@ -543,6 +591,7 @@ def _device_media_path(path: Path, root: Path) -> str:
 
 def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
                   artwork: bool = True, playlists: dict[str, list[str]] | None = None,
+                  target: str | None = None,
                   device_root: Path | None = None, progress: Callable[[dict], None] | None = None,
                   verification: str | None = None, cache_path: Path | None = None,
                   bypass_cache: bool = False,
@@ -555,6 +604,8 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
     """
     from .publish import validate_stage
 
+    if target not in (None, "ipod4g-q21", "photo4g-p98"):
+        raise ValueError("unsupported artwork target")
     source, output = Path(source).resolve(), Path(output).resolve()
     if not source.is_dir() or output == source or source in output.parents or output in source.parents:
         raise ValueError("output must be outside the source music directory")
@@ -597,7 +648,7 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
                                 if Path(directory) == output and name in managed])
         with ThreadPoolExecutor(max_workers=4, thread_name_prefix="music-metadata") as metadata_pool:
             report = _compile_music_stage(source, prepared, metadata_pool=metadata_pool, ffprobe=ffprobe,
-                                      artwork=artwork, playlists=playlists, device_root=device_root, progress=progress,
+                                      artwork=artwork, playlists=playlists, target=target, device_root=device_root, progress=progress,
                                        verification=verification, cache=cache, bypass_cache=bypass_cache,
                                        include_roots=roots, excluded=excluded)
         report["database"] = str(output / "LIBRARY.PDB")
@@ -687,6 +738,7 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
 
 def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: str | None = None,
                          artwork: bool = True, playlists: dict[str, list[str]] | None = None,
+                  target: str | None = None,
                   device_root: Path | None = None, progress: Callable[[dict], None] | None = None,
                    verification: str = "full", cache: _MetadataCache | None = None,
                    bypass_cache: bool = False,
@@ -748,24 +800,23 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             return art_cache[folder]
         candidates = [folder / name for name in ("cover.png", "cover.jpg", "folder.jpg", "Folder.jpg")]
         cover = next((p for p in candidates if p.is_file()), None)
-        if cover is None:
-            art_cache[folder] = NO_INDEX
+        embedded = _embedded_cover(path) if cover is None else None
+        if cover is None and embedded is None:
             return NO_INDEX
+        if cover is not None and cover.stat().st_size > 32 * 1024 * 1024:
+            raise ValueError("cover source exceeds 32 MiB")
         try:
-            from PIL import Image, ImageOps
+            pixels = _cover_pixels(cover if cover is not None else io.BytesIO(embedded), target)
         except ImportError as exc:
             raise ValueError("cover conversion requires Pillow, or artwork=False") from exc
-        if cover.stat().st_size > 32 * 1024 * 1024:
-            raise ValueError("cover source exceeds 32 MiB")
-        with Image.open(cover) as image:
-            if image.width * image.height > 16_000_000:
-                raise ValueError("cover dimensions exceed bound")
-            image = ImageOps.fit(image.convert("RGB"), (64, 64))
-            from .photos import _rgb565
-            pixels = _rgb565(image)
+        except (OSError, ValueError):
+            if cover is not None:
+                raise
+            return NO_INDEX
         digest = hashlib.sha256(pixels).digest()
         if digest in art_indices:
-            art_cache[folder] = art_indices[digest]
+            if cover is not None:
+                art_cache[folder] = art_indices[digest]
             return art_indices[digest]
         name = digest[:4].hex().upper() + ".RGB"
         (output / "ART").mkdir(exist_ok=True)
@@ -776,7 +827,8 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         index = len(artwork_records)
         artwork_records.append(struct.pack("<QIHHIIII", int.from_bytes(digest[:8], "little"),
             string("/LINNET/ART/" + name), 64, 64, 1, len(pixels), zlib.crc32(pixels), 0))
-        art_cache[folder] = index
+        if cover is not None:
+            art_cache[folder] = index
         art_indices[digest] = index
         return index
 
@@ -869,6 +921,16 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                             codec=metadata["codec"], integrity="sha256" if hash_audio else "metadata", bytes=before.st_size,
                             mtime_ns=before.st_mtime_ns,
                             sha256=hasher.hexdigest() if hash_audio else "0" * 64))
+    # All Tracks reads record ordinals directly. Sort once on the host and
+    # remap every existing group reference before constructing playlists/search.
+    order = sorted(range(len(entries)), key=lambda i: (
+        entries[i]["title"].casefold(), entries[i]["artist"].casefold(),
+        entries[i]["album"].casefold(), entries[i]["disc"], entries[i]["track"],
+        entries[i]["source"]))
+    ordinals = {old: new for new, old in enumerate(order)}
+    records = [records[i] for i in order]
+    entries = [entries[i] for i in order]
+    groups = {key: [ordinals[i] for i in indices] for key, indices in groups.items()}
     lookup = {entry["source"]: index for index, entry in enumerate(entries)}
     for name, members in (playlists or {}).items():
         if len(members) > MAX_TRACKS:

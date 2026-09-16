@@ -14,6 +14,22 @@ static bool front_valid;
 static bool same_path(const char *a,const char *b){
     for(uint32_t i=0;i<256;++i){if(a[i]!=b[i])return false;if(!a[i])return true;}return false;
 }
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+static void monochrome_cover(uint16_t *image){
+    static const uint8_t threshold[16]={0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5};
+    static const uint16_t gray[4]={0x0000,0x52aa,0xad55,0xffff};
+    /* Convert once after CRC validation, on the native 64x64 pixel grid.
+     * Fixed spatial dithering preserves midtones without animation/flicker. */
+    for(uint32_t y=0;y<64u;y++)for(uint32_t x=0;x<64u;x++){
+        uint16_t c=image[y*64u+x];
+        if(c==gray[0]||c==gray[1]||c==gray[2]||c==gray[3])continue;
+        uint32_t light=(((c>>11)*77u*255u/31u)+(((c>>5)&63u)*150u*255u/63u)+((c&31u)*29u*255u/31u))>>8;
+        uint32_t value=light*3u,level=value/255u,remainder=value-level*255u;
+        if(level<3u&&remainder*16u>threshold[(y&3u)*4u+(x&3u)]*255u+127u)++level;
+        image[y*64u+x]=gray[level];
+    }
+}
+#endif
 const uint16_t *ln_music_art_pixels(void){return visible?pixels[front]:0;}
 uint32_t ln_music_art_revision(void){return revision;}
 void ln_music_art_request(const char *name,uint32_t checksum){
@@ -44,6 +60,9 @@ void ln_music_art_step(bool allow_read){
     if(transferred!=4096){finish();return;}offset+=4096;
     if(offset==8192){
         if(ln_crc32((const uint8_t*)pixels[front^1u],8192)==crc){
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+            monochrome_cover(pixels[front^1u]);
+#endif
             front^=1u;front_crc=crc;front_valid=visible=true;
             for(uint32_t i=0;i<256;++i){front_path[i]=path[i];if(!path[i])break;}
             ++revision;}

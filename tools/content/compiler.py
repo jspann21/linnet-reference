@@ -317,6 +317,18 @@ def compile_system(root, output, configpath=None, target_override=None):
                 for node in scene['nodes']:
                     if node['text']=='System clock':
                         node['y']+=3
+                    if scene['id']=='linnet.system.now-playing':
+                        if node['kind']==14:
+                            node.update(x=2,y=18,w=64,h=64)
+                        elif node['text']=='Sample track':
+                            node.update(x=72,y=18,w=86,h=24)
+                        elif node['text']=='Audio pending':
+                            node.update(x=72,y=50,w=86,h=24)
+                        elif node['text']=='Track album':
+                            node.update(x=2,y=87,w=156,h=11)
+                        elif node['text']=='Native playback shell':
+                            node.update(x=2,y=100,w=156,h=11)
+
         if (width,height)!=(REFERENCE_WIDTH,REFERENCE_HEIGHT):
             variant['metrics']=dict(
                 row_height=max(font['height'],(variant['metrics']['row_height']*height+REFERENCE_HEIGHT//2)//REFERENCE_HEIGHT),

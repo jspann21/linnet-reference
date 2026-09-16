@@ -618,7 +618,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             if not item["count"]:
                 progress(f"{kind}: no supported files; existing prepared library retained.")
                 continue
-            option = photo_dimension if kind == "Photos" else f"{music_verification}-duration-search-names-album-owner" if kind == "Music" else "default"
+            option = photo_dimension if kind == "Photos" else f"{music_verification}-duration-search-names-album-owner-title-order1-art2-{identity['target_id']}" if kind == "Music" else "default"
             signature = (f"ipvf-{media_profile['video_fps']}-{media_profile['video_color']}-realtime:{item['fingerprint']}" if kind == "Videos"
                          else f"{option}:{item['fingerprint']}")
             saved = state.get(kind, {})
@@ -649,7 +649,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     preparation = compile_music(root, stage, ffprobe=ffprobe or shutil.which("ffprobe"), device_root=root,
                                   verification=music_verification, cache_path=cache / "music-metadata.sqlite3",
                                   bypass_cache=force, progress=music_progress, include_roots=roots,
-                                  excluded=skipped["Music"])
+                                  excluded=skipped["Music"], target=identity["target_id"])
                     compatibility = preparation.get("compatibility_copies", [])
                     report["steps"].append(dict(kind=kind, metadata=preparation.get("cache"), integrity=music_verification,
                                                compatibility_copies=compatibility))
