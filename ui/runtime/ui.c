@@ -255,10 +255,7 @@ static void text_scaled(struct painter*p,int32_t x,int32_t y,const char*s,uint16
                 for(int32_t yy=r.y;yy<r.y+r.h;++yy){
                     uint16_t *dest=p->pixels+(uint32_t)yy*LINNET_UI_WIDTH+(uint32_t)r.x;
                     const uint8_t *source=a+((uint32_t)(yy-gy)>>shift)*w;
-                    /* Enlarged glyphs land on whole LCD pixels. Keeping the
-                     * source antialiasing doubles its soft fringe and makes
-                     * the clock look blurred, so snap scaled coverage once. */
-                    for(int32_t xx=r.x;xx<r.x+r.w;++xx){uint32_t alpha=source[(uint32_t)(xx-gx)>>shift];alpha=alpha>=128u?255u:0u;if(alpha)*dest=c;++dest;}
+                    for(int32_t xx=r.x;xx<r.x+r.w;++xx){uint32_t alpha=source[(uint32_t)(xx-gx)>>shift];if(monochrome)alpha=alpha>=128u?255u:0u;if(alpha)*dest=alpha==255u?c:mix(c,*dest,alpha);++dest;}
                 }
             }
         }
@@ -551,8 +548,10 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
         if((n->flags&LN_UI_FOOTER)&&!same(n->text,"Theme status")){
             if(same(n->text,"Clock source"))node_text=ln_ui_clock_text(n,UINT32_MAX,ln_ui_clock_seconds()<86400u?"Device clock":"Clock unavailable");
             footer_text(p,n,node_text,fg);
-        }else if(same(n->text,"System clock")){char clock[9];time_label(clock);if(ln_ui_clock_12()&&ln_ui_clock_seconds()<86400u){clock[5]=' ';clock[6]=ln_ui_clock_seconds()<43200u?'A':'P';clock[7]='M';clock[8]=0;}uint32_t scale=n->h>=(int32_t)(2u*ln_ui_font.height)?2u:1u;
-            int32_t width=text_width(clock);if(width*(int32_t)scale>n->w)scale=1u;width*=scale;text_scaled(p,n->x+max(0,(n->w-width)/2),n->y,clock,fg,scale);}
+        }else if(same(n->text,"System clock")){char clock[9];time_label(clock);if(ln_ui_clock_12()&&ln_ui_clock_seconds()<86400u){clock[5]=' ';clock[6]=ln_ui_clock_seconds()<43200u?'A':'P';clock[7]='M';clock[8]=0;}
+            struct ln_ui_font saved=ln_ui_font;ln_ui_font=ln_ui_clock_font;
+            int32_t width=text_width(clock),y=n->y+max(0,(n->h-(int32_t)ln_ui_font.height)/2);
+            fitted_text(p,n->x+max(0,(n->w-width)/2),y,clock,fg,n->w);ln_ui_font=saved;}
         else if(same(n->text,"Clock source")){text_block(p,n,ln_ui_clock_text(n,UINT32_MAX,ln_ui_clock_seconds()<86400u?"Device clock":"Clock unavailable"),fg);}
         else if(same(n->text,"Theme status")){
             char status[32];uint32_t at=0;const char *part=ln_ui_theme_status();

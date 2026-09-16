@@ -72,6 +72,7 @@ extern const struct ln_ui_asset ln_ui_assets[];
 extern const uint32_t ln_ui_asset_count;
 extern struct ln_ui_font ln_ui_font;
 extern const struct ln_ui_font ln_ui_hint_font;
+extern const struct ln_ui_font ln_ui_clock_font;
 /* Text-only flag; list nodes use these bits for baked geometry. */
 #define LN_UI_FOOTER 64u
 struct ln_ui_state {

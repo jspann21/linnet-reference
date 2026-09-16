@@ -347,10 +347,18 @@ def compile_system(root, output, configpath=None, target_override=None):
                     advance=max(1,(hint['advance']*new_h+old_h//2)//old_h))
         if 'advances' in hint:hint['advances']=[max(1,(a*new_h+old_h//2)//old_h) for a in hint['advances']]
         hint_index=len(fonts);fonts.append(hint)
+    # The prominent clock uses a separately hinted native-size face. Scaling
+    # each target here keeps runtime glyph pixels aligned to its LCD grid.
+    clock=json.loads(read(root/'sdk/assets/font-clock24.json'))
+    if (width,height)!=(REFERENCE_WIDTH,REFERENCE_HEIGHT):
+        clock=scale_font(clock,width,REFERENCE_WIDTH,height,REFERENCE_HEIGHT)
+    clock_index=len(fonts);fonts.append(clock)
     font=chosen['font'];scenes=chosen['scenes'];license_data=licenses[chosen['font_index']]
     document=dict(format='LNUI',enabled_scenes=enabled_scenes,target=target,width=width,height=height,theme=theme,themes=themes,default_theme=ordered.index(theme_id),scenes=scenes,assets=assets,font=font,fonts=fonts,native_sources=native_sources)
     document['hint_font_index']=hint_index
-    files={'scenes.json':canonical(document),'font-license.txt':license_data}
+    document['clock_font_index']=clock_index
+    files={'scenes.json':canonical(document),'font-license.txt':license_data,
+           'font-license-clock.txt':read(root/'sdk/assets/FONT-LICENSE.txt')}
     for index,data in licenses.items(): files[f'font-license-{index}.txt']=data
     packed_fonts=[crop_font(font) for font in fonts]
     files['linnet_ui.c']=generate_c(document,packed_fonts).encode('ascii')
@@ -434,6 +442,7 @@ def generate_c(doc, packed_fonts=None):
     default=doc['default_theme']
     out.append('struct ln_ui_font ln_ui_font = '+font_values[doc['themes'][default]['font_index']]+';')
     out.append('const struct ln_ui_font ln_ui_hint_font = '+font_values[doc['hint_font_index']]+';')
+    out.append('const struct ln_ui_font ln_ui_clock_font = '+font_values[doc['clock_font_index']]+';')
     # Share immutable arrays by their complete emitted contents. First occurrence
     # owns the symbol, retaining deterministic traversal and all scene identities.
     item_arrays,target_arrays,node_arrays={},{},{}
