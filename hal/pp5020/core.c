@@ -199,6 +199,15 @@ bool ln_core_clock_set(uint32_t hz)
                    hz == 30000000u ? 0x8a020504u : 0u;
     bool ready = ((uint32_t (*)(uint32_t))(uintptr_t)0x4000d000u)(pll) != 0;
     bool matched = ready && ln_clock_hz() == hz;
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+    /* Q21 can briefly read the old selection after switching back from idle.
+     * Require the requested registers, allowing a bounded bridge settle. */
+    uint32_t settle_started=ln_time_us();
+    for(uint32_t budget=100000u;ready&&!matched&&budget;--budget){
+        matched=ln_clock_hz()==hz;
+        if(ln_time_us()-settle_started>=1000u)break;
+    }
+#endif
     if (!ready) ln_clock_failure = 4;
     else if (!matched) ln_clock_failure = 5;
     ln_core_irq_restore(flags);

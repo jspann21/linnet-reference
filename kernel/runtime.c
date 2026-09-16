@@ -76,6 +76,15 @@ static uint32_t shutdown_deadline;
 static bool shutdown_tracking;
 #define LINNET_SHUTDOWN_HOLD_US 2000000u
 static bool sleeping, dirty, ready;
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+static uint32_t idle_clock_cycles,idle_clock_us,idle_clock_failures;
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_runtime_idle_clock_diagnostics(uint32_t output[4]){
+    output[0]=30000000u;output[1]=idle_clock_cycles;
+    output[2]=idle_clock_us;output[3]=idle_clock_failures;
+}
+#endif
+#endif
 static bool wake(void);
 static void backlight_activity(void){
     if(sleeping&&!wake())return;
@@ -949,7 +958,29 @@ void ln_runtime_idle(void){
         if((int32_t)(wait_due-next)<0)next=wait_due;
     }
 #endif
-    ln_core_idle_until(ln_exec_next(&executive,now,next));
+    next=ln_exec_next(&executive,now,next);
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+    /* Short sampling waits do not repay PLL switching. Never change the
+     * audio clock or storage timing during an active transfer. */
+    bool clock_idle=(int32_t)(next-ln_time_us())>=20000;
+#if defined(LINNET_AUDIO)
+    struct ln_audio_status audio;ln_audio_snapshot(&audio);
+    clock_idle=clock_idle&&!audio.initialized&&!ln_player_busy();
+#endif
+#if defined(LINNET_STORAGE)
+    clock_idle=clock_idle&&!ln_storage_busy();
+#endif
+    if(clock_idle&&!idle_clock_failures){
+        bool lowered=ln_core_clock_set(30000000u);
+        uint32_t began=ln_time_us();
+        if(lowered){ln_core_idle_until(next);++idle_clock_cycles;idle_clock_us+=ln_time_us()-began;}
+        else ++idle_clock_failures;
+        /* A partial transition must also restore the known working clock. */
+        if(!ln_core_clock_set(80000000u))ln_panic(30,14,ln_core_clock_failure());
+        if(lowered)return;
+    }
+#endif
+    ln_core_idle_until(next);
 }
 int ln_runtime_control(uint32_t command,uint32_t argument){
     if(!ready)return 0;

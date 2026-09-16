@@ -55,6 +55,13 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r){
         else if(q->length==4u&&get32(q->payload)==4u){ln_runtime_render_timing(words);count=16u;}
         else if(q->length==4u&&get32(q->payload)==7u){ln_display_sync_diagnostics(words);count=16u;}
         else if(q->length==4u&&get32(q->payload)==8u){ln_display_blit_diagnostics(words);count=16u;}
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+        else if(q->length==4u&&get32(q->payload)==10u){
+            extern void ln_runtime_idle_clock_diagnostics(uint32_t output[4]);
+            ln_runtime_idle_clock_diagnostics(words);count=4u;
+        }
+
+#endif
 #if defined(LINNET_TARGET_PHOTO4G_P98)
         else if(q->length==4u&&get32(q->payload)==9u){
             words[0]=0x5044434cu;words[1]=0;
