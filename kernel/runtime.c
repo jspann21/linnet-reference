@@ -232,6 +232,7 @@ static bool stop_video(void){
 #if defined(LINNET_NATIVE_UI)
 static bool clock_save_presented;
 static const char *clock_admission(void){
+    if(ln_power_calendar_busy())return "Saving date and time...";
     if(!ready||sleeping||shutdown_tracking)return "Try again when the player is awake.";
     if(shell->hold)return "Unlock Hold before saving.";
     /* The RTC uses the power chip I2C bus, independently of storage activity. */
@@ -247,6 +248,17 @@ bool ln_ui_clock_begin(void){
     return true;
 }
 static void clock_save_step(void){
+    if(ln_power_calendar_busy()){
+        enum ln_calendar_result result=ln_power_calendar_poll();
+        if(result==LN_CALENDAR_PENDING)return;
+        clock_save_presented=false;
+        if(scene_is("linnet.system.clock-edit")){
+            ln_clock_editor_result(result);
+            if(result==LN_CALENDAR_SAVED&&ln_ui_show(shell,"linnet.system.clock"))retain_scene();
+            ln_ui_refresh(shell);dirty=true;
+        }
+        return;
+    }
     if(!clock_save_presented)return;
     if(!scene_is("linnet.system.clock-edit")){clock_save_presented=false;ln_clock_editor_cancel();return;}
     if(ln_display_busy())return;
@@ -256,6 +268,7 @@ static void clock_save_step(void){
     if(blocked)ln_clock_editor_block(blocked);
     else{
         enum ln_calendar_result result=ln_power_calendar_set(&requested);
+        if(result==LN_CALENDAR_PENDING)return;
         ln_clock_editor_result(result);
         if(result==LN_CALENDAR_SAVED){if(ln_ui_show(shell,"linnet.system.clock"))retain_scene();}
     }

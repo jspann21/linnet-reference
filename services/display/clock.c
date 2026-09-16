@@ -68,9 +68,10 @@ bool ln_clock_editor_input(struct ln_ui_state *state,uint32_t kind,int32_t value
         return true;
     }
     uint32_t pressed=(uint32_t)value&~state->buttons;
+    /* An accepted save owns the RTC until delayed verification completes. */
+    if(pending){state->buttons=(uint32_t)value;return true;}
     /* Menu navigation and cancellation belong to the caller's common bridge. */
     if(pressed&1u)return false;
-    if(pending){state->buttons=(uint32_t)value;return true;}
     if(!(pressed&16u)){
         if(editing){state->buttons=(uint32_t)value;return true;}
         return false;

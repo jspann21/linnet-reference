@@ -694,8 +694,8 @@ bool ln_ui_input(struct ln_ui_state*s,uint32_t kind,int32_t value){if(!s)return 
     bool clock_edit=same(ln_ui_scenes[s->scene].id,"linnet.system.clock-edit");
     if(clock_edit&&(kind==1u||kind==2u)){
         uint32_t pressed=kind==2u?(uint32_t)value&~s->buttons:0;
-        if(!s->hold&&(pressed&1u)){ln_ui_clock_cancel();s->buttons=(uint32_t)value;return ln_ui_show(s,"linnet.system.clock");}
         if(ln_ui_clock_input(s,kind,value)){s->dirty|=1u;return true;}
+        if(!s->hold&&(pressed&1u)){ln_ui_clock_cancel();s->buttons=(uint32_t)value;return ln_ui_show(s,"linnet.system.clock");}
         if(kind==2u){s->buttons=(uint32_t)value;return false;}
     }
     if(kind==2u&&!s->hold&&same(ln_ui_scenes[s->scene].id,"linnet.system.clock")&&((uint32_t)value&~s->buttons&16u)){

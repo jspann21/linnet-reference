@@ -17,17 +17,20 @@ struct ln_clock_state {uint8_t hour,minute,second;bool valid;};
 void ln_power_clock_snapshot(struct ln_clock_state *out);
 struct ln_calendar { uint16_t year; uint8_t month,day,hour,minute,second,weekday; };
 enum ln_calendar_result { LN_CALENDAR_INVALID=0, LN_CALENDAR_UNAVAILABLE,
-    LN_CALENDAR_SAVED, LN_CALENDAR_RESTORED, LN_CALENDAR_UNKNOWN };
+    LN_CALENDAR_SAVED, LN_CALENDAR_RESTORED, LN_CALENDAR_UNKNOWN, LN_CALENDAR_PENDING };
 /* Explicit foreground calls only. Caller rejects active/paused audio, video and
  * storage work. Never call from IRQ, rendering, startup or periodic power poll.
  * Set derives weekday. UNAVAILABLE means no write; UNKNOWN may be partial.
- * Calendar writes are not hardware-atomic. IRQs stay enabled; total work is
- * bounded to 250ms plus one already-started (at most 10ms) bus transaction. */
+ * Calendar writes are not hardware-atomic. PENDING requires foreground polling;
+ * each phase is bounded to 150ms plus one bus transaction. The 1 Hz RTC latch
+ * is awaited asynchronously, including during rollback. */
 enum ln_calendar_read_result { LN_CALENDAR_READ_UNAVAILABLE=0,
     LN_CALENDAR_READ_INVALID, LN_CALENDAR_READ_VALID };
 enum ln_calendar_read_result ln_power_calendar_read_status(struct ln_calendar *out);
 bool ln_power_calendar_read(struct ln_calendar *out);
 enum ln_calendar_result ln_power_calendar_set(const struct ln_calendar *requested);
+bool ln_power_calendar_busy(void);
+enum ln_calendar_result ln_power_calendar_poll(void);
 
 bool ln_power_init(void);
 /* Advances at most one periodic I2C transfer attempt. During a multi-step

@@ -246,31 +246,62 @@ enum ln_calendar_read_result ln_power_calendar_read_status(struct ln_calendar *o
     *out=c;return LN_CALENDAR_READ_VALID;
 }
 bool ln_power_calendar_read(struct ln_calendar *out){return ln_power_calendar_read_status(out)==LN_CALENDAR_READ_VALID;}
+/* PCF50605/50606 specification 8.19: RTC writes latch at the next 1 Hz
+ * edge. Verification and any rollback must wait for that edge without
+ * blocking the executive, USB, or watchdog. */
+static struct {
+    struct ln_calendar desired,baseline;
+    uint32_t baseline_at,written_at,verify_at;
+    uint8_t phase;
+    bool baseline_valid,wrote;
+} calendar_save;
+bool ln_power_calendar_busy(void){return calendar_save.phase!=0;}
+static void calendar_wait(uint8_t phase){
+    calendar_save.phase=phase;calendar_save.written_at=ln_time_us();
+    calendar_save.verify_at=calendar_save.written_at+1100000u;
+}
 enum ln_calendar_result ln_power_calendar_set(const struct ln_calendar *requested){
     if(!calendar_valid(requested))return LN_CALENDAR_INVALID;
-    if(!ln_power_ready)return LN_CALENDAR_UNAVAILABLE;
+    if(!ln_power_ready||ln_power_calendar_busy())return LN_CALENDAR_UNAVAILABLE;
     ln_sample_cancel();
-    struct ln_calendar desired=*requested,baseline,actual;calendar_weekday(&desired);
-    uint32_t started=ln_time_us(),deadline=started+150000u;uint8_t raw[7];bool attempted=false;
-    if(!calendar_raw(deadline,raw))return LN_CALENDAR_UNAVAILABLE;
-    bool valid_baseline=calendar_decode(raw,&baseline);if(valid_baseline)calendar_weekday(&baseline);
-    if(calendar_write(deadline,&desired,&attempted)&&calendar_verify(deadline,&desired,&actual)){
-        calendar_publish(&actual);return LN_CALENDAR_SAVED;
-    }
+    calendar_save=(typeof(calendar_save)){0};
+    calendar_save.desired=*requested;calendar_weekday(&calendar_save.desired);
+    uint32_t started=ln_time_us();uint8_t raw[7];bool attempted=false;
+    if(!calendar_raw(started+60000u,raw))return LN_CALENDAR_UNAVAILABLE;
+    calendar_save.baseline_at=ln_time_us();
+    calendar_save.baseline_valid=calendar_decode(raw,&calendar_save.baseline);
+    calendar_save.wrote=calendar_write(started+150000u,&calendar_save.desired,&attempted);
     if(!attempted)return LN_CALENDAR_UNAVAILABLE;
-    ln_clock.valid=false;
-    /* One recovery attempt, with its own reserved portion of the total budget.
-     * Never restore invalid raw calendar bytes or touch alarm/wake registers. */
-    deadline=started+250000u;
-    if(valid_baseline){
-        uint32_t seconds=(ln_time_us()-started)/1000000u;
-        if(seconds>1u)return LN_CALENDAR_UNKNOWN;
-        while(seconds--)calendar_tick(&baseline);
-        if(calendar_write(deadline,&baseline,&attempted)&&calendar_verify(deadline,&baseline,&actual)){
-            calendar_publish(&actual);return LN_CALENDAR_RESTORED;
-        }
-    }return LN_CALENDAR_UNKNOWN;
+    ln_clock.valid=false;calendar_wait(1);return LN_CALENDAR_PENDING;
 }
+enum ln_calendar_result ln_power_calendar_poll(void){
+    if(!calendar_save.phase)return LN_CALENDAR_UNAVAILABLE;
+    uint32_t now=ln_time_us();
+    if((int32_t)(now-calendar_save.verify_at)<0)return LN_CALENDAR_PENDING;
+    ln_sample_cancel();
+    struct ln_calendar expected=calendar_save.desired,actual;
+    /* A delayed runtime step may observe additional elapsed seconds. The
+     * latch can occur anywhere within the first second after the write. */
+    uint32_t elapsed=(now-calendar_save.written_at)/1000000u;
+    if(elapsed>30u){calendar_save.phase=0;ln_clock.valid=false;return LN_CALENDAR_UNKNOWN;}
+    while(elapsed>1u){calendar_tick(&expected);--elapsed;}
+    if(calendar_save.wrote&&calendar_verify(now+60000u,&expected,&actual)){
+        enum ln_calendar_result result=calendar_save.phase==1?LN_CALENDAR_SAVED:LN_CALENDAR_RESTORED;
+        calendar_save.phase=0;calendar_publish(&actual);return result;
+    }
+    if(calendar_save.phase==1&&calendar_save.baseline_valid){
+        uint32_t seconds=(ln_time_us()-calendar_save.baseline_at)/1000000u;
+        if(seconds<=30u){
+            calendar_save.desired=calendar_save.baseline;
+            while(seconds--)calendar_tick(&calendar_save.desired);
+            bool attempted=false;
+            calendar_save.wrote=calendar_write(ln_time_us()+150000u,&calendar_save.desired,&attempted);
+            if(attempted){calendar_wait(2);return LN_CALENDAR_PENDING;}
+        }
+    }
+    calendar_save.phase=0;ln_clock.valid=false;return LN_CALENDAR_UNKNOWN;
+}
+
 bool ln_power_poll(uint32_t now, struct ln_power_state *out)
 {
     if (!ln_power_ready || !out) return false;
