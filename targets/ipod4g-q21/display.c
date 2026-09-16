@@ -133,13 +133,14 @@ static uint32_t weighted_luma(uint16_t color)
     return (red[(color>>11)&31u]+green[(color>>5)&63u]+blue[color&31u]);
 }
 
-static uint8_t physical_gray(uint32_t px,uint32_t py)
+static uint8_t physical_gray(uint16_t color)
 {
-    uint16_t color=frame[py*LINNET_UI_WIDTH+px];
     /* Most menu pixels are black or white. Keep other RGB565 values exactly
      * equivalent to the previous conversion, without multiply/divide per pixel. */
     if(!color)return 3u;
     if(color==0xffffu)return 0u;
+    if(color==0x52aau)return 2u;
+    if(color==0xad55u)return 1u;
     uint32_t value=weighted_luma(color);
     return value<11008u?3u:value<32768u?2u:value<54528u?1u:0u;
 }
@@ -220,16 +221,17 @@ bool ln_display_service(uint32_t max_blocks)
         /* Jump directly to the next damaged block; ARM7 has no CLZ instruction. */
         while(!(remaining&(1u<<bx)))++bx;
         cursor=py*blocks_per_row+bx;
-        uint8_t bytes[2]={0,0};
-        for(uint32_t p=0;p<8u;++p){
-            uint32_t px=bx*8u+p;
-            bytes[p>>2]|=(uint8_t)(physical_gray(px,py)<<(6u-2u*(p&3u)));
-        }
-        uint16_t packed=(uint16_t)((uint16_t)bytes[0]<<8)|bytes[1];
+        /* Native grayscale artwork and UI share this palette. Fixed shifts
+         * pack eight pixels without per-pixel coordinate/shift arithmetic. */
+        const uint16_t *source=frame+py*LINNET_UI_WIDTH+bx*8u;
+        uint16_t packed=(uint16_t)((physical_gray(source[0])<<14)|(physical_gray(source[1])<<12)|
+            (physical_gray(source[2])<<10)|(physical_gray(source[3])<<8)|
+            (physical_gray(source[4])<<6)|(physical_gray(source[5])<<4)|
+            (physical_gray(source[6])<<2)|physical_gray(source[7]));
         if(force_full||sent[cursor]!=packed){
             if((!bx||last_write==UINT32_MAX||last_write+1u!=cursor)&&
                !ln_q21_lcd_begin_span(py,bx))goto failed;
-            if(!ln_q21_lcd_write(bytes[0],bytes[1]))goto failed;
+            if(!ln_q21_lcd_write((uint8_t)(packed>>8),(uint8_t)packed))goto failed;
             sent[cursor]=packed;last_write=cursor;++written_blocks;
         }
         ++cursor;
