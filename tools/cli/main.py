@@ -301,7 +301,7 @@ def main():
             emit(inspect(args.image.read_bytes()))
         elif args.command == "release":
             emit(verify_release(args.image.read_bytes(), args.symbols.read_text()))
-        elif args.command == "storage":
+        elif args.command == "storage" and args.action in ("package", "provision"):
             from tools.studio.storage import prepare,provision
             emit(prepare(args.image,args.output) if args.action=="package" else provision(args.package,args.mount,args.serial))
         elif args.command == "report":
