@@ -11,6 +11,12 @@ static uint32_t requested_crc,crc,token,working,revision,generation=0x20000000u;
 static uint32_t phase,offset,front;
 static bool pending,visible;
 static bool front_valid;
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+/* Reuse the previous cover in the existing second pixel buffer. */
+static char cached_path[2][256];
+static uint32_t cached_crc[2];
+static bool cached_valid[2];
+#endif
 static bool same_path(const char *a,const char *b){
     for(uint32_t i=0;i<256;++i){if(a[i]!=b[i])return false;if(!a[i])return true;}return false;
 }
@@ -43,6 +49,16 @@ void ln_music_art_step(bool allow_read){
         if(pending){ln_storage_media_cancel(generation);if(!ln_storage_media_poll(generation,0,0))return;pending=false;}
         working=token;offset=0;phase=1;crc=requested_crc;
         if(visible){finish();return;}
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+        /* Drain the prior read above before changing buffer ownership. */
+        for(uint32_t slot=0;slot<2u;slot++){
+            if(cached_valid[slot]&&cached_crc[slot]==crc&&same_path(requested,cached_path[slot])){
+                front=slot;front_crc=crc;front_valid=visible=true;
+                for(uint32_t i=0;i<256u;i++){front_path[i]=requested[i];if(!requested[i])break;}
+                ++revision;finish();return;
+            }
+        }
+#endif
         for(uint32_t i=0;i<256;++i){path[i]=requested[i];if(!path[i])break;}
         if(!path[0]||!ln_music_db_safe_path(path)){finish();return;}
         if(++generation>=0x30000000u)generation=0x20000000u;
@@ -50,6 +66,10 @@ void ln_music_art_step(bool allow_read){
     if(!phase)return;
     if(!pending){
         if(!allow_read)return;
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+        /* Partial, canceled, or failed reads must never remain cache hits. */
+        if(phase==2)cached_valid[front^1u]=false;
+#endif
         int result=phase==1?ln_storage_media_open(path,generation):
             ln_storage_media_read(&file,offset,(uint8_t*)pixels[front^1u]+offset,4096,generation);
         if(result<0){finish();return;}if(!result)return;pending=true;return;
@@ -65,6 +85,11 @@ void ln_music_art_step(bool allow_read){
 #endif
             front^=1u;front_crc=crc;front_valid=visible=true;
             for(uint32_t i=0;i<256;++i){front_path[i]=path[i];if(!path[i])break;}
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+            cached_crc[front]=crc;
+            for(uint32_t i=0;i<256u;i++){cached_path[front][i]=path[i];if(!path[i])break;}
+            cached_valid[front]=true;
+#endif
             ++revision;}
         finish();
     }
