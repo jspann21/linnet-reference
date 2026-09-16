@@ -123,7 +123,32 @@ def eject_reboot(disk_number: int, plan_path: Path, plan_sha256: str,
     # Fail before consent or any raw write if storage is absent, already
     # ejected, or a different volume. Never substitute plain eject on failure.
     from tools.content.publish import inspect_target
-    inspect_target(disk_number, manifest['expected_storage_serial'], '3D9E4E60')
+    storage = json.loads(artifacts['device.json'])['storage']
+    # Resolve the reviewed volume on the selected disk, even if Windows assigned
+    # a new drive letter. A different volume must not authorize raw refresh.
+    config = base64.b64encode(json.dumps(dict(number=disk_number,
+        volume=storage['volume_id'])).encode()).decode()
+    script = r'''
+$ErrorActionPreference='Stop'
+$cfg=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('CONFIG')) | ConvertFrom-Json
+$parts=@(Get-Partition -DiskNumber $cfg.number | Where-Object {$_.DriveLetter})
+if ($parts.Count -ne 1) {throw 'Require exactly one mounted partition'}
+$volume=Get-Volume -Partition $parts[0]
+if ($volume.UniqueId -cne $cfg.volume) {throw 'Reviewed volume identity changed'}
+$drive=[string]$parts[0].DriveLetter+':'
+$logical=Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='"+$drive+"'")
+@{drive=$drive;serial=$logical.VolumeSerialNumber} | ConvertTo-Json -Compress
+'''.replace('CONFIG', config)
+    result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-EncodedCommand',
+        base64.b64encode(script.encode('utf-16-le')).decode()], capture_output=True, text=True,
+        timeout=30, check=True, creationflags=subprocess.CREATE_NO_WINDOW)
+    volume = json.loads(result.stdout.lstrip('\ufeff'))
+    identity = inspect_target(disk_number, manifest['expected_storage_serial'], volume['serial'], volume['drive'])
+    if (identity['volume_unique_id'] != storage['volume_id'] or
+            identity['disk_bytes'] != manifest['expected_device_bytes'] or
+            identity['partition_offset'] != storage['partition_offset'] or
+            identity['partition_bytes'] != storage['partition_bytes']):
+        raise RuntimeError('mounted storage no longer matches reviewed plan')
     if expected_os is not None:
         if (not isinstance(expected_os, dict) or expected_os.get('target_id') != manifest['image']['target_id'] or
             expected_os.get('profile') not in ('dev', 'trace') or
