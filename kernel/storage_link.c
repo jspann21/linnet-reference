@@ -55,6 +55,14 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r){
         else if(q->length==4u&&get32(q->payload)==4u){ln_runtime_render_timing(words);count=16u;}
         else if(q->length==4u&&get32(q->payload)==7u){ln_display_sync_diagnostics(words);count=16u;}
         else if(q->length==4u&&get32(q->payload)==8u){ln_display_blit_diagnostics(words);count=16u;}
+#if defined(LINNET_TARGET_PHOTO4G_P98)
+        else if(q->length==4u&&get32(q->payload)==9u){
+            words[0]=0x5044434cu;words[1]=0;
+            words[2]=*(volatile uint32_t *)(uintptr_t)0x6000d030u;
+            words[3]=ln_lcd_panel_type();
+            count=4u;
+        }
+#endif
 #endif
         else if(q->length==4u&&get32(q->payload)==5u){ln_storage_schedule_performance(words);count=24u;}
         else if(q->length==4u&&get32(q->payload)==6u){ln_ata_clock_diagnostics(words);count=8u;}

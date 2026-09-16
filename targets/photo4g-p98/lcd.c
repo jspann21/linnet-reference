@@ -15,6 +15,29 @@
  * below the independent 500 ms watchdog; do not refresh watchdog progress here. */
 #define LINNET_LCD_FRAME_TIMEOUT_US 250000u
 static bool ln_panel_ready;
+uint32_t ln_lcd_panel_type(void)
+{
+    static uint32_t panel;
+    static bool detected;
+    if (!detected) {
+        /* Original Photo revision 0x60000 has no reliable panel straps.
+         * Map its physical boot ROM into the CPU-only ROM window before
+         * reading the revision; Linnet normally maps only SDRAM at zero. */
+        uint32_t logical = LINNET_REG(0xf000f008u);
+        uint32_t physical = LINNET_REG(0xf000f00cu);
+        LINNET_REG(0xf000f008u) = 0x20003c00u;
+        LINNET_REG(0xf000f00cu) = 0x00003f84u;
+        __asm__ volatile("" ::: "memory");
+        uint32_t revision = LINNET_REG(0x20002084u);
+        LINNET_REG(0xf000f008u) = logical;
+        LINNET_REG(0xf000f00cu) = physical;
+        __asm__ volatile("" ::: "memory");
+        uint32_t gpio = LINNET_REG(0x6000d030u);
+        panel = revision == 0x60000u ? 0u : (gpio & 2u) | ((gpio & 0x10u) >> 4);
+        detected = true;
+    }
+    return panel;
+}
 #if !defined(LINNET_PROFILE_RELEASE)
 static uint32_t ln_lcd_trace[8];
 void ln_lcd_diagnostics(uint32_t output[8])
@@ -71,6 +94,14 @@ static bool ln_lcd_command(uint32_t command, uint32_t value,
 {
     LINNET_LCD_RECORD(0, 3u | (command << 16));
     if (!ln_lcd_wait(&LINNET_LCD_PORT, 0x80000000u, false, started, budget)) return false;
+    if (ln_lcd_panel_type() & 1u) {
+        LINNET_LCD_PORT = 0x80000000u;
+        LINNET_LCD_PORT = 0x80000000u | command;
+        if (!ln_lcd_wait(&LINNET_LCD_PORT, 0x80000000u, false, started, budget)) return false;
+        LINNET_LCD_PORT = 0x81000000u | (value >> 8);
+        LINNET_LCD_PORT = 0x81000000u | (value & 255u);
+        return true;
+    }
     LINNET_LCD_PORT = 0x80000000u | command;
     if (!ln_lcd_wait(&LINNET_LCD_PORT, 0x80000000u, false, started, budget)) return false;
     LINNET_LCD_PORT = 0x80000000u | value;
@@ -130,7 +161,7 @@ static bool ln_lcd_draw(uint16_t color, const char (*fault_rows)[33], const uint
             {0xefu,0}, {1u,0}, {0x80u,1u}, {0x10u,0xcu},
             {0x18u,6u}, {0x7eu,4u}, {0x7eu,5u}, {0x7fu,1u}
         };
-        for (uint32_t i = 0; i < 8u; ++i)
+        for (uint32_t i = 0; !(ln_lcd_panel_type() & 1u) && i < 8u; ++i)
             if (!ln_lcd_command(registers[i][0], registers[i][1], started, &budget)) goto failed;
         /* PP5020 atomic GPIO alias packs mask in high byte, value in low. */
         LINNET_REG(0x6000d804u) = 0x0c0cu;
@@ -143,7 +174,14 @@ static bool ln_lcd_draw(uint16_t color, const char (*fault_rows)[33], const uint
     /* Program the full panel window once. The panel cursor continues across
      * bridge blocks; restarting it for every row adds 176 command/flush cycles.
      * PP5020 blocks have a 16-bit byte count, so 220x176 needs 148 + 28 rows. */
-    if (!ln_lcd_command(0x18u, 6u, started, &budget) ||
+    if (ln_lcd_panel_type() & 1u) {
+        if (!ln_lcd_command(0x44u, (LINNET_LCD_HEIGHT - 1u) << 8, started, &budget) ||
+            !ln_lcd_command(0x45u, (LINNET_LCD_WIDTH - 1u) << 8, started, &budget) ||
+            !ln_lcd_command(0x21u, (LINNET_LCD_WIDTH - 1u) << 8, started, &budget)) goto failed;
+        if (!ln_lcd_wait(&LINNET_LCD_PORT, 0x80000000u, false, started, &budget)) goto failed;
+        LINNET_LCD_PORT = 0x80000000u;
+        LINNET_LCD_PORT = 0x80000022u;
+    } else if (!ln_lcd_command(0x18u, 6u, started, &budget) ||
         !ln_lcd_command(0x12u, 0u, started, &budget) ||
         !ln_lcd_command(0x13u, LINNET_LCD_WIDTH - 1u, started, &budget) ||
         !ln_lcd_command(0x15u, LINNET_LCD_HEIGHT - 1u, started, &budget) ||

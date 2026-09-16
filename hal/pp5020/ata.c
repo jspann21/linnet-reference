@@ -293,7 +293,14 @@ void ln_ata_step(uint32_t now) {
         else if(phase==TRANSFER&&status&&status!=0xffu&&!(status&0x21u)&&!(status&8u))perf_add(&perf.no_drq,1u);
     }
 #endif
-    if(status&0x80u)return;
+    if(status&0x80u){
+        /* Mechanical wake/reset takes seconds. Let the executive sleep between
+         * checks instead of polling every100us; data transfers keep their fast
+         * service cadence and every wait remains bounded by the deadline. */
+        if(info.media_kind==LN_ATA_MEDIA_ROTATING&&
+           (phase==INIT_READY||(phase==FINISH&&operation==LN_ATA_WAKE)))not_before=now+10000u;
+        return;
+    }
     if(!status||status==0xffu){if(phase!=INIT_READY)fail(LN_ATA_OFFLINE);return;}
     if(phase==INIT_READY){if(!(status&0x40u))return;command(0xecu);phase=IDENT_DATA;return;}
     if(status&0x21u){

@@ -27,8 +27,9 @@ bool ln_block_submit(enum ln_block_op op,uint64_t lba,uint32_t sectors,void *buf
  * A request group uses its most restrictive ceiling and never expands past the window. */
 bool ln_block_submit_read(uint64_t lba,uint32_t sectors,void *buffer,
     uint32_t generation,uint32_t deadline_us,uint32_t read_ahead,uint32_t *request_id);
-/* Direct reads transfer up to 192 contiguous sectors into the caller buffer
- * without the cache/bounce buffer. They are never speculative. */
+/* Direct reads transfer up to 192 contiguous sectors into the caller buffer.
+ * Resident clean windows may satisfy them; successful reads up to8 sectors
+ * populate a window. Larger misses bypass the cache. Never speculative. */
 bool ln_block_submit_direct_read(uint64_t lba,uint32_t sectors,void *buffer,
     uint32_t generation,uint32_t deadline_us,uint32_t *request_id);
 void ln_block_step(uint32_t now);

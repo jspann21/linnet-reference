@@ -14,8 +14,16 @@ static uint8_t transfer[LN_BLOCK_READ_AHEAD_DEFAULT*512u] __attribute__((aligned
 static uint8_t cache[2][LN_BLOCK_READ_AHEAD_DEFAULT*512u] __attribute__((aligned(32)));
 static uint64_t cache_lba[2];
 static uint64_t window_first,window_count;
-static uint32_t cache_sectors[2],cache_next,next_id,active_count,active_sectors,active_deadline;
+static uint32_t cache_sectors[2],cache_next,next_id,active_count,active_sectors,active_required,active_deadline;
 static void invalidate_cache(void){cache_sectors[0]=cache_sectors[1]=cache_next=0;}
+static void invalidate_written(uint64_t lba,uint32_t sectors){
+    /* Requests and resident windows have already passed overflow/range checks.
+     * Keep unrelated FAT and data windows across a write; never serve written
+     * sectors from the old image, even before the write's flush completes. */
+    for(uint32_t way=0;way<2u;++way)
+        if(cache_sectors[way]&&lba<cache_lba[way]+cache_sectors[way]&&cache_lba[way]<lba+sectors)
+            cache_sectors[way]=0;
+}
 static uint32_t active_slots[8],active_offsets[8],streak;
 static bool active_retry,recovering,frozen;
 static bool barrier_failed;
@@ -121,10 +129,13 @@ bool ln_block_submit_direct_read(uint64_t lba,uint32_t sectors,void *bytes,
 static void active_complete(uint32_t status,uint32_t transferred) {
     last_activity=ln_time_us();standby_at=0;
     struct slot *first=&slots[active_slots[0]];
-    if(status==LN_ATA_OK&&first->op==LN_BLOCK_READ&&!first->direct){
-        uint32_t way=cache_next;cache_next^=1u;
+    if(status==LN_ATA_OK&&first->op==LN_BLOCK_READ&&
+       (!first->direct||(!first->canceled&&active_sectors<=8u))){
+        /* Cache small aligned reads, but keep large streaming transfers from
+         * copying data twice and evicting the two FAT windows every cluster. */
+        uint32_t way=!cache_sectors[0]?0u:!cache_sectors[1]?1u:cache_next;cache_next=way^1u;
         cache_lba[way]=first->lba;cache_sectors[way]=active_sectors;
-        copy(cache[way],transfer,active_sectors*512u);
+        copy(cache[way],first->direct?first->caller:transfer,active_sectors*512u);
     }
     for(uint32_t i=0;i<active_count;++i){
         struct slot *s=&slots[active_slots[i]];uint32_t offset=active_offsets[i];
@@ -195,7 +206,13 @@ static void step_inner(uint32_t now) {
             slots[active_slots[0]].op==LN_BLOCK_READ&&
             (int32_t)(active_deadline-now)>100000){
             bool canceled=true;for(uint32_t i=0;i<active_count;++i)if(!slots[active_slots[i]].canceled)canceled=false;
-            if(!canceled){active_retry=recovering=true;++metrics.retries;invalidate_cache();ln_ata_recover(now);return;}
+            if(!canceled){
+                /* A bad speculative neighbor must not defeat an otherwise
+                 * readable request. Retry only the explicitly requested span,
+                 * once, under the original caller deadline. */
+                active_sectors=active_required;
+                active_retry=recovering=true;++metrics.retries;invalidate_cache();ln_ata_recover(now);return;
+            }
         }
         active_complete(result.status,result.sectors_done);
         if(result.status!=LN_ATA_OK&&device.failed&&!metrics.quarantined)ln_ata_recover(now);
@@ -250,9 +267,9 @@ static void step_inner(uint32_t now) {
     if(metrics.quarantined){complete(s,LN_ATA_QUARANTINED,0);return;}
     if(device.failed){complete(s,LN_ATA_OFFLINE,0);return;}
     if(device.initializing||device.busy)return;
-    /* Two ways keep corresponding primary/mirror FAT sectors resident. Every
-     * media write/reset/window change invalidates both, preserving readback. */
-    if(s->op==LN_BLOCK_READ&&!s->direct)for(uint32_t way=0;way<2u;++way){
+    /* Aligned reads can use the same clean windows without waking the disk.
+     * Writes invalidate overlaps; failures/reset/window changes invalidate all. */
+    if(s->op==LN_BLOCK_READ)for(uint32_t way=0;way<2u;++way){
         if(cache_sectors[way]&&s->lba>=cache_lba[way]&&
            s->lba-cache_lba[way]+s->sectors<=cache_sectors[way]){
             copy(s->caller,cache[way]+(uint32_t)(s->lba-cache_lba[way])*512u,s->sectors*512u);
@@ -272,9 +289,9 @@ static void step_inner(uint32_t now) {
     }
     if(!device.initialized)return;
     active_count=1;active_slots[0]=(uint32_t)index;active_offsets[0]=0;
-    active_sectors=s->sectors;active_deadline=s->deadline;s->state=ACTIVE;
+    active_required=active_sectors=s->sectors;active_deadline=s->deadline;s->state=ACTIVE;
     active_retry=recovering=false;
-    if(s->op==LN_BLOCK_WRITE){invalidate_cache();copy(transfer,s->data,s->sectors*512u);}
+    if(s->op==LN_BLOCK_WRITE)copy(transfer,s->data,s->sectors*512u);
     if((s->op==LN_BLOCK_READ||s->op==LN_BLOCK_WRITE)&&!s->direct){
         uint32_t read_ahead=s->read_ahead;
         uint32_t capacity=s->op==LN_BLOCK_READ&&device.media_kind==LN_ATA_MEDIA_ROTATING?
@@ -297,12 +314,14 @@ static void step_inner(uint32_t now) {
             if(candidate->read_ahead<read_ahead)read_ahead=candidate->read_ahead;
             if((int32_t)(candidate->deadline-active_deadline)<0)active_deadline=candidate->deadline;
         }
+        active_required=active_sectors;
         if(s->op==LN_BLOCK_READ&&active_sectors<read_ahead){
             uint64_t end=window_count?window_first+window_count:device.sectors;
             uint32_t ahead=end-s->lba<read_ahead?(uint32_t)(end-s->lba):read_ahead;
             metrics.read_ahead_sectors+=ahead-active_sectors;active_sectors=ahead;
         }
     }
+    if(s->op==LN_BLOCK_WRITE)invalidate_written(s->lba,active_sectors);
 #if !defined(LINNET_PROFILE_RELEASE)
     active_fault=injected;
     if(active_fault==5u&&s->op!=LN_BLOCK_FLUSH)active_fault=0;

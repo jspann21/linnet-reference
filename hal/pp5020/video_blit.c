@@ -1,3 +1,4 @@
+#include "hal/api/platform.h"
 #include "hal/api/display.h"
 #include "hal/pp5020/display_internal.h"
 #include "hal/api/core.h"
@@ -99,6 +100,7 @@ static bool fingerprint(uint32_t *branch){
 }
 static bool helper_matches(uint32_t words){for(uint32_t i=0;i<words;i++)if(REG(HELPER+i*4u)!=ln_video_blit_begin[i])return false;return true;}
 bool ln_display_upgrade_blit(void){
+    if(ln_lcd_panel_type()&1u)return false;
     uintptr_t begin=(uintptr_t)ln_video_blit_begin,end=(uintptr_t)ln_video_blit_end;
     if(end<=begin||((begin|end)&3u)||end-begin>HELPER_LIMIT-HELPER)return false;
     uint32_t words=(uint32_t)(end-begin)/4u,branch=0;

@@ -16,7 +16,7 @@
 struct rectangle { uint32_t x, y, width, height; };
 static uint16_t draw_buffer[LINNET_DISPLAY_PIXELS] __attribute__((aligned(4)));
 static uint16_t scanout_buffer[LINNET_DISPLAY_PIXELS] __attribute__((aligned(32)));
-static bool column_mode;
+static bool column_mode, byte_panel;
 static struct rectangle damage[LINNET_DISPLAY_QUEUE_CAPACITY];
 static uint32_t damage_count, submitted, completed, frame_failures;
 static uint32_t frame_started;
@@ -236,6 +236,29 @@ static void cpu_step(void) {
     if (state == 1) {
         if (PORT & 0x80000000u) return;
         uint32_t command = MB(LN_DISPLAY_COMMAND), value;
+        if (byte_panel) {
+            /* Keep both bytes of each bus transfer together. */
+            uint32_t x1 = LINNET_UI_WIDTH-1u-MB(LN_DISPLAY_X);
+            uint32_t y0 = MB(LN_DISPLAY_Y);
+            if (command < 6u) {
+                uint32_t reg = command < 2u ? 0x44u : command < 4u ? 0x45u : 0x21u;
+                uint32_t data = command < 2u ? ((y0+MB(LN_DISPLAY_HEIGHT)-1u)<<8)|y0 :
+                    command < 4u ? (x1<<8)|(x1+1u-MB(LN_DISPLAY_WIDTH)) : (x1<<8)|y0;
+                if (!(command & 1u)) {
+                    PORT = 0x80000000u;
+                    PORT = 0x80000000u | reg;
+                } else {
+                    PORT = 0x81000000u | (data >> 8);
+                    PORT = 0x81000000u | (data & 255u);
+                }
+            } else {
+                PORT = 0x80000000u;
+                PORT = 0x80000022u;
+            }
+            MB(LN_DISPLAY_COMMAND) = command+1u;
+            if (command == 6u) MB(LN_DISPLAY_STATE) = 2;
+            return;
+        }
         if (command == 0) value = 0x12u;
         else if (command == 1) value = MB(LN_DISPLAY_Y);
         else if (command == 2) value = 0x13u;
@@ -293,6 +316,7 @@ static void cpu_step(void) {
 bool ln_display_init(void) {
     initialized=false;
     init_error=0;
+    byte_panel=(ln_lcd_panel_type() & 1u)!=0u;
     cop_capable=cop_probe();
     if (!pause_worker(true)) {init_error=0x01000000u|((MB(LN_DISPLAY_PAUSED)&255u)<<16)|cop_error;return false;}
     uint32_t generation=MB(LN_DISPLAY_MAGIC)==LINNET_DISPLAY_MAGIC ? MB(LN_DISPLAY_GENERATION)+1u : 1u;
@@ -321,7 +345,7 @@ bool ln_display_init(void) {
     }
 #endif
     initialized=true;
-    MB(LN_DISPLAY_ENABLED)=cop_capable?1u:0u;
+    MB(LN_DISPLAY_ENABLED)=(cop_capable&&!byte_panel)?1u:0u;
     if (!pause_worker(false)) {init_error=0x03000000u|((MB(LN_DISPLAY_PAUSED)&255u)<<16)|cop_error;initialized=false;return false;}
     return ln_display_damage(0,0,LINNET_UI_WIDTH,LINNET_UI_HEIGHT);
 }
@@ -390,7 +414,7 @@ bool ln_display_damage(int32_t x,int32_t y,int32_t width,int32_t height) {
 }
 
 void ln_display_column_mode(bool enabled) {
-    column_mode=enabled;
+    column_mode=enabled&&!byte_panel;
     MB(LN_DISPLAY_BUFFER)=(uint32_t)NATIVE(scanout_buffer);
 }
 
@@ -500,7 +524,7 @@ bool ln_display_service(uint32_t max_pairs) {
         ln_core_irq_restore(irq);
     }
     if (max_pairs>256u) max_pairs=256u;
-    if (!cop_capable) for (uint32_t i=0;i<max_pairs && MB(LN_DISPLAY_HEAD)!=MB(LN_DISPLAY_TAIL);++i) cpu_step();
+    if (!cop_capable || byte_panel) for (uint32_t i=0;i<max_pairs && MB(LN_DISPLAY_HEAD)!=MB(LN_DISPLAY_TAIL);++i) cpu_step();
     if (frame_pending && MB(LN_DISPLAY_HEAD)==MB(LN_DISPLAY_TAIL)) {
         frame_pending=false;
         if (frame_failures!=MB(LN_DISPLAY_FAILURES)) {
@@ -533,7 +557,7 @@ bool ln_display_reset(void) {
     MB(LN_DISPLAY_GENERATION)++;MB(LN_DISPLAY_RESETS)++;
     MB(LN_DISPLAY_HEAD)=MB(LN_DISPLAY_TAIL)=0;
     damage_count=0;
-    MB(LN_DISPLAY_ENABLED)=cop_capable?1u:0u;
+    MB(LN_DISPLAY_ENABLED)=(cop_capable&&!byte_panel)?1u:0u;
     if (!pause_worker(false)) return false;
     return ln_display_damage(0,0,LINNET_UI_WIDTH,LINNET_UI_HEIGHT);
 }
