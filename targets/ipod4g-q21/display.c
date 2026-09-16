@@ -124,19 +124,24 @@ void ln_display_cop_diagnostics(uint32_t output[8])
     output[5]=MB(LN_DISPLAY_PAUSE);output[6]=MB(LN_DISPLAY_PAUSED);output[7]=MB(LN_DISPLAY_PROBE_ACK);
 }
 
-static uint32_t luma(uint16_t color)
+static uint32_t weighted_luma(uint16_t color)
 {
     /* Exact weighted RGB565 conversion, with constant component contributions. */
     static const uint16_t red[32]={0,633,1266,1900,2533,3166,3800,4433,5067,5700,6333,6967,7600,8234,8867,9500,10134,10767,11400,12034,12667,13301,13934,14567,15201,15834,16468,17101,17734,18368,19001,19635};
     static const uint16_t green[64]={0,607,1214,1821,2428,3035,3642,4250,4857,5464,6071,6678,7285,7892,8500,9107,9714,10321,10928,11535,12142,12750,13357,13964,14571,15178,15785,16392,17000,17607,18214,18821,19428,20035,20642,21250,21857,22464,23071,23678,24285,24892,25500,26107,26714,27321,27928,28535,29142,29750,30357,30964,31571,32178,32785,33392,34000,34607,35214,35821,36428,37035,37642,38250};
     static const uint16_t blue[32]={0,238,477,715,954,1192,1431,1669,1908,2146,2385,2624,2862,3101,3339,3578,3816,4055,4293,4532,4770,5009,5248,5486,5725,5963,6202,6440,6679,6917,7156,7395};
-    return (red[(color>>11)&31u]+green[(color>>5)&63u]+blue[color&31u])>>8;
+    return (red[(color>>11)&31u]+green[(color>>5)&63u]+blue[color&31u]);
 }
 
 static uint8_t physical_gray(uint32_t px,uint32_t py)
 {
-    uint32_t level=(luma(frame[py*LINNET_UI_WIDTH+px])*3u+127u)/255u;
-    return (uint8_t)(3u-level);
+    uint16_t color=frame[py*LINNET_UI_WIDTH+px];
+    /* Most menu pixels are black or white. Keep other RGB565 values exactly
+     * equivalent to the previous conversion, without multiply/divide per pixel. */
+    if(!color)return 3u;
+    if(color==0xffffu)return 0u;
+    uint32_t value=weighted_luma(color);
+    return value<11008u?3u:value<32768u?2u:value<54528u?1u:0u;
 }
 
 bool ln_display_init(void)

@@ -23,6 +23,16 @@ static enum ln_ata_op operation;
 static uint64_t previous_capacity;
 static uint8_t flush_command;
 static uint8_t pio_mode;
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+/* Unknown after reset/error; only a completed flush proves the cache clean. */
+static bool write_dirty=true;
+#endif
+static bool needs_flush(void){
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+    if(info.media_kind==LN_ATA_MEDIA_ROTATING&&!write_dirty)return false;
+#endif
+    return info.can_flush;
+}
 static uint32_t hdd_idle_us,standby_started;
 static bool recent_standby;
 /* Back off repeated short rests, but forget the backoff after two minutes
@@ -100,6 +110,9 @@ static void read_sector(uint8_t *sector) {
         : [port] "r"((uintptr_t)0xc30001e0u) : "cc", "memory");
 }
 static void fail(uint32_t status) {
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+    write_dirty=true;
+#endif
     recent_standby=false;
     info.power_safe=0;
     ATA_RECORD(1, (uint32_t)phase);ATA_RECORD(2, status);
@@ -115,6 +128,9 @@ static void fail(uint32_t status) {
 static void finish(void) {
 #if !defined(LINNET_PROFILE_RELEASE)
     if(perf.active)perf_end(ln_time_us());
+#endif
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+    if(operation==LN_ATA_FLUSH)write_dirty=false;
 #endif
     if(operation==LN_ATA_STANDBY){
         if(info.media_kind==LN_ATA_MEDIA_ROTATING&&info.standby_supported){
@@ -193,6 +209,9 @@ static bool identify_valid(void) {
     return true;
 }
 static void reset_begin(uint32_t now) {
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+    write_dirty=true;
+#endif
 #if !defined(LINNET_PROFILE_RELEASE)
     /* A reset invalidates cross-epoch deltas, including an interrupted read. */
     perf.active=false;perf_add(&perf.epoch,1u);
@@ -259,9 +278,9 @@ bool ln_ata_start(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *bytes
     operation=op;buffer=bytes;count=sectors;done=0;deadline=limit;info.busy=1;
     CONTROL=2u;SELECT=0xe0u;settle();
     if(!data){
-        if(op==LN_ATA_FLUSH&&!info.can_flush){finish();return true;}
+        if(op==LN_ATA_FLUSH&&!needs_flush()){finish();return true;}
         if(op==LN_ATA_STANDBY&&!info.standby_supported&&!info.can_flush){finish();return true;}
-        if(op==LN_ATA_STANDBY&&info.can_flush){command(flush_command);phase=STANDBY_FLUSH;return true;}
+        if(op==LN_ATA_STANDBY&&needs_flush()){command(flush_command);phase=STANDBY_FLUSH;return true;}
         if(op==LN_ATA_WAKE){COUNT=1u;LOW=MID=HIGH=0;command(0x40u);}
         else command(op==LN_ATA_FLUSH?flush_command:0xe0u);
         phase=FINISH;return true;
@@ -274,6 +293,9 @@ bool ln_ata_start(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *bytes
     COUNT=(uint8_t)sectors;LOW=(uint8_t)lba;MID=(uint8_t)(lba>>8);HIGH=(uint8_t)(lba>>16);
 #if !defined(LINNET_PROFILE_RELEASE)
     if(op==LN_ATA_READ){perf.started=now;perf.active=true;perf_add(&perf.reads,1u);}
+#endif
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+    if(op==LN_ATA_WRITE)write_dirty=true;
 #endif
     command(op==LN_ATA_READ?(extended?0x24u:0x20u):(extended?0x34u:0x30u));phase=TRANSFER;return true;
 }
@@ -365,7 +387,12 @@ void ln_ata_step(uint32_t now) {
         }
     }
     if(status&8u){fail(LN_ATA_IO);return;}
-    if(phase==STANDBY_FLUSH){if(!info.standby_supported){finish();return;}command(0xe0u);phase=FINISH;return;}
+    if(phase==STANDBY_FLUSH){
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+        write_dirty=false;
+#endif
+        if(!info.standby_supported){finish();return;}command(0xe0u);phase=FINISH;return;
+    }
     finish();
 }
 bool ln_ata_take(struct ln_ata_result *out) { if(!out||!result_ready)return false;*out=result;result_ready=false;return true; }
