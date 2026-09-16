@@ -109,6 +109,21 @@ static void read_sector(uint8_t *sector) {
         : [out] "+&r"(sector), [words] "+&r"(words), [low] "=&r"(low), [high] "=&r"(high)
         : [port] "r"((uintptr_t)0xc30001e0u) : "cc", "memory");
 }
+static void write_sector(const uint8_t *sector){
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+    if(!((uintptr_t)sector&1u)){
+        typedef uint16_t sector_word __attribute__((may_alias));
+        const sector_word *words=(const sector_word *)sector;
+        /* Ordered 16-bit PIO writes, with aligned RAM loads and less loop work. */
+        for(uint32_t i=0;i<256u;i+=4u){
+            DATA=words[i];DATA=words[i+1u];DATA=words[i+2u];DATA=words[i+3u];
+        }
+        return;
+    }
+#endif
+    for(uint32_t i=0;i<256u;++i)
+        DATA=(uint16_t)((uint16_t)sector[i*2u]|((uint16_t)sector[i*2u+1u]<<8));
+}
 static void fail(uint32_t status) {
 #if defined(LINNET_TARGET_IPOD4G_Q21)
     write_dirty=true;
@@ -372,8 +387,7 @@ void ln_ata_step(uint32_t now) {
             if(elapsed>perf.max_sector)perf.max_sector=elapsed;
 #endif
         }
-        else for(uint32_t i=0;i<256u;++i)
-            DATA=(uint16_t)((uint16_t)sector[i*2u]|((uint16_t)sector[i*2u+1u]<<8));
+        else write_sector(sector);
         ++done;if(operation==LN_ATA_READ)++info.sectors_read;else ++info.sectors_written;
         settle();if(done==count){phase=FINISH;return;}
         if(++serviced==LINNET_ATA_MAX_SECTORS||ln_time_us()-service_started>=500u)return;
