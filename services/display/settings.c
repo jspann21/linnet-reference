@@ -4,6 +4,10 @@
 #include "ui/runtime/ui.h"
 static const uint32_t seconds[]={0,5,10,15,30,60,120};
 static const char *const labels[]={"Timeout: Never","Timeout: 5 seconds","Timeout: 10 seconds","Timeout: 15 seconds","Timeout: 30 seconds","Timeout: 1 minute","Timeout: 2 minutes"};
+static const uint32_t shutdown_seconds[]={0,60,120,300,600,900,1800,3600,7200};
+static const char *const shutdown_labels[]={"Off","1 min","2 min","5 min","10 min","15 min","30 min","1 hour","2 hours"};
+static uint8_t shutdown_choice[2];
+static char shutdown_label[2][32];
 static uint32_t choice=4,revision,record_revision,battery_capacity=1200;
 static uint32_t theme_index=UINT32_MAX,theme_revision;
 static bool theme_loaded,theme_dirty,theme_available;
@@ -19,7 +23,7 @@ static uint8_t photo_resume[16];
 static uint32_t video_resume[2];
 static uint32_t get(const uint8_t*p){return(uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
 static void put(uint8_t*p,uint32_t v){for(uint32_t i=0;i<4;++i)p[i]=(uint8_t)(v>>(i*8));}
-void ln_display_settings_init(void){clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;video_resume[0]=video_resume[1]=0;revision=record_revision=0;loaded=dirty=false;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;}
+void ln_display_settings_init(void){shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;video_resume[0]=video_resume[1]=0;revision=record_revision=0;loaded=dirty=false;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;}
 bool ln_display_clock_12(void){return clock_12;}
 void ln_display_clock_toggle(void){clock_12=!clock_12;dirty=true;++revision;++record_revision;}
 uint32_t ln_display_backlight_timeout_us(void){return seconds[choice]*1000000u;}
@@ -41,6 +45,20 @@ bool ln_display_settings_adjust(int32_t direction){
     if(!direction)return false;
     choice=direction<0?(choice?choice-1u:6u):(choice==6u?0u:choice+1u);
     dirty=true;++revision;++record_revision;return true;
+}
+uint32_t ln_auto_shutdown_seconds(bool headphones){return shutdown_seconds[shutdown_choice[headphones?1:0]];}
+bool ln_auto_shutdown_adjust(bool headphones,int32_t direction){
+    if(!direction)return false;
+    uint8_t *value=&shutdown_choice[headphones?1:0];
+    *value=direction<0?(*value?*value-1u:8u):(*value==8u?0u:*value+1u);
+    dirty=true;++revision;++record_revision;return true;
+}
+static const char *auto_shutdown_label(uint32_t item){
+    char *out=shutdown_label[item];uint32_t at=0;
+    const char *p=item?"Headphones in: ":"Headphones out: ";
+    while(*p)out[at++]=*p++;
+    p=shutdown_labels[shutdown_choice[item]];while(*p)out[at++]=*p++;
+    out[at]=0;return out;
 }
 uint32_t ln_battery_capacity_mah(void){return battery_capacity;}
 const char *ln_battery_capacity_label(void){
@@ -70,7 +88,7 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
     uint8_t saved_photo[16]={0};uint32_t saved_video[2]={0};
     if(bytes<36||get(raw)!=0x54544553u||get(raw+bytes-4)!=ln_crc32(raw,bytes-4))return -1;
     uint32_t n=(uint32_t)raw[4]|((uint32_t)raw[5]<<8),f=raw[14];
-    if(n!=bytes-36||raw[7]>1u||raw[6]>6||raw[15]||(f&7u)>5||((f>>5)&3u)>2||(f&128u))return -1;
+    if(n!=bytes-36||raw[7]>1u||raw[6]>6||(raw[15]&15u)>8u||(raw[15]>>4)>8u||(f&7u)>5||((f>>5)&3u)>2||(f&128u))return -1;
     saved_choice=raw[6];saved_clock_12=raw[7]==1u;
     put(saved_photo,get(raw+8));put(saved_photo+4,(uint32_t)raw[12]|((uint32_t)raw[13]<<8));
     put(saved_photo+8,(f&7u)|(((f>>3)&3u)<<8)|(((f>>5)&3u)<<16));put(saved_photo+12,get(raw+16));
@@ -81,8 +99,8 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
     out_offset=32;out_length=bytes-36;
     /* Commit only after the complete envelope has passed validation. */
     if(!loaded){
-        if(!dirty&&(choice!=saved_choice||battery_capacity!=saved_capacity||clock_12!=saved_clock_12)){
-            choice=saved_choice;battery_capacity=saved_capacity;clock_12=saved_clock_12;++revision;
+        if(!dirty&&(choice!=saved_choice||battery_capacity!=saved_capacity||clock_12!=saved_clock_12||shutdown_choice[0]!=(raw[15]&15u)||shutdown_choice[1]!=(raw[15]>>4))){
+            shutdown_choice[0]=raw[15]&15u;shutdown_choice[1]=raw[15]>>4;choice=saved_choice;battery_capacity=saved_capacity;clock_12=saved_clock_12;++revision;
         }
         for(uint32_t i=0;i<16;++i)photo_resume[i]=saved_photo[i];
         video_resume[0]=saved_video[0];video_resume[1]=saved_video[1];
@@ -96,7 +114,7 @@ static int write_record(uint8_t raw[480],const uint8_t *data,uint32_t length){
     if(index>65535u||(flags&255u)>5u||((flags>>8)&255u)>3u||(flags>>16)>2u)return 0;
     put(raw,0x54544553u);raw[4]=(uint8_t)length;raw[5]=(uint8_t)(length>>8);raw[6]=(uint8_t)choice;raw[7]=clock_12?1u:0u;
     put(raw+8,get(photo_resume));raw[12]=(uint8_t)index;raw[13]=(uint8_t)(index>>8);
-    raw[14]=(uint8_t)((flags&7u)|(((flags>>8)&3u)<<3)|(((flags>>16)&3u)<<5));raw[15]=0;
+    raw[14]=(uint8_t)((flags&7u)|(((flags>>8)&3u)<<3)|(((flags>>16)&3u)<<5));raw[15]=(uint8_t)(shutdown_choice[0]|(shutdown_choice[1]<<4));
     put(raw+16,get(photo_resume+12));put(raw+20,video_resume[0]);put(raw+24,video_resume[1]);
     put(raw+28,battery_capacity);put(raw+32+length,ln_crc32(raw,32+length));
     uint32_t bytes=length+36,snapshot_revision=record_revision;
@@ -258,6 +276,7 @@ const char *ln_display_settings_text(const struct ln_ui_node*n,uint32_t item,con
         static const char *const keys[]={"Update build","Update saved","Update candidate","Update health","Update history"};
         for(uint32_t i=0;i<5;++i)if(text_equal(n->text,keys[i]))return update_labels[i];
     }
+    if(n->kind==LN_UI_VIRTUAL_LIST&&item<2u&&text_equal(n->text,"Automatic shutdown"))return auto_shutdown_label(item);
     if(n->kind==LN_UI_VIRTUAL_LIST&&item==0&&n->text){
         const char *a=n->text,*b="Display timeout";while(*a&&*a==*b){++a;++b;}
         if(!*a&&!*b)return ln_display_settings_label();

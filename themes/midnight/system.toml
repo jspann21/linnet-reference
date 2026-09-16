@@ -12,4 +12,4 @@ demo = false
 
 [ui]
 theme = "local.example.midnight"
-apps = ["linnet.system.home", "linnet.system.music", "linnet.system.photos", "linnet.system.videos", "linnet.system.files", "linnet.system.now-playing", "linnet.system.settings", "linnet.system.about", "local.example.notes", "linnet.system.display", "linnet.system.battery", "linnet.system.update", "linnet.system.themes", "linnet.system.extras", "linnet.system.clock", "linnet.system.clock-edit"]
+apps = ["linnet.system.home", "linnet.system.music", "linnet.system.photos", "linnet.system.videos", "linnet.system.files", "linnet.system.now-playing", "linnet.system.settings", "linnet.system.about", "local.example.notes", "linnet.system.display", "linnet.system.battery", "linnet.system.shutdown", "linnet.system.update", "linnet.system.themes", "linnet.system.extras", "linnet.system.clock", "linnet.system.clock-edit"]

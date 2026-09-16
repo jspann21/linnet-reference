@@ -27,6 +27,8 @@ const char *ln_display_theme_status(void);
 bool ln_display_settings_pending(void);
 bool ln_display_settings_adjust(int32_t direction);
 /* User supplied nominal capacity; does not alter charge limits or gauge voltage. */
+uint32_t ln_auto_shutdown_seconds(bool headphones);
+bool ln_auto_shutdown_adjust(bool headphones,int32_t direction);
 uint32_t ln_battery_capacity_mah(void);
 const char *ln_battery_capacity_label(void);
 bool ln_battery_capacity_adjust(int32_t direction);

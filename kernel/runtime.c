@@ -59,6 +59,11 @@ static struct ln_power_state power;
 static uint32_t last_injection, synthetic_flags, override_mask;
 static uint32_t sleep_count,wake_count,wake_at,animation_left,animation_at;
 #if defined(LINNET_NATIVE_UI)
+/* Accumulate across the 32-bit microsecond clock wrap for long timeouts. */
+static uint64_t shutdown_idle_us;
+static uint32_t shutdown_sample_at,auto_shutdown_timeout;
+static bool auto_shutdown_headphones;
+static void shutdown_activity(void){shutdown_idle_us=0;shutdown_sample_at=ln_time_us();}
 static uint32_t text_scroll_at=UINT32_MAX,palette_at=UINT32_MAX;
 #endif
 static uint32_t brightness=100;
@@ -289,6 +294,8 @@ static void apply(uint32_t kind,int32_t value){
        (kind==LN_INPUT_BUTTON&&!shell->hold&&(uint32_t)value!=shell->buttons)||
        (kind==LN_INPUT_HOLD&&!value&&shell->hold))backlight_activity();
 #if defined(LINNET_NATIVE_UI)
+    if((kind==LN_INPUT_WHEEL&&value&&!shell->hold)||
+       (kind==LN_INPUT_BUTTON&&!shell->hold&&((uint32_t)value&~shell->buttons)))shutdown_activity();
     uint32_t before=shell->scene;
 #endif
     bool handled=false;
@@ -351,10 +358,11 @@ static void apply(uint32_t kind,int32_t value){
     }
 #endif
 #if defined(LINNET_NATIVE_UI)
-    if(kind==LN_INPUT_BUTTON&&!shell->hold&&(scene_is("linnet.system.display")||scene_is("linnet.system.battery"))){
+    if(kind==LN_INPUT_BUTTON&&!shell->hold&&(scene_is("linnet.system.display")||scene_is("linnet.system.battery")||scene_is("linnet.system.shutdown"))){
         uint32_t pressed=(uint32_t)value&~shell->buttons;
         if(pressed&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV)){
             if(scene_is("linnet.system.battery"))(void)ln_battery_capacity_adjust((pressed&LN_BUTTON_PREV)?-1:1);
+            else if(scene_is("linnet.system.shutdown"))(void)ln_auto_shutdown_adjust(shell->selected==1u,(pressed&LN_BUTTON_PREV)?-1:1);
             else (void)ln_display_settings_adjust((pressed&LN_BUTTON_PREV)?-1:1);
             shell->buttons=(uint32_t)value;ln_ui_refresh(shell);dirty=true;handled=true;
         }else if(pressed&LN_BUTTON_MENU){
@@ -533,6 +541,7 @@ bool ln_runtime_init(void){
 #if defined(LINNET_NATIVE_UI)
     ln_display_settings_init();
     display_settings_revision=ln_display_settings_revision();
+    shutdown_activity();auto_shutdown_timeout=0;auto_shutdown_headphones=false;
     update_status_at=0;
     backlight_timeout=ln_display_backlight_timeout_us();
 #endif
@@ -669,7 +678,7 @@ void ln_runtime_step(void){
         display_settings_revision=settings_revision;
         backlight_timeout=ln_display_backlight_timeout_us();
         if(!sleeping)backlight_activity();
-        if(scene_is("linnet.system.display")||scene_is("linnet.system.battery")||scene_is("linnet.system.themes")||shell->drawn_theme!=ln_ui_theme_index()){ln_ui_refresh(shell);dirty=true;}
+        if(scene_is("linnet.system.display")||scene_is("linnet.system.battery")||scene_is("linnet.system.shutdown")||scene_is("linnet.system.themes")||shell->drawn_theme!=ln_ui_theme_index()){ln_ui_refresh(shell);dirty=true;}
     }
     theme_frame_request();
 #endif
@@ -767,6 +776,9 @@ void ln_runtime_step(void){
             if(!ln_storage_disk_mode())ln_panic(34,1,0);
         }
 #endif
+#if defined(LINNET_NATIVE_UI)
+        if(!input.hold&&input.wheel_delta)shutdown_activity();
+#endif
         if(sleeping)(void)wake();
         if(!(override_mask&1u))apply(LN_INPUT_HOLD,input.hold);
         if(!(override_mask&2u))apply(LN_INPUT_HEADPHONE,input.headphones);
@@ -813,6 +825,14 @@ void ln_runtime_step(void){
     /* Accelerated and synthetic wheel bursts can update selection many times
      * per callback. Bind only the final page that this frame will display. */
     if(music_window_pending){music_window_pending=false;browser_navigation();}
+#endif
+#if defined(LINNET_NATIVE_UI)
+    uint32_t shutdown_now=ln_time_us(),timeout=ln_auto_shutdown_seconds(shell->headphones!=0);
+    if(timeout!=auto_shutdown_timeout||auto_shutdown_headphones!=(shell->headphones!=0)){
+        shutdown_idle_us=0;auto_shutdown_timeout=timeout;auto_shutdown_headphones=shell->headphones!=0;
+    }else if(timeout)shutdown_idle_us+=(uint32_t)(shutdown_now-shutdown_sample_at);
+    shutdown_sample_at=shutdown_now;
+    if(timeout&&shutdown_idle_us>=(uint64_t)timeout*1000000u&&!ln_storage_busy())shutdown(true);
 #endif
     if(sleeping&&wake_at&&(int32_t)(now-wake_at)>=0)(void)wake();
     /* Identical idle policy on battery, USB and AC; background work is not input.

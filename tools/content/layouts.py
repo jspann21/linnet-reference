@@ -120,7 +120,7 @@ def refine_footers(scene,theme):
           'clock-edit':{'Clock edit hint'},'music-search':{'Search controls'}}
     texts=[n for n in scene['nodes'] if n['kind']==3]
     if sid in keys:foot=[n for n in texts if n['text'] in keys[sid]]
-    elif sid in ('display','battery'):foot=texts[1:]
+    elif sid in ('display','battery','shutdown'):foot=texts[1:]
     elif sid in ('music-queue','music-sound','video-controls'):foot=texts
     else:return
     if not foot:return
@@ -130,7 +130,7 @@ def refine_footers(scene,theme):
     if len(foot)>1:
         foot[0]['text']='  '.join(n['text'] for n in foot)
         for n in foot[1:]:n['flags']|=2
-    height=36 if sid in ('clock','clock-edit','music-search','display','battery') else 24
+    height=36 if sid in ('clock','clock-edit','music-search','display','battery','shutdown') else 24
     if sid=='themes':height=12
     place(foot[0],x,bottom-height,w,height);foot[0]['flags']=64
     for n in scene['nodes']:
@@ -183,10 +183,11 @@ def refine_scene(scene,theme,body):
         list_h=max(field_h,((h-2*fh-8)//field_h)*field_h)
         place(listing,x,y,w-8,list_h)
         for n in texts:place(n,x+4,bottom-2*fh,w-8,2*fh);n['flags']=WRAP
-    elif sid in ('display','battery'):
-        place(listing,x,y,w,rh)
+    elif sid in ('display','battery','shutdown'):
+        list_h=max(50,2*rh) if sid=='shutdown' else rh
+        place(listing,x,y,w,list_h)
         for i,n in enumerate(texts):
-            top=y+rh+8 if i==0 else bottom-(len(texts)-i)*(fh+5)
+            top=y+list_h+8 if i==0 else bottom-(len(texts)-i)*(fh+5)
             place(n,x+4,top,w-8,fh);n['flags']=0
     elif sid in ('music-sound','music-queue'):
         footer_h=fh if sid=='music-sound' else 2*fh
@@ -308,7 +309,7 @@ def refine_ipod_photo(scene,theme):
     elif sid=='themes' and listing:
         place(listing,0,20,210,132)
         for n in texts:place(n,6,155,208,fh)
-    elif sid in ('display','battery','music-queue','music-sound','music-search','clock-edit','clock'):
+    elif sid in ('display','battery','shutdown','music-queue','music-sound','music-search','clock-edit','clock'):
         for n in texts:
             n['x']=6;n['w']=208
             n['h']=min(n['h'],172-n['y'])
