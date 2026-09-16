@@ -160,12 +160,19 @@ bool ln_q21_lcd_begin_span(uint32_t y, uint32_t block)
     return true;
 }
 
+bool ln_q21_lcd_flush(void)
+{
+    /* The common ready case needs no timer read or polling budget setup. */
+    if (!(LCD_CONTROL & LCD_BUSY)) return true;
+    uint32_t started = ln_time_us(), budget = 100000u;
+    return wait_ready(started, &budget, 2000u);
+}
+
 bool ln_q21_lcd_write(uint8_t first, uint8_t second)
 {
-    uint32_t started = ln_time_us(), budget = 100000u;
-    if (!wait_ready(started, &budget, 2000u)) return false;
+    if (!ln_q21_lcd_flush()) return false;
     LCD_DATA = first;
-    if (!wait_ready(started, &budget, 2000u)) return false;
+    if (!ln_q21_lcd_flush()) return false;
     LCD_DATA = second;
     return true;
 }
