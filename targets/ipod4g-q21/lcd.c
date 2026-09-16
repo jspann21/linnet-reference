@@ -131,8 +131,13 @@ bool ln_q21_lcd_init(void)
 
 bool ln_q21_lcd_reinitialize(void)
 {
+    uint32_t pwm=REG(0x7000a010u),backlight=REG(0x6000d024u)&8u;
     ready = false;
-    return ln_q21_lcd_init();
+    bool ok=ln_q21_lcd_init();
+    /* Resetting scanout must preserve the user's backlight state. */
+    REG(0x7000a010u)=pwm;
+    REG(0x6000d824u)=backlight?0x0808u:0x0800u;
+    return ok;
 }
 
 bool ln_q21_lcd_diagnostic(void)

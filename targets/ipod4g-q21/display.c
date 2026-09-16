@@ -16,6 +16,7 @@ static bool startup_rewake_armed,startup_rewake_done;
 static uint32_t damage[LINNET_LCD_HEIGHT],active[LINNET_LCD_HEIGHT];
 static uint16_t sent[LINNET_LCD_HEIGHT*BLOCKS_PER_ROW];
 static bool force_full=true;
+static bool retrying;
 static uint32_t cursor,submitted,completed,failures,resets,generation;
 static uint32_t last_write,written_blocks,started;
 static void damage_all(void)
@@ -182,7 +183,7 @@ bool ln_display_present(void)
 {
     if(!initialized||!dirty||pending)return false;
     for(uint32_t y=0;y<LINNET_LCD_HEIGHT;++y){active[y]=damage[y];damage[y]=0;}
-    pending=true;dirty=false;direct_frame=false;cursor=0;last_write=UINT32_MAX;++submitted;
+    pending=true;dirty=false;direct_frame=false;retrying=false;cursor=0;last_write=UINT32_MAX;++submitted;
     started=ln_time_us();
     return true;
 }
@@ -209,7 +210,11 @@ bool ln_display_service(uint32_t max_blocks)
     while(max_blocks--&&cursor<total){
         uint32_t py=cursor/blocks_per_row,bx=cursor%blocks_per_row;
         if(ln_time_us()-service_started>=2000u)break;
-        if(!(active[py]&(1u<<bx))){++cursor;continue;}
+        uint32_t remaining=active[py]& (ALL_BLOCKS<<bx);
+        if(!remaining){cursor=(py+1u)*blocks_per_row;continue;}
+        /* Jump directly to the next damaged block; ARM7 has no CLZ instruction. */
+        while(!(remaining&(1u<<bx)))++bx;
+        cursor=py*blocks_per_row+bx;
         uint8_t bytes[2]={0,0};
         for(uint32_t p=0;p<8u;++p){
             uint32_t px=bx*8u+p;
@@ -236,6 +241,17 @@ bool ln_display_service(uint32_t max_blocks)
     }
     return true;
 failed:
+    /* Keep the same submission pending during one full replay. A second
+     * failure is terminal, so a broken controller cannot trap the runtime. */
+    if(!retrying){
+        retrying=true;++failures;
+        if(ln_q21_lcd_reinitialize()){
+            ++resets;++generation;MB(LN_DISPLAY_GENERATION)=generation;
+            for(uint32_t y=0;y<LINNET_LCD_HEIGHT;++y)active[y]=ALL_BLOCKS;
+            force_full=true;cursor=0;last_write=UINT32_MAX;started=ln_time_us();
+            return true;
+        }
+    }
     pending=false;force_full=true;damage_all();++failures;return false;
 }
 
@@ -257,7 +273,16 @@ bool ln_display_reset(void)
 }
 bool ln_display_diagnostic(uint32_t pattern)
 {
-    (void)pattern;
+#if !defined(LINNET_PROFILE_RELEASE)
+    /* Link diagnostic 1 exercises the ordinary frame-timeout recovery path. */
+    if(pattern==1u){
+        if(!initialized||pending||dirty||direct_frame)return false;
+        damage_all();
+        if(!ln_display_present())return false;
+        started=ln_time_us()-500000u;return true;
+    }
+#endif
+    if(pattern)return false;
     /* A direct panel diagnostic has no queued completion record.  Admit it
      * only between ordinary frames so it cannot cancel a submitted frame or
      * leave presentation telemetry permanently out of balance. */
