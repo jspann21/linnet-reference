@@ -27,10 +27,10 @@ static bool delay_us(uint32_t delay)
     return false;
 }
 
-static bool wait_ready(uint32_t started, uint32_t *budget)
+static bool wait_ready(uint32_t started, uint32_t *budget, uint32_t timeout)
 {
     while (LCD_CONTROL & LCD_BUSY) {
-        if (!*budget || ln_time_us() - started >= LCD_TIMEOUT_US) {
+        if (!*budget || ln_time_us() - started >= timeout) {
             LCD_RECORD(1, *budget ? 1u : 2u);
             return false;
         }
@@ -39,22 +39,22 @@ static bool wait_ready(uint32_t started, uint32_t *budget)
     return true;
 }
 
-static bool prepare(uint32_t command, uint32_t started, uint32_t *budget)
+static bool prepare(uint32_t command, uint32_t started, uint32_t *budget, uint32_t timeout)
 {
     LCD_RECORD(0, 3u | (command << 16));
-    if (!wait_ready(started, budget)) return false;
+    if (!wait_ready(started, budget, timeout)) return false;
     LCD_COMMAND = 0;
-    if (!wait_ready(started, budget)) return false;
+    if (!wait_ready(started, budget, timeout)) return false;
     LCD_COMMAND = command;
     return true;
 }
 
 static bool command_data(uint32_t command, uint32_t value,
-                         uint32_t started, uint32_t *budget)
+                         uint32_t started, uint32_t *budget, uint32_t timeout)
 {
-    if (!prepare(command, started, budget) || !wait_ready(started, budget)) return false;
+    if (!prepare(command, started, budget, timeout) || !wait_ready(started, budget, timeout)) return false;
     LCD_DATA = value >> 8;
-    if (!wait_ready(started, budget)) return false;
+    if (!wait_ready(started, budget, timeout)) return false;
     LCD_DATA = value & 255u;
     return true;
 }
@@ -102,11 +102,11 @@ bool ln_q21_lcd_init(void)
      * accepts writes in that state while the glass keeps showing the final
      * Apple frame. Wake the oscillator and analog stages before programming
      * the normal 4G register set. */
-    if (!command_data(0x00u, 0x0001u, started, &budget) ||
+    if (!command_data(0x00u, 0x0001u, started, &budget, LCD_TIMEOUT_US) ||
         !delay_us(10000u) ||
-        !command_data(0x03u, 0x1200u, started, &budget) ||
+        !command_data(0x03u, 0x1200u, started, &budget, LCD_TIMEOUT_US) ||
         !delay_us(1000u) ||
-        !command_data(0x03u, 0x120cu, started, &budget)) {
+        !command_data(0x03u, 0x120cu, started, &budget, LCD_TIMEOUT_US)) {
         LCD_RECORD_FAILURE();
         finish(started, budget, 0); return false;
     }
@@ -115,7 +115,7 @@ bool ln_q21_lcd_init(void)
         {0x04u,0x0463u}, {0x01u,0x000fu}, {0x0du,0x7f00u}, {0x05u,0}
     };
     for (uint32_t i = 0; i < sizeof setup / sizeof setup[0]; ++i)
-        if (!command_data(setup[i][0], setup[i][1], started, &budget)) {
+        if (!command_data(setup[i][0], setup[i][1], started, &budget, LCD_TIMEOUT_US)) {
             finish(started, budget, 0); return false;
         }
     /* Shared 4G/Color PWM and B3 backlight circuit. */
@@ -143,19 +143,24 @@ bool ln_q21_lcd_diagnostic(void)
 
 bool ln_q21_lcd_begin_row(uint32_t y)
 {
-    if (y >= LINNET_LCD_HEIGHT || !ln_q21_lcd_init()) return false;
+    return ln_q21_lcd_begin_span(y, 0);
+}
+
+bool ln_q21_lcd_begin_span(uint32_t y, uint32_t block)
+{
+    if (y >= LINNET_LCD_HEIGHT || block >= LINNET_LCD_WIDTH/8u || !ln_q21_lcd_init()) return false;
     uint32_t started = ln_time_us(), budget = 100000u;
-    if (!command_data(0x11u, (y << 5) + 20u, started, &budget) ||
-        !prepare(0x12u, started, &budget)) return false;
+    if (!command_data(0x11u, (y << 5) + 20u - block, started, &budget, 2000u) ||
+        !prepare(0x12u, started, &budget, 2000u)) return false;
     return true;
 }
 
 bool ln_q21_lcd_write(uint8_t first, uint8_t second)
 {
     uint32_t started = ln_time_us(), budget = 100000u;
-    if (!wait_ready(started, &budget)) return false;
+    if (!wait_ready(started, &budget, 2000u)) return false;
     LCD_DATA = first;
-    if (!wait_ready(started, &budget)) return false;
+    if (!wait_ready(started, &budget, 2000u)) return false;
     LCD_DATA = second;
     return true;
 }
