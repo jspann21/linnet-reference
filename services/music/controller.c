@@ -466,7 +466,7 @@ static void music_step(void){
     /* Fill cached labels before rendering, with a strict time/iteration budget.
      * Hardware waits and PCM pressure always return control to the executive. */
     uint32_t metadata_started=ln_time_us();
-    for(uint32_t n=0;n<12u&&ln_music_library_can_continue();n++){
+    for(uint32_t n=0;n<48u&&ln_music_library_can_continue();n++){
         if((uint32_t)(ln_time_us()-metadata_started)>=1000u)break;
         if(!ln_music_browser_busy()&&!ln_music_search_busy()&&!ln_music_queue_view_busy())break;
         ln_music_library_step();
@@ -474,6 +474,7 @@ static void music_step(void){
         ln_music_search_step();
         ln_music_queue_view_step(queue_opened&&!ln_music_search_active()&&ln_music_browser_query_idle());
     }
+    ln_music_browser_publish();
     struct ln_music_browser_queue browser_queue;
     if(ln_music_search_take_queue(&browser_queue)&&select_queue(&browser_queue)){
         ln_music_search_close();show_now_playing=true;

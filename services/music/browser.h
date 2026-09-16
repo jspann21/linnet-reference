@@ -20,6 +20,8 @@ bool ln_music_browser_window_needed(void);
 bool ln_music_browser_query_idle(void);
 bool ln_music_browser_take_search(void);
 void ln_music_browser_step(void);
+/* Publish a bounded batch after the controller finishes metadata work. */
+void ln_music_browser_publish(void);
 uint32_t ln_music_browser_count(void);
 const char *ln_music_browser_label(uint32_t row);
 void ln_music_browser_window(uint32_t first);

@@ -1,14 +1,18 @@
 #include "browser.h"
 #include "library.h"
+#include "hal/api/platform.h"
 
 enum view { CATEGORIES, GROUPS, TRACKS };
-enum job { NONE, RANGE, GROUP, TITLE, QUEUE_MEMBER };
+enum job { NONE, RANGE, GROUP, TITLE, PRELOAD, QUEUE_MEMBER };
 /* Keep recently visited rows behind the viewport as well as lookahead.
  * Absolute row tags and dataset identity prevent reuse across collisions/views. */
+#define FIRST_PAGE_ROWS 12u
 #define ROW_CACHE (LN_MUSIC_BROWSER_ROWS*2u)
 struct row { char label[256]; uint32_t index,count,ordinal; bool valid; };
 static struct {
-    struct row rows[ROW_CACHE];
+    struct row rows[ROW_CACHE],first_page[FIRST_PAGE_ROWS];
+    bool labels_pending;
+    uint32_t labels_started;
     uint32_t group_lower[8],group_count[8];
     bool group_range_ready[8];
     enum view view;
@@ -36,10 +40,27 @@ static bool row_ready(uint32_t ordinal){
 static uint32_t lookahead(void){
     return browser.visible_rows>=LN_MUSIC_BROWSER_ROWS/2u?LN_MUSIC_BROWSER_ROWS:browser.visible_rows*2u;
 }
+static uint32_t preload_count(void){
+    uint32_t count=browser.visible_rows<FIRST_PAGE_ROWS?browser.visible_rows:FIRST_PAGE_ROWS;
+    return count<ln_music_library_count()?count:ln_music_library_count();
+}
+static void labels_changed(void){
+    if(!browser.labels_pending)browser.labels_started=ln_time_us();
+    browser.labels_pending=true;
+}
+void ln_music_browser_publish(void){
+    if(!browser.labels_pending)return;
+    bool complete=true;
+    for(uint32_t i=0;i<browser.visible_rows&&browser.first+i<browser.count;i++)
+        if(!row_ready(browser.first+i)){complete=false;break;}
+    if(complete||(uint32_t)(ln_time_us()-browser.labels_started)>=50000u){
+        browser.labels_pending=false;changed();
+    }
+}
 static void invalidate(void)
 {
     browser.epoch++;browser.selecting=false;browser.queue_status=LN_BROWSER_QUEUE_IDLE;browser.track_ready=false;browser.single=false;
-    browser.window_ready=false;
+    browser.window_ready=false;browser.labels_pending=false;
     /* Categories do not consume rows. Re-entering the same dataset can reuse
      * them; another group or a library reload must discard them. */
     if(browser.view!=CATEGORIES&&(!browser.cache_ready||browser.cache_view!=browser.view||
@@ -47,6 +68,10 @@ static void invalidate(void)
         for(uint32_t i=0;i<ROW_CACHE;i++)browser.rows[i].valid=false;
         browser.cache_ready=true;browser.cache_view=browser.view;
         browser.cache_kind=browser.kind;browser.cache_group=browser.group;
+    }
+    if(browser.view==TRACKS&&!browser.kind){
+        for(uint32_t i=0;i<FIRST_PAGE_ROWS;i++)
+            if(browser.first_page[i].valid)*row_slot(i)=browser.first_page[i];
     }
     changed();
 }
@@ -73,7 +98,14 @@ const char *ln_music_browser_title(void){
     return browser.title;
 }
 bool ln_music_browser_busy(void){
-    if(!browser.was_ready||browser.view==CATEGORIES)return false;
+    if(!browser.was_ready)return false;
+    if(browser.view==CATEGORIES){
+        if(browser.job!=NONE)return true;
+        if(browser.suspended||!browser.visible)return false;
+        for(uint32_t i=0;i<preload_count();i++)if(!browser.first_page[i].valid)return true;
+        return false;
+    }
+    if(browser.labels_pending)return true;
     if(browser.job!=NONE||browser.selecting||browser.queue_status==LN_BROWSER_QUEUE_LOADING)return true;
     if(browser.suspended||!browser.visible)return false;
     if(browser.range_phase)return true;
@@ -186,7 +218,8 @@ void ln_music_browser_step(void)
 {
     bool ready=ln_music_library_status()==LN_LIBRARY_READY;
     if(!ready){
-        browser.cache_ready=false;
+        browser.cache_ready=false;browser.labels_pending=false;
+        for(uint32_t i=0;i<FIRST_PAGE_ROWS;i++)browser.first_page[i].valid=false;
         for(uint32_t i=0;i<8u;i++)browser.group_range_ready[i]=false;
         if(browser.was_ready){
             browser.navigation++;
@@ -200,10 +233,21 @@ void ln_music_browser_step(void)
     if(browser.job!=NONE){
         struct ln_music_group g;char name[256];uint32_t track=UINT32_MAX;
         struct ln_music_library_search_row title;
-        bool done=browser.job==TITLE?ln_music_library_take_view_row(&title):browser.job==QUEUE_MEMBER?ln_music_library_take_member(&track):
+        bool done=(browser.job==TITLE||browser.job==PRELOAD)?ln_music_library_take_view_row(&title):browser.job==QUEUE_MEMBER?ln_music_library_take_member(&track):
             ln_music_library_take_group(&g,name);
         if(!done)return;
         enum job completed=browser.job;browser.job=NONE;
+        if(completed==PRELOAD){
+            struct row *r=&browser.first_page[browser.job_row];
+            *r=(struct row){.index=title.index,.ordinal=browser.job_row,.valid=true};
+            copy(r->label,title.index==UINT32_MAX?"Unavailable track":title.title);
+            if(browser.view==TRACKS&&!browser.kind){
+                *row_slot(browser.job_row)=*r;labels_changed();
+            }
+            /* This query always belongs to All Tracks, even if entered while
+             * it was in flight. Library replacement cancels the owner above. */
+            return;
+        }
         /* Navigation never reuses a pending query buffer or consumes its result
          * as the newer request. Drain first, then admit the new generation. */
         if(browser.job_epoch!=browser.epoch)return;
@@ -222,13 +266,14 @@ void ln_music_browser_step(void)
             if(completed==TITLE){
                 r->index=title.index;r->valid=true;
                 copy(r->label,title.index==UINT32_MAX?"Unavailable track":title.title);
-                if(browser.job_row-browser.first<browser.visible_rows)changed();
+                if(!browser.kind&&browser.job_row<FIRST_PAGE_ROWS)browser.first_page[browser.job_row]=*r;
+                if(browser.job_row-browser.first<browser.visible_rows)labels_changed();
             }else if(completed==GROUP){
                 r->index=browser.lower+browser.job_row;r->count=g.count;
                 copy(r->label,g.kind==browser.kind?name:"Invalid group");
                 if(g.kind!=browser.kind)r->count=0;
                 r->valid=true;
-                if(browser.job_row-browser.first<browser.visible_rows)changed();
+                if(browser.job_row-browser.first<browser.visible_rows)labels_changed();
             }
         }
     }
@@ -239,7 +284,15 @@ void ln_music_browser_step(void)
             browser.job=QUEUE_MEMBER;browser.job_epoch=browser.epoch;}
         return;
     }
-    if(browser.view==CATEGORIES)return;
+    if(browser.view==CATEGORIES){
+        for(uint32_t i=0;i<preload_count();i++)if(!browser.first_page[i].valid){
+            if(ln_music_library_view_row(1u,0,i)){
+                browser.job=PRELOAD;browser.job_row=i;browser.job_epoch=browser.epoch;
+            }
+            break;
+        }
+        return;
+    }
     if(browser.view==GROUPS&&browser.range_phase){
         if(browser.lo==browser.hi){
             if(browser.range_phase==1u){browser.lower=browser.lo;browser.range_phase=2;
