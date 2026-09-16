@@ -639,7 +639,7 @@ def _persist_artifacts(artifacts, transaction):
 
 
 def _package_storage(identity, artifacts, transaction):
-    from tools.studio import storage
+    from tools.studio import storage, theme_settings
     package = transaction / "storage"
     if package.exists():
         manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
@@ -647,7 +647,11 @@ def _package_storage(identity, artifacts, transaction):
             raise ValueError("saved storage transaction belongs to another build")
     else:
         storage.prepare(Path(artifacts["os_image"]), package)
-    return storage.provision(package, Path(identity["root"]), identity["disk_serial"])
+    receipt = storage.provision(package, Path(identity["root"]), identity["disk_serial"])
+    receipt["theme"] = theme_settings.provision(
+        Path(identity["root"]), identity["disk_serial"], identity["disk_bytes"],
+        artifacts["os_build_id"])
+    return receipt
 
 
 def _install_selector_config(identity):
