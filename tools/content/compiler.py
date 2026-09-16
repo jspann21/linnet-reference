@@ -304,6 +304,19 @@ def compile_system(root, output, configpath=None, target_override=None):
         licenses[variant['font_index']]=license_data
         font_paths[variant['id']]=bounded_path(root,font_license_path).relative_to(root).as_posix()
         variant['scenes']=scale_layout(apply_layout(scenes,variant,compact=monochrome),width,height)
+        device_name=target_manifest['name'].removeprefix('Linnet for ')
+        model=target_manifest.get('model_alias','').upper()
+        if model and model not in device_name.upper():
+            device_name+=f' ({model})'
+        for scene in variant['scenes']:
+            for node in scene['nodes']:
+                if node['text']=='System version and device':
+                    node['text']=f"{system['version']} / {device_name}"
+        if target=='ipod4g-q21':
+            for scene in variant['scenes']:
+                for node in scene['nodes']:
+                    if node['text']=='System clock':
+                        node['y']+=3
         if (width,height)!=(REFERENCE_WIDTH,REFERENCE_HEIGHT):
             variant['metrics']=dict(
                 row_height=max(font['height'],(variant['metrics']['row_height']*height+REFERENCE_HEIGHT//2)//REFERENCE_HEIGHT),
@@ -349,8 +362,9 @@ def compile_system(root, output, configpath=None, target_override=None):
         hint_index=len(fonts);fonts.append(hint)
     # The prominent clock uses a separately hinted native-size face. Scaling
     # each target here keeps runtime glyph pixels aligned to its LCD grid.
-    clock=json.loads(read(root/'sdk/assets/font-clock24.json'))
-    if (width,height)!=(REFERENCE_WIDTH,REFERENCE_HEIGHT):
+    clock=json.loads(read(root/('sdk/assets/font-q21-clock22.json' if target=='ipod4g-q21'
+                               else 'sdk/assets/font-clock24.json')))
+    if target!='ipod4g-q21' and (width,height)!=(REFERENCE_WIDTH,REFERENCE_HEIGHT):
         clock=scale_font(clock,width,REFERENCE_WIDTH,height,REFERENCE_HEIGHT)
     clock_index=len(fonts);fonts.append(clock)
     font=chosen['font'];scenes=chosen['scenes'];license_data=licenses[chosen['font_index']]

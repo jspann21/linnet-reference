@@ -4,7 +4,7 @@
 enum view { CATEGORIES, GROUPS, TRACKS };
 enum job { NONE, RANGE, GROUP, TITLE, QUEUE_MEMBER };
 /* Keep recently visited rows behind the viewport as well as lookahead.
- * Absolute row tags prevent reuse across ring collisions; navigation clears it. */
+ * Absolute row tags and dataset identity prevent reuse across collisions/views. */
 #define ROW_CACHE (LN_MUSIC_BROWSER_ROWS*2u)
 struct row { char label[256]; uint32_t index,count,ordinal; bool valid; };
 static struct {
@@ -17,7 +17,9 @@ static struct {
     uint32_t epoch,job_epoch,job_row,revision,selection,track,navigation;
     bool selecting,track_ready,was_ready,window_ready;
     bool suspended,search_ready;
-    bool visible;
+    bool visible,cache_ready;
+    enum view cache_view;
+    uint32_t cache_kind,cache_group;
     char title[256];
     struct ln_music_browser_queue queue;
     uint32_t queue_next;int queue_status;bool single;
@@ -31,12 +33,20 @@ static struct row *row_slot(uint32_t ordinal){return &browser.rows[ordinal%ROW_C
 static bool row_ready(uint32_t ordinal){
     struct row *r=row_slot(ordinal);return r->valid&&r->ordinal==ordinal;
 }
+static uint32_t lookahead(void){
+    return browser.visible_rows>=LN_MUSIC_BROWSER_ROWS/2u?LN_MUSIC_BROWSER_ROWS:browser.visible_rows*2u;
+}
 static void invalidate(void)
 {
     browser.epoch++;browser.selecting=false;browser.queue_status=LN_BROWSER_QUEUE_IDLE;browser.track_ready=false;browser.single=false;
     browser.window_ready=false;
-    for(uint32_t i=0;i<ROW_CACHE;i++){
-        browser.rows[i].valid=false;
+    /* Categories do not consume rows. Re-entering the same dataset can reuse
+     * them; another group or a library reload must discard them. */
+    if(browser.view!=CATEGORIES&&(!browser.cache_ready||browser.cache_view!=browser.view||
+       browser.cache_kind!=browser.kind||(browser.view==TRACKS&&browser.kind&&browser.cache_group!=browser.group))){
+        for(uint32_t i=0;i<ROW_CACHE;i++)browser.rows[i].valid=false;
+        browser.cache_ready=true;browser.cache_view=browser.view;
+        browser.cache_kind=browser.kind;browser.cache_group=browser.group;
     }
     changed();
 }
@@ -68,7 +78,7 @@ bool ln_music_browser_busy(void){
     if(browser.suspended||!browser.visible)return false;
     if(browser.range_phase)return true;
     if(browser.window_ready)return false;
-    for(uint32_t i=0;i<LN_MUSIC_BROWSER_ROWS&&browser.first+i<browser.count;++i)
+    for(uint32_t i=0;i<lookahead()&&browser.first+i<browser.count;++i)
         if(!row_ready(browser.first+i))return true;
     return false;
 }
@@ -82,7 +92,7 @@ const char *ln_music_browser_label(uint32_t row)
     return row_ready(row)?row_slot(row)->label:"Loading...";
 }
 void ln_music_browser_visible_rows(uint32_t rows)
-{ browser.visible_rows=rows?rows:1u; }
+{ rows=rows?rows:1u;if(browser.visible_rows!=rows)browser.window_ready=false;browser.visible_rows=rows; }
 void ln_music_browser_window(uint32_t first)
 {
     if(browser.view==CATEGORIES||first==browser.first)return;
@@ -176,6 +186,7 @@ void ln_music_browser_step(void)
 {
     bool ready=ln_music_library_status()==LN_LIBRARY_READY;
     if(!ready){
+        browser.cache_ready=false;
         for(uint32_t i=0;i<8u;i++)browser.group_range_ready[i]=false;
         if(browser.was_ready){
             browser.navigation++;
@@ -245,7 +256,7 @@ void ln_music_browser_step(void)
     }
     accept_selection();
     if(browser.queue_status==LN_BROWSER_QUEUE_LOADING||(!browser.visible&&!browser.selecting))return;
-    for(uint32_t n=0;n<LN_MUSIC_BROWSER_ROWS;n++){
+    for(uint32_t n=0;n<lookahead();n++){
         /* Resolve a selected row first, then fill the visible cache in order. */
         uint32_t slot=n;
         if(browser.selecting){
@@ -263,7 +274,7 @@ void ln_music_browser_step(void)
         if(browser.job!=NONE){browser.job_epoch=browser.epoch;browser.job_row=ordinal;return;}
         return;
     }
-    /* The bounded lookahead is complete. Avoid rescanning all 48 tags on
+    /* One screen of lookahead is complete. Avoid rescanning cached tags on
      * every music-service wake until navigation invalidates the window. */
     browser.window_ready=true;
 }
