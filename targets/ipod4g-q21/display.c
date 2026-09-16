@@ -235,6 +235,8 @@ bool ln_display_service(uint32_t max_blocks)
         ++cursor;
     }
     if(cursor==total){
+        /* Completion must include the final bridge write before idle clocks. */
+        if(!ln_q21_lcd_flush())goto failed;
         pending=false;force_full=false;++completed;
 #if !defined(LINNET_PROFILE_RELEASE)
         uint32_t elapsed=ln_time_us()-started;
