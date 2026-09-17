@@ -149,6 +149,15 @@ $logical=Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='"+$drive+"'")
             identity['partition_offset'] != storage['partition_offset'] or
             identity['partition_bytes'] != storage['partition_bytes']):
         raise RuntimeError('mounted storage no longer matches reviewed plan')
+    if expected_os is None:
+        from tools.studio.installer import installed_state
+        installed = installed_state(Path(volume['drive'] + '/'), manifest['image']['target_id'])
+        if installed['state'] == 'installed':
+            if installed['candidate_pending']:
+                raise ValueError('a pending OS candidate requires an explicit expected OS identity')
+            if installed['profile'] in ('dev', 'trace'):
+                expected_os = next(image for image in installed['images']
+                                   if image['build_id'] == installed['build_id'])
     if expected_os is not None:
         if (not isinstance(expected_os, dict) or expected_os.get('target_id') != manifest['image']['target_id'] or
             expected_os.get('profile') not in ('dev', 'trace') or
