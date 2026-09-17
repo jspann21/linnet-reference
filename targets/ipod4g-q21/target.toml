@@ -25,6 +25,7 @@ media_video_width = 160
 media_video_height = 128
 media_video_fps = 12
 media_video_color = "gray4"
+media_video_extensions = [".ipvf"]
 cop_display = false
 entry_address = 0
 load_address = 0

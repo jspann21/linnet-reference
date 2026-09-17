@@ -580,8 +580,9 @@ def safe_media_path(path: str) -> bool:
     """Match the firmware's bounded FAT short-name path contract."""
     parts = path.split("/")
     return (path.startswith("/") and len(path) <= 255 and 1 <= len(parts) - 1 <= 16
-            and all(re.fullmatch(r"[A-Z0-9_~!#$%&'()@^`{}-]{1,8}(?:\.[A-Z0-9_~!#$%&'()@^`{}-]{1,3})?", part)
-                    for part in parts[1:]))
+            and all((index == 1 and part == ".LINNET") or
+                    re.fullmatch(r"[A-Z0-9_~!#$%&'()@^`{}-]{1,8}(?:\.[A-Z0-9_~!#$%&'()@^`{}-]{1,3})?", part)
+                    for index, part in enumerate(parts[1:], 1)))
 
 
 class UnsupportedMediaPath(ValueError):
@@ -770,9 +771,9 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                    bypass_cache: bool = False,
                    include_roots: list[Path] | None = None,
                    excluded: set[str] | tuple[str, ...] | None = None) -> dict:
-    """Stage source audio under MUSIC/8HEX.EXT and write LIBRARY.PDB.
+    """Stage source audio under MUSIC and write LIBRARY.PDB.
 
-    Install MUSIC and ART below /LINNET and LIBRARY.PDB at /LINNET/LIBRARY.PDB.
+    Install MUSIC at /Music, ART below /.LINNET and LIBRARY.PDB at /.LINNET/LIBRARY.PDB.
     Source-relative playlist paths are exact; unsupported sources fail explicitly.
     """
     source, output = source.resolve(), output.resolve()
@@ -800,7 +801,8 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                         raise ValueError("library exceeds 100000 tracks")
     paths.sort(key=lambda p: p.relative_to(source).as_posix())
     output.mkdir(parents=True, exist_ok=True)
-    (output / "MUSIC").mkdir(exist_ok=True)
+    if device_root is None:
+        (output / "MUSIC").mkdir(exist_ok=True)
     pool = bytearray(b"\0")
     strings = {"": 0}
 
@@ -857,40 +859,39 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             from .coverflow import original_cover
             coverflow_originals[index] = original_cover(cover if cover is not None else embedded)
         artwork_records.append(struct.pack("<QIHHIIII", int.from_bytes(digest[:8], "little"),
-            string("/LINNET/ART/" + name), 64, 64, 1, len(pixels), zlib.crc32(pixels), 0))
+            string("/.LINNET/ART/" + name), 64, 64, 1, len(pixels), zlib.crc32(pixels), 0))
         if cover is not None:
             art_cache[folder] = index
         art_indices[digest] = index
         return index
 
     cache_hits = 0
-    compatibility_copies = []
+    from .media_manager import _music_import_name
     for number, path, before, metadata, cached in _metadata_rows(
             paths, source, ffprobe, device_root is not None, cache, bypass_cache, metadata_pool, progress):
         location = None
-        compatibility_reason = None
         if device_root is not None:
-            try:
-                location = _device_media_path(path, device_root)
-            except UnsupportedMediaPath as exc:
-                compatibility_reason = str(exc)
-        stage_audio = device_root is None or compatibility_reason is not None
+            location = _device_media_path(path, device_root)
+        stage_audio = device_root is None
         hash_audio = verification == "full" or stage_audio
         relative = path.relative_to(source).as_posix()
         cache_hits += int(cached)
         identity = _stable("track:" + relative)
         extension = {".aiff": "AIF", ".aifc": "AIF", ".flac": "FLC", ".opus": "OPS"}.get(path.suffix.lower(), path.suffix[1:].upper())
-        name = f"{identity & 0xffffffff:08X}.{extension}"
-        if identity in stable_ids or (stage_audio and name in filenames):
-            raise ValueError("stable track identifier or staged filename collision")
+        stem = re.sub(r"[^A-Z0-9_-]", "", _music_import_name(path.stem).upper()) or "TRACK"
+        name = f"{stem[:8]}.{extension}"
+        suffix = 1
+        while stage_audio and name in filenames:
+            tail = str(suffix)
+            name = f"{stem[:8-len(tail)-1]}-{tail}.{extension}"
+            suffix += 1
+        if identity in stable_ids:
+            raise ValueError("stable track identifier collision")
         stable_ids.add(identity)
         if stage_audio:
             filenames.add(name)
         hasher = hashlib.sha256()
         temporary = output / "MUSIC" / (name + ".tmp")
-        if compatibility_reason is not None and progress:
-            progress(dict(phase="compatibility-copy", current=number, total=len(paths),
-                          file=str(path), cached=cached))
         if hash_audio:
             with path.open("rb") as original:
                 staged = temporary.open("wb") if stage_audio else None
@@ -910,10 +911,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             cache.put(source, relative, before, metadata)
         if stage_audio:
             temporary.replace(output / "MUSIC" / name)
-        location = location or "/LINNET/MUSIC/" + name
-        if compatibility_reason is not None:
-            compatibility_copies.append(dict(source=relative, reason=compatibility_reason,
-                                            bytes=before.st_size, path=location))
+        location = location or "/MUSIC/" + name
         tags = metadata["tags"]
         title = _text(tags.get("title") or path.stem)
         artist = _text(tags.get("artist") or "Unknown Artist")
@@ -1042,9 +1040,6 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     report = dict(format="PODB", integrity="sha256" if verification == "full" else "metadata", tracks=len(records), groups=len(groups),
                   artwork=len(artwork_records), bytes=len(database), sha256=hashlib.sha256(database).hexdigest(),
                   database=str(output / "LIBRARY.PDB"), entries=entries,
-                  compatibility_copies=compatibility_copies,
-                  compatibility_copy_count=len(compatibility_copies),
-                  compatibility_copy_bytes=sum(entry["bytes"] for entry in compatibility_copies),
                   cache=dict(hits=cache_hits, misses=len(records) - cache_hits,
                              status=cache.status if cache else "unused"),
                   limitations=[
@@ -1193,6 +1188,6 @@ def validate_database(data: bytes) -> dict:
         raise ValueError("search permutation/order")
     for index in range(arts):
         identity, path, width, height, encoding, count, crc, reserved = struct.unpack_from("<QIHHIIII", data, ao + index * ART)
-        if not re.fullmatch(r"/LINNET/ART/[0-9A-F]{8}\.RGB", get_string(path)) or (width, height, encoding, count, reserved) != (64, 64, 1, 8192, 0):
+        if not re.fullmatch(r"/\.LINNET/ART/[0-9A-F]{8}\.RGB", get_string(path)) or (width, height, encoding, count, reserved) != (64, 64, 1, 8192, 0):
             raise ValueError("art record")
     return dict(tracks=tracks, groups=groups, members=members, artwork=arts, bytes=size)

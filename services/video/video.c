@@ -176,7 +176,7 @@ static void catalog_step(void){
     }
     if(catalog.phase==2)result=ln_storage_media_read(&catalog.file,0,catalog.header,CATALOG_HEADER_SIZE,CATALOG_GENERATION);
     else if(catalog.phase==6)result=ln_storage_media_read(&catalog.file,CATALOG_HEADER_SIZE+catalog.first[catalog.slot]*CATALOG_ROW_SIZE,catalog.pages[catalog.slot],catalog.read_size,CATALOG_GENERATION);
-    else result=ln_storage_media_open("/LINNET/VIDEOS/INDEX.VID",CATALOG_GENERATION);
+    else result=ln_storage_media_open("/.LINNET/VIDEOS/INDEX.VID",CATALOG_GENERATION);
     if(result>0)catalog.pending=true;
     else if(result<0){catalog.count=0;catalog.phase=5;++catalog.revision;}
 }

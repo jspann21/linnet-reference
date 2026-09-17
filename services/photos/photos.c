@@ -41,7 +41,7 @@ static struct {uint32_t view_started,frame_ready,io_started,max_open_us,max_read
 #define PHOTO_DIAG(code) do {} while(0)
 #define PHOTO_START() do {} while(0)
 #endif
-static const char package[]="/LINNET/PHOTOS/LIBRARY.PIM";
+static const char package[]="/.LINNET/PHOTOS/LIBRARY.PIM";
 static void clear(void*v,uint32_t n){
 #if defined(__arm__)
     extern void ln_memory_clear(void *,uint32_t);ln_memory_clear(v,n);

@@ -35,7 +35,7 @@ reinstall restores the saved boot state and installs the new build under one
 administrator approval. Reinstall preserves Linnet settings, the selected
 theme, playback history, prepared media, and all media-library indexes. Only
 the superseded OS, boot, scratch, selector, and recovery files remain in the
-single `LNETOLD0` archive. All methods preserve the existing filesystem, partitions,
+single `.LINNET/LNETOLD0` archive. All methods preserve the existing filesystem, partitions,
 media and Apple firmware payload.
 The native path saves the original MBR and firmware partition under
 `%LOCALAPPDATA%\Linnet\Installer`, verifies all Linnet storage files, writes a
@@ -82,17 +82,17 @@ Rockbox's files remain detected but inactive.
 If Rockbox Utility installs a valid Rockbox file and records a bootloader update
 after Linnet's native installation, the scan identifies Rockbox as the current
 default instead of trusting Linnet's older recovery journal. Switching back to
-Linnet then preserves the old `LINNET` folder and adopts Rockbox's reversible
+Linnet then preserves the old `.LINNET` folder and adopts Rockbox's reversible
 file-loader path.
 
 Interrupted file preparation is resumable only when every existing Linnet file
 matches the same build byte-for-byte. When a saved recovery record is available,
-**Fresh reinstall** first restores the previous boot, renames the old `LINNET`
+**Fresh reinstall** first restores the previous boot, renames the old `.LINNET`
 folder to the temporary `LNETPEND` archive, installs the current system files,
-and moves the preserved settings and media data back into the active `LINNET`
+and moves the preserved settings and media data back into the active `.LINNET`
 folder. After the new build and recovery journal verify, `LNETPEND` replaces the
-single previous-system archive at `LNETOLD0`. **Restore previous boot** restores the recorded Rockbox file or original
-native directory; it leaves media and the `LINNET` data folder in place. Always
+single previous-system archive at `.LINNET/LNETOLD0`. **Restore previous boot** restores the recorded Rockbox file or original
+native directory; it leaves media and the `.LINNET` data folder in place. Always
 use **Eject iPod** before restarting.
 
 The same workflow is available from the command line:
@@ -154,7 +154,7 @@ Music indexing uses actual FAT short aliases, with limits of 16 path components
 and 255 path bytes. Albums are grouped by album artist, with compilation and
 guest-credit handling; individual track artist credits are preserved.
 Unsupported aliases get verified compatibility copies under
-`LINNET/MUSIC`; originals remain. Missing files or alias lookup failures stop
+`.LINNET/MUSIC`; originals remain. Missing files or alias lookup failures stop
 import. Compressed audio is decoded once on the computer to count samples for
 track duration and playback progress, including files without duration headers.
 Up to four tracks are processed concurrently, and counts are cached for subsequent updates.
@@ -174,7 +174,7 @@ Menu goes back, and Select opens pan/rotation/fit controls.
 
 Use **Settings… → Prepared library recovery…** to remove an entire prepared
 library or restore previous removals. Manage original files in Windows Explorer.
-Device files move to `LINNET/TRASH` with a recovery receipt; this does not reclaim
+Device files move to `.LINNET/TRASH` with a recovery receipt; this does not reclaim
 space. Removing a video catalog entry retains its original unless that source
 is also selected. Computer cache entries are read-only.
 

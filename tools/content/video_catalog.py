@@ -32,7 +32,9 @@ def decode(data):
         raw_title=data[at+288:at+size]
         path=raw_name.split(b'\0',1)[0].decode('ascii')
         title=raw_title.split(b'\0',1)[0].decode('utf-8')
-        valid_name = path.startswith('/') and all(part and len(part.split('.')[0])<=8 and ('.' not in part or len(part.rsplit('.',1)[1])<=3) for part in path.split('/')[1:])
+        valid_name = path.startswith('/') and all((i == 1 and part.upper() == '.LINNET') or
+            (part and len(part.split('.')[0])<=8 and ('.' not in part or len(part.rsplit('.',1)[1])<=3))
+            for i,part in enumerate(path.split('/')[1:],1))
         if not valid_name or path.casefold() in names or key in keys or not title or b'\0' not in raw_title or b'\0' not in raw_name:
             raise ValueError('invalid video catalog entry')
         names.add(path.casefold()); keys.add(key)

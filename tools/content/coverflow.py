@@ -130,7 +130,7 @@ def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, I
                 cover = originals[art]
             elif art != 0xffffffff:
                 path = text(struct.unpack_from('<I', database, art_at + art * 32 + 8)[0])
-                raw = (root / path.removeprefix('/LINNET/')).read_bytes()
+                raw = (root / path.removeprefix('/.LINNET/')).read_bytes()
                 pixels = struct.unpack('<4096H', raw)
                 cover = Image.new('RGB', (64, 64))
                 cover.putdata([((p >> 11) * 255 // 31, ((p >> 5) & 63) * 255 // 63, (p & 31) * 255 // 31) for p in pixels])

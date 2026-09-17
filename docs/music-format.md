@@ -4,7 +4,7 @@
 and 128 MiB of database bytes. All integers are little endian. Offsets and sizes
 are checked with subtraction before reads; no file bytes are cast to C structs.
 Tables are contiguous in the order below, with no padding or trailing bytes.
-The file is `/LINNET/LIBRARY.PDB`; media and artwork have FAT-compatible 8.3 names.
+The file is `/.LINNET/LIBRARY.PDB`; media and artwork have FAT-compatible 8.3 names.
 The compiler packs group names in browse order, followed by track titles, search
 keys and remaining deduplicated strings. All references use rewritten pool
 offsets; record IDs, ordering and format remain unchanged. Existing databases
@@ -83,7 +83,7 @@ Track IDs are the first eight SHA-256 bytes of UTF-8 `track:` plus the exact
 source-relative POSIX path, decoded as little-endian u64. Metadata edits preserve
 IDs; moving a source changes its ID. The compiler rejects ID and short-name
 collisions. The staged name is uppercase low-32-bit ID hex plus an extension of
-at most three characters, e.g. `/LINNET/MUSIC/7A31B298.WAV`. AIFF/AIFC use `AIF`,
+at most three characters, e.g. `/.LINNET/MUSIC/7A31B298.WAV`. AIFF/AIFC use `AIF`,
 FLAC uses `FLC`, Opus uses `OPS`. Original relative paths are retained only in
 the host manifest. In-place imports instead reference the existing file using its
 actual FAT 8.3 alias, resolved on the mounted volume. Paths are absolute, at most
@@ -161,7 +161,7 @@ still receives the current index.
 | 24 | u32 | CRC32/ISO-HDLC of RGB565 data |
 | 28 | u32 | Reserved zero |
 
-Artwork files are `/LINNET/ART/XXXXXXXX.RGB`, where the name uses the first four
+Artwork files are `/.LINNET/ART/XXXXXXXX.RGB`, where the name uses the first four
 SHA-256 bytes as hex. The compiler optionally uses Pillow to crop/resize a folder's
 `cover.png`, `cover.jpg`, `folder.jpg`, or `Folder.jpg`. It bounds input file size
 to 32 MiB and decoded dimensions to 16 million pixels. Missing artwork uses the

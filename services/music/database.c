@@ -218,6 +218,12 @@ bool ln_music_db_safe_path(const char *path)
 {
     if(!path||path[0]!='/')return false;
     uint32_t i=1,components=0;
+    if(path[1]=='.'){
+        static const char prefix[]="/.LINNET/";
+        for(uint32_t j=0;j<sizeof prefix-1u;++j)if(path[j]!=prefix[j])return false;
+        i=sizeof prefix-1u;components=1;
+        if(!path[i])return false;
+    }
     while(path[i]){
         uint32_t name=0,ext=0;bool dot=false;
         while(path[i]&&path[i]!='/'){

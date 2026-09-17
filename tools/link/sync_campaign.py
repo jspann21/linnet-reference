@@ -83,7 +83,7 @@ def cycle(root, image_path, port, disk_number, plan_path, plan_sha256, progress=
                    disk_number=disk_number, started_at=datetime.now(timezone.utc).isoformat(),
                    passed=False, device_write_attempted=False,
                    state_change_attempted=False, phase='identity', steps=[],
-                   file=dict(path='LINNET/'+FILE_NAME, bytes=FILE_BYTES, sha256=expected_hash,
+                   file=dict(path='.LINNET/'+FILE_NAME, bytes=FILE_BYTES, sha256=expected_hash,
                              algorithm='SHA256("Linnet HOSTSYNC\\0" || LE32(index)), index0..32767'))
     _save(receipt_path, receipt)
     session = None
@@ -121,7 +121,7 @@ def cycle(root, image_path, port, disk_number, plan_path, plan_sha256, progress=
         observation = wait_for_disk(plan['expected_storage_serial'], 30)
         mount, identity = mounted()
         record('mounted', observation=observation, identity=identity, mount=str(mount))
-        destination = mount / 'LINNET'
+        destination = mount / '.LINNET'
         if (not destination.is_dir() or destination.is_symlink() or
             destination.resolve(strict=True).parent != mount.resolve(strict=True)):
             raise ValueError('expected existing LINNET directory on identified volume')

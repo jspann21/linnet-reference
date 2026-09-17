@@ -387,6 +387,20 @@ static int bpb(struct ln_fat32*f){
 static int component(struct ln_fat32*f){
     if(++f->component>16)return LN_FAT32_BOUNDS;
     for(unsigned i=0;i<11;++i)f->name[i]=' ';
+    f->system_long_name=false;f->system_long_match=false;
+    static const char system_name[]=".LINNET";
+    unsigned match=0;
+    while(match<sizeof system_name-1u){
+        uint8_t c=(uint8_t)f->path[f->path_cursor+match];
+        if(c>='a'&&c<='z')c-=32;
+        if(c!=(uint8_t)system_name[match])break;
+        ++match;
+    }
+    if(match==sizeof system_name-1u&&f->cluster==f->root&&f->component==1u&&
+       (!f->path[f->path_cursor+match]||f->path[f->path_cursor+match]=='/')){
+        f->system_long_name=true;f->path_cursor+=match;
+        if(f->operation==OP_CREATE&&!f->path[f->path_cursor])return LN_FAT32_UNSUPPORTED;
+    }
     unsigned base=0,extension=0;bool dot=false;
     while(f->path[f->path_cursor]&&f->path[f->path_cursor]!='/'){
         uint8_t c=(uint8_t)f->path[f->path_cursor++];
@@ -398,7 +412,7 @@ static int component(struct ln_fat32*f){
         if(!dot){if(base==8)return LN_FAT32_UNSUPPORTED;f->name[base++]=c;}
         else {if(extension==3)return LN_FAT32_UNSUPPORTED;f->name[8+extension++]=c;}
     }
-    if(!base||(dot&&!extension))return LN_FAT32_UNSUPPORTED;
+    if(!f->system_long_name&&(!base||(dot&&!extension)))return LN_FAT32_UNSUPPORTED;
     if(f->path[f->path_cursor]=='/'&&!f->path[f->path_cursor+1])return LN_FAT32_ARGUMENT;
     f->directory_sector_index=0;f->directory_entry_index=0;f->chain_steps=0;
     if(f->operation==OP_CREATE)f->slot_found=false;
@@ -451,7 +465,25 @@ int ln_fat32_poll(struct ln_fat32*f){
                 }
                 return finish(f,LN_FAT32_NOT_FOUND);
             }
-            if(p[0]==0xe5||(p[11]&8u)||!equal(p,f->name,11))continue;
+            if(f->system_long_name){
+                if(p[11]==15u){
+                    static const uint8_t positions[13]={1,3,5,7,9,14,16,18,20,22,24,28,30};
+                    static const char system_name[]=".LINNET";
+                    bool valid=p[0]==0x41u&&!p[12]&&!ln_read_le16(p+26);
+                    for(uint32_t i=0;i<13u;++i){
+                        uint16_t c=ln_read_le16(p+positions[i]);
+                        if(c>='a'&&c<='z')c-=32;
+                        uint16_t expected=i<7u?(uint8_t)system_name[i]:i==7u?0u:0xffffu;
+                        if(c!=expected)valid=false;
+                    }
+                    f->system_long_match=valid;f->system_long_checksum=p[13];continue;
+                }
+                uint8_t checksum=0;
+                for(uint32_t i=0;i<11u;++i)checksum=(uint8_t)(((checksum&1u)<<7)+(checksum>>1)+p[i]);
+                bool valid=f->system_long_match&&checksum==f->system_long_checksum&&
+                           p[0]!=0xe5&&!(p[11]&8u)&&(p[11]&16u);
+                f->system_long_match=false;if(!valid)continue;
+            }else if(p[0]==0xe5||(p[11]&8u)||!equal(p,f->name,11))continue;
             uint32_t cluster=((uint32_t)ln_read_le16(p+20)<<16)|ln_read_le16(p+26);
             uint32_t size=ln_read_le32(p+28);
             if((size||(p[11]&16u))&&!cluster_valid(f,cluster))return finish(f,LN_FAT32_CORRUPT);

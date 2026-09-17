@@ -1037,7 +1037,7 @@ class MediaWindow(QMainWindow):
     def choose_videos(self):
         if not self.inventory or self.busy:
             return
-        sources = [p for p in self.inventory['Videos']['files'] if Path(p).suffix.lower() not in ('.ipv', '.ipvf')]
+        sources = [p for p in self.inventory['Videos']['files'] if Path(p).suffix.lower() not in media.native_video_extensions(self.identity)]
         dialog = QDialog(self); dialog.setWindowTitle('Choose videos to convert'); dialog.resize(700, 520)
         layout = box(dialog, margins=(24, 24, 24, 24)); layout.addWidget(label('Choose video originals', 'section'))
         layout.addWidget(label('Prepared IPVF files are included automatically. Select originals to convert.', 'muted', True))

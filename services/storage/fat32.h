@@ -83,6 +83,8 @@ struct ln_fat32 {
     int result;
     char path[LN_FAT32_PATH_MAX+1];
     uint8_t name[11];
+    bool system_long_name,system_long_match;
+    uint8_t system_long_checksum;
     uint8_t sector[512] __attribute__((aligned(32)));
     uint8_t mirror[512] __attribute__((aligned(32)));
 };
@@ -91,7 +93,8 @@ void ln_fat32_init(struct ln_fat32 *, const struct ln_fat32_config *);
  * FAT32 sectors are supported. Mount/open/read/write/sync return admission. */
 bool ln_fat32_mount(struct ln_fat32 *,uint64_t lba,uint64_t sectors,uint32_t generation);
 /* Absolute, bounded 8.3 paths, depth <=16. LFN aliases may be opened using
- * their on-disk 8.3 names; long-name lookup is explicitly unsupported. */
+ * their on-disk 8.3 names. The root .LINNET directory also supports its verified
+ * single-entry FAT long name, independent of its generated short alias. */
 bool ln_fat32_open(struct ln_fat32 *,const char *path,uint32_t generation);
 /* Same open semantics for one leaf under an already opened directory handle.
  * Rejects stale/unregistered parents; all directory-set proof remains required. */

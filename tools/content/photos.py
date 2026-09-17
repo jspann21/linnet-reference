@@ -15,7 +15,7 @@ HEADER, ALBUM, PHOTO, LEVEL, TILE = 512, 32, 64, 24, 8
 MAX_FILE, MAX_PHOTOS, MAX_ALBUMS, MAX_TILES = 0x7fffffff, 65535, 4096, 1_000_000
 MAX_STRINGS, MAX_LEVELS = 16 * 1024 * 1024, 6
 THUMB, EDGE, NO_INDEX = 64, 32, 0xffffffff
-DEVICE_PATH = '/LINNET/PHOTOS/LIBRARY.PIM'
+DEVICE_PATH = '/.LINNET/PHOTOS/LIBRARY.PIM'
 EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp'}
 FAT_PATH = re.compile(r'(?:/[A-Z0-9_]{1,8}(?:\.[A-Z0-9_]{1,3})?)+')
 

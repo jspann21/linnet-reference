@@ -6,7 +6,7 @@ from pathlib import Path
 import time
 import uuid
 from .ipvf_validate import inspect_file
-from .publish import _plain, _hash, _copy_verified, _same_target, _volume_guard, inspect_target, _exclusive, _write_receipt, _write_verified
+from .publish import _plain, _hash, _copy_verified, _same_target, _volume_guard, inspect_target, _exclusive, _write_receipt, _write_verified, _finish_backups
 from .video_catalog import encode as _encode_catalog, decode as _read_catalog, read_file as _read_catalog_file
 MAX_FILE=0x7fffffff
 
@@ -83,11 +83,12 @@ def publish_video(package, *, disk_number, expected_disk_serial,
 def _publish(package, candidate, identity, root, number, serial, volume, drive, library_key=None, title=None):
     def guard():
         _volume_guard(identity)
-    linnet, directory = root/'LINNET', root/'LINNET'/'VIDEOS'
+    linnet, metadata = root/'.LINNET', root/'.LINNET'/'VIDEOS'
+    directory = root/'Videos'/'IPVF'
     key = hashlib.sha256(str(library_key if library_key is not None else package.stem).encode('utf-8')).digest()
     filename = video_filename(title or package.stem)
-    active, backups = directory/filename, directory/'BACKUP'
-    catalog = directory/'INDEX.VID'
+    active, backups = directory/filename, metadata/'BACKUP'
+    catalog = metadata/'INDEX.VID'
     catalog_before = None
     _plain(catalog, root)
     entries = []
@@ -100,7 +101,7 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
         active = directory / (Path(filename).stem + ' [' + key.hex()[:8] + '].ipvf')
         if active.exists():
             raise ValueError('Video filename already exists; rename the source first')
-    path = '/LINNET/VIDEOS/' + key.hex()[:8].upper() + '.IPV'
+    path = '/VIDEOS/IPVF/' + key.hex()[:8].upper() + '.IPV'
     for entry in entries:
         if entry[1].casefold() == path.casefold() and entry[0] != key:
             raise ValueError('video library filename collision; use a different library key')
@@ -112,7 +113,7 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
     entries.sort(key=lambda entry: (entry[2].casefold(), entry[1]))
     catalog_bytes = _encode_catalog(entries)
     guard()
-    for path in (linnet, directory, active, backups):
+    for path in (linnet, metadata, directory.parent, directory, active, backups):
         _plain(path, root)
     previous = None
     if active.exists():
@@ -137,8 +138,9 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
         _write_receipt(receipt_path, receipt)
 
     record()
+    recovery_paths = []
     try:
-        for path in (linnet, directory, backups):
+        for path in (linnet, metadata, directory.parent, directory):
             guard()
             _plain(path, root)
             path.mkdir(exist_ok=True)
@@ -146,9 +148,11 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
         if previous:
             receipt['phase'] = 'backing-up-previous'
             record()
+            backups.mkdir(exist_ok=True)
             backup = backups/(previous['sha256'][:8].upper()+'.IPV')
             _copy_verified(active, backup, previous, root, guard)
             receipt['backup'] = str(backup)
+            recovery_paths.append(backup)
         temporary = directory/('P'+uuid.uuid4().hex[:7].upper()+'.TMP')
         receipt.update(phase='copying-candidate', temporary=str(temporary))
         record()
@@ -185,6 +189,7 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
         if (catalog.read_bytes() if catalog.exists() else None) != catalog_before:
             raise RuntimeError('video catalog changed during publication')
         if catalog_before is not None:
+            backups.mkdir(exist_ok=True)
             saved = backups/(hashlib.sha256(catalog_before).hexdigest()[:8].upper()+'.VID')
             _plain(saved, root)
             if saved.exists():
@@ -194,7 +199,10 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
                 _write_verified(saved, catalog_before, 'video catalog backup readback mismatch')
             if saved.read_bytes()!=catalog_before:
                 raise OSError('video catalog backup readback mismatch')
-        temp_index = directory/('I'+uuid.uuid4().hex[:7].upper()+'.TMP')
+            recovery_paths.append(saved)
+            receipt['catalog_backup'] = str(saved)
+            record()
+        temp_index = metadata/('I'+uuid.uuid4().hex[:7].upper()+'.TMP')
         guard(); _plain(temp_index, root)
         _write_verified(temp_index, catalog_bytes, 'video catalog readback mismatch')
         guard(); _plain(catalog, root)
@@ -202,6 +210,7 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
         if catalog.read_bytes()!=catalog_bytes:
             raise OSError('published video catalog readback mismatch')
         receipt['catalog'] = str(catalog)
+        _finish_backups(receipt, recovery_paths, root, guard)
         receipt.update(passed=True, phase='published', finished_at=time.time(), package=str(active),
                        frames=candidate['frames'])
         record()
@@ -223,7 +232,7 @@ def index_ipvf(source, *, disk_number, expected_disk_serial,
     root = Path(identity['root']).resolve(strict=True)
     _plain(source, root)
     source = source.resolve(strict=True)
-    if not source.is_relative_to(root) or source.suffix.lower() not in ('.ipvf', '.ipv'):
+    if not source.is_relative_to(root) or source.suffix.lower() != '.ipvf':
         raise ValueError('native IPVF source must already be on this iPod')
     before = source.stat()
     candidate = inspect_file(source)
@@ -234,8 +243,8 @@ def index_ipvf(source, *, disk_number, expected_disk_serial,
     path = device_video_path(source, root)
     key = hashlib.sha256(str(library_key or source.relative_to(root)).replace('\\', '/').encode('utf-8')).digest()
     label = _catalog_title(title or source.stem)
-    catalog = root/'LINNET'/'VIDEOS'/'INDEX.VID'
-    backups = root/'LINNET'/'VIDEOS'/'BACKUP'
+    catalog = root/'.LINNET'/'VIDEOS'/'INDEX.VID'
+    backups = root/'.LINNET'/'VIDEOS'/'BACKUP'
     receipt_path = Path(os.environ.get('LOCALAPPDATA', source.parent))/'Linnet'/'Media'/('index-ipvf-'+uuid.uuid4().hex+'.json')
     receipt = dict(operation='index-ipvf', passed=False, phase='validated', identity=identity,
                    source=str(source), device_path=path, frames=candidate['frames'], media_id=candidate['media_id'],
@@ -255,16 +264,20 @@ def index_ipvf(source, *, disk_number, expected_disk_serial,
             if len(entries) > 256: raise ValueError('video library supports up to 256 videos')
             data = _encode_catalog(entries)
             _same_target(identity, inspect_target(disk_number, expected_disk_serial, expected_volume_serial, expected_drive))
-            backups.mkdir(parents=True, exist_ok=True)
+            catalog.parent.mkdir(parents=True, exist_ok=True)
             if previous is not None:
+                backups.mkdir(exist_ok=True)
                 saved = backups/(hashlib.sha256(previous).hexdigest()[:8].upper()+'.VID')
                 if saved.exists() and saved.read_bytes() != previous: raise RuntimeError('video catalog backup collision')
                 if not saved.exists():
                     _write_verified(saved, previous, 'video catalog backup readback mismatch')
+                receipt['catalog_backup'] = str(saved)
+                record()
             temporary = catalog.parent/('I'+uuid.uuid4().hex[:7].upper()+'.TMP')
             _write_verified(temporary, data, 'video catalog staging readback mismatch')
             _volume_guard(identity); os.replace(temporary, catalog)
             if catalog.read_bytes() != data: raise OSError('video catalog readback mismatch')
+            _finish_backups(receipt, [saved] if previous is not None else [], root, lambda: _volume_guard(identity))
             receipt.update(passed=True, phase='published', finished_at=time.time(), catalog=str(catalog)); record(); return receipt
         except Exception as exc:
             receipt.update(error=str(exc), finished_at=time.time()); record()

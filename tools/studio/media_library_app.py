@@ -151,7 +151,7 @@ class LibraryWindow:
         libraries = [row['kind'] for row in rows if row.get('category') == 'library']
         if libraries:
             names += "\n\nThis removes the ENTIRE published library for: " + ", ".join(libraries)
-        if not messagebox.askokcancel("Remove selected content", f"Remove these {len(rows)} item(s)?\n\n{names}\n\nFiles are moved to LINNET\\TRASH on the iPod for recovery; this does not free disk space. Video catalog entries are removed immediately. After removing Music, Notes or Photos source files, run Prepare & update for those folders to refresh their libraries.", parent=self.window):
+        if not messagebox.askokcancel("Remove selected content", f"Remove these {len(rows)} item(s)?\n\n{names}\n\nFiles are moved to .LINNET\\TRASH on the iPod for recovery; this does not free disk space. Video catalog entries are removed immediately. After removing Music, Notes or Photos source files, run Prepare & update for those folders to refresh their libraries.", parent=self.window):
             return
         self.status.set("Removing selected items… Leave this window open.")
         self.work(lambda: media_library.remove_items(self.identity, rows), "removed")

@@ -59,7 +59,7 @@ void ln_notes_step(struct ln_ui_state*s){
     }
     if(active&&phase&&!pending){
         uint32_t body_offset=16u+count*64u+selected*NOTES_RECORD;
-        int result=phase==1?ln_storage_media_open("/LINNET/NOTES/LIBRARY.NNT",generation):
+        int result=phase==1?ln_storage_media_open("/.LINNET/NOTES/LIBRARY.NNT",generation):
             phase==2?ln_storage_media_read(&file,0,header,16,generation):
             phase==3?ln_storage_media_read(&file,16u+request_first*64u,cache,request_count*64u,generation):
             phase==4?ln_storage_media_read(&file,body_offset,header,4u,generation):

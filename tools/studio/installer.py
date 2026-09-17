@@ -28,10 +28,10 @@ from tools.studio.targets import ROOT, TARGETS
 
 CORE_FILES = ("OS0.LOS", "OS1.LOS", "STATE0.BIN", "STATE1.BIN",
               "SCRATCH.BIN", "BOOT0.BIN", "BOOT1.BIN")
-JOURNAL = Path("LINNET/RECOVERY/INSTALL.JSON")
+JOURNAL = Path(".LINNET/RECOVERY/INSTALL.JSON")
 REINSTALL_SYSTEM_ENTRIES = {
     "OS0.LOS", "OS1.LOS", "BOOT0.BIN", "BOOT1.BIN", "SCRATCH.BIN",
-    "WORK.BIN", "RBPATH.CFG", "RECOVERY",
+    "WORK.BIN", "RBPATH.CFG", "RECOVERY", "LNETOLD0",
 }
 INSTALLATION_METHODS = {
     "rockbox-loader": dict(
@@ -208,7 +208,7 @@ def build_description(state):
 def installed_state(root, target_id):
     root = Path(root)
     capacity = TARGETS[target_id]["os_capacity_bytes"]
-    directory = root / "LINNET"
+    directory = root / ".LINNET"
     present = [name for name in CORE_FILES if (directory / name).exists()]
     if not present:
         return dict(state="absent", present=0, required=len(CORE_FILES))
@@ -287,7 +287,7 @@ def _resume_context(identity, linnet):
                 continue
             matches = True
             for name in CORE_FILES:
-                installed, expected = root / "LINNET" / name, package / name
+                installed, expected = root / ".LINNET" / name, package / name
                 if installed.exists() and (installed.is_symlink() or installed.read_bytes() != expected.read_bytes()):
                     matches = False
                     break
@@ -422,7 +422,7 @@ def assess(identity):
         except (ValueError, OSError):
             marker = None
     if marker is None and linnet["state"] != "absent":
-        bootstrap_path = root / "LINNET" / "RECOVERY" / "BOOTSTRAP.JSON"
+        bootstrap_path = root / ".LINNET" / "RECOVERY" / "BOOTSTRAP.JSON"
         if bootstrap_path.is_file() and not bootstrap_path.is_symlink():
             try:
                 from tools.studio.bootstrap import status as bootstrap_status
@@ -442,7 +442,7 @@ def assess(identity):
         marker and marker.get("strategy") == "rockbox-file" and marker.get("phase") == "installed")
     if marker and marker.get("strategy") == "rockbox-file" and not rockbox["selector_compatible"]:
         rockbox["selector_compatible"] = _selector_rockbox(
-            root / "LINNET" / "RECOVERY" / "ORIGINAL.IPOD", spec)
+            root / ".LINNET" / "RECOVERY" / "ORIGINAL.IPOD", spec)
     rockbox["supersedes_linnet_recovery"] = external_rockbox
     if marker is None or marker.get("phase") == "restored":
         resume = _resume_context(identity, linnet)
@@ -715,7 +715,7 @@ def _install_selector_config(identity):
     struct.pack_into("<I", data, 8, len(encoded))
     data[12:12 + len(encoded)] = encoded
     struct.pack_into("<I", data, 508, zlib.crc32(data[:508]))
-    target = root / "LINNET" / "RBPATH.CFG"
+    target = root / ".LINNET" / "RBPATH.CFG"
     from tools.content.publish import _plain
     _plain(target, root)
     if target.exists():
@@ -760,7 +760,7 @@ def _install_rockbox(identity, artifacts, progress, transaction, archive=None):
     progress("Preparing Linnet’s transactional storage files…")
     storage_receipt = _package_storage(identity, artifacts, transaction, archive)
     boot_path = Path(identity["root"]).joinpath(*TARGETS[identity["target_id"]]["installer"]["file_loader"].split("/"))
-    bootstrap_journal = Path(identity["root"]) / "LINNET" / "RECOVERY" / "BOOTSTRAP.JSON"
+    bootstrap_journal = Path(identity["root"]) / ".LINNET" / "RECOVERY" / "BOOTSTRAP.JSON"
     original_sha = (json.loads(bootstrap_journal.read_text(encoding="utf-8"))["original_sha256"]
                     if bootstrap_journal.is_file() else _sha(boot_path.read_bytes()))
     progress("Backing up the Rockbox loader and installing Linnet’s loader…")
@@ -814,7 +814,7 @@ def _archive_destination(root):
     """Reserve one FAT-safe staging name while retaining the last good archive."""
     from tools.content.publish import _plain
     root = Path(root).resolve(strict=True)
-    source = root / "LINNET"
+    source = root / ".LINNET"
     _plain(source, root)
     if not source.is_dir() or source.is_symlink():
         raise ValueError("the existing LINNET directory is unsafe or missing")
@@ -828,7 +828,7 @@ def _archive_destination(root):
 def _archive_linnet(root, destination):
     from tools.content.publish import _plain
     root, destination = Path(root).resolve(strict=True), Path(destination)
-    source = root / "LINNET"
+    source = root / ".LINNET"
     _plain(source, root)
     _plain(destination, root)
     if destination.parent != root or destination.exists() or destination.is_symlink():
@@ -843,17 +843,26 @@ def _finalize_reinstall_archive(root, staging):
     """Rotate a verified staging archive into the single previous-system slot."""
     from tools.content.publish import _plain
     root = Path(root).resolve(strict=True)
+    _plain(Path(staging).absolute(), root)
     staging = Path(staging).resolve(strict=True)
-    previous = root / "LNETOLD0"
+    active = root / ".LINNET"
+    previous = active / "LNETOLD0"
+    _plain(active, root)
     _plain(staging, root)
     _plain(previous, root)
     if (staging.parent != root or staging.name != "LNETPEND" or
-            staging.is_symlink() or not staging.is_dir()):
+            staging.is_symlink() or not staging.is_dir() or not active.is_dir()):
         raise ValueError("the pending Linnet reinstall archive is unsafe or missing")
-    if previous.exists() or previous.is_symlink():
-        if previous.is_symlink() or not previous.is_dir() or previous.resolve().parent != root:
+    # The old archive travels with LINNET into staging during a reinstall.
+    # Retire it only after the new installation verifies, without nesting archives.
+    obsolete = (previous, staging / "LNETOLD0")
+    for path in obsolete:
+        _plain(path, root)
+        if path.exists() and (not path.is_dir() or path.resolve().parent != path.parent):
             raise ValueError("the previous Linnet system archive is unsafe")
-        shutil.rmtree(previous)
+    for path in obsolete:
+        if path.exists():
+            shutil.rmtree(path)
     staging.replace(previous)
     if staging.exists() or previous.is_symlink() or not previous.is_dir():
         raise OSError("the previous Linnet system archive was not rotated completely")
@@ -866,11 +875,13 @@ def _restore_reinstall_data(root, archive):
     from tools.studio.storage import record
     from tools.studio.update_history import _read_record
     root = Path(root).resolve(strict=True)
-    archive = Path(archive).resolve(strict=True)
-    active = root / "LINNET"
+    active = root / ".LINNET"
+    archive = Path(archive).absolute()
+    _plain(archive, root)
+    archive = archive.resolve(strict=True)
     _plain(active, root)
     _plain(archive, root)
-    if (archive.parent != root or archive.name not in {"LNETPEND", "LNETOLD0"} or
+    if (archive not in {root / "LNETPEND", active / "LNETOLD0"} or
             archive.is_symlink() or not archive.is_dir() or
             active.is_symlink() or not active.is_dir()):
         raise ValueError("the Linnet reinstall archive or active directory is unsafe")

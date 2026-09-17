@@ -369,7 +369,7 @@ class MediaWorkspace(MediaApp):
         if self.busy or not self.inventory or not self.video_enabled:
             return
         sources = self.inventory['Videos'].get('files', [])
-        native_extensions = {'.ipv', '.ipvf'}
+        native_extensions = media.native_video_extensions(self.identity())
         conversion_sources = [path for path in sources if Path(path).suffix.lower() not in native_extensions]
         native_sources = [path for path in sources if Path(path).suffix.lower() in native_extensions]
         root = Path(self.identity()['root'])

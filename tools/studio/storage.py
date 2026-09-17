@@ -150,7 +150,7 @@ def provision(package, mount, serial):
     if any(content[name] != record(b'') for name in ('STATE0.BIN', 'STATE1.BIN')) or any(content['SCRATCH.BIN']):
         raise ValueError('initial state/scratch content mismatch')
     root, identity = _mount_identity(mount, serial)
-    destination = root / 'LINNET'
+    destination = root / '.LINNET'
     _plain(destination, root)
     if destination.exists() and (destination.is_symlink() or destination.resolve().parent != root):
         raise ValueError('unsafe LINNET directory')

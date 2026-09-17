@@ -48,12 +48,12 @@ def install(mount, image, envelope, expected_original):
     report=json.loads(report_path.read_text())
     if report.get('kind')!='boot' or report.get('build_id')!=identity['build_id']:
         raise ValueError('matching Boot build report is required')
-    recovery=mount/'LINNET/RECOVERY';_plain(recovery,mount);recovery.mkdir(parents=True,exist_ok=True)
+    recovery=mount/'.LINNET/RECOVERY';_plain(recovery,mount);recovery.mkdir(parents=True,exist_ok=True)
     state_path=recovery/'BOOTSTRAP.JSON'
     backup=recovery/'ORIGINAL.IPOD'
     expected_state=dict(target_id=identity['target_id'],build_id=identity['build_id'],
                         entry_mode='existing-file-bootloader',target=install_spec['file_loader'],
-                        backup='LINNET/RECOVERY/ORIGINAL.IPOD',original_sha256=expected_original,
+                        backup='.LINNET/RECOVERY/ORIGINAL.IPOD',original_sha256=expected_original,
                         candidate_sha256=digest(candidate))
     if state_path.exists():
         state=json.loads(state_path.read_text())
@@ -99,8 +99,8 @@ def install(mount, image, envelope, expected_original):
 def status(mount):
     mount=mount.resolve(strict=True)
     from tools.content.publish import _plain
-    _plain(mount/'LINNET/RECOVERY/BOOTSTRAP.JSON',mount)
-    state=json.loads((mount/'LINNET/RECOVERY/BOOTSTRAP.JSON').read_text())
+    _plain(mount/'.LINNET/RECOVERY/BOOTSTRAP.JSON',mount)
+    state=json.loads((mount/'.LINNET/RECOVERY/BOOTSTRAP.JSON').read_text())
     # Paths in external journal are never used to select write destinations.
     if not isinstance(state.get('target_id'),str):
         raise ValueError('unsupported bootstrap journal')
@@ -113,18 +113,18 @@ def status(mount):
     target=mount.joinpath(*relative.split('/'));_plain(target,mount)
     result=dict(state)
     result['active_sha256']=digest(target.read_bytes())
-    result['backup_valid']=digest((mount/'LINNET/RECOVERY/ORIGINAL.IPOD').read_bytes())==state['original_sha256']
+    result['backup_valid']=digest((mount/'.LINNET/RECOVERY/ORIGINAL.IPOD').read_bytes())==state['original_sha256']
     return result
 
 def restore(mount):
     mount=mount.resolve(strict=True);state=status(mount)
     from tools.content.publish import _plain
-    _plain(mount/'LINNET/RECOVERY/ORIGINAL.IPOD',mount)
+    _plain(mount/'.LINNET/RECOVERY/ORIGINAL.IPOD',mount)
     if not state['backup_valid']:
         raise ValueError('recovery backup hash mismatch')
     if state['active_sha256'] not in (state['original_sha256'],state['candidate_sha256']):
         raise ValueError('boot file was changed independently; refusing to overwrite')
-    original=(mount/'LINNET/RECOVERY/ORIGINAL.IPOD').read_bytes()
+    original=(mount/'.LINNET/RECOVERY/ORIGINAL.IPOD').read_bytes()
     from tools.studio.targets import TARGETS
     relative=TARGETS[state['target_id']]['installer']['file_loader']
     target=mount.joinpath(*relative.split('/'));_plain(target,mount)
@@ -136,5 +136,5 @@ def restore(mount):
     if digest(target.read_bytes())!=state['original_sha256']:
         raise OSError('restored boot file failed verification')
     state['phase']='restored';state['active_sha256']=state['original_sha256']
-    state_write(mount/'LINNET/RECOVERY/BOOTSTRAP.JSON',state)
+    state_write(mount/'.LINNET/RECOVERY/BOOTSTRAP.JSON',state)
     return state

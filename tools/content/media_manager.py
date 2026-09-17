@@ -13,12 +13,13 @@ import shutil
 import stat
 import subprocess
 import time
+import unicodedata
 import uuid
 
 from .publish import _plain, _hash, _same_target, _volume_guard, inspect_target
 
 KINDS = ("Music", "Notes", "Photos", "Videos")
-VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".mkv", ".avi", ".webm", ".mpg", ".mpeg", ".wmv", ".ipvf", ".ipv"}
+VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".mkv", ".avi", ".webm", ".mpg", ".mpeg", ".wmv", ".ipvf"}
 
 
 def extensions(kind):
@@ -93,6 +94,7 @@ def _identify(identity):
                 model_number=detected["retail_os"].get("model_number"),
                 regulatory_model=(spec["retail"]["regulatory_models"] or [None])[0],
                 media_profile=dict(video_enabled=enabled, video_fps=fps, video_color=color,
+                    video_extensions=spec["media_video_extensions"],
                     photo_width=photo_size[0],photo_height=photo_size[1],
                     video_width=video_size[0],video_height=video_size[1],
                     max_read_sectors=spec["storage_max_read_sectors"]))
@@ -102,6 +104,10 @@ def supported_kinds(identity):
     """Return the media services declared by the resolved device target."""
     profile = identity.get("media_profile", {})
     return tuple(kind for kind in KINDS if kind != "Videos" or profile.get("video_enabled", True))
+
+
+def native_video_extensions(identity=None):
+    return set((identity or {}).get("media_profile", {}).get("video_extensions", [".ipvf"]))
 
 
 def target_args(identity):
@@ -176,7 +182,7 @@ def preparation_option(kind, identity, photo_dimension=640, music_verification='
     """Shared preparation version for compilation and library readiness."""
     if kind == 'Music':
         art_version = 'art3' if identity['target_id'] == 'ipod4g-q21' else 'art2'
-        return f"{music_verification}-duration-search-names-album-owner-title-order1-{art_version}-{identity['target_id']}"
+        return f"{music_verification}-duration-search-names-album-owner-title-order1-music-folder1-{art_version}-{identity['target_id']}"
     return photo_dimension if kind == 'Photos' else 'default'
 
 
@@ -302,6 +308,53 @@ def restore_skipped_files(identity, items):
     return restored
 
 
+def _music_import_name(name):
+    # Non-ASCII FAT aliases cannot be opened by the firmware. Keep readable
+    # names, transliterating accents and punctuation before Windows makes aliases.
+    punctuation = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"',
+                                "‐": "-", "‑": "-", "–": "-", "—": "-", "…": "..."})
+    normalized = unicodedata.normalize("NFD", name.translate(punctuation))
+    normalized = "".join(c for c in normalized if not unicodedata.combining(c))
+    if normalized.isascii():
+        return normalized.replace('"', "'")
+    # A readable ASCII prefix also gives names in other scripts a usable alias.
+    return "Music - " + name
+
+
+def _normalize_music_paths(root, checkpoint, renamed):
+    from .music import device_media_path, UnsupportedMediaPath
+    directories = source_folders(root, "Music")
+    while directories:
+        folder = directories.pop()
+        _plain(folder, root)
+        for path in sorted(folder.iterdir()):
+            checkpoint()
+            _plain(path, root)
+            directory = path.is_dir()
+            if not directory and path.suffix.lower() not in extensions("Music"):
+                continue
+            try:
+                device_media_path(path, root)
+            except UnsupportedMediaPath:
+                name = _music_import_name(path.name)
+                if name == path.name:
+                    raise ValueError(f"Music path is too long or deep; move it closer to /Music: {path}")
+                destination = path.with_name(name)
+                number = 2
+                while destination.exists():
+                    candidate = f"{name} ({number})" if directory else f"{Path(name).stem} ({number}){Path(name).suffix}"
+                    destination = path.with_name(candidate)
+                    number += 1
+                _plain(destination, root)
+                checkpoint()
+                path.rename(destination)
+                renamed(path, destination)
+                path = destination
+                device_media_path(path, root)
+            if directory:
+                directories.append(path)
+
+
 def additions(root, pending):
     """Resolve selected files/folders to concrete destinations without writing."""
     root = Path(root).resolve(strict=True)
@@ -320,6 +373,8 @@ def additions(root, pending):
             if not source.is_dir() and path.suffix.lower() not in extensions(kind):
                 raise ValueError(f"{path.name} is not a supported {kind.lower()} source.")
             relative = Path(source.name) / path.relative_to(source) if source.is_dir() else Path(source.name)
+            if kind == "Music":
+                relative = Path(*(_music_import_name(part) for part in relative.parts))
             destination = root / kind / relative
             _plain(destination, root)
             key = str(destination).casefold()
@@ -377,7 +432,8 @@ def _outputs_match(root, outputs):
         if not isinstance(name, str) or not isinstance(digest, str):
             return False
         relative = Path(name)
-        if relative.is_absolute() or relative.drive or ".." in relative.parts or not relative.parts or relative.parts[0] != "LINNET":
+        if (relative.is_absolute() or relative.drive or ".." in relative.parts or not relative.parts or
+                relative.parts[0].casefold() not in {".linnet", "music", "videos"}):
             return False
         path = root / relative
         try:
@@ -393,12 +449,21 @@ class Cancelled(Exception):
     pass
 
 
-def video_jobs(root, pending=(), selection=None, skipped=()):
+def video_jobs(root, pending=(), selection=None, skipped=(), identity=None):
     """Resolve selected conversions plus every native IPVF already on the iPod."""
     root = Path(root).resolve(strict=True)
     folder = root / "Videos"
     available = scan(root, ("Videos",), skipped={"Videos": skipped})["Videos"]["files"]
-    native = [name for name in available if Path(name).suffix.lower() in {".ipvf", ".ipv"}]
+    from .video_catalog import read_file
+    catalog = root / ".LINNET" / "VIDEOS" / "INDEX.VID"
+    _plain(catalog, root)
+    entries = read_file(catalog)[1] if catalog.exists() else []
+    published = set()
+    for _, name, _ in entries:
+        path = root / name.lstrip('/')
+        _plain(path, root)
+        published.add(path.resolve())
+    native = [name for name in available if Path(name).suffix.lower() in native_video_extensions(identity)]
     chosen = available if selection is None else selection
     chosen = list(dict.fromkeys([*native, *chosen]))
     jobs = {}
@@ -420,6 +485,8 @@ def video_jobs(root, pending=(), selection=None, skipped=()):
         source = source.resolve(strict=True)
         if not source.is_relative_to(folder):
             raise ValueError(f"Selected video is outside this iPod's Videos folder: {source}")
+        if source.is_relative_to(folder / "IPVF") and source in published:
+            continue
         include(source, source.relative_to(folder).as_posix())
     for kind, name in pending:
         if kind != "Videos":
@@ -580,7 +647,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             video_selection = [value for value in video_selection
                                if Path(value).resolve().relative_to(root).as_posix().casefold()
                                not in skipped["Videos"]]
-        videos = video_jobs(root, pending, video_selection, skipped=skipped["Videos"]) if "Videos" in selected else []
+        videos = video_jobs(root, pending, video_selection, skipped=skipped["Videos"], identity=identity) if "Videos" in selected else []
         excluded_sources = {str(Path(value).resolve()).casefold() for value in (excluded_sources or ())}
         videos = [job for job in videos if str(Path(job["source"]).resolve()).casefold() not in excluded_sources]
         plan = additions(root, [item for item in pending if item[0] in selected and item[0] != "Videos"])
@@ -629,6 +696,19 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             report["steps"].append(dict(added=str(destination), bytes=item["bytes"]))
             record()
         checkpoint()
+        if "Music" in selected:
+            def renamed_music(old, new):
+                old_key = old.relative_to(root).as_posix().casefold()
+                new_key = new.relative_to(root).as_posix().casefold()
+                skipped["Music"] = {new_key + key[len(old_key):]
+                                    if key == old_key or key.startswith(old_key + "/") else key
+                                    for key in skipped["Music"]}
+                state.setdefault("skipped_files", {})["Music"] = sorted(skipped["Music"])
+                _save(state_path, state)
+                progress(f"Renamed for music playback: {old.name} → {new.name}")
+                report["steps"].append(dict(renamed=str(old), destination=str(new)))
+                record()
+            _normalize_music_paths(root, checkpoint, renamed_music)
         progress("Scanning the iPod folders…")
         inventory = scan(root, selected, skipped=skipped)
         if "Videos" in selected:
@@ -642,7 +722,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 progress(f"{kind}: no supported files; existing prepared library retained.")
                 continue
             option = preparation_option(kind, identity, photo_dimension, music_verification)
-            signature = (f"ipvf-{media_profile['video_fps']}-{media_profile['video_color']}-realtime:{item['fingerprint']}" if kind == "Videos"
+            signature = (f"ipvf-videos-ipvf-{media_profile['video_fps']}-{media_profile['video_color']}-realtime:{item['fingerprint']}" if kind == "Videos"
                          else f"{option}:{item['fingerprint']}")
             saved = state.get(kind, {})
             if not isinstance(saved, dict):
@@ -664,8 +744,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     def music_progress(event):
                         checkpoint()
                         now = time.monotonic()
-                        if now - last_progress[0] >= 0.2 or event['current'] + 1 == event['total'] or event.get("phase") == "compatibility-copy":
-                            action = "Preparing compatible copy" if event.get("phase") == "compatibility-copy" else "Using saved metadata" if event.get("cached") else "Reading metadata"
+                        if now - last_progress[0] >= 0.2 or event['current'] + 1 == event['total']:
+                            action = "Using saved metadata" if event.get("cached") else "Reading metadata"
                             progress(f"{action} {event['current']+1}/{event['total']}: {Path(event['file']).name}")
                             last_progress[0] = now
                     roots = source_folders(root, "Music")
@@ -673,17 +753,13 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                   verification=music_verification, cache_path=cache / "music-metadata.sqlite3",
                                   bypass_cache=force, progress=music_progress, include_roots=roots,
                                   excluded=skipped["Music"], target=identity["target_id"])
-                    compatibility = preparation.get("compatibility_copies", [])
-                    report["steps"].append(dict(kind=kind, metadata=preparation.get("cache"), integrity=music_verification,
-                                               compatibility_copies=compatibility))
-                    if compatibility:
-                        progress(f"Music: {len(compatibility)} track(s) need compatible playback copies; originals stay in place.")
+                    report["steps"].append(dict(kind=kind, metadata=preparation.get("cache"), integrity=music_verification))
                     checkpoint()
                     progress("Publishing the music index and artwork…")
                     published.append(publish_music(stage, progress=progress, **target_args(identity)))
-                    output_paths = ["LINNET/LIBRARY.PDB"] + [entry["path"].lstrip("/") for entry in preparation["entries"] if entry["storage"] == "staged"] + [
-                        "LINNET/ART/" + path.name for path in sorted((stage / "ART").glob("*.RGB"))]
-                    if (stage / "COVERS.CFL").exists():output_paths.append("LINNET/COVERS.CFL")
+                    output_paths = [".LINNET/LIBRARY.PDB"] + [entry["path"].lstrip("/") for entry in preparation["entries"] if entry["storage"] == "staged"] + [
+                        ".LINNET/ART/" + path.name for path in sorted((stage / "ART").glob("*.RGB"))]
+                    if (stage / "COVERS.CFL").exists():output_paths.append(".LINNET/COVERS.CFL")
                 elif kind == "Photos":
                     from .photos import compile_photos
                     from .publish_photos import publish_photos
@@ -696,7 +772,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     checkpoint()
                     progress("Publishing prepared photos…")
                     published.append(publish_photos(package, **target_args(identity)))
-                    output_paths = ["LINNET/PHOTOS/LIBRARY.PIM"]
+                    output_paths = [".LINNET/PHOTOS/LIBRARY.PIM"]
                 elif kind == "Notes":
                     from .notes import compile_notes
                     from .publish_notes import publish_notes
@@ -710,13 +786,13 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     checkpoint()
                     progress("Publishing prepared notes…")
                     published.append(publish_notes(package, **target_args(identity)))
-                    output_paths = ["LINNET/NOTES/LIBRARY.NNT"]
+                    output_paths = [".LINNET/NOTES/LIBRARY.NNT"]
                 else:
                     from .ipvf_encode import encode_ipvf
                     from .ipvf_validate import inspect_file
                     from .publish_video import publish_video
                     from .video_sources import video_title, catalog_contains
-                    output_paths = ["LINNET/VIDEOS/INDEX.VID"]
+                    output_paths = [".LINNET/VIDEOS/INDEX.VID"]
                     video_state = state.get("video_files", {})
                     if not isinstance(video_state, dict):
                         video_state = {}
@@ -737,12 +813,13 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             cached = video_state.get(relative, {})
                             if not isinstance(cached, dict):
                                 cached = {}
-                            output_name = cached.get('outputs', [["LINNET/VIDEOS/" + key + ".IPV"]])[0][0] if cached.get('outputs') else "LINNET/VIDEOS/" + key + ".IPV"
-                            native_ipvf = source.suffix.lower() in {".ipvf", ".ipv"}
+                            output_name = cached['outputs'][0][0] if cached.get('outputs') else ""
+                            native_ipvf = source.suffix.lower() in native_video_extensions(identity)
                             index_in_place = native_ipvf and source.is_relative_to(root)
                             if (not force and cached.get("signature") == fingerprint
                                     and catalog_contains(root, relative, label, path=False)
-                                    and (index_in_place or _outputs_match(root, cached.get("outputs", [])))):
+                                    and (index_in_place or (output_name.casefold().startswith("videos/ipvf/")
+                                         and _outputs_match(root, cached.get("outputs", []))))):
                                 if not index_in_place:
                                     output_paths.append(output_name)
                                 progress(f"Video {index+1}/{item['count']} already ready: {relative}")
@@ -839,7 +916,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 state[kind] = dict(signature=signature, outputs=outputs)
                 _save(state_path, state)
                 report["steps"].append(dict(kind=kind, status="published", publications=published))
-                progress(f"{kind}: published and verified on your iPod ({root / 'LINNET'}).")
+                progress(f"{kind}: published and verified on your iPod ({root / '.LINNET'}).")
                 record()
             except Cancelled:
                 raise
@@ -871,6 +948,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         for path in cache.rglob("publish-*.json"):
             try:
                 publication = json.loads(path.read_text(encoding="utf-8"))
+                for warning in publication.get("cleanup_warnings", []):
+                    report["cleanup"]["retained"].append(dict(path=warning["path"], reason=warning["error"]))
                 if not publication.get("passed"):
                     report["cleanup"]["retained"].append(dict(path=str(path),
                         reason="Incomplete publication receipt: inspect its temporary and backup paths before cleanup."))

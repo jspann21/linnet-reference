@@ -26,7 +26,7 @@ struct ln_update {
     uint8_t upload_sha[32],upload_active,ready;
     uint8_t rejected_slot; /* Transient failed candidate validation, or255. */
 };
-/* Metadata path /LINNET/BOOT{0,1}.BIN; image paths /LINNET/OS{0,1}.LOS.
+/* Metadata path /.LINNET/BOOT{0,1}.BIN; image paths /.LINNET/OS{0,1}.LOS.
  * Open store first; only initialize on explicitly blank store. */
 int ln_update_open(struct ln_update *,struct ln_state_store *,const struct ln_update_io *,const struct ln_image_policy *);
 int ln_update_initialize(struct ln_update *,uint32_t confirmed_slot,uint32_t image_length,

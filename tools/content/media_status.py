@@ -7,11 +7,11 @@ from . import media_manager as media
 from . import media_library
 
 
-def _video_readiness(inventory, published):
+def _video_readiness(inventory, published, identity=None):
     ready = [row for row in published if row['status'] == 'Ready on iPod']
     missing = [row for row in published if row['status'] != 'Ready on iPod']
     native = {str(Path(value).resolve()).casefold() for value in inventory['files']
-              if Path(value).suffix.lower() in ('.ipv', '.ipvf')}
+              if Path(value).suffix.lower() in media.native_video_extensions(identity)}
     cataloged = {str(Path(row['path']).resolve()).casefold() for row in ready}
     if missing or not native.issubset(cataloged):
         return 'Needs update'
@@ -43,7 +43,7 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
             saved = {}
         published = [r for r in rows if r['kind'] == kind and r['category'] in ('library', 'published')]
         if kind == 'Videos':
-            readiness[kind] = _video_readiness(inventory[kind], published)
+            readiness[kind] = _video_readiness(inventory[kind], published, identity)
             continue
         option = media.preparation_option(kind, identity, photo_dimension, verification)
         signature = f"{option}:{inventory[kind]['fingerprint']}"
@@ -74,7 +74,7 @@ def plan(identity, pending, selected, videos):
               not in skipped['Videos']]
     included = [p for p in pending if p[0] in selected]
     copies = media.additions(root, [p for p in included if p[0] != 'Videos'])
-    jobs = media.video_jobs(root, included, videos, skipped=skipped['Videos']) if 'Videos' in selected else []
+    jobs = media.video_jobs(root, included, videos, skipped=skipped['Videos'], identity=identity) if 'Videos' in selected else []
     previews = {}
     for kind, name in included:
         source = Path(name)
@@ -96,5 +96,5 @@ def plan(identity, pending, selected, videos):
     while not parent.exists():
         parent = parent.parent
     return dict(copies=len(copies), bytes=needed, videos=len(jobs), free=identity['free_bytes'], previews=previews,
-                conversion=any(Path(j['source']).suffix.lower() not in ('.ipv', '.ipvf') for j in jobs),
+                conversion=any(Path(j['source']).suffix.lower() not in media.native_video_extensions(identity) for j in jobs),
                 computer_free=shutil.disk_usage(parent).free, excluded=len(pending)-len(included))

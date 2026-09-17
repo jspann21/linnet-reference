@@ -201,7 +201,7 @@ void ln_coverflow_step(bool allow_read){
         if(phase==READY){io_due=NONE;return;}
     }
     int result;
-    if(phase==CLOSED||phase==OPEN){phase=OPEN;result=ln_storage_media_open("/LINNET/COVERS.CFL",generation);}
+    if(phase==CLOSED||phase==OPEN){phase=OPEN;result=ln_storage_media_open("/.LINNET/COVERS.CFL",generation);}
     else if(phase==HEADER)result=ln_storage_media_read(&file,0,header,1024,generation);
     else if(phase==CATALOG)result=ln_storage_media_read(&file,1024+loading*CATALOG_RECORD,catalog[loading%CATALOG_SLOTS],length,generation);
     else result=ln_storage_media_read(&file,1024+count*CATALOG_RECORD+loading*ART_RECORD,art_record(loading),length,generation);

@@ -362,7 +362,7 @@ static void row_step(void)
     }else if(library.stage==5){library.scratch.art_crc=library.db.art.crc;
         if(request(LN_DB_STRING,library.db.art.path))library.stage=6;
     }else{
-        static const char prefix[]="/LINNET/ART/";
+        static const char prefix[]="/.LINNET/ART/";
         bool valid=ln_music_db_safe_path(library.db.text);
         for(uint32_t i=0;i<sizeof prefix-1u;++i)if(library.db.text[i]!=prefix[i])valid=false;
         if(!valid){fail(LN_DB_FORMAT);return;}
@@ -444,7 +444,7 @@ static void library_step_once(void)
     if(library.status==LN_LIBRARY_OPENING){
         if(!library.io_active){
             if(library.paused)return;
-            int result=ln_storage_media_open("/LINNET/LIBRARY.PDB",library.generation);
+            int result=ln_storage_media_open("/.LINNET/LIBRARY.PDB",library.generation);
             if(result<0){fail(result);return;}if(!result)return;
             library.io_active=true;return;
         }

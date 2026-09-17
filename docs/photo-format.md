@@ -1,7 +1,7 @@
 # PIMG photo package
 
 PIMG is Linnet's prepared photo library. Host files use `.pimg`; the initial
-device package is `/LINNET/PHOTOS/LIBRARY.PIM`. All integer fields are unsigned
+device package is `/.LINNET/PHOTOS/LIBRARY.PIM`. All integer fields are unsigned
 little-endian. RGB565 pixels are little-endian words: red bits15..11, green10..5,
 blue4..0. EXIF orientation is applied before creating prepared pixels.
 

@@ -37,7 +37,7 @@ def provision(mount, serial, expected_size, expected_confirmed_build):
     root, identity = _mount_identity(mount, serial)
     if identity.get('size') != expected_size:
         raise ValueError('exact disk size mismatch')
-    directory = root / 'LINNET'
+    directory = root / '.LINNET'
     if (directory.is_symlink() or not directory.is_dir()
             or directory.resolve().parent != root):
         raise ValueError('unsafe or missing LINNET directory')

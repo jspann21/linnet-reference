@@ -7,15 +7,15 @@ def catalog_contains(root, relative, title, path=None):
     """Check the small bounded device catalog before trusting a video cache hit."""
     from .publish import _plain
     from .video_catalog import read_file
-    catalog = Path(root) / "LINNET" / "VIDEOS" / "INDEX.VID"
+    catalog = Path(root) / ".LINNET" / "VIDEOS" / "INDEX.VID"
     try:
         _plain(catalog, Path(root))
         if not catalog.is_file():
             return False
         _, entries = read_file(catalog)
         key = hashlib.sha256(relative.encode("utf-8")).digest()
-        expected = path or "/LINNET/VIDEOS/" + key.hex()[:8].upper() + ".IPV"
-        return (key, expected, title) in entries if path is not False else any(k == key and t == title and (Path(root) / p.lstrip('/')).is_file() for k, p, t in entries)
+        return ((key, path, title) in entries if path else
+                any(k == key and t == title and (Path(root) / p.lstrip('/')).is_file() for k, p, t in entries))
     except (OSError, ValueError):
         return False
 

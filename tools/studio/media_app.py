@@ -384,8 +384,9 @@ class MediaApp:
             if "Music" in selected and not self.ffprobe and (self.inventory["Music"]["count"] or any(k == "Music" for k, p in self.pending)):
                 raise ValueError("Locate FFmpeg and FFprobe before updating music.")
             video_sources = sorted(self.video_selection)
-            needs_video_conversion = any(Path(path).suffix.lower() not in {".ipvf", ".ipv"} for path in video_sources)
-            needs_video_conversion |= any(k == "Videos" and (Path(path).is_dir() or Path(path).suffix.lower() not in {".ipvf", ".ipv"}) for k, path in self.pending)
+            native_extensions = media.native_video_extensions(identity)
+            needs_video_conversion = any(Path(path).suffix.lower() not in native_extensions for path in video_sources)
+            needs_video_conversion |= any(k == "Videos" and (Path(path).is_dir() or Path(path).suffix.lower() not in native_extensions) for k, path in self.pending)
             if "Videos" in selected and (not self.ffmpeg or not self.ffprobe) and needs_video_conversion:
                 raise ValueError("Locate FFmpeg and FFprobe before converting videos to IPVF.")
         except ValueError as error:

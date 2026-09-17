@@ -1,8 +1,8 @@
 # IPVF video format
 
 IPVF is Linnet’s sole video format. Host files use `.ipvf` or `.ipv`;
-published files use `/LINNET/VIDEOS/<key>.IPV` and are listed in
-`/LINNET/VIDEOS/INDEX.VID`.
+published files use `/.LINNET/VIDEOS/<key>.IPV` and are listed in
+`/.LINNET/VIDEOS/INDEX.VID`.
 
 The 512-byte header starts with `IPVF` and contains an 80-byte fixed header
 plus bounded title, artist and album metadata. It declares target-native

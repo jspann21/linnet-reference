@@ -10,7 +10,7 @@ import time
 import uuid
 
 from . import media_manager as manager
-from .publish import _plain, _volume_guard, _exclusive, _write_verified
+from .publish import _plain, _volume_guard, _exclusive, _write_verified, _finish_backups
 from .video_catalog import encode as _encode_catalog, read_file as _read_catalog_file
 
 
@@ -18,7 +18,7 @@ def _device_path(root, value):
     parts = PurePosixPath(value).parts
     if not value.startswith('/') or value.startswith('//') or '\\' in value or ':' in value or any(p in ('..', '.') for p in value.split('/')):
         raise ValueError('Unsafe catalog path')
-    if len(parts) < 3 or parts[1].casefold() not in ('videos', 'linnet') or PurePosixPath(value).suffix.lower() not in ('.ipv', '.ipvf'):
+    if len(parts) < 3 or parts[1].casefold() not in ('videos', '.linnet') or PurePosixPath(value).suffix.lower() not in ('.ipv', '.ipvf'):
         raise ValueError('Unsupported catalog media path')
     path = root.joinpath(*parts[1:])
     _plain(path, root)
@@ -28,7 +28,7 @@ def _device_path(root, value):
 
 
 def _catalog(root):
-    path = root / 'LINNET' / 'VIDEOS' / 'INDEX.VID'
+    path = root / '.LINNET' / 'VIDEOS' / 'INDEX.VID'
     _plain(path, root)
     if not path.exists():
         return path, None, []
@@ -55,11 +55,14 @@ def list_items(identity):
     identity = manager.refresh(identity)
     root = Path(identity['root']).resolve(strict=True)
     _, _, entries = _catalog(root)
+    published_paths = {str(_device_path(root, name)).casefold() for _, name, _ in entries}
     result = []
     metadata = _music_metadata(root)
     for kind in manager.KINDS:
         allowed = manager.extensions(kind)
         for path, info in (record for folder in manager.source_folders(root, kind) for record in manager._file_records(folder)):
+            if kind == 'Videos' and str(path.resolve()).casefold() in published_paths:
+                continue
             if path.suffix.lower() in allowed:
                 tags = metadata.get(str(path.resolve()).casefold(), {}) if kind == 'Music' else {}
                 result.append(_row('original', kind, tags.get('title') or path.name, path,
@@ -68,13 +71,12 @@ def list_items(identity):
                     artwork=tags.get('artwork', ''), duration=tags.get('duration', 0), track=tags.get('track', 0),
                     album_artist=tags.get('album_artist', ''), disc=tags.get('disc', 0),
                     description='Removing this source requires preparing its media type afterward.'))
-    for kind, name in (('Music', 'LINNET/LIBRARY.PDB'), ('Photos', 'LINNET/PHOTOS/LIBRARY.PIM'), ('Notes', 'LINNET/NOTES/LIBRARY.NNT')):
+    for kind, name in (('Music', '.LINNET/LIBRARY.PDB'), ('Photos', '.LINNET/PHOTOS/LIBRARY.PIM'), ('Notes', '.LINNET/NOTES/LIBRARY.NNT')):
         path = root / name
         _plain(path, root)
         if path.is_file():
             result.append(_row('library', kind, 'Entire published ' + kind.lower() + ' library', path, 'Published library on iPod',
                 description='Remove this entire published library. Original source files and cached conversions are retained. Updating this folder can restore it.'))
-    published_paths = set()
     for key, name, title in entries:
         path = _device_path(root, name)
         published_paths.add(str(path).casefold())
@@ -105,7 +107,7 @@ def list_items(identity):
 def _music_metadata(root):
     """Read the prepared metadata once, without opening individual audio files."""
     from .music import validate_database, MAX_DATABASE, TRACK
-    database = root / 'LINNET' / 'LIBRARY.PDB'
+    database = root / '.LINNET' / 'LIBRARY.PDB'
     _plain(database, root)
     if not database.is_file():
         return {}
@@ -137,7 +139,7 @@ def _music_metadata(root):
                 location = string(struct.unpack_from('<I', data, fields[13] + art * 32 + 8)[0])
                 candidate = root / location.lstrip('/')
                 _plain(candidate, root)
-                if candidate.is_relative_to(root / 'LINNET' / 'ART'):
+                if candidate.is_relative_to(root / '.LINNET' / 'ART'):
                     artwork = str(candidate)
             frames, rate = struct.unpack_from('<QI', data, offset + index * TRACK + 32)
             track = struct.unpack_from('<I', data, offset + index * TRACK + 80)[0]
@@ -167,7 +169,7 @@ def organize_videos(identity):
             return dict(summary='No prepared videos found.', receipt='')
         moves, updated = [], []
         token = uuid.uuid4().hex
-        recovery = root / 'LINNET' / 'VIDEOS' / 'BACKUP' / (token[:8] + '.VID')
+        recovery = root / '.LINNET' / 'VIDEOS' / 'BACKUP' / (token[:8] + '.VID')
         _plain(recovery, root)
         _volume_guard(identity)
         recovery.parent.mkdir(exist_ok=True)
@@ -211,17 +213,19 @@ def organize_videos(identity):
             if temporary.exists():
                 _volume_guard(identity)
                 temporary.unlink()
+        cleanup = {}
+        _finish_backups(cleanup, [recovery], root, lambda: _volume_guard(identity))
         state_path = manager.cache_root(identity) / 'state.json'
         try:
             state = json.loads(state_path.read_text(encoding='utf-8'))
             renamed = {source.relative_to(root).as_posix().casefold(): destination.relative_to(root).as_posix() for source, destination in moves}
             for saved in [state.get('Videos', {}), *state.get('video_files', {}).values()]:
                 if isinstance(saved, dict) and isinstance(saved.get('outputs'), list):
-                    saved['outputs'] = [(renamed.get(name.casefold(), name), manager._hash(catalog) if name.casefold() == 'linnet/videos/index.vid' else digest) for name, digest in saved['outputs']]
+                    saved['outputs'] = [(renamed.get(name.casefold(), name), manager._hash(catalog) if name.casefold() == '.linnet/videos/index.vid' else digest) for name, digest in saved['outputs']]
             manager._save(state_path, state)
         except (OSError, ValueError, AttributeError, TypeError):
             pass  # A missing preparation cache is rebuilt on the next update.
-        return dict(summary=f'{len(moves)} videos renamed · {len(entries) - len(updated)} missing entries cleared. Videos are in {catalog.parent}.', receipt=str(recovery))
+        return dict(summary=f'{len(moves)} videos renamed · {len(entries) - len(updated)} missing entries cleared. Videos are in {root / "Videos" / "IPVF"}.', receipt='', **cleanup)
 
 
 def _remove(identity, items):
@@ -254,7 +258,7 @@ def _remove(identity, items):
         if row['category'] in ('original', 'library', 'published'):
             if path.exists():
                 paths[str(path.resolve()).casefold()] = path
-    music_index = root / 'LINNET' / 'LIBRARY.PDB'
+    music_index = root / '.LINNET' / 'LIBRARY.PDB'
     music_before = music_after = None
     music_cache = None
     music_sources = [row for row in selected if row['kind'] == 'Music' and row['category'] == 'original']
@@ -287,7 +291,7 @@ def _remove(identity, items):
             signature = saved_music.get('signature', '')
             outputs = saved_music.get('outputs', [])
             if signature.endswith(':' + fingerprint) and any(
-                    name.casefold() == 'linnet/library.pdb' and digest == hashlib.sha256(music_before).hexdigest()
+                    name.casefold() == '.linnet/library.pdb' and digest == hashlib.sha256(music_before).hexdigest()
                     for name, digest in outputs):
                 music_cache = cache_path, saved_state, skipped
         except (OSError, ValueError, TypeError, AttributeError):
@@ -296,7 +300,7 @@ def _remove(identity, items):
     remaining = [entry for entry in entries if entry[0].hex() not in selected_keys
                  and str(_device_path(root, entry[1]).resolve()).casefold() not in paths]
     token = uuid.uuid4().hex
-    trash = root / 'LINNET' / 'TRASH' / token
+    trash = root / '.LINNET' / 'TRASH' / token
     _plain(trash, root)
     receipt = manager.cache_root(identity) / ('remove-' + token + '.json')
     report = dict(operation='remove-media', started=time.time(), complete=False, receipt=str(receipt),
@@ -369,7 +373,7 @@ def _remove(identity, items):
                     fingerprint = manager.scan(root, ('Music',), skipped=skipped)['Music']['fingerprint']
                     saved_music['signature'] = saved_music['signature'].rsplit(':', 1)[0] + ':' + fingerprint
                     saved_music['outputs'] = [(name, hashlib.sha256(music_after).hexdigest()
-                        if name.casefold() == 'linnet/library.pdb' else digest) for name, digest in saved_music['outputs']]
+                        if name.casefold() == '.linnet/library.pdb' else digest) for name, digest in saved_music['outputs']]
                     manager._save(cache_path, saved_state)
                 except (OSError, ValueError, TypeError, AttributeError):
                     pass  # Cache failure must not undo a verified device update.

@@ -13,7 +13,7 @@ REQUIRED_KEYS = {
     "storage_max_read_sectors", "lcd_width",
     "lcd_height", "lcd_format", "capabilities", "media_photo_width",
     "media_photo_height", "media_video_width", "media_video_height",
-    "media_video_fps", "media_video_color",
+    "media_video_fps", "media_video_color", "media_video_extensions",
     "cop_display", "entry_address", "load_address", "mailbox_address",
     "mailbox_bytes", "retail", "installer",
 }
@@ -187,6 +187,11 @@ def load_targets():
                 type(spec["media_video_fps"]) is not int or
                 not 4 <= spec["media_video_fps"] <= 30 or
                 spec["media_video_color"] not in ("rgb565", "gray4") or
+                not _valid_ascii_list(spec["media_video_extensions"]) or
+                not spec["media_video_extensions"] or
+                len(set(spec["media_video_extensions"])) != len(spec["media_video_extensions"]) or
+                any(not re.fullmatch(r"\.[a-z0-9]+", extension)
+                    for extension in spec["media_video_extensions"]) or
                 (spec["capabilities"].get("video", True) and
                  spec["storage_max_read_sectors"] * 512 <
                  spec["media_video_width"] * spec["media_video_height"] * 2 + 16384)):

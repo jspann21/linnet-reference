@@ -223,8 +223,8 @@ def validate_stage(stage: Path, *, device_root: Path | None = None,
         if integrity == "metadata" and (sha != "0" * 64 or type(entry.get("bytes")) is not int or
                 entry["bytes"] != size or type(entry.get("mtime_ns")) is not int or entry["mtime_ns"] < 0):
             raise ValueError("invalid metadata-only music reference")
-        if storage == "staged" and Path(path).stem != f"{identity & 0xffffffff:08X}":
-            raise ValueError("media short name does not match track identity")
+        if path.upper().startswith("/.LINNET/MUSIC/"):
+            raise ValueError("Music must be imported into /Music; rebuild this legacy music stage")
         for field, position in (("title", 52), ("artist", 56), ("album", 60)):
             if entry.get(field) != _pool_string(database, pool, struct.unpack_from("<I", database, offset + position)[0]):
                 raise ValueError("manifest text mismatch")
@@ -245,9 +245,9 @@ def validate_stage(stage: Path, *, device_root: Path | None = None,
             external.append(dict(path=path, bytes=size, sha256=sha, kind="music", integrity=integrity,
                                  mtime_ns=snapshot.st_mtime_ns, inode=snapshot.st_ino))
             continue
-        if not re.fullmatch(r"/LINNET/MUSIC/[0-9A-F]{8}\.[A-Z0-9]{1,3}", path):
-            raise ValueError("staged media must use its managed short name")
-        relative = path.removeprefix("/LINNET/")
+        if not re.fullmatch(r"/MUSIC/[A-Z0-9_-]{1,8}\.[A-Z0-9]{1,3}", path):
+            raise ValueError("staged media must use a readable short name under /Music")
+        relative = path.lstrip("/")
         if relative in files:
             raise ValueError("duplicate staged media path")
         local = stage / relative
@@ -259,7 +259,7 @@ def validate_stage(stage: Path, *, device_root: Path | None = None,
         offset = art_offset + index * ART
         identity, path_offset = struct.unpack_from("<QI", database, offset)
         path = _pool_string(database, pool, path_offset)
-        relative = path.removeprefix("/LINNET/")
+        relative = path.removeprefix("/.LINNET/")
         local = stage / relative
         _plain(local, stage)
         pixels = _bounded(local, 8192)
@@ -411,14 +411,17 @@ def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
         raise ValueError("local stage must reside on a different volume from the iPod")
     guard = lambda: _volume_guard(identity)
     guard()
-    linnet = root / "LINNET"
+    linnet = root / ".LINNET"
     _plain(linnet, root)
     # Preflight existing media before any device mutation, including collisions.
     needed = inventory["database"]["bytes"]
     for item in inventory["files"]:
-        destination = linnet / item["path"]
+        destination = (root if item["kind"] == "music" else linnet) / item["path"]
         _plain(destination, root)
-        if destination.exists():
+        if item["path"] == "COVERS.CFL":
+            # Cover Flow is replaced atomically below, like the library index.
+            needed += item["bytes"] + 65536
+        elif destination.exists():
             if _hash(destination, item["bytes"]) != item["sha256"]:
                 raise ValueError(f"existing media differs; refusing overwrite: {item['path']}")
         else:
@@ -454,8 +457,10 @@ def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
     guard()
     linnet.mkdir(exist_ok=True)
     _plain(linnet, root)
-    for name in ("MUSIC", "ART", "LIBBAK"):
-        path = linnet / name
+    directories = [linnet / "ART"]
+    if any(item["kind"] == "music" for item in inventory["files"]):
+        directories.append(root / "Music")
+    for path in directories:
         _plain(path, root)
         path.mkdir(exist_ok=True)
     receipt = dict(operation="publish-music", passed=False, phase="copying-media", identity=identity,
@@ -486,7 +491,8 @@ def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
                 guard()
                 temporary_cover.replace(linnet / 'COVERS.CFL')
             else:
-                copied = _copy_verified(local, linnet / item["path"], item, root, guard)
+                destination = (root if item["kind"] == "music" else linnet) / item["path"]
+                copied = _copy_verified(local, destination, item, root, guard)
             receipt["copied" if copied else "reused"] += 1
         receipt["phase"] = "media-verified"
         record()
@@ -503,6 +509,8 @@ def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
         # Preserve previous published bytes before replacing the active entry.
         if previous:
             backup = linnet / "LIBBAK" / (previous["sha256"][:8].upper() + ".PDB")
+            _plain(backup.parent, root)
+            backup.parent.mkdir(exist_ok=True)
             _copy_verified(active, backup, previous, root, guard)
             receipt["backup"] = str(backup)
         temporary = linnet / ("L" + uuid.uuid4().hex[:7].upper() + ".TMP")
@@ -538,6 +546,7 @@ def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
             os.fsync(writer.fileno())
         if _hash(active, inventory["database"]["bytes"]) != inventory["database"]["sha256"]:
             raise OSError("published database readback mismatch")
+        _finish_backups(receipt, [backup] if previous else [], root, guard)
         receipt.update(passed=True, phase="published", finished_at=time.time(), database=str(active),
                        receipt=str(receipt_path), tracks=inventory["database"]["tracks"])
         record()
@@ -551,12 +560,27 @@ def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
         raise RuntimeError(f"Music publication stopped in {receipt['phase']}: {exc}. Inspect {receipt_path}; do not replay automatically") from exc
 
 
+def _finish_backups(receipt, paths, root, guard):
+    """Discard this operation's recovery copies only after verified publication."""
+    for path in paths:
+        try:
+            guard()
+            _plain(path, root)
+            path.unlink()
+            if not any(path.parent.iterdir()):
+                guard()
+                path.parent.rmdir()
+        except OSError as exc:
+            receipt.setdefault('cleanup_warnings', []).append(dict(path=str(path), error=str(exc)))
+    receipt['backups_retained'] = [str(path) for path in paths if path.exists()]
+
+
 def _publish_library(package, candidate, identity, root, number, serial, volume, drive,
                      *, kind, label, filename, max_file, summary,
                      verify_references=None, receipt_fields=None):
     def guard():
         _volume_guard(identity)
-    linnet, directory = root/'LINNET', root/'LINNET'/kind.upper()
+    linnet, directory = root/'.LINNET', root/'.LINNET'/kind.upper()
     active, backups = directory/filename, directory/'BACKUP'
     guard()
     for path in (linnet, directory, active, backups):
@@ -589,7 +613,7 @@ def _publish_library(package, candidate, identity, root, number, serial, volume,
 
     record()
     try:
-        for path in (linnet, directory, backups):
+        for path in (linnet, directory):
             guard()
             _plain(path, root)
             path.mkdir(exist_ok=True)
@@ -598,6 +622,8 @@ def _publish_library(package, candidate, identity, root, number, serial, volume,
             receipt['phase'] = 'backing-up-previous'
             record()
             backup = backups/(previous['sha256'][:8].upper()+Path(filename).suffix)
+            _plain(backup.parent, root)
+            backup.parent.mkdir(exist_ok=True)
             _copy_verified(active, backup, previous, root, guard)
             receipt['backup'] = str(backup)
         temporary = directory/('P'+uuid.uuid4().hex[:7].upper()+'.TMP')
@@ -629,6 +655,7 @@ def _publish_library(package, candidate, identity, root, number, serial, volume,
             os.fsync(writer.fileno())
         if _hash(active, candidate['bytes']) != candidate['sha256']:
             raise OSError(f'published {label} package readback mismatch')
+        _finish_backups(receipt, [backup] if previous else [], root, guard)
         receipt.update(passed=True, phase='published', finished_at=time.time(), package=str(active),
                        **summary)
         record()

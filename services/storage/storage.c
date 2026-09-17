@@ -23,12 +23,12 @@
 static struct ln_fat32 volume;
 #define STORAGE_FILE_COUNT 14u
 static struct ln_fat32_file files[STORAGE_FILE_COUNT],proof_files[STORAGE_FILE_COUNT];
-static const char *const paths[STORAGE_FILE_COUNT]={"/LINNET/OS0.LOS","/LINNET/OS1.LOS",
-    "/LINNET/BOOT0.BIN","/LINNET/BOOT1.BIN","/LINNET/STATE0.BIN",
-    "/LINNET/STATE1.BIN","/LINNET/SCRATCH.BIN","/LINNET/WORK.BIN",
-    "/LINNET/MUSIC0.BIN","/LINNET/MUSIC1.BIN",
-    "/LINNET/UPDATE0.BIN","/LINNET/UPDATE1.BIN",
-    "/LINNET/THEME0.BIN","/LINNET/THEME1.BIN"
+static const char *const paths[STORAGE_FILE_COUNT]={"/.LINNET/OS0.LOS","/.LINNET/OS1.LOS",
+    "/.LINNET/BOOT0.BIN","/.LINNET/BOOT1.BIN","/.LINNET/STATE0.BIN",
+    "/.LINNET/STATE1.BIN","/.LINNET/SCRATCH.BIN","/.LINNET/WORK.BIN",
+    "/.LINNET/MUSIC0.BIN","/.LINNET/MUSIC1.BIN",
+    "/.LINNET/UPDATE0.BIN","/.LINNET/UPDATE1.BIN",
+    "/.LINNET/THEME0.BIN","/.LINNET/THEME1.BIN"
 };
 static uint8_t mbr[512] __attribute__((aligned(32)));
 static uint32_t phase,error,found,opening,epoch=1,request,request_generation,request_sectors;
@@ -295,8 +295,8 @@ static void storage_step(bool defer_runtime){
         }
         /* proof_files is unused until discovery finishes; its first entry
          * temporarily holds the common parent, adding no persistent storage. */
-        bool admitted=opening==UINT32_MAX?ln_fat32_open(&volume,"/LINNET",next_generation()):
-            ln_fat32_open_at(&volume,&proof_files[0],paths[opening]+7,next_generation());
+        bool admitted=opening==UINT32_MAX?ln_fat32_open(&volume,"/.LINNET",next_generation()):
+            ln_fat32_open_at(&volume,&proof_files[0],paths[opening]+sizeof("/.LINNET")-1u,next_generation());
         if(!admitted){error=5;phase=9;return;}phase=5;
     }
     if(phase==5){int result=storage_fat_poll();if(!result)return;
@@ -669,7 +669,7 @@ static int selector_read(const struct ln_fat32_file *file,uint32_t offset,uint8_
 static int selector_rockbox(void){
     struct ln_fat32_file config_file,rockbox_file;
     uint8_t config[512],header[8];char path[LN_FAT32_PATH_MAX+1];
-    if(!selector_open("/LINNET/RBPATH.CFG",&config_file)||config_file.size!=sizeof(config) ||
+    if(!selector_open("/.LINNET/RBPATH.CFG",&config_file)||config_file.size!=sizeof(config) ||
        !selector_read(&config_file,0,config,sizeof(config)))return 0;
     static const uint8_t magic[8]={'R','B','P','A','T','H','1',0};
     for(uint32_t i=0;i<8u;++i)if(config[i]!=magic[i])return 0;
