@@ -6,10 +6,30 @@ from pathlib import Path
 import subprocess
 import sys
 from tools.inspect.image import inspect, verify_release
+from tools.link.music import ACTIONS as MUSIC_ACTIONS
 from tools.studio.build import ROOT, TARGETS, build, target_id, toolchain
 
 def emit(value):
     print(json.dumps(value, indent=2))
+
+def _source_output_arguments(entry):
+    entry.add_argument('--source', type=Path, required=True)
+    entry.add_argument('--output', type=Path, required=True)
+
+
+def _publication_arguments(entry, drive_help=None):
+    entry.add_argument('--disk-number', type=int, required=True)
+    entry.add_argument('--disk-serial', required=True)
+    entry.add_argument('--volume-serial', required=True)
+    entry.add_argument('--drive', help=drive_help)
+
+
+def _record_arguments(entry):
+    entry.add_argument('--mount', type=Path, required=True)
+    entry.add_argument('--disk-serial', required=True)
+    entry.add_argument('--disk-bytes', type=int, required=True)
+    entry.add_argument('--confirmed-build', required=True)
+
 
 def parser():
     cli = argparse.ArgumentParser(prog="linnet", description="Native open firmware for classic iPods")
@@ -45,8 +65,7 @@ def parser():
     simulator.add_argument("--tape",type=Path,help="JSON list of native input events")
     music=commands.add_parser('music').add_subparsers(dest='action',required=True)
     music_compile=music.add_parser('compile')
-    music_compile.add_argument('--source',type=Path,required=True)
-    music_compile.add_argument('--output',type=Path,required=True)
+    _source_output_arguments(music_compile)
     music_compile.add_argument('--target', choices=sorted(TARGETS), help='Prepare artwork for this display')
     music_compile.add_argument('--ffprobe',help='Optional executable for compressed-source metadata')
     music_compile.add_argument('--device-root',type=Path,help='Index existing files on this mounted iPod without copying audio')
@@ -56,14 +75,10 @@ def parser():
     music_check.add_argument('database',type=Path)
     music_publish=music.add_parser('publish',help='Publish verified staging to an explicitly identified mounted USB iPod')
     music_publish.add_argument('--stage',type=Path,required=True)
-    music_publish.add_argument('--disk-number',type=int,required=True)
-    music_publish.add_argument('--disk-serial',required=True)
-    music_publish.add_argument('--volume-serial',required=True)
-    music_publish.add_argument('--drive',help='Optional expected Windows drive letter')
+    _publication_arguments(music_publish, drive_help='Optional expected Windows drive letter')
     video=commands.add_parser('video').add_subparsers(dest='action',required=True)
     video_compile=video.add_parser('compile')
-    video_compile.add_argument('--source',type=Path,required=True)
-    video_compile.add_argument('--output',type=Path,required=True)
+    _source_output_arguments(video_compile)
     video_compile.add_argument('--target',default='photo4g-p98',type=target_id)
     video_compile.add_argument('--fps',type=int,choices=range(4,31),help='Defaults to the target video frame rate')
     video_compile.add_argument('--ffmpeg')
@@ -72,16 +87,12 @@ def parser():
     video_inspect.add_argument('package',type=Path)
     video_publish=video.add_parser('publish')
     video_publish.add_argument('--package',type=Path,required=True)
-    video_publish.add_argument('--disk-number',type=int,required=True)
-    video_publish.add_argument('--disk-serial',required=True)
-    video_publish.add_argument('--volume-serial',required=True)
-    video_publish.add_argument('--drive')
+    _publication_arguments(video_publish)
     video_publish.add_argument('--library-key',help='Stable source-relative identity for a video in the browsable library')
     video_publish.add_argument('--title',help='Video library display title')
     photos=commands.add_parser('photos').add_subparsers(dest='action',required=True)
     photo_compile=photos.add_parser('compile')
-    photo_compile.add_argument('--source',type=Path,required=True)
-    photo_compile.add_argument('--output',type=Path,required=True)
+    _source_output_arguments(photo_compile)
     photo_compile.add_argument('--target',default='photo4g-p98',type=target_id)
     photo_compile.add_argument('--max-dimension',type=int,default=640,
         help='Largest prepared zoom dimension (default: 640); originals are unchanged')
@@ -89,10 +100,7 @@ def parser():
     photo_inspect.add_argument('package',type=Path)
     photo_publish=photos.add_parser('publish')
     photo_publish.add_argument('--package',type=Path,required=True)
-    photo_publish.add_argument('--disk-number',type=int,required=True)
-    photo_publish.add_argument('--disk-serial',required=True)
-    photo_publish.add_argument('--volume-serial',required=True)
-    photo_publish.add_argument('--drive')
+    _publication_arguments(photo_publish)
     read = commands.add_parser("inspect")
     read.add_argument("image", type=Path)
     release = commands.add_parser("release").add_subparsers(dest="action", required=True).add_parser("verify")
@@ -107,36 +115,29 @@ def parser():
     provision.add_argument("--mount",type=Path,required=True)
     provision.add_argument("--serial",required=True)
     theme_provision=storage.add_parser("theme-provision",help="Add optional theme selection records to an identified Disk Mode installation")
-    theme_provision.add_argument("--mount",type=Path,required=True)
-    theme_provision.add_argument("--disk-serial",required=True)
-    theme_provision.add_argument("--disk-bytes",type=int,required=True)
-    theme_provision.add_argument("--confirmed-build",required=True)
+    _record_arguments(theme_provision)
     device = commands.add_parser("device").add_subparsers(dest="action", required=True)
     retail = device.add_parser("detect-retail", help="Identify a mounted RetailOS iPod and its Linnet target")
     retail.add_argument("--mount", type=Path, required=True)
     retail.add_argument("--output", type=Path)
     info = device.add_parser("info")
     info.add_argument("--port")
-    media_info=device.add_parser("media-info")
-    media_info.add_argument("--port",required=True)
-    ui_state=device.add_parser("ui-state")
-    ui_state.add_argument("--port",required=True)
-    startup_timing=device.add_parser("startup-timing",help="Read retained development startup stage timings")
-    startup_timing.add_argument("--port",required=True)
-    video_timing=device.add_parser("video-startup-timing",help="Read video startup latency and dropped display frames")
-    video_timing.add_argument("--port",required=True)
-    boot_timeline=device.add_parser("boot-timeline",help="Read native Boot and OS initialization timings")
-    boot_timeline.add_argument("--port",required=True)
-    for action in ('audio-state','player-state','player-timing-state','library-state','photos-state','video-state','player-open','player-pause','player-resume','player-stop','player-seek'):
+    for action, help_text in (
+            ('media-info', None),
+            ('ui-state', None),
+            ('startup-timing', 'Read retained development startup stage timings'),
+            ('video-startup-timing', 'Read video startup latency and dropped display frames'),
+            ('boot-timeline', 'Read native Boot and OS initialization timings')):
+        options = {'help': help_text} if help_text else {}
+        entry = device.add_parser(action, **options)
+        entry.add_argument('--port', required=True)
+    for action in MUSIC_ACTIONS:
         entry=device.add_parser(action)
         entry.add_argument('--port',required=True)
         if action=='player-open':entry.add_argument('--path',required=True)
         if action=='player-seek':entry.add_argument('--sample',type=int,required=True)
     history=device.add_parser("prepare-update-history",help="Add optional rollback history records to an identified Disk Mode installation")
-    history.add_argument("--mount",type=Path,required=True)
-    history.add_argument("--disk-serial",required=True)
-    history.add_argument("--disk-bytes",type=int,required=True)
-    history.add_argument("--confirmed-build",required=True)
+    _record_arguments(history)
     native=device.add_parser("native-install")
     native.add_argument("--package",type=Path,required=True)
     native.add_argument("--package-sha256",required=True)
@@ -408,7 +409,6 @@ def main():
                 emit(status(args.mount))
         elif args.command == "device":
             from tools.link.transport import SerialTransport
-            from tools.link.session import Session
             if args.port:
                 from tools.link.campaign import connect
                 if args.action == 'boot':
@@ -433,7 +433,7 @@ def main():
                         emit(dict(identity=identity,timing=session.video_startup_timing()))
                     elif args.action == "boot-timeline":
                         emit(dict(identity=identity,timing=session.boot_timeline(identity['generation'])))
-                    elif args.action in ('audio-state','player-state','player-timing-state','library-state','photos-state','video-state','player-open','player-pause','player-resume','player-stop','player-seek'):
+                    elif args.action in MUSIC_ACTIONS:
                         from tools.link.music import command
                         emit(command(session,identity,args.action,path=getattr(args,'path',None),sample=getattr(args,'sample',None)))
                     elif args.action=="media-info":

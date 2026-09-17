@@ -3,17 +3,20 @@ import struct
 from .identity import decode
 from .protocol import Command
 
+STATE_FORMATS = {
+    'audio-state':(Command.AUDIO_STATE,b'AUDS',('magic','reserved','rate','queued','free_frames','consumed','submitted','interrupts','underruns','silence_frames','fault','playing','paused','initialized','last_irq_us','max_irq_us','volume_db_tenths','fifo_empty_irqs','max_completion_interval_us','max_completion_late_us')),
+    'player-state':(Command.PLAYER_STATE,b'PLYR',('magic','phase','error','generation','rate','decoded','rendered','underruns','frames_low','frames_high','next_phase','next_error','gapless_joins','missed_joins','position_low','position_high')),
+    'player-timing-state':(Command.PLAYER_TIMING_STATE,b'TIME',('magic','reserved','decode_calls','decode_us','decode_max_us','dsp_calls','dsp_frames','dsp_us','dsp_max_us','runtime_calls','runtime_us','runtime_max_us','music_us','storage_us','link_us','clock_hz','cache_control','cache_priority','idle_us','clock_source','decoder_kind','mp3_frame_calls','mp3_frame_us','mp3_frame_max_us','mp3_synth_calls','mp3_synth_us','mp3_synth_max_us','mp3_pcm_calls','mp3_pcm_frames','mp3_pcm_us','mp3_pcm_max_us')),
+    'library-state':(Command.LIBRARY_STATE,b'LIBS',('magic','reserved','phase','error','tracks','groups','verified_bytes','revision')),
+    'photos-state':(Command.PHOTOS_STATE,b'PHOT',('magic','reserved','phase','error','active','ready','pending','view','file_size','verify_at','data_at','verify_crc','metadata_crc','verified_photos','verified_levels','verified_tiles','photo_index','visible_tiles','revision','navigation','frame_valid','frame_complete','slide_armed','slide_at_us','now_us','view_started_us','frame_ready_us','io_started_us','max_open_us','max_read_us','render_us','jpeg_us')),
+    'video-state':(Command.VIDEO_STATE,b'VIDS',('magic','reserved','phase','error','active','pending','paused','next_frame','frame_count','front_frame','read_ops','read_bytes','prepared','presented','late_frames','max_late_samples','max_prepare_us','queued_frames','max_queued_frames','audio_underruns','audio_silence_frames','audio_fault','submitted_samples','revision','max_io_us','max_record_read_us','max_record_crc_us','max_payload_crc_us','max_decode_us','max_frame_crc_us','max_step_us','min_audio_queued')),
+}
+PLAYER_CONTROLS = {"player-pause": 1, "player-resume": 2, "player-stop": 3, "player-seek": 4}
+ACTIONS = (*STATE_FORMATS, "player-open", *PLAYER_CONTROLS)
+
 def command(session,identity,action,*,path=None,sample=None):
     if action.endswith('-state'):
-        formats={
-            'video-state':(Command.VIDEO_STATE,b'VIDS',('magic','reserved','phase','error','active','pending','paused','next_frame','frame_count','front_frame','read_ops','read_bytes','prepared','presented','late_frames','max_late_samples','max_prepare_us','queued_frames','max_queued_frames','audio_underruns','audio_silence_frames','audio_fault','submitted_samples','revision','max_io_us','max_record_read_us','max_record_crc_us','max_payload_crc_us','max_decode_us','max_frame_crc_us','max_step_us','min_audio_queued')),
-            'player-timing-state':(Command.PLAYER_TIMING_STATE,b'TIME',('magic','reserved','decode_calls','decode_us','decode_max_us','dsp_calls','dsp_frames','dsp_us','dsp_max_us','runtime_calls','runtime_us','runtime_max_us','music_us','storage_us','link_us','clock_hz','cache_control','cache_priority','idle_us','clock_source','decoder_kind','mp3_frame_calls','mp3_frame_us','mp3_frame_max_us','mp3_synth_calls','mp3_synth_us','mp3_synth_max_us','mp3_pcm_calls','mp3_pcm_frames','mp3_pcm_us','mp3_pcm_max_us')),
-            'audio-state':(Command.AUDIO_STATE,b'AUDS',('magic','reserved','rate','queued','free_frames','consumed','submitted','interrupts','underruns','silence_frames','fault','playing','paused','initialized','last_irq_us','max_irq_us','volume_db_tenths','fifo_empty_irqs','max_completion_interval_us','max_completion_late_us')),
-            'player-state':(Command.PLAYER_STATE,b'PLYR',('magic','phase','error','generation','rate','decoded','rendered','underruns','frames_low','frames_high','next_phase','next_error','gapless_joins','missed_joins','position_low','position_high')),
-            'library-state':(Command.LIBRARY_STATE,b'LIBS',('magic','reserved','phase','error','tracks','groups','verified_bytes','revision')),
-            'photos-state':(Command.PHOTOS_STATE,b'PHOT',('magic','reserved','phase','error','active','ready','pending','view','file_size','verify_at','data_at','verify_crc','metadata_crc','verified_photos','verified_levels','verified_tiles','photo_index','visible_tiles','revision','navigation','frame_valid','frame_complete','slide_armed','slide_at_us','now_us','view_started_us','frame_ready_us','io_started_us','max_open_us','max_read_us','render_us','jpeg_us')),
-        }
-        operation,magic,names=formats[action]
+        operation,magic,names=STATE_FORMATS[action]
         raw=session.request(operation)
         expected=64 if action=='library-state' else len(names)*4
         if len(raw)!=expected or raw[:4]!=magic:raise RuntimeError('Malformed music state reply')
@@ -35,7 +38,7 @@ def command(session,identity,action,*,path=None,sample=None):
             raise ValueError('Player path must be an absolute ASCII filesystem path of at most255 bytes')
         operation=Command.PLAYER_OPEN;payload=struct.pack('<I',generation)+encoded+b'\0';value=0
     else:
-        value={'player-pause':1,'player-resume':2,'player-stop':3,'player-seek':4}[action]
+        value=PLAYER_CONTROLS[action]
         operation=Command.PLAYER_CONTROL;payload=struct.pack('<II',generation,value)
         if value==4:
             if sample is None or not 0<=sample<=0xffffffffffffffff:raise ValueError('Sample must be an unsigned64-bit position')
