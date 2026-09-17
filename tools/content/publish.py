@@ -524,3 +524,94 @@ def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
         except OSError:
             pass
         raise RuntimeError(f"Music publication stopped in {receipt['phase']}: {exc}. Inspect {receipt_path}; do not replay automatically") from exc
+
+
+def _publish_library(package, candidate, identity, root, number, serial, volume, drive,
+                     *, kind, label, filename, max_file, summary,
+                     verify_references=None, receipt_fields=None):
+    def guard():
+        _volume_guard(identity)
+    linnet, directory = root/'LINNET', root/'LINNET'/kind.upper()
+    active, backups = directory/filename, directory/'BACKUP'
+    guard()
+    for path in (linnet, directory, active, backups):
+        _plain(path, root)
+    if verify_references:
+        verify_references(root, guard)
+    previous = None
+    if active.exists():
+        # Preserve exact previous bytes even if its content is corrupt; replacing
+        # a damaged package must not require deleting recovery evidence first.
+        size = active.stat().st_size
+        if not 0 <= size <= max_file:
+            raise ValueError(f'existing {label} package exceeds the supported backup size')
+        previous = dict(bytes=size, sha256=_hash(active, size))
+    needed = candidate['bytes'] + (previous['bytes'] if previous else 0) + 3*65536 + 1024*1024
+    if identity['free_bytes'] < needed:
+        raise ValueError(f'insufficient free space for new {label} package and retained backup')
+    _same_target(identity, inspect_target(number, serial, volume, drive))
+    receipt_path = package.parent/('publish-'+kind+'-'+uuid.uuid4().hex+'.json')
+    receipt = dict(operation='publish-'+kind, passed=False, phase='preflight-complete',
+                   identity=identity, candidate_sha256=candidate['sha256'], candidate_bytes=candidate['bytes'],
+                   previous=previous, started_at=time.time(),
+                   elevation=False, receipt=str(receipt_path),
+                   durability='file fsync and complete readback; FAT rename is not a power-loss journal')
+
+    receipt.update(receipt_fields or {})
+
+    def record():
+        _write_receipt(receipt_path, receipt)
+
+    record()
+    try:
+        for path in (linnet, directory, backups):
+            guard()
+            _plain(path, root)
+            path.mkdir(exist_ok=True)
+            _plain(path, root)
+        if previous:
+            receipt['phase'] = 'backing-up-previous'
+            record()
+            backup = backups/(previous['sha256'][:8].upper()+Path(filename).suffix)
+            _copy_verified(active, backup, previous, root, guard)
+            receipt['backup'] = str(backup)
+        temporary = directory/('P'+uuid.uuid4().hex[:7].upper()+'.TMP')
+        receipt.update(phase='copying-candidate', temporary=str(temporary))
+        record()
+        _plain(package, Path(package.anchor))
+        _copy_verified(package, temporary, candidate, root, guard)
+        receipt['phase'] = 'candidate-verified'
+        record()
+        _plain(package, Path(package.anchor))
+        if _hash(package, candidate['bytes']) != candidate['sha256']:
+            raise RuntimeError(f'{label} source package changed during publication')
+        if verify_references:
+            verify_references(root, guard)
+        _same_target(identity, inspect_target(number, serial, volume, drive))
+        guard()
+        _plain(active, root)
+        if previous:
+            if _hash(active, previous['bytes']) != previous['sha256']:
+                raise RuntimeError(f'active {label} package changed during publication')
+        elif active.exists():
+            raise RuntimeError(f'another {label} package appeared during publication')
+        receipt['phase'] = 'replacing-package'
+        record()
+        os.replace(temporary, active)
+        guard()
+        with active.open('rb+') as writer:
+            writer.flush()
+            os.fsync(writer.fileno())
+        if _hash(active, candidate['bytes']) != candidate['sha256']:
+            raise OSError(f'published {label} package readback mismatch')
+        receipt.update(passed=True, phase='published', finished_at=time.time(), package=str(active),
+                       **summary)
+        record()
+        return receipt
+    except Exception as exc:
+        receipt.update(error=str(exc), finished_at=time.time())
+        try:
+            record()
+        except OSError:
+            pass
+        raise RuntimeError(f"{label.capitalize()} publication stopped in {receipt['phase']}: {exc}. Inspect {receipt_path}; do not replay automatically") from exc
