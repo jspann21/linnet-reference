@@ -1,4 +1,5 @@
 #include "library.h"
+#include "queue.h"
 #include "services/storage/storage.h"
 #include "hal/api/platform.h"
 
@@ -221,6 +222,7 @@ void ln_music_library_cancel_prefetch(void){
     ++library.prefetch_token;library.prefetch_pending=library.prefetch_ready=false;
 }
 bool ln_music_library_queue_member(uint32_t group,uint32_t ordinal,uint32_t token){
+    group&=~LN_QUEUE_REVERSE;
     if(!ready()||!token||group>=library.db.groups)return false;
     library.queue_group=group;library.queue_ordinal=ordinal;library.queue_token=token;
     library.queue_pending=true;library.queue_ready=false;return true;
@@ -272,6 +274,7 @@ bool ln_music_library_take_search_row(struct ln_music_library_search_row *out)
 }
 bool ln_music_library_view_row(uint32_t source,uint32_t group,uint32_t ordinal)
 {
+    group&=~LN_QUEUE_REVERSE;
     if(!ready()||source>2)return false;
     if(source==2)return group<library.db.groups&&query_admit(JOB_VIEW_GROUP,group,ordinal);
     return ordinal<library.db.tracks&&query_admit(JOB_VIEW,ordinal,0);
@@ -304,7 +307,7 @@ bool ln_music_library_take_group(struct ln_music_group *out,char name[256])
 }
 bool ln_music_library_group_member(uint32_t index,uint32_t ordinal)
 {
-    return ready()&&index<library.db.groups&&query_admit(JOB_MEMBER,index,ordinal);
+    index&=~LN_QUEUE_REVERSE;return ready()&&index<library.db.groups&&query_admit(JOB_MEMBER,index,ordinal);
 }
 bool ln_music_library_take_member(uint32_t *index)
 {

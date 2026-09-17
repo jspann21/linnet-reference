@@ -5,6 +5,7 @@
 #define LINNET_QUEUE_CAPACITY 1024u
 #define LINNET_QUEUE_SOURCE_MAX 100000u
 enum ln_queue_source {LN_QUEUE_EXPLICIT=0,LN_QUEUE_ALL=1,LN_QUEUE_GROUP=2};
+#define LN_QUEUE_REVERSE 0x80000000u
 #define LINNET_QUEUE_RESUME_MAX (80u+6u*LINNET_QUEUE_CAPACITY)
 enum ln_queue_repeat { LINNET_QUEUE_REPEAT_NONE,LINNET_QUEUE_REPEAT_ALL,LINNET_QUEUE_REPEAT_ONE };
 /* Explicit queue limit is 1024 entries; overflow returns false without truncation.

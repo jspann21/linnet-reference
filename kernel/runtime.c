@@ -390,6 +390,8 @@ static void apply(uint32_t kind,int32_t value){
 #endif
         if((pressed&LN_BUTTON_NEXT)&&scene_is("linnet.system.music")){
             (void)ln_music_browser_actions(shell->selected);browser_navigation();handled=true;dirty=true;
+        }else if((pressed&LN_BUTTON_PREV)&&scene_is("linnet.system.music")){
+            (void)ln_music_browser_options(shell->selected);browser_navigation();handled=true;dirty=true;
         }else if((pressed&LN_BUTTON_SELECT)&&scene_is("linnet.system.music")){
             (void)ln_music_browser_select(shell->selected);browser_navigation();handled=true;
             if(ln_music_browser_take_search()){

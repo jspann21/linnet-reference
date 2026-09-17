@@ -263,7 +263,7 @@ static bool select_queue(const struct ln_music_browser_queue *selection){
     for(uint32_t i=0;i<32;++i)replacement.library_identity[i]=identity[i];
     if(selection->source){
         if((selection->source==LN_QUEUE_ALL&&selection->count!=count)||
-           (selection->source==LN_QUEUE_GROUP&&selection->source_group>=ln_music_library_group_count())||
+           (selection->source==LN_QUEUE_GROUP&&(selection->source_group&~LN_QUEUE_REVERSE)>=ln_music_library_group_count())||
            !ln_queue_set_source(&replacement,selection->source,selection->source_group,selection->count,selection->cursor))return false;
     }else{
         if(selection->count>LINNET_QUEUE_CAPACITY)return false;
@@ -579,7 +579,7 @@ static void music_step(void){
                         bool valid=true;
                         if(!same(saved.library_identity,identity))valid=false;
                         if(saved.source==LN_QUEUE_ALL)valid=valid&&saved.source_count==ln_music_library_count();
-                        else if(saved.source==LN_QUEUE_GROUP)valid=valid&&saved.source_group<ln_music_library_group_count();
+                        else if(saved.source==LN_QUEUE_GROUP)valid=valid&&(saved.source_group&~LN_QUEUE_REVERSE)<ln_music_library_group_count();
                         else for(uint32_t i=0;i<saved.count;++i)if(saved.tracks[i]>=ln_music_library_count())valid=false;
                         if(valid&&revision==snapshot_revision&&revision==restore_revision&&!active&&!selecting&&!have_waiting&&resolver_kind!=1){queue=saved;profile=saved_profile;}
                     }

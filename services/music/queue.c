@@ -15,10 +15,11 @@ static uint32_t inverse(uint32_t a,uint32_t n){
 }
 bool ln_queue_set_source(struct ln_queue*q,uint32_t source,uint32_t group,uint32_t count,uint32_t ordinal){
     if(!q||source<LN_QUEUE_ALL||source>LN_QUEUE_GROUP||!count||count>LINNET_QUEUE_SOURCE_MAX||ordinal>=count)return false;
-    q->source_count=count;q->excluded_count=0;q->source=source;q->source_group=source==LN_QUEUE_GROUP?group:0;q->count=count;q->cursor=ordinal;
+    q->source_count=count;q->excluded_count=0;q->source=source;q->source_group=source==LN_QUEUE_GROUP?group:group&LN_QUEUE_REVERSE;q->count=count;q->cursor=ordinal;
     q->stride=q->inverse=1;q->offset=0;q->shuffled=false;q->position_samples=0;return true;
 }
-static uint32_t raw_rank(const struct ln_queue*q,uint32_t ordinal){return mod((uint64_t)(ordinal+q->source_count-q->offset)*q->inverse,q->source_count);}
+static uint32_t source_ordinal(const struct ln_queue*q,uint32_t ordinal){return q->source_group&LN_QUEUE_REVERSE?q->source_count-1-ordinal:ordinal;}
+static uint32_t raw_rank(const struct ln_queue*q,uint32_t ordinal){return mod((uint64_t)(source_ordinal(q,ordinal)+q->source_count-q->offset)*q->inverse,q->source_count);}
 bool ln_queue_track_at(const struct ln_queue*q,uint32_t at,uint32_t*out){
     if(!q||!out||at>=q->count)return false;
     if(!q->source){if(q->order[at]>=q->count)return false;*out=q->tracks[q->order[at]];return true;}
@@ -26,7 +27,7 @@ bool ln_queue_track_at(const struct ln_queue*q,uint32_t at,uint32_t*out){
     for(uint32_t i=0;i<q->excluded_count;i++){uint32_t r=raw_rank(q,q->excluded[i]),j=i;
         while(j&&ranks[j-1]>r){ranks[j]=ranks[j-1];j--;}ranks[j]=r;}
     for(uint32_t i=0;i<q->excluded_count;i++)if(ranks[i]<=at)at++;
-    *out=mod((uint64_t)at*q->stride+q->offset,q->source_count);return true;
+    *out=source_ordinal(q,mod((uint64_t)at*q->stride+q->offset,q->source_count));return true;
 }
 bool ln_queue_select_at(struct ln_queue*q,uint32_t at){if(!q||at>=q->count)return false;q->cursor=at;q->position_samples=0;return true;}
 bool ln_queue_current(const struct ln_queue*q,uint32_t*out){return q&&ln_queue_track_at(q,q->cursor,out);}
@@ -99,7 +100,7 @@ void ln_queue_shuffle(struct ln_queue *q,bool enabled)
         if(enabled){uint32_t stride=1+mod(random_word(q),q->source_count);
             for(uint32_t i=0;i<64&&gcd(stride,q->source_count)!=1;i++)stride=stride==q->source_count?1:stride+1;
             if(gcd(stride,q->source_count)!=1)stride=1;
-            q->stride=stride;q->inverse=inverse(stride,q->source_count);q->offset=current;q->cursor=0;}
+            q->stride=stride;q->inverse=inverse(stride,q->source_count);q->offset=source_ordinal(q,current);q->cursor=0;}
         (void)ln_queue_select_occurrence(q,current);return;
     }
     uint32_t current=q->count?q->order[q->cursor]:0;bool selected=q->count!=0;
@@ -128,7 +129,7 @@ static bool valid(const struct ln_queue *q)
        q->cursor>=(q->count?q->count:1u)||q->volume_db_tenths < -730||q->volume_db_tenths>0)return false;
     if(q->source){
         if(q->source>LN_QUEUE_GROUP||!q->source_count||q->source_count>LINNET_QUEUE_SOURCE_MAX||q->excluded_count>32||q->excluded_count>q->source_count||q->count!=q->source_count-q->excluded_count||
-           (q->source==LN_QUEUE_ALL&&q->source_group)||!q->stride||q->stride>q->source_count||
+           (q->source==LN_QUEUE_ALL&&(q->source_group&~LN_QUEUE_REVERSE))||!q->stride||q->stride>q->source_count||
            q->offset>=q->source_count||q->inverse>q->source_count||mod((uint64_t)q->stride*q->inverse,q->source_count)!=(q->source_count==1?0u:1u))return false;
         for(uint32_t i=0;i<q->excluded_count;i++)if(q->excluded[i]>=q->source_count||find(q->excluded,i,q->excluded[i])!=i)return false;
         return q->shuffled||(q->stride==1&&q->inverse==1&&!q->offset);
