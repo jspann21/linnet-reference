@@ -11,6 +11,42 @@ serial adapter, a bounded native framing codec and command dispatcher establish
 the development software contracts. The native PP5020 CDC ACM driver implements endpoint
 descriptors, control transfers and bulk DMA. Serial port discovery alone does not establish Linnet Link support.
 
+## Everyday USB operations
+
+Discover the iPod with `python linnet device info`, then handshake its listed
+Linnet USB port with `python linnet device info --port <port>`. Do not probe an
+unrelated USB serial adapter. Rediscover after every mode change; COM numbers
+can change.
+
+- Install a verified OS: `python linnet device install --port <port> --image <os.los>`.
+- Run a temporary build: `python linnet device boot --port <port> --image <os.los>`.
+- Restart installed firmware: `python linnet device reboot --port <port> --mode persistent`.
+- Enter recovery Boot or Apple Disk Mode: use `--mode boot` or `--mode disk`.
+- Read logs, inject inputs, capture screenshots, and read/write the supported
+  storage files through `tools.link.session.Session`; the commands and bounds
+  are listed below. Arbitrary paths/raw addresses are not accepted by Link.
+
+**Prepare the return from Disk Mode before entering it.** Apple Disk Mode exposes
+mass storage, not the Linnet COM endpoint. Automatic return uses the host's
+verified Boot-directory refresh followed by eject:
+
+```powershell
+python linnet device refresh-session prepare --plan <installed-plan.json> --plan-sha256 <sha256> --hours 8 > out/refresh-session-prepared.json
+python linnet device refresh-session start --prepared out/refresh-session-prepared.json --allow-uac
+python linnet device refresh-session status
+# After disk-mode file work, while the identified volume is still mounted:
+python linnet device eject --disk-number <number> --expected-serial <disk-serial> --reboot --plan <installed-plan.json> --plan-sha256 <sha256>
+```
+
+Use the exact currently installed Boot plan and a live matching refresh session
+(or an already elevated process). Validate these prerequisites first. Archived
+plans may have absolute dependencies or older formats; restore and validate them
+according to [local artifacts](local-artifacts.md), without changing pinned
+hashes. Plain eject and `--wait-link` do not request a restart. Plain eject can
+leave the device in Disk Mode with Windows reporting **No Media**, preventing
+this mounted-volume refresh path until the device is reconnected/restarted.
+Always rediscover Link and confirm the expected healthy build after restarting.
+
 ## Frame layout
 
 All integers are unsigned little endian. Frames have a 20-byte header, zero to
