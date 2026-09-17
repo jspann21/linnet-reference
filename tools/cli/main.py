@@ -47,7 +47,7 @@ def parser():
     music_compile=music.add_parser('compile')
     music_compile.add_argument('--source',type=Path,required=True)
     music_compile.add_argument('--output',type=Path,required=True)
-    music_compile.add_argument('--target', choices=('ipod4g-q21','photo4g-p98'), help='Prepare artwork for this display')
+    music_compile.add_argument('--target', choices=sorted(TARGETS), help='Prepare artwork for this display')
     music_compile.add_argument('--ffprobe',help='Optional executable for compressed-source metadata')
     music_compile.add_argument('--device-root',type=Path,help='Index existing files on this mounted iPod without copying audio')
     music_compile.add_argument('--verification',choices=('metadata','full'),help='Existing music defaults to fast metadata checks; full reads complete audio files')

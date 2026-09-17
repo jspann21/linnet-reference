@@ -25,6 +25,8 @@ import threading
 import tempfile
 import zlib
 
+from tools.studio.targets import TARGETS
+
 HEADER = 128
 TRACK = 128
 GROUP = 32
@@ -628,7 +630,7 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
     """
     from .publish import validate_stage
 
-    if target not in (None, "ipod4g-q21", "photo4g-p98"):
+    if target is not None and target not in TARGETS:
         raise ValueError("unsupported artwork target")
     source, output = Path(source).resolve(), Path(output).resolve()
     if not source.is_dir() or output == source or source in output.parents or output in source.parents:
