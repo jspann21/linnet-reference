@@ -232,7 +232,6 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
 def index_ipvf(source, *, disk_number, expected_disk_serial,
                expected_volume_serial, expected_drive=None, library_key=None, title=None):
     """Validate an existing iPod IPVF and publish only its bounded 8.3 catalog path."""
-    from .ipvf_validate import inspect_file
     source = Path(os.path.abspath(source))
     identity = inspect_target(disk_number, expected_disk_serial, expected_volume_serial, expected_drive)
     root = Path(identity['root']).resolve(strict=True)
@@ -246,12 +245,7 @@ def index_ipvf(source, *, disk_number, expected_disk_serial,
     after = source.stat()
     if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
         raise ValueError('IPVF changed during validation')
-    buffer = ctypes.create_unicode_buffer(1024)
-    if not ctypes.windll.kernel32.GetShortPathNameW(str(source), buffer, len(buffer)):
-        raise OSError(ctypes.get_last_error(), 'could not resolve the IPVF FAT short path')
-    short = Path(buffer.value)
-    relative = short.relative_to(Path(root.anchor)).as_posix()
-    path = '/' + relative
+    path = device_video_path(source, root)
     key = hashlib.sha256(str(library_key or source.relative_to(root)).replace('\\', '/').encode('utf-8')).digest()
     label = ''.join(c if ord(c) >= 32 else ' ' for c in str(title or source.stem)).strip() or 'Video'
     label = label.encode('utf-8')[:127].decode('utf-8', errors='ignore')

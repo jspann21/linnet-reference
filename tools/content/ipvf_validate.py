@@ -81,7 +81,6 @@ def inspect_file(
     max_record_sectors=1024,
 ) -> dict:
     file_size = path.stat().st_size
-    verify_audio = True
 
     with path.open("rb") as stream:
         header = stream.read(ipvf.DATA_OFFSET)
@@ -225,14 +224,13 @@ def inspect_file(
             audio = record[
                 ipvf.RECORD_HEADER_SIZE + stored_size:used_size
             ]
-            if verify_audio:
-                decoded_audio = ipvf.decode_ima_adpcm(audio, audio_count)
-                _require(len(decoded_audio) == audio_count *
-                         ipvf.AUDIO_FRAME_BYTES,
-                         f"frame {frame}: decoded audio length mismatch")
-                decoded_audio_crc = rockbox_crc32(
-                    decoded_audio, decoded_audio_crc
-                )
+            decoded_audio = ipvf.decode_ima_adpcm(audio, audio_count)
+            _require(len(decoded_audio) == audio_count *
+                     ipvf.AUDIO_FRAME_BYTES,
+                     f"frame {frame}: decoded audio length mismatch")
+            decoded_audio_crc = rockbox_crc32(
+                decoded_audio, decoded_audio_crc
+            )
 
             compressed = kind in (
                 ipvf.TYPE_KEY_LZ4,
@@ -389,9 +387,7 @@ def inspect_file(
         "stored_video_bytes": stored_video_total,
         "audio_bytes": audio_total,
         "audio_modes": dict(sorted(audio_modes.items())),
-        "decoded_audio_crc": (
-            f"{decoded_audio_crc:08x}" if verify_audio else None
-        ),
+        "decoded_audio_crc": f"{decoded_audio_crc:08x}",
         "padding_bytes": padding_total,
         "record_bytes": media_end_offset - ipvf.DATA_OFFSET,
         "max_record_sectors": largest_record_sectors,
