@@ -33,6 +33,7 @@ static bool photo_resume_loaded;
 #include "services/music/player.h"
 #include "services/music/controller.h"
 #include "services/music/artwork.h"
+#include "services/music/coverflow.h"
 #include "services/music/browser.h"
 #include "services/music/search.h"
 #include "services/music/queue_view.h"
@@ -104,6 +105,9 @@ static uint32_t music_revision,music_phase,music_generation,music_progress_at,mu
 static uint32_t music_window_epoch=UINT32_MAX,music_window_selection=UINT32_MAX,music_window_navigation=UINT32_MAX;
 static uint32_t search_navigation,search_revision,search_library_status;
 static bool playback_from_search,music_window_pending;
+#if defined(LINNET_COVERFLOW)
+static bool music_from_coverflow;
+#endif
 #endif
 #if defined(LINNET_NATIVE_UI)
 static uint32_t display_settings_revision;
@@ -374,6 +378,15 @@ static void apply(uint32_t kind,int32_t value){
 #if defined(LINNET_AUDIO)
     if(kind==LN_INPUT_HEADPHONE)ln_music_headphones(value!=0);
     if(!handled&&kind==LN_INPUT_BUTTON&&!shell->hold){uint32_t pressed=(uint32_t)value&~shell->buttons;
+#if defined(LINNET_COVERFLOW)
+        if(scene_is("linnet.system.cover-flow")){
+            if(pressed&LN_BUTTON_MENU)(void)ln_ui_show(shell,"linnet.system.home");
+            else if(pressed&LN_BUTTON_SELECT){if(ln_coverflow_select()){music_from_coverflow=true;(void)ln_ui_show(shell,"linnet.system.music");browser_navigation();}}
+            else if(pressed&(LN_BUTTON_NEXT|LN_BUTTON_PREV))ln_coverflow_move((pressed&LN_BUTTON_PREV)?-1:1);
+            else if(pressed&LN_BUTTON_PLAY)ln_music_toggle();
+            dirty=true;handled=true;
+        }else
+#endif
         if((pressed&LN_BUTTON_SELECT)&&scene_is("linnet.system.music")){
             (void)ln_music_browser_select(shell->selected);browser_navigation();handled=true;
             if(ln_music_browser_take_search()){
@@ -413,7 +426,11 @@ static void apply(uint32_t kind,int32_t value){
         }else if((pressed&LN_BUTTON_MENU)&&scene_is("linnet.system.music-options")){
             if(ln_ui_show(shell,"linnet.system.now-playing"))dirty=true;handled=true;
         }else if((pressed&LN_BUTTON_MENU)&&scene_is("linnet.system.music")){
-            handled=ln_music_browser_back();if(handled)browser_navigation();
+#if defined(LINNET_COVERFLOW)
+            if(music_from_coverflow){music_from_coverflow=false;(void)ln_ui_show(shell,"linnet.system.cover-flow");dirty=true;handled=true;}
+            else
+#endif
+            {handled=ln_music_browser_back();if(handled)browser_navigation();}
         }else if(pressed&LN_BUTTON_PLAY){
             if(scene_is("linnet.system.music")&&ln_music_browser_queue_status()==LN_BROWSER_QUEUE_CAPACITY)
                 (void)ln_music_browser_select_single(shell->selected);
@@ -423,6 +440,9 @@ static void apply(uint32_t kind,int32_t value){
             (void)ln_music_next((pressed&LN_BUTTON_PREV)!=0);handled=true;}
         if(handled)shell->buttons=(uint32_t)value;
     }
+#if defined(LINNET_COVERFLOW)
+    if(kind==LN_INPUT_WHEEL&&!shell->hold&&scene_is("linnet.system.cover-flow")){ln_coverflow_move(value);handled=true;}
+#endif
     if(kind==LN_INPUT_WHEEL&&!shell->hold&&scene_is("linnet.system.now-playing")){ln_music_volume(value);handled=true;}
 #endif
     if(!handled&&ln_shell_input(shell,kind,value)){
@@ -440,6 +460,9 @@ static void apply(uint32_t kind,int32_t value){
 #endif
 #if defined(LINNET_NATIVE_UI)
     if(before!=shell->scene){
+#if defined(LINNET_COVERFLOW)
+        if(scene_is("linnet.system.home"))music_from_coverflow=false;
+#endif
         retain_scene();
     }
 #endif
@@ -626,6 +649,10 @@ void ln_runtime_step(void){
     uint32_t now=ln_time_us();uint32_t wakes=ln_core_take_wakes();
 #if defined(LINNET_AUDIO)
     ln_music_browser_set_visible(scene_is("linnet.system.music"));
+#if defined(LINNET_COVERFLOW)
+    ln_coverflow_visible(scene_is("linnet.system.cover-flow"));
+    uint32_t cover_dirty=ln_coverflow_tick(now);if(cover_dirty){shell->dirty|=cover_dirty;dirty=true;}
+#endif
 #endif
     /* Check fresh power before optional publications or new viewer work.
      * A locked storage callback must return to its owner to finish draining. */
@@ -786,6 +813,9 @@ void ln_runtime_step(void){
         uint32_t epoch=0,count=0;
 #if defined(LINNET_NATIVE_UI)
         epoch=shell->scene_epoch;count=ln_ui_focused_count(shell);
+#if defined(LINNET_COVERFLOW)
+        if(scene_is("linnet.system.cover-flow"))count=ln_coverflow_count();
+#endif
 #endif
         if(wheel_scene!=shell->scene||wheel_epoch!=epoch||input.buttons){
             ln_wheel_motion_reset(&wheel_motion);
@@ -947,6 +977,9 @@ void ln_runtime_idle(void){
     /* CPU fallback must service its bounded worker; a live COP owns the LCD. */
     if(ln_display_busy()&&!display.cop_active)return;
     uint32_t next=now+200000u;
+#if defined(LINNET_COVERFLOW)
+    uint32_t cover_due=ln_coverflow_deadline();if(cover_due!=UINT32_MAX&&(int32_t)(cover_due-next)<0)next=cover_due;
+#endif
 #if defined(LINNET_NATIVE_UI)
     if(text_scroll_at!=UINT32_MAX&&(int32_t)(text_scroll_at-next)<0)next=text_scroll_at;
     if(palette_at!=UINT32_MAX&&(int32_t)(palette_at-next)<0)next=palette_at;

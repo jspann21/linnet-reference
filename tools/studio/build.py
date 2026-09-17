@@ -196,6 +196,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         sources += [ROOT/'third_party/libmad'/name for name in ('bit.c','frame.c','huffman.c','layer12.c','layer3.c','stream.c','synth.c','imdct_l_arm.S','synth_full_arm.S')]
         flags += ['-fwrapv']
         if profile!='release':sources += [ROOT/'kernel/audio_link.c']
+    if kind == 'os' and ui_report['features'].get('cover_flow', False):
+        flags += ['-DLINNET_COVERFLOW=1']
     if kind == 'os' and ui_report['features'].get('video', True):
         flags += ['-DLINNET_VIDEO=1']
         sources += sorted((ROOT/'services/video').glob('*.c'))
@@ -218,6 +220,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         codec_flags=[]
         if relative.startswith(('third_party/aac/','services/audio/aac/')):
             codec_flags=['-Ithird_party/aac','-Ithird_party/aac/faad','-Ithird_party/aac/lib','-O2','-DCPU_ARM=1','-DARM_ARCH=4']
+        elif source == generated/'linnet_ui.c' and ui_report['features'].get('cover_flow', False):
+            codec_flags=['-O2']
         elif relative in ('services/audio/dsp.c','services/video/video.c'):
             codec_flags=['-O2']
         elif relative.startswith(('third_party/vorbis/','services/audio/vorbis/')):
@@ -235,6 +239,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     memory_flags = ["-DLINNET_PLATFORM_CORE=1", "-DLINNET_STORAGE=1"]
     if kind == 'os':
         memory_flags += ['-DLINNET_AUDIO=1']
+        if ui_report['features'].get('cover_flow',False):memory_flags += ['-DLINNET_COVERFLOW=1']
     run([chain['compiler']['path'], "-E", "-P", "-x", "c", "-I" + str(generated), f"-DLINNET_PROFILE_{profile.upper()}=1", f"-DLINNET_IMAGE_{kind.upper()}=1", *memory_flags, ROOT / target_sources["linker"], "-o", script])
     run([chain['linker']['path'], "-T", script, "--gc-sections", "-Map=" + str(mapfile), "-o", elf, *objects])
     raw = dest / (prefix + ".bin")
@@ -266,7 +271,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     report = dict(**configuration, build_id=build_id, toolchain=chain, image=inspect(envelope),
                   source_files=[p.relative_to(ROOT).as_posix() for p in sources],
                   artifacts={key: str(path.relative_to(ROOT)) for key, path in dict(elf=elf, los=los, ipod=ipod, map=mapfile).items()},
-                  memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=4718592 if kind=='os' else 1048576, retained_limit_bytes=spec['mailbox_bytes']),
+                  memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=(7340032 if ui_report['features'].get('cover_flow',False) else 4718592) if kind=='os' else 1048576, retained_limit_bytes=spec['mailbox_bytes']),
                   release_exclusion=verification,
                   limitation="FIQ watchdog depends on FIQ delivery; COP reset escalation requires a live COP monitor.")
     if ui_report is not None:report["ui"]=ui_report

@@ -18,7 +18,7 @@ REQUIRED_KEYS = {
     "mailbox_bytes", "retail", "installer",
 }
 OPTIONAL_KEYS = {"ui"}
-CAPABILITIES = {"photos", "video", "files", "demo", "themes"}
+CAPABILITIES = {"photos", "video", "files", "demo", "themes", "cover_flow"}
 LCD_FORMATS = {"rgb565-swapped": 1, "gray2-horizontal": 2, "rgb565": 3}
 
 

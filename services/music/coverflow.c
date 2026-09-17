@@ -1,0 +1,328 @@
+#include "coverflow.h"
+#if defined(LINNET_COVERFLOW)
+#include "services/music/library.h"
+#include "services/music/browser.h"
+#include "services/storage/storage.h"
+#include "boot/include/linnet_boot.h"
+#include "boot/include/linnet_bytes.h"
+#include "hal/api/platform.h"
+#define CATALOG_SLOTS 2048u
+#define CATALOG_RECORD 1024u
+#define PAGE 16u
+#define ART_RECORD 13312u
+#define SLOTS 16u
+#define ART_PAGE 7u
+#define ART_LOW 630u
+#define ART_HIGH 469u
+#define ART_SLOTS (ART_LOW+ART_HIGH)
+#define NONE UINT32_MAX
+enum {CLOSED,OPEN,HEADER,READY,CATALOG,ART};
+static struct {uint16_t pixels[12288];uint32_t id,age;} cache[SLOTS];
+static uint8_t catalog[CATALOG_SLOTS][CATALOG_RECORD] __attribute__((aligned(32)));
+static uint32_t tags[CATALOG_SLOTS];
+static struct ln_fat32_file file;
+static uint8_t header[1024] __attribute__((aligned(32)));
+static uint8_t art_low[ART_LOW][ART_RECORD] __attribute__((section(".cover_low"),aligned(32)));
+static uint8_t art_high[ART_HIGH][ART_RECORD] __attribute__((section(".cover_high"),aligned(32)));
+static uint32_t art_tags[ART_SLOTS],art_warm,art_loaded;
+static uint8_t *art_record(uint32_t id){uint32_t slot=id%ART_SLOTS;return slot<ART_LOW?art_low[slot]:art_high[slot-ART_LOW];}
+static bool art_ready(uint32_t id){return art_tags[id%ART_SLOTS]==id+1u;}
+static uint32_t count,arts,selected,phase,loading,length,revision,drawn,next,io_due,age,warm,moved_at;
+static uint32_t catalog_loaded,full_reads,read_bytes,hits,preview_hits,misses,last_full_us,max_full_us,last_preview_us;
+static int32_t position,direction=1;
+static int32_t settle_from;
+static uint32_t settle_frames,settle_step;
+static bool visible,pending,failed;
+static const uint32_t generation=0x79000001u;
+static const uint32_t crc_table[16]={0,0x1db71064,0x3b6e20c8,0x26d930ac,0x76dc4190,0x6b6b51f4,0x4db26158,0x5005713c,0xedb88320,0xf00f9344,0xd6d6a3e8,0xcb61b38c,0x9b64c2b0,0x86d3d2d4,0xa00ae278,0xbdbdf21c};
+struct ln_coverflow_column {uint32_t step;uint8_t source,top,height,length;};
+extern const struct ln_coverflow_column ln_coverflow_columns[33][96];
+extern const uint8_t ln_coverflow_widths[33];
+extern const uint8_t ln_coverflow_ease[8][8];
+extern const uint8_t ln_coverflow_glow[220][140];
+static uint32_t crc_span(uint32_t crc,const uint8_t *data,uint32_t size){
+    while(size--){crc^=*data++;crc=(crc>>4)^crc_table[crc&15u];crc=(crc>>4)^crc_table[crc&15u];}return crc;
+}
+static bool identity(void){uint8_t hash[32];if(!ln_music_library_identity(hash))return false;
+    for(uint32_t i=0;i<32;i++)if(hash[i]!=header[16+i])return false;return true;}
+static uint8_t *row(uint32_t index){return index<count&&tags[index%CATALOG_SLOTS]==index+1u?catalog[index%CATALOG_SLOTS]:0;}
+static int32_t find_art(uint32_t id){for(uint32_t i=0;i<SLOTS;i++)if(cache[i].id==id+1u)return (int32_t)i;return -1;}
+static bool selected_full(void){uint8_t *r=row(selected);return r&&art_ready(ln_read_le32(r+248));}
+static void invalidate(void){
+    for(uint32_t i=0;i<CATALOG_SLOTS;i++)tags[i]=0;
+    for(uint32_t i=0;i<SLOTS;i++)cache[i].id=0;
+    for(uint32_t i=0;i<ART_SLOTS;i++)art_tags[i]=0;
+    art_warm=art_loaded=0;count=arts=selected=warm=catalog_loaded=0;position=0;phase=CLOSED;++revision;
+}
+void ln_coverflow_visible(bool value){if(value&&!visible)io_due=ln_time_us();visible=value;}
+uint32_t ln_coverflow_count(void){return count;}
+bool ln_coverflow_active(void){return visible;}
+void ln_coverflow_move(int32_t delta){
+    if(!count)return;int32_t n=(int32_t)selected+(delta>64?64:delta< -64?-64:delta);
+    uint32_t target=n<0?0u:(uint32_t)n>=count?count-1u:(uint32_t)n;if(target==selected)return;
+    int32_t moving=target>selected?1:-1;
+    int32_t destination=(int32_t)(target*256u);
+    if(moving!=direction&&((moving>0&&position>destination)||(moving<0&&position<destination)))
+        position=destination-moving*256;
+    direction=moving;
+    if(target/CATALOG_SLOTS!=selected/CATALOG_SLOTS)warm=(target/CATALOG_SLOTS)*CATALOG_SLOTS;
+    selected=target;
+    int32_t distance=(int32_t)(selected*256u)-position;
+    if(distance>768)position=(int32_t)(selected*256u)-768;
+    else if(distance< -768)position=(int32_t)(selected*256u)+768;
+    settle_from=position;settle_step=0;settle_frames=1;
+    int32_t span=(int32_t)(selected*256u)-position;if(span<0)span=-span;
+    while(span>=8&&settle_frames<8){span=(span+1)/2;++settle_frames;}
+    moved_at=ln_time_us();io_due=moved_at;
+    if(selected_full()){++hits;last_full_us=0;}else if(row(selected))++preview_hits;else ++misses;
+    last_preview_us=row(selected)?0u:NONE;
+    ++revision;next=0;
+}
+const char *ln_coverflow_text(bool artist){
+    if(failed)return artist?"Sync music to prepare artwork":"Cover Flow needs a sync";
+    if(!count)return artist?"":phase>=READY?"No albums":"Loading albums...";
+    uint8_t *r=row(selected);return r?(const char*)r+(artist?128:8):(artist?"":"Loading albums...");
+}
+bool ln_coverflow_select(void){uint8_t *r=row(selected);return r&&identity()&&
+    ln_music_browser_open_album(ln_read_le32(r),ln_read_le32(r+4),(const char*)r+8);}
+static void fail(void){failed=true;phase=CLOSED;io_due=NONE;++revision;}
+static void request_catalog(uint32_t index){
+    loading=(index/PAGE)*PAGE;length=count-loading;if(length>PAGE)length=PAGE;
+    for(uint32_t i=0;i<length;i++)tags[(loading+i)%CATALOG_SLOTS]=0;
+    length*=CATALOG_RECORD;phase=CATALOG;
+}
+static bool close_to_selection(uint32_t art){
+    for(int32_t d=-3;d<=3;d++){int32_t n=(int32_t)selected+d;if(n<0)continue;
+        uint8_t *r=row((uint32_t)n);if(r&&ln_read_le32(r+248)==art)return true;}
+    return false;
+}
+static int32_t decode_art(uint32_t id){
+    int32_t found=find_art(id);if(found>=0)return found;
+    if(!art_ready(id))return -1;
+    uint32_t victim=0,oldest=NONE;
+    for(uint32_t i=0;i<SLOTS;i++){
+        if(!cache[i].id){victim=i;break;}
+        if(cache[i].age<oldest){oldest=cache[i].age;victim=i;}
+    }
+    const uint8_t *packed=art_record(id);
+    union {uint16_t colors[256];uint32_t words[128];} palette;
+    const uint32_t *words=(const uint32_t*)packed;
+    for(uint32_t i=0;i<128u;i++)palette.words[i]=words[i];
+    words+=128;
+    for(uint32_t i=0;i<12288u;i+=4){
+        uint32_t indices=*words++;
+        cache[victim].pixels[i]=palette.colors[indices&255u];
+        cache[victim].pixels[i+1]=palette.colors[(indices>>8)&255u];
+        cache[victim].pixels[i+2]=palette.colors[(indices>>16)&255u];
+        cache[victim].pixels[i+3]=palette.colors[indices>>24];
+    }
+    cache[victim].id=id+1u;cache[victim].age=++age;
+    return (int32_t)victim;
+}
+static void request_art(uint32_t id,bool bulk){
+    loading=bulk?(id/ART_PAGE)*ART_PAGE:id;length=bulk?ART_PAGE:1u;
+    if(length>arts-loading)length=arts-loading;
+    for(uint32_t i=0;i<length;i++)art_tags[(loading+i)%ART_SLOTS]=0;
+    length*=ART_RECORD;phase=ART;
+}
+static void accept_art(void){
+    for(uint32_t i=0;i<length/ART_RECORD;i++){
+        uint32_t id=loading+i;const uint8_t *packed=art_record(id);
+        if((~crc_span(0xffffffffu,packed,12800))!=ln_read_le32(packed+12800)){fail();return;}
+        art_tags[id%ART_SLOTS]=id+1u;++art_loaded;
+        if(close_to_selection(id))++revision;
+        uint8_t *r=row(selected);
+        if(r&&ln_read_le32(r+248)==id){last_full_us=ln_time_us()-moved_at;if(last_full_us>max_full_us)max_full_us=last_full_us;}
+    }
+}
+void ln_coverflow_step(bool allow_read){
+    if(pending){
+        uint32_t transferred=0;int result=ln_storage_media_poll(generation,phase==OPEN?&file:0,&transferred);
+        if(!result){io_due=ln_time_us()+1000u;return;}pending=false;
+        if(result<0){fail();return;}
+        if(phase==OPEN){phase=HEADER;}
+        else if(phase==HEADER){
+            count=ln_read_le32(header+4);arts=ln_read_le32(header+52);
+            if(transferred!=1024||ln_read_le32(header)!=0x3246434cu||count>100000u||arts>count||
+               ln_read_le32(header+8)!=ART_RECORD||ln_read_le32(header+12)!=96||ln_read_le32(header+48)!=CATALOG_RECORD||
+               ln_read_le32(header+56)!=24||ln_read_le32(header+60)!=32||
+               ln_crc32(header,508)!=ln_read_le32(header+508)||ln_crc32(header+512,512)!=ln_read_le32(header+64)||
+               file.size!=1024u+count*CATALOG_RECORD+arts*ART_RECORD||!identity()){
+                count=0;fail();return;}
+            phase=READY;++revision;
+        }else if(phase==CATALOG){
+            if(transferred!=length){fail();return;}
+            for(uint32_t i=0;i<length/CATALOG_RECORD;i++){
+                uint32_t index=loading+i;uint8_t *r=catalog[index%CATALOG_SLOTS];
+                uint32_t crc=crc_span(crc_span(0xffffffffu,r,252),r+256,768);
+                if((~crc)!=ln_read_le32(r+252)||r[127]||r[247]||ln_read_le32(r+248)>=arts||
+                   ln_read_le32(r)>=ln_music_library_group_count()||!ln_read_le32(r+4)||ln_read_le32(r+4)>ln_music_library_count()){
+                    fail();return;}
+                tags[index%CATALOG_SLOTS]=index+1u;++catalog_loaded;
+            }
+            if(selected>=loading&&selected<loading+length/CATALOG_RECORD){last_preview_us=ln_time_us()-moved_at;++revision;}
+            else if(visible&&loading<selected+4u&&loading+length/CATALOG_RECORD+3u>selected)++revision;
+            phase=READY;
+        }else if(phase==ART){
+            if(transferred!=length){fail();return;}
+            accept_art();if(failed)return;phase=READY;
+        }
+    }
+    uint32_t now=ln_time_us();
+    if(failed){io_due=NONE;return;}
+    if(!allow_read||ln_music_library_status()!=LN_LIBRARY_READY){io_due=now+10000u;return;}
+    if(phase>=READY&&!identity())invalidate();
+    if(phase==READY){
+        if(visible&&count&&!row(selected))request_catalog(selected);
+        else if(visible&&count){
+            static const int8_t ahead[]={0,1,2,-1,3,-2,-3,4,5,-4,6,-5};
+            for(uint32_t d=0;d<sizeof(ahead);d++){
+                int32_t index=(int32_t)selected+ahead[d]*direction;
+                if(index<0||(uint32_t)index>=count)continue;
+                uint8_t *r=row((uint32_t)index);if(!r)continue;
+                uint32_t art=ln_read_le32(r+248);
+                if(!art_ready(art)){request_art(art,false);break;}
+            }
+        }
+        if(phase==READY){
+            uint32_t base=count<=CATALOG_SLOTS?0u:(selected>128u?((selected-128u)/PAGE)*PAGE:0u);
+            uint32_t end=count<=CATALOG_SLOTS?count:selected+128u;if(end>count)end=count;
+            if(warm<base||warm>=end)warm=base;
+            for(uint32_t n=0;warm<end&&n<CATALOG_SLOTS/PAGE;n++){
+                uint32_t index=warm;warm+=PAGE;
+                if(!row(index)){request_catalog(index);break;}
+            }
+        }
+        if(phase==READY){
+            uint32_t limit=arts<ART_SLOTS?arts:ART_SLOTS;
+            while(art_warm<limit&&art_ready(art_warm))++art_warm;
+            if(art_warm<limit){request_art(art_warm,true);art_warm=loading+length/ART_RECORD;}
+        }
+        if(phase==READY){io_due=NONE;return;}
+    }
+    int result;
+    if(phase==CLOSED||phase==OPEN){phase=OPEN;result=ln_storage_media_open("/LINNET/COVERS.CFL",generation);}
+    else if(phase==HEADER)result=ln_storage_media_read(&file,0,header,1024,generation);
+    else if(phase==CATALOG)result=ln_storage_media_read(&file,1024+loading*CATALOG_RECORD,catalog[loading%CATALOG_SLOTS],length,generation);
+    else result=ln_storage_media_read(&file,1024+count*CATALOG_RECORD+loading*ART_RECORD,art_record(loading),length,generation);
+    if(result>0){pending=true;if(phase==ART){++full_reads;read_bytes+=length;}else if(phase==CATALOG)read_bytes+=length;}
+    else if(result<0){fail();return;}
+    io_due=now+1000u;
+}
+uint32_t ln_coverflow_io_deadline(void){return io_due;}
+uint32_t ln_coverflow_deadline(void){return visible?next:NONE;}
+uint32_t ln_coverflow_tick(uint32_t now){
+    if(!visible)return 0;
+    if(next!=NONE&&next&&(int32_t)(now-next)<0)return 0;
+    int32_t diff=(int32_t)(selected*256u)-position;
+    if(diff){
+        int32_t target=(int32_t)(selected*256u);
+        position=settle_step<settle_frames?target-(target-settle_from)*ln_coverflow_ease[settle_frames-1][settle_step++]/256:target;
+    }
+    uint32_t changed=drawn!=revision?1u:diff?8u:0u;drawn=revision;
+    next=position!=(int32_t)(selected*256u)?now+33333u:NONE;
+    return changed;
+}
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_coverflow_diagnostics(uint32_t words[16]){
+    uint32_t values[16]={0x574f4c46u,phase,count,selected,catalog_loaded,hits,preview_hits,misses,
+        full_reads,read_bytes,last_full_us,art_loaded,max_full_us,selected_full(),row(selected)!=0,pending};
+    for(uint32_t i=0;i<16;i++)words[i]=values[i];
+}
+#endif
+static void ambient_color(uint32_t index,uint32_t color[3]){
+    const uint8_t *r=row(index);color[0]=color[1]=color[2]=0;if(!r)return;
+    for(uint32_t x=3;x<24;x+=6)for(uint32_t y=3;y<24;y+=6){
+        uint32_t p=r[256+x*32+y];
+        color[0]+=p>>5;color[1]+=(p>>2)&7;color[2]+=p&3;
+    }
+    color[0]=color[0]*255/112;color[1]=color[1]*255/112;color[2]=color[2]*255/48;
+}
+void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
+    uint16_t painted_top[LINNET_UI_WIDTH],painted_end[LINNET_UI_WIDTH];
+    for(uint32_t x=0;x<LINNET_UI_WIDTH;x++){painted_top[x]=LINNET_UI_HEIGHT;painted_end[x]=0;}
+    int32_t center=(position+128)/256;
+    for(int32_t layer=0;layer<=3;layer++)for(int32_t side=1;side>=-1;side-=2){
+        if(!layer&&side==1)continue;
+        int32_t index=center+layer*side;if(index<0||(uint32_t)index>=count)continue;
+        uint8_t *r=row((uint32_t)index);
+        uint32_t art=r?ln_read_le32(r+248):NONE;
+        int32_t cached=r?find_art(art):-1;
+        if(cached<0&&r&&layer<2)cached=decode_art(art);
+        const uint16_t *pixels=cached>=0?cache[cached].pixels:0;
+        const uint8_t *indexed=!pixels&&r&&art_ready(art)?art_record(art):0;
+        const uint16_t *palette=(const uint16_t*)indexed;
+        if(cached>=0)cache[cached].age=++age;
+        int32_t distance=index*256-position,ad=distance<0?-distance:distance;
+        int32_t pose=ad>=256?32:(ad+4)/8,width=ln_coverflow_widths[pose];
+        int32_t xcenter=110+(distance<0?-1:1)*(ad<=256?ad*69/256:69+(ad-256)*25/256);
+        for(int32_t x=0;x<width;x++){
+            int32_t dx=xcenter-width/2+x;if(dx<c->clip_x||dx>=c->clip_x+c->clip_w)continue;
+            const struct ln_coverflow_column *column=&ln_coverflow_columns[pose][distance<0?x:width-1-x];
+            int32_t sx=distance<0?column->source:95-column->source;
+            const uint16_t *source=pixels?pixels+sx*128:0;
+            int32_t first=c->clip_y-column->top;if(first<0)first=0;
+            int32_t end=c->clip_y+c->clip_h-column->top;if(end>column->length)end=column->length;
+            if(first>=end)continue;
+            int32_t ends[4]={first,end,0,0};
+            if(painted_end[dx]>painted_top[dx]){
+                int32_t hidden_top=painted_top[dx]-column->top,hidden_end=painted_end[dx]-column->top;
+                if(ends[1]>hidden_top)ends[1]=hidden_top;
+                ends[2]=first>hidden_end?first:hidden_end;ends[3]=end;
+            }
+            if(column->top+first<painted_top[dx])painted_top[dx]=(uint16_t)(column->top+first);
+            if(column->top+end>painted_end[dx])painted_end[dx]=(uint16_t)(column->top+end);
+            const uint8_t *indices=indexed?indexed+512+sx*128:0;
+            for(uint32_t segment=0;segment<4;segment+=2){
+                int32_t from=ends[segment],to=ends[segment+1];if(from>=to)continue;
+                uint16_t *dest=c->pixels+(column->top+from)*LINNET_UI_WIDTH+dx;
+                uint32_t step=column->step,sy=(step>>1)+(uint32_t)from*step;
+                if(source){
+                    for(int32_t y=from;y<to;y++,sy+=step,dest+=LINNET_UI_WIDTH)*dest=source[sy>>16];
+                }else if(indices){
+                    for(int32_t y=from;y<to;y++,sy+=step,dest+=LINNET_UI_WIDTH)*dest=palette[indices[sy>>16]];
+                }else{
+                    for(int32_t y=from;y<to;y++,sy+=step,dest+=LINNET_UI_WIDTH)*dest=sy<(96u<<16)?0x18e4u:0u;
+                }
+            }
+        }
+    }
+    /* Paint only exposed background; the host supplies the soft halo mask. */
+    if(count){
+        uint32_t left=(uint32_t)position/256u,blend=(uint32_t)position&255u;
+        uint32_t a[3],b[3];ambient_color(left,a);ambient_color(left+1u<count?left+1u:left,b);
+        for(uint32_t channel=0;channel<3;channel++)a[channel]=(a[channel]*(256u-blend)+b[channel]*blend)>>8;
+        int32_t mean=(int32_t)(a[0]+a[1]+a[2])/3;
+        for(uint32_t channel=0;channel<3;channel++){
+            int32_t value=mean+((int32_t)a[channel]-mean)*3/2;
+            a[channel]=value<0?0u:value>255?255u:(uint32_t)value;
+        }
+        uint16_t colors[256];
+        uint32_t rs=a[0]*70u*31u*2048u/(63u*100u*255u);
+        uint32_t gs=a[1]*70u*63u*2048u/(63u*100u*255u);
+        uint32_t bs=a[2]*70u*31u*2048u/(63u*100u*255u);
+        for(uint32_t k=0;k<64;k++){
+            uint32_t r=rs*k,g=gs*k,b=bs*k;
+            for(uint32_t d=0;d<4;d++){
+                uint32_t bias=d*512u+256u;
+                colors[k*4+d]=(uint16_t)(((r+bias)>>11)<<11|((g+bias)>>11)<<5|((b+bias)>>11));
+            }
+        }
+        int32_t bottom=c->clip_y+c->clip_h;if(bottom>140)bottom=140;
+        for(int32_t x=c->clip_x;x<c->clip_x+c->clip_w;x++){
+            int32_t spans[4]={c->clip_y,painted_top[x],painted_end[x],bottom};
+            if(painted_end[x]<=painted_top[x]){spans[1]=bottom;spans[2]=bottom;}
+            for(uint32_t part=0;part<4;part+=2){
+                int32_t from=spans[part],to=spans[part+1];
+                if(from<c->clip_y)from=c->clip_y;if(to>bottom)to=bottom;if(from>=to)continue;
+                uint16_t *dest=c->pixels+from*LINNET_UI_WIDTH+x;
+                const uint8_t *mask=ln_coverflow_glow[x]+from;
+                for(int32_t y=from;y<to;y++,dest+=LINNET_UI_WIDTH)*dest=colors[*mask++];
+            }
+        }
+    }
+}
+
+#else
+void ln_coverflow_draw(const struct ln_ui_canvas_context *c){(void)c;}
+#endif

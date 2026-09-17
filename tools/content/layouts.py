@@ -325,6 +325,7 @@ def refine_ipod_photo(scene,theme):
 def gate_features(scenes,features):
     """Keep stable scene slots while removing links into disabled services."""
     groups={
+        'cover_flow':{'linnet.system.cover-flow'},
         'files':{'linnet.system.files'},
         'demo':{'local.example.notes'},
         'photos':{'linnet.system.photos','linnet.system.photos-grid','linnet.system.photos-viewer','linnet.system.photos-options'},

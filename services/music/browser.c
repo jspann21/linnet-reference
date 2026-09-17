@@ -148,6 +148,11 @@ static void groups(void)
     }
     copy(browser.title,categories[browser.kind]);invalidate();
 }
+bool ln_music_browser_open_album(uint32_t group,uint32_t count,const char *title){
+    if(!browser.was_ready||!count||group>=ln_music_library_group_count())return false;
+    browser.kind=2;browser.group=group;browser.count=count;browser.view=TRACKS;browser.first=0;
+    browser.range_phase=0;browser.navigation++;copy(browser.title,title);invalidate();return true;
+}
 bool ln_music_browser_select(uint32_t row)
 {
     if(row>=ln_music_browser_count())return false;

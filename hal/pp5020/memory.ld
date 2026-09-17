@@ -8,6 +8,10 @@
 ENTRY(ln_start)
 MEMORY {
   SDRAM (rwx) : ORIGIN = LINNET_LOAD_ADDRESS, LENGTH = LINNET_OS_CAPACITY
+#if defined(LINNET_COVERFLOW)
+  COVER_LOW (rw) : ORIGIN = 0x00800000, LENGTH = 0x00800000
+  COVER_HIGH (rw) : ORIGIN = 0x01800000, LENGTH = 0x00600000
+#endif
 #if !defined(LINNET_PROFILE_RELEASE) || defined(LINNET_STORAGE)
   STAGE (rw) : ORIGIN = LINNET_STAGE_ADDRESS, LENGTH = LINNET_STAGE_CAPACITY
 #endif
@@ -85,6 +89,14 @@ SECTIONS {
     . += 8192; __stack_top = .;
 #endif
   } > SDRAM
+#if defined(LINNET_COVERFLOW)
+  .cover_low (NOLOAD) : { *(.cover_low) } > COVER_LOW
+  .cover_high (NOLOAD) : { *(.cover_high) } > COVER_HIGH
+  ASSERT(ORIGIN(COVER_LOW) >= LINNET_LOAD_ADDRESS + LINNET_OS_CAPACITY, "Artwork overlaps OS")
+  ASSERT(ORIGIN(COVER_LOW) + LENGTH(COVER_LOW) <= LINNET_STAGE_ADDRESS, "Artwork overlaps staging")
+  ASSERT(ORIGIN(COVER_HIGH) >= LINNET_STAGE_ADDRESS + LINNET_STAGE_CAPACITY, "Artwork overlaps staging")
+  ASSERT(ORIGIN(COVER_HIGH) + LENGTH(COVER_HIGH) <= LINNET_LOADER_SNAPSHOT, "Artwork overlaps recovery")
+#endif
   .noinit (NOLOAD) : { KEEP(*(.noinit*)) } > MAILBOX
 #ifdef LINNET_STORAGE
   .persistent_handoff (LINNET_MAILBOX_ADDRESS + 0x100) (NOLOAD) : { . += 0x80; } > MAILBOX
@@ -120,7 +132,11 @@ SECTIONS {
    * recovery snapshot at30 MiB still has its unchanged1 MiB payload limit. */
   /* The metadata page cache and expanded browser rows fit below 4.5 MiB,
    * within the existing 8 MiB OS region and below all staging reservations. */
+#if defined(LINNET_COVERFLOW)
+  ASSERT(__stack_top <= 0x00700000, "Cover Flow resident image exceeds 7 MiB")
+#else
   ASSERT(__stack_top <= 0x00480000, "Music resident image exceeds 4.5 MiB")
+#endif
 #else
   ASSERT(__stack_top <= 0x00100000, "Resident image exceeds 1 MiB")
 #endif

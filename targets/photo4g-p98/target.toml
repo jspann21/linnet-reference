@@ -18,7 +18,7 @@ storage_max_read_sectors = 192
 lcd_width = 220
 lcd_height = 176
 lcd_format = "rgb565-swapped"
-capabilities = { video = true }
+capabilities = { video = true, cover_flow = true }
 media_photo_width = 220
 media_photo_height = 156
 media_video_width = 220

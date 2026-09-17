@@ -7,6 +7,7 @@
 #if defined(LINNET_IMAGE_OS)
 #include "services/update/native.h"
 #include "kernel/runtime.h"
+#include "services/music/coverflow.h"
 #include "hal/api/display.h"
 #endif
 #if defined(LINNET_VIDEO)
@@ -53,6 +54,9 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r){
 #if defined(LINNET_IMAGE_OS)
         else if(q->length==4u&&ln_read_le32(q->payload)==4u){ln_runtime_render_timing(words);count=16u;}
         else if(q->length==4u&&ln_read_le32(q->payload)==7u){ln_display_sync_diagnostics(words);count=16u;}
+#if defined(LINNET_COVERFLOW)
+        else if(q->length==4u&&ln_read_le32(q->payload)==11u){ln_coverflow_diagnostics(words);count=16u;}
+#endif
         else if(q->length==4u&&ln_read_le32(q->payload)==8u){ln_display_blit_diagnostics(words);count=16u;}
 #if defined(LINNET_TARGET_IPOD4G_Q21)
         else if(q->length==4u&&ln_read_le32(q->payload)==10u){

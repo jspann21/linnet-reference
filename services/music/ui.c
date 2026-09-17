@@ -3,6 +3,7 @@
 #include "services/music/controller.h"
 #include "services/music/player.h"
 #include "services/music/artwork.h"
+#include "services/music/coverflow.h"
 #include "services/music/browser.h"
 #include "services/music/search.h"
 #include "services/music/queue_view.h"
@@ -145,6 +146,10 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
         static const char *const labels[]={"Wheel: zoom","Wheel: pan left/right","Wheel: pan up/down","Rotate clockwise","Start slideshow","Fit image","Back to photo"};
         if(item==4u&&ln_photos_slideshow_active())return "Stop slideshow";return labels[item];
     }
+#endif
+#if defined(LINNET_COVERFLOW)
+    if(in_scene(n,"linnet.system.cover-flow")&&n->kind==LN_UI_TEXT)
+        return ln_coverflow_text(equal(fallback,"Cover Flow artist"));
 #endif
     if(in_scene(n,"linnet.system.music-options")){
         if(n->kind==LN_UI_STATUS_BAR)return "Playback options";

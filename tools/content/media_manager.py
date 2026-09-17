@@ -683,6 +683,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     published.append(publish_music(stage, progress=progress, **target_args(identity)))
                     output_paths = ["LINNET/LIBRARY.PDB"] + [entry["path"].lstrip("/") for entry in preparation["entries"] if entry["storage"] == "staged"] + [
                         "LINNET/ART/" + path.name for path in sorted((stage / "ART").glob("*.RGB"))]
+                    if (stage / "COVERS.CFL").exists():output_paths.append("LINNET/COVERS.CFL")
                 elif kind == "Photos":
                     from .photos import compile_photos
                     from .publish_photos import publish_photos

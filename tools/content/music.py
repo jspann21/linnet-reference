@@ -812,6 +812,8 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         return strings[value]
 
     records, entries, artwork_records = [], [], []
+    coverflow_originals = {}
+    coverflow_enabled = bool(target and TARGETS[target].get('capabilities', {}).get('cover_flow', False))
     art_cache: dict[Path, int] = {}
     art_indices: dict[bytes, int] = {}
     filenames: set[str] = set()
@@ -851,6 +853,9 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             raise ValueError("art filename collision")
         destination.write_bytes(pixels)
         index = len(artwork_records)
+        if coverflow_enabled:
+            from .coverflow import original_cover
+            coverflow_originals[index] = original_cover(cover if cover is not None else embedded)
         artwork_records.append(struct.pack("<QIHHIIII", int.from_bytes(digest[:8], "little"),
             string("/LINNET/ART/" + name), 64, 64, 1, len(pixels), zlib.crc32(pixels), 0))
         if cover is not None:
@@ -1031,6 +1036,9 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     temporary = output / "LIBRARY.TMP"
     temporary.write_bytes(database)
     temporary.replace(output / "LIBRARY.PDB")
+    if coverflow_enabled:
+        from .coverflow import prepare
+        prepare(database, output, output / 'COVERS.CFL', originals=coverflow_originals)
     report = dict(format="PODB", integrity="sha256" if verification == "full" else "metadata", tracks=len(records), groups=len(groups),
                   artwork=len(artwork_records), bytes=len(database), sha256=hashlib.sha256(database).hexdigest(),
                   database=str(output / "LIBRARY.PDB"), entries=entries,

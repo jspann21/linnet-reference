@@ -27,6 +27,7 @@ const char *ln_music_browser_label(uint32_t row);
 void ln_music_browser_window(uint32_t first);
 void ln_music_browser_visible_rows(uint32_t rows);
 bool ln_music_browser_select(uint32_t row);
+bool ln_music_browser_open_album(uint32_t group,uint32_t count,const char *title);
 struct ln_music_browser_queue {
     uint8_t library_hash[32];
     uint32_t count,cursor,tracks[LINNET_QUEUE_CAPACITY];

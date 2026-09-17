@@ -1,6 +1,7 @@
 #include "services/music/controller.h"
 #include "services/music/player.h"
 #include "services/music/artwork.h"
+#include "services/music/coverflow.h"
 #include "services/music/queue.h"
 #include "services/music/history.h"
 #include "services/music/browser.h"
@@ -165,6 +166,9 @@ uint32_t ln_music_deadline(uint32_t now){
     if(selecting||have_waiting||resolver_kind||ln_music_browser_busy()||ln_music_search_busy()||ln_music_queue_view_busy())return now;
     uint32_t next=ln_player_deadline(now),library=ln_music_library_deadline(now);
     if((int32_t)(library-next)<0)next=library;
+#if defined(LINNET_COVERFLOW)
+    uint32_t covers=ln_coverflow_io_deadline();if(covers!=UINT32_MAX&&(int32_t)(covers-next)<0)next=covers;
+#endif
     uint32_t history=ln_music_history_deadline(now);
     if((int32_t)(history-next)<0)next=history;
     if(volume_retry_pending&&(int32_t)(volume_retry_at-next)<0)next=volume_retry_at;
@@ -330,12 +334,18 @@ bool ln_music_prepare_shutdown(void){return ln_music_quiesce(true);}
 bool ln_music_quiesce(bool save_settings){
     if(shutting_down||stepping||ln_storage_busy())return false;
     shutting_down=true;
+#if defined(LINNET_COVERFLOW)
+    ln_coverflow_visible(false);
+#endif
     remember_position();ln_music_history_freeze();
     active=have_waiting=selecting=false;resolver_kind=0;
     ln_player_stop();ln_music_library_cancel();ln_music_art_request(0,0);
     uint32_t started=ln_time_us();bool drained=false;
     for(uint32_t budget=0;budget<1000000u;++budget){
         ln_player_step();ln_music_library_step();ln_music_art_step(false);
+#if defined(LINNET_COVERFLOW)
+        ln_coverflow_step(false);
+#endif
         struct ln_player_status p;struct ln_audio_status a;
         ln_player_snapshot(&p);ln_audio_snapshot(&a);
         if(p.phase==LN_PLAYER_ERROR||a.fault)return false;
@@ -409,6 +419,12 @@ static void music_step(void){
     }
     ln_player_expect_next(expected);
     ln_player_snapshot(&before);ln_player_step();ln_player_snapshot(&p);ln_audio_snapshot(&audio);
+#if defined(LINNET_COVERFLOW)
+    for(uint32_t budget=0;budget<3&&ln_coverflow_active()&&audio.playing&&!audio.paused&&
+        audio.queued<LINNET_AUDIO_RING_FRAMES/2u;++budget){
+        ln_player_step();ln_player_snapshot(&p);ln_audio_snapshot(&audio);
+    }
+#endif
     struct ln_player_transition transition;
     if(ln_player_take_transition(&transition)&&next_armed){
         uint32_t index;
@@ -481,6 +497,13 @@ static void music_step(void){
     }
     if(ln_music_browser_take_queue(&browser_queue)&&select_queue(&browser_queue))show_now_playing=true;
     ln_music_art_step(!audio.initialized||!audio.playing||audio.queued>=LINNET_AUDIO_RING_FRAMES-2048u);
+#if defined(LINNET_COVERFLOW)
+    bool cover_read=!audio.initialized||!audio.playing||audio.queued>=LINNET_AUDIO_RING_FRAMES/2u;
+#if defined(LINNET_PHOTOS)
+    cover_read=cover_read&&!ln_photos_busy();
+#endif
+    ln_coverflow_step(cover_read);
+#endif
     if(!restored&&ln_music_library_status()==LN_LIBRARY_READY&&!ln_storage_busy()&&
        (!restore_attempts||(int32_t)(ln_time_us()-restore_retry_at)>=0)){
         /* A user edit made while waiting wins over the older saved queue. */

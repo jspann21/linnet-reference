@@ -272,6 +272,12 @@ def validate_stage(stage: Path, *, device_root: Path | None = None,
         if relative in files and files[relative] != record:
             raise ValueError("conflicting artwork short name")
         files[relative] = record
+    if (stage / "COVERS.CFL").exists():
+        _plain(stage / "COVERS.CFL", stage)
+        from .coverflow import validate as validate_coverflow
+        validate_coverflow(stage / 'COVERS.CFL', database)
+        size = (stage / 'COVERS.CFL').stat().st_size
+        files['COVERS.CFL'] = dict(path='COVERS.CFL', bytes=size, sha256=_hash(stage / 'COVERS.CFL', size), kind='art')
     return dict(stage=str(stage), database=expected, manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
                 files=list(files.values()), existing_files=external, media_bytes=sum(item["bytes"] for item in files.values()))
 
@@ -470,7 +476,17 @@ def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
         for item in inventory["files"]:
             local = stage / item["path"]
             _plain(local, stage)
-            copied = _copy_verified(local, linnet / item["path"], item, root, guard)
+            if item['path'] == 'COVERS.CFL':
+                temporary_cover = linnet / 'COVERS.NEW'
+                _plain(temporary_cover, root)
+                if temporary_cover.exists():
+                    temporary_cover.unlink()
+                copied = _copy_verified(local, temporary_cover, item, root, guard)
+                _plain(linnet / 'COVERS.CFL', root)
+                guard()
+                temporary_cover.replace(linnet / 'COVERS.CFL')
+            else:
+                copied = _copy_verified(local, linnet / item["path"], item, root, guard)
             receipt["copied" if copied else "reused"] += 1
         receipt["phase"] = "media-verified"
         record()
