@@ -1,6 +1,5 @@
 """Guarded, unelevated single-video publication with verified previous backup."""
 import hashlib
-import json
 import os
 import struct
 import ctypes
@@ -8,7 +7,7 @@ from pathlib import Path
 import time
 import uuid
 from .ipvf_validate import inspect_file
-from .publish import _plain, _hash, _copy_verified, _same_target, _volume_guard, inspect_target, _exclusive
+from .publish import _plain, _hash, _copy_verified, _same_target, _volume_guard, inspect_target, _exclusive, _write_receipt
 MAX_FILE=0x7fffffff
 CATALOG_HEADER_SIZE = 12
 CATALOG_ROW_SIZE = 416
@@ -140,11 +139,7 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
                    durability='file fsync and complete readback; FAT rename is not a power-loss journal')
 
     def record():
-        with receipt_path.open('w', encoding='utf-8', newline='\n') as writer:
-            json.dump(receipt, writer, indent=2)
-            writer.write('\n')
-            writer.flush()
-            os.fsync(writer.fileno())
+        _write_receipt(receipt_path, receipt)
 
     record()
     try:
@@ -257,8 +252,7 @@ def index_ipvf(source, *, disk_number, expected_disk_serial,
                    started_at=time.time(), receipt=str(receipt_path))
     receipt_path.parent.mkdir(parents=True, exist_ok=True)
     def record():
-        with receipt_path.open('w', encoding='utf-8', newline='\n') as writer:
-            json.dump(receipt, writer, indent=2); writer.write('\n'); writer.flush(); os.fsync(writer.fileno())
+        _write_receipt(receipt_path, receipt)
     record()
     with _exclusive(identity):
         try:

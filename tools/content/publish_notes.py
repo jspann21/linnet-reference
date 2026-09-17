@@ -1,11 +1,10 @@
 """Guarded Notes publication; retains the previous device catalog before replacement."""
 from pathlib import Path
 import os
-import json
 import time
 import uuid
 from .notes import inspect, MAX_FILE
-from .publish import _plain, _hash, _copy_verified, _same_target, _volume_guard, inspect_target, _exclusive
+from .publish import _plain, _hash, _copy_verified, _same_target, _volume_guard, inspect_target, _exclusive, _write_receipt
 
 
 def publish_notes(package, *, disk_number, expected_disk_serial,
@@ -62,11 +61,7 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive):
                    durability='file fsync and complete readback; FAT rename is not a power-loss journal')
 
     def record():
-        with receipt_path.open('w', encoding='utf-8', newline='\n') as writer:
-            json.dump(receipt, writer, indent=2)
-            writer.write('\n')
-            writer.flush()
-            os.fsync(writer.fileno())
+        _write_receipt(receipt_path, receipt)
 
     record()
     try:

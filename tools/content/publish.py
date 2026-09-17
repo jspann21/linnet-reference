@@ -68,6 +68,14 @@ def _exclusive(identity):
         kernel.CloseHandle(handle)
 
 
+def _write_receipt(path, receipt):
+    with path.open("w", encoding="utf-8", newline="\n") as writer:
+        json.dump(receipt, writer, indent=2)
+        writer.write("\n")
+        writer.flush()
+        os.fsync(writer.fileno())
+
+
 def _history_superblock(data: bytes) -> bytes:
     expected = (b'HIST', 0, 64, HISTORY_BANK_BYTES, HISTORY_PAGE_COUNT, HISTORY_PAGE_RECORDS, 32)
     if len(data) != HISTORY_PAGE_BYTES or struct.unpack_from('<4sHHIIII', data) != expected or any(data[40:4092]):
@@ -446,11 +454,7 @@ def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
     receipt_path = stage / ("publish-" + uuid.uuid4().hex + ".json")
 
     def record() -> None:
-        with receipt_path.open("w", encoding="utf-8", newline="\n") as writer:
-            json.dump(receipt, writer, indent=2)
-            writer.write("\n")
-            writer.flush()
-            os.fsync(writer.fileno())
+        _write_receipt(receipt_path, receipt)
 
     record()
     try:

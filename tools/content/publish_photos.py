@@ -7,7 +7,6 @@ No raw device access, UAC, eject, automatic retry, rollback or cleanup is used.
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 from pathlib import Path
 import struct
@@ -17,7 +16,7 @@ import zlib
 
 from .photos import HEADER, PHOTO, MAX_FILE, inspect
 from .publish import (_plain, _bounded, _hash, _copy_verified, _same_target,
-                      _volume_guard, inspect_target, _exclusive)
+                      _volume_guard, inspect_target, _exclusive, _write_receipt)
 
 
 def _fallbacks(package):
@@ -112,11 +111,7 @@ def _publish(package, candidate, references, identity, root, number, serial, vol
                    durability='file fsync and complete readback; FAT rename is not a power-loss journal')
 
     def record():
-        with receipt_path.open('w', encoding='utf-8', newline='\n') as writer:
-            json.dump(receipt, writer, indent=2)
-            writer.write('\n')
-            writer.flush()
-            os.fsync(writer.fileno())
+        _write_receipt(receipt_path, receipt)
 
     record()
     try:
