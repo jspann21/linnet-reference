@@ -76,6 +76,15 @@ def _write_receipt(path, receipt):
         os.fsync(writer.fileno())
 
 
+def _write_verified(path, data, error):
+    with path.open('xb') as writer:
+        writer.write(data)
+        writer.flush()
+        os.fsync(writer.fileno())
+    if path.read_bytes() != data:
+        raise OSError(error)
+
+
 def _history_superblock(data: bytes) -> bytes:
     expected = (b'HIST', 0, 64, HISTORY_BANK_BYTES, HISTORY_PAGE_COUNT, HISTORY_PAGE_RECORDS, 32)
     if len(data) != HISTORY_PAGE_BYTES or struct.unpack_from('<4sHHIIII', data) != expected or any(data[40:4092]):

@@ -10,8 +10,8 @@ import time
 import uuid
 
 from . import media_manager as manager
-from .publish import _plain, _volume_guard, _exclusive
-from .publish_video import _read_catalog, _encode_catalog, CATALOG_MAX_BYTES
+from .publish import _plain, _volume_guard, _exclusive, _write_verified
+from .video_catalog import encode as _encode_catalog, read_file as _read_catalog_file
 
 
 def _device_path(root, value):
@@ -32,10 +32,7 @@ def _catalog(root):
     _plain(path, root)
     if not path.exists():
         return path, None, []
-    if path.stat().st_size > CATALOG_MAX_BYTES:
-        raise ValueError('Video catalog exceeds supported size')
-    data = path.read_bytes()
-    entries = _read_catalog(data)
+    data, entries = _read_catalog_file(path)
     for _, name, _ in entries:
         _device_path(root, name)
     return path, data, entries
@@ -174,10 +171,7 @@ def organize_videos(identity):
         _plain(recovery, root)
         _volume_guard(identity)
         recovery.parent.mkdir(exist_ok=True)
-        with recovery.open('xb') as writer:
-            writer.write(before); writer.flush(); os.fsync(writer.fileno())
-        if recovery.read_bytes() != before:
-            raise OSError('Could not verify catalog backup')
+        _write_verified(recovery, before, 'Could not verify catalog backup')
         temporary = catalog.with_name(token[:8] + '.TMP')
         published = False
         try:
@@ -199,9 +193,8 @@ def organize_videos(identity):
                         moves.append((source, destination))
                 updated.append((key, device_video_path(destination, root), title))
             data = _encode_catalog(updated)
-            with temporary.open('xb') as writer:
-                writer.write(data); writer.flush(); os.fsync(writer.fileno())
-            if temporary.read_bytes() != data or catalog.read_bytes() != before:
+            _write_verified(temporary, data, 'Video catalog changed; refresh before organizing')
+            if catalog.read_bytes() != before:
                 raise OSError('Video catalog changed; refresh before organizing')
             _volume_guard(identity)
             os.replace(temporary, catalog)
@@ -318,19 +311,13 @@ def _remove(identity, items):
         trash.mkdir(parents=True, exist_ok=False)
         if music_before is not None:
             backup = trash / 'LIBRARY.PDB.before'
-            with backup.open('xb') as writer:
-                writer.write(music_before); writer.flush(); os.fsync(writer.fileno())
-            if backup.read_bytes() != music_before:
-                raise OSError('Music index backup verification failed')
+            _write_verified(backup, music_before, 'Music index backup verification failed')
             report['music_backup'] = str(backup)
             manager._save(receipt, report)
         if remaining != entries:
             backup = trash / 'INDEX.VID.before'
             _plain(backup, root)
-            with backup.open('xb') as writer:
-                writer.write(before); writer.flush(); os.fsync(writer.fileno())
-            if backup.read_bytes() != before:
-                raise OSError('Video catalog backup verification failed')
+            _write_verified(backup, before, 'Video catalog backup verification failed')
             report['catalog_backup'] = str(backup)
             manager._save(receipt, report)
             temporary = catalog.with_name('I' + token[:7].upper() + '.TMP')

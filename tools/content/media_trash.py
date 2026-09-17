@@ -5,8 +5,8 @@ from pathlib import Path
 import uuid
 
 from . import media_manager as media, media_library as library
-from .publish import _plain, _volume_guard, _exclusive
-from .publish_video import _read_catalog, _encode_catalog, CATALOG_MAX_BYTES
+from .publish import _plain, _volume_guard, _exclusive, _write_verified
+from .video_catalog import encode as _encode_catalog, decode as _read_catalog, read_file as _read_catalog_file
 
 
 def removals(identity):
@@ -81,9 +81,7 @@ def recover(identity, token, *, erase=False):
         restore_paths = {}
         if backup.exists():
             _plain(backup, trash)
-            if backup.stat().st_size > CATALOG_MAX_BYTES:
-                raise ValueError('Unexpected catalog backup size.')
-            old = _read_catalog(backup.read_bytes())
+            _, old = _read_catalog_file(backup)
             selected_keys = {r.get('key') for r in report.get('selected', []) if r.get('category') == 'published'}
             restored_paths = {str(d).casefold() for _, d, _ in moves}
             for row in report.get('selected', []):
@@ -128,12 +126,7 @@ def recover(identity, token, *, erase=False):
             temporary = catalog.with_name('R' + uuid.uuid4().hex[:7] + '.TMP')
             _plain(temporary, root)
             try:
-                with temporary.open('xb') as writer:
-                    writer.write(data)
-                    writer.flush()
-                    os.fsync(writer.fileno())
-                if temporary.read_bytes() != data:
-                    raise OSError('Restored catalog verification failed.')
+                _write_verified(temporary, data, 'Restored catalog verification failed.')
                 _volume_guard(identity)
                 _plain(catalog, root)
                 os.replace(temporary, catalog)
