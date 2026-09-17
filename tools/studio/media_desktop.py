@@ -13,7 +13,7 @@ from PySide6.QtCore import (QAbstractTableModel, QModelIndex, QObject, QRectF, Q
 from PySide6.QtGui import (QColor, QFont, QIcon, QImage, QImageReader, QKeySequence, QPalette,
                           QLinearGradient, QPainter, QPainterPath, QPixmap, QShortcut, QPen)
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QCheckBox,
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox,
     QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QListView, QMainWindow, QProgressBar, QPushButton, QScrollArea,
     QStackedWidget, QStyledItemDelegate, QStyle,

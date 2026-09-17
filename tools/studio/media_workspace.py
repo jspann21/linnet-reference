@@ -5,7 +5,7 @@ import shutil
 import threading
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog
 
 from .media_app import MediaApp, size
 from tools.content import media_manager as media, media_status

@@ -2,7 +2,6 @@
 import hashlib
 import json
 import os
-from pathlib import Path
 import struct
 from tools.inspect.image import inspect
 

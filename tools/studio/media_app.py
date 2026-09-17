@@ -9,7 +9,7 @@ import queue
 import shutil
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, ttk
 
 from tools.content import media_manager as media
 from tools.content.media_manager import format_size as size

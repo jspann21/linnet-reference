@@ -4,7 +4,7 @@ Applications keep their semantic nodes and service bindings. Every theme emits
 its own complete scene table; no runtime layout parser or allocation is needed.
 """
 from copy import deepcopy
-from .tsx import KINDS, COLOR_ROLES
+from .tsx import COLOR_ROLES
 
 TOKEN=0x10000
 CENTER=8

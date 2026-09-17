@@ -27,7 +27,7 @@ import uuid
 import zlib
 from typing import Callable
 
-from .music import ART, HEADER, MAX_DATABASE, TRACK, validate_database
+from .music import ART, MAX_DATABASE, TRACK, validate_database
 
 CHUNK = 1024 * 1024
 HISTORY_PAGE_BYTES = 4096

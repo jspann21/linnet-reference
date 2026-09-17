@@ -9,7 +9,6 @@ Video and matching audio remain together in one sector-aligned disk read.
 """
 from __future__ import annotations
 
-import argparse
 import ctypes
 import ctypes.util
 import json

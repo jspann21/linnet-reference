@@ -2,13 +2,11 @@
 from datetime import datetime, timezone
 import hashlib
 import json
-from pathlib import Path
 import struct
 import time
 import zlib
 from tools.inspect.image import inspect
 from .campaign import connect, _run_directory, _save
-from .identity import decode
 
 FIELDS = ('magic','generation','flags','selected','scene','events_accepted','events_processed',
           'event_drops','max_latency_us','queue_high','deadline_high','arena_high','frames_submitted',
