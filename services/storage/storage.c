@@ -21,14 +21,14 @@
 #endif
 
 static struct ln_fat32 volume;
-#define STORAGE_FILE_COUNT 14u
+#define STORAGE_FILE_COUNT 16u
 static struct ln_fat32_file files[STORAGE_FILE_COUNT],proof_files[STORAGE_FILE_COUNT];
 static const char *const paths[STORAGE_FILE_COUNT]={"/.LINNET/OS0.LOS","/.LINNET/OS1.LOS",
     "/.LINNET/BOOT0.BIN","/.LINNET/BOOT1.BIN","/.LINNET/STATE0.BIN",
     "/.LINNET/STATE1.BIN","/.LINNET/SCRATCH.BIN","/.LINNET/WORK.BIN",
     "/.LINNET/MUSIC0.BIN","/.LINNET/MUSIC1.BIN",
     "/.LINNET/UPDATE0.BIN","/.LINNET/UPDATE1.BIN",
-    "/.LINNET/THEME0.BIN","/.LINNET/THEME1.BIN"
+    "/.LINNET/THEME0.BIN","/.LINNET/THEME1.BIN", "/.LINNET/LISTS0.BIN", "/.LINNET/LISTS1.BIN"
 };
 static uint8_t mbr[512] __attribute__((aligned(32)));
 static uint32_t phase,error,found,opening,epoch=1,request,request_generation,request_sectors;

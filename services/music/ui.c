@@ -98,7 +98,7 @@ uint32_t ln_ui_dynamic_count(const struct ln_ui_node*n,uint32_t fallback){
     if((in_scene(n,"linnet.system.photos")||in_scene(n,"linnet.system.photos-grid"))&&
        (n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_GRID||n->kind==LN_UI_SCROLLBAR))return ln_photos_count();
 #endif
-    if(in_scene(n,"linnet.system.music-options")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return 11;
+    if(in_scene(n,"linnet.system.music-options")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return 12;
     if(in_scene(n,"linnet.system.music-sound")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return 6;
     if(in_scene(n,"linnet.system.music-search")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_music_search_count();
     if(in_scene(n,"linnet.system.music-queue")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_music_queue_view_count();
@@ -153,13 +153,14 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
 #endif
     if(in_scene(n,"linnet.system.music-options")){
         if(n->kind==LN_UI_STATUS_BAR)return "Playback options";
-        if(n->kind==LN_UI_VIRTUAL_LIST&&item<11)return ln_music_option_label(ln_music_option_action(item));
+        if(n->kind==LN_UI_VIRTUAL_LIST&&item<12)return ln_music_option_label(ln_music_option_action(item));
     }
     if(in_scene(n,"linnet.system.music-sound")&&n->kind==LN_UI_VIRTUAL_LIST&&item<6)return ln_music_sound_label(item);
     if(in_scene(n,"linnet.system.music-queue")){
         if(n->kind==LN_UI_STATUS_BAR&&ln_music_notice())return ln_music_notice();
         if(n->kind==LN_UI_VIRTUAL_LIST&&item!=UINT32_MAX)return ln_music_queue_view_label(item);
     }
+    if(in_scene(n,"linnet.system.music-queue-actions")&&n->kind==LN_UI_STATUS_BAR&&ln_music_notice())return ln_music_notice();
     if(in_scene(n,"linnet.system.music-queue-actions")&&n->kind==LN_UI_VIRTUAL_LIST&&item<5){
         static const char *const labels[]={"Play","Remove","Move up","Move down","Clear queue"};return labels[ln_music_queue_action(item)];
     }
@@ -171,6 +172,7 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
     }
     if(n->kind==LN_UI_ALBUM_ART&&in_scene(n,"linnet.system.now-playing")&&ln_music_art_pixels())return "";
     if(in_scene(n,"linnet.system.music")){
+        if(n->kind==LN_UI_TEXT)return ln_music_browser_hint();
         if(n->kind==LN_UI_STATUS_BAR){uint32_t status=ln_music_library_status();return status==LN_LIBRARY_READY?ln_music_browser_title():status==LN_LIBRARY_ERROR?"Music - no library":"Music - loading";}
         if(n->kind==LN_UI_VIRTUAL_LIST&&item!=UINT32_MAX)return ln_music_browser_label(item);
     }

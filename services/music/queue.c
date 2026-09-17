@@ -142,22 +142,23 @@ static bool valid(const struct ln_queue *q)
 uint32_t ln_queue_encode(const struct ln_queue *q,uint8_t *out,uint32_t capacity)
 {
     if(!q||!out||!valid(q))return 0;
-    uint32_t length=q->source?108u+4u*q->excluded_count:80u+q->count*5u;if(capacity<length)return 0;
-    ln_write_le32(out,0x55455551u);ln_write_le32(out+4,q->source?1u:0u);ln_write_le32(out+8,length);ln_write_le32(out+12,q->count);
+    uint32_t width=q->count<=64?5u:6u;
+    uint32_t length=q->source?108u+4u*q->excluded_count:80u+q->count*width;if(capacity<length)return 0;
+    ln_write_le32(out,0x55455551u);ln_write_le32(out+4,q->source?1u:width==5u?0u:2u);ln_write_le32(out+8,length);ln_write_le32(out+12,q->count);
     ln_write_le32(out+16,q->cursor);ln_write_le32(out+20,q->repeat);ln_write_le32(out+24,q->seed);ln_write_le32(out+28,q->shuffled?1u:0u);
     ln_write_le32(out+32,(uint32_t)q->position_samples);ln_write_le32(out+36,(uint32_t)(q->position_samples>>32));
     ln_write_le32(out+40,(uint32_t)q->volume_db_tenths);
     for(uint32_t i=0;i<32u;++i)out[44u+i]=q->library_identity[i];
     if(q->source){ln_write_le32(out+76,q->source);ln_write_le32(out+80,q->source_group);ln_write_le32(out+84,q->stride);ln_write_le32(out+88,q->offset);ln_write_le32(out+92,q->inverse);ln_write_le32(out+96,q->source_count);ln_write_le32(out+100,q->excluded_count);for(uint32_t i=0;i<q->excluded_count;i++)ln_write_le32(out+104+4*i,q->excluded[i]);}
-    else for(uint32_t i=0;i<q->count;++i){ln_write_le32(out+76u+4u*i,q->tracks[i]);out[76u+4u*q->count+i]=(uint8_t)q->order[i];}
+    else for(uint32_t i=0;i<q->count;++i){ln_write_le32(out+76u+4u*i,q->tracks[i]);if(width==5u)out[76u+4u*q->count+i]=(uint8_t)q->order[i];else {out[76u+4u*q->count+2*i]=(uint8_t)q->order[i];out[77u+4u*q->count+2*i]=(uint8_t)(q->order[i]>>8);}}
     ln_write_le32(out+length-4u,crc(out,length-4u));return length;
 }
 bool ln_queue_decode(struct ln_queue *q,const uint8_t *data,uint32_t length)
 {
     if(!q||!data||length<80u||length>LINNET_QUEUE_RESUME_MAX||ln_read_le32(data)!=0x55455551u||
-       ln_read_le32(data+4)>1u||ln_read_le32(data+8)!=length||
-       (!ln_read_le32(data+4)?(ln_read_le32(data+12)>LINNET_QUEUE_CAPACITY||length!=80u+ln_read_le32(data+12)*5u):(length<108u||length>236u))||ln_read_le32(data+28)>1u||ln_read_le32(data+length-4u)!=crc(data,length-4u))return false;
-    struct ln_queue candidate={0};candidate.count=ln_read_le32(data+12);candidate.cursor=ln_read_le32(data+16);
+       ln_read_le32(data+4)>2u||ln_read_le32(data+8)!=length||
+       (ln_read_le32(data+4)!=1u?(ln_read_le32(data+12)>LINNET_QUEUE_CAPACITY||length!=80u+ln_read_le32(data+12)*(ln_read_le32(data+4)==2u?6u:5u)):(length<108u||length>236u))||ln_read_le32(data+28)>1u||ln_read_le32(data+length-4u)!=crc(data,length-4u))return false;
+    static struct ln_queue candidate;candidate=(struct ln_queue){0};candidate.count=ln_read_le32(data+12);candidate.cursor=ln_read_le32(data+16);
     candidate.repeat=ln_read_le32(data+20);candidate.seed=ln_read_le32(data+24);candidate.shuffled=ln_read_le32(data+28)!=0;
     candidate.position_samples=ln_read_le32(data+32)|((uint64_t)ln_read_le32(data+36)<<32);
     uint32_t volume=ln_read_le32(data+40); /* Explicit two's-complement decoding. */
@@ -170,7 +171,7 @@ bool ln_queue_decode(struct ln_queue *q,const uint8_t *data,uint32_t length)
         for(uint32_t i=0;i<candidate.excluded_count;i++)candidate.excluded[i]=ln_read_le32(data+104+4*i);
         if(!candidate.source||!valid(&candidate))return false;*q=candidate;return true;}
     for(uint32_t i=0;i<candidate.count;++i)candidate.tracks[i]=ln_read_le32(data+76u+4u*i);
-    for(uint32_t i=0;i<candidate.count;++i){uint32_t index=data[76u+4u*candidate.count+i];
+    for(uint32_t i=0;i<candidate.count;++i){uint32_t index=ln_read_le32(data+4)==2u?((uint32_t)data[76u+4u*candidate.count+2*i]|((uint32_t)data[77u+4u*candidate.count+2*i]<<8)):data[76u+4u*candidate.count+i];
         if(index>=candidate.count)return false;candidate.order[i]=index;}
     if(!valid(&candidate))return false;*q=candidate;return true;
 }

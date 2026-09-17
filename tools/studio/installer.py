@@ -695,6 +695,12 @@ def _package_storage(identity, artifacts, transaction, archive=None):
     receipt["theme"] = theme_settings.provision(
         Path(identity["root"]), identity["disk_serial"], identity["disk_bytes"],
         artifacts["os_build_id"])
+    from tools.content.publish import provision_collections
+    def guard_collections():
+        root, current = storage._mount_identity(Path(identity["root"]), identity["disk_serial"])
+        if current.get("size") != identity["disk_bytes"]:
+            raise ValueError("disk changed during playlist provisioning")
+    provision_collections(Path(identity["root"]) / ".LINNET", guard_collections)
     return receipt
 
 
@@ -906,7 +912,7 @@ def _restore_reinstall_data(root, archive):
         target = active / source.name
         _plain(target, root)
         if target.exists() or target.is_symlink():
-            if (source.name.upper() not in {"STATE0.BIN", "STATE1.BIN", "THEME0.BIN", "THEME1.BIN"}
+            if (source.name.upper() not in {"STATE0.BIN", "STATE1.BIN", "THEME0.BIN", "THEME1.BIN", "LISTS0.BIN", "LISTS1.BIN"}
                     or target.is_symlink() or not target.is_file() or target.read_bytes() != empty):
                 raise ValueError("fresh installation conflicts with preserved data: " + source.name)
         planned.append((source, target))

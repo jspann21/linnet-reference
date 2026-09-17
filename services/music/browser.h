@@ -12,7 +12,15 @@
  * PODB group kinds must use the content compiler's ascending kind ordering.
  * Playback snapshots resolve the complete selected group before publication.
  */
+bool ln_music_browser_expand(const struct ln_queue *queue);
+bool ln_music_browser_take_expanded(struct ln_queue *queue);
 void ln_music_browser_init(void);
+bool ln_music_browser_actions(uint32_t row);
+bool ln_music_browser_external_actions(uint32_t index,uint32_t kind,uint32_t count,const char *title);
+bool ln_music_browser_take_search_return(void);
+bool ln_music_browser_save_queue(const struct ln_queue *queue);
+bool ln_music_browser_take_selection(uint32_t *row);
+void ln_music_browser_notice(const char *text);
 void ln_music_browser_suspend(bool suspend);
 /* Visibility gates speculative cache work, never an accepted playback intent. */
 void ln_music_browser_set_visible(bool visible);
@@ -31,12 +39,12 @@ bool ln_music_browser_open_album(uint32_t group,uint32_t count,const char *title
 struct ln_music_browser_queue {
     uint8_t library_hash[32];
     uint32_t count,cursor,tracks[LINNET_QUEUE_CAPACITY];
-    uint32_t source,source_group;
+    uint32_t source,source_group,action;
 };
 enum ln_music_browser_queue_status { LN_BROWSER_QUEUE_IDLE=0,LN_BROWSER_QUEUE_LOADING=1,
     LN_BROWSER_QUEUE_READY=2,LN_BROWSER_QUEUE_CAPACITY=-1,LN_BROWSER_QUEUE_INVALID=-2 };
 /* Select normally requests the full group including tracks before cursor.
- * Groups over64 publish a virtual source descriptor, bounded at100000 members.
+ * Groups over1024 publish a virtual source descriptor, bounded at100000 members.
  * tracks[] is populated only for source0; select_single explicitly requests one.
  * Window/navigation/new selection cancels and drains pending snapshot work. */
 bool ln_music_browser_select_single(uint32_t row);
@@ -44,6 +52,7 @@ int ln_music_browser_queue_status(void);
 bool ln_music_browser_take_queue(struct ln_music_browser_queue *out);
 bool ln_music_browser_back(void);
 const char *ln_music_browser_title(void);
+const char *ln_music_browser_hint(void);
 uint32_t ln_music_browser_revision(void);
 bool ln_music_browser_busy(void);
 /* Advances for hierarchy changes, independently of cache publication. */

@@ -133,9 +133,9 @@ SECTIONS {
   /* The metadata page cache and expanded browser rows fit below 4.5 MiB,
    * within the existing 8 MiB OS region and below all staging reservations. */
 #if defined(LINNET_COVERFLOW)
-  ASSERT(__stack_top <= 0x00700000, "Cover Flow resident image exceeds 7 MiB")
+  ASSERT(__stack_top <= 0x007c0000, "Cover Flow resident image exceeds 7.75 MiB")
 #else
-  ASSERT(__stack_top <= 0x00480000, "Music resident image exceeds 4.5 MiB")
+  ASSERT(__stack_top <= 0x00540000, "Music resident image exceeds 5.25 MiB")
 #endif
 #else
   ASSERT(__stack_top <= 0x00100000, "Resident image exceeds 1 MiB")

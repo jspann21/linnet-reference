@@ -25,6 +25,7 @@ bool ln_music_option_select(uint32_t index);
 uint32_t ln_music_revision(void);
 const char *ln_music_sound_label(uint32_t index);
 bool ln_music_sound_adjust(uint32_t index,int32_t direction);
+bool ln_music_save_queue(void);
 void ln_music_queue_open(void);
 void ln_music_queue_close(void);
 void ln_music_queue_choose(uint32_t row);

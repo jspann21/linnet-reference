@@ -24,6 +24,7 @@ uint32_t ln_music_search_navigation(void);
 bool ln_music_search_select(uint32_t row);
 void ln_music_search_left(void);
 void ln_music_search_right(void);
+bool ln_music_search_actions(uint32_t row);
 /* True means moved up within search; false means search closed. */
 bool ln_music_search_back(void);
 void ln_music_search_window(uint32_t first);

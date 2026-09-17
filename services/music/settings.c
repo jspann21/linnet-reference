@@ -11,7 +11,7 @@ uint32_t ln_music_settings_encode(const struct ln_queue*q,const struct ln_music_
     ln_write_le32(out,0x5445534du);ln_write_le32(out+4,n);ln_write_le32(out+40+n,ln_crc32(out,40+n));return 44+n;
 }
 bool ln_music_settings_decode(struct ln_queue*q,struct ln_music_profile*p,const uint8_t*in,uint32_t bytes){
-    if(!q||!p||!in)return false;struct ln_queue saved;struct ln_music_profile profile;
+    if(!q||!p||!in)return false;static struct ln_queue saved;struct ln_music_profile profile;
     if(bytes<44||ln_read_le32(in)!=0x5445534du)return false;
     uint32_t n=ln_read_le32(in+4);if(n!=bytes-44||ln_read_le32(in+40+n)!=ln_crc32(in,40+n)||
         !ln_queue_decode(&saved,in+8,n)||!ln_music_profile_decode(&profile,in+8+n,32))return false;

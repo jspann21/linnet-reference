@@ -414,7 +414,7 @@ def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
     linnet = root / ".LINNET"
     _plain(linnet, root)
     # Preflight existing media before any device mutation, including collisions.
-    needed = inventory["database"]["bytes"]
+    needed = inventory["database"]["bytes"] + 2 * 147456
     for item in inventory["files"]:
         destination = (root if item["kind"] == "music" else linnet) / item["path"]
         _plain(destination, root)
@@ -506,6 +506,7 @@ def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
                     writer.write(bank);writer.flush();os.fsync(writer.fileno())
                 if _hash(journal,HISTORY_BANK_BYTES)!=digest:raise OSError('Music history initialization readback mismatch')
             receipt['initialized_music_state']=True
+        provision_collections(linnet, guard)
         # Preserve previous published bytes before replacing the active entry.
         if previous:
             backup = linnet / "LIBBAK" / (previous["sha256"][:8].upper() + ".PDB")
@@ -667,3 +668,45 @@ def _publish_library(package, candidate, identity, root, number, serial, volume,
         except OSError:
             pass
         raise RuntimeError(f"{label.capitalize()} publication stopped in {receipt['phase']}: {exc}. Inspect {receipt_path}; do not replay automatically") from exc
+
+
+def provision_collections(directory: Path, guard: Callable[[], None]) -> None:
+    """Add the optional dual playlist banks, preserving every existing bank."""
+    size = 147456
+    banks = [directory / name for name in ('LISTS0.BIN', 'LISTS1.BIN')]
+    existing = []
+    for path in banks:
+        guard()
+        if path.is_symlink():
+            raise ValueError('unsafe playlist bank')
+        if path.exists():
+            if path.stat().st_size != size:
+                raise ValueError('unexpected playlist bank size; preserving it')
+            data = bytearray(path.read_bytes())
+            magic, version, generation, checksum = struct.unpack_from('<4sIII', data)
+            struct.pack_into('<I', data, 12, 0)
+            if magic != b'LLST' or version != 1 or not generation or zlib.crc32(data) != checksum:
+                continue  # Firmware can recover from the other complete bank.
+            struct.pack_into('<I', data, 12, checksum)
+            existing.append((generation, data))
+    if all(path.exists() for path in banks):
+        return
+    if existing:
+        initial = max(existing, key=lambda pair: pair[0])[1]
+    elif any(path.exists() for path in banks):
+        raise ValueError('no valid playlist bank; preserving state')
+    else:
+        initial = bytearray(size)
+        struct.pack_into('<4sIII', initial, 0, b'LLST', 1, 1, 0)
+        struct.pack_into('<I', initial, 12, zlib.crc32(initial))
+    for path in banks:
+        if path.exists():
+            continue
+        guard()
+        with path.open('xb') as writer:
+            writer.write(initial)
+            writer.flush()
+            os.fsync(writer.fileno())
+        if path.read_bytes() != initial:
+            raise OSError('playlist bank readback mismatch')
+    guard()

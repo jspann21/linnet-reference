@@ -121,7 +121,7 @@ def refine_footers(scene,theme):
     texts=[n for n in scene['nodes'] if n['kind']==3]
     if sid in keys:foot=[n for n in texts if n['text'] in keys[sid]]
     elif sid in ('display','battery','shutdown'):foot=texts[1:]
-    elif sid in ('music-queue','music-sound','video-controls'):foot=texts
+    elif sid in ('music','music-queue','music-sound','video-controls'):foot=texts
     else:return
     if not foot:return
     style=theme['layout']
@@ -190,7 +190,7 @@ def refine_scene(scene,theme,body):
         for i,n in enumerate(texts):
             top=y+(2*rh if sid=='shutdown' else rh)+note_gap if i==0 else bottom-(len(texts)-i)*(fh+5)
             place(n,x+4,top,w-8,fh);n['flags']=0
-    elif sid in ('music-sound','music-queue'):
+    elif sid in ('music','music-sound','music-queue'):
         footer_h=fh if sid=='music-sound' else 2*fh
         place(listing,listing['x'],y,listing['w'],max(rh,((h-footer_h-8)//rh)*rh))
         for n in texts:place(n,x+4,bottom-footer_h,w-8,footer_h);n['flags']=WRAP
@@ -310,7 +310,7 @@ def refine_ipod_photo(scene,theme):
     elif sid=='themes' and listing:
         place(listing,0,20,210,132)
         for n in texts:place(n,6,155,208,fh)
-    elif sid in ('display','battery','shutdown','music-queue','music-sound','music-search','clock-edit','clock'):
+    elif sid in ('display','battery','shutdown','music','music-queue','music-sound','music-search','clock-edit','clock'):
         for n in texts:
             n['x']=6;n['w']=208
             n['h']=min(n['h'],172-n['y'])

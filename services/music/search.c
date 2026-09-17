@@ -86,7 +86,7 @@ const char *ln_music_search_label(uint32_t row){
     }
 }
 const char *ln_music_search_prefix(void){return length?prefix:"Enter name prefix";}
-const char *ln_music_search_hint(void){return results?(in_group?"Select: Play  Menu: Results":"Select: Open/Play  Menu: Edit"):"Select: Add  Left: Erase  Right: Find";}
+const char *ln_music_search_hint(void){return results?(in_group?"Right: Actions  Menu: Results":"Right: Actions  Menu: Edit"):"Select: Add  Left: Erase  Right: Find";}
 const char *ln_music_search_title(void){return in_group?group_title:results?"Search results":"Search music";}
 uint32_t ln_music_search_revision(void){return revision;}
 uint32_t ln_music_search_navigation(void){return navigation;}
@@ -137,4 +137,11 @@ bool ln_music_search_take_queue(struct ln_music_browser_queue *queue){
         queue->count=group_count;queue->cursor=selected_ordinal;
     }else {queue->count=1;queue->tracks[0]=selected_track;}
     return true;
+}
+
+bool ln_music_search_actions(uint32_t index){
+    if(!opened||!results||index>=known||!row_ready(index))return false;
+    const struct ln_music_library_search_row *r=&row_slot(index)->value;
+    if(!ln_music_browser_external_actions(r->index,r->kind,r->count,r->title))return false;
+    ln_music_search_close();return true;
 }

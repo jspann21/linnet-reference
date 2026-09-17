@@ -181,7 +181,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         sources += [ROOT/'services/music/artwork.c']
         sources += [ROOT/'services/music/browser.c']
         sources += [ROOT/'services/music/search.c',ROOT/'services/music/profile.c',ROOT/'services/music/settings.c']
-        sources += [ROOT/'services/music/queue_view.c']
+        sources += [ROOT/'services/music/queue_view.c',ROOT/'services/music/collections.c']
         sources += [ROOT/'services/music/decoder.c']
         sources += [ROOT/'services/audio/dsp.c',ROOT/'services/audio/dsp_arm.S']
         sources += [ROOT/'services/audio/mp3/mp3.c']
@@ -271,7 +271,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     report = dict(**configuration, build_id=build_id, toolchain=chain, image=inspect(envelope),
                   source_files=[p.relative_to(ROOT).as_posix() for p in sources],
                   artifacts={key: str(path.relative_to(ROOT)) for key, path in dict(elf=elf, los=los, ipod=ipod, map=mapfile).items()},
-                  memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=(7340032 if ui_report['features'].get('cover_flow',False) else 4718592) if kind=='os' else 1048576, retained_limit_bytes=spec['mailbox_bytes']),
+                  memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=(8126464 if ui_report['features'].get('cover_flow',False) else 5505024) if kind=='os' else 1048576, retained_limit_bytes=spec['mailbox_bytes']),
                   release_exclusion=verification,
                   limitation="FIQ watchdog depends on FIQ delivery; COP reset escalation requires a live COP monitor.")
     if ui_report is not None:report["ui"]=ui_report

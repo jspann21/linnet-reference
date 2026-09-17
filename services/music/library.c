@@ -2,7 +2,7 @@
 #include "services/storage/storage.h"
 #include "hal/api/platform.h"
 
-enum job { JOB_NONE=0,JOB_WINDOW,JOB_SELECTION,JOB_SEARCH,JOB_GROUP,JOB_MEMBER,JOB_PREFETCH,JOB_QUEUE,JOB_VIEW,JOB_VIEW_GROUP,JOB_GROUP_RECORD };
+enum job { JOB_NONE=0,JOB_WINDOW,JOB_SELECTION,JOB_SEARCH,JOB_GROUP,JOB_MEMBER,JOB_PREFETCH,JOB_QUEUE,JOB_VIEW,JOB_VIEW_GROUP,JOB_GROUP_RECORD,JOB_TRACK_RECORD };
 struct library {
     struct ln_music_db db;
     /* Bounded shared page cache: titles, group/member tables and search indexes.
@@ -13,6 +13,7 @@ struct library {
     struct ln_fat32_file file;
     struct ln_music_library_row rows[LN_MUSIC_LIBRARY_ROWS],scratch,selection,prefetch;
     struct ln_music_group group;
+    struct ln_music_track record;
     char prefix[256],group_name[256];
     uint32_t generation,revision,first,job_index,selection_index,selection_token,job_token;
     uint32_t query_index,query_ordinal,query_result,io_offset,io_size;
@@ -283,6 +284,11 @@ bool ln_music_library_take_view_row(struct ln_music_library_search_row *out)
     out->kind=out->count=0;
     library.query_ready=false;return true;
 }
+bool ln_music_library_track_record(uint32_t index){return ready()&&index<library.db.tracks&&query_admit(JOB_TRACK_RECORD,index,0);}
+bool ln_music_library_take_track_record(struct ln_music_track *out){
+    if(!out||!ready()||library.query!=JOB_TRACK_RECORD||!library.query_ready)return false;
+    *out=library.record;library.query_ready=false;return true;
+}
 bool ln_music_library_group(uint32_t index)
 {
     return ready()&&index<library.db.groups&&query_admit(JOB_GROUP,index,0);
@@ -378,7 +384,7 @@ static void query_complete(uint32_t result)
 static void query_step(void)
 {
     if(!library.stage){
-        if(library.job==JOB_VIEW){
+        if(library.job==JOB_VIEW||library.job==JOB_TRACK_RECORD){
             library.query_result=library.query_index;library.group_name[0]=0;
             if(request(LN_DB_TRACK,library.query_index))library.stage=2;
             return;
@@ -389,6 +395,7 @@ static void query_step(void)
     }
     int result=ln_music_db_step(&library.db);
     if(result<0){fail(result);return;}if(!result)return;
+    if(library.job==JOB_TRACK_RECORD){library.record=library.db.track;query_complete(library.query_index);return;}
     if(library.job==JOB_VIEW_GROUP&&library.stage==1){
         library.group_name[0]=0;
         if(library.query_ordinal>=library.db.group.count){query_complete(UINT32_MAX);return;}

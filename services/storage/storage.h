@@ -32,7 +32,7 @@ void ln_storage_media_cancel(uint32_t generation);
 enum ln_storage_file { LN_STORAGE_OS0=0,LN_STORAGE_OS1=1,LN_STORAGE_BOOT0=2,
     LN_STORAGE_BOOT1=3,LN_STORAGE_STATE0=4,LN_STORAGE_STATE1=5,LN_STORAGE_SCRATCH=6,LN_STORAGE_WORK=7,
     LN_STORAGE_MUSIC0=8,LN_STORAGE_MUSIC1=9,LN_STORAGE_UPDATE0=10,LN_STORAGE_UPDATE1=11,
-    LN_STORAGE_THEME0=12,LN_STORAGE_THEME1=13 };
+    LN_STORAGE_THEME0=12,LN_STORAGE_THEME1=13,LN_STORAGE_LIST0=14,LN_STORAGE_LIST1=15 };
 void ln_storage_init(void);
 void ln_storage_step(void);
 /* Executive-only entry: full runtime must run after the bounded storage step. */

@@ -197,7 +197,8 @@ static void browser_navigation(void){
     uint32_t navigation=ln_music_browser_navigation();
     if(navigation!=music_navigation){
         shell->selected=0;shell->selections[shell->scene]=0;
-        music_navigation=navigation;ln_ui_refresh(shell);dirty=true;
+        music_navigation=navigation;uint32_t restored_row;if(ln_music_browser_take_selection(&restored_row)){shell->selected=restored_row;shell->selections[shell->scene]=restored_row;}
+        ln_ui_refresh(shell);dirty=true;
     }
     if(music_window_epoch==shell->scene_epoch&&music_window_selection==shell->selected&&
        music_window_navigation==navigation)return;
@@ -387,7 +388,9 @@ static void apply(uint32_t kind,int32_t value){
             dirty=true;handled=true;
         }else
 #endif
-        if((pressed&LN_BUTTON_SELECT)&&scene_is("linnet.system.music")){
+        if((pressed&LN_BUTTON_NEXT)&&scene_is("linnet.system.music")){
+            (void)ln_music_browser_actions(shell->selected);browser_navigation();handled=true;dirty=true;
+        }else if((pressed&LN_BUTTON_SELECT)&&scene_is("linnet.system.music")){
             (void)ln_music_browser_select(shell->selected);browser_navigation();handled=true;
             if(ln_music_browser_take_search()){
                 ln_music_search_open();if(ln_ui_show(shell,"linnet.system.music-search"))dirty=true;
@@ -401,25 +404,27 @@ static void apply(uint32_t kind,int32_t value){
         }else if((pressed&LN_BUTTON_SELECT)&&scene_is("linnet.system.music-options")){
             uint32_t action=ln_music_option_action(shell->selected);
             if(action==7){ln_music_queue_open();(void)ln_ui_show(shell,"linnet.system.music-queue");}
+            else if(action==11){ln_music_queue_close();(void)ln_ui_show(shell,"linnet.system.music");(void)ln_music_save_queue();browser_navigation();}
             else if(action==8){(void)ln_ui_show(shell,"linnet.system.music-sound");}
             else (void)ln_music_option_select(action);
             ln_ui_refresh(shell);dirty=true;handled=true;
         }else if(scene_is("linnet.system.music-queue")&&(pressed&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV|LN_BUTTON_MENU))){
             if(pressed&LN_BUTTON_MENU){ln_music_queue_close();(void)ln_ui_show(shell,"linnet.system.music-options");}
             else {ln_music_queue_choose(shell->selected);
-                if(pressed&LN_BUTTON_NEXT)(void)ln_ui_show(shell,"linnet.system.music-queue-actions");
-                else (void)ln_music_queue_edit((pressed&LN_BUTTON_PREV)?1u:0u);}
+                if(pressed&LN_BUTTON_PREV){ln_music_queue_close();(void)ln_ui_show(shell,"linnet.system.music-options");}
+                else (void)ln_ui_show(shell,"linnet.system.music-queue-actions");}
             ln_ui_refresh(shell);dirty=true;handled=true;
         }else if(scene_is("linnet.system.music-queue-actions")&&(pressed&(LN_BUTTON_SELECT|LN_BUTTON_MENU))){
-            if(pressed&LN_BUTTON_SELECT)(void)ln_music_queue_edit(ln_music_queue_action(shell->selected));
-            (void)ln_ui_show(shell,"linnet.system.music-queue");ln_ui_refresh(shell);dirty=true;handled=true;
+            if((pressed&LN_BUTTON_MENU)||ln_music_queue_edit(ln_music_queue_action(shell->selected)))
+                (void)ln_ui_show(shell,"linnet.system.music-queue");
+            ln_ui_refresh(shell);dirty=true;handled=true;
         }else if(scene_is("linnet.system.music-sound")&&(pressed&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV))){
             (void)ln_music_sound_adjust(shell->selected,(pressed&LN_BUTTON_PREV)?-1:1);ln_ui_refresh(shell);dirty=true;handled=true;
         }else if(scene_is("linnet.system.music-sound")&&(pressed&LN_BUTTON_MENU)){
             (void)ln_ui_show(shell,"linnet.system.music-options");dirty=true;handled=true;
         }else if(scene_is("linnet.system.music-search")&&(pressed&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV|LN_BUTTON_MENU))){
             if(pressed&LN_BUTTON_MENU){if(!ln_music_search_back())(void)ln_ui_show(shell,"linnet.system.music");}
-            else if(pressed&LN_BUTTON_NEXT)ln_music_search_right();
+            else if(pressed&LN_BUTTON_NEXT){if(ln_music_search_actions(shell->selected)){(void)ln_ui_show(shell,"linnet.system.music");browser_navigation();}else ln_music_search_right();}
             else if(pressed&LN_BUTTON_PREV)ln_music_search_left();
             else (void)ln_music_search_select(shell->selected);
             ln_ui_refresh(shell);dirty=true;handled=true;
@@ -430,7 +435,7 @@ static void apply(uint32_t kind,int32_t value){
             if(music_from_coverflow){music_from_coverflow=false;(void)ln_ui_show(shell,"linnet.system.cover-flow");dirty=true;handled=true;}
             else
 #endif
-            {handled=ln_music_browser_back();if(handled)browser_navigation();}
+            {handled=ln_music_browser_back();if(handled)browser_navigation();if(ln_music_browser_take_search_return()){ln_music_search_resume();(void)ln_ui_show(shell,"linnet.system.music-search");dirty=true;handled=true;}}
         }else if(pressed&LN_BUTTON_PLAY){
             if(scene_is("linnet.system.music")&&ln_music_browser_queue_status()==LN_BROWSER_QUEUE_CAPACITY)
                 (void)ln_music_browser_select_single(shell->selected);

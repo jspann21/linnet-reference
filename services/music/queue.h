@@ -2,12 +2,12 @@
 #define LINNET_MUSIC_QUEUE_H
 #include <stdint.h>
 #include <stdbool.h>
-#define LINNET_QUEUE_CAPACITY 64u
+#define LINNET_QUEUE_CAPACITY 1024u
 #define LINNET_QUEUE_SOURCE_MAX 100000u
 enum ln_queue_source {LN_QUEUE_EXPLICIT=0,LN_QUEUE_ALL=1,LN_QUEUE_GROUP=2};
-#define LINNET_QUEUE_RESUME_MAX (80u+5u*LINNET_QUEUE_CAPACITY)
+#define LINNET_QUEUE_RESUME_MAX (80u+6u*LINNET_QUEUE_CAPACITY)
 enum ln_queue_repeat { LINNET_QUEUE_REPEAT_NONE,LINNET_QUEUE_REPEAT_ALL,LINNET_QUEUE_REPEAT_ONE };
-/* Initial queue limit is 64 entries; overflow returns false without truncation.
+/* Explicit queue limit is 1024 entries; overflow returns false without truncation.
  * Track values are indexes into the caller's library. Caller must set and compare
  * library_identity (PODB payload SHA256) and validate indexes against track count.
  * This is queue/resume state, not a favorites/rating/play-count journal. */
@@ -41,8 +41,8 @@ bool ln_queue_previous(struct ln_queue *queue);
 void ln_queue_shuffle(struct ln_queue *queue,bool enabled);
 bool ln_queue_set_repeat(struct ln_queue *queue,uint32_t repeat);
 /* Encode returns bytes written or zero. Decode is atomic on invalid records.
- * Explicit state is at most400 bytes. Virtual state is108+4*excluded_count,
- * at most236 bytes. Both fit the480-byte durable settings payload.
+ * Explicit state is at most6224 bytes. Virtual state is108+4*excluded_count,
+ * at most236 bytes. Large queues use the collections sidecars.
  * Bytes0..3 are QUEU; byte4 selects explicit0 or virtual1 storage.
  * Common fields occupy0..75;76source,80group,84stride,88offset,92inverse,
  * 96source_count,100excluded_count,104 source ordinals; final4 bytes CRC32.
