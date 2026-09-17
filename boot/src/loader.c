@@ -1,7 +1,5 @@
+#include "boot/include/linnet_bytes.h"
 #include "loader.h"
-static void write32(uint8_t *p,uint32_t value) {
-    for(unsigned i=0;i<4;++i)p[i]=(uint8_t)(value>>(8u*i));
-}
 static void count(uint32_t *value) { if(*value!=UINT32_MAX)++*value; }
 static int begin(void *context,uint32_t size) {
     struct ln_loader *s=context;
@@ -49,16 +47,16 @@ static int read_response(void *context,uint16_t command,uint8_t *output,uint32_t
     if(command==1||command==2||command==3) {
         if(*size<LINNET_LOADER_IDENTITY_SIZE)return 0;
         output[0]='L';output[1]='N';output[2]='I';output[3]='D';
-        write32(output+4,s->config.policy.target);write32(output+8,0);
-        write32(output+12,s->config.profile);write32(output+16,s->config.image_kind);
-        write32(output+20,s->config.health_flags);write32(output+24,s->config.generation);
-        write32(output+28,s->config.capabilities);
+        ln_write_le32(output+4,s->config.policy.target);ln_write_le32(output+8,0);
+        ln_write_le32(output+12,s->config.profile);ln_write_le32(output+16,s->config.image_kind);
+        ln_write_le32(output+20,s->config.health_flags);ln_write_le32(output+24,s->config.generation);
+        ln_write_le32(output+28,s->config.capabilities);
         for(unsigned i=0;i<32;++i){output[32+i]=s->config.build_id[i];output[64+i]=s->config.image_sha256[i];}
         *size=LINNET_LOADER_IDENTITY_SIZE;return 1;
     }
     if(command==49) {
         if(*size<32)return 0;
-        for(unsigned i=0;i<8;++i)write32(output+4u*i,s->metrics[i]);
+        for(unsigned i=0;i<8;++i)ln_write_le32(output+4u*i,s->metrics[i]);
         *size=32;return 1;
     }
     if(command==48){*size=0;return 1;} /* No log records emitted by this bounded backend. */

@@ -1,3 +1,4 @@
+#include "boot/include/linnet_bytes.h"
 #include "services/update/update.h"
 #include "boot/include/sha256.h"
 #if defined(LINNET_IMAGE_BOOT) && !defined(LINNET_PROFILE_RELEASE)
@@ -11,8 +12,6 @@
 #define LN_VALIDATE_TIME(index,name) ((void)0)
 #define LN_VALIDATE_COUNT(index,value) ((void)0)
 #endif
-static uint32_t get32(const uint8_t*p){return p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
-static void put32(uint8_t*p,uint32_t n){for(unsigned i=0;i<4;++i)p[i]=(uint8_t)(n>>(8*i));}
 static int equal(const uint8_t*a,const uint8_t*b,uint32_t n){for(uint32_t i=0;i<n;++i)if(a[i]!=b[i])return 0;return 1;}
 static int zero(const uint8_t*p,uint32_t n){for(uint32_t i=0;i<n;++i)if(p[i])return 0;return 1;}
 static void clear_image(struct ln_update_image*i){i->length=i->profile=0;for(unsigned k=0;k<32;++k)i->build_id[k]=i->sha256[k]=0;}
@@ -20,10 +19,10 @@ static int usable(struct ln_update*u){return u&&u->ready&&u->store->ready&&!u->s
 int ln_update_metadata_encode(const struct ln_update*u,uint8_t p[184]){
     if(!u||!p)return 0;
     for(unsigned i=0;i<184;++i)p[i]=0;
-    put32(p,0x54445055u);put32(p+4,0);
+    ln_write_le32(p,0x54445055u);ln_write_le32(p+4,0);
     if(!ln_boot_state_encode(&u->boot,p+8,32))return 0;
     for(unsigned s=0;s<2;++s){uint8_t*r=p+40+s*72;const struct ln_update_image*i=&u->image[s];
-        put32(r,i->length);put32(r+4,i->profile);
+        ln_write_le32(r,i->length);ln_write_le32(r+4,i->profile);
         for(unsigned k=0;k<32;++k){r[8+k]=i->build_id[k];r[40+k]=i->sha256[k];}}
     return 1;
 }
@@ -36,9 +35,9 @@ int ln_update_open(struct ln_update*u,struct ln_state_store*store,const struct l
     clear_image(&u->image[0]);clear_image(&u->image[1]);ln_boot_state_init(&u->boot,255);
     if(!store->generation){u->ready=1;return 1;}
     const uint8_t*p=store->payload;
-    if(store->length!=184||get32(p)!=0x54445055u||get32(p+4)||!ln_boot_state_decode(&u->boot,p+8,32))return 0;
+    if(store->length!=184||ln_read_le32(p)!=0x54445055u||ln_read_le32(p+4)||!ln_boot_state_decode(&u->boot,p+8,32))return 0;
     for(unsigned s=0;s<2;++s){const uint8_t*r=p+40+s*72;struct ln_update_image*i=&u->image[s];
-        i->length=get32(r);i->profile=get32(r+4);
+        i->length=ln_read_le32(r);i->profile=ln_read_le32(r+4);
         if(!i->length){if(!zero(r,72))return 0;continue;}
         if(i->length<132||i->length>LN_UPDATE_IMAGE_MAX||i->length>io->capacity(io->context,s)||
            i->profile>2)return 0;

@@ -1,3 +1,4 @@
+#include "boot/include/linnet_bytes.h"
 #include "services/notes/notes.h"
 #include "services/storage/storage.h"
 #define NOTES_MAX 256u
@@ -11,7 +12,6 @@ static uint32_t phase,generation=0x4e000001u,count,lines,selected,revision,drawn
 static uint32_t cache_first,cache_count,request_first,request_count;
 static bool active,pending,reading,discard;
 static const char *status="Prepare Notes on your computer";
-static uint32_t word(const uint8_t*p){return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);}
 static bool equal(const char*a,const char*b){while(*a&&*a==*b){++a;++b;}return *a==*b;}
 static bool scene(const struct ln_ui_state*s){return s&&s->scene<ln_ui_scene_count&&equal(ln_ui_scenes[s->scene].id,"linnet.system.notes");}
 static bool text_valid(const uint8_t*p,uint32_t n){bool zero=false;for(uint32_t i=0;i<n;++i){if(!p[i])zero=true;else if(p[i]<32u||p[i]>126u)return false;}return zero;}
@@ -36,15 +36,15 @@ void ln_notes_step(struct ln_ui_state*s){
         else if(result<0){fail();}
         else if(phase==1){phase=2;}
         else if(phase==2){
-            count=word(header+8);
-            if(transferred!=16u||word(header)!=0x45544f4eu||word(header+4)||count>NOTES_MAX||word(header+12)!=NOTES_RECORD||file.size!=16u+count*(64u+NOTES_RECORD))fail();
+            count=ln_read_le32(header+8);
+            if(transferred!=16u||ln_read_le32(header)!=0x45544f4eu||ln_read_le32(header+4)||count>NOTES_MAX||ln_read_le32(header+12)!=NOTES_RECORD||file.size!=16u+count*(64u+NOTES_RECORD))fail();
             else{phase=0;status="No Notes - add text files";++revision;}
         }else if(phase==3||phase==5){
             uint32_t stride=phase==3?64u:32u;bool valid=transferred==request_count*stride;
             for(uint32_t i=0;i<request_count&&valid;++i)valid=text_valid(cache+i*stride,stride);
             if(!valid)fail();else{phase=0;cache_first=request_first;cache_count=request_count;++revision;}
         }else if(phase==4){
-            lines=word(header);
+            lines=ln_read_le32(header);
             if(transferred!=4u||!lines||lines>256u)fail();
             else{phase=0;reading=true;cache_count=0;s->selected=0;++revision;}
         }

@@ -1,8 +1,6 @@
+#include "boot/include/linnet_bytes.h"
 #include "database.h"
 #include "boot/include/linnet_boot.h"
-static uint16_t r16(const uint8_t *p){return (uint16_t)(p[0]|(p[1]<<8));}
-static uint32_t r32(const uint8_t *p){return p[0]|(p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);}
-static uint64_t r64(const uint8_t *p){return r32(p)|((uint64_t)r32(p+4)<<32);}
 static void copy(void *to,const void *from,uint32_t n){uint8_t *d=to;const uint8_t *s=from;for(uint32_t i=0;i<n;i++)d[i]=s[i];}
 static int bad(struct ln_music_db *d,int error){d->error=error;d->busy=false;d->search_lower_valid=false;return error;}
 static int read_bytes(struct ln_music_db *d,uint32_t offset,uint32_t count)
@@ -45,13 +43,13 @@ int ln_music_db_open_step(struct ln_music_db *d)
     int r;uint8_t *b=d->buffer;
     if(d->phase==0){
         r=read_bytes(d,0,128);if(r!=1)return r;
-        if(b[0]!='P'||b[1]!='O'||b[2]!='D'||b[3]!='B'||r16(b+4)!=0||r16(b+6)!=128||
-           r32(b+8)!=d->size||r32(b+12)||ln_crc32(b,124)!=r32(b+124))return bad(d,LN_DB_FORMAT);
+        if(b[0]!='P'||b[1]!='O'||b[2]!='D'||b[3]!='B'||ln_read_le16(b+4)!=0||ln_read_le16(b+6)!=128||
+           ln_read_le32(b+8)!=d->size||ln_read_le32(b+12)||ln_crc32(b,124)!=ln_read_le32(b+124))return bad(d,LN_DB_FORMAT);
         for(uint32_t i=96;i<124;i++)if(b[i])return bad(d,LN_DB_FORMAT);
-        d->tracks=r32(b+16);d->groups=r32(b+20);d->members=r32(b+24);d->searches=r32(b+28);
-        d->track_offset=r32(b+32);d->group_offset=r32(b+36);d->member_offset=r32(b+40);
-        d->search_offset=r32(b+44);d->pool_offset=r32(b+48);d->pool_bytes=r32(b+52);
-        d->arts=r32(b+56);d->art_offset=r32(b+60);
+        d->tracks=ln_read_le32(b+16);d->groups=ln_read_le32(b+20);d->members=ln_read_le32(b+24);d->searches=ln_read_le32(b+28);
+        d->track_offset=ln_read_le32(b+32);d->group_offset=ln_read_le32(b+36);d->member_offset=ln_read_le32(b+40);
+        d->search_offset=ln_read_le32(b+44);d->pool_offset=ln_read_le32(b+48);d->pool_bytes=ln_read_le32(b+52);
+        d->arts=ln_read_le32(b+56);d->art_offset=ln_read_le32(b+60);
         uint32_t cursor=128;
         if(d->tracks>100000u||d->searches<d->tracks||
            d->searches-d->tracks>d->groups||!d->pool_bytes||
@@ -108,11 +106,11 @@ bool ln_music_db_request(struct ln_music_db *d,enum ln_music_db_request operatio
 static bool track_record(struct ln_music_db *d)
 {
     uint8_t *b=d->buffer;struct ln_music_track *t=&d->track;
-    t->id=r64(b);t->file_bytes=r64(b+8);t->data_offset=r64(b+16);t->data_bytes=r64(b+24);t->frames=r64(b+32);
-    t->rate=r32(b+40);t->channels=r16(b+44);t->bits=r16(b+46);t->codec=r32(b+48);
-    t->title=r32(b+52);t->artist=r32(b+56);t->album=r32(b+60);t->path=r32(b+64);t->genre=r32(b+68);t->composer=r32(b+72);
-    t->year=r32(b+76);t->number=r32(b+80);t->disc=r32(b+84);t->art=r32(b+88);t->replaygain=(int32_t)r32(b+92);copy(t->sha256,b+96,32);
-    for(uint32_t i=52;i<=72;i+=4)if(r32(b+i)>=d->pool_bytes)return false;
+    t->id=ln_read_le64(b);t->file_bytes=ln_read_le64(b+8);t->data_offset=ln_read_le64(b+16);t->data_bytes=ln_read_le64(b+24);t->frames=ln_read_le64(b+32);
+    t->rate=ln_read_le32(b+40);t->channels=ln_read_le16(b+44);t->bits=ln_read_le16(b+46);t->codec=ln_read_le32(b+48);
+    t->title=ln_read_le32(b+52);t->artist=ln_read_le32(b+56);t->album=ln_read_le32(b+60);t->path=ln_read_le32(b+64);t->genre=ln_read_le32(b+68);t->composer=ln_read_le32(b+72);
+    t->year=ln_read_le32(b+76);t->number=ln_read_le32(b+80);t->disc=ln_read_le32(b+84);t->art=ln_read_le32(b+88);t->replaygain=(int32_t)ln_read_le32(b+92);copy(t->sha256,b+96,32);
+    for(uint32_t i=52;i<=72;i+=4)if(ln_read_le32(b+i)>=d->pool_bytes)return false;
     if(!t->rate||t->rate>384000||!t->channels||t->channels>8||t->data_offset>t->file_bytes||
        t->data_bytes>t->file_bytes-t->data_offset||(t->art!=UINT32_MAX&&t->art>=d->arts))return false;
     if(t->codec>=1&&t->codec<=4){
@@ -172,10 +170,10 @@ static int search_step(struct ln_music_db *d)
         d->query_phase=4;cached_title=true;
     }else if(d->query_phase==1||d->query_phase==3){
         int r=read_bytes(d,d->search_offset+d->middle*8u,8);if(r!=1)return r;
-        d->member=r32(d->buffer);
+        d->member=ln_read_le32(d->buffer);
         bool group=(d->member&LN_MUSIC_SEARCH_GROUP)!=0;
         if((group?(d->member&~LN_MUSIC_SEARCH_GROUP)>=d->groups:d->member>=d->tracks)||
-           !string_start(d,r32(d->buffer+4)))return bad(d,LN_DB_FORMAT);
+           !string_start(d,ln_read_le32(d->buffer+4)))return bad(d,LN_DB_FORMAT);
         d->query_phase++;return 0;
     }
     int r=cached_title?1:string_step(d);if(r!=1)return r;
@@ -206,13 +204,13 @@ int ln_music_db_step(struct ln_music_db *d)
     uint8_t *b=d->buffer;
     if(d->operation==LN_DB_TRACK){if(!track_record(d))return bad(d,LN_DB_FORMAT);}
     else if(d->operation==LN_DB_GROUP){
-        struct ln_music_group *g=&d->group;g->kind=r32(b);g->name=r32(b+4);g->parent=r32(b+8);g->first=r32(b+12);g->count=r32(b+16);g->id=r64(b+24);
-        if(g->kind<1||g->kind>7||g->name>=d->pool_bytes||g->first>d->members||g->count>d->members-g->first||r32(b+20)||
+        struct ln_music_group *g=&d->group;g->kind=ln_read_le32(b);g->name=ln_read_le32(b+4);g->parent=ln_read_le32(b+8);g->first=ln_read_le32(b+12);g->count=ln_read_le32(b+16);g->id=ln_read_le64(b+24);
+        if(g->kind<1||g->kind>7||g->name>=d->pool_bytes||g->first>d->members||g->count>d->members-g->first||ln_read_le32(b+20)||
            (g->kind==2?(g->parent>=d->groups||g->parent==d->index):g->parent!=UINT32_MAX))return bad(d,LN_DB_FORMAT);
-    }else if(d->operation==LN_DB_MEMBER){d->member=r32(b);if(d->member>=d->tracks)return bad(d,LN_DB_FORMAT);}
+    }else if(d->operation==LN_DB_MEMBER){d->member=ln_read_le32(b);if(d->member>=d->tracks)return bad(d,LN_DB_FORMAT);}
     else if(d->operation==LN_DB_ART){
-        d->art.id=r64(b);d->art.path=r32(b+8);d->art.crc=r32(b+24);
-        if(d->art.path>=d->pool_bytes||r16(b+12)!=64||r16(b+14)!=64||r32(b+16)!=1||r32(b+20)!=8192||r32(b+28))return bad(d,LN_DB_FORMAT);
+        d->art.id=ln_read_le64(b);d->art.path=ln_read_le32(b+8);d->art.crc=ln_read_le32(b+24);
+        if(d->art.path>=d->pool_bytes||ln_read_le16(b+12)!=64||ln_read_le16(b+14)!=64||ln_read_le32(b+16)!=1||ln_read_le32(b+20)!=8192||ln_read_le32(b+28))return bad(d,LN_DB_FORMAT);
     }
     d->busy=false;return 1;
 }

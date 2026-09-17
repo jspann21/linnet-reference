@@ -1,3 +1,4 @@
+#include "boot/include/linnet_bytes.h"
 #include "services/storage/storage.h"
 #include "services/storage/block.h"
 #include "services/storage/fat32.h"
@@ -171,7 +172,6 @@ void ln_state_publication_step(uint32_t stage){
 #endif
 /* Explicitly reserved in memory.ld; copied Boot/OS code shares this layout. */
 static volatile uint32_t *const handoff=(volatile uint32_t *)(uintptr_t)0x11fff100u;
-static uint32_t read32(const uint8_t *p){return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
 static uint32_t next_generation(void){if(++epoch==0)++epoch;return epoch;}
 static int sector_io(void *context,enum ln_fat32_io operation,uint64_t lba,uint8_t *sector,uint32_t generation){
     (void)context;
@@ -276,10 +276,10 @@ static void storage_step(bool defer_runtime){
     if(phase==2){int result=sector_io(0,LN_FAT32_READ,0,mbr,epoch);if(!result)return;
         if(result<0||mbr[510]!=0x55||mbr[511]!=0xaa){error=2;phase=9;return;}
         uint64_t start=0,count=0;uint32_t matches=0;
-        for(uint32_t i=0;i<4;++i){const uint8_t *p=mbr+446+i*16;uint32_t n=read32(p+12),s=read32(p+8);
+        for(uint32_t i=0;i<4;++i){const uint8_t *p=mbr+446+i*16;uint32_t n=ln_read_le32(p+12),s=ln_read_le32(p+8);
             if(!n)continue;
             if(!s||(uint64_t)s+n>volume.config.disk_sectors){error=3;phase=9;return;}
-            for(uint32_t j=0;j<i;++j){const uint8_t *q=mbr+446+j*16;uint32_t qn=read32(q+12),qs=read32(q+8);
+            for(uint32_t j=0;j<i;++j){const uint8_t *q=mbr+446+j*16;uint32_t qn=ln_read_le32(q+12),qs=ln_read_le32(q+8);
                 if(qn&&(uint64_t)s<(uint64_t)qs+qn&&(uint64_t)qs<(uint64_t)s+n){error=3;phase=9;return;}}
             if(p[4]==0x0b||p[4]==0x0c){start=s;count=n;++matches;}
         }
@@ -606,12 +606,12 @@ static void history_open(void){
     if(ln_state_open(&history_store,&io)<0)return;
     if(!history_store.length){history_summary=0;return;}
     const uint8_t *p=history_store.payload;
-    if(history_store.length!=60u||read32(p)!=0x4b424c52u||read32(p+4)!=0u||
-       read32(p+8)<1u||read32(p+8)>2u||read32(p+12)>1u||
-       (read32(p+16)>1u&&read32(p+16)!=255u)){
+    if(history_store.length!=60u||ln_read_le32(p)!=0x4b424c52u||ln_read_le32(p+4)!=0u||
+       ln_read_le32(p+8)<1u||ln_read_le32(p+8)>2u||ln_read_le32(p+12)>1u||
+       (ln_read_le32(p+16)>1u&&ln_read_le32(p+16)!=255u)){
         history_store.ready=0;return;
     }
-    history_summary=read32(p+8)|(read32(p+12)<<8);
+    history_summary=ln_read_le32(p+8)|(ln_read_le32(p+12)<<8);
 #endif
 }
 uint32_t ln_storage_update_history(void){return history_summary;}
@@ -673,8 +673,8 @@ static int selector_rockbox(void){
        !selector_read(&config_file,0,config,sizeof(config)))return 0;
     static const uint8_t magic[8]={'R','B','P','A','T','H','1',0};
     for(uint32_t i=0;i<8u;++i)if(config[i]!=magic[i])return 0;
-    if(ln_crc32(config,508u)!=read32(config+508u))return 0;
-    uint32_t path_length=read32(config+8u);
+    if(ln_crc32(config,508u)!=ln_read_le32(config+508u))return 0;
+    uint32_t path_length=ln_read_le32(config+8u);
     if(!path_length||path_length>LN_FAT32_PATH_MAX||12u+path_length>=508u||
        config[12u]!='/'||config[12u+path_length])return 0;
     for(uint32_t i=0;i<=path_length;++i)path[i]=(char)config[12u+i];
@@ -743,7 +743,7 @@ void ln_storage_boot(void){
     for(uint32_t i=0;i<32;++i){bytes[8+i]=info.build_id[i];bytes[40+i]=updater.image[slot].sha256[i];}
     bytes[0]='H';bytes[1]='A';bytes[2]='N';bytes[3]='D';bytes[4]=slot;
     uint32_t crc=ln_crc32(bytes,76);for(uint32_t i=0;i<4;++i)bytes[76+i]=(uint8_t)(crc>>(i*8));
-    handoff[0]=0;for(uint32_t i=1;i<20;++i)handoff[i]=read32(bytes+4*i);handoff[0]=read32(bytes);
+    handoff[0]=0;for(uint32_t i=1;i<20;++i)handoff[i]=ln_read_le32(bytes+4*i);handoff[0]=ln_read_le32(bytes);
 #if !defined(LINNET_PROFILE_RELEASE)
     if(!ln_recovery_chainload(0,scratch+128,info.payload_size,info.load_address,info.entry_address,
        info.build_id,updater.image[slot].sha256,ln_recovery_generation()+1u))error=403;
@@ -769,7 +769,7 @@ void ln_storage_healthy(uint32_t readiness){
        (readiness&LINNET_BOOT_HEALTH_ALL)!=LINNET_BOOT_HEALTH_ALL)return;
     if(health_open_attempts&&(int32_t)(ln_time_us()-health_retry_at)<0)return;
     uint8_t bytes[80];for(uint32_t i=0;i<20;++i){uint32_t v=handoff[i];for(uint32_t j=0;j<4;++j)bytes[i*4+j]=(uint8_t)(v>>(j*8));}
-    if(read32(bytes)!=0x444e4148u||bytes[4]>1||ln_crc32(bytes,76)!=read32(bytes+76)){
+    if(ln_read_le32(bytes)!=0x444e4148u||bytes[4]>1||ln_crc32(bytes,76)!=ln_read_le32(bytes+76)){
         health_checked=true;handoff[0]=0;return;
     }
     const uint8_t build[32]=LINNET_BUILD_ID_BYTES;

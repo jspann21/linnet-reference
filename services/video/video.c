@@ -1,3 +1,4 @@
+#include "boot/include/linnet_bytes.h"
 #if !defined(LINNET_PROFILE_RELEASE)
 #define LN_VIDEO_RECORD(...) do { __VA_ARGS__; } while (0)
 #else
@@ -134,7 +135,6 @@ bool ln_video_measurement_arm(uint32_t mode){
 }
 #endif
 static const uint8_t *record_source(void){return v.raw_write?v.raw_write:v.raw_view?v.raw_view:v.record.bytes;}
-static uint32_t r32(const uint8_t*b){return b[0]|(uint32_t)b[1]<<8|(uint32_t)b[2]<<16|(uint32_t)b[3]<<24;}
 static void catalog_step(void){
     if(!catalog.phase||catalog.phase==5||v.active||v.pending)return;
     int result;
@@ -150,8 +150,8 @@ static void catalog_step(void){
             catalog.phase=2;return;
         }
         if(catalog.phase==2){
-            const uint8_t*b=catalog.header;uint32_t count=r32(b+4);
-            bool valid=transferred==CATALOG_HEADER_SIZE&&r32(b)==0x5849564cu&&count<=256u&&r32(b+8)==CATALOG_ROW_SIZE&&catalog.file.size==CATALOG_HEADER_SIZE+count*CATALOG_ROW_SIZE;
+            const uint8_t*b=catalog.header;uint32_t count=ln_read_le32(b+4);
+            bool valid=transferred==CATALOG_HEADER_SIZE&&ln_read_le32(b)==0x5849564cu&&count<=256u&&ln_read_le32(b+8)==CATALOG_ROW_SIZE&&catalog.file.size==CATALOG_HEADER_SIZE+count*CATALOG_ROW_SIZE;
             catalog.count=valid?count:0;catalog.phase=valid?4:5;
             catalog.want_page=valid&&count;catalog.wanted=0;++catalog.revision;return;
         }
@@ -180,8 +180,6 @@ static void catalog_step(void){
     if(result>0)catalog.pending=true;
     else if(result<0){catalog.count=0;catalog.phase=5;++catalog.revision;}
 }
-static uint32_t r16(const uint8_t*b){return b[0]|(uint32_t)b[1]<<8;}
-static uint64_t r64(const uint8_t*b){return r32(b)|(uint64_t)r32(b+4)<<32;}
 static void clear(void*p,uint32_t n){
 #if defined(__arm__)
     extern void ln_memory_clear(void *,uint32_t);ln_memory_clear(p,n);
@@ -265,8 +263,8 @@ static uint32_t submit_ipvf_pcm(void){
     uint32_t capacity=PCM_FRAMES-staged_pcm();if(!capacity)return 0;uint32_t frames=v.samples-v.at;if(frames>64u)frames=64u;if(frames>capacity)frames=capacity;
     const uint8_t*source=record_source()+16u+v.video_bytes;bool silence=!v.audio_bytes,mono=v.audio_bytes==4u+v.samples/2u;
     if(v.at==0u&&!silence){if((mono&&(source[3]||source[2]>88u))||(!mono&&(source[3]||source[7]||source[2]>88u||source[6]>88u)))return NONE;
-        uint32_t left=r16(source);v.ima_left=left<0x8000u?(int32_t)left:(int32_t)left-0x10000;v.ima_left_index=source[2];
-        if(mono){v.ima_right=v.ima_left;v.ima_right_index=v.ima_left_index;}else{uint32_t right=r16(source+4);v.ima_right=right<0x8000u?(int32_t)right:(int32_t)right-0x10000;v.ima_right_index=source[6];}}
+        uint32_t left=ln_read_le16(source);v.ima_left=left<0x8000u?(int32_t)left:(int32_t)left-0x10000;v.ima_left_index=source[2];
+        if(mono){v.ima_right=v.ima_left;v.ima_right_index=v.ima_left_index;}else{uint32_t right=ln_read_le16(source+4);v.ima_right=right<0x8000u?(int32_t)right:(int32_t)right-0x10000;v.ima_right_index=source[6];}}
     uint32_t head=v.pcm_head,i=0;
     if(silence){for(;i<frames;++i)PCM_BASE[(head+i)&(PCM_FRAMES-1u)]=0;}
     else{
@@ -301,33 +299,33 @@ static int read_ipvf_index(uint32_t index){
     copy(v.record.bytes,v.index_page+(offset&511u),16);return 1;
 }
 static bool ipvf_index_record(const uint8_t*b){
-    uint64_t offset=r64(b+4);uint32_t frame=r32(b),sectors=r16(b+12),flags=r16(b+14);
+    uint64_t offset=ln_read_le64(b+4);uint32_t frame=ln_read_le32(b),sectors=ln_read_le16(b+12),flags=ln_read_le16(b+14);
     return frame<v.count&&offset>=512u&&offset<v.media_end&&!(offset&511u)&&offset<=0x7fffffffu&&
         sectors&&sectors<=LINNET_STORAGE_MAX_READ_SECTORS&&offset+(uint64_t)sectors*512u<=v.media_end&&!(flags&~1u);
 }
 static bool ipvf_header(void){
-    const uint8_t*b=v.record.bytes;uint32_t flags=r32(b+20),metadata=r16(b+66),metadata_at=r32(b+68);
-    uint64_t media_end=r64(b+44),index_at=r64(b+52),index_bytes=(uint64_t)r32(b+60)*16u;
-    if(r32(b)!=0x46565049u||r16(b+4)!=80u||r16(b+6)!=LINNET_VIDEO_WIDTH||r16(b+8)!=LINNET_VIDEO_HEIGHT||
-       !r16(b+10)||!r16(b+12)||r16(b+10)<4u*r16(b+12)||r16(b+10)>240u*r16(b+12)||
-       !r32(b+16)||(flags!=11u&&flags!=27u)||r32(b+24)!=512u||!r16(b+14)||r16(b+14)>LINNET_STORAGE_MAX_READ_SECTORS||
-       r16(b+28)!=2u||r16(b+30)!=2u||r16(b+32)!=16u||r32(b+34)!=44100u||r16(b+42)||
+    const uint8_t*b=v.record.bytes;uint32_t flags=ln_read_le32(b+20),metadata=ln_read_le16(b+66),metadata_at=ln_read_le32(b+68);
+    uint64_t media_end=ln_read_le64(b+44),index_at=ln_read_le64(b+52),index_bytes=(uint64_t)ln_read_le32(b+60)*16u;
+    if(ln_read_le32(b)!=0x46565049u||ln_read_le16(b+4)!=80u||ln_read_le16(b+6)!=LINNET_VIDEO_WIDTH||ln_read_le16(b+8)!=LINNET_VIDEO_HEIGHT||
+       !ln_read_le16(b+10)||!ln_read_le16(b+12)||ln_read_le16(b+10)<4u*ln_read_le16(b+12)||ln_read_le16(b+10)>240u*ln_read_le16(b+12)||
+       !ln_read_le32(b+16)||(flags!=11u&&flags!=27u)||ln_read_le32(b+24)!=512u||!ln_read_le16(b+14)||ln_read_le16(b+14)>LINNET_STORAGE_MAX_READ_SECTORS||
+       ln_read_le16(b+28)!=2u||ln_read_le16(b+30)!=2u||ln_read_le16(b+32)!=16u||ln_read_le32(b+34)!=44100u||ln_read_le16(b+42)||
        media_end<=512u||media_end>0x7fffffffu||index_at!=media_end||index_at>v.file.size||
-       !r32(b+60)||r32(b+60)>r32(b+16)||r16(b+64)!=16u||metadata_at!=80u||metadata>432u||
+       !ln_read_le32(b+60)||ln_read_le32(b+60)>ln_read_le32(b+16)||ln_read_le16(b+64)!=16u||metadata_at!=80u||metadata>432u||
        index_bytes!=v.file.size-index_at)return false;
-    uint64_t total=divide64((uint64_t)r32(b+16)*44100u*r16(b+12)+r16(b+10)/2u,r16(b+10));
-    if(!total||total>0xffffffffu||r32(b+38)!=(uint32_t)total)return false;
+    uint64_t total=divide64((uint64_t)ln_read_le32(b+16)*44100u*ln_read_le16(b+12)+ln_read_le16(b+10)/2u,ln_read_le16(b+10));
+    if(!total||total>0xffffffffu||ln_read_le32(b+38)!=(uint32_t)total)return false;
     uint32_t tags=0,at=80,end=80u+metadata;while(at<end){if(end-at<2u)return false;uint32_t tag=b[at],n=b[at+1];
         if(tag<1u||tag>3u||!n||(tags&(1u<<tag))||n>end-at-2u)return false;tags|=1u<<tag;
         if(tag==1u){uint32_t take=n<127u?n:127u;copy(v.title,b+at+2u,take);v.title[take]=0;}at+=2u+n;}
     if(!zero(b+end,512u-end))return false;
-    v.temporal=(flags&16u)!=0;v.width=LINNET_VIDEO_WIDTH;v.height=LINNET_VIDEO_HEIGHT;v.fps_num=r16(b+10);v.fps_den=r16(b+12);v.fps=v.fps_num/v.fps_den;
+    v.temporal=(flags&16u)!=0;v.width=LINNET_VIDEO_WIDTH;v.height=LINNET_VIDEO_HEIGHT;v.fps_num=ln_read_le16(b+10);v.fps_den=ln_read_le16(b+12);v.fps=v.fps_num/v.fps_den;
     /* Keep a 1.5-second video cushion for expensive scenes; the audio
      * producer continues targeting four seconds independently. */
     v.preroll=(3u*v.fps_num+2u*v.fps_den-1u)/(2u*v.fps_den);
     if(v.preroll>VIDEO_PREROLL)v.preroll=VIDEO_PREROLL;if(v.preroll<2u)v.preroll=2u;
-    v.rate=44100;v.count=r32(b+16);v.media_end=(uint32_t)media_end;v.index_at=(uint32_t)index_at;
-    v.index_count=r32(b+60);v.index_crc=r32(b+72);v.identity=r32(b+76);v.first_sectors=r16(b+14);
+    v.rate=44100;v.count=ln_read_le32(b+16);v.media_end=(uint32_t)media_end;v.index_at=(uint32_t)index_at;
+    v.index_count=ln_read_le32(b+60);v.index_crc=ln_read_le32(b+72);v.identity=ln_read_le32(b+76);v.first_sectors=ln_read_le16(b+14);
     return true;
 }
 static uint32_t free_slot(void){
@@ -413,7 +411,7 @@ VIDEO_LZ_CODE void ln_video_lz_copy_long(uint8_t*write,uint32_t offset,uint32_t 
                     uint32_t word=(uint32_t)halves[0]|((uint32_t)halves[1]<<16);
                     *(match_word*)write=word;write+=4u;match+=4u;remaining-=4u;}
             }else{
-                while(remaining>=4u){uint32_t word=r32(match);*(match_word*)write=word;
+                while(remaining>=4u){uint32_t word=ln_read_le32(match);*(match_word*)write=word;
                     write+=4u;match+=4u;remaining-=4u;}
             }
         }
@@ -435,7 +433,7 @@ static VIDEO_LZ_CODE int ln_video_lz_decode_block(const uint8_t *in,uint32_t inp
          * block. Validate their combined input/output spans once. */
         if(literal<=2u&&(token&15u)<=4u&&(uint32_t)(input_end-source)>=literal+2u&&
            (uint32_t)(output_end-destination)>=literal+12u){
-            uint32_t offset=r16(source+literal),length=4u+(token&15u);
+            uint32_t offset=ln_read_le16(source+literal),length=4u+(token&15u);
             if(!offset||offset>(uint32_t)(destination-out)+literal)return -1;
             if(literal){destination[0]=source[0];if(literal==2u)destination[1]=source[1];}
             source+=literal+2u;destination+=literal;
@@ -458,7 +456,7 @@ static VIDEO_LZ_CODE int ln_video_lz_decode_block(const uint8_t *in,uint32_t inp
         if(source==input_end)return destination==output_end&&literal&&
             (literal>=5u||(!matched&&size<5u))?1:-1;
         if(input_end-source<2)return -1;
-        uint32_t offset=r16(source);source+=2u;if(!offset||offset>(uint32_t)(destination-out))return -1;
+        uint32_t offset=ln_read_le16(source);source+=2u;if(!offset||offset>(uint32_t)(destination-out))return -1;
         uint32_t length=token&15u;
         if(length==15u){uint32_t extension;do{if(source>=input_end)return -1;extension=*source++;if(extension>size||length>size-extension)return -1;length+=extension;}while(extension==255u);}
         if(size<4u||length>size-4u)return -1;length+=4u;
@@ -527,8 +525,8 @@ static void audio_cursor_restore(void){
     v.prefetching=false;v.audio_yield=true;v.building=NONE;v.phase=INDEX;
 }
 static bool ipvf_record_header(void){
-    const uint8_t*b=record_source();uint64_t used;v.source_type=b[0];v.tile_count=b[1];v.next_sectors=r16(b+2);
-    v.video_bytes=r32(b+4);v.decoded_bytes=r32(b+8);v.audio_bytes=r32(b+12);
+    const uint8_t*b=record_source();uint64_t used;v.source_type=b[0];v.tile_count=b[1];v.next_sectors=ln_read_le16(b+2);
+    v.video_bytes=ln_read_le32(b+4);v.decoded_bytes=ln_read_le32(b+8);v.audio_bytes=ln_read_le32(b+12);
     v.sample=frame_sample(v.next);v.samples=frame_sample(v.next+1u)-v.sample;
     if(!v.samples||v.video_bytes>RECORD||v.decoded_bytes>IPVF_PAYLOAD)return false;
     uint32_t mono=4u+v.samples/2u,stereo=8u+v.samples-1u;
@@ -546,7 +544,7 @@ static bool ipvf_record_header(void){
     v.lz_input_offset=16u;v.lz_input_bytes=v.video_bytes;v.lz_output_bytes=v.decoded_bytes;v.lz_output_slot=NONE;v.motion_dx=v.motion_dy=0;
     if(temporal){const uint8_t*p=b+16;if(v.source_type==6u){v.motion_dx=(int8_t)p[0];v.motion_dy=(int8_t)p[1];
             if(v.motion_dx<=-(int32_t)v.width||v.motion_dx>=(int32_t)v.width||v.motion_dy<=-(int32_t)v.height||v.motion_dy>=(int32_t)v.height)return false;v.lz_input_offset+=2u;v.lz_input_bytes-=2u;p+=2;}
-        uint32_t expected=r32(p);v.lz_input_offset+=4u;v.lz_input_bytes-=4u;/* The FIFO retains immutable bytes already checked by the audio scan. */
+        uint32_t expected=ln_read_le32(p);v.lz_input_offset+=4u;v.lz_input_bytes-=4u;/* The FIFO retains immutable bytes already checked by the audio scan. */
         if(v.prefetching&&rockbox_crc(~0u,b+v.lz_input_offset,v.lz_input_bytes)!=expected)return false;}
     v.decode_at=v.decode_pixel=v.rect_row=0;v.rect_data_at=NONE;v.at=compressed?0u:1u;
     return true;
@@ -623,7 +621,7 @@ static int decode_ipvf(void){
          * its conversion will leave untouched. The normal parser still runs. */
         bool full_width=v.type==1u&&v.tile_count==1u&&v.decoded_bytes>=8u&&
             !payload[0]&&(uint32_t)payload[2]==v.width&&payload[3]&&payload[1]+payload[3]<=v.height&&
-            v.decoded_bytes==8u+v.width*2u*payload[3]&&r32(payload+4u)==v.width*2u*payload[3];
+            v.decoded_bytes==8u+v.width*2u*payload[3]&&ln_read_le32(payload+4u)==v.width*2u*payload[3];
         if(full_width){
             uint32_t top=payload[1],bottom=top+payload[3];
             if(top)copy(out,previous,top*v.width*2u);
@@ -636,7 +634,7 @@ static int decode_ipvf(void){
     typedef uint16_t rect_pixel __attribute__((may_alias));
     typedef uint32_t rect_pair __attribute__((may_alias));
 #endif
-    while(v.tile_count){if(v.decode_at+8u>v.decoded_bytes)return -1;uint32_t x=payload[v.decode_at],y=payload[v.decode_at+1],w=payload[v.decode_at+2],h=payload[v.decode_at+3],bytes=r32(payload+v.decode_at+4);
+    while(v.tile_count){if(v.decode_at+8u>v.decoded_bytes)return -1;uint32_t x=payload[v.decode_at],y=payload[v.decode_at+1],w=payload[v.decode_at+2],h=payload[v.decode_at+3],bytes=ln_read_le32(payload+v.decode_at+4);
         if(!w||!h||x+w>v.width||y+h>v.height||bytes!=w*h*2u||bytes>v.decoded_bytes-v.decode_at-8u)return -1;
         const uint8_t*source=payload+v.decode_at+8u;
 #if defined(__arm__)
@@ -745,7 +743,7 @@ static void step(void){
         v.verify_crc=~0u;return;
     case VERIFY:{uint32_t end=v.file.size,n=end-v.verify_at;if(n>4096)n=4096;r=io(v.verify_at,b,n,false);if(r<0){fail(4);return;}if(!r)return;
         v.verify_crc=rockbox_crc(v.verify_crc,b,n);
-        for(uint32_t at=0;at<n;at+=16u){if(!ipvf_index_record(b+at)){fail(5);return;}uint32_t frame=r32(b+at);uint64_t offset=r64(b+at+4);
+        for(uint32_t at=0;at<n;at+=16u){if(!ipvf_index_record(b+at)){fail(5);return;}uint32_t frame=ln_read_le32(b+at);uint64_t offset=ln_read_le64(b+at+4);
             if((!v.verify_frame&&(frame||offset!=512u))||(v.verify_frame&&(frame<=v.verify_key||offset<=v.verify_end))){fail(5);return;}
             v.verify_key=frame;v.verify_end=(uint32_t)offset;++v.verify_frame;
         }
@@ -763,7 +761,7 @@ static void step(void){
                 audio_cursor_reset();v.phase=INDEX;}}return;}
     case SEEK:
         if(v.seek_index<v.index_count){r=read_ipvf_index(v.seek_index);if(r<0){fail(7);return;}if(!r)return;if(!ipvf_index_record(b)){fail(7);return;}
-                uint32_t frame=r32(b);if(frame<=v.target){v.seek_frame=frame;v.seek_offset=(uint32_t)r64(b+4);v.seek_sectors=r16(b+12);++v.seek_index;return;}}
+                uint32_t frame=ln_read_le32(b);if(frame<=v.target){v.seek_frame=frame;v.seek_offset=(uint32_t)ln_read_le64(b+4);v.seek_sectors=ln_read_le16(b+12);++v.seek_index;return;}}
             v.next=v.seek_frame;v.offset=v.seek_offset;v.bytes=v.seek_sectors*512u;v.resume_frame=v.target;v.origin=frame_sample(v.target);if(!ln_audio_init(v.rate)){fail(13);return;}audio_cursor_reset();v.phase=INDEX;return;
     case INDEX:
         /* Retire the previous video record before the audio producer runs. */

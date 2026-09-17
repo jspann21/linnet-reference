@@ -1,21 +1,5 @@
+#include "boot/include/linnet_bytes.h"
 #include "linnet_boot.h"
-
-static uint32_t read32(const uint8_t *p)
-{
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
-        ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-
-static uint16_t read16(const uint8_t *p)
-{
-    return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
-}
-
-static void write32(uint8_t *p, uint32_t value)
-{
-    unsigned i;
-    for (i = 0; i < 4; ++i) p[i] = (uint8_t)(value >> (8u * i));
-}
 
 static int zeroes(const uint8_t *p, size_t length)
 {
@@ -65,17 +49,17 @@ enum ln_image_result ln_image_validate_progress(const uint8_t *image, size_t len
     if (!image || !policy || !info) return LINNET_IMAGE_ARGUMENT;
     if (length < LINNET_IMAGE_HEADER_SIZE) return LINNET_IMAGE_TRUNCATED;
     if (image[0] != 'L' || image[1] != 'N' || image[2] != 'O' || image[3] != 'S' ||
-        read16(image + 4) != 0 || read16(image + 6) != LINNET_IMAGE_HEADER_SIZE ||
-        read32(image + 12) != 0 ||
+        ln_read_le16(image + 4) != 0 || ln_read_le16(image + 6) != LINNET_IMAGE_HEADER_SIZE ||
+        ln_read_le32(image + 12) != 0 ||
         !zeroes(image + 68, 56)) return LINNET_IMAGE_FORMAT;
-    if (ln_crc32(image, 124) != read32(image + 124)) return LINNET_IMAGE_CHECKSUM;
-    if (read32(image + 8) != policy->target) return LINNET_IMAGE_TARGET;
-    profile = read32(image + 16);
+    if (ln_crc32(image, 124) != ln_read_le32(image + 124)) return LINNET_IMAGE_CHECKSUM;
+    if (ln_read_le32(image + 8) != policy->target) return LINNET_IMAGE_TARGET;
+    profile = ln_read_le32(image + 16);
     if (profile > 2 || (policy->allowed_profiles & (1u << profile)) == 0)
         return LINNET_IMAGE_PROFILE;
-    payload = read32(image + 20);
-    load = read32(image + 24);
-    entry = read32(image + 28);
+    payload = ln_read_le32(image + 20);
+    load = ln_read_le32(image + 24);
+    entry = ln_read_le32(image + 28);
     if (length - LINNET_IMAGE_HEADER_SIZE != payload) return LINNET_IMAGE_TRUNCATED;
     if (payload < 4 || policy->ram_size == 0 ||
         policy->ram_size - 1u > UINT32_MAX - policy->ram_start ||
@@ -84,7 +68,7 @@ enum ln_image_result ln_image_validate_progress(const uint8_t *image, size_t len
     offset = load - policy->ram_start;
     if (offset >= policy->ram_size || payload > policy->ram_size - offset ||
         entry < load || entry - load > payload - 4u) return LINNET_IMAGE_RANGE;
-    if (ln_crc32_progress(image + LINNET_IMAGE_HEADER_SIZE, payload, progress, context) != read32(image + 32))
+    if (ln_crc32_progress(image + LINNET_IMAGE_HEADER_SIZE, payload, progress, context) != ln_read_le32(image + 32))
         return LINNET_IMAGE_CHECKSUM;
     info->profile = profile;
     info->payload_size = payload;
@@ -122,10 +106,10 @@ int ln_boot_state_decode(struct ln_boot_state *state, const uint8_t *bytes, size
 {
     struct ln_boot_state result;
     if (!state || !bytes || length != LINNET_BOOT_STATE_SIZE) return 0;
-    if (read32(bytes) != UINT32_C(0x544f4f42) || read32(bytes + 4) != 0 ||
-        !zeroes(bytes + 19, 9) || ln_crc32(bytes, 28) != read32(bytes + 28)) return 0;
-    result.generation = read32(bytes + 8);
-    result.attempts = read32(bytes + 12);
+    if (ln_read_le32(bytes) != UINT32_C(0x544f4f42) || ln_read_le32(bytes + 4) != 0 ||
+        !zeroes(bytes + 19, 9) || ln_crc32(bytes, 28) != ln_read_le32(bytes + 28)) return 0;
+    result.generation = ln_read_le32(bytes + 8);
+    result.attempts = ln_read_le32(bytes + 12);
     result.confirmed_slot = bytes[16];
     result.candidate_slot = bytes[17];
     result.attempt_pending = bytes[18];
@@ -139,14 +123,14 @@ int ln_boot_state_encode(const struct ln_boot_state *state, uint8_t *bytes, size
     unsigned i;
     if (!state_valid(state) || !bytes || length != LINNET_BOOT_STATE_SIZE) return 0;
     for (i = 0; i < LINNET_BOOT_STATE_SIZE; ++i) bytes[i] = 0;
-    write32(bytes, UINT32_C(0x544f4f42));
-    write32(bytes + 4, 0);
-    write32(bytes + 8, state->generation);
-    write32(bytes + 12, state->attempts);
+    ln_write_le32(bytes, UINT32_C(0x544f4f42));
+    ln_write_le32(bytes + 4, 0);
+    ln_write_le32(bytes + 8, state->generation);
+    ln_write_le32(bytes + 12, state->attempts);
     bytes[16] = state->confirmed_slot;
     bytes[17] = state->candidate_slot;
     bytes[18] = state->attempt_pending;
-    write32(bytes + 28, ln_crc32(bytes, 28));
+    ln_write_le32(bytes + 28, ln_crc32(bytes, 28));
     return 1;
 }
 
@@ -209,19 +193,19 @@ int ln_crash_encode(const struct ln_crash_record *record, uint8_t *bytes, size_t
     unsigned i;
     if (!record || !bytes || length != LINNET_CRASH_MAILBOX_SIZE) return 0;
     for (i = 0; i < LINNET_CRASH_MAILBOX_SIZE; ++i) bytes[i] = 0;
-    write32(bytes, UINT32_C(0x48535243));
+    ln_write_le32(bytes, UINT32_C(0x48535243));
     bytes[4] = 0;
     bytes[6] = LINNET_CRASH_MAILBOX_SIZE;
-    write32(bytes + 8, record->sequence);
-    write32(bytes + 12, record->reason);
-    for (i = 0; i < 16; ++i) write32(bytes + 16 + i * 4, record->registers[i]);
-    write32(bytes + 80, record->cpsr);
-    write32(bytes + 84, record->flags);
+    ln_write_le32(bytes + 8, record->sequence);
+    ln_write_le32(bytes + 12, record->reason);
+    for (i = 0; i < 16; ++i) ln_write_le32(bytes + 16 + i * 4, record->registers[i]);
+    ln_write_le32(bytes + 80, record->cpsr);
+    ln_write_le32(bytes + 84, record->flags);
     for (i = 0; i < 32; ++i) bytes[88 + i] = record->build_id[i];
-    write32(bytes + 120, record->boot_generation);
-    write32(bytes + 124, record->active_service);
-    write32(bytes + 128, record->last_event);
-    write32(bytes + 140, ln_crc32(bytes, 140));
+    ln_write_le32(bytes + 120, record->boot_generation);
+    ln_write_le32(bytes + 124, record->active_service);
+    ln_write_le32(bytes + 128, record->last_event);
+    ln_write_le32(bytes + 140, ln_crc32(bytes, 140));
     return 1;
 }
 
@@ -229,17 +213,17 @@ int ln_crash_decode(struct ln_crash_record *record, const uint8_t *bytes, size_t
 {
     unsigned i;
     if (!record || !bytes || length != LINNET_CRASH_MAILBOX_SIZE) return 0;
-    if (read32(bytes) != UINT32_C(0x48535243) || read16(bytes + 4) != 0 ||
-        read16(bytes + 6) != LINNET_CRASH_MAILBOX_SIZE || !zeroes(bytes + 132, 8) ||
-        ln_crc32(bytes, 140) != read32(bytes + 140)) return 0;
-    record->sequence = read32(bytes + 8);
-    record->reason = read32(bytes + 12);
-    for (i = 0; i < 16; ++i) record->registers[i] = read32(bytes + 16 + i * 4);
-    record->cpsr = read32(bytes + 80);
-    record->flags = read32(bytes + 84);
+    if (ln_read_le32(bytes) != UINT32_C(0x48535243) || ln_read_le16(bytes + 4) != 0 ||
+        ln_read_le16(bytes + 6) != LINNET_CRASH_MAILBOX_SIZE || !zeroes(bytes + 132, 8) ||
+        ln_crc32(bytes, 140) != ln_read_le32(bytes + 140)) return 0;
+    record->sequence = ln_read_le32(bytes + 8);
+    record->reason = ln_read_le32(bytes + 12);
+    for (i = 0; i < 16; ++i) record->registers[i] = ln_read_le32(bytes + 16 + i * 4);
+    record->cpsr = ln_read_le32(bytes + 80);
+    record->flags = ln_read_le32(bytes + 84);
     for (i = 0; i < 32; ++i) record->build_id[i] = bytes[88 + i];
-    record->boot_generation = read32(bytes + 120);
-    record->active_service = read32(bytes + 124);
-    record->last_event = read32(bytes + 128);
+    record->boot_generation = ln_read_le32(bytes + 120);
+    record->active_service = ln_read_le32(bytes + 124);
+    record->last_event = ln_read_le32(bytes + 128);
     return 1;
 }

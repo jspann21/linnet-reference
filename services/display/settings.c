@@ -1,3 +1,4 @@
+#include "boot/include/linnet_bytes.h"
 #include "settings.h"
 #include "services/storage/storage.h"
 #include "boot/include/linnet_boot.h"
@@ -21,8 +22,6 @@ static bool update_known;
 static bool loaded,dirty,clock_12;
 static uint8_t photo_resume[16];
 static uint32_t video_resume[2];
-static uint32_t get(const uint8_t*p){return(uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
-static void put(uint8_t*p,uint32_t v){for(uint32_t i=0;i<4;++i)p[i]=(uint8_t)(v>>(i*8));}
 void ln_display_settings_init(void){shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;video_resume[0]=video_resume[1]=0;revision=record_revision=0;loaded=dirty=false;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;}
 bool ln_display_clock_12(void){return clock_12;}
 void ln_display_clock_toggle(void){clock_12=!clock_12;dirty=true;++revision;++record_revision;}
@@ -76,8 +75,8 @@ bool ln_battery_capacity_adjust(int32_t direction){
 /* SETT stores display, photo, video, battery and music state in one current
  * envelope. Its 36-byte overhead leaves 444 bytes for the music payload. */
 static bool valid_photo(const uint8_t *resume){
-    uint32_t flags=get(resume+8);
-    return get(resume+4)<=65535u&&(flags&255u)<=5u&&((flags>>8)&255u)<=3u&&(flags>>16)<=2u;
+    uint32_t flags=ln_read_le32(resume+8);
+    return ln_read_le32(resume+4)<=65535u&&(flags&255u)<=5u&&((flags>>8)&255u)<=3u&&(flags>>16)<=2u;
 }
 static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
     uint32_t bytes=480;
@@ -86,15 +85,15 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
     if(!bytes){*offset=*length=0;loaded=true;return 1;}
     uint32_t out_offset=0,out_length=0,saved_choice=choice,saved_capacity=1200;bool saved_clock_12=false;
     uint8_t saved_photo[16]={0};uint32_t saved_video[2]={0};
-    if(bytes<36||get(raw)!=0x54544553u||get(raw+bytes-4)!=ln_crc32(raw,bytes-4))return -1;
+    if(bytes<36||ln_read_le32(raw)!=0x54544553u||ln_read_le32(raw+bytes-4)!=ln_crc32(raw,bytes-4))return -1;
     uint32_t n=(uint32_t)raw[4]|((uint32_t)raw[5]<<8),f=raw[14];
     if(n!=bytes-36||raw[7]>1u||raw[6]>6||(raw[15]&15u)>8u||(raw[15]>>4)>8u||(f&7u)>5||((f>>5)&3u)>2||(f&128u))return -1;
     saved_choice=raw[6];saved_clock_12=raw[7]==1u;
-    put(saved_photo,get(raw+8));put(saved_photo+4,(uint32_t)raw[12]|((uint32_t)raw[13]<<8));
-    put(saved_photo+8,(f&7u)|(((f>>3)&3u)<<8)|(((f>>5)&3u)<<16));put(saved_photo+12,get(raw+16));
-    saved_video[0]=get(raw+20);saved_video[1]=get(raw+24);
+    ln_write_le32(saved_photo,ln_read_le32(raw+8));ln_write_le32(saved_photo+4,(uint32_t)raw[12]|((uint32_t)raw[13]<<8));
+    ln_write_le32(saved_photo+8,(f&7u)|(((f>>3)&3u)<<8)|(((f>>5)&3u)<<16));ln_write_le32(saved_photo+12,ln_read_le32(raw+16));
+    saved_video[0]=ln_read_le32(raw+20);saved_video[1]=ln_read_le32(raw+24);
     if(!valid_photo(saved_photo))return -1;
-    saved_capacity=get(raw+28);
+    saved_capacity=ln_read_le32(raw+28);
     if(saved_capacity<50u||saved_capacity>10000u||saved_capacity%50u)return -1;
     out_offset=32;out_length=bytes-36;
     /* Commit only after the complete envelope has passed validation. */
@@ -110,13 +109,13 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
 static int write_record(uint8_t raw[480],const uint8_t *data,uint32_t length){
     if(length>444||!valid_photo(photo_resume)||battery_capacity<50u||battery_capacity>10000u||battery_capacity%50u)return 0;
     for(uint32_t i=length;i;--i)raw[32+i-1]=data[i-1];
-    uint32_t index=get(photo_resume+4),flags=get(photo_resume+8);
+    uint32_t index=ln_read_le32(photo_resume+4),flags=ln_read_le32(photo_resume+8);
     if(index>65535u||(flags&255u)>5u||((flags>>8)&255u)>3u||(flags>>16)>2u)return 0;
-    put(raw,0x54544553u);raw[4]=(uint8_t)length;raw[5]=(uint8_t)(length>>8);raw[6]=(uint8_t)choice;raw[7]=clock_12?1u:0u;
-    put(raw+8,get(photo_resume));raw[12]=(uint8_t)index;raw[13]=(uint8_t)(index>>8);
+    ln_write_le32(raw,0x54544553u);raw[4]=(uint8_t)length;raw[5]=(uint8_t)(length>>8);raw[6]=(uint8_t)choice;raw[7]=clock_12?1u:0u;
+    ln_write_le32(raw+8,ln_read_le32(photo_resume));raw[12]=(uint8_t)index;raw[13]=(uint8_t)(index>>8);
     raw[14]=(uint8_t)((flags&7u)|(((flags>>8)&3u)<<3)|(((flags>>16)&3u)<<5));raw[15]=(uint8_t)(shutdown_choice[0]|(shutdown_choice[1]<<4));
-    put(raw+16,get(photo_resume+12));put(raw+20,video_resume[0]);put(raw+24,video_resume[1]);
-    put(raw+28,battery_capacity);put(raw+32+length,ln_crc32(raw,32+length));
+    ln_write_le32(raw+16,ln_read_le32(photo_resume+12));ln_write_le32(raw+20,video_resume[0]);ln_write_le32(raw+24,video_resume[1]);
+    ln_write_le32(raw+28,battery_capacity);ln_write_le32(raw+32+length,ln_crc32(raw,32+length));
     uint32_t bytes=length+36,snapshot_revision=record_revision;
     if(!ln_storage_settings(true,raw,&bytes))return 0;
     if(record_revision==snapshot_revision)dirty=false;return 1;
@@ -176,7 +175,7 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
         theme_loaded=true;theme_available=result==1;
         uint32_t saved=UINT32_MAX;
         if(theme_available&&length){
-            if(length<9u||length>89u||get(payload)!=0x534d4854u||get(payload+4)!=0u||payload[length-1])theme_available=false;
+            if(length<9u||length>89u||ln_read_le32(payload)!=0x534d4854u||ln_read_le32(payload+4)!=0u||payload[length-1])theme_available=false;
             if(theme_available){
                 if(!theme_id_valid(payload+8,length-9u))theme_available=false;
             }
@@ -207,7 +206,7 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
     const char *id=theme_index==UINT32_MAX?"":ln_ui_themes[theme_index].id;
     uint32_t count=0;while(id[count]&&count<80u&&theme_id_char((uint8_t)id[count]))++count;
     if(id[count]){theme_available=false;theme_dirty=false;++revision;return;}
-    put(payload,0x534d4854u);put(payload+4,0);
+    ln_write_le32(payload,0x534d4854u);ln_write_le32(payload+4,0);
     for(uint32_t i=0;i<count;++i)payload[8+i]=(uint8_t)id[i];payload[8+count]=0;
     length=9u+count;uint32_t snapshot_revision=theme_revision;
     int result=ln_storage_theme(true,payload,&length);

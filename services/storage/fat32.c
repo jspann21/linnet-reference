@@ -1,3 +1,4 @@
+#include "boot/include/linnet_bytes.h"
 #include "services/storage/fat32.h"
 #include <stddef.h>
 
@@ -10,10 +11,6 @@ enum { MOUNT=1, HEADER, HEADER_MIRROR, OPEN_NAME, DIRECTORY, DIRECTORY_NEXT,
 enum { OP_MOUNT=1, OP_OPEN, OP_READ, OP_WRITE, OP_SYNC, OP_SET, OP_CREATE, OP_GROW };
 #define EOC 0x0ffffff8u
 #define MAX_CHAIN 65536u
-static uint16_t u16(const uint8_t*p){return (uint16_t)(p[0]|(uint16_t)p[1]<<8);}
-static uint32_t u32(const uint8_t*p){return (uint32_t)u16(p)|(uint32_t)u16(p+2)<<16;}
-static void put16(uint8_t*p,uint16_t n){p[0]=(uint8_t)n;p[1]=(uint8_t)(n>>8);}
-static void put32(uint8_t*p,uint32_t n){put16(p,(uint16_t)n);put16(p+2,(uint16_t)(n>>16));}
 static bool equal(const uint8_t*a,const uint8_t*b,uint32_t n){
     for(uint32_t i=0;i<n;++i)if(a[i]!=b[i])return false;
     return true;
@@ -266,9 +263,9 @@ static int edit_fat(struct ln_fat32*f,uint32_t cluster,bool write,uint32_t value
     case 1:r=io(f,LN_FAT32_READ,lba+f->fat_sectors,f->mirror);if(r!=1)return r;
         if(!equal(f->sector,f->mirror,512))return LN_FAT32_CORRUPT;
         f->edit_phase=2;return 0;
-    case 2:f->edit_value=u32(f->sector+offset)&0x0fffffffu;
+    case 2:f->edit_value=ln_read_le32(f->sector+offset)&0x0fffffffu;
         if(!write){f->edit_phase=0;return 1;}
-        put32(f->sector+offset,(u32(f->sector+offset)&0xf0000000u)|(value&0x0fffffffu));
+        ln_write_le32(f->sector+offset,(ln_read_le32(f->sector+offset)&0xf0000000u)|(value&0x0fffffffu));
         f->edit_phase=3;return 0;
     case 3:r=io(f,LN_FAT32_WRITE,lba,f->sector);if(r!=1)return r;
         f->edit_phase=f->mirrored&&f->fats==2?4:5;return 0;
@@ -297,7 +294,7 @@ static int scan_free_fat(struct ln_fat32*f){
     if(end>limit)end=limit;
     if(f->slot_found&&end>f->directory_entry_index)end=f->directory_entry_index;
     while(f->candidate<end){
-        if(!(u32(f->sector+(f->candidate&127u)*4u)&0x0fffffffu)){
+        if(!(ln_read_le32(f->sector+(f->candidate&127u)*4u)&0x0fffffffu)){
             f->fat_phase=0;return 1;
         }
         ++f->candidate;
@@ -322,7 +319,7 @@ static int next_cluster(struct ln_fat32*f){
         f->fat_cluster=f->cluster;
         /* Only this proof request may reuse the validated primary sector. */
         if(f->state==VERIFY_CHAIN&&f->verified_fat_sector==f->cluster/128u+1u){
-            f->fat_value=u32(f->sector+(f->cluster%128u)*4u)&0x0fffffffu;
+            f->fat_value=ln_read_le32(f->sector+(f->cluster%128u)*4u)&0x0fffffffu;
             f->fat_phase=3;
         }else f->fat_phase=1;
     }
@@ -330,7 +327,7 @@ static int next_cluster(struct ln_fat32*f){
     int result;
     if(f->fat_phase==1){
         result=io(f,LN_FAT32_READ,sector,f->sector);if(result!=1)return result;
-        f->fat_value=u32(f->sector+(f->fat_cluster%128u)*4u)&0x0fffffffu;
+        f->fat_value=ln_read_le32(f->sector+(f->fat_cluster%128u)*4u)&0x0fffffffu;
         f->fat_phase=f->mirrored&&f->fats==2?2:3;
         return 0;
     }
@@ -351,7 +348,7 @@ static int next_cluster(struct ln_fat32*f){
     _Static_assert(LN_FAT32_CACHE_SIZE==16u,"FAT edge group divides128 entries");
     uint32_t first=f->fat_cluster&~(LN_FAT32_CACHE_SIZE-1u);
     for(uint32_t i=0;i<LN_FAT32_CACHE_SIZE;++i){
-        uint32_t cluster=first+i,next=u32(f->sector+(cluster%128u)*4u)&0x0fffffffu;
+        uint32_t cluster=first+i,next=ln_read_le32(f->sector+(cluster%128u)*4u)&0x0fffffffu;
         struct ln_fat32_cache*c=&f->cache[i];
         c->cluster=0;
         if(cluster_valid(f,cluster)&&next!=cluster&&(next>=EOC||cluster_valid(f,next))){
@@ -363,11 +360,11 @@ static int next_cluster(struct ln_fat32*f){
 }
 static int bpb(struct ln_fat32*f){
     const uint8_t*p=f->sector;
-    uint32_t spc=p[13],reserved=u16(p+14),fats=p[16],total=u32(p+32),fat=u32(p+36);
-    uint16_t flags=u16(p+40),fsinfo=u16(p+48),backup=u16(p+50);
-    if(p[510]!=0x55||p[511]!=0xaa||u16(p+11)!=512||!spc||spc>128||(spc&(spc-1u))||
-       !reserved||(fats!=1&&fats!=2)||u16(p+17)||u16(p+19)||u16(p+22)||
-       !total||total>f->partition_sectors||!fat||u16(p+42)||
+    uint32_t spc=p[13],reserved=ln_read_le16(p+14),fats=p[16],total=ln_read_le32(p+32),fat=ln_read_le32(p+36);
+    uint16_t flags=ln_read_le16(p+40),fsinfo=ln_read_le16(p+48),backup=ln_read_le16(p+50);
+    if(p[510]!=0x55||p[511]!=0xaa||ln_read_le16(p+11)!=512||!spc||spc>128||(spc&(spc-1u))||
+       !reserved||(fats!=1&&fats!=2)||ln_read_le16(p+17)||ln_read_le16(p+19)||ln_read_le16(p+22)||
+       !total||total>f->partition_sectors||!fat||ln_read_le16(p+42)||
        (flags&0xff70u)||((flags&0x80u)&&(flags&15u)>=fats)||
        (fsinfo!=0xffffu&&fsinfo>=reserved)||(backup!=0xffffu&&backup>=reserved))
         return LN_FAT32_FORMAT;
@@ -377,7 +374,7 @@ static int bpb(struct ln_fat32*f){
     uint32_t clusters=(total-(uint32_t)metadata)>>shift;
     if(clusters<65525u||clusters>0x0fffffedu||(uint64_t)fat*128u<clusters+2u)
         return LN_FAT32_FORMAT;
-    f->root=u32(p+44);f->clusters=clusters;
+    f->root=ln_read_le32(p+44);f->clusters=clusters;
     if(!cluster_valid(f,f->root))return LN_FAT32_FORMAT;
     f->sectors_per_cluster=(uint8_t)spc;f->cluster_shift=shift;
     f->reserved=(uint16_t)reserved;f->fats=(uint8_t)fats;
@@ -419,8 +416,8 @@ int ln_fat32_poll(struct ln_fat32*f){
     case HEADER:
         result=io(f,LN_FAT32_READ,f->fat_start+(uint64_t)f->active_fat*f->fat_sectors,f->sector);
         if(result!=1)break;
-        if((u32(f->sector)&0x0ffffff8u)!=0x0ffffff8u||
-           (u32(f->sector+4)&0x03ffffffu)!=0x03ffffffu){result=LN_FAT32_CORRUPT;break;}
+        if((ln_read_le32(f->sector)&0x0ffffff8u)!=0x0ffffff8u||
+           (ln_read_le32(f->sector+4)&0x03ffffffu)!=0x03ffffffu){result=LN_FAT32_CORRUPT;break;}
         f->state=HEADER_MIRROR;return 0;
     case HEADER_MIRROR:
         if(f->mirrored&&f->fats==2){
@@ -429,8 +426,8 @@ int ln_fat32_poll(struct ln_fat32*f){
             if(!equal(f->sector,f->mirror,512)){result=LN_FAT32_CORRUPT;break;}
         }
         /* Dirty/error-marked volumes are readable but cannot be mutated. */
-        f->mounted=(u32(f->sector+4)&0x0c000000u)==0x0c000000u?1:2;
-        f->volume_flags=u32(f->sector+4)&0x0fffffffu;
+        f->mounted=(ln_read_le32(f->sector+4)&0x0c000000u)==0x0c000000u?1:2;
+        f->volume_flags=ln_read_le32(f->sector+4)&0x0fffffffu;
         (void)directory_register(f,f->root);
         if(++f->epoch==0)++f->epoch;
         return finish(f,1);
@@ -455,8 +452,8 @@ int ln_fat32_poll(struct ln_fat32*f){
                 return finish(f,LN_FAT32_NOT_FOUND);
             }
             if(p[0]==0xe5||(p[11]&8u)||!equal(p,f->name,11))continue;
-            uint32_t cluster=((uint32_t)u16(p+20)<<16)|u16(p+26);
-            uint32_t size=u32(p+28);
+            uint32_t cluster=((uint32_t)ln_read_le16(p+20)<<16)|ln_read_le16(p+26);
+            uint32_t size=ln_read_le32(p+28);
             if((size||(p[11]&16u))&&!cluster_valid(f,cluster))return finish(f,LN_FAT32_CORRUPT);
             if(f->path[f->path_cursor]=='/'){
                 if(!(p[11]&16u))return finish(f,LN_FAT32_NOT_FOUND);
@@ -623,8 +620,8 @@ set_chain_cached:
         if(f->operation==OP_CREATE){
             if(p[0]!=(f->slot_end?0:0xe5))return finish(f,LN_FAT32_STALE);
             f->file=(struct ln_fat32_file){0,0,f->epoch,f->slot_sector,f->slot_offset,0x20};
-        }else if((((uint32_t)u16(p+20)<<16)|u16(p+26))!=f->file.cluster||
-                  u32(p+28)!=f->file.size||p[11]!=f->file.attributes||!p[0]||p[0]==0xe5)
+        }else if((((uint32_t)ln_read_le16(p+20)<<16)|ln_read_le16(p+26))!=f->file.cluster||
+                  ln_read_le32(p+28)!=f->file.size||p[11]!=f->file.attributes||!p[0]||p[0]==0xe5)
             return finish(f,LN_FAT32_STALE);
         for(index=0;index<32;++index)f->entry[index]=p[index];
         f->mutation_started=true;f->write_proven=false;f->edit_phase=0;
@@ -651,9 +648,9 @@ set_chain_cached:
     case MUT_FSINFO:
         f->io_lba=f->partition+f->fsinfo+(f->directory_entry_index?f->backup:0u);
         result=io(f,LN_FAT32_READ,f->io_lba,f->sector);if(result!=1)break;
-        if(u32(f->sector)!=0x41615252u||u32(f->sector+484)!=0x61417272u||
-           u32(f->sector+508)!=0xaa550000u){result=LN_FAT32_CORRUPT;break;}
-        put32(f->sector+488,0xffffffffu);put32(f->sector+492,0xffffffffu);
+        if(ln_read_le32(f->sector)!=0x41615252u||ln_read_le32(f->sector+484)!=0x61417272u||
+           ln_read_le32(f->sector+508)!=0xaa550000u){result=LN_FAT32_CORRUPT;break;}
+        ln_write_le32(f->sector+488,0xffffffffu);ln_write_le32(f->sector+492,0xffffffffu);
         f->state=MUT_FSINFO_WRITE;return 0;
     case MUT_FSINFO_WRITE:
         result=io(f,LN_FAT32_WRITE,f->io_lba,f->sector);if(result!=1)break;
@@ -716,8 +713,8 @@ set_chain_cached:
             p[11]=0x20;
             if(f->slot_end)p[32]=0; /* end slots at index15 were refused */
         }
-        put16(p+20,(uint16_t)(f->new_first>>16));put16(p+26,(uint16_t)f->new_first);
-        put32(p+28,f->new_size);f->state=MUT_PUBLISH_WRITE;return 0;
+        ln_write_le16(p+20,(uint16_t)(f->new_first>>16));ln_write_le16(p+26,(uint16_t)f->new_first);
+        ln_write_le32(p+28,f->new_size);f->state=MUT_PUBLISH_WRITE;return 0;
     case MUT_PUBLISH_WRITE:
         result=io(f,LN_FAT32_WRITE,f->slot_sector,f->sector);if(result!=1)break;
         f->state=MUT_PUBLISH_FLUSH;return 0;

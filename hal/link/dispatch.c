@@ -1,13 +1,5 @@
+#include "boot/include/linnet_bytes.h"
 #include "dispatch.h"
-
-static uint32_t read32(const uint8_t *p) {
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
-           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-
-static void write32(uint8_t *p, uint32_t value) {
-    for (unsigned i = 0; i < 4; ++i) p[i] = (uint8_t)(value >> (8u * i));
-}
 
 static uint32_t crc_update(uint32_t crc, const uint8_t *data, uint32_t size) {
     for (uint32_t i = 0; i < size; ++i) {
@@ -54,18 +46,18 @@ int ln_link_dispatch(ln_link_dispatcher *state, const ln_link_frame *request,
     }
     case 16: {
         if (request->length != 40 || !state->backend.begin) return 1;
-        uint32_t size = read32(request->payload);
+        uint32_t size = ln_read_le32(request->payload);
         if (!size || size > LINNET_LINK_MAX_IMAGE) return 1;
         /* Invalidating previous verification precedes any backend mutation. */
         state->staging = state->complete = state->verified = 0;
         if (!state->backend.begin(state->backend.context, size)) return 1;
         state->size = size;
-        state->expected_crc = read32(request->payload + 4);
+        state->expected_crc = ln_read_le32(request->payload + 4);
         for (unsigned i = 0; i < 32; ++i) state->sha256[i] = request->payload[8u + i];
         state->offset = 0;
         state->crc = 0xffffffffu;
         state->staging = 1;
-        write32(state->reply, 0);
+        ln_write_le32(state->reply, 0);
         response->length = 4;
         break;
     }
@@ -73,7 +65,7 @@ int ln_link_dispatch(ln_link_dispatcher *state, const ln_link_frame *request,
         if (!state->staging || state->complete || request->length <= 4 || !state->backend.write)
             return 1;
         uint32_t size = request->length - 4u;
-        if (read32(request->payload) != state->offset || size > state->size - state->offset)
+        if (ln_read_le32(request->payload) != state->offset || size > state->size - state->offset)
             return 1;
         if (!state->backend.write(state->backend.context, state->offset, request->payload + 4, size)) {
             state->staging = 0; /* A failed write may be partial: never resume it. */
@@ -81,7 +73,7 @@ int ln_link_dispatch(ln_link_dispatcher *state, const ln_link_frame *request,
         }
         state->crc = crc_update(state->crc, request->payload + 4, size);
         state->offset += size;
-        write32(state->reply, state->offset);
+        ln_write_le32(state->reply, state->offset);
         response->length = 4;
         break;
     }
@@ -94,7 +86,7 @@ int ln_link_dispatch(ln_link_dispatcher *state, const ln_link_frame *request,
             return 1;
         }
         state->complete = 1;
-        write32(state->reply, state->offset);
+        ln_write_le32(state->reply, state->offset);
         response->length = 4;
         break;
     case 19:
@@ -107,7 +99,7 @@ int ln_link_dispatch(ln_link_dispatcher *state, const ln_link_frame *request,
         break;
     case 20: case 32: case 33: case 34: case 52:
         if (request->command == 52) {
-            if (request->length != 4 || read32(request->payload) != 0 || !state->backend.crash) return 1;
+            if (request->length != 4 || ln_read_le32(request->payload) != 0 || !state->backend.crash) return 1;
         } else if (request->length) return 1;
         if (!state->backend.quiesce || !state->backend.can_action ||
             !state->backend.can_action(state->backend.context, request->command)) return 1;

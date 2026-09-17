@@ -1,3 +1,4 @@
+#include "boot/include/linnet_bytes.h"
 #include "services/state/store.h"
 #include "boot/include/linnet_boot.h"
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -6,22 +7,20 @@ __attribute__((weak)) void ln_state_publication_step(uint32_t stage){(void)stage
 #else
 #define PUBLICATION_STEP(stage) ((void)0)
 #endif
-static uint32_t get32(const uint8_t *p){return p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
-static void put32(uint8_t *p,uint32_t n){for(unsigned i=0;i<4;++i)p[i]=(uint8_t)(n>>(8*i));}
 static int same(const uint8_t*a,const uint8_t*b,uint32_t n){for(uint32_t i=0;i<n;++i)if(a[i]!=b[i])return 0;return 1;}
 static int blank(const uint8_t*p,uint32_t n){for(uint32_t i=0;i<n;++i)if(p[i])return 0;return 1;}
 int ln_state_encode(uint8_t r[512],uint32_t generation,const uint8_t *payload,uint32_t n){
     if(!r||!generation||n>480||(!payload&&n))return 0;
     for(unsigned i=0;i<512;++i)r[i]=0;
-    put32(r,0x54415453u);put32(r+4,0);put32(r+8,generation);put32(r+12,n);
+    ln_write_le32(r,0x54415453u);ln_write_le32(r+4,0);ln_write_le32(r+8,generation);ln_write_le32(r+12,n);
     for(uint32_t i=0;i<n;++i)r[28+i]=payload[i];
-    put32(r+508,ln_crc32(r,508));return 1;
+    ln_write_le32(r+508,ln_crc32(r,508));return 1;
 }
 int ln_state_decode(const uint8_t r[512],uint32_t *generation,uint32_t *length){
-    if(!r||!generation||!length||get32(r)!=0x54415453u||get32(r+4)||!get32(r+8)||
-       get32(r+12)>480||!blank(r+16,12)||ln_crc32(r,508)!=get32(r+508))return 0;
-    uint32_t n=get32(r+12);if(!blank(r+28+n,480-n))return 0;
-    *generation=get32(r+8);*length=n;return 1;
+    if(!r||!generation||!length||ln_read_le32(r)!=0x54415453u||ln_read_le32(r+4)||!ln_read_le32(r+8)||
+       ln_read_le32(r+12)>480||!blank(r+16,12)||ln_crc32(r,508)!=ln_read_le32(r+508))return 0;
+    uint32_t n=ln_read_le32(r+12);if(!blank(r+28+n,480-n))return 0;
+    *generation=ln_read_le32(r+8);*length=n;return 1;
 }
 int ln_state_open(struct ln_state_store*s,const struct ln_state_io*io){
     if(!s||!io||!io->read||!io->write||!io->flush)return -1;

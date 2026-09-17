@@ -1,3 +1,4 @@
+#include "boot/include/linnet_bytes.h"
 #include "kernel/platform_link.h"
 #include "kernel/runtime.h"
 #include "hal/api/recovery.h"
@@ -50,13 +51,6 @@ static const uint32_t ln_platform_crc_table[256] = {
     0xb3667a2eu, 0xc4614ab8u, 0x5d681b02u, 0x2a6f2b94u, 0xb40bbe37u, 0xc30c8ea1u, 0x5a05df1bu, 0x2d02ef8du,
 };
 
-static uint32_t read32(const uint8_t *p) {
-    return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-}
-static void write32(uint8_t *p, uint32_t value) {
-    for (unsigned i=0; i<4; ++i) p[i]=(uint8_t)(value>>(i*8));
-}
-
 int ln_platform_link_dispatch(const ln_link_frame *request, ln_link_frame *response) {
     if (request->command < 64 || request->command > 70) return 0;
     if (request->flags || !request->sequence || request->length > LINNET_LINK_MAX_PAYLOAD ||
@@ -65,42 +59,42 @@ int ln_platform_link_dispatch(const ln_link_frame *request, ln_link_frame *respo
     response->command=request->command; response->sequence=request->sequence;
     response->flags=LINNET_LINK_ACK|LINNET_LINK_ERROR;
     response->payload=ln_platform_reply; response->length=8;
-    write32(ln_platform_reply, generation); write32(ln_platform_reply+4, 0);
+    ln_write_le32(ln_platform_reply, generation); ln_write_le32(ln_platform_reply+4, 0);
     if (request->command == 70) {
         if(request->length)return 1;uint32_t words[16];ln_input_diagnostics(words);
-        for(uint32_t i=0;i<16u;++i)write32(ln_platform_reply+i*4,words[i]);response->length=64;
+        for(uint32_t i=0;i<16u;++i)ln_write_le32(ln_platform_reply+i*4,words[i]);response->length=64;
     } else if (request->command == 69) {
         if(request->length)return 1;uint32_t words[16];
         if(ln_runtime_ui_state(words,16)!=16)return 1;
-        for(uint32_t i=0;i<16u;++i)write32(ln_platform_reply+i*4,words[i]);response->length=64;
+        for(uint32_t i=0;i<16u;++i)ln_write_le32(ln_platform_reply+i*4,words[i]);response->length=64;
     } else if (request->command == 64) {
         if (request->length) return 1;
         uint32_t state[32];
         if (ln_runtime_state(state,32) != 32) return 1;
-        for (unsigned i=0;i<32;++i) write32(ln_platform_reply+i*4,state[i]);
+        for (unsigned i=0;i<32;++i) ln_write_le32(ln_platform_reply+i*4,state[i]);
         response->length=128;
     } else if (request->command == 65) {
-        if (request->length < 8 || read32(request->payload) != generation) return 1;
-        uint32_t count=read32(request->payload+4);
+        if (request->length < 8 || ln_read_le32(request->payload) != generation) return 1;
+        uint32_t count=ln_read_le32(request->payload+4);
         if (!count || count>32 || request->length != 8+count*12) return 1;
         /* Validate every event's shape before applying any synthetic state. */
         for (uint32_t i=0;i<count;++i) {
             const uint8_t *event=request->payload+8+i*12;
-            uint32_t kind=read32(event+4); int32_t value=(int32_t)read32(event+8);
-            if (!read32(event) || kind<1 || kind>4 ||
+            uint32_t kind=ln_read_le32(event+4); int32_t value=(int32_t)ln_read_le32(event+8);
+            if (!ln_read_le32(event) || kind<1 || kind>4 ||
                 (kind==1 && (value < -64 || value > 64)) ||
                 (kind==2 && (value<0 || value>31)) ||
                 (kind>=3 && (value<0 || value>1))) return 1;
         }
         for (uint32_t i=0;i<count;++i) {
             const uint8_t *event=request->payload+8+i*12;
-            if (!ln_runtime_inject(read32(event+4),(int32_t)read32(event+8),read32(event))) {
-                write32(ln_platform_reply+4,i); return 1;
+            if (!ln_runtime_inject(ln_read_le32(event+4),(int32_t)ln_read_le32(event+8),ln_read_le32(event))) {
+                ln_write_le32(ln_platform_reply+4,i); return 1;
             }
         }
-        write32(ln_platform_reply+4,count);
+        ln_write_le32(ln_platform_reply+4,count);
     } else if (request->command == 66) {
-        if (request->length != 4 || read32(request->payload) != generation || ln_platform_capture_id==0xffffffffu) return 1;
+        if (request->length != 4 || ln_read_le32(request->payload) != generation || ln_platform_capture_id==0xffffffffu) return 1;
         const uint16_t *frame=ln_runtime_framebuffer();
         if (!frame) return 1;
         uint32_t crc=0xffffffffu;
@@ -116,23 +110,23 @@ int ln_platform_link_dispatch(const ln_link_frame *request, ln_link_frame *respo
         ++ln_platform_capture_id; ln_platform_capture_generation=generation;
         uint32_t info[7]={ln_platform_capture_id,generation,LINNET_UI_WIDTH,LINNET_UI_HEIGHT,1,LINNET_PLATFORM_FRAME_BYTES,
                          crc^0xffffffffu};
-        for(unsigned i=0;i<7;++i)write32(ln_platform_reply+i*4,info[i]);
+        for(unsigned i=0;i<7;++i)ln_write_le32(ln_platform_reply+i*4,info[i]);
         response->length=28;
     } else if (request->command == 67) {
         if(request->length!=16 || !ln_platform_capture_id ||
-           read32(request->payload)!=ln_platform_capture_id ||
-           read32(request->payload+4)!=ln_platform_capture_generation || generation!=ln_platform_capture_generation) return 1;
-        uint32_t offset=read32(request->payload+8), size=read32(request->payload+12);
+           ln_read_le32(request->payload)!=ln_platform_capture_id ||
+           ln_read_le32(request->payload+4)!=ln_platform_capture_generation || generation!=ln_platform_capture_generation) return 1;
+        uint32_t offset=ln_read_le32(request->payload+8), size=ln_read_le32(request->payload+12);
         if(!size || size>1008 || offset>LINNET_PLATFORM_FRAME_BYTES || size>LINNET_PLATFORM_FRAME_BYTES-offset) return 1;
-        write32(ln_platform_reply,ln_platform_capture_id); write32(ln_platform_reply+4,generation); write32(ln_platform_reply+8,offset);
+        ln_write_le32(ln_platform_reply,ln_platform_capture_id); ln_write_le32(ln_platform_reply+4,generation); ln_write_le32(ln_platform_reply+8,offset);
         const uint8_t *bytes=(const uint8_t*)ln_platform_capture;
         for(uint32_t i=0;i<size;++i)ln_platform_reply[12+i]=bytes[offset+i];
         response->length=12+size;
     } else {
-        if(request->length!=12 || read32(request->payload)!=generation) return 1;
-        uint32_t action=read32(request->payload+4), argument=read32(request->payload+8);
+        if(request->length!=12 || ln_read_le32(request->payload)!=generation) return 1;
+        uint32_t action=ln_read_le32(request->payload+4), argument=ln_read_le32(request->payload+8);
         if(action<1 || action>8 || !ln_runtime_control(action,argument))return 1;
-        write32(ln_platform_reply+4,action);write32(ln_platform_reply+8,argument);response->length=12;
+        ln_write_le32(ln_platform_reply+4,action);ln_write_le32(ln_platform_reply+8,argument);response->length=12;
     }
     response->flags=LINNET_LINK_ACK;
     return 1;

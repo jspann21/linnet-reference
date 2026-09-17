@@ -1,3 +1,4 @@
+#include "boot/include/linnet_bytes.h"
 #include "hal/api/usb.h"
 #include "hal/api/platform.h"
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -247,11 +248,9 @@ static bool status_in(void) {
     return prime(1, LINNET_USB_CTRL, 0);
 }
 
-static uint16_t read16(const uint8_t *p) { return (uint16_t)(p[0] | (uint16_t)p[1] << 8); }
-
 static bool setup_request(const uint8_t setup[8]) {
     uint8_t type = setup[0], request = setup[1];
-    uint16_t value = read16(setup + 2), index = read16(setup + 4), length = read16(setup + 6);
+    uint16_t value = ln_read_le16(setup + 2), index = ln_read_le16(setup + 4), length = ln_read_le16(setup + 6);
     ln_usb.pending_address = 0xffu;
     ln_usb.pending_configuration = 0xffu;
     LINNET_USB_EP(0) &= ~0x00010001u;

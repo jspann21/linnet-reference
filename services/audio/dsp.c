@@ -1,3 +1,4 @@
+#include "boot/include/linnet_bytes.h"
 #include "services/audio/dsp.h"
 /* Q8 signal values retain fractional precision between filters. Headroom is
  * bounded to +/-2^27 (24 dB above full-scale PCM16). A sum of five products of
@@ -80,25 +81,23 @@ bool ln_dsp_configure(struct ln_dsp *dsp,const struct ln_dsp_config *config)
     dsp->crossfeed_low[0]=dsp->crossfeed_low[1]=0;
     dsp->config=copy;return true;
 }
-static uint32_t read32(const uint8_t *p)
-{return p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);}
 bool ln_dsp_profile_decode(const uint8_t *data,uint32_t bytes,uint32_t rate,struct ln_dsp_config *out)
 {
     if(!data||!out||bytes!=160||rate<8000||rate>192000||data[0]!='L'||data[1]!='D'||data[2]!='S'||data[3]!='P'||
-       data[4]||data[5]||data[6]!=160||data[7]||read32(data+8)!=rate||read32(data+12))return false;
+       data[4]||data[5]||data[6]!=160||data[7]||ln_read_le32(data+8)!=rate||ln_read_le32(data+12))return false;
     for(uint32_t i=16;i<28;i++)if(data[i])return false;
     uint32_t crc=UINT32_MAX;
     for(uint32_t i=0;i<156;i++){crc^=data[i];for(uint32_t bit=0;bit<8;bit++)crc=(crc>>1)^((0u-(crc&1u))&0xedb88320u);}
-    if((crc^UINT32_MAX)!=read32(data+156))return false;
+    if((crc^UINT32_MAX)!=ln_read_le32(data+156))return false;
     struct ln_dsp_config config;
-    config.gain_q16=read32(data+28);config.replaygain_q16=read32(data+32);config.balance=(int32_t)read32(data+36);
-    config.mode=read32(data+40);config.band_count=read32(data+44);
+    config.gain_q16=ln_read_le32(data+28);config.replaygain_q16=ln_read_le32(data+32);config.balance=(int32_t)ln_read_le32(data+36);
+    config.mode=ln_read_le32(data+40);config.band_count=ln_read_le32(data+44);
     for(uint32_t i=0;i<5;i++){
         const uint8_t *p=data+48+i*20;struct ln_dsp_biquad *b=&config.bands[i];
-        b->b0=(int32_t)read32(p);b->b1=(int32_t)read32(p+4);b->b2=(int32_t)read32(p+8);b->a1=(int32_t)read32(p+12);b->a2=(int32_t)read32(p+16);
+        b->b0=(int32_t)ln_read_le32(p);b->b1=(int32_t)ln_read_le32(p+4);b->b2=(int32_t)ln_read_le32(p+8);b->a1=(int32_t)ln_read_le32(p+12);b->a2=(int32_t)ln_read_le32(p+16);
         if(i>=config.band_count&&(b->b0||b->b1||b->b2||b->a1||b->a2))return false;
     }
-    config.crossfeed_amount_q16=read32(data+148);config.crossfeed_coefficient_q16=read32(data+152);
+    config.crossfeed_amount_q16=ln_read_le32(data+148);config.crossfeed_coefficient_q16=ln_read_le32(data+152);
     if(!valid_config(&config))return false;
     *out=config;return true;
 }

@@ -1,22 +1,5 @@
+#include "boot/include/linnet_bytes.h"
 #include "link.h"
-
-static uint16_t read16(const uint8_t *p) {
-    return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
-}
-
-static uint32_t read32(const uint8_t *p) {
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
-           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-
-static void write16(uint8_t *p, uint16_t value) {
-    p[0] = (uint8_t)value;
-    p[1] = (uint8_t)(value >> 8);
-}
-
-static void write32(uint8_t *p, uint32_t value) {
-    for (unsigned i = 0; i < 4; ++i) p[i] = (uint8_t)(value >> (8u * i));
-}
 
 static uint32_t crc32(const uint8_t *p, uint32_t size) {
     uint32_t crc = 0xffffffffu;
@@ -29,11 +12,11 @@ static uint32_t crc32(const uint8_t *p, uint32_t size) {
 }
 
 static int valid_header(const uint8_t *p) {
-    uint16_t flags = read16(p + 6);
+    uint16_t flags = ln_read_le16(p + 6);
     return p[0] == 'L' && p[1] == 'I' && p[2] == 'N' && p[3] == 'K' &&
            p[4] == 0 && p[5] == 0 && (flags == 0 || flags == 1 || flags == 3) &&
-           read16(p + 10) == 0 && read32(p + 12) != 0 &&
-           read32(p + 16) <= LINNET_LINK_MAX_PAYLOAD;
+           ln_read_le16(p + 10) == 0 && ln_read_le32(p + 12) != 0 &&
+           ln_read_le32(p + 16) <= LINNET_LINK_MAX_PAYLOAD;
 }
 
 void ln_link_parser_init(ln_link_parser *parser) {
@@ -47,17 +30,17 @@ int ln_link_parser_feed(ln_link_parser *parser, uint8_t byte, ln_link_frame *fra
     parser->bytes[parser->used++] = byte;
     if (parser->used == LINNET_LINK_HEADER_SIZE) {
         if (!valid_header(parser->bytes)) goto invalid;
-        parser->expected = LINNET_LINK_HEADER_SIZE + read32(parser->bytes + 16) + 4u;
+        parser->expected = LINNET_LINK_HEADER_SIZE + ln_read_le32(parser->bytes + 16) + 4u;
     }
     if (parser->used < parser->expected) return 0;
-    if (crc32(parser->bytes, parser->used - 4u) != read32(parser->bytes + parser->used - 4u))
+    if (crc32(parser->bytes, parser->used - 4u) != ln_read_le32(parser->bytes + parser->used - 4u))
         goto invalid;
-    frame->sequence = read32(parser->bytes + 12);
+    frame->sequence = ln_read_le32(parser->bytes + 12);
     if (frame->sequence <= parser->last_sequence) goto invalid;
     parser->last_sequence = frame->sequence;
-    frame->command = read16(parser->bytes + 8);
-    frame->flags = read16(parser->bytes + 6);
-    frame->length = read32(parser->bytes + 16);
+    frame->command = ln_read_le16(parser->bytes + 8);
+    frame->flags = ln_read_le16(parser->bytes + 6);
+    frame->length = ln_read_le32(parser->bytes + 16);
     frame->payload = parser->bytes + LINNET_LINK_HEADER_SIZE;
     parser->used = 0;
     parser->expected = LINNET_LINK_HEADER_SIZE;
@@ -76,12 +59,12 @@ size_t ln_link_encode(const ln_link_frame *frame, uint8_t *output, size_t capaci
     if (capacity < total) return 0;
     output[0] = 'L'; output[1] = 'I'; output[2] = 'N'; output[3] = 'K';
     output[4] = 0; output[5] = 0;
-    write16(output + 6, frame->flags);
-    write16(output + 8, frame->command);
-    write16(output + 10, 0);
-    write32(output + 12, frame->sequence);
-    write32(output + 16, frame->length);
+    ln_write_le16(output + 6, frame->flags);
+    ln_write_le16(output + 8, frame->command);
+    ln_write_le16(output + 10, 0);
+    ln_write_le32(output + 12, frame->sequence);
+    ln_write_le32(output + 16, frame->length);
     for (uint32_t i = 0; i < frame->length; ++i) output[20u + i] = frame->payload[i];
-    write32(output + total - 4u, crc32(output, (uint32_t)total - 4u));
+    ln_write_le32(output + total - 4u, crc32(output, (uint32_t)total - 4u));
     return total;
 }

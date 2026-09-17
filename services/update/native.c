@@ -1,3 +1,4 @@
+#include "boot/include/linnet_bytes.h"
 #include "services/update/native.h"
 #include "services/storage/storage.h"
 #include "services/storage/block.h"
@@ -12,8 +13,6 @@ static uint8_t sector[4096] __attribute__((aligned(32)));
 static uint8_t expected[32],observed[32];
 static uint32_t phase,error,offset,writes,request_generation=0x40000000u,bytes_read;
 static uint32_t apply_started,package_size;
-static uint32_t u32(const uint8_t *p){return p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
-static uint64_t u64(const uint8_t *p){return u32(p)|((uint64_t)u32(p+4)<<32);}
 static int equal(const uint8_t *a,const uint8_t *b,uint32_t n){for(uint32_t i=0;i<n;++i)if(a[i]!=b[i])return 0;return 1;}
 static int zero(const uint8_t *a,uint32_t n){for(uint32_t i=0;i<n;++i)if(a[i])return 0;return 1;}
 static void hash(const uint8_t *data,uint32_t n,uint8_t out[32]){
@@ -53,13 +52,13 @@ static int directory_valid(uint64_t candidate,uint32_t length){
     for(uint32_t entry=0;entry+40<=512;entry+=40){
         const uint8_t *p=old+entry;if(zero(p,4))break;
         if(!equal(p,(const uint8_t *)"!ATA",4))return 0;
-        uint64_t start=32256u+(uint64_t)u32(p+12)+512u;uint32_t size=u32(p+16);
+        uint64_t start=32256u+(uint64_t)ln_read_le32(p+12)+512u;uint32_t size=ln_read_le32(p+16);
         if(!size||start<49152u+512u||start+size>41126400u||
-           (candidate<start+size&&start<candidate+u32(package+40)))return 0;
+           (candidate<start+size&&start<candidate+ln_read_le32(package+40)))return 0;
         if(equal(p+4,(const uint8_t *)"soso",4)){if(os!=UINT32_MAX)return 0;os=entry;}
     }
-    if(os==UINT32_MAX||u32(next+os+12)!=candidate-32256u-512u||u32(next+os+16)!=length||
-       u32(next+os+24)||u32(next+os+28)!=sum)return 0;
+    if(os==UINT32_MAX||ln_read_le32(next+os+12)!=candidate-32256u-512u||ln_read_le32(next+os+16)!=length||
+       ln_read_le32(next+os+24)||ln_read_le32(next+os+28)!=sum)return 0;
     for(uint32_t i=0;i<512;++i){
         bool mutable=(i>=os+12&&i<os+20)||(i>=os+24&&i<os+32);
         if(!mutable&&old[i]!=next[i])return 0;
@@ -69,23 +68,23 @@ static int directory_valid(uint64_t candidate,uint32_t length){
 static int validate(void){
     static const uint8_t original_sha[32]={0x0e,0x21,0xc2,0xbc,0x8c,0xba,0xbd,0xee,0xd6,0xe3,0xd6,0xa0,0x34,0xea,0xcc,0x8e,0x3c,0xa7,0xd6,0xfb,0x04,0xcd,0x2d,0x5d,0x1b,0x4c,0xfc,0x5f,0xd8,0x5d,0x96,0x11};
     static const uint8_t serial[16]="JQ5081G3SAY",usb[16]=LINNET_USB_SERIAL;
-    const uint8_t *p=package;uint64_t candidate=u64(p+32);uint32_t n=u32(p+44),span=u32(p+40);
-    if(u32(p)!=0x4b504e4cu||u32(p+4)||u32(p+8)!=package_size||u32(p+12)!=98||u32(p+16)||
-       u32(p+20)!=41094144u||u64(p+24)!=32256u||span!=package_size-2560u||n<32||n>span||
-       u64(p+48)!=49152u||u64(p+56)!=21003776u||u32(p+64)!=1549256u||
-       u32(p+68)>2||u64(p+72)!=64021856256ull||
+    const uint8_t *p=package;uint64_t candidate=ln_read_le64(p+32);uint32_t n=ln_read_le32(p+44),span=ln_read_le32(p+40);
+    if(ln_read_le32(p)!=0x4b504e4cu||ln_read_le32(p+4)||ln_read_le32(p+8)!=package_size||ln_read_le32(p+12)!=98||ln_read_le32(p+16)||
+       ln_read_le32(p+20)!=41094144u||ln_read_le64(p+24)!=32256u||span!=package_size-2560u||n<32||n>span||
+       ln_read_le64(p+48)!=49152u||ln_read_le64(p+56)!=21003776u||ln_read_le32(p+64)!=1549256u||
+       ln_read_le32(p+68)>2||ln_read_le64(p+72)!=64021856256ull||
        !equal(p+80,serial,16)||!equal(p+96,usb,16)||!equal(p+208,original_sha,32)||
-       !zero(p+464,44)||ln_crc32(p,508)!=u32(p+508)||
-       candidate%512||candidate<22553032u||candidate+u32(package+40)>41126400u)return 0;
+       !zero(p+464,44)||ln_crc32(p,508)!=ln_read_le32(p+508)||
+       candidate%512||candidate<22553032u||candidate+ln_read_le32(package+40)>41126400u)return 0;
     if(!matches(p,package_size,expected)||!matches(p+512,package_size-512,p+432)||
        !matches(p+512,512,p+240)||!matches(p+1024,512,p+304)||!matches(p+1536,512,p+336)||
        !matches(p+2560,span,p+272)||!zero(p+2176,384)||!zero(p+2560+n,span-n)||!directory_valid(candidate,n))return 0;
-    const uint8_t *mbr=p+512;if(mbr[510]!=0x55||mbr[511]!=0xaa||mbr[450]||u32(mbr+454)!=63||u32(mbr+458)!=80262)return 0;
+    const uint8_t *mbr=p+512;if(mbr[510]!=0x55||mbr[511]!=0xaa||mbr[450]||ln_read_le32(mbr+454)!=63||ln_read_le32(mbr+458)!=80262)return 0;
     uint8_t *image=(uint8_t *)(uintptr_t)LINNET_STAGE_ADDRESS;
     for(uint32_t i=0;i<128;++i)image[i]=p[2048+i];for(uint32_t i=0;i<n;++i)image[128+i]=p[2560+i];
     struct ln_image_policy policy={98,7,0,0x100000};struct ln_image_info info;
     return matches(image,n+128,p+368)&&ln_image_validate_progress(image,n+128,&policy,&info,ln_storage_progress,0)==LINNET_IMAGE_OK&&
-        info.load_address==0&&info.entry_address==0&&info.payload_size==n&&info.profile==u32(p+68)&&equal(info.build_id,p+400,32);
+        info.load_address==0&&info.entry_address==0&&info.payload_size==n&&info.profile==ln_read_le32(p+68)&&equal(info.build_id,p+400,32);
 }
 int ln_native_apply(void){
     if(phase!=2||offset!=package_size||writes)return 0;
@@ -96,7 +95,7 @@ int ln_native_apply(void){
     phase=4;
     if(!digest_disk(0,512,package+240)||!digest_disk(32256,41094144,package+112)||
        !digest_disk(21003776,1549256,package+208)||!digest_disk(49152,512,package+304)){error=3;goto failed;}
-    uint64_t candidate=u64(package+32);uint32_t span=u32(package+40);
+    uint64_t candidate=ln_read_le64(package+32);uint32_t span=ln_read_le32(package+40);
     for(uint32_t n=0;n<span;n+=4096){uint32_t chunk=span-n>4096u?4096u:span-n;if(!io(LN_BLOCK_READ,candidate+n,sector,chunk/512u)||!zero(sector,chunk)){error=4;goto failed;}}
     phase=5;
     for(uint32_t n=0;n<span;n+=4096){uint32_t chunk=span-n>4096u?4096u:span-n;writes|=1u;if(!io(LN_BLOCK_WRITE,candidate+n,package+2560+n,chunk/512u)){error=5;goto failed;}}
@@ -112,5 +111,5 @@ failed:phase=11;ln_storage_maintenance_end(false);return 0;
 }
 void ln_native_status(uint32_t words[16]){
     uint32_t v[8]={0x32424e4cu,phase,error,offset,writes,bytes_read,ln_time_us()-apply_started,request_generation};
-    for(uint32_t i=0;i<8;++i){words[i]=v[i];words[8+i]=u32(observed+i*4);}
+    for(uint32_t i=0;i<8;++i){words[i]=v[i];words[8+i]=ln_read_le32(observed+i*4);}
 }

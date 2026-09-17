@@ -1,3 +1,4 @@
+#include "boot/include/linnet_bytes.h"
 #include "photos.h"
 #include "pimg.h"
 #include "jpeg.h"
@@ -49,8 +50,6 @@ static void clear(void*v,uint32_t n){
 #endif
 }
 static void copy(void*d,const void*s,uint32_t n){uint8_t*a=d;const uint8_t*b=s;while(n--)*a++=*b++;}
-static uint32_t r32(const uint8_t*b){return b[0]|(uint32_t)b[1]<<8|(uint32_t)b[2]<<16|(uint32_t)b[3]<<24;}
-static void w32(uint8_t*b,uint32_t n){for(uint32_t i=0;i<4;i++)b[i]=(uint8_t)(n>>(8*i));}
 static void text(char*d,const char*s){uint32_t i=0;while(i<191&&s[i]){d[i]=s[i];++i;}d[i]=0;}
 static uint32_t next_generation(void){if(++p.generation>=0x70000000u)p.generation=0x60000001u;return p.generation;}
 static bool allowed(void){
@@ -287,25 +286,25 @@ const char *ln_photos_status(void){return p.error?"Image unavailable":!p.ready?"
 void ln_photos_resume_get(uint8_t out[16]){
     if(p.resume_pending){copy(out,p.resume,16);return;}
     bool empty=p.ready&&p.album_known&&p.view!=LN_PHOTOS_VIEWER&&!p.count;
-    w32(out,p.ready?p.header.identity:0);w32(out+4,empty?EMPTY_ALBUM_RESUME:p.photo_index);
-    w32(out+8,(empty?0:p.zoom|(p.rotation<<8))|(p.view<<16));
-    w32(out+12,empty?p.album:(uint16_t)p.pan_x|((uint32_t)(uint16_t)p.pan_y<<16));
+    ln_write_le32(out,p.ready?p.header.identity:0);ln_write_le32(out+4,empty?EMPTY_ALBUM_RESUME:p.photo_index);
+    ln_write_le32(out+8,(empty?0:p.zoom|(p.rotation<<8))|(p.view<<16));
+    ln_write_le32(out+12,empty?p.album:(uint16_t)p.pan_x|((uint32_t)(uint16_t)p.pan_y<<16));
 }
 bool ln_photos_resume_set(const uint8_t in[16]){
-    uint32_t flags=r32(in+8),index=r32(in+4);
+    uint32_t flags=ln_read_le32(in+8),index=ln_read_le32(in+4);
     if(index>EMPTY_ALBUM_RESUME||(flags&0xffu)>5||((flags>>8)&255u)>3||(flags>>16)>2)return false;
-    if(index==EMPTY_ALBUM_RESUME&&((flags&65535u)||(flags>>16)==LN_PHOTOS_VIEWER||r32(in+12)>=4096u))return false;
+    if(index==EMPTY_ALBUM_RESUME&&((flags&65535u)||(flags>>16)==LN_PHOTOS_VIEWER||ln_read_le32(in+12)>=4096u))return false;
     copy(p.resume,in,16);p.resume_pending=true;p.resume_stage=0;return true;
 }
 static bool resume_matches(void){
-    return r32(p.resume)==p.header.identity&&(r32(p.resume+4)==EMPTY_ALBUM_RESUME?
-        r32(p.resume+12)<p.header.albums:r32(p.resume+4)<p.header.photos);
+    return ln_read_le32(p.resume)==p.header.identity&&(ln_read_le32(p.resume+4)==EMPTY_ALBUM_RESUME?
+        ln_read_le32(p.resume+12)<p.header.albums:ln_read_le32(p.resume+4)<p.header.photos);
 }
 static void restore_resume(void){
     if(!resume_matches()){p.resume_pending=false;return;}
-    uint32_t index=r32(p.resume+4),view=r32(p.resume+8)>>16;bool empty=index==EMPTY_ALBUM_RESUME;
+    uint32_t index=ln_read_le32(p.resume+4),view=ln_read_le32(p.resume+8)>>16;bool empty=index==EMPTY_ALBUM_RESUME;
     if(!p.resume_stage){
-        if(empty)p.album=r32(p.resume+12);
+        if(empty)p.album=ln_read_le32(p.resume+12);
         else{struct row*row=cached(index,false);if(!row){begin_row(index,false);return;}p.album=row->data.p.album;}
         p.resume_stage=1;
     }
@@ -410,7 +409,7 @@ static void photo_step(void){
            (p.level_count&&(l->width<p.levels[p.level_count-1].width||l->height<p.levels[p.level_count-1].height||(l->width==p.levels[p.level_count-1].width&&l->height==p.levels[p.level_count-1].height)||l->first!=p.levels[p.level_count-1].first+p.levels[p.level_count-1].count))){image_fail(9);return;}
         }
         p.view_loaded=true;p.phase=IDLE;
-        if(p.resume_pending&&p.photo_index==r32(p.resume+4)){uint32_t flags=r32(p.resume+8),pan=r32(p.resume+12);p.zoom=flags&255u;p.rotation=(flags>>8)&3u;p.pan_x=(int16_t)pan;p.pan_y=(int16_t)(pan>>16);p.resume_pending=false;}
+        if(p.resume_pending&&p.photo_index==ln_read_le32(p.resume+4)){uint32_t flags=ln_read_le32(p.resume+8),pan=ln_read_le32(p.resume+12);p.zoom=flags&255u;p.rotation=(flags>>8)&3u;p.pan_x=(int16_t)pan;p.pan_y=(int16_t)(pan>>16);p.resume_pending=false;}
         if(p.zoom>=p.photo.levels)p.zoom=p.photo.levels-1u;layout();return;
     }
     if(p.phase==TILE_RECORD){r=tile_record();if(!r)return;

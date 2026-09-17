@@ -1,3 +1,4 @@
+#include "boot/include/linnet_bytes.h"
 #include "services/music/queue.h"
 static uint32_t find(const uint32_t *values,uint32_t count,uint32_t track)
 {for(uint32_t i=0;i<count;++i)if(values[i]==track)return i;return count;}
@@ -115,10 +116,6 @@ void ln_queue_shuffle(struct ln_queue *q,bool enabled)
 }
 bool ln_queue_set_repeat(struct ln_queue *q,uint32_t repeat)
 {if(!q||repeat>LINNET_QUEUE_REPEAT_ONE)return false;q->repeat=repeat;return true;}
-static void put(uint8_t *p,uint32_t value)
-{for(uint32_t i=0;i<4;++i)p[i]=(uint8_t)(value>>(8u*i));}
-static uint32_t get(const uint8_t *p)
-{return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);}
 static uint32_t crc(const uint8_t *p,uint32_t length)
 {
     uint32_t value=0xffffffffu;
@@ -146,33 +143,33 @@ uint32_t ln_queue_encode(const struct ln_queue *q,uint8_t *out,uint32_t capacity
 {
     if(!q||!out||!valid(q))return 0;
     uint32_t length=q->source?108u+4u*q->excluded_count:80u+q->count*5u;if(capacity<length)return 0;
-    put(out,0x55455551u);put(out+4,q->source?1u:0u);put(out+8,length);put(out+12,q->count);
-    put(out+16,q->cursor);put(out+20,q->repeat);put(out+24,q->seed);put(out+28,q->shuffled?1u:0u);
-    put(out+32,(uint32_t)q->position_samples);put(out+36,(uint32_t)(q->position_samples>>32));
-    put(out+40,(uint32_t)q->volume_db_tenths);
+    ln_write_le32(out,0x55455551u);ln_write_le32(out+4,q->source?1u:0u);ln_write_le32(out+8,length);ln_write_le32(out+12,q->count);
+    ln_write_le32(out+16,q->cursor);ln_write_le32(out+20,q->repeat);ln_write_le32(out+24,q->seed);ln_write_le32(out+28,q->shuffled?1u:0u);
+    ln_write_le32(out+32,(uint32_t)q->position_samples);ln_write_le32(out+36,(uint32_t)(q->position_samples>>32));
+    ln_write_le32(out+40,(uint32_t)q->volume_db_tenths);
     for(uint32_t i=0;i<32u;++i)out[44u+i]=q->library_identity[i];
-    if(q->source){put(out+76,q->source);put(out+80,q->source_group);put(out+84,q->stride);put(out+88,q->offset);put(out+92,q->inverse);put(out+96,q->source_count);put(out+100,q->excluded_count);for(uint32_t i=0;i<q->excluded_count;i++)put(out+104+4*i,q->excluded[i]);}
-    else for(uint32_t i=0;i<q->count;++i){put(out+76u+4u*i,q->tracks[i]);out[76u+4u*q->count+i]=(uint8_t)q->order[i];}
-    put(out+length-4u,crc(out,length-4u));return length;
+    if(q->source){ln_write_le32(out+76,q->source);ln_write_le32(out+80,q->source_group);ln_write_le32(out+84,q->stride);ln_write_le32(out+88,q->offset);ln_write_le32(out+92,q->inverse);ln_write_le32(out+96,q->source_count);ln_write_le32(out+100,q->excluded_count);for(uint32_t i=0;i<q->excluded_count;i++)ln_write_le32(out+104+4*i,q->excluded[i]);}
+    else for(uint32_t i=0;i<q->count;++i){ln_write_le32(out+76u+4u*i,q->tracks[i]);out[76u+4u*q->count+i]=(uint8_t)q->order[i];}
+    ln_write_le32(out+length-4u,crc(out,length-4u));return length;
 }
 bool ln_queue_decode(struct ln_queue *q,const uint8_t *data,uint32_t length)
 {
-    if(!q||!data||length<80u||length>LINNET_QUEUE_RESUME_MAX||get(data)!=0x55455551u||
-       get(data+4)>1u||get(data+8)!=length||
-       (!get(data+4)?(get(data+12)>LINNET_QUEUE_CAPACITY||length!=80u+get(data+12)*5u):(length<108u||length>236u))||get(data+28)>1u||get(data+length-4u)!=crc(data,length-4u))return false;
-    struct ln_queue candidate={0};candidate.count=get(data+12);candidate.cursor=get(data+16);
-    candidate.repeat=get(data+20);candidate.seed=get(data+24);candidate.shuffled=get(data+28)!=0;
-    candidate.position_samples=get(data+32)|((uint64_t)get(data+36)<<32);
-    uint32_t volume=get(data+40); /* Explicit two's-complement decoding. */
+    if(!q||!data||length<80u||length>LINNET_QUEUE_RESUME_MAX||ln_read_le32(data)!=0x55455551u||
+       ln_read_le32(data+4)>1u||ln_read_le32(data+8)!=length||
+       (!ln_read_le32(data+4)?(ln_read_le32(data+12)>LINNET_QUEUE_CAPACITY||length!=80u+ln_read_le32(data+12)*5u):(length<108u||length>236u))||ln_read_le32(data+28)>1u||ln_read_le32(data+length-4u)!=crc(data,length-4u))return false;
+    struct ln_queue candidate={0};candidate.count=ln_read_le32(data+12);candidate.cursor=ln_read_le32(data+16);
+    candidate.repeat=ln_read_le32(data+20);candidate.seed=ln_read_le32(data+24);candidate.shuffled=ln_read_le32(data+28)!=0;
+    candidate.position_samples=ln_read_le32(data+32)|((uint64_t)ln_read_le32(data+36)<<32);
+    uint32_t volume=ln_read_le32(data+40); /* Explicit two's-complement decoding. */
     if(volume&&volume<0xfffffd26u)return false;
     candidate.volume_db_tenths=volume?-(int32_t)(~volume+1u):0;
     for(uint32_t i=0;i<32u;++i)candidate.library_identity[i]=data[44u+i];
-    if(get(data+4)==1){candidate.source=get(data+76);candidate.source_group=get(data+80);
-        candidate.stride=get(data+84);candidate.offset=get(data+88);candidate.inverse=get(data+92);candidate.source_count=get(data+96);candidate.excluded_count=get(data+100);
+    if(ln_read_le32(data+4)==1){candidate.source=ln_read_le32(data+76);candidate.source_group=ln_read_le32(data+80);
+        candidate.stride=ln_read_le32(data+84);candidate.offset=ln_read_le32(data+88);candidate.inverse=ln_read_le32(data+92);candidate.source_count=ln_read_le32(data+96);candidate.excluded_count=ln_read_le32(data+100);
         if(candidate.excluded_count>32||length!=108u+4u*candidate.excluded_count)return false;
-        for(uint32_t i=0;i<candidate.excluded_count;i++)candidate.excluded[i]=get(data+104+4*i);
+        for(uint32_t i=0;i<candidate.excluded_count;i++)candidate.excluded[i]=ln_read_le32(data+104+4*i);
         if(!candidate.source||!valid(&candidate))return false;*q=candidate;return true;}
-    for(uint32_t i=0;i<candidate.count;++i)candidate.tracks[i]=get(data+76u+4u*i);
+    for(uint32_t i=0;i<candidate.count;++i)candidate.tracks[i]=ln_read_le32(data+76u+4u*i);
     for(uint32_t i=0;i<candidate.count;++i){uint32_t index=data[76u+4u*candidate.count+i];
         if(index>=candidate.count)return false;candidate.order[i]=index;}
     if(!valid(&candidate))return false;*q=candidate;return true;
