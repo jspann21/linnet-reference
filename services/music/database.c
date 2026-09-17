@@ -205,7 +205,7 @@ int ln_music_db_step(struct ln_music_db *d)
     if(d->operation==LN_DB_TRACK){if(!track_record(d))return bad(d,LN_DB_FORMAT);}
     else if(d->operation==LN_DB_GROUP){
         struct ln_music_group *g=&d->group;g->kind=ln_read_le32(b);g->name=ln_read_le32(b+4);g->parent=ln_read_le32(b+8);g->first=ln_read_le32(b+12);g->count=ln_read_le32(b+16);g->id=ln_read_le64(b+24);
-        if(g->kind<1||g->kind>7||g->name>=d->pool_bytes||g->first>d->members||g->count>d->members-g->first||ln_read_le32(b+20)||
+        if(g->kind<1||g->kind>8||g->name>=d->pool_bytes||g->first>d->members||g->count>d->members-g->first||ln_read_le32(b+20)||
            (g->kind==2?(g->parent>=d->groups||g->parent==d->index):g->parent!=UINT32_MAX))return bad(d,LN_DB_FORMAT);
     }else if(d->operation==LN_DB_MEMBER){d->member=ln_read_le32(b);if(d->member>=d->tracks)return bad(d,LN_DB_FORMAT);}
     else if(d->operation==LN_DB_ART){

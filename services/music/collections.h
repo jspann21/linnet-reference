@@ -17,6 +17,8 @@ uint32_t ln_collections_revision(void);
 const struct ln_collection *ln_collection_get(uint32_t slot);
 bool ln_collection_put(uint32_t slot,const struct ln_collection *value);
 int ln_collection_free(void);
+void ln_collections_played(uint64_t id);
+uint32_t ln_collections_recent_rank(uint64_t id);
 bool ln_collections_resume_set(const uint8_t *data,uint32_t length);
 uint32_t ln_collections_resume_get(uint8_t *out,uint32_t capacity);
 #endif

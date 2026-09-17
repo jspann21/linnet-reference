@@ -673,11 +673,13 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
             shutil.copytree(output, prepared, dirs_exist_ok=True, symlinks=True,
                             ignore=lambda directory, names: [name for name in names
                                 if Path(directory) == output and name in managed])
+        previous_database = (Path(device_root) / '.LINNET' / 'LIBRARY.PDB') if device_root is not None else output / 'LIBRARY.PDB'
+        recent_ids = _recent_track_ids(previous_database)
         with ThreadPoolExecutor(max_workers=4, thread_name_prefix="music-metadata") as metadata_pool:
             report = _compile_music_stage(source, prepared, metadata_pool=metadata_pool, ffprobe=ffprobe,
                                       artwork=artwork, playlists=playlists, target=target, device_root=device_root, progress=progress,
                                        verification=verification, cache=cache, bypass_cache=bypass_cache,
-                                       include_roots=roots, excluded=excluded)
+                                       include_roots=roots, excluded=excluded, recent_ids=recent_ids)
         report["database"] = str(output / "LIBRARY.PDB")
         (prepared / "music-manifest.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         validate_stage(prepared, device_root=device_root)
@@ -770,7 +772,8 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                    verification: str = "full", cache: _MetadataCache | None = None,
                    bypass_cache: bool = False,
                    include_roots: list[Path] | None = None,
-                   excluded: set[str] | tuple[str, ...] | None = None) -> dict:
+                   excluded: set[str] | tuple[str, ...] | None = None,
+                   recent_ids: list[int] | None = None) -> dict:
     """Stage source audio under MUSIC and write LIBRARY.PDB.
 
     Install MUSIC at /Music, ART below /.LINNET and LIBRARY.PDB at /.LINNET/LIBRARY.PDB.
@@ -968,6 +971,12 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             groups[(7, _text(name), "")] = [lookup[member] for member in members]
         except KeyError as exc:
             raise ValueError(f"playlist contains unknown source: {exc}") from exc
+    by_id = {int(entry['id'], 16): index for index, entry in enumerate(entries)}
+    old_ids = set(recent_ids or ())
+    recent = [i for identity, i in by_id.items() if identity not in old_ids]
+    recent.extend(by_id[identity] for identity in (recent_ids or ()) if identity in by_id)
+    if recent:
+        groups[(8, 'Recently Added', '')] = recent
     keys = sorted(groups, key=lambda key: (key[0], key[1].casefold(), key[2].casefold(), key))
     group_indices = {key: index for index, key in enumerate(keys)}
     group_records, members, group_ids = [], [], set()
@@ -976,7 +985,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     for key in keys:
         kind, name, parent = key
         indices = groups[key]
-        if kind != 7:
+        if kind not in (7, 8):
             indices = sorted(indices, key=track_order.__getitem__)
         parent_index = group_indices[(1, parent, "")] if kind == 2 else NO_INDEX
         identity = _stable("group:" + json.dumps([kind, parent, name], ensure_ascii=False, separators=(",", ":")))
@@ -1167,7 +1176,7 @@ def validate_database(data: bytes) -> dict:
         get_string(name)
         if kind in (1, 2):
             expected_search.append((get_string(name).casefold(), 0x80000000 | index))
-        if kind not in range(1, 8) or reserved or first > members or count > members - first:
+        if kind not in range(1, 9) or reserved or first > members or count > members - first:
             raise ValueError("group bounds")
         if identity in group_ids:
             raise ValueError("group identifier collision")
@@ -1191,3 +1200,21 @@ def validate_database(data: bytes) -> dict:
         if not re.fullmatch(r"/\.LINNET/ART/[0-9A-F]{8}\.RGB", get_string(path)) or (width, height, encoding, count, reserved) != (64, 64, 1, 8192, 0):
             raise ValueError("art record")
     return dict(tracks=tracks, groups=groups, members=members, artwork=arts, bytes=size)
+
+
+def _recent_track_ids(path: Path) -> list[int]:
+    """Preserve import order by stable ID across syncs and metadata reordering."""
+    if not path.exists():
+        return []
+    if path.is_symlink() or path.stat().st_size > MAX_DATABASE:
+        raise ValueError('unsafe previous library')
+    data = path.read_bytes()
+    validate_database(data)
+    tracks, groups = struct.unpack_from('<II', data, 16)
+    to, go, mo = struct.unpack_from('<III', data, 32)
+    ids = [struct.unpack_from('<Q', data, to + i * TRACK)[0] for i in range(tracks)]
+    for i in range(groups):
+        kind, _, _, first, count = struct.unpack_from('<5I', data, go + i * GROUP)
+        if kind == 8:
+            return [ids[struct.unpack_from('<I', data, mo + (first+j)*4)[0]] for j in range(count)]
+    return ids

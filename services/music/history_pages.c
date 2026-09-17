@@ -6,7 +6,7 @@ enum {SUPER_A,SUPER_B,IDLE,PAGE_A,PAGE_B,PUBLISH,FLUSH,CHECK,ACK,FAILED};
 static struct {
     struct ln_history_page cache[4];uint32_t age[4],clock,revision;
     uint8_t a[4096],b[4096],epoch[16];
-    uint32_t phase,index,probe,slot;int error;bool loaded,wanted;
+    uint32_t phase,index,probe,slot;int error;bool loaded,wanted,scanning;
     uint32_t ticket,io_bytes;int io_error;
     uint64_t id,full_id,pinned_id;bool full,pinned;
     struct {uint64_t id;uint32_t slot,index;bool valid;} proofs[4];uint32_t proof_cursor;
@@ -41,14 +41,21 @@ const struct ln_music_journal_record *ln_paged_history_get(uint64_t id){int slot
 bool ln_paged_history_prefetch(uint64_t id){
     if(h.error||!h.loaded)return false;int slot=location(id);if(slot>=0){h.age[slot]=++h.clock;return true;}
     if(h.full&&h.full_id==id)return false;
-    if(h.wanted)return h.id==id;h.wanted=true;h.id=id;h.index=ln_history_page_hash(id);h.probe=0;return true;
+    if(h.wanted)return !h.scanning&&h.id==id;h.wanted=true;h.id=id;h.index=ln_history_page_hash(id);h.probe=0;return true;
 }
 bool ln_paged_history_put(const struct ln_music_journal_record *r){
     if(h.error||!r)return false;int slot=location(r->id);if(slot<0)return false;
     uint32_t before=h.cache[slot].revision;if(!ln_history_page_put(&h.cache[slot],r))return false;
     if(before!=h.cache[slot].revision)h.revision++;h.age[slot]=++h.clock;return true;
 }
+const struct ln_history_page *ln_paged_history_page(uint32_t index){
+    if(!h.loaded||h.error||index>=LN_HISTORY_PAGE_COUNT)return 0;
+    for(uint32_t i=0;i<4;i++)if(h.cache[i].ready&&h.cache[i].index==index){h.age[i]=++h.clock;return &h.cache[i];}
+    if(!h.wanted&&h.phase==IDLE){h.wanted=h.scanning=true;h.index=index;h.probe=0;}
+    return 0;
+}
 static void resolve(void){
+    if(h.scanning){h.scanning=h.wanted=false;return;}
     struct ln_history_page *p=&h.cache[h.slot];
     if(ln_history_page_get(p,h.id)||p->count<125){
         uint32_t proof=h.proof_cursor++&3u;

@@ -26,7 +26,8 @@ static uint32_t revision,saved_revision,skipped;
 static uint32_t restore_attempts,restore_retry_at,restore_revision;
 static uint8_t resume[LN_COLLECTION_RESUME];
 static uint64_t requested_position;
-static bool headphone_known,headphones;
+static bool headphone_known,headphones,recent_recorded;
+static uint64_t recent_id;
 static struct ln_music_library_row upcoming;
 static bool prefetching,next_ready,next_armed,next_failed;
 static bool manual_next_pending;
@@ -271,7 +272,7 @@ static bool select_queue(const struct ln_music_browser_queue *selection){
         if(!ln_queue_select_occurrence(&replacement,selection->cursor))return false;
     }
     ln_queue_shuffle(&replacement,queue.shuffled);
-    remember_position();queue=replacement;++revision;skipped=0;active=true;requested_position=0;
+    remember_position();queue=replacement;++revision;skipped=0;active=true;requested_position=selection->frame;
     return select_current();
 }
 bool ln_music_select(uint32_t index){
@@ -476,6 +477,7 @@ static void music_step(void){
             (void)ln_music_history_set_resume(current.track.id,false,0);}
         current=upcoming;current_cursor=queue.cursor;have_current=true;next_armed=next_ready=prefetching=next_failed=false;
         ln_music_history_pin_current(true,current.track.id);
+        ln_collections_played(current.track.id);
         manual_next_pending=false;
         queue.position_samples=0;++revision;skipped=0;
         ln_music_art_request(current.art_path,current.art_crc);
@@ -518,6 +520,7 @@ static void music_step(void){
         }else {next_index=resolved;prefetching=ln_music_library_prefetch(resolved);}
     }
     ln_collections_step(!audio.playing||audio.queued>=read_runway,!audio.playing||audio.queued>=LINNET_AUDIO_RING_FRAMES-2048u);
+    if(have_current&&!selecting&&!have_waiting&&ln_collections_writable()&&(!recent_recorded||recent_id!=current.track.id)){ln_collections_played(current.track.id);recent_id=current.track.id;recent_recorded=true;}
     ln_music_browser_step();
     ln_music_search_step();
     if(queue_opened)ln_music_queue_view_update(&queue,revision);
@@ -600,6 +603,7 @@ static void music_step(void){
         }else if(ln_player_open_configured(waiting.path,waiting.track.file_bytes,requested_position,&dsp,waiting.track.rate)){
             current=waiting;current_cursor=waiting_cursor;have_current=true;have_waiting=false;
             ln_music_history_pin_current(true,current.track.id);
+        ln_collections_played(current.track.id);
             ln_music_art_request(current.art_path,current.art_crc);
             active=true;queue.position_samples=requested_position;requested_position=0;++revision;
         }

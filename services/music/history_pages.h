@@ -1,6 +1,7 @@
 #ifndef LINNET_MUSIC_HISTORY_PAGES_H
 #define LINNET_MUSIC_HISTORY_PAGES_H
 #include "journal_pages.h"
+const struct ln_history_page *ln_paged_history_page(uint32_t index);
 void ln_paged_history_pin_current(bool present,uint64_t id);
 void ln_paged_history_step(bool may_read,bool may_write);
 bool ln_paged_history_ready(void);

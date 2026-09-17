@@ -7,13 +7,15 @@
 #define BODY 512u
 #define LISTS (BODY+4u+LN_COLLECTION_RESUME)
 #define ENTRY (40u+8u*LINNET_QUEUE_CAPACITY)
+#define RECENT (LISTS+LN_COLLECTION_SLOTS*ENTRY)
+#define RECENT_MAX 256u
 static uint8_t saved[LN_COLLECTION_BYTES],io[LN_COLLECTION_BYTES];
 static uint32_t bank,generation,revision,durable,snapshot,phase,offset,ticket,loading;
 static bool ready,pending,failed,available,stepping;
 static struct ln_collection entry;
 static uint32_t crc(uint8_t *p){uint32_t old=ln_read_le32(p+12);ln_write_le32(p+12,0);uint32_t value=ln_crc32(p,LN_COLLECTION_BYTES);ln_write_le32(p+12,old);return value;}
 static bool valid(uint8_t *p){
-    if(ln_read_le32(p)!=0x54534c4cu||ln_read_le32(p+4)!=1||!ln_read_le32(p+8)||ln_read_le32(p+12)!=crc(p)||ln_read_le32(p+BODY)>LN_COLLECTION_RESUME)return false;
+    if(ln_read_le32(p)!=0x54534c4cu||ln_read_le32(p+4)!=1||!ln_read_le32(p+8)||ln_read_le32(p+12)!=crc(p)||ln_read_le32(p+BODY)>LN_COLLECTION_RESUME||ln_read_le32(p+RECENT)>RECENT_MAX)return false;
     for(uint32_t n=0;n<LN_COLLECTION_SLOTS;n++){uint8_t *e=p+LISTS+n*ENTRY;
         if(e[31]||ln_read_le32(e+32)>LINNET_QUEUE_CAPACITY||(!e[0]&&ln_read_le32(e+32)))return false;}
     return true;
@@ -80,3 +82,17 @@ static void step(bool read,bool write){
     if(result<0)failed=true;else pending=result==1;
 }
 void ln_collections_step(bool read,bool write){if(stepping)return;stepping=true;step(read,write);stepping=false;}
+
+void ln_collections_played(uint64_t id){
+    if(!ln_collections_writable())return;uint32_t count=ln_read_le32(saved+RECENT),at=0;
+    while(at<count&&ln_read_le64(saved+RECENT+8+8*at)!=id)at++;
+    if(!at&&count)return;
+    if(at==count&&count<RECENT_MAX)count++;
+    if(at>=RECENT_MAX)at=RECENT_MAX-1;
+    while(at){ln_write_le64(saved+RECENT+8+8*at,ln_read_le64(saved+RECENT+8+8*(at-1)));at--;}
+    ln_write_le64(saved+RECENT+8,id);ln_write_le32(saved+RECENT,count);++revision;
+}
+uint32_t ln_collections_recent_rank(uint64_t id){
+    if(!ready)return 0;uint32_t count=ln_read_le32(saved+RECENT);
+    for(uint32_t i=0;i<count;i++)if(ln_read_le64(saved+RECENT+8+8*i)==id)return RECENT_MAX-i;return 0;
+}

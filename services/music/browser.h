@@ -40,6 +40,7 @@ struct ln_music_browser_queue {
     uint8_t library_hash[32];
     uint32_t count,cursor,tracks[LINNET_QUEUE_CAPACITY];
     uint32_t source,source_group,action;
+    uint64_t frame;
 };
 enum ln_music_browser_queue_status { LN_BROWSER_QUEUE_IDLE=0,LN_BROWSER_QUEUE_LOADING=1,
     LN_BROWSER_QUEUE_READY=2,LN_BROWSER_QUEUE_CAPACITY=-1,LN_BROWSER_QUEUE_INVALID=-2 };
