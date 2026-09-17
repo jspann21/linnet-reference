@@ -24,6 +24,11 @@ def video_filename(title):
     return name + '.ipvf'
 
 
+def _catalog_title(value):
+    label = ''.join(c if ord(c) >= 32 else ' ' for c in str(value)).strip() or 'Video'
+    return label.encode('utf-8')[:127].decode('utf-8', errors='ignore')
+
+
 def device_video_path(source, root):
     buffer = ctypes.create_unicode_buffer(1024)
     if not ctypes.windll.kernel32.GetShortPathNameW(str(source), buffer, len(buffer)):
@@ -106,11 +111,7 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
         if entry[1].casefold() == path.casefold() and entry[0] != key:
             raise ValueError('video library filename collision; use a different library key')
     entries = [entry for entry in entries if entry[0] != key]
-    label = str(title or package.stem).strip()
-    label = ''.join(c if ord(c)>=32 else ' ' for c in label)
-    if not label:
-        label = 'Video'
-    label = label.encode('utf-8')[:127].decode('utf-8', errors='ignore')
+    label = _catalog_title(title or package.stem)
     entries.append((key, path, label))
     if len(entries)>256:
         raise ValueError('video library supports up to 256 videos')
@@ -242,8 +243,7 @@ def index_ipvf(source, *, disk_number, expected_disk_serial,
         raise ValueError('IPVF changed during validation')
     path = device_video_path(source, root)
     key = hashlib.sha256(str(library_key or source.relative_to(root)).replace('\\', '/').encode('utf-8')).digest()
-    label = ''.join(c if ord(c) >= 32 else ' ' for c in str(title or source.stem)).strip() or 'Video'
-    label = label.encode('utf-8')[:127].decode('utf-8', errors='ignore')
+    label = _catalog_title(title or source.stem)
     catalog = root/'LINNET'/'VIDEOS'/'INDEX.VID'
     backups = root/'LINNET'/'VIDEOS'/'BACKUP'
     receipt_path = Path(os.environ.get('LOCALAPPDATA', source.parent))/'Linnet'/'Media'/('index-ipvf-'+uuid.uuid4().hex+'.json')
