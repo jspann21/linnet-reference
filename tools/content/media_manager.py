@@ -172,6 +172,14 @@ def _skipped_paths(state, kind):
     return result
 
 
+def preparation_option(kind, identity, photo_dimension=640, music_verification='metadata'):
+    """Shared preparation version for compilation and library readiness."""
+    if kind == 'Music':
+        art_version = 'art3' if identity['target_id'] == 'ipod4g-q21' else 'art2'
+        return f"{music_verification}-duration-search-names-album-owner-title-order1-{art_version}-{identity['target_id']}"
+    return photo_dimension if kind == 'Photos' else 'default'
+
+
 def scan(root, kinds=KINDS, skipped=None):
     root = Path(root).resolve(strict=True)
     skipped = skipped or {}
@@ -618,8 +626,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             if not item["count"]:
                 progress(f"{kind}: no supported files; existing prepared library retained.")
                 continue
-            art_version = "art3" if identity["target_id"] == "ipod4g-q21" else "art2"
-            option = photo_dimension if kind == "Photos" else f"{music_verification}-duration-search-names-album-owner-title-order1-{art_version}-{identity['target_id']}" if kind == "Music" else "default"
+            option = preparation_option(kind, identity, photo_dimension, music_verification)
             signature = (f"ipvf-{media_profile['video_fps']}-{media_profile['video_color']}-realtime:{item['fingerprint']}" if kind == "Videos"
                          else f"{option}:{item['fingerprint']}")
             saved = state.get(kind, {})
@@ -714,11 +721,11 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             cached = video_state.get(relative, {})
                             if not isinstance(cached, dict):
                                 cached = {}
-                            output_name = "LINNET/VIDEOS/" + key + ".IPV"
+                            output_name = cached.get('outputs', [["LINNET/VIDEOS/" + key + ".IPV"]])[0][0] if cached.get('outputs') else "LINNET/VIDEOS/" + key + ".IPV"
                             native_ipvf = source.suffix.lower() in {".ipvf", ".ipv"}
                             index_in_place = native_ipvf and source.is_relative_to(root)
                             if (not force and cached.get("signature") == fingerprint
-                                    and catalog_contains(root, relative, label, path=False if index_in_place else "/" + output_name)
+                                    and catalog_contains(root, relative, label, path=False)
                                     and (index_in_place or _outputs_match(root, cached.get("outputs", [])))):
                                 if not index_in_place:
                                     output_paths.append(output_name)
@@ -780,6 +787,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                 raise ValueError("Video changed during preparation; scan again before updating")
                             progress(f"Publishing video {index+1}/{item['count']}: {relative}")
                             result = publish_video(package, title=label, library_key=relative, **target_args(identity))
+                            output_name = Path(result['package']).relative_to(root).as_posix()
                             published.append(result)
                             output_paths.append(output_name)
                             after = source.stat()

@@ -112,7 +112,7 @@ class _StageProgress:
             message += f" · {rate:.1f} fps"
         self.progress(message)
         if self.detail:
-            self.detail({"stage": self.stage, "percent": percent, "message": message,
+            self.detail({"stage": self.stage, "name": self.name, "percent": percent, "message": message,
                          "frames": self.frames, "total_frames": self.total,
                          "eta_seconds": eta, "elapsed_seconds": elapsed,
                          "frames_per_second": rate})

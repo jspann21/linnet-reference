@@ -68,7 +68,7 @@ def recover(identity, token, *, erase=False):
             relative = source.relative_to(trash)
             if relative.as_posix() == 'INDEX.VID.before':
                 continue
-            allowed = relative.parts[0] in media.KINDS or relative.as_posix() in ('LINNET/LIBRARY.PDB', 'LINNET/PHOTOS/LIBRARY.PIM', 'LINNET/NOTES/LIBRARY.NNT') or (relative.parent.as_posix() == 'LINNET/VIDEOS' and relative.suffix.upper() == '.IPV')
+            allowed = relative.parts[0] in media.KINDS or relative.parts[:2] == ('iPod_Control', 'Music') or relative.as_posix() in ('LINNET/LIBRARY.PDB', 'LINNET/PHOTOS/LIBRARY.PIM', 'LINNET/NOTES/LIBRARY.NNT') or (relative.parent.as_posix() == 'LINNET/VIDEOS' and relative.suffix.lower() in ('.ipv', '.ipvf'))
             if not allowed:
                 raise ValueError('Unexpected file in Trash; inspect the report before restoring.')
             destination = root / relative
@@ -79,6 +79,7 @@ def recover(identity, token, *, erase=False):
         catalog, before, entries = library._catalog(root)
         backup = trash / 'INDEX.VID.before'
         restore_entries = []
+        restore_paths = {}
         if backup.exists():
             _plain(backup, trash)
             if backup.stat().st_size > CATALOG_MAX_BYTES:
@@ -93,7 +94,8 @@ def recover(identity, token, *, erase=False):
                     if path.is_file():
                         restored_paths.add(str(path).casefold())
             for entry in old:
-                path = library._device_path(root, entry[1])
+                relative = report.get('catalog_paths', {}).get(entry[0].hex())
+                path = library._device_path(root, '/' + relative if relative else entry[1])
                 if entry[0].hex() in selected_keys or str(path).casefold() in restored_paths:
                     existing = next((e for e in entries if e[0] == entry[0]), None)
                     if existing is not None and existing != entry:
@@ -102,6 +104,7 @@ def recover(identity, token, *, erase=False):
                         if not path.exists() and str(path).casefold() not in restored_paths:
                             raise ValueError('The original video needed for recovery is missing.')
                         restore_entries.append(entry)
+                        restore_paths[entry[0]] = path
         data = _encode_catalog(entries + restore_entries) if restore_entries else None
         if data is not None:
             _read_catalog(data)  # Check count, duplicate paths, and keys before restoring any files.
@@ -115,6 +118,10 @@ def recover(identity, token, *, erase=False):
             destination.parent.mkdir(parents=True, exist_ok=True)
             source.rename(destination)
         if data is not None:
+            from .publish_video import device_video_path
+            restore_entries = [(key, device_video_path(restore_paths[key], root), title) for key, _, title in restore_entries]
+            data = _encode_catalog(entries + restore_entries)
+            _read_catalog(data)
             _volume_guard(identity)
             current = catalog.read_bytes() if catalog.exists() else None
             if current != before:
@@ -149,4 +156,5 @@ def recover(identity, token, *, erase=False):
             path.rmdir()
         _volume_guard(identity)
         trash.rmdir()
-        return dict(receipt=str(receipt), summary='Content restored. Update the affected categories to refresh their libraries.')
+        return dict(receipt=str(receipt), summary='Content restored. Update the affected categories to refresh their libraries.',
+                    requires_update=sorted({row['kind'] for row in report.get('selected', []) if row['kind'] in ('Music', 'Photos', 'Notes')}))

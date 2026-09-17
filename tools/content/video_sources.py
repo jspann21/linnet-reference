@@ -15,7 +15,7 @@ def catalog_contains(root, relative, title, path=None):
         entries = _read_catalog(catalog.read_bytes())
         key = hashlib.sha256(relative.encode("utf-8")).digest()
         expected = path or "/LINNET/VIDEOS/" + key.hex()[:8].upper() + ".IPV"
-        return (key, expected, title) in entries if path is not False else any(k == key and t == title for k, p, t in entries)
+        return (key, expected, title) in entries if path is not False else any(k == key and t == title and (Path(root) / p.lstrip('/')).is_file() for k, p, t in entries)
     except (OSError, ValueError):
         return False
 

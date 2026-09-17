@@ -277,6 +277,7 @@ if ($checkPartition.Offset -ne $originalPartition.Offset -or $checkPartition.Siz
     $checkPartition.DriveLetter -ne $originalPartition.DriveLetter) { throw 'Partition changed during eject preparation' }
 $item.InvokeVerb('Eject')
 $clock = [Diagnostics.Stopwatch]::StartNew()
+$confirmationState = 'Storage is still mounted'
 do {
     Start-Sleep -Milliseconds 200
     $remaining = @(Get-Disk | Where-Object {
@@ -297,10 +298,25 @@ do {
            operational_status=$diskOperational } | ConvertTo-Json -Compress
         exit 0
     }
-    $currentPartition = Get-Partition -DiskNumber $remaining[0].Number -PartitionNumber $originalPartition.PartitionNumber
+    # Windows removes the volume and partition in separate enumeration steps.
+    # Keep observing the same disk until removal is positively confirmed.
+    $currentPartitions = @(Get-Partition -DiskNumber $remaining[0].Number -PartitionNumber $originalPartition.PartitionNumber -ErrorAction SilentlyContinue)
+    if ($currentPartitions.Count -ne 1) {
+        $confirmationState = 'Waiting for disk removal after partition disappeared'
+        continue
+    }
+    $currentPartition = $currentPartitions[0]
     if ($currentPartition.Offset -ne $originalPartition.Offset -or $currentPartition.Size -ne $originalPartition.Size -or
-        $currentPartition.DriveLetter -ne $originalPartition.DriveLetter) { throw 'Selected partition changed while confirming eject' }
-    $volume = Get-Volume -Partition $currentPartition
+        $currentPartition.DriveLetter -ne $originalPartition.DriveLetter) {
+        $confirmationState = 'Partition changed; waiting for confirmed storage removal'
+        continue
+    }
+    $volumes = @(Get-Volume -Partition $currentPartition -ErrorAction SilentlyContinue)
+    if ($volumes.Count -ne 1) {
+        $confirmationState = 'Waiting for disk removal after volume disappeared'
+        continue
+    }
+    $volume = $volumes[0]
     $operational = @($volume.OperationalStatus | ForEach-Object { [string]$_ })
     if ($operational -contains 'Offline' -or
         ([string]$volume.FileSystemType -eq 'Unknown' -and $operational -contains 'Unknown')) {
@@ -309,9 +325,12 @@ do {
            filesystem=[string]$volume.FileSystemType; operational_status=$operational } | ConvertTo-Json -Compress
         exit 0
     }
-    if ($volume.UniqueId -cne $originalVolume.UniqueId) { throw 'Selected volume changed while confirming eject' }
+    if ($volume.UniqueId -cne $originalVolume.UniqueId) {
+        $confirmationState = 'Volume identity changed; waiting for confirmed storage removal'
+        continue
+    }
 } while ($clock.Elapsed.TotalSeconds -lt 20)
-throw 'Eject requested once, but storage removal or media unavailability was not confirmed'
+throw ('Eject requested once, but storage removal or media unavailability was not confirmed. ' + $confirmationState)
 } catch {
     @{ error=$_.Exception.Message } | ConvertTo-Json -Compress
     exit 1

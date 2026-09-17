@@ -45,7 +45,7 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
         if kind == 'Videos':
             readiness[kind] = _video_readiness(inventory[kind], published)
             continue
-        option = photo_dimension if kind == 'Photos' else f'{verification}-duration-search-names-album-owner' if kind == 'Music' else 'default'
+        option = media.preparation_option(kind, identity, photo_dimension, verification)
         signature = f"{option}:{inventory[kind]['fingerprint']}"
         if saved.get('signature') == signature and saved.get('outputs') and media._outputs_match(root, saved['outputs']):
             readiness[kind] = 'Ready'

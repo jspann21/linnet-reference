@@ -34,12 +34,12 @@ INSTALLATION_METHODS = {
         detail="Replace Rockbox’s boot file reversibly; Linnet depends on the Rockbox bootloader.",
         strategy="rockbox-file", boot_selector="none", requires_admin=False),
     "native-preserve": dict(
-        label="Native Linnet; preserve Rockbox dormant",
-        detail="Boot Linnet directly and leave the Rockbox folder unchanged for later restoration.",
+        label="Start Linnet directly",
+        detail="Linnet opens automatically when you turn on your iPod.",
         strategy="native-directory", boot_selector="none", requires_admin=True),
     "native-selector": dict(
-        label="Native Linnet + Rockbox startup selector",
-        detail="Boot natively, then choose Linnet or the existing Rockbox image at startup.",
+        label="Choose at startup: Linnet or Rockbox",
+        detail="Show a startup menu so you can choose Linnet or Rockbox each time you turn on your iPod.",
         strategy="native-directory", boot_selector="rockbox", requires_admin=True),
 }
 

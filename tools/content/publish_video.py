@@ -16,6 +16,25 @@ CATALOG_ROW_SIZE = 416
 CATALOG_MAX_BYTES = CATALOG_HEADER_SIZE + 256 * CATALOG_ROW_SIZE
 
 
+def video_filename(title):
+    """A Windows/FAT-safe name; collisions are resolved against the actual folder."""
+    name = Path(str(title).replace('\\', '/')).stem
+    name = ''.join(c if ord(c) >= 32 and c not in '<>:"/\\|?*' else '_' for c in name)
+    name = name[:160].strip(' .') or 'Video'
+    if name.split('.')[0].upper() in {'CON', 'PRN', 'AUX', 'NUL', *(f'COM{i}' for i in range(1, 10)), *(f'LPT{i}' for i in range(1, 10))}:
+        name = '_' + name
+    return name + '.ipvf'
+
+
+def device_video_path(source, root):
+    buffer = ctypes.create_unicode_buffer(1024)
+    if not ctypes.windll.kernel32.GetShortPathNameW(str(source), buffer, len(buffer)):
+        raise OSError('Could not resolve the video FAT short path')
+    path = '/' + Path(buffer.value).relative_to(root).as_posix()
+    _read_catalog(_encode_catalog([(bytes(32), path, 'Video')]))
+    return path
+
+
 def _target_profile(root):
     from tools.inspect.retail_device import detect
     from tools.studio.targets import TARGETS
@@ -68,7 +87,7 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
         _volume_guard(identity)
     linnet, directory = root/'LINNET', root/'LINNET'/'VIDEOS'
     key = hashlib.sha256(str(library_key if library_key is not None else package.stem).encode('utf-8')).digest()
-    filename = key.hex()[:8].upper() + '.IPV'
+    filename = video_filename(title or package.stem)
     active, backups = directory/filename, directory/'BACKUP'
     catalog = directory/'INDEX.VID'
     catalog_before = None
@@ -79,7 +98,14 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
             raise ValueError('video catalog exceeds supported size')
         catalog_before = catalog.read_bytes()
         entries = _read_catalog(catalog_before)
-    path = '/LINNET/VIDEOS/' + filename
+    existing = next((root / entry[1].lstrip('/') for entry in entries if entry[0] == key), None)
+    if existing is not None and existing.is_file() and existing.parent == directory:
+        active = existing.resolve()
+    elif active.exists():
+        active = directory / (Path(filename).stem + ' [' + key.hex()[:8] + '].ipvf')
+        if active.exists():
+            raise ValueError('Video filename already exists; rename the source first')
+    path = '/LINNET/VIDEOS/' + key.hex()[:8].upper() + '.IPV'
     for entry in entries:
         if entry[1].casefold() == path.casefold() and entry[0] != key:
             raise ValueError('video library filename collision; use a different library key')
@@ -133,7 +159,7 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
         if previous:
             receipt['phase'] = 'backing-up-previous'
             record()
-            backup = backups/(previous['sha256'][:8].upper()+extension)
+            backup = backups/(previous['sha256'][:8].upper()+'.IPV')
             _copy_verified(active, backup, previous, root, guard)
             receipt['backup'] = str(backup)
         temporary = directory/('P'+uuid.uuid4().hex[:7].upper()+'.TMP')
@@ -163,6 +189,9 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
             os.fsync(writer.fileno())
         if _hash(active, candidate['bytes']) != candidate['sha256']:
             raise OSError('published video package readback mismatch')
+        path = device_video_path(active, root)
+        entries = [(k, path if k == key else p, t) for k, p, t in entries]
+        catalog_bytes = _encode_catalog(entries)
         receipt['phase'] = 'publishing-catalog'
         record()
         _plain(catalog, root)

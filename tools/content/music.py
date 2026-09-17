@@ -1043,6 +1043,60 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     return report
 
 
+def remove_database_tracks(data: bytes, removed) -> bytes:
+    """Remove track ordinals using only the validated index, preserving media and artwork."""
+    validate_database(data)
+    _, _, tracks, groups, members, searches, to, go, mo, so, po, ps, arts, ao = struct.unpack_from('<14I', data, 8)
+    removed = set(removed)
+    if any(index < 0 or index >= tracks for index in removed):
+        raise ValueError('Removed track index out of range')
+    if not removed:
+        return data
+    track_map = {old: new for new, old in enumerate(i for i in range(tracks) if i not in removed)}
+    records = [data[to + i * TRACK:to + (i + 1) * TRACK] for i in track_map]
+    group_rows, kept_members = [], {}
+    for i in range(groups):
+        row = list(struct.unpack_from('<IIIIIIQ', data, go + i * GROUP))
+        group_rows.append(row)
+        indices = [struct.unpack_from('<I', data, mo + j * 4)[0] for j in range(row[3], row[3] + row[4])]
+        kept_members[i] = [track_map[j] for j in indices if j in track_map]
+    kept_groups = {i for i in range(groups) if kept_members[i]}
+    kept_groups.update(group_rows[i][2] for i in tuple(kept_groups) if group_rows[i][0] == 2)
+    group_map = {old: new for new, old in enumerate(sorted(kept_groups))}
+    packed_groups, packed_members = [], []
+    for i in group_map:
+        row = group_rows[i]
+        if row[0] == 2:
+            row[2] = group_map[row[2]]
+        row[3], row[4] = len(packed_members), len(kept_members[i])
+        packed_members.extend(kept_members[i])
+        packed_groups.append(struct.pack('<IIIIIIQ', *row))
+    packed_search = []
+    for i in range(searches):
+        reference, key = struct.unpack_from('<II', data, so + i * 8)
+        mapping = group_map if reference & 0x80000000 else track_map
+        old = reference & 0x7fffffff
+        if old in mapping:
+            packed_search.append(struct.pack('<II', mapping[old] | (reference & 0x80000000), key))
+    go = HEADER + len(records) * TRACK
+    mo = go + len(packed_groups) * GROUP
+    so = mo + len(packed_members) * 4
+    new_ao = so + len(packed_search) * 8
+    new_po = new_ao + arts * ART
+    payload = (b''.join(records) + b''.join(packed_groups)
+               + b''.join(struct.pack('<I', i) for i in packed_members)
+               + b''.join(packed_search) + data[ao:po] + data[po:])
+    header = bytearray(HEADER)
+    struct.pack_into('<4sHH14I', header, 0, b'PODB', 0, HEADER, HEADER + len(payload), 0,
+                     len(records), len(packed_groups), len(packed_members), len(packed_search),
+                     HEADER, go, mo, so, new_po, ps, arts, new_ao)
+    header[64:96] = hashlib.sha256(payload).digest()
+    struct.pack_into('<I', header, 124, zlib.crc32(header[:124]))
+    result = bytes(header) + payload
+    validate_database(result)
+    return result
+
+
 def validate_database(data: bytes) -> dict:
     """Strict full host validation; firmware may validate by bounded reads."""
     if len(data) < HEADER or len(data) > MAX_DATABASE:
