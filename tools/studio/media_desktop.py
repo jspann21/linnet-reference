@@ -1214,11 +1214,7 @@ class MediaWindow(QMainWindow):
             return
         identity = self.identity
         def run():
-            from tools.content.publish import _exclusive
-            from tools.link.eject import eject
-            with _exclusive(identity):
-                current = media.refresh(identity)
-                return eject(current['disk_number'], current['disk_serial'], wait_link=False)
+            return media.eject_device(identity)
         self.work('eject', run, 'Safely ejecting your iPod…')
 
     def stop(self):

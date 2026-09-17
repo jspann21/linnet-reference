@@ -342,6 +342,14 @@ def format_size(value):
         value /= 1024
 
 
+def eject_device(identity):
+    from .publish import _exclusive
+    from tools.link.eject import eject
+    with _exclusive(identity):
+        current = refresh(identity)
+        return eject(current['disk_number'], current['disk_serial'], wait_link=False)
+
+
 def cache_root(identity):
     base = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".cache")) / "Linnet" / "Media"
     key = hashlib.sha256((identity["disk_serial"] + identity["volume_serial"]).encode()).hexdigest()[:24]

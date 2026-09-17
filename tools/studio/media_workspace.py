@@ -618,11 +618,7 @@ class MediaWorkspace(MediaApp):
         identity = self.identity()
         self.plan_generation += 1
         def operation():
-            from tools.content.publish import _exclusive
-            from tools.link.eject import eject
-            with _exclusive(identity):
-                current = media.refresh(identity)
-                return eject(current['disk_number'], current['disk_serial'], wait_link=False)
+            return media.eject_device(identity)
         self.status.set('Asking Windows to safely eject the iPod…')
         self.worker(operation, 'ejected')
 
