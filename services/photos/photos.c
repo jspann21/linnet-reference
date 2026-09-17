@@ -30,7 +30,7 @@ static struct {
     uint32_t visible[64],visible_count,front,render_y,slide_at,jpeg_at,ready_tiles,resume_stage;
     uint8_t verify_record[64];uint32_t v_photos,v_levels,v_tiles,v_album,v_photo,v_level,v_width,v_height,v_text_bytes,v_more,v_code,v_min,jpeg_crc;
     int16_t map_x[WIDTH],map_y[HEIGHT];int32_t pan_x,pan_y;
-    bool active,ready,pending,io_open,job_album,view_loaded,frame_valid,frame_complete,rendering,redraw,slide,slide_armed,resume_pending,jpeg_mode,stepping,album_known;
+    bool active,ready,pending,io_open,job_album,view_loaded,frame_valid,frame_complete,rendering,redraw,slide,slide_armed,resume_pending,jpeg_mode,stepping,album_known,direct;
     int error;
 } p;
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -49,7 +49,13 @@ static void clear(void*v,uint32_t n){
     uint8_t*b=v;while(n--)*b++=0;
 #endif
 }
-static void copy(void*d,const void*s,uint32_t n){uint8_t*a=d;const uint8_t*b=s;while(n--)*a++=*b++;}
+static void copy(void*d,const void*s,uint32_t n){
+#if defined(__arm__)
+    extern void ln_memory_copy(void *,const void *,uint32_t);ln_memory_copy(d,s,n);
+#else
+    uint8_t*a=d;const uint8_t*b=s;while(n--)*a++=*b++;
+#endif
+}
 static void text(char*d,const char*s){uint32_t i=0;while(i<191&&s[i]){d[i]=s[i];++i;}d[i]=0;}
 static uint32_t next_generation(void){if(++p.generation>=0x70000000u)p.generation=0x60000001u;return p.generation;}
 static bool allowed(void){
@@ -202,6 +208,7 @@ static void layout(void){
     if(!p.view_loaded||p.jpeg_mode)return;p.level=p.zoom<p.photo.levels?p.zoom:p.photo.levels-1u;
     const struct ln_pimg_level*l=&p.levels[p.level];uint32_t w=(p.rotation&1u)?l->height:l->width,h=(p.rotation&1u)?l->width:l->height;
     uint32_t dw=w,dh=h;if(!p.zoom){if(w*HEIGHT>h*WIDTH){dw=WIDTH;dh=h*WIDTH/w;}else{dh=HEIGHT;dw=w*HEIGHT/h;}if(!dw)dw=1;if(!dh)dh=1;}
+    p.direct=!p.rotation&&(p.zoom||(dw==w&&dh==h));
     if(p.pan_x>(int32_t)w/2)p.pan_x=(int32_t)w/2;if(p.pan_x<-(int32_t)w/2)p.pan_x=-(int32_t)w/2;
     if(p.pan_y>(int32_t)h/2)p.pan_y=(int32_t)h/2;if(p.pan_y<-(int32_t)h/2)p.pan_y=-(int32_t)h/2;
     for(uint32_t x=0;x<WIDTH;x++){int32_t v=(int32_t)x-((int32_t)WIDTH-(int32_t)dw)/2;p.map_x[x]=v<0||v>=(int32_t)dw?-1:(int16_t)((uint32_t)v*w/dw);if(p.zoom)p.map_x[x]=(int16_t)((int32_t)x-(int32_t)WIDTH/2+(int32_t)w/2+p.pan_x);}
@@ -229,7 +236,23 @@ static void render_step(void){
     if(!p.rendering){p.rendering=true;p.render_y=0;p.redraw=false;}
     const struct ln_pimg_level*l=&p.levels[p.level];uint16_t*out=p.surface.frame[p.front^1u];
     uint32_t end=p.render_y+8u;if(end>HEIGHT)end=HEIGHT;
-    for(uint32_t y=p.render_y;y<end;y++){uint32_t last=UINT32_MAX;int slot=-1;
+    for(uint32_t y=p.render_y;y<end;y++){
+        if(p.direct){
+            uint16_t*row=out+y*WIDTH;int32_t sy=p.map_y[y];
+            clear(row,WIDTH*sizeof *row);
+            if(sy<0||sy>=(int32_t)l->height)continue;
+            uint32_t x=0;while(x<WIDTH&&p.map_x[x]<0)++x;
+            while(x<WIDTH){int32_t sx=p.map_x[x];if(sx<0||sx>=(int32_t)l->width)break;
+                uint32_t count=32u-((uint32_t)sx&31u);
+                if(count>WIDTH-x)count=WIDTH-x;if(count>l->width-(uint32_t)sx)count=l->width-(uint32_t)sx;
+                uint32_t tile=l->first+(uint32_t)sy/32u*l->columns+(uint32_t)sx/32u;
+                int slot=tile_find(tile);
+                if(slot>=0)copy(row+x,p.pixels.pimg.tiles[slot]+((uint32_t)sy&31u)*32u+((uint32_t)sx&31u),count*sizeof *row);
+                x+=count;
+            }
+            continue;
+        }
+        uint32_t last=UINT32_MAX;int slot=-1;
         /* Quarter-turn transforms are affine in x. Hoist the transform and
          * level geometry out of the pixel loop without changing scaled maps. */
         int32_t origin_x,origin_y,step_x,step_y;
@@ -474,5 +497,14 @@ static void photo_step(void){
 void ln_photos_step(void){
     /* Storage progress services the runtime, which may call us again while an
      * outer poll still owns its phase and buffer. Only that outer call advances. */
-    if(p.stepping)return;p.stepping=true;photo_step();p.stepping=false;
+    if(p.stepping)return;p.stepping=true;
+    uint32_t started=ln_time_us();
+    for(uint32_t steps=0;steps<8u;steps++){
+        photo_step();
+        /* Finish short in-memory transitions without another executive turn.
+         * Keep the existing I/O yields and a one-millisecond burst budget. */
+        if(p.pending||!p.active||p.error||ln_time_us()-started>=1000u||
+           (!memory_work()&&!idle_plan(false)))break;
+    }
+    p.stepping=false;
 }
