@@ -9,7 +9,9 @@ def disks():
     if os.name == 'nt':
         script = "Get-CimInstance Win32_DiskDrive | Select-Object DeviceID,Model,SerialNumber,PNPDeviceID | ConvertTo-Json -Compress"
         result = subprocess.run(['powershell', '-NoProfile', '-Command', script], capture_output=True, text=True, timeout=5, check=True)
-        value = json.loads(result.stdout or '[]')
+        value = json.loads(result.stdout.strip() or '[]')
+        if value is None:
+            return []
         return value if isinstance(value, list) else [value]
     result = []
     for device in Path('/sys/class/block').glob('*'):
