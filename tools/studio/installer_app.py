@@ -252,7 +252,9 @@ class InstallerWindow:
                     f"Make {option['label']} the default boot")
             if not messagebox.askyesno("Choose default boot", verb + " on this iPod using:\n\n" +
                                       method["label"] + "\n\n" +
-                                      "Existing media and other detected software will be preserved. "
+                                      "Settings, the selected theme, playback history, media libraries, "
+                                      "existing media, and other detected software will be preserved. "
+                                      "Superseded Linnet system files will be archived. "
                                       "Keep the iPod connected until completion.", parent=self.window):
                 return
             self._set_status(f"Preparing {option['label']}…")

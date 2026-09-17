@@ -30,8 +30,13 @@ connected iPod:
   Linnet is the timeout default. A missing, changed, corrupt, or oversized
   Rockbox image falls back to Linnet.
 
-The native methods require normal Windows administrator approval. All methods
-preserve the existing filesystem, partitions, media and Apple firmware payload.
+The native methods require normal Windows administrator approval. A native
+reinstall restores the saved boot state and installs the new build under one
+administrator approval. Reinstall preserves Linnet settings, the selected
+theme, playback history, prepared media, and all media-library indexes. Only
+the superseded OS, boot, scratch, selector, and recovery files remain in the
+single `LNETOLD0` archive. All methods preserve the existing filesystem, partitions,
+media and Apple firmware payload.
 The native path saves the original MBR and firmware partition under
 `%LOCALAPPDATA%\Linnet\Installer`, verifies all Linnet storage files, writes a
 new loader only into an unused firmware extent, and publishes one directory
@@ -83,9 +88,10 @@ file-loader path.
 Interrupted file preparation is resumable only when every existing Linnet file
 matches the same build byte-for-byte. When a saved recovery record is available,
 **Fresh reinstall** first restores the previous boot, renames the old `LINNET`
-folder to the first free `LNETOLD0` through `LNETOLD9` archive, and installs a
-clean current copy. It does not translate old Linnet state or touch the media
-folders. **Restore previous boot** restores the recorded Rockbox file or original
+folder to the temporary `LNETPEND` archive, installs the current system files,
+and moves the preserved settings and media data back into the active `LINNET`
+folder. After the new build and recovery journal verify, `LNETPEND` replaces the
+single previous-system archive at `LNETOLD0`. **Restore previous boot** restores the recorded Rockbox file or original
 native directory; it leaves media and the `LINNET` data folder in place. Always
 use **Eject iPod** before restarting.
 

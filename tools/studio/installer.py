@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -28,6 +29,10 @@ from tools.studio.targets import ROOT, TARGETS
 CORE_FILES = ("OS0.LOS", "OS1.LOS", "STATE0.BIN", "STATE1.BIN",
               "SCRATCH.BIN", "BOOT0.BIN", "BOOT1.BIN")
 JOURNAL = Path("LINNET/RECOVERY/INSTALL.JSON")
+REINSTALL_SYSTEM_ENTRIES = {
+    "OS0.LOS", "OS1.LOS", "BOOT0.BIN", "BOOT1.BIN", "SCRATCH.BIN",
+    "WORK.BIN", "RBPATH.CFG", "RECOVERY",
+}
 INSTALLATION_METHODS = {
     "rockbox-loader": dict(
         label="Use the existing Rockbox bootloader",
@@ -490,6 +495,8 @@ def assess(identity):
                 recovery=marker, resume=resume, action=action, strategy=strategy, summary=summary,
                 preservation=dict(formats_disk=False, repartitions_disk=False, deletes_media=False,
                                   overwrites_existing_linnet_files=False, archives_previous_linnet=True,
+                                  preserves_settings=True, preserves_media_libraries=True,
+                                  archive_contains_superseded_system_files_only=True,
                                   original_boot_backed_up=True))
 
 
@@ -673,7 +680,7 @@ def _persist_artifacts(artifacts, transaction):
     return persisted
 
 
-def _package_storage(identity, artifacts, transaction):
+def _package_storage(identity, artifacts, transaction, archive=None):
     from tools.studio import storage, theme_settings
     package = transaction / "storage"
     if package.exists():
@@ -683,6 +690,8 @@ def _package_storage(identity, artifacts, transaction):
     else:
         storage.prepare(Path(artifacts["os_image"]), package)
     receipt = storage.provision(package, Path(identity["root"]), identity["disk_serial"])
+    if archive is not None:
+        receipt["reinstall_preservation"] = _restore_reinstall_data(identity["root"], archive)
     receipt["theme"] = theme_settings.provision(
         Path(identity["root"]), identity["disk_serial"], identity["disk_bytes"],
         artifacts["os_build_id"])
@@ -745,11 +754,11 @@ def _journal(identity, artifacts, strategy, transaction, extra=None):
     return value
 
 
-def _install_rockbox(identity, artifacts, progress, transaction):
+def _install_rockbox(identity, artifacts, progress, transaction, archive=None):
     from tools.studio import bootstrap
     transaction.mkdir(parents=True, exist_ok=True)
     progress("Preparing Linnet’s transactional storage files…")
-    storage_receipt = _package_storage(identity, artifacts, transaction)
+    storage_receipt = _package_storage(identity, artifacts, transaction, archive)
     boot_path = Path(identity["root"]).joinpath(*TARGETS[identity["target_id"]]["installer"]["file_loader"].split("/"))
     bootstrap_journal = Path(identity["root"]) / "LINNET" / "RECOVERY" / "BOOTSTRAP.JSON"
     original_sha = (json.loads(bootstrap_journal.read_text(encoding="utf-8"))["original_sha256"]
@@ -760,8 +769,13 @@ def _install_rockbox(identity, artifacts, progress, transaction):
     marker = _journal(identity, artifacts, "rockbox-file", transaction,
                       dict(original_boot_sha256=original_sha,
                            installation_method=artifacts["installation_method"]))
-    return dict(passed=True, strategy="rockbox-file", storage=storage_receipt,
-                boot=boot_receipt, recovery=marker, requires_safe_eject=True)
+    result = dict(passed=True, strategy="rockbox-file", storage=storage_receipt,
+                  boot=boot_receipt, recovery=marker, requires_safe_eject=True)
+    if archive is not None:
+        final_archive = _finalize_reinstall_archive(identity["root"], archive)
+        result["previous_linnet_archive"] = final_archive
+        storage_receipt["reinstall_preservation"]["archive"] = final_archive
+    return result
 
 
 def _encode(value):
@@ -797,19 +811,18 @@ exit $p.ExitCode
 
 
 def _archive_destination(root):
-    """Choose a FAT-safe sibling name without changing the mounted volume."""
+    """Reserve one FAT-safe staging name while retaining the last good archive."""
     from tools.content.publish import _plain
     root = Path(root).resolve(strict=True)
     source = root / "LINNET"
     _plain(source, root)
     if not source.is_dir() or source.is_symlink():
         raise ValueError("the existing LINNET directory is unsafe or missing")
-    for index in range(10):
-        candidate = root / f"LNETOLD{index}"
-        _plain(candidate, root)
-        if not candidate.exists() and not candidate.is_symlink():
-            return candidate
-    raise ValueError("LNETOLD0 through LNETOLD9 already exist; move one off the iPod before reinstalling")
+    candidate = root / "LNETPEND"
+    _plain(candidate, root)
+    if candidate.exists() or candidate.is_symlink():
+        raise ValueError("an unfinished LNETPEND reinstall archive already exists; inspect it before reinstalling")
+    return candidate
 
 
 def _archive_linnet(root, destination):
@@ -824,6 +837,77 @@ def _archive_linnet(root, destination):
     if source.exists() or not destination.is_dir():
         raise OSError("the previous Linnet folder was not archived completely")
     return str(destination)
+
+
+def _finalize_reinstall_archive(root, staging):
+    """Rotate a verified staging archive into the single previous-system slot."""
+    from tools.content.publish import _plain
+    root = Path(root).resolve(strict=True)
+    staging = Path(staging).resolve(strict=True)
+    previous = root / "LNETOLD0"
+    _plain(staging, root)
+    _plain(previous, root)
+    if (staging.parent != root or staging.name != "LNETPEND" or
+            staging.is_symlink() or not staging.is_dir()):
+        raise ValueError("the pending Linnet reinstall archive is unsafe or missing")
+    if previous.exists() or previous.is_symlink():
+        if previous.is_symlink() or not previous.is_dir() or previous.resolve().parent != root:
+            raise ValueError("the previous Linnet system archive is unsafe")
+        shutil.rmtree(previous)
+    staging.replace(previous)
+    if staging.exists() or previous.is_symlink() or not previous.is_dir():
+        raise OSError("the previous Linnet system archive was not rotated completely")
+    return str(previous)
+
+
+def _restore_reinstall_data(root, archive):
+    """Return persistent settings and media from a full reinstall archive."""
+    from tools.content.publish import _plain
+    from tools.studio.storage import record
+    from tools.studio.update_history import _read_record
+    root = Path(root).resolve(strict=True)
+    archive = Path(archive).resolve(strict=True)
+    active = root / "LINNET"
+    _plain(active, root)
+    _plain(archive, root)
+    if (archive.parent != root or archive.name not in {"LNETPEND", "LNETOLD0"} or
+            archive.is_symlink() or not archive.is_dir() or
+            active.is_symlink() or not active.is_dir()):
+        raise ValueError("the Linnet reinstall archive or active directory is unsafe")
+    entries = []
+    for source in archive.iterdir():
+        _plain(source, root)
+        if source.name.upper() not in REINSTALL_SYSTEM_ENTRIES:
+            entries.append(source)
+    state_names = {"STATE0.BIN", "STATE1.BIN"}
+    archived_states = {item.name.upper(): item for item in entries if item.name.upper() in state_names}
+    if archived_states and set(archived_states) != state_names:
+        raise ValueError("the archived settings record pair is incomplete")
+    state_records = {}
+    for name, path in archived_states.items():
+        state_records[name] = _read_record(path)
+    if (len(state_records) == 2 and state_records["STATE0.BIN"][1] == state_records["STATE1.BIN"][1]
+            and state_records["STATE0.BIN"][0] != state_records["STATE1.BIN"][0]):
+        raise ValueError("the archived settings records conflict at the same generation")
+    planned = []
+    empty = record(b"")
+    for source in entries:
+        target = active / source.name
+        _plain(target, root)
+        if target.exists() or target.is_symlink():
+            if (source.name.upper() not in {"STATE0.BIN", "STATE1.BIN", "THEME0.BIN", "THEME1.BIN"}
+                    or target.is_symlink() or not target.is_file() or target.read_bytes() != empty):
+                raise ValueError("fresh installation conflicts with preserved data: " + source.name)
+        planned.append((source, target))
+    restored = {}
+    for source, target in planned:
+        if target.exists():
+            target.unlink()
+        source.replace(target)
+        restored[source.name] = dict(kind="directory" if target.is_dir() else "file",
+                                     bytes=target.stat().st_size if target.is_file() else None)
+    return dict(passed=True, archive=str(archive), restored=restored,
+                retained_system=sorted(item.name for item in archive.iterdir()))
 
 
 def install(identity, progress=lambda _message: None, build="user", installation_method=None):
@@ -885,7 +969,11 @@ def install(identity, progress=lambda _message: None, build="user", installation
                                if item["id"] == method_id), None)
         if current["action"] != reviewed["action"] or not current_method or not current_method["enabled"]:
             raise RuntimeError("installation state changed after review")
-        if reviewed["action"] == "replace":
+        combined_native_reinstall = (
+            reviewed["action"] == "replace" and
+            reviewed.get("recovery", {}).get("strategy") == "native-directory" and
+            strategy == "native-directory")
+        if reviewed["action"] == "replace" and not combined_native_reinstall:
             receipt["device_write_attempted"] = True
             receipt["phase"] = "restore-before-reinstall"
             _save(receipt_path, receipt)
@@ -914,16 +1002,32 @@ def install(identity, progress=lambda _message: None, build="user", installation
         receipt["phase"] = "device-transaction"
         _save(receipt_path, receipt)
         if strategy == "rockbox-file":
-            result = _install_rockbox(identity, artifacts, progress, transaction)
+            result = _install_rockbox(identity, artifacts, progress, transaction, archive)
         else:
-            progress("Requesting administrator access to back up and update the iPod boot partition…")
-            job = dict(mode="install", identity=identity, artifacts=artifacts,
+            progress(("Requesting administrator access to restore and reinstall the iPod boot partition…"
+                      if combined_native_reinstall else
+                      "Requesting administrator access to back up and update the iPod boot partition…"))
+            job = dict(mode="reinstall" if combined_native_reinstall else "install",
+                       identity=identity, artifacts=artifacts,
                        transaction=str(transaction), installation_method=method_id,
                        previous_boot=previous_boot,
                        result=str(receipt_path.with_suffix(".result.json")))
+            if combined_native_reinstall:
+                marker = reviewed["recovery"]
+                job["restoration"] = dict(
+                    transaction=marker["transaction"], plan=marker["plan"],
+                    plan_sha256=marker["plan_sha256"], marker=marker)
+            if archive is not None:
+                job["archive"] = str(archive)
             job_path = transaction / ("worker-" + uuid.uuid4().hex + ".json")
             _save(job_path, job, replace=False)
             result = _run_elevated(job_path)
+            if combined_native_reinstall:
+                reinstall = result.pop("reinstall")
+                receipt["restored_boot"] = reinstall["restored_boot"]
+                receipt["previous_linnet_archive"] = reinstall["previous_linnet_archive"]
+            elif archive is not None:
+                receipt["previous_linnet_archive"] = result["previous_linnet_archive"]
         receipt.update(passed=True, result=result, phase="complete")
     except BaseException as error:
         receipt.update(failure=f"{type(error).__name__}: {error}", phase="failed")
@@ -1001,6 +1105,37 @@ def _native_worker(job):
         if not result.get("passed"):
             raise RuntimeError(result.get("failure", "native restore failed"))
         return result
+    reinstall = None
+    if job["mode"] == "reinstall":
+        restoration = job["restoration"]
+        saved_transaction = Path(restoration["transaction"]).resolve(strict=True)
+        plan = Path(restoration["plan"]).resolve(strict=True)
+        marker = restoration["marker"]
+        marker_transaction = Path(marker["transaction"]).resolve(strict=True)
+        marker_plan = Path(marker["plan"]).resolve(strict=True)
+        if (plan.parent.parent != saved_transaction or
+                marker_transaction != saved_transaction or marker_plan != plan or
+                marker.get("plan_sha256") != restoration["plan_sha256"]):
+            raise ValueError("saved native restore plan does not match its recovery journal")
+        if (marker.get("strategy") != "native-directory" or marker.get("phase") != "installed" or
+                marker.get("target_id") != expected["target_id"] or
+                marker.get("device_id") != expected["disk_serial"]):
+            raise ValueError("saved native recovery journal differs from the connected iPod")
+        restored = native.execute("restore", plan, restoration["plan_sha256"], expected["disk_number"])
+        if not restored.get("passed"):
+            raise RuntimeError(restored.get("failure", "native restore failed"))
+        marker = dict(marker, phase="restored", restored_at=_now())
+        _save(Path(expected["root"]) / JOURNAL, marker)
+        archived = _archive_linnet(expected["root"], Path(job["archive"]))
+        current = assess(expected)
+        current_method = next((item for item in current["installation_methods"]
+                               if item["id"] == job["installation_method"]), None)
+        if current["action"] != "install" or not current_method or not current_method["enabled"]:
+            raise RuntimeError("fresh installation state differs after preserving the previous Linnet folder")
+        reinstall = dict(
+            restored_boot=dict(passed=True, boot=restored, media_preserved=True,
+                               linnet_files_preserved=True, requires_safe_eject=True),
+            previous_linnet_archive=archived)
     mbr, firmware = _read_raw_backup(expected, transaction)
     device_path = transaction / "device.json"
     device_value = detected
@@ -1019,7 +1154,7 @@ def _native_worker(job):
         planned = native.plan(firmware, mbr, device_path, Path(job["artifacts"]["boot_image"]), plan_dir)
         plan_path, plan_sha = Path(planned["plan"]), planned["plan_sha256"]
         hash_path.write_text(plan_sha + "\n", encoding="ascii")
-    storage_receipt = _package_storage(expected, job["artifacts"], transaction)
+    storage_receipt = _package_storage(expected, job["artifacts"], transaction, job.get("archive"))
     selector = (_install_selector_config(expected)
                 if job.get("installation_method") == "native-selector" else None)
     applied = native.execute("apply", plan_path, plan_sha, expected["disk_number"])
@@ -1031,8 +1166,16 @@ def _native_worker(job):
                            installation_method=job.get("installation_method", "native-preserve"),
                            previous_boot=_saved_previous_boot(job),
                            selector=selector))
-    return dict(passed=True, strategy="native-directory", storage=storage_receipt,
-                boot=applied, selector=selector, recovery=marker, requires_safe_eject=True)
+    result = dict(passed=True, strategy="native-directory", storage=storage_receipt,
+                  boot=applied, selector=selector, recovery=marker, requires_safe_eject=True)
+    if job.get("archive") is not None:
+        final_archive = _finalize_reinstall_archive(expected["root"], job["archive"])
+        result["previous_linnet_archive"] = final_archive
+        storage_receipt["reinstall_preservation"]["archive"] = final_archive
+    if reinstall is not None:
+        reinstall["previous_linnet_archive"] = result["previous_linnet_archive"]
+        result["reinstall"] = reinstall
+    return result
 
 
 def restore(identity, expected=None):
@@ -1072,7 +1215,7 @@ def worker(job_path):
     result_path = Path(job["result"]).resolve()
     response = dict(passed=False, operation=job.get("mode"), started_at=_now())
     try:
-        if job.get("mode") not in ("install", "restore"):
+        if job.get("mode") not in ("install", "restore", "reinstall"):
             raise ValueError("unsupported installer worker job")
         response.update(_native_worker(job))
     except BaseException as error:
