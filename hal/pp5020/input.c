@@ -1,38 +1,13 @@
 #include "hal/api/input.h"
 #include "hal/api/core.h"
 #include "hal/api/platform.h"
+#include "hal/pp5020/target.h"
 #define LINNET_MMIO(a) (*(volatile uint32_t *)(uintptr_t)(a))
 static struct ln_input_state ln_input;
 static int32_t ln_last_wheel = -1;
 static bool ln_input_ready;
 #if !defined(LINNET_PROFILE_RELEASE)
 static uint32_t ln_input_polls,ln_input_ready_reads,ln_input_last_packet,ln_input_last_status;
-#endif
-
-#if defined(LINNET_TARGET_IPOD4G_Q21)
-static void ln_q21_opto_wake(void)
-{
-    /* A cold handoff from the Apple ROM can leave the Q21 optical ASIC
-     * waiting for its serial configuration command. The ordinary Rockbox
-     * runtime init assumes its bootloader already performed this exchange. */
-    LINNET_MMIO(0x6000d004u) &= ~0x80u;
-    LINNET_MMIO(0x7000c104u) |= 0x0c000000u;
-    LINNET_MMIO(0x7000c120u) = 0x8000023au;
-    LINNET_MMIO(0x7000c100u) |= 0x80000000u;
-    LINNET_MMIO(0x6000d024u) &= ~0x10u;
-    LINNET_MMIO(0x6000d014u) |= 0x10u;
-    uint32_t start=ln_time_us();
-    while((LINNET_MMIO(0x7000c104u)&0x80000000u)&&ln_time_us()-start<1500u){}
-    LINNET_MMIO(0x7000c100u) &= ~0x80000000u;
-    LINNET_MMIO(0x6000d004u) |= 0x80u;
-    LINNET_MMIO(0x6000d024u) |= 0x10u;
-    LINNET_MMIO(0x6000d014u) &= ~0x10u;
-    LINNET_MMIO(0x7000c104u) |= 0x0c000000u;
-    LINNET_MMIO(0x7000c100u) |= 0x60000000u;
-    start=ln_time_us();
-    while(!(LINNET_MMIO(0x7000c104u)&0x04000000u)&&ln_time_us()-start<1500u){}
-    if(LINNET_MMIO(0x7000c104u)&0x04000000u)(void)LINNET_MMIO(0x7000c140u);
-}
 #endif
 
 static void ln_switch_rearm(uint32_t sample)
@@ -44,14 +19,13 @@ static void ln_switch_rearm(uint32_t sample)
 }
 bool ln_input_init(void)
 {
+    ln_input_ready = false;
     LINNET_MMIO(0x6000600cu) |= 0x10000u;
     LINNET_MMIO(0x60006004u) |= 0x10000u;
     if (!ln_core_delay_us(5u)) return false;
     LINNET_MMIO(0x60006004u) &= ~0x10000u;
     LINNET_MMIO(0x70000010u) |= 0x40000u;
-#if defined(LINNET_TARGET_IPOD4G_Q21)
-    ln_q21_opto_wake();
-#endif
+    ln_target_input_prepare();
     LINNET_MMIO(0x7000c100u) = 0xc00a1f00u;
     LINNET_MMIO(0x7000c104u) = 0x01000000u;
     LINNET_MMIO(0x7000c100u) &= ~0x60000000u;

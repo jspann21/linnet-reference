@@ -23,6 +23,8 @@ def connect(port=None, serial_number=None, deadline_seconds=15):
                       and (port or serial_number or 'Linnet' in (p['description'] or ''))]
         if serial_number and len(candidates) > 1:
             raise RuntimeError("multiple USB endpoints have the requested serial identity")
+        if not port and not serial_number and len(candidates) > 1:
+            raise RuntimeError("multiple Linnet endpoints found; select a port or USB serial identity")
         for candidate in candidates:
             session = None
             try:

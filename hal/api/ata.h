@@ -10,10 +10,6 @@ enum ln_ata_op { LN_ATA_READ=1,LN_ATA_WRITE=2,LN_ATA_FLUSH=3,LN_ATA_STANDBY=4,LN
 enum ln_ata_status { LN_ATA_OK=0,LN_ATA_TIMEOUT=1,LN_ATA_IO=2,LN_ATA_UNSUPPORTED=3,
     LN_ATA_RANGE=4,LN_ATA_OFFLINE=5,LN_ATA_CANCELED=6,LN_ATA_QUARANTINED=7 };
 enum ln_ata_media_kind { LN_ATA_MEDIA_UNKNOWN=0, LN_ATA_MEDIA_ROTATING=1, LN_ATA_MEDIA_SOLID_STATE=2 };
-/* A target may fill older IDENTIFY fields that predate the ATA media/rotation
- * words.  Implementations must match an exact device identity and leave
- * unrecognized devices unchanged. */
-void ln_target_ata_classify(const char *model,uint32_t *media_kind,uint32_t *rotation_rpm);
 struct ln_ata_info {
     uint64_t sectors;
     uint32_t initialized,initializing,busy,sleeping,failed,lba48,can_flush;

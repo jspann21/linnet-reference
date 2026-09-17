@@ -1,6 +1,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "hal/api/ata.h"
+#include "hal/api/platform.h"
+#include "hal/pp5020/target.h"
 
 #define REG(a) (*(volatile uint32_t *)(uintptr_t)(a))
 
@@ -21,3 +23,5 @@ void ln_target_ata_classify(const char *model,uint32_t *media_kind,uint32_t *rot
     *media_kind=LN_ATA_MEDIA_ROTATING;
     *rotation_rpm=4200u;
 }
+
+void ln_target_input_prepare(void) {}

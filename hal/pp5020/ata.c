@@ -1,4 +1,5 @@
 #include "hal/api/ata.h"
+#include "hal/pp5020/target.h"
 #include "hal/api/platform.h"
 #define R32(a) (*(volatile uint32_t *)(uintptr_t)(a))
 #define R8(a) (*(volatile uint8_t *)(uintptr_t)(a))
