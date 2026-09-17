@@ -89,8 +89,8 @@ void ln_music_queue_close(void){queue_opened=false;ln_music_queue_view_close();}
 void ln_music_queue_choose(uint32_t row){queue_clear_confirm=false;notice=0;queue_choice=row;queue_choice_revision=revision;}
 bool ln_music_queue_edit(uint32_t action){
     if(shutting_down||manual_next_pending||selecting||have_waiting||resolver_kind==1||queue_choice_revision!=revision||queue_choice>=queue.count||action>4){notice="Queue changed; choose again";++revision;return false;}
-    if(action==4&&!queue_clear_confirm){queue_clear_confirm=true;notice="Clear queue? Select again";++revision;queue_choice_revision=revision;return false;}
-    if(action==4){queue_clear_confirm=false;int32_t volume=queue.volume_db_tenths;uint32_t repeat=queue.repeat;
+    if(action==4&&!queue_clear_confirm){queue_clear_confirm=true;notice="Select again to clear";++revision;queue_choice_revision=revision;return false;}
+    if(action==4){notice="Queue cleared";queue_clear_confirm=false;int32_t volume=queue.volume_db_tenths;uint32_t repeat=queue.repeat;
         ln_music_stop();ln_queue_init(&queue,ln_time_us());(void)ln_music_library_identity(queue.library_identity);queue.volume_db_tenths=volume;queue.repeat=repeat;++revision;return true;}
     remember_position();uint32_t occurrence;
     if(queue.source){if(!ln_queue_track_at(&queue,queue_choice,&occurrence))return false;}

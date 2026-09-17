@@ -10,7 +10,7 @@
 #define RECENT (LISTS+LN_COLLECTION_SLOTS*ENTRY)
 #define RECENT_MAX 256u
 static uint8_t saved[LN_COLLECTION_BYTES],io[LN_COLLECTION_BYTES];
-static uint32_t bank,generation,revision,durable,snapshot,phase,offset,ticket,loading;
+static uint32_t bank,generation,revision,durable,snapshot,snapshot_crc,phase,offset,ticket,loading;
 static bool ready,pending,failed,available,stepping;
 static struct ln_collection entry;
 static uint32_t crc(uint8_t *p){uint32_t old=ln_read_le32(p+12);ln_write_le32(p+12,0);uint32_t value=ln_crc32(p,LN_COLLECTION_BYTES);ln_write_le32(p+12,old);return value;}
@@ -25,7 +25,7 @@ bool ln_collections_writable(void){return ready&&available&&!failed;}
 bool ln_collections_busy(void){return pending||phase!=0;}
 bool ln_collections_dirty(void){return revision!=durable;}
 uint32_t ln_collections_revision(void){return revision+durable+(ready?1u:0u)+(failed?1u:0u);}
-const char *ln_collections_status(void){return !ready?"Loading playlists...":!available?"Sync to enable saving":failed?"Save failed; reconnect USB":revision!=durable?"Saving...":"Saved";}
+const char *ln_collections_status(void){return failed?"Save failed; reconnect USB":!ready?"Loading playlists...":!available?"Sync to enable saving":revision!=durable?"Saving...":"Saved";}
 const struct ln_collection *ln_collection_get(uint32_t slot){
     if(!ready||slot>=LN_COLLECTION_SLOTS)return 0;const uint8_t *p=saved+LISTS+slot*ENTRY;
     for(uint32_t i=0;i<32;i++)entry.name[i]=(char)p[i];entry.count=ln_read_le32(p+32);
@@ -56,9 +56,9 @@ static void step(bool read,bool write){
         int proof=ln_storage_prepare_writes();if(!proof)return;if(proof<0){failed=true;return;}
         for(uint32_t i=0;i<LN_COLLECTION_BYTES;i++)io[i]=saved[i];
         ln_write_le32(io,0x54534c4cu);ln_write_le32(io+4,1);ln_write_le32(io+8,generation+1u);ln_write_le32(io+12,crc(io));
-        if(generation==UINT32_MAX){failed=true;return;}snapshot=revision;offset=BODY;phase=2;
+        if(generation==UINT32_MAX){failed=true;return;}snapshot=revision;snapshot_crc=ln_read_le32(io+12);offset=BODY;phase=2;
     }
-    uint32_t size=phase==3?BODY:4096u;
+    uint32_t size=phase==5?0:phase==3?BODY:4096u;
     if(size>LN_COLLECTION_BYTES-offset)size=LN_COLLECTION_BYTES-offset;
     if(pending){uint32_t transferred=0;int result=ln_storage_async_poll_deferred(ticket,&transferred);if(!result)return;pending=false;
         if(result!=1||transferred!=size){failed=true;return;}
@@ -69,15 +69,20 @@ static void step(bool read,bool write){
                 if(seq>generation){for(uint32_t i=0;i<LN_COLLECTION_BYTES;i++)saved[i]=io[i];generation=seq;bank=loading;}}
             if(!loading){loading=1;offset=0;}else{ready=true;phase=0;if(!generation)failed=true;}
         }else if(phase==2&&offset==LN_COLLECTION_BYTES){phase=3;offset=0;}
-        else if(phase==3){phase=4;offset=0;}
+        else if(phase==3){phase=5;offset=0;}
+        else if(phase==5){phase=4;offset=0;}
         else if(phase==4&&offset==LN_COLLECTION_BYTES){
-            if(!valid(io)||ln_read_le32(io+8)!=generation+1u){failed=true;return;}
+            if(!valid(io)||ln_read_le32(io+8)!=generation+1u||ln_read_le32(io+12)!=snapshot_crc){failed=true;return;}
             generation++;bank^=1u;durable=snapshot;phase=0;
         }
         return;
     }
     if((phase==1&&!read)||(phase!=1&&!write))return;
-    int result=phase==1||phase==4?ln_storage_async_read(LN_STORAGE_LIST0+(phase==1?loading:bank^1u),offset,io+offset,size,&ticket):
+    /* Opening a media file can invalidate the FAT proof between chunks. */
+    if((phase==2||phase==3)&&!ln_storage_prepared()){
+        int proof=ln_storage_prepare_writes();if(!proof)return;if(proof<0){failed=true;return;}
+    }
+    int result=phase==5?ln_storage_async_flush(&ticket):phase==1||phase==4?ln_storage_async_read(LN_STORAGE_LIST0+(phase==1?loading:bank^1u),offset,io+offset,size,&ticket):
         ln_storage_async_write(LN_STORAGE_LIST0+(bank^1u),offset,io+offset,size,&ticket);
     if(result<0)failed=true;else pending=result==1;
 }
