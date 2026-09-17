@@ -614,6 +614,41 @@ def _transaction(identity, artifacts):
     return cache_root(identity) / "transactions" / f"{artifacts['build']}-{artifacts['os_build_id'][:16]}-{uuid.uuid4().hex}"
 
 
+def reboot_plan(disk_number, expected_serial):
+    """Resolve the current native plan recorded by the installed iPod."""
+    from tools.content.media_manager import discover
+    from tools.studio import native_bootstrap as native
+
+    matches = [item for item in discover()
+               if item.get("disk_number") == disk_number and
+               item.get("disk_serial") == expected_serial]
+    if len(matches) != 1:
+        raise ValueError("the selected disk does not resolve to exactly one supported iPod")
+    identity = matches[0]
+    root = Path(identity["root"]).resolve(strict=True)
+    marker_path = root / JOURNAL
+    if (not marker_path.is_file() or marker_path.is_symlink() or
+            marker_path.stat().st_size > 65536):
+        raise ValueError("the installed iPod has no usable recovery record")
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    if (marker.get("target_id") != identity["target_id"] or
+            marker.get("device_id") != identity["disk_serial"] or
+            marker.get("strategy") != "native-directory" or
+            marker.get("phase") != "installed"):
+        raise ValueError("the installed recovery record does not describe active native Boot")
+    if not isinstance(marker.get("plan"), str) or not marker["plan"]:
+        raise ValueError("the installed recovery record has no plan path")
+    plan_path = Path(marker["plan"]).resolve(strict=True)
+    plan_sha = marker.get("plan_sha256", "")
+    try:
+        native.load_plan(plan_path, plan_sha)
+    except ValueError as error:
+        if str(error) == "unsupported native installation plan":
+            raise ValueError("installed Boot metadata is obsolete; reinstall Linnet with the current installer") from error
+        raise
+    return plan_path, plan_sha
+
+
 def _persist_artifacts(artifacts, transaction):
     destination = transaction / "artifacts"
     destination.mkdir(parents=True, exist_ok=True)

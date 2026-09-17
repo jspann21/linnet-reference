@@ -348,9 +348,13 @@ def main():
         elif args.command == "device" and args.action == "eject":
             from tools.link.eject import eject, eject_reboot
             if args.reboot:
-                if not args.plan or not args.plan_sha256:
-                    raise ValueError("eject --reboot requires --plan and --plan-sha256")
-                emit(eject_reboot(args.disk_number, args.plan, args.plan_sha256, allow_prompt=args.allow_uac))
+                if bool(args.plan) != bool(args.plan_sha256):
+                    raise ValueError("explicit reboot plan requires both --plan and --plan-sha256")
+                plan, plan_sha = args.plan, args.plan_sha256
+                if not plan:
+                    from tools.studio.installer import reboot_plan
+                    plan, plan_sha = reboot_plan(args.disk_number, args.expected_serial)
+                emit(eject_reboot(args.disk_number, plan, plan_sha, allow_prompt=args.allow_uac))
             else:
                 if args.plan or args.plan_sha256 or args.allow_uac:
                     raise ValueError("--plan, --plan-sha256 and --allow-uac require --reboot")

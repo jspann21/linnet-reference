@@ -21,7 +21,9 @@ import time
 import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
-STATE = ROOT / 'out' / 'refresh-session.json'
+DATA = (Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData/Local')) /
+        'Linnet' / 'Refresh')
+STATE = DATA / 'state.json'
 SOURCES = ('tools/link/refresh_session.py', 'tools/studio/native_bootstrap.py',
            'tools/inspect/image.py', 'tools/studio/targets.py')
 MAX_MESSAGE = 65536
@@ -158,7 +160,7 @@ def prepare(plan_path, plan_sha256, *, hours=8, install_reviewed_boot=False):
     artifacts=dict(artifacts)
     sid, _ = Windows().token()
     session_id = uuid.uuid4().hex
-    directory = ROOT / 'out' / 'refresh-sessions' / session_id
+    directory = DATA / 'sessions' / session_id
     directory.mkdir(parents=True)
     config = dict(session_id=session_id, owner_sid=sid, seconds=hours * 3600,
                   install_reviewed_boot=bool(install_reviewed_boot),
