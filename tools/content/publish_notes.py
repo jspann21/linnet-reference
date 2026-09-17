@@ -5,8 +5,7 @@ import json
 import time
 import uuid
 from .notes import inspect, MAX_FILE
-from .publish import _plain, _hash, _copy_verified, _same_target, _volume_guard, inspect_target
-from .publish_photos import _exclusive
+from .publish import _plain, _hash, _copy_verified, _same_target, _volume_guard, inspect_target, _exclusive
 
 
 def publish_notes(package, *, disk_number, expected_disk_serial,

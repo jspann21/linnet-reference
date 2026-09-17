@@ -11,6 +11,7 @@ Mode throughout publication and handle reboot only after a successful receipt.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import base64
 import ctypes
 import hashlib
@@ -33,6 +34,38 @@ HISTORY_PAGE_BYTES = 4096
 HISTORY_PAGE_COUNT = 1024
 HISTORY_PAGE_RECORDS = 125
 HISTORY_BANK_BYTES = (HISTORY_PAGE_COUNT + 1) * HISTORY_PAGE_BYTES
+
+
+@contextmanager
+def _exclusive(identity):
+    """Serialize cooperating media publishers without creating a device file."""
+    from ctypes import wintypes as w
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateMutexW.argtypes = [ctypes.c_void_p, w.BOOL, w.LPCWSTR]
+    kernel.CreateMutexW.restype = w.HANDLE
+    kernel.WaitForSingleObject.argtypes = [w.HANDLE, w.DWORD]
+    kernel.WaitForSingleObject.restype = w.DWORD
+    kernel.ReleaseMutex.argtypes = [w.HANDLE]
+    kernel.ReleaseMutex.restype = w.BOOL
+    kernel.CloseHandle.argtypes = [w.HANDLE]
+    kernel.CloseHandle.restype = w.BOOL
+    key = hashlib.sha256(identity['volume_unique_id'].casefold().encode()).hexdigest()
+    handle = kernel.CreateMutexW(None, False, 'Local\\LinnetPhotoPublish-'+key)
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    acquired = False
+    try:
+        result = kernel.WaitForSingleObject(handle, 0)
+        acquired = result in (0, 0x80)
+        if result == 0x80:
+            raise RuntimeError('previous media publisher was abandoned; inspect its receipt before retrying')
+        if result != 0:
+            raise RuntimeError('another media publisher is active or exclusivity could not be established')
+        yield
+    finally:
+        if acquired:
+            kernel.ReleaseMutex(handle)
+        kernel.CloseHandle(handle)
 
 
 def _history_superblock(data: bytes) -> bytes:

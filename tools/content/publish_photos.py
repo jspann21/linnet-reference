@@ -6,9 +6,6 @@ No raw device access, UAC, eject, automatic retry, rollback or cleanup is used.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
-import ctypes
-from ctypes import wintypes as w
 import hashlib
 import json
 import os
@@ -20,38 +17,7 @@ import zlib
 
 from .photos import HEADER, PHOTO, MAX_FILE, inspect
 from .publish import (_plain, _bounded, _hash, _copy_verified, _same_target,
-                      _volume_guard, inspect_target)
-
-
-@contextmanager
-def _exclusive(identity):
-    """Serialize cooperating photo publishers without creating a device file."""
-    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
-    kernel.CreateMutexW.argtypes = [ctypes.c_void_p, w.BOOL, w.LPCWSTR]
-    kernel.CreateMutexW.restype = w.HANDLE
-    kernel.WaitForSingleObject.argtypes = [w.HANDLE, w.DWORD]
-    kernel.WaitForSingleObject.restype = w.DWORD
-    kernel.ReleaseMutex.argtypes = [w.HANDLE]
-    kernel.ReleaseMutex.restype = w.BOOL
-    kernel.CloseHandle.argtypes = [w.HANDLE]
-    kernel.CloseHandle.restype = w.BOOL
-    key = hashlib.sha256(identity['volume_unique_id'].casefold().encode()).hexdigest()
-    handle = kernel.CreateMutexW(None, False, 'Local\\LinnetPhotoPublish-'+key)
-    if not handle:
-        raise ctypes.WinError(ctypes.get_last_error())
-    acquired = False
-    try:
-        result = kernel.WaitForSingleObject(handle, 0)
-        acquired = result in (0, 0x80)
-        if result == 0x80:
-            raise RuntimeError('previous photo publisher was abandoned; inspect its receipt before retrying')
-        if result != 0:
-            raise RuntimeError('another photo publisher is active or exclusivity could not be established')
-        yield
-    finally:
-        if acquired:
-            kernel.ReleaseMutex(handle)
-        kernel.CloseHandle(handle)
+                      _volume_guard, inspect_target, _exclusive)
 
 
 def _fallbacks(package):

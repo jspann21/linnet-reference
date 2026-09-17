@@ -453,7 +453,7 @@ def _error_record(kind, error, inventory, root):
 
 
 def run(identity, selected, pending=(), **options):
-    from .publish_photos import _exclusive
+    from .publish import _exclusive
     # The same Windows mutex is recursive for nested publishers on this thread.
     # A second manager must not overwrite the first manager's cache or catalog.
     identity = refresh(identity)

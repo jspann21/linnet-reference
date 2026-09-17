@@ -8,8 +8,7 @@ from pathlib import Path
 import time
 import uuid
 from .ipvf_validate import inspect_file
-from .publish import _plain, _hash, _copy_verified, _same_target, _volume_guard, inspect_target
-from .publish_photos import _exclusive
+from .publish import _plain, _hash, _copy_verified, _same_target, _volume_guard, inspect_target, _exclusive
 MAX_FILE=0x7fffffff
 CATALOG_HEADER_SIZE = 12
 CATALOG_ROW_SIZE = 416
@@ -68,8 +67,6 @@ def publish_video(package, *, disk_number, expected_disk_serial,
     candidate['sha256'] = digest
     candidate['format'] = 'IPVF'
     candidate['bytes']=candidate['file_bytes']
-    if candidate['sha256'] != digest:
-        raise ValueError('video package changed during validation')
     if _hash(package, candidate['bytes']) != digest:
         raise ValueError('video package changed during reference validation')
     identity = inspect_target(disk_number, expected_disk_serial, expected_volume_serial, expected_drive)

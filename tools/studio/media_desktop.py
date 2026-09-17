@@ -1220,7 +1220,7 @@ class MediaWindow(QMainWindow):
             return
         identity = self.identity
         def run():
-            from tools.content.publish_photos import _exclusive
+            from tools.content.publish import _exclusive
             from tools.link.eject import eject
             with _exclusive(identity):
                 current = media.refresh(identity)

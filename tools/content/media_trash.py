@@ -5,8 +5,7 @@ from pathlib import Path
 import uuid
 
 from . import media_manager as media, media_library as library
-from .publish import _plain, _volume_guard
-from .publish_photos import _exclusive
+from .publish import _plain, _volume_guard, _exclusive
 from .publish_video import _read_catalog, _encode_catalog, CATALOG_MAX_BYTES
 
 
