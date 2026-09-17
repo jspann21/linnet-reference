@@ -101,17 +101,8 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                 raise ValueError('photo count exceeds 65535')
     if not paths:
         raise ValueError('source contains no supported still images')
-    folders = {Path('.')}
-    for path in paths:
-        folder = path.parent.relative_to(source)
-        folders.add(folder)
-        folders.update(folder.parents)
-    ordered = [Path('.')] + sorted(folders-{Path('.')}, key=lambda p: (p.as_posix().casefold(), p.as_posix()))
-    if ordered[0] != Path('.') or len(ordered) > MAX_ALBUMS:
-        raise ValueError('album hierarchy exceeds the supported bounds')
-    albums = {path: i for i, path in enumerate(ordered)}
-    paths.sort(key=lambda p: (albums[p.parent.relative_to(source)],
-                             p.name.casefold(), p.name))
+    paths.sort(key=lambda p: (p.relative_to(source).as_posix().casefold(),
+                             p.relative_to(source).as_posix()))
     fallback_paths = dict(fallback_paths or {})
     known = {p.relative_to(source).as_posix() for p in paths}
     if set(fallback_paths) - known:
@@ -128,13 +119,8 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
         return string_index[value]
 
     photos, levels, tile_crcs = [], [], []
-    album_ranges = [[0, 0] for _ in ordered]
     with tempfile.TemporaryFile() as thumbs, tempfile.TemporaryFile() as tiles:
         for index, path in enumerate(paths):
-            album = albums[path.parent.relative_to(source)]
-            if not album_ranges[album][1]:
-                album_ranges[album][0] = index
-            album_ranges[album][1] += 1
             title = string(_title(path.stem))
             fallback = fallback_paths.get(path.relative_to(source).as_posix(), '')
             fallback_bytes = fallback_crc = orientation = 0
@@ -173,7 +159,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
             width, height = image.size
             thumb = Image.new('RGB', (THUMB, THUMB), (0, 0, 0))
             tw, th = _fit(width, height, THUMB, THUMB)
-            thumb.paste(image.resize((tw, th), Image.Resampling.LANCZOS), ((THUMB-tw)//2, (THUMB-th)//2))
+            thumb.paste(image.resize((tw, th), Image.Resampling.LANCZOS, reducing_gap=3.0), ((THUMB-tw)//2, (THUMB-th)//2))
             raw_thumb = _rgb565(thumb)
             thumbs.write(raw_thumb)
             first_level = len(levels)
@@ -183,7 +169,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                 if first_tile + count > MAX_TILES or ((len(paths)*8192)+(first_tile+count)*2048) > MAX_FILE:
                     raise ValueError('photo tile payload exceeds package limits')
                 padded = Image.new('RGB', (tx*EDGE, ty*EDGE), (0, 0, 0))
-                padded.paste(image.resize((lw, lh), Image.Resampling.LANCZOS))
+                padded.paste(image.resize((lw, lh), Image.Resampling.LANCZOS, reducing_gap=3.0))
                 raw = _rgb565(padded)
                 stride = tx * EDGE * 2
                 for y in range(ty):
@@ -193,18 +179,11 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                         tiles.write(tile)
                         tile_crcs.append(_crc(tile))
                 levels.append((index, lw, lh, tx, ty, first_tile, count))
-            photos.append((album, *title, *string(fallback), width, height, first_level,
+            photos.append((0, *title, *string(fallback), width, height, first_level,
                            len(levels)-first_level, 0, _crc(raw_thumb), fallback_bytes,
                            fallback_crc, orientation, 0))
-        album_records = []
-        for folder in ordered:
-            first, count = album_ranges[albums[folder]]
-            # Empty ancestors have an empty interval at the following album's
-            # first photo; this preserves canonical running intervals.
-            if not count:
-                first = sum(pair[1] for pair in album_ranges[:albums[folder]])
-            parent = NO_INDEX if folder == Path('.') else albums[folder.parent]
-            album_records.append(_record(struct.pack('<7I', *string(_title(source.name if folder == Path('.') else folder.name)), first, count, parent, 0, 0)))
+        album_records = [_record(struct.pack('<7I', *string(_title(source.name)),
+                                             0, len(photos), NO_INDEX, 0, 0))]
         album_offset = HEADER
         photo_offset = album_offset + len(album_records)*ALBUM
         level_offset = photo_offset + len(photos)*PHOTO
@@ -228,7 +207,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
         metadata.extend(bytes(data_offset - HEADER - len(metadata)))
         header = bytearray(HEADER)
         struct.pack_into('<4sHH14I4H', header, 0, b'PIMG', 0, HEADER, 0, total,
-                         len(albums), len(photos), len(levels), len(tile_crcs),
+                         len(album_records), len(photos), len(levels), len(tile_crcs),
                          album_offset, photo_offset, level_offset, tile_offset,
                          string_offset, len(strings), _crc(metadata), data_offset,
                          THUMB, THUMB, EDGE, 1)

@@ -183,7 +183,7 @@ def preparation_option(kind, identity, photo_dimension=640, music_verification='
     if kind == 'Music':
         art_version = 'art3' if identity['target_id'] == 'ipod4g-q21' else 'art2'
         return f"{music_verification}-duration-search-names-album-owner-title-order1-music-folder1-{art_version}-{identity['target_id']}"
-    return photo_dimension if kind == 'Photos' else 'default'
+    return f'flat-photos1-{photo_dimension}' if kind == 'Photos' else 'default'
 
 
 def scan(root, kinds=KINDS, skipped=None):
