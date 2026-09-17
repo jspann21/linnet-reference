@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QButtonGroup, QC
     QTableView, QTextEdit, QVBoxLayout, QWidget, QStyleOptionButton, QSizePolicy)
 
 from tools.content import media_manager as media, media_library, media_status, media_trash
+from tools.content.media_manager import format_size as size
 from tools.studio import installer
 
 
@@ -75,13 +76,6 @@ def icon(name, color='#63757b', size=20):
     painter.end()
     pixmap.setDevicePixelRatio(2)
     return QIcon(pixmap)
-
-
-def size(value):
-    for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
-        if value < 1024 or unit == 'TB':
-            return f'{value:,.1f} {unit}'
-        value /= 1024
 
 
 def label(text='', name=None, wrap=False):

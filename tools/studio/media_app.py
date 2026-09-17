@@ -12,13 +12,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from tools.content import media_manager as media
-
-
-def size(value):
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if value < 1024 or unit == "TB":
-            return f"{value:,.1f} {unit}"
-        value /= 1024
+from tools.content.media_manager import format_size as size
 
 
 class MediaApp:

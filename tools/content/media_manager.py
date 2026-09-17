@@ -335,6 +335,13 @@ def additions(root, pending):
     return list(planned.values())
 
 
+def format_size(value):
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB":
+            return f"{value:,.1f} {unit}"
+        value /= 1024
+
+
 def cache_root(identity):
     base = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".cache")) / "Linnet" / "Media"
     key = hashlib.sha256((identity["disk_serial"] + identity["volume_serial"]).encode()).hexdigest()[:24]
