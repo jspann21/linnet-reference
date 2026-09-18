@@ -12,6 +12,7 @@ uint32_t ln_ui_playback_status(void){return sample_playback;}
 /* Explicit sample metadata; device builds bind these keys to the music service. */
 const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){
     if(item!=UINT32_MAX||!n->text)return fallback;
+    if(!strcmp(n->text,"Native playback shell"))return sample_playback?"":"Stopped";
     if(!strcmp(n->text,"Track position"))return "1 of 12";
     if(!strcmp(n->text,"Track album"))return "Sample album";
     if(!strcmp(n->text,"Track elapsed"))return "1:24";

@@ -426,7 +426,7 @@ def geometry_flags(node, theme, font):
     elif node['kind'] == 6:
         height = max(18, font['height'] + 5)
     elif node['kind'] == 8:
-        height = 38 if layout == 'ipod-photo' else max(1, node['h'] // 2)
+        height = 31 if layout == 'ipod-photo' else max(1, node['h'] // 2)
     else:
         height = 46 if columns == 2 else theme['metrics']['row_height']
     if height <= 0 or node['w'] <= 0:

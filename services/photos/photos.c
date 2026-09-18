@@ -7,7 +7,8 @@
 #include "hal/api/audio.h"
 #include "hal/api/platform.h"
 #include "boot/include/linnet_boot.h"
-#define ROWS 20u
+#define ROWS 25u
+#define THUMB_SIZE 56u
 #define TILES 64u
 #define WIDTH LINNET_PHOTO_WIDTH
 #define HEIGHT LINNET_PHOTO_HEIGHT
@@ -16,7 +17,7 @@ enum phase {OPEN,HEADER,VERIFY,IDLE,RECORD,TITLE,THUMB,LEVEL,TILE_RECORD,TILE_DA
 struct row {uint32_t index;bool valid,album,thumb;char title[192];union {struct ln_pimg_album a;struct ln_pimg_photo p;} data;struct ln_ui_asset asset;};
 struct tile {uint32_t index,age;bool valid;};
 static struct {
-    union {struct {uint16_t tiles[TILES][1024],thumbs[ROWS][4096];} pimg;uint8_t jpeg[262144];uint32_t photo_info[65535];} pixels;
+    union {struct {uint16_t tiles[TILES][1024],thumbs[ROWS][THUMB_SIZE*THUMB_SIZE];} pimg;uint8_t jpeg[262144];uint32_t photo_info[65535];} pixels;
     union {uint16_t frame[2][WIDTH*HEIGHT];struct {uint32_t album_counts[4096];uint8_t metadata[65536];} verify;} surface;
     struct ln_photo_jpeg jpeg;
     struct ln_pimg_header header;struct ln_fat32_file file,jpeg_file;
@@ -418,9 +419,13 @@ static void photo_step(void){
         if(!valid){fail(6);return;}row->index=p.job_index;row->album=p.job_album;p.phase=TITLE;return;
     }
     if(p.phase==TITLE){struct row*row=&p.rows[p.job_slot];r=string_read(row->album?row->data.a.title:row->data.p.title,row->album?row->data.a.bytes:row->data.p.bytes,false);
-        if(!r)return;if(r<0){fail(7);return;}text(row->title,(char*)p.scratch);row->valid=true;row->asset=(struct ln_ui_asset){64,64,p.pixels.pimg.thumbs[p.job_slot]};p.phase=IDLE;++p.revision;return;}
-    if(p.phase==THUMB){struct row*row=&p.rows[p.job_slot];r=read_at(&p.file,row->data.p.thumb,p.pixels.pimg.thumbs[p.job_slot],8192);
-        if(!r)return;if(r<0||ln_crc32((uint8_t*)p.pixels.pimg.thumbs[p.job_slot],8192)!=row->data.p.thumb_crc){fail(8);return;}row->thumb=true;p.phase=IDLE;++p.revision;return;}
+        if(!r)return;if(r<0){fail(7);return;}text(row->title,(char*)p.scratch);row->valid=true;row->asset=(struct ln_ui_asset){THUMB_SIZE,THUMB_SIZE,p.pixels.pimg.thumbs[p.job_slot]};p.phase=IDLE;++p.revision;return;}
+    if(p.phase==THUMB){struct row*row=&p.rows[p.job_slot];r=read_at(&p.file,row->data.p.thumb,p.scratch,8192);
+        if(!r)return;if(r<0||ln_crc32(p.scratch,8192)!=row->data.p.thumb_crc){fail(8);return;}
+        /* Cache at the largest displayed thumbnail size; keep all 25 resident. */
+        for(uint32_t y=0;y<THUMB_SIZE;++y)for(uint32_t x=0;x<THUMB_SIZE;++x)
+            p.pixels.pimg.thumbs[p.job_slot][y*THUMB_SIZE+x]=ln_read_le16(p.scratch+2u*((y*64u/THUMB_SIZE)*64u+x*64u/THUMB_SIZE));
+        row->thumb=true;p.phase=IDLE;++p.revision;return;}
     if(p.phase==LEVEL){
         /* Descriptors are contiguous; retain the same request until it drains. */
         if(!p.photo.levels||p.photo.levels>6u||p.photo.first>p.header.levels||p.photo.levels>p.header.levels-p.photo.first){image_fail(9);return;}

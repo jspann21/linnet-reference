@@ -87,6 +87,9 @@ const struct ln_ui_asset *ln_ui_dynamic_item_asset(const struct ln_ui_node*n,uin
 #endif
     return fallback;
 }
+bool ln_ui_dynamic_navigation(const struct ln_ui_node*n,uint32_t item){
+    return n->kind==LN_UI_VIRTUAL_LIST&&in_scene(n,"linnet.system.music")&&ln_music_browser_row_navigates(item);
+}
 uint32_t ln_ui_dynamic_count(const struct ln_ui_node*n,uint32_t fallback){
 #if defined(LINNET_NOTES)
     if(in_scene(n,"linnet.system.notes")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_notes_count();

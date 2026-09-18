@@ -97,6 +97,7 @@ const char *ln_ui_clock_text(const struct ln_ui_node *,uint32_t item,const char 
 /* Providers must be bounded memory-only reads: no storage, allocation or I/O.
  * item UINT32_MAX requests node text; other values request a list/grid row.
  * Default weak implementations return fallback unchanged. */
+bool ln_ui_dynamic_navigation(const struct ln_ui_node *node,uint32_t item);
 uint32_t ln_ui_dynamic_count(const struct ln_ui_node *node,uint32_t fallback);
 uint32_t ln_ui_dynamic_value(const struct ln_ui_node *node,uint32_t fallback);
 const struct ln_ui_asset *ln_ui_dynamic_asset(const struct ln_ui_node *node,const struct ln_ui_asset *fallback);

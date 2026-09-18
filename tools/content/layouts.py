@@ -96,8 +96,8 @@ def apply_layout(scenes,theme,compact=False):
             foot['flags']=0
             bar=next(n for n in nodes if n['kind']==9);bar['y']=listing['y'];bar['h']=listing['h']
         refine_scene(scene,theme,(bx,by,bw,bh))
-        if style=='ipod-photo':refine_ipod_photo(scene,theme)
         refine_footers(scene,theme)
+        if style=='ipod-photo':refine_ipod_photo(scene,theme)
         align_scrollbars(scene,theme)
         # Fixed clipping bounds remain a compiler invariant for every variant.
         for node in nodes:
@@ -112,6 +112,9 @@ def align_scrollbars(scene,theme):
     if not listing:return
     for bar in scene['nodes']:
         if bar['kind']!=9:continue
+        if theme['layout']=='ipod-photo':
+            place(bar,210,listing['y'],10,listing['h'])
+            continue
         inset=2 if theme['layout']=='ipod-photo' else 0
         bar['y']=listing['y']+inset
         bottom={'graphite':150,'aurora':170,'sunset':150,'blueprint':146}.get(theme['layout'],172)
@@ -237,7 +240,7 @@ def refine_scene(scene,theme,body):
             # Photo-era composition: position above art, metadata to its right.
             header=next(n for n in nodes if n['kind']==11);header['text']='Now Playing'
             left=10;width=200
-            place(art,10,48,70,70)
+            place(art,10,46,70,70)
             nodes.append(text_node(title,'Track position',10,29,200,fh))
             place(title,90,50,120,2*fh);title['flags']=WRAP
             place(artist,90,86,120,fh);artist['flags']=0;artist['fg']=color('foreground')
@@ -290,17 +293,17 @@ def refine_ipod_photo(scene,theme):
     scroll=next((n for n in nodes if n['kind']==9),None)
     header=next((n for n in nodes if n['kind']==11),None)
     if header:
-        place(header,0,0,220,20)
+        place(header,0,0,220,21)
         names={'home':'iPod','about':'About','display':'Backlight Timer',
                'photos-options':'Slideshow Settings','music-sound':'EQ',
                'clock-edit':'Date & Time','music-options':'Playback Options'}
         if sid in names:header['text']=names[sid]
     if listing:
         # White edge at the right keeps the thumb and chevrons inside the LCD.
-        top=20 if listing['y']<=24 else listing['y']
-        bottom=min(174,listing['y']+listing['h'])
-        place(listing,0,top,210 if scroll else 220,max(rh,((bottom-top)//rh)*rh))
-        if listing['kind']==8:place(listing,0,22,220,152)
+        top=21 if listing['y']<=24 else listing['y']
+        bottom=min(176,listing['y']+listing['h']+1)
+        place(listing,0,top,220,max(rh,((bottom-top)//rh)*rh))
+        if listing['kind']==8:place(listing,0,21,210,155)
     if sid=='settings' and listing:
         labels={'About Linnet':'About','Display':'Backlight Timer','Clock':'Date & Time'}
         listing['items']=[labels.get(label,label) for label in listing['items']]
@@ -309,27 +312,35 @@ def refine_ipod_photo(scene,theme):
         artist=next(n for n in texts if n['text']=='Audio pending')
         album=next(n for n in texts if n['text']=='Track album')
         # A single baseline for each field matches the original player layout.
-        for n,y in ((title,55),(artist,77),(album,99)):
-            place(n,88,y,122,fh);n['flags']=0;n['fg']=color('foreground')
+        for n,y in ((title,47),(artist,72),(album,97)):
+            place(n,10,y,200,fh);n['flags']=0;n['fg']=color('foreground')
         position=next(n for n in texts if n['text']=='Track position');place(position,10,29,200,fh)
-        art=next(n for n in nodes if n['kind']==14);place(art,10,48,70,70)
-        notice=next(n for n in texts if n['text']=='Native playback shell');place(notice,10,119,200,fh)
-        bar=next(n for n in nodes if n['kind']==10);place(bar,10,138,200,11)
+        art=next(n for n in nodes if n['kind']==14);place(art,10,46,70,70)
+        notice=next(n for n in texts if n['text']=='Native playback shell');place(notice,10,115,200,fh)
+        bar=next(n for n in nodes if n['kind']==10);place(bar,11,134,198,11)
         for n in texts:
-            if n['text']=='Track elapsed':place(n,10,156,94,fh)
-            elif n['text']=='Track remaining':place(n,116,156,94,fh)
+            if n['text']=='Track elapsed':place(n,10,150,94,fh)
+            elif n['text']=='Track remaining':place(n,116,150,94,fh)
     elif sid=='themes' and listing:
-        place(listing,0,20,210,132)
-        for n in texts:place(n,6,155,208,fh)
+        place(listing,0,21,220,132)
+        for n in texts:place(n,6,155,208,17)
     elif sid in ('display','battery','shutdown','music','music-queue','music-sound','music-search','clock-edit','clock'):
         for n in texts:
             n['x']=6;n['w']=208
             n['h']=min(n['h'],172-n['y'])
             if n['h']<fh:n['y']=172-fh;n['h']=fh
     elif sid=='photos-viewer':
-        surface=next(n for n in nodes if n['kind']==15);place(surface,0,20,220,156)
+        surface=next(n for n in nodes if n['kind']==15);place(surface,0,21,220,155)
+    elif sid=='cover-flow':
+        surface=next(n for n in nodes if n['kind']==17);place(surface,0,0,220,140)
+        for n in texts:
+            place(n,4,141 if n['text']=='Cover Flow album' else 158,212,fh)
+            n['flags']=0
+    if sid in ('music','music-queue','music-sound') and listing:
+        place(listing,0,21,220,154)
+        for n in texts:n['flags']|=2
     if scroll and listing:
-        place(scroll,213,listing['y']+2,5,max(4,listing['h']-4))
+        place(scroll,210,listing['y'],10,listing['h'])
     scene['count']=len(nodes)
 
 

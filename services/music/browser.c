@@ -141,6 +141,10 @@ bool ln_music_browser_options(uint32_t selected){
     if(!list_view()||b.catalog||b.jumping||b.range||b.activity_scanning||b.resolving||b.exporting||b.expanding||b.status==LN_BROWSER_QUEUE_LOADING)return false;
     b.here.selected=selected;if(!push())return false;enter(BROWSE_OPTIONS,"Browse options");return true;
 }
+bool ln_music_browser_row_navigates(uint32_t n){
+    (void)n;return b.here.view==CATEGORIES||b.here.view==GROUPS||b.here.view==PLAYLISTS||
+        b.here.view==ARTIST_ALBUMS||b.here.view==ALBUM_ARTISTS;
+}
 bool ln_music_browser_select(uint32_t n){
     if(b.catalog||b.jumping||b.range||b.activity_scanning||b.resolving||b.exporting||b.expanding||b.status==LN_BROWSER_QUEUE_LOADING)return false;
     b.notice=0;b.saved_message=false;b.here.selected=n;
