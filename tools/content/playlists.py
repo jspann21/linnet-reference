@@ -4,7 +4,7 @@ import struct
 import zlib
 
 from . import media_manager as manager
-from .music import MAX_DATABASE, TRACK, validate_database
+from .music import MAX_DATABASE, track_bytes, validate_database
 from .publish import _exclusive, _plain, _volume_guard, provision_collections
 
 SIZE, SLOTS, CAPACITY = 147456, 16, 1024
@@ -73,9 +73,10 @@ def read(identity):
             raise ValueError('Music library is too large')
         data = path.read_bytes()
         validate_database(data)
+        width = track_bytes(data)
         fields = struct.unpack_from('<14I', data, 8)
         for index in range(fields[2]):
-            at = fields[6] + index * TRACK
+            at = fields[6] + index * width
             strings = []
             for offset in struct.unpack_from('<3I', data, at + 52):
                 start = fields[10] + offset

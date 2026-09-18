@@ -43,9 +43,10 @@ int ln_music_db_open_step(struct ln_music_db *d)
     int r;uint8_t *b=d->buffer;
     if(d->phase==0){
         r=read_bytes(d,0,128);if(r!=1)return r;
-        if(b[0]!='P'||b[1]!='O'||b[2]!='D'||b[3]!='B'||ln_read_le16(b+4)!=0||ln_read_le16(b+6)!=128||
+        if(b[0]!='P'||b[1]!='O'||b[2]!='D'||b[3]!='B'||ln_read_le16(b+4)>1||ln_read_le16(b+6)!=128||
            ln_read_le32(b+8)!=d->size||ln_read_le32(b+12)||ln_crc32(b,124)!=ln_read_le32(b+124))return bad(d,LN_DB_FORMAT);
         for(uint32_t i=96;i<124;i++)if(b[i])return bad(d,LN_DB_FORMAT);
+        d->track_bytes=ln_read_le16(b+4)==1?132u:128u;
         d->tracks=ln_read_le32(b+16);d->groups=ln_read_le32(b+20);d->members=ln_read_le32(b+24);d->searches=ln_read_le32(b+28);
         d->track_offset=ln_read_le32(b+32);d->group_offset=ln_read_le32(b+36);d->member_offset=ln_read_le32(b+40);
         d->search_offset=ln_read_le32(b+44);d->pool_offset=ln_read_le32(b+48);d->pool_bytes=ln_read_le32(b+52);
@@ -53,7 +54,7 @@ int ln_music_db_open_step(struct ln_music_db *d)
         uint32_t cursor=128;
         if(d->tracks>100000u||d->searches<d->tracks||
            d->searches-d->tracks>d->groups||!d->pool_bytes||
-           !section(&cursor,d->track_offset,d->tracks,128,d->size)||
+           !section(&cursor,d->track_offset,d->tracks,d->track_bytes,d->size)||
            !section(&cursor,d->group_offset,d->groups,32,d->size)||
            !section(&cursor,d->member_offset,d->members,4,d->size)||
            !section(&cursor,d->search_offset,d->searches,8,d->size)||
@@ -94,7 +95,7 @@ bool ln_music_db_request(struct ln_music_db *d,enum ln_music_db_request operatio
     if(!d||!d->verified||d->busy||d->error)return false;
     uint32_t offset,width;
     switch(operation){
-    case LN_DB_TRACK:if(index>=d->tracks)return false;offset=d->track_offset;width=128;break;
+    case LN_DB_TRACK:if(index>=d->tracks)return false;offset=d->track_offset;width=d->track_bytes;break;
     case LN_DB_GROUP:if(index>=d->groups)return false;offset=d->group_offset;width=32;break;
     case LN_DB_MEMBER:if(index>=d->members)return false;offset=d->member_offset;width=4;break;
     case LN_DB_ART:if(index>=d->arts)return false;offset=d->art_offset;width=32;break;
@@ -110,6 +111,8 @@ static bool track_record(struct ln_music_db *d)
     t->rate=ln_read_le32(b+40);t->channels=ln_read_le16(b+44);t->bits=ln_read_le16(b+46);t->codec=ln_read_le32(b+48);
     t->title=ln_read_le32(b+52);t->artist=ln_read_le32(b+56);t->album=ln_read_le32(b+60);t->path=ln_read_le32(b+64);t->genre=ln_read_le32(b+68);t->composer=ln_read_le32(b+72);
     t->year=ln_read_le32(b+76);t->number=ln_read_le32(b+80);t->disc=ln_read_le32(b+84);t->art=ln_read_le32(b+88);t->replaygain=(int32_t)ln_read_le32(b+92);copy(t->sha256,b+96,32);
+    t->album_replaygain=d->track_bytes==132?(int32_t)ln_read_le32(b+128):INT32_MIN;
+    if(t->album_replaygain!=INT32_MIN&&(t->album_replaygain< -60*65536||t->album_replaygain>60*65536))return false;
     for(uint32_t i=52;i<=72;i+=4)if(ln_read_le32(b+i)>=d->pool_bytes)return false;
     if(!t->rate||t->rate>384000||!t->channels||t->channels>8||t->data_offset>t->file_bytes||
        t->data_bytes>t->file_bytes-t->data_offset||(t->art!=UINT32_MAX&&t->art>=d->arts))return false;

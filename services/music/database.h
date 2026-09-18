@@ -10,14 +10,14 @@ enum ln_music_db_request { LN_DB_TRACK=1,LN_DB_GROUP,LN_DB_MEMBER,LN_DB_ART,LN_D
 struct ln_music_track {
     uint64_t id,file_bytes,data_offset,data_bytes,frames;
     uint32_t rate,codec,title,artist,album,path,genre,composer,year,number,disc,art;
-    int32_t replaygain;uint16_t channels,bits;uint8_t sha256[32];
+    int32_t replaygain,album_replaygain;uint16_t channels,bits;uint8_t sha256[32];
 };
 struct ln_music_group { uint32_t kind,name,parent,first,count;uint64_t id; };
 struct ln_music_art {uint64_t id;uint32_t path,crc;};
 struct ln_music_db {
     ln_music_db_read_fn read;void *context;struct ln_sha256 hash;
     uint32_t size,generation,tracks,groups,members,searches,arts;
-    uint32_t track_offset,group_offset,member_offset,search_offset,art_offset,pool_offset,pool_bytes;
+    uint32_t track_bytes,track_offset,group_offset,member_offset,search_offset,art_offset,pool_offset,pool_bytes;
     uint32_t cursor,index,read_offset,read_size,low,high,middle,string_offset;
     uint32_t member,search_index,search_track,search_ordinal;
     /* One completed lower bound for prefix in this immutable DB generation.

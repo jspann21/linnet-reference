@@ -100,8 +100,9 @@ def validate(path: Path, database: bytes) -> None:
 
 
 def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, Image.Image] | None = None) -> None:
-    from .music import validate_database
+    from .music import validate_database, track_bytes
     validate_database(database)
+    width = track_bytes(database)
     _, _, _, groups, _, _, tracks_at, groups_at, members_at, _, pool, _, _, art_at = struct.unpack_from('<14I', database, 8)
 
     def text(offset):
@@ -121,7 +122,7 @@ def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, I
         art = 0xffffffff
         for member in range(first, first + count):
             track = struct.unpack_from('<I', database, members_at + member * 4)[0]
-            art = struct.unpack_from('<I', database, tracks_at + track * 128 + 88)[0]
+            art = struct.unpack_from('<I', database, tracks_at + track * width + 88)[0]
             if art != 0xffffffff:
                 break
         if art not in source_ids:

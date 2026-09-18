@@ -108,7 +108,7 @@ def list_items(identity, *, records_by_kind=None):
 
 def _music_metadata(root):
     """Read the prepared metadata once, without opening individual audio files."""
-    from .music import validate_database, MAX_DATABASE, TRACK
+    from .music import validate_database, MAX_DATABASE, track_bytes
     database = root / '.LINNET' / 'LIBRARY.PDB'
     _plain(database, root)
     if not database.is_file():
@@ -118,6 +118,7 @@ def _music_metadata(root):
             return {}
         data = database.read_bytes()
         validate_database(data)
+        width = track_bytes(data)
         fields = struct.unpack_from('<14I', data, 8)
         count, offset, pool = fields[2], fields[6], fields[10]
         strings = {}
@@ -135,19 +136,19 @@ def _music_metadata(root):
                     owners[member] = owner
         result, artwork_paths = {}, {}
         for index in range(count):
-            title, artist, album, location, genre = map(string, struct.unpack_from('<5I', data, offset + index * TRACK + 52))
+            title, artist, album, location, genre = map(string, struct.unpack_from('<5I', data, offset + index * width + 52))
             path = root / location.lstrip('/')
             _plain(path, root)
-            art = struct.unpack_from('<I', data, offset + index * TRACK + 88)[0]
+            art = struct.unpack_from('<I', data, offset + index * width + 88)[0]
             if art < fields[12] and art not in artwork_paths:
                 location = string(struct.unpack_from('<I', data, fields[13] + art * 32 + 8)[0])
                 candidate = root / location.lstrip('/')
                 _plain(candidate, root)
                 artwork_paths[art] = str(candidate) if candidate.is_relative_to(root / '.LINNET' / 'ART') else ''
             artwork = artwork_paths.get(art, '')
-            frames, rate = struct.unpack_from('<QI', data, offset + index * TRACK + 32)
-            track = struct.unpack_from('<I', data, offset + index * TRACK + 80)[0]
-            disc = struct.unpack_from('<I', data, offset + index * TRACK + 84)[0]
+            frames, rate = struct.unpack_from('<QI', data, offset + index * width + 32)
+            track = struct.unpack_from('<I', data, offset + index * width + 80)[0]
+            disc = struct.unpack_from('<I', data, offset + index * width + 84)[0]
             result[str(path.resolve()).casefold()] = dict(title=title, artist=artist, album=album, genre=genre,
                 artwork=artwork, duration=frames / rate if rate else 0, track=track, disc=disc, album_artist=owners.get(index, artist))
         return result
@@ -267,17 +268,18 @@ def _remove(identity, items):
     music_cache = None
     music_sources = [row for row in selected if row['kind'] == 'Music' and row['category'] == 'original']
     if music_sources and str(music_index.resolve()).casefold() not in paths and music_index.is_file():
-        from .music import MAX_DATABASE, TRACK, _stable, validate_database, remove_database_tracks
+        from .music import MAX_DATABASE, track_bytes, _stable, validate_database, remove_database_tracks
         _plain(music_index, root)
         if music_index.stat().st_size > MAX_DATABASE:
             raise ValueError('Music database exceeds supported size')
         music_before = music_index.read_bytes()
         validate_database(music_before)
+        width = track_bytes(music_before)
         fields = struct.unpack_from('<14I', music_before, 8)
         source_ids = {_stable('track:' + Path(row['path']).relative_to(root).as_posix()) for row in music_sources}
         removed_tracks = []
         for index in range(fields[2]):
-            offset = fields[6] + index * TRACK
+            offset = fields[6] + index * width
             track_id = struct.unpack_from('<Q', music_before, offset)[0]
             start = fields[10] + struct.unpack_from('<I', music_before, offset + 64)[0]
             location = music_before[start:music_before.index(b'\0', start)].decode('utf-8')
