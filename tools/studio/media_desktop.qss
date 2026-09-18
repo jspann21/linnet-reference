@@ -4,7 +4,7 @@ QWidget#sidebar { background: #101214; }
 QWidget#sidebar QLabel { color: #c1c9cc; background: transparent; }
 QLabel#brand { font-size: 27px; font-weight: 700; color: white; }
 QLabel#eyebrow { font-size: 10px; font-weight: 600; color: #849296; letter-spacing: 2px; }
-QPushButton#nav { text-align: left; background: transparent; color: #c1c9cc; border: none; border-radius: 9px; padding: 12px 15px; font-size: 14px; }
+QPushButton#nav { text-align: left; background: transparent; color: #c1c9cc; border: none; border-radius: 9px; padding: 8px 15px; font-size: 14px; }
 QPushButton#nav:hover { background: #232a2d; color: white; }
 QPushButton#nav:checked { background: #66d9ef; color: #102b32; font-weight: 600; }
 QFrame#deviceCard { background: #1b2023; border: 1px solid #333e42; border-radius: 13px; }
@@ -83,3 +83,7 @@ QDialog#playlistEditor QFrame#playlistPanel QLabel { background: transparent; }
 QDialog#playlistEditor QLabel#playlistEmpty { color: #718287; padding: 16px; }
 QDialog#playlistEditor QListWidget#playlistTracks { background: white; }
 QDialog#playlistEditor QPushButton#danger:disabled { color: #96a2a6; background: #edf1f2; border-color: #e7edef; }
+
+QListWidget#screenItems { background: white; border: 1px solid #dce3e5; border-radius: 8px; padding: 6px; }
+QListWidget#screenItems::item { min-height: 28px; padding: 4px 8px; color: #202629; }
+QListWidget#screenItems::item:selected { background: #ddf4f8; color: #193d46; }

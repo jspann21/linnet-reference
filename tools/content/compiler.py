@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import tomllib
 from .tsx import ContentError, compile_tsx, COLOR_ROLES
-from .layouts import apply_layout, gate_features
+from .layouts import apply_layout, gate_features, feature_enabled
 
 LAYOUTS = ('default','ipod-photo','graphite','aurora','sunset','blueprint','minimal')
 REFERENCE_WIDTH, REFERENCE_HEIGHT = 220, 176
@@ -100,6 +100,23 @@ def ppm(data):
     if any(value<0 or value>255 for value in pixels): raise ContentError('PPM sample outside 0..255')
     return dict(width=width,height=height,pixels=[rgb565(*pixels[i:i+3]) for i in range(0,len(pixels),3)])
 
+def resolve_features(config, target_manifest=None):
+    features=config.get('features',{})
+    names=('photos','video','files','demo','themes','cover_flow')
+    if not isinstance(features,dict) or any(type(features[key]) is not bool for key in names if key in features):
+        raise ContentError('feature flags must be booleans')
+    features=dict(features)
+    if target_manifest is None:
+        return features
+    capabilities=target_manifest.get('capabilities',{})
+    if not isinstance(capabilities,dict) or any(key not in names or type(value) is not bool for key,value in capabilities.items()):
+        raise ContentError('invalid target capability flags')
+    features['cover_flow']=feature_enabled(features,'cover_flow') and capabilities.get('cover_flow',False)
+    for name,available in capabilities.items():
+        if not available:features[name]=False
+    return features
+
+
 def compile_system(root, output, configpath=None, target_override=None):
     root=Path(root).resolve(); output=Path(output).resolve(); sources={}
     def read(path):
@@ -128,16 +145,7 @@ def compile_system(root, output, configpath=None, target_override=None):
     physical_height=target_manifest.get('lcd_height')
     if type(physical_width) is not int or type(physical_height) is not int or physical_width<1 or physical_height<1:
         raise ContentError('invalid physical display dimensions')
-    features=config.get('features',{})
-    if not isinstance(features,dict) or any(type(features[key]) is not bool for key in ('photos','video','files','demo','themes','cover_flow') if key in features):
-        raise ContentError('feature flags must be booleans')
-    features=dict(features)
-    features["cover_flow"] = features.get("cover_flow", True) and target_manifest.get("capabilities", {}).get("cover_flow", False)
-    capabilities=target_manifest.get('capabilities',{})
-    if not isinstance(capabilities,dict) or any(key not in ('photos','video','files','demo','themes','cover_flow') or type(value) is not bool for key,value in capabilities.items()):
-        raise ContentError('invalid target capability flags')
-    for name,available in capabilities.items():
-        if not available:features[name]=False
+    features=resolve_features(config,target_manifest)
     ui=config.get('ui',{})
     if not isinstance(ui,dict): raise ContentError('ui must be a table')
     if set(ui)-{'theme','apps'}: raise ContentError('unknown UI system setting')

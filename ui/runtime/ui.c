@@ -29,6 +29,53 @@ static void theme_sync(void){
 static uint32_t layout(void){return ln_ui_themes[active_theme].layout;}
 static uint16_t color(uint32_t role){return ln_ui_color(LN_UI_COLOR_TOKEN+role);}
 static bool same(const char*a,const char*b){if(!a||!b)return false;while(*a&&*a==*b){++a;++b;}return *a==*b;}
+/* Stable menu IDs are independent of theme labels and disabled features. */
+static uint8_t menu_order[LN_MENU_GROUPS][16]={{0,1,2,3,9,5,6},{0,1,2,7,9,11,8},{0,1,2,3,4,5,6,7,8,9},{0,1,2,3}};
+static uint8_t menu_counts[LN_MENU_GROUPS]={7,7,10,4};
+uint32_t ln_ui_menu_count(uint32_t group){return group<LN_MENU_GROUPS?menu_counts[group]:0;}
+uint32_t ln_ui_menu_item(uint32_t group,uint32_t row){return group<LN_MENU_GROUPS&&row<menu_counts[group]?menu_order[group][row]:UINT32_MAX;}
+bool ln_ui_menu_load(const uint8_t *data,uint32_t length){
+    if(length!=80||data[0]!='M'||data[1]!='E'||data[2]!='N'||data[3]!='U'||data[4]!=1||data[5]||data[6]||data[7])return false;
+    uint32_t crc=~0u;for(uint32_t i=0;i<76;++i){crc^=data[i];for(uint32_t bit=0;bit<8;++bit)crc=(crc>>1)^((0u-(crc&1u))&0xedb88320u);}
+    uint32_t saved=(uint32_t)data[76]|((uint32_t)data[77]<<8)|((uint32_t)data[78]<<16)|((uint32_t)data[79]<<24);
+    if(~crc!=saved)return false;
+    static const uint8_t limits[]={10,15,10,5};
+    for(uint32_t g=0;g<LN_MENU_GROUPS;++g){const uint8_t *row=data+8+g*17;uint32_t seen=0;
+        if(!row[0]||row[0]>limits[g])return false;
+        for(uint32_t i=0;i<row[0];++i){uint32_t id=row[i+1];if(id>=limits[g]||(seen&(1u<<id)))return false;seen|=1u<<id;}
+        if((g==LN_MENU_HOME&&!(seen&(1u<<6)))||(g==LN_MENU_SETTINGS&&(seen&((1u<<6)|(1u<<9)))!=((1u<<6)|(1u<<9))))return false;
+    }
+    for(uint32_t g=0;g<LN_MENU_GROUPS;++g){menu_counts[g]=data[8+g*17];for(uint32_t i=0;i<menu_counts[g];++i)menu_order[g][i]=data[9+g*17+i];}
+    /* Expand the former Extras entry while preserving existing choices. */
+    uint8_t home[16];uint32_t count=0,seen=0;
+    for(uint32_t i=0;i<menu_counts[LN_MENU_HOME];++i)seen|=1u<<menu_order[LN_MENU_HOME][i];
+    for(uint32_t i=0;i<menu_counts[LN_MENU_HOME];++i){uint8_t id=menu_order[LN_MENU_HOME][i];
+        if(id==8){if(!(seen&(1u<<3)))home[count++]=3;if(!(seen&(1u<<9)))home[count++]=9;}else home[count++]=id;}
+    menu_counts[LN_MENU_HOME]=(uint8_t)count;for(uint32_t i=0;i<count;++i)menu_order[LN_MENU_HOME][i]=home[i];
+    return true;
+}
+static const char *const menu_scenes[]={"linnet.system.home","linnet.system.music","linnet.system.settings","linnet.system.extras"};
+static const char *const menu_targets[LN_MENU_GROUPS][16]={
+    {"linnet.system.music","linnet.system.cover-flow","linnet.system.photos","linnet.system.videos","linnet.system.files","linnet.system.now-playing","linnet.system.settings","local.example.notes","linnet.system.extras","linnet.system.notes"},
+    {0},
+    {"linnet.system.display","linnet.system.themes","linnet.system.clock","linnet.system.battery","linnet.system.shutdown","linnet.system.sleep-timer","@sync","linnet.system.update","linnet.system.about","linnet.system.home"},
+    {"linnet.system.clock","linnet.system.notes","linnet.system.videos","linnet.system.files","local.example.notes"}};
+static uint32_t menu_group(const struct ln_ui_node *n){
+    if(!n||n->kind!=LN_UI_MENU||!n->targets)return UINT32_MAX;
+    for(uint32_t scene=0;scene<ln_ui_scene_count;++scene){const struct ln_ui_scene *s=&ln_ui_scenes[scene];
+        for(uint32_t i=0;i<s->count;++i)if(n==&s->nodes[i]){for(uint32_t g=0;g<LN_MENU_GROUPS;++g)if(same(s->id,menu_scenes[g]))return g;return UINT32_MAX;}}
+    return UINT32_MAX;
+}
+static uint32_t menu_source(const struct ln_ui_node *n,uint32_t row){
+    uint32_t group=menu_group(n);if(group==UINT32_MAX)return row;
+    for(uint32_t i=0;i<menu_counts[group];++i){const char *id=menu_targets[group][menu_order[group][i]];
+        for(uint32_t j=0;j<n->item_count;++j){uint32_t target=n->targets[j];const char *actual=target==LINNET_UI_ACTION_SYNC?"@sync":target<ln_ui_scene_count?ln_ui_scenes[target].id:"";
+            if(same(id,actual)){if(!row)return j;--row;break;}}}
+    return UINT32_MAX;
+}
+static uint32_t menu_total(const struct ln_ui_node *n,uint32_t fallback){
+    if(menu_group(n)==UINT32_MAX)return fallback;uint32_t count=0;while(menu_source(n,count)!=UINT32_MAX)++count;return count;
+}
 static bool theme_choices(const struct ln_ui_node*n){return n&&same(n->text,"Theme choices");}
 static bool apple_style(void){return (ln_ui_themes[active_theme].flags&(LN_UI_THEME_MONOCHROME|LN_UI_THEME_APPLE_PHOTO))!=0;}
 __attribute__((weak)) const char *ln_display_settings_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){(void)n;(void)item;return fallback;}
@@ -360,7 +407,7 @@ static uint32_t fraction(uint32_t value,uint32_t scale,uint32_t denominator){
     for(uint32_t i=0;i<scale;++i){if(remainder>=denominator-value){remainder-=denominator-value;++result;}else remainder+=value;}return result;
 }
 static void number(char out[11],uint32_t n){char rev[10];uint32_t len=0;do{rev[len++]=(char)('0'+n%10u);n/=10u;}while(n&&len<10u);for(uint32_t i=0;i<len;++i)out[i]=rev[len-i-1u];out[len]=0;}
-static uint32_t total(const struct ln_ui_node*n){return theme_choices(n)?ln_ui_theme_count:ln_ui_dynamic_count(n,n->count?n->count:n->item_count);}
+static uint32_t total(const struct ln_ui_node*n){return theme_choices(n)?ln_ui_theme_count:ln_ui_dynamic_count(n,menu_total(n,n->count?n->count:n->item_count));}
 static bool baked_geometry(const struct ln_ui_node*n){
     uint32_t f=n->flags;
     return n->kind>=LN_UI_VIRTUAL_LIST&&n->kind<=LN_UI_GRID&&
@@ -581,7 +628,7 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
 
             if(chosen&&(ln_ui_themes[active_theme].flags&LN_UI_THEME_APPLE_PHOTO))gradient(p,r,mix(color(LN_UI_SELECTION_BG),color(LN_UI_BACKGROUND),210),color(LN_UI_SELECTION_BG));
             struct rect saved=p->clip;p->clip=intersect(saved,r);char num[11],fallback_label[144];const char*label=0;
-            if(n->items&&i<n->item_count)label=n->items[i];label=theme_choices(n)?ln_ui_themes[i].name:ln_ui_clock_text(n,i,ln_display_settings_text(n,i,ln_ui_dynamic_text(n,i,label)));if(same(n->text,"Clock settings")&&i==1u)label=ln_ui_clock_12()?"Time format: 12-hour":"Time format: 24-hour";if(!label){number(num,i+1u);label=num;
+            uint32_t source=menu_source(n,i);if(n->items&&source<n->item_count)label=n->items[source];label=theme_choices(n)?ln_ui_themes[i].name:ln_ui_clock_text(n,i,ln_display_settings_text(n,i,ln_ui_dynamic_text(n,i,label)));if(same(n->text,"Clock settings")&&i==1u)label=ln_ui_clock_12()?"Time format: 12-hour":"Time format: 24-hour";if(!label){number(num,i+1u);label=num;
                 if(node_text&&n->kind!=LN_UI_GRID){uint32_t len=0;while(len<128u&&node_text[len]){fallback_label[len]=node_text[len];++len;}
                     fallback_label[len++]=' ';for(uint32_t digit=0;num[digit]&&len<143u;++digit)fallback_label[len++]=num[digit];fallback_label[len]=0;label=fallback_label;}
             }
@@ -592,7 +639,7 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
                 image_asset(p,&thumbnail,a);if(layout()!=LN_UI_LAYOUT_IPOD_PHOTO)fitted_text(p,r.x+3,r.y+size+5,label,ink,r.w-6);
             }else {
                 bool mark=theme_choices(n)&&i==active_theme;
-                bool arrow=apple_style()&&n->targets&&i<n->item_count&&n->targets[i]<ln_ui_scene_count;
+                bool arrow=apple_style()&&n->targets&&source<n->item_count&&n->targets[source]<ln_ui_scene_count;
                 int32_t padding=(int32_t)ln_ui_themes[active_theme].padding;
                 if(layout()==LN_UI_LAYOUT_SUNSET&&n->kind!=LN_UI_VIRTUAL_LIST){char ordinal[11];number(ordinal,i+1u);text(p,r.x+2,r.y+max(0,(row_h-(int32_t)ln_ui_font.height)/2),ordinal,ink);padding=max(28,text_width(ordinal)+10);}
                 if(cols==2u){struct ln_ui_node tile=*n;tile.x=r.x+7;tile.y=r.y+7;tile.w=r.w-14;tile.h=r.h-12;tile.flags=32u;text_block(p,&tile,label,ink);}
@@ -703,7 +750,7 @@ bool ln_ui_input(struct ln_ui_state*s,uint32_t kind,int32_t value){if(!s)return 
     if(kind==2u&&!s->hold&&same(ln_ui_scenes[s->scene].id,"linnet.system.clock")&&((uint32_t)value&~s->buttons&16u)){
         s->buttons=(uint32_t)value;if(s->selected==1u)ln_ui_clock_toggle();else (void)ln_ui_show(s,"linnet.system.clock-edit");s->dirty|=1u;return true;
     }
-    if(kind==2u){uint32_t pressed=(uint32_t)value&~s->buttons;s->buttons=(uint32_t)value;if(s->hold)return false;if(pressed&1u){if(same(ln_ui_scenes[s->scene].id,"linnet.system.themes")||same(ln_ui_scenes[s->scene].id,"linnet.system.clock")||same(ln_ui_scenes[s->scene].id,"linnet.system.update"))return ln_ui_show(s,"linnet.system.settings");return change_scene(s,0);}if(pressed&4u){for(uint32_t i=s->scene+1u;i<ln_ui_scene_count&&i<32u;++i)if(ln_ui_enabled_scenes&(1u<<i))return change_scene(s,i)||(s->dirty&1u);return false;}if(pressed&8u){for(uint32_t i=s->scene;i;--i)if(ln_ui_enabled_scenes&(1u<<(i-1u)))return change_scene(s,i-1u)||(s->dirty&1u);return false;}if(pressed&16u){const struct ln_ui_node*n=focus(s);if(theme_choices(n)&&s->selected<ln_ui_theme_count){ln_ui_theme_changed(s->selected);theme_sync();s->dirty|=1u;return true;}if(n&&n->targets&&s->selected<n->item_count){uint32_t target=n->targets[s->selected];if(target==LINNET_UI_ACTION_SYNC){s->action=target;return false;}return change_scene(s,target);}}return false;}
+    if(kind==2u){uint32_t pressed=(uint32_t)value&~s->buttons;s->buttons=(uint32_t)value;if(s->hold)return false;if(pressed&1u){if(same(ln_ui_scenes[s->scene].id,"linnet.system.themes")||same(ln_ui_scenes[s->scene].id,"linnet.system.clock")||same(ln_ui_scenes[s->scene].id,"linnet.system.update"))return ln_ui_show(s,"linnet.system.settings");return change_scene(s,0);}if(pressed&4u){for(uint32_t i=s->scene+1u;i<ln_ui_scene_count&&i<32u;++i)if(ln_ui_enabled_scenes&(1u<<i))return change_scene(s,i)||(s->dirty&1u);return false;}if(pressed&8u){for(uint32_t i=s->scene;i;--i)if(ln_ui_enabled_scenes&(1u<<(i-1u)))return change_scene(s,i-1u)||(s->dirty&1u);return false;}if(pressed&16u){const struct ln_ui_node*n=focus(s);if(theme_choices(n)&&s->selected<ln_ui_theme_count){ln_ui_theme_changed(s->selected);theme_sync();s->dirty|=1u;return true;}uint32_t source=n?menu_source(n,s->selected):UINT32_MAX;if(n&&n->targets&&source<n->item_count){uint32_t target=n->targets[source];if(target==LINNET_UI_ACTION_SYNC){s->action=target;return false;}return change_scene(s,target);}}return false;}
     if(kind!=1u||s->hold||!value)return false;const struct ln_ui_node*n=focus(s);uint32_t count=n?total(n):0;if(!count)return false;
     int64_t next=(int64_t)s->selected+value;if(next<0)next=0;if((uint64_t)next>=count)next=count-1u;if((uint32_t)next==s->selected)return false;s->selected=(uint32_t)next;s->selections[s->scene]=s->selected;s->dirty|=2u;return true;
 }
@@ -865,7 +912,8 @@ static bool text_save(char out[256],const char *in){
     out[255]=0;return false;
 }
 static const char *content_text(const struct ln_ui_node *n,uint32_t item){
-    const char *fallback=item==UINT32_MAX?n->text:n->items&&item<n->item_count?n->items[item]:0;
+    uint32_t source=item==UINT32_MAX?item:menu_source(n,item);
+    const char *fallback=item==UINT32_MAX?n->text:n->items&&source<n->item_count?n->items[source]:0;
     return ln_display_settings_text(n,item,ln_ui_dynamic_text(n,item,fallback));
 }
 static bool content_layout(const struct ln_ui_state*s){
@@ -922,7 +970,7 @@ uint32_t ln_ui_scroll_tick(struct ln_ui_state*s,uint32_t now){
         if(n->flags&2u)continue;uint32_t item=UINT32_MAX;int32_t width=n->w;
         if(i==c->focus_node&&(n->kind==LN_UI_MENU||n->kind==LN_UI_VIRTUAL_LIST)){
             if(s->selected>=total(n))continue;item=s->selected;
-            bool arrow=n->targets&&item<n->item_count&&n->targets[item]<ln_ui_scene_count;
+            uint32_t source=menu_source(n,item);bool arrow=n->targets&&source<n->item_count&&n->targets[source]<ln_ui_scene_count;
             width-=(int32_t)ln_ui_themes[active_theme].padding+6+(theme_choices(n)||arrow?12:0);
         }else if(!scrolling_field(n))continue;
         const char*label=theme_choices(n)&&item<ln_ui_theme_count?ln_ui_themes[item].name:

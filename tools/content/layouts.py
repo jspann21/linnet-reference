@@ -83,15 +83,7 @@ def apply_layout(scenes,theme,compact=False):
             menu=next(n for n in nodes if n['kind']==7);place(menu,10,126,200,26)
         if scene['id']=='linnet.system.home':
             menu=next(n for n in nodes if n['kind']==7)
-            if style=='ipod-photo':
-                # Stock grouping: extra applications live under Extras.
-                lookup=dict(zip(menu['items'],menu['targets']))
-                extras=next((i for i,s in enumerate(result) if s['id']=='linnet.system.extras'),None)
-                if extras is not None:
-                    menu['items']=['Music','Photos','Extras','Settings','Now Playing']
-                    menu['targets']=[lookup['Music'],lookup['Photos'],extras,lookup['Settings'],lookup['Now Playing']]
-                    menu['count']=menu['item_count']=5
-            elif style=='blueprint':place(menu,8,8,204,138)
+            if style=='blueprint':place(menu,8,8,204,138)
         if scene['id']=='linnet.system.themes':
             listing=next(n for n in nodes if n['kind']==6)
             foot=next(n for n in nodes if n['kind']==3)
@@ -325,6 +317,10 @@ def refine_ipod_photo(scene,theme):
     scene['count']=len(nodes)
 
 
+def feature_enabled(features, name):
+    return features.get(name, name != 'demo')
+
+
 def gate_features(scenes,features):
     """Keep stable scene slots while removing links into disabled services."""
     groups={
@@ -335,7 +331,7 @@ def gate_features(scenes,features):
         'video':{'linnet.system.videos','linnet.system.video-player','linnet.system.video-controls'},
         'themes':{'linnet.system.themes'},
     }
-    disabled={sid for feature,ids in groups.items() if not features.get(feature,feature!='demo') for sid in ids}
+    disabled={sid for feature,ids in groups.items() if not feature_enabled(features,feature) for sid in ids}
     enabled=[scene['id'] not in disabled for scene in scenes]
     for scene in scenes:
         for node in scene['nodes']:

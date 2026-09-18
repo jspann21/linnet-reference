@@ -15,13 +15,13 @@ from PySide6.QtGui import (QColor, QFont, QIcon, QImage, QImageReader, QKeySeque
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox,
     QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QListView, QMainWindow, QProgressBar, QPushButton, QScrollArea,
+    QLineEdit, QListView, QListWidget, QListWidgetItem, QMainWindow, QProgressBar, QPushButton, QScrollArea,
     QStackedWidget, QStyledItemDelegate, QStyle,
     QTableView, QTextEdit, QVBoxLayout, QWidget, QStyleOptionButton, QSizePolicy)
 
 from tools.content import media_manager as media, media_library, media_status, media_trash
 from tools.content.media_manager import format_size as size
-from tools.studio import installer
+from tools.studio import installer, screen_settings
 
 
 ACCENT = '#66d9ef'
@@ -427,18 +427,18 @@ class MediaWindow(QMainWindow):
         shell = QWidget(); self.setCentralWidget(shell)
         main = box(shell, horizontal=True, spacing=0)
         sidebar = QWidget(); sidebar.setObjectName('sidebar'); sidebar.setFixedWidth(224)
-        side = box(sidebar, margins=(18, 28, 18, 20), spacing=7)
+        side = box(sidebar, margins=(18, 20, 18, 16), spacing=6)
         brand = box(horizontal=True, spacing=11)
         mark = label(); mark.setPixmap(boot_artwork((594, 180, 310, 445), 38, 56))
         wordmark = label(); wordmark.setPixmap(boot_artwork((548, 648, 442, 64), 132, 20))
         brand.addWidget(mark); brand.addWidget(wordmark); brand.addStretch()
-        side.addLayout(brand); side.addSpacing(30)
+        side.addLayout(brand); side.addSpacing(18)
         side.addWidget(label('LIBRARY', 'eyebrow')); side.addSpacing(7)
         self.navigation = {}
         for name, glyph in [('Music', 'music'), ('Photos', 'photos'), ('Videos', 'videos'), ('Notes', 'notes'),
-                            ('Preparation', 'prepare'), ('iPod setup', 'setup'), ('Trash', 'trash'), ('Settings', 'settings')]:
+                            ('Preparation', 'prepare'), ('Screens', 'settings'), ('iPod setup', 'setup'), ('Trash', 'trash'), ('Settings', 'settings')]:
             if name == 'Preparation':
-                side.addSpacing(27); side.addWidget(label('DEVICE', 'eyebrow')); side.addSpacing(7)
+                side.addSpacing(18); side.addWidget(label('DEVICE', 'eyebrow')); side.addSpacing(7)
             item = button(name, lambda _=False, n=name: self.navigate(n), 'nav')
             item.setIcon(icon(glyph, '#a8bbc1')); item.setIconSize(QSize(19, 19)); item.setCheckable(True)
             item.toggled.connect(lambda checked, glyph=glyph, item=item:
@@ -459,6 +459,7 @@ class MediaWindow(QMainWindow):
         self.library = self.build_library(); self.stack.addWidget(self.library)
         self.preparation = self.build_preparation(); self.stack.addWidget(self.preparation)
         self.setup = self.build_setup(); self.stack.addWidget(self.setup)
+        self.screens = self.build_screens(); self.stack.addWidget(self.screens)
         self.preferences = self.build_settings(); self.stack.addWidget(self.preferences)
         activity = QFrame(); activity.setObjectName('activity'); foot = box(activity, margins=(28, 10, 28, 12), spacing=7)
         self.progress = QProgressBar(); self.progress.setTextVisible(False); self.progress.hide(); foot.addWidget(self.progress)
@@ -588,6 +589,100 @@ class MediaWindow(QMainWindow):
         outer.addWidget(footer)
         return page
 
+    def build_screens(self):
+        page, layout = self.scroll_page()
+        self.heading(layout, 'Screens', 'Choose what appears on your iPod and arrange it in your preferred order.')
+        self.screen_state = screen_settings.defaults()
+        self.screen_loaded_for = None
+        self.screen_picker = ComboBox(); self.screen_picker.addItems(['Home', 'Music', 'Settings'])
+        self.screen_picker.currentTextChanged.connect(self.render_screen_items)
+        layout.addWidget(self.screen_picker)
+        layout.addWidget(label('Check items to include them. Drag to reorder, or use the move buttons.', 'muted', True))
+        self.screen_items = QListWidget(); self.screen_items.setObjectName('screenItems'); self.screen_items.setMinimumHeight(350)
+        self.screen_items.setDragDropMode(QAbstractItemView.InternalMove)
+        self.screen_items.setDefaultDropAction(Qt.MoveAction)
+        self.screen_items.itemChanged.connect(self.screen_items_changed)
+        self.screen_items.model().rowsMoved.connect(self.screen_items_changed)
+        layout.addWidget(self.screen_items)
+        self.screen_unavailable = label('', 'muted', True); layout.addWidget(self.screen_unavailable)
+        self.screen_hint = label('', 'muted', True); layout.addWidget(self.screen_hint)
+        self.screen_items.currentItemChanged.connect(self.screen_item_hint)
+        controls = box(horizontal=True)
+        controls.addWidget(button('Move up', lambda: self.move_screen_item(-1)))
+        controls.addWidget(button('Move down', lambda: self.move_screen_item(1)))
+        controls.addStretch()
+        controls.addWidget(button('Reset this screen', self.reset_screen))
+        layout.addLayout(controls)
+        self.screen_status = label('Connect an iPod in Disk Mode to save screen settings.', 'muted', True)
+        layout.addWidget(self.screen_status)
+        self.screen_save = button('Save to iPod', self.save_screens, 'primary')
+        layout.addWidget(self.screen_save)
+        self.render_screen_items()
+        return page
+
+    def render_screen_items(self, *_):
+        name = self.screen_picker.currentText()
+        labels = screen_settings.SCREENS[name]
+        selected = self.screen_state[name]
+        available, unavailable = screen_settings.item_availability(name, self.identity)
+        self.screen_unavailable.setText('Not available on this device: ' + ', '.join(labels[i] for i in unavailable))
+        self.screen_unavailable.setVisible(bool(unavailable))
+        order = [i for i in selected if i in available] + [i for i in available if i not in selected]
+        self.screen_items.blockSignals(True); self.screen_items.clear()
+        for i in order:
+            item = QListWidgetItem(labels[i]); item.setData(Qt.UserRole, i)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled)
+            item.setCheckState(Qt.Checked if i in selected else Qt.Unchecked)
+            if i in screen_settings.REQUIRED.get(name, set()):
+                item.setFlags(item.flags() & ~Qt.ItemIsUserCheckable)
+                item.setText(labels[i] + ' (always included)')
+                item.setToolTip('Always available so you can reach settings and USB access.')
+            elif labels[i] in screen_settings.HINTS:
+                item.setToolTip(screen_settings.HINTS[labels[i]])
+            self.screen_items.addItem(item)
+        self.screen_items.blockSignals(False)
+        self.screen_items.setCurrentRow(0)
+
+    def screen_items_changed(self, *_):
+        name = self.screen_picker.currentText()
+        selected = [self.screen_items.item(i).data(Qt.UserRole) for i in range(self.screen_items.count())
+                    if self.screen_items.item(i).checkState() == Qt.Checked]
+        self.screen_state[name] = selected
+        self.screen_status.setText('Unsaved changes. Save to iPod, then eject safely to apply on startup.'
+                                   if all(self.screen_state.values()) else 'Select at least one item on each screen before saving.')
+        self.update_controls()
+
+    def screen_item_hint(self, item, *_):
+        self.screen_hint.setText(item.toolTip() if item else '')
+
+    def move_screen_item(self, direction):
+        row = self.screen_items.currentRow(); target = row + direction
+        if row < 0 or not 0 <= target < self.screen_items.count():
+            return
+        item = self.screen_items.takeItem(row); self.screen_items.insertItem(target, item)
+        self.screen_items.setCurrentRow(target); self.screen_items_changed()
+
+    def reset_screen(self):
+        name = self.screen_picker.currentText()
+        self.screen_state[name] = screen_settings.defaults(self.identity)[name]
+        self.render_screen_items(); self.screen_items_changed()
+
+    def load_screens(self):
+        if self.identity and not self.busy and self.screen_loaded_for != self.identity['root']:
+            identity = self.identity
+            self.work('screens', lambda: screen_settings.read(identity), 'Reading screen settings…')
+
+    def save_screens(self):
+        if not self.identity or self.busy:
+            return
+        state = {name: list(rows) for name, rows in self.screen_state.items()}
+        try:
+            screen_settings.encode(state)
+        except ValueError as error:
+            self.show_error(str(error)); return
+        identity = self.identity
+        self.work('save_screens', lambda: screen_settings.save(identity, state), 'Saving screen settings…')
+
     def build_setup(self):
         page, layout = self.scroll_page()
         self.heading(layout, 'iPod setup', 'Choose your startup software and how your iPod starts.')
@@ -642,6 +737,8 @@ class MediaWindow(QMainWindow):
                 self.work('trash', lambda: media_trash.removals(self.identity), 'Reading Trash…')
         elif page == 'Preparation':
             self.stack.setCurrentWidget(self.preparation)
+        elif page == 'Screens':
+            self.stack.setCurrentWidget(self.screens); self.load_screens()
         elif page == 'iPod setup':
             self.stack.setCurrentWidget(self.setup)
             if self.identity and not self.busy and self.review is None:
@@ -903,12 +1000,18 @@ class MediaWindow(QMainWindow):
             if tag == 'save_playlists':
                 self.edit_playlists(self.playlist_draft)
             return
+        if tag == 'screens':
+            self.screen_state = result; self.screen_loaded_for = self.identity['root']; self.render_screen_items()
+            self.screen_status.setText('Loaded from iPod. Changes apply after saving and restarting Linnet.'); self.update_controls(); return
+        if tag == 'save_screens':
+            self.screen_status.setText('Saved to iPod. Eject safely to apply on startup.'); return
         if tag == 'playlists':
             self.show_progress('Playlists loaded.'); self.edit_playlists(result); return
         if tag == 'save_playlists':
             self.show_progress('Playlists saved to iPod. Eject safely when finished.'); return
         if tag == 'devices':
             if not result:
+                self.screen_loaded_for = None
                 self.identity = None; self.rows = []; self.inventory = None; self.review = None
                 self.device_name.setText('No iPod connected'); self.device_info.setText('Connect in Disk Mode'); self.render_library()
                 self.update_controls()
@@ -929,6 +1032,8 @@ class MediaWindow(QMainWindow):
             self.identity, self.inventory, self.rows, self.readiness = result
             self.review = None; self.notice.hide(); self.update_device(); self.update_filters(); self.update_preparation(); self.render_library()
             self.show_progress('Ready. Eject safely when you’re finished.')
+            if self.page == 'Screens':
+                self.load_screens()
             if self.page == 'iPod setup':
                 self.work('setup', lambda: installer.assess(self.identity), 'Checking installed software…')
             elif self.page == 'Trash':
@@ -951,6 +1056,7 @@ class MediaWindow(QMainWindow):
                 self.prep_results.setPlainText(result['summary']); self.prep_results.show(); self.navigate('Preparation')
             self.refresh()
         elif tag == 'eject':
+            self.screen_loaded_for = None
             self.identity = self.inventory = self.review = None; self.rows = []; self.trash_rows = []
             self.device_name.setText('Safely ejected'); self.device_info.setText('You can disconnect your iPod.'); self.capacity.setValue(0)
             self.render_library(); self.show_progress('Your iPod is safe to disconnect.')
@@ -999,6 +1105,10 @@ class MediaWindow(QMainWindow):
 
     def update_controls(self):
         ready = self.identity is not None and not self.busy
+        self.screens.setEnabled(not self.busy)
+        self.screen_save.setEnabled(ready and all(self.screen_state.values()))
+        self.screen_items.setEnabled(not self.busy)
+        self.screen_picker.setEnabled(not self.busy)
         for item in (self.eject_button, self.add_button, self.playlists_button, self.sync_button, self.choose_videos_button, self.queue_remove):
             item.setEnabled(ready)
         self.prepare_button.setEnabled(ready and self.inventory is not None)

@@ -77,7 +77,7 @@ bool ln_notes_input(struct ln_ui_state*s,uint32_t kind,int32_t value){
         if(reading){
             if(pending){ln_storage_media_cancel(generation);discard=true;}else phase=0;
             reading=false;lines=cache_count=0;s->selected=selected;++revision;ln_ui_refresh(s);
-        }else{ln_notes_close();(void)ln_ui_show(s,"linnet.system.extras");}
+        }else{ln_notes_close();(void)ln_ui_show(s,"linnet.system.home");}
     }else if(pressed&(4u|8u)){
         uint32_t total=ln_notes_count();
         if((pressed&4u)&&s->selected+1u<total)++s->selected;

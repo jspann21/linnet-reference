@@ -12,7 +12,11 @@ static char shutdown_label[2][32];
 static uint32_t choice=4,revision,record_revision,battery_capacity=1200;
 static uint32_t theme_index=UINT32_MAX,theme_revision;
 static bool theme_loaded,theme_dirty,theme_available;
-bool ln_display_settings_boot_ready(void){return theme_loaded;}
+static bool menus_loaded;
+static uint32_t menus_phase;
+static uint8_t menus_data[80];
+static struct ln_fat32_file menus_file;
+bool ln_display_settings_boot_ready(void){return theme_loaded&&menus_loaded;}
 static bool step_busy;
 static char battery_label[25];
 static char update_labels[5][32];
@@ -22,7 +26,7 @@ static bool update_known;
 static bool loaded,dirty,clock_12;
 static uint8_t photo_resume[16];
 static uint32_t video_resume[2];
-void ln_display_settings_init(void){shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;video_resume[0]=video_resume[1]=0;revision=record_revision=0;loaded=dirty=false;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;}
+void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;video_resume[0]=video_resume[1]=0;revision=record_revision=0;loaded=dirty=false;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;}
 bool ln_display_clock_12(void){return clock_12;}
 void ln_display_clock_toggle(void){clock_12=!clock_12;dirty=true;++revision;++record_revision;}
 uint32_t ln_display_backlight_timeout_us(void){return seconds[choice]*1000000u;}
@@ -213,6 +217,16 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
     if(result<0){theme_available=false;theme_dirty=false;++revision;}
     else if(result==1&&snapshot_revision==theme_revision){theme_dirty=false;++revision;}
 }
+static void menus_step(void){
+    if(menus_loaded||!ln_storage_mounted())return;
+    const uint32_t generation=0x4d454e55u;int result;uint32_t transferred=0;
+    if(menus_phase==0){result=ln_storage_media_open("/.LINNET/MENUS.BIN",generation);if(!result)return;if(result<0){menus_loaded=true;return;}menus_phase=1;return;}
+    if(menus_phase==1){result=ln_storage_media_poll_deferred(generation,&menus_file,0);if(!result)return;if(result<0||menus_file.size!=sizeof menus_data){menus_loaded=true;return;}menus_phase=2;}
+    if(menus_phase==2){result=ln_storage_media_read(&menus_file,0,menus_data,sizeof menus_data,generation);if(!result)return;if(result<0){menus_loaded=true;return;}menus_phase=3;return;}
+    result=ln_storage_media_poll_deferred(generation,0,&transferred);if(!result)return;
+    if(result>0&&transferred==sizeof menus_data)(void)ln_ui_menu_load(menus_data,sizeof menus_data);
+    menus_loaded=true;++revision;
+}
 static void settings_work(bool may_write,bool presented,uint32_t presented_revision,bool flush){
     if(!may_write||((loaded&&!dirty)&&(theme_loaded&&!theme_dirty))||ln_storage_busy()||!ln_storage_mounted())return;
     /* Once loading is complete, a theme waiting for its first frame must not
@@ -235,7 +249,7 @@ static void settings_work(bool may_write,bool presented,uint32_t presented_revis
 }
 static void settings_step(bool may_write,bool presented,uint32_t presented_revision,bool flush){
     if(step_busy)return;
-    step_busy=true;settings_work(may_write,presented,presented_revision,flush);step_busy=false;
+    step_busy=true;if(may_write)menus_step();settings_work(may_write,presented,presented_revision,flush);step_busy=false;
 }
 void ln_display_settings_step_ready(bool may_write,bool theme_presented,uint32_t presented_revision){
     settings_step(may_write,theme_presented,presented_revision,false);

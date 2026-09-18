@@ -4,8 +4,8 @@ export default function Scene() {
 <Screen>
   <StatusBar x={0} y={0} w={220} h={20} text="Linnet" bg="theme.panel" deps={16} />
   <Menu x={4} y={24} w={212} h={148} focus={true}
-    items={['Music','Cover Flow','Photos','Videos','Files','Now Playing','Settings','UI Demo']}
-    targets={['linnet.system.music','linnet.system.cover-flow','linnet.system.photos','linnet.system.videos','linnet.system.files','linnet.system.now-playing','linnet.system.settings','local.example.notes']} />
+    items={['Music','Cover Flow','Photos','Videos','Files','Now Playing','Settings','UI Demo','Notes']}
+    targets={['linnet.system.music','linnet.system.cover-flow','linnet.system.photos','linnet.system.videos','linnet.system.files','linnet.system.now-playing','linnet.system.settings','local.example.notes','linnet.system.notes']} />
 </Screen>
   );
 }
