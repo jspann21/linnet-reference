@@ -9,7 +9,7 @@ import sys
 import threading
 
 from PySide6.QtCore import (QAbstractTableModel, QModelIndex, QObject, QRectF, QSize, QPointF,
-                           Qt, QTimer, Signal, Slot, QSettings, QBuffer, QIODevice)
+                           Qt, QTimer, Signal, Slot, QSettings, QBuffer, QIODevice, QLoggingCategory)
 from PySide6.QtGui import (QColor, QFont, QIcon, QImage, QImageReader, QKeySequence, QPalette,
                           QLinearGradient, QPainter, QPainterPath, QPixmap, QShortcut, QPen)
 from PySide6.QtSvg import QSvgRenderer
@@ -1261,6 +1261,9 @@ class MediaWindow(QMainWindow):
 
 
 def launch():
+    # Qt still decodes photos with malformed ICC metadata; avoid repeating
+    # profile diagnostics as their previews enter and leave the artwork cache.
+    QLoggingCategory.setFilterRules('qt.gui.icc.warning=false')
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setStyle('Fusion'); app.setFont(QFont(UI_FONT, 10))
     window = MediaWindow(); window.show()
