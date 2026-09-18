@@ -773,8 +773,10 @@ void ln_runtime_step(void){
         else if(scene_is("linnet.system.now-playing")||scene_is("linnet.system.music-options")||scene_is("linnet.system.music-sound")||scene_is("linnet.system.music-queue")||scene_is("linnet.system.music-queue-actions")){ln_ui_refresh(shell);dirty=true;}
         music_revision=revision;music_phase=music.phase;music_generation=music.generation;
     }
-    if(scene_is("linnet.system.now-playing")&&music.phase==LN_PLAYER_PLAY&&(int32_t)(now-music_progress_at)>=0){
-        shell->dirty|=8u;dirty=true;music_progress_at=now+250000u;
+    /* Elapsed time stays valid after long periods away from playback. */
+    if(scene_is("linnet.system.now-playing")&&(music.phase==LN_PLAYER_PLAY||music.phase==LN_PLAYER_DRAIN)&&
+       (uint32_t)(now-music_progress_at)>=250000u){
+        shell->dirty|=8u;dirty=true;music_progress_at=now;
     }
     }
 #endif
