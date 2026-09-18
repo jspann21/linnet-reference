@@ -775,17 +775,22 @@ def multi_rect_diff(
 
     pair_columns = W // 2
     changed = set()
-    # Only tile membership is needed here. Compare each tile row as one
-    # byte slice and stop at its first change; tightening below remains exact.
+    # Combine changed bits across each tile band with bulk integer operations,
+    # then inspect one mask per tile instead of slicing every tile row.
+    tile_mask = (1 << (min(tile_pairs, pair_columns) * 32)) - 1
     for y in range(0, H, tile_rows):
+        difference = 0
+        for row in range(y, min(H, y + tile_rows)):
+            offset = row * W * 2
+            end = offset + pair_columns * 4
+            difference |= (int.from_bytes(prev[offset:end], "little") ^
+                           int.from_bytes(cur[offset:end], "little"))
         for pair in range(0, pair_columns, tile_pairs):
-            start = pair * 4
-            end = min(pair_columns, pair + tile_pairs) * 4
-            for row in range(y, min(H, y + tile_rows)):
-                offset = row * W * 2
-                if prev[offset + start:offset + end] != cur[offset + start:offset + end]:
-                    changed.add((pair // tile_pairs, y // tile_rows))
-                    break
+            if difference & tile_mask:
+                changed.add((pair // tile_pairs, y // tile_rows))
+            difference >>= tile_pairs * 32
+            if not difference:
+                break
     if not changed:
         return []
 
