@@ -282,14 +282,20 @@ def inspect(path, *, verify_payloads=True):
                 if _title(value) != value:
                     raise ValueError('noncanonical PIMG title')
             return value
-        def record(offset, length):
-            data = read(offset, length)
-            if _crc(data[:-4]) != struct.unpack_from('<I', data, length-4)[0]:
-                raise ValueError('PIMG record CRC mismatch')
-            return data
+        def records(offset, count, length):
+            # Each table retains at most 64 KiB while photo and level records
+            # are consumed together, avoiding a seek for every small record.
+            batch = 65536 // length
+            for first in range(0, count, batch):
+                block = read(offset + first*length, min(batch, count-first)*length)
+                for start in range(0, len(block), length):
+                    data = block[start:start+length]
+                    if _crc(data[:-4]) != struct.unpack_from('<I', data, length-4)[0]:
+                        raise ValueError('PIMG record CRC mismatch')
+                    yield data
         intervals, count, album_titles = [], 0, []
-        for index in range(ac):
-            title, length, first, photos, parent, r0, r1 = struct.unpack('<7I', record(ao+index*ALBUM, ALBUM)[:-4])
+        for index, data in enumerate(records(ao, ac, ALBUM)):
+            title, length, first, photos, parent, r0, r1 = struct.unpack('<7I', data[:-4])
             if r0 or r1 or first != count or photos > pc-count or parent != (NO_INDEX if index == 0 else parent) or (index and parent >= index):
                 raise ValueError('invalid PIMG album ordering/range')
             intervals.append((first, photos))
@@ -298,8 +304,10 @@ def inspect(path, *, verify_payloads=True):
         if count != pc:
             raise ValueError('PIMG albums do not cover the photo catalog')
         next_level = next_tile = 0
-        for index in range(pc):
-            p = struct.unpack('<15I', record(po+index*PHOTO, PHOTO)[:-4])
+        level_records = records(lo, lc, LEVEL)
+        thumb_crcs = []
+        for index, data in enumerate(records(po, pc, PHOTO)):
+            p = struct.unpack('<15I', data[:-4])
             album, title, length, source_offset, source_length, width, height, first, count, thumb, thumb_crc, fallback_bytes, fallback_crc, orientation, reserved = p
             if (album >= ac or not intervals[album][0] <= index < sum(intervals[album]) or reserved or
                 not 1 <= width <= 16384 or not 1 <= height <= 16384 or width*height > 32_000_000 or
@@ -309,11 +317,11 @@ def inspect(path, *, verify_payloads=True):
             fallback = text(source_offset, source_length, source=True)
             if (not fallback and (fallback_bytes or fallback_crc or orientation)) or (fallback and (not 1 <= fallback_bytes <= 262144 or not 1 <= orientation <= 8 or max(width, height) > 2048 or width*height > 4_000_000)):
                 raise ValueError('invalid PIMG fallback metadata')
-            if verify_payloads and _crc(read(thumb, 8192)) != thumb_crc:
-                raise ValueError('PIMG thumbnail CRC mismatch')
+            if verify_payloads:
+                thumb_crcs.append(thumb_crc)
             previous = None
             for ordinal in range(count):
-                photo, w, h, x, y, first_tile, tiles = struct.unpack('<I4H2I', record(lo+(first+ordinal)*LEVEL, LEVEL)[:-4])
+                photo, w, h, x, y, first_tile, tiles = struct.unpack('<I4H2I', next(level_records)[:-4])
                 if (photo != index or not 1 <= w <= min(width, 2048) or not 1 <= h <= min(height, 2048) or
                     x != (w+31)//32 or y != (h+31)//32 or tiles != x*y or first_tile != next_tile or tiles > tc-first_tile or
                     (ordinal == 0 and w*h > 131072) or
@@ -324,6 +332,12 @@ def inspect(path, *, verify_payloads=True):
             next_level += count
         if next_level != lc or next_tile != tc:
             raise ValueError('PIMG levels do not cover tile index exactly')
+        for first in range(0, len(thumb_crcs), 128):
+            count = min(128, len(thumb_crcs)-first)
+            payload = memoryview(read(do+first*8192, count*8192))
+            for ordinal in range(count):
+                if _crc(payload[ordinal*8192:(ordinal+1)*8192]) != thumb_crcs[first+ordinal]:
+                    raise ValueError('PIMG thumbnail CRC mismatch')
         # Group the index and contiguous payloads to avoid two seeks per tile.
         # Keep payload memory bounded to 1 MiB even for maximum-size libraries.
         for first in range(0, tc, 512):
