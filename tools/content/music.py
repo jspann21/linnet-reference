@@ -820,6 +820,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     coverflow_originals = {}
     coverflow_enabled = bool(target and TARGETS[target].get('capabilities', {}).get('cover_flow', False))
     art_cache: dict[Path, int] = {}
+    folder_covers: dict[Path, Path | None] = {}
     art_indices: dict[bytes, int] = {}
     embedded_cache: OrderedDict[bytes, int] = OrderedDict()
     embedded_cache_bytes = 0
@@ -835,8 +836,12 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         folder = path.parent
         if folder in art_cache:
             return art_cache[folder]
-        candidates = [folder / name for name in ("cover.png", "cover.jpg", "folder.jpg", "Folder.jpg")]
-        cover = next((p for p in candidates if p.is_file()), None)
+        # Most MP3 albums carry embedded art. Search sidecar names once per
+        # folder, but still inspect each track's own embedded cover.
+        if folder not in folder_covers:
+            candidates = [folder / name for name in ("cover.png", "cover.jpg", "folder.jpg", "Folder.jpg")]
+            folder_covers[folder] = next((p for p in candidates if p.is_file()), None)
+        cover = folder_covers[folder]
         embedded = _embedded_cover(path) if cover is None else None
         if cover is None and embedded is None:
             return NO_INDEX
