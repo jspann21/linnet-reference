@@ -481,6 +481,7 @@ class MediaWindow(QMainWindow):
         top = box(horizontal=True)
         titles = box(spacing=5); self.heading_label = label('Music', 'title'); self.subtitle = label('', 'subtitle')
         titles.addWidget(self.heading_label); titles.addWidget(self.subtitle); top.addLayout(titles, 1)
+        self.playlists_button = button('Playlists', self.open_playlists, None, 'music'); top.addWidget(self.playlists_button)
         self.add_button = button('Add media', self.add_media, 'primary', 'plus'); top.addWidget(self.add_button)
         outer.addLayout(top)
         toolbar = box(horizontal=True)
@@ -890,7 +891,14 @@ class MediaWindow(QMainWindow):
             if tag in ('setup', 'devices', 'scan'):
                 self.setup_progress.hide()
                 self.setup_software.setText('Could not check iPod setup. Choose Refresh to try again.')
-            self.show_error(error); return
+            self.show_error(error)
+            if tag == 'save_playlists':
+                self.edit_playlists(self.playlist_draft)
+            return
+        if tag == 'playlists':
+            self.show_progress('Playlists loaded.'); self.edit_playlists(result); return
+        if tag == 'save_playlists':
+            self.show_progress('Playlists saved to iPod. Eject safely when finished.'); return
         if tag == 'devices':
             if not result:
                 self.identity = None; self.rows = []; self.inventory = None; self.review = None
@@ -943,6 +951,20 @@ class MediaWindow(QMainWindow):
     def discover(self):
         self.work('devices', media.discover, 'Looking for your iPod…')
 
+    def open_playlists(self):
+        if self.identity and not self.busy:
+            from tools.content import playlists
+            identity = self.identity
+            self.work('playlists', lambda: playlists.read(identity), 'Reading iPod playlists…')
+
+    def edit_playlists(self, state):
+        from tools.content import playlists
+        from tools.studio.playlist_editor import PlaylistEditor
+        editor = PlaylistEditor(self, state)
+        if editor.exec() == QDialog.Accepted:
+            self.playlist_draft = state
+            self.work('save_playlists', lambda: playlists.save(state), 'Saving playlists to iPod…')
+
     def refresh(self):
         if self.busy:
             return
@@ -969,7 +991,7 @@ class MediaWindow(QMainWindow):
 
     def update_controls(self):
         ready = self.identity is not None and not self.busy
-        for item in (self.eject_button, self.add_button, self.sync_button, self.choose_videos_button, self.queue_remove):
+        for item in (self.eject_button, self.add_button, self.playlists_button, self.sync_button, self.choose_videos_button, self.queue_remove):
             item.setEnabled(ready)
         self.prepare_button.setEnabled(ready and self.inventory is not None)
         self.choose_videos_button.setEnabled(ready and self.inventory is not None and self.identity.get('media_profile', {}).get('video_enabled', True))
