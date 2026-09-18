@@ -71,6 +71,15 @@ static uint32_t brightness=100;
 static uint32_t backlight_deadline,backlight_timeout=30000000u;
 static bool backlight_idle;
 static bool first_frame_ready;
+#if defined(LINNET_STORAGE)
+static bool restart_requested;
+static uint32_t restart_started;
+#endif
+void ln_runtime_restart(void){
+#if defined(LINNET_STORAGE)
+    if(!restart_requested){restart_requested=true;restart_started=ln_time_us();}
+#endif
+}
 #if defined(LINNET_NATIVE_UI) && defined(LINNET_STORAGE)
 static bool boot_theme_waiting;
 #endif
@@ -522,6 +531,28 @@ static bool stop_notes(void){
     return true;
 }
 #endif
+#if defined(LINNET_STORAGE)
+static _Noreturn void restart(bool disk_mode){
+    ready=false;shutdown_tracking=false;animation_left=0;
+#if defined(LINNET_VIDEO)
+    if(!stop_video())ln_panic(34,5,0);
+#endif
+#if defined(LINNET_PHOTOS)
+    if(!stop_photos())ln_panic(34,4,0);
+#endif
+#if defined(LINNET_NOTES)
+    if(!stop_notes())ln_panic(34,5,0);
+#endif
+#if defined(LINNET_AUDIO)
+    if(!ln_music_prepare_shutdown())ln_panic(34,2,0);
+#endif
+#if defined(LINNET_NATIVE_UI)
+    if(!save_display_settings())ln_panic(34,3,0);
+#endif
+    if(disk_mode)(void)ln_storage_disk_mode();else (void)ln_storage_restart();
+    ln_panic(34,1,0);
+}
+#endif
 static _Noreturn void shutdown(bool save_settings){
     (void)save_settings;
     ready=false;shutdown_tracking=false;animation_left=0;
@@ -665,6 +696,12 @@ void ln_runtime_step(void){
     /* Storage drain callbacks may reenter here during shutdown or Sync.
      * Once terminal cleanup starts, UI work must not reopen media. */
     if(!ready)return;
+#if defined(LINNET_STORAGE)
+    if(restart_requested){
+        if(!ln_storage_busy())restart(false);
+        if(ln_time_us()-restart_started>=30000000u)ln_panic(34,6,0);
+    }
+#endif
     uint32_t now=ln_time_us();uint32_t wakes=ln_core_take_wakes();
 #if defined(LINNET_AUDIO)
     ln_music_browser_set_visible(scene_is("linnet.system.music"));
@@ -907,22 +944,8 @@ void ln_runtime_step(void){
     palette_at=(!sleeping&&!backlight_idle)?ln_ui_palette_tick(shell,now):UINT32_MAX;
     if(shell->dirty)dirty=true;
     if(shell->action==LINNET_UI_ACTION_SYNC&&!ln_storage_busy()){
-        ready=false;shutdown_tracking=false;animation_left=0;
         (void)ln_shell_take_action(shell);
-#if defined(LINNET_VIDEO)
-        if(!stop_video())ln_panic(34,5,0);
-#endif
-#if defined(LINNET_PHOTOS)
-        if(!stop_photos())ln_panic(34,4,0);
-#endif
-#if defined(LINNET_NOTES)
-        if(!stop_notes())ln_panic(34,5,0);
-#endif
-#if defined(LINNET_AUDIO)
-        if(!ln_music_prepare_shutdown())ln_panic(34,2,0);
-#endif
-        if(!save_display_settings())ln_panic(34,3,0);
-        if(!ln_storage_disk_mode())ln_panic(34,1,0);
+        restart(true);
     }
 #endif
     if(!ln_display_service(256))ln_panic(32,0,0);

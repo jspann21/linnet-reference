@@ -7,6 +7,8 @@ enum { LN_CONTROL_SLEEP=1,LN_CONTROL_WAKE=2,LN_CONTROL_BACKLIGHT=3,LN_CONTROL_CO
 bool ln_runtime_init(void);
 bool ln_runtime_first_frame_ready(void);
 void ln_runtime_step(void);
+/* Called after the reboot ACK drains; cleanup runs in the outer executive. */
+void ln_runtime_restart(void);
 #if !defined(LINNET_PROFILE_RELEASE)
 /* Dirty-render and publication inclusive timing; development OS only. */
 void ln_runtime_render_timing(uint32_t words[16]);

@@ -141,7 +141,10 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r){
         if(q->length!=4||ln_read_le32(q->payload)!=generation||!ln_storage_recover())return 1;
         break;
     case 92:
-        if(q->length!=4||ln_read_le32(q->payload)!=generation||ln_storage_restart_pending||ln_storage_busy()||!ln_storage_prepared())return 1;
+        if(q->length!=4||ln_read_le32(q->payload)!=generation||ln_storage_restart_pending)return 1;
+#if !defined(LINNET_IMAGE_OS)
+        if(ln_storage_busy()||!ln_storage_prepared())return 1;
+#endif
         ln_storage_restart_pending=1;break;
     case 93:{
         if(q->length!=8||ln_read_le32(q->payload)!=generation)return 1;
@@ -158,5 +161,9 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r){
 }
 void ln_storage_link_ack_sent(uint16_t command){
     if(command!=92||!ln_storage_restart_pending)return;
+#if defined(LINNET_IMAGE_OS)
+    ln_runtime_restart();
+#else
     ln_storage_restart_pending=0;(void)ln_storage_restart();ln_panic(35,0,0);
+#endif
 }
