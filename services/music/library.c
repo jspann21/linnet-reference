@@ -2,8 +2,9 @@
 #include "queue.h"
 #include "services/storage/storage.h"
 #include "hal/api/platform.h"
+#include "boot/include/linnet_bytes.h"
 
-enum job { JOB_NONE=0,JOB_WINDOW,JOB_SELECTION,JOB_SEARCH,JOB_GROUP,JOB_MEMBER,JOB_PREFETCH,JOB_QUEUE,JOB_VIEW,JOB_VIEW_GROUP,JOB_GROUP_RECORD,JOB_TRACK_RECORD };
+enum job { JOB_NONE=0,JOB_WINDOW,JOB_SELECTION,JOB_SEARCH,JOB_GROUP,JOB_MEMBER,JOB_PREFETCH,JOB_QUEUE,JOB_VIEW,JOB_VIEW_GROUP,JOB_GROUP_RECORD,JOB_TRACK_RECORD,JOB_TRACK_IDS };
 struct library {
     struct ln_music_db db;
     /* Bounded shared page cache: titles, group/member tables and search indexes.
@@ -14,8 +15,8 @@ struct library {
     struct ln_fat32_file file;
     struct ln_music_library_row rows[LN_MUSIC_LIBRARY_ROWS],scratch,selection,prefetch;
     struct ln_music_group group;
-    struct ln_music_track record;
-    char prefix[256],group_name[256];
+    union {char prefix[256];struct ln_music_track record;};
+    union {char group_name[256];uint64_t ids[LN_MUSIC_ID_BATCH];};
     uint32_t generation,revision,first,job_index,selection_index,selection_token,job_token;
     uint32_t query_index,query_ordinal,query_result,io_offset,io_size;
     uint8_t *io_buffer;
@@ -288,6 +289,11 @@ bool ln_music_library_take_view_row(struct ln_music_library_search_row *out)
     library.query_ready=false;return true;
 }
 bool ln_music_library_track_record(uint32_t index){return ready()&&index<library.db.tracks&&query_admit(JOB_TRACK_RECORD,index,0);}
+bool ln_music_library_track_ids(uint32_t first){return ready()&&first<library.db.tracks&&query_admit(JOB_TRACK_IDS,first,0);}
+bool ln_music_library_take_track_ids(uint64_t ids[LN_MUSIC_ID_BATCH],uint32_t *count){
+    if(!ids||!count||!ready()||library.query!=JOB_TRACK_IDS||!library.query_ready)return false;
+    *count=library.query_result;for(uint32_t i=0;i<*count;i++)ids[i]=library.ids[i];library.query_ready=false;return true;
+}
 bool ln_music_library_take_track_record(struct ln_music_track *out){
     if(!out||!ready()||library.query!=JOB_TRACK_RECORD||!library.query_ready)return false;
     *out=library.record;library.query_ready=false;return true;
@@ -386,6 +392,13 @@ static void query_complete(uint32_t result)
 }
 static void query_step(void)
 {
+    if(library.job==JOB_TRACK_IDS){
+        uint32_t count=library.db.tracks-library.query_index;if(count>LN_MUSIC_ID_BATCH)count=LN_MUSIC_ID_BATCH;
+        int result=read_database(0,library.db.track_offset+library.query_index*LN_MUSIC_TRACK_BYTES,library.db.buffer,count*LN_MUSIC_TRACK_BYTES);
+        if(result<0){fail(result);return;}if(!result)return;
+        for(uint32_t i=0;i<count;i++)library.ids[i]=ln_read_le64(library.db.buffer+i*LN_MUSIC_TRACK_BYTES);
+        query_complete(count);return;
+    }
     if(!library.stage){
         if(library.job==JOB_VIEW||library.job==JOB_TRACK_RECORD){
             library.query_result=library.query_index;library.group_name[0]=0;

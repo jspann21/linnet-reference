@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "boot/include/sha256.h"
 #define LN_MUSIC_SEARCH_GROUP 0x80000000u
+#define LN_MUSIC_TRACK_BYTES 132u
 typedef int (*ln_music_db_read_fn)(void *,uint64_t,uint8_t *,uint32_t);
 enum ln_music_db_result { LN_DB_PENDING=0,LN_DB_READY=1,LN_DB_IO=-1,LN_DB_FORMAT=-2,LN_DB_ARGUMENT=-3 };
 enum ln_music_db_request { LN_DB_TRACK=1,LN_DB_GROUP,LN_DB_MEMBER,LN_DB_ART,LN_DB_STRING };
@@ -17,7 +18,7 @@ struct ln_music_art {uint64_t id;uint32_t path,crc;};
 struct ln_music_db {
     ln_music_db_read_fn read;void *context;struct ln_sha256 hash;
     uint32_t size,generation,tracks,groups,members,searches,arts;
-    uint32_t track_bytes,track_offset,group_offset,member_offset,search_offset,art_offset,pool_offset,pool_bytes;
+    uint32_t track_offset,group_offset,member_offset,search_offset,art_offset,pool_offset,pool_bytes;
     uint32_t cursor,index,read_offset,read_size,low,high,middle,string_offset;
     uint32_t member,search_index,search_track,search_ordinal;
     /* One completed lower bound for prefix in this immutable DB generation.

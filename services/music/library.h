@@ -81,6 +81,9 @@ bool ln_music_library_take_view_row(struct ln_music_library_search_row *out);
 bool ln_music_library_take_search(uint32_t *track_index);
 bool ln_music_library_track_record(uint32_t index);
 bool ln_music_library_take_track_record(struct ln_music_track *out);
+#define LN_MUSIC_ID_BATCH 30u
+bool ln_music_library_track_ids(uint32_t first);
+bool ln_music_library_take_track_ids(uint64_t ids[LN_MUSIC_ID_BATCH],uint32_t *count);
 bool ln_music_library_group(uint32_t group_index);
 /* Range searches need the record kind, not its display name. */
 bool ln_music_library_group_record(uint32_t group_index);

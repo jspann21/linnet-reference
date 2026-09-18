@@ -188,7 +188,7 @@ def preparation_option(kind, identity, photo_dimension=640, music_verification='
     """Shared preparation version for compilation and library readiness."""
     if kind == 'Music':
         art_version = 'art3' if identity['target_id'] == 'ipod4g-q21' else 'art2'
-        return f"{music_verification}-duration-search-names-album-owner-title-order1-music-folder1-{art_version}-{identity['target_id']}"
+        return f"{music_verification}-duration-search-names-album-owner-title-order1-music-folder1-recent-album-gain-{art_version}-{identity['target_id']}"
     return f'flat-photos1-{photo_dimension}' if kind == 'Photos' else 'default'
 
 

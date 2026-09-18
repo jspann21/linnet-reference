@@ -101,3 +101,4 @@ uint32_t ln_collections_recent_rank(uint64_t id){
     if(!ready)return 0;uint32_t count=ln_read_le32(saved+RECENT);
     for(uint32_t i=0;i<count;i++)if(ln_read_le64(saved+RECENT+8+8*i)==id)return RECENT_MAX-i;return 0;
 }
+uint32_t ln_collections_recent_count(void){return ready?ln_read_le32(saved+RECENT):0;}

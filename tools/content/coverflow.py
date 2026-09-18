@@ -100,9 +100,9 @@ def validate(path: Path, database: bytes) -> None:
 
 
 def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, Image.Image] | None = None) -> None:
-    from .music import validate_database, track_bytes
+    from .music import validate_database, TRACK
     validate_database(database)
-    width = track_bytes(database)
+    width = TRACK
     _, _, _, groups, _, _, tracks_at, groups_at, members_at, _, pool, _, _, art_at = struct.unpack_from('<14I', database, 8)
 
     def text(offset):

@@ -27,7 +27,7 @@ import uuid
 import zlib
 from typing import Callable
 
-from .music import ART, MAX_DATABASE, track_bytes, validate_database
+from .music import ART, MAX_DATABASE, TRACK, validate_database
 
 CHUNK = 1024 * 1024
 HISTORY_PAGE_BYTES = 4096
@@ -189,7 +189,7 @@ def validate_stage(stage: Path, *, device_root: Path | None = None,
     entries = manifest.get("entries")
     if not isinstance(entries, list) or len(entries) != info["tracks"]:
         raise ValueError("manifest track inventory mismatch")
-    width = track_bytes(database)
+    width = TRACK
     track_offset, pool, art_offset = (struct.unpack_from("<I", database, offset)[0] for offset in (32, 48, 60))
     files: dict[str, dict] = {}
     sources = set()

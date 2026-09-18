@@ -108,7 +108,7 @@ def list_items(identity, *, records_by_kind=None):
 
 def _music_metadata(root):
     """Read the prepared metadata once, without opening individual audio files."""
-    from .music import validate_database, MAX_DATABASE, track_bytes
+    from .music import validate_database, MAX_DATABASE, TRACK
     database = root / '.LINNET' / 'LIBRARY.PDB'
     _plain(database, root)
     if not database.is_file():
@@ -118,7 +118,7 @@ def _music_metadata(root):
             return {}
         data = database.read_bytes()
         validate_database(data)
-        width = track_bytes(data)
+        width = TRACK
         fields = struct.unpack_from('<14I', data, 8)
         count, offset, pool = fields[2], fields[6], fields[10]
         strings = {}
@@ -268,13 +268,13 @@ def _remove(identity, items):
     music_cache = None
     music_sources = [row for row in selected if row['kind'] == 'Music' and row['category'] == 'original']
     if music_sources and str(music_index.resolve()).casefold() not in paths and music_index.is_file():
-        from .music import MAX_DATABASE, track_bytes, _stable, validate_database, remove_database_tracks
+        from .music import MAX_DATABASE, TRACK, _stable, validate_database, remove_database_tracks
         _plain(music_index, root)
         if music_index.stat().st_size > MAX_DATABASE:
             raise ValueError('Music database exceeds supported size')
         music_before = music_index.read_bytes()
         validate_database(music_before)
-        width = track_bytes(music_before)
+        width = TRACK
         fields = struct.unpack_from('<14I', music_before, 8)
         source_ids = {_stable('track:' + Path(row['path']).relative_to(root).as_posix()) for row in music_sources}
         removed_tracks = []

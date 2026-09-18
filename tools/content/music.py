@@ -30,9 +30,6 @@ from tools.studio.targets import TARGETS
 HEADER = 128
 TRACK = 132
 
-def track_bytes(data: bytes) -> int:
-    return 132 if struct.unpack_from("<H", data, 4)[0] == 1 else 128
-
 GROUP = 32
 ART = 32
 MAX_TRACKS = 100_000
@@ -1099,7 +1096,7 @@ def remove_database_tracks(data: bytes, removed) -> bytes:
     if not removed:
         return data
     track_map = {old: new for new, old in enumerate(i for i in range(tracks) if i not in removed)}
-    width = track_bytes(data)
+    width = TRACK
     records = [data[to + i * width:to + (i + 1) * width] for i in track_map]
     group_rows, kept_members = [], {}
     for i in range(groups):
@@ -1134,7 +1131,7 @@ def remove_database_tracks(data: bytes, removed) -> bytes:
                + struct.pack(f'<{len(packed_members)}I', *packed_members)
                + b''.join(packed_search) + data[ao:po] + data[po:])
     header = bytearray(HEADER)
-    struct.pack_into('<4sHH14I', header, 0, b'PODB', struct.unpack_from('<H', data, 4)[0], HEADER, HEADER + len(payload), 0,
+    struct.pack_into('<4sHH14I', header, 0, b'PODB', 1, HEADER, HEADER + len(payload), 0,
                      len(records), len(packed_groups), len(packed_members), len(packed_search),
                      HEADER, go, mo, so, new_po, ps, arts, new_ao)
     header[64:96] = hashlib.sha256(payload).digest()
@@ -1150,11 +1147,11 @@ def validate_database(data: bytes) -> dict:
         raise ValueError("database size")
     magic, reserved, header_size, *fields = struct.unpack_from("<4sHH14I", data)
     size, flags, tracks, groups, members, searches, to, go, mo, so, po, ps, arts, ao = fields
-    if reserved not in (0, 1) or (magic, header_size, size, flags) != (b"PODB", HEADER, len(data), 0):
+    if reserved != 1 or (magic, header_size, size, flags) != (b"PODB", HEADER, len(data), 0):
         raise ValueError("database header")
     if tracks > MAX_TRACKS or not tracks <= searches <= tracks + groups or any(data[96:124]):
         raise ValueError("database counts/reserved")
-    width = track_bytes(data)
+    width = TRACK
     if (to != HEADER or go != to + tracks * width or mo != go + groups * GROUP or
         so != mo + members * 4 or ao != so + searches * 8 or po != ao + arts * ART or po + ps != size or not ps):
         raise ValueError("database section bounds")
@@ -1202,10 +1199,9 @@ def validate_database(data: bytes) -> dict:
             raise ValueError("float sample width")
         if gain != UNKNOWN_GAIN and not -60 * 65536 <= gain <= 60 * 65536:
             raise ValueError("ReplayGain bound")
-        if width == 132:
-            album_gain = struct.unpack_from("<i", data, off + 128)[0]
-            if album_gain != UNKNOWN_GAIN and not -60 * 65536 <= album_gain <= 60 * 65536:
-                raise ValueError("Album ReplayGain bound")
+        album_gain = struct.unpack_from("<i", data, off + 128)[0]
+        if album_gain != UNKNOWN_GAIN and not -60 * 65536 <= album_gain <= 60 * 65536:
+            raise ValueError("Album ReplayGain bound")
         titles.append(get_string(title))
     group_ids = set()
     expected_search = [(title.casefold(), i) for i, title in enumerate(titles)]
@@ -1250,10 +1246,12 @@ def _recent_track_ids(path: Path) -> list[int]:
     validate_database(data)
     tracks, groups = struct.unpack_from('<II', data, 16)
     to, go, mo = struct.unpack_from('<III', data, 32)
-    width = track_bytes(data)
+    width = TRACK
     ids = [struct.unpack_from('<Q', data, to + i * width)[0] for i in range(tracks)]
     for i in range(groups):
         kind, _, _, first, count = struct.unpack_from('<5I', data, go + i * GROUP)
         if kind == 8:
             return [ids[struct.unpack_from('<I', data, mo + (first+j)*4)[0]] for j in range(count)]
-    return ids
+    if tracks:
+        raise ValueError("Music library is missing its Recently Added index")
+    return []
