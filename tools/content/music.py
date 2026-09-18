@@ -1050,7 +1050,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     art_offset = search_offset + 8 * len(search)
     string_offset = art_offset + ART * len(artwork_records)
     payload = b"".join(records) + b"".join(group_records)
-    payload += b"".join(struct.pack("<I", i) for i in members)
+    payload += struct.pack(f"<{len(members)}I", *members)
     payload += b"".join(search_records)
     payload += b"".join(artwork_records) + pool
     if HEADER + len(payload) > MAX_DATABASE:
@@ -1095,8 +1095,8 @@ def remove_database_tracks(data: bytes, removed) -> bytes:
     for i in range(groups):
         row = list(struct.unpack_from('<IIIIIIQ', data, go + i * GROUP))
         group_rows.append(row)
-        indices = [struct.unpack_from('<I', data, mo + j * 4)[0] for j in range(row[3], row[3] + row[4])]
-        kept_members[i] = [track_map[j] for j in indices if j in track_map]
+        member_data = memoryview(data)[mo + row[3]*4:mo + (row[3]+row[4])*4]
+        kept_members[i] = [track_map[j] for (j,) in struct.iter_unpack('<I', member_data) if j in track_map]
     kept_groups = {i for i in range(groups) if kept_members[i]}
     kept_groups.update(group_rows[i][2] for i in tuple(kept_groups) if group_rows[i][0] == 2)
     group_map = {old: new for new, old in enumerate(sorted(kept_groups))}
@@ -1121,7 +1121,7 @@ def remove_database_tracks(data: bytes, removed) -> bytes:
     new_ao = so + len(packed_search) * 8
     new_po = new_ao + arts * ART
     payload = (b''.join(records) + b''.join(packed_groups)
-               + b''.join(struct.pack('<I', i) for i in packed_members)
+               + struct.pack(f'<{len(packed_members)}I', *packed_members)
                + b''.join(packed_search) + data[ao:po] + data[po:])
     header = bytearray(HEADER)
     struct.pack_into('<4sHH14I', header, 0, b'PODB', 0, HEADER, HEADER + len(payload), 0,
@@ -1149,7 +1149,7 @@ def validate_database(data: bytes) -> dict:
         raise ValueError("database section bounds")
     if zlib.crc32(data[:124]) != struct.unpack_from("<I", data, 124)[0]:
         raise ValueError("database header CRC")
-    if hashlib.sha256(data[HEADER:]).digest() != data[64:96]:
+    if hashlib.sha256(memoryview(data)[HEADER:]).digest() != data[64:96]:
         raise ValueError("database payload SHA256")
     pool = data[po:]
     if pool[0] or pool[-1]:
@@ -1209,8 +1209,8 @@ def validate_database(data: bytes) -> dict:
                 raise ValueError("album artist parent")
         elif parent != NO_INDEX:
             raise ValueError("unexpected group parent")
-    for offset in range(mo, so, 4):
-        if struct.unpack_from("<I", data, offset)[0] >= tracks:
+    for (member,) in struct.iter_unpack("<I", memoryview(data)[mo:so]):
+        if member >= tracks:
             raise ValueError("member track index")
     order = []
     for index in range(searches):
