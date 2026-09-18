@@ -32,6 +32,7 @@ def apply_layout(scenes,theme,compact=False):
             refine_scene(scene,theme,body)
             if style=='minimal':refine_minimal(scene,theme)
             refine_footers(scene,theme)
+            align_scrollbars(scene,theme)
         return result
     font_h=theme['font']['height']
     # Each body rectangle is its own layout, not a recolor of the default shell.
@@ -97,12 +98,27 @@ def apply_layout(scenes,theme,compact=False):
         refine_scene(scene,theme,(bx,by,bw,bh))
         if style=='ipod-photo':refine_ipod_photo(scene,theme)
         refine_footers(scene,theme)
+        align_scrollbars(scene,theme)
         # Fixed clipping bounds remain a compiler invariant for every variant.
         for node in nodes:
             node['w']=max(1,min(node['w'],220-node['x']))
             node['h']=max(1,min(node['h'],176-node['y']))
         scene['count']=len(nodes)
     return result
+
+
+def align_scrollbars(scene,theme):
+    listing=next((n for n in scene['nodes'] if n['kind'] in (6,7,8) and n['flags']&1),None)
+    if not listing:return
+    for bar in scene['nodes']:
+        if bar['kind']!=9:continue
+        inset=2 if theme['layout']=='ipod-photo' else 0
+        bar['y']=listing['y']+inset
+        bottom={'graphite':150,'aurora':170,'sunset':150,'blueprint':146}.get(theme['layout'],172)
+        bar['h']=max(1,bottom-bar['y'])
+        for node in scene['nodes']:
+            if node['kind']==3:node['w']=min(node['w'],bar['x']-node['x']-4)
+        listing['w']=min(listing['w'],bar['x']-listing['x']-(3 if inset else 2))
 
 
 def refine_footers(scene,theme):
