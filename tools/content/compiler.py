@@ -361,24 +361,9 @@ def compile_system(root, output, configpath=None, target_override=None):
         # the target-specific font is intended to avoid.
         hint_index=chosen['font_index']
     else:
-        # Bake a compact footer face once; runtime text needs no resampling.
-        hint=json.loads(read(root/'sdk/assets/font-compact13.json'))
-        old_w,old_h=hint['width'],hint['height'];new_h=11
-        new_w=max(1,(old_w*new_h+old_h-1)//old_h)
-        pixels=[]
-        for glyph in range(hint['count']):
-            for y in range(new_h):
-                for x in range(new_w):
-                    value=weight=0
-                    for sy in range(y*old_h//new_h,min(old_h,((y+1)*old_h+new_h-1)//new_h)):
-                        wy=min((y+1)*old_h,(sy+1)*new_h)-max(y*old_h,sy*new_h)
-                        for sx in range(x*old_w//new_w,min(old_w,((x+1)*old_w+new_w-1)//new_w)):
-                            wx=min((x+1)*old_w,(sx+1)*new_w)-max(x*old_w,sx*new_w)
-                            value+=hint['alpha'][(glyph*old_h+sy)*old_w+sx]*wx*wy;weight+=wx*wy
-                    pixels.append((value+weight//2)//weight)
-        hint.update(width=new_w,height=new_h,alpha=pixels,
-                    advance=max(1,(hint['advance']*new_h+old_h//2)//old_h))
-        if 'advances' in hint:hint['advances']=[max(1,(a*new_h+old_h//2)//old_h) for a in hint['advances']]
+        # Use a small face hinted directly onto the LCD pixel grid. Scaling the
+        # regular UI face made the low-contrast corner hints visibly soft.
+        hint=json.loads(read(root/'sdk/assets/font-hint11.json'))
         hint_index=len(fonts);fonts.append(hint)
     # The prominent clock uses a separately hinted native-size face. Scaling
     # each target here keeps runtime glyph pixels aligned to its LCD grid.

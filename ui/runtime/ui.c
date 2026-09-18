@@ -649,7 +649,9 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
             left=n->x+inset;right=n->x+n->w-inset;
             x=left+max(0,(right-left-text_width(title))/2);
         }
-        fitted_text(p,x,n->y+max(0,(n->h-(int32_t)ln_ui_font.height)/2),title,fg,right-x);
+        int32_t title_y=n->y+max(0,(n->h-(int32_t)ln_ui_font.height)/2);
+        if(layout()==LN_UI_LAYOUT_DEFAULT)++title_y;
+        fitted_text(p,x,title_y,title,fg,right-x);
         break;}
     case LN_UI_DIALOG:case LN_UI_TOAST:fill(p,bounds(n),bg);border(p,bounds(n),fg);fitted_text(p,n->x+7,n->y+max(0,(n->h-(int32_t)ln_ui_font.height)/2),node_text,fg,n->w-14);break;
     case LN_UI_ALBUM_ART:case LN_UI_PHOTO_SURFACE:case LN_UI_VIDEO_SURFACE:{
