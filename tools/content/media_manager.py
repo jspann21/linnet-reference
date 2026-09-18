@@ -64,7 +64,13 @@ ConvertTo-Json -InputObject $items -Compress
             "and choose Find iPod."
         ) from error
     if result.returncode:
-        raise RuntimeError("Could not find the iPod: " + result.stderr.strip())
+        raise RuntimeError(
+            "We couldn't read your iPod's storage. Reconnect your iPod in Disk Mode, "
+            "wait a few seconds, then try again. If the problem continues, try a different "
+            "USB cable or port."
+        ) from subprocess.CalledProcessError(
+            result.returncode, result.args, output=result.stdout, stderr=result.stderr
+        )
     items = json.loads(result.stdout.lstrip("\ufeff") or "[]")
     return [_identify(inspect_target(item["number"], item["serial"], item["volume"], item["drive"])) for item in items]
 
