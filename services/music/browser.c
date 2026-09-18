@@ -18,12 +18,14 @@ static struct {
     uint32_t action_row,action_index,action_count,action_group,action_kind;
     bool action_track,action_local,action_bookmark,bookmark_remove,recent_open;
     const char *notice;
-    struct ln_collection draft;uint64_t activity_id;uint32_t mapped[LINNET_QUEUE_CAPACITY],positions[LINNET_QUEUE_CAPACITY],scan,resolve_count;
+    struct ln_collection draft;uint64_t activity_id;uint32_t mapped[LINNET_QUEUE_CAPACITY],scan,resolve_count;
+    /* Playlist resolution and activity ranking never run together. */
+    union {uint32_t positions[LINNET_QUEUE_CAPACITY],activity_scores[LINNET_QUEUE_CAPACITY];};
     bool resolving,exporting,choosing,renaming,saved_message,empty_actions;uint32_t export_at,destination;
     struct ln_queue export_queue,expanded;bool expanding,expanded_ready;uint32_t expand_at;
     char name[32];uint32_t name_length;
     uint8_t activity_filter[65536];uint32_t activity_page;
-    uint32_t activity_count,activity_scan,activity_kind,activity_scores[LINNET_QUEUE_CAPACITY],activity_tracks[LINNET_QUEUE_SOURCE_MAX];
+    uint32_t activity_count,activity_scan,activity_kind,activity_tracks[LINNET_QUEUE_SOURCE_MAX];
     uint32_t catalog,catalog_at,catalog_end,catalog_member,catalog_members,catalog_count,catalog_group;
     bool jumping,jump_binary;uint32_t jump_at,jump_lo,jump_hi,jump_found;char jump_letter;
     bool activity_scanning,activity_waiting,activity_overflow,favorite_waiting,bookmark_waiting,activity_dirty;uint64_t favorite_id;
@@ -88,7 +90,7 @@ const char *ln_music_browser_label(uint32_t n){
     case NAME:{static char letter[2];if(!n)return "Save name";if(n==1)return "Erase last character";if(n-2>=sizeof alphabet-1)return "";letter[0]=alphabet[n-2];letter[1]=0;return letter[0]==' '?"[space]":letter;}
     case CONFIRM:return n?"Delete playlist":"Cancel";
     case ACTIONS:{if(b.action_bookmark&&(!n||n==5))return n?"Remove bookmark":"Resume bookmark";static const char *const actions[]={"Play","Play Next","Add to Queue","Add to Playlist...","Toggle Favorite","Move up","Move down","Remove track","Rename playlist...","Delete playlist..."};return b.empty_actions?(n?"Delete playlist...":"Rename playlist..."):n<(b.action_local?10u:b.action_track?5u:4u)?actions[n]:"";}
-    default:if(!b.here.count)return b.range?"Loading...":"No tracks";struct row *r=row(n);return r?r->label:"Loading...";
+    default:if(!b.here.count)return b.range?"Loading...":b.here.view==ACTIVITY&&b.activity_kind==10?"No bookmarks":"No tracks";struct row *r=row(n);return r?r->label:"Loading...";
     }
     struct row *r=row(n);return r?r->label:"Loading...";
 }
@@ -279,6 +281,9 @@ void ln_music_browser_step(void){
         if(b.here.view==GROUPS||b.here.view==ARTIST_ALBUMS||b.here.view==ALBUM_ARTISTS){uint32_t group=b.here.view==GROUPS?b.here.lower+at:b.activity_tracks[b.here.view==ARTIST_ALBUMS?at-1:at];if(ln_music_library_group(group))b.job=JUMP_GROUP;}
         else if(ln_music_library_view_row(b.here.view==TRACKS&&b.here.kind?2:0,b.here.group,b.here.view==ACTIVITY?b.activity_tracks[at]:b.here.view==LOCAL_TRACKS?b.mapped[at]:at))b.job=JUMP_TITLE;
     }else if(b.activity_scanning){
+        if(b.activity_kind==10&&!ln_music_history_error()&&ln_paged_history_bookmark_count()==0){
+            b.activity_scanning=false;b.here.count=b.activity_count=0;invalidate();return;
+        }
         if(b.activity_kind==11){
             if(!ln_collections_ready())return;
             if(b.activity_scan>=ln_music_library_count()||b.activity_count>=ln_collections_recent_count()){
@@ -288,6 +293,7 @@ void ln_music_browser_step(void){
             b.job_epoch=b.epoch;return;
         }
         if(b.activity_page<LN_HISTORY_PAGE_COUNT&&!ln_music_history_error()){
+            if(b.activity_kind==10&&!ln_paged_history_bookmark_page(b.activity_page)){b.activity_page++;return;}
             const struct ln_history_page *page=ln_paged_history_page(b.activity_page);if(!page)return;
             for(uint32_t i=0;i<page->count;i++){const struct ln_music_journal_record *r=&page->records[i];
                 if((b.activity_kind==9&&(r->flags&LN_MUSIC_JOURNAL_FAVORITE))||(b.activity_kind==10&&(r->flags&LN_MUSIC_JOURNAL_BOOKMARK))||(b.activity_kind==12&&r->play_count))activity_filter(r->id,true);}

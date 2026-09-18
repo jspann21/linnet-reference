@@ -5,7 +5,9 @@
 enum {SUPER_A,SUPER_B,IDLE,PAGE_A,PAGE_B,PUBLISH,FLUSH,CHECK,ACK,FAILED};
 static struct {
     struct ln_history_page cache[4];uint32_t age[4],clock,revision;
-    uint8_t a[4096],b[4096],epoch[16];
+    uint8_t a[16384],b[16384],epoch[16];
+    uint32_t window_first,window_count,window_revision;bool window_valid;
+    uint32_t seen[32],bookmark_pages[32],seen_count,bookmarks;
     uint32_t phase,index,probe,slot;int error;bool loaded,wanted,scanning;
     uint32_t ticket,io_bytes;int io_error;
     uint64_t id,full_id,pinned_id;bool full,pinned;
@@ -20,6 +22,8 @@ bool ln_paged_history_busy(void){return !h.loaded||h.wanted||h.phase!=IDLE;}
 bool ln_paged_history_io_pending(void){return h.ticket!=0;}
 bool ln_paged_history_finishing(void){return h.phase>=FLUSH&&h.phase<=ACK;}
 uint32_t ln_paged_history_revision(void){return h.revision;}
+int ln_paged_history_bookmark_count(void){return h.seen_count==LN_HISTORY_PAGE_COUNT?(int)h.bookmarks:-1;}
+bool ln_paged_history_bookmark_page(uint32_t index){return index<LN_HISTORY_PAGE_COUNT&&(!(h.seen[index/32]&(1u<<(index&31)))||(h.bookmark_pages[index/32]&(1u<<(index&31))));}
 static int location(uint64_t id){
     if(!h.loaded)return -1;
     for(uint32_t i=0;i<4;i++)if(ln_history_page_get(&h.cache[i],id))return (int)i;
@@ -45,8 +49,16 @@ bool ln_paged_history_prefetch(uint64_t id){
 }
 bool ln_paged_history_put(const struct ln_music_journal_record *r){
     if(h.error||!r)return false;int slot=location(r->id);if(slot<0)return false;
+    const struct ln_music_journal_record *old=ln_history_page_get(&h.cache[slot],r->id);
+    bool had=old&&(old->flags&LN_MUSIC_JOURNAL_BOOKMARK);
     uint32_t before=h.cache[slot].revision;if(!ln_history_page_put(&h.cache[slot],r))return false;
-    if(before!=h.cache[slot].revision)h.revision++;h.age[slot]=++h.clock;return true;
+    bool has=(r->flags&LN_MUSIC_JOURNAL_BOOKMARK)!=0;if(had!=has){if(has)h.bookmarks++;else h.bookmarks--;}
+    if(had!=has){
+        const struct ln_history_page *p=&h.cache[slot];uint32_t mask=1u<<(p->index&31);
+        h.bookmark_pages[p->index/32]&=~mask;
+        for(uint32_t i=0;i<p->count;i++)if(p->records[i].flags&LN_MUSIC_JOURNAL_BOOKMARK){h.bookmark_pages[p->index/32]|=mask;break;}
+    }
+    if(before!=h.cache[slot].revision){h.revision++;h.window_valid=false;}h.age[slot]=++h.clock;return true;
 }
 const struct ln_history_page *ln_paged_history_page(uint32_t index){
     if(!h.loaded||h.error||index>=LN_HISTORY_PAGE_COUNT)return 0;
@@ -68,12 +80,24 @@ static void resolve(void){
     }
     if(++h.probe>=1024){h.full=true;h.full_id=h.id;h.wanted=false;h.revision++;return;}h.index=(h.index+1)&1023u;
 }
+static void load_window(void){
+    uint32_t offset=(h.index-h.window_first)*4096;
+        int result=ln_history_page_load(&h.cache[h.slot],h.a+offset,h.b+offset,h.index,h.epoch);
+        if(result<0){fail(result==-2?LN_HISTORY_CONFLICT:LN_HISTORY_BOTH_CORRUPT);return;}
+        uint32_t mask=1u<<(h.index&31);if(!(h.seen[h.index/32]&mask)){
+            const struct ln_history_page *p=&h.cache[h.slot];
+            for(uint32_t i=0;i<p->count;i++)if(p->records[i].flags&LN_MUSIC_JOURNAL_BOOKMARK){h.bookmarks++;h.bookmark_pages[h.index/32]|=mask;}
+            h.seen[h.index/32]|=mask;h.seen_count++;
+        }
+        h.age[h.slot]=++h.clock;h.phase=IDLE;resolve();return;
+}
 static void start_io(uint32_t operation,uint32_t file,uint32_t offset,uint8_t *buffer,int error){
+    uint32_t bytes=(h.phase==PAGE_A||h.phase==PAGE_B)?h.window_count*4096u:4096u;
     int result=operation==LN_FAT32_FLUSH?ln_storage_async_flush(&h.ticket):
-        operation==LN_FAT32_WRITE?ln_storage_async_write(file,offset,buffer,4096,&h.ticket):
-        ln_storage_async_read(file,offset,buffer,4096,&h.ticket);
+        operation==LN_FAT32_WRITE?ln_storage_async_write(file,offset,buffer,bytes,&h.ticket):
+        ln_storage_async_read(file,offset,buffer,bytes,&h.ticket);
     if(result<0){fail(error);return;}
-    if(result>0){h.io_bytes=operation==LN_FAT32_FLUSH?0u:4096u;h.io_error=error;}
+    if(result>0){h.io_bytes=operation==LN_FAT32_FLUSH?0u:bytes;h.io_error=error;}
 }
 uint32_t ln_paged_history_deadline(uint32_t now,bool may_read,bool may_write){
     if(h.ticket)return now;
@@ -136,7 +160,10 @@ void ln_paged_history_step(bool may_read,bool may_write){
                 if(!pinned_slot(i)&&!h.cache[i].staged&&h.cache[i].revision==h.cache[i].durable_revision&&(h.slot==4||h.age[i]<h.age[h.slot]))h.slot=i;}
             if(h.slot<4){
                 h.cache[h.slot].ready=false;for(uint32_t i=0;i<4;i++)if(h.proofs[i].slot==h.slot)h.proofs[i].valid=false;
-                h.phase=PAGE_A;return;
+                if(h.window_valid&&h.index>=h.window_first&&h.index-h.window_first<h.window_count){load_window();return;}
+                h.window_valid=false;h.window_first=h.index;h.window_count=h.scanning?4u:1u;
+                if(h.window_count>LN_HISTORY_PAGE_COUNT-h.index)h.window_count=LN_HISTORY_PAGE_COUNT-h.index;
+                h.window_revision=h.revision;h.phase=PAGE_A;return;
             }
         }
         /* Dirty pages are never evicted. Under pressure publish the oldest
@@ -148,13 +175,13 @@ void ln_paged_history_step(bool may_read,bool may_write){
         }
         if(h.slot==4)return;
         if(!ln_storage_prepared()){if(ln_storage_prepare_writes()<0)fail(LN_HISTORY_READ_ONLY);return;}
+        h.window_valid=false;
         if(!ln_history_page_encode(&h.cache[h.slot],h.a)){fail(LN_HISTORY_ENCODE);return;}h.phase=PUBLISH;return;
     case PAGE_A:
         if(!completed){start_io(LN_FAT32_READ,LN_STORAGE_MUSIC0,(h.index+1)*4096,h.a,LN_HISTORY_READ_A);return;}h.phase=PAGE_B;return;
     case PAGE_B:{
         if(!completed){start_io(LN_FAT32_READ,LN_STORAGE_MUSIC1,(h.index+1)*4096,h.b,LN_HISTORY_READ_B);return;}
-        int result=ln_history_page_load(&h.cache[h.slot],h.a,h.b,h.index,h.epoch);
-        if(result<0){fail(result==-2?LN_HISTORY_CONFLICT:LN_HISTORY_BOTH_CORRUPT);return;}h.age[h.slot]=++h.clock;h.phase=IDLE;resolve();return;
+        h.window_valid=h.window_revision==h.revision;load_window();return;
     }
     case PUBLISH:
         if(!completed){

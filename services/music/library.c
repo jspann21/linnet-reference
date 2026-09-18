@@ -4,14 +4,16 @@
 #include "hal/api/platform.h"
 #include "boot/include/linnet_bytes.h"
 
+#define LIBRARY_PAGES 24u
+
 enum job { JOB_NONE=0,JOB_WINDOW,JOB_SELECTION,JOB_SEARCH,JOB_GROUP,JOB_MEMBER,JOB_PREFETCH,JOB_QUEUE,JOB_VIEW,JOB_VIEW_GROUP,JOB_GROUP_RECORD,JOB_TRACK_RECORD,JOB_TRACK_IDS };
 struct library {
     struct ln_music_db db;
     /* Bounded shared page cache: titles, group/member tables and search indexes.
      * Tags publish only after a complete read; reload clears the entire cache. */
-    uint8_t pages[32][4096];
-    uint32_t page_tags[32],page_used[32],page_clock;
-    bool page_valid[32];
+    uint8_t pages[LIBRARY_PAGES][4096];
+    uint32_t page_tags[LIBRARY_PAGES],page_used[LIBRARY_PAGES],page_clock;
+    bool page_valid[LIBRARY_PAGES];
     struct ln_fat32_file file;
     struct ln_music_library_row rows[LN_MUSIC_LIBRARY_ROWS],scratch,selection,prefetch;
     struct ln_music_group group;
@@ -127,18 +129,18 @@ static int read_database(void *context,uint64_t offset,uint8_t *buffer,uint32_t 
     if(offset>library.file.size||!bytes||bytes>4096u||bytes>library.file.size-offset)return LN_DB_ARGUMENT;
     uint32_t copied=0;
     while(copied<bytes){
-        uint32_t address=(uint32_t)offset+copied,page=address/4096u,slot=32u;
+        uint32_t address=(uint32_t)offset+copied,page=address/4096u,slot=LIBRARY_PAGES;
         /* Fully associative replacement keeps record and string pages together,
          * even when their file offsets differ by a multiple of cache capacity. */
-        for(uint32_t i=0;i<32u;i++)
+        for(uint32_t i=0;i<LIBRARY_PAGES;i++)
             if(library.page_valid[i]&&library.page_tags[i]==page){slot=i;break;}
-        if(slot==32u){
+        if(slot==LIBRARY_PAGES){
             if(library.io_active){
-                for(uint32_t i=0;i<32u;i++)if(library.io_buffer==library.pages[i]){slot=i;break;}
-                if(slot==32u)return LN_DB_ARGUMENT;
+                for(uint32_t i=0;i<LIBRARY_PAGES;i++)if(library.io_buffer==library.pages[i]){slot=i;break;}
+                if(slot==LIBRARY_PAGES)return LN_DB_ARGUMENT;
             }else{
                 slot=0;
-                for(uint32_t i=0;i<32u;i++){
+                for(uint32_t i=0;i<LIBRARY_PAGES;i++){
                     if(!library.page_valid[i]){slot=i;break;}
                     if((uint32_t)(library.page_clock-library.page_used[i])>
                        (uint32_t)(library.page_clock-library.page_used[slot]))slot=i;

@@ -1,8 +1,9 @@
 #include "boot/include/linnet_bytes.h"
 #include "journal_pages.h"
+#include "boot/include/linnet_boot.h"
 static bool same(const uint8_t *a,const uint8_t *b,uint32_t n){for(uint32_t i=0;i<n;i++)if(a[i]!=b[i])return false;return true;}
 static bool zero(const uint8_t *p,uint32_t n){for(uint32_t i=0;i<n;i++)if(p[i])return false;return true;}
-static uint32_t crc(const uint8_t *p){uint32_t x=UINT32_MAX;for(uint32_t i=0;i<4092;i++){x^=p[i];for(uint32_t k=0;k<8;k++)x=(x>>1)^((0u-(x&1u))&0xedb88320u);}return ~x;}
+static uint32_t crc(const uint8_t *p){return ln_crc32(p,4092);}
 bool ln_history_superblock(const uint8_t *p,uint8_t epoch[16]){
     if(!p||!epoch||ln_read_le32(p)!=0x54534948u||ln_read_le32(p+4)!=0x00400000u||ln_read_le32(p+8)!=LN_HISTORY_PAGED_BANK_BYTES||
        ln_read_le32(p+12)!=1024||ln_read_le32(p+16)!=125||ln_read_le32(p+20)!=32||!zero(p+40,4052)||ln_read_le32(p+4092)!=crc(p))return false;
@@ -21,8 +22,8 @@ static bool valid(const uint8_t *p,uint32_t index,const uint8_t epoch[16]){
     return zero(p+64+n*32,4092-64-n*32);
 }
 int ln_history_page_load(struct ln_history_page *s,const uint8_t *a,const uint8_t *b,uint32_t index,const uint8_t epoch[16]){
-    if(!s||!epoch||index>=1024)return -3;bool av=valid(a,index,epoch),bv=valid(b,index,epoch);if(!av&&!bv)return -1;
-    uint32_t bank=av?0u:1u;if(av&&bv){uint32_t d=ln_read_le32(b+12)-ln_read_le32(a+12);if(d==0x80000000u||(!d&&!same(a,b,4096)))return -2;if(d&&d<0x80000000u)bank=1;}
+    if(!s||!epoch||index>=1024)return -3;bool equal=a&&b&&same(a,b,4096),av=valid(a,index,epoch),bv=equal?av:valid(b,index,epoch);if(!av&&!bv)return -1;
+    uint32_t bank=av?0u:1u;if(av&&bv){uint32_t d=ln_read_le32(b+12)-ln_read_le32(a+12);if(d==0x80000000u||(!d&&!equal))return -2;if(d&&d<0x80000000u)bank=1;}
     const uint8_t *p=bank?b:a;s->index=index;s->count=ln_read_le32(p+16);s->sequence=ln_read_le32(p+12);s->revision=s->durable_revision=ln_read_le32(p+20);s->bank=bank;
     for(uint32_t i=0;i<16;i++)s->epoch[i]=epoch[i];for(uint32_t i=0;i<s->count;i++)record(p+64+i*32,&s->records[i]);s->ready=true;s->staged=false;return 1;
 }
