@@ -4,7 +4,16 @@
 #include "services/audio/dsp.h"
 #include "hal/api/audio.h"
 #include "hal/api/platform.h"
+#if !defined(LINNET_PROFILE_RELEASE)
+#include "kernel/development.h"
+#endif
 #define PLAYER_DECODE_FRAMES 1152u
+/* Music, video and firmware upload have exclusive ownership of STAGE. */
+#define RAW_PCM ((int16_t *)(uintptr_t)(LINNET_STAGE_ADDRESS+LINNET_STAGE_CAPACITY-LINNET_AUDIO_RING_FRAMES*4u))
+#define EFFECT_PCM (RAW_PCM-PLAYER_DECODE_FRAMES*2u)
+_Static_assert((LINNET_AUDIO_RING_FRAMES+PLAYER_DECODE_FRAMES)*4u<=LINNET_STAGE_CAPACITY,"PCM cache exceeds staging");
+static uint32_t raw_head,effect_cursor;
+static bool effect_pending;
 enum slot_phase {SLOT_EMPTY,SLOT_OPEN,SLOT_DECODE,SLOT_EOF,SLOT_FAILED};
 struct player_slot {
     struct ln_decoder decoder;struct ln_dsp dsp;struct ln_fat32_file media;
@@ -143,18 +152,25 @@ static void advance_next(void){
     else if(s->phase==SLOT_EOF)next_failure(-2);
 }
 static bool initialize_audio(uint32_t rate){
-    if(!ln_audio_init(rate))return false;last_consumed=0;submitted=consumed;audio_ready=true;finish_sent=false;eof_waiting=false;return true;
+    if(!ln_audio_init(rate))return false;last_consumed=raw_head=0;effect_pending=false;submitted=consumed;audio_ready=true;finish_sent=false;eof_waiting=false;return true;
 }
-static bool submit_slot(struct player_slot *s){
-    if(!s->buffered)return true;if(ln_audio_capacity()<s->buffered)return false;
+static void process_pcm(struct player_slot *s,int16_t *pcm,uint32_t frames){
 #if !defined(LINNET_PROFILE_RELEASE)
     uint32_t started=ln_time_us();
 #endif
-    ln_dsp_process(&s->dsp,s->pcm,s->buffered);
+    ln_dsp_process(&s->dsp,pcm,frames);
 #if !defined(LINNET_PROFILE_RELEASE)
-    uint32_t elapsed=ln_time_us()-started;timing_add(&timing.dsp_calls,1);timing_add(&timing.dsp_frames,s->buffered);timing_add(&timing.dsp_us,elapsed);
+    uint32_t elapsed=ln_time_us()-started;timing_add(&timing.dsp_calls,1);timing_add(&timing.dsp_frames,frames);timing_add(&timing.dsp_us,elapsed);
     if(elapsed>timing.dsp_max_us)timing.dsp_max_us=elapsed;
 #endif
+}
+static bool submit_slot(struct player_slot *s){
+    if(!s->buffered)return true;if(ln_audio_capacity()<s->buffered)return false;
+    for(uint32_t i=0;i<s->buffered;i++){
+        uint32_t at=(raw_head+i)&(LINNET_AUDIO_RING_FRAMES-1u);
+        __builtin_memcpy(RAW_PCM+2*at,s->pcm+2*i,4);
+    }
+    raw_head+=s->buffered;process_pcm(s,s->pcm,s->buffered);
     if(ln_audio_submit(s->pcm,s->buffered)!=s->buffered){fail(14);return false;}
     s->submitted+=s->buffered;submitted+=s->buffered;s->buffered=0;return true;
 }
@@ -177,9 +193,24 @@ bool ln_player_open_at(const char *name,uint64_t bytes,uint64_t position){
 static bool prepare_dsp(struct ln_dsp *dsp,const struct ln_dsp_config *config,uint32_t rate){
     ln_dsp_init(dsp);return !config||(supported_rate(rate)&&ln_dsp_configure(dsp,config));
 }
+bool ln_player_configure(const struct ln_dsp_config *config,uint32_t rate){
+    if(stop_requested||skip_requested||join_pending||event_pending)return false;
+    if(state.phase==LN_PLAYER_IDLE||state.phase==LN_PLAYER_ERROR)return true;
+    struct player_slot *s=&slots[audible];struct ln_dsp candidate;
+    if(!config||!prepare_dsp(&candidate,config,rate)||(s->rate&&s->rate!=rate))return false;
+    if(audio_ready){
+        struct ln_audio_status audio;ln_audio_snapshot(&audio);
+        uint32_t skip=audio.playing?2048u:0u;if(skip>audio.queued)skip=audio.queued;
+        effect_cursor=audio.consumed+skip;effect_pending=effect_cursor!=raw_head;
+    }
+    s->dsp=candidate;s->config_rate=rate;return true;
+}
 bool ln_player_open_configured(const char *name,uint64_t bytes,uint64_t position,
                                const struct ln_dsp_config *config,uint32_t config_rate){
     if(state.phase!=LN_PLAYER_IDLE||ln_storage_busy()||!ln_storage_mounted())return false;
+#if !defined(LINNET_PROFILE_RELEASE)
+    if(ln_development_stage_busy())return false;
+#endif
     struct ln_dsp dsp;if(!prepare_dsp(&dsp,config,config_rate))return false;
     if(!start_slot(&slots[0],name,bytes,position,0,&dsp,config?config_rate:0))return false;
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -188,7 +219,7 @@ bool ln_player_open_configured(const char *name,uint64_t bytes,uint64_t position
     audible=feed=0;state=(struct ln_player_status){.phase=LN_PLAYER_OPEN,.generation=slots[0].generation};
     io_owner=0;stop_requested=seek_requested=pause_requested=have_next=cancel_next=false;
     skip_requested=seek_paused=false;
-    audio_ready=join_pending=event_pending=finish_sent=next_expected=eof_waiting=false;consumed=submitted=audible_origin=0;last_consumed=0;return true;
+    effect_pending=audio_ready=join_pending=event_pending=finish_sent=next_expected=eof_waiting=false;consumed=submitted=audible_origin=0;last_consumed=0;return true;
 }
 bool ln_player_prepare_next(const char *name,uint64_t bytes,uint32_t token){
     return ln_player_prepare_next_configured(name,bytes,token,0,0);
@@ -267,7 +298,7 @@ static void player_advance(void){
         if(!drain_canceled())return;clear_slot(&slots[0]);clear_slot(&slots[1]);
         if(state.error)(void)ln_audio_stop();
         state.phase=state.error?LN_PLAYER_ERROR:LN_PLAYER_IDLE;stop_requested=seek_requested=pause_requested=false;
-        have_next=cancel_next=join_pending=event_pending=audio_ready=skip_requested=seek_paused=false;state.next_phase=LN_PLAYER_NEXT_NONE;return;
+        effect_pending=have_next=cancel_next=join_pending=event_pending=audio_ready=skip_requested=seek_paused=false;state.next_phase=LN_PLAYER_NEXT_NONE;return;
     }
     if(skip_requested){
         if(!drain_canceled())return;
@@ -379,10 +410,23 @@ static void player_advance(void){
     if(next_expected&&!have_next&&!join_pending&&runway)return;
     if(!finish_sent){ln_audio_finish();finish_sent=true;}state.phase=LN_PLAYER_DRAIN;
 }
-void ln_player_step(void){if(stepping)return;stepping=true;player_advance();stepping=false;}
+void ln_player_step(void){
+    if(stepping)return;stepping=true;
+    if(effect_pending&&!stop_requested&&!seek_requested&&!skip_requested&&!pause_requested){
+        uint32_t count=raw_head-effect_cursor;if(count>PLAYER_DECODE_FRAMES)count=PLAYER_DECODE_FRAMES;
+        for(uint32_t i=0;i<count;i++){
+            uint32_t at=(effect_cursor+i)&(LINNET_AUDIO_RING_FRAMES-1u);
+            __builtin_memcpy(EFFECT_PCM+2*i,RAW_PCM+2*at,4);
+        }
+        process_pcm(&slots[audible],EFFECT_PCM,count);
+        (void)ln_audio_rewrite(effect_cursor,EFFECT_PCM,count);
+        effect_cursor+=count;effect_pending=effect_cursor!=raw_head;
+    }else player_advance();
+    stepping=false;
+}
 bool ln_player_busy(void){return state.phase!=LN_PLAYER_IDLE&&state.phase!=LN_PLAYER_ERROR;}
 uint32_t ln_player_deadline(uint32_t now){
-    if(state.phase==LN_PLAYER_OPEN||state.phase==LN_PLAYER_HEADER||state.phase==LN_PLAYER_PRIME||io_owner)return now;
+    if(effect_pending||state.phase==LN_PLAYER_OPEN||state.phase==LN_PLAYER_HEADER||state.phase==LN_PLAYER_PRIME||io_owner)return now;
     /* Decode and drain are separate bounded steps. Sleeping between them
      * caps MP3 production below44.1kHz even before accounting for compute. */
     if(stop_requested||seek_requested||cancel_next||pause_requested||skip_requested||

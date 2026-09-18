@@ -10,6 +10,9 @@
 #include "services/music/coverflow.h"
 #include "hal/api/display.h"
 #endif
+#if defined(LINNET_AUDIO)
+#include "services/music/player.h"
+#endif
 #if defined(LINNET_VIDEO)
 #include "services/video/video.h"
 #endif
@@ -23,6 +26,9 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r){
 #if defined(LINNET_VIDEO)
     /* Package validation uses STAGE, also owned by retained video records. */
     if((q->command==87u||q->command==102u)&&(ln_video_active()||ln_video_pending()))return 1;
+#endif
+#if defined(LINNET_AUDIO)
+    if((q->command==87u||q->command==102u)&&ln_player_busy())return 1;
 #endif
     switch(q->command){
 #if defined(LINNET_IMAGE_OS)

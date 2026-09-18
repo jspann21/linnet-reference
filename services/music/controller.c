@@ -134,10 +134,11 @@ bool ln_music_queue_position(uint32_t *position,uint32_t *count){
 }
 uint32_t ln_music_revision(void){return revision+ln_music_history_revision()+ln_collections_revision();}
 const char *ln_music_sound_label(uint32_t index){
-    static char balance[24],preamp[24];
+    static char balance[24],preamp[24],levels[3][20];
     static const char *const modes[]={"Channels: Stereo","Channels: Mono","Channels: Left","Channels: Right","Channels: Karaoke"};
+    if(index==0&&profile.preset==LN_MUSIC_EQ_CUSTOM)return "EQ: Custom";
     if(index==0)return profile.preset==LN_MUSIC_EQ_BASS?"EQ: Bass":profile.preset==LN_MUSIC_EQ_VOICE?"EQ: Voice":"EQ: Flat";
-    if(index==1)return profile.replaygain?"ReplayGain: On":"ReplayGain: Off";
+    if(index==1)return profile.replaygain==2?"ReplayGain: Album":profile.replaygain?"ReplayGain: Track":"ReplayGain: Off";
     if(index==2)return profile.crossfeed?"Crossfeed: On":"Crossfeed: Off";
     if(index==3){
         if(!profile.balance)return "Balance: Center";
@@ -150,23 +151,44 @@ const char *ln_music_sound_label(uint32_t index){
     if(index==5){uint32_t value=(uint32_t)(-profile.preamp_db_q16)/65536u,n=0;const char *prefix="Preamp: -";
         while(prefix[n]){preamp[n]=prefix[n];++n;}if(value>=10)preamp[n++]=(char)('0'+value/10u);
         preamp[n++]=(char)('0'+value%10u);preamp[n++]=' ';preamp[n++]='d';preamp[n++]='B';preamp[n]=0;return preamp;}
+    if(index>=6&&index<9){
+        static const char *const names[]={"Max volume: ","Bass 100 Hz: ","Treble 8 kHz: "};
+        uint32_t slot=index-6,n=0;char *out=levels[slot];const char *name=names[slot];
+        while(*name)out[n++]=*name++;
+        int32_t db=slot?profile.eq_db[slot-1]:profile.max_volume_db_tenths/10;
+        out[n++]=db<0?'-':'+';uint32_t value=(uint32_t)(db<0?-db:db);
+        if(value>=10)out[n++]=(char)('0'+value/10);
+        out[n++]=(char)('0'+value%10);out[n++]=' ';out[n++]='d';out[n++]='B';out[n]=0;return out;
+    }
     return "";
 }
+static int32_t profile_gain(const struct ln_music_profile *p,const struct ln_music_track *t){
+    return p->replaygain==2&&t->album_replaygain!=INT32_MIN?t->album_replaygain:t->replaygain;
+}
 bool ln_music_sound_adjust(uint32_t index,int32_t direction){
-    if(shutting_down||manual_next_pending||index>5||!direction)return false;
+    if(shutting_down||manual_next_pending||index>8||!direction)return false;
     struct ln_music_profile next=profile;bool up=direction>0;
-    if(index==0)next.preset=(next.preset+(up?1u:2u))%3u;
-    else if(index==1)next.replaygain=!next.replaygain;
+    if(index==0)next.preset=(next.preset+(up?1u:3u))%4u;
+    else if(index==1)next.replaygain=(next.replaygain+(up?1u:2u))%3u;
     else if(index==2)next.crossfeed=!next.crossfeed;
     else if(index==3){next.balance+=up?100:-100;if(next.balance>1000)next.balance=1000;if(next.balance< -1000)next.balance=-1000;}
     else if(index==4)next.mode=(next.mode+(up?1u:4u))%5u;
-    else {next.preamp_db_q16+=up?65536:-65536;if(next.preamp_db_q16>0)next.preamp_db_q16=0;if(next.preamp_db_q16< -24*65536)next.preamp_db_q16=-24*65536;}
+    else if(index==5){next.preamp_db_q16+=up?65536:-65536;if(next.preamp_db_q16>0)next.preamp_db_q16=0;if(next.preamp_db_q16< -24*65536)next.preamp_db_q16=-24*65536;}
+    else if(index==6){next.max_volume_db_tenths+=up?10:-10;
+        if(next.max_volume_db_tenths>0)next.max_volume_db_tenths=0;
+        if(next.max_volume_db_tenths< -730)next.max_volume_db_tenths=-730;
+    }else {int32_t db=next.eq_db[index-7]+(up?1:-1);if(db>6)db=6;if(db< -6)db=-6;
+        next.eq_db[index-7]=(int8_t)db;next.preset=LN_MUSIC_EQ_CUSTOM;}
     if(!ln_music_profile_valid(&next))return false;
-    /* Profiles apply at the next track boundary, keeping current PCM coherent.
-     * A committed join is immutable; otherwise refresh its prepared profile. */
+    if(index==6){profile=next;ln_music_volume(0);return true;}
+    if(have_current){struct ln_dsp_config config;
+        if(!ln_music_profile_configure(&next,current.track.rate,profile_gain(&next,&current.track),&config)||
+           !ln_player_configure(&config,current.track.rate))return false;
+    }
     if(!ln_player_cancel_next())return false;
     prefetching=next_ready=next_armed=next_failed=false;
     if(resolver_kind==2)resolver_kind=0;
+    ln_music_library_cancel_prefetch();
     profile=next;++revision;return true;
 }
 uint32_t ln_music_deadline(uint32_t now){
@@ -396,7 +418,7 @@ bool ln_music_quiesce(bool save_settings){
 void ln_music_volume(int32_t steps){
     if(shutting_down)return;
     int64_t next=(int64_t)queue.volume_db_tenths+(int64_t)steps*10;
-    if(next<-730)next=-730;if(next>0)next=0;
+    if(next<-730)next=-730;if(next>profile.max_volume_db_tenths)next=profile.max_volume_db_tenths;
     queue.volume_db_tenths=(int32_t)next;++revision;
     struct ln_audio_status audio;ln_audio_snapshot(&audio);
     if(audio.initialized){
@@ -410,6 +432,7 @@ void ln_music_volume(int32_t steps){
 /* Shared output gain also runs while video owns the audio sink. */
 void ln_music_volume_sync(void){
     if(shutting_down)return;
+    if(queue.volume_db_tenths>profile.max_volume_db_tenths){queue.volume_db_tenths=profile.max_volume_db_tenths;++revision;}
     struct ln_audio_status audio;ln_audio_snapshot(&audio);
     if(!audio.initialized){volume_retry_pending=false;volume_retry_at=0;}
     else if(audio.volume_db_tenths!=queue.volume_db_tenths){
@@ -598,7 +621,7 @@ static void music_step(void){
        (ln_music_history_error()||(ln_music_history_ready()&&
         (ln_music_history_record_ready(waiting.track.id)||ln_music_history_record_error(waiting.track.id))))){
         struct ln_dsp_config dsp;
-        if(!ln_music_profile_configure(&profile,waiting.track.rate,waiting.track.replaygain,&dsp)){
+        if(!ln_music_profile_configure(&profile,waiting.track.rate,profile_gain(&profile,&waiting.track),&dsp)){
             have_waiting=false;active=false;notice="Unsupported sample rate";ln_player_stop();++revision;
         }else if(ln_player_open_configured(waiting.path,waiting.track.file_bytes,requested_position,&dsp,waiting.track.rate)){
             current=waiting;current_cursor=waiting_cursor;have_current=true;have_waiting=false;
@@ -642,7 +665,7 @@ static void music_step(void){
             struct ln_dsp_config dsp;
             if(!ln_music_history_error()&&ln_music_history_ready()&&!ln_music_history_record_ready(upcoming.track.id)&&!ln_music_history_record_error(upcoming.track.id)){
                 (void)ln_music_history_prefetch(upcoming.track.id);
-            }else if(!ln_music_profile_configure(&profile,upcoming.track.rate,upcoming.track.replaygain,&dsp)){
+            }else if(!ln_music_profile_configure(&profile,upcoming.track.rate,profile_gain(&profile,&upcoming.track),&dsp)){
                 next_ready=false;next_failed=true;
             }else if(ln_player_prepare_next_configured(upcoming.path,upcoming.track.file_bytes,candidate,&dsp,upcoming.track.rate)){
                 next_token=candidate;next_armed=true;}

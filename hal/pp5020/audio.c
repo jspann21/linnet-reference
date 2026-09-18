@@ -176,6 +176,16 @@ uint32_t ln_audio_submit(const int16_t *pcm,uint32_t frames)
     __asm__ volatile("":::"memory");
     head=cursor+frames;state.submitted+=frames;return frames;
 }
+/* Replace only queued PCM beyond the DMA-owned block. The short copy is atomic
+ * against completion; neither counters nor playback position are changed. */
+bool ln_audio_rewrite(uint32_t frame,const int16_t *pcm,uint32_t frames){
+    uint32_t flags=ln_core_irq_save(),offset=frame-tail,queued=head-tail;
+    bool allowed=state.initialized&&!state.fault&&offset<=queued&&frames<=queued-offset&&
+        (!active||!real_block||offset>=inflight);
+    if(allowed)for(uint32_t i=0;i<frames;i++)native(ring)[(frame+i)&MASK]=
+        (uint16_t)pcm[2*i]|((uint32_t)(uint16_t)pcm[2*i+1]<<16);
+    ln_core_irq_restore(flags);return allowed;
+}
 bool ln_audio_start(void)
 {
     if(!state.initialized||state.fault||head==tail)return false;

@@ -143,10 +143,10 @@ static int16_t output(struct ln_dsp *dsp,int32_t value)
     if(sample<-32768){increment(&dsp->output_clips);return -32768;}
     return (int16_t)sample;
 }
-/* 32 stereo Q8 frames use 256 bytes of bounded stack scratch. Processing
+/* 128 stereo Q8 frames use 1024 bytes of bounded stack scratch. Processing
  * each stage across this block preserves its exact recurrence and rounding,
  * while avoiding coefficient/history reloads throughout the combined chain. */
-#define DSP_BLOCK_FRAMES 32u
+#define DSP_BLOCK_FRAMES 128u
 static __attribute__((always_inline)) inline void process_channels(struct ln_dsp *dsp,int16_t *pcm,uint32_t frames,uint32_t channels)
 {
     const struct ln_dsp_config *c=&dsp->config;

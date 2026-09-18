@@ -19,6 +19,8 @@ bool ln_player_open_at(const char *path,uint64_t expected_bytes,uint64_t positio
  * fails before submitting PCM. The caller may release config after this call. */
 bool ln_player_open_configured(const char *path,uint64_t expected_bytes,uint64_t position,
                                const struct ln_dsp_config *config,uint32_t config_rate);
+/* Reprocess queued PCM in bounded steps without seeking or moving the playhead. */
+bool ln_player_configure(const struct ln_dsp_config *config,uint32_t rate);
 bool ln_player_pause(bool pause);
 /* Toggle the latest accepted intent, including pending pause/seek and priming. */
 bool ln_player_toggle_pause(void);

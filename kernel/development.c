@@ -19,6 +19,7 @@ extern _Noreturn void ln_panic(uint32_t reason, uint32_t pc, uint32_t status);
 static struct ln_loader loader;
 static ln_link_backend backend;
 static ln_link_dispatcher dispatcher;
+int ln_development_stage_busy(void){return dispatcher.staging;}
 static ln_link_parser parser;
 static uint32_t usb_generation;
 static uint8_t receive_bytes[512];
@@ -26,15 +27,30 @@ static uint8_t transmit_bytes[LINNET_LINK_MAX_FRAME];
 static int (*loader_read)(void *, uint16_t, uint8_t *, uint32_t *);
 #if defined(LINNET_VIDEO)
 #include "services/video/video.h"
+#endif
+#if defined(LINNET_AUDIO)
+#include "services/music/player.h"
+#endif
+#if defined(LINNET_VIDEO) || defined(LINNET_AUDIO)
 static int (*loader_begin)(void *, uint32_t);
 static int (*loader_write)(void *, uint32_t, const uint8_t *, uint32_t);
-/* Video owns STAGE until its outstanding storage request has drained. */
+/* Playback owns STAGE until its outstanding work has drained. */
 static int stage_begin(void *context,uint32_t size) {
+#if defined(LINNET_VIDEO)
     if(ln_video_active()||ln_video_pending())return 0;
+#endif
+#if defined(LINNET_AUDIO)
+    if(ln_player_busy())return 0;
+#endif
     return loader_begin(context,size);
 }
 static int stage_write(void *context,uint32_t offset,const uint8_t *data,uint32_t size) {
+#if defined(LINNET_VIDEO)
     if(ln_video_active()||ln_video_pending())return 0;
+#endif
+#if defined(LINNET_AUDIO)
+    if(ln_player_busy())return 0;
+#endif
     return loader_write(context,offset,data,size);
 }
 #endif
@@ -122,7 +138,7 @@ int ln_development_init(void) {
     if (!ln_loader_init(&loader, &config, &backend)) return 0;
     loader_read = backend.read;
     backend.read = diagnostic_read;
-#if defined(LINNET_VIDEO)
+#if defined(LINNET_VIDEO) || defined(LINNET_AUDIO)
     loader_begin=backend.begin;backend.begin=stage_begin;
     loader_write=backend.write;backend.write=stage_write;
 #endif

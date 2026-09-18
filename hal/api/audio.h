@@ -16,6 +16,8 @@ struct ln_audio_status {
 bool ln_audio_init(uint32_t rate);
 uint32_t ln_audio_submit(const int16_t *pcm, uint32_t frames);
 uint32_t ln_audio_capacity(void);
+/* Absolute submitted frame index; rejects overlap with the active DMA block. */
+bool ln_audio_rewrite(uint32_t frame,const int16_t *pcm,uint32_t frames);
 bool ln_audio_start(void);
 void ln_audio_finish(void);
 void ln_audio_pause(void);
