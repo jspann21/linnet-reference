@@ -49,6 +49,8 @@ const struct ln_music_library_row *ln_music_library_row(uint32_t track_index);
 /* New selection supersedes an older unresolved selection, draining its read.
  * take_selection copies an immutable snapshot and consumes the result. */
 bool ln_music_library_select(uint32_t track_index);
+/* Resolve a stable ID through the selection slot; missing returns index UINT32_MAX. */
+bool ln_music_library_select_id(uint64_t id);
 bool ln_music_library_take_selection(struct ln_music_library_row *out);
 /* Independent next-track metadata slot. Explicit selection has priority. */
 bool ln_music_library_prefetch(uint32_t track_index);

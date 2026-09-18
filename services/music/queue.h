@@ -21,6 +21,7 @@ struct ln_queue {
     bool shuffled;
     uint8_t library_identity[32];
     uint64_t position_samples;
+    uint64_t last_track_id;
     int32_t volume_db_tenths;
 };
 /* Virtual current returns source ordinal (all-tracks ordinal is PODB index).
