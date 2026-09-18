@@ -201,23 +201,24 @@ def scan(root, kinds=KINDS, skipped=None):
             raise ValueError("Unknown media folder")
         folders = source_folders(root, kind)
         excluded = {Path(value).as_posix().casefold() for value in skipped.get(kind, ())}
-        records = [record for folder in folders for record in _file_records(folder)]
-        skipped_records = [record for record in records
-                           if record[0].relative_to(root).as_posix().casefold() in excluded]
-        records = [record for record in records
-                   if record[0].relative_to(root).as_posix().casefold() not in excluded]
-        files = [path for path, info in records]
-        supported = [p for p in files if p.suffix.lower() in extensions(kind)]
-        rows = []
-        supported_bytes = 0
+        rows, supported = [], []
+        supported_bytes = skipped_count = ignored = 0
         allowed = extensions(kind)
-        for path, info in records:
-            rows.append((path.relative_to(root).as_posix(), info.st_size, info.st_mtime_ns))
-            if path.suffix.lower() in allowed:
-                supported_bytes += info.st_size
+        for folder in folders:
+            for path, info in _file_records(folder):
+                relative = path.relative_to(root).as_posix()
+                if relative.casefold() in excluded:
+                    skipped_count += 1
+                    continue
+                rows.append((relative, info.st_size, info.st_mtime_ns))
+                if path.suffix.lower() in allowed:
+                    supported.append(str(path))
+                    supported_bytes += info.st_size
+                else:
+                    ignored += 1
         result[kind] = dict(count=len(supported), bytes=supported_bytes,
-                            ignored=len(files)-len(supported), files=[str(p) for p in supported],
-                            skipped=len(skipped_records),
+                            ignored=ignored, files=supported,
+                            skipped=skipped_count,
                             fingerprint=hashlib.sha256(json.dumps(rows).encode()).hexdigest())
     return result
 
