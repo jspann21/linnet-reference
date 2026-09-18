@@ -50,7 +50,7 @@ def _row(category, kind, title, path, status, *, info=None, **extra):
                 removable=category != 'cache', **extra)
 
 
-def list_items(identity):
+def list_items(identity, *, records_by_kind=None):
     """Read file names, timestamps and the bounded catalog; never decode media."""
     identity = manager.refresh(identity)
     root = Path(identity['root']).resolve(strict=True)
@@ -60,7 +60,9 @@ def list_items(identity):
     metadata = _music_metadata(root)
     for kind in manager.KINDS:
         allowed = manager.extensions(kind)
-        for path, info in (record for folder in manager.source_folders(root, kind) for record in manager._file_records(folder)):
+        records = (records_by_kind[kind] if records_by_kind is not None else
+                   (record for folder in manager.source_folders(root, kind) for record in manager._file_records(folder)))
+        for path, info in records:
             if kind == 'Videos' and str(path.resolve()).casefold() in published_paths:
                 continue
             if path.suffix.lower() in allowed:

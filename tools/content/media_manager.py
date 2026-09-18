@@ -192,30 +192,30 @@ def preparation_option(kind, identity, photo_dimension=640, music_verification='
     return f'flat-photos1-{photo_dimension}' if kind == 'Photos' else 'default'
 
 
-def scan(root, kinds=KINDS, skipped=None):
+def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None):
     root = Path(root).resolve(strict=True)
     skipped = skipped or {}
     result = {}
     for kind in kinds:
         if kind not in KINDS:
             raise ValueError("Unknown media folder")
-        folders = source_folders(root, kind)
         excluded = {Path(value).as_posix().casefold() for value in skipped.get(kind, ())}
         rows, supported = [], []
         supported_bytes = skipped_count = ignored = 0
         allowed = extensions(kind)
-        for folder in folders:
-            for path, info in _file_records(folder):
-                relative = path.relative_to(root).as_posix()
-                if relative.casefold() in excluded:
-                    skipped_count += 1
-                    continue
-                rows.append((relative, info.st_size, info.st_mtime_ns))
-                if path.suffix.lower() in allowed:
-                    supported.append(str(path))
-                    supported_bytes += info.st_size
-                else:
-                    ignored += 1
+        records = (records_by_kind[kind] if records_by_kind is not None else
+                   (record for folder in source_folders(root, kind) for record in _file_records(folder)))
+        for path, info in records:
+            relative = path.relative_to(root).as_posix()
+            if relative.casefold() in excluded:
+                skipped_count += 1
+                continue
+            rows.append((relative, info.st_size, info.st_mtime_ns))
+            if path.suffix.lower() in allowed:
+                supported.append(str(path))
+                supported_bytes += info.st_size
+            else:
+                ignored += 1
         result[kind] = dict(count=len(supported), bytes=supported_bytes,
                             ignored=ignored, files=supported,
                             skipped=skipped_count,

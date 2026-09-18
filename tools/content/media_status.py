@@ -34,8 +34,12 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     except (OSError, ValueError):
         state = {}
     skipped = {kind: media._skipped_paths(state, kind) for kind in media.KINDS}
-    inventory = media.scan(root, skipped=skipped)
-    rows = media_library.list_items(identity)
+    # Inventory and visible rows describe the same refresh. Traverse the iPod
+    # once, retaining excluded files for the library's removal controls.
+    records = {kind: [record for folder in media.source_folders(root, kind)
+                      for record in media._file_records(folder)] for kind in media.KINDS}
+    inventory = media.scan(root, skipped=skipped, records_by_kind=records)
+    rows = media_library.list_items(identity, records_by_kind=records)
     readiness = {}
     for kind in media.KINDS:
         saved = state.get(kind, {})
