@@ -98,7 +98,7 @@ uint32_t ln_ui_dynamic_count(const struct ln_ui_node*n,uint32_t fallback){
     if((in_scene(n,"linnet.system.photos")||in_scene(n,"linnet.system.photos-grid"))&&
        (n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_GRID||n->kind==LN_UI_SCROLLBAR))return ln_photos_count();
 #endif
-    if(in_scene(n,"linnet.system.music-options")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return 12;
+    if(in_scene(n,"linnet.system.music-options")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return 13;
     if(in_scene(n,"linnet.system.music-sound")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return 9;
     if(in_scene(n,"linnet.system.music-search")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_music_search_count();
     if(in_scene(n,"linnet.system.music-queue")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_music_queue_view_count();
@@ -117,6 +117,8 @@ uint32_t ln_ui_dynamic_value(const struct ln_ui_node*n,uint32_t fallback){
     return fallback;
 }
 const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){
+    if(n->text&&equal(n->text,"Sleep timer"))return item<4u?ln_music_sleep_label(item):fallback;
+    if(n->text&&equal(n->text,"Sleep timer status"))return ln_music_sleep_status();
 #if defined(LINNET_NOTES)
     if(in_scene(n,"linnet.system.notes")){
         if(n->kind==LN_UI_STATUS_BAR)return ln_notes_title();

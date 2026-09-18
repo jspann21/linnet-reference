@@ -44,6 +44,15 @@ static struct ln_queue expanded_queue;
 #define LN_MUSIC_VOLUME_RETRY_US 100000u
 static uint32_t volume_retry_at;
 static bool volume_retry_pending;
+static const uint32_t sleep_minutes[]={1,5,10,15,30,45,60,90,120};
+static const char *const sleep_modes[]={"After: 1 minute","After: 5 minutes","After: 10 minutes","After: 15 minutes","After: 30 minutes","After: 45 minutes","After: 1 hour","After: 90 minutes","After: 2 hours","End of track","End of album"};
+static const uint32_t sleep_fades[]={0,5,10,30};
+static uint32_t sleep_choice=3,sleep_fade_choice,sleep_mode,sleep_fade;
+static uint32_t sleep_left,sleep_fraction,sleep_sample,sleep_revision,sleep_attenuation;
+static bool sleep_active,sleep_due,sleep_tail_ended;
+static const char *sleep_notice;
+static bool sleep_holds_next(void);
+static void sleep_cancel_boundary(void);
 static bool next_queue_cursor(uint32_t *cursor){
     if(!queue.count)return false;
     if(queue.repeat==LINNET_QUEUE_REPEAT_ONE)*cursor=queue.cursor;
@@ -51,6 +60,94 @@ static bool next_queue_cursor(uint32_t *cursor){
     else if(queue.repeat==LINNET_QUEUE_REPEAT_ALL)*cursor=0;
     else return false;
     return true;
+}
+static bool sleep_holds_next(void){
+    if(!sleep_active||sleep_mode<9u)return false;
+    if(sleep_mode==9u)return true;
+    uint32_t cursor;
+    return !have_current||!current.album[0]||!next_queue_cursor(&cursor)||cursor<=queue.cursor||
+        next_failed||(next_ready&&upcoming.track.album!=current.track.album);
+}
+static void sleep_cancel(void){
+    sleep_active=sleep_due=sleep_tail_ended=false;sleep_attenuation=0;sleep_notice=0;++sleep_revision;
+}
+static void sleep_cancel_boundary(void){if(sleep_active&&sleep_mode>=9u)sleep_cancel();}
+uint32_t ln_music_sleep_revision(void){return sleep_revision;}
+const char *ln_music_sleep_label(uint32_t row){
+    static const char *const fades[]={"Fade out: Off","Fade out: 5 seconds","Fade out: 10 seconds","Fade out: 30 seconds"};
+    if(row==0)return sleep_modes[sleep_choice];
+    if(row==1)return fades[sleep_fade_choice];
+    if(row==2)return sleep_active?"Restart timer":"Start timer";
+    return "Cancel timer";
+}
+const char *ln_music_sleep_status(void){
+    static char label[32];
+    if(sleep_notice)return sleep_notice;
+    if(!sleep_active)return "Timer off";
+    if(sleep_due)return "Shutting down...";
+    if(sleep_mode>=9u)return sleep_mode==9u?"Sleeping after this track":"Sleeping after this album";
+    uint32_t minutes=sleep_left/60u,seconds=sleep_left%60u,n=0,count=0;char digits[10];
+    const char *prefix="Remaining: ";while(*prefix)label[n++]=*prefix++;
+    do{digits[count++]=(char)('0'+minutes%10u);minutes/=10u;}while(minutes);
+    while(count)label[n++]=digits[--count];
+    label[n++]=':';label[n++]=(char)('0'+seconds/10u);label[n++]=(char)('0'+seconds%10u);label[n]=0;return label;
+}
+bool ln_music_sleep_adjust(uint32_t row,int32_t direction){
+    if(shutting_down||!direction||row>3u)return false;
+    sleep_notice=0;
+    if(row<2u){
+        uint32_t *choice=row?&sleep_fade_choice:&sleep_choice,max=row?3u:10u;
+        *choice=direction<0?(*choice?*choice-1u:max):(*choice==max?0u:*choice+1u);
+        ++sleep_revision;return true;
+    }
+    if(row==3u){sleep_cancel();ln_music_volume_sync();return true;}
+    if(sleep_choice>=9u){
+        struct ln_player_status p;ln_player_snapshot(&p);
+        if(!active||!have_current||selecting||have_waiting||manual_next_pending||resolver_kind==1||
+           (p.phase!=LN_PLAYER_PLAY&&p.phase!=LN_PLAYER_PRIME&&p.phase!=LN_PLAYER_PAUSE&&p.phase!=LN_PLAYER_DRAIN)){
+            sleep_notice="Play a track first";++sleep_revision;return false;
+        }
+        /* Never claim an end boundary after next-track PCM is committed. */
+        if(!ln_player_cancel_next()){sleep_notice="Track changing; try again";++sleep_revision;return false;}
+        next_armed=false;
+    }
+    sleep_active=true;sleep_due=sleep_tail_ended=false;sleep_attenuation=0;
+    sleep_mode=sleep_choice;sleep_fade=sleep_fades[sleep_fade_choice];
+    sleep_left=sleep_mode<9u?sleep_minutes[sleep_mode]*60u:0;
+    sleep_fraction=0;sleep_sample=ln_time_us();++sleep_revision;ln_music_volume_sync();return true;
+}
+bool ln_music_sleep_step(uint32_t now){
+    if(!sleep_active)return false;
+    uint32_t delta=now-sleep_sample;sleep_sample=now;
+    if(sleep_mode<9u&&!sleep_due){
+        uint32_t elapsed=delta/1000000u;
+        sleep_fraction+=delta%1000000u;
+        if(sleep_fraction>=1000000u){sleep_fraction-=1000000u;++elapsed;}
+        if(elapsed){sleep_left=elapsed>=sleep_left?0:sleep_left-elapsed;++sleep_revision;}
+        if(!sleep_left){sleep_due=true;++sleep_revision;}
+    }
+    uint32_t attenuation=0;
+    if(sleep_fade){
+        if(sleep_mode<9u&&sleep_left<=sleep_fade){
+            uint32_t remaining=sleep_left*1000u;
+            uint32_t fraction=sleep_fraction/1000u;
+            remaining=remaining>fraction?remaining-fraction:0;
+            attenuation=730u-(remaining*730u)/(sleep_fade*1000u);
+        }else if(sleep_mode>=9u&&sleep_holds_next()){
+            struct ln_player_status p;ln_player_snapshot(&p);
+            uint64_t position=ln_player_position(),frames=p.frames?p.frames:current.track.frames;
+            uint32_t window=p.rate*sleep_fade;
+            uint64_t remaining=frames>position?frames-position:0;
+            if(frames&&window&&remaining<=window)attenuation=730u-((uint32_t)remaining*730u)/window;
+        }
+    }
+    if(sleep_due){attenuation=sleep_fade?730u:0;(void)ln_player_pause(true);}
+    if(attenuation!=sleep_attenuation){sleep_attenuation=attenuation;ln_music_volume_sync();}
+    return sleep_due;
+}
+static int32_t output_volume(void){
+    int32_t value=queue.volume_db_tenths-(int32_t)sleep_attenuation;
+    return value< -730?-730:value;
 }
 const char *ln_music_notice(void){return notice;}
 static void remember_position(void);
@@ -99,13 +196,13 @@ bool ln_music_queue_edit(uint32_t action){
     if(action>1&&queue.source){notice="Large queue: reorder unavailable";++revision;return false;}
     if(action&& !ln_player_cancel_next()){notice="Track change in progress";++revision;return false;}
     if(action==0){
-        accepted=ln_queue_select_at(&queue,queue_choice);
+        sleep_cancel_boundary();accepted=ln_queue_select_at(&queue,queue_choice);
         if(accepted){active=true;requested_position=0;accepted=select_current();show_now_playing=accepted;}
     }else if(action==1){
         accepted=ln_queue_remove_occurrence(&queue,occurrence);
         if(accepted){
             discard_next(true);resolver_kind=0;
-            if(was_current){ln_player_stop_for_restart();requested_position=0;active=queue.count!=0;
+            if(was_current){sleep_cancel_boundary();ln_player_stop_for_restart();requested_position=0;active=queue.count!=0;
                 if(active)(void)select_current();else ln_player_stop();}
             else current_cursor=queue.cursor;
         }
@@ -206,7 +303,7 @@ uint32_t ln_music_deadline(uint32_t now){
 /* Menu rows map to stable service actions, shared by labels and selection. */
 uint32_t ln_music_option_action(uint32_t row){
     /* Queue, playback settings, favorites/bookmarks, transport, stop. */
-    static const uint8_t actions[]={7,11,0,1,8,2,3,4,5,9,10,6};
+    static const uint8_t actions[]={7,11,0,1,8,12,2,3,4,5,9,10,6};
     return row<sizeof(actions)?actions[row]:UINT32_MAX;
 }
 uint32_t ln_music_queue_action(uint32_t row){
@@ -231,6 +328,7 @@ const char *ln_music_option_label(uint32_t index){
     case 4:return record&&(record->flags&LN_MUSIC_JOURNAL_BOOKMARK)?"Resume bookmark":"No bookmark saved";
     case 5:return "Restart track";
     case 6:return "Stop";
+    case 12:return "Sleep timer";
     case 11:return "Save queue as playlist...";
     case 7:return "Play queue";
     case 8:return "Sound settings";
@@ -294,7 +392,7 @@ static bool select_queue(const struct ln_music_browser_queue *selection){
         if(!ln_queue_select_occurrence(&replacement,selection->cursor))return false;
     }
     ln_queue_shuffle(&replacement,queue.shuffled);
-    remember_position();queue=replacement;++revision;skipped=0;active=true;requested_position=selection->frame;
+    sleep_cancel_boundary();remember_position();queue=replacement;++revision;skipped=0;active=true;requested_position=selection->frame;
     return select_current();
 }
 bool ln_music_select(uint32_t index){
@@ -307,7 +405,7 @@ bool ln_music_next(bool previous){
     remember_position();
     bool moved=previous?ln_queue_previous(&queue):ln_queue_next(&queue,true);
     uint32_t index;if(!moved||!ln_queue_current(&queue,&index))return false;
-    ++revision;active=true;skipped=0;requested_position=0;
+    sleep_cancel_boundary();++revision;active=true;skipped=0;requested_position=0;
     if(!previous&&next_armed&&next_ordinal==index&&ln_player_skip_prepared_next(next_token)){
         manual_next_pending=true;return true;}
     bool accepted=select_current();
@@ -336,7 +434,7 @@ static void remember_position(void){
         (void)ln_music_history_set_resume(current.track.id,true,position);
         if(position!=queue.position_samples){queue.position_samples=position;++revision;}}
 }
-void ln_music_stop(void){if(shutting_down)return;remember_position();active=false;have_waiting=false;selecting=false;resolver_kind=0;volume_retry_pending=false;volume_retry_at=0;discard_next(false);ln_player_stop();++revision;}
+void ln_music_stop(void){if(shutting_down)return;sleep_cancel_boundary();remember_position();active=false;have_waiting=false;selecting=false;resolver_kind=0;volume_retry_pending=false;volume_retry_at=0;discard_next(false);ln_player_stop();++revision;}
 bool ln_music_seek(uint64_t frame){
     if(shutting_down||!ln_player_seek(frame))return false;
     prefetching=next_ready=next_armed=next_failed=false;
@@ -422,7 +520,7 @@ void ln_music_volume(int32_t steps){
     queue.volume_db_tenths=(int32_t)next;++revision;
     struct ln_audio_status audio;ln_audio_snapshot(&audio);
     if(audio.initialized){
-        if(ln_audio_volume(queue.volume_db_tenths)){
+        if(ln_audio_volume(output_volume())){
             volume_retry_pending=false;volume_retry_at=0;
         }else{
             volume_retry_pending=true;volume_retry_at=ln_time_us()+LN_MUSIC_VOLUME_RETRY_US;
@@ -435,10 +533,10 @@ void ln_music_volume_sync(void){
     if(queue.volume_db_tenths>profile.max_volume_db_tenths){queue.volume_db_tenths=profile.max_volume_db_tenths;++revision;}
     struct ln_audio_status audio;ln_audio_snapshot(&audio);
     if(!audio.initialized){volume_retry_pending=false;volume_retry_at=0;}
-    else if(audio.volume_db_tenths!=queue.volume_db_tenths){
+    else if(audio.volume_db_tenths!=output_volume()){
         uint32_t retry_now=ln_time_us();
         if(!volume_retry_pending||(int32_t)(retry_now-volume_retry_at)>=0){
-            if(ln_audio_volume(queue.volume_db_tenths)){
+            if(ln_audio_volume(output_volume())){
                 volume_retry_pending=false;volume_retry_at=0;
             }else{
                 volume_retry_pending=true;volume_retry_at=ln_time_us()+LN_MUSIC_VOLUME_RETRY_US;
@@ -483,7 +581,7 @@ static void music_step(void){
         if(next_armed||next_ready||prefetching||resolver_kind==2)expected=true;
         else {uint32_t cursor;expected=next_queue_cursor(&cursor);}
     }
-    ln_player_expect_next(expected);
+    ln_player_expect_next(expected&&!sleep_holds_next()&&!sleep_due);
     ln_player_snapshot(&before);ln_player_step();ln_player_snapshot(&p);ln_audio_snapshot(&audio);
 #if defined(LINNET_COVERFLOW)
     for(uint32_t budget=0;budget<3&&ln_coverflow_active()&&audio.playing&&!audio.paused&&
@@ -617,6 +715,16 @@ static void music_step(void){
     }
     if(have_waiting&&ln_music_history_ready()&&!ln_music_history_record_ready(waiting.track.id))
         (void)ln_music_history_prefetch(waiting.track.id);
+    if(active&&have_current&&!selecting&&!have_waiting&&!next_failed&&!sleep_due&&
+       !prefetching&&!next_ready&&!next_armed&&!resolver_kind){
+        uint32_t cursor;
+        if(next_queue_cursor(&cursor)&&ln_queue_track_at(&queue,cursor,&next_ordinal))
+            (void)resolve_queue(next_ordinal,2);
+    }
+    struct ln_music_library_row prefetched;
+    if(ln_music_library_take_prefetch(&prefetched)&&prefetching&&prefetched.index==next_index){
+        upcoming=prefetched;prefetching=false;next_ready=true;
+    }
     if(have_waiting&&p.phase==LN_PLAYER_IDLE&&!ln_storage_busy()&&
        (ln_music_history_error()||(ln_music_history_ready()&&
         (ln_music_history_record_ready(waiting.track.id)||ln_music_history_record_error(waiting.track.id))))){
@@ -630,8 +738,22 @@ static void music_step(void){
             ln_music_art_request(current.art_path,current.art_crc);
             active=true;queue.position_samples=requested_position;requested_position=0;++revision;
         }
-    }else if(active&&!have_waiting&&!selecting&&resolver_kind!=1&&!next_armed&&before.phase!=LN_PLAYER_IDLE&&before.phase!=LN_PLAYER_ERROR&&
-              (p.phase==LN_PLAYER_IDLE||p.phase==LN_PLAYER_ERROR)){
+    }else if(active&&!have_waiting&&!selecting&&resolver_kind!=1&&!next_armed&&
+              (sleep_tail_ended||(before.phase!=LN_PLAYER_IDLE&&before.phase!=LN_PLAYER_ERROR&&
+              (p.phase==LN_PLAYER_IDLE||p.phase==LN_PLAYER_ERROR)))){
+        if(sleep_active&&sleep_mode>=9u){
+            if(sleep_holds_next()||p.phase==LN_PLAYER_ERROR){
+                if(p.phase!=LN_PLAYER_ERROR&&have_current){
+                    (void)ln_music_history_played(current.track.id);
+                    (void)ln_music_history_set_resume(current.track.id,false,0);
+                }
+                sleep_due=true;sleep_tail_ended=false;active=false;queue.position_samples=requested_position=0;
+                ++sleep_revision;++revision;
+                return;
+            }
+            if(!next_ready){sleep_tail_ended=true;return;}
+        }
+        sleep_tail_ended=false;
         if(p.phase==LN_PLAYER_ERROR){++skipped;ln_player_stop();}
         else {
             if(have_current){(void)ln_music_history_played(current.track.id);
@@ -650,17 +772,8 @@ static void music_step(void){
             requested_position=0;(void)select_current();++revision;
         }else active=false;
     }
-    struct ln_music_library_row prefetched;
-    if(ln_music_library_take_prefetch(&prefetched)&&prefetching&&prefetched.index==next_index){
-        upcoming=prefetched;prefetching=false;next_ready=true;
-    }
-    if(active&&have_current&&!selecting&&!have_waiting&&!next_failed){
-        if(!prefetching&&!next_ready&&!next_armed&&!resolver_kind){
-            uint32_t cursor;
-            if(next_queue_cursor(&cursor)&&ln_queue_track_at(&queue,cursor,&next_ordinal))
-                (void)resolve_queue(next_ordinal,2);
-        }
-        if(next_ready&&!next_armed&&!photo_priority&&(p.phase==LN_PLAYER_PRIME||p.phase==LN_PLAYER_PLAY||p.phase==LN_PLAYER_DRAIN)){
+    if(active&&have_current&&!selecting&&!have_waiting&&!next_failed&&!sleep_due){
+        if(next_ready&&!next_armed&&!sleep_holds_next()&&!photo_priority&&(p.phase==LN_PLAYER_PRIME||p.phase==LN_PLAYER_PLAY||p.phase==LN_PLAYER_DRAIN)){
             uint32_t candidate=next_token+1u;if(!candidate)candidate=1;
             struct ln_dsp_config dsp;
             if(!ln_music_history_error()&&ln_music_history_ready()&&!ln_music_history_record_ready(upcoming.track.id)&&!ln_music_history_record_error(upcoming.track.id)){

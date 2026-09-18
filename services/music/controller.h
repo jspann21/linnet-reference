@@ -3,6 +3,12 @@
 #include "services/music/library.h"
 void ln_music_init(void);
 void ln_music_step(void);
+/* One-shot sleep timer; input never resets it. Timer state is boot-local. */
+bool ln_music_sleep_adjust(uint32_t row,int32_t direction);
+const char *ln_music_sleep_label(uint32_t row);
+const char *ln_music_sleep_status(void);
+uint32_t ln_music_sleep_revision(void);
+bool ln_music_sleep_step(uint32_t now);
 /* Consumes an executive-issued UI intent after browser track admission. */
 bool ln_music_take_now_playing(void);
 bool ln_music_select(uint32_t index);

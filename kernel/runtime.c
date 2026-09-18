@@ -101,6 +101,8 @@ static void backlight_activity(void){
     }
 }
 #if defined(LINNET_AUDIO)
+static uint32_t sleep_timer_revision;
+static bool sleep_from_playback;
 static uint32_t music_revision,music_phase,music_generation,music_progress_at,music_navigation;
 static uint32_t music_window_epoch=UINT32_MAX,music_window_selection=UINT32_MAX,music_window_navigation=UINT32_MAX;
 static uint32_t search_navigation,search_revision,search_library_status;
@@ -377,6 +379,15 @@ static void apply(uint32_t kind,int32_t value){
     }
 #endif
 #if defined(LINNET_AUDIO)
+    if(kind==LN_INPUT_BUTTON&&!shell->hold&&scene_is("linnet.system.sleep-timer")){
+        uint32_t pressed=(uint32_t)value&~shell->buttons;
+        if(pressed&LN_BUTTON_MENU){
+            (void)ln_ui_show(shell,sleep_from_playback?"linnet.system.music-options":"linnet.system.settings");sleep_from_playback=false;handled=true;
+        }else if((pressed&LN_BUTTON_SELECT)||(shell->selected<2u&&(pressed&(LN_BUTTON_NEXT|LN_BUTTON_PREV)))){
+            (void)ln_music_sleep_adjust(shell->selected,(pressed&LN_BUTTON_PREV)?-1:1);handled=true;
+        }
+        if(handled){shell->buttons=(uint32_t)value;ln_ui_refresh(shell);dirty=true;}
+    }
     if(kind==LN_INPUT_HEADPHONE)ln_music_headphones(value!=0);
     if(!handled&&kind==LN_INPUT_BUTTON&&!shell->hold){uint32_t pressed=(uint32_t)value&~shell->buttons;
 #if defined(LINNET_COVERFLOW)
@@ -406,6 +417,7 @@ static void apply(uint32_t kind,int32_t value){
         }else if((pressed&LN_BUTTON_SELECT)&&scene_is("linnet.system.music-options")){
             uint32_t action=ln_music_option_action(shell->selected);
             if(action==7){ln_music_queue_open();(void)ln_ui_show(shell,"linnet.system.music-queue");}
+            else if(action==12){sleep_from_playback=true;(void)ln_ui_show(shell,"linnet.system.sleep-timer");}
             else if(action==11){ln_music_queue_close();(void)ln_ui_show(shell,"linnet.system.music");(void)ln_music_save_queue();browser_navigation();}
             else if(action==8){(void)ln_ui_show(shell,"linnet.system.music-sound");}
             else (void)ln_music_option_select(action);
@@ -864,6 +876,15 @@ void ln_runtime_step(void){
     if(music_window_pending){music_window_pending=false;browser_navigation();}
 #endif
 #if defined(LINNET_NATIVE_UI)
+#if defined(LINNET_AUDIO)
+    bool sleep_timer_due=ln_music_sleep_step(ln_time_us());
+    uint32_t sleep_revision=ln_music_sleep_revision();
+    if(sleep_revision!=sleep_timer_revision){
+        sleep_timer_revision=sleep_revision;
+        if(scene_is("linnet.system.sleep-timer")){ln_ui_refresh(shell);dirty=true;}
+    }
+    if(sleep_timer_due&&!ln_storage_busy())shutdown(true);
+#endif
     uint32_t shutdown_now=ln_time_us(),timeout=ln_auto_shutdown_seconds(shell->headphones!=0);
     if(timeout!=auto_shutdown_timeout||auto_shutdown_headphones!=(shell->headphones!=0)){
         shutdown_idle_us=0;auto_shutdown_timeout=timeout;auto_shutdown_headphones=shell->headphones!=0;

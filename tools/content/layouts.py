@@ -117,7 +117,7 @@ def refine_footers(scene,theme):
     """Keep supporting text on one bottom grid, above each theme's chrome."""
     sid=scene['id'].rsplit('.',1)[-1]
     keys={'themes':{'Theme status'},'clock':{'Clock source'},
-          'clock-edit':{'Clock edit hint'},'music-search':{'Search controls'}}
+          'clock-edit':{'Clock edit hint'},'sleep-timer':{'Sleep timer status'},'music-search':{'Search controls'}}
     texts=[n for n in scene['nodes'] if n['kind']==3]
     if sid in keys:foot=[n for n in texts if n['text'] in keys[sid]]
     elif sid in ('display','battery','shutdown'):foot=texts[1:]
@@ -183,6 +183,9 @@ def refine_scene(scene,theme,body):
         list_h=max(field_h,((h-2*fh-8)//field_h)*field_h)
         place(listing,x,y,w-8,list_h)
         for n in texts:place(n,x+4,bottom-2*fh,w-8,2*fh);n['flags']=WRAP
+    elif sid=='sleep-timer':
+        place(listing,listing['x'],y,listing['w'],max(rh,((h-32)//rh)*rh))
+        for n in texts:place(n,x+4,bottom-26,w-8,26);n['flags']=WRAP
     elif sid in ('display','battery','shutdown'):
         list_h=max(50,2*rh) if sid=='shutdown' else rh
         place(listing,x,y,w,list_h)
