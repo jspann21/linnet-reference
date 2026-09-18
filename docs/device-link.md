@@ -26,6 +26,8 @@ can change.
   storage files through `tools.link.session.Session`; the commands and bounds
   are listed below. Arbitrary paths/raw addresses are not accepted by Link.
 
+Linnet Link also supports persistent installation from recovery Boot: if the OS rejects `UPDATE_BEGIN`, reboot with `--mode boot`, rediscover the port, run `device install`, then reboot with `--mode persistent` and verify the build identity.
+
 **Prepare the return from Disk Mode before entering it.** Apple Disk Mode exposes
 mass storage, not the Linnet COM endpoint. Automatic return uses the host's
 verified Boot-directory refresh followed by eject:
