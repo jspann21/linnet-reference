@@ -118,9 +118,12 @@ def _music_metadata(root):
         validate_database(data)
         fields = struct.unpack_from('<14I', data, 8)
         count, offset, pool = fields[2], fields[6], fields[10]
+        strings = {}
         def string(at):
-            start = pool + at
-            return data[start:data.index(b'\0', start)].decode('utf-8')
+            if at not in strings:
+                start = pool + at
+                strings[at] = data[start:data.index(b'\0', start)].decode('utf-8')
+            return strings[at]
         owners = {}
         for index in range(fields[3]):
             kind, name, parent, first, length = struct.unpack_from('<5I', data, fields[7] + index * 32)
@@ -128,19 +131,18 @@ def _music_metadata(root):
                 owner = string(struct.unpack_from('<I', data, fields[7] + parent * 32 + 4)[0])
                 for member in struct.unpack_from(f'<{length}I', data, fields[8] + first * 4):
                     owners[member] = owner
-        result = {}
+        result, artwork_paths = {}, {}
         for index in range(count):
             title, artist, album, location, genre = map(string, struct.unpack_from('<5I', data, offset + index * TRACK + 52))
             path = root / location.lstrip('/')
             _plain(path, root)
             art = struct.unpack_from('<I', data, offset + index * TRACK + 88)[0]
-            artwork = ''
-            if art < fields[12]:
+            if art < fields[12] and art not in artwork_paths:
                 location = string(struct.unpack_from('<I', data, fields[13] + art * 32 + 8)[0])
                 candidate = root / location.lstrip('/')
                 _plain(candidate, root)
-                if candidate.is_relative_to(root / '.LINNET' / 'ART'):
-                    artwork = str(candidate)
+                artwork_paths[art] = str(candidate) if candidate.is_relative_to(root / '.LINNET' / 'ART') else ''
+            artwork = artwork_paths.get(art, '')
             frames, rate = struct.unpack_from('<QI', data, offset + index * TRACK + 32)
             track = struct.unpack_from('<I', data, offset + index * TRACK + 80)[0]
             disc = struct.unpack_from('<I', data, offset + index * TRACK + 84)[0]
