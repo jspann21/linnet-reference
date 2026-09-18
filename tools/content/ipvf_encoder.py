@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 import zlib
 from fractions import Fraction
+from functools import lru_cache
 from pathlib import Path
 from typing import BinaryIO
 
@@ -420,8 +421,7 @@ def encode_ima_adpcm_stateful(
     rp = right
     li = left_index
     ri = right_index
-    for frame in range(1, frames):
-        target_l, target_r = struct.unpack_from("<hh", pcm, frame * AUDIO_FRAME_BYTES)
+    for target_l, target_r in struct.iter_unpack("<hh", memoryview(pcm)[AUDIO_FRAME_BYTES:]):
         code_l, lp, li = _ima_encode_step(lp, target_l, li)
         code_r, rp, ri = _ima_encode_step(rp, target_r, ri)
         out.append(code_l | (code_r << 4))
@@ -441,9 +441,8 @@ def encode_ima_mono_stateful(
         raise ValueError("PCM is not dual mono")
     out = bytearray(struct.pack("<hBB", predictor, index, 0))
     pending = 0
-    for frame in range(1, frames):
-        target, right = struct.unpack_from("<hh", pcm,
-                                           frame * AUDIO_FRAME_BYTES)
+    for frame, (target, right) in enumerate(
+            struct.iter_unpack("<hh", memoryview(pcm)[AUDIO_FRAME_BYTES:]), 1):
         if target != right:
             raise ValueError("PCM is not dual mono")
         code, predictor, index = _ima_encode_step(predictor, target, index)
@@ -1274,6 +1273,19 @@ def profile_settings(
     return fps, color_depth, source_fps
 
 
+@lru_cache(maxsize=1)
+def _gray4_pixels() -> tuple[bytes, ...]:
+    # Evaluate the existing integer luma rounding once for every RGB565 value.
+    palette = (b"\x00\x00", b"\x52\xaa", b"\xad\x55", b"\xff\xff")
+    pixels = []
+    for color in range(65536):
+        r, g, b = (color >> 11) & 31, (color >> 5) & 63, color & 31
+        luma = (r * 77 * 255 // 31 + g * 150 * 255 // 63 +
+                b * 29 * 255 // 31) >> 8
+        pixels.append(palette[(luma * 3 + 127) // 255])
+    return tuple(pixels)
+
+
 def ffmpeg_frames(
     source: Path,
     fps: int | Fraction,
@@ -1326,16 +1338,8 @@ def ffmpeg_frames(
                 # Make the compressed pixels exactly match Q21's four physical
                 # shades. FFmpeg's gray-to-RGB conversion can otherwise leave
                 # several adjacent RGB565 values for the same visible shade.
-                palette = (0x0000, 0x52AA, 0xAD55, 0xFFFF)
-                canonical = bytearray(FRAME_BYTES)
-                for offset in range(0, FRAME_BYTES, 2):
-                    color = (frame[offset] << 8) | frame[offset + 1]
-                    r, g, b = (color >> 11) & 31, (color >> 5) & 63, color & 31
-                    luma = (r * 77 * 255 // 31 + g * 150 * 255 // 63 +
-                            b * 29 * 255 // 31) >> 8
-                    shade = palette[(luma * 3 + 127) // 255]
-                    canonical[offset], canonical[offset + 1] = shade >> 8, shade & 255
-                frame = bytes(canonical)
+                colors = struct.unpack(f">{W * H}H", frame)
+                frame = b"".join(map(_gray4_pixels().__getitem__, colors))
             yield frame
     finally:
         proc.stdout.close()
