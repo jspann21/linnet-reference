@@ -403,6 +403,7 @@ class MediaWindow(QMainWindow):
         self.settings = QSettings('Linnet', 'MediaManager')
         self.identity, self.inventory, self.review = None, None, None
         self.rows, self.readiness, self.pending, self.trash_rows = [], {}, [], []
+        self._library_source, self._library_cache = None, {}
         self.video_selection, self.stop_event = set(), threading.Event()
         self.page, self.view, self.group = 'Music', self.settings.value('music_view', 'Albums'), None
         if self.view not in ('Songs', 'Albums', 'Artists', 'Genres'):
@@ -667,6 +668,12 @@ class MediaWindow(QMainWindow):
     def library_rows(self):
         if self.page == 'Trash':
             return [dict(r, kind='Trash', title=r['title'] or 'Removed files', status=datetime.fromtimestamp(r['started']).strftime('%b %d, %Y · %H:%M')) for r in self.trash_rows]
+        # Completed scans replace self.rows. Reuse page rows between searches
+        # and view changes, returning a new list so model sorting stays local.
+        if self._library_source is not self.rows:
+            self._library_source, self._library_cache = self.rows, {}
+        if self.page in self._library_cache:
+            return list(self._library_cache[self.page])
         unique = {}
         for row in self.rows:
             if row['kind'] == self.page and row['category'] in ('original', 'published'):
@@ -674,7 +681,8 @@ class MediaWindow(QMainWindow):
                 if row['kind'] == 'Photos':
                     copy['artwork'] = row['path']
                 unique[str(Path(row['path'])).casefold()] = copy
-        return list(unique.values())
+        self._library_cache[self.page] = list(unique.values())
+        return list(self._library_cache[self.page])
 
     def render_library(self):
         if self.page not in (*media.KINDS, 'Trash'):
