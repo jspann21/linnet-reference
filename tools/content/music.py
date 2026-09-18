@@ -6,7 +6,7 @@ does not confer device codec support. Staged copies preserve original files.
 from __future__ import annotations
 
 import ctypes
-from collections import deque
+from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
 import os
 from typing import Callable
@@ -821,11 +821,15 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     coverflow_enabled = bool(target and TARGETS[target].get('capabilities', {}).get('cover_flow', False))
     art_cache: dict[Path, int] = {}
     art_indices: dict[bytes, int] = {}
+    embedded_cache: OrderedDict[bytes, int] = OrderedDict()
+    embedded_cache_bytes = 0
     filenames: set[str] = set()
+    filename_suffixes: dict[tuple[str, str], int] = {}
     stable_ids: set[int] = set()
     groups: dict[tuple[int, str, str], list[int]] = {}
 
     def art_for(path: Path) -> int:
+        nonlocal embedded_cache_bytes
         if not artwork:
             return NO_INDEX
         folder = path.parent
@@ -836,6 +840,10 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         embedded = _embedded_cover(path) if cover is None else None
         if cover is None and embedded is None:
             return NO_INDEX
+        # Compare the actual tag bytes; reuse conversion only within this build.
+        if embedded is not None and embedded in embedded_cache:
+            embedded_cache.move_to_end(embedded)
+            return embedded_cache[embedded]
         if cover is not None and cover.stat().st_size > 32 * 1024 * 1024:
             raise ValueError("cover source exceeds 32 MiB")
         try:
@@ -847,9 +855,19 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                 raise
             return NO_INDEX
         digest = hashlib.sha256(pixels).digest()
+        def remember_embedded(index):
+            nonlocal embedded_cache_bytes
+            if embedded is not None:
+                while embedded_cache and embedded_cache_bytes + len(embedded) > 32 * 1024 * 1024:
+                    old, _ = embedded_cache.popitem(last=False)
+                    embedded_cache_bytes -= len(old)
+                embedded_cache[embedded] = index
+                embedded_cache_bytes += len(embedded)
+
         if digest in art_indices:
             if cover is not None:
                 art_cache[folder] = art_indices[digest]
+            remember_embedded(art_indices[digest])
             return art_indices[digest]
         name = digest[:4].hex().upper() + ".RGB"
         (output / "ART").mkdir(exist_ok=True)
@@ -866,6 +884,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         if cover is not None:
             art_cache[folder] = index
         art_indices[digest] = index
+        remember_embedded(index)
         return index
 
     cache_hits = 0
@@ -883,7 +902,10 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         extension = {".aiff": "AIF", ".aifc": "AIF", ".flac": "FLC", ".opus": "OPS"}.get(path.suffix.lower(), path.suffix[1:].upper())
         stem = re.sub(r"[^A-Z0-9_-]", "", _music_import_name(path.stem).upper()) or "TRACK"
         name = f"{stem[:8]}.{extension}"
-        suffix = 1
+        # Occupied names only accumulate, so earlier suffixes for this exact
+        # stem and extension never need to be searched again.
+        suffix_key = (stem, extension)
+        suffix = filename_suffixes.get(suffix_key, 1)
         while stage_audio and name in filenames:
             tail = str(suffix)
             name = f"{stem[:8-len(tail)-1]}-{tail}.{extension}"
@@ -893,6 +915,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         stable_ids.add(identity)
         if stage_audio:
             filenames.add(name)
+            filename_suffixes[suffix_key] = suffix
         hasher = hashlib.sha256()
         temporary = output / "MUSIC" / (name + ".tmp")
         if hash_audio:
