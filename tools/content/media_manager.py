@@ -563,9 +563,14 @@ def _video_inventory(jobs):
 
 def _error_record(kind, error, inventory, root):
     """Attach a concrete source when a compiler identifies one in its error."""
+    from . import SourceError
     message = str(error)
-    folded = message.casefold()
-    matches = [Path(value) for value in inventory.get("files", []) if str(value).casefold() in folded]
+    if isinstance(error, SourceError):
+        folded = str(error.source).casefold()
+        matches = [Path(value) for value in inventory.get("files", []) if str(value).casefold() == folded]
+    else:
+        folded = message.casefold()
+        matches = [Path(value) for value in inventory.get("files", []) if str(value).casefold() in folded]
     record = dict(kind=kind, message=message)
     if len(matches) == 1:
         source = matches[0]

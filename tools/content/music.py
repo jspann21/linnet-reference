@@ -771,7 +771,8 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
             try:
                 metadata = metadata if cached else future.result()
             except ValueError as error:
-                raise ValueError(f"{path}: {error}") from error
+                from . import SourceError
+                raise SourceError(f"{path}: {error}", path) from error
             pending.popleft()
             enqueue()
             yield number, path, before, metadata, cached
