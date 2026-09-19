@@ -215,6 +215,8 @@ class Covers(QObject):
                 self.cache.pop(path, None)
 
     def read(self, path, source_path, generation):
+        if self.closed or generation != self.generation:
+            return
         image = QImage()
         try:
             source = Path(path)
