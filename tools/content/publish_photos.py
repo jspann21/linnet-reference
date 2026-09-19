@@ -26,8 +26,8 @@ def _fallbacks(package):
         pool_offset, pool_bytes = struct.unpack_from('<II', header, 48)
         reader.seek(pool_offset)
         pool = reader.read(pool_bytes)
-        for index in range(count):
-            reader.seek(offset+index*PHOTO)
+        reader.seek(offset)
+        for _ in range(count):
             photo = reader.read(PHOTO)
             start, length = struct.unpack_from('<II', photo, 12)
             if not length:
