@@ -41,8 +41,8 @@ def apply_layout(scenes,theme,compact=False):
     headers={'ipod-photo':(0,0,220,22),'graphite':(0,0,220,26),
              'aurora':(34,7,178,25),'sunset':(0,0,220,30),'blueprint':(0,154,220,22)}
     bx,by,bw,bh=bodies[style]
-    for scene in result:
-        original=deepcopy(scene['nodes'])
+    for scene,source in zip(result,scenes):
+        original=source['nodes']
         for node,old in zip(scene['nodes'],original):
             kind=node['kind']
             if kind==1: continue
@@ -115,13 +115,12 @@ def align_scrollbars(scene,theme):
         if theme['layout']=='ipod-photo':
             place(bar,210,listing['y'],10,listing['h'])
             continue
-        inset=2 if theme['layout']=='ipod-photo' else 0
-        bar['y']=listing['y']+inset
+        bar['y']=listing['y']
         bottom={'graphite':150,'aurora':170,'sunset':150,'blueprint':146}.get(theme['layout'],172)
         bar['h']=max(1,bottom-bar['y'])
         for node in scene['nodes']:
             if node['kind']==3:node['w']=min(node['w'],bar['x']-node['x']-4)
-        listing['w']=min(listing['w'],bar['x']-listing['x']-(3 if inset else 2))
+        listing['w']=min(listing['w'],bar['x']-listing['x']-2)
 
 
 def refine_footers(scene,theme):
