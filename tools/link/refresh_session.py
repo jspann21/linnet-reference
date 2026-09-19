@@ -25,7 +25,14 @@ DATA = (Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData/Local')) /
         'Linnet' / 'Refresh')
 STATE = DATA / 'state.json'
 SOURCES = ('tools/link/refresh_session.py', 'tools/studio/native_bootstrap.py',
-           'tools/inspect/image.py', 'tools/studio/targets.py')
+           'tools/inspect/image.py', 'tools/studio/targets.py',
+           # Target discovery validates each manifest's conventional source layout.
+           'targets/photo4g-p98/target.toml', 'targets/ipod4g-q21/target.toml',
+           'hal/pp5020/startup.S', 'hal/pp5020/memory.ld',
+           'hal/pp5020/platform.c', 'hal/pp5020/display.c',
+           'targets/photo4g-p98/lcd.c', 'targets/photo4g-p98/device.c',
+           'targets/ipod4g-q21/lcd.c', 'targets/ipod4g-q21/device.c',
+           'targets/ipod4g-q21/display.c')
 MAX_MESSAGE = 65536
 
 
