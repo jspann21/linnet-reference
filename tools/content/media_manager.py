@@ -988,7 +988,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         publications = []
         for path in cache.rglob('*'):
             name = path.name.casefold()
-            if name.startswith('publish-') and name.endswith('.json'):
+            if path.match('publish-*.json'):
                 publications.append(path)
             if (name.startswith(('ipvf-encode-', 'music-prepare-')) or
                     '.music-prepare-' in name or name.endswith(('.tmp', '.music-previous'))):
