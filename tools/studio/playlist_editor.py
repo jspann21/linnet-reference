@@ -130,7 +130,8 @@ class PlaylistEditor(QDialog):
 
     def update_actions(self):
         active = self.slot is not None
-        row = self.members.currentRow(); selected = self.members.selectedItems()
+        selected = self.members.selectedItems()
+        row = self.members.row(selected[0]) if len(selected) == 1 else -1
         self.delete_button.setEnabled(active)
         self.remove_button.setEnabled(active and bool(selected))
         self.up_button.setEnabled(active and len(selected) == 1 and row > 0)
@@ -208,18 +209,22 @@ class PlaylistEditor(QDialog):
             self.select()
 
     def move(self, direction):
-        row = self.members.currentRow()
-        if self.slot is None or row < 0:
+        selected = self.members.selectedItems()
+        if self.slot is None or len(selected) != 1:
             return
+        row = self.members.row(selected[0])
         ids = self.state['lists'][self.slot]['ids']; target = row + direction
-        if len(self.members.selectedItems()) == 1 and 0 <= target < len(ids):
+        if 0 <= target < len(ids):
             ids[row], ids[target] = ids[target], ids[row]
             self.select(); self.members.setCurrentRow(target)
 
     def filter(self, text):
+        query, count = text.casefold(), 0
         for row in range(self.songs.count()):
-            item = self.songs.item(row); item.setHidden(text.casefold() not in item.text().casefold())
-        count = sum(not self.songs.item(row).isHidden() for row in range(self.songs.count()))
+            item = self.songs.item(row)
+            visible = query in item.text().casefold()
+            item.setHidden(not visible)
+            count += visible
         self.library_count.setText(f'{count:,} songs' + (' matching your search' if text else ' available'))
         self.song_stack.setCurrentIndex(0 if count else 1)
         self.empty_songs.setText('No matching songs\n\nTry another title, artist, or album.' if text else

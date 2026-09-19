@@ -65,7 +65,7 @@ def recover(identity, token, *, erase=False):
         # Derive destinations from the guarded removal tree; never trust absolute receipt paths.
         for source, info in media._file_records(trash):
             relative = source.relative_to(trash)
-            if relative.as_posix() == 'INDEX.VID.before':
+            if relative.as_posix() in ('INDEX.VID.before', 'LIBRARY.PDB.before'):
                 continue
             allowed = relative.parts[0] in media.KINDS or relative.parts[:2] == ('iPod_Control', 'Music') or relative.as_posix() in ('.LINNET/LIBRARY.PDB', '.LINNET/PHOTOS/LIBRARY.PIM', '.LINNET/NOTES/LIBRARY.NNT') or (relative.parent.as_posix() == '.LINNET/VIDEOS' and relative.suffix.lower() in ('.ipv', '.ipvf'))
             if not allowed:
@@ -139,9 +139,11 @@ def recover(identity, token, *, erase=False):
         report['restored'] = True
         media._save(receipt, report)
         # Backup is no longer needed only after file and catalog restoration succeeded.
-        if backup.exists():
-            _volume_guard(identity)
-            backup.unlink()
+        for backup in (backup, trash / 'LIBRARY.PDB.before'):
+            if backup.exists():
+                _volume_guard(identity)
+                _plain(backup, trash)
+                backup.unlink()
         for path in sorted((p for p in trash.rglob('*') if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
             _volume_guard(identity)
             _plain(path, trash)

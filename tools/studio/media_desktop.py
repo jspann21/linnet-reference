@@ -311,9 +311,17 @@ class MediaModel(QAbstractTableModel):
 
     def sort(self, column, order=Qt.AscendingOrder):
         key = self.columns[column][0]
-        self.beginResetModel()
-        self.rows.sort(key=lambda row: row.get(key, 0) or 0 if key in ('bytes', 'duration') else str(row.get(key, '')).casefold(), reverse=order == Qt.DescendingOrder)
-        self.endResetModel()
+        self.layoutAboutToBeChanged.emit()
+        previous = self.persistentIndexList()
+        sort_key = lambda row: row.get(key, 0) or 0 if key in ('bytes', 'duration') else str(row.get(key, '')).casefold()
+        if previous:
+            positions = sorted(range(len(self.rows)), key=lambda at: sort_key(self.rows[at]), reverse=order == Qt.DescendingOrder)
+            self.rows[:] = [self.rows[at] for at in positions]
+            relocated = {old: new for new, old in enumerate(positions)}
+            self.changePersistentIndexList(previous, [self.index(relocated[index.row()], index.column()) for index in previous])
+        else:
+            self.rows.sort(key=sort_key, reverse=order == Qt.DescendingOrder)
+        self.layoutChanged.emit()
 
 
 class Artwork(QWidget):
@@ -801,8 +809,17 @@ class MediaWindow(QMainWindow):
         if self.group:
             ids = {r['id'] for r in self.group['members']}
             rows = [r for r in rows if r['id'] in ids]
-        rows = [r for r in rows if all(word in ' '.join(str(r.get(field, '')) for field in ('title', 'artist', 'album', 'genre', 'path')).casefold() for word in words)
-                and (not music or ((not artist or (r.get('artist') or 'Unknown artist') == artist) and (not genre or (r.get('genre') or 'Unknown genre') == genre)))]
+        if music and (artist or genre):
+            rows = [r for r in rows if (not artist or (r.get('artist') or 'Unknown artist') == artist)
+                    and (not genre or (r.get('genre') or 'Unknown genre') == genre)]
+        if words:
+            matches = []
+            first, *remaining = words
+            for row in rows:
+                text = ' '.join(str(row.get(field, '')) for field in ('title', 'artist', 'album', 'genre', 'path')).casefold()
+                if first in text and (not remaining or all(word in text for word in remaining)):
+                    matches.append(row)
+            rows = matches
         grouped = music and self.view != 'Songs' and self.group is None
         if grouped:
             groups = {}

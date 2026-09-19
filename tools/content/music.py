@@ -670,7 +670,7 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
             cache = _MetadataCache(cache_file)
         if output.exists():
             # Preserve unrelated staged content without copying obsolete music.
-            managed = {"MUSIC", "ART", "LIBRARY.PDB", "LIBRARY.TMP", "music-manifest.json"}
+            managed = {"MUSIC", "ART", "COVERS.CFL", "LIBRARY.PDB", "LIBRARY.TMP", "music-manifest.json"}
             shutil.copytree(output, prepared, dirs_exist_ok=True, symlinks=True,
                             ignore=lambda directory, names: [name for name in names
                                 if Path(directory) == output and name in managed])

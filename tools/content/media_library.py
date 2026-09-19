@@ -266,6 +266,7 @@ def _remove(identity, items):
     music_index = root / '.LINNET' / 'LIBRARY.PDB'
     music_before = music_after = None
     music_cache = None
+    music_needs_update = False
     music_sources = [row for row in selected if row['kind'] == 'Music' and row['category'] == 'original']
     if music_sources and str(music_index.resolve()).casefold() not in paths and music_index.is_file():
         from .music import MAX_DATABASE, TRACK, _stable, validate_database, remove_database_tracks
@@ -286,6 +287,8 @@ def _remove(identity, items):
             if track_id in source_ids or str((root / location.lstrip('/')).resolve()).casefold() in paths:
                 removed_tracks.append(index)
         music_after = remove_database_tracks(music_before, removed_tracks)
+        # Cover Flow records reference the old database identity and group indexes.
+        music_needs_update = music_after != music_before and (root / '.LINNET' / 'COVERS.CFL').exists()
         # Carry forward readiness only if the saved source snapshot and index
         # matched before deletion. This scan reads file stats, never audio tags.
         try:
@@ -370,9 +373,10 @@ def _remove(identity, items):
             if music_index.read_bytes() != music_after:
                 raise OSError('Music index update verification failed')
             report['music_updated'] = True
-            report['requires_update'].remove('Music')
+            if not music_needs_update:
+                report['requires_update'].remove('Music')
             manager._save(receipt, report)
-            if music_cache:
+            if music_cache and not music_needs_update:
                 try:
                     cache_path, saved_state, skipped = music_cache
                     saved_music = saved_state['Music']

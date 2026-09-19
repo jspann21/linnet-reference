@@ -1,5 +1,6 @@
 """Prepare read-only Notes for the device's bounded ASCII display."""
 from pathlib import Path
+from itertools import islice
 import hashlib
 import struct
 import json
@@ -15,7 +16,7 @@ MAX_FILE = 16 + MAX_NOTES * (TITLE + RECORD)
 EXTENSIONS = {'.txt', '.md', '.text'}
 
 
-def _display_lines(text):
+def _display_widths():
     # Fit the narrowest built-in list (Aurora), accounting for proportional
     # glyph widths in every bundled theme so switching themes loses no text.
     widths = [8] * 95
@@ -23,6 +24,12 @@ def _display_lines(text):
         font = json.loads(path.read_text(encoding='utf-8'))
         advances = font.get('advances', [font['advance']] * 95)
         widths = [max(a, b) for a, b in zip(widths, advances)]
+    return widths
+
+
+def _display_lines(text, widths=None):
+    if widths is None:
+        widths = _display_widths()
     for paragraph in text.split('\n'):
         if not paragraph:
             yield ''
@@ -66,6 +73,7 @@ def compile_notes(source, output, *, excluded=None):
     if len(files) > MAX_NOTES:
         raise ValueError(f'Notes supports at most {MAX_NOTES} documents; found {len(files)}')
     titles, records, changed = bytearray(), bytearray(), []
+    widths = _display_widths()
     for path in files:
         _plain(path, source)
         if path.is_symlink() or not path.resolve().is_relative_to(source):
@@ -85,7 +93,7 @@ def compile_notes(source, output, *, excluded=None):
         title = ''.join(c if 32 <= ord(c) <= 126 else '?' for c in title)
         if len(title) > 63:
             raise ValueError(f'Note title exceeds 63 display characters: {path}')
-        lines = list(_display_lines(text))
+        lines = list(islice(_display_lines(text, widths), LINES + 1))
         if len(lines) > LINES:
             raise ValueError(f'Note exceeds {LINES} display lines; split it into smaller documents: {path}')
         if any(ord(c) > 127 for c in original + path.relative_to(source).as_posix()):
