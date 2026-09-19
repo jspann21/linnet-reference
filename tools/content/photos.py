@@ -148,7 +148,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                         if orientation not in range(1, 9):
                             raise ValueError('invalid EXIF fallback orientation')
                         fallback_crc = _crc(path.read_bytes())
-                    oriented = ImageOps.exif_transpose(original)
+                    oriented = ImageOps.exif_transpose(original) if source_orientation != 1 else original
                     if 'A' not in oriented.getbands() and 'transparency' not in oriented.info:
                         image = oriented.convert('RGB')
                     else:
