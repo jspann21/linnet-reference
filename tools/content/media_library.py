@@ -22,9 +22,10 @@ def _device_path(root, value):
         raise ValueError('Unsupported catalog media path')
     path = root.joinpath(*parts[1:])
     _plain(path, root)
-    if not path.resolve().is_relative_to(root):
+    resolved = path.resolve()
+    if not resolved.is_relative_to(root):
         raise ValueError('Catalog path escaped the iPod')
-    return path.resolve()
+    return resolved
 
 
 def _catalog(root):
