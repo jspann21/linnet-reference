@@ -136,10 +136,13 @@ def compile_notes(source, output, *, excluded=None):
 
 def inspect(path):
     path = Path(path)
-    if path.stat().st_size > MAX_FILE:
-        raise ValueError('Notes package is too large')
     with path.open('rb') as reader:
-        data = reader.read(MAX_FILE + 1)
+        size = os.fstat(reader.fileno()).st_size
+        if size > MAX_FILE:
+            raise ValueError('Notes package is too large')
+        data = reader.read(size + 1)
+        if len(data) != size:
+            raise ValueError('Notes package changed while reading')
     if len(data) < 16:
         raise ValueError('Notes header is missing')
     magic, reserved, count, record = struct.unpack_from('<4sIII', data)
