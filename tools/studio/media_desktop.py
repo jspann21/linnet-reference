@@ -205,9 +205,14 @@ class Covers(QObject):
             self.pool.submit(self.read, path, source, self.generation)
         return None
 
-    def invalidate(self):
+    def invalidate(self, paths=None):
         self.generation += 1
-        self.cache.clear(); self.pending.clear()
+        self.pending.clear()
+        if paths is None:
+            self.cache.clear()
+        else:
+            for path in paths:
+                self.cache.pop(path, None)
 
     def read(self, path, source_path, generation):
         image = QImage()
@@ -1075,7 +1080,16 @@ class MediaWindow(QMainWindow):
             self.identity = identity
             self.refresh()
         elif tag == 'scan':
+            cached_photos = {row['path']: (row['bytes'], row['mtime_ns']) for row in self.rows
+                             if row['kind'] == 'Photos' and
+                             (row['path'] in self.covers.cache or row['path'] in self.covers.pending)}
             self.identity, self.inventory, self.rows, self.readiness = result
+            if cached_photos:
+                current_photos = {row['path']: (row['bytes'], row['mtime_ns']) for row in self.rows
+                                  if row['path'] in cached_photos}
+                changed = [path for path, stamp in cached_photos.items() if current_photos.get(path) != stamp]
+                if changed:
+                    self.covers.invalidate(changed)
             if self.group:
                 field = {'Albums': 'album', 'Artists': 'artist', 'Genres': 'genre'}[self.group['group_kind']]
                 members = [row for row in self.library_rows()
