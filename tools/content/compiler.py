@@ -543,7 +543,6 @@ def generate_c(doc, packed_fonts=None):
             scene_focus.append(native_focus)
         out.append(f'static const struct ln_ui_scene ln_scenes_{theme_index}[] = {{')
         for i,scene in enumerate(theme['scenes']):
-            enabled=bool(doc['enabled_scenes'] & (1 << i))
             out.append('{'+','.join([quote(scene['id']),quote(scene['title']),scene_nodes[i],str(scene_counts[i])+'u',str(scene_focus[i])+'u'])+'},')
         out.append('};')
     out.append('const struct ln_ui_theme ln_ui_themes[] = {')
