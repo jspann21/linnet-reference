@@ -7,6 +7,7 @@ import json
 import tomllib
 import unicodedata
 import os
+import tempfile
 
 MAX_NOTES = 256
 TITLE = 64
@@ -110,8 +111,18 @@ def compile_notes(source, output, *, excluded=None):
         records += record.ljust(RECORD, b'\0')
     data = struct.pack('<4sIII', b'NOTE', 0, len(files), RECORD) + titles + records
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(data)
-    report = inspect(output)
+    fd, name = tempfile.mkstemp(prefix=output.name+'.', suffix='.tmp', dir=output.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, 'wb') as writer:
+            writer.write(data)
+            writer.flush()
+            os.fsync(writer.fileno())
+        report = inspect(temporary)
+        temporary.replace(output)
+    finally:
+        temporary.unlink(missing_ok=True)
+    report['package'] = str(output)
     report.update(source=str(source), ascii_converted=changed, note='Prepared ASCII display copies; original documents are unchanged.')
     return report
 
