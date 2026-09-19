@@ -107,8 +107,12 @@ class Parser:
     def feed(self, data: bytes) -> list[Frame]:
         frames = []
         try:
-            for byte in data:
-                self.buffer.append(byte)
+            incoming = memoryview(data)
+            offset = 0
+            while offset < len(incoming):
+                count = min(self.expected - len(self.buffer), len(incoming) - offset)
+                self.buffer.extend(incoming[offset:offset + count])
+                offset += count
                 if len(self.buffer) == HEADER.size:
                     magic, reserved8a, reserved8b, flags, command, reserved, seq, length = HEADER.unpack(self.buffer)
                     if (magic != MAGIC or reserved8a or reserved8b or reserved
