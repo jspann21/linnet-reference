@@ -163,7 +163,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                         image = Image.new('RGB', rgba.size, (0, 0, 0))
                         image.paste(rgba, mask=rgba.getchannel('A'))
                         del rgba
-            except (OSError, ValueError, SyntaxError) as error:
+            except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as error:
                 raise SourceError(f'Could not prepare photo {path}: {error}', path) from error
             del original, oriented
             width, height = image.size

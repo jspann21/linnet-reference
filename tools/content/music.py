@@ -122,7 +122,11 @@ def _mp102_cover(image):
 
 def _cover_pixels(cover, target: str | None = None) -> bytes:
     from PIL import Image, ImageOps
-    with Image.open(cover) as image:
+    try:
+        image = Image.open(cover)
+    except Image.DecompressionBombError as error:
+        raise ValueError("cover dimensions exceed bound") from error
+    with image:
         if image.width * image.height > 16_000_000:
             raise ValueError("cover dimensions exceed bound")
         if image.getexif().get(274, 1) != 1:
