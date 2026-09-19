@@ -985,13 +985,16 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             except Exception as error:
                 report["cleanup"]["retained"].append(dict(path=str(temporary), reason=str(error)))
         # Audit scratch locations without deleting files that could belong to another run.
+        publications = []
         for path in cache.rglob('*'):
             name = path.name.casefold()
+            if name.startswith('publish-') and name.endswith('.json'):
+                publications.append(path)
             if (name.startswith(('ipvf-encode-', 'music-prepare-')) or
                     '.music-prepare-' in name or name.endswith(('.tmp', '.music-previous'))):
                 report["cleanup"]["retained"].append(dict(path=str(path),
                     reason="Preparation scratch remains; review before removing if another update is running."))
-        for path in cache.rglob("publish-*.json"):
+        for path in publications:
             try:
                 publication = json.loads(path.read_text(encoding="utf-8"))
                 if not isinstance(publication, dict):
