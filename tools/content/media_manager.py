@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import stat
 import subprocess
@@ -986,9 +987,10 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 report["cleanup"]["retained"].append(dict(path=str(temporary), reason=str(error)))
         # Audit scratch locations without deleting files that could belong to another run.
         publications = []
+        publication_name = re.compile(r'publish-.*\.json', re.DOTALL | (re.IGNORECASE if os.name == 'nt' else 0)).fullmatch
         for path in cache.rglob('*'):
             name = path.name.casefold()
-            if name.startswith('publish-') and name.endswith('.json'):
+            if publication_name(path.name):
                 publications.append(path)
             if (name.startswith(('ipvf-encode-', 'music-prepare-')) or
                     '.music-prepare-' in name or name.endswith(('.tmp', '.music-previous'))):
