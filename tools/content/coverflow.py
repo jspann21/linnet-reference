@@ -45,7 +45,8 @@ def original_cover(source) -> Image.Image:
         if image.width * image.height > 16_000_000:
             raise ValueError('cover dimensions exceed bound')
         profile = image.info.get('icc_profile')
-        image = ImageOps.exif_transpose(image)
+        if image.getexif().get(274, 1) != 1:
+            image = ImageOps.exif_transpose(image)
         if profile:
             try:
                 image = ImageCms.profileToProfile(image, ImageCms.ImageCmsProfile(io.BytesIO(profile)),
