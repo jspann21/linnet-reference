@@ -1045,6 +1045,10 @@ class MediaWindow(QMainWindow):
     def completed(self, tag, result, error):
         self.busy = False; self.progress.hide(); self.cancel_button.hide(); self.update_controls()
         if error:
+            if tag == 'screens':
+                self.screen_state = screen_settings.defaults(self.identity)
+                self.render_screen_items()
+                self.screen_status.setText('Could not read settings. Showing defaults for this iPod; saving will replace its screen settings.')
             if tag in ('setup', 'devices', 'scan'):
                 self.setup_progress.hide()
                 self.setup_software.setText('Could not check iPod setup. Choose Refresh to try again.')
