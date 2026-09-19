@@ -47,7 +47,7 @@ def _rgb565(image):
     # Pack little-endian bytes through Pillow's C channel operations. Each
     # addition combines disjoint bits, preserving exact truncation without
     # dithering, rescaling or a Python operation for every output pixel.
-    red, green, blue = image.convert('RGB').split()
+    red, green, blue = (image if image.mode == 'RGB' else image.convert('RGB')).split()
     low = ImageChops.add(green.point(_GREEN_LOW), blue.point(_BLUE_LOW))
     high = ImageChops.add(red.point(_RED_HIGH), green.point(_GREEN_HIGH))
     return Image.merge('LA', (low, high)).tobytes()
