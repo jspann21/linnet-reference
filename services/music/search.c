@@ -8,7 +8,7 @@ static char prefix[LN_MUSIC_SEARCH_PREFIX+1],character[2],group_title[256],label
 static uint32_t length,first,known,total,revision,navigation,epoch,admitted_epoch,pending_ordinal,selected_track;
 static uint32_t group_index,group_count,search_first,search_row,selected_ordinal,restore_row;
 static bool restore_selection;
-static bool opened,closing,results,pending,complete,track_ready,in_group,pending_group,window_ready;
+static bool opened,closing,results,pending,complete,track_ready,in_group,pending_group,window_ready,library_waiting;
 static struct cached_row *row_slot(uint32_t ordinal){return &rows[ordinal%(LN_MUSIC_SEARCH_ROWS*2u)];}
 static bool row_ready(uint32_t ordinal){struct cached_row *r=row_slot(ordinal);return r->valid&&r->ordinal==ordinal;}
 static void reset_results(uint32_t start){
@@ -29,10 +29,11 @@ void ln_music_search_resume(void){
 void ln_music_search_step(void){
     if(!opened&&!closing)return;
     if(ln_music_library_status()!=LN_LIBRARY_READY){
-        pending=false;complete=window_ready=true;total=known;
+        pending=false;complete=window_ready=library_waiting=true;total=known;
         if(closing){ln_music_browser_suspend(false);closing=false;}
         return;
     }
+    if(library_waiting){library_waiting=false;reset_results(first);}
     if(pending){
         struct ln_music_library_search_row row;
         if(pending_group?!ln_music_library_take_view_row(&row):!ln_music_library_take_search_row(&row))return;
