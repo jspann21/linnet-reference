@@ -38,6 +38,7 @@ void ln_music_queue_close(void);
 void ln_music_queue_choose(uint32_t row);
 bool ln_music_queue_edit(uint32_t action);
 const char *ln_music_notice(void);
+bool ln_music_loading(void);
 uint32_t ln_music_deadline(uint32_t now);
 const struct ln_music_library_row *ln_music_current(void);
 /* Retained current playback occurrence; position is one-based. No I/O. */

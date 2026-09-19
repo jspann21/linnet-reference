@@ -151,6 +151,7 @@ static int32_t output_volume(void){
     return value< -730?-730:value;
 }
 const char *ln_music_notice(void){return notice;}
+bool ln_music_loading(void){return selecting||have_waiting||manual_next_pending||resolver_kind==1;}
 static void remember_position(void);
 static void discard_next(bool restarting){
     ln_music_library_cancel_prefetch();

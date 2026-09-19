@@ -202,7 +202,7 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
             if(equal(fallback,"Track duration"))return clock_text(duration,frames,rate,false);
             return clock_text(remaining,position<frames?frames-position:0,rate,true);
         }
-        if(equal(fallback,"Native playback shell"))return ln_music_notice()?ln_music_notice():p.phase==LN_PLAYER_PLAY?"":p.phase==LN_PLAYER_PAUSE?"":p.phase==LN_PLAYER_ERROR?"Playback error":ln_player_busy()?"Loading...":r?"Stopped":"";
+        if(equal(fallback,"Native playback shell"))return ln_music_notice()?ln_music_notice():ln_music_loading()?"Loading...":p.phase==LN_PLAYER_PLAY?"":p.phase==LN_PLAYER_PAUSE?"":p.phase==LN_PLAYER_ERROR?"Playback error":ln_player_busy()?"Loading...":r?"Stopped":"";
     }
     return fallback;
 }
