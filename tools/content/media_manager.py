@@ -974,8 +974,10 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             except Exception as error:
                 report["cleanup"]["retained"].append(dict(path=str(temporary), reason=str(error)))
         # Audit scratch locations without deleting files that could belong to another run.
-        for pattern in ("ipvf-encode-*", "music-prepare-*", "*.tmp"):
-            for path in cache.rglob(pattern):
+        for path in cache.rglob('*'):
+            name = path.name.casefold()
+            if (name.startswith(('ipvf-encode-', 'music-prepare-')) or
+                    '.music-prepare-' in name or name.endswith(('.tmp', '.music-previous'))):
                 report["cleanup"]["retained"].append(dict(path=str(path),
                     reason="Preparation scratch remains; review before removing if another update is running."))
         for path in cache.rglob("publish-*.json"):
