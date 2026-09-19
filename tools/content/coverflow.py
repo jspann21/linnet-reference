@@ -39,6 +39,7 @@ ART_RECORD = 13312
 
 def original_cover(source) -> Image.Image:
     from PIL import ImageCms
+    from .music import _cover_rgb
     if isinstance(source, bytes):
         source = io.BytesIO(source)
     with Image.open(source) as image:
@@ -47,13 +48,15 @@ def original_cover(source) -> Image.Image:
         profile = image.info.get('icc_profile')
         if image.getexif().get(274, 1) != 1:
             image = ImageOps.exif_transpose(image)
+        if 'A' in image.getbands() or 'transparency' in image.info:
+            image = _cover_rgb(image)
         if profile:
             try:
                 image = ImageCms.profileToProfile(image, ImageCms.ImageCmsProfile(io.BytesIO(profile)),
                                                  ImageCms.createProfile('sRGB'), outputMode='RGB')
             except (OSError, ValueError, ImageCms.PyCMSError):
                 image = image.convert('RGB')
-        return ImageOps.fit(image if image.mode == 'RGB' else image.convert('RGB'), (96, 96), method=Image.Resampling.LANCZOS)
+        return ImageOps.fit(_cover_rgb(image), (96, 96), method=Image.Resampling.LANCZOS)
 
 
 def _indexed_tile(tile: Image.Image) -> tuple[Image.Image, list[int]]:

@@ -120,6 +120,16 @@ def _mp102_cover(image):
     return Image.frombytes("L", gray.size, bytes(result)).convert("RGB")
 
 
+def _cover_rgb(image):
+    from PIL import Image
+    if 'A' in image.getbands() or 'transparency' in image.info:
+        rgba = image.convert('RGBA')
+        result = Image.new('RGB', rgba.size, (0, 0, 0))
+        result.paste(rgba, mask=rgba.getchannel('A'))
+        return result
+    return image if image.mode == 'RGB' else image.convert('RGB')
+
+
 def _cover_pixels(cover, target: str | None = None) -> bytes:
     from PIL import Image, ImageOps
     try:
@@ -131,7 +141,7 @@ def _cover_pixels(cover, target: str | None = None) -> bytes:
             raise ValueError("cover dimensions exceed bound")
         if image.getexif().get(274, 1) != 1:
             image = ImageOps.exif_transpose(image)
-        image = ImageOps.fit(image if image.mode == "RGB" else image.convert("RGB"), (64, 64))
+        image = ImageOps.fit(_cover_rgb(image), (64, 64))
         if target == "ipod4g-q21":
             image = _mp102_cover(image)
         from .photos import _rgb565
