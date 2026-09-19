@@ -37,6 +37,7 @@ static void monochrome_cover(uint16_t *image){
 #endif
 const uint16_t *ln_music_art_pixels(void){return visible?pixels[front]:0;}
 uint32_t ln_music_art_revision(void){return revision;}
+bool ln_music_art_loading(void){return !visible&&requested[0]&&(working!=token||(!preload&&phase));}
 void ln_music_art_request(const char *name,uint32_t checksum){
     prefetch_tried=false;
     if(!preload&&(!requested[0]||visible||phase||working!=token)&&

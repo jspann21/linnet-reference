@@ -104,7 +104,7 @@ bool ln_music_sleep_adjust(uint32_t row,int32_t direction){
     if(row==3u){sleep_cancel();ln_music_volume_sync();return true;}
     if(sleep_choice>=9u){
         struct ln_player_status p;ln_player_snapshot(&p);
-        if(!active||!have_current||selecting||have_waiting||manual_next_pending||resolver_kind==1||
+        if(!active||!have_current||ln_music_loading()||
            (p.phase!=LN_PLAYER_PLAY&&p.phase!=LN_PLAYER_PRIME&&p.phase!=LN_PLAYER_PAUSE&&p.phase!=LN_PLAYER_DRAIN)){
             sleep_notice="Play a track first";++sleep_revision;return false;
         }
@@ -151,7 +151,7 @@ static int32_t output_volume(void){
     return value< -730?-730:value;
 }
 const char *ln_music_notice(void){return notice;}
-bool ln_music_loading(void){return selecting||have_waiting||manual_next_pending||resolver_kind==1;}
+__attribute__((noinline)) bool ln_music_loading(void){return selecting||have_waiting||manual_next_pending||resolver_kind==1;}
 static void remember_position(void);
 static void discard_next(bool restarting){
     ln_music_library_cancel_prefetch();
@@ -189,7 +189,7 @@ void ln_music_queue_open(void){
 void ln_music_queue_close(void){queue_opened=false;ln_music_queue_view_close();}
 void ln_music_queue_choose(uint32_t row){queue_clear_confirm=false;notice=0;queue_choice=row;queue_choice_revision=revision;}
 bool ln_music_queue_edit(uint32_t action){
-    if(shutting_down||manual_next_pending||selecting||have_waiting||resolver_kind==1||queue_choice_revision!=revision||queue_choice>=queue.count||action>4){notice="Queue changed; choose again";++revision;return false;}
+    if(shutting_down||ln_music_loading()||queue_choice_revision!=revision||queue_choice>=queue.count||action>4){notice="Queue changed; choose again";++revision;return false;}
     if(action==4&&!queue_clear_confirm){queue_clear_confirm=true;notice="Select again to clear";++revision;queue_choice_revision=revision;return false;}
     if(action==4){notice="Queue cleared";queue_clear_confirm=false;int32_t volume=queue.volume_db_tenths;uint32_t repeat=queue.repeat;
         bool shuffled=queue.shuffled;ln_music_stop();ln_queue_init(&queue,ln_time_us());queue.shuffled=shuffled;(void)ln_music_library_identity(queue.library_identity);queue.volume_db_tenths=volume;queue.repeat=repeat;++revision;return true;}
@@ -354,7 +354,7 @@ bool ln_music_option_select(uint32_t index){
     }
     if(index==6){ln_music_stop();return true;}
     if(index<2){
-        if(manual_next_pending||selecting||have_waiting||resolver_kind==1)return false;
+        if(ln_music_loading())return false;
         if(!ln_player_cancel_next()&&!ln_player_seek(ln_player_position()))return false;
         prefetching=next_ready=next_armed=next_failed=false;
         if(resolver_kind==2)resolver_kind=0;
@@ -438,7 +438,7 @@ void ln_music_toggle(void){
 }
 static void remember_position(void){
     uint32_t index;struct ln_player_status p;ln_player_snapshot(&p);
-    if(have_current&&!selecting&&!have_waiting&&!manual_next_pending&&resolver_kind!=1&&ln_queue_current(&queue,&index)&&current_cursor==queue.cursor&&p.generation&&
+    if(have_current&&!ln_music_loading()&&ln_queue_current(&queue,&index)&&current_cursor==queue.cursor&&p.generation&&
        p.phase!=LN_PLAYER_IDLE&&p.phase!=LN_PLAYER_ERROR&&p.phase!=LN_PLAYER_STOPPING){
         uint64_t position=ln_player_position();
         (void)ln_music_history_set_resume(current.track.id,true,position);
@@ -841,7 +841,7 @@ static void music_step(void){
     if(p.phase==LN_PLAYER_PAUSE&&!audio.playing&&!pause_captured){
         remember_position();pause_captured=ln_music_history_ready()||ln_music_history_error()!=0;
     }
-    bool changing=manual_next_pending||selecting||have_waiting||resolver_kind==1;
+    bool changing=ln_music_loading();
     bool stopped=!audio.playing&&(p.phase==LN_PLAYER_PAUSE||p.phase==LN_PLAYER_IDLE||p.phase==LN_PLAYER_ERROR);
     bool may_write=stopped&&!changing;
     /* Explicit selection can pass briefly through IDLE. Preserve history
@@ -863,7 +863,7 @@ static void music_step(void){
      * asynchronous media owner has drained. New UI input may supersede this
      * snapshot while storage progress runs; retain its dirty revision then. */
     if(restored&&!persist_failed&&revision!=saved_revision&&!ln_storage_busy()&&
-       may_write&&!manual_next_pending&&!selecting&&!have_waiting&&resolver_kind!=1){
+       may_write&&!ln_music_loading()){
         (void)persist();
     }
 }

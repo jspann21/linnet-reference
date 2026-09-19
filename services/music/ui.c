@@ -50,6 +50,7 @@ uint32_t ln_ui_playback_status(void){
     struct ln_player_status p;ln_player_snapshot(&p);
     return p.phase==LN_PLAYER_PAUSE?2u:(p.phase==LN_PLAYER_PLAY||p.phase==LN_PLAYER_DRAIN)?1u:0u;
 }
+bool ln_ui_now_playing_art_loading(void){return ln_music_art_loading();}
 const struct ln_ui_asset *ln_ui_now_playing_art(uint32_t *revision){
     static struct ln_ui_asset art={64,64,0};
     *revision=ln_music_art_revision();art.pixels=ln_music_art_pixels();

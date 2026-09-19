@@ -23,6 +23,7 @@ uint32_t ln_ui_theme_index(void){uint32_t index=ln_ui_theme_preference();return 
 static uint16_t album_colors[LN_UI_COLOR_COUNT];
 static bool album_colors_valid;
 __attribute__((weak)) const struct ln_ui_asset *ln_ui_now_playing_art(uint32_t *revision){*revision=0;return 0;}
+__attribute__((weak)) bool ln_ui_now_playing_art_loading(void){return false;}
 uint16_t ln_ui_color(uint32_t value){return value>=LN_UI_COLOR_TOKEN&&value<LN_UI_COLOR_TOKEN+LN_UI_COLOR_COUNT?((ln_ui_themes[active_theme].flags&LN_UI_THEME_ALBUM_ART)&&album_colors_valid?album_colors[value-LN_UI_COLOR_TOKEN]:ln_ui_themes[active_theme].colors[value-LN_UI_COLOR_TOKEN]):(uint16_t)value;}
 static void theme_sync(void){
     uint32_t next=ln_ui_theme_index();if(theme_ready&&next==active_theme)return;
@@ -211,8 +212,9 @@ uint32_t ln_ui_palette_tick(struct ln_ui_state*s,uint32_t now){
         album_waiting=!(a&&a->pixels&&a->width&&a->height&&a->width<=LINNET_UI_WIDTH&&a->height<=LINNET_UI_HEIGHT);
         album_missing_at=now;
     }
-    /* Rockbox keeps the previous palette while the next cover loads, then
-     * falls back after one second if no artwork becomes available. */
+    /* Keep the prior palette through disk reads; the fallback is only for
+     * absent or failed artwork, never a cover that is still loading. */
+    if(album_waiting&&ln_ui_now_playing_art_loading())album_missing_at=now;
     bool missing_expired=album_waiting&&now-album_missing_at>=1000000u;
     if((changed_art&&!album_waiting)||missing_expired){
         album_waiting=false;
