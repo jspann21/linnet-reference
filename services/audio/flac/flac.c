@@ -54,9 +54,15 @@ int ln_flac_open_step(struct ln_flac*s)
 static void yield_decoder(void){}
 static uint16_t crc16(const uint8_t*p,uint32_t n)
 {
-    uint32_t value=0;for(uint32_t i=0;i<n;++i){value^=(uint32_t)p[i]<<8;
-        for(uint32_t j=0;j<8;++j)value=((value<<1)^((value&0x8000u)?0x8005u:0))&0xffffu;}return(uint16_t)value;
+    static const uint16_t table[16]={0x0000u,0x8005u,0x800fu,0x000au,0x801bu,0x001eu,0x0014u,0x8011u,0x8033u,0x0036u,0x003cu,0x8039u,0x0028u,0x802du,0x8027u,0x0022u};
+    uint32_t value=0;
+    for(uint32_t i=0;i<n;++i){
+        value=((value<<4)^table[(value>>12)^(p[i]>>4)])&0xffffu;
+        value=((value<<4)^table[(value>>12)^(p[i]&15u)])&0xffffu;
+    }
+    return (uint16_t)value;
 }
+
 int ln_flac_decode(struct ln_flac*s,int16_t*out,uint32_t capacity,uint32_t*frames)
 {
     if(!s||!out||!frames||!capacity)return LN_PCM_ARGUMENT;*frames=0;
