@@ -10,6 +10,7 @@ import struct
 import tempfile
 import unicodedata
 import zlib
+from . import SourceError
 
 HEADER, ALBUM, PHOTO, LEVEL, TILE = 512, 32, 64, 24, 8
 MAX_FILE, MAX_PHOTOS, MAX_ALBUMS, MAX_TILES = 0x7fffffff, 65535, 4096, 1_000_000
@@ -122,7 +123,11 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
     photos, levels, tile_crcs = [], [], []
     with tempfile.TemporaryFile() as thumbs, tempfile.TemporaryFile() as tiles:
         for index, path in enumerate(paths):
-            title = string(_title(path.stem))
+            try:
+                title = _title(path.stem)
+            except ValueError as error:
+                raise SourceError(f'Could not prepare photo {path}: {error}', path) from error
+            title = string(title)
             fallback = fallback_paths.get(path.relative_to(source).as_posix(), '')
             fallback_bytes = fallback_crc = orientation = 0
             if fallback and (not FAT_PATH.fullmatch(fallback) or len(fallback) > 127 or
@@ -159,7 +164,6 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                         image.paste(rgba, mask=rgba.getchannel('A'))
                         del rgba
             except (OSError, ValueError, SyntaxError) as error:
-                from . import SourceError
                 raise SourceError(f'Could not prepare photo {path}: {error}', path) from error
             del original, oriented
             width, height = image.size

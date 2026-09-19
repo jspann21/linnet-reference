@@ -8,6 +8,7 @@ import tomllib
 import unicodedata
 import os
 import tempfile
+from . import SourceError
 
 MAX_NOTES = 256
 TITLE = 64
@@ -92,24 +93,24 @@ def compile_notes(source, output, *, excluded=None):
         if path.is_symlink() or not path.resolve().is_relative_to(source):
             raise ValueError(f'Note links cannot escape or alias the source: {path}')
         if path.stat().st_size > 1024 * 1024:
-            raise ValueError(f'Note is too large: {path}')
+            raise SourceError(f'Note is too large: {path}', path)
         with path.open('rb') as reader:
             raw = reader.read(1024 * 1024 + 1)
         if len(raw) > 1024 * 1024:
-            raise ValueError(f'Note is too large: {path}')
+            raise SourceError(f'Note is too large: {path}', path)
         try:
             original = raw.decode('utf-16' if raw.startswith((b'\xff\xfe', b'\xfe\xff')) else 'utf-8-sig')
         except UnicodeError as exc:
-            raise ValueError(f'Note must be UTF-8 or BOM-marked UTF-16: {path}') from exc
+            raise SourceError(f'Note must be UTF-8 or BOM-marked UTF-16: {path}', path) from exc
         text = _ascii(original).replace('\r\n', '\n').replace('\r', '\n').expandtabs(4)
         text = ''.join(c if c == '\n' or 32 <= ord(c) <= 126 else '?' for c in text)
         title = _ascii(path.relative_to(source).with_suffix('').as_posix())
         title = ''.join(c if 32 <= ord(c) <= 126 else '?' for c in title)
         if len(title) > 63:
-            raise ValueError(f'Note title exceeds 63 display characters: {path}')
+            raise SourceError(f'Note title exceeds 63 display characters: {path}', path)
         lines = list(islice(_display_lines(text, widths), LINES + 1))
         if len(lines) > LINES:
-            raise ValueError(f'Note exceeds {LINES} display lines; split it into smaller documents: {path}')
+            raise SourceError(f'Note exceeds {LINES} display lines; split it into smaller documents: {path}', path)
         if not original.isascii() or not path.relative_to(source).as_posix().isascii():
             changed.append(path.relative_to(source).as_posix())
         titles += title.encode('ascii').ljust(TITLE, b'\0')
