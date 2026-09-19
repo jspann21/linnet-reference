@@ -768,7 +768,10 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
             cached = metadata is not None
             if progress:
                 progress(dict(phase="music", current=number, total=len(paths), file=str(path), cached=cached))
-            metadata = metadata if cached else future.result()
+            try:
+                metadata = metadata if cached else future.result()
+            except ValueError as error:
+                raise ValueError(f"{path}: {error}") from error
             pending.popleft()
             enqueue()
             yield number, path, before, metadata, cached
