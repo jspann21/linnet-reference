@@ -961,11 +961,15 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             temporary.replace(output / "MUSIC" / name)
         location = location or "/MUSIC/" + name
         tags = metadata["tags"]
-        title = _text(tags.get("title") or path.stem)
-        artist = _text(tags.get("artist") or "Unknown Artist")
-        album = _text(tags.get("album") or "Unknown Album")
-        album_artist = _album_artist(tags, artist)
-        genre, composer = _text(tags.get("genre", "")), _text(tags.get("composer", ""))
+        try:
+            title = _text(tags.get("title") or path.stem)
+            artist = _text(tags.get("artist") or "Unknown Artist")
+            album = _text(tags.get("album") or "Unknown Album")
+            album_artist = _album_artist(tags, artist)
+            genre, composer = _text(tags.get("genre", "")), _text(tags.get("composer", ""))
+        except ValueError as error:
+            from . import SourceError
+            raise SourceError(f"{path}: {error}", path) from error
         year = _number(str(tags.get("date", tags.get("year", "")))[:4])
         track, disc = _number(tags.get("track", "")), _number(tags.get("disc", ""))
         def replaygain(key):
