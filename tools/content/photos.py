@@ -157,8 +157,10 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                         rgba = oriented.convert('RGBA')
                         image = Image.new('RGB', rgba.size, (0, 0, 0))
                         image.paste(rgba, mask=rgba.getchannel('A'))
+                        del rgba
             except (OSError, ValueError, SyntaxError) as error:
                 raise ValueError(f'Could not prepare photo {path}: {error}') from error
+            del original, oriented
             width, height = image.size
             thumb = Image.new('RGB', (THUMB, THUMB), (0, 0, 0))
             tw, th = _fit(width, height, THUMB, THUMB)
