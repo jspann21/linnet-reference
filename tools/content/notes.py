@@ -40,21 +40,25 @@ def _display_lines(text, widths=None):
     for paragraph in text.split('\n'):
         if not paragraph:
             yield ''
-        while paragraph:
+            continue
+        start, stop = 0, len(paragraph)
+        while start < stop:
             length, pixels = 0, 0
-            for char in paragraph[:31]:
+            for char in paragraph[start:start+31]:
                 advance = widths[ord(char)-32]
                 if pixels + advance > 140:
                     break
                 pixels += advance
                 length += 1
-            end = length
-            if length < len(paragraph):
-                space = paragraph.rfind(' ', 0, length+1)
-                if space > 0:
+            end = start + length
+            if end < stop:
+                space = paragraph.rfind(' ', start, end+1)
+                if space > start:
                     end = space
-            yield paragraph[:end]
-            paragraph = paragraph[end:].lstrip(' ')
+            yield paragraph[start:end]
+            start = end
+            while start < stop and paragraph[start] == ' ':
+                start += 1
 
 
 def _ascii(text):
