@@ -116,6 +116,7 @@ def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, I
     palette = Image.new('P', (1, 1))
     colors = [(r * 255 // 7, g * 255 // 7, b * 255 // 3) for r in range(8) for g in range(8) for b in range(4)]
     palette.putpalette([v for color in colors for v in color])
+    reflection_shape = [(1 - ((x - 47.5) / 48) ** 2) ** 2 for x in range(96)]
     source_ids, image_ids, artwork, previews, catalog = {}, {}, [], [], []
     for group in range(groups):
         kind, name, parent, first, count = struct.unpack_from('<5I', database, groups_at + group * 32)
@@ -151,11 +152,12 @@ def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, I
             tile = Image.new('RGB', (96, 128))
             tile.paste(cover)
             reflection = ImageOps.flip(cover).crop((0, 0, 96, 30))
+            reflection_accent = [c * .18 for c in accent]
             for y in range(30):
+                fade = (1 - y / 30) ** 2
                 row = reflection.crop((0, y, 96, y + 1))
-                row = Image.blend(Image.new('RGB', row.size), row, .48 * (1 - y / 30) ** 2 * (1 + .8 * y / 30))
-                row.putdata([tuple(min(255, round(c + accent[channel] * .18 *
-                             (1 - ((x - 47.5) / 48) ** 2) ** 2 * (1 - y / 30) ** 2))
+                row = Image.blend(Image.new('RGB', row.size), row, .48 * fade * (1 + .8 * y / 30))
+                row.putdata([tuple(min(255, round(c + reflection_accent[channel] * reflection_shape[x] * fade))
                              for channel, c in enumerate(pixel))
                              for x, pixel in enumerate(row.getdata())])
                 tile.paste(row, (0, 98 + y))
