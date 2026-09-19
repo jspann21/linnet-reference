@@ -148,7 +148,11 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                         fallback_crc = _crc(path.read_bytes())
                     oriented = ImageOps.exif_transpose(original) if source_orientation != 1 else original
                     if 'A' not in oriented.getbands() and 'transparency' not in oriented.info:
-                        image = oriented.convert('RGB')
+                        if oriented.mode == 'RGB':
+                            oriented.load()
+                            image = oriented
+                        else:
+                            image = oriented.convert('RGB')
                     else:
                         rgba = oriented.convert('RGBA')
                         image = Image.new('RGB', rgba.size, (0, 0, 0))
