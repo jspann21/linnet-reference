@@ -24,6 +24,7 @@ def _windows_storage(root):
         raise ValueError("retail-device inspection requires a Windows drive root")
     letter = root.drive[0]
     script = f"""$ErrorActionPreference='Stop'
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $p=Get-Partition -DriveLetter {letter}
 $d=Get-Disk -Number $p.DiskNumber
 $v=Get-Volume -DriveLetter {letter}
@@ -38,7 +39,7 @@ volume_label=$v.FileSystemLabel;filesystem=$v.FileSystem;volume_id=$v.UniqueId}}
 """
     try:
         result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
-                                text=True, capture_output=True, timeout=15, check=True,
+                                text=True, encoding="utf-8", capture_output=True, timeout=15, check=True,
                                 creationflags=subprocess.CREATE_NO_WINDOW)
     except subprocess.CalledProcessError as error:
         detail = (error.stderr or error.stdout or "Windows storage query failed").strip()
