@@ -318,12 +318,14 @@ class Session:
             not 1<=width<=220 or not 1<=height<=176 or size != width*height*2):
             raise ProtocolError('invalid screenshot identity or dimensions')
         pixels = bytearray()
-        for offset in range(0,size,1008):
-            length=min(1008,size-offset)
-            reply=self.request(Command.SCREEN_READ,struct.pack('<IIII',capture,generation,offset,length))
-            if len(reply)!=12+length or reply[:12]!=struct.pack('<III',capture,generation,offset):
-                raise ProtocolError('screenshot chunk identity or offset mismatch')
-            pixels.extend(reply[12:])
+        for first in range(0,size,4*1008):
+            chunks = [(offset, min(1008,size-offset)) for offset in range(first,min(size,first+4*1008),1008)]
+            replies = self._batch([(Command.SCREEN_READ,struct.pack('<IIII',capture,generation,offset,length))
+                                   for offset,length in chunks])
+            for (offset,length),reply in zip(chunks,replies):
+                if len(reply)!=12+length or reply[:12]!=struct.pack('<III',capture,generation,offset):
+                    raise ProtocolError('screenshot chunk identity or offset mismatch')
+                pixels.extend(reply[12:])
         if zlib.crc32(pixels)!=crc:
             raise ProtocolError('screenshot CRC mismatch')
         return dict(capture_id=capture,generation=generation,width=width,height=height,
