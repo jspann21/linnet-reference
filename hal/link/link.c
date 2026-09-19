@@ -1,15 +1,6 @@
 #include "boot/include/linnet_bytes.h"
+#include "boot/include/linnet_boot.h"
 #include "link.h"
-
-static uint32_t crc32(const uint8_t *p, uint32_t size) {
-    uint32_t crc = 0xffffffffu;
-    for (uint32_t i = 0; i < size; ++i) {
-        crc ^= p[i];
-        for (unsigned bit = 0; bit < 8; ++bit)
-            crc = (crc >> 1) ^ ((0u - (crc & 1u)) & 0xedb88320u);
-    }
-    return ~crc;
-}
 
 static int valid_header(const uint8_t *p) {
     uint16_t flags = ln_read_le16(p + 6);
@@ -33,7 +24,7 @@ int ln_link_parser_feed(ln_link_parser *parser, uint8_t byte, ln_link_frame *fra
         parser->expected = LINNET_LINK_HEADER_SIZE + ln_read_le32(parser->bytes + 16) + 4u;
     }
     if (parser->used < parser->expected) return 0;
-    if (crc32(parser->bytes, parser->used - 4u) != ln_read_le32(parser->bytes + parser->used - 4u))
+    if (ln_crc32(parser->bytes, parser->used - 4u) != ln_read_le32(parser->bytes + parser->used - 4u))
         goto invalid;
     frame->sequence = ln_read_le32(parser->bytes + 12);
     if (frame->sequence <= parser->last_sequence) goto invalid;
@@ -65,6 +56,6 @@ size_t ln_link_encode(const ln_link_frame *frame, uint8_t *output, size_t capaci
     ln_write_le32(output + 12, frame->sequence);
     ln_write_le32(output + 16, frame->length);
     for (uint32_t i = 0; i < frame->length; ++i) output[20u + i] = frame->payload[i];
-    ln_write_le32(output + total - 4u, crc32(output, (uint32_t)total - 4u));
+    ln_write_le32(output + total - 4u, ln_crc32(output, (uint32_t)total - 4u));
     return total;
 }
