@@ -795,7 +795,7 @@ int ln_storage_update(uint32_t action,const uint8_t *data,uint32_t length,uint32
      * opened.  Recheck it before every update action; otherwise UPDATE_BEGIN
      * could poison the cached state store when its publication is refused by
      * the lower write guard. */
-    if(!ln_storage_prepared()||!open_stores())return 0;
+    if(ln_storage_busy()||!ln_storage_prepared()||!open_stores())return 0;
     if(action==1)return data&&ln_update_begin(&updater,length,data);
     if(action==2)return ln_update_write(&updater,offset,data,length);
     if(action==3)return ln_update_finish(&updater,
