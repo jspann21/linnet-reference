@@ -634,6 +634,17 @@ static void music_step(void){
     photo_priority=active&&have_current&&!selecting&&!have_waiting&&!manual_next_pending&&
         p.phase==LN_PLAYER_PLAY&&!urgent&&!transition_soon&&ln_photos_busy();
 #endif
+    /* Visible artwork gets the first background window after audio decoding.
+     * Keep startup and urgent gapless reads ahead of new cover I/O. */
+    bool art_starting=selecting||have_waiting||resolver_kind==1||
+        p.phase==LN_PLAYER_OPEN||p.phase==LN_PLAYER_HEADER||p.phase==LN_PLAYER_PRIME;
+    ln_music_art_step(!art_starting&&!urgent&&
+        (!audio.initialized||!audio.playing||audio.paused||audio.queued>=read_runway));
+    /* Metadata is enough to preload the next cover; waiting for its audio
+     * decoder also waits for the player's larger speculative-read reserve. */
+    if(!art_starting&&!urgent&&!photo_priority&&(next_ready||next_armed)&&p.phase==LN_PLAYER_PLAY&&
+       audio.playing&&!audio.paused&&audio.queued>=read_runway)
+        ln_music_art_prefetch(upcoming.art_path,upcoming.art_crc);
     /* Both services use the same PCM reserve. Let unfinished visible photos
      * claim that window before speculative metadata consumes it repeatedly.
      * Library/history service calls still drain their admitted operations. */
@@ -679,9 +690,8 @@ static void music_step(void){
         if(revision!=additions_revision||!ln_player_cancel_next())ln_music_browser_notice("Queue changed; try again");
         else append_queue(&expanded_queue,&additions);
     }
-    bool starting=selecting||have_waiting||resolver_kind==1||p.phase==LN_PLAYER_PRIME;
-    ln_music_art_step(!starting&&(!audio.initialized||!audio.playing||audio.queued>=LINNET_AUDIO_RING_FRAMES-2048u));
 #if defined(LINNET_COVERFLOW)
+    bool starting=selecting||have_waiting||resolver_kind==1||p.phase==LN_PLAYER_PRIME;
     bool cover_read=!starting&&(!audio.initialized||!audio.playing||audio.queued>=LINNET_AUDIO_RING_FRAMES/2u);
 #if defined(LINNET_PHOTOS)
     cover_read=cover_read&&!ln_photos_busy();

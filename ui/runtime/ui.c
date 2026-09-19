@@ -223,11 +223,11 @@ uint32_t ln_ui_palette_tick(struct ln_ui_state*s,uint32_t now){
         if(entered)s->dirty|=1u;
     }
     if(!album_fading)return album_waiting?album_missing_at+1000000u:UINT32_MAX;
-    uint32_t elapsed=now-album_started,alpha=elapsed>=250000u?256u:divide(elapsed*256u,250000u);
+    uint32_t elapsed=now-album_started,alpha=elapsed>=150000u?256u:divide(elapsed*256u,150000u);
     bool changed=false;
     for(uint32_t i=0;i<LN_UI_COLOR_COUNT;++i){uint16_t c=album_lerp(album_from[i],album_target[i],alpha);if(c!=album_colors[i])changed=true;album_colors[i]=c;}
     if(changed)s->dirty|=1u; /* Palette affects every region, including empty space. */
-    if(elapsed>=250000u){album_fading=false;return album_waiting?album_missing_at+1000000u:UINT32_MAX;}
+    if(elapsed>=150000u){album_fading=false;return album_waiting?album_missing_at+1000000u:UINT32_MAX;}
     return now+25000u;
 }
 typedef uint32_t ln_fill_word __attribute__((may_alias));

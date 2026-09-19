@@ -46,7 +46,7 @@ bool ln_player_busy(void);
 uint32_t ln_player_deadline(uint32_t now);
 void ln_player_snapshot(struct ln_player_status *out);
 /* Background reads get three quarters of a second of PCM where ring size
- * permits; writes/artwork keep their separate near-full policy. */
+ * permits; writes keep their separate near-full policy. */
 uint32_t ln_player_background_frames(uint32_t rate);
 /* Queue intent lets a short current track use its remaining audible runway
  * to finish preparing the next track before the irreversible finish marker. */
