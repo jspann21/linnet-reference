@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
 from datetime import datetime
+from functools import lru_cache
 import hashlib
 import os
 from pathlib import Path
@@ -69,6 +70,7 @@ def boot_artwork(rect, width, height):
     return pixmap
 
 
+@lru_cache(maxsize=128)
 def icon(name, color='#63757b', size=20):
     data = f'<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">{ICONS[name]}</svg>'
     pixmap = QPixmap(size * 2, size * 2)
