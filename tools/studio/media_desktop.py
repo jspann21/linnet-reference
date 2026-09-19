@@ -340,7 +340,12 @@ class MediaModel(QAbstractTableModel):
         key = self.columns[column][0]
         self.layoutAboutToBeChanged.emit()
         previous = self.persistentIndexList()
-        sort_key = lambda row: row.get(key, 0) or 0 if key in ('bytes', 'duration') else str(row.get(key, '')).casefold()
+        if key == 'status' and all(row.get('kind') == 'Trash' for row in self.rows):
+            key = 'started'
+        if key in ('bytes', 'duration', 'started'):
+            sort_key = lambda row: row.get(key, 0) or 0
+        else:
+            sort_key = lambda row: str(row.get(key, '')).casefold()
         if previous:
             positions = sorted(range(len(self.rows)), key=lambda at: sort_key(self.rows[at]), reverse=order == Qt.DescendingOrder)
             self.rows[:] = [self.rows[at] for at in positions]
