@@ -1186,6 +1186,7 @@ class MediaWindow(QMainWindow):
 
     def update_controls(self):
         ready = self.identity is not None and not self.busy
+        supported = media.supported_kinds(self.identity) if ready else ()
         self.screens.setEnabled(not self.busy)
         self.screen_save.setEnabled(ready and all(self.screen_state.values()))
         self.screen_items.setEnabled(not self.busy)
@@ -1197,7 +1198,7 @@ class MediaWindow(QMainWindow):
         self.refresh_button.setEnabled(not self.busy)
         self.refresh_button.setVisible(not self.busy)
         for kind, check in self.prep_checks.items():
-            check.setEnabled(ready and (kind != 'Videos' or self.identity.get('media_profile', {}).get('video_enabled', True)))
+            check.setEnabled(kind in supported)
         self.update_setup_status(); self.update_install_action(); self.selection_changed()
 
     def update_setup_status(self):
@@ -1213,9 +1214,12 @@ class MediaWindow(QMainWindow):
             self.setup_software.setText('Device detection is in progress.' if loading else '')
 
     def update_preparation(self):
+        supported = media.supported_kinds(self.identity) if self.identity else ()
         for kind, text in self.prep_labels.items():
             info = (self.inventory or {}).get(kind)
-            if not info:
+            if self.identity and kind not in supported:
+                text.setText(f'{kind} playback is unavailable on this iPod model.')
+            elif not info:
                 text.setText('Connect an iPod to check this library.')
             elif kind == 'Videos':
                 prepared = sum(row['kind'] == 'Videos' and row['category'] == 'published' for row in self.rows)
@@ -1236,7 +1240,7 @@ class MediaWindow(QMainWindow):
         layout = box(dialog, margins=(28, 28, 28, 28), spacing=16)
         layout.addWidget(label('Bring something new', 'section'))
         layout.addWidget(label('Choose files from your computer. Review the queue in Preparation before copying them to your iPod.', 'muted', True))
-        picker = ComboBox(); picker.addItems(media.KINDS); picker.setCurrentText(self.page if self.page in media.KINDS else 'Music'); layout.addWidget(picker)
+        picker = ComboBox(); picker.addItems(media.supported_kinds(self.identity)); picker.setCurrentText(self.page if self.page in media.KINDS else 'Music'); layout.addWidget(picker)
         def choose(folder=False):
             kind = picker.currentText()
             if folder:
@@ -1320,7 +1324,8 @@ class MediaWindow(QMainWindow):
         ffmpeg, ffprobe = self.ffmpeg, self.ffprobe
         def remove():
             result = media_library.remove_items(identity, rows)
-            needed = [kind for kind in result['requires_update'] if kind != 'Videos' and kind not in result['empty_folders']]
+            needed = [kind for kind in result['requires_update'] if kind != 'Videos'
+                      and kind in media.supported_kinds(identity) and kind not in result['empty_folders']]
             if needed:
                 prepared = media.run(identity, needed, photo_dimension=dimension, ffmpeg=ffmpeg, ffprobe=ffprobe,
                     progress=self.events.progress.emit, cancelled=self.stop_event.is_set)
@@ -1341,6 +1346,7 @@ class MediaWindow(QMainWindow):
             for row in rows:
                 result = media_trash.recover(identity, row['id'])
                 needed.update(result.get('requires_update', []))
+            needed.intersection_update(media.supported_kinds(identity))
             if needed:
                 prepared = media.run(identity, needed, photo_dimension=dimension, ffmpeg=ffmpeg, ffprobe=ffprobe,
                     progress=self.events.progress.emit, cancelled=self.stop_event.is_set)

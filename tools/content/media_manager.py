@@ -88,10 +88,11 @@ def _identify(identity):
         raise RuntimeError("RetailOS and mounted storage identities disagree")
     spec = TARGETS[detected["target_id"]]
     enabled = spec.get("capabilities", {}).get("video", True)
+    photos_enabled = spec.get("capabilities", {}).get("photos", True)
     fps, color = spec.get("media_video_fps", 24), spec.get("media_video_color", "rgb565")
     photo_size=(spec.get("media_photo_width"),spec.get("media_photo_height"))
     video_size=(spec.get("media_video_width"),spec.get("media_video_height"))
-    if (type(enabled) is not bool or type(fps) is not int or not 4 <= fps <= 30 or
+    if (type(enabled) is not bool or type(photos_enabled) is not bool or type(fps) is not int or not 4 <= fps <= 30 or
             color not in ("rgb565", "gray4") or
             any(type(value) is not int or value < 1 for value in (*photo_size,*video_size))):
         raise RuntimeError(f"invalid media profile in target manifest: {detected['target_id']}")
@@ -99,7 +100,7 @@ def _identify(identity):
                 linnet_usb_serial=detected["linnet_usb_serial"],
                 model_number=detected["retail_os"].get("model_number"),
                 regulatory_model=(spec["retail"]["regulatory_models"] or [None])[0],
-                media_profile=dict(video_enabled=enabled, video_fps=fps, video_color=color,
+                media_profile=dict(photo_enabled=photos_enabled, video_enabled=enabled, video_fps=fps, video_color=color,
                     video_extensions=spec["media_video_extensions"],
                     photo_width=photo_size[0],photo_height=photo_size[1],
                     video_width=video_size[0],video_height=video_size[1],
@@ -109,7 +110,9 @@ def _identify(identity):
 def supported_kinds(identity):
     """Return the media services declared by the resolved device target."""
     profile = identity.get("media_profile", {})
-    return tuple(kind for kind in KINDS if kind != "Videos" or profile.get("video_enabled", True))
+    return tuple(kind for kind in KINDS
+                 if (kind != "Videos" or profile.get("video_enabled", True))
+                 and (kind != "Photos" or profile.get("photo_enabled", True)))
 
 
 def native_video_extensions(identity=None):
