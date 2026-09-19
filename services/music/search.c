@@ -8,11 +8,11 @@ static char prefix[LN_MUSIC_SEARCH_PREFIX+1],character[2],group_title[256],label
 static uint32_t length,first,known,total,revision,navigation,epoch,admitted_epoch,pending_ordinal,selected_track;
 static uint32_t group_index,group_count,search_first,search_row,selected_ordinal,restore_row;
 static bool restore_selection;
-static bool opened,closing,results,pending,complete,track_ready,in_group,pending_group;
+static bool opened,closing,results,pending,complete,track_ready,in_group,pending_group,window_ready;
 static struct cached_row *row_slot(uint32_t ordinal){return &rows[ordinal%(LN_MUSIC_SEARCH_ROWS*2u)];}
 static bool row_ready(uint32_t ordinal){struct cached_row *r=row_slot(ordinal);return r->valid&&r->ordinal==ordinal;}
 static void reset_results(uint32_t start){
-    first=start;known=total=0;complete=false;restore_selection=false;
+    first=start;known=total=0;complete=window_ready=false;restore_selection=false;
     for(uint32_t i=0;i<LN_MUSIC_SEARCH_ROWS*2u;++i)rows[i].valid=false;
     ++epoch;++revision;
 }
@@ -29,7 +29,7 @@ void ln_music_search_resume(void){
 void ln_music_search_step(void){
     if(!opened&&!closing)return;
     if(ln_music_library_status()!=LN_LIBRARY_READY){
-        pending=false;complete=true;total=known;
+        pending=false;complete=window_ready=true;total=known;
         if(closing){ln_music_browser_suspend(false);closing=false;}
         return;
     }
@@ -52,13 +52,14 @@ void ln_music_search_step(void){
     uint32_t limit=first+LN_MUSIC_SEARCH_ROWS,ordinal=first;
     if(complete&&limit>total)limit=total;
     while(ordinal<limit&&row_ready(ordinal))++ordinal;
-    if(ordinal>=limit)return;
+    window_ready=ordinal>=limit;
+    if(window_ready)return;
     if(in_group?ln_music_library_view_row(2,group_index,ordinal):ln_music_library_search_at(prefix,ordinal)){
         pending_ordinal=ordinal;
         pending=true;pending_group=in_group;admitted_epoch=epoch;
     }
 }
-bool ln_music_search_busy(void){return closing||pending||(opened&&results&&length&&!complete);}
+bool ln_music_search_busy(void){return closing||pending||(opened&&results&&length&&!window_ready);}
 bool ln_music_search_active(void){return opened||closing;}
 uint32_t ln_music_search_count(void){
     if(!results)return sizeof alphabet;
@@ -122,7 +123,7 @@ bool ln_music_search_back(void){
 }
 void ln_music_search_window(uint32_t first_visible){
     if(!results||first_visible==first)return;
-    first=first_visible;++epoch;++revision;
+    first=first_visible;window_ready=false;++epoch;++revision;
 }
 bool ln_music_search_take_selection(uint32_t *row){
     if(!row||!restore_selection)return false;
