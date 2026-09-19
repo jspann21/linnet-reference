@@ -850,14 +850,17 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     if device_root is None:
         (output / "MUSIC").mkdir(exist_ok=True)
     pool = bytearray(b"\0")
-    strings = {"": 0}
+    strings = {("", None): 0}
 
-    def string(value: object) -> int:
+    def string(value: object, album_owner: str | None = None) -> int:
         value = _text(value)
-        if value not in strings:
-            strings[value] = len(pool)
+        # Firmware compares album offsets at the sleep-timer boundary. Equal
+        # titles from different album artists must retain distinct identities.
+        key = (value, album_owner)
+        if key not in strings:
+            strings[key] = len(pool)
             pool.extend(value.encode("utf-8") + b"\0")
-        return strings[value]
+        return strings[key]
 
     records, entries, artwork_records = [], [], []
     coverflow_originals = {}
@@ -1010,7 +1013,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             metadata["data_offset"], metadata["data_bytes"], metadata["frames"],
             metadata["rate"], metadata["channels"], metadata["bits"])
         struct.pack_into("<IIIIIIIIIIIi", record, 48, metadata["codec"], string(title), string(artist),
-            string(album), string(location), string(genre), string(composer),
+            string(album, album_artist), string(location), string(genre), string(composer),
             year, track, disc, art_for(path), gain)
         record[96:128] = hasher.digest() if hash_audio else bytes(32)
         struct.pack_into("<i", record, 128, replaygain("replaygain_album_gain"))
@@ -1067,7 +1070,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         if identity in group_ids:
             raise ValueError("stable group identifier collision")
         group_ids.add(identity)
-        group_records.append(struct.pack("<IIIIIIQ", kind, string(name), parent_index,
+        group_records.append(struct.pack("<IIIIIIQ", kind, string(name, parent if kind == 2 else None), parent_index,
             len(members), len(indices), 0, identity))
         members.extend(indices)
     search = [(entry["title"].casefold(), i) for i, entry in enumerate(entries)]
@@ -1077,7 +1080,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     # Pack browse labels in group order, then titles and search keys. Previously
     # album names were scattered among each source file's paths and metadata,
     # forcing unrelated page reads while traversing a sorted album list.
-    old_strings = {offset: value for value, offset in strings.items()}
+    old_strings = {offset: key[0] for key, offset in strings.items()}
     offsets = [0]
     offsets.extend(struct.unpack_from("<I", row, 4)[0] for row in group_records)
     offsets.extend(struct.unpack_from("<I", row, 52)[0] for row in records)
