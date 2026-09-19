@@ -207,6 +207,8 @@ def validate_stage(stage: Path, *, device_root: Path | None = None,
             raise ValueError("invalid manifest entry")
         offset = track_offset + index * width
         identity, size = struct.unpack_from("<QQ", database, offset)
+        if size > 0xFFFFFFFF:
+            raise ValueError("Music file exceeds the iPod's FAT32 file size limit")
         path = _pool_string(database, pool, struct.unpack_from("<I", database, offset + 64)[0])
         sha = database[offset + 96:offset + 128].hex()
         if entry.get("id") != f"{identity:016x}" or entry.get("path") != path or entry.get("sha256") != sha:
