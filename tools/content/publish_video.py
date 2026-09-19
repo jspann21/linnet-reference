@@ -197,8 +197,6 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
                     raise RuntimeError('video catalog backup collision')
             else:
                 _write_verified(saved, catalog_before, 'video catalog backup readback mismatch')
-            if saved.read_bytes()!=catalog_before:
-                raise OSError('video catalog backup readback mismatch')
             recovery_paths.append(saved)
             receipt['catalog_backup'] = str(saved)
             record()
