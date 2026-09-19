@@ -20,7 +20,7 @@ bool ln_queue_set_source(struct ln_queue*q,uint32_t source,uint32_t group,uint32
     q->stride=q->inverse=1;q->offset=0;q->shuffled=false;q->position_samples=0;return true;
 }
 static uint32_t source_ordinal(const struct ln_queue*q,uint32_t ordinal){return q->source_group&LN_QUEUE_REVERSE?q->source_count-1-ordinal:ordinal;}
-static uint32_t raw_rank(const struct ln_queue*q,uint32_t ordinal){return mod((uint64_t)(source_ordinal(q,ordinal)+q->source_count-q->offset)*q->inverse,q->source_count);}
+static uint32_t raw_rank(const struct ln_queue*q,uint32_t ordinal){return q->shuffled?mod((uint64_t)(source_ordinal(q,ordinal)+q->source_count-q->offset)*q->inverse,q->source_count):source_ordinal(q,ordinal);}
 bool ln_queue_track_at(const struct ln_queue*q,uint32_t at,uint32_t*out){
     if(!q||!out||at>=q->count)return false;
     if(!q->source){if(q->order[at]>=q->count)return false;*out=q->tracks[q->order[at]];return true;}
@@ -28,7 +28,7 @@ bool ln_queue_track_at(const struct ln_queue*q,uint32_t at,uint32_t*out){
     for(uint32_t i=0;i<q->excluded_count;i++){uint32_t r=raw_rank(q,q->excluded[i]),j=i;
         while(j&&ranks[j-1]>r){ranks[j]=ranks[j-1];j--;}ranks[j]=r;}
     for(uint32_t i=0;i<q->excluded_count;i++)if(ranks[i]<=at)at++;
-    *out=source_ordinal(q,mod((uint64_t)at*q->stride+q->offset,q->source_count));return true;
+    *out=source_ordinal(q,q->shuffled?mod((uint64_t)at*q->stride+q->offset,q->source_count):at);return true;
 }
 bool ln_queue_select_at(struct ln_queue*q,uint32_t at){if(!q||at>=q->count)return false;q->cursor=at;q->position_samples=0;return true;}
 bool ln_queue_current(const struct ln_queue*q,uint32_t*out){return q&&ln_queue_track_at(q,q->cursor,out);}
