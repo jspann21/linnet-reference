@@ -131,9 +131,17 @@ def _plain(path: Path, boundary: Path) -> None:
 
 def _bounded(path: Path, maximum: int) -> bytes:
     with path.open("rb") as reader:
-        data = reader.read(maximum + 1)
-    if len(data) > maximum:
-        raise ValueError(f"file exceeds limit: {path.name}")
+        if maximum <= CHUNK:
+            data = reader.read(maximum + 1)
+            if len(data) > maximum:
+                raise ValueError(f"file exceeds limit: {path.name}")
+            return data
+        size = os.fstat(reader.fileno()).st_size
+        if size > maximum:
+            raise ValueError(f"file exceeds limit: {path.name}")
+        data = reader.read(size + 1)
+        if len(data) != size:
+            raise ValueError(f"file changed while reading: {path.name}")
     return data
 
 
