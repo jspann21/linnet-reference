@@ -190,6 +190,8 @@ def inspect_file(
             kind, rect_count, next_sectors, stored_size, decoded_size, \
                 audio_size = struct.unpack_from("<BBHIII", record)
             _require(kind in TYPE_NAMES, f"frame {frame}: unknown type {kind}")
+            _require(decoded_size <= frame_bytes + 4096,
+                     f"frame {frame}: decoded payload exceeds firmware buffer")
             audio_count = (ipvf.audio_boundary(frame + 1, rate) -
                            ipvf.audio_boundary(frame, rate))
             _require(audio_count > 0, f"frame {frame}: empty audio block")
