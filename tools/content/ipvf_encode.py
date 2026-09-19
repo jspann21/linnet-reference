@@ -126,7 +126,10 @@ def _stop(process):
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        creationflags=subprocess.CREATE_NO_WINDOW, check=False)
     else:
-        os.killpg(process.pid, signal.SIGKILL)
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass  # The worker can exit between poll() and killpg().
     if process.poll() is None:
         process.kill()
     process.wait()
