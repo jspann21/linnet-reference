@@ -191,7 +191,7 @@ def _skipped_paths(state, kind):
 def preparation_option(kind, identity, photo_dimension=640, music_verification='metadata'):
     """Shared preparation version for compilation and library readiness."""
     if kind == 'Music':
-        art_version = 'art6' if identity['target_id'] == 'ipod4g-q21' else 'art5'
+        art_version = 'art8' if identity['target_id'] == 'ipod4g-q21' else 'art7'
         return f"{music_verification}-duration-search-names-album-owner-title-order1-music-folder1-recent-album-gain-{art_version}-{identity['target_id']}"
     if kind == 'Notes':
         return 'theme-fonts1'

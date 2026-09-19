@@ -83,10 +83,22 @@ def _embedded_cover(path: Path) -> bytes | None:
         elif tags.get("metadata_block_picture"):
             import base64
             from mutagen.flac import Picture
-            encoded = tags["metadata_block_picture"][0]
-            if len(encoded) > 44 * 1024 * 1024:
+            data = None
+            for encoded in tags["metadata_block_picture"]:
+                if len(encoded) > 44 * 1024 * 1024:
+                    continue
+                try:
+                    picture = Picture(base64.b64decode(encoded, validate=True))
+                except (ValueError, mutagen.MutagenError):
+                    continue
+                if not 0 < len(picture.data) <= 32 * 1024 * 1024:
+                    continue
+                if data is None or picture.type == 3:
+                    data = picture.data
+                if picture.type == 3:
+                    break
+            if data is None:
                 return None
-            data = Picture(base64.b64decode(encoded)).data
         else:
             return None
         return data if 0 < len(data) <= 32 * 1024 * 1024 else None
