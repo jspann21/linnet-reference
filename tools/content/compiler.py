@@ -280,8 +280,9 @@ def compile_system(root, output, configpath=None, target_override=None):
             node['canvas']=callbacks.get(node['canvas'],'')
             targets=[]
             for navigation_target in node['targets']:
-                if navigation_target!='@sync' and navigation_target not in selected: raise ContentError(f'unknown/unselected target {navigation_target}')
-                targets.append(0xfffffffe if navigation_target=='@sync' else selected.index(navigation_target))
+                actions={'@sync':0xfffffffe,'@shuffle':0xfffffffd,'@repeat':0xfffffffc}
+                if navigation_target not in actions and navigation_target not in selected: raise ContentError(f'unknown/unselected target {navigation_target}')
+                targets.append(actions[navigation_target] if navigation_target in actions else selected.index(navigation_target))
             node['targets']=targets; node['item_count']=len(node['items'])
     fonts=[]; font_ids={}; licenses={}; font_paths={}
     for variant in themes:

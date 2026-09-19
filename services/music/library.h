@@ -32,6 +32,7 @@ void ln_music_library_pause(bool pause);
 enum ln_music_library_status ln_music_library_status(void);
 int ln_music_library_error(void);
 uint32_t ln_music_library_count(void);
+const char *ln_music_library_title(uint32_t track_index);
 uint32_t ln_music_library_group_count(void);
 uint32_t ln_music_library_revision(void);
 uint32_t ln_music_library_verified_bytes(void);

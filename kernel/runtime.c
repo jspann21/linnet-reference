@@ -943,6 +943,13 @@ void ln_runtime_step(void){
     text_scroll_at=(!sleeping&&!backlight_idle)?ln_ui_scroll_tick(shell,now):UINT32_MAX;
     palette_at=(!sleeping&&!backlight_idle)?ln_ui_palette_tick(shell,now):UINT32_MAX;
     if(shell->dirty)dirty=true;
+#if defined(LINNET_AUDIO)
+    if(shell->action==LINNET_UI_ACTION_SHUFFLE||shell->action==LINNET_UI_ACTION_REPEAT){
+        uint32_t action=ln_shell_take_action(shell);
+        (void)ln_music_option_select(action==LINNET_UI_ACTION_SHUFFLE?0u:1u);
+        ln_ui_refresh(shell);dirty=true;
+    }
+#endif
     if(shell->action==LINNET_UI_ACTION_SYNC&&!ln_storage_busy()){
         (void)ln_shell_take_action(shell);
         restart(true);

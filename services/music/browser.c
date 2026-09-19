@@ -46,7 +46,13 @@ static bool activity_filter(uint64_t id,bool add){
 }
 static void changed(void){b.revision++;}
 static void invalidate(void){++b.epoch;for(uint32_t i=0;i<LN_MUSIC_BROWSER_ROWS*2;i++)b.rows[i].valid=false;changed();}
-static struct row *row(uint32_t n){struct row *r=&b.rows[n%(LN_MUSIC_BROWSER_ROWS*2)];return r->valid&&r->ordinal==n?r:0;}
+static struct row *row(uint32_t n){
+    if(b.here.view==TRACKS&&!b.here.kind&&n<b.here.count){
+        const char *title=ln_music_library_title(b.here.reverse?b.here.count-1u-n:n);
+        if(title){struct row *r=&b.rows[n%(LN_MUSIC_BROWSER_ROWS*2)];
+            if(!r->valid||r->ordinal!=n){*r=(struct row){.ordinal=n,.index=b.here.reverse?b.here.count-1u-n:n,.valid=true};copy(r->label,title);}return r;}
+    }
+    struct row *r=&b.rows[n%(LN_MUSIC_BROWSER_ROWS*2)];return r->valid&&r->ordinal==n?r:0;}
 static void navigate(void){b.navigation++;b.first=0;invalidate();b.selection_ready=true;b.restored_selection=b.here.selected;}
 static uint32_t ordinal(uint32_t n){return b.here.reverse?(b.here.view==ARTIST_ALBUMS?(n?b.here.count-n:0):b.here.count-1-n):n;}
 static bool list_view(void){return b.here.view==GROUPS||b.here.view==TRACKS||b.here.view==ACTIVITY||b.here.view==LOCAL_TRACKS||b.here.view==ARTIST_ALBUMS||b.here.view==ALBUM_ARTISTS;}

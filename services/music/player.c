@@ -70,6 +70,16 @@ static bool supported_rate(uint32_t rate){
     switch(rate){case 8000:case 11025:case 12000:case 16000:case 22050:case 24000:
     case 32000:case 44100:case 48000:case 88200:case 96000:return true;default:return false;}
 }
+static int poll_media(struct player_slot *s,struct ln_fat32_file *file,uint32_t *transferred){
+    bool starting=state.phase==LN_PLAYER_OPEN||state.phase==LN_PLAYER_HEADER||state.phase==LN_PLAYER_PRIME;
+    uint32_t began=ln_time_us();int result;
+    for(uint32_t step=0;;step++){
+        result=ln_storage_media_poll_deferred(s->generation,file,transferred);
+        if(result||!starting||step==3u||interrupted())return result;
+        uint32_t now=ln_time_us(),deadline;
+        if(now-began>=500u||(ln_storage_idle_wait(now,&deadline)&&(int32_t)(deadline-now)>0))return 0;
+    }
+}
 static int read_media(void *context,uint64_t offset,uint8_t *buffer,uint32_t length){
     struct player_slot *s=context;if(offset>UINT32_MAX)return -1;
     if(io_owner&&io_owner!=s)return 0;
@@ -83,7 +93,7 @@ static int read_media(void *context,uint64_t offset,uint8_t *buffer,uint32_t len
         int r=ln_storage_media_read(&s->media,(uint32_t)offset,buffer,length,s->generation);if(r<=0)return r;
         io_owner=s;io_open=false;io_offset=(uint32_t)offset;io_length=length;io_buffer=buffer;
     }else if(io_open||io_offset!=offset||io_length!=length||io_buffer!=buffer)return -1;
-    uint32_t transferred=0;int r=ln_storage_media_poll_deferred(s->generation,0,&transferred);
+    uint32_t transferred=0;int r=poll_media(s,0,&transferred);
     if(!r)return 0;io_owner=0;return r==1&&transferred==length?1:-1;
 }
 static void clear_slot(struct player_slot *s){
@@ -112,7 +122,7 @@ static int slot_step(struct player_slot *s){
     if(s->phase==SLOT_OPEN){
         if(io_owner&&io_owner!=s)return 0;
         if(!io_owner){int r=ln_storage_media_open(s->path,s->generation);if(r<=0)return r;io_owner=s;io_open=true;}
-        int r=ln_storage_media_poll_deferred(s->generation,&s->media,0);if(!r)return 0;io_owner=0;
+        int r=poll_media(s,&s->media,0);if(!r)return 0;io_owner=0;
         if(interrupted())return 0;
         if(r<0||(s->expected&&s->expected!=s->media.size))return -1;
         ln_decoder_init(&s->decoder,read_media,s,s->media.size);s->phase=SLOT_DECODE;return 0;
@@ -372,11 +382,9 @@ static void player_advance(void){
     else if(s->phase!=SLOT_EOF&&audio.free_frames>=PLAYER_DECODE_FRAMES){
         int r=slot_step(s);if(interrupted())return;if(r<0){fail(13);return;}if(s->buffered&&!submit_slot(s))return;
     }
-    /* Start with the same bounded runway used for next-track I/O. Starting
-     * at 8192 frames leaves less than the photo reserve; with effects enabled,
-     * earning that reserve during playback can take many seconds. Short tracks
-     * still start at EOF, and a paused seek remains muted while priming. */
-    if(state.phase==LN_PLAYER_PRIME&&(s->submitted>=prefetch_frames(s->rate)||s->phase==SLOT_EOF)){
+    /* Start after the background reserve is available. Next-track I/O still
+     * waits for its larger runway; priming need not pay that cost up front. */
+    if(state.phase==LN_PLAYER_PRIME&&(s->submitted>=ln_player_background_frames(s->rate)||s->phase==SLOT_EOF)){
         if(submitted==consumed){(void)ln_audio_stop();audio_ready=false;clear_slot(s);state.phase=LN_PLAYER_IDLE;return;}
         /* A paused seek fills a fresh ring while muted. Resume starts DMA;
          * priming must not briefly expose audio before returning to pause. */

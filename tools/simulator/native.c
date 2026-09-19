@@ -5,13 +5,25 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-static uint32_t sample_battery=80u,sample_clock=9u*3600u+41u*60u,sample_playback;
+static uint32_t sample_battery=80u,sample_clock=9u*3600u+41u*60u,sample_playback,sample_modes;
+static bool sample_art;
 uint32_t ln_ui_battery_status(void){return sample_battery;}
 uint32_t ln_ui_clock_seconds(void){return sample_clock;}
 uint32_t ln_ui_playback_status(void){return sample_playback;}
+uint32_t ln_ui_playback_modes(void){return sample_modes;}
+const struct ln_ui_asset *ln_ui_now_playing_art(uint32_t *revision){
+    *revision=sample_art?1u:0u;return sample_art&&ln_ui_asset_count?&ln_ui_assets[0]:0;
+}
 /* Explicit sample metadata; device builds bind these keys to the music service. */
 const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){
-    if(item!=UINT32_MAX||!n->text)return fallback;
+    if(!n->text)return fallback;
+    if(item!=UINT32_MAX&&strcmp(n->text,"Option ")==0){
+        static const char *const labels[]={"Shuffle: Off","Repeat: Off","Play queue","Sound settings","Sleep timer","Favorite: No","Save bookmark","No bookmark saved","Restart track","Back 10 seconds","Forward 10 seconds","Save queue as playlist...","Stop"};
+        if(item==0)return sample_modes&1u?"Shuffle: Songs":"Shuffle: Off";
+        if(item==1)return (sample_modes>>1)==2u?"Repeat: One":(sample_modes>>1)==1u?"Repeat: All":"Repeat: Off";
+        return item<13u?labels[item]:fallback;
+    }
+    if(item!=UINT32_MAX)return fallback;
     if(!strcmp(n->text,"Native playback shell"))return sample_playback?"":"Stopped";
     if(!strcmp(n->text,"Track position"))return "1 of 12";
     if(!strcmp(n->text,"Track album"))return "Sample album";
@@ -68,14 +80,22 @@ int main(int argc,char **argv){
     if(!snapshot(&state,argv[1],0))return 3;
     uint32_t kind,repeat,capture,index=0,total=0;int32_t value;
     while(scanf("%u %d %u %u",&kind,&value,&repeat,&capture)==4){
-        if(kind>10u||!repeat||repeat>100000u||total>100000u-repeat||capture>1u)return 4;
+        if(kind>12u||!repeat||repeat>100000u||total>100000u-repeat||capture>1u)return 4;
         for(uint32_t i=0;i<repeat;++i){if(kind<=4u&&kind)ln_ui_input(&state,kind,value);
+            else if(kind==0u&&value==1)ln_ui_refresh(&state);
             else if(kind==5u){if(value!=-1&&((value&255)>100||value<0||value>1023))return 4;sample_battery=(uint32_t)value;}
             else if(kind==6u){if(value< -1||value>=86400)return 4;sample_clock=(uint32_t)value;}
             else if(kind==7u){if(value<0||value>2)return 4;sample_playback=(uint32_t)value;}
             else if(kind==8u){if(value<0||value>4)return 4;sample_result=(uint32_t)value;}
             else if(kind==9u){if(value<0||value>2)return 4;sample_read=(uint32_t)value;}
             else if(kind==10u){if(value<0||value>2)return 4;sample_busy=(uint32_t)value;}
+            else if(kind==11u){if(value<0||value>5)return 4;sample_modes=(uint32_t)value;}
+            else if(kind==12u){if(value<0||value>1)return 4;if(sample_art!=(value!=0)){sample_art=value!=0;ln_ui_refresh(&state);}}
+            if(state.action==LINNET_UI_ACTION_SHUFFLE||state.action==LINNET_UI_ACTION_REPEAT){
+                uint32_t action=ln_ui_take_action(&state);
+                sample_modes=action==LINNET_UI_ACTION_SHUFFLE?sample_modes^1u:(sample_modes&1u)|((((sample_modes>>1)+1u)%3u)<<1);
+                ln_ui_refresh(&state);
+            }
             clock_step(&state);ln_ui_render(&state,pixels,damage);save_presented=ln_clock_editor_pending();}
         total+=repeat;
         if(capture){if(++index>512u||!snapshot(&state,argv[1],index))return 5;}

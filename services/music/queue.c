@@ -95,13 +95,15 @@ static uint32_t random_word(struct ln_queue *q)
 void ln_queue_shuffle(struct ln_queue *q,bool enabled)
 {
     if(!q||q->shuffled==enabled)return;
+    if(!q->count){q->shuffled=enabled;q->stride=q->inverse=1;q->offset=q->cursor=0;return;}
     if(q->source){uint32_t current; if(!ln_queue_current(q,&current))return;
         q->shuffled=enabled;q->stride=q->inverse=1;q->offset=0;q->cursor=0;
         if(enabled){uint32_t stride=1+mod(random_word(q),q->source_count);
             for(uint32_t i=0;i<64&&gcd(stride,q->source_count)!=1;i++)stride=stride==q->source_count?1:stride+1;
             if(gcd(stride,q->source_count)!=1)stride=1;
             q->stride=stride;q->inverse=inverse(stride,q->source_count);q->offset=source_ordinal(q,current);q->cursor=0;}
-        (void)ln_queue_select_occurrence(q,current);return;
+        uint64_t position=q->position_samples;
+        (void)ln_queue_select_occurrence(q,current);q->position_samples=position;return;
     }
     uint32_t current=q->count?q->order[q->cursor]:0;bool selected=q->count!=0;
     for(uint32_t i=0;i<q->count;++i)q->order[i]=i;

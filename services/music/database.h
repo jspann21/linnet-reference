@@ -5,6 +5,8 @@
 #include "boot/include/sha256.h"
 #define LN_MUSIC_SEARCH_GROUP 0x80000000u
 #define LN_MUSIC_TRACK_BYTES 132u
+bool ln_music_db_utf8(const uint8_t *s,uint32_t n);
+
 typedef int (*ln_music_db_read_fn)(void *,uint64_t,uint8_t *,uint32_t);
 enum ln_music_db_result { LN_DB_PENDING=0,LN_DB_READY=1,LN_DB_IO=-1,LN_DB_FORMAT=-2,LN_DB_ARGUMENT=-3 };
 enum ln_music_db_request { LN_DB_TRACK=1,LN_DB_GROUP,LN_DB_MEMBER,LN_DB_ART,LN_DB_STRING };

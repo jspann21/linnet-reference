@@ -5,6 +5,18 @@
 #include "boot/include/linnet_bytes.h"
 
 #define LIBRARY_PAGES 24u
+#define TITLE_TRACKS 20000u
+#define TITLE_BYTES (704u*1024u)
+#define TITLE_PENDING 0x80000000u
+static struct {
+    uint32_t offsets[TITLE_TRACKS];
+    uint16_t heap[TITLE_TRACKS];
+    char text[TITLE_BYTES];
+} titles __attribute__((section(".music_titles"),aligned(32)));
+static uint32_t title_count,title_used,title_length,title_source;
+static bool title_reading;
+static uint8_t title_previous;
+static char title_pending[256];
 
 enum job { JOB_NONE=0,JOB_WINDOW,JOB_SELECTION,JOB_SEARCH,JOB_GROUP,JOB_MEMBER,JOB_PREFETCH,JOB_QUEUE,JOB_VIEW,JOB_VIEW_GROUP,JOB_GROUP_RECORD,JOB_TRACK_RECORD,JOB_TRACK_IDS };
 struct library {
@@ -55,6 +67,62 @@ static void fail(int error)
     changed();
 }
 static bool ready(void){return library.status==LN_LIBRARY_READY;}
+static void title_push(uint32_t track,uint32_t offset){
+    titles.offsets[track]=offset|TITLE_PENDING;
+    uint32_t at=title_count++;
+    while(at){uint32_t parent=(at-1u)/2u;if(titles.offsets[titles.heap[parent]]<=titles.offsets[track])break;
+        titles.heap[at]=titles.heap[parent];at=parent;}
+    titles.heap[at]=(uint16_t)track;
+}
+static uint32_t title_pop(void){
+    uint32_t result=titles.heap[0],last=titles.heap[--title_count],at=0;
+    while(at*2u+1u<title_count){uint32_t child=at*2u+1u;
+        if(child+1u<title_count&&titles.offsets[titles.heap[child+1u]]<titles.offsets[titles.heap[child]])child++;
+        if(titles.offsets[last]<=titles.offsets[titles.heap[child]])break;
+        titles.heap[at]=titles.heap[child];at=child;}
+    if(title_count)titles.heap[at]=(uint16_t)last;return result;
+}
+/* Harvest only completed verification reads. The cache is inaccessible until
+ * the database hash passes; no extra disk reads or shared audio/artwork memory. */
+static void title_capture(uint32_t offset,const uint8_t *data,uint32_t bytes){
+    struct ln_music_db *d=&library.db;
+    if(d->phase!=1)return;
+    uint32_t limit=d->tracks<TITLE_TRACKS?d->tracks:TITLE_TRACKS;
+    uint32_t first=offset>d->track_offset?(offset-d->track_offset)/LN_MUSIC_TRACK_BYTES:0;
+    for(uint32_t i=first;i<limit;i++){
+        uint32_t field=d->track_offset+i*LN_MUSIC_TRACK_BYTES+52u;
+        if(field>=offset+bytes)break;
+        if(field>=offset&&field+4u<=offset+bytes){uint32_t value=ln_read_le32(data+field-offset);if(value<d->pool_bytes)title_push(i,value);}
+    }
+    if(offset+bytes<=d->pool_offset)return;
+    uint32_t at=offset<d->pool_offset?d->pool_offset-offset:0;
+    uint8_t previous=title_previous;title_previous=data[bytes-1u];
+    while(at<bytes&&title_count){
+        uint32_t source=offset+at-d->pool_offset;
+        if(!title_reading){
+            title_source=titles.offsets[titles.heap[0]]&~TITLE_PENDING;
+            if(title_source>source){uint32_t skip=title_source-source;if(skip>=bytes-at)return;at+=skip;}
+            else if(title_source<source){(void)title_pop();continue;}
+            if(title_source&&(at?data[at-1u]:previous)){(void)title_pop();continue;}
+            title_reading=true;title_length=0;
+        }
+        uint8_t c=data[at++];
+        if(title_length<sizeof title_pending)title_pending[title_length]=c;
+        ++title_length;
+        if(c)continue;
+        bool valid=title_length<=sizeof title_pending&&ln_music_db_utf8((const uint8_t*)title_pending,title_length-1u)&&title_length<=TITLE_BYTES-title_used;
+        uint32_t saved=title_used;
+        if(valid){for(uint32_t i=0;i<title_length;i++)titles.text[title_used++]=title_pending[i];}
+        do{uint32_t track=title_pop();if(valid)titles.offsets[track]=saved;}
+        while(title_count&&(titles.offsets[titles.heap[0]]&~TITLE_PENDING)==title_source);
+        title_reading=false;
+    }
+}
+const char *ln_music_library_title(uint32_t index){
+    if(!ready()||index>=library.db.tracks||index>=TITLE_TRACKS||titles.offsets[index]&TITLE_PENDING)return 0;
+    return titles.text+titles.offsets[index];
+}
+
 static bool superseded_job(void){
     return (library.job==JOB_WINDOW&&!window_enabled)||
         (library.job==JOB_SELECTION&&library.job_token!=library.selection_token)||
@@ -91,6 +159,8 @@ uint32_t ln_music_library_deadline(uint32_t now){
 static void start(void)
 {
     uint32_t revision=library.revision+1u;
+    title_count=title_used=title_length=0;title_reading=false;
+    for(uint32_t i=0;i<TITLE_TRACKS;i++)titles.offsets[i]=TITLE_PENDING;
     bool paused=library.paused;
     clear(&library,sizeof(library));library.status=LN_LIBRARY_OPENING;
     library.revision=revision;library.paused=paused;library.generation=next_generation();
@@ -116,7 +186,11 @@ static int read_database_raw(void *context,uint64_t offset,uint8_t *buffer,uint3
         if(!result)return 0;
         library.io_active=false;library.io_buffer=0;
         library.generation=next_generation();
-        return result==1&&transferred==bytes?1:LN_DB_IO;
+        if(result==1&&transferred==bytes){
+            if(library.status==LN_LIBRARY_VERIFYING)title_capture((uint32_t)offset,buffer,bytes);
+            return 1;
+        }
+        return LN_DB_IO;
     }
     if(library.paused)return 0;
     int result=ln_storage_media_read(&library.file,(uint32_t)offset,buffer,bytes,library.generation);
@@ -376,7 +450,12 @@ static void row_step(void)
     }
     int result=ln_music_db_step(&library.db);
     if(result<0){fail(result);return;}if(!result)return;
-    if(library.stage==1){library.scratch.track=library.db.track;if(request(LN_DB_STRING,library.scratch.track.title))library.stage=2;}
+    if(library.stage==1){
+        library.scratch.track=library.db.track;
+        const char *title=ln_music_library_title(library.job_index);
+        if(title){text_copy(library.scratch.title,title);if(request(LN_DB_STRING,library.scratch.track.artist))library.stage=3;}
+        else if(request(LN_DB_STRING,library.scratch.track.title))library.stage=2;
+    }
     else if(library.stage==2){text_copy(library.scratch.title,library.db.text);if(request(LN_DB_STRING,library.scratch.track.artist))library.stage=3;}
     else if(library.stage==3){
         text_copy(library.scratch.artist,library.db.text);
@@ -424,6 +503,10 @@ static void query_step(void)
         query_complete(count);return;
     }
     if(!library.stage){
+        if(library.job==JOB_VIEW){
+            const char *title=ln_music_library_title(library.query_index);
+            if(title){text_copy(library.group_name,title);query_complete(library.query_index);return;}
+        }
         if(library.job==JOB_VIEW||library.job==JOB_TRACK_RECORD){
             library.query_result=library.query_index;library.group_name[0]=0;
             if(request(LN_DB_TRACK,library.query_index))library.stage=2;
@@ -444,6 +527,8 @@ static void query_step(void)
     }
     if(library.job==JOB_VIEW_GROUP&&library.stage==4){
         library.query_result=library.db.member;
+        const char *title=ln_music_library_title(library.query_result);
+        if(title){text_copy(library.group_name,title);query_complete(library.query_result);return;}
         if(request(LN_DB_TRACK,library.query_result))library.stage=2;
         return;
     }

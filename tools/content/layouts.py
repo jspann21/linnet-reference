@@ -233,6 +233,8 @@ def refine_scene(scene,theme,body):
         status=next(n for n in texts if n['text']=='Native playback shell')
         art=next(n for n in nodes if n['kind']==14)
         bar=next(n for n in nodes if n['kind']==10)
+        header=next(n for n in nodes if n['kind']==11);header['text']='Now Playing'
+        status['deps']|=16
         # Metadata owns stable lines; notices never displace it or disappear.
         inset=6 if style=='ipod-photo' else 4
         left=x+inset;width=w-2*inset;top=y+(2 if h<120 else 4)
@@ -314,7 +316,7 @@ def refine_ipod_photo(scene,theme):
         # A single baseline for each field matches the original player layout.
         for n,y in ((title,47),(artist,72),(album,97)):
             place(n,10,y,200,fh);n['flags']=0;n['fg']=color('foreground')
-        position=next(n for n in texts if n['text']=='Track position');place(position,10,29,200,fh)
+        position=next(n for n in texts if n['text']=='Track position');place(position,10,29,200,fh);position['deps']|=16
         art=next(n for n in nodes if n['kind']==14);place(art,10,46,70,70)
         notice=next(n for n in texts if n['text']=='Native playback shell');place(notice,10,115,200,fh)
         bar=next(n for n in nodes if n['kind']==10);place(bar,11,134,198,11)

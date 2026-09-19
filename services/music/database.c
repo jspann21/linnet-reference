@@ -9,7 +9,7 @@ static int read_bytes(struct ln_music_db *d,uint32_t offset,uint32_t count)
     int r=d->read(d->context,offset,d->buffer,count);d->pending=r==0;
     return r<0?bad(d,LN_DB_IO):r;
 }
-static bool utf8(const uint8_t *s,uint32_t n)
+bool ln_music_db_utf8(const uint8_t *s,uint32_t n)
 {
     for(uint32_t i=0;i<n;){
         uint32_t c=s[i++],more,min;
@@ -86,7 +86,7 @@ static int string_step(struct ln_music_db *d)
     uint32_t skip=d->string_offset?1u:0u;
     if(skip&&d->buffer[0])return bad(d,LN_DB_FORMAT);
     uint32_t n=0;while(n<d->read_size-skip&&d->buffer[n+skip])n++;
-    if(n>255||n==d->read_size-skip||!utf8(d->buffer+skip,n))return bad(d,LN_DB_FORMAT);
+    if(n>255||n==d->read_size-skip||!ln_music_db_utf8(d->buffer+skip,n))return bad(d,LN_DB_FORMAT);
     copy(d->text,d->buffer+skip,n);d->text[n]=0;return 1;
 }
 bool ln_music_db_request(struct ln_music_db *d,enum ln_music_db_request operation,uint32_t index)
@@ -133,7 +133,7 @@ bool ln_music_db_search(struct ln_music_db *d,const char *prefix)
 bool ln_music_db_search_at(struct ln_music_db *d,const char *prefix,uint32_t ordinal)
 {
     if(!d||!prefix||!d->verified||d->busy||d->error)return false;
-    uint32_t n=0;while(n<256&&prefix[n])n++;if(n==256||!utf8((const uint8_t *)prefix,n))return false;
+    uint32_t n=0;while(n<256&&prefix[n])n++;if(n==256||!ln_music_db_utf8((const uint8_t *)prefix,n))return false;
     d->search_prefix_length=n;
     bool cached=d->search_lower_valid,extension=d->search_lower_valid;
     /* An extended prefix cannot sort before its completed shorter prefix.

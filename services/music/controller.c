@@ -191,7 +191,7 @@ bool ln_music_queue_edit(uint32_t action){
     if(shutting_down||manual_next_pending||selecting||have_waiting||resolver_kind==1||queue_choice_revision!=revision||queue_choice>=queue.count||action>4){notice="Queue changed; choose again";++revision;return false;}
     if(action==4&&!queue_clear_confirm){queue_clear_confirm=true;notice="Select again to clear";++revision;queue_choice_revision=revision;return false;}
     if(action==4){notice="Queue cleared";queue_clear_confirm=false;int32_t volume=queue.volume_db_tenths;uint32_t repeat=queue.repeat;
-        ln_music_stop();ln_queue_init(&queue,ln_time_us());(void)ln_music_library_identity(queue.library_identity);queue.volume_db_tenths=volume;queue.repeat=repeat;++revision;return true;}
+        bool shuffled=queue.shuffled;ln_music_stop();ln_queue_init(&queue,ln_time_us());queue.shuffled=shuffled;(void)ln_music_library_identity(queue.library_identity);queue.volume_db_tenths=volume;queue.repeat=repeat;++revision;return true;}
     remember_position();uint32_t occurrence;
     if(queue.source){if(!ln_queue_track_at(&queue,queue_choice,&occurrence))return false;}
     else occurrence=queue.order[queue_choice];
@@ -306,7 +306,7 @@ uint32_t ln_music_deadline(uint32_t now){
 /* Menu rows map to stable service actions, shared by labels and selection. */
 uint32_t ln_music_option_action(uint32_t row){
     /* Queue, playback settings, favorites/bookmarks, transport, stop. */
-    static const uint8_t actions[]={7,11,0,1,8,12,2,3,4,5,9,10,6};
+    static const uint8_t actions[]={0,1,7,8,12,2,3,4,5,9,10,11,6};
     return row<sizeof(actions)?actions[row]:UINT32_MAX;
 }
 uint32_t ln_music_queue_action(uint32_t row){
@@ -314,6 +314,7 @@ uint32_t ln_music_queue_action(uint32_t row){
     static const uint8_t actions[]={0,2,3,1,4};
     return row<sizeof(actions)?actions[row]:UINT32_MAX;
 }
+uint32_t ln_music_playback_modes(void){return (queue.shuffled?1u:0u)|(queue.repeat<<1);}
 const char *ln_music_option_label(uint32_t index){
     const struct ln_music_journal_record *record=have_current?ln_music_history_get(current.track.id):0;
     if(index==2||index==3){
@@ -324,7 +325,7 @@ const char *ln_music_option_label(uint32_t index){
             return "History full";
     }
     switch(index){
-    case 0:return queue.shuffled?"Shuffle: On":"Shuffle: Off";
+    case 0:return queue.shuffled?"Shuffle: Songs":"Shuffle: Off";
     case 1:return queue.repeat==LINNET_QUEUE_REPEAT_ONE?"Repeat: One":queue.repeat==LINNET_QUEUE_REPEAT_ALL?"Repeat: All":"Repeat: Off";
     case 2:return !ln_music_history_ready()?"Favorite: Unavailable":record&&(record->flags&LN_MUSIC_JOURNAL_FAVORITE)?"Favorite: Yes":"Favorite: No";
     case 3:return record&&(record->flags&LN_MUSIC_JOURNAL_BOOKMARK)?"Update bookmark":"Save bookmark";
@@ -352,10 +353,11 @@ bool ln_music_option_select(uint32_t index){
     }
     if(index==6){ln_music_stop();return true;}
     if(index<2){
-        if(!queue.count||manual_next_pending||selecting||have_waiting||resolver_kind==1)return false;
+        if(manual_next_pending||selecting||have_waiting||resolver_kind==1)return false;
         if(!ln_player_cancel_next()&&!ln_player_seek(ln_player_position()))return false;
         prefetching=next_ready=next_armed=next_failed=false;
         if(resolver_kind==2)resolver_kind=0;
+        ln_music_library_cancel_prefetch();
         if(index==0)ln_queue_shuffle(&queue,!queue.shuffled);
         else (void)ln_queue_set_repeat(&queue,(queue.repeat+1u)%3u);
         current_cursor=queue.cursor;
@@ -405,6 +407,10 @@ bool ln_music_select(uint32_t index){
 }
 bool ln_music_next(bool previous){
     if(shutting_down)return false;
+    if(previous&&have_current){
+        uint32_t rate=current.track.rate;
+        if(rate&&ln_player_position()>=(uint64_t)rate*3u)return ln_music_seek(0);
+    }
     remember_position();
     bool moved=previous?ln_queue_previous(&queue):ln_queue_next(&queue,true);
     uint32_t index;if(!moved||!ln_queue_current(&queue,&index))return false;
@@ -673,9 +679,10 @@ static void music_step(void){
         if(revision!=additions_revision||!ln_player_cancel_next())ln_music_browser_notice("Queue changed; try again");
         else append_queue(&expanded_queue,&additions);
     }
-    ln_music_art_step(!audio.initialized||!audio.playing||audio.queued>=LINNET_AUDIO_RING_FRAMES-2048u);
+    bool starting=selecting||have_waiting||resolver_kind==1||p.phase==LN_PLAYER_PRIME;
+    ln_music_art_step(!starting&&(!audio.initialized||!audio.playing||audio.queued>=LINNET_AUDIO_RING_FRAMES-2048u));
 #if defined(LINNET_COVERFLOW)
-    bool cover_read=!audio.initialized||!audio.playing||audio.queued>=LINNET_AUDIO_RING_FRAMES/2u;
+    bool cover_read=!starting&&(!audio.initialized||!audio.playing||audio.queued>=LINNET_AUDIO_RING_FRAMES/2u);
 #if defined(LINNET_PHOTOS)
     cover_read=cover_read&&!ln_photos_busy();
 #endif
@@ -709,7 +716,7 @@ static void music_step(void){
                         else for(uint32_t i=0;i<saved.count;++i)if(saved.tracks[i]>=ln_music_library_count())valid=false;
                         if(valid){queue=saved;(void)select_current();}
                         else {
-                            queue.volume_db_tenths=saved.volume_db_tenths;queue.repeat=saved.repeat;
+                            queue.volume_db_tenths=saved.volume_db_tenths;queue.repeat=saved.repeat;queue.shuffled=saved.shuffled;
                             (void)ln_music_library_identity(queue.library_identity);
                             if(saved.last_track_id&&ln_music_library_select_id(saved.last_track_id)){
                                 queue.position_samples=saved.position_samples;queue.shuffled=saved.shuffled;

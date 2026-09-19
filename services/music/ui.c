@@ -42,6 +42,7 @@ static const char *clock_text(char *out,uint64_t frames,uint32_t rate,bool remai
     out[used++]=':';out[used++]=(char)('0'+seconds/10u);out[used++]=(char)('0'+seconds%10u);out[used]=0;
     return out;
 }
+uint32_t ln_ui_playback_modes(void){return ln_music_playback_modes();}
 uint32_t ln_ui_playback_status(void){
 #if defined(LINNET_VIDEO)
     if(ln_video_active())return ln_video_paused()?2u:1u;
@@ -158,7 +159,7 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
 #endif
     if(in_scene(n,"linnet.system.music-options")){
         if(n->kind==LN_UI_STATUS_BAR)return "Playback options";
-        if(n->kind==LN_UI_VIRTUAL_LIST&&item<12)return ln_music_option_label(ln_music_option_action(item));
+        if(n->kind==LN_UI_VIRTUAL_LIST&&item<13)return ln_music_option_label(ln_music_option_action(item));
     }
     if(in_scene(n,"linnet.system.music-sound")&&n->kind==LN_UI_VIRTUAL_LIST&&item<9)return ln_music_sound_label(item);
     if(in_scene(n,"linnet.system.music-queue")){

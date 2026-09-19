@@ -5,6 +5,8 @@
 #include "linnet_target.h"
 #define LINNET_UI_MAX_SCENES 32u
 #define LINNET_UI_ACTION_SYNC 0xfffffffeu
+#define LINNET_UI_ACTION_SHUFFLE 0xfffffffdu
+#define LINNET_UI_ACTION_REPEAT 0xfffffffcu
 enum ln_ui_kind { LN_UI_SCREEN=1,LN_UI_VIEW,LN_UI_TEXT,LN_UI_ICON,LN_UI_IMAGE,
     LN_UI_VIRTUAL_LIST,LN_UI_MENU,LN_UI_GRID,LN_UI_SCROLLBAR,LN_UI_PROGRESS_BAR,
     LN_UI_STATUS_BAR,LN_UI_DIALOG,LN_UI_TOAST,LN_UI_ALBUM_ART,LN_UI_PHOTO_SURFACE,
@@ -46,6 +48,7 @@ uint32_t ln_ui_battery_status(void); /* percent0..100,bit8 charging,bit9 externa
 uint32_t ln_ui_clock_seconds(void); /* local RTC seconds since midnight, UINT32_MAX unknown */
 bool ln_ui_clock_12(void);
 void ln_ui_clock_toggle(void);
+uint32_t ln_ui_playback_modes(void); /* bit0 shuffle; bits1..2 repeat: off,all,one */
 uint32_t ln_ui_playback_status(void); /*0 stopped,1 playing,2 paused*/
 /* Memory-only preference hooks; persistence belongs to display settings. */
 uint32_t ln_ui_theme_preference(void);

@@ -9,6 +9,7 @@ __attribute__((weak)) void ln_ui_clock_toggle(void){session_clock_12=!session_cl
 __attribute__((weak)) uint32_t ln_ui_battery_status(void){return UINT32_MAX;}
 __attribute__((weak)) uint32_t ln_ui_clock_seconds(void){return UINT32_MAX;}
 __attribute__((weak)) uint32_t ln_ui_playback_status(void){return 0;}
+__attribute__((weak)) uint32_t ln_ui_playback_modes(void){return 0;}
 __attribute__((weak)) bool ln_ui_clock_begin(void){return false;}
 __attribute__((weak)) bool ln_ui_clock_input(struct ln_ui_state*s,uint32_t kind,int32_t value){(void)s;(void)kind;(void)value;return false;}
 __attribute__((weak)) void ln_ui_clock_cancel(void){}
@@ -69,6 +70,11 @@ static uint32_t menu_group(const struct ln_ui_node *n){
 }
 static uint32_t menu_source(const struct ln_ui_node *n,uint32_t row){
     uint32_t group=menu_group(n);if(group==UINT32_MAX)return row;
+    /* Playback preferences are always reachable, including with older saved menus. */
+    if(group==LN_MENU_SETTINGS){
+        for(uint32_t action=LINNET_UI_ACTION_SHUFFLE;action>=LINNET_UI_ACTION_REPEAT;--action)
+            for(uint32_t j=0;j<n->item_count;++j)if(n->targets[j]==action){if(!row)return j;--row;break;}
+    }
     for(uint32_t i=0;i<menu_counts[group];++i){const char *id=menu_targets[group][menu_order[group][i]];
         for(uint32_t j=0;j<n->item_count;++j){uint32_t target=n->targets[j];const char *actual=target==LINNET_UI_ACTION_SYNC?"@sync":target<ln_ui_scene_count?ln_ui_scenes[target].id:"";
             if(same(id,actual)){if(!row)return j;--row;break;}}}
@@ -363,7 +369,7 @@ static bool photo_setting(const struct ln_ui_node*n){
         (same(n->text,"Display timeout")||same(n->text,"Battery capacity")||
          same(n->text,"Automatic shutdown")||same(n->text,"Sleep timer")||
          same(n->text,"Clock settings")||same(n->text,"Clock fields")||
-         same(n->text,"Option ")||same(n->text,"Sound "));
+         same(n->text,"Option ")||same(n->text,"Sound ")||menu_group(n)==LN_MENU_SETTINGS);
 }
 static bool setting_text(struct painter*p,const struct ln_ui_node*n,struct rect r,const char*label,uint16_t ink){
     if(!photo_setting(n)||!label)return false;
@@ -560,6 +566,16 @@ static void symbol(struct painter*p,int32_t x,int32_t y,uint32_t kind,uint16_t i
     const uint8_t*mask=kind==1u?symbol_play:kind==2u?symbol_pause:kind==3u?symbol_headphones:kind==4u?symbol_lock:kind==5u?symbol_clock:0;
     if(mask)symbol_mask(p,x,y,11,11,mask,ink);
 }
+static void mode_icon(struct painter*p,int32_t x,int32_t y,bool shuffle,bool one,uint16_t ink){
+    symbol_mask(p,x,y,15,11,shuffle?symbol_shuffle:symbol_repeat,ink);
+    if(one){fill(p,(struct rect){x+7,y+3,1,5},ink);fill(p,(struct rect){x+6,y+4,1,1},ink);fill(p,(struct rect){x+6,y+7,3,1},ink);}
+}
+static int32_t playback_indicators(struct painter*p,int32_t right,int32_t y,uint16_t ink){
+    uint32_t modes=ln_ui_playback_modes();
+    if(modes&1u){right-=15;mode_icon(p,right,y,true,false,ink);right-=5;}
+    if(modes>>1){right-=15;mode_icon(p,right,y,false,(modes>>1)==2u,ink);right-=5;}
+    return right;
+}
 static void time_label(char out[6]){
     uint32_t value=ln_ui_clock_seconds();if(value>=86400u){out[0]='-';out[1]='-';out[2]=':';out[3]='-';out[4]='-';out[5]=0;return;}
     uint32_t hour=value/3600u,minute=(value-hour*3600u)/60u;
@@ -607,21 +623,26 @@ static void chrome(struct painter*p,struct ln_ui_state*s){
     if(layout()==LN_UI_LAYOUT_AURORA){
         fill(p,(struct rect){0,0,UI_X(26),LINNET_UI_HEIGHT},color(LN_UI_PANEL));fill(p,(struct rect){UI_X(25),0,1,LINNET_UI_HEIGHT},color(LN_UI_BORDER));
         vertical_battery(p,UI_X(7),UI_Y(10),ink);symbol(p,UI_X(7),UI_Y(47),ln_ui_playback_status(),ink);
-        if(s->headphones)symbol(p,UI_X(7),UI_Y(77),3,ink);if(s->hold)symbol(p,UI_X(7),UI_Y(107),4,ink);
+        int32_t next=UI_Y(47);if(ln_ui_playback_status())next+=30;
+        if(s->headphones){symbol(p,UI_X(7),next,3,ink);next+=30;}if(s->hold)symbol(p,UI_X(7),next,4,ink);
         clock[2]=0;text(p,max(1,(UI_X(25)-text_width(clock))/2),UI_Y(142),clock,ink);
         text(p,max(1,(UI_X(25)-text_width(clock+3))/2),UI_Y(157),clock+3,ink);
     }else if(layout()==LN_UI_LAYOUT_GRAPHITE||layout()==LN_UI_LAYOUT_SUNSET){
         fill(p,(struct rect){0,UI_Y(154),LINNET_UI_WIDTH,LINNET_UI_HEIGHT-UI_Y(154)},color(LN_UI_PANEL));
-        symbol(p,UI_X(10),UI_Y(159),ln_ui_playback_status(),ink);if(s->headphones)symbol(p,UI_X(29),UI_Y(159),3,ink);if(s->hold)symbol(p,UI_X(48),UI_Y(159),4,ink);
+        int32_t next=UI_X(10);uint32_t play=ln_ui_playback_status();
+        if(play){symbol(p,next,UI_Y(159),play,ink);next+=19;}if(s->headphones){symbol(p,next,UI_Y(159),3,ink);next+=19;}if(s->hold)symbol(p,next,UI_Y(159),4,ink);
         symbol(p,UI_X(155),UI_Y(159),5,ink);fitted_text(p,UI_X(170),UI_Y(154)+max(0,(UI_Y(22)-(int32_t)ln_ui_font.height)/2),clock,ink,UI_X(48));
     }
 }
 static uint32_t status_signature(void){
     uint32_t seconds=ln_ui_clock_seconds(),minutes=seconds<86400u?seconds/60u:2047u;
-    return (ln_ui_battery_status()&1023u)|(minutes<<10)|((ln_ui_playback_status()&3u)<<21);
+    return (ln_ui_battery_status()&1023u)|(minutes<<10)|((ln_ui_playback_status()&3u)<<21)|((ln_ui_playback_modes()&7u)<<23);
 }
 bool ln_ui_status_refresh(struct ln_ui_state*s){
-    if(!s)return false;theme_sync();if(s->drawn_status==status_signature())return false;s->dirty|=4u;return true;
+    if(!s)return false;theme_sync();uint32_t status=status_signature();if(s->drawn_status==status)return false;
+    /* Restoring preferences can finish while Settings is already visible. */
+    if(((s->drawn_status^status)&(7u<<23))&&same(ln_ui_scenes[s->scene].id,"linnet.system.settings"))s->dirty|=1u;
+    else s->dirty|=4u;return true;
 }
 static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_state*s,bool focused){
     if(n->flags&2u)return;
@@ -653,6 +674,8 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
             while(*part&&at<29u)status[at++]=*part++;status[at++]=':';status[at++]=' ';part=ln_ui_themes[active_theme].name;
             while(*part&&at<31u)status[at++]=*part++;status[at]=0;footer_text(p,n,status,fg);
         }else if(layout()==LN_UI_LAYOUT_IPOD_PHOTO&&same(n->text,"Track position")){
+            int32_t right=playback_indicators(p,n->x+n->w,n->y+1,fg);
+            p->clip=intersect(p->clip,(struct rect){n->x,n->y,max(0,right-n->x),n->h});
             int32_t x=n->x;
             for(uint32_t i=0;node_text&&node_text[i]&&i<32u;++i){
                 char c=node_text[i];int32_t glyph=c>='0'&&c<='9'?c-'0':c=='o'?10:c=='f'?11:-1;
@@ -660,6 +683,10 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
                 else if(c=='-'){fill(p,(struct rect){x+1,n->y+6,4,1},fg);x+=5;}
                 else x+=3;
             }
+        }else if(same(n->text,"Native playback shell")&&layout()!=LN_UI_LAYOUT_IPOD_PHOTO){
+            struct ln_ui_node notice=*n;
+            int32_t right=playback_indicators(p,n->x+n->w,n->y+max(0,(n->h-11)/2),color(LN_UI_FOREGROUND));
+            notice.w=max(0,right-n->x);text_block(p,&notice,node_text,fg);
         }else if(scrolling_field(n))scrolling_text(p,s,n->x,n->y,node_text,fg,n->w);
         else text_block(p,n,node_text,fg);break;
     case LN_UI_ICON:case LN_UI_IMAGE:image(p,n);break;
@@ -694,6 +721,11 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
             uint32_t source=menu_source(n,i);if(n->items&&source<n->item_count)label=n->items[source];label=theme_choices(n)?ln_ui_themes[i].name:ln_ui_clock_text(n,i,ln_display_settings_text(n,i,ln_ui_dynamic_text(n,i,label)));if(same(n->text,"Clock settings")&&i==1u)label=ln_ui_clock_12()?"Time format: 12-hour":"Time format: 24-hour";if(!label){number(num,i+1u);label=num;
                 if(node_text&&n->kind!=LN_UI_GRID){uint32_t len=0;while(len<128u&&node_text[len]){fallback_label[len]=node_text[len];++len;}
                     fallback_label[len++]=' ';for(uint32_t digit=0;num[digit]&&len<143u;++digit)fallback_label[len++]=num[digit];fallback_label[len]=0;label=fallback_label;}
+            }
+            if(n->targets&&source<n->item_count){
+                uint32_t action=n->targets[source],modes=ln_ui_playback_modes();
+                if(action==LINNET_UI_ACTION_SHUFFLE)label=(modes&1u)?"Shuffle: Songs":"Shuffle: Off";
+                else if(action==LINNET_UI_ACTION_REPEAT)label=(modes>>1)==2u?"Repeat: One":(modes>>1)==1u?"Repeat: All":"Repeat: Off";
             }
             if(n->kind==LN_UI_GRID){
                 const struct ln_ui_asset*a=ln_ui_dynamic_item_asset(n,i,n->resource<ln_ui_asset_count?&ln_ui_assets[n->resource]:0);
@@ -754,7 +786,7 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
             battery(p,right-25,icon_y,fg);right-=31;
             if(layout()==LN_UI_LAYOUT_IPOD_PHOTO){
                 uint32_t play=ln_ui_playback_status();if(play){if(play==1u)symbol_mask(p,left+3,n->y+3,15,15,photo_play,fg);else symbol(p,left+3,icon_y,play,fg);left+=20;}
-                if(s->hold){symbol(p,left,icon_y,4,fg);left+=14;}
+                if(s->hold){right-=14;symbol(p,right,icon_y,4,fg);}
             }else if(layout()==LN_UI_LAYOUT_BLUEPRINT){char clock[6];time_label(clock);fitted_text(p,left,n->y+max(0,(n->h-(int32_t)ln_ui_font.height)/2),clock,fg,36);left+=42;
                 if(s->headphones){symbol(p,left,icon_y,3,fg);left+=14;}if(s->hold){symbol(p,left,icon_y,4,fg);left+=14;}}
             else if(layout()==LN_UI_LAYOUT_DEFAULT){if(s->headphones){symbol(p,left,icon_y,3,fg);left+=14;}if(s->hold){symbol(p,left,icon_y,4,fg);left+=14;}}
@@ -766,9 +798,7 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
         if(layout()==LN_UI_LAYOUT_IPOD_PHOTO){
             x=max(left,min(n->x+(n->w-text_width(title)+1)/2,right-text_width(title)));
         }else if(layout()==LN_UI_LAYOUT_BLUEPRINT){
-            int32_t inset=max(left-n->x,n->x+n->w-right);
-            left=n->x+inset;right=n->x+n->w-inset;
-            x=left+max(0,(right-left-text_width(title))/2);
+            x=max(left,min(n->x+(n->w-text_width(title))/2,right-text_width(title)));
         }
         int32_t title_y=n->y+max(0,(n->h-(int32_t)ln_ui_font.height)/2);
         if(layout()==LN_UI_LAYOUT_DEFAULT||layout()==LN_UI_LAYOUT_IPOD_PHOTO)++title_y;
@@ -828,7 +858,7 @@ bool ln_ui_input(struct ln_ui_state*s,uint32_t kind,int32_t value){if(!s)return 
     if(kind==2u&&!s->hold&&same(ln_ui_scenes[s->scene].id,"linnet.system.clock")&&((uint32_t)value&~s->buttons&16u)){
         s->buttons=(uint32_t)value;if(s->selected==1u)ln_ui_clock_toggle();else (void)ln_ui_show(s,"linnet.system.clock-edit");s->dirty|=1u;return true;
     }
-    if(kind==2u){uint32_t pressed=(uint32_t)value&~s->buttons;s->buttons=(uint32_t)value;if(s->hold)return false;if(pressed&1u){if(same(ln_ui_scenes[s->scene].id,"linnet.system.themes")||same(ln_ui_scenes[s->scene].id,"linnet.system.clock")||same(ln_ui_scenes[s->scene].id,"linnet.system.update"))return ln_ui_show(s,"linnet.system.settings");return change_scene(s,0);}if(pressed&4u){for(uint32_t i=s->scene+1u;i<ln_ui_scene_count&&i<32u;++i)if(ln_ui_enabled_scenes&(1u<<i))return change_scene(s,i)||(s->dirty&1u);return false;}if(pressed&8u){for(uint32_t i=s->scene;i;--i)if(ln_ui_enabled_scenes&(1u<<(i-1u)))return change_scene(s,i-1u)||(s->dirty&1u);return false;}if(pressed&16u){const struct ln_ui_node*n=focus(s);if(theme_choices(n)&&s->selected<ln_ui_theme_count){ln_ui_theme_changed(s->selected);theme_sync();s->dirty|=1u;return true;}uint32_t source=n?menu_source(n,s->selected):UINT32_MAX;if(n&&n->targets&&source<n->item_count){uint32_t target=n->targets[source];if(target==LINNET_UI_ACTION_SYNC){s->action=target;return false;}return change_scene(s,target);}}return false;}
+    if(kind==2u){uint32_t pressed=(uint32_t)value&~s->buttons;s->buttons=(uint32_t)value;if(s->hold)return false;if(pressed&1u){if(same(ln_ui_scenes[s->scene].id,"linnet.system.themes")||same(ln_ui_scenes[s->scene].id,"linnet.system.clock")||same(ln_ui_scenes[s->scene].id,"linnet.system.update"))return ln_ui_show(s,"linnet.system.settings");return change_scene(s,0);}if(pressed&4u){for(uint32_t i=s->scene+1u;i<ln_ui_scene_count&&i<32u;++i)if(ln_ui_enabled_scenes&(1u<<i))return change_scene(s,i)||(s->dirty&1u);return false;}if(pressed&8u){for(uint32_t i=s->scene;i;--i)if(ln_ui_enabled_scenes&(1u<<(i-1u)))return change_scene(s,i-1u)||(s->dirty&1u);return false;}if(pressed&16u){const struct ln_ui_node*n=focus(s);if(theme_choices(n)&&s->selected<ln_ui_theme_count){ln_ui_theme_changed(s->selected);theme_sync();s->dirty|=1u;return true;}uint32_t source=n?menu_source(n,s->selected):UINT32_MAX;if(n&&n->targets&&source<n->item_count){uint32_t target=n->targets[source];if(target==LINNET_UI_ACTION_SYNC||target==LINNET_UI_ACTION_SHUFFLE||target==LINNET_UI_ACTION_REPEAT){s->action=target;return false;}return change_scene(s,target);}}return false;}
     if(kind!=1u||s->hold||!value)return false;const struct ln_ui_node*n=focus(s);uint32_t count=n?total(n):0;if(!count)return false;
     int64_t next=(int64_t)s->selected+value;if(next<0)next=0;if((uint64_t)next>=count)next=count-1u;if((uint32_t)next==s->selected)return false;s->selected=(uint32_t)next;s->selections[s->scene]=s->selected;s->dirty|=2u;return true;
 }
