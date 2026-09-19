@@ -62,6 +62,8 @@ def _display_lines(text, widths=None):
 
 
 def _ascii(text):
+    if text.isascii():
+        return text
     text = text.translate(str.maketrans({'“': '"', '”': '"', '’': "'", '‘': "'", '—': '-', '–': '-', '…': '...'}))
     normalized = ''.join(c for c in unicodedata.normalize('NFKD', text) if not unicodedata.combining(c))
     return normalized.encode('ascii', 'replace').decode('ascii')
@@ -108,7 +110,7 @@ def compile_notes(source, output, *, excluded=None):
         lines = list(islice(_display_lines(text, widths), LINES + 1))
         if len(lines) > LINES:
             raise ValueError(f'Note exceeds {LINES} display lines; split it into smaller documents: {path}')
-        if any(ord(c) > 127 for c in original + path.relative_to(source).as_posix()):
+        if not original.isascii() or not path.relative_to(source).as_posix().isascii():
             changed.append(path.relative_to(source).as_posix())
         titles += title.encode('ascii').ljust(TITLE, b'\0')
         record = struct.pack('<I', len(lines)) + b''.join(line.encode('ascii').ljust(LINE, b'\0') for line in lines)
