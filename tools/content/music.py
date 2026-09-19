@@ -1138,9 +1138,11 @@ def remove_database_tracks(data: bytes, removed) -> bytes:
     so = mo + len(packed_members) * 4
     new_ao = so + len(packed_search) * 8
     new_po = new_ao + arts * ART
-    payload = (b''.join(records) + b''.join(packed_groups)
-               + struct.pack(f'<{len(packed_members)}I', *packed_members)
-               + b''.join(packed_search) + data[ao:po] + data[po:])
+    payload = bytearray().join(records)
+    payload += b''.join(packed_groups)
+    payload += struct.pack(f'<{len(packed_members)}I', *packed_members)
+    payload += b''.join(packed_search)
+    payload += memoryview(data)[ao:]
     header = bytearray(HEADER)
     struct.pack_into('<4sHH14I', header, 0, b'PODB', 1, HEADER, HEADER + len(payload), 0,
                      len(records), len(packed_groups), len(packed_members), len(packed_search),
@@ -1148,6 +1150,7 @@ def remove_database_tracks(data: bytes, removed) -> bytes:
     header[64:96] = hashlib.sha256(payload).digest()
     struct.pack_into('<I', header, 124, zlib.crc32(header[:124]))
     result = bytes(header) + payload
+    del payload
     validate_database(result)
     return result
 
