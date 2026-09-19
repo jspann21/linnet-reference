@@ -679,7 +679,7 @@ def provision_collections(directory: Path, guard: Callable[[], None]) -> None:
     """Add the optional dual playlist banks, preserving every existing bank."""
     size = 147456
     banks = [directory / name for name in ('LISTS0.BIN', 'LISTS1.BIN')]
-    existing = []
+    present = []
     for path in banks:
         guard()
         if path.is_symlink():
@@ -687,15 +687,18 @@ def provision_collections(directory: Path, guard: Callable[[], None]) -> None:
         if path.exists():
             if path.stat().st_size != size:
                 raise ValueError('unexpected playlist bank size; preserving it')
-            data = bytearray(path.read_bytes())
-            magic, version, generation, checksum = struct.unpack_from('<4sIII', data)
-            struct.pack_into('<I', data, 12, 0)
-            if magic != b'LLST' or version != 1 or not generation or zlib.crc32(data) != checksum:
-                continue  # Firmware can recover from the other complete bank.
-            struct.pack_into('<I', data, 12, checksum)
-            existing.append((generation, data))
-    if all(path.exists() for path in banks):
+            present.append(path)
+    if len(present) == len(banks):
         return
+    existing = []
+    for path in present:
+        data = bytearray(path.read_bytes())
+        magic, version, generation, checksum = struct.unpack_from('<4sIII', data)
+        struct.pack_into('<I', data, 12, 0)
+        if magic != b'LLST' or version != 1 or not generation or zlib.crc32(data) != checksum:
+            continue  # Firmware can recover from the other complete bank.
+        struct.pack_into('<I', data, 12, checksum)
+        existing.append((generation, data))
     if existing:
         initial = max(existing, key=lambda pair: pair[0])[1]
     elif any(path.exists() for path in banks):
