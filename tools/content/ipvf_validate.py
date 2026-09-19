@@ -171,7 +171,6 @@ def inspect_file(
         decoded_audio_crc = 0xFFFFFFFF
         calculated_media_id = 0xFFFFFFFF
         keyframe_entries: list[tuple[int, int, int, int]] = []
-        record_info: dict[int, tuple[int, int, int]] = {}
 
         for frame in range(frame_count):
             if cancelled is not None and cancelled():
@@ -191,7 +190,6 @@ def inspect_file(
             kind, rect_count, next_sectors, stored_size, decoded_size, \
                 audio_size = struct.unpack_from("<BBHIII", record)
             _require(kind in TYPE_NAMES, f"frame {frame}: unknown type {kind}")
-            record_info[record_offset] = (frame, kind, current_sectors)
             audio_count = (ipvf.audio_boundary(frame + 1, rate) -
                            ipvf.audio_boundary(frame, rate))
             _require(audio_count > 0, f"frame {frame}: empty audio block")
@@ -330,46 +328,10 @@ def inspect_file(
         _require(rockbox_crc32(index_data) == index_crc,
                  "index CRC mismatch")
 
-        parsed_index: list[tuple[int, int, int, int]] = []
-        previous_frame = -1
-        previous_offset = ipvf.DATA_OFFSET - 1
-        for entry_number in range(index_count):
-            entry_offset = entry_number * ipvf.INDEX_ENTRY_SIZE
-            entry = struct.unpack_from("<IQHH", index_data, entry_offset)
-            frame, offset, sectors, entry_flags = entry
-            _require(entry_number != 0 or frame == 0,
-                     "index must begin with frame 0")
-            _require(frame > previous_frame,
-                     f"index entry {entry_number}: frames are not monotonic")
-            _require(offset > previous_offset,
-                     f"index entry {entry_number}: offsets are not monotonic")
-            _require(offset >= ipvf.DATA_OFFSET and
-                     offset % ipvf.RECORD_SECTOR_SIZE == 0,
-                     f"index entry {entry_number}: invalid record offset")
-            _require(1 <= sectors <= max_record_sectors,
-                     f"index entry {entry_number}: invalid record sectors")
-            _require(offset + sectors * ipvf.RECORD_SECTOR_SIZE <=
-                     media_end_offset,
-                     f"index entry {entry_number}: record exceeds media")
-            info = record_info.get(offset)
-            _require(info is not None,
-                     f"index entry {entry_number}: offset is not a record start")
-            assert info is not None
-            record_frame, record_kind, record_sectors = info
-            _require(record_frame == frame,
-                     f"index entry {entry_number}: frame identity mismatch")
-            _require(record_kind in (ipvf.TYPE_KEY, ipvf.TYPE_KEY_LZ4),
-                     f"index entry {entry_number}: not a keyframe record")
-            _require(record_sectors == sectors,
-                     f"index entry {entry_number}: sector identity mismatch")
-            _require(entry_flags == ipvf.index_flags_for_kind(record_kind),
-                     f"index entry {entry_number}: keyframe flags mismatch")
-            parsed_index.append(entry)
-            previous_frame = frame
-            previous_offset = offset
-
-        _require(parsed_index and parsed_index[0][0] == 0,
-                 "index must begin with frame 0")
+        # The verified frame walk already establishes every keyframe's offset,
+        # sector count, flags and order. Exact equality rejects missing, extra,
+        # non-keyframe and malformed index entries without retaining all frames.
+        parsed_index = list(struct.iter_unpack("<IQHH", index_data))
         _require(parsed_index == keyframe_entries,
                  "index does not enumerate every keyframe")
 
