@@ -1,4 +1,5 @@
 #include "boot/include/linnet_bytes.h"
+#include "boot/include/linnet_boot.h"
 #include "services/audio/dsp.h"
 /* Q8 signal values retain fractional precision between filters. Headroom is
  * bounded to +/-2^27 (24 dB above full-scale PCM16). A sum of five products of
@@ -86,9 +87,7 @@ bool ln_dsp_profile_decode(const uint8_t *data,uint32_t bytes,uint32_t rate,stru
     if(!data||!out||bytes!=160||rate<8000||rate>192000||data[0]!='L'||data[1]!='D'||data[2]!='S'||data[3]!='P'||
        data[4]||data[5]||data[6]!=160||data[7]||ln_read_le32(data+8)!=rate||ln_read_le32(data+12))return false;
     for(uint32_t i=16;i<28;i++)if(data[i])return false;
-    uint32_t crc=UINT32_MAX;
-    for(uint32_t i=0;i<156;i++){crc^=data[i];for(uint32_t bit=0;bit<8;bit++)crc=(crc>>1)^((0u-(crc&1u))&0xedb88320u);}
-    if((crc^UINT32_MAX)!=ln_read_le32(data+156))return false;
+    if(ln_crc32(data,156)!=ln_read_le32(data+156))return false;
     struct ln_dsp_config config;
     config.gain_q16=ln_read_le32(data+28);config.replaygain_q16=ln_read_le32(data+32);config.balance=(int32_t)ln_read_le32(data+36);
     config.mode=ln_read_le32(data+40);config.band_count=ln_read_le32(data+44);
