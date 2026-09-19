@@ -406,12 +406,11 @@ def additions(root, pending):
         if source.is_relative_to(root):
             raise ValueError(f"{source.name} is already on this iPod. Use its existing {kind} folder.")
         is_folder = source.is_dir()
-        files = _files(source) if is_folder else [source]
-        for path in files:
+        records = _file_records(source) if is_folder else [(source, source.stat())]
+        for path, info in records:
             # Preserve supporting files (cover art, playlists) inside selected folders.
             if not is_folder and path.suffix.lower() not in extensions(kind):
                 raise ValueError(f"{path.name} is not a supported {kind.lower()} source.")
-            info = path.stat()
             if info.st_size > 0xFFFFFFFF:
                 raise ValueError(f"{path.name} exceeds the iPod's FAT32 file size limit (4 GiB minus 1 byte).")
             relative = Path(source.name) / path.relative_to(source) if is_folder else Path(source.name)
