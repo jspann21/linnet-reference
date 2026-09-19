@@ -81,7 +81,6 @@ def list_items(identity, *, records_by_kind=None):
                 description='Remove this entire published library. Original source files and cached conversions are retained. Updating this folder can restore it.'))
     for key, name, title in entries:
         path = _device_path(root, name)
-        published_paths.add(str(path).casefold())
         result.append(_row('published', 'Videos', title, path,
             'Ready on iPod' if path.is_file() else 'Missing published file', key=key.hex(),
             description='Remove this video from the playback catalog and move its file to Trash.'))

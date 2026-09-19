@@ -145,8 +145,6 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                             fallback_bytes > 262144 or max(width, height) > 2048 or width * height > 4_000_000):
                             raise ValueError('fallback JPEG exceeds baseline format/size bounds')
                         orientation = source_orientation
-                        if orientation not in range(1, 9):
-                            raise ValueError('invalid EXIF fallback orientation')
                         fallback_crc = _crc(path.read_bytes())
                     oriented = ImageOps.exif_transpose(original) if source_orientation != 1 else original
                     if 'A' not in oriented.getbands() and 'transparency' not in oriented.info:

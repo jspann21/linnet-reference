@@ -134,8 +134,6 @@ class Parser:
         if type(node['focus']) is not bool: self.fail('focus must be boolean')
         for key in ('text','resource','canvas'):
             if not isinstance(node[key],str): self.fail(f'{key} must be a string')
-        for key in ('items','targets'):
-            if not isinstance(node[key],list): self.fail(f'{key} must be a literal string array')
         if len(node['targets']) not in (0,len(node['items'])): self.fail('targets must match static item count')
         if node['items'] and node['count']!=len(node['items']): self.fail('static items must exactly match count')
         if node['index']>=max(node['count'],1): self.fail('index outside item count')
