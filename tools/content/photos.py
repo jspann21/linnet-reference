@@ -192,6 +192,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
             photos.append((0, *title, *string(fallback), width, height, first_level,
                            len(levels)-first_level, 0, _crc(raw_thumb), fallback_bytes,
                            fallback_crc, orientation, 0))
+            del image, padded, raw
         album_records = [_record(struct.pack('<7I', *string(_title(source.name)),
                                              0, len(photos), NO_INDEX, 0, 0))]
         album_offset = HEADER
