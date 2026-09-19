@@ -330,15 +330,18 @@ def restore_skipped_files(identity, items):
 def _music_import_name(name):
     # Non-ASCII FAT aliases cannot be opened by the firmware. Keep readable
     # names, transliterating accents and punctuation before Windows makes aliases.
-    punctuation = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"',
-                                "‐": "-", "‑": "-", "–": "-", "—": "-", "…": "..."})
-    normalized = unicodedata.normalize("NFD", name.translate(punctuation))
-    normalized = "".join(c for c in normalized if not unicodedata.combining(c))
-    if normalized.isascii():
-        result = normalized.replace('"', "'")
+    if name.isascii():
+        result = name.replace('"', "'")
     else:
-        # A readable ASCII prefix also gives names in other scripts a usable alias.
-        result = "Music - " + name
+        punctuation = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"',
+                                    "‐": "-", "‑": "-", "–": "-", "—": "-", "…": "..."})
+        normalized = unicodedata.normalize("NFD", name.translate(punctuation))
+        normalized = "".join(c for c in normalized if not unicodedata.combining(c))
+        if normalized.isascii():
+            result = normalized.replace('"', "'")
+        else:
+            # A readable ASCII prefix also gives names in other scripts a usable alias.
+            result = "Music - " + name
     if len(result) > 127 and len(result.encode('utf-16-le')) > 510:
         suffix = Path(result).suffix
         marker = '-' + hashlib.sha256(name.encode('utf-8')).hexdigest()[:12]
