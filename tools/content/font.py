@@ -49,14 +49,13 @@ def _fixed(font,height,source,monochrome=False):
     from PIL import Image, ImageDraw
     alpha=[]
     for code in range(32,127):
-        cell=Image.new('L',(8,height))
         width=max(8,int(font.getlength(chr(code))+1))
         glyph=Image.new('L',(width,height))
         draw=ImageDraw.Draw(glyph)
         if monochrome: draw.fontmode='1'
         draw.text((0,0),chr(code),font=font,fill=255)
         if width>8: glyph=glyph.resize((8,height),Image.Resampling.LANCZOS)
-        cell.paste(glyph,(0,0)); alpha.extend(cell.tobytes())
+        alpha.extend(glyph.tobytes())
     return dict(format='FONT',width=8,height=height,advance=8,first=32,count=95,
                alpha=alpha,source_sha256=hashlib.sha256(source).hexdigest())
 
