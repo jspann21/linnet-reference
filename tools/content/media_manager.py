@@ -664,6 +664,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         state = {}
     if not isinstance(state, dict):
         state = {}
+    if not isinstance(state.get("skipped_files", {}), dict):
+        state["skipped_files"] = {}
     skipped = {kind: _skipped_paths(state, kind) for kind in KINDS}
     report = dict(started=time.time(), identity=identity, steps=[], errors=[], complete=False,
                   stopped=False, cache_directory=str(cache), cleanup=dict(removed=[], retained=[]))
