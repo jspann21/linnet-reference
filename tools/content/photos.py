@@ -171,8 +171,13 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                 first_tile, count = len(tile_crcs), tx * ty
                 if first_tile + count > MAX_TILES or ((len(paths)*8192)+(first_tile+count)*2048) > MAX_FILE:
                     raise ValueError('photo tile payload exceeds package limits')
-                padded = Image.new('RGB', (tx*EDGE, ty*EDGE), (0, 0, 0))
-                padded.paste(image.resize((lw, lh), Image.Resampling.LANCZOS, reducing_gap=3.0))
+                resized = image if image.size == (lw, lh) else image.resize((lw, lh), Image.Resampling.LANCZOS, reducing_gap=3.0)
+                if (lw, lh) == (tx*EDGE, ty*EDGE):
+                    padded = resized
+                else:
+                    padded = Image.new('RGB', (tx*EDGE, ty*EDGE), (0, 0, 0))
+                    padded.paste(resized)
+                del resized
                 raw = _rgb565(padded)
                 stride = tx * EDGE * 2
                 for y in range(ty):
