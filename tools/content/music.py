@@ -42,6 +42,7 @@ CODECS = {"pcm_le": 1, "pcm_be": 2, "float_le": 3, "float_be": 4,
           "vorbis": 20, "opus": 21, "wavpack": 22, "unknown": 255}
 EXTENSIONS = {".wav", ".aif", ".aiff", ".aifc", ".mp3", ".m4a",
               ".aac", ".flac", ".ogg", ".opus", ".wv"}
+COVER_NAMES = ("cover.png", "cover.jpg", "folder.jpg", "Folder.jpg")
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
@@ -124,6 +125,8 @@ def _cover_pixels(cover, target: str | None = None) -> bytes:
     with Image.open(cover) as image:
         if image.width * image.height > 16_000_000:
             raise ValueError("cover dimensions exceed bound")
+        if image.getexif().get(274, 1) != 1:
+            image = ImageOps.exif_transpose(image)
         image = ImageOps.fit(image.convert("RGB"), (64, 64))
         if target == "ipod4g-q21":
             image = _mp102_cover(image)
@@ -183,6 +186,7 @@ def _pcm(path: Path) -> dict:
             start = position + 8
             if length + (length & 1) > end - start:
                 raise ValueError("truncated audio chunk")
+            next_position = start + length + (length & 1)
             if wave and kind == b"fmt ":
                 if length < 16 or length > 65536 or "codec" in result:
                     raise ValueError("invalid WAV format chunk")
@@ -246,10 +250,7 @@ def _pcm(path: Path) -> dict:
                         if tag in tags:
                             result["tags"][tags[tag]] = raw[cursor:cursor+count].rstrip(b"\0").decode("utf-8", "replace")
                         cursor += count + (count & 1)
-            # Use the original chunk length; SSND processing changes local length.
-            stream.seek(position + 4)
-            original = struct.unpack(endian + "I", stream.read(4))[0]
-            position += 8 + original + (original & 1)
+            position = next_position
         if "codec" not in result or not have_data:
             raise ValueError("audio format or data missing")
         if result["data_bytes"] % result["align"]:
@@ -498,6 +499,8 @@ class _MetadataCache:
         pcm = Path(relative).suffix.lower() in (".wav", ".aif", ".aiff", ".aifc")
         if pcm:
             if value["codec"] not in (1, 2, 3, 4) or value["bits"] not in (8, 16, 24, 32):
+                return False
+            if value["codec"] in (3, 4) and value["bits"] != 32:
                 return False
             align = value["channels"] * (value["bits"] // 8)
             if value["frames"] * align != value["data_bytes"]:
@@ -840,7 +843,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         # Most MP3 albums carry embedded art. Search sidecar names once per
         # folder, but still inspect each track's own embedded cover.
         if folder not in folder_covers:
-            candidates = [folder / name for name in ("cover.png", "cover.jpg", "folder.jpg", "Folder.jpg")]
+            candidates = [folder / name for name in COVER_NAMES]
             folder_covers[folder] = next((p for p in candidates if p.is_file()), None)
         cover = folder_covers[folder]
         embedded = _embedded_cover(path) if cover is None else None
@@ -1055,12 +1058,14 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     search_offset = member_offset + 4 * len(members)
     art_offset = search_offset + 8 * len(search)
     string_offset = art_offset + ART * len(artwork_records)
-    payload = b"".join(records) + b"".join(group_records)
+    if string_offset + len(pool) > MAX_DATABASE:
+        raise ValueError("database exceeds 128 MiB")
+    payload = bytearray().join(records)
+    payload += b"".join(group_records)
     payload += struct.pack(f"<{len(members)}I", *members)
     payload += b"".join(search_records)
-    payload += b"".join(artwork_records) + pool
-    if HEADER + len(payload) > MAX_DATABASE:
-        raise ValueError("database exceeds 128 MiB")
+    payload += b"".join(artwork_records)
+    payload += pool
     header = bytearray(HEADER)
     struct.pack_into("<4sHH14I", header, 0, b"PODB", 1, HEADER, HEADER + len(payload), 0,
         len(records), len(group_records), len(members), len(search), track_offset, group_offset,
@@ -1159,16 +1164,15 @@ def validate_database(data: bytes) -> dict:
         raise ValueError("database header CRC")
     if hashlib.sha256(memoryview(data)[HEADER:]).digest() != data[64:96]:
         raise ValueError("database payload SHA256")
-    pool = data[po:]
-    if pool[0] or pool[-1]:
+    if data[po] or data[-1]:
         raise ValueError("string pool sentinel")
     strings = {}
-    cursor = 0
-    while cursor < len(pool):
-        end = pool.find(b"\0", cursor)
+    cursor = po
+    while cursor < len(data):
+        end = data.find(b"\0", cursor)
         if end < 0 or end - cursor > MAX_STRING:
             raise ValueError("string length")
-        strings[cursor] = pool[cursor:end].decode("utf-8")
+        strings[cursor - po] = data[cursor:end].decode("utf-8")
         cursor = end + 1
 
     def get_string(offset: int) -> str:
@@ -1223,11 +1227,11 @@ def validate_database(data: bytes) -> dict:
     for (member,) in struct.iter_unpack("<I", memoryview(data)[mo:so]):
         if member >= tracks:
             raise ValueError("member track index")
-    order = []
-    for index in range(searches):
-        reference, key = struct.unpack_from("<II", data, so + index * 8)
-        order.append((get_string(key), reference))
-    if order != sorted(expected_search):
+    expected_search.sort()
+    if searches != len(expected_search) or any(
+            (get_string(key), reference) != expected
+            for (reference, key), expected in zip(
+                struct.iter_unpack("<II", memoryview(data)[so:ao]), expected_search)):
         raise ValueError("search permutation/order")
     for index in range(arts):
         identity, path, width, height, encoding, count, crc, reserved = struct.unpack_from("<QIHHIIII", data, ao + index * ART)

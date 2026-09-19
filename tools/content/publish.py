@@ -76,8 +76,10 @@ def _write_receipt(path, receipt):
         os.fsync(writer.fileno())
 
 
-def _write_verified(path, data, error):
+def _write_verified(path, data, error, *, owned=None):
     with path.open('xb') as writer:
+        if owned is not None:
+            owned.append(path)
         writer.write(data)
         writer.flush()
         os.fsync(writer.fileno())

@@ -503,15 +503,11 @@ def assess(identity):
 def _run_build(arguments):
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     if os.name == "nt":
-        converted = subprocess.run(
-            ["wsl", "-d", "Ubuntu-24.04", "--", "wslpath", "-a", ROOT.as_posix()],
-            text=True, capture_output=True, check=True,
-            creationflags=creationflags).stdout.strip()
-        command = ["wsl", "-d", "Ubuntu-24.04", "--cd", converted, "--",
-                   "python3", "linnet", "build", *arguments]
+        from tools.studio.build import wsl_command
+        command = wsl_command(["build", *arguments])
     else:
-        command = [sys.executable, str(ROOT / "linnet"), "build", *arguments]
-    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True,
+        command = [sys.executable, "-X", "utf8", str(ROOT / "linnet"), "build", *arguments]
+    result = subprocess.run(command, cwd=ROOT, text=True, encoding="utf-8", capture_output=True,
                             creationflags=creationflags)
     if result.returncode:
         raise RuntimeError((result.stderr or result.stdout).strip() or "Linnet build failed")

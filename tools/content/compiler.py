@@ -35,6 +35,22 @@ def identifier(value):
 def rgb565(r,g,b):
     return ((r>>3)<<11)|((g>>2)<<5)|(b>>3)
 
+def load_font(data):
+    font=json.loads(data)
+    required={'format','width','height','advance','first','count','alpha','source_sha256'}
+    if not isinstance(font,dict) or not required<=set(font) or set(font)-required-{'advances'} or font['format']!='FONT':
+        raise ContentError('invalid baked font')
+    if any(type(font[key]) is not int or not 1<=font[key]<=24 for key in ('width','height','advance')) or any(type(font[key]) is not int for key in ('first','count')) or (font['first'],font['count'])!=(32,95):
+        raise ContentError('font cell/advance must be 1..24 with 95 printable ASCII glyphs')
+    alpha=font['alpha']
+    if not isinstance(alpha,list) or len(alpha)!=font['width']*font['height']*95 or any(type(n) is not int or not 0<=n<=255 for n in alpha):
+        raise ContentError('invalid font alpha pixels')
+    if 'advances' in font and (not isinstance(font['advances'],list) or len(font['advances'])!=95 or any(type(n) is not int or not 1<=n<=24 for n in font['advances'])):
+        raise ContentError('font advances must contain 95 values in 1..24')
+    if not isinstance(font['source_sha256'],str) or not re.fullmatch(r'[0-9a-f]{64}',font['source_sha256']):
+        raise ContentError('font source hash required')
+    return font
+
 def crop_font(font):
     """Losslessly pack each glyph's ink rectangle, preserving cell placement."""
     width,height=font['width'],font['height'];alpha=[];glyphs=[]
@@ -103,8 +119,8 @@ def ppm(data):
 def resolve_features(config, target_manifest=None):
     features=config.get('features',{})
     names=('photos','video','files','demo','themes','cover_flow')
-    if not isinstance(features,dict) or any(type(features[key]) is not bool for key in names if key in features):
-        raise ContentError('feature flags must be booleans')
+    if not isinstance(features,dict) or any(key not in names or type(value) is not bool for key,value in features.items()):
+        raise ContentError('feature flags must use supported names and boolean values')
     features=dict(features)
     if target_manifest is None:
         return features
@@ -120,7 +136,9 @@ def resolve_features(config, target_manifest=None):
 def compile_system(root, output, configpath=None, target_override=None):
     root=Path(root).resolve(); output=Path(output).resolve(); sources={}
     def read(path):
-        path=bounded_path(root,path); data=path.read_bytes()
+        path=bounded_path(root,path)
+        with path.open('rb') as reader:
+            data=reader.read(1024*1024+1)
         if len(data)>1024*1024: raise ContentError(f'source exceeds 1 MiB: {path}')
         sources[path.relative_to(root).as_posix()]=digest(data)
         return data
@@ -141,10 +159,6 @@ def compile_system(root, output, configpath=None, target_override=None):
         not 1<=width<=1024 or not 1<=height<=1024 or width*height>131072):
         raise ContentError('UI target dimensions exceed the supported framebuffer bound')
     monochrome=str(target_manifest.get('lcd_format','')).startswith('gray')
-    physical_width=target_manifest.get('lcd_width')
-    physical_height=target_manifest.get('lcd_height')
-    if type(physical_width) is not int or type(physical_height) is not int or physical_width<1 or physical_height<1:
-        raise ContentError('invalid physical display dimensions')
     features=resolve_features(config,target_manifest)
     ui=config.get('ui',{})
     if not isinstance(ui,dict): raise ContentError('ui must be a table')
@@ -290,19 +304,7 @@ def compile_system(root, output, configpath=None, target_override=None):
         metadata=theme_specs[variant['id']]['theme']
         font_path=directory/metadata.get('font','../../sdk/assets/font.json')
         font_license_path=directory/metadata.get('font_license','../../sdk/assets/FONT-LICENSE.txt')
-        font=json.loads(read(font_path))
-        required={'format','width','height','advance','first','count','alpha','source_sha256'}
-        if not required<=set(font) or set(font)-required-{'advances'} or font['format']!='FONT':
-            raise ContentError('invalid baked font')
-        if any(type(font[key]) is not int or not 1<=font[key]<=24 for key in ('width','height','advance')) or any(type(font[key]) is not int for key in ('first','count')) or (font['first'],font['count'])!=(32,95):
-            raise ContentError('font cell/advance must be 1..24 with 95 printable ASCII glyphs')
-        alpha=font['alpha']
-        if not isinstance(alpha,list) or len(alpha)!=font['width']*font['height']*95 or any(type(n) is not int or not 0<=n<=255 for n in alpha):
-            raise ContentError('invalid font alpha pixels')
-        if 'advances' in font and (not isinstance(font['advances'],list) or len(font['advances'])!=95 or any(type(n) is not int or not 1<=n<=24 for n in font['advances'])):
-            raise ContentError('font advances must contain 95 values in 1..24')
-        if not isinstance(font['source_sha256'],str) or not re.fullmatch(r'[0-9a-f]{64}',font['source_sha256']):
-            raise ContentError('font source hash required')
+        font=load_font(read(font_path))
         if font['height']>variant['metrics']['row_height']:
             raise ContentError('theme row height must accommodate its font')
         font_id=digest(canonical(font))
@@ -372,11 +374,11 @@ def compile_system(root, output, configpath=None, target_override=None):
     else:
         # Use a small face hinted directly onto the LCD pixel grid. Scaling the
         # regular UI face made the low-contrast corner hints visibly soft.
-        hint=json.loads(read(root/'sdk/assets/font-hint11.json'))
+        hint=load_font(read(root/'sdk/assets/font-hint11.json'))
         hint_index=len(fonts);fonts.append(hint)
     # The prominent clock uses a separately hinted native-size face. Scaling
     # each target here keeps runtime glyph pixels aligned to its LCD grid.
-    clock=json.loads(read(root/('sdk/assets/font-q21-clock22.json' if target=='ipod4g-q21'
+    clock=load_font(read(root/('sdk/assets/font-q21-clock22.json' if target=='ipod4g-q21'
                                else 'sdk/assets/font-clock24.json')))
     if target!='ipod4g-q21' and (width,height)!=(REFERENCE_WIDTH,REFERENCE_HEIGHT):
         clock=scale_font(clock,width,REFERENCE_WIDTH,height,REFERENCE_HEIGHT)

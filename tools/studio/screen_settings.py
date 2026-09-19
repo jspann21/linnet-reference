@@ -99,8 +99,10 @@ def save(identity, state):
         raise ValueError('Install Linnet on this iPod first.')
     temporary = path.with_name('MENU-' + uuid.uuid4().hex[:8] + '.TMP')
     _plain(temporary, root)
+    temporary_owned = False
     try:
         with temporary.open('xb') as stream:
+            temporary_owned = True
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
@@ -110,6 +112,8 @@ def save(identity, state):
         if path.read_bytes() != data:
             raise IOError('Screen settings could not be verified on the iPod.')
     finally:
-        if temporary.exists():
+        if temporary_owned and temporary.exists():
+            _volume_guard(identity)
+            _plain(temporary, root)
             temporary.unlink()
     return state

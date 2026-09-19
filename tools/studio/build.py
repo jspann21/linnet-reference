@@ -17,6 +17,23 @@ def run(args):
         raise RuntimeError(f"command failed: {' '.join(map(str, args))}\n{result.stdout}{result.stderr}")
     return result.stdout.strip()
 
+def wsl_command(arguments, *, paths=None):
+    distribution = tomllib.loads((ROOT / "config/toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["windows_wsl_distribution"]
+    def convert(path):
+        return subprocess.run(
+            ["wsl", "-d", distribution, "--", "wslpath", "-a", path.as_posix()],
+            capture_output=True, text=True, encoding="utf-8", check=True,
+            creationflags=subprocess.CREATE_NO_WINDOW).stdout.strip()
+    converted = convert(ROOT)
+    forwarded = list(arguments)
+    for option, path in (paths or {}).items():
+        if path is None:
+            continue
+        value = convert(path.resolve()) if path.drive else path.as_posix()
+        # Last occurrence wins for both --option=value and abbreviated flags.
+        forwarded.extend(("--" + option, value))
+    return ["wsl", "-d", distribution, "--cd", converted, "--", "python3", "linnet", *forwarded]
+
 def toolchain():
     spec = tomllib.loads((ROOT / "config/toolchain.toml").read_text())["toolchain"]
     result = {}
@@ -27,7 +44,9 @@ def toolchain():
         version = run([executable, "--version"])
         if not re.search(r"\b" + re.escape(spec["version"]) + r"\b", version):
             raise RuntimeError(f"toolchain pin mismatch: {version}; expected {spec['version']}")
-        result[name] = dict(path=executable, version=version, sha256=hashlib.sha256(Path(executable).read_bytes()).hexdigest())
+        with Path(executable).open('rb') as reader:
+            checksum = hashlib.file_digest(reader, 'sha256').hexdigest()
+        result[name] = dict(path=executable, version=version, sha256=checksum)
     return result
 
 def source_paths():
@@ -48,7 +67,10 @@ def source_identity(configuration, chain):
     for path in source_paths():
         data = path.read_bytes()
         name = path.relative_to(ROOT).as_posix().encode()
-        digest.update(struct.pack("<I", len(name)) + name + struct.pack("<Q", len(data)) + data)
+        digest.update(struct.pack("<I", len(name)))
+        digest.update(name)
+        digest.update(struct.pack("<Q", len(data)))
+        digest.update(data)
     digest.update(json.dumps(configuration, sort_keys=True).encode())
     digest.update(json.dumps({k: {field: v[field] for field in ('version', 'sha256')} for k, v in chain.items()}, sort_keys=True).encode())
     return digest.hexdigest()

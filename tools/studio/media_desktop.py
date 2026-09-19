@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox,
 
 from tools.content import media_manager as media, media_library, media_status, media_trash
 from tools.content.media_manager import format_size as size
+from tools.content.music import COVER_NAMES
 from tools.studio import installer, screen_settings
 
 
@@ -173,7 +174,7 @@ class Events(QObject):
     done = Signal(str, object, str)
     progress = Signal(str)
     conversion = Signal(object)
-    artwork = Signal(str, object)
+    artwork = Signal(int, str, object)
 
 
 class Covers(QObject):
@@ -181,6 +182,7 @@ class Covers(QObject):
     def __init__(self, parent):
         super().__init__(parent)
         self.cache, self.pending = OrderedDict(), set()
+        self.generation = 0
         self.closed = False
         self.pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix='linnet-art')
         self.events = Events(self)
@@ -195,17 +197,21 @@ class Covers(QObject):
             return self.cache[path]
         if path not in self.pending:
             self.pending.add(path)
-            self.pool.submit(self.read, path, source)
+            self.pool.submit(self.read, path, source, self.generation)
         return None
 
-    def read(self, path, source_path=None):
+    def invalidate(self):
+        self.generation += 1
+        self.cache.clear(); self.pending.clear()
+
+    def read(self, path, source_path, generation):
         image = QImage()
         try:
             source = Path(path)
             if source.suffix.lower() == '.rgb':
                 if source_path:
                     folder = Path(source_path).parent
-                    original = next((folder / name for name in ('cover.jpg', 'cover.png', 'folder.jpg', 'Folder.jpg') if (folder / name).is_file()), None)
+                    original = next((folder / name for name in COVER_NAMES if (folder / name).is_file()), None)
                     if original and original.stat().st_size <= 32 * 1024 * 1024:
                         image = self.read_image(str(original))
                     if image.isNull():
@@ -224,7 +230,7 @@ class Covers(QObject):
         except (OSError, ValueError):
             pass
         if not self.closed:
-            self.events.artwork.emit(path, image)
+            self.events.artwork.emit(generation, path, image)
 
     @staticmethod
     def read_image(source):
@@ -235,8 +241,10 @@ class Covers(QObject):
             return reader.read()
         return QImage()
 
-    @Slot(str, object)
-    def receive(self, path, image):
+    @Slot(int, str, object)
+    def receive(self, generation, path, image):
+        if generation != self.generation:
+            return
         self.pending.discard(path)
         self.cache[path] = QPixmap.fromImage(image) if not image.isNull() else None
         self.cache.move_to_end(path)
@@ -336,9 +344,9 @@ class Artwork(QWidget):
         self.setFixedSize(180, 180)
         covers.events.artwork.connect(self.art_ready)
 
-    @Slot(str, object)
-    def art_ready(self, path, _image):
-        if path == self.row.get('artwork'):
+    @Slot(int, str, object)
+    def art_ready(self, generation, path, _image):
+        if generation == self.covers.generation and path == self.row.get('artwork'):
             self.update()
 
     def paintEvent(self, event):
@@ -1037,6 +1045,7 @@ class MediaWindow(QMainWindow):
             self.show_progress('Playlists saved to iPod. Eject safely when finished.'); return
         if tag == 'devices':
             if not result:
+                self.covers.invalidate()
                 self.screen_loaded_for = None
                 self.identity = None; self.rows = []; self.inventory = None; self.review = None
                 self.trash_rows = []; self.readiness = {}; self.group = None; self.video_selection.clear()
@@ -1052,9 +1061,14 @@ class MediaWindow(QMainWindow):
                 layout.addWidget(picker); layout.addWidget(button('Use this iPod', dialog.accept, 'primary'))
                 if dialog.exec() != QDialog.Accepted:
                     return
-                self.identity = picker.currentData()
+                identity = picker.currentData()
             else:
-                self.identity = result[0]
+                identity = result[0]
+            if self.identity and any(self.identity.get(key) != identity.get(key)
+                                     for key in ('disk_serial', 'volume_serial', 'root')):
+                self.covers.invalidate(); self.video_selection.clear(); self.group = None
+                self.screen_loaded_for = None
+            self.identity = identity
             self.refresh()
         elif tag == 'scan':
             self.identity, self.inventory, self.rows, self.readiness = result
@@ -1085,6 +1099,7 @@ class MediaWindow(QMainWindow):
                 self.prep_results.setPlainText(result['summary']); self.prep_results.show(); self.navigate('Preparation')
             self.refresh()
         elif tag == 'eject':
+            self.covers.invalidate()
             self.screen_loaded_for = None
             self.identity = self.inventory = self.review = None; self.rows = []; self.trash_rows = []
             self.readiness = {}; self.group = None; self.video_selection.clear()

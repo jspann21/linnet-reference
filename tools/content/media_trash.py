@@ -7,7 +7,7 @@ from datetime import datetime
 
 from . import media_manager as media, media_library as library
 from .publish import _plain, _volume_guard, _exclusive, _write_verified
-from .video_catalog import encode as _encode_catalog, decode as _read_catalog, read_file as _read_catalog_file
+from .video_catalog import encode as _encode_catalog, read_file as _read_catalog_file
 
 
 def removals(identity):
@@ -111,8 +111,6 @@ def recover(identity, token, *, erase=False):
                         restore_entries.append(entry)
                         restore_paths[entry[0]] = path
         data = _encode_catalog(entries + restore_entries) if restore_entries else None
-        if data is not None:
-            _read_catalog(data)  # Check count, duplicate paths, and keys before restoring any files.
         for source, destination, info in moves:
             _volume_guard(identity)
             _plain(source, trash)
@@ -126,23 +124,24 @@ def recover(identity, token, *, erase=False):
             from .publish_video import device_video_path
             restore_entries = [(key, device_video_path(restore_paths[key], root), title) for key, _, title in restore_entries]
             data = _encode_catalog(entries + restore_entries)
-            _read_catalog(data)
             _volume_guard(identity)
             current = catalog.read_bytes() if catalog.exists() else None
             if current != before:
                 raise ValueError('Video catalog changed. Files restored; retry to restore playback entries.')
             temporary = catalog.with_name('R' + uuid.uuid4().hex[:7] + '.TMP')
             _plain(temporary, root)
+            owned_temporaries = []
             try:
-                _write_verified(temporary, data, 'Restored catalog verification failed.')
+                _write_verified(temporary, data, 'Restored catalog verification failed.', owned=owned_temporaries)
                 _volume_guard(identity)
                 _plain(catalog, root)
                 os.replace(temporary, catalog)
                 if catalog.read_bytes() != data:
                     raise OSError('Published recovery catalog verification failed.')
             finally:
-                if temporary.exists():
+                if temporary in owned_temporaries and temporary.exists():
                     _volume_guard(identity)
+                    _plain(temporary, root)
                     temporary.unlink()
         report['restored'] = True
         media._save(receipt, report)

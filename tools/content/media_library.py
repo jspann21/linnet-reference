@@ -181,6 +181,7 @@ def organize_videos(identity):
         recovery.parent.mkdir(exist_ok=True)
         _write_verified(recovery, before, 'Could not verify catalog backup')
         temporary = catalog.with_name(token[:8] + '.TMP')
+        owned_temporaries = []
         published = False
         try:
             for key, name, title in entries:
@@ -201,7 +202,7 @@ def organize_videos(identity):
                         moves.append((source, destination))
                 updated.append((key, device_video_path(destination, root), title))
             data = _encode_catalog(updated)
-            _write_verified(temporary, data, 'Video catalog changed; refresh before organizing')
+            _write_verified(temporary, data, 'Video catalog changed; refresh before organizing', owned=owned_temporaries)
             if catalog.read_bytes() != before:
                 raise OSError('Video catalog changed; refresh before organizing')
             _volume_guard(identity)
@@ -216,8 +217,9 @@ def organize_videos(identity):
                     destination.rename(source)
             raise
         finally:
-            if temporary.exists():
+            if temporary in owned_temporaries and temporary.exists():
                 _volume_guard(identity)
+                _plain(temporary, root)
                 temporary.unlink()
         cleanup = {}
         _finish_backups(cleanup, [recovery], root, lambda: _volume_guard(identity))

@@ -30,7 +30,8 @@ def inspect(data):
         raise ValueError("invalid profile or reserved bytes")
     if len(data) != 128 + length or length < 4:
         raise ValueError("invalid payload size")
-    if zlib.crc32(data[:124]) != struct.unpack_from("<I", data, 124)[0] or zlib.crc32(data[128:]) != crc:
+    raw = memoryview(data)
+    if zlib.crc32(raw[:124]) != struct.unpack_from("<I", data, 124)[0] or zlib.crc32(raw[128:]) != crc:
         raise ValueError("image CRC mismatch")
     spec = TARGET_SPECS[TARGETS[target]]
     if load % 4 or entry % 4 or not (spec["load_address"] <= load <= entry <= load + length - 4 and

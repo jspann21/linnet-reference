@@ -2,12 +2,12 @@
 import hashlib
 import os
 import ctypes
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import time
 import uuid
 from .ipvf_validate import inspect_file
 from .publish import _plain, _hash, _copy_verified, _same_target, _volume_guard, inspect_target, _exclusive, _write_receipt, _write_verified, _finish_backups
-from .video_catalog import encode as _encode_catalog, decode as _read_catalog, read_file as _read_catalog_file
+from .video_catalog import encode as _encode_catalog, read_file as _read_catalog_file
 MAX_FILE=0x7fffffff
 
 
@@ -15,8 +15,8 @@ def video_filename(title):
     """A Windows/FAT-safe name; collisions are resolved against the actual folder."""
     name = Path(str(title).replace('\\', '/')).stem
     name = ''.join(c if ord(c) >= 32 and c not in '<>:"/\\|?*' else '_' for c in name)
-    name = name[:160].strip(' .') or 'Video'
-    if name.split('.')[0].upper() in {'CON', 'PRN', 'AUX', 'NUL', *(f'COM{i}' for i in range(1, 10)), *(f'LPT{i}' for i in range(1, 10))}:
+    name = name.encode('utf-16-le')[:320].decode('utf-16-le', errors='ignore').strip(' .') or 'Video'
+    if PureWindowsPath(name).is_reserved():
         name = '_' + name
     return name + '.ipvf'
 
@@ -31,7 +31,7 @@ def device_video_path(source, root):
     if not ctypes.windll.kernel32.GetShortPathNameW(str(source), buffer, len(buffer)):
         raise OSError('Could not resolve the video FAT short path')
     path = '/' + Path(buffer.value).relative_to(root).as_posix()
-    _read_catalog(_encode_catalog([(bytes(32), path, 'Video')]))
+    _encode_catalog([(bytes(32), path, 'Video')])
     return path
 
 

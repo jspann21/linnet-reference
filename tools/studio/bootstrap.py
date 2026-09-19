@@ -24,7 +24,10 @@ def sync_write(path,data):
         raise OSError('readback verification failed: '+str(path))
 
 def state_write(path,state):
+    from tools.content.publish import _plain
     temporary=path.with_suffix('.new')
+    _plain(path,path.parent)
+    _plain(temporary,path.parent)
     with temporary.open('w',encoding='utf-8',newline='\n') as writer:
         json.dump(state,writer,indent=2);writer.write('\n');writer.flush();os.fsync(writer.fileno())
     temporary.replace(path)
@@ -51,6 +54,7 @@ def install(mount, image, envelope, expected_original):
     recovery=mount/'.LINNET/RECOVERY';_plain(recovery,mount);recovery.mkdir(parents=True,exist_ok=True)
     state_path=recovery/'BOOTSTRAP.JSON'
     backup=recovery/'ORIGINAL.IPOD'
+    _plain(state_path,mount);_plain(backup,mount)
     expected_state=dict(target_id=identity['target_id'],build_id=identity['build_id'],
                         entry_mode='existing-file-bootloader',target=install_spec['file_loader'],
                         backup='.LINNET/RECOVERY/ORIGINAL.IPOD',original_sha256=expected_original,
@@ -111,6 +115,7 @@ def status(mount):
     if state.get('target')!=relative:
         raise ValueError('bootstrap journal target differs from the target manifest')
     target=mount.joinpath(*relative.split('/'));_plain(target,mount)
+    _plain(mount/'.LINNET/RECOVERY/ORIGINAL.IPOD',mount)
     result=dict(state)
     result['active_sha256']=digest(target.read_bytes())
     result['backup_valid']=digest((mount/'.LINNET/RECOVERY/ORIGINAL.IPOD').read_bytes())==state['original_sha256']

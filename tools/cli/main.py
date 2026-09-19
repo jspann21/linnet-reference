@@ -223,13 +223,11 @@ def main():
     args = parser().parse_args()
     try:
         if os.name == "nt" and args.command in ("build", "doctor", "simulator"):
-            no_window = subprocess.CREATE_NO_WINDOW
-            converted = subprocess.run(
-                ["wsl", "-d", "Ubuntu-24.04", "--", "wslpath", "-a", ROOT.as_posix()],
-                capture_output=True, text=True, check=True, creationflags=no_window).stdout.strip()
+            paths = {name: getattr(args, name, None) for name in ("system", "output", "tape")}
+            from tools.studio.build import wsl_command
             completed = subprocess.run(
-                ["wsl", "-d", "Ubuntu-24.04", "--cd", converted, "--", "python3", "linnet", *sys.argv[1:]],
-                capture_output=True, text=True, creationflags=no_window)
+                wsl_command(sys.argv[1:], paths=paths), capture_output=True,
+                text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW)
             if completed.stdout and sys.stdout is not None:
                 sys.stdout.write(completed.stdout)
             if completed.stderr and sys.stderr is not None:
