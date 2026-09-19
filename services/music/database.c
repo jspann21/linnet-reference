@@ -111,6 +111,7 @@ static bool track_record(struct ln_music_db *d)
     t->title=ln_read_le32(b+52);t->artist=ln_read_le32(b+56);t->album=ln_read_le32(b+60);t->path=ln_read_le32(b+64);t->genre=ln_read_le32(b+68);t->composer=ln_read_le32(b+72);
     t->year=ln_read_le32(b+76);t->number=ln_read_le32(b+80);t->disc=ln_read_le32(b+84);t->art=ln_read_le32(b+88);t->replaygain=(int32_t)ln_read_le32(b+92);copy(t->sha256,b+96,32);
     t->album_replaygain=(int32_t)ln_read_le32(b+128);
+    if(t->replaygain!=INT32_MIN&&(t->replaygain< -60*65536||t->replaygain>60*65536))return false;
     if(t->album_replaygain!=INT32_MIN&&(t->album_replaygain< -60*65536||t->album_replaygain>60*65536))return false;
     for(uint32_t i=52;i<=72;i+=4)if(ln_read_le32(b+i)>=d->pool_bytes)return false;
     if(!t->rate||t->rate>384000||!t->channels||t->channels>8||t->data_offset>t->file_bytes||
