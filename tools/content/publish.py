@@ -409,6 +409,13 @@ def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
     LIBRARY.PDB and retained LIBBAK backup; never automatically replay the call.
     """
     identity = inspect_target(disk_number, expected_disk_serial, expected_volume_serial, expected_drive)
+    with _exclusive(identity):
+        return _publish_music(stage, identity, disk_number, expected_disk_serial,
+                              expected_volume_serial, expected_drive, progress)
+
+
+def _publish_music(stage, identity, disk_number, expected_disk_serial,
+                   expected_volume_serial, expected_drive, progress):
     root = Path(identity["root"])
     inventory = validate_stage(stage, device_root=root, progress=progress)
     stage = Path(inventory["stage"])
