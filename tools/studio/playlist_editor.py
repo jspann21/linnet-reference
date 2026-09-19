@@ -147,9 +147,9 @@ class PlaylistEditor(QDialog):
                 item.setToolTip(playlist['name']); self.playlists.addItem(item)
                 if slot == selected:
                     self.playlists.setCurrentItem(item)
-        self.playlists.blockSignals(False)
         if self.playlists.currentRow() < 0 and self.playlists.count():
             self.playlists.setCurrentRow(0)
+        self.playlists.blockSignals(False)
         self.select()
         self.playlist_stack.setCurrentIndex(0 if self.playlists.count() else 1)
         self.count.setText(f'{self.playlists.count()} / 16 playlists')
