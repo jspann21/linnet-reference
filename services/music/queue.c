@@ -6,7 +6,13 @@ static uint32_t find(const uint32_t *values,uint32_t count,uint32_t track)
 void ln_queue_init(struct ln_queue *q,uint32_t seed)
 {if(q){*q=(struct ln_queue){0};q->seed=seed?seed:0x4c4e5155u;q->volume_db_tenths=-400;}}
 static uint32_t div32(uint32_t a,uint32_t b){uint32_t q=0,r=0;for(uint32_t i=32;i;i--){r=(r<<1)|((a>>(i-1))&1u);if(r>=b){r-=b;q|=1u<<(i-1);}}return q;}
-static uint32_t mod(uint64_t a,uint32_t b){uint32_t r=0;for(uint32_t i=64;i;i--){r=(r<<1)|(uint32_t)((a>>(i-1))&1u);if(r>=b)r-=b;}return r;}
+static uint32_t mod(uint64_t a,uint32_t b){
+    uint32_t high=(uint32_t)(a>>32),low=(uint32_t)a,r=high;
+    /* The upper word is already a remainder for bounded queue products. */
+    if(high>=b){r=0;for(uint32_t i=32;i;i--){r=(r<<1)|((high>>(i-1))&1u);if(r>=b)r-=b;}}
+    for(uint32_t i=32;i;i--){r=(r<<1)|((low>>(i-1))&1u);if(r>=b)r-=b;}
+    return r;
+}
 static uint32_t gcd(uint32_t a,uint32_t b){while(b){uint32_t r=mod(a,b);a=b;b=r;}return a;}
 static uint32_t inverse(uint32_t a,uint32_t n){
     int64_t t=0,next=1;uint32_t r=n,nr=a;
