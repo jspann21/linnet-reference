@@ -569,6 +569,9 @@ class _MetadataCache:
             if self.pending_writes >= 128:
                 self.connection.commit()
                 self.pending_writes = 0
+        except OverflowError:
+            # NTFS timestamps can exceed SQLite's signed 64-bit nanoseconds.
+            return
         except sqlite3.Error:
             self._disable()
 
