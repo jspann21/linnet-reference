@@ -368,7 +368,12 @@ def _normalize_music_paths(root, checkpoint, renamed):
                 destination = path.with_name(name)
                 number = 2
                 while destination.exists():
-                    candidate = f"{name} ({number})" if directory else f"{Path(name).stem} ({number}){Path(name).suffix}"
+                    suffix = '' if directory else Path(name).suffix
+                    stem = name[:-len(suffix)] if suffix else name
+                    ending = f" ({number}){suffix}"
+                    budget = 255 - len(ending.encode('utf-16-le')) // 2
+                    stem = stem.encode('utf-16-le')[:budget * 2].decode('utf-16-le', errors='ignore')
+                    candidate = stem + ending
                     destination = path.with_name(candidate)
                     number += 1
                 _plain(destination, root)
