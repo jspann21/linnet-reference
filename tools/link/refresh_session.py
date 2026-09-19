@@ -319,7 +319,7 @@ def serve(snapshot):
                             # Pin executable lookup: the native utility uses a fixed
                             # integer-only, read-only Get-Disk query. System PATH and
                             # protected cwd exclude workspace executables.
-                            response['device'] = native.identify_disk(number)
+                            response['device'] = native.identify_disk(number, manifest)
                             with open(r'\\.\PhysicalDrive' + str(number), 'r+b', buffering=0) as device:
                                 response['before'] = native.guard_device(device, manifest, artifacts, original)
                                 if command=='install':
