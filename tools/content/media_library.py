@@ -368,6 +368,7 @@ def _remove(identity, items):
             manager._save(receipt, report)
         if music_after is not None:
             temporary = music_index.with_name('M' + token[:7].upper() + '.TMP')
+            temporary_owned = False
             _plain(temporary, root); _volume_guard(identity)
             with temporary.open('xb') as writer:
                 temporary_owned = True
