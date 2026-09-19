@@ -770,7 +770,7 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
                 progress(dict(phase="music", current=number, total=len(paths), file=str(path), cached=cached))
             try:
                 metadata = metadata if cached else future.result()
-            except ValueError as error:
+            except (ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
                 from . import SourceError
                 raise SourceError(f"{path}: {error}", path) from error
             pending.popleft()
