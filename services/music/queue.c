@@ -1,4 +1,5 @@
 #include "boot/include/linnet_bytes.h"
+#include "boot/include/linnet_boot.h"
 #include "services/music/queue.h"
 static uint32_t find(const uint32_t *values,uint32_t count,uint32_t track)
 {for(uint32_t i=0;i<count;++i)if(values[i]==track)return i;return count;}
@@ -119,12 +120,6 @@ void ln_queue_shuffle(struct ln_queue *q,bool enabled)
 }
 bool ln_queue_set_repeat(struct ln_queue *q,uint32_t repeat)
 {if(!q||repeat>LINNET_QUEUE_REPEAT_ONE)return false;q->repeat=repeat;return true;}
-static uint32_t crc(const uint8_t *p,uint32_t length)
-{
-    uint32_t value=0xffffffffu;
-    for(uint32_t i=0;i<length;++i){value^=p[i];for(uint32_t j=0;j<8;++j)value=(value>>1)^((0u-(value&1u))&0xedb88320u);}
-    return ~value;
-}
 static bool valid(const struct ln_queue *q)
 {
     if(q->repeat>LINNET_QUEUE_REPEAT_ONE||
@@ -154,13 +149,13 @@ uint32_t ln_queue_encode(const struct ln_queue *q,uint8_t *out,uint32_t capacity
     for(uint32_t i=0;i<32u;++i)out[44u+i]=q->library_identity[i];
     if(q->source){ln_write_le32(out+76,q->source);ln_write_le32(out+80,q->source_group);ln_write_le32(out+84,q->stride);ln_write_le32(out+88,q->offset);ln_write_le32(out+92,q->inverse);ln_write_le32(out+96,q->source_count);ln_write_le32(out+100,q->excluded_count);for(uint32_t i=0;i<q->excluded_count;i++)ln_write_le32(out+104+4*i,q->excluded[i]);}
     else for(uint32_t i=0;i<q->count;++i){ln_write_le32(out+76u+4u*i,q->tracks[i]);if(width==5u)out[76u+4u*q->count+i]=(uint8_t)q->order[i];else {out[76u+4u*q->count+2*i]=(uint8_t)q->order[i];out[77u+4u*q->count+2*i]=(uint8_t)(q->order[i]>>8);}}
-    ln_write_le32(out+length-4u,crc(out,length-4u));return length;
+    ln_write_le32(out+length-4u,ln_crc32(out,length-4u));return length;
 }
 bool ln_queue_decode(struct ln_queue *q,const uint8_t *data,uint32_t length)
 {
     if(!q||!data||length<80u||length>LINNET_QUEUE_RESUME_MAX||ln_read_le32(data)!=0x55455551u||
        ln_read_le32(data+4)>2u||ln_read_le32(data+8)!=length||
-       (ln_read_le32(data+4)!=1u?(ln_read_le32(data+12)>LINNET_QUEUE_CAPACITY||length!=80u+ln_read_le32(data+12)*(ln_read_le32(data+4)==2u?6u:5u)):(length<108u||length>236u))||ln_read_le32(data+28)>1u||ln_read_le32(data+length-4u)!=crc(data,length-4u))return false;
+       (ln_read_le32(data+4)!=1u?(ln_read_le32(data+12)>LINNET_QUEUE_CAPACITY||length!=80u+ln_read_le32(data+12)*(ln_read_le32(data+4)==2u?6u:5u)):(length<108u||length>236u))||ln_read_le32(data+28)>1u||ln_read_le32(data+length-4u)!=ln_crc32(data,length-4u))return false;
     static struct ln_queue candidate;candidate=(struct ln_queue){0};candidate.count=ln_read_le32(data+12);candidate.cursor=ln_read_le32(data+16);
     candidate.repeat=ln_read_le32(data+20);candidate.seed=ln_read_le32(data+24);candidate.shuffled=ln_read_le32(data+28)!=0;
     candidate.position_samples=ln_read_le32(data+32)|((uint64_t)ln_read_le32(data+36)<<32);

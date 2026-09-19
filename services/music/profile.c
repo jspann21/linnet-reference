@@ -1,4 +1,5 @@
 #include "boot/include/linnet_bytes.h"
+#include "boot/include/linnet_boot.h"
 #include "profile.h"
 struct preset_rate {uint32_t rate,crossfeed;};
 static const struct preset_rate presets[]={
@@ -69,21 +70,18 @@ __attribute__((minsize)) bool ln_music_profile_configure(const struct ln_music_p
     if(p->crossfeed){c.crossfeed_amount_q16=16384;c.crossfeed_coefficient_q16=entry->crossfeed;}
     if(!ln_dsp_configure(&dsp,&c))return false;*out=c;return true;
 }
-static uint32_t crc(const uint8_t *p){uint32_t x=UINT32_MAX;
-    for(uint32_t i=0;i<28;i++){x^=p[i];for(uint32_t bit=0;bit<8;bit++)x=(x>>1)^((0u-(x&1u))&0xedb88320u);}return ~x;
-}
 __attribute__((minsize)) bool ln_music_profile_encode(const struct ln_music_profile *p,uint8_t out[LN_MUSIC_PROFILE_BYTES]){
     if(!out||!ln_music_profile_valid(p))return false;
     uint32_t flags=(p->replaygain==1?1u:p->replaygain==2?4u:0u)|(p->crossfeed?2u:0u);
     for(uint32_t i=0;i<2;i++)flags|=(uint32_t)(p->eq_db[i]+6)<<(3+i*4);
     flags|=(uint32_t)(-p->max_volume_db_tenths/10)<<23;
     ln_write_le32(out,0x464f5250u);ln_write_le32(out+4,0x00200001u);ln_write_le32(out+8,flags);
-    ln_write_le32(out+12,p->preset);ln_write_le32(out+16,p->mode);ln_write_le32(out+20,(uint32_t)p->balance);ln_write_le32(out+24,(uint32_t)p->preamp_db_q16);ln_write_le32(out+28,crc(out));return true;
+    ln_write_le32(out+12,p->preset);ln_write_le32(out+16,p->mode);ln_write_le32(out+20,(uint32_t)p->balance);ln_write_le32(out+24,(uint32_t)p->preamp_db_q16);ln_write_le32(out+28,ln_crc32(out,28));return true;
 }
 static int32_t signed32(uint32_t x){return x<=INT32_MAX?(int32_t)x:-1-(int32_t)(~x);}
 __attribute__((minsize)) bool ln_music_profile_decode(struct ln_music_profile *p,const uint8_t *data,uint32_t bytes){
     if(!p||!data||bytes!=32||ln_read_le32(data)!=0x464f5250u||
-       (ln_read_le32(data+4)!=0x00200000u&&ln_read_le32(data+4)!=0x00200001u)||ln_read_le32(data+28)!=crc(data))return false;
+       (ln_read_le32(data+4)!=0x00200000u&&ln_read_le32(data+4)!=0x00200001u)||ln_read_le32(data+28)!=ln_crc32(data,28))return false;
     uint32_t flags=ln_read_le32(data+8);bool legacy=ln_read_le32(data+4)==0x00200000u;
     if(legacy?(flags&~3u):((flags&0xc0000000u)||(flags&5u)==5u))return false;
     struct ln_music_profile candidate={.preset=ln_read_le32(data+12),.mode=ln_read_le32(data+16),
