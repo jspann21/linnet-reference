@@ -127,7 +127,7 @@ def _cover_pixels(cover, target: str | None = None) -> bytes:
             raise ValueError("cover dimensions exceed bound")
         if image.getexif().get(274, 1) != 1:
             image = ImageOps.exif_transpose(image)
-        image = ImageOps.fit(image.convert("RGB"), (64, 64))
+        image = ImageOps.fit(image if image.mode == "RGB" else image.convert("RGB"), (64, 64))
         if target == "ipod4g-q21":
             image = _mp102_cover(image)
         from .photos import _rgb565

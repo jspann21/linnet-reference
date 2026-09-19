@@ -53,7 +53,7 @@ def original_cover(source) -> Image.Image:
                                                  ImageCms.createProfile('sRGB'), outputMode='RGB')
             except (OSError, ValueError, ImageCms.PyCMSError):
                 image = image.convert('RGB')
-        return ImageOps.fit(image.convert('RGB'), (96, 96), method=Image.Resampling.LANCZOS)
+        return ImageOps.fit(image if image.mode == 'RGB' else image.convert('RGB'), (96, 96), method=Image.Resampling.LANCZOS)
 
 
 def _indexed_tile(tile: Image.Image) -> tuple[Image.Image, list[int]]:
