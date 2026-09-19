@@ -408,6 +408,9 @@ def additions(root, pending):
             # Preserve supporting files (cover art, playlists) inside selected folders.
             if not is_folder and path.suffix.lower() not in extensions(kind):
                 raise ValueError(f"{path.name} is not a supported {kind.lower()} source.")
+            info = path.stat()
+            if info.st_size > 0xFFFFFFFF:
+                raise ValueError(f"{path.name} exceeds the iPod's FAT32 file size limit (4 GiB minus 1 byte).")
             relative = Path(source.name) / path.relative_to(source) if is_folder else Path(source.name)
             if kind == "Music":
                 relative = Path(*(_music_import_name(part) for part in relative.parts))
@@ -417,10 +420,9 @@ def additions(root, pending):
             if key in planned and planned[key]["source"] != str(path):
                 raise ValueError(f"Two selected files have the same destination: {destination}")
             if destination.exists():
-                if not destination.is_file() or destination.stat().st_size != path.stat().st_size or _hash(destination) != _hash(path):
+                if not destination.is_file() or destination.stat().st_size != info.st_size or _hash(destination) != _hash(path):
                     raise ValueError(f"A different file already exists: {destination}. Rename the new file or folder first.")
                 continue
-            info = path.stat()
             planned[key] = dict(kind=kind, source=str(path), destination=str(destination),
                                 bytes=info.st_size, mtime_ns=info.st_mtime_ns)
     return list(planned.values())
