@@ -333,7 +333,17 @@ def _music_import_name(name):
     if normalized.isascii():
         return normalized.replace('"', "'")
     # A readable ASCII prefix also gives names in other scripts a usable alias.
-    return "Music - " + name
+    result = "Music - " + name
+    if len(result) > 127 and len(result.encode('utf-16-le')) > 510:
+        suffix = Path(name).suffix
+        marker = '-' + hashlib.sha256(name.encode('utf-8')).hexdigest()[:12]
+        budget = 255 - len(('Music - ' + marker + suffix).encode('utf-16-le')) // 2
+        if budget < 1:
+            raise ValueError('Music filename extension is too long; rename it before importing.')
+        stem = name[:-len(suffix)] if suffix else name
+        stem = stem.encode('utf-16-le')[:budget * 2].decode('utf-16-le', errors='ignore')
+        result = 'Music - ' + stem + marker + suffix
+    return result
 
 
 def _normalize_music_paths(root, checkpoint, renamed):
