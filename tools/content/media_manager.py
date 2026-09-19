@@ -238,6 +238,7 @@ def skip_files(identity, items):
     if not isinstance(skipped, dict):
         skipped = state["skipped_files"] = {}
     added = []
+    known_by_kind = {}
     for kind, value in items:
         if kind not in KINDS:
             raise ValueError("Unknown media folder")
@@ -250,8 +251,11 @@ def skip_files(identity, items):
         values = skipped.setdefault(kind, [])
         if not isinstance(values, list):
             values = skipped[kind] = []
-        if relative.casefold() not in {Path(item).as_posix().casefold() for item in values if isinstance(item, str)}:
+        if kind not in known_by_kind:
+            known_by_kind[kind] = {Path(item).as_posix().casefold() for item in values if isinstance(item, str)}
+        if relative.casefold() not in known_by_kind[kind]:
             values.append(relative)
+            known_by_kind[kind].add(relative.casefold())
             added.append(relative)
         state.pop(kind, None)
         if kind == "Videos":
@@ -302,6 +306,8 @@ def restore_skipped_files(identity, items):
         return []
     restored = []
     for kind, value in items:
+        if kind not in KINDS:
+            raise ValueError("Unknown media folder")
         relative = Path(value).as_posix()
         values = skipped.get(kind, [])
         if not isinstance(values, list):
@@ -374,12 +380,13 @@ def additions(root, pending):
         source = source.resolve(strict=True)
         if source.is_relative_to(root):
             raise ValueError(f"{source.name} is already on this iPod. Use its existing {kind} folder.")
-        files = _files(source) if source.is_dir() else [source]
+        is_folder = source.is_dir()
+        files = _files(source) if is_folder else [source]
         for path in files:
             # Preserve supporting files (cover art, playlists) inside selected folders.
-            if not source.is_dir() and path.suffix.lower() not in extensions(kind):
+            if not is_folder and path.suffix.lower() not in extensions(kind):
                 raise ValueError(f"{path.name} is not a supported {kind.lower()} source.")
-            relative = Path(source.name) / path.relative_to(source) if source.is_dir() else Path(source.name)
+            relative = Path(source.name) / path.relative_to(source) if is_folder else Path(source.name)
             if kind == "Music":
                 relative = Path(*(_music_import_name(part) for part in relative.parts))
             destination = root / kind / relative
@@ -470,7 +477,8 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None):
         path = root / name.lstrip('/')
         _plain(path, root)
         published.add(path.resolve())
-    native = [name for name in available if Path(name).suffix.lower() in native_video_extensions(identity)]
+    native_extensions = native_video_extensions(identity)
+    native = [name for name in available if Path(name).suffix.lower() in native_extensions]
     chosen = available if selection is None else selection
     chosen = list(dict.fromkeys([*native, *chosen]))
     jobs = {}
@@ -537,7 +545,8 @@ def _error_record(kind, error, inventory, root):
     record = dict(kind=kind, message=message)
     if len(matches) == 1:
         source = matches[0]
-        record.update(file=source.relative_to(root).as_posix(), source=str(source))
+        name = source.relative_to(root).as_posix() if source.is_relative_to(root) else source.name
+        record.update(file=name, source=str(source))
     return record
 
 
@@ -592,8 +601,9 @@ def run(identity, selected, pending=(), **options):
                 report["complete"] = not remaining and not report.get("stopped")
                 if automatically_skipped:
                     count = len(automatically_skipped)
+                    outcome = 'stopped' if report.get('stopped') else 'finished'
                     report["summary"] = (
-                        f"Update finished with {count} problem file{'s' if count != 1 else ''} skipped. "
+                        f"Update {outcome} with {count} problem file{'s' if count != 1 else ''} skipped. "
                         "Select a skipped file in Media Manager if you want to retry it."
                     )
                     if remaining:
@@ -690,7 +700,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     digest.update(chunk)
                 writer.flush()
                 os.fsync(writer.fileno())
-            if (source.stat().st_size, source.stat().st_mtime_ns) != (info.st_size, info.st_mtime_ns):
+            after = source.stat()
+            if (after.st_size, after.st_mtime_ns) != (info.st_size, info.st_mtime_ns):
                 raise ValueError(f"Source changed during copy: {source}")
             _volume_guard(identity)
             if _hash(temporary, item["bytes"]) != digest.hexdigest():
@@ -820,7 +831,10 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             cached = video_state.get(relative, {})
                             if not isinstance(cached, dict):
                                 cached = {}
-                            output_name = cached['outputs'][0][0] if cached.get('outputs') else ""
+                            cached_outputs = cached.get('outputs')
+                            first_output = cached_outputs[0] if isinstance(cached_outputs, list) and cached_outputs else None
+                            output_name = (first_output[0] if isinstance(first_output, (list, tuple))
+                                           and len(first_output) == 2 and isinstance(first_output[0], str) else "")
                             native_ipvf = source.suffix.lower() in native_video_extensions(identity)
                             index_in_place = native_ipvf and source.is_relative_to(root)
                             if (not force and cached.get("signature") == fingerprint

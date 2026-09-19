@@ -67,8 +67,8 @@ def compile_notes(source, output, *, excluded=None):
         raise ValueError('Stage the Notes package outside the source folder')
     excluded = {Path(value).as_posix().casefold() for value in (excluded or ())}
     files = sorted((p for p in source.rglob('*')
-                    if p.is_file() and p.suffix.lower() in EXTENSIONS
-                    and p.relative_to(source).as_posix().casefold() not in excluded),
+                    if p.suffix.lower() in EXTENSIONS
+                    and p.relative_to(source).as_posix().casefold() not in excluded and p.is_file()),
                    key=lambda p: p.as_posix().casefold())
     if len(files) > MAX_NOTES:
         raise ValueError(f'Notes supports at most {MAX_NOTES} documents; found {len(files)}')
@@ -80,7 +80,8 @@ def compile_notes(source, output, *, excluded=None):
             raise ValueError(f'Note links cannot escape or alias the source: {path}')
         if path.stat().st_size > 1024 * 1024:
             raise ValueError(f'Note is too large: {path}')
-        raw = path.read_bytes()
+        with path.open('rb') as reader:
+            raw = reader.read(1024 * 1024 + 1)
         if len(raw) > 1024 * 1024:
             raise ValueError(f'Note is too large: {path}')
         try:
@@ -113,7 +114,8 @@ def inspect(path):
     path = Path(path)
     if path.stat().st_size > MAX_FILE:
         raise ValueError('Notes package is too large')
-    data = path.read_bytes()
+    with path.open('rb') as reader:
+        data = reader.read(MAX_FILE + 1)
     if len(data) < 16:
         raise ValueError('Notes header is missing')
     magic, reserved, count, record = struct.unpack_from('<4sIII', data)

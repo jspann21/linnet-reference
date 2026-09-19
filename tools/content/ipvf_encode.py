@@ -185,7 +185,7 @@ def encode_ipvf(source, destination, *, title=None, cancelled=None,
         conversion.emit()
         options = ({"creationflags": subprocess.CREATE_NO_WINDOW}
                    if os.name == "nt" else {"start_new_session": True})
-        command = [sys.executable, "-u", "-m", "tools.content.ipvf_encode", str(request)]
+        command = [sys.executable, "-X", "utf8", "-u", "-m", "tools.content.ipvf_encode", str(request)]
         with log_path.open("wb") as log, log_path.open("rb") as updates:
             process = subprocess.Popen(command, cwd=Path(__file__).resolve().parents[2],
                                        stdout=log, stderr=log, **options)
@@ -261,7 +261,7 @@ def _worker(request):
                             "format=duration:stream=codec_type,duration:"
                             "format_tags=title,artist,album:stream_tags=title,artist,album",
                             "-of", "json", str(source)],
-                           capture_output=True, text=True, check=True,
+                           capture_output=True, text=True, encoding="utf-8", check=True,
                            creationflags=NO_WINDOW)
     information = json.loads(probe.stdout)
     def finite_duration(value):

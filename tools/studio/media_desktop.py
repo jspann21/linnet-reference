@@ -1,5 +1,6 @@
 """Linnet's native media library and device workspace."""
 from concurrent.futures import ThreadPoolExecutor
+from collections import OrderedDict
 from datetime import datetime
 import hashlib
 import os
@@ -9,7 +10,7 @@ import sys
 import threading
 
 from PySide6.QtCore import (QAbstractTableModel, QModelIndex, QObject, QRectF, QSize, QPointF,
-                           Qt, QTimer, Signal, Slot, QSettings, QBuffer, QIODevice, QLoggingCategory)
+                           Qt, QTimer, Signal, Slot, QSettings, QBuffer, QIODevice, QLoggingCategory, QSignalBlocker)
 from PySide6.QtGui import (QColor, QFont, QIcon, QImage, QImageReader, QKeySequence, QPalette,
                           QLinearGradient, QPainter, QPainterPath, QPixmap, QShortcut, QPen)
 from PySide6.QtSvg import QSvgRenderer
@@ -179,7 +180,7 @@ class Covers(QObject):
     """Load only visible artwork; keep device IO off the GUI thread."""
     def __init__(self, parent):
         super().__init__(parent)
-        self.cache, self.pending = {}, set()
+        self.cache, self.pending = OrderedDict(), set()
         self.closed = False
         self.pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix='linnet-art')
         self.events = Events(self)
@@ -190,6 +191,7 @@ class Covers(QObject):
         if not path:
             return None
         if path in self.cache:
+            self.cache.move_to_end(path)
             return self.cache[path]
         if path not in self.pending:
             self.pending.add(path)
@@ -236,9 +238,10 @@ class Covers(QObject):
     @Slot(str, object)
     def receive(self, path, image):
         self.pending.discard(path)
-        if len(self.cache) >= 600:
-            self.cache.pop(next(iter(self.cache)))
         self.cache[path] = QPixmap.fromImage(image) if not image.isNull() else None
+        self.cache.move_to_end(path)
+        if len(self.cache) > 600:
+            self.cache.popitem(last=False)
         for view in self.views:
             view.viewport().update()
 
@@ -287,7 +290,7 @@ class MediaModel(QAbstractTableModel):
         return 0 if parent.isValid() else len(self.columns)
 
     def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid():
+        if not index.isValid() or not 0 <= index.row() < len(self.rows) or not 0 <= index.column() < len(self.columns):
             return None
         row = self.rows[index.row()]
         if role == Qt.UserRole:
@@ -306,10 +309,12 @@ class MediaModel(QAbstractTableModel):
             return QColor('#63757b')
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole and 0 <= section < len(self.columns):
             return self.columns[section][1]
 
     def sort(self, column, order=Qt.AscendingOrder):
+        if not 0 <= column < len(self.columns):
+            return
         key = self.columns[column][0]
         self.layoutAboutToBeChanged.emit()
         previous = self.persistentIndexList()
@@ -738,7 +743,7 @@ class MediaWindow(QMainWindow):
             item.setChecked(name == page)
         if page in media.KINDS or page == 'Trash':
             if changed:
-                self.group = None; self.search.clear(); self.artist_filter.setCurrentIndex(0); self.genre_filter.setCurrentIndex(0)
+                self.group = None; self.clear_filters(render=False)
             self.stack.setCurrentWidget(self.library)
             self.render_library()
             if page == 'Trash' and self.identity and not self.busy:
@@ -767,8 +772,12 @@ class MediaWindow(QMainWindow):
         if self.stack.currentWidget() == self.library:
             self.search.setFocus(); self.search.selectAll()
 
-    def clear_filters(self):
-        self.search.clear(); self.genre_filter.setCurrentIndex(0); self.artist_filter.setCurrentIndex(0); self.render_library()
+    def clear_filters(self, *, render=True):
+        self.search_timer.stop()
+        with QSignalBlocker(self.search), QSignalBlocker(self.genre_filter), QSignalBlocker(self.artist_filter):
+            self.search.clear(); self.genre_filter.setCurrentIndex(0); self.artist_filter.setCurrentIndex(0)
+        if render:
+            self.render_library()
 
     def library_rows(self):
         if self.page == 'Trash':
@@ -1030,6 +1039,8 @@ class MediaWindow(QMainWindow):
             if not result:
                 self.screen_loaded_for = None
                 self.identity = None; self.rows = []; self.inventory = None; self.review = None
+                self.trash_rows = []; self.readiness = {}; self.group = None; self.video_selection.clear()
+                self.update_preparation()
                 self.device_name.setText('No iPod connected'); self.device_info.setText('Connect in Disk Mode'); self.render_library()
                 self.update_controls()
                 self.show_progress('Connect your iPod, then choose Refresh.'); return
@@ -1047,6 +1058,7 @@ class MediaWindow(QMainWindow):
             self.refresh()
         elif tag == 'scan':
             self.identity, self.inventory, self.rows, self.readiness = result
+            self.video_selection.intersection_update(self.inventory['Videos']['files'])
             self.review = None; self.notice.hide(); self.update_device(); self.update_filters(); self.update_preparation(); self.render_library()
             self.show_progress('Ready. Eject safely when you’re finished.')
             if self.page == 'Screens':
@@ -1075,6 +1087,8 @@ class MediaWindow(QMainWindow):
         elif tag == 'eject':
             self.screen_loaded_for = None
             self.identity = self.inventory = self.review = None; self.rows = []; self.trash_rows = []
+            self.readiness = {}; self.group = None; self.video_selection.clear()
+            self.update_preparation()
             self.device_name.setText('Safely ejected'); self.device_info.setText('You can disconnect your iPod.'); self.capacity.setValue(0)
             self.render_library(); self.show_progress('Your iPod is safe to disconnect.')
         self.update_controls()

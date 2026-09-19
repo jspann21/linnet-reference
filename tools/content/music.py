@@ -1238,11 +1238,12 @@ def validate_database(data: bytes) -> dict:
 
 def _recent_track_ids(path: Path) -> list[int]:
     """Preserve import order by stable ID across syncs and metadata reordering."""
+    from .publish import _bounded
     if not path.exists():
         return []
     if path.is_symlink() or path.stat().st_size > MAX_DATABASE:
         raise ValueError('unsafe previous library')
-    data = path.read_bytes()
+    data = _bounded(path, MAX_DATABASE)
     validate_database(data)
     tracks, groups = struct.unpack_from('<II', data, 16)
     to, go, mo = struct.unpack_from('<III', data, 32)

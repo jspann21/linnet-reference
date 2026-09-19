@@ -12,10 +12,10 @@ from pathlib import Path
 
 def bake(font_path, output, size=11, proportional=False, height=14, monochrome=False):
     from PIL import Image, ImageDraw, ImageFont
-    source=Path(font_path).read_bytes()
     import io
     if type(size) is not int or not 1 <= size <= 24 or type(height) is not int or not 1 <= height <= 24:
         raise ValueError('font size and cell height must be integers in 1..24')
+    source=Path(font_path).read_bytes()
     font=ImageFont.truetype(io.BytesIO(source),size)
     glyphs=[chr(code) for code in range(32,127)]
     if proportional:

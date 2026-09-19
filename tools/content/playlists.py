@@ -5,7 +5,7 @@ import zlib
 
 from . import media_manager as manager
 from .music import MAX_DATABASE, TRACK, validate_database
-from .publish import _exclusive, _plain, _volume_guard, provision_collections
+from .publish import _bounded, _exclusive, _plain, _volume_guard, provision_collections
 
 SIZE, SLOTS, CAPACITY = 147456, 16, 1024
 RESUME = 80 + 6 * CAPACITY + 44
@@ -16,10 +16,10 @@ RECENT = LISTS + SLOTS * ENTRY
 def decode(data):
     if len(data) != SIZE:
         raise ValueError('Unexpected playlist bank size')
-    raw = bytearray(data)
+    raw = memoryview(data)
     magic, version, generation, checksum = struct.unpack_from('<4sIII', raw)
-    struct.pack_into('<I', raw, 12, 0)
-    if magic != b'LLST' or version != 1 or not generation or zlib.crc32(raw) != checksum:
+    actual_crc = zlib.crc32(raw[16:], zlib.crc32(bytes(4), zlib.crc32(raw[:12])))
+    if magic != b'LLST' or version != 1 or not generation or actual_crc != checksum:
         raise ValueError('Invalid playlist bank checksum or version')
     if struct.unpack_from('<I', raw, 512)[0] > RESUME or struct.unpack_from('<I', raw, RECENT)[0] > 256:
         raise ValueError('Invalid playlist playback state')
@@ -44,7 +44,7 @@ def banks(root):
             continue
         if path.stat().st_size != SIZE:
             raise ValueError('Unexpected playlist bank size; preserving it')
-        data = path.read_bytes()
+        data = _bounded(path, SIZE)
         snapshots.append(data)
         try:
             generation, lists = decode(data)
@@ -71,16 +71,19 @@ def read(identity):
     if path.exists():
         if path.stat().st_size > MAX_DATABASE:
             raise ValueError('Music library is too large')
-        data = path.read_bytes()
+        data = _bounded(path, MAX_DATABASE)
         validate_database(data)
         width = TRACK
         fields = struct.unpack_from('<14I', data, 8)
+        labels = {}
         for index in range(fields[2]):
             at = fields[6] + index * width
             strings = []
             for offset in struct.unpack_from('<3I', data, at + 52):
-                start = fields[10] + offset
-                strings.append(data[start:data.index(b'\0', start)].decode('utf-8'))
+                if offset not in labels:
+                    start = fields[10] + offset
+                    labels[offset] = data[start:data.index(b'\0', start)].decode('utf-8')
+                strings.append(labels[offset])
             tracks[struct.unpack_from('<Q', data, at)[0]] = ' · '.join(filter(None, strings))
     return dict(identity=identity, snapshots=snapshots, lists=lists, tracks=tracks)
 

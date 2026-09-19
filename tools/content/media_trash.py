@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import uuid
+from datetime import datetime
 
 from . import media_manager as media, media_library as library
 from .publish import _plain, _volume_guard, _exclusive, _write_verified
@@ -14,7 +15,13 @@ def removals(identity):
     found = []
     for receipt in media.cache_root(identity).glob('remove-*.json'):
         try:
-            report = json.loads(receipt.read_text())
+            report = json.loads(receipt.read_text(encoding='utf-8'))
+            if not isinstance(report, dict):
+                continue
+            started = report.get('started', 0)
+            if type(started) not in (int, float):
+                continue
+            datetime.fromtimestamp(started)
             token = receipt.stem.removeprefix('remove-')
             if len(token) != 32 or any(c not in '0123456789abcdef' for c in token):
                 continue
@@ -25,8 +32,8 @@ def removals(identity):
             files = media._file_records(trash)
             found.append(dict(id=token, receipt=str(receipt), path=str(trash), bytes=sum(i.st_size for _, i in files),
                               title=', '.join(r['title'] for r in report.get('selected', [])[:3]),
-                              started=report.get('started', 0)))
-        except (OSError, ValueError, TypeError, KeyError):
+                              started=started))
+        except (OSError, ValueError, TypeError, KeyError, OverflowError):
             continue
     return sorted(found, key=lambda r: r['started'], reverse=True)
 
@@ -40,7 +47,7 @@ def recover(identity, token, *, erase=False):
             raise ValueError('This Trash removal changed. Refresh before continuing.')
         trash = Path(removal['path'])
         receipt = Path(removal['receipt'])
-        report = json.loads(receipt.read_text())
+        report = json.loads(receipt.read_text(encoding='utf-8'))
         if erase:
             # Enumerate guarded ordinary files before deleting any of them.
             files = media._file_records(trash)
@@ -76,6 +83,7 @@ def recover(identity, token, *, erase=False):
                 raise ValueError(f'Cannot restore over an existing file: {relative}. Move that file first.')
             moves.append((source, destination, info))
         catalog, before, entries = library._catalog(root)
+        entries_by_key = {entry[0]: entry for entry in entries}
         backup = trash / 'INDEX.VID.before'
         restore_entries = []
         restore_paths = {}
@@ -94,7 +102,7 @@ def recover(identity, token, *, erase=False):
                 relative = report.get('catalog_paths', {}).get(entry[0].hex())
                 path = library._device_path(root, '/' + relative if relative else entry[1])
                 if entry[0].hex() in selected_keys or str(path).casefold() in restored_paths:
-                    existing = next((e for e in entries if e[0] == entry[0]), None)
+                    existing = entries_by_key.get(entry[0])
                     if existing is not None and existing != entry:
                         raise ValueError('A newer video uses this library entry. Resolve the conflict before restoring.')
                     if existing is None:

@@ -10,7 +10,7 @@ import time
 import uuid
 
 from . import media_manager as manager
-from .publish import _plain, _volume_guard, _exclusive, _write_verified, _finish_backups
+from .publish import _bounded, _plain, _volume_guard, _exclusive, _write_verified, _finish_backups
 from .video_catalog import encode as _encode_catalog, read_file as _read_catalog_file
 
 
@@ -116,7 +116,7 @@ def _music_metadata(root):
     try:
         if database.stat().st_size > MAX_DATABASE:
             return {}
-        data = database.read_bytes()
+        data = _bounded(database, MAX_DATABASE)
         validate_database(data)
         width = TRACK
         fields = struct.unpack_from('<14I', data, 8)
@@ -132,7 +132,8 @@ def _music_metadata(root):
             kind, name, parent, first, length = struct.unpack_from('<5I', data, fields[7] + index * 32)
             if kind == 2:
                 owner = string(struct.unpack_from('<I', data, fields[7] + parent * 32 + 4)[0])
-                for member in struct.unpack_from(f'<{length}I', data, fields[8] + first * 4):
+                start = fields[8] + first * 4
+                for (member,) in struct.iter_unpack('<I', memoryview(data)[start:start + length * 4]):
                     owners[member] = owner
         result, artwork_paths = {}, {}
         for index in range(count):
@@ -237,19 +238,20 @@ def _remove(identity, items):
     root = Path(identity['root']).resolve(strict=True)
     fresh = {row['id']: row for row in list_items(identity)}
     selected = []
+    selected_ids = set()
     for item in items:
         row = fresh.get(item['id'])
         if row is None or not row['removable']:
             raise ValueError('Selection changed or cannot be removed; refresh the library.')
         if any(row.get(field) != item.get(field) for field in ('path', 'bytes', 'mtime_ns')):
             raise ValueError('Selected file changed; refresh before removing: ' + row['title'])
-        if row['id'] not in {r['id'] for r in selected}:
+        if row['id'] not in selected_ids:
             selected.append(row)
+            selected_ids.add(row['id'])
     if not selected:
         raise ValueError('Select an iPod item to remove.')
     # When the last source is removed, retire its packed library as part of the
     # same recoverable removal; preparation intentionally retains empty libraries.
-    selected_ids = {row['id'] for row in selected}
     for kind in manager.KINDS:
         originals = [row for row in fresh.values() if row['kind'] == kind and row['category'] == 'original']
         if kind != 'Videos' and originals and all(row['id'] in selected_ids for row in originals):
@@ -257,12 +259,15 @@ def _remove(identity, items):
     catalog, before, entries = _catalog(root)
     selected_keys = {row['key'] for row in selected if row['category'] == 'published'}
     paths = {}
+    expected_by_path = {}
     for row in selected:
         path = Path(row['path'])
         _plain(path, root)
         if row['category'] in ('original', 'library', 'published'):
             if path.exists():
-                paths[str(path.resolve()).casefold()] = path
+                key = str(path.resolve()).casefold()
+                paths[key] = path
+                expected_by_path.setdefault(key, row)
     music_index = root / '.LINNET' / 'LIBRARY.PDB'
     music_before = music_after = None
     music_cache = None
@@ -352,7 +357,7 @@ def _remove(identity, items):
             source, destination = Path(move['source']), Path(move['trash'])
             _volume_guard(identity)
             _plain(source, root); _plain(destination, root)
-            expected = next(r for r in selected if Path(r['path']).resolve() == source.resolve())
+            expected = expected_by_path[str(source.resolve()).casefold()]
             info = source.stat()
             if (info.st_size, info.st_mtime_ns) != (expected['bytes'], expected['mtime_ns']):
                 raise ValueError('File changed during removal: ' + str(source))
@@ -387,7 +392,8 @@ def _remove(identity, items):
                     manager._save(cache_path, saved_state)
                 except (OSError, ValueError, TypeError, AttributeError):
                     pass  # Cache failure must not undo a verified device update.
-        empty = [kind for kind in report['requires_update'] if not any(row['category'] == 'original' and row['kind'] == kind for row in list_items(identity))]
+        remaining_kinds = {row['kind'] for row in list_items(identity) if row['category'] == 'original'} if report['requires_update'] else set()
+        empty = [kind for kind in report['requires_update'] if kind not in remaining_kinds]
         report['empty_folders'] = empty
         report['complete'] = True
         report['summary'] = f'Removed {len(selected)} selected item(s). Recoverable files and catalog backup: {trash}'

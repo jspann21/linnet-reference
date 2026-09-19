@@ -33,9 +33,15 @@ MODES = {"stereo": 0, "mono": 1, "left": 2, "right": 3, "karaoke": 4}
 
 
 def _finite(value: object, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be a finite number")
-    return float(value)
+    try:
+        value = float(value)
+    except OverflowError as error:
+        raise ValueError(f"{name} must be a finite number") from error
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be a finite number")
+    return value
 
 
 def _nearest(value: float) -> int:

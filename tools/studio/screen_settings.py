@@ -49,15 +49,18 @@ def available_items(name, identity=None):
 
 
 def defaults(identity=None):
-    return {name: [i for i in rows if identity is None or i in available_items(name, identity)]
-            for name, rows in DEFAULTS.items()}
+    result = {}
+    for name, rows in DEFAULTS.items():
+        available = available_items(name, identity) if identity is not None else rows
+        result[name] = [i for i in rows if i in available]
+    return result
 
 
 def encode(state):
     data = bytearray(b'MENU' + struct.pack('<I', 1))
     for name, labels in SCREENS.items():
         rows = state[name]
-        if (not rows or len(set(rows)) != len(rows) or any(type(i) is not int or i not in range(len(labels)) for i in rows)
+        if (not isinstance(rows, (list, tuple)) or not rows or any(type(i) is not int or i not in range(len(labels)) for i in rows) or len(set(rows)) != len(rows)
                 or not REQUIRED.get(name, set()).issubset(rows)):
             raise ValueError(f'{name}: select at least one item and keep required navigation.')
         data.extend(bytes([len(rows), *rows]) + bytes(16 - len(rows)))
@@ -80,7 +83,10 @@ def read(identity):
     root = Path(identity['root'])
     path = root / '.LINNET' / 'MENUS.BIN'
     _plain(path, root)
-    return decode(path.read_bytes()) if path.exists() else defaults(identity)
+    if not path.exists():
+        return defaults(identity)
+    with path.open('rb') as reader:
+        return decode(reader.read(81))
 
 
 def save(identity, state):

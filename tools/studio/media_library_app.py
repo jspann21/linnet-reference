@@ -116,9 +116,8 @@ class LibraryWindow:
 
     def selection(self, _=None):
         rows = [self.rows[key] for key in self.tree.selection()]
-        self.remove_button.configure(state="normal" if rows and not self.busy and all(row.get("removable", False) for row in rows) else "disabled")
         trash = bool(rows) and all(r['category'] == 'trash' for r in rows)
-        self.remove_button.configure(text='Permanently delete removal…' if self.kind.get() == 'Trash' else 'Remove prepared library…', state='normal' if rows and not self.busy and (not trash or len(rows) == 1) else 'disabled')
+        self.remove_button.configure(text='Permanently delete removal…' if self.kind.get() == 'Trash' else 'Remove prepared library…', state='normal' if rows and not self.busy and all(row.get('removable', False) for row in rows) and (not trash or len(rows) == 1) else 'disabled')
         self.restore_button.configure(state='normal' if trash and len(rows) == 1 and not self.busy else 'disabled')
         self.open_button.configure(state="normal" if len(rows) == 1 else "disabled")
         if len(rows) == 1:

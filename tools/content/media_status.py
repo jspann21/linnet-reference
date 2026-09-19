@@ -10,8 +10,9 @@ from . import media_library
 def _video_readiness(inventory, published, identity=None):
     ready = [row for row in published if row['status'] == 'Ready on iPod']
     missing = [row for row in published if row['status'] != 'Ready on iPod']
+    native_extensions = media.native_video_extensions(identity)
     native = {str(Path(value).resolve()).casefold() for value in inventory['files']
-              if Path(value).suffix.lower() in media.native_video_extensions(identity)}
+              if Path(value).suffix.lower() in native_extensions}
     cataloged = {str(Path(row['path']).resolve()).casefold() for row in ready}
     if missing or not native.issubset(cataloged):
         return 'Needs update'
@@ -83,7 +84,8 @@ def plan(identity, pending, selected, videos):
     for kind, name in included:
         source = Path(name)
         records = media._file_records(source) if source.is_dir() else [(source, source.stat())]
-        supported = sum(p.suffix.lower() in media.extensions(kind) for p, _ in records)
+        allowed = media.extensions(kind)
+        supported = sum(p.suffix.lower() in allowed for p, _ in records)
         other = len(records) - supported
         previews[name] = f'{supported} media files' + (f' · {other} supporting/other files' if other else '')
         if kind == 'Videos' and other:

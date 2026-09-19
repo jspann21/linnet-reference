@@ -23,6 +23,8 @@ def _validate_legacy(path: Path, database: bytes) -> None:
         groups, groups_at = struct.unpack_from('<I', database, 20)[0], struct.unpack_from('<I', database, 36)[0]
         for _ in range(count):
             record = reader.read(RECORD)
+            if len(record) != RECORD:
+                raise ValueError('Truncated Cover Flow album record')
             group, tracks = struct.unpack_from('<II', record)
             if (group >= groups or struct.unpack_from('<I', database, groups_at + group * 32)[0] != 2 or
                     tracks != struct.unpack_from('<I', database, groups_at + group * 32 + 16)[0] or
@@ -89,18 +91,19 @@ def validate(path: Path, database: bytes) -> None:
             raise ValueError('Incomplete Cover Flow album catalog')
         for group in expected:
             record = reader.read(CATALOG)
-            if (struct.unpack_from('<II', record) != (group, struct.unpack_from('<I', database, groups_at + group * 32 + 16)[0]) or
+            if (len(record) != CATALOG or struct.unpack_from('<II', record) != (group, struct.unpack_from('<I', database, groups_at + group * 32 + 16)[0]) or
                     struct.unpack_from('<I', record, 248)[0] >= arts or record[127] or record[247] or
                     zlib.crc32(record[256:], zlib.crc32(record[:252])) != struct.unpack_from('<I', record, 252)[0]):
                 raise ValueError('Invalid Cover Flow catalog record')
         for _ in range(arts):
             record = reader.read(ART_RECORD)
-            if zlib.crc32(record[:12800]) != struct.unpack_from('<I', record, 12800)[0]:
+            if len(record) != ART_RECORD or zlib.crc32(record[:12800]) != struct.unpack_from('<I', record, 12800)[0]:
                 raise ValueError('Invalid Cover Flow artwork')
 
 
 def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, Image.Image] | None = None) -> None:
     from .music import validate_database, TRACK
+    from .publish import _bounded
     validate_database(database)
     width = TRACK
     _, _, _, groups, _, _, tracks_at, groups_at, members_at, _, pool, _, _, art_at = struct.unpack_from('<14I', database, 8)
@@ -131,7 +134,7 @@ def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, I
                 cover = originals[art]
             elif art != 0xffffffff:
                 path = text(struct.unpack_from('<I', database, art_at + art * 32 + 8)[0])
-                raw = (root / path.removeprefix('/.LINNET/')).read_bytes()
+                raw = _bounded(root / path.removeprefix('/.LINNET/'), 8192)
                 pixels = struct.unpack('<4096H', raw)
                 cover = Image.new('RGB', (64, 64))
                 cover.putdata([((p >> 11) * 255 // 31, ((p >> 5) & 63) * 255 // 63, (p & 31) * 255 // 31) for p in pixels])

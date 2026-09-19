@@ -1143,7 +1143,7 @@ def probe_source_fps(source: Path, ffprobe: str) -> Fraction:
             str(source),
         ],
         check=False,
-        text=True,
+        text=True, encoding="utf-8",
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         creationflags=NO_WINDOW,
@@ -1182,7 +1182,7 @@ def probe_source_metadata(source: Path, ffprobe: str) -> dict[str, str]:
             str(source),
         ],
         check=False,
-        text=True,
+        text=True, encoding="utf-8",
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         creationflags=NO_WINDOW,
@@ -1244,7 +1244,7 @@ def probe_source_has_audio(source: Path, ffprobe: str) -> bool:
             str(source),
         ],
         check=False,
-        text=True,
+        text=True, encoding="utf-8",
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         creationflags=NO_WINDOW,
@@ -1326,6 +1326,7 @@ def ffmpeg_frames(
     ]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, creationflags=NO_WINDOW)
     assert proc.stdout is not None
+    exhausted = False
     try:
         while True:
             chunks = bytearray()
@@ -1335,6 +1336,7 @@ def ffmpeg_frames(
                     break
                 chunks.extend(chunk)
             if not chunks:
+                exhausted = True
                 break
             if len(chunks) != FRAME_BYTES:
                 raise RuntimeError("ffmpeg ended with a partial frame")
@@ -1347,9 +1349,11 @@ def ffmpeg_frames(
                 frame = b"".join(map(_gray4_pixels().__getitem__, colors))
             yield frame
     finally:
+        if not exhausted and proc.poll() is None:
+            proc.kill()
         proc.stdout.close()
         rc = proc.wait()
-        if rc:
+        if exhausted and rc:
             raise RuntimeError(f"video ffmpeg exited with status {rc}")
 
 

@@ -17,6 +17,10 @@ MAX_STRINGS, MAX_LEVELS = 16 * 1024 * 1024, 6
 THUMB, EDGE, NO_INDEX = 64, 32, 0xffffffff
 DEVICE_PATH = '/.LINNET/PHOTOS/LIBRARY.PIM'
 EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp'}
+_GREEN_LOW = [(v & 28) << 3 for v in range(256)]
+_BLUE_LOW = [v >> 3 for v in range(256)]
+_RED_HIGH = [v & 248 for v in range(256)]
+_GREEN_HIGH = [v >> 5 for v in range(256)]
 FAT_PATH = re.compile(r'(?:/[A-Z0-9_]{1,8}(?:\.[A-Z0-9_]{1,3})?)+')
 
 
@@ -44,10 +48,8 @@ def _rgb565(image):
     # addition combines disjoint bits, preserving exact truncation without
     # dithering, rescaling or a Python operation for every output pixel.
     red, green, blue = image.convert('RGB').split()
-    low = ImageChops.add(green.point(lambda v: (v & 28) << 3),
-                         blue.point(lambda v: v >> 3))
-    high = ImageChops.add(red.point(lambda v: v & 248),
-                          green.point(lambda v: v >> 5))
+    low = ImageChops.add(green.point(_GREEN_LOW), blue.point(_BLUE_LOW))
+    high = ImageChops.add(red.point(_RED_HIGH), green.point(_GREEN_HIGH))
     return Image.merge('LA', (low, high)).tobytes()
 
 
@@ -81,11 +83,10 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
     """
     from PIL import Image, ImageOps
     source, output = Path(source).resolve(), Path(output).resolve()
-    minimum = max(viewport_width, viewport_height)
     if (not source.is_dir() or type(viewport_width) is not int or
-            type(viewport_height) is not int or not 1 <= viewport_width <= 1024 or
+            type(viewport_height) is not int or type(max_dimension) is not int or not 1 <= viewport_width <= 1024 or
             not 1 <= viewport_height <= 1024 or viewport_width*viewport_height > 131072 or
-            not minimum <= max_dimension <= 2048):
+            not max(viewport_width, viewport_height) <= max_dimension <= 2048):
         raise ValueError('invalid photo source, viewport, or maximum dimension')
     if output.suffix.lower() not in ('.pimg', '.pim'):
         raise ValueError('photo output must have .pimg or .pim extension')
@@ -93,7 +94,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
     paths = []
     for path in source.rglob('*'):
         relative = path.relative_to(source).as_posix().casefold()
-        if path.is_file() and path.suffix.lower() in EXTENSIONS and relative not in excluded:
+        if path.suffix.lower() in EXTENSIONS and relative not in excluded and path.is_file():
             if path.is_symlink() or not path.resolve().is_relative_to(source):
                 raise ValueError('photo source links may not escape or alias the source tree')
             paths.append(path)
