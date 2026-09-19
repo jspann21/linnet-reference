@@ -969,7 +969,15 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         for path in cache.rglob("publish-*.json"):
             try:
                 publication = json.loads(path.read_text(encoding="utf-8"))
-                for warning in publication.get("cleanup_warnings", []):
+                if not isinstance(publication, dict):
+                    raise ValueError("invalid publication receipt")
+                warnings = publication.get("cleanup_warnings", [])
+                if not isinstance(warnings, list) or any(
+                        not isinstance(warning, dict) or
+                        any(not isinstance(warning.get(key), str) for key in ("path", "error"))
+                        for warning in warnings):
+                    raise ValueError("invalid publication cleanup warnings")
+                for warning in warnings:
                     report["cleanup"]["retained"].append(dict(path=warning["path"], reason=warning["error"]))
                 if not publication.get("passed"):
                     report["cleanup"]["retained"].append(dict(path=str(path),
