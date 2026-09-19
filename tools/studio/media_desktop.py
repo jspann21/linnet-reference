@@ -107,6 +107,11 @@ def box(parent=None, horizontal=False, margins=(0, 0, 0, 0), spacing=12):
     return layout
 
 
+def music_group_key(row, field):
+    title = row.get(field) or f'Unknown {field}'
+    return (title, row.get('album_artist') or row.get('artist', '')) if field == 'album' else title
+
+
 class StatusLabel(QLabel):
     def __init__(self, text):
         super().__init__()
@@ -840,18 +845,17 @@ class MediaWindow(QMainWindow):
         grouped = music and self.view != 'Songs' and self.group is None
         if grouped:
             groups = {}
+            field = {'Albums': 'album', 'Artists': 'artist', 'Genres': 'genre'}[self.view]
             for row in rows:
-                field = {'Albums': 'album', 'Artists': 'artist', 'Genres': 'genre'}[self.view]
-                title = row.get(field) or f'Unknown {field}'
-                key = (title, row.get('album_artist') or row.get('artist', '')) if field == 'album' else title
+                key = music_group_key(row, field)
                 groups.setdefault(key, []).append(row)
             cards = []
-            for members in groups.values():
+            for key, members in groups.items():
                 artists = {r.get('artist') for r in members if r.get('artist')}
                 subtitle = (members[0].get('album_artist') or (next(iter(artists)) if len(artists) == 1 else 'Various artists')) if self.view == 'Albums' else f'{len(members):,} songs'
                 art_row = next((r for r in members if r.get('artwork')), members[0])
                 cards.append(dict(title=members[0].get(field) or f'Unknown {field}', subtitle=subtitle,
-                    kind='Music', group_kind=self.view, members=members, artwork=art_row.get('artwork', '') if self.view != 'Genres' else '', cover_source=art_row['path'], bytes=sum(r['bytes'] for r in members)))
+                    kind='Music', group_kind=self.view, group_key=key, members=members, artwork=art_row.get('artwork', '') if self.view != 'Genres' else '', cover_source=art_row['path'], bytes=sum(r['bytes'] for r in members)))
             rows = cards
         rows.sort(key=lambda r: (r.get('disc', 0), r.get('track', 0), r['title'].casefold()) if self.group and self.view == 'Albums' else (r['title'].casefold(),))
         self.model.reset(rows, [('title', 'TITLE'), ('album', 'ALBUM'), ('genre', 'GENRE'), ('duration', 'TIME'), ('bytes', 'SIZE')] if music and not grouped else
@@ -1072,6 +1076,14 @@ class MediaWindow(QMainWindow):
             self.refresh()
         elif tag == 'scan':
             self.identity, self.inventory, self.rows, self.readiness = result
+            if self.group:
+                field = {'Albums': 'album', 'Artists': 'artist', 'Genres': 'genre'}[self.group['group_kind']]
+                members = [row for row in self.library_rows()
+                           if music_group_key(row, field) == self.group['group_key']]
+                if members:
+                    self.group['members'] = members
+                else:
+                    self.group = None
             self.video_selection.intersection_update(self.inventory['Videos']['files'])
             self.review = None; self.notice.hide(); self.update_device(); self.update_filters(); self.update_preparation(); self.render_library()
             self.show_progress('Ready. Eject safely when you’re finished.')
