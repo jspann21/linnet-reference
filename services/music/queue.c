@@ -132,9 +132,16 @@ static bool valid(const struct ln_queue *q)
         return q->shuffled||(q->stride==1&&q->inverse==1&&!q->offset);
     }
     if(q->count>LINNET_QUEUE_CAPACITY)return false;
+    if(!q->shuffled){
+        for(uint32_t i=0;i<q->count;++i)if(q->order[i]!=i)return false;
+        return true;
+    }
+    uint32_t seen[LINNET_QUEUE_CAPACITY/32u]={0};
     for(uint32_t i=0;i<q->count;++i){
-        if(q->order[i]>=q->count||find(q->order,i,q->order[i])!=i||
-           (!q->shuffled&&i!=q->order[i]))return false;
+        uint32_t at=q->order[i];if(at>=q->count)return false;
+        uint32_t mask=1u<<(at&31u);
+        if(seen[at>>5]&mask)return false;
+        seen[at>>5]|=mask;
     }return true;
 }
 uint32_t ln_queue_encode(const struct ln_queue *q,uint8_t *out,uint32_t capacity)
