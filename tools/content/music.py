@@ -153,12 +153,13 @@ def _stable(value: str) -> int:
 
 def _extended(raw: bytes) -> int:
     exponent, mantissa = struct.unpack(">HQ", raw)
-    if exponent & 0x8000 or (exponent & 0x7FFF) > 16401:
+    if not 16383 <= exponent <= 16401 or not mantissa & (1 << 63):
         raise ValueError("invalid AIFF sample rate")
-    rate = math.ldexp(mantissa, (exponent & 0x7FFF) - 16383 - 63)
-    if not math.isfinite(rate) or not 1 <= rate <= 384000 or rate != int(rate):
+    shift = 63 - (exponent - 16383)
+    rate = mantissa >> shift
+    if mantissa & ((1 << shift) - 1) or not 1 <= rate <= 384000:
         raise ValueError("unsupported AIFF sample rate")
-    return int(rate)
+    return rate
 
 
 def _pcm(path: Path) -> dict:
@@ -219,7 +220,8 @@ def _pcm(path: Path) -> dict:
                 if codec == "float_be" and bits != 32:
                     raise ValueError("unsupported AIFF float width")
                 result.update(codec=CODECS[codec], channels=channels, frames=frames,
-                              rate=_extended(raw[8:18]), bits=bits, align=channels * ((bits + 7) // 8))
+                              rate=_extended(raw[8:18]), aiff_rate_exact=True,
+                              bits=bits, align=channels * ((bits + 7) // 8))
             elif (wave and kind == b"data") or (aiff and kind == b"SSND"):
                 if have_data:
                     raise ValueError("multiple audio data chunks")
@@ -496,8 +498,12 @@ class _MetadataCache:
             return False
         if value["data_offset"] + value["data_bytes"] > stat.st_size:
             return False
-        pcm = Path(relative).suffix.lower() in (".wav", ".aif", ".aiff", ".aifc")
+        suffix = Path(relative).suffix.lower()
+        pcm = suffix in (".wav", ".aif", ".aiff", ".aifc")
         if pcm:
+            # Older AIFF cache entries may contain a rounded fractional rate.
+            if suffix != '.wav' and value.get('aiff_rate_exact') is not True:
+                return False
             if value["codec"] not in (1, 2, 3, 4) or value["bits"] not in (8, 16, 24, 32):
                 return False
             if value["codec"] in (3, 4) and value["bits"] != 32:
