@@ -457,6 +457,17 @@ static uint32_t row_height(const struct ln_ui_node*n){
 }
 static uint32_t rows(const struct ln_ui_node*n){if(baked_geometry(n))return(n->flags>>LN_UI_GEOMETRY_ROWS_SHIFT)&15u;uint32_t h=row_height(n);return n->h>0?max(1,(int32_t)divide((uint32_t)n->h,h)):1u;}
 static uint32_t first_row(uint32_t selected,uint32_t capacity){return divide(selected,capacity)*capacity;}
+static bool edge_list(const struct ln_ui_node*n){return (n->kind==LN_UI_MENU||n->kind==LN_UI_VIRTUAL_LIST)&&columns(n)==1u;}
+static uint32_t list_first(const struct ln_ui_state*s,const struct ln_ui_node*n,uint32_t selected,bool focused){
+    uint32_t capacity=rows(n),cols=columns(n);
+    if(!focused||!edge_list(n))return first_row(divide(selected,cols),capacity)*cols;
+    uint32_t count=total(n),first=s->first_visible[s->scene],last=count>capacity?count-capacity:0;
+    if(first>last)first=last;
+    if(selected<first)first=selected;
+    else if(selected-first>=capacity)first=selected-capacity+1u;
+    return first>last?last:first;
+}
+
 static bool decorative_asset(const struct ln_ui_node*n,const struct ln_ui_asset*a){
     bool decoration=n->kind==LN_UI_ICON||n->kind==LN_UI_IMAGE||n->kind==LN_UI_ALBUM_ART||n->kind==LN_UI_GRID||n->kind==LN_UI_PHOTO_SURFACE||n->kind==LN_UI_VIDEO_SURFACE;
     return decoration&&n->resource<ln_ui_asset_count&&a==&ln_ui_assets[n->resource];
@@ -694,7 +705,7 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
         bool photo_list=layout()==LN_UI_LAYOUT_IPOD_PHOTO&&n->kind!=LN_UI_GRID;
         if(!photo_list)fill(p,bounds(n),bg);uint32_t count=total(n),cols=columns(n);
         uint32_t capacity=rows(n),selected=focused?s->selected:n->index;
-        uint32_t first=first_row(divide(selected,cols),capacity)*cols;
+        uint32_t first=list_first(s,n,selected,focused);
         int32_t w=(int32_t)(baked_geometry(n)?(n->flags>>LN_UI_GEOMETRY_WIDTH_SHIFT)&255u:divide((uint32_t)n->w,cols));
         if(photo_list){
             w=n->w-(count>capacity&&n->w==220?10:0);
@@ -757,10 +768,9 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
             if(f->kind==LN_UI_VIRTUAL_LIST||f->kind==LN_UI_MENU||f->kind==LN_UI_GRID){count=total(f);capacity=rows(f)*columns(f);}}
         if(count<=capacity){if(layout()!=LN_UI_LAYOUT_IPOD_PHOTO)fill(p,bounds(n),bg);break;}
         fill(p,bounds(n),bg);
-        /* first_row already returns an item offset, not a page number.
-         * Match the list's paged viewport and use the thumb's available travel. */
-        uint32_t first=first_row(s->selected<count?s->selected:count-1u,capacity);
-        uint32_t last=first_row(count-1u,capacity);
+        const struct ln_ui_node*f=c->focus_node<c->count?&c->nodes[c->focus_node]:0;
+        uint32_t first=f?list_first(s,f,s->selected,true):0;
+        uint32_t last=f&&edge_list(f)?count-capacity:first_row(count-1u,capacity);
         int32_t height=min(n->h,max(4,(int32_t)fraction(capacity,(uint32_t)n->h,count)));
         int32_t top=(int32_t)fraction(first,(uint32_t)(n->h-height),last);
         if(layout()==LN_UI_LAYOUT_IPOD_PHOTO){
@@ -832,6 +842,12 @@ uint32_t ln_ui_visible_capacity(const struct ln_ui_state*s){
     theme_sync();const struct ln_ui_node*n=focus(s);if(!n||(n->kind!=LN_UI_MENU&&n->kind!=LN_UI_VIRTUAL_LIST&&n->kind!=LN_UI_GRID))return 0;
     return rows(n)*columns(n);
 }
+uint32_t ln_ui_first_visible(struct ln_ui_state*s){
+    if(!s||s->scene>=LINNET_UI_MAX_SCENES)return 0;
+    theme_sync();const struct ln_ui_node*n=focus(s);
+    if(!n||(n->kind!=LN_UI_MENU&&n->kind!=LN_UI_VIRTUAL_LIST&&n->kind!=LN_UI_GRID))return 0;
+    return s->first_visible[s->scene]=list_first(s,n,s->selected,true);
+}
 uint32_t ln_ui_focused_count(const struct ln_ui_state*s){
     theme_sync();const struct ln_ui_node*n=focus(s);return n&&(n->kind==LN_UI_MENU||n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_GRID)?total(n):0;
 }
@@ -860,7 +876,15 @@ bool ln_ui_input(struct ln_ui_state*s,uint32_t kind,int32_t value){if(!s)return 
     }
     if(kind==2u){uint32_t pressed=(uint32_t)value&~s->buttons;s->buttons=(uint32_t)value;if(s->hold)return false;if(pressed&1u){if(same(ln_ui_scenes[s->scene].id,"linnet.system.themes")||same(ln_ui_scenes[s->scene].id,"linnet.system.clock")||same(ln_ui_scenes[s->scene].id,"linnet.system.update"))return ln_ui_show(s,"linnet.system.settings");return change_scene(s,0);}if(pressed&4u){for(uint32_t i=s->scene+1u;i<ln_ui_scene_count&&i<32u;++i)if(ln_ui_enabled_scenes&(1u<<i))return change_scene(s,i)||(s->dirty&1u);return false;}if(pressed&8u){for(uint32_t i=s->scene;i;--i)if(ln_ui_enabled_scenes&(1u<<(i-1u)))return change_scene(s,i-1u)||(s->dirty&1u);return false;}if(pressed&16u){const struct ln_ui_node*n=focus(s);if(theme_choices(n)&&s->selected<ln_ui_theme_count){ln_ui_theme_changed(s->selected);theme_sync();s->dirty|=1u;return true;}uint32_t source=n?menu_source(n,s->selected):UINT32_MAX;if(n&&n->targets&&source<n->item_count){uint32_t target=n->targets[source];if(target==LINNET_UI_ACTION_SYNC||target==LINNET_UI_ACTION_SHUFFLE||target==LINNET_UI_ACTION_REPEAT){s->action=target;return false;}return change_scene(s,target);}}return false;}
     if(kind!=1u||s->hold||!value)return false;const struct ln_ui_node*n=focus(s);uint32_t count=n?total(n):0;if(!count)return false;
-    int64_t next=(int64_t)s->selected+value;if(next<0)next=0;if((uint64_t)next>=count)next=count-1u;if((uint32_t)next==s->selected)return false;s->selected=(uint32_t)next;s->selections[s->scene]=s->selected;s->dirty|=2u;return true;
+    (void)ln_ui_first_visible(s);int64_t next=(int64_t)s->selected+value;if(next<0)next=0;if((uint64_t)next>=count)next=count-1u;if((uint32_t)next==s->selected)return false;s->selected=(uint32_t)next;s->selections[s->scene]=s->selected;(void)ln_ui_first_visible(s);s->dirty|=2u;return true;
+}
+static void pixel_copy(uint16_t *to,const uint16_t *from,uint32_t pixels){
+#if defined(__arm__)
+    extern void ln_memory_copy(void *,const void *,uint32_t);
+    ln_memory_copy(to,from,pixels*2u);
+#else
+    for(uint32_t i=0;i<pixels;++i)to[i]=from[i];
+#endif
 }
 #if defined(LINNET_VIDEO)
 /* Retain opaque video controls between data changes. Each band is bounded;
@@ -871,14 +895,6 @@ static struct {
     bool valid,hold,headphones,clock12;
     char status[128];
 } video_overlay;
-static void overlay_copy(uint16_t *to,const uint16_t *from,uint32_t pixels){
-#if defined(__arm__)
-    extern void ln_memory_copy(void *,const void *,uint32_t);
-    ln_memory_copy(to,from,pixels*2u);
-#else
-    for(uint32_t i=0;i<pixels;++i)to[i]=from[i];
-#endif
-}
 static bool paint_video_overlay(struct painter*p,struct ln_ui_state*s,const struct ln_ui_scene*c){
     if(!same(c->id,"linnet.system.video-controls")||c->count!=5u||
        c->nodes[2].kind!=LN_UI_STATUS_BAR||c->nodes[3].kind!=LN_UI_PROGRESS_BAR||c->nodes[4].kind!=LN_UI_TEXT||
@@ -910,8 +926,8 @@ static bool paint_video_overlay(struct painter*p,struct ln_ui_state*s,const stru
         fill(p,(struct rect){0,0,LINNET_UI_WIDTH,(int32_t)top},color(LN_UI_PANEL));
         fill(p,(struct rect){0,(int32_t)bottom,LINNET_UI_WIDTH,LINNET_UI_HEIGHT-(int32_t)bottom},color(LN_UI_PANEL));
         for(uint32_t i=2;i<c->count;++i)draw_node(p,&c->nodes[i],s,i==c->focus_node);
-        overlay_copy(video_overlay.pixels,p->pixels,top*LINNET_UI_WIDTH);
-        overlay_copy(video_overlay.pixels+bottom*LINNET_UI_WIDTH,p->pixels+bottom*LINNET_UI_WIDTH,(LINNET_UI_HEIGHT-bottom)*LINNET_UI_WIDTH);
+        pixel_copy(video_overlay.pixels,p->pixels,top*LINNET_UI_WIDTH);
+        pixel_copy(video_overlay.pixels+bottom*LINNET_UI_WIDTH,p->pixels+bottom*LINNET_UI_WIDTH,(LINNET_UI_HEIGHT-bottom)*LINNET_UI_WIDTH);
         video_overlay.scene=s->scene;video_overlay.epoch=s->scene_epoch;video_overlay.theme=active_theme;
         video_overlay.battery=battery;video_overlay.playback=playback;video_overlay.minute=minute;video_overlay.progress=progress;
         video_overlay.top=top;video_overlay.bottom=bottom;video_overlay.hold=s->hold;video_overlay.headphones=s->headphones;
@@ -919,8 +935,8 @@ static bool paint_video_overlay(struct painter*p,struct ln_ui_state*s,const stru
         for(uint32_t i=0;i<LN_UI_COLOR_COUNT;++i)video_overlay.colors[i]=color(i);
         video_overlay.valid=true;
     }else{
-        overlay_copy(p->pixels,video_overlay.pixels,top*LINNET_UI_WIDTH);
-        overlay_copy(p->pixels+bottom*LINNET_UI_WIDTH,video_overlay.pixels+bottom*LINNET_UI_WIDTH,(LINNET_UI_HEIGHT-bottom)*LINNET_UI_WIDTH);
+        pixel_copy(p->pixels,video_overlay.pixels,top*LINNET_UI_WIDTH);
+        pixel_copy(p->pixels+bottom*LINNET_UI_WIDTH,video_overlay.pixels+bottom*LINNET_UI_WIDTH,(LINNET_UI_HEIGHT-bottom)*LINNET_UI_WIDTH);
     }
     return true;
 }
@@ -964,7 +980,7 @@ static uint32_t visible_cells(const struct ln_ui_state*s,const struct ln_ui_scen
         struct rect clip=intersect(bounds(n),screen);if(!clip.w||!clip.h)continue;
         uint32_t cols=columns(n),capacity=rows(n),count=total(n);
         uint32_t selected=j==c->focus_node?s->selected:n->index;
-        uint32_t first=first_row(divide(selected,cols),capacity)*cols;
+        uint32_t first=list_first(s,n,selected,j==c->focus_node);
         int32_t w=(int32_t)(baked_geometry(n)?(n->flags>>LN_UI_GEOMETRY_WIDTH_SHIFT)&255u:divide((uint32_t)n->w,cols)),h=(int32_t)row_height(n);
         if(layout()==LN_UI_LAYOUT_IPOD_PHOTO&&n->kind!=LN_UI_GRID)w=n->w-(count>capacity&&n->w==220?10:0);
         uint32_t column=0,row=0;
@@ -992,9 +1008,9 @@ static void paint_selection(struct ln_ui_state*s,uint16_t*pixels,const struct ln
 }
 static bool selection_damage(struct ln_ui_state*s,uint16_t*pixels,const struct ln_ui_node*n,ln_ui_damage_fn damage){
     if(n->kind!=LN_UI_MENU&&n->kind!=LN_UI_VIRTUAL_LIST&&n->kind!=LN_UI_GRID)return false;
-    uint32_t cols=columns(n),capacity=rows(n);
-    uint32_t old_first=first_row(divide(s->drawn_selected,cols),capacity)*cols;
-    uint32_t new_first=first_row(divide(s->selected,cols),capacity)*cols;
+    uint32_t cols=columns(n);
+    uint32_t old_first=s->drawn_first;
+    uint32_t new_first=list_first(s,n,s->selected,true);
     if(old_first!=new_first)return false;
     uint32_t indexes[2]={s->drawn_selected,s->selected};
     int32_t width=(int32_t)divide((uint32_t)n->w,cols),height=(int32_t)row_height(n);
@@ -1052,7 +1068,7 @@ static bool content_layout(const struct ln_ui_state*s){
 static void content_save(const struct ln_ui_state*s){
     content.valid=false;if(!content_layout(s))return;
     const struct ln_ui_scene*c=scene(s);const struct ln_ui_node*n=focus(s);
-    uint32_t capacity=rows(n),first=first_row(s->selected,capacity),count=total(n);
+    uint32_t capacity=rows(n),first=list_first(s,n,s->selected,true),count=total(n);
     for(uint32_t i=0;i<capacity;++i){
         content.present[i]=first+i<count;
         const char *label=content.present[i]?content_text(n,first+i):"";
@@ -1063,10 +1079,45 @@ static void content_save(const struct ln_ui_state*s){
     content.owner=s;content.scene=s->scene;content.epoch=s->scene_epoch;
     content.first=first;content.count=count;content.selected=s->selected;content.valid=true;
 }
+/* Reuse complete rows only when their labels still match the painted frame. */
+static bool scroll_selection(struct ln_ui_state*s,uint16_t*pixels,const struct ln_ui_node*n,ln_ui_damage_fn damage){
+    if(s->dirty!=2u||!content.valid||content.owner!=s||content.scene!=s->scene||
+       content.epoch!=s->scene_epoch||!content_layout(s)||!edge_list(n)||(n->flags&4u))return false;
+    uint32_t capacity=rows(n),count=total(n),first=list_first(s,n,s->selected,true),old=content.first;
+    if(count!=content.count||first==old||(first>old?first-old:old-first)!=1u||
+       first+capacity>count||old+capacity>count||capacity<2u)return false;
+    struct rect area={n->x,n->y,n->w,(int32_t)(capacity*row_height(n))};
+    if(area.x<0||area.y<0||area.x+area.w>(int32_t)LINNET_UI_WIDTH||area.y+area.h>(int32_t)LINNET_UI_HEIGHT||area.h>n->h)return false;
+    const struct ln_ui_scene*c=scene(s);
+    for(uint32_t i=0;i<c->count;i++){
+        const struct ln_ui_node*other=&c->nodes[i];
+        if(other==n||(other->flags&2u)||other->kind==LN_UI_SCREEN||other->kind==LN_UI_SCROLLBAR)continue;
+        struct rect overlap=intersect(area,bounds(other));if(overlap.w&&overlap.h)return false;
+    }
+    for(uint32_t i=0;i<capacity;i++){
+        uint32_t item=first+i;
+        if(item>=old&&item-old<capacity&&!text_same(content_text(n,item),content.labels[item-old]))return false;
+    }
+    int32_t height=(int32_t)row_height(n),copy_height=area.h-height;
+    for(int32_t line=0;line<copy_height;line++){
+        int32_t y=first>old?area.y+line:area.y+area.h-1-line;
+        int32_t source=first>old?y+height:y-height;
+        pixel_copy(pixels+(uint32_t)y*LINNET_UI_WIDTH+area.x,
+                     pixels+(uint32_t)source*LINNET_UI_WIDTH+area.x,(uint32_t)area.w);
+    }
+    s->painted_pixels+=(uint32_t)(area.w*copy_height);
+    if(damage)damage(area.x,area.y,area.w,area.h);
+    for(uint32_t i=0;i<capacity;i++){
+        uint32_t item=first+i;
+        if(item<old||item-old>=capacity||item==s->selected||item==s->drawn_selected)
+            paint_selection(s,pixels,n,(struct rect){area.x,area.y+(int32_t)i*height,area.w,height},damage);
+    }
+    return true;
+}
 static bool content_damage(struct ln_ui_state*s,uint16_t*pixels,ln_ui_damage_fn damage){
     if(!content.valid||content.owner!=s||content.scene!=s->scene||content.epoch!=s->scene_epoch||!content_layout(s))return false;
     const struct ln_ui_scene*c=scene(s);const struct ln_ui_node*n=focus(s);
-    uint32_t capacity=rows(n),first=first_row(s->selected,capacity),count=total(n);
+    uint32_t capacity=rows(n),first=list_first(s,n,s->selected,true),count=total(n);
     if(first!=content.first)paint(s,pixels,bounds(n),damage);
     else for(uint32_t i=0;i<capacity;++i){
         bool present=first+i<count;const char *label=present?content_text(n,first+i):"";
@@ -1118,13 +1169,13 @@ static void paint_scrolling(struct ln_ui_state*s,uint16_t*pixels,const struct ln
     for(uint32_t i=0;c&&i<c->count;++i){const struct ln_ui_node*n=&c->nodes[i];
         if(scrolling_field(n))paint(s,pixels,bounds(n),damage);
         else if(i==c->focus_node&&(n->kind==LN_UI_MENU||n->kind==LN_UI_VIRTUAL_LIST)){
-            uint32_t capacity=rows(n),row=s->selected%capacity;
+            uint32_t row=s->selected-list_first(s,n,s->selected,true);
             paint(s,pixels,(struct rect){n->x,n->y+(int32_t)(row*row_height(n)),n->w,(int32_t)row_height(n)},damage);
         }
     }
 }
 void ln_ui_render(struct ln_ui_state*s,uint16_t*pixels,ln_ui_damage_fn damage){if(!s||!pixels)return;theme_sync();if(s->drawn_theme!=active_theme){s->dirty|=1u;++s->scene_epoch;}
-    (void)ln_ui_status_refresh(s);if(!s->dirty)return;
+    (void)ln_ui_first_visible(s);(void)ln_ui_status_refresh(s);if(!s->dirty)return;
     if(s->rendered&&!(s->dirty&1u)){if(s->selected==s->drawn_selected)s->dirty&=~2u;if(((s->hold?1u:0u)|(s->headphones?2u:0u))==s->drawn_flags&&status_signature()==s->drawn_status)s->dirty&=~4u;if(!s->dirty)return;}
     uint32_t painted_before=s->painted_pixels,render_dirty=s->dirty,visible_before=s->visible_items;bool cached_selection=false;const struct ln_ui_scene*c=scene(s);s->visible_items=0;
     if(!s->rendered||(s->dirty&1u))paint(s,pixels,screen,damage);
@@ -1142,10 +1193,10 @@ void ln_ui_render(struct ln_ui_state*s,uint16_t*pixels,ln_ui_damage_fn damage){i
         if(c)for(uint32_t i=0;i<c->count&&i<1024u;++i){const struct ln_ui_node*n=&c->nodes[i];
             bool scrollbar_changed=n->kind!=LN_UI_SCROLLBAR;
             if(!scrollbar_changed&&c->focus_node<c->count){const struct ln_ui_node*f=&c->nodes[c->focus_node];
-                if(f->kind==LN_UI_MENU||f->kind==LN_UI_VIRTUAL_LIST||f->kind==LN_UI_GRID){uint32_t capacity=rows(f)*columns(f);
-                    scrollbar_changed=first_row(s->drawn_selected,capacity)!=first_row(s->selected,capacity);}
+                if(f->kind==LN_UI_MENU||f->kind==LN_UI_VIRTUAL_LIST||f->kind==LN_UI_GRID)
+                    scrollbar_changed=s->drawn_first!=list_first(s,f,s->selected,true);
             }
-            bool selected=(s->dirty&2u)&&(i==c->focus_node||(n->kind==LN_UI_SCROLLBAR?scrollbar_changed:(n->deps&3u)));bool status=(s->dirty&4u)&&(n->kind==LN_UI_STATUS_BAR||(n->deps&16u));bool animation=(s->dirty&8u)&&(n->deps&4u);if(selected&&!status&&!animation&&i==c->focus_node&&selection_damage(s,pixels,n,damage)){cached_selection=render_dirty==2u;continue;}if(selected||status||animation)paint(s,pixels,bounds(n),damage);}
+            bool selected=(s->dirty&2u)&&(i==c->focus_node||(n->kind==LN_UI_SCROLLBAR?scrollbar_changed:(n->deps&3u)));bool status=(s->dirty&4u)&&(n->kind==LN_UI_STATUS_BAR||(n->deps&16u));bool animation=(s->dirty&8u)&&(n->deps&4u);if(selected&&!status&&!animation&&i==c->focus_node){if(scroll_selection(s,pixels,n,damage))continue;if(selection_damage(s,pixels,n,damage)){cached_selection=render_dirty==2u;continue;}}if(selected||status||animation)paint(s,pixels,bounds(n),damage);}
     }
     if(layout()==LN_UI_LAYOUT_MINIMAL&&(s->dirty&4u)&&!(s->dirty&1u))paint(s,pixels,(struct rect){0,0,LINNET_UI_WIDTH,2},damage);
     if((s->dirty&32u)&&!(s->dirty&1u))paint_scrolling(s,pixels,c,damage);
@@ -1159,7 +1210,7 @@ void ln_ui_render(struct ln_ui_state*s,uint16_t*pixels,ln_ui_damage_fn damage){i
      * the retained labels and advance only its selection marker. */
     if(cached_selection&&content.valid&&content.owner==s&&content.scene==s->scene&&content.epoch==s->scene_epoch)content.selected=s->selected;
     else content_save(s);
-    s->drawn_status=status_signature();s->drawn_theme=active_theme;s->drawn_scene=s->scene;s->drawn_selected=s->selected;s->drawn_flags=(s->hold?1u:0u)|(s->headphones?2u:0u);s->dirty=0;s->rendered=true;if(s->painted_pixels!=painted_before)++s->paint_count;
+    s->drawn_first=ln_ui_first_visible(s);s->drawn_status=status_signature();s->drawn_theme=active_theme;s->drawn_scene=s->scene;s->drawn_selected=s->selected;s->drawn_flags=(s->hold?1u:0u)|(s->headphones?2u:0u);s->dirty=0;s->rendered=true;if(s->painted_pixels!=painted_before)++s->paint_count;
 }
 void ln_ui_animate(struct ln_ui_state*s,uint16_t*pixels,uint32_t frame,ln_ui_damage_fn damage){if(!s)return;if(s->animation!=frame){s->animation=frame;const struct ln_ui_scene*c=scene(s);if(c)for(uint32_t i=0;i<c->count&&i<1024u;++i)if(c->nodes[i].deps&4u){s->dirty|=8u;break;}}ln_ui_render(s,pixels,damage);}
 uint32_t ln_ui_take_action(struct ln_ui_state*s){if(!s)return UINT32_MAX;uint32_t action=s->action;s->action=UINT32_MAX;return action;}

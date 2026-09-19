@@ -52,7 +52,7 @@ void ln_notes_step(struct ln_ui_state*s){
     if(active&&!phase&&count&&scene(s)){
         uint32_t capacity=ln_ui_visible_capacity(s);if(!capacity)capacity=1;
         if(capacity>CACHE_ROWS){fail();return;}
-        uint32_t total=reading?lines:count,first=(s->selected/capacity)*capacity;
+        uint32_t total=reading?lines:count,first=ln_ui_first_visible(s);
         if(first>=total)first=0;
         uint32_t wanted=total-first;if(wanted>capacity)wanted=capacity;
         if(cache_first!=first||cache_count!=wanted){request_first=first;request_count=wanted;cache_count=0;phase=reading?5u:3u;}

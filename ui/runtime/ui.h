@@ -84,7 +84,8 @@ extern const struct ln_ui_font ln_ui_clock_font;
 #define LN_UI_FOOTER 64u
 struct ln_ui_state {
     uint32_t scene,selected,buttons,animation;
-    uint32_t selections[LINNET_UI_MAX_SCENES];
+    uint32_t selections[LINNET_UI_MAX_SCENES],first_visible[LINNET_UI_MAX_SCENES];
+    uint32_t drawn_first;
     uint32_t drawn_scene,drawn_selected,drawn_flags,dirty,action,transitions;
     uint32_t paint_count,painted_pixels,visible_items,scene_epoch,drawn_theme,drawn_status;
     bool hold,headphones,rendered;
@@ -113,6 +114,7 @@ const struct ln_ui_asset *ln_ui_now_playing_art(uint32_t *revision);
 uint32_t ln_ui_palette_tick(struct ln_ui_state *state,uint32_t now_us);
 bool ln_ui_status_refresh(struct ln_ui_state *state);
 uint32_t ln_ui_visible_capacity(const struct ln_ui_state *state);
+uint32_t ln_ui_first_visible(struct ln_ui_state *state);
 uint32_t ln_ui_focused_count(const struct ln_ui_state *state);
 /* Compare bounded visible list/text content with the last painted frame.
  * Scene changes and unsupported layouts retain full refresh semantics. */

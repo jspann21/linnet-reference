@@ -20,7 +20,7 @@ bool ln_music_browser_options(uint32_t row);
 bool ln_music_browser_external_actions(uint32_t index,uint32_t kind,uint32_t count,const char *title);
 bool ln_music_browser_take_search_return(void);
 bool ln_music_browser_save_queue(const struct ln_queue *queue);
-bool ln_music_browser_take_selection(uint32_t *row);
+bool ln_music_browser_take_selection(uint32_t *row,uint32_t *first);
 void ln_music_browser_notice(const char *text);
 void ln_music_browser_suspend(bool suspend);
 /* Visibility gates speculative cache work, never an accepted playback intent. */

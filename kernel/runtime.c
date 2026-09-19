@@ -208,14 +208,14 @@ static void browser_navigation(void){
     uint32_t navigation=ln_music_browser_navigation();
     if(navigation!=music_navigation){
         shell->selected=0;shell->selections[shell->scene]=0;
-        music_navigation=navigation;uint32_t restored_row;if(ln_music_browser_take_selection(&restored_row)){shell->selected=restored_row;shell->selections[shell->scene]=restored_row;}
+        music_navigation=navigation;uint32_t restored_row;if(ln_music_browser_take_selection(&restored_row,&shell->first_visible[shell->scene])){shell->selected=restored_row;shell->selections[shell->scene]=restored_row;}
         ln_ui_refresh(shell);dirty=true;
     }
     if(music_window_epoch==shell->scene_epoch&&music_window_selection==shell->selected&&
        music_window_navigation==navigation)return;
     uint32_t rows=ln_ui_visible_capacity(shell);if(!rows)rows=1;
     ln_music_browser_visible_rows(rows);
-    ln_music_browser_window((shell->selected/rows)*rows);
+    ln_music_browser_window(ln_ui_first_visible(shell));
     music_window_epoch=shell->scene_epoch;music_window_selection=shell->selected;
     music_window_navigation=navigation;
 }
@@ -245,7 +245,7 @@ static void photo_navigation_update(void){
     }
     if(ln_photos_view()!=LN_PHOTOS_VIEWER){
         uint32_t count=ln_ui_visible_capacity(shell);if(!count)count=1;
-        ln_photos_window((shell->selected/count)*count,count);
+        ln_photos_window(ln_ui_first_visible(shell),count);
     }
 }
 #endif
@@ -777,15 +777,14 @@ void ln_runtime_step(void){
     if(scene_is("linnet.system.music-queue")){
         uint32_t rows=ln_ui_visible_capacity(shell);if(!rows)rows=1;
         ln_music_queue_view_visible_rows(rows);
-        ln_music_queue_view_window((shell->selected/rows)*rows);
+        ln_music_queue_view_window(ln_ui_first_visible(shell));
     }
     if(scene_is("linnet.system.music-search")&&!ln_music_search_active())ln_music_search_resume();
     if(scene_is("linnet.system.music-search")&&search_navigation!=ln_music_search_navigation()){
         search_navigation=ln_music_search_navigation();shell->selected=0;shell->selections[shell->scene]=0;ln_ui_refresh(shell);dirty=true;
     }
     if(scene_is("linnet.system.music-search")){
-        uint32_t rows=ln_ui_visible_capacity(shell);if(!rows)rows=1;
-        ln_music_search_window((shell->selected/rows)*rows);
+        ln_music_search_window(ln_ui_first_visible(shell));
         uint32_t restored_selection;
         if(ln_music_search_take_selection(&restored_selection)){
             shell->selected=restored_selection;ln_ui_refresh(shell);dirty=true;

@@ -8,7 +8,7 @@
 
 enum view { CATEGORIES,GROUPS,TRACKS,PLAYLISTS,LOCAL_TRACKS,ACTIONS,DESTINATION,NAME,CONFIRM,ACTIVITY,ARTIST_ALBUMS,ALBUM_ARTISTS,BROWSE_OPTIONS,LETTERS };
 enum job { NONE,RANGE,GROUP,TITLE,MEMBER,RECORD,RESOLVE,EXPAND,ACTIVITY_RECORD,FAVORITE_RECORD,BOOKMARK_RECORD,RECENT_GROUP,CATALOG_GROUP,CATALOG_MEMBER,CATALOG_ARTIST,CATALOG_RANGE,JUMP_GROUP,JUMP_TITLE,RECENT_IDS };
-struct location {enum view view;uint32_t kind,group,count,lower,selected,slot;bool reverse;char title[256];};
+struct location {enum view view;uint32_t kind,group,count,lower,selected,slot,first;bool reverse;char title[256];};
 struct row {uint32_t ordinal,index,count;bool valid;char label[256];};
 static struct {
     struct location here,parents[8];uint32_t depth,first,visible,revision,navigation,epoch,job_epoch,job_row,lo,hi,mid,range;
@@ -53,7 +53,7 @@ static struct row *row(uint32_t n){
             if(!r->valid||r->ordinal!=n){*r=(struct row){.ordinal=n,.index=b.here.reverse?b.here.count-1u-n:n,.valid=true};copy(r->label,title);}return r;}
     }
     struct row *r=&b.rows[n%(LN_MUSIC_BROWSER_ROWS*2)];return r->valid&&r->ordinal==n?r:0;}
-static void navigate(void){b.navigation++;b.first=0;invalidate();b.selection_ready=true;b.restored_selection=b.here.selected;}
+static void navigate(void){b.navigation++;b.first=b.here.first;invalidate();b.selection_ready=true;b.restored_selection=b.here.selected;}
 static uint32_t ordinal(uint32_t n){return b.here.reverse?(b.here.view==ARTIST_ALBUMS?(n?b.here.count-n:0):b.here.count-1-n):n;}
 static bool list_view(void){return b.here.view==GROUPS||b.here.view==TRACKS||b.here.view==ACTIVITY||b.here.view==LOCAL_TRACKS||b.here.view==ARTIST_ALBUMS||b.here.view==ALBUM_ARTISTS;}
 static bool push(void){if(b.depth==8)return false;b.parents[b.depth++]=b.here;return true;}
@@ -69,7 +69,7 @@ bool ln_music_browser_take_search(void){bool result=b.search;b.search=false;retu
 void ln_music_browser_publish(void){}
 uint32_t ln_music_browser_revision(void){return b.revision+ln_collections_revision();}
 uint32_t ln_music_browser_navigation(void){return b.navigation;}
-bool ln_music_browser_take_selection(uint32_t *out){if(!out||!b.selection_ready)return false;*out=b.restored_selection;b.selection_ready=false;return true;}
+bool ln_music_browser_take_selection(uint32_t *out,uint32_t *first){if(!out||!b.selection_ready)return false;*out=b.restored_selection;if(first)*first=b.here.first;b.selection_ready=false;return true;}
 void ln_music_browser_notice(const char *text){b.notice=text;changed();}
 uint32_t ln_music_browser_count(void){
     if(b.catalog||b.jumping||b.activity_scanning||b.resolving||b.exporting||b.expanding)return 1;
@@ -102,7 +102,7 @@ const char *ln_music_browser_label(uint32_t n){
     struct row *r=row(n);return r?r->label:"Loading...";
 }
 void ln_music_browser_visible_rows(uint32_t n){b.visible=n?n:1;if(b.visible>LN_MUSIC_BROWSER_ROWS)b.visible=LN_MUSIC_BROWSER_ROWS;}
-void ln_music_browser_window(uint32_t n){b.first=n;}
+void ln_music_browser_window(uint32_t n){b.first=b.here.first=n;}
 static void groups(uint32_t kind){enter(GROUPS,kind==8?"Recently Added":categories[kind]);b.here.kind=kind;b.range=1;b.lo=0;b.hi=ln_music_library_group_count();}
 static void name_begin(bool rename){
     b.renaming=rename;b.name_length=0;
@@ -206,7 +206,7 @@ bool ln_music_browser_back(void){
     if(!b.depth)return false;b.here=b.parents[--b.depth];navigate();
     if(b.here.view==ALBUM_ARTISTS&&rebuild_owners)catalog_begin(true);
     if(b.here.view==ACTIVITY){b.here.count=b.activity_count;if(b.activity_dirty){b.activity_dirty=false;b.activity_count=b.activity_scan=b.activity_page=0;for(uint32_t i=0;i<sizeof b.activity_filter;i++)b.activity_filter[i]=0;b.activity_scanning=true;b.activity_waiting=false;}}
-    if(b.here.view==LOCAL_TRACKS){uint32_t selected=b.here.selected,slot=b.here.slot;bool reverse=b.here.reverse;resolve_begin(slot);b.here.reverse=reverse;b.here.selected=selected;b.restored_selection=selected;}
+    if(b.here.view==LOCAL_TRACKS){uint32_t selected=b.here.selected,slot=b.here.slot,first=b.here.first;bool reverse=b.here.reverse;resolve_begin(slot);b.here.reverse=reverse;b.here.selected=selected;b.here.first=b.first=first;b.restored_selection=selected;}
     return true;
 }
 int ln_music_browser_queue_status(void){return b.status;}
