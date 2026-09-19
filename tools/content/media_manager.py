@@ -189,6 +189,8 @@ def preparation_option(kind, identity, photo_dimension=640, music_verification='
     if kind == 'Music':
         art_version = 'art4' if identity['target_id'] == 'ipod4g-q21' else 'art3'
         return f"{music_verification}-duration-search-names-album-owner-title-order1-music-folder1-recent-album-gain-{art_version}-{identity['target_id']}"
+    if kind == 'Notes':
+        return 'theme-fonts1'
     return f'flat-photos1-{photo_dimension}' if kind == 'Photos' else 'default'
 
 

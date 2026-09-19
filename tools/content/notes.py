@@ -4,6 +4,7 @@ from itertools import islice
 import hashlib
 import struct
 import json
+import tomllib
 import unicodedata
 import os
 
@@ -20,7 +21,12 @@ def _display_widths():
     # Fit the narrowest built-in list (Aurora), accounting for proportional
     # glyph widths in every bundled theme so switching themes loses no text.
     widths = [8] * 95
-    for path in (Path(__file__).resolve().parents[2]/'sdk/assets').glob('font*.json'):
+    root = Path(__file__).resolve().parents[2]
+    paths = set()
+    for manifest in (root/'themes').glob('*/theme.toml'):
+        theme = tomllib.loads(manifest.read_text(encoding='utf-8'))['theme']
+        paths.add((manifest.parent/theme.get('font', '../../sdk/assets/font.json')).resolve())
+    for path in paths:
         font = json.loads(path.read_text(encoding='utf-8'))
         advances = font.get('advances', [font['advance']] * 95)
         widths = [max(a, b) for a, b in zip(widths, advances)]
