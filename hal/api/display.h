@@ -23,6 +23,7 @@ struct ln_display_metrics {
     uint32_t max_present_us, head, tail;
 };
 
+uint32_t ln_display_target_diagnostics(uint32_t selector,uint32_t output[32]);
 bool ln_display_init(void);
 /* High byte: pause/fill/resume stage; lower bytes retain failure diagnostics. */
 uint32_t ln_display_init_error(void);
@@ -38,7 +39,8 @@ bool ln_display_damage(int32_t x, int32_t y, int32_t width, int32_t height);
 bool ln_display_present(void);
 void ln_display_column_mode(bool enabled);
 /* CPU fallback performs at most max_pairs steps (clamped to 256); COP mode
- * handles sync timeout and observes completion. No polling wait inside service. */
+ * handles sync timeout and observes completion. True means healthy, including
+ * idle or waiting for hardware; false means a presentation failure. */
 bool ln_display_service(uint32_t max_pairs);
 void ln_display_sync_irq(void);
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -47,6 +49,12 @@ void ln_display_blit_diagnostics(uint32_t output[16]);
 uint32_t ln_display_column_mismatches(void);
 #endif
 bool ln_display_busy(void);
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+/* CPU scanout is waiting for BCM readiness; no framebuffer writes are runnable. */
+bool ln_display_wait_deadline(uint32_t *deadline);
+/* One Cover Flow frame may render after PIO, while BCM completes scanout. */
+bool ln_display_can_render(void);
+#endif
 bool ln_display_cop_capable(void);
 /* Upgrade the verified resident monitor's timer/progress race guard while it
  * is parked. One ARM condition field changes; no worker relocation or restart.

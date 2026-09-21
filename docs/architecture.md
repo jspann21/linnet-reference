@@ -1,8 +1,8 @@
 # Architecture
 
-Linnet is freestanding native firmware with PP5020 targets for the iPod Photo
-A1099 (`photo4g-p98`, 220 x 176 color) and iPod 4G MP102 (`ipod4g-q21`,
-160 x 128 monochrome). P98 is the primary development target. Host tools prepare media and compile static
+Linnet is freestanding native firmware for the PP502x iPod family: Photo
+A1099 (`photo4g-p98`, 220 x 176 color), 4G MP102 (`ipod4g-q21`,
+160 x 128 monochrome), and Video A1136 30 GB (`video5g-m25`, 320 x 240 color). Host tools prepare media and compile static
 TSX layouts; the device uses fixed memory pools and cooperative service work.
 There is no runtime JavaScript VM or general-purpose allocator.
 
@@ -13,8 +13,8 @@ There is no runtime JavaScript VM or general-purpose allocator.
 | `boot/` | Image validation, slot selection, recovery and loader |
 | `kernel/` | Executive, deadlines and service integration |
 | `hal/api/` | Portable hardware interfaces used by kernel, services and UI |
-| `hal/<soc>/` | SoC implementations, startup and linker contracts |
-| `targets/` | Target manifests and board-specific device/LCD code |
+| `hal/<family>/`, `hal/codecs/` | Shared SoC implementations, selected audio codecs, startup and linker contracts |
+| `targets/` | Target manifests, board wiring, display adapters, policies, native screens and themes |
 | `services/` | Storage, media, settings and other native services |
 | `apps/`, `ui/`, `themes/` | Applications, renderer and static layouts |
 | `config/`, `sdk/` | Build configuration and app/theme authoring |
@@ -80,9 +80,11 @@ frame dependency and keeping presentation tied to the audio clock. Device timing
 and underrun counters measure playback across media; framebuffer captures
 cannot establish physical A/V quality.
 
-The UI compiler emits native C and simulator scenes from constrained TSX. TSX
-uses a 220 x 176 reference coordinate space which is scaled to the target LCD;
-runtime buffers and prepared media use target-native dimensions. The desktop
+The UI compiler emits native C and simulator scenes from constrained TSX.
+Legacy layouts use a 220 x 176 reference space scaled to the target LCD.
+Targets can own a complete native screen and theme set; M25 uses 320 x 240
+coordinates and unscaled fonts. Runtime buffers and prepared media use
+target-native dimensions. The desktop
 simulator executes the native renderer; its output checks layout and pixels;
 use device measurements for hardware timing. See the [SDK](../sdk/README.md).
 

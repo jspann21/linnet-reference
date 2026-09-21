@@ -12,12 +12,20 @@ STATE_FORMATS = {
     'video-state':(Command.VIDEO_STATE,b'VIDS',('magic','reserved','phase','error','active','pending','paused','next_frame','frame_count','front_frame','read_ops','read_bytes','prepared','presented','late_frames','max_late_samples','max_prepare_us','queued_frames','max_queued_frames','audio_underruns','audio_silence_frames','audio_fault','submitted_samples','revision','max_io_us','max_record_read_us','max_record_crc_us','max_payload_crc_us','max_decode_us','max_frame_crc_us','max_step_us','min_audio_queued')),
 }
 PLAYER_CONTROLS = {"player-pause": 1, "player-resume": 2, "player-stop": 3, "player-seek": 4}
-ACTIONS = (*STATE_FORMATS, "player-open", *PLAYER_CONTROLS)
+ACTIONS = (*STATE_FORMATS, "player-open", "video-open", *PLAYER_CONTROLS)
 
 def command(session,identity,action,*,path=None,sample=None):
     if action.endswith('-state'):
         operation,magic,names=STATE_FORMATS[action]
         raw=session.request(operation)
+        if action=='video-state' and identity['target_id']=='video5g-m25':
+            if len(raw)!=128 or struct.unpack_from('<I',raw)[0]!=0x4d250002:
+                raise RuntimeError('Malformed native video state reply')
+            words=struct.unpack('<32I',raw)
+            state=dict(backend='bcm2722',phase=words[1],error=words[2],restoring=bool(words[3]),
+                       display_owned=bool(words[7]),restore_error=words[20],
+                       position_ms=words[24],duration_ms=words[25],active=bool(words[26]))
+            return dict(identity=identity,state=state)
         expected=64 if action=='library-state' else len(names)*4
         if len(raw)!=expected or raw[:4]!=magic:raise RuntimeError('Malformed music state reply')
         state=dict(zip(names,struct.unpack('<'+'I'*len(names),raw[:len(names)*4])))
@@ -32,6 +40,9 @@ def command(session,identity,action,*,path=None,sample=None):
     if any(confirmed[key]!=identity[key] for key in ('target_id','build_id','generation')):
         raise RuntimeError('Device identity changed during music preflight')
     generation=identity['generation']
+    if action=='video-open':
+        session.video_open(generation,path)
+        return dict(identity=identity,accepted=action)
     if action=='player-open':
         encoded=path.encode('ascii')
         if not encoded.startswith(b'/') or len(encoded)>255 or b'\0' in encoded:

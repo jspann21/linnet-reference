@@ -23,7 +23,10 @@ class ContentError(ValueError):
     pass
 
 class Parser:
-    def __init__(self, source, colors):
+    def __init__(self, source, colors, width=220, height=176):
+        if type(width) is not int or type(height) is not int or not 1 <= width <= 1024 or not 1 <= height <= 1024 or width*height > 131072:
+            raise ContentError("invalid authoring canvas")
+        self.width, self.height = width, height
         if len(source.encode('utf-8')) > 262144:
             raise ContentError('TSX source exceeds 256 KiB')
         self.s, self.p, self.colors, self.nodes = source, 0, colors, []
@@ -116,12 +119,12 @@ class Parser:
             props[key]=value
         for key in ('items','targets'):
             if key in props and not isinstance(props[key],list): self.fail(f'{key} must be a literal string array')
-        parent_x,parent_y,parent_w,parent_h=(0,0,220,176) if parent is None else (parent[k] for k in ('x','y','w','h'))
-        x=self.integer(props,'x',0,0,219); y=self.integer(props,'y',0,0,175)
-        w=self.integer(props,'w',parent_w-x,1,220); h=self.integer(props,'h',parent_h-y,1,176)
+        parent_x,parent_y,parent_w,parent_h=(0,0,self.width,self.height) if parent is None else (parent[k] for k in ('x','y','w','h'))
+        x=self.integer(props,'x',0,0,self.width-1); y=self.integer(props,'y',0,0,self.height-1)
+        w=self.integer(props,'w',parent_w-x,1,self.width); h=self.integer(props,'h',parent_h-y,1,self.height)
         if x+w>parent_w or y+h>parent_h: self.fail('rectangle escapes parent bounds')
-        if parent is None and (x,y,w,h)!=(0,0,220,176):
-            self.fail('Screen must cover the 220x176 authoring canvas')
+        if parent is None and (x,y,w,h)!=(0,0,self.width,self.height):
+            self.fail('Screen must cover the authoring canvas')
         node=dict(kind=KINDS.index(name)+1,component=name,x=x+parent_x,y=y+parent_y,w=w,h=h,
                   fg=self.color(props.get('fg','theme.foreground')),bg=self.color(props.get('bg','theme.background')),
                   flags=self.integer(props,'flags',1 if name in ('Menu','VirtualList','Grid') else 0,0,7),
@@ -186,5 +189,5 @@ class Parser:
         if len(focus)>1: self.fail('at most one initial focus node')
         return self.nodes,focus[0] if focus else next((i for i,n in enumerate(self.nodes) if n['flags']&1 and not n['flags']&2),0xffffffff)
 
-def compile_tsx(source, colors):
-    return Parser(source,colors).parse()
+def compile_tsx(source, colors, width=220, height=176):
+    return Parser(source,colors,width,height).parse()

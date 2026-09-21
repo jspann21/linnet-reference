@@ -1,0 +1,257 @@
+#include "services/video/mp4.h"
+#define TAG(a,b,c,d) (((uint32_t)(a)<<24)|((uint32_t)(b)<<16)|((uint32_t)(c)<<8)|(d))
+static uint32_t be32(const uint8_t *p){return ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3];}
+static uint64_t be64(const uint8_t *p){return ((uint64_t)be32(p)<<32)|be32(p+4);}
+static uint32_t be16(const uint8_t *p){return ((uint32_t)p[0]<<8)|p[1];}
+static int bad(struct ln_mp4 *m,int error){return m->error=error;}
+static int read_at(struct ln_mp4 *m,uint64_t at,uint32_t bytes){
+    if(bytes>sizeof m->buffer||at>m->bytes||bytes>m->bytes-at)return bad(m,LN_MP4_FORMAT);
+    int result=m->read(m->context,at,m->buffer,bytes);
+    return result<0?bad(m,LN_MP4_IO):result;
+}
+void ln_mp4_init(struct ln_mp4 *m,ln_mp4_read_fn read,void *context,uint64_t bytes){
+    *m=(struct ln_mp4){0};m->read=read;m->context=context;m->bytes=bytes;m->ends[0]=bytes;
+}
+void ln_mp4_init_audio(struct ln_mp4 *m,ln_mp4_read_fn read,void *context,uint64_t bytes){ln_mp4_init(m,read,context,bytes);m->audio=true;}
+static bool once(struct ln_mp4 *m,uint32_t bit){if(m->seen&bit)return false;m->seen|=bit;return true;}
+static bool descriptors(struct ln_mp4 *m,const uint8_t *p,uint32_t bytes,uint32_t depth){
+    if(depth>4u)return false;
+    while(bytes){
+        uint32_t tag=*p++,length=0,n=0;--bytes;
+        uint8_t v;
+        do{if(!bytes||n++==4u)return false;v=*p++;--bytes;length=(length<<7)|(v&127u);}while(v&128u);
+        if(length>bytes)return false;
+        uint32_t skip=0;
+        if(tag==3u){
+            if(length<3u)return false;skip=3u;
+            if(p[2]&128u)skip+=2u;
+            if(p[2]&64u){if(skip>=length)return false;skip+=1u+p[skip];}
+            if(p[2]&32u)skip+=2u;
+        }else if(tag==4u)skip=13u;
+        else if(tag==5u){
+            if(!length||length>sizeof m->config||m->config_bytes)return false;
+            for(uint32_t i=0;i<length;++i)m->config[i]=p[i];m->config_bytes=length;
+        }
+        if(skip&&(skip>length||!descriptors(m,p+skip,length-skip,depth+1u)))return false;
+        p+=length;bytes-=length;
+    }
+    return true;
+}
+static int body(struct ln_mp4 *m){
+    const uint8_t *b=m->buffer;uint32_t n=m->body_bytes;
+    switch(m->type){
+    case TAG('h','d','l','r'):
+        if(n<12u)return bad(m,LN_MP4_FORMAT);
+        if(be32(b+8)!=(m->audio?TAG('s','o','u','n'):TAG('v','i','d','e'))){
+            for(uint32_t i=m->depth;i;i--)if(m->parents[i]==TAG('t','r','a','k')){m->cursor=m->ends[i];m->depth=i;m->phase=0;return 0;}
+            return bad(m,LN_MP4_FORMAT);
+        }
+        break;
+    case TAG('e','l','s','t'):
+        if(n<20u||b[0]||be32(b+4)!=1u||be32(b+16)!=0x10000u||(be32(b+12)&0x80000000u))return bad(m,LN_MP4_UNSUPPORTED);
+        m->lead=be32(b+12);break;
+    case TAG('m','d','h','d'):
+        if(n<24u||!once(m,1u))return bad(m,LN_MP4_FORMAT);
+        if(b[0]==0u){m->timescale=be32(b+12);m->duration=be32(b+16);}
+        else if(b[0]==1u&&n>=32u){m->timescale=be32(b+20);m->duration=be64(b+24);}
+        else return bad(m,LN_MP4_UNSUPPORTED);
+        break;
+    case TAG('s','t','s','d'):{
+        if(n<16u||be32(b+4)!=1u)return bad(m,LN_MP4_UNSUPPORTED);
+        uint32_t codec=be32(b+12),entry=be32(b+8);
+        if(m->audio){
+            if(codec!=TAG('m','p','4','a'))return bad(m,LN_MP4_UNSUPPORTED);
+            if(!once(m,2u)||entry<36u||entry>n-8u||be16(b+24))return bad(m,LN_MP4_UNSUPPORTED);
+            m->video=true;m->codec=codec;m->channels=be16(b+32);m->rate=be32(b+40)>>16;
+            if(m->channels<1u||m->channels>2u||!m->rate)return bad(m,LN_MP4_UNSUPPORTED);
+            for(uint32_t at=44u;at<entry+8u;){
+                if(entry+8u-at<8u)return bad(m,LN_MP4_FORMAT);
+                uint32_t bytes=be32(b+at),type=be32(b+at+4);
+                if(bytes<8u||bytes>entry+8u-at)return bad(m,LN_MP4_FORMAT);
+                if(type==TAG('e','s','d','s')&&(bytes<12u||!descriptors(m,b+at+12u,bytes-12u,0)))return bad(m,LN_MP4_FORMAT);
+                at+=bytes;
+            }
+            break;
+        }
+        if(codec!=TAG('a','v','c','1')&&codec!=TAG('m','p','4','v'))break;
+        if(!once(m,2u)||entry<86u||entry>n-8u)return bad(m,LN_MP4_FORMAT);
+        m->video=true;m->codec=codec;m->width=be16(b+40);m->height=be16(b+42);
+        for(uint32_t at=94u;at<entry+8u;){
+            if(entry+8u-at<8u)return bad(m,LN_MP4_FORMAT);
+            uint32_t bytes=be32(b+at),type=be32(b+at+4);
+            if(bytes<8u||bytes>entry+8u-at)return bad(m,LN_MP4_FORMAT);
+            if(type==TAG('a','v','c','C')&&codec==TAG('a','v','c','1')){
+                if(bytes<15u||bytes-8u>sizeof m->config||m->config_bytes)return bad(m,LN_MP4_UNSUPPORTED);
+                m->config_bytes=bytes-8u;
+                for(uint32_t i=0;i<m->config_bytes;++i)m->config[i]=b[at+8u+i];
+                if(m->config[0]!=1u)return bad(m,LN_MP4_FORMAT);
+                m->nal_bytes=(m->config[4]&3u)+1u;
+            }else if(type==TAG('e','s','d','s')&&codec==TAG('m','p','4','v')){
+                if(bytes<12u||!descriptors(m,b+at+12u,bytes-12u,0))return bad(m,LN_MP4_FORMAT);
+            }
+            at+=bytes;
+        }
+        break;}
+    case TAG('s','t','s','z'):
+        if(n<12u||!once(m,4u))return bad(m,LN_MP4_FORMAT);
+        m->default_bytes=be32(b+4);m->samples=be32(b+8);m->sizes=m->cursor+12u;
+        if(!m->samples||m->samples>1000000u||(!m->default_bytes&&(uint64_t)m->samples*4u>m->atom_end-m->sizes))return bad(m,LN_MP4_UNSUPPORTED);
+        break;
+    case TAG('s','t','c','o'):case TAG('c','o','6','4'):
+        if(n<8u||!once(m,8u))return bad(m,LN_MP4_FORMAT);
+        m->chunk_count=be32(b+4);m->chunks=m->cursor+8u;m->chunk_width=m->type==TAG('c','o','6','4')?8u:4u;
+        if(!m->chunk_count||m->chunk_count>1000000u||(uint64_t)m->chunk_count*m->chunk_width>m->atom_end-m->chunks)return bad(m,LN_MP4_UNSUPPORTED);
+        break;
+    case TAG('s','t','s','c'):
+        if(n<8u||!once(m,16u))return bad(m,LN_MP4_FORMAT);
+        m->map_count=be32(b+4);
+        if(!m->map_count||m->map_count>256u||n!=8u+12u*m->map_count)return bad(m,LN_MP4_UNSUPPORTED);
+        for(uint32_t i=0;i<m->map_count;++i){
+            m->map[i].first=be32(b+8u+i*12u);m->map[i].count=be32(b+12u+i*12u);
+            if(!m->map[i].count||m->map[i].count>65536u||be32(b+16u+i*12u)!=1u||(!i&&m->map[i].first!=1u)||(i&&m->map[i].first<=m->map[i-1u].first))return bad(m,LN_MP4_UNSUPPORTED);
+        }
+        break;
+    case TAG('s','t','t','s'):
+        if(n<8u||!once(m,32u))return bad(m,LN_MP4_FORMAT);
+        m->time_count=be32(b+4);
+        if(!m->time_count||m->time_count>128u||n!=8u+8u*m->time_count)return bad(m,LN_MP4_UNSUPPORTED);
+        for(uint32_t i=0;i<m->time_count;++i){m->times[i].count=be32(b+8u+i*8u);m->times[i].delta=be32(b+12u+i*8u);if(!m->times[i].count||!m->times[i].delta)return bad(m,LN_MP4_FORMAT);}
+        break;
+    case TAG('s','t','s','s'):
+        if(n<8u||!once(m,64u))return bad(m,LN_MP4_FORMAT);
+        m->sync_count=be32(b+4);m->sync=m->cursor+8u;
+        if((uint64_t)m->sync_count*4u>m->atom_end-m->sync)return bad(m,LN_MP4_FORMAT);
+        break;
+    case TAG('c','t','t','s'):
+        /* Baseline streams have no reordered presentation timestamps. */
+        if(n<8u||be32(b+4)>128u||n!=8u+be32(b+4)*8u)return bad(m,LN_MP4_UNSUPPORTED);
+        for(uint32_t at=8u;at<n;at+=8u)if(be32(b+at+4u))return bad(m,LN_MP4_UNSUPPORTED);
+        break;
+    default:break;
+    }
+    m->cursor=m->atom_end;m->phase=0;return 0;
+}
+static int finish(struct ln_mp4 *m){
+    if((m->seen&63u)!=63u||!m->timescale||(!m->audio&&(!m->width||!m->height))||!m->config_bytes)return bad(m,LN_MP4_FORMAT);
+    uint64_t count=0,duration=0,capacity=0;
+    for(uint32_t i=0;i<m->time_count;++i){count+=m->times[i].count;duration+=(uint64_t)m->times[i].count*m->times[i].delta;}
+    if(count!=m->samples||duration!=m->duration||m->lead>=duration||(m->audio&&m->rate!=m->timescale))return bad(m,LN_MP4_UNSUPPORTED);
+    for(uint32_t i=0;i<m->map_count;++i){uint32_t end=i+1u<m->map_count?m->map[i+1u].first:m->chunk_count+1u;if(m->map[i].first>end||end>m->chunk_count+1u)return bad(m,LN_MP4_FORMAT);capacity+=(uint64_t)(end-m->map[i].first)*m->map[i].count;}
+    if(capacity!=m->samples||m->sync_count>m->samples)return bad(m,LN_MP4_FORMAT);
+    m->opened=true;m->chunk_samples=m->map[0].count;return 1;
+}
+int ln_mp4_open_step(struct ln_mp4 *m){
+    if(!m||!m->read)return LN_MP4_FORMAT;if(m->error)return m->error;if(m->opened)return 1;
+    if(m->phase){int result=read_at(m,m->cursor,m->body_bytes);return result>0?body(m):result;}
+    while(m->depth&&m->cursor==m->ends[m->depth]){
+        uint32_t type=m->parents[m->depth--];
+        if(type==TAG('t','r','a','k')&&m->video)return finish(m);
+    }
+    if(m->cursor==m->bytes)return m->audio?LN_MP4_EOF:bad(m,LN_MP4_UNSUPPORTED);
+    if(m->cursor>m->ends[m->depth]||m->ends[m->depth]-m->cursor<8u)return bad(m,LN_MP4_FORMAT);
+    uint32_t header_read=m->ends[m->depth]-m->cursor>=16u?16u:8u;
+    int result=read_at(m,m->cursor,header_read);if(result<=0)return result;
+    uint64_t size=be32(m->buffer);uint32_t header=8u,type=be32(m->buffer+4);
+    if(size==1u){if(header_read<16u)return bad(m,LN_MP4_FORMAT);size=be64(m->buffer+8);header=16u;}
+    else if(!size)size=m->ends[m->depth]-m->cursor;
+    if(size<header||size>m->ends[m->depth]-m->cursor||++m->atoms>16384u)return bad(m,LN_MP4_FORMAT);
+    m->atom_end=m->cursor+size;m->type=type;m->cursor+=header;
+    if(type==TAG('m','o','o','f'))return bad(m,LN_MP4_UNSUPPORTED);
+    if(type==TAG('m','o','o','v')||type==TAG('t','r','a','k')||type==TAG('m','d','i','a')||type==TAG('m','i','n','f')||type==TAG('s','t','b','l')||type==TAG('e','d','t','s')){
+        if(m->depth==7u)return bad(m,LN_MP4_UNSUPPORTED);
+        if(type==TAG('t','r','a','k')){if(++m->tracks>16u)return bad(m,LN_MP4_UNSUPPORTED);m->seen=0;m->video=false;m->config_bytes=0;m->sync_count=0;m->sync=0;m->nal_bytes=0;m->lead=0;}
+        m->parents[++m->depth]=type;m->ends[m->depth]=m->atom_end;return 0;
+    }
+    uint32_t wanted=0;
+    if(type==TAG('h','d','l','r'))wanted=12u;
+    else if(type==TAG('e','l','s','t'))wanted=size-header>20u?20u:(uint32_t)(size-header);
+    else if(type==TAG('m','d','h','d'))wanted=size-header>32u?32u:(uint32_t)(size-header);
+    else if(type==TAG('s','t','s','d')||type==TAG('s','t','s','c')||type==TAG('s','t','t','s')||type==TAG('c','t','t','s')){
+        if(size-header>sizeof m->buffer)return bad(m,LN_MP4_UNSUPPORTED);wanted=(uint32_t)(size-header);
+    }else if(type==TAG('s','t','s','z'))wanted=12u;
+    else if(type==TAG('s','t','c','o')||type==TAG('c','o','6','4')||type==TAG('s','t','s','s'))wanted=8u;
+    if(!wanted){m->cursor=m->atom_end;return 0;}
+    if(wanted>size-header)return bad(m,LN_MP4_FORMAT);
+    m->body_bytes=wanted;m->phase=1;return 0;
+}
+int ln_mp4_next(struct ln_mp4 *m,struct ln_mp4_packet *out){
+    if(!m||!out||!m->opened)return LN_MP4_FORMAT;if(m->error)return m->error;if(m->packet==m->samples)return LN_MP4_EOF;
+    int result;
+    if(!m->packet_phase){
+        if(m->packet==m->chunk_first+m->chunk_samples){
+            m->chunk_first=m->packet;++m->chunk;
+            for(uint32_t i=0;i<m->map_count;++i)if(m->map[i].first<=m->chunk+1u)m->chunk_samples=m->map[i].count;
+        }
+        if(m->chunk>=m->chunk_count)return bad(m,LN_MP4_FORMAT);
+        if(m->packet==m->chunk_first){result=read_at(m,m->chunks+(uint64_t)m->chunk*m->chunk_width,m->chunk_width);if(result<=0)return result;m->packet_offset=m->chunk_width==8u?be64(m->buffer):be32(m->buffer);}
+        m->packet_phase=1;
+    }
+    if(m->packet_phase==1u){
+        m->packet_bytes=m->default_bytes;
+        if(!m->packet_bytes){result=read_at(m,m->sizes+(uint64_t)m->packet*4u,4u);if(result<=0)return result;m->packet_bytes=be32(m->buffer);}
+        if(!m->packet_bytes||m->packet_bytes>65536u||m->packet_offset>m->bytes||m->packet_bytes>m->bytes-m->packet_offset)return bad(m,LN_MP4_UNSUPPORTED);
+        m->packet_phase=2;
+    }
+    if(m->sync_count&&m->sync_index<m->sync_count&&m->next_sync<=m->packet){
+        result=read_at(m,m->sync+(uint64_t)m->sync_index*4u,4u);if(result<=0)return result;
+        uint32_t next=be32(m->buffer);
+        if(next<=m->packet||next>m->samples||next<=m->next_sync)return bad(m,LN_MP4_FORMAT);
+        m->next_sync=next;++m->sync_index;
+    }
+    uint32_t ordinal=m->packet,delta=0;
+    for(uint32_t i=0;i<m->time_count;++i){if(ordinal<m->times[i].count){delta=m->times[i].delta;break;}ordinal-=m->times[i].count;}
+    if(!delta)return bad(m,LN_MP4_FORMAT);
+    *out=(struct ln_mp4_packet){m->packet_offset,m->decode_time,m->packet_bytes,delta,!m->sync_count||m->next_sync==m->packet+1u};
+    m->decode_time+=delta;m->packet_offset+=m->packet_bytes;++m->packet;m->packet_phase=0;return 1;
+}
+
+bool ln_mp4_seek(struct ln_mp4 *m,uint64_t time,int direction){
+    if(!m||!m->opened||m->error||m->packet_phase||m->seek_phase)return false;
+    if(time>=m->duration)time=m->duration-1u;
+    uint32_t packet=0;
+    for(uint32_t i=0;i<m->time_count;++i){
+        uint64_t span=(uint64_t)m->times[i].count*m->times[i].delta;
+        if(time<span){
+            /* ARMv4T has no runtime 64-bit division helper. */
+            uint32_t count=0;uint64_t remainder=time;
+            for(uint32_t bit=32u;bit;--bit){uint64_t value=(uint64_t)m->times[i].delta<<(bit-1u);if(remainder>=value){remainder-=value;count|=1u<<(bit-1u);}}
+            packet+=count;break;
+        }
+        time-=span;packet+=m->times[i].count;
+    }
+    m->seek_packet=packet;m->seek_lo=0;m->seek_hi=m->sync_count;
+    m->seek_forward=direction>0;m->seek_phase=direction&&m->sync_count?1u:3u;return true;
+}
+int ln_mp4_seek_step(struct ln_mp4 *m){
+    if(!m||!m->opened)return LN_MP4_FORMAT;if(m->error)return m->error;
+    if(!m->seek_phase)return LN_MP4_READY;
+    if(m->seek_phase==1u){
+        if(m->seek_lo==m->seek_hi){if(m->seek_forward&&m->seek_lo<m->sync_count)++m->seek_lo;if(!m->seek_lo)return bad(m,LN_MP4_FORMAT);m->seek_phase=2u;return 0;}
+        uint32_t mid=m->seek_lo+(m->seek_hi-m->seek_lo)/2u;
+        int r=read_at(m,m->sync+(uint64_t)mid*4u,4u);if(r<=0)return r;
+        uint32_t sample=be32(m->buffer);if(!sample||sample>m->samples)return bad(m,LN_MP4_FORMAT);
+        if(sample<m->seek_packet+1u||(!m->seek_forward&&sample==m->seek_packet+1u))m->seek_lo=mid+1u;else m->seek_hi=mid;return 0;
+    }
+    if(m->seek_phase==2u){
+        int r=read_at(m,m->sync+(uint64_t)(m->seek_lo-1u)*4u,4u);if(r<=0)return r;
+        m->seek_packet=be32(m->buffer)-1u;m->sync_index=m->seek_lo;m->next_sync=m->seek_packet+1u;m->seek_phase=3u;
+    }
+    if(m->seek_phase==3u){
+        uint32_t base=0;
+        for(uint32_t i=0;i<m->map_count;++i){
+            uint32_t end=i+1u<m->map_count?m->map[i+1u].first:m->chunk_count+1u;
+            uint32_t count=(end-m->map[i].first)*m->map[i].count;
+            if(m->seek_packet-base<count){
+                uint32_t relative=(m->seek_packet-base)/m->map[i].count;
+                m->chunk=m->map[i].first-1u+relative;m->chunk_samples=m->map[i].count;
+                m->chunk_first=base+relative*m->map[i].count;m->packet=m->chunk_first;break;
+            }
+            base+=count;
+        }
+        m->decode_time=0;uint32_t ordinal=m->packet;
+        for(uint32_t i=0;i<m->time_count&&ordinal;++i){uint32_t count=ordinal<m->times[i].count?ordinal:m->times[i].count;m->decode_time+=(uint64_t)count*m->times[i].delta;ordinal-=count;}
+        m->packet_phase=0;m->seek_phase=4u;
+    }
+    if(m->packet<m->seek_packet){struct ln_mp4_packet ignored;int r=ln_mp4_next(m,&ignored);return r<0?r:0;}
+    m->seek_phase=0;return LN_MP4_READY;
+}

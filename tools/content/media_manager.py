@@ -79,7 +79,7 @@ ConvertTo-Json -InputObject $items -Compress
 def _identify(identity):
     """Bind Disk Mode storage identity to one target manifest."""
     from tools.inspect.retail_device import detect
-    from tools.studio.targets import TARGETS
+    from tools.studio.targets import TARGETS, media_profile
     detected = detect(identity["root"])
     storage = detected["storage"]
     if (detected["device_id"] != identity["disk_serial"] or
@@ -88,24 +88,11 @@ def _identify(identity):
             storage["partition_offset"] != identity["partition_offset"]):
         raise RuntimeError("RetailOS and mounted storage identities disagree")
     spec = TARGETS[detected["target_id"]]
-    enabled = spec.get("capabilities", {}).get("video", True)
-    photos_enabled = spec.get("capabilities", {}).get("photos", True)
-    fps, color = spec.get("media_video_fps", 24), spec.get("media_video_color", "rgb565")
-    photo_size=(spec.get("media_photo_width"),spec.get("media_photo_height"))
-    video_size=(spec.get("media_video_width"),spec.get("media_video_height"))
-    if (type(enabled) is not bool or type(photos_enabled) is not bool or type(fps) is not int or not 4 <= fps <= 30 or
-            color not in ("rgb565", "gray4") or
-            any(type(value) is not int or value < 1 for value in (*photo_size,*video_size))):
-        raise RuntimeError(f"invalid media profile in target manifest: {detected['target_id']}")
     return dict(identity, target_id=detected["target_id"], target_name=spec["name"],
                 linnet_usb_serial=detected["linnet_usb_serial"],
                 model_number=detected["retail_os"].get("model_number"),
                 regulatory_model=(spec["retail"]["regulatory_models"] or [None])[0],
-                media_profile=dict(photo_enabled=photos_enabled, video_enabled=enabled, video_fps=fps, video_color=color,
-                    video_extensions=spec["media_video_extensions"],
-                    photo_width=photo_size[0],photo_height=photo_size[1],
-                    video_width=video_size[0],video_height=video_size[1],
-                    max_read_sectors=spec["storage_max_read_sectors"]))
+                media_profile=media_profile(detected["target_id"]))
 
 
 def supported_kinds(identity):
@@ -117,7 +104,18 @@ def supported_kinds(identity):
 
 
 def native_video_extensions(identity=None):
-    return set((identity or {}).get("media_profile", {}).get("video_extensions", [".ipvf"]))
+    profile = (identity or {}).get("media_profile", {})
+    return set(profile.get("video_extensions", [".ipvf"])) if profile.get("video_enabled", True) else set()
+
+
+def video_source_extensions(identity):
+    profile = (identity or {}).get("media_profile", {})
+    if not profile.get("video_enabled", True):
+        return set()
+    allowed = set(VIDEO_EXTENSIONS)
+    if profile.get("video_backend") == "bcm-mp4":
+        allowed.discard(".ipvf")
+    return allowed
 
 
 def target_args(identity):
@@ -136,7 +134,7 @@ def refresh(identity):
 def source_folders(root, kind):
     root = Path(root)
     folders = [root / kind]
-    if kind == "Music":
+    if kind in ("Music", "Videos"):
         folders.append(root / "iPod_Control" / "Music")
     return [folder for folder in folders if folder.is_dir()]
 
@@ -167,6 +165,19 @@ def _files(folder):
     return [path for path, info in _file_records(folder)]
 
 
+def _records_by_kind(root, kinds=KINDS):
+    folders, result = {}, {}
+    for kind in kinds:
+        if kind not in KINDS:
+            raise ValueError("Unknown media folder")
+        result[kind] = []
+        for folder in source_folders(root, kind):
+            if folder not in folders:
+                folders[folder] = _file_records(folder)
+            result[kind].extend(folders[folder])
+    return result
+
+
 def _skipped_paths(state, kind):
     skipped = state.get("skipped_files", {}) if isinstance(state, dict) else {}
     values = skipped.get(kind, []) if isinstance(skipped, dict) else []
@@ -174,7 +185,7 @@ def _skipped_paths(state, kind):
         return set()
     result = set()
     prefixes = {(kind.casefold(),)}
-    if kind == "Music":
+    if kind in ("Music", "Videos"):
         prefixes.add(("ipod_control", "music"))
     for value in values:
         if not isinstance(value, str):
@@ -191,15 +202,22 @@ def _skipped_paths(state, kind):
 def preparation_option(kind, identity, photo_dimension=640, music_verification='metadata'):
     """Shared preparation version for compilation and library readiness."""
     if kind == 'Music':
-        art_version = 'art8' if identity['target_id'] == 'ipod4g-q21' else 'art7'
-        return f"{music_verification}-duration-search-names-album-owner2-title-order1-music-folder1-recent-album-gain-{art_version}-{identity['target_id']}"
+        from tools.studio.targets import TARGETS
+        art_version = 'art8' if TARGETS[identity['target_id']]['lcd_format'] == 'gray2-horizontal' else 'art7'
+        return f"{music_verification}-duration-search-names-album-owner2-title-order1-retail2-recent-album-gain-{art_version}-{identity['target_id']}"
     if kind == 'Notes':
         return 'theme-fonts1'
-    return f'flat-photos1-{photo_dimension}' if kind == 'Photos' else 'default'
+    if kind == 'Photos':
+        profile = identity['media_profile']
+        return f"retail-photos3-{photo_dimension}-{profile['photo_width']}x{profile['photo_height']}"
+    return 'default'
 
 
 def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None):
     root = Path(root).resolve(strict=True)
+    kinds = tuple(kinds)
+    if records_by_kind is None:
+        records_by_kind = _records_by_kind(root, kinds)
     skipped = skipped or {}
     result = {}
     for kind in kinds:
@@ -209,8 +227,7 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None):
         rows, supported = [], []
         supported_bytes = skipped_count = ignored = 0
         allowed = extensions(kind)
-        records = (records_by_kind[kind] if records_by_kind is not None else
-                   (record for folder in source_folders(root, kind) for record in _file_records(folder)))
+        records = records_by_kind[kind]
         for path, info in records:
             relative = path.relative_to(root).as_posix()
             if relative.casefold() in excluded:
@@ -222,6 +239,28 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None):
                 supported_bytes += info.st_size
             else:
                 ignored += 1
+        if kind in ('Music', 'Videos'):
+            database = root / 'iPod_Control/iTunes/iTunesDB'
+            _plain(database, root)
+            if database.is_file():
+                info = database.stat()
+                rows.append(('iTunesDB', info.st_size, info.st_mtime_ns))
+            artwork_folder = root / 'iPod_Control' / 'Artwork'
+            for path, info in _file_records(artwork_folder):
+                rows.append((path.relative_to(root).as_posix(), info.st_size, info.st_mtime_ns))
+            if kind == 'Music':
+                from .album_art import signature as artwork_signature
+                from .retail_media import tracks
+                rows.append(('album-art', artwork_signature(tracks(root).values())))
+        if kind == 'Photos':
+            from .retail_media import images
+            for photo in images(root):
+                if photo['relative'].casefold() in excluded:
+                    skipped_count += 1
+                    continue
+                supported.append(str(root / photo['relative']))
+                supported_bytes += photo['bytes']
+                rows.append((photo['relative'], photo['bytes'], photo['mtime_ns'], photo['preview']))
         result[kind] = dict(count=len(supported), bytes=supported_bytes,
                             ignored=ignored, files=supported,
                             skipped=skipped_count,
@@ -248,8 +287,12 @@ def skip_files(identity, items):
     for kind, value in items:
         if kind not in KINDS:
             raise ValueError("Unknown media folder")
-        path = Path(value).resolve(strict=True)
-        if not path.is_file() or path.suffix.lower() not in extensions(kind):
+        path = Path(value).resolve()
+        retail_photo = False
+        if kind == 'Photos' and path.is_relative_to(root / 'Photos' / '@iTunes'):
+            from .retail_media import images
+            retail_photo = any(path == root / photo['relative'] for photo in images(root))
+        if not retail_photo and (not path.is_file() or path.suffix.lower() not in extensions(kind)):
             raise ValueError(f"This is not a supported {kind.lower()} file: {path}")
         if not any(path.is_relative_to(folder.resolve()) for folder in source_folders(root, kind)):
             raise ValueError(f"The file is outside this iPod's {kind} sources: {path}")
@@ -473,7 +516,7 @@ def _outputs_match(root, outputs):
             return False
         relative = Path(name)
         if (relative.is_absolute() or relative.drive or ".." in relative.parts or not relative.parts or
-                relative.parts[0].casefold() not in {".linnet", "music", "videos"}):
+                relative.parts[0].casefold() not in {".linnet", "music", "videos", "ipod_control"}):
             return False
         path = root / relative
         try:
@@ -498,37 +541,39 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None):
     catalog = root / ".LINNET" / "VIDEOS" / "INDEX.VID"
     _plain(catalog, root)
     entries = read_file(catalog)[1] if catalog.exists() else []
-    published = set()
-    for _, name, _ in entries:
+    published = {}
+    for catalog_key, name, title in entries:
         path = root / name.lstrip('/')
         _plain(path, root)
-        published.add(path.resolve())
+        published[path.resolve()] = title
+    allowed = video_source_extensions(identity)
+    available = [name for name in available if Path(name).suffix.lower() in allowed]
     native_extensions = native_video_extensions(identity)
     native = [name for name in available if Path(name).suffix.lower() in native_extensions]
-    chosen = available if selection is None else selection
+    chosen = available if not selection else selection
     chosen = list(dict.fromkeys([*native, *chosen]))
     jobs = {}
 
     def include(source, relative):
         _plain(source, Path(source.anchor))
         source = source.resolve(strict=True)
-        if not source.is_file() or source.suffix.lower() not in VIDEO_EXTENSIONS:
+        if not source.is_file() or source.suffix.lower() not in allowed:
             raise ValueError(f"Unsupported video: {source}")
         key = relative.casefold()
         if key in jobs and jobs[key]["source"] != str(source):
             raise ValueError(f"Two videos have the same library name: {relative}. Rename one first.")
         info = source.stat()
-        jobs[key] = dict(source=str(source), relative=relative, bytes=info.st_size, mtime_ns=info.st_mtime_ns)
+        jobs[key] = dict(source=str(source), relative=relative, bytes=info.st_size, mtime_ns=info.st_mtime_ns,
+                         catalog_title=published.get(source))
 
     for name in chosen:
         source = Path(name).absolute()
         _plain(source, root)
         source = source.resolve(strict=True)
-        if not source.is_relative_to(folder):
-            raise ValueError(f"Selected video is outside this iPod's Videos folder: {source}")
-        if source.is_relative_to(folder / "IPVF") and source in published:
-            continue
-        include(source, source.relative_to(folder).as_posix())
+        if not any(source.is_relative_to(p.resolve()) for p in source_folders(root, 'Videos')):
+            raise ValueError(f"Selected video is outside this iPod's video sources: {source}")
+        include(source, source.relative_to(folder).as_posix() if source.is_relative_to(folder)
+                else source.relative_to(root).as_posix())
     for kind, name in pending:
         if kind != "Videos":
             continue
@@ -539,7 +584,7 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None):
             raise ValueError("Use Choose videos and select this file under Videos on this iPod.")
         is_folder = source.is_dir()
         for path in _files(source) if is_folder else [source]:
-            if is_folder and path.suffix.lower() not in VIDEO_EXTENSIONS:
+            if is_folder and path.suffix.lower() not in allowed:
                 continue
             relative = (Path(source.name) / path.relative_to(source)).as_posix() if is_folder else source.name
             existing = folder / relative
@@ -612,7 +657,7 @@ def run(identity, selected, pending=(), **options):
                             remaining.append(error)
                             continue
                     else:
-                        if kind != "Videos" or source.suffix.lower() not in VIDEO_EXTENSIONS:
+                        if kind != "Videos" or source.suffix.lower() not in allowed:
                             remaining.append(error)
                             continue
                         excluded_sources.add(str(source).casefold())
@@ -645,7 +690,7 @@ def run(identity, selected, pending=(), **options):
 
 def _run(identity, selected, pending=(), *, progress=lambda message: None, cancelled=lambda: False,
         photo_dimension=640, ffmpeg=None, ffprobe=None, force=False, music_verification="metadata",
-        video_selection=None, progress_detail=None, excluded_sources=None):
+        video_selection=None, progress_detail=None, excluded_sources=None, online_artwork=False):
     """Copy additions, prepare and publish selected folders; retain per-step receipts.
 
     Stop requests are honored between files and between compiler/publication calls.
@@ -760,6 +805,10 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 report["steps"].append(dict(renamed=str(old), destination=str(new)))
                 record()
             _normalize_music_paths(root, checkpoint, renamed_music)
+            if online_artwork:
+                from .album_art import fetch
+                report['steps'].append(dict(kind='Music', artwork_lookup=fetch(root, progress=progress,
+                    checkpoint=checkpoint, retry_missing=force)))
         progress("Scanning the iPod folders…")
         inventory = scan(root, selected, skipped=skipped)
         if "Videos" in selected:
@@ -770,10 +819,20 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             checkpoint()
             item = inventory[kind]
             if not item["count"]:
+                if kind == 'Photos' and item.get('skipped'):
+                    from .media_library import list_items, remove_items
+                    libraries = [row for row in list_items(identity)
+                                 if row['kind'] == 'Photos' and row['category'] == 'library']
+                    if libraries:
+                        remove_items(identity, libraries)
+                    state.pop(kind, None)
+                    _save(state_path, state)
+                    progress('Photos: all sources excluded; Linnet photo index retired.')
+                    continue
                 progress(f"{kind}: no supported files; existing prepared library retained.")
                 continue
             option = preparation_option(kind, identity, photo_dimension, music_verification)
-            signature = (f"ipvf-videos-ipvf-{media_profile['video_fps']}-{media_profile['video_color']}-realtime:{item['fingerprint']}" if kind == "Videos"
+            signature = (f"videos-v3-{json.dumps(media_profile, sort_keys=True)}:{item['fingerprint']}" if kind == "Videos"
                          else f"{option}:{item['fingerprint']}")
             saved = state.get(kind, {})
             if not isinstance(saved, dict):
@@ -814,12 +873,15 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 elif kind == "Photos":
                     from .photos import compile_photos
                     from .publish_photos import publish_photos
+                    from .retail_media import images
                     package = cache / "photos.pimg"
                     compile_photos(folder, package, max_dimension=photo_dimension,
                                    viewport_width=media_profile["photo_width"],
                                    viewport_height=media_profile["photo_height"],
                                    excluded={Path(value).relative_to("Photos").as_posix()
-                                             for value in skipped["Photos"]})
+                                             for value in skipped["Photos"]},
+                                   additional_sources={Path(p['relative']).relative_to('Photos').as_posix():
+                                                       (p['preview'], p['title']) for p in images(root)})
                     checkpoint()
                     progress("Publishing prepared photos…")
                     published.append(publish_photos(package, **target_args(identity)))
@@ -857,10 +919,61 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             key = hashlib.sha256(relative.encode()).hexdigest()[:8].upper()
                             source_info = source.stat()
                             source_stamp = (source_info.st_size, source_info.st_mtime_ns)
+                            if media_profile["video_backend"] == "bcm-mp4":
+                                from .native_video import inspect_file as inspect_native, prepare as prepare_native
+                                from .publish_video import index_video
+                                fingerprint = hashlib.sha256(f"native-mp4-v2:{json.dumps(media_profile, sort_keys=True)}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
+                                from .retail_media import tracks
+                                label = video_title(job.get('catalog_title') or tracks(root).get(str(source.resolve()).casefold(), {}).get('title') or relative)
+                                cached = video_state.get(relative, {})
+                                if (not force and isinstance(cached, dict) and cached.get("signature") == fingerprint
+                                        and catalog_contains(root, relative, label, path=False)
+                                        and _outputs_match(root, cached.get("outputs", []))):
+                                    output_paths.extend(name for name, digest in cached.get("outputs", []))
+                                    report["steps"].append(dict(kind=kind, file=relative, status="unchanged"))
+                                    continue
+                                compatible = False
+                                if source.suffix.lower() in (".mp4", ".m4v"):
+                                    try:
+                                        inspect_native(source, ffprobe=ffprobe, profile=media_profile)
+                                        compatible = True
+                                    except ValueError:
+                                        pass
+                                progress(f"Preparing native video {index+1}/{item['count']}: {relative}")
+                                if compatible and source.is_relative_to(root):
+                                    result = index_video(source, title=label, library_key=relative, ffprobe=ffprobe, **target_args(identity))
+                                    outputs = [(source.relative_to(root).as_posix(), _hash(source))]
+                                    output_paths.append(source.relative_to(root).as_posix())
+                                else:
+                                    package = cache / "videos" / (key + "-" + fingerprint[:16] + ".mp4")
+                                    reusable = package.exists() and not force
+                                    if reusable:
+                                        try: inspect_native(package, ffprobe=ffprobe, profile=media_profile)
+                                        except (OSError, ValueError): reusable = False
+                                    if not reusable:
+                                        prepare_native(source, package, profile=media_profile, ffmpeg=ffmpeg, ffprobe=ffprobe, progress=progress, cancelled=cancelled)
+                                    checkpoint()
+                                    after = source.stat()
+                                    if (after.st_size, after.st_mtime_ns) != source_stamp:
+                                        raise ValueError("Video changed during preparation; scan again")
+                                    result = publish_video(package, title=label, library_key=relative, ffprobe=ffprobe, **target_args(identity))
+                                    output_name = Path(result['package']).relative_to(root).as_posix()
+                                    outputs = [(output_name, result["candidate_sha256"])]
+                                    output_paths.append(output_name)
+                                after = source.stat()
+                                if (after.st_size, after.st_mtime_ns) != source_stamp:
+                                    raise ValueError("Video changed during publication; scan again")
+                                published.append(result)
+                                video_state[relative] = dict(signature=fingerprint, outputs=outputs, source_stamp=source_stamp)
+                                _save(state_path, state)
+                                report["steps"].append(dict(kind=kind, file=relative, status="published", publication=result))
+                                record()
+                                continue
                             profile_key = (f"{media_profile['video_width']}x{media_profile['video_height']}-"
                                            f"{media_profile['video_fps']}-{media_profile['video_color']}-realtime")
                             fingerprint = hashlib.sha256(f"ipvf-{profile_key}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
-                            label = video_title(relative)
+                            from .retail_media import tracks
+                            label = video_title(job.get('catalog_title') or tracks(root).get(str(source.resolve()).casefold(), {}).get('title') or relative)
                             cached = video_state.get(relative, {})
                             if not isinstance(cached, dict):
                                 cached = {}
@@ -885,7 +998,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                 from .publish_video import index_ipvf
                                 result = index_ipvf(source, title=label, library_key=relative, **target_args(identity))
                                 published.append(result)
-                                video_state[relative] = dict(signature=fingerprint, outputs=[])
+                                video_state[relative] = dict(signature=fingerprint, outputs=[], source_stamp=source_stamp)
                                 _save(state_path, state)
                                 report["steps"].append(dict(kind=kind, file=relative, status="published", publication=result))
                                 record()
@@ -940,7 +1053,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             after = source.stat()
                             if (after.st_size, after.st_mtime_ns) != source_stamp:
                                 raise ValueError("Video changed during publication; scan again before updating")
-                            video_state[relative] = dict(signature=fingerprint,
+                            video_state[relative] = dict(signature=fingerprint, source_stamp=source_stamp,
                                 outputs=[(output_name, result["candidate_sha256"])])
                             _save(state_path, state)
                             report["steps"].append(dict(kind=kind, file=relative, status="published", publication=result))
@@ -968,6 +1081,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     raise ValueError(f"{kind} changed during processing. Scan again before updating.")
                 outputs = [(name, _hash(root / name)) for name in output_paths]
                 state[kind] = dict(signature=signature, outputs=outputs)
+                if kind == "Videos":
+                    state[kind]["media_profile"] = media_profile
                 _save(state_path, state)
                 report["steps"].append(dict(kind=kind, status="published", publications=published))
                 progress(f"{kind}: published and verified on your iPod ({root / '.LINNET'}).")
@@ -1037,6 +1152,12 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             summary.append(f"On your iPod ({root}): {', '.join(ready)}.")
         if failed:
             summary.append(f"Could not finish: {', '.join(failed)}. Open report for the errors.")
+        for step in report['steps']:
+            artwork = step.get('artwork_lookup')
+            if artwork:
+                summary.append(f"Album covers: {artwork['downloaded']} downloaded; {artwork.get('cached', 0)} reused; {artwork['unmatched']} without a confident match.")
+                if artwork['errors']:
+                    summary.append('Artwork service unavailable; cached covers were kept. Prepare again to retry.')
         if report["stopped"]:
             summary.append("Update stopped; completed work is retained on the iPod.")
         elif report["errors"] and not failed:

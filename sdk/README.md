@@ -134,6 +134,13 @@ to RGB565, at most 64 resources / 256 KiB combined.
 P3 PPM sources use range 255, dimensions up to 1024 per side and no more than
 131,072 pixels. Assets must still fit the combined 256 KiB pack limit.
 
+Target editions live in `targets/<target>/themes/*/theme.toml` and replace a
+shared manifest with the same ID for that target only. Duplicate IDs within
+one scope are rejected. Keep target editions explicitly restricted with
+`targets = ["<target>"]`. M25 uses its native screens and the complete 320 × 240
+layouts in `tools/content/video_layouts.py`; it does not scale Photo geometry.
+Its default remains `linnet.theme.default` (Linnet).
+
 The bundled `linnet.theme.album-colors` theme uses `[theme] style="album-art"`.
 All thirteen semantic colors follow the current music artwork on every screen,
 with a 250 ms transition. Rockbox Photo's 4,096-bucket, every-fourth-pixel

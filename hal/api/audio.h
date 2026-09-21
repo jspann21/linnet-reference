@@ -26,6 +26,7 @@ bool ln_audio_stop(void);
  * A successful halt requires init before submitting the replacement stream. */
 bool ln_audio_halt(void);
 bool ln_audio_volume(int32_t db_tenths);
+bool ln_audio_lineout(bool enabled);
 void ln_audio_irq(void);
 void ln_audio_service(uint32_t now);
 void ln_audio_snapshot(struct ln_audio_status *out);

@@ -1,6 +1,6 @@
 #include "hal/api/platform.h"
 #if defined(LINNET_IMAGE_BOOT)
-#include "hal/pp5020/boot_wordmark.h"
+#include "targets/photo4g-p98/boot_wordmark.h"
 #endif
 
 /* Register addresses and bus protocol provenance: docs/architecture.md. */

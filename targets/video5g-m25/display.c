@@ -1,0 +1,230 @@
+#include "hal/api/display.h"
+#include "hal/api/platform.h"
+#include "hal/api/core.h"
+#include "hal/api/audio.h"
+#include "hal/pp502x/display_internal.h"
+#include "targets/video5g-m25/lcd.h"
+#include "boot/include/linnet_boot.h"
+#if defined(LINNET_IMAGE_OS)
+#include "targets/video5g-m25/coprocessor.h"
+#include "services/music/player.h"
+#include "services/video/video.h"
+#include "services/photos/photos.h"
+#include "services/music/coverflow.h"
+#endif
+#define REG(a) (*(volatile uint32_t *)(uintptr_t)(a))
+#define MB(o) REG(LINNET_DISPLAY_MAILBOX+(o))
+static bool cop_capable,clock_park_owned;
+static uint32_t cop_error;
+static void barrier(void){__asm__ volatile("":::"memory");}
+#include "hal/pp502x/cop_control.inc"
+static uint16_t draw[LINNET_DISPLAY_PIXELS] __attribute__((aligned(32)));
+static uint16_t scan[LINNET_DISPLAY_PIXELS] __attribute__((aligned(32)));
+static const uint16_t *presented=scan;
+extern void ln_memory_copy(void *,const void *,uint32_t);
+static bool initialized,dirty,direct,queued;
+static uint32_t queued_started,queue_high_water=1u;
+static uint32_t phase,cursor,started,wait_started,poll_at,error,submitted,completed,failures,resets,generation,pairs;
+#if !defined(LINNET_PROFILE_RELEASE)
+static uint32_t max_present_us;
+static uint32_t transfer_us,transfer_calls,transfer_max_us,last_present_us;
+#endif
+bool ln_display_init(void){
+    initialized=false;cop_capable=cop_probe();
+    if(!pause_worker(true)){error=1;return false;}
+    MB(LN_DISPLAY_ENABLED)=0;MB(LN_DISPLAY_STATE)=0;
+    if(!pause_worker(false)){error=2;return false;}
+    if(!ln_m25_lcd_init()){error=3;return false;}
+    ++generation;phase=0;queued=false;dirty=true;direct=false;initialized=true;error=0;return true;
+}
+uint32_t ln_display_init_error(void){return error;}
+uint16_t *ln_display_framebuffer(void){return direct?0:draw;}
+uint16_t *ln_display_direct_framebuffer(void){
+    if(!initialized||phase||direct)return 0;direct=true;dirty=true;return draw;
+}
+bool ln_display_damage(int32_t x,int32_t y,int32_t width,int32_t height){
+    if(!initialized||width<=0||height<=0||x>=320||y>=240||x<=-width||y<=-height)return false;
+    dirty=true;return true;
+}
+bool ln_display_can_render(void){
+#if defined(LINNET_IMAGE_OS)
+    if(ln_m25_coprocessor_owned())return false;
+#endif
+    if(!phase)return true;
+#if defined(LINNET_IMAGE_OS) && defined(LINNET_COVERFLOW)
+    return phase==3u&&!queued&&ln_coverflow_active();
+#else
+    return false;
+#endif
+}
+bool ln_display_present(void){
+#if defined(LINNET_IMAGE_OS)
+    if(ln_m25_coprocessor_owned())return false;
+#endif
+    if(!initialized||!dirty||!ln_display_can_render())return false;
+#if defined(LINNET_IMAGE_OS) && defined(LINNET_COVERFLOW)
+    /* Once PIO finishes, BCM owns its own pixels. CPU rendering can overlap
+     * that scanout, with at most one queued frame owning the draw buffer. */
+    if(ln_coverflow_active())presented=draw;
+    else
+#endif
+    {ln_memory_copy(scan,draw,sizeof scan);presented=scan;}
+    direct=false;dirty=false;++submitted;
+    if(phase==3u){queued=true;queued_started=ln_time_us();queue_high_water=2u;return true;}
+    cursor=0;phase=1;started=wait_started=poll_at=ln_time_us();return true;
+}
+static bool fail(uint32_t code){error=code;++failures;phase=0;queued=false;dirty=true;return false;}
+bool ln_display_service(uint32_t max_pairs){
+#if defined(LINNET_IMAGE_OS)
+    if(ln_m25_coprocessor_owned())return true;
+#endif
+    if(!initialized)return false;
+    if(!phase)return true;
+    bool ready;
+    if(phase==1||phase==3){
+        if(max_pairs==LINNET_DISPLAY_SERVICE_PAIRS&&(int32_t)(ln_time_us()-poll_at)<0)return true;
+        if(!ln_m25_lcd_ready(&ready))return fail(5);
+        /* A long foreground image hash can postpone this service. Only a
+         * still-busy BCM transaction is a timeout, not the CPU's scheduling
+         * gap or an already completed LCD update. */
+        if(!ready){
+            uint32_t now=ln_time_us();poll_at=now+1000u;
+            return now-wait_started>=500000u?fail(4):true;
+        }
+        if(phase==3){
+#if !defined(LINNET_PROFILE_RELEASE)
+            uint32_t elapsed=ln_time_us()-started;
+            last_present_us=elapsed;
+            if(elapsed>max_present_us)max_present_us=elapsed;
+#endif
+            phase=0;++completed;
+            if(!queued)return true;
+            queued=false;cursor=0;started=queued_started;
+        }
+        phase=2;
+    }
+    if(!max_pairs)return true;if(max_pairs>LINNET_DISPLAY_SERVICE_PAIRS)max_pairs=LINNET_DISPLAY_SERVICE_PAIRS;
+#if defined(LINNET_IMAGE_OS) && defined(LINNET_COVERFLOW)
+    if(max_pairs==LINNET_DISPLAY_SERVICE_PAIRS&&ln_coverflow_active()){
+        struct ln_audio_status audio;ln_audio_snapshot(&audio);
+        /* A full frame takes about 13 ms with IRQs enabled. Reserve at least
+         * half the PCM ring before avoiding decoder gaps between LCD chunks. */
+        if(!audio.playing||audio.paused||audio.queued>=LINNET_AUDIO_RING_FRAMES/2u)max_pairs=LINNET_DISPLAY_PIXELS/2u;
+    }
+#endif
+    uint32_t count=max_pairs*2u;
+    if(count>LINNET_DISPLAY_PIXELS-cursor)count=LINNET_DISPLAY_PIXELS-cursor;
+#if !defined(LINNET_PROFILE_RELEASE)
+    uint32_t transfer_started=ln_time_us();
+#endif
+    if(!ln_m25_lcd_write(cursor,presented+cursor,count))return fail(6);
+#if !defined(LINNET_PROFILE_RELEASE)
+    uint32_t elapsed=ln_time_us()-transfer_started;++transfer_calls;transfer_us+=elapsed;
+    if(elapsed>transfer_max_us)transfer_max_us=elapsed;
+#endif
+    cursor+=count;pairs+=count/2u;
+    if(cursor==LINNET_DISPLAY_PIXELS){if(!ln_m25_lcd_commit())return fail(7);phase=3;wait_started=ln_time_us();poll_at=wait_started+1000u;}
+    return true;
+}
+bool ln_display_wait_deadline(uint32_t *deadline){
+    if(phase!=1u&&phase!=3u)return false;
+    if(deadline)*deadline=poll_at;
+    return true;
+}
+void ln_display_sync_irq(void){}
+void ln_display_column_mode(bool enabled){(void)enabled;}
+bool ln_display_upgrade_blit(void){return false;}
+bool ln_display_busy(void){
+#if defined(LINNET_IMAGE_OS)
+    if(ln_m25_coprocessor_owned())return true;
+#endif
+    return phase!=0;
+}
+bool ln_display_cop_capable(void){return false;}
+bool ln_display_quiesce(void){
+#if defined(LINNET_IMAGE_OS)
+    if(ln_m25_coprocessor_owned())return false;
+#endif
+    uint32_t start=ln_time_us();
+    for(uint32_t budget=0;phase&&budget<100000u;++budget){
+        if(!ln_display_service(256u))return false;
+        if(ln_time_us()-start>=500000u)return false;
+    }
+    return !phase;
+}
+bool ln_display_reset(void){
+    if(!ln_display_quiesce())return false;++resets;dirty=true;direct=false;return ln_m25_lcd_init();
+}
+bool ln_display_diagnostic(uint32_t pattern){
+#if defined(LINNET_IMAGE_OS)
+#if !defined(LINNET_PROFILE_RELEASE)
+    if(pattern>=0x4d250015u&&pattern<=0x4d250016u)return ln_m25_coprocessor_fault(pattern-0x4d250014u);
+#endif
+    if(pattern>=0x4d250010u&&pattern<=0x4d250014u)return ln_m25_coprocessor_control(pattern-0x4d25000fu);
+    if(pattern>=0x4d250002u&&pattern<=0x4d250004u){
+        if(ln_player_busy())return false;
+#if defined(LINNET_PHOTOS)
+        if(ln_photos_active()||ln_photos_pending())return false;
+#endif
+#if defined(LINNET_COVERFLOW)
+        if(ln_coverflow_active())return false;
+#endif
+#if defined(LINNET_VIDEO)
+        if(ln_video_active()||ln_video_pending())return false;
+#endif
+        return ln_m25_coprocessor_begin(pattern-0x4d250002u);
+    }
+#endif
+    if(pattern||!ln_display_quiesce())return false;dirty=true;return ln_lcd_fill(0x07e0u);
+}
+void ln_display_presentation_snapshot(struct ln_display_presentation *out){
+    if(out)*out=(struct ln_display_presentation){submitted,completed,failures,resets,generation};
+}
+void ln_display_get_metrics(struct ln_display_metrics *out){
+    if(out)*out=(struct ln_display_metrics){submitted,completed,completed,pairs,queue_high_water,failures,error,resets,
+        generation,(phase?1u:0u)+(queued?1u:0u),0,0,
+#if !defined(LINNET_PROFILE_RELEASE)
+        max_present_us,
+#else
+        0,
+#endif
+        submitted,completed};
+}
+const uint16_t *ln_display_snapshot(void){return direct?0:presented;}
+uint32_t ln_display_snapshot_crc32(void){return direct?0:ln_crc32((const uint8_t *)presented,LINNET_DISPLAY_BYTES);}
+size_t ln_display_capture(uint8_t *out,size_t capacity){
+    if(!initialized||direct||!out||capacity<LINNET_DISPLAY_BYTES)return 0;
+    for(uint32_t i=0;i<LINNET_DISPLAY_PIXELS;++i){out[2*i]=presented[i];out[2*i+1]=presented[i]>>8;}
+    return LINNET_DISPLAY_BYTES;
+}
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_display_sync_diagnostics(uint32_t out[16]){
+    if(!out)return;for(uint32_t i=0;i<16u;++i)out[i]=0;
+    out[0]=0x35595344u;out[1]=phase;out[2]=cursor;out[3]=error;out[4]=submitted;out[5]=completed;out[6]=failures;
+    out[7]=transfer_us;out[8]=transfer_calls;out[9]=transfer_max_us;out[10]=last_present_us;out[11]=max_present_us;
+}
+void ln_display_blit_diagnostics(uint32_t out[16]){ln_display_sync_diagnostics(out);}
+uint32_t ln_display_column_mismatches(void){return 0;}
+int ln_recovery_presentation_stop(void){return ln_display_quiesce();}
+#endif
+
+uint32_t ln_display_target_diagnostics(uint32_t selector,uint32_t out[32]){
+#if defined(LINNET_IMAGE_OS)
+    if(selector==0x4d250002u)return ln_m25_coprocessor_snapshot(out);
+    if(selector>=0x4d250010u&&selector<0x4d250018u)return ln_m25_coprocessor_channel(selector-0x4d250010u,out);
+    if(selector>=0x4d250030u&&selector<0x4d250038u)return ln_m25_coprocessor_channel(16u+selector-0x4d250030u,out);
+    if(selector==0x4d250020u)return ln_m25_coprocessor_channel(8u,out);
+    if(selector==0x4d250021u)return ln_m25_coprocessor_channel(9u,out);
+    if(selector==0x4d250022u)return ln_m25_coprocessor_channel(10u,out);
+    if(selector==0x4d250023u)return ln_m25_coprocessor_channel(11u,out);
+    if(selector==0x4d250026u)return ln_m25_coprocessor_channel(14u,out);
+    if(selector==0x4d250025u)return ln_m25_coprocessor_channel(13u,out);
+    if(selector==0x4d250024u)return ln_m25_coprocessor_channel(12u,out);
+#endif
+    if(selector!=0x4d250001u||!out)return 0;
+    for(uint32_t i=0;i<8u;++i)out[i]=0;
+    out[0]=selector;out[1]=1u;
+    if(!ln_display_quiesce()){out[2]=1u;return 8u;}
+    if(!ln_m25_lcd_runtime_header(out+4u))out[2]=2u;
+    return 8u;
+}

@@ -19,7 +19,7 @@ static bool same_path(const char *a,const char *b){
 static void copy_path(char *dest,const char *source){
     uint32_t n=0;while(n<255u&&source[n]){dest[n]=source[n];++n;}dest[n]=0;
 }
-#if defined(LINNET_TARGET_IPOD4G_Q21)
+#if LINNET_LCD_FORMAT == 2
 static void monochrome_cover(uint16_t *image){
     static const uint8_t threshold[16]={0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5};
     static const uint16_t gray[4]={0x0000,0x52aa,0xad55,0xffff};
@@ -101,7 +101,7 @@ void ln_music_art_step(bool allow_read){
     if(transferred!=sizeof pixels[0]){finish();return;}
     {
         if(ln_crc32((const uint8_t*)pixels[front^1u],8192)==crc){
-#if defined(LINNET_TARGET_IPOD4G_Q21)
+#if LINNET_LCD_FORMAT == 2
             monochrome_cover(pixels[front^1u]);
 #endif
             uint32_t slot=front^1u;

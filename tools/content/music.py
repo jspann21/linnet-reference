@@ -40,8 +40,8 @@ UNKNOWN_GAIN = -0x80000000
 CODECS = {"pcm_le": 1, "pcm_be": 2, "float_le": 3, "float_be": 4,
           "mp3": 16, "aac": 17, "alac": 18, "flac": 19,
           "vorbis": 20, "opus": 21, "wavpack": 22, "unknown": 255}
-EXTENSIONS = {".wav", ".aif", ".aiff", ".aifc", ".mp3", ".m4a",
-              ".aac", ".flac", ".ogg", ".opus", ".wv"}
+EXTENSIONS = {".wav", ".aif", ".aiff", ".aifc", ".mp3", ".m4a", ".m4b",
+              ".aac", ".flac", ".flc", ".ogg", ".opus", ".ops", ".wv"}
 COVER_NAMES = ("cover.png", "cover.jpg", "folder.jpg", "Folder.jpg")
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
@@ -154,7 +154,7 @@ def _cover_pixels(cover, target: str | None = None) -> bytes:
         if image.getexif().get(274, 1) != 1:
             image = ImageOps.exif_transpose(image)
         image = ImageOps.fit(_cover_rgb(image), (64, 64))
-        if target == "ipod4g-q21":
+        if target and TARGETS[target]["lcd_format"] == "gray2-horizontal":
             image = _mp102_cover(image)
         from .photos import _rgb565
         return _rgb565(image)
@@ -457,13 +457,26 @@ def _quick_metadata(path: Path) -> dict | None:
         import mutagen
     except ImportError:
         return None
-    # Raw AAC needs probing; MP4 can contain different codecs or several streams.
-    if path.suffix.lower() not in (".mp3", ".flac", ".ogg", ".opus", ".wv"):
+    # Raw AAC still needs probing; MP4's sample entry identifies its codec.
+    if path.suffix.lower() not in (".mp3", ".m4a", ".m4b", ".flac", ".flc", ".ogg", ".opus", ".ops", ".wv"):
         return None
     try:
-        audio = mutagen.File(path, easy=True)
+        audio = mutagen.File(path, easy=path.suffix.lower() not in ('.m4a', '.m4b'))
         codec_name = {"MP3": "mp3", "EasyMP3": "mp3", "FLAC": "flac", "OggVorbis": "vorbis",
                       "OggOpus": "opus", "WavPack": "wavpack"}.get(type(audio).__name__)
+        if type(audio).__name__ == "MP4":
+            codec_name = {"mp4a.40.2": "aac", "alac": "alac"}.get(audio.info.codec)
+            from mutagen.mp4 import Atoms
+            with path.open('rb') as reader:
+                atoms = Atoms(reader)
+                audio_tracks = 0
+                for track in atoms[b'moov'].findall(b'trak'):
+                    ok, handler = track[b'mdia', b'hdlr'].read(reader)
+                    if not ok:
+                        return None
+                    audio_tracks += handler[8:12] == b'soun'
+                if audio_tracks != 1:
+                    return None
         if codec_name is None:
             return None
         info = audio.info
@@ -474,13 +487,23 @@ def _quick_metadata(path: Path) -> dict | None:
             return None
         tags = {str(k).lower(): str(v[0]) if isinstance(v, list) and v else str(v)
                 for k, v in (audio.tags or {}).items()}
+        if type(audio).__name__ == 'MP4':
+            raw = audio.tags or {}
+            tags = {key: str(raw[atom][0]) for atom, key in {
+                '\xa9nam': 'title', '\xa9ART': 'artist', '\xa9alb': 'album',
+                'aART': 'album_artist', '\xa9gen': 'genre', '\xa9day': 'date',
+                '\xa9wrt': 'composer'}.items() if raw.get(atom)}
+            tags['compilation'] = '1' if raw.get('cpil') else '0'
+            for atom, key in (('trkn', 'track'), ('disk', 'disc')):
+                if raw.get(atom):
+                    tags[key] = str(raw[atom][0][0])
         for key in ("track", "disc"):
             if key + "number" in tags:
                 tags[key] = tags[key + "number"]
         return dict(codec=CODECS[codec_name], channels=channels, rate=rate, bits=bits,
                     frames=_quick_frames(path, info, codec_name, rate), data_offset=0,
                     data_bytes=path.stat().st_size, tags=tags)
-    except (mutagen.MutagenError, ValueError, AttributeError, TypeError, struct.error):
+    except (mutagen.MutagenError, ValueError, AttributeError, TypeError, KeyError, struct.error):
         return None
 
 
@@ -496,6 +519,8 @@ class _MetadataCache:
             self.connection.execute("CREATE TABLE IF NOT EXISTS metadata "
                 "(source TEXT, relative TEXT, size INTEGER, mtime INTEGER, parser TEXT, "
                 "value TEXT, PRIMARY KEY(source, relative, parser))")
+            self.connection.execute("CREATE TABLE IF NOT EXISTS coverflow "
+                "(key BLOB PRIMARY KEY, value BLOB, digest BLOB)")
             self.connection.commit()
         except (OSError, sqlite3.Error):
             self._disable()
@@ -598,6 +623,26 @@ class _MetadataCache:
         except OverflowError:
             # NTFS timestamps can exceed SQLite's signed 64-bit nanoseconds.
             return
+        except sqlite3.Error:
+            self._disable()
+
+    def coverflow_get(self, key):
+        if self.connection is None:
+            return None
+        try:
+            row = self.connection.execute("SELECT value, digest FROM coverflow WHERE key=?", (key,)).fetchone()
+            if row and isinstance(row[0], bytes) and len(row[0]) == 14080 and hashlib.sha256(row[0]).digest() == row[1]:
+                return row[0]
+        except sqlite3.Error:
+            self._disable()
+        return None
+
+    def coverflow_put(self, key, value):
+        if self.connection is None:
+            return
+        try:
+            self.connection.execute("INSERT OR REPLACE INTO coverflow VALUES (?,?,?)",
+                (key, value, hashlib.sha256(value).digest()))
         except sqlite3.Error:
             self._disable()
 
@@ -866,6 +911,8 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     coverflow_originals = {}
     coverflow_enabled = bool(target and TARGETS[target].get('capabilities', {}).get('cover_flow', False))
     art_cache: dict[Path, int] = {}
+    from .retail_media import metadata as retail_metadata
+    retail = retail_metadata(device_root) if device_root is not None else {}
     folder_covers: dict[Path, Path | None] = {}
     art_indices: dict[bytes, int] = {}
     embedded_cache: OrderedDict[bytes, int] = OrderedDict()
@@ -888,7 +935,12 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             candidates = [folder / name for name in COVER_NAMES]
             folder_covers[folder] = next((p for p in candidates if p.is_file()), None)
         cover = folder_covers[folder]
+        sidecar = cover is not None
         embedded = _embedded_cover(path) if cover is None else None
+        if cover is None and embedded is None:
+            saved_cover = retail.get(str(path.resolve()).casefold(), {}).get('artwork')
+            if saved_cover:
+                cover = Path(saved_cover)
         if cover is None and embedded is None:
             return NO_INDEX
         # Compare the actual tag bytes; reuse conversion only within this build.
@@ -916,7 +968,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                 embedded_cache_bytes += len(embedded)
 
         if digest in art_indices:
-            if cover is not None:
+            if sidecar:
                 art_cache[folder] = art_indices[digest]
             remember_embedded(art_indices[digest])
             return art_indices[digest]
@@ -932,7 +984,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             coverflow_originals[index] = original_cover(cover if cover is not None else embedded)
         artwork_records.append(struct.pack("<QIHHIIII", int.from_bytes(digest[:8], "little"),
             string("/.LINNET/ART/" + name), 64, 64, 1, len(pixels), zlib.crc32(pixels), 0))
-        if cover is not None:
+        if sidecar:
             art_cache[folder] = index
         art_indices[digest] = index
         remember_embedded(index)
@@ -989,7 +1041,12 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         if stage_audio:
             temporary.replace(output / "MUSIC" / name)
         location = location or "/MUSIC/" + name
-        tags = metadata["tags"]
+        saved_tags = retail.get(str(path.resolve()).casefold(), {})
+        tags = {**{key: str(value) for key, value in saved_tags.items() if value},
+                **{key: value for key, value in metadata["tags"].items() if value}}
+        if device_root is not None:
+            tags = {key: value.encode('utf-8')[:MAX_STRING].decode('utf-8', errors='ignore')
+                    for key, value in tags.items()}
         try:
             title = _text(tags.get("title") or path.stem)
             artist = _text(tags.get("artist") or "Unknown Artist")
@@ -1125,7 +1182,8 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     temporary.replace(output / "LIBRARY.PDB")
     if coverflow_enabled:
         from .coverflow import prepare
-        prepare(database, output, output / 'COVERS.CFL', originals=coverflow_originals)
+        prepare(database, output, output / 'COVERS.CFL', originals=coverflow_originals,
+                cache=cache, bypass_cache=bypass_cache)
     report = dict(format="PODB", integrity="sha256" if verification == "full" else "metadata", tracks=len(records), groups=len(groups),
                   artwork=len(artwork_records), bytes=len(database), sha256=hashlib.sha256(database).hexdigest(),
                   database=str(output / "LIBRARY.PDB"), entries=entries,

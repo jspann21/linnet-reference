@@ -62,23 +62,20 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r){
         else if(q->length==4u&&ln_read_le32(q->payload)==7u){ln_display_sync_diagnostics(words);count=16u;}
 #if defined(LINNET_COVERFLOW)
         else if(q->length==4u&&ln_read_le32(q->payload)==11u){ln_coverflow_diagnostics(words);count=16u;}
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+        else if(q->length==4u&&ln_read_le32(q->payload)==12u){ln_coverflow_render_diagnostics(words);count=16u;}
+#endif
 #endif
         else if(q->length==4u&&ln_read_le32(q->payload)==8u){ln_display_blit_diagnostics(words);count=16u;}
-#if defined(LINNET_TARGET_IPOD4G_Q21)
+#if LINNET_IDLE_CLOCK_HZ
         else if(q->length==4u&&ln_read_le32(q->payload)==10u){
             extern void ln_runtime_idle_clock_diagnostics(uint32_t output[4]);
             ln_runtime_idle_clock_diagnostics(words);count=4u;
         }
 
 #endif
-#if defined(LINNET_TARGET_PHOTO4G_P98)
-        else if(q->length==4u&&ln_read_le32(q->payload)==9u){
-            words[0]=0x5044434cu;words[1]=0;
-            words[2]=*(volatile uint32_t *)(uintptr_t)0x6000d030u;
-            words[3]=ln_lcd_panel_type();
-            count=4u;
-        }
-#endif
+        else if(q->length==4u&&(count=ln_display_target_diagnostics(ln_read_le32(q->payload),words))!=0u){}
+
 #endif
         else if(q->length==4u&&ln_read_le32(q->payload)==5u){ln_storage_schedule_performance(words);count=24u;}
         else if(q->length==4u&&ln_read_le32(q->payload)==6u){ln_ata_clock_diagnostics(words);count=8u;}
@@ -137,6 +134,10 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r){
         if(q->length!=8||ln_read_le32(q->payload)!=generation)return 1;
         uint32_t mode=ln_read_le32(q->payload+4);if(mode<1||mode>5||!ln_block_inject(mode))return 1;
         ln_write_le32(ln_storage_reply+4,mode);break;}
+    case 90:
+        /* Read-only FAT ownership proof. This never publishes filesystem data. */
+        if(q->length!=4||ln_read_le32(q->payload)!=generation||ln_storage_prepare_writes()<0)return 1;
+        break;
     case 91:
         if(q->length!=4||ln_read_le32(q->payload)!=generation||!ln_storage_recover())return 1;
         break;

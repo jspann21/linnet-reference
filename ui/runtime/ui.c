@@ -33,8 +33,8 @@ static uint32_t layout(void){return ln_ui_themes[active_theme].layout;}
 static uint16_t color(uint32_t role){return ln_ui_color(LN_UI_COLOR_TOKEN+role);}
 static bool same(const char*a,const char*b){if(!a||!b)return false;while(*a&&*a==*b){++a;++b;}return *a==*b;}
 /* Stable menu IDs are independent of theme labels and disabled features. */
-static uint8_t menu_order[LN_MENU_GROUPS][16]={{0,1,2,3,9,5,6},{0,1,2,7,9,11,8},{0,1,2,3,4,5,6,7,8,9},{0,1,2,3}};
-static uint8_t menu_counts[LN_MENU_GROUPS]={7,7,10,4};
+static uint8_t menu_order[LN_MENU_GROUPS][16]={{0,1,2,3,9,5,6},{0,1,2,7,9,11,8},{0,10,1,2,3,4,5,6,7,8,9},{0,1,2,3}};
+static uint8_t menu_counts[LN_MENU_GROUPS]={7,7,11,4};
 uint32_t ln_ui_menu_count(uint32_t group){return group<LN_MENU_GROUPS?menu_counts[group]:0;}
 uint32_t ln_ui_menu_item(uint32_t group,uint32_t row){return group<LN_MENU_GROUPS&&row<menu_counts[group]?menu_order[group][row]:UINT32_MAX;}
 bool ln_ui_menu_load(const uint8_t *data,uint32_t length){
@@ -42,7 +42,7 @@ bool ln_ui_menu_load(const uint8_t *data,uint32_t length){
     uint32_t crc=~0u;for(uint32_t i=0;i<76;++i){crc^=data[i];for(uint32_t bit=0;bit<8;++bit)crc=(crc>>1)^((0u-(crc&1u))&0xedb88320u);}
     uint32_t saved=(uint32_t)data[76]|((uint32_t)data[77]<<8)|((uint32_t)data[78]<<16)|((uint32_t)data[79]<<24);
     if(~crc!=saved)return false;
-    static const uint8_t limits[]={10,15,10,5};
+    static const uint8_t limits[]={10,15,11,5};
     for(uint32_t g=0;g<LN_MENU_GROUPS;++g){const uint8_t *row=data+8+g*17;uint32_t seen=0;
         if(!row[0]||row[0]>limits[g])return false;
         for(uint32_t i=0;i<row[0];++i){uint32_t id=row[i+1];if(id>=limits[g]||(seen&(1u<<id)))return false;seen|=1u<<id;}
@@ -55,13 +55,17 @@ bool ln_ui_menu_load(const uint8_t *data,uint32_t length){
     for(uint32_t i=0;i<menu_counts[LN_MENU_HOME];++i){uint8_t id=menu_order[LN_MENU_HOME][i];
         if(id==8){if(!(seen&(1u<<3)))home[count++]=3;if(!(seen&(1u<<9)))home[count++]=9;}else home[count++]=id;}
     menu_counts[LN_MENU_HOME]=(uint8_t)count;for(uint32_t i=0;i<count;++i)menu_order[LN_MENU_HOME][i]=home[i];
+    uint8_t settings[16];count=0;seen=0;
+    for(uint32_t i=0;i<menu_counts[LN_MENU_SETTINGS];++i)seen|=1u<<menu_order[LN_MENU_SETTINGS][i];
+    for(uint32_t i=0;i<menu_counts[LN_MENU_SETTINGS];++i){uint8_t id=menu_order[LN_MENU_SETTINGS][i];settings[count++]=id;if(id==0&&!(seen&(1u<<10)))settings[count++]=10;}
+    menu_counts[LN_MENU_SETTINGS]=(uint8_t)count;for(uint32_t i=0;i<count;++i)menu_order[LN_MENU_SETTINGS][i]=settings[i];
     return true;
 }
 static const char *const menu_scenes[]={"linnet.system.home","linnet.system.music","linnet.system.settings","linnet.system.extras"};
 static const char *const menu_targets[LN_MENU_GROUPS][16]={
     {"linnet.system.music","linnet.system.cover-flow","linnet.system.photos","linnet.system.videos","linnet.system.files","linnet.system.now-playing","linnet.system.settings","local.example.notes","linnet.system.extras","linnet.system.notes"},
     {0},
-    {"linnet.system.display","linnet.system.themes","linnet.system.clock","linnet.system.battery","linnet.system.shutdown","linnet.system.sleep-timer","@sync","linnet.system.update","linnet.system.about","linnet.system.home"},
+    {"linnet.system.display","linnet.system.themes","linnet.system.clock","linnet.system.battery","linnet.system.shutdown","linnet.system.sleep-timer","@sync","linnet.system.update","linnet.system.about","linnet.system.home","linnet.system.video-settings"},
     {"linnet.system.clock","linnet.system.notes","linnet.system.videos","linnet.system.files","local.example.notes"}};
 static uint32_t menu_group(const struct ln_ui_node *n){
     if(!n||n->kind!=LN_UI_MENU||!n->targets)return UINT32_MAX;
@@ -560,7 +564,7 @@ static bool video_covers(const struct painter*p,const struct ln_ui_node*n,const 
     return source<target?target-source>=bytes:source-target>=LINNET_UI_WIDTH*LINNET_UI_HEIGHT*2u;
 }
 #include "ui/runtime/symbols.h"
-#include "ui/runtime/photo_chrome.h"
+#include "themes/ipod-photo/chrome.h"
 static void photo_stripes(struct painter*p,struct rect r,const uint16_t*stripes,uint32_t count){
     for(int32_t y=0;y<r.h;++y)fill(p,(struct rect){r.x,r.y+y,r.w,1},stripes[min(y,(int32_t)count-1)]);
 }
@@ -799,7 +803,7 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
             if(layout()==LN_UI_LAYOUT_IPOD_PHOTO){
                 uint32_t play=ln_ui_playback_status();if(play){if(play==1u)symbol_mask(p,left+3,n->y+3,15,15,photo_play,fg);else symbol(p,left+3,icon_y,play,fg);left+=20;}
                 if(s->hold){right-=14;symbol(p,right,icon_y,4,fg);}
-            }else if(layout()==LN_UI_LAYOUT_BLUEPRINT){char clock[6];time_label(clock);fitted_text(p,left,n->y+max(0,(n->h-(int32_t)ln_ui_font.height)/2),clock,fg,36);left+=42;
+            }else if(layout()==LN_UI_LAYOUT_BLUEPRINT){char clock[6];time_label(clock);int32_t clock_width=max(36,text_width(clock));fitted_text(p,left,n->y+max(0,(n->h-(int32_t)ln_ui_font.height)/2),clock,fg,clock_width);left+=clock_width+6;
                 if(s->headphones){symbol(p,left,icon_y,3,fg);left+=14;}if(s->hold){symbol(p,left,icon_y,4,fg);left+=14;}}
             else if(layout()==LN_UI_LAYOUT_DEFAULT){if(s->headphones){symbol(p,left,icon_y,3,fg);left+=14;}if(s->hold){symbol(p,left,icon_y,4,fg);left+=14;}}
             if(layout()==LN_UI_LAYOUT_DEFAULT||layout()==LN_UI_LAYOUT_BLUEPRINT){uint32_t play=ln_ui_playback_status();if(play){symbol(p,left,icon_y,play,fg);left+=14;}}
@@ -831,7 +835,7 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
         if(video){struct ln_ui_node label=*n;label.x+=8;label.w=max(1,label.w-16);label.y+=max(0,(label.h-(int32_t)ln_ui_font.height)/2);label.h=(int32_t)ln_ui_font.height;label.flags=8u;text_block(p,&label,node_text?node_text:"",fg);}
         else text(p,n->x+7,n->y+7,node_text?node_text:"Preview",fg);break;}
     case LN_UI_CANVAS_SURFACE:{
-        fill(p,bounds(n),bg);
+        if(!n->canvas||!(n->flags&LN_UI_CANVAS_OPAQUE))fill(p,bounds(n),bg);
         if(n->canvas){const struct ln_ui_canvas_context context={p->pixels,n->x,n->y,n->w,n->h,p->clip.x,p->clip.y,p->clip.w,p->clip.h,s->animation,fg,bg};n->canvas(&context);}
         else {border(p,bounds(n),fg);text(p,n->x+7,n->y+7,node_text,fg);}
         break;}
@@ -949,6 +953,18 @@ static void paint(struct ln_ui_state*s,uint16_t*pixels,struct rect r,ln_ui_damag
     if(c&&c->nodes&&c->count&&c->count<=1024u){const struct ln_ui_node*n=&c->nodes[0];
         if(n->kind==LN_UI_SCREEN&&!(n->flags&2u)){struct rect cover=intersect(bounds(n),r);covered=cover.x==r.x&&cover.y==r.y&&cover.w==r.w&&cover.h==r.h;}
         if(n->kind==LN_UI_SCREEN&&c->count>1u){const struct ln_ui_node*video=&c->nodes[1];
+            if(!(n->flags&2u)&&video->kind==LN_UI_CANVAS_SURFACE&&video->canvas&&
+               (video->flags&LN_UI_CANVAS_OPAQUE)&&!(video->flags&2u)){
+                struct rect area=intersect(bounds(n),r),cover=intersect(bounds(video),area);
+                if(covered&&cover.w&&cover.h){
+                    uint16_t bg=ln_ui_color(n->bg);
+                    fill(&p,(struct rect){area.x,area.y,area.w,cover.y-area.y},bg);
+                    fill(&p,(struct rect){area.x,cover.y+cover.h,area.w,area.y+area.h-cover.y-cover.h},bg);
+                    fill(&p,(struct rect){area.x,cover.y,cover.x-area.x,cover.h},bg);
+                    fill(&p,(struct rect){cover.x+cover.w,cover.y,area.x+area.w-cover.x-cover.w,cover.h},bg);
+                    first=1u;
+                }
+            }
             if(video->kind==LN_UI_VIDEO_SURFACE&&!(video->flags&2u)){
                 const struct ln_ui_asset*a=ln_ui_dynamic_asset(video,video->resource<ln_ui_asset_count?&ln_ui_assets[video->resource]:0);
                 struct rect cover=intersect(bounds(video),r);

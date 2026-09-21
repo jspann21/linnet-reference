@@ -11,8 +11,9 @@ import re
 import tomllib
 from .tsx import ContentError, compile_tsx, COLOR_ROLES
 from .layouts import apply_layout, gate_features, feature_enabled
+from .video_layouts import apply_video_layout
 
-LAYOUTS = ('default','ipod-photo','graphite','aurora','sunset','blueprint','minimal')
+LAYOUTS = ('default','ipod-photo','graphite','aurora','sunset','blueprint','minimal','native')
 REFERENCE_WIDTH, REFERENCE_HEIGHT = 220, 176
 
 def canonical(value):
@@ -144,7 +145,7 @@ def compile_system(root, output, configpath=None, target_override=None):
         return data
     def toml(path):
         return tomllib.loads(read(path).decode('utf-8'))
-    for source in ('tools/content/compiler.py','tools/content/tsx.py','tools/content/layouts.py','ui/runtime/ui.h'):
+    for source in ('tools/content/compiler.py','tools/content/tsx.py','tools/content/layouts.py','tools/content/video_layouts.py','ui/runtime/ui.h'):
         read(source)
     config=toml(configpath or 'config/system.toml')
     system=config.get('system',{})
@@ -171,12 +172,16 @@ def compile_system(root, output, configpath=None, target_override=None):
         raise ContentError('ui.apps must select 1..32 distinct app IDs')
     theme_id=identifier(ui.get('theme'))
     theme_manifests={}; seen_theme_ids=set()
-    for path in sorted((root/'themes').glob('*/theme.toml')):
+    # Target editions replace shared manifests by stable ID; duplicates within
+    # either scope remain errors. Keep precedence independent of path sorting.
+    theme_paths = sorted((root/'themes').glob('*/theme.toml')) + sorted((root/'targets'/target/'themes').glob('*/theme.toml'))
+    for path in theme_paths:
         manifest=tomllib.loads(path.read_text(encoding='utf-8'))
         metadata=manifest.get('theme',{})
         name=identifier(metadata.get('id'))
-        if name in seen_theme_ids: raise ContentError('duplicate theme ID')
-        seen_theme_ids.add(name)
+        scope = path.parent.parent
+        if (scope,name) in seen_theme_ids: raise ContentError('duplicate theme ID')
+        seen_theme_ids.add((scope,name))
         compatible_targets=metadata.get('targets')
         if compatible_targets is not None:
             if (not isinstance(compatible_targets,list) or not compatible_targets or
@@ -200,7 +205,7 @@ def compile_system(root, output, configpath=None, target_override=None):
         if default_theme not in allowed or any(name not in theme_manifests for name in allowed):
             raise ContentError('target UI profile references an unavailable theme')
         theme_manifests={name:theme_manifests[name] for name in allowed}
-        theme_id=default_theme
+        if theme_id not in allowed: theme_id=default_theme
     if theme_id not in theme_manifests: raise ContentError(f'theme unavailable: {theme_id}')
     preferred=('linnet.theme.default','local.example.midnight','linnet.theme.ipod-photo',
                'linnet.theme.graphite','linnet.theme.aurora','linnet.theme.sunset','linnet.theme.blueprint')
@@ -259,6 +264,11 @@ def compile_system(root, output, configpath=None, target_override=None):
             if app_id in manifests: raise ContentError('duplicate app ID')
             manifests[app_id]=path
     scenes=[]; callbacks={}; native_sources=[]
+    native_screens = (root/'targets'/target/'screens').is_dir()
+    presentation_path=root/'targets'/target/'presentation.toml'
+    presentation=toml(presentation_path) if presentation_path.is_file() else {}
+    if set(presentation)-{'clock_font','scale_clock','adjustments'}:
+        raise ContentError('unknown target presentation field')
     for app_id in selected:
         if app_id not in manifests: raise ContentError(f'app unavailable: {app_id}')
         path=manifests[app_id]; manifest=toml(path); app=manifest.get('app',{})
@@ -283,7 +293,8 @@ def compile_system(root, output, configpath=None, target_override=None):
             if relative not in native_sources: native_sources.append(relative)
             callbacks[app_id+'.'+name]=symbol
             if len(callbacks)>16: raise ContentError('at most16 native callbacks')
-        nodes,focus=compile_tsx(read(path.parent/app['entry']).decode('utf-8'),colors)
+        entry = root/'targets'/target/'screens'/app_id/'screen.tsx' if native_screens else path.parent/app['entry']
+        nodes,focus=compile_tsx(read(entry).decode('utf-8'),colors,width if native_screens else REFERENCE_WIDTH,height if native_screens else REFERENCE_HEIGHT)
         scenes.append(dict(id=app_id,title=title,nodes=nodes,count=len(nodes),focus_node=focus))
     for scene in scenes:
         for node in scene['nodes']:
@@ -315,14 +326,24 @@ def compile_system(root, output, configpath=None, target_override=None):
         license_data=read(font_license_path)
         licenses[variant['font_index']]=license_data
         font_paths[variant['id']]=bounded_path(root,font_license_path).relative_to(root).as_posix()
-        layouts=apply_layout(scenes,variant,compact=monochrome)
+        if native_screens:
+            if target == 'video5g-m25':
+                layouts=apply_video_layout(scenes,variant)
+            else:
+                if variant['layout'] != 'native': raise ContentError('native screens require native theme layouts')
+                import copy
+                layouts=copy.deepcopy(scenes)
+        else:
+            if variant['layout'] == 'native': raise ContentError('native theme requires target screens')
+            layouts=apply_layout(scenes,variant,compact=monochrome)
         for i, scene in enumerate(scenes):
             if scene['id']=='linnet.system.cover-flow':
                 import copy
                 layouts[i]=copy.deepcopy(scene)
                 for node in layouts[i]['nodes']:
                     if node['kind']==3:node['flags'] |= 8
-        variant['scenes']=scale_layout(layouts,width,height)
+                    if target=='video5g-m25' and node['kind']==17:node['flags'] |= 64
+        variant['scenes']=layouts if native_screens else scale_layout(layouts,width,height)
         device_name=target_manifest['name'].removeprefix('Linnet for ')
         model=target_manifest.get('model_alias','').upper()
         if model and model not in device_name.upper():
@@ -331,24 +352,18 @@ def compile_system(root, output, configpath=None, target_override=None):
             for node in scene['nodes']:
                 if node['text']=='System version and device':
                     node['text']=f"{system['version']} / {device_name}"
-        if target=='ipod4g-q21':
+        for rule in presentation.get('adjustments', []):
+            if set(rule)-{'scene','text','kind','x','y','w','h','dy'} or not ({'text','kind'} & set(rule)):
+                raise ContentError('invalid target presentation adjustment')
             for scene in variant['scenes']:
+                if 'scene' in rule and rule['scene'] != scene['id']: continue
                 for node in scene['nodes']:
-                    if node['text']=='System clock':
-                        node['y']+=3
-                    if scene['id']=='linnet.system.now-playing':
-                        if node['kind']==14:
-                            node.update(x=2,y=18,w=64,h=64)
-                        elif node['text']=='Sample track':
-                            node.update(x=72,y=18,w=86,h=24)
-                        elif node['text']=='Audio pending':
-                            node.update(x=72,y=50,w=86,h=24)
-                        elif node['text']=='Track album':
-                            node.update(x=2,y=87,w=156,h=11)
-                        elif node['text']=='Native playback shell':
-                            node.update(x=2,y=100,w=156,h=11)
+                    if any(node[k] != rule[k] for k in ('text','kind') if k in rule): continue
+                    for key in ('x','y','w','h'):
+                        if key in rule: node[key]=rule[key]
+                    if 'dy' in rule: node['y']+=rule['dy']
 
-        if (width,height)!=(REFERENCE_WIDTH,REFERENCE_HEIGHT):
+        if not native_screens and (width,height)!=(REFERENCE_WIDTH,REFERENCE_HEIGHT):
             variant['metrics']=dict(
                 row_height=max(font['height'],(variant['metrics']['row_height']*height+REFERENCE_HEIGHT//2)//REFERENCE_HEIGHT),
                 padding=(variant['metrics']['padding']*width+REFERENCE_WIDTH//2)//REFERENCE_WIDTH)
@@ -378,9 +393,8 @@ def compile_system(root, output, configpath=None, target_override=None):
         hint_index=len(fonts);fonts.append(hint)
     # The prominent clock uses a separately hinted native-size face. Scaling
     # each target here keeps runtime glyph pixels aligned to its LCD grid.
-    clock=load_font(read(root/('sdk/assets/font-q21-clock22.json' if target=='ipod4g-q21'
-                               else 'sdk/assets/font-clock24.json')))
-    if target!='ipod4g-q21' and (width,height)!=(REFERENCE_WIDTH,REFERENCE_HEIGHT):
+    clock=load_font(read(bounded_path(root,presentation.get('clock_font','sdk/assets/font-clock24.json'))))
+    if presentation.get('scale_clock',not native_screens) and (width,height)!=(REFERENCE_WIDTH,REFERENCE_HEIGHT):
         clock=scale_font(clock,width,REFERENCE_WIDTH,height,REFERENCE_HEIGHT)
     clock_index=len(fonts);fonts.append(clock)
     font=chosen['font'];scenes=chosen['scenes'];license_data=licenses[chosen['font_index']]
@@ -446,24 +460,60 @@ def generate_c(doc, packed_fonts=None):
         packed_fonts=[crop_font(font) for font in doc['fonts']]
     out=['/* Generated by Linnet content compiler. Do not edit. */','#include "ui/runtime/ui.h"']
     out.extend('#include "'+source+'"' for source in doc['native_sources'])
-    if doc['target']=='photo4g-p98' and any(scene['id']=='linnet.system.cover-flow' and doc['enabled_scenes']&(1<<i) for i,scene in enumerate(doc['scenes'])):
-        widths=[96-round(pose*57/32) for pose in range(33)]
+    if any(scene['id']=='linnet.system.cover-flow' and doc['enabled_scenes']&(1<<i) for i,scene in enumerate(doc['scenes'])):
+        cover_size=96*doc['height']//176
+        widths=[cover_size-round(pose*57*cover_size/(32*96)) for pose in range(33)]
         out.append('#if defined(LINNET_COVERFLOW)')
         out.append('const uint8_t ln_coverflow_ease[8][8]={'+','.join(
             '{'+','.join(str(round(256*(1-(step+1)/frames)**3*(1+.6*(step+1)/frames))) if step<frames else '0'
                          for step in range(8))+'}' for frames in range(1,9))+'};')
-        glow=[round(63*max(0,1-((x-109.5)/116)**2-((y-62)/84)**2)**2)*4+((0,2),(3,1))[y&1][x&1] for x in range(220) for y in range(140)]
-        out.append('const uint8_t ln_coverflow_glow[220][140]={'+','.join('{'+','.join(map(str,glow[x*140:(x+1)*140]))+'}' for x in range(220))+'};')
+        gw,gh=doc['width'],doc['height']*140//176
+        glow=[round(63*max(0,1-((x-(gw-1)/2)/(gw*116/220))**2-((y-gh*62/140)/(gh*84/140))**2)**2)*4+((0,2),(3,1))[y&1][x&1] for x in range(gw) for y in range(gh)]
+        m25=doc.get('target')=='video5g-m25'
+        if m25:
+            pairs=[[],[]];indices=[]
+            for y in range(gh):
+                row=[];palette=pairs[y&1]
+                for x in range(0,gw,2):
+                    pair=(glow[x*gh+y],glow[(x+1)*gh+y])
+                    if pair not in palette:palette.append(pair)
+                    row.append(palette.index(pair))
+                indices.append('{'+','.join(map(str,row))+'}')
+            assert all(len(palette)<=192 for palette in pairs)
+            out.append(f'const uint8_t ln_coverflow_glow_pairs[{gh}][{gw//2}]={{'+','.join(indices)+'};')
+            out.append('const uint8_t ln_coverflow_glow_colors[2][192][2]={'+','.join('{'+','.join('{'+f'{a},{b}'+'}' for a,b in palette)+'}' for palette in pairs)+'};')
+        else:
+            out.append(f'const uint8_t ln_coverflow_glow[{gw}][{gh}]={{'+','.join('{'+','.join(map(str,glow[x*gh:(x+1)*gh]))+'}' for x in range(gw))+'};')
         out.append('const uint8_t ln_coverflow_widths[33]={'+','.join(map(str,widths))+'};')
-        out.append('const struct ln_coverflow_column ln_coverflow_columns[33][96]={')
+        if not m25:out.append(f'const struct ln_coverflow_column ln_coverflow_columns[33][{cover_size}]={{')
+        scanlines,samples,sources=[],[],[]
         for pose,width in enumerate(widths):
             tilt=pose*8
-            columns=[]
+            columns=[];geometry=[]
             for x in range(width):
-                height=round(96-tilt*15/256+(x+.5)*tilt*13/(width*256))
-                columns.append('{'+f'{(96<<16)//height},{(2*x+1)*96//(2*width)},{24+(96-height)//2},{height},{height*128//96}'+'}')
-            out.append('{'+','.join(columns)+'},')
-        out.append('};\n#endif')
+                height=round((96-tilt*15/256+(x+.5)*tilt*13/(width*256))*cover_size/96)
+                values=((96<<16)//height,(2*x+1)*96//(2*width),24*doc['height']//176+(cover_size-height)//2,height,height*128//96)
+                columns.append('{'+','.join(map(str,values))+'}');geometry.append(values)
+            if not m25:out.append('{'+','.join(columns)+'},')
+            else:
+                sources.append('{'+','.join(str(c[1]) for c in geometry)+'}')
+                rows=[]
+                for y in range(gh):
+                    visible=[x for x,c in enumerate(geometry) if c[2]<=y<c[2]+c[4]]
+                    left=visible[0] if visible else 0
+                    assert not visible or visible==list(range(left,left+len(visible)))
+                    rows.append('{'+f'{len(samples)},{left},{len(visible)}'+'}')
+                    for x in visible:
+                        sy=((geometry[x][0]>>1)+(y-geometry[x][2])*geometry[x][0])>>16
+                        if x==left or samples[-1]!=sy:samples.extend((x+1,sy))
+                        else:samples[-2]=x+1
+                scanlines.append('{'+','.join(rows)+'}')
+        if m25:
+            out.append(f'const uint8_t ln_coverflow_sources[33][{cover_size}]={{'+','.join(sources)+'};')
+            out.append(f'const struct ln_coverflow_scanline ln_coverflow_rows[33][{gh}]={{'+','.join(scanlines)+'};')
+            out.append('const uint8_t ln_coverflow_samples[]={'+','.join(map(str,samples))+'};')
+        else:out.append('};')
+        out.append('#endif')
     def array(type_,name,values):
         out.append(f'static const {type_} {name}[] = {{')
         for i in range(0,len(values),24): out.append(','.join(str(v) for v in values[i:i+24])+',')

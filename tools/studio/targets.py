@@ -13,11 +13,11 @@ REQUIRED_KEYS = {
     "storage_max_read_sectors", "lcd_width",
     "lcd_height", "lcd_format", "capabilities", "media_photo_width",
     "media_photo_height", "media_video_width", "media_video_height",
-    "media_video_fps", "media_video_color", "media_video_extensions",
+    "media_video_fps", "media_video_color", "media_video_extensions", "media_video_backend",
     "cop_display", "entry_address", "load_address", "mailbox_address",
-    "mailbox_bytes", "retail", "installer",
+    "mailbox_bytes", "retail", "installer", "resources",
 }
-OPTIONAL_KEYS = {"ui"}
+OPTIONAL_KEYS = {"ui", "hal_family", "audio_codec", "idle_clock_hz", "native_video"}
 CAPABILITIES = {"photos", "video", "files", "demo", "themes", "cover_flow"}
 LCD_FORMATS = {"rgb565-swapped": 1, "gray2-horizontal": 2, "rgb565": 3}
 
@@ -29,19 +29,33 @@ def _valid_ascii_list(value):
 
 def _target_sources(path, spec):
     """Resolve the conventional source layout for one target."""
-    soc_root = ROOT / "hal" / spec["soc"]
+    soc_root = ROOT / "hal" / spec.get("hal_family", spec["soc"])
     target_root = path.parent
+    if not re.fullmatch(r"[a-z][a-z0-9-]*", spec.get("hal_family", spec["soc"])):
+        raise RuntimeError(f"invalid HAL family: {path}")
+    codec = spec.get("audio_codec", "wm8975")
+    if codec not in {"wm8975", "wm8758"}:
+        raise RuntimeError(f"unsupported audio codec: {path}")
     display = target_root / "display.c"
     if not display.is_file():
         display = soc_root / "display.c"
     sources = {
+        "native_update": target_root / "native_update.c" if (target_root / "native_update.c").is_file() else ROOT / "services/update/native.c",
+        "hardware": target_root / "hardware.h",
         "startup": soc_root / "startup.S",
         "linker": soc_root / "memory.ld",
         "platform": soc_root / "platform.c",
         "lcd": target_root / "lcd.c",
         "display": display,
         "device": target_root / "device.c",
+        "codec": ROOT / "hal" / "codecs" / (codec + ".c"),
     }
+    video = target_root / "video.c"
+    if video.is_file():
+        sources["video"] = video
+    coprocessor = target_root / "coprocessor.c"
+    if coprocessor.is_file():
+        sources["coprocessor"] = coprocessor
     if any(not source.is_file() for source in sources.values()):
         missing = ", ".join(
             source.relative_to(ROOT).as_posix()
@@ -128,6 +142,17 @@ def _validate_identity(path, spec):
         raise RuntimeError(f"invalid target identity: {path}")
 
 
+def _validate_resources(path, spec):
+    r=spec["resources"]
+    if not isinstance(r,dict) or set(r)!={"music_titles_address","music_titles_bytes","coverflow_catalog_slots"}:
+        raise RuntimeError(f"invalid resource budget: {path}")
+    start,size,slots=(r[k] for k in ("music_titles_address","music_titles_bytes","coverflow_catalog_slots"))
+    if (any(type(v) is not int for v in (start,size,slots)) or start%32 or size<840896 or
+        not 16<=slots<=2048 or start < spec["recovery_snapshot_address"]+spec["recovery_snapshot_bytes"]+spec["lcd_width"]*spec["lcd_height"]*2 or
+        start+size>spec["mailbox_address"]-8192):
+        raise RuntimeError(f"resource budget overlaps recovery or exceeds limits: {path}")
+
+
 def _validate_profiles(path, spec):
     retail = spec["retail"]
     if (not isinstance(retail, dict) or
@@ -163,6 +188,28 @@ def _validate_profiles(path, spec):
         raise RuntimeError(f"invalid installer profile: {path}")
 
 
+def _validate_media(path, spec):
+    backend = spec.get("media_video_backend")
+    enabled = spec["capabilities"].get("video", True)
+    if backend not in ("none", "ipvf", "bcm-mp4") or (backend != "none") != enabled:
+        raise RuntimeError(f"invalid media video backend: {path}")
+    expected = {"none": {".ipvf"}, "ipvf": {".ipvf"}, "bcm-mp4": {".mp4", ".m4v"}}[backend]
+    if set(spec["media_video_extensions"]) != expected:
+        raise RuntimeError(f"video extensions disagree with backend: {path}")
+    native = spec.get("native_video", {})
+    fields = {"h264_width", "h264_height", "h264_level", "mpeg4_width", "mpeg4_height",
+              "max_fps", "video_kbps", "max_video_kbps", "buffer_kbits", "audio_kbps"}
+    if backend == "bcm-mp4":
+        if (not isinstance(native, dict) or set(native) != fields or any(type(v) is not int or v <= 0 for v in native.values()) or
+                spec["media_video_width"] > native["h264_width"] or
+                spec["media_video_height"] > native["h264_height"] or
+                spec["media_video_fps"] > native["max_fps"] or
+                native["video_kbps"] > native["max_video_kbps"]):
+            raise RuntimeError(f"invalid native video profile: {path}")
+    elif native:
+        raise RuntimeError(f"unexpected native video profile: {path}")
+
+
 def load_targets():
     targets = {}
     aliases = {}
@@ -176,6 +223,8 @@ def load_targets():
                 not REQUIRED_KEYS <= set(spec) or
                 set(spec) - REQUIRED_KEYS - OPTIONAL_KEYS):
             raise RuntimeError(f"invalid target manifest: {path}")
+        if spec.get("idle_clock_hz",0) not in (0,30000000):
+            raise RuntimeError(f"unsupported idle clock: {path}")
         _validate_identity(path, spec)
         spec["target_define"] = "LINNET_TARGET_" + target.upper().replace("-", "_")
         number = spec["image_target"]
@@ -196,6 +245,8 @@ def load_targets():
                  spec["storage_max_read_sectors"] * 512 <
                  spec["media_video_width"] * spec["media_video_height"] * 2 + 16384)):
             raise RuntimeError(f"invalid target identity: {path}")
+        _validate_media(path, spec)
+        _validate_resources(path, spec)
         _validate_profiles(path, spec)
         _validate_ui(path, spec)
         names = [target, *spec.get("aliases", [])]
@@ -222,3 +273,17 @@ def target_id(value):
 
 def target_spec(value):
     return TARGETS[target_id(value)]
+
+
+def media_profile(value):
+    """Resolve Media Manager capabilities from the same manifest as firmware."""
+    spec = target_spec(value)
+    return dict(photo_enabled=spec["capabilities"].get("photos", True),
+                video_enabled=spec["capabilities"].get("video", True),
+                video_backend=spec["media_video_backend"],
+                video_extensions=list(spec["media_video_extensions"]),
+                video_fps=spec["media_video_fps"], video_color=spec["media_video_color"],
+                photo_width=spec["media_photo_width"], photo_height=spec["media_photo_height"],
+                video_width=spec["media_video_width"], video_height=spec["media_video_height"],
+                max_read_sectors=spec["storage_max_read_sectors"],
+                native_video=dict(spec.get("native_video", {})))

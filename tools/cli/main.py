@@ -85,6 +85,7 @@ def parser():
     video_compile.add_argument('--ffprobe')
     video_inspect=video.add_parser('inspect')
     video_inspect.add_argument('package',type=Path)
+    video_inspect.add_argument('--target', type=target_id, help='Required for native MP4 validation')
     video_publish=video.add_parser('publish')
     video_publish.add_argument('--package',type=Path,required=True)
     _publication_arguments(video_publish)
@@ -134,7 +135,7 @@ def parser():
     for action in MUSIC_ACTIONS:
         entry=device.add_parser(action)
         entry.add_argument('--port',required=True)
-        if action=='player-open':entry.add_argument('--path',required=True)
+        if action in ('player-open','video-open'):entry.add_argument('--path',required=True)
         if action=='player-seek':entry.add_argument('--sample',type=int,required=True)
     history=device.add_parser("prepare-update-history",help="Add optional rollback history records to an identified Disk Mode installation")
     _record_arguments(history)
@@ -165,9 +166,9 @@ def parser():
         if action=="install":entry.add_argument("--image",type=Path,required=True)
     eject = device.add_parser("eject", help="Safely eject an explicitly identified Windows USB iPod disk")
     eject.add_argument("--disk-number", type=int, required=True)
-    eject.add_argument("--expected-serial", default="JQ5081G3SAY")
+    eject.add_argument("--expected-serial", help="Required for ordinary eject; reboot uses the reviewed plan identity")
     eject.add_argument("--wait-link", action="store_true")
-    eject.add_argument("--link-serial", default="000000F7A765")
+    eject.add_argument("--link-serial", help="Required with --wait-link")
     eject.add_argument("--reboot", action="store_true", help="Refresh the exact installed Boot directory before eject and verify restart")
     eject.add_argument("--plan", type=Path)
     eject.add_argument("--plan-sha256")
@@ -179,6 +180,9 @@ def parser():
     refresh_prepare.add_argument("--plan-sha256", required=True)
     refresh_prepare.add_argument("--hours", type=int, default=8)
     refresh_prepare.add_argument("--install-reviewed-boot", action="store_true", help="Authorize only the exact reviewed Boot image for this finite session")
+    refresh_prepare.add_argument("--usb-serial", help="Approve bounded USB tracing and restart of this device on its pinned port")
+    for action in ("trace-start", "trace-stop", "usb-restart", "usb-cycle"):
+        refresh_actions.add_parser(action)
     refresh_start = refresh_actions.add_parser("start")
     refresh_start.add_argument("--prepared", type=Path, required=True)
     refresh_start.add_argument("--allow-uac", action="store_true")
@@ -186,6 +190,8 @@ def parser():
     refresh_actions.add_parser("stop")
     refresh_install=refresh_actions.add_parser("install")
     refresh_install.add_argument("--disk-number",type=int,required=True)
+    refresh_verify=refresh_actions.add_parser("verify",help="Read and verify the reviewed firmware without writing")
+    refresh_verify.add_argument("--disk-number",type=int,required=True)
     cycle = device.add_parser("cycle")
     cycle.add_argument("--image", type=Path, required=True)
     cycle.add_argument("--scenario", type=Path, required=True)
@@ -274,16 +280,36 @@ def main():
                 spec=TARGETS[args.target]
                 if not spec['capabilities'].get('video',True):
                     raise ValueError('video is disabled for the selected target')
-                if args.output.suffix.lower() not in ('.ipvf','.ipv'):
-                    raise ValueError('video output must use .ipvf or .ipv')
-                emit(encode_ipvf(args.source,args.output,fps=args.fps or spec['media_video_fps'],
-                    width=spec['media_video_width'],height=spec['media_video_height'],
-                    color_depth=spec['media_video_color'],
-                    max_record_sectors=spec['storage_max_read_sectors'],
-                    ffmpeg=args.ffmpeg,ffprobe=args.ffprobe))
+                if spec['media_video_backend'] == 'bcm-mp4':
+                    from tools.content.native_video import prepare
+                    from tools.studio.targets import media_profile
+                    profile = media_profile(args.target)
+                    if args.output.suffix.lower() not in spec['media_video_extensions']:
+                        raise ValueError('native video output must use .mp4 or .m4v')
+                    if args.fps:
+                        if args.fps > profile['native_video']['max_fps']:
+                            raise ValueError('frame rate exceeds the target limit')
+                        profile['video_fps'] = args.fps
+                    emit(prepare(args.source, args.output, profile=profile,
+                                 ffmpeg=args.ffmpeg, ffprobe=args.ffprobe))
+                else:
+                    if args.output.suffix.lower() not in ('.ipvf','.ipv'):
+                        raise ValueError('video output must use .ipvf or .ipv')
+                    emit(encode_ipvf(args.source,args.output,fps=args.fps or spec['media_video_fps'],
+                        width=spec['media_video_width'],height=spec['media_video_height'],
+                        color_depth=spec['media_video_color'],
+                        max_record_sectors=spec['storage_max_read_sectors'],
+                        ffmpeg=args.ffmpeg,ffprobe=args.ffprobe))
             elif args.action=='inspect':
-                from tools.content.ipvf_validate import inspect_file
-                emit(inspect_file(args.package))
+                if args.package.suffix.lower() in ('.mp4', '.m4v'):
+                    from tools.content.native_video import inspect_file
+                    from tools.studio.targets import media_profile
+                    if not args.target:
+                        raise ValueError('Specify --target for native MP4 validation')
+                    emit(inspect_file(args.package, profile=media_profile(args.target)))
+                else:
+                    from tools.content.ipvf_validate import inspect_file
+                    emit(inspect_file(args.package))
             else:
                 from tools.content.publish_video import publish_video
                 emit(publish_video(args.package,disk_number=args.disk_number,expected_disk_serial=args.disk_serial,
@@ -326,12 +352,12 @@ def main():
         elif args.command == "device" and args.action == "refresh-session":
             from tools.link import refresh_session
             if args.session_action == "prepare":
-                emit(refresh_session.prepare(args.plan, args.plan_sha256, hours=args.hours,install_reviewed_boot=args.install_reviewed_boot))
+                emit(refresh_session.prepare(args.plan, args.plan_sha256, hours=args.hours,install_reviewed_boot=args.install_reviewed_boot, usb_serial=args.usb_serial))
             elif args.session_action == "start":
                 emit(refresh_session.start(json.loads(args.prepared.read_text()), allow_prompt=args.allow_uac))
-            elif args.session_action == "install":
+            elif args.session_action in ("install", "verify"):
                 state=json.loads(refresh_session.STATE.read_text())
-                result=refresh_session.request(state,'install',disk_number=args.disk_number)
+                result=refresh_session.request(state,args.session_action,disk_number=args.disk_number)
                 emit(result)
                 if not result.get('passed'):return 1
             else:

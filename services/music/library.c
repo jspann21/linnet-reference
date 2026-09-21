@@ -17,6 +17,10 @@ static uint32_t title_count,title_used,title_length,title_source;
 static bool title_reading;
 static uint8_t title_previous;
 static char title_pending[256];
+#if defined(LINNET_MUSIC_METADATA_BYTES)
+static uint8_t metadata[LINNET_MUSIC_METADATA_BYTES] __attribute__((section(".music_metadata"),aligned(32)));
+static uint32_t metadata_offset,metadata_bytes;
+#endif
 
 enum job { JOB_NONE=0,JOB_WINDOW,JOB_SELECTION,JOB_SEARCH,JOB_GROUP,JOB_MEMBER,JOB_PREFETCH,JOB_QUEUE,JOB_VIEW,JOB_VIEW_GROUP,JOB_GROUP_RECORD,JOB_TRACK_RECORD,JOB_TRACK_IDS };
 struct library {
@@ -158,6 +162,9 @@ uint32_t ln_music_library_deadline(uint32_t now){
 }
 static void start(void)
 {
+#if defined(LINNET_MUSIC_METADATA_BYTES)
+    metadata_offset=metadata_bytes=0;
+#endif
     uint32_t revision=library.revision+1u;
     title_count=title_used=title_length=0;title_reading=false;
     for(uint32_t i=0;i<TITLE_TRACKS;i++)titles.offsets[i]=TITLE_PENDING;
@@ -187,6 +194,23 @@ static int read_database_raw(void *context,uint64_t offset,uint8_t *buffer,uint3
         library.io_active=false;library.io_buffer=0;
         library.generation=next_generation();
         if(result==1&&transferred==bytes){
+#if defined(LINNET_MUSIC_METADATA_BYTES)
+            /* Reuse verification I/O, publishing only after the database hash
+             * passes. Large libraries retain the browse tables first, while
+             * the independent title and LRU caches cover the remaining data. */
+            if(library.status==LN_LIBRARY_VERIFYING){
+                if(library.file.size<=sizeof metadata){metadata_offset=0;metadata_bytes=library.file.size;}
+                else if(library.db.phase==1){
+                    metadata_offset=library.db.group_offset;
+                    metadata_bytes=library.file.size-metadata_offset;
+                    if(metadata_bytes>sizeof metadata)metadata_bytes=sizeof metadata;
+                }
+                uint32_t first=(uint32_t)offset,end=first+bytes;
+                if(first<metadata_offset)first=metadata_offset;
+                if(end>metadata_offset+metadata_bytes)end=metadata_offset+metadata_bytes;
+                for(uint32_t at=first;at<end;at++)metadata[at-metadata_offset]=buffer[at-(uint32_t)offset];
+            }
+#endif
             if(library.status==LN_LIBRARY_VERIFYING)title_capture((uint32_t)offset,buffer,bytes);
             return 1;
         }
@@ -202,6 +226,13 @@ static int read_database(void *context,uint64_t offset,uint8_t *buffer,uint32_t 
 {
     if(!ready())return read_database_raw(context,offset,buffer,bytes);
     if(offset>library.file.size||!bytes||bytes>4096u||bytes>library.file.size-offset)return LN_DB_ARGUMENT;
+#if defined(LINNET_MUSIC_METADATA_BYTES)
+    if(offset>=metadata_offset&&offset-metadata_offset<=metadata_bytes&&
+       bytes<=metadata_bytes-(uint32_t)(offset-metadata_offset)){
+        for(uint32_t i=0;i<bytes;i++)buffer[i]=metadata[(uint32_t)offset-metadata_offset+i];
+        return 1;
+    }
+#endif
     uint32_t copied=0;
     while(copied<bytes){
         uint32_t address=(uint32_t)offset+copied,page=address/4096u,slot=LIBRARY_PAGES;

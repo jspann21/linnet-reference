@@ -262,7 +262,7 @@ int ln_m4a_read_packet(struct ln_alac *a)
         int result=read_bytes(a,a->chunks_offset+(uint64_t)a->chunk_index*a->chunk_width,a->chunk_width);if(result!=1)return result;
         a->packet_offset=a->chunk_width==4?be32(a->buffer):be64(a->buffer);
         if(a->packet_offset<a->mdat_start||a->packet_offset>=a->mdat_end)return bad(a,LN_ALAC_FORMAT);
-        a->decode_phase=2;return 0;
+        a->decode_phase=2;
     }
     if(a->decode_phase==2){
         if(a->default_size){
@@ -279,7 +279,7 @@ int ln_m4a_read_packet(struct ln_alac *a)
         }
         if(a->packet_offset<a->mdat_start||a->packet_offset>a->mdat_end||a->packet_size>a->mdat_end-a->packet_offset)return bad(a,LN_ALAC_FORMAT);
         if(a->codec==17&&a->packet_size>8191)return bad(a,LN_ALAC_UNSUPPORTED);
-        a->decode_phase=3;return 0;
+        a->decode_phase=3;
     }
     int result=read_bytes(a,a->packet_offset,a->packet_size);if(result!=1)return result;
     a->current_packet_frames=packet_frames(a,a->packet);a->packet++;a->decode_phase=0;return 1;

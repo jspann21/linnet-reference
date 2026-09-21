@@ -18,7 +18,10 @@ def _device_path(root, value):
     parts = PurePosixPath(value).parts
     if not value.startswith('/') or value.startswith('//') or '\\' in value or ':' in value or any(p in ('..', '.') for p in value.split('/')):
         raise ValueError('Unsafe catalog path')
-    if len(parts) < 3 or parts[1].casefold() not in ('videos', '.linnet') or PurePosixPath(value).suffix.lower() not in ('.ipv', '.ipvf'):
+    media_folder = len(parts) >= 3 and (parts[1].casefold() in ('videos', '.linnet') or
+                   (len(parts) >= 4 and parts[1].casefold() in ('ipod_control', 'ipod_c~1')
+                    and parts[2].casefold() == 'music'))
+    if not media_folder or PurePosixPath(value).suffix.lower() not in ('.ipv', '.ipvf', '.mp4', '.m4v'):
         raise ValueError('Unsupported catalog media path')
     path = root.joinpath(*parts[1:])
     _plain(path, root)
@@ -55,25 +58,41 @@ def list_items(identity, *, records_by_kind=None):
     """Read file names, timestamps and the bounded catalog; never decode media."""
     identity = manager.refresh(identity)
     root = Path(identity['root']).resolve(strict=True)
+    if records_by_kind is None:
+        records_by_kind = manager._records_by_kind(root)
     _, _, entries = _catalog(root)
     published_paths = {str(_device_path(root, name)).casefold() for _, name, _ in entries}
     result = []
     metadata = _music_metadata(root)
+    from .retail_media import metadata as retail_metadata, images as retail_images
+    retail = retail_metadata(root)
+    music_records = records_by_kind['Music']
+    source_metadata = _source_music_metadata(root, music_records, manager.cache_root(identity), retail)
     for kind in manager.KINDS:
         allowed = manager.extensions(kind)
-        records = (records_by_kind[kind] if records_by_kind is not None else
-                   (record for folder in manager.source_folders(root, kind) for record in manager._file_records(folder)))
+        records = records_by_kind[kind]
         for path, info in records:
             if kind == 'Videos' and str(path.resolve()).casefold() in published_paths:
                 continue
             if path.suffix.lower() in allowed:
-                tags = metadata.get(str(path.resolve()).casefold(), {}) if kind == 'Music' else {}
+                key = str(path.resolve()).casefold()
+                indexed = metadata.get(key, {}) if kind == 'Music' else {}
+                tags = dict(indexed, **source_metadata.get(key, {})) if kind == 'Music' else retail.get(key, {})
+                if indexed.get('artwork') and tags.get('artwork') == str(path):
+                    tags['artwork'] = indexed['artwork']
                 result.append(_row('original', kind, tags.get('title') or path.name, path,
-                    'Indexed on iPod' if tags else 'Source on iPod', info=info,
+                    ('Not supported on this iPod' if kind == 'Videos' and path.suffix.lower() not in manager.video_source_extensions(identity)
+                     else 'Indexed on iPod' if indexed else 'Source on iPod'), info=info,
                     artist=tags.get('artist', ''), album=tags.get('album', ''), genre=tags.get('genre', ''),
                     artwork=tags.get('artwork', ''), duration=tags.get('duration', 0), track=tags.get('track', 0),
                     album_artist=tags.get('album_artist', ''), disc=tags.get('disc', 0),
                     description='Removing this source requires preparing its media type afterward.'))
+    for photo in retail_images(root):
+        result.append(dict(id='retail-photo:' + str(photo['key']), category='original', kind='Photos',
+                           title=photo['title'], path=str(root / photo['relative']), source=photo['source'],
+                           artwork=photo['preview'], bytes=photo['bytes'], mtime_ns=photo['mtime_ns'],
+                           status='iTunes photo · Needs preparation', removable=False, retail_photo=True,
+                           description='Prepared from the existing iTunes photo library; the Apple original is retained.'))
     for kind, name in (('Music', '.LINNET/LIBRARY.PDB'), ('Photos', '.LINNET/PHOTOS/LIBRARY.PIM'), ('Notes', '.LINNET/NOTES/LIBRARY.NNT')):
         path = root / name
         _plain(path, root)
@@ -82,8 +101,12 @@ def list_items(identity, *, records_by_kind=None):
                 description='Remove this entire published library. Original source files and cached conversions are retained. Updating this folder can restore it.'))
     for key, name, title in entries:
         path = _device_path(root, name)
+        tags = retail.get(str(path.resolve()).casefold(), {})
         result.append(_row('published', 'Videos', title, path,
-            'Ready on iPod' if path.is_file() else 'Missing published file', key=key.hex(),
+            ('Not supported on this iPod' if path.suffix.lower() not in manager.native_video_extensions(identity)
+             else 'Ready on iPod' if path.is_file() else 'Missing published file'), key=key.hex(),
+            artist=tags.get('artist', ''), album=tags.get('album', ''), genre=tags.get('genre', ''),
+            artwork=tags.get('artwork', ''), duration=tags.get('duration', 0),
             description='Remove this video from the playback catalog and move its file to Trash.'))
     cache = manager.cache_root(identity)
     names = {}
@@ -96,13 +119,64 @@ def list_items(identity, *, records_by_kind=None):
     video_dir = cache / 'videos'
     if video_dir.exists():
         _plain(video_dir, Path(video_dir.anchor))
-        for path in sorted(video_dir.glob('*.ipvf')):
+        for path in sorted(video_dir.iterdir()):
+            if path.suffix.lower() not in {'.ipvf', '.mp4', '.m4v'}:
+                continue
             _plain(path, cache)
             if not path.is_file():
                 continue
             title = names.get(path.name.split('-')[0], path.name)
             result.append(_row('cache', 'Videos', title, path, 'Prepared copy on computer',
                 description='Reusable conversion cache. Published videos are listed separately; this file alone does not prove publication.'))
+    return result
+
+
+def _source_music_metadata(root, records, cache_root, retail=None):
+    from .music import _MetadataCache, _quick_metadata, _pcm, _number, _album_artist, EXTENSIONS
+    cache = _MetadataCache(cache_root / 'music-metadata.sqlite3')
+    result = {}
+    records = [(path, info) for path, info in records if path.suffix.lower() in EXTENSIONS]
+    prefetched = {}
+    try:
+        for index, (path, before) in enumerate(records):
+            if index % 128 == 0:
+                prefetched = cache.prefetch(root, [p.relative_to(root).as_posix()
+                                                 for p, _ in records[index:index + 128]])
+            try:
+                relative = path.relative_to(root).as_posix()
+                key = str(path.resolve()).casefold()
+                saved = (retail or {}).get(key, {})
+                value = cache.get(root, relative, before, prefetched=prefetched)
+                if value is None and saved:
+                    result[key] = dict(saved,
+                        album_artist=_album_artist({k: str(v) for k, v in saved.items()}, saved.get('artist', '')),
+                        artwork=saved.get('artwork') or str(path))
+                    continue
+                if value is None:
+                    value = (_pcm(path) if path.suffix.lower() in ('.wav', '.aif', '.aiff', '.aifc')
+                             else _quick_metadata(path))
+                    after = path.stat()
+                    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                        continue
+                    if value is not None:
+                        cache.put(root, relative, before, value)
+                if value is None:
+                    if saved:
+                        result[key] = saved
+                    continue
+                tags = {**{k: str(v) for k, v in saved.items() if v},
+                        **{k: v for k, v in value['tags'].items() if v}}
+                artist = tags.get('artist', '')
+                result[key] = dict(
+                    title=tags.get('title') or path.stem, artist=artist,
+                    album=tags.get('album', ''), genre=tags.get('genre', ''),
+                    album_artist=_album_artist(tags, artist), track=_number(tags.get('track')),
+                    disc=_number(tags.get('disc')), duration=value['frames'] / value['rate'],
+                    artwork=saved.get('artwork') or str(path))
+            except (OSError, ValueError, TypeError, KeyError, struct.error):
+                continue
+    finally:
+        cache.close()
     return result
 
 
@@ -190,9 +264,11 @@ def organize_videos(identity):
                     continue
                 destination = source
                 if source.parent == catalog.parent:
-                    destination = source.with_name(video_filename(title))
+                    extension = source.suffix.lower() if source.suffix.lower() in ('.mp4', '.m4v') else '.ipvf'
+                    filename = video_filename(title, extension)
+                    destination = source.with_name(filename)
                     if destination.exists() and destination != source:
-                        destination = source.with_name(Path(video_filename(title)).stem + ' [' + key.hex()[:8] + '].ipvf')
+                        destination = source.with_name(Path(filename).stem + ' [' + key.hex()[:8] + ']' + extension)
                     _plain(destination, root)
                     if destination != source:
                         if destination.exists():
@@ -274,6 +350,9 @@ def _remove(identity, items):
     music_before = music_after = None
     music_cache = None
     music_needs_update = False
+    cover_index = root / ".LINNET" / "COVERS.CFL"
+    cover_temporary = None
+    cover_digest = None
     music_sources = [row for row in selected if row['kind'] == 'Music' and row['category'] == 'original']
     if music_sources and str(music_index.resolve()).casefold() not in paths and music_index.is_file():
         from .music import MAX_DATABASE, TRACK, _stable, validate_database, remove_database_tracks
@@ -334,6 +413,24 @@ def _remove(identity, items):
             _write_verified(backup, music_before, 'Music index backup verification failed')
             report['music_backup'] = str(backup)
             manager._save(receipt, report)
+        if music_needs_update:
+            from . import coverflow
+            from .publish import _hash, _copy_verified
+            _plain(cover_index, root)
+            cover_before = dict(bytes=cover_index.stat().st_size, sha256=_hash(cover_index))
+            staged_cover = cover_index.with_name('C' + token[:7].upper() + '.TMP')
+            _plain(staged_cover, root)
+            try:
+                coverflow.remove_tracks(cover_index, music_before, music_after, staged_cover)
+            except ValueError:
+                pass  # A stale or invalid existing catalog still needs normal preparation.
+            else:
+                cover_temporary = staged_cover
+                cover_digest = _hash(staged_cover)
+                backup = trash / 'COVERS.CFL.before'
+                _copy_verified(cover_index, backup, cover_before, root, lambda: _volume_guard(identity))
+                report['coverflow_backup'] = str(backup)
+                manager._save(receipt, report)
         if remaining != entries:
             backup = trash / 'INDEX.VID.before'
             _plain(backup, root)
@@ -381,6 +478,18 @@ def _remove(identity, items):
             if music_index.read_bytes() != music_after:
                 raise OSError('Music index update verification failed')
             report['music_updated'] = True
+            if cover_temporary is not None:
+                _volume_guard(identity); _plain(cover_index, root)
+                if _hash(cover_index) != cover_before['sha256']:
+                    raise OSError('Cover Flow changed during removal')
+                with cover_temporary.open('rb+') as writer:
+                    writer.flush(); os.fsync(writer.fileno())
+                os.replace(cover_temporary, cover_index)
+                if _hash(cover_index) != cover_digest:
+                    raise OSError('Cover Flow update verification failed')
+                coverflow.validate(cover_index, music_after)
+                report['coverflow_updated'] = True
+                music_needs_update = False
             if not music_needs_update:
                 report['requires_update'].remove('Music')
             manager._save(receipt, report)
@@ -391,7 +500,8 @@ def _remove(identity, items):
                     fingerprint = manager.scan(root, ('Music',), skipped=skipped)['Music']['fingerprint']
                     saved_music['signature'] = saved_music['signature'].rsplit(':', 1)[0] + ':' + fingerprint
                     saved_music['outputs'] = [(name, hashlib.sha256(music_after).hexdigest()
-                        if name.casefold() == '.linnet/library.pdb' else digest) for name, digest in saved_music['outputs']]
+                        if name.casefold() == '.linnet/library.pdb' else cover_digest
+                        if name.casefold() == '.linnet/covers.cfl' and cover_digest else digest) for name, digest in saved_music['outputs']]
                     manager._save(cache_path, saved_state)
                 except (OSError, ValueError, TypeError, AttributeError):
                     pass  # Cache failure must not undo a verified device update.
@@ -415,6 +525,13 @@ def _remove(identity, items):
                 temporary.unlink(missing_ok=True)
             except Exception as error:
                 report['temporary'] = str(temporary)
+                report['cleanup_error'] = str(error)
+        if cover_temporary is not None:
+            try:
+                _volume_guard(identity); _plain(cover_temporary, root)
+                cover_temporary.unlink(missing_ok=True)
+            except Exception as error:
+                report['coverflow_temporary'] = str(cover_temporary)
                 report['cleanup_error'] = str(error)
         report['finished'] = time.time()
         manager._save(receipt, report)

@@ -13,6 +13,9 @@ uint32_t ln_coverflow_deadline(void);
 uint32_t ln_coverflow_io_deadline(void);
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_coverflow_diagnostics(uint32_t words[16]);
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+void ln_coverflow_render_diagnostics(uint32_t words[16]);
+#endif
 #endif
 const char *ln_coverflow_text(bool artist);
 void ln_coverflow_draw(const struct ln_ui_canvas_context *c);

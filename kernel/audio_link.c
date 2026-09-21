@@ -1,5 +1,6 @@
 #include "boot/include/linnet_bytes.h"
 #include "kernel/audio_link.h"
+#include "kernel/runtime.h"
 #include "hal/api/audio.h"
 #include "hal/api/core.h"
 #include "hal/api/recovery.h"
@@ -17,12 +18,12 @@
 static uint8_t reply[128];
 static int16_t pcm[508];
 int ln_audio_link_dispatch(const ln_link_frame *q,ln_link_frame *r){
-    if(q->command<112||q->command>123)return 0;
+    if(q->command<112||q->command>124)return 0;
 #if !defined(LINNET_PHOTOS)
     if(q->command==121)return 0;
 #endif
 #if !defined(LINNET_VIDEO)
-    if(q->command==122||q->command==123)return 0;
+    if(q->command==122||q->command==123||q->command==124)return 0;
 #endif
     if(q->flags||!q->sequence||q->length>1024||(q->length&&!q->payload))return 0;
     uint32_t generation=ln_recovery_generation();
@@ -32,7 +33,15 @@ int ln_audio_link_dispatch(const ln_link_frame *q,ln_link_frame *r){
     if((ln_video_active()||ln_video_pending())&&q->command>=113&&q->command<=118&&q->command!=116)return 1;
 #endif
     struct ln_audio_status a;ln_audio_snapshot(&a);
-    if(q->command==123){
+    if(q->command==124){
+#if defined(LINNET_VIDEO)
+        if(q->length<6u||q->length>260u||ln_read_le32(q->payload)!=generation||q->payload[q->length-1u])return 1;
+        for(uint32_t i=4u;i+1u<q->length;++i)if(!q->payload[i])return 1;
+        if(!ln_runtime_video_open((const char *)q->payload+4u))return 1;
+#else
+        return 0;
+#endif
+    }else if(q->command==123){
 #if defined(LINNET_VIDEO) && !defined(LINNET_PROFILE_RELEASE)
         if(q->length!=8||ln_read_le32(q->payload)!=generation||
            !ln_video_measurement_arm(ln_read_le32(q->payload+4)))return 1;

@@ -21,11 +21,13 @@ def refresh(plan_path, plan_sha256, disk_number, receipt_path):
         manifest, artifacts, original = load_plan(Path(plan_path).resolve(), plan_sha256)
         receipt["device"] = identify_disk(disk_number, manifest)
         with open(r"\\.\PhysicalDrive" + str(disk_number), "r+b", buffering=0) as device:
+            receipt["phase"] = "verify-before-write"
             receipt["before"] = guard_device(device, manifest, artifacts, original)
             if receipt["before"]["directory"] != "candidate":
                 raise RuntimeError("refresh requires the exact candidate already installed")
             write_verified(device, manifest["directory_disk_offset"], artifacts["directory-candidate.bin"],
                            receipt, receipt_path, "refresh-identical-directory")
+            receipt["phase"] = "verify-after-write"
             receipt["after"] = guard_device(device, manifest, artifacts, original)
             if receipt["after"] != receipt["before"]:
                 raise RuntimeError("directory refresh changed firmware state")

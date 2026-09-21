@@ -468,7 +468,8 @@ def assess(identity):
         summary = "A matching interrupted Linnet installation is ready to resume."
     elif linnet["state"] == "installed":
         action, strategy = "installed", "existing"
-        summary = f"{build_description(linnet)} is installed, but no installer recovery record is available."
+        summary = (f"{build_description(linnet)} is installed. Startup changes are unavailable because "
+                   "this installation has no saved installer recovery record. Your media can still be managed normally.")
     elif linnet["state"] in ("incomplete", "invalid"):
         action, strategy = "attention", None
         summary = linnet.get("detail", "The existing Linnet installation needs inspection.")

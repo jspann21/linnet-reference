@@ -43,6 +43,8 @@ bool ln_display_settings_photo_get(uint8_t out[16]);
 void ln_display_settings_photo_set(const uint8_t in[16]);
 bool ln_display_settings_video_get(uint32_t out[2]);
 void ln_display_settings_video_set(const uint32_t in[2]);
+bool ln_display_settings_video_options_get(uint8_t *out);
+void ln_display_settings_video_options_set(uint8_t options);
 struct ln_ui_node;
 const char *ln_display_settings_text(const struct ln_ui_node *,uint32_t,const char *);
 #endif

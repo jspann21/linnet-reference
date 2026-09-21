@@ -175,6 +175,11 @@ $logical=Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='"+$drive+"'")
         if not session_refresh(plan_path, plan_sha256, disk_number, receipt_path):
             _elevated_refresh(sys.executable, arguments, str(root), allow_prompt=allow_prompt)
         receipt = json.loads(receipt_path.read_text())
+        if receipt.get('passed') is not True and receipt.get('failure'):
+            writes = receipt.get('writes', [])
+            write_state = ('no device write attempted' if receipt.get('device_write_attempted') is False
+                           else f"{sum(item.get('complete') is True for item in writes)}/{len(writes)} writes completed readback; overall verification failed")
+            raise RuntimeError(f"refresh stopped in {receipt.get('phase')}: {receipt['failure']}; {write_state}")
         device = receipt.get("device", {})
         expected_write = dict(bytes=512, complete=True, offset=manifest["directory_disk_offset"],
                               returned_bytes=512, sha256=hashlib.sha256(artifacts["directory-candidate.bin"]).hexdigest())
@@ -249,11 +254,12 @@ $logical=Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='"+$drive+"'")
         raise RuntimeError(f"Eject/reboot failed: {exc}. Retained refresh receipt: {receipt_path}; do not replay automatically") from exc
 
 
-def eject(disk_number: int, expected_serial: str = "JQ5081G3SAY",
-          wait_link: bool = False, link_serial: str = "000000F7A765") -> dict:
+def eject(disk_number: int, expected_serial: str,
+          wait_link: bool = False, link_serial: str | None = None) -> dict:
     if os.name != "nt":
         raise RuntimeError("device eject requires Windows")
-    if disk_number < 0 or not expected_serial.strip() or not link_serial.strip():
+    if (disk_number < 0 or not isinstance(expected_serial, str) or not expected_serial.strip() or
+            (wait_link and (not isinstance(link_serial, str) or not link_serial.strip()))):
         raise ValueError("explicit disk number and nonempty expected serials are required")
     config = base64.b64encode(json.dumps(dict(number=disk_number,
         serial=expected_serial.strip())).encode()).decode()

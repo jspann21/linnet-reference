@@ -1,0 +1,15 @@
+/* Board policy consumed by the shared PP502x drivers. */
+#pragma once
+#define LINNET_INPUT_FIRST_PACKET_FIX 1
+#define LINNET_STORAGE_TAIL_SECTOR 0
+#define LINNET_CLOCK_SETTLE_US 1000u
+#define LINNET_ATA_TRACK_FLUSH 1
+#define LINNET_ATA_ALIGNED_WRITE 1
+#define LINNET_DISK_MODE_MARKER 0x40017f00u
+
+#define LINNET_AUDIO_IRAM_BYTES 8192
+
+/* Nominal 0..100% voltage estimate; not a battery capacity measurement. */
+#define LINNET_BATTERY_CURVE_MV {3450,3660,3700,3730,3770,3820,3870,3920,4040,4100,4170}
+
+#define LINNET_DISPLAY_SERVICE_PAIRS 256u

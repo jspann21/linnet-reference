@@ -98,13 +98,15 @@ uint32_t ln_ui_dynamic_count(const struct ln_ui_node*n,uint32_t fallback){
 #endif
 #if defined(LINNET_VIDEO)
     if(in_scene(n,"linnet.system.videos")&&n->kind==LN_UI_VIRTUAL_LIST)return ln_video_library_count();
+    if(in_scene(n,"linnet.system.video-settings")&&n->kind==LN_UI_VIRTUAL_LIST)return 4u;
+    if(in_scene(n,"linnet.system.video-output")&&n->kind==LN_UI_VIRTUAL_LIST)return 2u;
 #endif
 #if defined(LINNET_PHOTOS)
     if((in_scene(n,"linnet.system.photos")||in_scene(n,"linnet.system.photos-grid"))&&
        (n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_GRID||n->kind==LN_UI_SCROLLBAR))return ln_photos_count();
 #endif
     if(in_scene(n,"linnet.system.music-options")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return 13;
-    if(in_scene(n,"linnet.system.music-sound")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return 9;
+    if(in_scene(n,"linnet.system.music-sound")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_music_sound_count();
     if(in_scene(n,"linnet.system.music-search")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_music_search_count();
     if(in_scene(n,"linnet.system.music-queue")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_music_queue_view_count();
     if(in_scene(n,"linnet.system.music-queue-actions")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return 5;
@@ -137,6 +139,8 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
        n->kind!=LN_UI_ALBUM_ART)return fallback;
 #if defined(LINNET_VIDEO)
     if(in_scene(n,"linnet.system.videos")&&n->kind==LN_UI_VIRTUAL_LIST&&item!=UINT32_MAX)return ln_video_library_label(item);
+    if(in_scene(n,"linnet.system.video-settings")&&n->kind==LN_UI_VIRTUAL_LIST&&item<4u)return ln_video_option_label(item);
+    if(in_scene(n,"linnet.system.video-output")&&n->kind==LN_UI_VIRTUAL_LIST&&item<2u)return item?"TV":"iPod";
     if(in_scene(n,"linnet.system.video-player")||in_scene(n,"linnet.system.video-controls")){
         if(n->kind==LN_UI_VIDEO_SURFACE)return ln_video_asset()?"":ln_video_status();
         if(n->kind==LN_UI_STATUS_BAR)return ln_video_status();
@@ -162,7 +166,7 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
         if(n->kind==LN_UI_STATUS_BAR)return "Playback options";
         if(n->kind==LN_UI_VIRTUAL_LIST&&item<13)return ln_music_option_label(ln_music_option_action(item));
     }
-    if(in_scene(n,"linnet.system.music-sound")&&n->kind==LN_UI_VIRTUAL_LIST&&item<9)return ln_music_sound_label(item);
+    if(in_scene(n,"linnet.system.music-sound")&&n->kind==LN_UI_VIRTUAL_LIST&&item<ln_music_sound_count())return ln_music_sound_label(item);
     if(in_scene(n,"linnet.system.music-queue")){
         if(n->kind==LN_UI_STATUS_BAR&&ln_music_notice())return ln_music_notice();
         if(n->kind==LN_UI_VIRTUAL_LIST&&item!=UINT32_MAX)return ln_music_queue_view_label(item);

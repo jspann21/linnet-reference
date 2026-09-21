@@ -24,15 +24,24 @@ ROOT = Path(__file__).resolve().parents[2]
 DATA = (Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData/Local')) /
         'Linnet' / 'Refresh')
 STATE = DATA / 'state.json'
-SOURCES = ('tools/link/refresh_session.py', 'tools/studio/native_bootstrap.py',
-           'tools/inspect/image.py', 'tools/studio/targets.py',
-           # Target discovery validates each manifest's conventional source layout.
-           'targets/photo4g-p98/target.toml', 'targets/ipod4g-q21/target.toml',
-           'hal/pp5020/startup.S', 'hal/pp5020/memory.ld',
-           'hal/pp5020/platform.c', 'hal/pp5020/display.c',
-           'targets/photo4g-p98/lcd.c', 'targets/photo4g-p98/device.c',
-           'targets/ipod4g-q21/lcd.c', 'targets/ipod4g-q21/device.c',
-           'targets/ipod4g-q21/display.c')
+# Discover data files without importing workspace code in the isolated bootstrap.
+# Keep the entry script first: prepare uses SOURCES[0] for the UAC command.
+def _source_closure():
+    import tomllib
+    paths = {'services/update/native.c', 'tools/studio/native_bootstrap.py', 'tools/inspect/image.py', 'tools/studio/targets.py'}
+    for manifest in (ROOT/'targets').glob('*/target.toml'):
+        spec = tomllib.loads(manifest.read_text(encoding='utf-8'))
+        board = manifest.parent
+        hal = ROOT/'hal'/spec.get('hal_family',spec['soc'])
+        if (board/'native_update.c').is_file(): paths.add((board/'native_update.c').relative_to(ROOT).as_posix())
+        display = board/'display.c'
+        if not display.is_file(): display = hal/'display.c'
+        for path in (manifest,hal/'startup.S',hal/'memory.ld',hal/'platform.c',
+                     board/'lcd.c',board/'device.c',board/'hardware.h',display,
+                     ROOT/'hal'/'codecs'/(spec.get('audio_codec','wm8975')+'.c')):
+            paths.add(path.resolve().relative_to(ROOT.resolve()).as_posix())
+    return ('tools/link/refresh_session.py', *sorted(paths))
+SOURCES = _source_closure()
 MAX_MESSAGE = 65536
 
 
@@ -157,20 +166,147 @@ class Windows:
             raise OSError('incomplete pipe response')
 
 
-def prepare(plan_path, plan_sha256, *, hours=8, install_reviewed_boot=False):
+def _usb_nodes():
+    # Fixed query: client requests cannot supply PowerShell or instance paths.
+    script = r"""$ErrorActionPreference='Stop'; @(Get-PnpDevice -PresentOnly | Where-Object {$_.InstanceId -like 'USB\VID_*' -and $_.InstanceId -notlike '*&MI_*'} | ForEach-Object { $p=Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_LocationPaths -ErrorAction SilentlyContinue; $parent=Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_Parent -ErrorAction SilentlyContinue; $address=Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName DEVPKEY_Device_Address -ErrorAction SilentlyContinue; [pscustomobject]@{id=$_.InstanceId; locations=@($p.Data); status=$_.Status; parent=$parent.Data; port=$address.Data} }) | ConvertTo-Json -Compress"""
+    result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script],
+                            capture_output=True, text=True, timeout=30, check=True,
+                            creationflags=subprocess.CREATE_NO_WINDOW)
+    data = json.loads(result.stdout or '[]')
+    return data if isinstance(data, list) else [data]
+
+
+def _usb_pin(serial, recovery_pin=None):
+    if not isinstance(serial, str) or not re.fullmatch('[0-9A-Fa-f]{16}', serial):
+        raise ValueError('USB serial must contain 16 hexadecimal digits')
+    nodes = _usb_nodes()
+    matches = [n for n in nodes if n['id'].upper().endswith('\\' + serial.upper())
+               and n['id'].upper().startswith(('USB\\VID_1209&PID_504A', 'USB\\VID_05AC&PID_1209'))]
+    if not matches and recovery_pin and recovery_pin['serial'] == serial.upper():
+        matches = [n for n in nodes if n['id'].upper().startswith('USB\\VID_0000&PID_0002\\')
+                   and n['status'] == 'Error' and set(n['locations']) & set(recovery_pin['locations'])]
+    if len(matches) != 1 or not matches[0]['locations']:
+        raise RuntimeError('expected one present iPod with a physical location')
+    node = matches[0]
+    if type(node['port']) is not int or not 1 <= node['port'] <= 255 or not isinstance(node['parent'], str) or not node['parent'].upper().startswith('USB\\'):
+        raise RuntimeError('invalid USB parent or port')
+    locations = [p for p in node['locations'] if isinstance(p, str) and p.startswith('ACPI(')] or node['locations']
+    return dict(serial=serial.upper(), locations=locations, parent=node['parent'], port=node['port'], port_cycle=True)
+
+
+def _usb_cycle_port(pin):
+    # Resolve the current hub interface for the approved parent. Only its
+    # approved connection index is cycled; no hub-wide reset is issued.
+    cm = ctypes.WinDLL('cfgmgr32')
+    guid = ctypes.create_string_buffer(uuid.UUID('f18a0e88-c30c-11d0-8815-00a0c906bed8').bytes_le)
+    cm.CM_Get_Device_Interface_List_SizeW.argtypes = [ctypes.POINTER(w.ULONG), ctypes.c_void_p, w.LPCWSTR, w.ULONG]
+    cm.CM_Get_Device_Interface_ListW.argtypes = [ctypes.c_void_p, w.LPCWSTR, w.LPWSTR, w.ULONG, w.ULONG]
+    size = w.ULONG()
+    if cm.CM_Get_Device_Interface_List_SizeW(ctypes.byref(size), guid, pin['parent'], 0):
+        raise RuntimeError('cannot resolve approved USB hub')
+    buf = ctypes.create_unicode_buffer(size.value)
+    if cm.CM_Get_Device_Interface_ListW(guid, pin['parent'], buf, size, 0):
+        raise RuntimeError('cannot resolve approved USB hub interface')
+    paths = [x for x in buf[:size.value].split('\0') if x]
+    if len(paths) != 1:
+        raise RuntimeError('approved USB hub interface is ambiguous')
+    api = Windows()
+    handle = api.k.CreateFileW(paths[0], 0x40000000, 3, None, 3, 0, None)
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        api.k.DeviceIoControl.argtypes = [w.HANDLE, w.DWORD, ctypes.c_void_p, w.DWORD,
+                                         ctypes.c_void_p, w.DWORD, ctypes.POINTER(w.DWORD), ctypes.c_void_p]
+        params = (w.ULONG * 2)(pin['port'], 0)
+        count = w.DWORD()
+        api.check(api.k.DeviceIoControl(handle, 0x220444, params, 8, params, 8, ctypes.byref(count), None))
+        if params[1]:
+            raise RuntimeError('USB port cycle returned status ' + hex(params[1]))
+        return dict(passed=True, parent=pin['parent'], port=pin['port'], status=params[1])
+    finally:
+        api.k.CloseHandle(handle)
+
+
+class UsbDiagnostics:
+    def __init__(self, config, directory):
+        self.pin = config.get('usb_diagnostics')
+        self.directory = directory
+        self.name = 'LinnetUSB-' + config['session_id']
+        self.trace = None
+        self.deadline = 0
+
+    def run(self, command):
+        if not self.pin:
+            raise ValueError('USB diagnostics were not approved for this session')
+        if command in ('usb-restart', 'usb-cycle'):
+            matches = [n for n in _usb_nodes() if set(n['locations']) & set(self.pin['locations'])]
+            if len(matches) != 1:
+                raise RuntimeError('pinned USB port does not contain exactly one device')
+            node = matches[0]
+            identity = node['id'].upper()
+            known = identity.endswith('\\' + self.pin['serial']) and identity.startswith(
+                ('USB\\VID_1209&PID_504A', 'USB\\VID_05AC&PID_1209'))
+            failed = identity.startswith('USB\\VID_0000&PID_0002\\') and node['status'] == 'Error'
+            if not (known or failed):
+                raise RuntimeError('pinned port contains an unexpected device')
+            if command == 'usb-cycle':
+                if not self.pin.get('port_cycle') or (node['parent'], node['port']) != (self.pin['parent'], self.pin['port']):
+                    raise RuntimeError('USB parent or port differs from approval')
+                return _usb_cycle_port(self.pin)
+            result = subprocess.run(['pnputil.exe', '/restart-device', node['id']],
+                                    capture_output=True, text=True, timeout=40,
+                                    creationflags=subprocess.CREATE_NO_WINDOW)
+            return dict(passed=result.returncode == 0, device=node, output=result.stdout,
+                        error=result.stderr, returncode=result.returncode)
+        if command == 'trace-start':
+            if self.trace:
+                return dict(passed=True, trace=str(self.trace), already_running=True)
+            providers = self.directory / 'usb-providers.txt'
+            providers.write_text(''.join(name + ' 0x8065f 5\n' for name in (
+                'Microsoft-Windows-USB-USBHUB3', 'Microsoft-Windows-USB-USBXHCI',
+                'Microsoft-Windows-USB-UCX')), encoding='ascii')
+            path = self.directory / ('usb-' + uuid.uuid4().hex + '.etl')
+            subprocess.run(['logman.exe', 'create', 'trace', self.name, '-o', str(path),
+                            '-pf', str(providers), '-f', 'bincirc', '-max', '128', '-ets'],
+                           capture_output=True, text=True, check=True, timeout=20,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            self.trace, self.deadline = path, time.monotonic() + 900
+            return dict(passed=True, trace=str(path), maximum_seconds=900)
+        if command == 'trace-stop':
+            path = self.trace
+            if path:
+                subprocess.run(['logman.exe', 'stop', self.name, '-ets'], capture_output=True,
+                               text=True, check=True, timeout=20,
+                               creationflags=subprocess.CREATE_NO_WINDOW)
+                self.trace = None
+            return dict(passed=True, trace=str(path) if path else None)
+        raise ValueError('unsupported USB diagnostic command')
+
+    def tick(self):
+        if self.trace and time.monotonic() >= self.deadline:
+            self.run('trace-stop')
+
+
+def prepare(plan_path, plan_sha256, *, hours=8, install_reviewed_boot=False, usb_serial=None):
     """Read-only device preparation; creates local immutable-content snapshot."""
     from tools.studio.native_bootstrap import load_plan
     if type(hours) is not int or not 1 <= hours <= 24:
         raise ValueError('session duration must be 1..24 hours')
     plan_path = Path(plan_path).resolve()
     manifest, artifacts, original = load_plan(plan_path, plan_sha256)
+    prior_pin = None
+    if usb_serial and STATE.is_file():
+        prior_state = json.loads(STATE.read_text())
+        if (prior_state.get('plan'), prior_state.get('plan_sha256')) == (str(plan_path), plan_sha256):
+            prior_pin = request(prior_state).get('usb_diagnostics')
+    usb_pin = _usb_pin(usb_serial, prior_pin) if usb_serial else None
     artifacts=dict(artifacts)
     sid, _ = Windows().token()
     session_id = uuid.uuid4().hex
     directory = DATA / 'sessions' / session_id
     directory.mkdir(parents=True)
     config = dict(session_id=session_id, owner_sid=sid, seconds=hours * 3600,
-                  install_reviewed_boot=bool(install_reviewed_boot),
+                  usb_diagnostics=usb_pin, install_reviewed_boot=bool(install_reviewed_boot),
                   plan=str(plan_path), plan_sha256=plan_sha256,
                   interpreter=str(Path(sys.executable).resolve()),
                   interpreter_sha256=hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest(),
@@ -189,7 +325,7 @@ def prepare(plan_path, plan_sha256, *, hours=8, install_reviewed_boot=False):
                     snapshot=str(path), snapshot_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
                     script=str(directory / SOURCES[0]), interpreter=config['interpreter'],
                     interpreter_sha256=config['interpreter_sha256'], sources=sources,
-                    owner_sid=sid, hours=hours,install_reviewed_boot=bool(install_reviewed_boot))
+                    owner_sid=sid, hours=hours, usb_diagnostics=usb_pin, install_reviewed_boot=bool(install_reviewed_boot))
     _json(directory / 'prepared.json', prepared)
     return prepared
 
@@ -207,6 +343,8 @@ def bootstrap(snapshot, expected_hash):
         raise ValueError('interpreter differs from approved preparation')
     if set(config['sources']) != set(SOURCES):
         raise ValueError('unexpected source closure')
+    if config.get('usb_diagnostics') and _usb_pin(config['usb_diagnostics']['serial'], config['usb_diagnostics']) != config['usb_diagnostics']:
+        raise RuntimeError('USB topology changed since approval preparation')
     source_bytes = {}
     for relative in SOURCES:
         source = (Path(snapshot).parent / relative).read_bytes()
@@ -276,10 +414,13 @@ def serve(snapshot):
                   pid=os.getpid(), owner_sid=config['owner_sid'], poisoned=False,
                   started_at=datetime.now(timezone.utc).isoformat(), seconds=config['seconds'])
     _json(directory / 'ready.json', status)
+    diagnostics = UsbDiagnostics(config, directory)
+    status['usb_diagnostics'] = config.get('usb_diagnostics')
     receipts = {}
     stop = False
     try:
         while time.monotonic() < expires and not stop:
+            diagnostics.tick()
             connected = win.k.ConnectNamedPipe(handle, None)
             if not connected and ctypes.get_last_error() not in (535,):
                 if ctypes.get_last_error() == 536:  # no client yet
@@ -295,7 +436,10 @@ def serve(snapshot):
                 if command in ('status', 'stop') and set(request) == {'session_id', 'command'}:
                     stop = command == 'stop'
                     response = dict(status, remaining_seconds=max(0, int(expires-time.monotonic())), stopping=stop)
-                elif command in ('refresh','install') and set(request) == {'session_id', 'command', 'request_id', 'disk_number'}:
+                elif command in ('trace-start', 'trace-stop', 'usb-restart', 'usb-cycle') and set(request) == {'session_id', 'command'}:
+                    response = dict(diagnostics.run(command), session_id=config['session_id'], plan_sha256=config['plan_sha256'])
+                    _json(directory / (command + '-' + uuid.uuid4().hex + '.json'), response)
+                elif command in ('refresh','install','verify') and set(request) == {'session_id', 'command', 'request_id', 'disk_number'}:
                     if command=='install' and config.get('install_reviewed_boot') is not True:
                         raise ValueError('approved session permits refresh only')
                     request_id, number = request['request_id'], request['disk_number']
@@ -306,10 +450,10 @@ def serve(snapshot):
                         if prior.get('requested_disk_number') != number or prior.get('command') != command:
                             raise ValueError('request ID reused with different disk')
                         response = prior
-                    elif status['poisoned'] or len(receipts) >= 512:
+                    elif (status['poisoned'] and command != 'verify') or len(receipts) >= 512:
                         raise RuntimeError('session writes revoked; inspect its receipts')
                     else:
-                        response = dict(operation='install-reviewed-boot' if command=='install' else 'refresh-installed-directory', command=command, plan=config['plan'], plan_sha256=config['plan_sha256'],
+                        response = dict(operation='verify-installed-directory' if command=='verify' else 'install-reviewed-boot' if command=='install' else 'refresh-installed-directory', command=command, plan=config['plan'], plan_sha256=config['plan_sha256'],
                                         passed=False, device_write_attempted=False, writes=[], phase='identify-device',
                                         started_at=datetime.now(timezone.utc).isoformat(), requested_disk_number=number,
                                         request_id=request_id, session_id=config['session_id'])
@@ -320,22 +464,28 @@ def serve(snapshot):
                             # integer-only, read-only Get-Disk query. System PATH and
                             # protected cwd exclude workspace executables.
                             response['device'] = native.identify_disk(number, manifest)
-                            with open(r'\\.\PhysicalDrive' + str(number), 'r+b', buffering=0) as device:
+                            with open(r'\\.\PhysicalDrive' + str(number), 'rb' if command=='verify' else 'r+b', buffering=0) as device:
+                                response['phase'] = 'verify-before-write' if command!='verify' else 'verify-read-only'
                                 response['before'] = native.guard_device(device, manifest, artifacts, original)
                                 if command=='install':
                                     if response['before']['staging']!='candidate':
                                         native.write_verified(device,manifest['candidate_disk_offset'],artifacts['candidate.bin'],response,receipt_path,'install-reviewed-payload')
+                                    response['phase'] = 'verify-staged-payload'
                                     native.guard_device(device,manifest,artifacts,original)
                                 elif response['before']['directory'] != 'candidate':
                                     raise RuntimeError('refresh requires exact installed candidate')
-                                native.write_verified(device, manifest['directory_disk_offset'], new_directory, response, receipt_path, 'refresh-identical-directory')
-                                response['after'] = native.guard_device(device, manifest, artifacts, original)
+                                if command != 'verify':
+                                    native.write_verified(device, manifest['directory_disk_offset'], new_directory, response, receipt_path, 'refresh-identical-directory')
+                                    response['phase'] = 'verify-after-write'
+                                    response['after'] = native.guard_device(device, manifest, artifacts, original)
+                                else:
+                                    response['after'] = dict(response['before'])
                                 if command=='install' and (response['after']['directory']!='candidate' or response['after']['staging']!='candidate'):
                                     raise RuntimeError('installed Boot failed full guard')
                                 if command=='refresh' and response['before'] != response['after']:
                                     raise RuntimeError('directory refresh changed firmware state')
                             response.update(passed=True, phase='complete')
-                            if command=='refresh':response['bytes_changed']=0
+                            if command in ('refresh','verify'):response['bytes_changed']=0
                         except Exception as exc:
                             response['failure'] = f'{type(exc).__name__}: {exc}'
                             if response['device_write_attempted']:
@@ -345,7 +495,7 @@ def serve(snapshot):
                 else:
                     raise ValueError('unsupported command or fields')
                 win.write(handle, response)
-                if command in ('refresh','install'):
+                if command in ('refresh','install','verify'):
                     if win.read(handle, 5) != {'ack': request_id}:
                         raise RuntimeError('refresh completion was not acknowledged')
                 # Give the client a bounded interval to consume the message before
@@ -354,7 +504,7 @@ def serve(snapshot):
                 available = w.DWORD()
                 while time.monotonic() < deadline and win.k.PeekNamedPipe(handle, None, 0, None, ctypes.byref(available), None):
                     time.sleep(.025)
-            except (OSError, ValueError, RuntimeError, TimeoutError) as exc:
+            except (OSError, ValueError, RuntimeError, TimeoutError, subprocess.SubprocessError) as exc:
                 if response and response.get('device_write_attempted'):
                     status['poisoned'] = True
                     _json(directory / 'revoked.json', dict(status, reason='refresh response was not acknowledged'))
@@ -368,6 +518,8 @@ def serve(snapshot):
             finally:
                 win.k.DisconnectNamedPipe(handle)
     finally:
+        if diagnostics.trace:
+            diagnostics.run('trace-stop')
         win.k.CloseHandle(handle)
         _json(directory / 'closed.json', dict(status, closed_at=datetime.now(timezone.utc).isoformat()))
 
@@ -397,7 +549,7 @@ def request(state, command='status', *, disk_number=None, request_id=None):
         finally:
             win.k.CloseHandle(process)
         message = dict(session_id=session_id, command=command)
-        if command in ('refresh','install'):
+        if command in ('refresh','install','verify'):
             message.update(disk_number=disk_number, request_id=request_id or uuid.uuid4().hex)
         win.write(handle, message)
         response = win.read(handle, 60)
@@ -405,7 +557,7 @@ def request(state, command='status', *, disk_number=None, request_id=None):
             raise RuntimeError('session response identity mismatch')
         if response.get('error'):
             raise RuntimeError(response['error'])
-        if command in ('refresh','install'):
+        if command in ('refresh','install','verify'):
             if response.get('request_id') != message['request_id']:
                 raise RuntimeError('refresh request identity mismatch')
             win.write(handle, {'ack': message['request_id']})
@@ -433,6 +585,8 @@ def start(prepared, *, allow_prompt=False):
     existing = active(prepared['plan'], prepared['plan_sha256'])
     if existing:
         status=request(existing)
+        if prepared.get('usb_diagnostics') != status.get('usb_diagnostics'):
+            raise RuntimeError('active session has different USB capabilities; stop it before approving replacement')
         if prepared.get('install_reviewed_boot') and not status.get('install_reviewed_boot'):
             raise RuntimeError('active session permits refresh only; stop it before approving installation capability')
         return status

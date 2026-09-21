@@ -7,9 +7,6 @@ uint32_t ln_time_us(void);
 /* Return a CPU address that bypasses cache for target SDRAM, when required. */
 uintptr_t ln_platform_uncached_address(uintptr_t address);
 bool ln_lcd_fill(uint16_t color);
-#if defined(LINNET_TARGET_PHOTO4G_P98)
-uint32_t ln_lcd_panel_type(void);
-#endif
 #if defined(LINNET_IMAGE_BOOT)
 bool ln_lcd_boot(void);
 bool ln_lcd_boot_selector(bool rockbox, bool starting);

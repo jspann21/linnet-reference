@@ -225,7 +225,7 @@ bool ln_music_queue_edit(uint32_t action){
     if(accepted){notice=0;++revision;}else {notice="Queue edit unavailable";++revision;}
     return accepted;
 }
-void ln_music_init(void){restore_attempts=restore_retry_at=0;restore_revision=revision;volume_retry_pending=false;volume_retry_at=0;ln_queue_init(&queue,ln_time_us());ln_music_profile_default(&profile);ln_music_library_init();ln_music_browser_init();ln_music_history_init();}
+void ln_music_init(void){restore_attempts=restore_retry_at=0;restore_revision=revision;volume_retry_pending=false;volume_retry_at=0;ln_queue_init(&queue,ln_time_us());ln_music_profile_default(&profile);(void)ln_audio_lineout(false);ln_music_library_init();ln_music_browser_init();ln_music_history_init();}
 bool ln_music_take_now_playing(void){bool show=show_now_playing;show_now_playing=false;return show;}
 const struct ln_music_library_row *ln_music_current(void){return have_current?&current:0;}
 bool ln_music_queue_position(uint32_t *position,uint32_t *count){
@@ -234,12 +234,26 @@ bool ln_music_queue_position(uint32_t *position,uint32_t *count){
     *position=queue.cursor+1u;*count=queue.count;return true;
 }
 uint32_t ln_music_revision(void){return revision+ln_music_history_revision()+ln_collections_revision();}
+uint32_t ln_music_sound_count(void){
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    return 13u;
+#else
+    return 9u;
+#endif
+}
 const char *ln_music_sound_label(uint32_t index){
-    static char balance[24],preamp[24],levels[3][20];
+    static char balance[24],preamp[24],levels[7][24];
     static const char *const modes[]={"Channels: Stereo","Channels: Mono","Channels: Left","Channels: Right","Channels: Karaoke"};
     if(index==0&&profile.preset==LN_MUSIC_EQ_CUSTOM)return "EQ: Custom";
-    if(index==0)return profile.preset==LN_MUSIC_EQ_BASS?"EQ: Bass":profile.preset==LN_MUSIC_EQ_VOICE?"EQ: Voice":"EQ: Flat";
+    if(index==0){
+        static const char *const presets[]={"EQ: Off","EQ: Acoustic","EQ: Bass Booster","EQ: Classical","EQ: Electronic","EQ: Hip Hop","EQ: Loudness","EQ: Lounge","EQ: Small Speakers","EQ: Spoken Word","EQ: Treble Booster","EQ: Vocal Booster"};
+        return presets[profile.preset];
+    }
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    if(index==1)return profile.replaygain==2?"Sound Check: Album":profile.replaygain?"Sound Check: On":"Sound Check: Off";
+#else
     if(index==1)return profile.replaygain==2?"ReplayGain: Album":profile.replaygain?"ReplayGain: Track":"ReplayGain: Off";
+#endif
     if(index==2)return profile.crossfeed?"Crossfeed: On":"Crossfeed: Off";
     if(index==3){
         if(!profile.balance)return "Balance: Center";
@@ -252,24 +266,42 @@ const char *ln_music_sound_label(uint32_t index){
     if(index==5){uint32_t value=(uint32_t)(-profile.preamp_db_q16)/65536u,n=0;const char *prefix="Preamp: -";
         while(prefix[n]){preamp[n]=prefix[n];++n;}if(value>=10)preamp[n++]=(char)('0'+value/10u);
         preamp[n++]=(char)('0'+value%10u);preamp[n++]=' ';preamp[n++]='d';preamp[n++]='B';preamp[n]=0;return preamp;}
-    if(index>=6&&index<9){
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    if(index==6||index>=8){
+        static const char *const names[]={"Max volume: ","Bass 100 Hz: ","Low 250 Hz: ","Mid 1 kHz: ","High 4 kHz: ","Treble 8 kHz: "};
+        uint32_t slot=index==6?0u:index-7u,band=index>=8?index-8u:0u;
+#else
+    if(index>=6){
         static const char *const names[]={"Max volume: ","Bass 100 Hz: ","Treble 8 kHz: "};
-        uint32_t slot=index-6,n=0;char *out=levels[slot];const char *name=names[slot];
+        uint32_t slot=index-6u,band=index==8u?4u:0u;
+#endif
+        uint32_t n=0;char *out=levels[slot];const char *name=names[slot];
         while(*name)out[n++]=*name++;
-        int32_t db=slot?profile.eq_db[slot-1]:profile.max_volume_db_tenths/10;
+        int32_t db=slot?profile.eq_db[band]:profile.max_volume_db_tenths/10;
         out[n++]=db<0?'-':'+';uint32_t value=(uint32_t)(db<0?-db:db);
         if(value>=10)out[n++]=(char)('0'+value/10);
         out[n++]=(char)('0'+value%10);out[n++]=' ';out[n++]='d';out[n++]='B';out[n]=0;return out;
     }
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    if(index==7)return profile.lineout?"Dock line out: On":"Dock line out: Off";
+#endif
     return "";
 }
 static int32_t profile_gain(const struct ln_music_profile *p,const struct ln_music_track *t){
     return p->replaygain==2&&t->album_replaygain!=INT32_MIN?t->album_replaygain:t->replaygain;
 }
 bool ln_music_sound_adjust(uint32_t index,int32_t direction){
-    if(shutting_down||manual_next_pending||index>8||!direction)return false;
+    if(shutting_down||manual_next_pending||index>=ln_music_sound_count()||!direction)return false;
     struct ln_music_profile next=profile;bool up=direction>0;
-    if(index==0)next.preset=(next.preset+(up?1u:3u))%4u;
+    if(index==0){
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+        next.preset=(next.preset+(up?1u:LN_MUSIC_EQ_CUSTOM))%(LN_MUSIC_EQ_CUSTOM+1u);
+#else
+        static const uint8_t choices[]={LN_MUSIC_EQ_FLAT,LN_MUSIC_EQ_BASS_BOOSTER,LN_MUSIC_EQ_VOCAL_BOOSTER,LN_MUSIC_EQ_CUSTOM};
+        uint32_t at=0;while(at<4u&&choices[at]!=next.preset)++at;if(at==4u)at=0;
+        next.preset=choices[(at+(up?1u:3u))%4u];
+#endif
+    }
     else if(index==1)next.replaygain=(next.replaygain+(up?1u:2u))%3u;
     else if(index==2)next.crossfeed=!next.crossfeed;
     else if(index==3){next.balance+=up?100:-100;if(next.balance>1000)next.balance=1000;if(next.balance< -1000)next.balance=-1000;}
@@ -278,10 +310,20 @@ bool ln_music_sound_adjust(uint32_t index,int32_t direction){
     else if(index==6){next.max_volume_db_tenths+=up?10:-10;
         if(next.max_volume_db_tenths>0)next.max_volume_db_tenths=0;
         if(next.max_volume_db_tenths< -730)next.max_volume_db_tenths=-730;
-    }else {int32_t db=next.eq_db[index-7]+(up?1:-1);if(db>6)db=6;if(db< -6)db=-6;
-        next.eq_db[index-7]=(int8_t)db;next.preset=LN_MUSIC_EQ_CUSTOM;}
+    }
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    else if(index==7){next.lineout=!next.lineout;}
+    else {uint32_t band=index-8u;int32_t db=next.eq_db[band]+(up?1:-1);if(db>6)db=6;if(db< -6)db=-6;
+        next.eq_db[band]=(int8_t)db;next.preset=LN_MUSIC_EQ_CUSTOM;}
+#else
+    else {uint32_t band=index==8u?4u:0u;int32_t db=next.eq_db[band]+(up?1:-1);if(db>6)db=6;if(db< -6)db=-6;
+        next.eq_db[band]=(int8_t)db;next.preset=LN_MUSIC_EQ_CUSTOM;}
+#endif
     if(!ln_music_profile_valid(&next))return false;
     if(index==6){profile=next;ln_music_volume(0);return true;}
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    if(index==7){if(!ln_audio_lineout(next.lineout))return false;profile=next;++revision;return true;}
+#endif
     if(have_current){struct ln_dsp_config config;
         if(!ln_music_profile_configure(&next,current.track.rate,profile_gain(&next,&current.track),&config)||
            !ln_player_configure(&config,current.track.rate))return false;
@@ -692,8 +734,10 @@ static void music_step(void){
         else append_queue(&expanded_queue,&additions);
     }
 #if defined(LINNET_COVERFLOW)
-    bool starting=selecting||have_waiting||resolver_kind==1||p.phase==LN_PLAYER_PRIME;
-    bool cover_read=!starting&&(!audio.initialized||!audio.playing||audio.queued>=LINNET_AUDIO_RING_FRAMES/2u);
+    bool starting=selecting||have_waiting||resolver_kind==1||p.phase==LN_PLAYER_OPEN||
+        p.phase==LN_PLAYER_HEADER||p.phase==LN_PLAYER_PRIME;
+    bool cover_read=!starting&&!urgent&&(!audio.initialized||!audio.playing||audio.paused||
+        audio.queued>=LINNET_AUDIO_RING_FRAMES/2u);
 #if defined(LINNET_PHOTOS)
     cover_read=cover_read&&!ln_photos_busy();
 #endif
@@ -719,7 +763,7 @@ static void music_step(void){
                 if(result==1){
                     static struct ln_queue saved;struct ln_music_profile saved_profile;
                     if(ln_music_settings_decode(&saved,&saved_profile,resume,length)&&revision==snapshot_revision&&revision==restore_revision&&!active&&!selecting&&!have_waiting&&resolver_kind!=1){
-                        profile=saved_profile;
+                        profile=saved_profile;(void)ln_audio_lineout(profile.lineout);
                         bool valid=true;
                         if(!same(saved.library_identity,identity))valid=false;
                         if(saved.source==LN_QUEUE_ALL)valid=valid&&saved.source_count==ln_music_library_count();

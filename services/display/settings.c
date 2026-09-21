@@ -26,7 +26,8 @@ static bool update_known;
 static bool loaded,dirty,clock_12;
 static uint8_t photo_resume[16];
 static uint32_t video_resume[2];
-void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;video_resume[0]=video_resume[1]=0;revision=record_revision=0;loaded=dirty=false;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;}
+static uint8_t video_options;
+void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;}
 bool ln_display_clock_12(void){return clock_12;}
 void ln_display_clock_toggle(void){clock_12=!clock_12;dirty=true;++revision;++record_revision;}
 uint32_t ln_display_backlight_timeout_us(void){return seconds[choice]*1000000u;}
@@ -87,12 +88,13 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
     if(ln_storage_busy()||!ln_storage_mounted()||!ln_storage_settings(false,raw,&bytes))return 0;
     if(bytes>480)return -1;
     if(!bytes){*offset=*length=0;loaded=true;return 1;}
-    uint32_t out_offset=0,out_length=0,saved_choice=choice,saved_capacity=1200;bool saved_clock_12=false;
+    uint32_t out_offset=0,out_length=0,saved_choice=choice,saved_capacity=1200;bool saved_clock_12=false;uint8_t saved_video_options=8u;
     uint8_t saved_photo[16]={0};uint32_t saved_video[2]={0};
     if(bytes<36||ln_read_le32(raw)!=0x54544553u||ln_read_le32(raw+bytes-4)!=ln_crc32(raw,bytes-4))return -1;
     uint32_t n=(uint32_t)raw[4]|((uint32_t)raw[5]<<8),f=raw[14];
-    if(n!=bytes-36||raw[7]>1u||raw[6]>6||(raw[15]&15u)>8u||(raw[15]>>4)>8u||(f&7u)>5||((f>>5)&3u)>2||(f&128u))return -1;
-    saved_choice=raw[6];saved_clock_12=raw[7]==1u;
+    if(n!=bytes-36||(raw[7]&0xc0u)||((raw[7]>>1)&3u)>2u||raw[6]>6||(raw[15]&15u)>8u||(raw[15]>>4)>8u||(f&7u)>5||((f>>5)&3u)>2||(f&128u))return -1;
+    saved_choice=raw[6];saved_clock_12=(raw[7]&1u)!=0;
+    saved_video_options=(uint8_t)(((raw[7]>>1)&3u)|(((raw[7]>>3)&1u)<<2)|(((raw[7]>>4)&1u?0u:1u)<<3)|(((raw[7]>>5)&1u)<<4));
     ln_write_le32(saved_photo,ln_read_le32(raw+8));ln_write_le32(saved_photo+4,(uint32_t)raw[12]|((uint32_t)raw[13]<<8));
     ln_write_le32(saved_photo+8,(f&7u)|(((f>>3)&3u)<<8)|(((f>>5)&3u)<<16));ln_write_le32(saved_photo+12,ln_read_le32(raw+16));
     saved_video[0]=ln_read_le32(raw+20);saved_video[1]=ln_read_le32(raw+24);
@@ -106,7 +108,7 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
             shutdown_choice[0]=raw[15]&15u;shutdown_choice[1]=raw[15]>>4;choice=saved_choice;battery_capacity=saved_capacity;clock_12=saved_clock_12;++revision;
         }
         for(uint32_t i=0;i<16;++i)photo_resume[i]=saved_photo[i];
-        video_resume[0]=saved_video[0];video_resume[1]=saved_video[1];
+        video_resume[0]=saved_video[0];video_resume[1]=saved_video[1];video_options=saved_video_options;
     }
     *offset=out_offset;*length=out_length;loaded=true;return 1;
 }
@@ -115,7 +117,8 @@ static int write_record(uint8_t raw[480],const uint8_t *data,uint32_t length){
     for(uint32_t i=length;i;--i)raw[32+i-1]=data[i-1];
     uint32_t index=ln_read_le32(photo_resume+4),flags=ln_read_le32(photo_resume+8);
     if(index>65535u||(flags&255u)>5u||((flags>>8)&255u)>3u||(flags>>16)>2u)return 0;
-    ln_write_le32(raw,0x54544553u);raw[4]=(uint8_t)length;raw[5]=(uint8_t)(length>>8);raw[6]=(uint8_t)choice;raw[7]=clock_12?1u:0u;
+    ln_write_le32(raw,0x54544553u);raw[4]=(uint8_t)length;raw[5]=(uint8_t)(length>>8);raw[6]=(uint8_t)choice;
+    raw[7]=(uint8_t)((clock_12?1u:0u)|((video_options&3u)<<1)|(((video_options>>2)&1u)<<3)|(((video_options&8u)?0u:1u)<<4)|(((video_options>>4)&1u)<<5));
     ln_write_le32(raw+8,ln_read_le32(photo_resume));raw[12]=(uint8_t)index;raw[13]=(uint8_t)(index>>8);
     raw[14]=(uint8_t)((flags&7u)|(((flags>>8)&3u)<<3)|(((flags>>16)&3u)<<5));raw[15]=(uint8_t)(shutdown_choice[0]|(shutdown_choice[1]<<4));
     ln_write_le32(raw+16,ln_read_le32(photo_resume+12));ln_write_le32(raw+20,video_resume[0]);ln_write_le32(raw+24,video_resume[1]);
@@ -140,6 +143,11 @@ bool ln_display_settings_video_get(uint32_t out[2]){
 void ln_display_settings_video_set(const uint32_t in[2]){
     if(!loaded||!in||(in[0]==video_resume[0]&&in[1]==video_resume[1]))return;
     video_resume[0]=in[0];video_resume[1]=in[1];dirty=true;++record_revision;
+}
+bool ln_display_settings_video_options_get(uint8_t *out){if(!loaded||!out)return false;*out=video_options;return true;}
+void ln_display_settings_video_options_set(uint8_t options){
+    options&=31u;if(!loaded||options==video_options)return;
+    video_options=options;dirty=true;++revision;++record_revision;
 }
 int ln_display_settings_music_restore(uint8_t *data,uint32_t *length){
     if(!data||!length)return -1;

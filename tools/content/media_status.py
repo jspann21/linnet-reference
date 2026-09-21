@@ -7,18 +7,34 @@ from . import media_manager as media
 from . import media_library
 
 
-def _video_readiness(inventory, published, identity=None):
+def _video_readiness(inventory, published, identity=None, state=None):
+    compatible_files = [value for value in inventory['files']
+                        if Path(value).suffix.lower() in media.video_source_extensions(identity)]
+    published = [row for row in published
+                 if Path(row['path']).suffix.lower() in media.native_video_extensions(identity)]
+    if compatible_files and identity and (state or {}).get('Videos', {}).get('media_profile') != identity['media_profile']:
+        return 'Needs update'
     ready = [row for row in published if row['status'] == 'Ready on iPod']
     missing = [row for row in published if row['status'] != 'Ready on iPod']
-    native_extensions = media.native_video_extensions(identity)
-    native = {str(Path(value).resolve()).casefold() for value in inventory['files']
-              if Path(value).suffix.lower() in native_extensions}
     cataloged = {str(Path(row['path']).resolve()).casefold() for row in ready}
-    if missing or not native.issubset(cataloged):
+    if missing:
         return 'Needs update'
+    root = Path(identity['root']).resolve() if identity else None
+    for value in compatible_files:
+        source = Path(value).resolve()
+        if str(source).casefold() in cataloged:
+            continue
+        if root is None:
+            return 'Needs update'
+        relative = source.relative_to(root / 'Videos').as_posix() if source.is_relative_to(root / 'Videos') else source.relative_to(root).as_posix()
+        saved = (state or {}).get('video_files', {}).get(relative, {})
+        info = source.stat()
+        if (saved.get('source_stamp') != [info.st_size, info.st_mtime_ns] or
+                not media._outputs_match(root, saved.get('outputs', []))):
+            return 'Needs update'
     if ready:
         return 'Ready'
-    return 'Not prepared' if inventory['count'] else 'No content yet'
+    return 'Not prepared' if compatible_files else 'No compatible videos' if inventory['count'] else 'No content yet'
 
 
 def inspect(identity, photo_dimension=640, verification="metadata"):
@@ -37,8 +53,7 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     skipped = {kind: media._skipped_paths(state, kind) for kind in media.KINDS}
     # Inventory and visible rows describe the same refresh. Traverse the iPod
     # once, retaining excluded files for the library's removal controls.
-    records = {kind: [record for folder in media.source_folders(root, kind)
-                      for record in media._file_records(folder)] for kind in media.KINDS}
+    records = media._records_by_kind(root)
     inventory = media.scan(root, skipped=skipped, records_by_kind=records)
     rows = media_library.list_items(identity, records_by_kind=records)
     readiness = {}
@@ -48,7 +63,7 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
             saved = {}
         published = [r for r in rows if r['kind'] == kind and r['category'] in ('library', 'published')]
         if kind == 'Videos':
-            readiness[kind] = _video_readiness(inventory[kind], published, identity)
+            readiness[kind] = _video_readiness(inventory[kind], published, identity, state)
             continue
         option = media.preparation_option(kind, identity, photo_dimension, verification)
         signature = f"{option}:{inventory[kind]['fingerprint']}"
@@ -58,6 +73,15 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
             readiness[kind] = 'Needs update' if inventory[kind]['count'] else 'Prepared library retained'
         else:
             readiness[kind] = 'Not prepared' if inventory[kind]['count'] else 'No content yet'
+    for row in rows:
+        if row['id'].startswith('retail-photo:'):
+            relative = Path(row['path']).relative_to(root).as_posix().casefold()
+            row['status'] = ('Excluded from preparation' if relative in skipped['Photos']
+                             else 'iTunes photo · ' + readiness['Photos'])
+    for row in rows:
+        path = Path(row['path'])
+        if path.is_relative_to(root) and path.relative_to(root).as_posix().casefold() in skipped.get(row['kind'], set()):
+            row['status'] = 'Excluded from preparation'
     return identity, inventory, rows, readiness
 
 
@@ -84,7 +108,7 @@ def plan(identity, pending, selected, videos):
     for kind, name in included:
         source = Path(name)
         records = media._file_records(source) if source.is_dir() else [(source, source.stat())]
-        allowed = media.extensions(kind)
+        allowed = media.video_source_extensions(identity) if kind == 'Videos' else media.extensions(kind)
         supported = sum(p.suffix.lower() in allowed for p, _ in records)
         other = len(records) - supported
         previews[name] = f'{supported} media files' + (f' · {other} supporting/other files' if other else '')

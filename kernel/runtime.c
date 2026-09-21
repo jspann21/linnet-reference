@@ -49,6 +49,7 @@ static bool photo_resume_loaded;
 #include "services/video/video.h"
 static uint32_t video_revision,video_library_revision;
 static const char *video_selected_path;
+static char video_path[256];
 static bool video_requested,video_resume_loaded;
 #endif
 static ln_executive executive;
@@ -91,11 +92,11 @@ static uint32_t shutdown_deadline;
 static bool shutdown_tracking;
 #define LINNET_SHUTDOWN_HOLD_US 2000000u
 static bool sleeping, dirty, ready;
-#if defined(LINNET_TARGET_IPOD4G_Q21)
+#if LINNET_IDLE_CLOCK_HZ
 static uint32_t idle_clock_cycles,idle_clock_us,idle_clock_failures;
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_runtime_idle_clock_diagnostics(uint32_t output[4]){
-    output[0]=30000000u;output[1]=idle_clock_cycles;
+    output[0]=LINNET_IDLE_CLOCK_HZ;output[1]=idle_clock_cycles;
     output[2]=idle_clock_us;output[3]=idle_clock_failures;
 }
 #endif
@@ -251,6 +252,16 @@ static void photo_navigation_update(void){
 #endif
 #if defined(LINNET_VIDEO)
 static bool video_scene(void){return scene_is("linnet.system.video-player")||scene_is("linnet.system.video-controls");}
+static bool video_path_set(const char *path){
+    if(!path||path[0]!='/')return false;uint32_t n=0;while(path[n]&&n<255u)++n;if(!n||n==255u)return false;
+    for(uint32_t i=0;i<=n;++i)video_path[i]=path[i];video_selected_path=video_path;return true;
+}
+bool ln_runtime_video_open(const char *path){
+    if(!shell||!path||path[0]!='/'||ln_video_active()||ln_video_pending())return false;
+    if(!video_path_set(path))return false;
+    ln_music_stop();ln_photos_close();video_requested=true;
+    (void)ln_ui_show(shell,"linnet.system.video-player");dirty=true;return true;
+}
 static void video_save(void){uint32_t raw[2];if(video_resume_loaded){ln_video_resume_get(raw);ln_video_resume_set(raw);ln_display_settings_video_set(raw);}}
 static bool stop_video(void){
     video_requested=false;video_save();ln_video_stop();uint32_t started=ln_time_us();
@@ -319,16 +330,30 @@ static void apply(uint32_t kind,int32_t value){
     handled=ln_notes_input(shell,kind,value);
 #endif
 #if defined(LINNET_VIDEO)
-    if(!shell->hold&&(video_scene()||scene_is("linnet.system.videos"))){
+    if(kind==LN_INPUT_HEADPHONE)ln_video_headphones(value!=0);
+    if(!shell->hold&&scene_is("linnet.system.video-settings")&&kind==LN_INPUT_BUTTON){
+        uint32_t pressed=(uint32_t)value&~shell->buttons;
+        if(pressed&LN_BUTTON_MENU)(void)ln_ui_show(shell,"linnet.system.settings");
+        else if(pressed&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV)){
+            (void)ln_video_option_adjust(shell->selected,(pressed&LN_BUTTON_PREV)?-1:1);
+            ln_display_settings_video_options_set(ln_video_options());
+        }
+        if(pressed){shell->buttons=(uint32_t)value;handled=true;dirty=true;ln_ui_refresh(shell);}
+    }else if(!shell->hold&&scene_is("linnet.system.video-output")&&kind==LN_INPUT_BUTTON){
+        uint32_t pressed=(uint32_t)value&~shell->buttons;
+        if(pressed&LN_BUTTON_MENU)(void)ln_ui_show(shell,"linnet.system.videos");
+        else if(pressed&LN_BUTTON_SELECT){ln_video_output_once(shell->selected==1u);(void)ln_runtime_video_open(video_path);}
+        if(pressed){shell->buttons=(uint32_t)value;handled=true;dirty=true;ln_ui_refresh(shell);}
+    }else if(!shell->hold&&(video_scene()||scene_is("linnet.system.videos"))){
         if(kind==LN_INPUT_BUTTON){uint32_t pressed=(uint32_t)value&~shell->buttons;
             if(pressed){
                 if(scene_is("linnet.system.videos")){
-                    if(pressed&LN_BUTTON_SELECT){video_selected_path=ln_video_library_path(shell->selected);if(video_selected_path){ln_music_stop();ln_photos_close();video_requested=true;(void)ln_ui_show(shell,"linnet.system.video-player");}}
+                    if(pressed&LN_BUTTON_SELECT){const char *path=ln_video_library_path(shell->selected);if(path){if(ln_video_output_prompt()&&video_path_set(path))(void)ln_ui_show(shell,"linnet.system.video-output");else (void)ln_runtime_video_open(path);}}
                     else if(pressed&LN_BUTTON_MENU)(void)ln_ui_show(shell,"linnet.system.home");
                 }else if(pressed&LN_BUTTON_MENU){video_save();video_requested=false;ln_video_stop();(void)ln_ui_show(shell,"linnet.system.videos");}
                 else if(pressed&LN_BUTTON_PLAY)(void)ln_video_pause(!ln_video_paused());
                 else if(pressed&(LN_BUTTON_NEXT|LN_BUTTON_PREV))(void)ln_video_seek((pressed&LN_BUTTON_PREV)?-10:10);
-                else if(pressed&LN_BUTTON_SELECT)(void)ln_ui_show(shell,scene_is("linnet.system.video-player")?"linnet.system.video-controls":"linnet.system.video-player");
+                else if(pressed&LN_BUTTON_SELECT){bool show=scene_is("linnet.system.video-player");if(ln_video_controls(show))(void)ln_ui_show(shell,show?"linnet.system.video-controls":"linnet.system.video-player");}
                 shell->buttons=(uint32_t)value;handled=true;dirty=true;ln_ui_refresh(shell);
             }
         }else if(kind==LN_INPUT_WHEEL&&video_scene()){ln_music_volume(value);handled=true;}
@@ -664,7 +689,7 @@ bool ln_runtime_init(void){
 #endif
     uint32_t start=ln_time_us();
     while(ln_display_busy()){
-        if(!ln_display_service(256)||ln_time_us()-start>400000u)ln_panic(30,8,0);
+        if(!ln_display_service(LINNET_DISPLAY_SERVICE_PAIRS)||ln_time_us()-start>400000u)ln_panic(30,8,0);
     }
 #if defined(LINNET_NATIVE_UI)
     theme_frame_observe();
@@ -724,7 +749,7 @@ void ln_runtime_step(void){
     bool settings_io=true;
 #if defined(LINNET_VIDEO)
     settings_io=!ln_video_active()&&!ln_video_pending();
-    if(!video_resume_loaded){uint32_t raw[2];if(ln_display_settings_video_get(raw)){ln_video_resume_set(raw);video_resume_loaded=true;}}
+    if(!video_resume_loaded){uint32_t raw[2];uint8_t options;if(ln_display_settings_video_get(raw)&&ln_display_settings_video_options_get(&options)){ln_video_resume_set(raw);ln_video_options_set(options);video_resume_loaded=true;}}
 #endif
 #if defined(LINNET_AUDIO)
     if(settings_io){
@@ -954,7 +979,7 @@ void ln_runtime_step(void){
         restart(true);
     }
 #endif
-    if(!ln_display_service(256))ln_panic(32,0,0);
+    if(!ln_display_service(LINNET_DISPLAY_SERVICE_PAIRS))ln_panic(32,0,0);
 #if defined(LINNET_NATIVE_UI)
     theme_frame_observe();
     if(!first_frame_ready&&theme_frame_ready()){
@@ -963,7 +988,27 @@ void ln_runtime_step(void){
     }
     clock_save_step();
 #endif
-    if(!sleeping&&!ln_display_busy()){
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    bool render_ready=!sleeping&&ln_display_can_render();
+#if defined(LINNET_NATIVE_UI)
+    /* Confirm the first frame of a theme before overlapping later frames. */
+    if(render_ready&&ln_display_busy()&&!theme_frame_ready())render_ready=false;
+#endif
+#else
+    bool render_ready=!sleeping&&!ln_display_busy();
+#endif
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_COVERFLOW)
+    if(render_ready&&ln_coverflow_active()){
+        struct ln_audio_status audio;ln_audio_snapshot(&audio);
+        /* Cover drawing and PIO share the decoder's CPU. Keep a PCM reserve
+         * before starting another frame, including during sustained wheel input. */
+        if(audio.playing&&!audio.paused&&audio.queued<LINNET_AUDIO_RING_FRAMES/2u){
+            struct ln_player_status player;ln_player_snapshot(&player);
+            if(player.phase!=LN_PLAYER_DRAIN)render_ready=false;
+        }
+    }
+#endif
+    if(render_ready){
 #if defined(LINNET_NATIVE_UI)
         uint32_t rendered_theme_revision=ln_display_theme_revision();
 #endif
@@ -1031,11 +1076,17 @@ void ln_runtime_idle(void){
     if(ln_usb_rx_pending())return;
 #endif
     uint32_t now=ln_time_us();
-    if(executive.used||dirty)return;
+    if(executive.used)return;
+    bool display_wait=false;uint32_t display_due=now;
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    display_wait=ln_display_wait_deadline(&display_due);
+#endif
+    if(dirty&&!display_wait)return;
     struct ln_display_metrics display;ln_display_get_metrics(&display);
     /* CPU fallback must service its bounded worker; a live COP owns the LCD. */
-    if(ln_display_busy()&&!display.cop_active)return;
+    if(ln_display_busy()&&!display.cop_active&&!display_wait)return;
     uint32_t next=now+200000u;
+    if(display_wait&&(int32_t)(display_due-next)<0)next=display_due;
 #if defined(LINNET_COVERFLOW)
     uint32_t cover_due=ln_coverflow_deadline();if(cover_due!=UINT32_MAX&&(int32_t)(cover_due-next)<0)next=cover_due;
 #endif
@@ -1071,7 +1122,7 @@ void ln_runtime_idle(void){
     }
 #endif
     next=ln_exec_next(&executive,now,next);
-#if defined(LINNET_TARGET_IPOD4G_Q21)
+#if LINNET_IDLE_CLOCK_HZ
     /* Short sampling waits do not repay PLL switching. Never change the
      * audio clock or storage timing during an active transfer. */
     bool clock_idle=(int32_t)(next-ln_time_us())>=20000;
@@ -1083,7 +1134,7 @@ void ln_runtime_idle(void){
     clock_idle=clock_idle&&!ln_storage_busy();
 #endif
     if(clock_idle&&!idle_clock_failures){
-        bool lowered=ln_core_clock_set(30000000u);
+        bool lowered=ln_core_clock_set(LINNET_IDLE_CLOCK_HZ);
         uint32_t began=ln_time_us();
         if(lowered){ln_core_idle_until(next);++idle_clock_cycles;idle_clock_us+=ln_time_us()-began;}
         else ++idle_clock_failures;

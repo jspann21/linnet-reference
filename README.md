@@ -9,9 +9,10 @@ persistent updates. See the [roadmap](docs/roadmap.md) for planned improvements.
 | Target ID | Model | Status |
 | --- | --- | --- |
 | `photo4g-p98` | iPod Photo A1099, 220 × 176 color | Primary development target. |
+| `video5g-m25` | iPod Video A1136 30 GB, 320 × 240 color | Native Boot, Link and device qualification; see [target status](targets/video5g-m25/README.md). |
 | `ipod4g-q21` | iPod 4G MP102, 160 × 128 monochrome | Photos, video and theme selection disabled. |
 
-Installer profiles exist for both targets.
+Installer profiles exist for all listed targets.
 
 **Want to support another iPod?** Follow the [model porting guide](targets/README.md)
 for the required files, manifest fields, hardware assumptions and validation.

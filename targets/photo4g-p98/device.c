@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include "hal/api/ata.h"
 #include "hal/api/platform.h"
-#include "hal/pp5020/target.h"
+#include "hal/pp502x/target.h"
 
 #define REG(a) (*(volatile uint32_t *)(uintptr_t)(a))
 
@@ -25,3 +25,5 @@ void ln_target_ata_classify(const char *model,uint32_t *media_kind,uint32_t *rot
 }
 
 void ln_target_input_prepare(void) {}
+
+#include "targets/ipod4g-common/wiring.inc"

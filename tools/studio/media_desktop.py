@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox,
 
 from tools.content import media_manager as media, media_library, media_status, media_trash
 from tools.content.media_manager import format_size as size
-from tools.content.music import COVER_NAMES
+from tools.content.music import COVER_NAMES, EXTENSIONS as MUSIC_EXTENSIONS
 from tools.studio import installer, screen_settings
 
 
@@ -222,7 +222,8 @@ class Covers(QObject):
         image = QImage()
         try:
             source = Path(path)
-            if source.suffix.lower() == '.rgb':
+            if source.suffix.lower() == '.rgb' or source.suffix.lower() in MUSIC_EXTENSIONS:
+                source_path = source_path or (path if source.suffix.lower() in MUSIC_EXTENSIONS else None)
                 if source_path:
                     folder = Path(source_path).parent
                     original = next((folder / name for name in COVER_NAMES if (folder / name).is_file()), None)
@@ -234,7 +235,7 @@ class Covers(QObject):
                         if embedded:
                             buffer = QBuffer(); buffer.setData(embedded); buffer.open(QIODevice.ReadOnly)
                             image = self.read_image(buffer)
-                if image.isNull():
+                if image.isNull() and source.suffix.lower() == '.rgb':
                     with source.open('rb') as reader:
                         pixels = reader.read(8193)
                     if len(pixels) == 8192:
@@ -599,7 +600,7 @@ class MediaWindow(QMainWindow):
         outer.addWidget(scroll, 1)
         self.heading(layout, 'Prepare your media', 'Turn your files into an iPod-ready collection. Your originals stay on the device.')
         self.prep_checks, self.prep_labels = {}, {}
-        descriptions = {'Music': 'Build the song library and album artwork', 'Photos': 'Create thumbnails and zoomable photos', 'Videos': 'Convert selected videos to the iPod format', 'Notes': 'Prepare text and Markdown for the reader'}
+        descriptions = {'Music': 'Build the song library and album artwork', 'Photos': 'Create thumbnails and zoomable photos', 'Videos': 'Validate existing videos and prepare them for this iPod', 'Notes': 'Prepare text and Markdown for the reader'}
         for kind in ('Music', 'Photos', 'Videos', 'Notes'):
             card = QFrame(); card.setObjectName('card'); row = box(card, horizontal=True, margins=(20, 18, 20, 18), spacing=15)
             check = CheckBox(kind); check.setChecked(True); check.setMinimumWidth(110); self.prep_checks[kind] = check; row.addWidget(check)
@@ -608,6 +609,10 @@ class MediaWindow(QMainWindow):
             if kind == 'Videos':
                 self.choose_videos_button = button('Choose videos', self.choose_videos); row.addWidget(self.choose_videos_button)
             layout.addWidget(card)
+        self.online_artwork = CheckBox('Find missing iTunes album covers online (MusicBrainz / Cover Art Archive)')
+        self.online_artwork.setChecked(self.settings.value('onlineArtwork', True, type=bool))
+        self.online_artwork.toggled.connect(lambda enabled: self.settings.setValue('onlineArtwork', enabled))
+        layout.addWidget(self.online_artwork)
         layout.addSpacing(10); layout.addWidget(label('Up next', 'section'))
         self.queue_model = MediaModel(self)
         self.queue_table = QTableView(); self.queue_table.setModel(self.queue_model); self.queue_table.verticalHeader().hide(); self.queue_table.setShowGrid(False)
@@ -622,7 +627,7 @@ class MediaWindow(QMainWindow):
         layout.addStretch()
         footer = QFrame(); footer.setObjectName('preparationFooter')
         actions = box(footer, horizontal=True, margins=(34, 16, 34, 16), spacing=18)
-        self.prep_summary = label('Unchanged media is reused. Only selected video originals are converted.', 'muted', True)
+        self.prep_summary = label('Unchanged media is reused. All existing videos are included unless you choose a selection.', 'muted', True)
         actions.addWidget(self.prep_summary, 1)
         self.prepare_button = button('Prepare selected media', self.prepare, 'primary', 'prepare')
         actions.addWidget(self.prepare_button)
@@ -737,6 +742,7 @@ class MediaWindow(QMainWindow):
         layout.addSpacing(12); layout.addWidget(label('Startup software', 'section'))
         layout.addWidget(label('Choose the software that opens by default.', 'muted'))
         self.boot_choice = ComboBox(); self.boot_choice.currentIndexChanged.connect(self.update_install_action); layout.addWidget(self.boot_choice)
+        self.boot_detail = label('', 'muted', True); layout.addWidget(self.boot_detail)
         self.method_title = label('Startup behavior', 'section'); layout.addWidget(self.method_title)
         self.method_choice = ComboBox(); self.method_choice.currentIndexChanged.connect(self.update_install_action); layout.addWidget(self.method_choice)
         self.method_detail = label('', 'muted', True); layout.addWidget(self.method_detail)
@@ -820,7 +826,7 @@ class MediaWindow(QMainWindow):
             if row['kind'] == self.page and row['category'] in ('original', 'published'):
                 copy = dict(row)
                 if row['kind'] == 'Photos':
-                    copy['artwork'] = row['path']
+                    copy['artwork'] = row.get('artwork') or row['path']
                 unique[str(Path(row['path'])).casefold()] = copy
         self._library_cache[self.page] = list(unique.values())
         return list(self._library_cache[self.page])
@@ -921,8 +927,10 @@ class MediaWindow(QMainWindow):
         self.selection_text.setText(f'{len(rows):,} selected  ·  {size(sum(r["bytes"] for r in rows))}')
         self.restore_button.setVisible(self.page == 'Trash')
         self.restore_button.setEnabled(not self.busy)
-        self.remove_button.setText('Delete permanently' if self.page == 'Trash' else 'Move to Trash')
-        self.remove_button.setEnabled(not self.busy)
+        retail_photos = bool(rows) and all(r.get('retail_photo') for r in rows)
+        self.remove_button.setText('Exclude from preparation' if retail_photos else
+                                   'Delete permanently' if self.page == 'Trash' else 'Move to Trash')
+        self.remove_button.setEnabled(not self.busy and (retail_photos or all(r.get('removable', True) for r in rows)))
         self.info_button.setEnabled(len(rows) == 1 and not self.busy)
 
     def clear_selection(self):
@@ -1093,14 +1101,14 @@ class MediaWindow(QMainWindow):
             self.identity = identity
             self.refresh()
         elif tag == 'scan':
-            cached_photos = {row['path']: (row['bytes'], row['mtime_ns']) for row in self.rows
-                             if row['kind'] == 'Photos' and
-                             (row['path'] in self.covers.cache or row['path'] in self.covers.pending)}
+            cached_photos = {row['path']: (row['bytes'], row['mtime_ns'], row.get('artwork')) for row in self.rows
+                             if row['kind'] in ('Photos', 'Music') and
+                             (row.get('artwork') in self.covers.cache or row.get('artwork') in self.covers.pending)}
             self.identity, self.inventory, self.rows, self.readiness = result
             if cached_photos:
-                current_photos = {row['path']: (row['bytes'], row['mtime_ns']) for row in self.rows
+                current_photos = {row['path']: (row['bytes'], row['mtime_ns'], row.get('artwork')) for row in self.rows
                                   if row['path'] in cached_photos}
-                changed = [path for path, stamp in cached_photos.items() if current_photos.get(path) != stamp]
+                changed = [stamp[2] for path, stamp in cached_photos.items() if current_photos.get(path) != stamp]
                 if changed:
                     self.covers.invalidate(changed)
             if self.group:
@@ -1227,7 +1235,8 @@ class MediaWindow(QMainWindow):
                 text.setText('Connect an iPod to check this library.')
             elif kind == 'Videos':
                 prepared = sum(row['kind'] == 'Videos' and row['category'] == 'published' for row in self.rows)
-                text.setText(f'{prepared:,} prepared videos · {len(self.video_selection)} selected to convert')
+                text.setText(f"{info['count']:,} files · {self.readiness.get(kind, 'Not checked')} · " +
+                             (f'{len(self.video_selection)} selected' if self.video_selection else 'All existing videos included'))
             else:
                 text.setText(f"{info['count']:,} files · {self.readiness.get(kind, 'Not checked')}")
         self.queue_model.reset([dict(title=Path(path).name, kind=kind, path=path) for kind, path in self.pending], [('title', 'FILE'), ('kind', 'TYPE'), ('path', 'FROM YOUR COMPUTER')])
@@ -1266,10 +1275,12 @@ class MediaWindow(QMainWindow):
     def choose_videos(self):
         if not self.inventory or self.busy:
             return
-        sources = [p for p in self.inventory['Videos']['files'] if Path(p).suffix.lower() not in media.native_video_extensions(self.identity)]
+        sources = [p for p in self.inventory['Videos']['files']
+                   if Path(p).suffix.lower() in media.video_source_extensions(self.identity)
+                   and Path(p).suffix.lower() not in media.native_video_extensions(self.identity)]
         dialog = QDialog(self); dialog.setWindowTitle('Choose videos to convert'); dialog.resize(700, 520)
         layout = box(dialog, margins=(24, 24, 24, 24)); layout.addWidget(label('Choose video originals', 'section'))
-        layout.addWidget(label('Prepared IPVF files are included automatically. Select originals to convert.', 'muted', True))
+        layout.addWidget(label('Device-format videos are included automatically. Select other originals to convert; an empty selection includes all.', 'muted', True))
         search = QLineEdit(); search.setPlaceholderText('Find a video…'); layout.addWidget(search)
         table = QTableView(); model = MediaModel(table); table.setModel(model); table.setSelectionBehavior(QAbstractItemView.SelectRows); table.setSelectionMode(QAbstractItemView.ExtendedSelection); table.setEditTriggers(QAbstractItemView.NoEditTriggers); table.verticalHeader().hide(); layout.addWidget(table)
         selected = set(self.video_selection)
@@ -1296,6 +1307,7 @@ class MediaWindow(QMainWindow):
             self.show_error('Choose at least one media type to prepare.'); return
         identity = self.identity; pending = [item for item in self.pending if item[0] in selected]
         videos = list(self.video_selection); dimension = 2048 if self.photo_detail.currentIndex() else 640
+        online_artwork = self.online_artwork.isChecked()
         force, verification = self.rebuild.isChecked(), 'full' if self.verify_audio.isChecked() else 'metadata'
         ffmpeg, ffprobe = self.ffmpeg, self.ffprobe
         self.submitted, self.submitted_videos = pending, set(videos) if 'Videos' in selected else set()
@@ -1305,6 +1317,7 @@ class MediaWindow(QMainWindow):
                 raise ValueError('Video conversion needs FFmpeg and FFprobe. Choose their folder in Settings.')
             return media.run(identity, selected, pending, photo_dimension=dimension, force=force,
                 music_verification=verification, ffmpeg=ffmpeg, ffprobe=ffprobe, video_selection=videos,
+                online_artwork=online_artwork,
                 progress=self.events.progress.emit, progress_detail=self.events.conversion.emit,
                 cancelled=self.stop_event.is_set)
         self.prep_results.hide(); self.work('prepare', run, 'Preparing your selected media…')
@@ -1314,6 +1327,12 @@ class MediaWindow(QMainWindow):
         if self.busy or not self.identity or not rows:
             return
         identity = self.identity
+        if all(row.get('retail_photo') for row in rows):
+            def exclude_photos():
+                media.skip_files(identity, [('Photos', row['path']) for row in rows])
+                return dict(summary='Photos excluded. Run Prepare to update Linnet; Apple originals are retained.')
+            self.work('skipped', exclude_photos, 'Excluding selected photos from preparation…')
+            return
         if self.page == 'Trash':
             if self.dialog('Delete permanently?', f'Permanently delete {len(rows)} removals and free {size(sum(r["bytes"] for r in rows))}? These files cannot be restored afterward.', 'Delete permanently', True):
                 def erase():
@@ -1369,10 +1388,14 @@ class MediaWindow(QMainWindow):
         self.setup_device.setText(f"{review['identity']['target_name']} · {review['identity']['drive']}")
         self.setup_software.setText('Linnet: ' + installer.build_description(review['linnet']))
         self.boot_choice.blockSignals(True); self.boot_choice.clear()
-        available_boot = [option for option in review['boot_options'] if option.get('selectable')]
+        available_boot = review['boot_options']
         for option in available_boot:
-            self.boot_choice.addItem(option['label'] + (' · Current' if option.get('active') else ''), option)
-        selected = next((i for i, option in enumerate(available_boot) if option.get('active')), 0)
+            suffix = ' · Current' if option.get('active') else ' · Unavailable' if not option.get('selectable') else ''
+            self.boot_choice.addItem(option['label'] + suffix, option)
+            self.boot_choice.setItemData(self.boot_choice.count() - 1, option.get('detail', ''), Qt.ToolTipRole)
+        selected = next((i for i, option in enumerate(available_boot) if option.get('active')),
+                        next((i for i, option in enumerate(available_boot) if option.get('selectable')), -1))
+        self.boot_choice.setPlaceholderText('No verified startup software')
         self.boot_choice.setCurrentIndex(selected); self.boot_choice.blockSignals(False)
         self.method_choice.blockSignals(True); self.method_choice.clear()
         for method in review['installation_methods']:
@@ -1391,14 +1414,19 @@ class MediaWindow(QMainWindow):
         option = self.boot_choice.currentData(); method = self.method_choice.currentData()
         enabled = not self.busy and self.identity is not None and bool(option and option.get('selectable'))
         linnet = option and option['kind'] == 'linnet'
+        self.boot_detail.setText(option.get('detail', '') if option else '')
+        show_methods = bool(linnet and option.get('selectable') and method)
         for widget in (self.method_title, self.method_choice, self.method_detail, self.selector_note):
-            widget.setVisible(bool(linnet) or self.review is None)
+            widget.setVisible(show_methods)
         self.method_detail.setText(method.get('detail', '') if method and linnet else '')
         enabled = enabled and bool(method and method.get('enabled')) if linnet else enabled and not bool(option and option.get('active'))
         self.method_choice.setEnabled(bool(linnet and method) and not self.busy)
-        self.boot_choice.setEnabled(not self.busy and self.review is not None and bool(option))
+        self.boot_choice.setEnabled(not self.busy and self.review is not None and self.boot_choice.count() > 0)
         self.install_button.setEnabled(enabled)
-        self.install_button.setText(('Reinstall ' if option.get('active') else 'Install ') + option['label'] if linnet else 'Set as default boot')
+        if option and not option.get('selectable'):
+            self.install_button.setText('Current startup software' if option.get('active') else 'Startup change unavailable')
+        else:
+            self.install_button.setText(('Reinstall ' if option.get('active') else 'Install ') + option['label'] if linnet else 'Set as default boot')
 
     def install_selected(self):
         if not self.install_button.isEnabled():

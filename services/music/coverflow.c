@@ -6,7 +6,7 @@
 #include "boot/include/linnet_boot.h"
 #include "boot/include/linnet_bytes.h"
 #include "hal/api/platform.h"
-#define CATALOG_SLOTS 2048u
+#define CATALOG_SLOTS LINNET_COVERFLOW_CATALOG_SLOTS
 #define CATALOG_RECORD 1024u
 #define PAGE 16u
 #define ART_RECORD 13312u
@@ -16,8 +16,10 @@
 #define ART_HIGH 469u
 #define ART_SLOTS (ART_LOW+ART_HIGH)
 #define NONE UINT32_MAX
+#define COVER_WIDTH (96u*LINNET_UI_HEIGHT/176u)
 enum {CLOSED,OPEN,HEADER,READY,CATALOG,ART};
 static struct {uint16_t pixels[12288];uint32_t id,age;} cache[SLOTS];
+static uint32_t age;
 static uint8_t catalog[CATALOG_SLOTS][CATALOG_RECORD] __attribute__((aligned(32)));
 static uint32_t tags[CATALOG_SLOTS];
 static struct ln_fat32_file file;
@@ -27,7 +29,7 @@ static uint8_t art_high[ART_HIGH][ART_RECORD] __attribute__((section(".cover_hig
 static uint32_t art_tags[ART_SLOTS],art_warm,art_loaded;
 static uint8_t *art_record(uint32_t id){uint32_t slot=id%ART_SLOTS;return slot<ART_LOW?art_low[slot]:art_high[slot-ART_LOW];}
 static bool art_ready(uint32_t id){return art_tags[id%ART_SLOTS]==id+1u;}
-static uint32_t count,arts,selected,phase,loading,length,revision,drawn,next,io_due,age,warm,moved_at;
+static uint32_t count,arts,selected,phase,loading,length,revision,drawn,next,io_due,warm,moved_at;
 static uint32_t catalog_loaded,full_reads,read_bytes,hits,preview_hits,misses,last_full_us,max_full_us,last_preview_us;
 static int32_t position,direction=1;
 static int32_t settle_from;
@@ -36,10 +38,15 @@ static bool visible,pending,failed;
 static const uint32_t generation=0x79000001u;
 static const uint32_t crc_table[16]={0,0x1db71064,0x3b6e20c8,0x26d930ac,0x76dc4190,0x6b6b51f4,0x4db26158,0x5005713c,0xedb88320,0xf00f9344,0xd6d6a3e8,0xcb61b38c,0x9b64c2b0,0x86d3d2d4,0xa00ae278,0xbdbdf21c};
 struct ln_coverflow_column {uint32_t step;uint8_t source,top,height,length;};
-extern const struct ln_coverflow_column ln_coverflow_columns[33][96];
+extern const struct ln_coverflow_column ln_coverflow_columns[33][COVER_WIDTH];
 extern const uint8_t ln_coverflow_widths[33];
 extern const uint8_t ln_coverflow_ease[8][8];
-extern const uint8_t ln_coverflow_glow[220][140];
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+extern const uint8_t ln_coverflow_glow_pairs[190][160];
+extern const uint8_t ln_coverflow_glow_colors[2][192][2];
+#else
+extern const uint8_t ln_coverflow_glow[LINNET_UI_WIDTH][LINNET_UI_HEIGHT*140u/176u];
+#endif
 static uint32_t crc_span(uint32_t crc,const uint8_t *data,uint32_t size){
     while(size--){crc^=*data++;crc=(crc>>4)^crc_table[crc&15u];crc=(crc>>4)^crc_table[crc&15u];}return crc;
 }
@@ -109,6 +116,11 @@ static int32_t decode_art(uint32_t id){
     const uint32_t *words=(const uint32_t*)packed;
     for(uint32_t i=0;i<128u;i++)palette.words[i]=words[i];
     words+=128;
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    for(uint32_t by=0;by<128u;by+=8u)for(uint32_t bx=0;bx<96u;bx+=8u)
+        for(uint32_t y=by;y<by+8u;y++)for(uint32_t x=bx;x<bx+8u;x++)
+            cache[victim].pixels[y*96u+x]=palette.colors[packed[512u+x*128u+y]];
+#else
     for(uint32_t i=0;i<12288u;i+=4){
         uint32_t indices=*words++;
         cache[victim].pixels[i]=palette.colors[indices&255u];
@@ -116,11 +128,14 @@ static int32_t decode_art(uint32_t id){
         cache[victim].pixels[i+2]=palette.colors[(indices>>16)&255u];
         cache[victim].pixels[i+3]=palette.colors[indices>>24];
     }
+#endif
     cache[victim].id=id+1u;cache[victim].age=++age;
     return (int32_t)victim;
 }
 static void request_art(uint32_t id,bool bulk){
-    loading=bulk?(id/ART_PAGE)*ART_PAGE:id;length=bulk?ART_PAGE:1u;
+    loading=id;length=1u;
+    uint32_t slot=id%ART_SLOTS,available=slot<ART_LOW?ART_LOW-slot:ART_SLOTS-slot;
+    if(bulk)while(length<ART_PAGE&&length<available&&loading+length<arts&&!art_ready(loading+length))++length;
     if(length>arts-loading)length=arts-loading;
     for(uint32_t i=0;i<length;i++)art_tags[(loading+i)%ART_SLOTS]=0;
     length*=ART_RECORD;phase=ART;
@@ -128,7 +143,7 @@ static void request_art(uint32_t id,bool bulk){
 static void accept_art(void){
     for(uint32_t i=0;i<length/ART_RECORD;i++){
         uint32_t id=loading+i;const uint8_t *packed=art_record(id);
-        if((~crc_span(0xffffffffu,packed,12800))!=ln_read_le32(packed+12800)){fail();return;}
+        if(ln_crc32(packed,12800)!=ln_read_le32(packed+12800)){fail();return;}
         art_tags[id%ART_SLOTS]=id+1u;++art_loaded;
         if(close_to_selection(id))++revision;
         uint8_t *r=row(selected);
@@ -137,7 +152,13 @@ static void accept_art(void){
 }
 void ln_coverflow_step(bool allow_read){
     if(pending){
-        uint32_t transferred=0;int result=ln_storage_media_poll(generation,phase==OPEN?&file:0,&transferred);
+        uint32_t transferred=0,began=ln_time_us();int result;
+        for(uint32_t step=0;;step++){
+            result=ln_storage_media_poll_deferred(generation,phase==OPEN?&file:0,&transferred);
+            if(result||step==3u)break;
+            uint32_t now=ln_time_us(),deadline;
+            if(now-began>=500u||(ln_storage_idle_wait(now,&deadline)&&(int32_t)(deadline-now)>0))break;
+        }
         if(!result){io_due=ln_time_us()+1000u;return;}pending=false;
         if(result<0){fail();return;}
         if(phase==OPEN){phase=HEADER;}
@@ -179,7 +200,7 @@ void ln_coverflow_step(bool allow_read){
             for(uint32_t d=0;d<sizeof(ahead);d++){
                 int32_t index=(int32_t)selected+ahead[d]*direction;
                 if(index<0||(uint32_t)index>=count)continue;
-                uint8_t *r=row((uint32_t)index);if(!r)continue;
+                uint8_t *r=row((uint32_t)index);if(!r){request_catalog((uint32_t)index);break;}
                 uint32_t art=ln_read_le32(r+248);
                 if(!art_ready(art)){request_art(art,false);break;}
             }
@@ -224,6 +245,13 @@ uint32_t ln_coverflow_tick(uint32_t now){
     return changed;
 }
 #if !defined(LINNET_PROFILE_RELEASE)
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+static uint32_t render_calls,render_us;
+void ln_coverflow_render_diagnostics(uint32_t words[16]){
+    uint32_t values[16]={0x52464c43u,render_calls,render_us};
+    for(uint32_t i=0;i<16;i++)words[i]=values[i];
+}
+#endif
 void ln_coverflow_diagnostics(uint32_t words[16]){
     uint32_t values[16]={0x574f4c46u,phase,count,selected,catalog_loaded,hits,preview_hits,misses,
         full_reads,read_bytes,last_full_us,art_loaded,max_full_us,selected_full(),row(selected)!=0,pending};
@@ -238,7 +266,19 @@ static void ambient_color(uint32_t index,uint32_t color[3]){
     }
     color[0]=color[0]*255/112;color[1]=color[1]*255/112;color[2]=color[2]*255/48;
 }
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+#include "services/music/coverflow_m25.inc"
+#else
 void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    if(!count){
+        for(int32_t y=c->clip_y;y<c->clip_y+c->clip_h;y++){
+            uint16_t *dest=c->pixels+y*LINNET_UI_WIDTH+c->clip_x;
+            for(int32_t x=0;x<c->clip_w;x++)*dest++=0;
+        }
+        return;
+    }
+#endif
     uint16_t painted_top[LINNET_UI_WIDTH],painted_end[LINNET_UI_WIDTH];
     for(uint32_t x=0;x<LINNET_UI_WIDTH;x++){painted_top[x]=LINNET_UI_HEIGHT;painted_end[x]=0;}
     int32_t center=(position+128)/256;
@@ -255,7 +295,7 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
         if(cached>=0)cache[cached].age=++age;
         int32_t distance=index*256-position,ad=distance<0?-distance:distance;
         int32_t pose=ad>=256?32:(ad+4)/8,width=ln_coverflow_widths[pose];
-        int32_t xcenter=110+(distance<0?-1:1)*(ad<=256?ad*69/256:69+(ad-256)*25/256);
+        int32_t xcenter=LINNET_UI_WIDTH/2+(distance<0?-1:1)*(ad<=256?ad*69/256:69+(ad-256)*25/256)*(int32_t)LINNET_UI_WIDTH/220;
         for(int32_t x=0;x<width;x++){
             int32_t dx=xcenter-width/2+x;if(dx<c->clip_x||dx>=c->clip_x+c->clip_w)continue;
             const struct ln_coverflow_column *column=&ln_coverflow_columns[pose][distance<0?x:width-1-x];
@@ -281,6 +321,10 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
                     for(int32_t y=from;y<to;y++,sy+=step,dest+=LINNET_UI_WIDTH)*dest=source[sy>>16];
                 }else if(indices){
                     for(int32_t y=from;y<to;y++,sy+=step,dest+=LINNET_UI_WIDTH)*dest=palette[indices[sy>>16]];
+                }else if(r){
+                    const uint8_t *preview=r+256+(sx/4)*32;
+                    for(int32_t y=from;y<to;y++,sy+=step,dest+=LINNET_UI_WIDTH)
+                        *dest=ln_read_le16(header+512+2u*preview[sy>>18]);
                 }else{
                     for(int32_t y=from;y<to;y++,sy+=step,dest+=LINNET_UI_WIDTH)*dest=sy<(96u<<16)?0x18e4u:0u;
                 }
@@ -308,7 +352,7 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
                 colors[k*4+d]=(uint16_t)(((r+bias)>>11)<<11|((g+bias)>>11)<<5|((b+bias)>>11));
             }
         }
-        int32_t bottom=c->clip_y+c->clip_h;if(bottom>140)bottom=140;
+        int32_t bottom=c->clip_y+c->clip_h;if(bottom>(int32_t)(LINNET_UI_HEIGHT*140u/176u))bottom=LINNET_UI_HEIGHT*140u/176u;
         for(int32_t x=c->clip_x;x<c->clip_x+c->clip_w;x++){
             int32_t spans[4]={c->clip_y,painted_top[x],painted_end[x],bottom};
             if(painted_end[x]<=painted_top[x]){spans[1]=bottom;spans[2]=bottom;}
@@ -321,7 +365,9 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
             }
         }
     }
+
 }
+#endif
 
 #else
 void ln_coverflow_draw(const struct ln_ui_canvas_context *c){(void)c;}

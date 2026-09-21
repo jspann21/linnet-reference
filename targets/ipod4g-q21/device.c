@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include "hal/api/ata.h"
 #include "hal/api/platform.h"
-#include "hal/pp5020/target.h"
+#include "hal/pp502x/target.h"
 
 #define REG(a) (*(volatile uint32_t *)(uintptr_t)(a))
 
@@ -46,3 +46,5 @@ void ln_target_input_prepare(void)
     while(!(REG(0x7000c104u)&0x04000000u)&&ln_time_us()-start<1500u&&budget){--budget;}
     if(REG(0x7000c104u)&0x04000000u)(void)REG(0x7000c140u);
 }
+
+#include "targets/ipod4g-common/wiring.inc"

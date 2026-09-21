@@ -75,7 +75,7 @@ def _sizes(width, height, max_dimension, viewport_width, viewport_height):
 
 
 def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
-                   viewport_height=156, fallback_paths=None, excluded=None):
+                   viewport_height=156, fallback_paths=None, excluded=None, additional_sources=None):
     """Prepare a folder into one .pimg; optional mapping names existing JPEG copies.
 
     The default keeps zoom detail without a desktop-sized tile pyramid.
@@ -101,12 +101,20 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
             paths.append(path)
             if len(paths) > MAX_PHOTOS:
                 raise ValueError('photo count exceeds 65535')
+    names = {path: path.relative_to(source).as_posix() for path in paths}
+    titles = {}
+    for name, (preview, title) in (additional_sources or {}).items():
+        if name.casefold() not in excluded:
+            path = Path(preview)
+            paths.append(path)
+            names[path], titles[path] = name, title
+    if len(paths) > MAX_PHOTOS:
+        raise ValueError('photo count exceeds 65535')
     if not paths:
         raise ValueError('source contains no supported still images')
-    paths.sort(key=lambda p: (p.relative_to(source).as_posix().casefold(),
-                             p.relative_to(source).as_posix()))
+    paths.sort(key=lambda p: (names[p].casefold(), names[p]))
     fallback_paths = dict(fallback_paths or {})
-    known = {p.relative_to(source).as_posix() for p in paths}
+    known = set(names.values())
     if set(fallback_paths) - known:
         raise ValueError('fallback mapping names a photo outside the selected source set')
     strings, string_index = bytearray(b'\0'), {'': (0, 0)}
@@ -124,11 +132,11 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
     with tempfile.TemporaryFile() as thumbs, tempfile.TemporaryFile() as tiles:
         for index, path in enumerate(paths):
             try:
-                title = _title(path.stem)
+                title = _title(titles.get(path, path.stem))
             except ValueError as error:
                 raise SourceError(f'Could not prepare photo {path}: {error}', path) from error
             title = string(title)
-            fallback = fallback_paths.get(path.relative_to(source).as_posix(), '')
+            fallback = fallback_paths.get(names[path], '')
             fallback_bytes = fallback_crc = orientation = 0
             if fallback and (not FAT_PATH.fullmatch(fallback) or len(fallback) > 127 or
                              not fallback.endswith(('.JPG', '.JPEG'))):

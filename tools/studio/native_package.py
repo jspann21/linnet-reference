@@ -15,6 +15,7 @@ from pathlib import Path
 import struct
 import zlib
 from tools.studio.native_bootstrap import load_plan
+from tools.studio.targets import TARGETS
 
 HEADER_BYTES=512
 CANDIDATE_BYTES=65536
@@ -63,7 +64,7 @@ def prepare(plan, plan_sha256, outpath):
     if len(body)!=package_bytes-HEADER_BYTES:
         raise ValueError('unexpected fixed package component length')
     header=bytearray(HEADER_BYTES)
-    struct.pack_into('<4s5I',header,0,b'LNPK',0,package_bytes,98,0,len(original))
+    struct.pack_into('<4s5I',header,0,b'LNPK',0,package_bytes,TARGETS[manifest['target_id']]['image_target'],0,len(original))
     partition_start=manifest['partition_lba']*512
     struct.pack_into('<QQIIQQIIQ',header,24,partition_start,manifest['candidate_disk_offset'],
                      candidate_bytes,len(payload),manifest['directory_disk_offset'],partition_start+old_start,

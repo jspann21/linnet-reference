@@ -4,7 +4,7 @@ import struct
 import zlib
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageOps, __version__ as pillow_version
 
 RECORD = 25088
 
@@ -105,7 +105,67 @@ def validate(path: Path, database: bytes) -> None:
                 raise ValueError('Invalid Cover Flow artwork')
 
 
-def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, Image.Image] | None = None) -> None:
+def remove_tracks(source: Path, before: bytes, after: bytes, output: Path) -> None:
+    """Remap the album catalog after deletion, reusing prepared artwork bytes."""
+    from .music import validate_database
+    validate_database(before)
+    validate_database(after)
+    validate(source, before)
+
+    def albums(database):
+        count, start = struct.unpack_from('<I', database, 20)[0], struct.unpack_from('<I', database, 36)[0]
+        return {struct.unpack_from('<Q', database, start + i * 32 + 24)[0]:
+                (i, struct.unpack_from('<I', database, start + i * 32 + 16)[0])
+                for i in range(count) if struct.unpack_from('<I', database, start + i * 32)[0] == 2}
+
+    old, new = albums(before), albums(after)
+    if not new.keys() <= old.keys():
+        raise ValueError('Cover Flow deletion introduced new albums')
+    mapping = {old[key][0]: value for key, value in new.items()}
+    created = False
+    try:
+        with source.open('rb') as reader, output.open('xb') as writer:
+            created = True
+            legacy = reader.read(4) == b'LCF1'
+            reader.seek(0)
+            header = bytearray(reader.read(512 if legacy else 1024))
+            count = struct.unpack_from('<I', header, 4)[0]
+            records, art_ids = [], {}
+            for _ in range(count):
+                row = bytearray(reader.read(RECORD if legacy else CATALOG))
+                group = struct.unpack_from('<I', row)[0]
+                if group not in mapping:
+                    continue
+                struct.pack_into('<II', row, 0, *mapping[group])
+                if not legacy:
+                    art = struct.unpack_from('<I', row, 248)[0]
+                    art_ids.setdefault(art, len(art_ids))
+                    struct.pack_into('<I', row, 248, art_ids[art])
+                crc_at = 508 if legacy else 252
+                struct.pack_into('<I', row, crc_at,
+                                 zlib.crc32(row[crc_at + 4:], zlib.crc32(row[:crc_at])))
+                records.append(row)
+            records.sort(key=lambda row: struct.unpack_from('<I', row)[0])
+            header[16:48] = after[64:96]
+            struct.pack_into('<I', header, 4, len(records))
+            if not legacy:
+                struct.pack_into('<I', header, 52, len(art_ids))
+            struct.pack_into('<I', header, 508, zlib.crc32(header[:508]))
+            writer.write(header)
+            for row in records:
+                writer.write(row)
+            for art in art_ids:
+                reader.seek(1024 + count * CATALOG + art * ART_RECORD)
+                writer.write(reader.read(ART_RECORD))
+        validate(output, after)
+    except BaseException:
+        if created:
+            output.unlink(missing_ok=True)
+        raise
+
+
+def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, Image.Image] | None = None,
+            cache=None, bypass_cache: bool = False) -> None:
     from .music import validate_database, TRACK
     from .publish import _bounded
     validate_database(database)
@@ -148,34 +208,23 @@ def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, I
                 draw = ImageDraw.Draw(cover)
                 draw.ellipse((24, 24, 72, 72), outline='#819fbc', width=2)
                 draw.ellipse((44, 44, 52, 52), fill='#819fbc')
-            cover = cover.filter(ImageFilter.UnsharpMask(radius=.55, percent=35, threshold=3))
-            accent = cover.resize((1, 1), Image.Resampling.BOX).getpixel((0, 0))
-            mean = sum(accent) / 3
-            accent = tuple(max(0, min(255, round(mean + (c - mean) * 1.4))) for c in accent)
-            tile = Image.new('RGB', (96, 128))
-            tile.paste(cover)
-            reflection = ImageOps.flip(cover).crop((0, 0, 96, 30))
-            reflection_accent = [c * .18 for c in accent]
-            for y in range(30):
-                fade = (1 - y / 30) ** 2
-                row = reflection.crop((0, y, 96, y + 1))
-                row = Image.blend(Image.new('RGB', row.size), row, .48 * fade * (1 + .8 * y / 30))
-                row.putdata([tuple(min(255, round(c + reflection_accent[channel] * reflection_shape[x] * fade))
-                             for channel, c in enumerate(pixel))
-                             for x, pixel in enumerate(row.getdata())])
-                tile.paste(row, (0, 98 + y))
-            digest = hashlib.sha256(tile.tobytes()).digest()
-            if digest not in image_ids:
-                image_ids[digest] = len(artwork)
-                indexed, rgb565 = _indexed_tile(tile)
-                packed = bytearray(ART_RECORD)
-                struct.pack_into('<256H', packed, 0, *rgb565)
-                packed[512:12800] = indexed.transpose(Image.Transpose.TRANSPOSE).tobytes()
-                struct.pack_into('<I', packed, 12800, zlib.crc32(packed[:12800]))
+            # Include the recipe and Pillow version; never reuse art by timestamp.
+            key = hashlib.sha256(b'LCF2-tile-1\0' + pillow_version.encode() + b'\0' +
+                                 cover.mode.encode() + struct.pack('<II', *cover.size) + cover.tobytes()).digest()
+            saved = cache.coverflow_get(key) if cache is not None and not bypass_cache else None
+            if key in image_ids:
+                source_ids[art] = image_ids[key]
+            elif saved is not None:
+                source_ids[art] = image_ids[key] = len(artwork)
+                artwork.append(saved[:ART_RECORD])
+                previews.append(saved[ART_RECORD:])
+            else:
+                source_ids[art] = image_ids[key] = len(artwork)
+                packed, preview = _prepare_tile(cover, palette, reflection_shape)
                 artwork.append(packed)
-                preview = tile.resize((24, 32), Image.Resampling.LANCZOS).quantize(palette=palette, dither=Image.Dither.FLOYDSTEINBERG)
-                previews.append(preview.transpose(Image.Transpose.TRANSPOSE).tobytes())
-            source_ids[art] = image_ids[digest]
+                previews.append(preview)
+                if cache is not None:
+                    cache.coverflow_put(key, bytes(packed) + preview)
         art_id = source_ids[art]
         record = bytearray(CATALOG)
         struct.pack_into('<II', record, 0, group, count)
@@ -202,3 +251,29 @@ def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, I
             writer.write(record)
     validate(temporary, database)
     temporary.replace(output)
+
+
+def _prepare_tile(cover, palette, reflection_shape):
+    cover = cover.filter(ImageFilter.UnsharpMask(radius=.55, percent=35, threshold=3))
+    accent = cover.resize((1, 1), Image.Resampling.BOX).getpixel((0, 0))
+    mean = sum(accent) / 3
+    accent = tuple(max(0, min(255, round(mean + (c - mean) * 1.4))) for c in accent)
+    tile = Image.new('RGB', (96, 128))
+    tile.paste(cover)
+    reflection = ImageOps.flip(cover).crop((0, 0, 96, 30))
+    reflection_accent = [c * .18 for c in accent]
+    for y in range(30):
+        fade = (1 - y / 30) ** 2
+        row = reflection.crop((0, y, 96, y + 1))
+        row = Image.blend(Image.new('RGB', row.size), row, .48 * fade * (1 + .8 * y / 30))
+        row.putdata([tuple(min(255, round(c + reflection_accent[channel] * reflection_shape[x] * fade))
+                     for channel, c in enumerate(pixel))
+                     for x, pixel in enumerate(row.getdata())])
+        tile.paste(row, (0, 98 + y))
+    indexed, rgb565 = _indexed_tile(tile)
+    packed = bytearray(ART_RECORD)
+    struct.pack_into('<256H', packed, 0, *rgb565)
+    packed[512:12800] = indexed.transpose(Image.Transpose.TRANSPOSE).tobytes()
+    struct.pack_into('<I', packed, 12800, zlib.crc32(packed[:12800]))
+    preview = tile.resize((24, 32), Image.Resampling.LANCZOS).quantize(palette=palette, dither=Image.Dither.FLOYDSTEINBERG)
+    return packed, preview.transpose(Image.Transpose.TRANSPOSE).tobytes()
