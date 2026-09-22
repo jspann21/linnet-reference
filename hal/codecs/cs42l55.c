@@ -27,6 +27,9 @@ bool ln_codec_mute(ln_codec_writer write,bool mute) {
     if(mute)return write(0x0f,3) && write(0x1a,0xc0) && write(0x1b,0xc0);
     return write(0x1a,0) && write(0x1b,0) && write(0x0f,0);
 }
+bool ln_codec_digital_mute(ln_codec_writer write,bool mute) {
+    return write(0x0f,mute?3:0);
+}
 bool ln_codec_off(ln_codec_writer write) {
     bool muted=ln_codec_mute(write,true),line=ln_codec_lineout(write,false),power=write(2,0x0f);
     return muted && line && power;

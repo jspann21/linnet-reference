@@ -9,5 +9,6 @@ bool ln_codec_init(ln_codec_writer write,uint32_t rate);
 bool ln_codec_volume(ln_codec_writer write,int32_t db_tenths);
 bool ln_codec_lineout(ln_codec_writer write,bool enabled);
 bool ln_codec_mute(ln_codec_writer write,bool mute);
+bool ln_codec_digital_mute(ln_codec_writer write,bool mute);
 bool ln_codec_off(ln_codec_writer write);
 #endif
