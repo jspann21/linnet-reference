@@ -483,7 +483,12 @@ static void apply(uint32_t kind,int32_t value){
             if(music_from_coverflow){music_from_coverflow=false;(void)ln_ui_show(shell,"linnet.system.cover-flow");dirty=true;handled=true;}
             else
 #endif
-            {handled=ln_music_browser_back();if(handled)browser_navigation();if(ln_music_browser_take_search_return()){ln_music_search_resume();(void)ln_ui_show(shell,"linnet.system.music-search");dirty=true;handled=true;}}
+            {
+                handled=ln_music_browser_back();
+                if(handled)browser_navigation();
+                if(ln_music_browser_take_search_return()){ln_music_search_resume();(void)ln_ui_show(shell,"linnet.system.music-search");dirty=true;handled=true;}
+                else if(!handled){(void)ln_ui_show(shell,"linnet.system.home");dirty=true;handled=true;}
+            }
         }else if(pressed&LN_BUTTON_PLAY){
             if(scene_is("linnet.system.music")&&ln_music_browser_queue_status()==LN_BROWSER_QUEUE_CAPACITY)
                 (void)ln_music_browser_select_single(shell->selected);
