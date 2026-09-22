@@ -1032,21 +1032,34 @@ static bool paint_video_overlay(struct painter*p,struct ln_ui_state*s,const stru
     struct rect clip=p->clip;p->clip=(struct rect){0,(int32_t)top,LINNET_UI_WIDTH,(int32_t)(bottom-top)};
     draw_node(p,&c->nodes[1],s,false);p->clip=clip;
     if(changed){
-        const uint16_t panel=0x1082u,edge=0x4208u,track=0x528au,accent=0x4dffu;
-        const uint16_t ink=0xffffu,muted=0xbdf7u;
-        fill(p,(struct rect){0,0,LINNET_UI_WIDTH,(int32_t)top},panel);
-        fill(p,(struct rect){0,(int32_t)bottom,LINNET_UI_WIDTH,LINNET_UI_HEIGHT-(int32_t)bottom},panel);
-        fill(p,(struct rect){0,(int32_t)top-1,LINNET_UI_WIDTH,1},edge);
-        fill(p,(struct rect){0,(int32_t)bottom,LINNET_UI_WIDTH,1},edge);
+        const uint16_t header_bg=color(LN_UI_STATUS_BG),footer_bg=color(LN_UI_PANEL);
+        const uint16_t ink=color(LN_UI_STATUS_FG),accent=color(LN_UI_ACCENT);
+        const uint16_t header_hint=mix(ink,header_bg,210u);
+        const uint16_t footer_hint=mix(color(LN_UI_FOREGROUND),footer_bg,210u);
+        const uint16_t track=mix(accent,footer_bg,56u);
+        uint32_t style=layout();
+        fill(p,(struct rect){0,0,LINNET_UI_WIDTH,(int32_t)top},header_bg);
+        fill(p,(struct rect){0,(int32_t)bottom,LINNET_UI_WIDTH,LINNET_UI_HEIGHT-(int32_t)bottom},footer_bg);
+        if(style!=LN_UI_LAYOUT_MINIMAL){
+            uint16_t edge=style==LN_UI_LAYOUT_BLUEPRINT?accent:color(LN_UI_BORDER);
+            fill(p,(struct rect){0,(int32_t)top-1,LINNET_UI_WIDTH,1},edge);
+            fill(p,(struct rect){0,(int32_t)bottom,LINNET_UI_WIDTH,1},edge);
+        }
+        if(style==LN_UI_LAYOUT_AURORA){
+            fill(p,(struct rect){0,0,2,(int32_t)top},accent);
+            fill(p,(struct rect){0,(int32_t)bottom,2,LINNET_UI_HEIGHT-(int32_t)bottom},accent);
+        }else if(style==LN_UI_LAYOUT_IPOD_PHOTO||style==LN_UI_LAYOUT_IPOD_CLASSIC){
+            fill(p,(struct rect){0,0,LINNET_UI_WIDTH,1},mix(0xffffu,header_bg,64u));
+        }
         struct ln_ui_font main_font=ln_ui_font;
         const char*hide=LINNET_UI_WIDTH<=220u?"SELECT":"SELECT Hide";
         ln_ui_font=ln_ui_hint_font;
         int32_t title_width=text_width("VIDEO"),hide_width=text_width(hide);
         int32_t side_y=max(0,((int32_t)top-(int32_t)ln_ui_font.height)/2);
-        text(p,8,side_y,"VIDEO",muted);
-        text(p,LINNET_UI_WIDTH-8-hide_width,side_y,hide,muted);
+        text(p,bar->x,side_y,"VIDEO",header_hint);
+        text(p,LINNET_UI_WIDTH-bar->x-hide_width,side_y,hide,header_hint);
         ln_ui_font=main_font;
-        int32_t side=max(title_width,hide_width)+16,slot=LINNET_UI_WIDTH-2*side;
+        int32_t side=max(title_width,hide_width)+2*bar->x,slot=LINNET_UI_WIDTH-2*side;
         if(text_width(status)>slot)ln_ui_font=ln_ui_hint_font;
         int32_t status_width=text_width(status);
         fitted_text(p,side+max(0,(slot-status_width)/2),max(0,((int32_t)top-(int32_t)ln_ui_font.height)/2),status,ink,slot);
@@ -1058,7 +1071,7 @@ static bool paint_video_overlay(struct painter*p,struct ln_ui_state*s,const stru
         static const char*const labels[]={"MENU Exit","PLAY Pause","< > Seek"};
         int32_t column=hint->w/3,y=hint->y+max(0,(hint->h-(int32_t)ln_ui_font.height)/2);
         for(uint32_t i=0;i<3u;++i){int32_t x=hint->x+(int32_t)i*column;
-            fitted_text(p,x+max(0,(column-text_width(labels[i]))/2),y,labels[i],muted,column);
+            fitted_text(p,x+max(0,(column-text_width(labels[i]))/2),y,labels[i],footer_hint,column);
         }
         ln_ui_font=main_font;
         pixel_copy(video_overlay.pixels,p->pixels,top*LINNET_UI_WIDTH);

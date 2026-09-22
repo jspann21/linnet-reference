@@ -33,7 +33,7 @@ def apply_layout(scenes, theme):
     if style == 'native':
         result = deepcopy(scenes)
         for scene in result:
-            place_video_controls(scene, 320, 240)
+            place_video_controls(scene, 320, 240, theme)
             mark_control_footer(scene, (8, 212, 304, 24))
         return result
     if style == 'ipod-classic':
@@ -74,7 +74,7 @@ def apply_layout(scenes, theme):
         if sid in ('cover-flow', 'video-player'):
             continue
         if sid == 'video-controls':
-            place_video_controls(scene, 320, 240)
+            place_video_controls(scene, 320, 240, theme)
             continue
         if sid == 'photos-viewer':
             surface = next(n for n in nodes if n['kind'] == 15)
@@ -191,7 +191,7 @@ def apply_ipod_classic(scenes, theme):
         if sid in ('cover-flow', 'video-player'):
             continue
         if sid == 'video-controls':
-            place_video_controls(scene, 320, 240)
+            place_video_controls(scene, 320, 240, theme)
             continue
         if sid == 'photos-viewer':
             surface = next(n for n in nodes if n['kind'] == 15)
