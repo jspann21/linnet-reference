@@ -54,6 +54,7 @@ bool ln_ui_now_playing_art_loading(void){return ln_music_art_loading();}
 const struct ln_ui_asset *ln_ui_now_playing_art(uint32_t *revision){
     static struct ln_ui_asset art={64,64,0};
     *revision=ln_music_art_revision();art.pixels=ln_music_art_pixels();
+    art.width=art.height=(uint16_t)ln_music_art_side();
     return art.pixels?&art:0;
 }
 static bool in_scene(const struct ln_ui_node*n,const char*id){
@@ -78,7 +79,8 @@ const struct ln_ui_asset *ln_ui_dynamic_asset(const struct ln_ui_node*n,const st
 #endif
     static struct ln_ui_asset art={64,64,0};
     if(n->kind==LN_UI_ALBUM_ART&&in_scene(n,"linnet.system.now-playing")){
-        art.pixels=ln_music_art_pixels();if(art.pixels)return &art;}
+        art.pixels=ln_music_art_pixels();art.width=art.height=(uint16_t)ln_music_art_side();
+        if(art.pixels)return &art;}
     return fallback;
 }
 const struct ln_ui_asset *ln_ui_dynamic_item_asset(const struct ln_ui_node*n,uint32_t item,const struct ln_ui_asset*fallback){

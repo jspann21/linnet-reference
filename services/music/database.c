@@ -213,7 +213,14 @@ int ln_music_db_step(struct ln_music_db *d)
     }else if(d->operation==LN_DB_MEMBER){d->member=ln_read_le32(b);if(d->member>=d->tracks)return bad(d,LN_DB_FORMAT);}
     else if(d->operation==LN_DB_ART){
         d->art.id=ln_read_le64(b);d->art.path=ln_read_le32(b+8);d->art.crc=ln_read_le32(b+24);
-        if(d->art.path>=d->pool_bytes||ln_read_le16(b+12)!=64||ln_read_le16(b+14)!=64||ln_read_le32(b+16)!=1||ln_read_le32(b+20)!=8192||ln_read_le32(b+28))return bad(d,LN_DB_FORMAT);
+        uint32_t side=ln_read_le16(b+12);
+        if(d->art.path>=d->pool_bytes||
+#if defined(LINNET_TARGET_CLASSIC6G_N25)
+           (side!=64u&&side!=128u)||
+#else
+           side!=64u||
+#endif
+           ln_read_le16(b+14)!=side||ln_read_le32(b+16)!=1u||ln_read_le32(b+20)!=side*side*2u||ln_read_le32(b+28))return bad(d,LN_DB_FORMAT);
     }
     d->busy=false;return 1;
 }

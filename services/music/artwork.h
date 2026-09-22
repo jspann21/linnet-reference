@@ -8,6 +8,7 @@ void ln_music_art_prefetch(const char *path,uint32_t crc);
  * even when allow_read is false because the PCM ring needs priority. */
 void ln_music_art_step(bool allow_read);
 const uint16_t *ln_music_art_pixels(void);
+uint32_t ln_music_art_side(void);
 uint32_t ln_music_art_revision(void);
 bool ln_music_art_loading(void);
 #endif

@@ -153,7 +153,8 @@ def _cover_pixels(cover, target: str | None = None) -> bytes:
             raise ValueError("cover dimensions exceed bound")
         if image.getexif().get(274, 1) != 1:
             image = ImageOps.exif_transpose(image)
-        image = ImageOps.fit(_cover_rgb(image), (64, 64))
+        side = 128 if target == "classic6g-n25" else 64
+        image = ImageOps.fit(_cover_rgb(image), (side, side), method=Image.Resampling.LANCZOS)
         if target and TARGETS[target]["lcd_format"] == "gray2-horizontal":
             image = _mp102_cover(image)
         from .photos import _rgb565
@@ -982,8 +983,9 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         if coverflow_enabled:
             from .coverflow import original_cover
             coverflow_originals[index] = original_cover(cover if cover is not None else embedded)
+        side = 128 if target == "classic6g-n25" else 64
         artwork_records.append(struct.pack("<QIHHIIII", int.from_bytes(digest[:8], "little"),
-            string("/.LINNET/ART/" + name), 64, 64, 1, len(pixels), zlib.crc32(pixels), 0))
+            string("/.LINNET/ART/" + name), side, side, 1, len(pixels), zlib.crc32(pixels), 0))
         if sidecar:
             art_cache[folder] = index
         art_indices[digest] = index
@@ -1352,7 +1354,9 @@ def validate_database(data: bytes) -> dict:
         raise ValueError("search permutation/order")
     for index in range(arts):
         identity, path, width, height, encoding, count, crc, reserved = struct.unpack_from("<QIHHIIII", data, ao + index * ART)
-        if not re.fullmatch(r"/\.LINNET/ART/[0-9A-F]{8}\.RGB", get_string(path)) or (width, height, encoding, count, reserved) != (64, 64, 1, 8192, 0):
+        if (not re.fullmatch(r"/\.LINNET/ART/[0-9A-F]{8}\.RGB", get_string(path)) or
+                width not in (64, 128) or (height, encoding, count, reserved) !=
+                (width, 1, width * width * 2, 0)):
             raise ValueError("art record")
     return dict(tracks=tracks, groups=groups, members=members, artwork=arts, bytes=size)
 

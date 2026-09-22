@@ -154,17 +154,19 @@ still receives the current index.
 | --- | --- | --- |
 | 0 | u64 | First eight bytes of SHA-256 of RGB565 data, little endian |
 | 8 | u32 | Artwork path string offset |
-| 12 | u16 | Width, 64 |
-| 14 | u16 | Height, 64 |
+| 12 | u16 | Width, 64 or 128 |
+| 14 | u16 | Height, same as width |
 | 16 | u32 | Encoding 1: little-endian RGB565, top row first |
-| 20 | u32 | Bytes, 8192 |
+| 20 | u32 | Bytes, width × height × 2 |
 | 24 | u32 | CRC32/ISO-HDLC of RGB565 data |
 | 28 | u32 | Reserved zero |
 
 Artwork files are `/.LINNET/ART/XXXXXXXX.RGB`, where the name uses the first four
 SHA-256 bytes as hex. The compiler optionally uses Pillow to crop/resize a folder's
 `cover.png`, `cover.jpg`, `folder.jpg`, or `Folder.jpg`. It bounds input file size
-to 32 MiB and decoded dimensions to 16 million pixels. Missing artwork uses the
+to 32 MiB and decoded dimensions to 16 million pixels. The classic6g-n25 target
+prepares 128×128 artwork (32768 bytes) and also reads older 64×64 artwork
+(8192 bytes). Other targets prepare and read 64×64 artwork. Missing artwork uses the
 sentinel, and name collisions are rejected. Embedded artwork extraction is not
 implemented in the current player.
 

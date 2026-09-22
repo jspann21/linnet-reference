@@ -3,11 +3,17 @@
 #include "services/music/database.h"
 #include "boot/include/linnet_boot.h"
 #include "hal/api/platform.h"
-static uint16_t pixels[2][4096];
+#if defined(LINNET_TARGET_CLASSIC6G_N25)
+#define LN_ART_MAX_SIDE 128u
+#else
+#define LN_ART_MAX_SIDE 64u
+#endif
+static uint16_t pixels[2][LN_ART_MAX_SIDE*LN_ART_MAX_SIDE];
+static uint16_t cached_side[2];
 static struct ln_fat32_file file;
 static char requested[256],path[256];
 static uint32_t requested_crc,crc,token,working,revision,generation=0x20000000u;
-static uint32_t phase,front;
+static uint32_t phase,front,transfer_bytes;
 static bool pending,visible,preload,prefetch_tried;
 /* Keep the previous or prefetched cover in the existing second buffer. */
 static char cached_path[2][256];
@@ -36,6 +42,7 @@ static void monochrome_cover(uint16_t *image){
 }
 #endif
 const uint16_t *ln_music_art_pixels(void){return visible?pixels[front]:0;}
+uint32_t ln_music_art_side(void){return visible?cached_side[front]:0u;}
 uint32_t ln_music_art_revision(void){return revision;}
 bool ln_music_art_loading(void){return !visible&&requested[0]&&(working!=token||(!preload&&phase));}
 void ln_music_art_request(const char *name,uint32_t checksum){
@@ -81,7 +88,7 @@ void ln_music_art_step(bool allow_read){
     if(!pending){
         if(!allow_read)return;
         int result=phase==1?ln_storage_media_open(path,generation):
-            ln_storage_media_read(&file,0,pixels[front^1u],sizeof pixels[0],generation);
+            ln_storage_media_read(&file,0,pixels[front^1u],transfer_bytes,generation);
         if(result<0){finish();return;}if(!result)return;
         /* Invalidate only once a read owns the buffer, not while admission waits. */
         if(phase==2)cached_valid[front^1u]=false;
@@ -97,14 +104,22 @@ void ln_music_art_step(bool allow_read){
         if(now-began>=500u||(ln_storage_idle_wait(now,&deadline)&&(int32_t)(deadline-now)>0))break;
     }
     if(!result)return;pending=false;if(result<0){finish();return;}
-    if(phase==1){if(file.size!=8192){finish();return;}phase=2;return;}
-    if(transferred!=sizeof pixels[0]){finish();return;}
+    if(phase==1){
+        if(file.size!=8192u
+#if defined(LINNET_TARGET_CLASSIC6G_N25)
+           &&file.size!=32768u
+#endif
+        ){finish();return;}
+        transfer_bytes=file.size;phase=2;return;
+    }
+    if(transferred!=transfer_bytes){finish();return;}
     {
-        if(ln_crc32((const uint8_t*)pixels[front^1u],8192)==crc){
+        if(ln_crc32((const uint8_t*)pixels[front^1u],transfer_bytes)==crc){
 #if LINNET_LCD_FORMAT == 2
             monochrome_cover(pixels[front^1u]);
 #endif
             uint32_t slot=front^1u;
+            cached_side[slot]=transfer_bytes==32768u?128u:64u;
             cached_crc[slot]=crc;
             copy_path(cached_path[slot],path);
             cached_valid[slot]=true;

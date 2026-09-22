@@ -173,7 +173,7 @@ separate.
 
 | Folder | Preparation and limits |
 | --- | --- |
-| Music | Indexes original audio, metadata and 64×64 artwork; up to 100,000 tracks. Native codec support determines playback. |
+| Music | Indexes original audio and metadata with 128×128 artwork for classic6g-n25 or 64×64 artwork for other targets; up to 100,000 tracks. Native codec support determines playback. |
 | Notes | UTF-8 or BOM-marked UTF-16 `.txt`, `.text`, `.md`; 256 notes, 63-character titles, 256 wrapped lines per note. |
 | Photos | JPEG, PNG, BMP, TIFF and WebP via Pillow; orientation, thumbnails and tiled RGB565 copies. Up to 65,535 images; zoom dimension 640 pixels by default or 2048 for higher detail. |
 | Videos | Indexes native IPVF in place; converts FFmpeg-readable video to IPVF. Up to 256 named videos; each under 2 GiB. |

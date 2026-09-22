@@ -198,10 +198,11 @@ def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, I
             if originals is not None and art in originals:
                 cover = originals[art]
             elif art != 0xffffffff:
-                path = text(struct.unpack_from('<I', database, art_at + art * 32 + 8)[0])
-                raw = _bounded(root / path.removeprefix('/.LINNET/'), 8192)
-                pixels = struct.unpack('<4096H', raw)
-                cover = Image.new('RGB', (64, 64))
+                path_offset, side, _, _, art_bytes = struct.unpack_from('<IHHII', database, art_at + art * 32 + 8)
+                path = text(path_offset)
+                raw = _bounded(root / path.removeprefix('/.LINNET/'), art_bytes)
+                pixels = struct.unpack(f'<{side * side}H', raw)
+                cover = Image.new('RGB', (side, side))
                 cover.putdata([((p >> 11) * 255 // 31, ((p >> 5) & 63) * 255 // 63, (p & 31) * 255 // 31) for p in pixels])
                 cover = cover.resize((96, 96), Image.Resampling.LANCZOS)
             else:

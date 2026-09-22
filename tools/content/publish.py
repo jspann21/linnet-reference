@@ -270,18 +270,19 @@ def validate_stage(stage: Path, *, device_root: Path | None = None,
         files[relative] = dict(path=relative, bytes=size, sha256=sha, kind="music")
     for index in range(info["artwork"]):
         offset = art_offset + index * ART
-        identity, path_offset = struct.unpack_from("<QI", database, offset)
+        identity, path_offset, width, height, encoding, count, crc, reserved = struct.unpack_from("<QIHHIIII", database, offset)
         path = _pool_string(database, pool, path_offset)
         relative = path.removeprefix("/.LINNET/")
         local = stage / relative
         _plain(local, stage)
-        pixels = _bounded(local, 8192)
+        pixels = _bounded(local, count)
         digest = hashlib.sha256(pixels).digest()
-        if (len(pixels) != 8192 or int.from_bytes(digest[:8], "little") != identity or
-            zlib.crc32(pixels) != struct.unpack_from("<I", database, offset + 24)[0] or
+        if (width not in (64, 128) or height != width or encoding != 1 or
+            count != width * height * 2 or reserved or len(pixels) != count or
+            int.from_bytes(digest[:8], "little") != identity or zlib.crc32(pixels) != crc or
             Path(path).stem != digest[:4].hex().upper()):
             raise ValueError(f"staged artwork identity/CRC mismatch: {relative}")
-        record = dict(path=relative, bytes=8192, sha256=digest.hex(), kind="art")
+        record = dict(path=relative, bytes=count, sha256=digest.hex(), kind="art")
         if relative in files and files[relative] != record:
             raise ValueError("conflicting artwork short name")
         files[relative] = record
