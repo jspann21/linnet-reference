@@ -100,7 +100,7 @@ static void start_io(uint32_t operation,uint32_t file,uint32_t offset,uint8_t *b
     if(result>0){h.io_bytes=operation==LN_FAT32_FLUSH?0u:bytes;h.io_error=error;}
 }
 uint32_t ln_paged_history_deadline(uint32_t now,bool may_read,bool may_write){
-    if(h.ticket)return now;
+    if(h.ticket)return now+200000u;
     uint32_t idle=now+200000u;
     if(h.error||ln_storage_busy()||!ln_storage_mounted())return idle;
     if(h.phase==SUPER_A||h.phase==SUPER_B||h.phase==PAGE_A||h.phase==PAGE_B)

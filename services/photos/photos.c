@@ -271,7 +271,12 @@ static void render_step(void){
     PHOTO_DIAG(timing.render_us+=ln_time_us()-started);
 }
 static void begin_view(uint32_t index){PHOTO_DIAG(timing.view_started=ln_time_us();timing.frame_ready=timing.render_us=timing.jpeg_us=0);p.slide_armed=false;p.photo_index=index;p.view=LN_PHOTOS_VIEWER;p.view_loaded=p.frame_valid=p.frame_complete=p.jpeg_mode=p.rendering=false;p.error=0;p.zoom=p.rotation=0;p.pan_x=p.pan_y=0;p.level_count=0;change();++p.navigation;}
-void ln_photos_init(void){PHOTO_DIAG(clear(&timing,sizeof timing));clear(&p,sizeof p);p.generation=0x60000000u;p.phase=OPEN;p.view=LN_PHOTOS_LIST;p.window_count=ROWS;p.asset=(struct ln_ui_asset){WIDTH,HEIGHT,p.surface.frame[0]};}
+void ln_photos_init(void){
+    /* The runtime calls this once after startup has cleared BSS. Clearing
+     * the full photo arena again would write over a megabyte before Home. */
+    p.generation=0x60000000u;p.phase=OPEN;p.view=LN_PHOTOS_LIST;
+    p.window_count=ROWS;p.asset=(struct ln_ui_asset){WIDTH,HEIGHT,p.surface.frame[0]};
+}
 void ln_photos_open(void){if(!p.active){p.active=true;p.error=0;change();++p.navigation;}}
 void ln_photos_close(void){p.active=false;p.slide=false;change();}
 bool ln_photos_active(void){return p.active;}
@@ -372,7 +377,23 @@ bool ln_photos_busy(void){
         (p.view==LN_PHOTOS_VIEWER&&(!p.frame_valid||p.rendering||p.redraw||
          (!p.jpeg_mode&&!p.frame_complete))));
 }
-uint32_t ln_photos_deadline(uint32_t now){if(p.pending)return now;if(!p.active||p.error)return now+200000u;if(idle_plan(false)||memory_work())return now;if(!allowed())return now+200000u;if(p.phase!=IDLE||p.rendering||p.redraw||(p.view==LN_PHOTOS_VIEWER&&!p.jpeg_mode&&!p.frame_complete))return now;if(p.slide&&p.slide_armed&&(int32_t)(p.slide_at-now)>0)return p.slide_at;return now+200000u;}
+uint32_t ln_photos_deadline(uint32_t now){
+    /* Storage owns an admitted read. Its deadline wakes the executive when
+     * progress is possible; another photo poll cannot advance the disk. */
+    if(p.pending){
+        if(p.working!=p.epoch)return now;
+        if(p.slide&&p.slide_armed&&p.frame_valid&&
+           (int32_t)(p.slide_at-now)<200000)return p.slide_at;
+        return now+200000u;
+    }
+    if(!p.active||p.error)return now+200000u;
+    if(idle_plan(false)||memory_work())return now;
+    if(!allowed())return now+200000u;
+    if(p.phase!=IDLE||p.rendering||p.redraw||
+       (p.view==LN_PHOTOS_VIEWER&&!p.jpeg_mode&&!p.frame_complete))return now;
+    if(p.slide&&p.slide_armed&&(int32_t)(p.slide_at-now)>0)return p.slide_at;
+    return now+200000u;
+}
 static void image_fail(int error){
     if(p.photo.source_bytes&&!p.jpeg_mode){p.phase=SOURCE;p.rendering=false;p.frame_valid=false;return;}fail(error);
 }

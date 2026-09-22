@@ -234,7 +234,9 @@ static bool retire_superseded_job(void){
     return true;
 }
 uint32_t ln_music_library_deadline(uint32_t now){
-    if(library.io_active)return now;
+    /* An admitted media request is advanced by storage, not another library
+     * turn. Keep its deadline out of the executive's immediate-work path. */
+    if(library.io_active)return superseded_job()?now:now+200000u;
     if(library.paused)return now+200000u;
     if(library.status==LN_LIBRARY_OPENING||library.status==LN_LIBRARY_VERIFYING||
        library.status==LN_LIBRARY_DRAINING)return now;
