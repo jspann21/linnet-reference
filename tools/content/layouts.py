@@ -36,8 +36,8 @@ def place_video_controls(scene,width,height):
     place(surface,0,0,width,height)
     place(header,0,0,width,top);header['flags']=0
     place(progress,8,bottom+7,width-16,4);progress['flags']=0
-    place(hint,8,bottom+15,width-16,height-bottom-15);hint['flags']=0
-    hint['text']='PLAY Pause    < > Seek' if width==220 else 'MENU Exit    PLAY Pause    < > Seek'
+    place(hint,8,bottom+15,width-16,height-bottom-15);hint['flags']=64
+    hint['text']='MENU Exit  PLAY Pause  < > Seek'
 
 def apply_layout(scenes,theme,compact=False):
     result=deepcopy(scenes)
@@ -149,7 +149,7 @@ def refine_footers(scene,theme):
     texts=[n for n in scene['nodes'] if n['kind']==3]
     if sid in keys:foot=[n for n in texts if n['text'] in keys[sid]]
     elif sid in ('display','battery','shutdown'):foot=texts[1:]
-    elif sid in ('music','music-queue','music-sound','video-controls'):foot=texts
+    elif sid in ('music','music-queue','music-sound','video-settings','video-output'):foot=texts
     else:return
     if not foot:return
     style=theme['layout']

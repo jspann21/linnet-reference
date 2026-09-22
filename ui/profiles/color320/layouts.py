@@ -8,12 +8,33 @@ from tools.content.layouts import place, place_video_controls, text_node, CENTER
 from tools.content.tsx import ContentError
 
 
+def mark_control_footer(scene, footer=None):
+    sid = scene['id'].rsplit('.', 1)[-1]
+    if sid in ('display', 'battery', 'shutdown'):
+        hints = [node for node in scene['nodes'] if node['kind'] == 3][1:]
+        if len(hints) != 2:
+            return
+        hints[0]['text'] += '  ' + hints[1]['text']
+        hints[0]['flags'] = 64
+        hints[1]['flags'] |= 2
+        if footer:
+            place(hints[0], *footer)
+        return
+    if sid not in ('music', 'music-queue', 'music-sound', 'music-search',
+                   'video-settings', 'video-output'):
+        return
+    for node in scene['nodes']:
+        if node['kind'] == 3 and (sid != 'music-search' or node['text'] == 'Search controls'):
+            node['flags'] = (node['flags'] & 2) | 64
+
+
 def apply_layout(scenes, theme):
     style = theme['layout']
     if style == 'native':
         result = deepcopy(scenes)
         for scene in result:
             place_video_controls(scene, 320, 240)
+            mark_control_footer(scene, (8, 212, 304, 24))
         return result
     if style == 'ipod-classic':
         return apply_ipod_classic(scenes, theme)
@@ -143,6 +164,7 @@ def apply_layout(scenes, theme):
         for bar in bars:
             if listing:
                 place(bar, x + w - 4, listing['y'], 4, listing['h'])
+        mark_control_footer(scene, (x, bottom - 22, w, 22))
         scene['count'] = len(nodes)
     return result
 
@@ -274,5 +296,6 @@ def apply_ipod_classic(scenes, theme):
         for n in nodes:
             n['w'] = max(1, min(n['w'], 320 - n['x']))
             n['h'] = max(1, min(n['h'], 240 - n['y']))
+        mark_control_footer(scene, (8, 216, 304, 22))
         scene['count'] = len(nodes)
     return result
