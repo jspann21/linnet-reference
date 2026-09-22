@@ -21,10 +21,12 @@ connected iPod:
 - **Use the existing Rockbox bootloader** replaces `.rockbox/rockbox.ipod`
   reversibly. Linnet depends on the Rockbox bootloader and the saved Rockbox
   file is the restoration path.
-- **Native Linnet; preserve Rockbox dormant** boots Linnet directly. The
-  `.rockbox` folder stays unchanged, but Rockbox cannot start until its
-  bootloader is restored or Linnet is reinstalled with the selector.
-- **Native Linnet + Rockbox startup selector** boots a native Linnet loader and
+- **Native Linnet with Apple fallback; preserve Rockbox dormant** boots Linnet
+  directly. Hold `MENU` continuously during power-on to start the preserved
+  Apple software. The `.rockbox` folder stays unchanged, but Rockbox cannot
+  start until its bootloader is restored or Linnet is reinstalled with the selector.
+- **Native Linnet + Rockbox startup selector** retains the same Apple `MENU`
+  fallback, then boots a native Linnet loader and
   presents Linnet and the existing Rockbox image on the iPod for five seconds.
   Menu, Previous, Next, or Play/Pause changes the choice; Select starts it.
   Linnet is the timeout default. A missing, changed, corrupt, or oversized
@@ -43,6 +45,11 @@ new loader only into an unused firmware extent, and publishes one directory
 sector last. The startup selector reads Rockbox separately from its preserved
 file; Linnet's `OS0.LOS` and `OS1.LOS` remain dedicated to Linnet updates and
 rollback.
+
+Native installation also copies the exact original Apple OS payload to
+`.LINNET/APPLE.BIN` and publishes a target number, payload length, SHA-256, and
+record CRC in `.LINNET/APPLE.CFG`. Boot rechecks all four before handing control
+to Apple software. Missing or invalid fallback data continues into Linnet.
 
 Before installing, choose **User build** for the normal release OS without
 developer transport or instrumentation, or **Developer build** for the

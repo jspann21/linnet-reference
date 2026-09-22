@@ -485,7 +485,7 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
         response->length=148;response->flags=LINNET_LINK_ACK;return 1;
     }
     if((operation==9 || operation==10) && !lba) {
-        uint32_t phase=operation==9?(ln_n25_panel_start()?1u:0xffffffffu):ln_n25_panel_poll();
+        uint32_t phase=operation==9?(ln_n25_panel_start(true)?1u:0xffffffffu):ln_n25_panel_poll();
         ln_write_le32(reply,0x4252504cu);ln_write_le32(reply+4,operation);ln_write_le32(reply+8,phase);
         response->length=12;response->flags=LINNET_LINK_ACK;return 1;
     }

@@ -1,8 +1,24 @@
 #include "hal/api/display.h"
 #include "hal/api/core.h"
+#include "hal/api/platform.h"
 #include "boot/include/linnet_bytes.h"
 #include "boot/include/linnet_boot.h"
 #include "panel.h"
+#if defined(LINNET_IMAGE_OS)
+#include "linnet_build.h"
+static bool boot_panel_handoff(void) {
+    /* Use the same CRC- and image-bound publication as storage confirmation.
+     * A RAM launch has no matching publication and must initialize the panel. */
+    const volatile uint8_t *record=(const volatile uint8_t *)
+        ln_platform_uncached_address(LINNET_MAILBOX_ADDRESS+0x100u);
+    uint8_t bytes[80];for(unsigned i=0;i<sizeof bytes;i++)bytes[i]=record[i];
+    if(ln_read_le32(bytes)!=0x444e4148u || bytes[4]>1 ||
+       ln_crc32(bytes,76)!=ln_read_le32(bytes+76))return false;
+    const uint8_t build[32]=LINNET_BUILD_ID_BYTES;
+    for(unsigned i=0;i<32;i++)if(bytes[8+i]!=build[i])return false;
+    return ln_n25_panel_adopt();
+}
+#endif
 extern uint32_t ln_time_us(void);
 extern void ln_memory_copy(void *,const void *,uint32_t);
 #ifdef LINNET_SRAM_MONITOR
@@ -18,15 +34,27 @@ static uint32_t submitted,completed,failures,resets,generation,error,started,max
 static bool fail(uint32_t reason){error=reason;failures++;busy=false;return false;}
 bool ln_display_init(void) {
     initialized=false;busy=false;error=0;
-    if(!ln_n25_panel_start())return fail(1);
-    uint32_t deadline=ln_time_us()+2000000u;
-    for(;;) {
-        uint32_t phase=ln_n25_panel_poll();
-        if(phase==3)break;
-        if(phase==0xffffffffu || (int32_t)(ln_time_us()-deadline)>=0 || !ln_core_delay_us(100))return fail(2);
+    bool inherited=false;
+#if defined(LINNET_IMAGE_OS)
+    inherited=boot_panel_handoff();
+#endif
+    if(!inherited){
+        if(!ln_n25_panel_start(false))return fail(1);
+        uint32_t deadline=ln_time_us()+2000000u;
+        for(;;) {
+            uint32_t phase=ln_n25_panel_poll();
+            if(phase==3)break;
+            if(phase==0xffffffffu || (int32_t)(ln_time_us()-deadline)>=0 || !ln_core_delay_us(100))return fail(2);
+        }
     }
     for(unsigned i=0;i<LINNET_DISPLAY_PIXELS;i++)draw[i]=presented[i]=0;
-    initialized=true;dirty=true;draw_valid=true;generation++;return true;
+    initialized=true;dirty=true;draw_valid=true;generation++;
+#if defined(LINNET_IMAGE_OS)
+    /* Preserve Boot's artwork without a reset/clear flash; a standalone RAM
+     * entry presents the same artwork after full panel initialization. */
+    if(!ln_lcd_boot())return fail(6);
+#endif
+    return true;
 }
 uint32_t ln_display_init_error(void){return error;}
 uint16_t *ln_display_framebuffer(void){

@@ -6,6 +6,7 @@
 extern uint32_t ln_time_us(void);
 static uint32_t phase,deadline,pixel,bar,bar_pixel;
 static const uint16_t *frame;
+static bool color_bars;
 static bool send(uint8_t command,const uint8_t *data,unsigned count) {
     if(!ln_s5l_lcd_command(command))return false;
     for(unsigned i=0;i<count;i++)if(!ln_s5l_lcd_data(data[i]))return false;
@@ -32,12 +33,25 @@ bool ln_n25_panel_present(const uint16_t *pixels) {
     }
     phase=0xffffffffu;return false;
 }
-bool ln_n25_panel_start(void) {
+bool ln_n25_panel_start(bool diagnostic) {
+    color_bars=diagnostic;
     phase=0;pixel=0;bar=0;bar_pixel=0;frame=0;
     if(((LN_REG(0x3cf000c4u)>>4)&3u)!=1)return false;
     if(!ln_n25_lcd_power())return false;
     LN_REG(0x38300020u)=0x33;
     if(!ln_s5l_lcd_mode(0x80000c20u))return false;
+    /* Establish the same controller state after ROM, OS and RAM handoffs.
+     * A repeated Sleep Out alone does not reset an already awake panel. */
+    if(!send(0x01,0,0))return false;
+    deadline=ln_time_us()+120000u;phase=5;return true;
+}
+bool ln_n25_panel_adopt(void) {
+    if(((LN_REG(0x3cf000c4u)>>4)&3u)!=1 ||
+       (LN_CLOCK_GATE0&2u) || LN_REG(0x38300000u)!=0x80100db0u ||
+       !(LN_REG(0x3830001cu)&2u))return false;
+    phase=3;pixel=bar=bar_pixel=0;frame=0;color_bars=false;return true;
+}
+static bool configure(void) {
     /* N25 panel-1 electrical timing and gamma register values. These are
      * panel configuration data, separate from the S5L transfer driver. */
     static const uint8_t timing[]={0x3a,0x3a,0x80,0x80,0x0a,0x0a,0x0a,0x0a,
@@ -60,17 +74,26 @@ bool ln_n25_panel_start(void) {
 }
 uint32_t ln_n25_panel_service(uint32_t pixels) {
     if(pixels>512)pixels=512;
+    if(phase==5){
+        if((int32_t)(ln_time_us()-deadline)<0)return phase;
+        if(!configure())goto fail;
+    }
 #if defined(LINNET_IMAGE_OS)
     if(phase==4){int result=ln_s5l_lcd_dma_poll();if(result<0)goto fail;if(result>0)phase=3;return phase;}
 #endif
     if(phase==1) {
         if((int32_t)(ln_time_us()-deadline)<0)return phase;
-        if(!send(0x13,0,0) || !send(0x29,0,0) || !begin_frame())goto fail;
+        /* Memory Access Control is only reliable after Sleep Out has settled.
+         * Program it explicitly so cold NOR boot and warm RAM boot do not
+         * inherit different scan directions from the previous firmware. */
+        uint8_t orientation=0;
+        if(!send(0x36,&orientation,1) || !send(0x13,0,0) ||
+           !send(0x29,0,0) || !begin_frame())goto fail;
     }
     if(phase==2) {
         static const uint16_t colors[]={0xffff,0xffe0,0x07ff,0x07e0,0xf81f,0xf800,0x001f,0};
         for(unsigned i=0;i<pixels && pixel<320u*240u;i++,pixel++) {
-            if(!ln_s5l_lcd_data(frame?frame[pixel]:colors[bar]))goto fail;
+            if(!ln_s5l_lcd_data(frame?frame[pixel]:color_bars?colors[bar]:0x0841))goto fail;
             if(++bar_pixel==40){bar_pixel=0;bar=(bar+1)&7;}
         }
         if(pixel==320u*240u) {

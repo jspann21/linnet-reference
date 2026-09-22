@@ -68,4 +68,20 @@ int ln_platform_enter(const uint8_t *payload,uint32_t size,uint32_t load,uint32_
     ((void (*)(const uint8_t *,uint32_t,uint32_t,uint32_t))(uintptr_t)code)(payload,size,load,entry);
     return 0;
 }
-int ln_platform_enter_retail(const uint8_t *payload,uint32_t size){(void)payload;(void)size;return 0;}
+int ln_platform_enter_retail(const uint8_t *payload,uint32_t size){
+    extern const uint8_t ln_persistent_enter_begin[],ln_persistent_enter_end[];
+    uint32_t code_size=(uint32_t)(ln_persistent_enter_end-ln_persistent_enter_begin);
+    /* The original N25 IM3 body occupies 0x22000000..0x2201f800. Keep the
+     * position-independent copier in the remaining top256 bytes of SRAM. */
+    if(!payload||size<32u||size>0x1f800u||code_size>256u)return 0;
+    /* The persistent monitor marks Linnet Boot as an attempt. Retail firmware
+     * owns the next reset after a successful handoff, so clear that marker. */
+    ln_s5l_boot_request(LN_S5L_BOOT_NORMAL);
+    if(!ln_arm926_mmu_disable())return 0;
+    uint8_t *code=(uint8_t *)(uintptr_t)0x2201ff00u;
+    for(uint32_t i=0;i<code_size;++i)code[i]=ln_persistent_enter_begin[i];
+    (void)ln_arm926_instruction_cache(true);
+    ((void (*)(const uint8_t *,uint32_t,uint32_t,uint32_t))(uintptr_t)code)(
+        payload,size,0x22000000u,0x22000000u);
+    return 0;
+}

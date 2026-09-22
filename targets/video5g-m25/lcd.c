@@ -127,6 +127,7 @@ bool ln_lcd_boot(void){
     if(left||run!=sizeof ln_boot_runs/sizeof ln_boot_runs[0])return false;
     return ln_m25_lcd_commit()&&await_ready();
 }
+bool ln_lcd_boot_apple(void){return ln_lcd_fill(0xffffu);}
 bool ln_lcd_boot_selector(bool alternative,bool starting){(void)alternative;(void)starting;return ln_lcd_boot();}
 #endif
 bool ln_lcd_fault(uint32_t reason,const uint8_t build[32]){

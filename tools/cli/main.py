@@ -228,6 +228,10 @@ def parser():
     sram_nor_prepare.add_argument("--backup", type=Path, required=True)
     sram_nor_prepare.add_argument("--output", type=Path, required=True)
     sram_nor_prepare.add_argument("--boot-image", type=Path, help="Include the verified native Boot stage in the existing NOR slot")
+    sram_apple = sram_actions.add_parser("preserve-apple", help="Publish the verified original Apple loader for MENU-at-boot fallback")
+    sram_apple.add_argument("--prepared", type=Path, required=True)
+    sram_apple.add_argument("--backup", type=Path, required=True)
+    sram_apple.add_argument("--mount", type=Path, required=True)
     sram_nor_install = sram_actions.add_parser("install-nor", help="Install the verified monitor in the original NOR boot slot and reboot")
     sram_nor_install.add_argument("--prepared", type=Path, required=True)
     sram_nor_install.add_argument("--plan-sha256", required=True)
@@ -473,6 +477,9 @@ def main():
             elif args.sram_action == "prepare-nor":
                 from tools.link.classic_nor import prepare
                 emit(prepare(args.prepared, args.backup, args.output, args.boot_image))
+            elif args.sram_action == "preserve-apple":
+                from tools.link.classic_nor import preserve_apple
+                emit(preserve_apple(args.prepared, args.backup, args.mount))
             elif args.sram_action == "install-nor":
                 from tools.link.classic_nor import install
                 emit(install(args.prepared, args.plan_sha256, progress=lambda message: print(message, file=sys.stderr)))

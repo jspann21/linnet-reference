@@ -7,7 +7,10 @@ def pack(data: bytes) -> bytes:
     def remember(at):
         matches=positions.setdefault(data[at:at+4],[])
         matches.append(at)
-        if len(matches)>32:del matches[0]
+        # Boot images contain many repeated instruction and zero-filled table
+        # prefixes. Keep a deeper, still-bounded window so the archive fits the
+        # Classic's fixed NOR slot without changing the on-device LZ4 format.
+        if len(matches)>4096:del matches[0]
     def length(value):
         while value>=255:output.append(255);value-=255
         output.append(value)

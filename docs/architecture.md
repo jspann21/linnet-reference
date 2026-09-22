@@ -57,7 +57,25 @@ stages a replacement, checks readback, and publishes the directory last.
 Restore uses the original directory sector. Preserve plans, predecessor files
 and backups together; see [local artifacts](local-artifacts.md).
 
+Every native Linnet installation preserves a bootable copy of the device's
+original Apple firmware. Normal power-on starts Linnet. Holding `MENU`
+continuously during the early boot window requests Apple software. Boot verifies
+the preserved payload's target, length, SHA-256, and configuration CRC before
+handoff; missing or invalid fallback data never replaces the normal Linnet path.
+
 ## Runtime and media
+
+The Classic N25 panel resets the controller before configuration and programs
+Memory Access Control to `0x00` after the 60 ms Sleep Out delay. The OS retains
+a quiesced Boot panel when the persistent handoff CRC and destination build
+match and the display controller is ready. This avoids a reset/clear flash
+between identical startup frames. RAM entry or an invalid handoff performs full
+panel initialization. Normal initialization clears to the startup background;
+color bars are reserved for the explicit monitor display diagnostic. Boot and
+the OS both present the Linnet OS bird-and-iPod artwork. The OS keeps it visible
+while storage resolves the saved theme, before publishing the first home frame
+and its normal health readiness. N25 Boot uses size-focused compilation to keep
+the artwork and dual-boot code within the existing NOR archive boundary.
 
 The executive schedules bounded work with audio, input and watchdog deadlines.
 Storage operations retain buffer ownership until completion or drained cancellation.

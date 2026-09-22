@@ -4,6 +4,9 @@
 #include "hal/s5l8702/registers.h"
 #include "hal/s5l8702/board.h"
 #include "ui/profiles/color320/boot_font.h"
+#if defined(LINNET_IMAGE_OS) || defined(LINNET_IMAGE_BOOT)
+#include "targets/classic6g-n25/boot_wordmark.h"
+#endif
 bool ln_lcd_fill(uint16_t color) {
     uint16_t *frame=ln_display_framebuffer();
     if(!frame){if(!ln_display_init())return false;frame=ln_display_framebuffer();}
@@ -26,8 +29,27 @@ static void text(unsigned top,const char *message,uint16_t color) {
 }
 static bool present(void){return ln_display_damage(0,0,LINNET_UI_WIDTH,LINNET_UI_HEIGHT)&&ln_display_present()&&ln_display_quiesce();}
 bool ln_lcd_boot(void){
+#if defined(LINNET_IMAGE_OS) || defined(LINNET_IMAGE_BOOT)
+    uint16_t *frame=ln_display_framebuffer();
+    if(!frame){if(!ln_display_init())return false;frame=ln_display_framebuffer();}
+    if(!frame || !ln_display_quiesce())return false;
+    unsigned pixel=0;
+    for(unsigned run=0;run<sizeof ln_boot_runs/sizeof ln_boot_runs[0];run++){
+        uint32_t packed=ln_boot_runs[run],index=packed&511u,count=packed>>9;
+        if(!count || index>=sizeof ln_boot_palette/sizeof ln_boot_palette[0] ||
+           count>LINNET_DISPLAY_PIXELS-pixel)return false;
+        while(count--)frame[pixel++]=ln_boot_palette[index];
+    }
+    return pixel==LINNET_DISPLAY_PIXELS && present();
+#else
     if(!ln_lcd_fill(0x0841))return false;
-    text(94,"Linnet",0xffff);text(150,"Starting",0xad75);return present();
+    text(94,"Linnet",0xffff);
+    text(150,"Starting",0xad75);return present();
+#endif
+}
+bool ln_lcd_boot_apple(void){
+    if(!ln_lcd_fill(0xffff))return false;
+    text(94,"Apple iPod Software",0x0000);text(150,"Starting",0x4208);return present();
 }
 bool ln_s5l_board_disk_screen(void){
     if(!ln_lcd_fill(0x0841))return false;

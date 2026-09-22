@@ -42,7 +42,7 @@ def prepare(mount):
 
 
 def update(prepared):
-    """Replace an upload-capable SRAM monitor through ordinary Linnet Link."""
+    """Enter or replace the SRAM monitor through ordinary Linnet Link."""
     from tools.inspect.image import pack
     from tools.link.transport import SerialTransport
     from tools.link.session import Session
@@ -51,9 +51,11 @@ def update(prepared):
     base=ROOT/'out/dev/classic6g-n25/bootstrap'
     report=json.loads((base/'manifest.json').read_text())
     payload=(base/'monitor.bin').read_bytes();image=(base/'monitor.lnos').read_bytes()
+    bridge=(base/'monitor-bridge.lnos').read_bytes()
     if (plan.get('target_id')!='classic6g-n25' or report.get('target_id')!=plan['target_id'] or
         report.get('serial')!=plan['serial'] or hashlib.sha256(payload).hexdigest()!=report['monitor_sha256'] or
-        image!=pack(payload,'dev',report['build_id'],0x22000000,0x22000000,'classic6g-n25')):
+        image!=pack(payload,'dev',report['build_id'],0x22000000,0x22000000,'classic6g-n25') or
+        hashlib.sha256(bridge).hexdigest()!=report.get('bridge_sha256')):
         raise ValueError('Bootstrap update identity/hash mismatch')
     ports=[p for p in SerialTransport.discover() if p['vid']==0x1209 and p['pid']==0x504a and p['serial_number']==plan['serial']]
     if len(ports)!=1:raise RuntimeError('Expected one Linnet Link endpoint for the recorded Classic')
@@ -67,9 +69,10 @@ def update(prepared):
         before=decode(session.hello())
         if before['target_id']!=plan['target_id'] or before['capabilities']&3!=3:
             raise RuntimeError('Running monitor does not support verified RAM updates')
+        transfer=image if before['image_kind']=='boot' else bridge
         receipt.update(phase='uploading',previous_generation=before['generation']);record()
-        session.upload(image)
-        digest=hashlib.sha256(image).digest()
+        session.upload(transfer)
+        digest=hashlib.sha256(transfer).digest()
         if session.verify()!=digest:raise RuntimeError('Device upload digest mismatch')
         receipt['phase']='handoff-requested';record()
         session.boot_ram();session.close();session=None
@@ -163,7 +166,7 @@ def diagnose(prepared, *, display=False):
                 magic,op,phase=struct.unpack('<3I',raw)
                 if magic!=0x4252504c or op not in (9,10):raise RuntimeError('Invalid panel progress marker')
                 if phase==3:break
-                if phase not in (1,2):raise RuntimeError(f'Panel startup failed: {phase:#x}')
+                if phase not in (1,2,5):raise RuntimeError(f'Panel startup failed: {phase:#x}')
                 if time.monotonic()>=deadline:raise TimeoutError('Panel startup deadline expired')
                 raw=session.request(Command.BOOTSTRAP_CONTROL,struct.pack('<II',10,0))
             result['display'].update(frame_transfer_complete=True,physical_output_verified=False)

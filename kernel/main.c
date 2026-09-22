@@ -4,7 +4,7 @@
 #include "hal/api/platform.h"
 #include "boot/include/linnet_boot.h"
 #include "linnet_build.h"
-#if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_SELECTOR_ROCKBOX
+#if defined(LINNET_IMAGE_BOOT) && (LINNET_BOOT_APPLE_FALLBACK || LINNET_BOOT_SELECTOR_ROCKBOX)
 #include "hal/api/input.h"
 #endif
 #if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_BOOT)
@@ -189,6 +189,15 @@ _Noreturn void ln_main(void)
 #endif
 #if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_OS)
     bool first_frame = ln_runtime_first_frame_ready();
+#elif defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_APPLE_FALLBACK
+    if(!ln_input_init())ln_panic(30,3,0);
+    bool apple_done=false,apple_requested=false,apple_holding=false;
+    uint32_t apple_started=0,apple_hold_started=0;
+#if LINNET_BOOT_SELECTOR_ROCKBOX
+    bool selector_rockbox=false,selector_done=false;
+    uint32_t selector_buttons=0,selector_started=0;
+#endif
+    bool first_frame = ln_lcd_boot();
 #elif defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_SELECTOR_ROCKBOX
     if(!ln_input_init())ln_panic(30,3,0);
     bool selector_rockbox=false,selector_done=false;
@@ -233,7 +242,62 @@ _Noreturn void ln_main(void)
     LN_CACHE_FIRST_MARK(0xca11u);
 #endif
     for (;;) {
-#if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_SELECTOR_ROCKBOX
+#if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_APPLE_FALLBACK
+        if(!apple_done){
+            struct ln_input_state input;
+            (void)ln_input_poll(&input);ln_input_snapshot(&input);
+            uint32_t now=ln_time_us();
+            /* Start the choice window at the first selector poll. Display and
+             * disk initialization happen before this loop and can otherwise
+             * consume the entire interval on a cold mechanical-disk boot. */
+            if(!apple_started)apple_started=now;
+            /* A held button is first reported by the click-wheel handshake;
+             * ordinary data packets can arrive later. Accept either source. */
+            bool menu=!input.hold&&input.buttons==LINNET_BUTTON_MENU;
+            if(menu){
+                if(!apple_holding){apple_holding=true;apple_hold_started=now;}
+                if(now-apple_hold_started>=750000u){apple_requested=true;apple_done=true;}
+            }else{
+                apple_holding=false;
+                /* Click-wheel startup emits neutral and handshake packets before
+                 * the first held-button sample. Keep the full selection window
+                 * open instead of treating those packets as a Linnet choice. */
+                if(now-apple_started>=1500000u)apple_done=true;
+            }
+            if(apple_done){
+                if(apple_requested){
+                    (void)ln_lcd_boot_apple();ln_storage_boot_choice(3u);
+                }
+#if LINNET_BOOT_SELECTOR_ROCKBOX
+                else{
+                    selector_started=now;
+                    (void)ln_lcd_boot_selector(false,false);
+                }
+#else
+                else ln_storage_boot_choice(1u);
+#endif
+            }
+        }
+#if LINNET_BOOT_SELECTOR_ROCKBOX
+        else if(!apple_requested&&!selector_done){
+            struct ln_input_state input;
+            if(ln_input_poll(&input)){
+                uint32_t pressed=input.buttons&~selector_buttons;
+                selector_buttons=input.buttons;
+                if(pressed&(LINNET_BUTTON_MENU|LINNET_BUTTON_LEFT|LINNET_BUTTON_RIGHT|LINNET_BUTTON_PLAY)){
+                    selector_rockbox=!selector_rockbox;
+                    (void)ln_lcd_boot_selector(selector_rockbox,false);
+                }
+                if(pressed&LINNET_BUTTON_SELECT)selector_done=true;
+            }
+            if(ln_time_us()-selector_started>=5000000u){selector_rockbox=false;selector_done=true;}
+            if(selector_done){
+                (void)ln_lcd_boot_selector(selector_rockbox,true);
+                ln_storage_boot_choice(selector_rockbox?2u:1u);
+            }
+        }
+#endif
+#elif defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_SELECTOR_ROCKBOX
         if(!selector_done){
             struct ln_input_state input;
             if(ln_input_poll(&input)){

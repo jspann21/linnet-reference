@@ -270,6 +270,11 @@ failed:
 bool ln_lcd_fill(uint16_t color){return ln_lcd_draw(color,0,0,0);}
 #if defined(LINNET_IMAGE_BOOT)
 bool ln_lcd_boot(void){return ln_lcd_draw(0,0,ln_boot_runs,ln_boot_palette);}
+bool ln_lcd_boot_apple(void)
+{
+    static const char lines[8][33]={"APPLE IPOD SOFTWARE","","STARTING"};
+    return ln_lcd_draw(0x1800u,lines,0,0);
+}
 #if LINNET_BOOT_SELECTOR_ROCKBOX
 bool ln_lcd_boot_selector(bool rockbox,bool starting)
 {

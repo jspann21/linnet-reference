@@ -1,4 +1,5 @@
 #include "boot/include/linnet_bytes.h"
+#include "boot/include/sha256.h"
 #include "services/storage/storage.h"
 #include "services/storage/block.h"
 #include "services/storage/fat32.h"
@@ -50,7 +51,7 @@ static bool theme_available,theme_opened;
 static uint32_t history_summary=UINT32_MAX;
 static struct ln_update updater;
 static bool stores_ready,boot_checked,health_checked;
-#if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_SELECTOR_ROCKBOX
+#if defined(LINNET_IMAGE_BOOT) && (LINNET_BOOT_APPLE_FALLBACK || LINNET_BOOT_SELECTOR_ROCKBOX)
 static uint32_t boot_choice;
 #endif
 #if defined(LINNET_IMAGE_OS)
@@ -664,8 +665,8 @@ static int open_stores(void){
     if(!ln_update_open(&updater,&boot_store,&io,&policy)){error=401;return 0;}
     stores_ready=true;theme_opened=false;history_open();return 1;
 }
-#if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_SELECTOR_ROCKBOX
-void ln_storage_boot_choice(uint32_t choice){if(!boot_choice&&(choice==1u||choice==2u))boot_choice=choice;}
+#if defined(LINNET_IMAGE_BOOT) && (LINNET_BOOT_APPLE_FALLBACK || LINNET_BOOT_SELECTOR_ROCKBOX)
+void ln_storage_boot_choice(uint32_t choice){if(!boot_choice&&choice>=1u&&choice<=3u)boot_choice=choice;}
 static int selector_open(const char *path,struct ln_fat32_file *file){
     if(!ln_fat32_open(&volume,path,next_generation()))return 0;
     locked=true;if(!finish())return 0;*file=volume.file;return 1;
@@ -674,6 +675,7 @@ static int selector_read(const struct ln_fat32_file *file,uint32_t offset,uint8_
     if(!length||length>LN_STORAGE_MEDIA_MAX_READ||!ln_fat32_read(&volume,file,offset,data,length,next_generation()))return 0;
     locked=true;return finish();
 }
+#if LINNET_BOOT_SELECTOR_ROCKBOX
 static int selector_rockbox(void){
     struct ln_fat32_file config_file,rockbox_file;
     uint8_t config[512],header[8];char path[LN_FAT32_PATH_MAX+1];
@@ -713,10 +715,58 @@ static int selector_rockbox(void){
     return 0;
 }
 #endif
+#if LINNET_BOOT_APPLE_FALLBACK
+#if defined(LINNET_SOC_S5L8702)
+#include "hal/s5l8702/aes.h"
+#endif
+static int selector_apple(void){
+    struct ln_fat32_file config_file,firmware_file;
+    uint8_t config[512],digest[32];
+    if(!selector_open("/.LINNET/APPLE.CFG",&config_file)||config_file.size!=sizeof(config)||
+       !selector_read(&config_file,0,config,sizeof(config)))return 0;
+    static const uint8_t magic[8]={'A','P','P','L','E','O','S','1'};
+    for(uint32_t i=0;i<8u;++i)if(config[i]!=magic[i])return 0;
+    if(ln_read_le32(config+8u)!=LINNET_TARGET_NUMBER||ln_crc32(config,508u)!=ln_read_le32(config+508u))return 0;
+    for(uint32_t i=48u;i<508u;++i)if(config[i])return 0;
+    uint32_t payload_size=ln_read_le32(config+12u);
+    if(!payload_size||payload_size>LINNET_STAGE_CAPACITY||
+       !selector_open("/.LINNET/APPLE.BIN",&firmware_file)||firmware_file.size!=payload_size)return 0;
+    uint8_t *payload=(uint8_t *)(uintptr_t)LINNET_STAGE_ADDRESS;
+    struct ln_sha256 hash;ln_sha256_init(&hash);
+    for(uint32_t offset=0;offset<payload_size;){
+        uint32_t chunk=payload_size-offset;
+        if(chunk>LN_STORAGE_MEDIA_MAX_READ)chunk=LN_STORAGE_MEDIA_MAX_READ;
+        if(!selector_read(&firmware_file,offset,payload+offset,chunk))return 0;
+        ln_sha256_update(&hash,payload+offset,chunk);offset+=chunk;
+    }
+    ln_sha256_finish(&hash,digest);
+    for(uint32_t i=0;i<32u;++i)if(digest[i]!=config[16u+i])return 0;
+#if defined(LINNET_SOC_S5L8702)
+    /* N25 stores the original NOR body encrypted with the device hardware
+     * key.  Authenticate the exact archived ciphertext above, then decrypt
+     * the complete CBC stream in one engine operation before execution. */
+    if(!ln_s5l_aes_crypt(payload,payload_size,2u,false))return 0;
+#endif
+    if(!ln_storage_quiesce()||!ln_platform_audio_idle())return 0;
+    ln_core_watchdog_disarm();ln_platform_quiesce();
+    if(!ln_platform_dma_idle()){ln_core_watchdog_arm();return 0;}
+    (void)ln_platform_enter_retail(payload,payload_size);
+    ln_core_watchdog_arm();return 0;
+}
+#endif
+#endif
 void ln_storage_boot(void){
 #if defined(LINNET_IMAGE_BOOT)
-#if LINNET_BOOT_SELECTOR_ROCKBOX
+#if LINNET_BOOT_APPLE_FALLBACK || LINNET_BOOT_SELECTOR_ROCKBOX
     if(!boot_choice)return;
+    /* Input selection can complete before disk spin-up and FAT discovery. Keep
+     * the choice pending until selector files can be opened safely. */
+    if(!ln_storage_startup_complete()||ln_storage_busy())return;
+    if(!ln_storage_mounted()){
+        boot_choice=1u;error=408u;
+        (void)ln_storage_recover();return;
+    }
+#if LINNET_BOOT_SELECTOR_ROCKBOX
     if(boot_choice==2u){
         boot_choice=1u;
         (void)selector_rockbox();
@@ -724,6 +774,17 @@ void ln_storage_boot(void){
         if(!ln_storage_recover()){error=405u;return;}
         return;
     }
+#endif
+#if LINNET_BOOT_APPLE_FALLBACK
+    if(boot_choice==3u){
+        boot_choice=1u;
+        (void)selector_apple();
+        /* Missing or invalid Apple data never blocks the healthy Linnet path. */
+        error=406u;
+        if(!ln_storage_recover()){error=407u;return;}
+        return;
+    }
+#endif
 #endif
     if(boot_checked||ln_storage_busy())return;boot_checked=true;
     if(!open_stores())return;

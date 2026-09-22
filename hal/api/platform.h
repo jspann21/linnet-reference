@@ -14,8 +14,9 @@ int ln_platform_enter_retail(const uint8_t *payload,uint32_t size);
 uint32_t ln_platform_clock_divider(void);
 void ln_platform_cache_marker(uint32_t value);
 bool ln_lcd_fill(uint16_t color);
-#if defined(LINNET_IMAGE_BOOT)
 bool ln_lcd_boot(void);
+#if defined(LINNET_IMAGE_BOOT)
+bool ln_lcd_boot_apple(void);
 bool ln_lcd_boot_selector(bool rockbox, bool starting);
 #endif
 /* Bounded, standalone field fault display, including release Boot. */

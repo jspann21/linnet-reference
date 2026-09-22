@@ -31,7 +31,7 @@ CORE_FILES = ("OS0.LOS", "OS1.LOS", "STATE0.BIN", "STATE1.BIN",
 JOURNAL = Path(".LINNET/RECOVERY/INSTALL.JSON")
 REINSTALL_SYSTEM_ENTRIES = {
     "OS0.LOS", "OS1.LOS", "BOOT0.BIN", "BOOT1.BIN", "SCRATCH.BIN",
-    "WORK.BIN", "RBPATH.CFG", "RECOVERY", "LNETOLD0",
+    "WORK.BIN", "RBPATH.CFG", "APPLE.CFG", "APPLE.BIN", "RECOVERY", "LNETOLD0",
 }
 INSTALLATION_METHODS = {
     "rockbox-loader": dict(
@@ -39,12 +39,12 @@ INSTALLATION_METHODS = {
         detail="Replace Rockbox’s boot file reversibly; Linnet depends on the Rockbox bootloader.",
         strategy="rockbox-file", boot_selector="none", requires_admin=False),
     "native-preserve": dict(
-        label="Start Linnet directly",
-        detail="Linnet opens automatically when you turn on your iPod.",
+        label="Linnet with Apple fallback",
+        detail="Linnet starts normally; hold MENU during power-on to start the preserved Apple software.",
         strategy="native-directory", boot_selector="none", requires_admin=True),
     "native-selector": dict(
-        label="Choose at startup: Linnet or Rockbox",
-        detail="Show a startup menu so you can choose Linnet or Rockbox each time you turn on your iPod.",
+        label="Linnet, Apple software, and Rockbox",
+        detail="Hold MENU during power-on for Apple software, or use the startup menu for Linnet and Rockbox.",
         strategy="native-directory", boot_selector="rockbox", requires_admin=True),
 }
 
@@ -629,6 +629,8 @@ def _validate_artifacts(identity, artifacts):
             raise ValueError("installer build report does not match its image")
         if kind == "boot" and report.get("boot_selector", "none") != expected_selector:
             raise ValueError("installer Boot report uses the wrong startup selector")
+        if kind == "boot" and report.get("apple_firmware_fallback") is not True:
+            raise ValueError("installer Boot report does not preserve the Apple firmware fallback")
         if build == "user" and (report.get("release_exclusion") or {}).get("passed") is not True:
             raise ValueError("user installer artifacts require release exclusion verification")
 
@@ -759,6 +761,20 @@ def _install_selector_config(identity):
     if target.read_bytes() != data:
         raise OSError("the Rockbox selector record failed verification")
     return dict(path=firmware_path, bytes=len(data), sha256=_sha(data))
+
+
+def _install_apple_firmware(identity, plan_path, plan_sha256):
+    """Publish the exact preserved RetailOS payload consumed by native Boot."""
+    from tools.studio import native_bootstrap as native
+    manifest, _artifacts, firmware = native.load_plan(plan_path, plan_sha256)
+    if manifest["target_id"] != identity["target_id"]:
+        raise ValueError("Apple firmware plan target differs from the connected iPod")
+    original = manifest["original_osos"]
+    start, size = original["payload_offset"], original["payload_bytes"]
+    payload = firmware[start:start + size]
+    from tools.studio.apple_firmware import publish
+    return publish(identity["root"], identity["target_id"], payload,
+                   original["payload_sha256"])
 
 
 def _journal(identity, artifacts, strategy, transaction, extra=None):
@@ -1206,6 +1222,7 @@ def _native_worker(job):
         plan_path, plan_sha = Path(planned["plan"]), planned["plan_sha256"]
         hash_path.write_text(plan_sha + "\n", encoding="ascii")
     storage_receipt = _package_storage(expected, job["artifacts"], transaction, job.get("archive"))
+    apple_firmware = _install_apple_firmware(expected, plan_path, plan_sha)
     selector = (_install_selector_config(expected)
                 if job.get("installation_method") == "native-selector" else None)
     applied = native.execute("apply", plan_path, plan_sha, expected["disk_number"])
@@ -1213,12 +1230,14 @@ def _native_worker(job):
         raise RuntimeError(applied.get("failure", "native boot publication failed"))
     marker = _journal(expected, job["artifacts"], "native-directory", transaction,
                       dict(plan=str(plan_path), plan_sha256=plan_sha,
-                           firmware_backup_sha256=_sha(firmware.read_bytes()),
-                           installation_method=job.get("installation_method", "native-preserve"),
-                           previous_boot=_saved_previous_boot(job),
-                           selector=selector))
+                            firmware_backup_sha256=_sha(firmware.read_bytes()),
+                            installation_method=job.get("installation_method", "native-preserve"),
+                            previous_boot=_saved_previous_boot(job),
+                            apple_firmware=apple_firmware,
+                            selector=selector))
     result = dict(passed=True, strategy="native-directory", storage=storage_receipt,
-                  boot=applied, selector=selector, recovery=marker, requires_safe_eject=True)
+                  boot=applied, apple_firmware=apple_firmware, selector=selector,
+                  recovery=marker, requires_safe_eject=True)
     if job.get("archive") is not None:
         final_archive = _finalize_reinstall_archive(expected["root"], job["archive"])
         result["previous_linnet_archive"] = final_archive

@@ -3,10 +3,12 @@
 #include "boot/include/linnet_boot.h"
 #include "boot/include/sha256.h"
 #include "hal/api/usb.h"
-/* The second half of N25's original NOR boot slot holds a bounded LZ4 block.
- * The independently bootable SRAM monitor remains in the first half. */
-#define ARCHIVE 0x18000u
-#define ARCHIVE_BYTES 0x10000u
+/* The archive begins after the independently bootable, authenticated monitor.
+ * Its first flash sector also contains only the verified monitor tail and erased
+ * padding, so the installer can still program every archive sector before the
+ * boot header sector that makes the new image executable. */
+#define ARCHIVE 0x17800u
+#define ARCHIVE_BYTES 0x10800u
 static bool unpack(const uint8_t *source,uint32_t size,uint8_t *out,uint32_t capacity) {
     uint32_t input=0,used=0;
     while(input<size) {

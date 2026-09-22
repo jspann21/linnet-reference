@@ -98,6 +98,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
                           probe=probe, device_serial=device_serial)
     if kind == "boot":
         configuration["boot_selector"] = boot_selector
+        configuration["apple_firmware_fallback"] = True
     if kind == "os":
         configuration["system_config"] = str(system_config or "config/system.toml")
     dest = ROOT / "out" / profile / target / kind
@@ -155,6 +156,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         f'#define LINNET_MAILBOX_BYTES {spec["mailbox_bytes"]}',
         f'#define LINNET_FILE_WRAPPER_MODEL "{spec["installer"]["wrapper_model"]}"',
         f'#define LINNET_FILE_WRAPPER_CHECKSUM_SEED {spec["installer"]["wrapper_checksum_seed"]}u',
+        '#define LINNET_BOOT_APPLE_FALLBACK 1',
         f'#define LINNET_BOOT_SELECTOR_ROCKBOX {int(boot_selector == "rockbox")}',
         f'#define {spec["target_define"]} 1',
         "#endif",
@@ -225,7 +227,9 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     if kind == "os":
         sources += [ROOT/"ui/runtime/ui.c",generated/"linnet_ui.c",ROOT/"services/display/settings.c"]
     compiler_target = "arm-none-eabi" if spec["endianness"] == "little" else "armeb-none-eabi"
-    flags = [f"--target={compiler_target}", f'-mcpu={spec["cpu"]}', f'-march={spec["architecture"]}', "-marm", "-mfloat-abi=soft", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-ffunction-sections", "-fdata-sections", "-Os", "-Wall", "-Wextra", "-Werror", "-I.", "-Iboot/include", f"-DLINNET_PROFILE_{profile.upper()}=1", f"-DLINNET_IMAGE_{kind.upper()}=1", f'-D{spec["target_define"]}=1']
+    # N25 Boot shares a fixed NOR slot with the SRAM recovery monitor.
+    optimization = "-Oz" if target == "classic6g-n25" and kind == "boot" else "-Os"
+    flags = [f"--target={compiler_target}", f'-mcpu={spec["cpu"]}', f'-march={spec["architecture"]}', "-marm", "-mfloat-abi=soft", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-ffunction-sections", "-fdata-sections", optimization, "-Wall", "-Wextra", "-Werror", "-I.", "-Iboot/include", f"-DLINNET_PROFILE_{profile.upper()}=1", f"-DLINNET_IMAGE_{kind.upper()}=1", f'-D{spec["target_define"]}=1']
     flags += ["-I" + str(generated), f"-DLINNET_PROBE_CRASH={int(probe == 'crash')}", f"-DLINNET_PROBE_HANG={int(probe == 'hang')}"]
     flags += ["-DLINNET_PLATFORM_CORE=1", "-DLINNET_STORAGE=1"]
     if kind == "os":
@@ -299,6 +303,10 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         obj = dest / (source.relative_to(ROOT).as_posix().replace("/", "_") + ".o")
         relative=source.relative_to(ROOT).as_posix()
         codec_flags=[]
+        if optimization == '-Oz' and relative == 'services/storage/block.c':
+            # Keep constant pointer-distance division inline; -Oz emits an
+            # unavailable __aeabi_idiv helper in this freestanding build.
+            codec_flags=['-Os']
         if relative.startswith('third_party/h264bsd/'):
             codec_flags=['-O3','-fomit-frame-pointer','-Wno-unused-parameter','-Wno-unused-but-set-variable','-include','services/video/native/compat.h']
         elif relative.startswith('third_party/pvmp4/') or relative in ('services/video/native/mpeg4.cpp','hal/s5l8702/mpeg4.cpp'):

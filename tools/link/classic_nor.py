@@ -13,7 +13,8 @@ from tools.studio.targets import ROOT
 
 TARGET='classic6g-n25'
 START,END=0x8000,0x28000
-ARCHIVE=0x18000
+ARCHIVE=0x17800
+ARCHIVE_SECTOR=ARCHIVE&~0xfff
 
 
 def _sha(data):return hashlib.sha256(data).hexdigest()
@@ -28,6 +29,39 @@ def _backup(path, serial):
     if data[START:START+8]!=b'87021.0\x01' or struct.unpack_from('<II',data,START+8)!=(0,129024):
         raise ValueError('Original bootloader layout differs from the verified N25 layout')
     return data
+
+
+def preserve_apple(device_plan, backup, mount):
+    """Copy the exact original N25 IM3 body to Linnet's verified fallback files."""
+    device=json.loads(Path(device_plan).read_text())
+    if device.get('target_id')!=TARGET or not device.get('serial'):
+        raise ValueError('Expected an N25 device plan')
+    root=Path(mount).resolve(strict=True)
+    from tools.content.media_manager import discover
+    matches=[item for item in discover() if Path(item['root']).resolve()==root]
+    if len(matches)!=1:
+        raise ValueError('Mounted iPod identity differs from the reviewed N25 device plan')
+    mounted=matches[0]
+    # Linnet's native disk mode intentionally exposes the immutable logic-board
+    # serial as both the USB and USBSTOR serial.  Retail disk mode exposes the
+    # underlying drive serial saved in the bootstrap plan instead.  Bind either
+    # representation to the same target, logic-board serial, and physical port.
+    from tools.link.s5l_bootstrap import location
+    disk_serial=mounted.get('disk_serial')
+    valid_disk_serial=disk_serial in (device.get('disk_serial'),device['serial'])
+    if (mounted.get('target_id')!=TARGET or
+        mounted.get('linnet_usb_serial')!=device['serial'] or not valid_disk_serial or
+        location(mounted.get('usb_pnp_id',''))!=sorted(device.get('usb_location',[]))):
+        raise ValueError('Mounted iPod identity differs from the reviewed N25 device plan')
+    original=_backup(backup,device['serial'])
+    entry,size=struct.unpack_from('<II',original,START+8)
+    if entry or size!=129024 or START+2048+size>END:
+        raise ValueError('Original N25 bootloader layout differs from the reviewed layout')
+    payload=original[START+2048:START+2048+size]
+    from tools.studio.apple_firmware import publish
+    result=publish(root,TARGET,payload,_sha(payload))
+    result.update(serial=device['serial'],source_nor_sha256=_sha(original))
+    return result
 
 
 def _connect(plan):
@@ -120,7 +154,7 @@ def prepare(device_plan, backup, output, boot_image=None):
         if START+len(image)>END:raise ValueError('Boot image exceeds the original slot')
         expected=current[:START]+image+current[START+len(image):]
         pages=[offset for offset in range(START,START+len(image),4096) if current[offset:offset+4096]!=expected[offset:offset+4096]]
-        pages=[offset for offset in pages if offset not in (START,ARCHIVE)]+([ARCHIVE] if ARCHIVE in pages else [])+([START] if START in pages else [])
+        pages=[offset for offset in pages if offset not in (START,ARCHIVE_SECTOR)]+([ARCHIVE_SECTOR] if ARCHIVE_SECTOR in pages else [])+([START] if START in pages else [])
         plan=dict(target_id=TARGET,serial=device['serial'],build_id=manifest['build_id'],
                   original_path=str(Path(backup).resolve()),original_sha256=_sha(original),
                   base_path=str(before_path),base_sha256=_sha(current),
@@ -154,7 +188,7 @@ def install(prepared, expected_plan_sha, *, progress=print):
     expected=before[:START]+image+before[START+len(image):]
     if _sha(expected)!=plan['result_sha256']:raise ValueError('Result image hash mismatch')
     pages=[offset for offset in range(START,START+len(image),4096) if before[offset:offset+4096]!=expected[offset:offset+4096]]
-    pages=[offset for offset in pages if offset not in (START,ARCHIVE)]+([ARCHIVE] if ARCHIVE in pages else [])+([START] if START in pages else [])
+    pages=[offset for offset in pages if offset not in (START,ARCHIVE_SECTOR)]+([ARCHIVE_SECTOR] if ARCHIVE_SECTOR in pages else [])+([START] if START in pages else [])
     if pages!=plan['pages']:raise ValueError('NOR sector plan mismatch')
     receipt=dict(target_id=TARGET,serial=plan['serial'],build_id=plan['build_id'],phase='validating',
                  persistent_writes=False,completed=[])

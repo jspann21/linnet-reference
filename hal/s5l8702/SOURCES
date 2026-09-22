@@ -2,6 +2,7 @@ hal/s5l8702/irq.c
 hal/s5l8702/irq.S
 hal/s5l8702/timer.c
 hal/s5l8702/watchdog.c
+hal/s5l8702/aes.c
 hal/s5l8702/disk_mode.c
 hal/s5l8702/pcm_dma.c
 hal/s5l8702/i2c.c

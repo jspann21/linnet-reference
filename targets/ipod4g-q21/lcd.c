@@ -239,6 +239,11 @@ bool ln_lcd_boot(void)
     static const char lines[7][24]={"LINNET","MP102","STARTING"};
     return draw(0xffffu,lines);
 }
+bool ln_lcd_boot_apple(void)
+{
+    static const char lines[7][24]={"APPLE IPOD SOFTWARE","","STARTING"};
+    return draw(0xffffu,lines);
+}
 #if LINNET_BOOT_SELECTOR_ROCKBOX
 bool ln_lcd_boot_selector(bool rockbox,bool starting)
 {
