@@ -13,7 +13,7 @@ from .tsx import ContentError, compile_tsx, COLOR_ROLES
 from .layouts import apply_layout, gate_features, feature_enabled
 import importlib.util
 
-LAYOUTS = ('default','ipod-photo','graphite','aurora','sunset','blueprint','minimal','native')
+LAYOUTS = ('default','ipod-photo','graphite','aurora','sunset','blueprint','minimal','native','ipod-classic')
 REFERENCE_WIDTH, REFERENCE_HEIGHT = 220, 176
 
 def canonical(value):
@@ -232,7 +232,7 @@ def compile_system(root, output, configpath=None, target_override=None):
         theme_manifests={name:theme_manifests[name] for name in allowed}
         if theme_id not in allowed: theme_id=default_theme
     if theme_id not in theme_manifests: raise ContentError(f'theme unavailable: {theme_id}')
-    preferred=('linnet.theme.default','local.example.midnight','linnet.theme.ipod-photo',
+    preferred=('linnet.theme.default','local.example.midnight','linnet.theme.ipod-photo','linnet.theme.ipod-classic',
                'linnet.theme.graphite','linnet.theme.aurora','linnet.theme.sunset','linnet.theme.blueprint')
     ordered=sorted(theme_manifests,key=lambda name:(preferred.index(name) if name in preferred else len(preferred),name))
     if len(ordered)>16: raise ContentError('at most 16 bundled themes')
@@ -245,7 +245,7 @@ def compile_system(root, output, configpath=None, target_override=None):
         if not isinstance(label,str) or not 1<=len(label)<=24 or any(ord(c)<32 or ord(c)>126 for c in label):
             raise ContentError('theme name must be 1..24 printable ASCII characters')
         style=metadata.get('style','standard')
-        if style not in ('standard','monochrome','apple-photo','album-art'): raise ContentError('unknown theme style')
+        if style not in ('standard','monochrome','apple-photo','apple-classic','album-art'): raise ContentError('unknown theme style')
         layout=metadata.get('layout','default')
         if layout not in LAYOUTS: raise ContentError('unknown theme layout')
         if monochrome: layout='default'
@@ -270,7 +270,7 @@ def compile_system(root, output, configpath=None, target_override=None):
         # symbols and decorative assets pass through antialias blends before
         # the LCD driver quantized them to four shades, producing ragged gray
         # fringes on the passive-matrix panel.
-        flags=1 if monochrome else {'standard':0,'monochrome':1,'apple-photo':2,'album-art':4}[style]
+        flags=1 if monochrome else {'standard':0,'monochrome':1,'apple-photo':2,'album-art':4,'apple-classic':8}[style]
         themes.append(dict(id=name,name=label,colors=palette,flags=flags,layout=layout,metrics=metrics))
         theme_specs[name]=spec
     theme_path=theme_manifests[theme_id]; theme=toml(theme_path)

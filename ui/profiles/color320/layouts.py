@@ -12,6 +12,8 @@ def apply_layout(scenes, theme):
     style = theme['layout']
     if style == 'native':
         return deepcopy(scenes)
+    if style == 'ipod-classic':
+        return apply_ipod_classic(scenes, theme)
     # Graphite/Sunset reserve the bottom 30 pixels for transport chrome;
     # Aurora reserves 38 pixels at the left. Blueprint puts status below content.
     shells = {
@@ -140,5 +142,124 @@ def apply_layout(scenes, theme):
         for bar in bars:
             if listing:
                 place(bar, x + w - 4, listing['y'], 4, listing['h'])
+        scene['count'] = len(nodes)
+    return result
+
+
+def apply_ipod_classic(scenes, theme):
+    """Apple's 2007 Classic proportions, with Linnet services kept native."""
+    result = deepcopy(scenes)
+    fh = theme['font']['height']
+    row = theme['metrics']['row_height']
+    for scene in result:
+        sid = scene['id'].rsplit('.', 1)[-1]
+        nodes = scene['nodes']
+        texts = [n for n in nodes if n['kind'] == 3]
+        listing = next((n for n in nodes if n['kind'] in (6, 7, 8)), None)
+        scroll = next((n for n in nodes if n['kind'] == 9), None)
+        header = next((n for n in nodes if n['kind'] == 11), None)
+        if header:
+            place(header, 0, 0, 320, 24)
+            names = {'home': 'iPod', 'about': 'About', 'display': 'Backlight Timer',
+                     'music-sound': 'EQ', 'music-options': 'Playback Options',
+                     'clock-edit': 'Date & Time', 'photos-options': 'Slideshow Settings'}
+            if sid in names:
+                header['text'] = names[sid]
+        if sid in ('cover-flow', 'video-player'):
+            continue
+        if sid == 'video-controls':
+            for n in nodes:
+                if n['kind'] == 11:
+                    place(n, 0, 0, 320, 24)
+            continue
+        if sid == 'photos-viewer':
+            surface = next(n for n in nodes if n['kind'] == 15)
+            place(surface, 0, 24, 320, 216)
+            continue
+        if listing:
+            place(listing, 0, 24, 312 if scroll else 320, 216)
+            if listing['kind'] == 8:
+                place(listing, 0, 24, 312 if scroll else 320, 216)
+            if scroll:
+                place(scroll, 312, 24, 8, 216)
+        if sid == 'home' and listing:
+            place(listing, 0, 24, 160, 216)
+            if scroll:
+                scroll['flags'] |= 2
+        elif sid in ('music', 'music-queue', 'music-sound') and listing:
+            place(listing, 0, 24, 312 if scroll else 320, 216)
+            for n in texts:
+                n['flags'] |= 2
+        elif sid == 'music-search' and listing:
+            prefix = next(n for n in texts if n['text'] == 'Search prefix')
+            footer = next(n for n in texts if n['text'] == 'Search controls')
+            place(prefix, 8, 28, 304, fh)
+            place(listing, 0, 49, 312, 162)
+            place(scroll, 312, 49, 8, 162)
+            place(footer, 8, 216, 304, fh)
+        elif sid == 'now-playing':
+            art = next(n for n in nodes if n['kind'] == 14)
+            title = next(n for n in texts if n['text'] == 'Sample track')
+            artist = next(n for n in texts if n['text'] == 'Audio pending')
+            album = next(n for n in texts if n['text'] == 'Track album')
+            notice = next(n for n in texts if n['text'] == 'Native playback shell')
+            progress = next(n for n in nodes if n['kind'] == 10)
+            place(art, 16, 39, 120, 120)
+            place(title, 151, 45, 157, 38); title['flags'] = WRAP
+            place(artist, 151, 88, 157, fh); artist['flags'] = 0
+            place(album, 151, 111, 157, fh); album['flags'] = 0
+            place(notice, 16, 168, 140, fh); notice['flags'] = 0
+            place(progress, 16, 194, 288, 10)
+            nodes.extend([
+                text_node(title, 'Track position', 172, 168, 132, fh, RIGHT),
+                text_node(title, 'Track elapsed', 16, 212, 132, fh),
+                text_node(title, 'Track remaining', 172, 212, 132, fh, RIGHT),
+            ])
+        elif sid == 'themes' and listing:
+            place(listing, 0, 24, 312, 189)
+            place(scroll, 312, 24, 8, 189)
+            for n in texts:
+                place(n, 8, 217, 304, fh); n['flags'] = 0
+        elif sid == 'clock' and listing:
+            clock = next(n for n in texts if n['text'] == 'System clock')
+            source = next(n for n in texts if n['text'] == 'Clock source')
+            place(clock, 8, 34, 304, 44); clock['flags'] = CENTER
+            place(listing, 0, 88, 312, 2 * row)
+            place(scroll, 312, 88, 8, 2 * row)
+            place(source, 8, 184, 304, 2 * fh); source['flags'] = WRAP
+        elif sid == 'clock-edit' and listing:
+            place(listing, 0, 24, 312, 6 * row)
+            place(scroll, 312, 24, 8, 6 * row)
+            for n in texts:
+                place(n, 8, 200, 304, 2 * fh); n['flags'] = WRAP
+        elif sid in ('display', 'battery', 'shutdown') and listing:
+            list_rows = 2 if sid == 'shutdown' else 1
+            place(listing, 0, 24, 320, list_rows * row)
+            for i, n in enumerate(texts):
+                place(n, 8, 24 + list_rows * row + 18 + i * 28, 304, fh)
+        elif sid == 'sleep-timer' and listing:
+            place(listing, 0, 24, 312, 4 * row)
+            place(scroll, 312, 24, 8, 4 * row)
+            for n in texts:
+                place(n, 8, 204, 304, 2 * fh); n['flags'] = WRAP
+        elif sid == 'about':
+            art = next(n for n in nodes if n['kind'] == 17)
+            place(art, 125, 36, 70, 107)
+            for i, n in enumerate(texts):
+                place(n, 8, 164 + i * 26, 304, fh); n['flags'] = CENTER
+        elif sid == 'update' and listing:
+            for i, n in enumerate(texts):
+                place(n, 8, 30 + i * 26, 304, fh)
+            place(listing, 0, 204, 320, 27)
+        elif sid == 'photos-grid' and listing:
+            for n in texts:
+                place(n, 16, 104, 288, 2 * fh); n['flags'] = CENTER | WRAP
+        elif sid == 'video-output' and listing:
+            place(listing, 0, 48, 320, 2 * row)
+            for n in texts:
+                place(n, 8, 190, 304, fh); n['flags'] = CENTER
+        for n in nodes:
+            n['w'] = max(1, min(n['w'], 320 - n['x']))
+            n['h'] = max(1, min(n['h'], 240 - n['y']))
         scene['count'] = len(nodes)
     return result

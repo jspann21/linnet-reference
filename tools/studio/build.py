@@ -355,13 +355,14 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     model_code = install["wrapper_model"].encode("ascii")
     ipod.write_bytes(struct.pack(">I4s", (install["wrapper_checksum_seed"] + sum(payload)) & 0xffffffff, model_code) + payload)
     verification = verify_release(envelope, symbols + mapfile.read_text()) if profile == "release" else None
+    watchdog_limitation = None if spec.get("hal_family") == "s5l8702" else (
+        "FIQ watchdog depends on FIQ delivery; COP reset escalation requires a live COP monitor."
+        if "coprocessor" in target_sources else "Watchdog recovery requires FIQ delivery.")
     report = dict(**configuration, build_id=build_id, toolchain=chain, image=inspect(envelope),
                   source_files=[p.relative_to(ROOT).as_posix() for p in sources],
                   artifacts={key: str(path.relative_to(ROOT)) for key, path in dict(elf=elf, los=los, ipod=ipod, map=mapfile).items()},
                   memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=(8126464 if ui_report['features'].get('cover_flow',False) else 5505024) if kind=='os' else 1048576, retained_limit_bytes=spec['mailbox_bytes']),
-                  release_exclusion=verification,
-                  limitation=("FIQ watchdog depends on FIQ delivery; COP reset escalation requires a live COP monitor."
-                              if "coprocessor" in target_sources else "Watchdog recovery requires FIQ delivery."))
+                  release_exclusion=verification, limitation=watchdog_limitation)
     if ui_report is not None:report["ui"]=ui_report
     (dest / (prefix + ".json")).write_text(json.dumps(report, indent=2) + "\n")
     return report

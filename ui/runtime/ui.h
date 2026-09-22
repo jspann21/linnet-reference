@@ -16,6 +16,7 @@ enum ln_ui_kind { LN_UI_SCREEN=1,LN_UI_VIEW,LN_UI_TEXT,LN_UI_ICON,LN_UI_IMAGE,
 #define LN_UI_THEME_MONOCHROME 1u
 #define LN_UI_THEME_APPLE_PHOTO 2u
 #define LN_UI_THEME_ALBUM_ART 4u
+#define LN_UI_THEME_APPLE_CLASSIC 8u
 #define LN_UI_CANVAS_OPAQUE 64u
 /* Host-baked list geometry. Low six flags retain their existing meanings.
  * Unmarked, reserved-bit, or incomplete encodings use runtime geometry. */
@@ -29,7 +30,8 @@ enum ln_ui_color_role {LN_UI_FOREGROUND,LN_UI_BACKGROUND,LN_UI_ACCENT,LN_UI_MUTE
     LN_UI_PANEL,LN_UI_SELECTION_FG,LN_UI_SELECTION_BG,LN_UI_STATUS_FG,LN_UI_STATUS_BG,
     LN_UI_BORDER,LN_UI_ARTWORK_BG,LN_UI_ARTWORK_FG,LN_UI_BATTERY,LN_UI_COLOR_COUNT};
 enum ln_ui_layout {LN_UI_LAYOUT_DEFAULT,LN_UI_LAYOUT_IPOD_PHOTO,LN_UI_LAYOUT_GRAPHITE,
-    LN_UI_LAYOUT_AURORA,LN_UI_LAYOUT_SUNSET,LN_UI_LAYOUT_BLUEPRINT,LN_UI_LAYOUT_MINIMAL,LN_UI_LAYOUT_NATIVE};
+    LN_UI_LAYOUT_AURORA,LN_UI_LAYOUT_SUNSET,LN_UI_LAYOUT_BLUEPRINT,LN_UI_LAYOUT_MINIMAL,LN_UI_LAYOUT_NATIVE,
+    LN_UI_LAYOUT_IPOD_CLASSIC};
 enum ln_ui_menu_group { LN_MENU_HOME, LN_MENU_MUSIC, LN_MENU_SETTINGS, LN_MENU_EXTRAS, LN_MENU_GROUPS };
 uint32_t ln_ui_menu_count(uint32_t group);
 uint32_t ln_ui_menu_item(uint32_t group,uint32_t row);
@@ -89,6 +91,7 @@ struct ln_ui_state {
     uint32_t drawn_first;
     uint32_t drawn_scene,drawn_selected,drawn_flags,dirty,action,transitions;
     uint32_t paint_count,painted_pixels,visible_items,scene_epoch,drawn_theme,drawn_status;
+    uint8_t history[16],history_count;
     bool hold,headphones,rendered;
 };
 typedef void (*ln_ui_damage_fn)(int32_t x,int32_t y,int32_t w,int32_t h);

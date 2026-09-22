@@ -70,8 +70,8 @@ wrapper_model = "ip6g"
 wrapper_checksum_seed = 71
 
 [ui]
-allowed_themes = ["linnet.theme.classic-cobalt", "linnet.theme.classic-ember", "linnet.theme.default", "local.example.midnight", "linnet.theme.graphite", "linnet.theme.aurora", "linnet.theme.sunset", "linnet.theme.blueprint", "linnet.theme.minimal-light", "linnet.theme.minimal-dark", "linnet.theme.album-colors"]
-default_theme = "linnet.theme.classic-cobalt"
+allowed_themes = ["linnet.theme.ipod-classic", "linnet.theme.classic-cobalt", "linnet.theme.classic-ember", "linnet.theme.default", "local.example.midnight", "linnet.theme.graphite", "linnet.theme.aurora", "linnet.theme.sunset", "linnet.theme.blueprint", "linnet.theme.minimal-light", "linnet.theme.minimal-dark", "linnet.theme.album-colors"]
+default_theme = "linnet.theme.ipod-classic"
 
 [resources]
 music_titles_address = 198334464
