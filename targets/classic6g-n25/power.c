@@ -30,9 +30,9 @@ enum ln_calendar_read_result ln_power_calendar_read_status(struct ln_calendar *o
 }
 bool ln_power_calendar_read(struct ln_calendar *out){return ln_power_calendar_read_status(out)==LN_CALENDAR_READ_VALID;}
 static struct ln_calendar desired,previous;
-static uint8_t calendar_phase,calendar_second;
+static uint8_t calendar_phase,calendar_second,calendar_verify_retries;
 static bool calendar_previous_valid;
-static uint32_t calendar_deadline;
+static uint32_t calendar_deadline,calendar_written_at,calendar_baseline_at;
 static enum ln_calendar_result calendar_result=LN_CALENDAR_UNAVAILABLE;
 static bool calendar_write(const struct ln_calendar *c) {
     uint8_t raw[]={bcd(c->second),bcd(c->minute),bcd(c->hour),bcd(c->weekday),bcd(c->day),bcd(c->month),bcd(c->year-2000)};
@@ -42,19 +42,36 @@ static bool calendar_matches(const struct ln_calendar *a,const struct ln_calenda
     return a->year==b->year && a->month==b->month && a->day==b->day && a->hour==b->hour &&
         a->minute==b->minute && a->second==b->second && a->weekday==b->weekday;
 }
+static void calendar_tick(struct ln_calendar *c) {
+    static const uint8_t days[]={31,28,31,30,31,30,31,31,30,31,30,31};
+    if(++c->second<60)return;c->second=0;
+    if(++c->minute<60)return;c->minute=0;
+    if(++c->hour<24)return;c->hour=0;c->weekday=(c->weekday+1u)%7u;
+    if(++c->day<=days[c->month-1]+(c->month==2&&!(c->year%4)))return;c->day=1;
+    if(++c->month<=12)return;c->month=1;if(++c->year>2099)c->year=2000;
+}
+static bool calendar_verified(const struct ln_calendar *actual,const struct ln_calendar *written) {
+    uint32_t elapsed=(ln_time_us()-calendar_written_at)/1000000u;
+    if(!elapsed||elapsed>30u)return false;
+    struct ln_calendar expected=*written;
+    while(elapsed>1u){calendar_tick(&expected);--elapsed;}
+    if(calendar_matches(actual,&expected))return true;
+    calendar_tick(&expected);return calendar_matches(actual,&expected);
+}
 enum ln_calendar_result ln_power_calendar_set(const struct ln_calendar *requested) {
     if(calendar_phase)return LN_CALENDAR_PENDING;
     if(!calendar_valid(requested))return LN_CALENDAR_INVALID;
     enum ln_calendar_read_result previous_status=ln_power_calendar_read_status(&previous);
     if(previous_status==LN_CALENDAR_READ_UNAVAILABLE)return LN_CALENDAR_UNAVAILABLE;
     calendar_previous_valid=previous_status==LN_CALENDAR_READ_VALID;
+    calendar_baseline_at=ln_time_us();
     desired=*requested;
     unsigned days=6; /* 2000-01-01 was Saturday (Sunday = 0). */
     for(unsigned year=2000;year<desired.year;year++)days+=365+!(year%4);
     static const uint8_t month_days[]={31,28,31,30,31,30,31,31,30,31,30,31};
     for(unsigned month=1;month<desired.month;month++)days+=month_days[month-1]+(month==2 && !(desired.year%4));
     desired.weekday=(days+desired.day-1)%7;
-    calendar_second=previous.second;calendar_deadline=ln_time_us()+1200000u;
+    calendar_second=calendar_previous_valid?previous.second:255;calendar_deadline=ln_time_us()+1200000u;
     calendar_phase=calendar_previous_valid?1:2;
     return calendar_result=LN_CALENDAR_PENDING;
 }
@@ -63,35 +80,54 @@ enum ln_calendar_result ln_power_calendar_poll(void) {
     if(!calendar_phase)return calendar_result;
     static uint8_t verify_bytes[7];
     uint8_t second;
-    if((int32_t)(ln_time_us()-calendar_deadline)>=0) {
-        bool untouched=calendar_phase==1;
-        calendar_phase=0;return calendar_result=untouched?LN_CALENDAR_UNAVAILABLE:LN_CALENDAR_UNKNOWN;
-    }
-    if(calendar_phase==1 || calendar_phase==5) {
+    uint32_t now=ln_time_us();
+    if(calendar_phase==1) {
+        if((int32_t)(now-calendar_deadline)>=0){calendar_phase=0;return calendar_result=LN_CALENDAR_UNAVAILABLE;}
         if(!read_pmu(0x59,&second,1))goto failed;
         if(calendar_second==255){calendar_second=decimal(second);return LN_CALENDAR_PENDING;}
         if(decimal(second)==calendar_second)return LN_CALENDAR_PENDING;
         calendar_phase++;return LN_CALENDAR_PENDING;
     }
-    if(calendar_phase==2 || calendar_phase==6) {
+    if(calendar_phase==6){
+        if((int32_t)(now-calendar_deadline)<0)return LN_CALENDAR_PENDING;
+        calendar_phase=7;return LN_CALENDAR_PENDING;
+    }
+    if(calendar_phase==2 || calendar_phase==7) {
+        if(calendar_phase==7){
+            uint32_t elapsed=(now-calendar_baseline_at)/1000000u;
+            if(elapsed>30u)goto failed;
+            while(elapsed--){calendar_tick(&previous);}
+        }
         if(!calendar_write(calendar_phase==2?&desired:&previous))goto failed;
+        calendar_written_at=ln_time_us();calendar_deadline=calendar_written_at+1100000u;
+        calendar_verify_retries=0;
         calendar_phase++;return LN_CALENDAR_PENDING;
     }
-    if(calendar_phase==3 || calendar_phase==7) {
+    if(calendar_phase==3 || calendar_phase==8){
+        if((int32_t)(now-calendar_deadline)<0)return LN_CALENDAR_PENDING;
+        calendar_phase++;return LN_CALENDAR_PENDING;
+    }
+    if(calendar_phase==4 || calendar_phase==9) {
         if(!read_pmu(0x59,verify_bytes,7))goto failed;
         calendar_phase++;return LN_CALENDAR_PENDING;
     }
-    if(!read_pmu(0x59,&second,1) || second!=verify_bytes[0])goto failed;
+    if(!read_pmu(0x59,&second,1))goto failed;
+    if(second!=verify_bytes[0]){
+        if(calendar_verify_retries++<2u){calendar_phase--;return LN_CALENDAR_PENDING;}
+        goto failed;
+    }
     struct ln_calendar check={2000u+decimal(verify_bytes[6]),decimal(verify_bytes[5]),decimal(verify_bytes[4]),
         decimal(verify_bytes[2]),decimal(verify_bytes[1]),decimal(verify_bytes[0]),decimal(verify_bytes[3])};
-    if(!calendar_matches(&check,calendar_phase==4?&desired:&previous))goto failed;
-    calendar_result=calendar_phase==4?LN_CALENDAR_SAVED:LN_CALENDAR_RESTORED;
+    if(!calendar_valid(&check)||check.weekday>=7||
+       !calendar_verified(&check,calendar_phase==5?&desired:&previous))goto failed;
+    clock_state=(struct ln_clock_state){check.hour,check.minute,check.second,true};
+    calendar_result=calendar_phase==5?LN_CALENDAR_SAVED:LN_CALENDAR_RESTORED;
     calendar_phase=0;return calendar_result;
 failed:
     if(calendar_phase==1){calendar_phase=0;return calendar_result=LN_CALENDAR_UNAVAILABLE;}
     if(!calendar_previous_valid){calendar_phase=0;return calendar_result=LN_CALENDAR_UNKNOWN;}
-    if(calendar_phase>=5){calendar_phase=0;return calendar_result=LN_CALENDAR_UNKNOWN;}
-    calendar_phase=5;calendar_second=255;calendar_deadline=ln_time_us()+1200000u;
+    if(calendar_phase>=6){calendar_phase=0;return calendar_result=LN_CALENDAR_UNKNOWN;}
+    calendar_phase=6;calendar_deadline=ln_time_us()+1100000u;
     return LN_CALENDAR_PENDING;
 }
 
