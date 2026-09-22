@@ -31,6 +31,11 @@ def _source_closure():
     paths = {'services/update/native.c', 'tools/studio/native_bootstrap.py', 'tools/inspect/image.py', 'tools/studio/targets.py'}
     for manifest in (ROOT/'targets').glob('*/target.toml'):
         spec = tomllib.loads(manifest.read_text(encoding='utf-8'))
+        paths.add(manifest.relative_to(ROOT).as_posix())
+        if spec.get('presentation_profile'):
+            paths.add('ui/profiles/' + spec['presentation_profile'] + '/profile.toml')
+        if not spec.get('build_enabled', True):
+            continue
         board = manifest.parent
         hal = ROOT/'hal'/spec.get('hal_family',spec['soc'])
         if (board/'native_update.c').is_file(): paths.add((board/'native_update.c').relative_to(ROOT).as_posix())

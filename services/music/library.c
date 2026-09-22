@@ -3,6 +3,7 @@
 #include "services/storage/storage.h"
 #include "hal/api/platform.h"
 #include "boot/include/linnet_bytes.h"
+#include "boot/include/linnet_boot.h"
 
 #define LIBRARY_PAGES 24u
 #define TITLE_TRACKS 20000u
@@ -22,7 +23,7 @@ static uint8_t metadata[LINNET_MUSIC_METADATA_BYTES] __attribute__((section(".mu
 static uint32_t metadata_offset,metadata_bytes;
 #endif
 
-enum job { JOB_NONE=0,JOB_WINDOW,JOB_SELECTION,JOB_SEARCH,JOB_GROUP,JOB_MEMBER,JOB_PREFETCH,JOB_QUEUE,JOB_VIEW,JOB_VIEW_GROUP,JOB_GROUP_RECORD,JOB_TRACK_RECORD,JOB_TRACK_IDS };
+enum job { JOB_NONE=0,JOB_WINDOW,JOB_SELECTION,JOB_SEARCH,JOB_GROUP,JOB_MEMBER,JOB_PREFETCH,JOB_QUEUE,JOB_VIEW,JOB_VIEW_GROUP,JOB_GROUP_RECORD,JOB_TRACK_RECORD,JOB_TRACK_IDS,JOB_MEMBERS };
 struct library {
     struct ln_music_db db;
     /* Bounded shared page cache: titles, group/member tables and search indexes.
@@ -34,7 +35,7 @@ struct library {
     struct ln_music_library_row rows[LN_MUSIC_LIBRARY_ROWS],scratch,selection,prefetch;
     struct ln_music_group group;
     union {char prefix[256];struct ln_music_track record;};
-    union {char group_name[256];uint64_t ids[LN_MUSIC_ID_BATCH];};
+    union {char group_name[256];uint64_t ids[LN_MUSIC_ID_BATCH];uint32_t members[LN_MUSIC_ID_BATCH];};
     uint32_t generation,revision,first,job_index,selection_index,selection_token,job_token;
     uint64_t selection_id;
     uint32_t query_index,query_ordinal,query_result,io_offset,io_size;
@@ -51,6 +52,90 @@ struct library {
     int error;
 };
 static struct library library;
+static uint32_t next_generation(void);
+#if LINNET_MUSIC_BROWSE_INDEX
+/* Verification's title heap is no longer needed once the PODB is verified. */
+static uint8_t *browse_buffer;
+static uint8_t *browse_data(void){return browse_buffer;}
+static struct ln_fat32_file browse_file;
+static uint32_t browse_phase,browse_at,browse_size;
+static bool browse_valid;
+static bool browse_check(void){
+    const uint8_t *data=browse_data();
+    if(browse_size<128u||ln_read_le32(data)!=0x3152424cu||ln_read_le32(data+4)!=browse_size||
+       ln_read_le32(data+20)!=library.db.groups||ln_crc32(data,60)!=ln_read_le32(data+60)||
+       ln_crc32(data+64,browse_size-64)!=ln_read_le32(data+56))return false;
+    for(uint32_t i=0;i<32;i++)if(data[24+i]!=library.db.expected_hash[i])return false;
+    uint32_t artists=ln_read_le32(data+8),links=ln_read_le32(data+12),owners=ln_read_le32(data+16);
+    if(128ull+12ull*artists+4ull*links+4ull*owners!=browse_size)return false;
+    for(uint32_t i=0;i<8;i++){
+        uint32_t first=ln_read_le32(data+64+i*8),count=ln_read_le32(data+68+i*8);
+        if(first>library.db.groups||count>library.db.groups-first)return false;
+    }
+    uint32_t next=0,previous=0;
+    for(uint32_t i=0;i<artists;i++){
+        const uint8_t *r=data+128+i*12;uint32_t id=ln_read_le32(r),first=ln_read_le32(r+4),count=ln_read_le32(r+8);
+        if(id>=library.db.groups||(i&&id<=previous)||first!=next||count>links-next)return false;
+        previous=id;next+=count;
+    }
+    if(next!=links)return false;
+    for(uint32_t i=0;i<links+owners;i++)if(ln_read_le32(data+128+artists*12+i*4)>=library.db.groups)return false;
+    return true;
+}
+static bool browse_load(void){
+    if(browse_phase==3)return true;
+    if(library.paused&&!library.io_active)return false;
+    if(!library.io_active){
+        uint32_t bytes=browse_size-browse_at;if(bytes>4096u)bytes=4096u;
+        int result=browse_phase==0?ln_storage_media_open("/.LINNET/BROWSE.BIN",library.generation):
+            ln_storage_media_read(&browse_file,browse_at,browse_data()+browse_at,bytes,library.generation);
+        if(result<0){browse_phase=3;return true;}if(!result)return false;
+        library.io_active=true;return false;
+    }
+    uint32_t bytes=0;int result=ln_storage_media_poll(library.generation,&browse_file,&bytes);
+    if(!result)return false;
+    library.io_active=false;library.generation=next_generation();
+    if(result<0){browse_phase=3;return true;}
+    if(!browse_phase){
+        browse_size=browse_file.size;
+        if(browse_size<128u){browse_phase=3;return true;}
+        if(browse_size<=sizeof titles.heap)browse_buffer=(uint8_t*)titles.heap;
+        else if(browse_size<=TITLE_BYTES-title_used)browse_buffer=(uint8_t*)titles.text+title_used;
+        else {browse_phase=3;return true;}
+        browse_phase=1;return false;
+    }
+    uint32_t expected=browse_size-browse_at;if(expected>4096u)expected=4096u;
+    if(bytes!=expected){browse_phase=3;return true;}
+    browse_at+=bytes;if(browse_at<browse_size)return false;
+    browse_valid=browse_check();browse_phase=3;return true;
+}
+#endif
+bool ln_music_library_albums(uint32_t artist,uint32_t *out,uint32_t capacity,uint32_t *count){
+#if LINNET_MUSIC_BROWSE_INDEX
+    if(library.status!=LN_LIBRARY_READY||!browse_valid||!out||!count)return false;
+    const uint8_t *data=browse_data();uint32_t artists=ln_read_le32(data+8),links=ln_read_le32(data+12),first=0,n=0;
+    if(artist==UINT32_MAX){first=links;n=ln_read_le32(data+16);}
+    else{
+        uint32_t lo=0,hi=artists;
+        while(lo<hi){uint32_t mid=lo+(hi-lo)/2;if(ln_read_le32(data+128+mid*12)<artist)lo=mid+1;else hi=mid;}
+        if(lo==artists||ln_read_le32(data+128+lo*12)!=artist)return false;
+        first=ln_read_le32(data+132+lo*12);n=ln_read_le32(data+136+lo*12);
+    }
+    if(n>capacity)return false;
+    for(uint32_t i=0;i<n;i++)out[i]=ln_read_le32(data+128+artists*12+(first+i)*4);
+    *count=n;return true;
+#else
+    (void)artist;(void)out;(void)capacity;(void)count;return false;
+#endif
+}
+bool ln_music_library_group_range(uint32_t kind,uint32_t *first,uint32_t *count){
+#if LINNET_MUSIC_BROWSE_INDEX
+    if(library.status!=LN_LIBRARY_READY||!browse_valid||kind<1||kind>8||!first||!count)return false;
+    *first=ln_read_le32(browse_data()+64+(kind-1)*8);*count=ln_read_le32(browse_data()+68+(kind-1)*8);return true;
+#else
+    (void)kind;(void)first;(void)count;return false;
+#endif
+}
 static bool window_enabled=true;
 static uint32_t generation=0x10000000u;
 static void clear(void *memory,uint32_t count){
@@ -162,6 +247,9 @@ uint32_t ln_music_library_deadline(uint32_t now){
 }
 static void start(void)
 {
+#if LINNET_MUSIC_BROWSE_INDEX
+    browse_phase=browse_at=browse_size=0;browse_valid=false;browse_buffer=0;
+#endif
 #if defined(LINNET_MUSIC_METADATA_BYTES)
     metadata_offset=metadata_bytes=0;
 #endif
@@ -430,6 +518,13 @@ bool ln_music_library_group_member(uint32_t index,uint32_t ordinal)
 {
     index&=~LN_QUEUE_REVERSE;return ready()&&index<library.db.groups&&query_admit(JOB_MEMBER,index,ordinal);
 }
+bool ln_music_library_group_members(uint32_t index,uint32_t ordinal){
+    index&=~LN_QUEUE_REVERSE;return ready()&&index<library.db.groups&&query_admit(JOB_MEMBERS,index,ordinal);
+}
+bool ln_music_library_take_members(uint32_t indices[LN_MUSIC_ID_BATCH],uint32_t *count){
+    if(!indices||!count||!ready()||library.query!=JOB_MEMBERS||!library.query_ready)return false;
+    *count=library.query_result;for(uint32_t i=0;i<*count;i++)indices[i]=library.members[i];library.query_ready=false;return true;
+}
 bool ln_music_library_take_member(uint32_t *index)
 {
     if(!index||!ready()||library.query!=JOB_MEMBER||!library.query_ready)return false;
@@ -526,6 +621,16 @@ static void query_complete(uint32_t result)
 }
 static void query_step(void)
 {
+    if(library.job==JOB_MEMBERS&&library.stage==2){
+        uint32_t count=library.group.count-library.query_ordinal;if(count>LN_MUSIC_ID_BATCH)count=LN_MUSIC_ID_BATCH;
+        int result=read_database(0,library.db.member_offset+(library.group.first+library.query_ordinal)*4u,library.db.buffer,count*4u);
+        if(result<0){fail(result);return;}if(!result)return;
+        for(uint32_t i=0;i<count;i++){
+            uint32_t member=ln_read_le32(library.db.buffer+i*4u);
+            if(member>=library.db.tracks){fail(LN_DB_FORMAT);return;}library.members[i]=member;
+        }
+        query_complete(count);return;
+    }
     if(library.job==JOB_TRACK_IDS){
         uint32_t count=library.db.tracks-library.query_index;if(count>LN_MUSIC_ID_BATCH)count=LN_MUSIC_ID_BATCH;
         int result=read_database(0,library.db.track_offset+library.query_index*LN_MUSIC_TRACK_BYTES,library.db.buffer,count*LN_MUSIC_TRACK_BYTES);
@@ -583,6 +688,10 @@ static void query_step(void)
     }
     if(library.stage==1){
         library.group=library.db.group;
+        if(library.job==JOB_MEMBERS){
+            if(library.query_ordinal>=library.group.count)query_complete(0);else library.stage=2;
+            return;
+        }
         if(library.job==JOB_GROUP_RECORD){library.group_name[0]=0;query_complete(library.query_index);return;}
         if(library.job==JOB_GROUP){if(request(LN_DB_STRING,library.group.name))library.stage=2;}
         else if(library.query_ordinal>=library.group.count)query_complete(UINT32_MAX);
@@ -622,7 +731,12 @@ static void library_step_once(void)
     if(library.status==LN_LIBRARY_VERIFYING){
         int result=ln_music_db_open_step(&library.db);
         if(result<0)fail(result);
-        else if(result==1){library.status=LN_LIBRARY_READY;changed();}
+        else if(result==1){
+#if LINNET_MUSIC_BROWSE_INDEX
+            if(!browse_load())return;
+#endif
+            library.status=LN_LIBRARY_READY;changed();
+        }
         return;
     }
     if(retire_superseded_job())return;

@@ -33,6 +33,7 @@ static const char *const paths[STORAGE_FILE_COUNT]={"/.LINNET/OS0.LOS","/.LINNET
 static uint8_t mbr[512] __attribute__((aligned(32)));
 static uint32_t phase,error,found,opening,epoch=1,request,request_generation,request_sectors;
 static bool pending,locked;
+static uint32_t partition_scale;
 static uint32_t media_owner;
 static uint32_t fixed_owner,fixed_started;
 static uint32_t media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
@@ -166,12 +167,11 @@ int ln_storage_publication_fault(uint32_t stage){
 void ln_state_publication_step(uint32_t stage){
     if(publication_fault!=stage)return;publication_fault=0;
     /* Deliberate crash-consistency campaign cut: bypass the flush barrier. */
-    *(volatile uint32_t *)(uintptr_t)0x60006004|=4u;
-    for(;;)__asm__ volatile("nop");
+    ln_platform_hardware_reset();
 }
 #endif
 /* Explicitly reserved in memory.ld; copied Boot/OS code shares this layout. */
-static volatile uint32_t *const handoff=(volatile uint32_t *)(uintptr_t)0x11fff100u;
+#define handoff ((volatile uint32_t *)ln_platform_uncached_address(LINNET_MAILBOX_ADDRESS+0x100u))
 static uint32_t next_generation(void){if(++epoch==0)++epoch;return epoch;}
 static int sector_io(void *context,enum ln_fat32_io operation,uint64_t lba,uint8_t *sector,uint32_t generation){
     (void)context;
@@ -214,8 +214,7 @@ void ln_storage_progress(void *context){
     if(now==progress_clock){
         if(++progress_stalls>=1000000u){
             /* Buffer ownership cannot be released if the deadline clock died. */
-            *(volatile uint32_t *)(uintptr_t)0x60006004|=4u;
-            for(;;)__asm__ volatile("nop");
+            ln_platform_hardware_reset();
         }
     }else{progress_clock=now;progress_stalls=0;}
     ln_block_allow_idle(phase==6&&!locked&&!pending);
@@ -241,7 +240,7 @@ void ln_storage_progress(void *context){
     ln_core_watchdog_feed();
 #endif
 }
-void ln_storage_init(void){phase=1;error=found=opening=0;pending=locked=false;media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
+void ln_storage_init(void){phase=1;partition_scale=1;error=found=opening=0;pending=locked=false;media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
 #if !defined(LINNET_PROFILE_RELEASE)
     uint32_t timing_flags=(poll_timing.depth[0]||poll_timing.depth[1])?1u<<29:0u;
     if(poll_timing.epoch==UINT32_MAX)timing_flags|=1u<<31;
@@ -273,16 +272,16 @@ static void storage_step(bool defer_runtime){
             .context=0,.disk_sectors=info.sectors,.writable=true};
         ln_fat32_init(&volume,&config);phase=2;
     }
-    if(phase==2){int result=sector_io(0,LN_FAT32_READ,0,mbr,epoch);if(!result)return;
+    if(phase==2){int result=partition_scale==1?sector_io(0,LN_FAT32_READ,0,mbr,epoch):1;if(!result)return;
         if(result<0||mbr[510]!=0x55||mbr[511]!=0xaa){error=2;phase=9;return;}
         uint64_t start=0,count=0;uint32_t matches=0;bool tail_claimed=false;
         for(uint32_t i=0;i<4;++i){const uint8_t *p=mbr+446+i*16;uint32_t n=ln_read_le32(p+12),s=ln_read_le32(p+8);
             if(!n)continue;
-            if(!s||(uint64_t)s+n>volume.config.disk_sectors){error=3;phase=9;return;}
+            if(!s||((uint64_t)s+n)*partition_scale>volume.config.disk_sectors){error=3;phase=9;return;}
             for(uint32_t j=0;j<i;++j){const uint8_t *q=mbr+446+j*16;uint32_t qn=ln_read_le32(q+12),qs=ln_read_le32(q+8);
                 if(qn&&(uint64_t)s<(uint64_t)qs+qn&&(uint64_t)qs<(uint64_t)s+n){error=3;phase=9;return;}}
-            if((uint64_t)s+n==volume.config.disk_sectors)tail_claimed=true;
-            if(p[4]==0x0b||p[4]==0x0c){start=s;count=n;++matches;}
+            if(((uint64_t)s+n)*partition_scale==volume.config.disk_sectors)tail_claimed=true;
+            if(p[4]==0x0b||p[4]==0x0c){start=(uint64_t)s*partition_scale;count=(uint64_t)n*partition_scale;++matches;}
         }
         /* M25's factory MBR omits the final physical sector while its FAT32
          * BPB includes it. Admit that single tail sector only at disk end.
@@ -293,7 +292,12 @@ static void storage_step(bool defer_runtime){
 #endif
         if(matches!=1||!ln_block_set_window(start,count)||!ln_fat32_mount(&volume,start,count,next_generation())){error=4;phase=9;return;}phase=3;
     }
-    if(phase==3){int result=storage_fat_poll();if(!result)return;if(result<0){error=(uint32_t)-result+100;phase=9;return;}LN_STORAGE_STAMP(FAT);opening=UINT32_MAX;phase=4;}
+    if(phase==3){int result=storage_fat_poll();if(!result)return;
+        /* Some retail disks express MBR extents in 1/2/4 KiB units. Only a
+         * rejected BPB advances the candidate; I/O and FAT corruption remain
+         * terminal. Each candidate is bounded by the physical disk capacity. */
+        if(result==LN_FAT32_FORMAT&&partition_scale<8){partition_scale*=2;phase=2;return;}
+        if(result<0){error=(uint32_t)-result+100;phase=9;return;}LN_STORAGE_STAMP(FAT);opening=UINT32_MAX;phase=4;}
     if(phase==4){if(opening==STORAGE_FILE_COUNT){
             LN_STORAGE_STAMP(FILES);
             if((found&127u)!=127u){phase=6;return;}
@@ -329,6 +333,7 @@ void ln_storage_step(void){storage_step(false);}
 void ln_storage_step_deferred(void){storage_step(true);}
 bool ln_storage_busy(void){return locked||background_running||(phase>=1&&phase<6)||phase==7||phase==10;}
 bool ln_storage_mounted(void){return phase==6&&volume.mounted;}
+uint32_t ln_storage_disk_sector_bytes(void){return partition_scale*512u;}
 bool ln_storage_startup_complete(void){return phase==6||phase==9;}
 bool ln_storage_prepared(void){return ln_storage_mounted()&&volume.mounted==1&&volume.write_proven&&(found&127u)==127u&&files[0].size==LINNET_OS_CAPACITY&&files[1].size==LINNET_OS_CAPACITY&&
     files[2].size==512&&files[3].size==512&&files[4].size==512&&files[5].size==512&&files[6].size==0x400000u;}
@@ -562,11 +567,8 @@ int ln_storage_disk_mode(void){
 #endif
     ln_core_watchdog_disarm();ln_platform_quiesce();
     if(!ln_platform_dma_idle()){ln_core_watchdog_arm();return 0;}
-    static const uint8_t marker[21]="diskmode\0\0hotstuff\0\0\1";
-    volatile uint8_t *destination=(volatile uint8_t *)(uintptr_t)LINNET_DISK_MODE_MARKER;
-    for(uint32_t i=0;i<21;++i)destination[i]=marker[i];
-    *(volatile uint32_t *)(uintptr_t)0x60006004|=4u;
-    for(;;)__asm__ volatile("nop");
+    if(!ln_platform_set_disk_mode(true)){ln_core_watchdog_arm();return 0;}
+    ln_platform_hardware_reset();
 #endif
 }
 int ln_storage_restart(void){
@@ -577,10 +579,8 @@ int ln_storage_restart(void){
     extern bool ln_display_quiesce(void);if(!ln_display_quiesce())return 0;
 #endif
     ln_core_watchdog_disarm();ln_platform_quiesce();
-    volatile uint8_t *marker=(volatile uint8_t *)(uintptr_t)LINNET_DISK_MODE_MARKER;
-    for(uint32_t i=0;i<21;++i)marker[i]=0;
-    *(volatile uint32_t *)(uintptr_t)0x60006004|=4u;
-    for(;;)__asm__ volatile("nop");
+    if(!ln_platform_set_disk_mode(false)){ln_core_watchdog_arm();return 0;}
+    ln_platform_hardware_reset();
 }
 void ln_storage_state(uint32_t words[24]){
     struct ln_block_info b;ln_block_snapshot(&b);
@@ -705,15 +705,11 @@ static int selector_rockbox(void){
     static const uint8_t rockbox[8]={'R','o','c','k','b','o','x',1};
     if(sum!=expected||payload_size<40u)return 0;
     for(uint32_t i=0;i<8u;++i)if(payload[32u+i]!=rockbox[i])return 0;
-    extern const uint8_t ln_persistent_enter_begin[],ln_persistent_enter_end[];
-    uint32_t trampoline=(uint32_t)(ln_persistent_enter_end-ln_persistent_enter_begin);
-    if(trampoline>256u||!ln_storage_quiesce()||!ln_platform_audio_idle())return 0;
+    if(!ln_storage_quiesce()||!ln_platform_audio_idle())return 0;
     ln_core_watchdog_disarm();ln_platform_quiesce();
     if(!ln_platform_dma_idle()){ln_core_watchdog_arm();return 0;}
-    volatile uint8_t *iram=(volatile uint8_t *)(uintptr_t)0x40000000u;
-    for(uint32_t i=0;i<trampoline;++i)iram[i]=ln_persistent_enter_begin[i];
-    ((void (*)(const uint8_t *,uint32_t,uint32_t,uint32_t))(uintptr_t)0x40000000u)
-        (payload,payload_size,0x10000000u,0x10000000u);
+    (void)ln_platform_enter_retail(payload,payload_size);
+    ln_core_watchdog_arm();
     return 0;
 }
 #endif
@@ -752,19 +748,16 @@ void ln_storage_boot(void){
     bytes[0]='H';bytes[1]='A';bytes[2]='N';bytes[3]='D';bytes[4]=slot;
     uint32_t crc=ln_crc32(bytes,76);for(uint32_t i=0;i<4;++i)bytes[76+i]=(uint8_t)(crc>>(i*8));
     handoff[0]=0;for(uint32_t i=1;i<20;++i)handoff[i]=ln_read_le32(bytes+4*i);handoff[0]=ln_read_le32(bytes);
+    ln_platform_boot_candidate(updater.boot.attempt_pending&&updater.boot.candidate_slot==slot);
 #if !defined(LINNET_PROFILE_RELEASE)
     if(!ln_recovery_chainload(0,scratch+128,info.payload_size,info.load_address,info.entry_address,
        info.build_id,updater.image[slot].sha256,ln_recovery_generation()+1u))error=403;
 #else
-    extern const uint8_t ln_persistent_enter_begin[],ln_persistent_enter_end[];
-    uint32_t size=(uint32_t)(ln_persistent_enter_end-ln_persistent_enter_begin);
-    if(size>256||!ln_storage_quiesce()||!ln_platform_audio_idle()){handoff[0]=0;error=403;return;}
+    if(!ln_storage_quiesce()||!ln_platform_audio_idle()){handoff[0]=0;error=403;return;}
     ln_core_watchdog_disarm();ln_platform_quiesce();
     if(!ln_platform_dma_idle()){handoff[0]=0;ln_core_watchdog_arm();error=403;return;}
-    volatile uint8_t *iram=(volatile uint8_t *)(uintptr_t)0x40000000;
-    for(uint32_t i=0;i<size;++i)iram[i]=ln_persistent_enter_begin[i];
-    ((void (*)(const uint8_t *,uint32_t,uint32_t,uint32_t))(uintptr_t)0x40000000)
-        (scratch+128,info.payload_size,info.load_address,info.entry_address);
+    (void)ln_platform_enter(scratch+128,info.payload_size,info.load_address,info.entry_address);
+    ln_core_watchdog_arm();error=403;
 #endif
     handoff[0]=0;
 #else

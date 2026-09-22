@@ -11,8 +11,11 @@ follow fixed paths, so adding a model does not require another build table.
 | `photo4g-p98` | iPod Photo A1099, PP5020, 220 × 176 color | Primary development target |
 | `video5g-m25` | iPod Video A1136 30 GB, PP5022 family, 320 × 240 color | Native Boot and development OS verified over USB Link |
 | `ipod4g-q21` | iPod 4G MP102, PP5020, 160 × 128 monochrome | Photos, video and theme selection disabled by the manifest |
+| `classic6g-n25` | iPod Classic A1238, S5L8702, 320 × 240 color | Native Boot, OS, Link, Disk Mode and H.264 VGA playback verified; MPEG-4 performance qualification in progress |
 
-All targets expose their installation profile through the same Media Manager. M25 is in hardware bringup; see its target README for verification status.
+All targets expose their installation status through the same Media Manager. `build_enabled = false` explicitly marks an incomplete port and requires a `bringup_blocker`; it cannot enable installation. A1238 uses the independent S5L8702 HAL and target-owned NOR maintenance path.
+
+`presentation_profile = "color320"` shares native screens, themes and layout generation from `ui/profiles/color320/` between A1136 and A1238. Target-local screens and themes override the shared profile. Display dimensions must match. The Classic owns its Cobalt and Ember themes under its target directory. `sdram_address` supports nonzero physical RAM bases; it defaults to zero for PortalPlayer targets.
 
 ## Repository contract
 
@@ -28,6 +31,8 @@ hal/
   api/                  portable firmware interfaces
   pp502x/               common PP5020/PP5022 CPU, ATA, USB and input
   pp5022/               PP5022-only PHY sequence
+  s5l8702/              Classic CPU, ATA, USB and H.264 hardware
+  arm926/               ARM926 cache, MMU and pixel conversion
   codecs/               selected audio codecs
 targets/
   <target-id>/
@@ -90,7 +95,7 @@ themes. Native font pixels are retained. Legacy layout adjustments belong in
 
 `[resources]` declares title-cache placement and cover-flow catalog capacity.
 The loader checks these against recovery capture and mailbox reservations, and
-the linker checks the final SRAM/SDRAM bounds. Board policy in `hardware.h`
+the linker checks the final SRAM/SDRAM bounds. Runtime scheduling and music features are selected by `runtime_policy`, independently of the board ID. Board policy in `hardware.h`
 selects bounded clock settling, ATA write/flush behavior, ROM restart markers
 and documented storage quirks. Services consume capabilities and policy rather
 than naming a board.
@@ -116,8 +121,7 @@ from `iPod_Control/Device/SysInfo` and USB enumeration. Keep serial numbers,
 hardware GUIDs and firmware backups local. Regulatory labels and volume names
 are not sufficient detection keys.
 
-Start `[installer]` with `enabled = false`. All installer fields remain required
-so the profile is reviewable before enabling it. Only the `ipod-directory` boot
+Start `[installer]` with `enabled = false`. The directory installer requires its partition and header fields; other disabled boot layouts do not inherit those fields. Only the `ipod-directory` boot
 layout can currently be enabled. Verify the wrapper, firmware directory, memory
 and disk bounds on the actual device before changing `enabled` to true. See
 [local artifacts](../docs/local-artifacts.md) and the

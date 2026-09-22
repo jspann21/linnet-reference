@@ -553,12 +553,10 @@ static void image_asset(struct painter*p,const struct ln_ui_node*n,const struct 
     }
 }
 static void image(struct painter*p,const struct ln_ui_node*n){image_asset(p,n,ln_ui_dynamic_asset(n,n->resource<ln_ui_asset_count?&ln_ui_assets[n->resource]:0));}
-static bool video_covers(const struct painter*p,const struct ln_ui_node*n,const struct ln_ui_asset*a){
+static bool video_independent(const struct painter*p,const struct ln_ui_node*n,const struct ln_ui_asset*a){
     if(!a||!a->pixels||n->w<=0||n->w>(int32_t)LINNET_UI_WIDTH||n->h<=0||n->h>(int32_t)LINNET_UI_HEIGHT||
-       !a->width||a->width>LINNET_UI_WIDTH||!a->height||a->height>LINNET_UI_HEIGHT||
-       a->width*(uint32_t)n->h!=a->height*(uint32_t)n->w)return false;
-    /* Equal bounded aspect ratios make image_asset cover the whole node.
-     * Preserve background writes if source storage aliases the framebuffer. */
+       !a->width||a->width>LINNET_UI_WIDTH||!a->height||a->height>LINNET_UI_HEIGHT)return false;
+    /* Preserve write order if source storage aliases the framebuffer. */
     uintptr_t source=(uintptr_t)a->pixels,target=(uintptr_t)p->pixels;
     uint32_t bytes=a->width*a->height*2u;
     return source<target?target-source>=bytes:source-target>=LINNET_UI_WIDTH*LINNET_UI_HEIGHT*2u;
@@ -830,7 +828,18 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
          * these writes is not a contract for framebuffer-inspecting overrides. */
         bool video=n->kind==LN_UI_VIDEO_SURFACE;
         const struct ln_ui_asset*a=video?ln_ui_dynamic_asset(n,n->resource<ln_ui_asset_count?&ln_ui_assets[n->resource]:0):0;
-        if(!video||!video_covers(p,n,a)){fill(p,bounds(n),bg);if(!video)border(p,bounds(n),color(LN_UI_BORDER));}
+        if(video&&video_independent(p,n,a)){
+            /* Paint only the letterbox bars: the image overwrites the interior. */
+            if(a->width*(uint32_t)n->h>a->height*(uint32_t)n->w){
+                int32_t h=(int32_t)divide(a->height*(uint32_t)n->w,a->width),top=(n->h-h)/2;
+                fill(p,(struct rect){n->x,n->y,n->w,top},bg);
+                fill(p,(struct rect){n->x,n->y+top+h,n->w,n->h-top-h},bg);
+            }else{
+                int32_t w=(int32_t)divide(a->width*(uint32_t)n->h,a->height),left=(n->w-w)/2;
+                fill(p,(struct rect){n->x,n->y,left,n->h},bg);
+                fill(p,(struct rect){n->x+left+w,n->y,n->w-left-w,n->h},bg);
+            }
+        }else {fill(p,bounds(n),bg);if(!video)border(p,bounds(n),color(LN_UI_BORDER));}
         if(video)image_asset(p,n,a);else image(p,n);
         if(video){struct ln_ui_node label=*n;label.x+=8;label.w=max(1,label.w-16);label.y+=max(0,(label.h-(int32_t)ln_ui_font.height)/2);label.h=(int32_t)ln_ui_font.height;label.flags=8u;text_block(p,&label,node_text?node_text:"",fg);}
         else text(p,n->x+7,n->y+7,node_text?node_text:"Preview",fg);break;}
@@ -970,7 +979,7 @@ static void paint(struct ln_ui_state*s,uint16_t*pixels,struct rect r,ln_ui_damag
                 struct rect cover=intersect(bounds(video),r);
                 /* This opaque video will overwrite the screen and chrome in
                  * the entire damaged clip. Overlays still draw afterwards. */
-                if(cover.x==r.x&&cover.y==r.y&&cover.w==r.w&&cover.h==r.h&&video_covers(&p,video,a)){covered=true;first=1u;}
+                if(cover.x==r.x&&cover.y==r.y&&cover.w==r.w&&cover.h==r.h&&video_independent(&p,video,a)){covered=true;first=1u;}
             }
         }
     }

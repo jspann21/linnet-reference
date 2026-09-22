@@ -285,6 +285,13 @@ def validate_stage(stage: Path, *, device_root: Path | None = None,
         if relative in files and files[relative] != record:
             raise ValueError("conflicting artwork short name")
         files[relative] = record
+    if (stage / "BROWSE.BIN").exists():
+        _plain(stage / "BROWSE.BIN", stage)
+        from .browse import prepare as prepare_browse
+        browse = _bounded(stage / "BROWSE.BIN", MAX_DATABASE)
+        if browse != prepare_browse(database):
+            raise ValueError("Browse index does not match library")
+        files['BROWSE.BIN'] = dict(path='BROWSE.BIN', bytes=len(browse), sha256=hashlib.sha256(browse).hexdigest(), kind='art')
     if (stage / "COVERS.CFL").exists():
         _plain(stage / "COVERS.CFL", stage)
         from .coverflow import validate as validate_coverflow
@@ -313,19 +320,33 @@ def inspect_target(disk_number: int, expected_disk_serial: str, expected_volume_
     drive = None if expected_drive is None else str(expected_drive).rstrip("\\/").upper()
     if drive is not None and not re.fullmatch("[A-Z]:", drive):
         raise ValueError("expected drive must be a drive letter such as F:")
+    from tools.studio.targets import TARGETS
+    native=[dict(spec["native_storage"],target_id=target) for target,spec in TARGETS.items() if "native_storage" in spec]
     config = base64.b64encode(json.dumps(dict(number=disk_number, serial=expected_disk_serial.strip(),
-                                            volume=volume_serial, drive=drive)).encode()).decode()
+                                            volume=volume_serial, drive=drive,native=native)).encode()).decode()
     script = r'''
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 $cfg=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('CONFIG')) | ConvertFrom-Json
 $disk=Get-Disk -Number $cfg.number -ErrorAction Stop
 $physical=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$cfg.number)
+$native=@($cfg.native | Where-Object {$_.model -ceq $physical.Model -and $_.friendly_name -ceq $disk.FriendlyName})
+$apple=$disk.FriendlyName -ceq 'Apple iPod' -and $physical.PNPDeviceID -match '^USBSTOR\\.*VEN_APPLE.*PROD_IPOD'
+$usb='';$target=''
+if ($native.Count -eq 1) {
+ $usb=(Get-PnpDeviceProperty -InstanceId $physical.PNPDeviceID -KeyName 'DEVPKEY_Device_Parent').Data
+ for($depth=0;$depth -lt 4 -and $usb -notmatch '^USB\\VID_[0-9A-F]{4}&PID_[0-9A-F]{4}\\';$depth++) {
+  $usb=(Get-PnpDeviceProperty -InstanceId $usb -KeyName 'DEVPKEY_Device_Parent').Data
+ }
+ $expected='USB\VID_{0:X4}&PID_{1:X4}\{2}' -f $native[0].usb_vid,$native[0].usb_pid,$cfg.serial
+ if($usb -cne $expected -or $cfg.serial -cnotmatch '^[0-9A-F]{16}$' -or $disk.LogicalSectorSize -notin $native[0].sector_bytes) {throw 'Native USB identity rejected'}
+ $target=$native[0].target_id
+}
 if ($disk.SerialNumber.Trim() -cne $cfg.serial -or [string]$disk.BusType -ne 'USB' -or
-    [string]$disk.FriendlyName -ne 'Apple iPod' -or $disk.IsBoot -or $disk.IsSystem -or
-    $disk.IsOffline -or $disk.IsReadOnly -or $disk.LogicalSectorSize -ne 512 -or
-    $physical.PNPDeviceID -notmatch '^USBSTOR\\.*VEN_APPLE.*PROD_IPOD') {
-    throw 'Require expected serial, Apple USB iPod, writable online non-system disk and 512-byte sectors'
+    (-not $apple -and -not $target) -or $disk.IsBoot -or $disk.IsSystem -or
+    $disk.IsOffline -or $disk.IsReadOnly -or $disk.LogicalSectorSize -notin @(512,4096) -or
+    $physical.SerialNumber.Trim() -cne $cfg.serial) {
+    throw 'Require expected serial, supported USB iPod, writable online non-system disk and supported sectors'
 }
 $parts=@(Get-Partition -DiskNumber $disk.Number | Where-Object {$_.DriveLetter})
 if ($parts.Count -ne 1) {throw 'Require exactly one mounted partition'}
@@ -336,10 +357,10 @@ $logical=Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='"+$drive+"'")
 if ([string]$volume.FileSystemType -ne 'FAT32' -or $logical.VolumeSerialNumber.ToUpper() -cne $cfg.volume -or
     ($cfg.drive -and $drive -cne $cfg.drive) -or $drive -eq $env:SystemDrive) {throw 'Volume identity rejected'}
 @{disk_number=[int]$disk.Number;disk_serial=$disk.SerialNumber.Trim();disk_unique_id=[string]$disk.UniqueId;
-  disk_bytes=[uint64]$disk.Size;partition_number=[int]$part.PartitionNumber;partition_offset=[uint64]$part.Offset;
+  disk_bytes=[uint64]$disk.Size;sector_bytes=[int]$disk.LogicalSectorSize;partition_number=[int]$part.PartitionNumber;partition_offset=[uint64]$part.Offset;
   partition_bytes=[uint64]$part.Size;drive=$drive;root=$drive+'\';volume_unique_id=[string]$volume.UniqueId;
   volume_serial=$logical.VolumeSerialNumber.ToUpper();filesystem=[string]$volume.FileSystemType;
-  pnp_id=[string]$physical.PNPDeviceID;free_bytes=[uint64]$volume.SizeRemaining} | ConvertTo-Json -Compress
+  pnp_id=[string]$physical.PNPDeviceID;native_target_id=$target;usb_pnp_id=$usb;free_bytes=[uint64]$volume.SizeRemaining} | ConvertTo-Json -Compress
 '''.replace("CONFIG", config)
     encoded = base64.b64encode(script.encode("utf-16-le")).decode()
     result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
@@ -357,7 +378,7 @@ if ([string]$volume.FileSystemType -ne 'FAT32' -or $logical.VolumeSerialNumber.T
 
 def _same_target(before: dict, after: dict) -> None:
     for key in ("disk_number", "disk_serial", "disk_unique_id", "disk_bytes", "partition_number", "partition_offset",
-                "partition_bytes", "drive", "root", "volume_unique_id", "volume_serial", "filesystem", "pnp_id"):
+                "partition_bytes", "sector_bytes", "drive", "root", "volume_unique_id", "volume_serial", "filesystem", "pnp_id"):
         if before.get(key) != after.get(key):
             raise RuntimeError(f"iPod identity changed during publication: {key}")
 
@@ -438,7 +459,7 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
     for item in inventory["files"]:
         destination = (root if item["kind"] == "music" else linnet) / item["path"]
         _plain(destination, root)
-        if item["path"] == "COVERS.CFL":
+        if item["path"] in ("COVERS.CFL", "BROWSE.BIN"):
             # Cover Flow is replaced atomically below, like the library index.
             needed += item["bytes"] + 65536
         elif destination.exists():
@@ -501,15 +522,15 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
         for item in inventory["files"]:
             local = stage / item["path"]
             _plain(local, stage)
-            if item['path'] == 'COVERS.CFL':
-                temporary_cover = linnet / 'COVERS.NEW'
+            if item['path'] in ('COVERS.CFL', 'BROWSE.BIN'):
+                temporary_cover = linnet / ('COVERS.NEW' if item['path'] == 'COVERS.CFL' else 'BROWSE.NEW')
                 _plain(temporary_cover, root)
                 if temporary_cover.exists():
                     temporary_cover.unlink()
                 copied = _copy_verified(local, temporary_cover, item, root, guard)
-                _plain(linnet / 'COVERS.CFL', root)
+                _plain(linnet / item['path'], root)
                 guard()
-                temporary_cover.replace(linnet / 'COVERS.CFL')
+                temporary_cover.replace(linnet / item['path'])
             else:
                 destination = (root if item["kind"] == "music" else linnet) / item["path"]
                 copied = _copy_verified(local, destination, item, root, guard)

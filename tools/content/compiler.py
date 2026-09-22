@@ -11,7 +11,7 @@ import re
 import tomllib
 from .tsx import ContentError, compile_tsx, COLOR_ROLES
 from .layouts import apply_layout, gate_features, feature_enabled
-from .video_layouts import apply_video_layout
+import importlib.util
 
 LAYOUTS = ('default','ipod-photo','graphite','aurora','sunset','blueprint','minimal','native')
 REFERENCE_WIDTH, REFERENCE_HEIGHT = 220, 176
@@ -145,7 +145,7 @@ def compile_system(root, output, configpath=None, target_override=None):
         return data
     def toml(path):
         return tomllib.loads(read(path).decode('utf-8'))
-    for source in ('tools/content/compiler.py','tools/content/tsx.py','tools/content/layouts.py','tools/content/video_layouts.py','ui/runtime/ui.h'):
+    for source in ('tools/content/compiler.py','tools/content/tsx.py','tools/content/layouts.py','ui/runtime/ui.h'):
         read(source)
     config=toml(configpath or 'config/system.toml')
     system=config.get('system',{})
@@ -160,6 +160,28 @@ def compile_system(root, output, configpath=None, target_override=None):
         not 1<=width<=1024 or not 1<=height<=1024 or width*height>131072):
         raise ContentError('UI target dimensions exceed the supported framebuffer bound')
     monochrome=str(target_manifest.get('lcd_format','')).startswith('gray')
+    profile_root = None
+    profile_layout = None
+    scanline = False
+    profile_id = target_manifest.get('presentation_profile')
+    if profile_id is not None:
+        if not isinstance(profile_id, str) or not re.fullmatch(r'[a-z][a-z0-9-]*', profile_id):
+            raise ContentError('invalid presentation profile')
+        profile_root = root/'ui/profiles'/profile_id
+        profile = toml(profile_root/'profile.toml')
+        if set(profile) != {'width', 'height', 'coverflow_renderer'} or (profile['width'], profile['height']) != (width, height):
+            raise ContentError('presentation profile does not match target display')
+        if profile['coverflow_renderer'] not in ('column', 'scanline'):
+            raise ContentError('invalid cover-flow renderer')
+        scanline = profile['coverflow_renderer'] == 'scanline'
+        if scanline and (width, height) != (320, 240):
+            raise ContentError('scanline cover-flow requires 320 x 240')
+        layout_path = bounded_path(root, profile_root/'layouts.py')
+        read(layout_path)
+        module_spec = importlib.util.spec_from_file_location('linnet_presentation_' + profile_id, layout_path)
+        module = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(module)
+        profile_layout = module.apply_layout
     features=resolve_features(config,target_manifest)
     ui=config.get('ui',{})
     if not isinstance(ui,dict): raise ContentError('ui must be a table')
@@ -174,7 +196,10 @@ def compile_system(root, output, configpath=None, target_override=None):
     theme_manifests={}; seen_theme_ids=set()
     # Target editions replace shared manifests by stable ID; duplicates within
     # either scope remain errors. Keep precedence independent of path sorting.
-    theme_paths = sorted((root/'themes').glob('*/theme.toml')) + sorted((root/'targets'/target/'themes').glob('*/theme.toml'))
+    theme_paths = sorted((root/'themes').glob('*/theme.toml'))
+    if profile_root is not None:
+        theme_paths += sorted((profile_root/'themes').glob('*/theme.toml'))
+    theme_paths += sorted((root/'targets'/target/'themes').glob('*/theme.toml'))
     for path in theme_paths:
         manifest=tomllib.loads(path.read_text(encoding='utf-8'))
         metadata=manifest.get('theme',{})
@@ -264,7 +289,10 @@ def compile_system(root, output, configpath=None, target_override=None):
             if app_id in manifests: raise ContentError('duplicate app ID')
             manifests[app_id]=path
     scenes=[]; callbacks={}; native_sources=[]
-    native_screens = (root/'targets'/target/'screens').is_dir()
+    screen_root = root/'targets'/target/'screens'
+    if not screen_root.is_dir() and profile_root is not None:
+        screen_root = profile_root/'screens'
+    native_screens = screen_root.is_dir()
     presentation_path=root/'targets'/target/'presentation.toml'
     presentation=toml(presentation_path) if presentation_path.is_file() else {}
     if set(presentation)-{'clock_font','scale_clock','adjustments'}:
@@ -293,7 +321,7 @@ def compile_system(root, output, configpath=None, target_override=None):
             if relative not in native_sources: native_sources.append(relative)
             callbacks[app_id+'.'+name]=symbol
             if len(callbacks)>16: raise ContentError('at most16 native callbacks')
-        entry = root/'targets'/target/'screens'/app_id/'screen.tsx' if native_screens else path.parent/app['entry']
+        entry = screen_root/app_id/'screen.tsx' if native_screens else path.parent/app['entry']
         nodes,focus=compile_tsx(read(entry).decode('utf-8'),colors,width if native_screens else REFERENCE_WIDTH,height if native_screens else REFERENCE_HEIGHT)
         scenes.append(dict(id=app_id,title=title,nodes=nodes,count=len(nodes),focus_node=focus))
     for scene in scenes:
@@ -327,8 +355,8 @@ def compile_system(root, output, configpath=None, target_override=None):
         licenses[variant['font_index']]=license_data
         font_paths[variant['id']]=bounded_path(root,font_license_path).relative_to(root).as_posix()
         if native_screens:
-            if target == 'video5g-m25':
-                layouts=apply_video_layout(scenes,variant)
+            if profile_layout is not None:
+                layouts=profile_layout(scenes,variant)
             else:
                 if variant['layout'] != 'native': raise ContentError('native screens require native theme layouts')
                 import copy
@@ -342,7 +370,7 @@ def compile_system(root, output, configpath=None, target_override=None):
                 layouts[i]=copy.deepcopy(scene)
                 for node in layouts[i]['nodes']:
                     if node['kind']==3:node['flags'] |= 8
-                    if target=='video5g-m25' and node['kind']==17:node['flags'] |= 64
+                    if scanline and node['kind']==17:node['flags'] |= 64
         variant['scenes']=layouts if native_screens else scale_layout(layouts,width,height)
         device_name=target_manifest['name'].removeprefix('Linnet for ')
         model=target_manifest.get('model_alias','').upper()
@@ -401,6 +429,7 @@ def compile_system(root, output, configpath=None, target_override=None):
     document=dict(format='LNUI',enabled_scenes=enabled_scenes,target=target,width=width,height=height,theme=theme,themes=themes,default_theme=ordered.index(theme_id),scenes=scenes,assets=assets,font=font,fonts=fonts,native_sources=native_sources)
     document['hint_font_index']=hint_index
     document['clock_font_index']=clock_index
+    document['coverflow_scanline']=scanline
     files={'scenes.json':canonical(document),'font-license.txt':license_data,
            'font-license-clock.txt':read(root/'sdk/assets/FONT-LICENSE.txt')}
     for index,data in licenses.items(): files[f'font-license-{index}.txt']=data
@@ -469,8 +498,8 @@ def generate_c(doc, packed_fonts=None):
                          for step in range(8))+'}' for frames in range(1,9))+'};')
         gw,gh=doc['width'],doc['height']*140//176
         glow=[round(63*max(0,1-((x-(gw-1)/2)/(gw*116/220))**2-((y-gh*62/140)/(gh*84/140))**2)**2)*4+((0,2),(3,1))[y&1][x&1] for x in range(gw) for y in range(gh)]
-        m25=doc.get('target')=='video5g-m25'
-        if m25:
+        scanline=doc.get('coverflow_scanline',False)
+        if scanline:
             pairs=[[],[]];indices=[]
             for y in range(gh):
                 row=[];palette=pairs[y&1]
@@ -485,7 +514,7 @@ def generate_c(doc, packed_fonts=None):
         else:
             out.append(f'const uint8_t ln_coverflow_glow[{gw}][{gh}]={{'+','.join('{'+','.join(map(str,glow[x*gh:(x+1)*gh]))+'}' for x in range(gw))+'};')
         out.append('const uint8_t ln_coverflow_widths[33]={'+','.join(map(str,widths))+'};')
-        if not m25:out.append(f'const struct ln_coverflow_column ln_coverflow_columns[33][{cover_size}]={{')
+        if not scanline:out.append(f'const struct ln_coverflow_column ln_coverflow_columns[33][{cover_size}]={{')
         scanlines,samples,sources=[],[],[]
         for pose,width in enumerate(widths):
             tilt=pose*8
@@ -494,7 +523,7 @@ def generate_c(doc, packed_fonts=None):
                 height=round((96-tilt*15/256+(x+.5)*tilt*13/(width*256))*cover_size/96)
                 values=((96<<16)//height,(2*x+1)*96//(2*width),24*doc['height']//176+(cover_size-height)//2,height,height*128//96)
                 columns.append('{'+','.join(map(str,values))+'}');geometry.append(values)
-            if not m25:out.append('{'+','.join(columns)+'},')
+            if not scanline:out.append('{'+','.join(columns)+'},')
             else:
                 sources.append('{'+','.join(str(c[1]) for c in geometry)+'}')
                 rows=[]
@@ -508,7 +537,7 @@ def generate_c(doc, packed_fonts=None):
                         if x==left or samples[-1]!=sy:samples.extend((x+1,sy))
                         else:samples[-2]=x+1
                 scanlines.append('{'+','.join(rows)+'}')
-        if m25:
+        if scanline:
             out.append(f'const uint8_t ln_coverflow_sources[33][{cover_size}]={{'+','.join(sources)+'};')
             out.append(f'const struct ln_coverflow_scanline ln_coverflow_rows[33][{gh}]={{'+','.join(scanlines)+'};')
             out.append('const uint8_t ln_coverflow_samples[]={'+','.join(map(str,samples))+'};')

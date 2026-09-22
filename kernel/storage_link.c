@@ -62,7 +62,7 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r){
         else if(q->length==4u&&ln_read_le32(q->payload)==7u){ln_display_sync_diagnostics(words);count=16u;}
 #if defined(LINNET_COVERFLOW)
         else if(q->length==4u&&ln_read_le32(q->payload)==11u){ln_coverflow_diagnostics(words);count=16u;}
-#if defined(LINNET_TARGET_VIDEO5G_M25)
+#if LINNET_COVERFLOW_SCANLINE
         else if(q->length==4u&&ln_read_le32(q->payload)==12u){ln_coverflow_render_diagnostics(words);count=16u;}
 #endif
 #endif

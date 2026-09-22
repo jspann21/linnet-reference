@@ -1,4 +1,7 @@
 #include "sha256.h"
+#if defined(LINNET_PLATFORM_CORE)
+#include "linnet_target.h"
+#endif
 static const uint32_t constants[64] = {
     0x428a2f98u,0x71374491u,0xb5c0fbcfu,0xe9b5dba5u,0x3956c25bu,0x59f111f1u,0x923f82a4u,0xab1c5ed5u,
     0xd807aa98u,0x12835b01u,0x243185beu,0x550c7dc3u,0x72be5d74u,0x80deb1feu,0x9bdc06a7u,0xc19bf174u,
@@ -21,7 +24,7 @@ static uint32_t rotate(uint32_t value, unsigned amount) {
 #undef LN_SHA_COMPRESS_NAME
 #undef LN_SHA_CONSTANTS
 #undef LN_SHA_WORKSPACE
-#if defined(LINNET_IMAGE_BOOT) && defined(LINNET_PLATFORM_CORE) && defined(LINNET_STORAGE)
+#if defined(LINNET_IMAGE_BOOT) && defined(LINNET_PLATFORM_CORE) && defined(LINNET_STORAGE) && LINNET_BOOT_HASH_IRAM
 static const uint32_t boot_constants[64] __attribute__((section(".boot_hash.rodata"),aligned(4))) = {
     0x428a2f98u,0x71374491u,0xb5c0fbcfu,0xe9b5dba5u,0x3956c25bu,0x59f111f1u,0x923f82a4u,0xab1c5ed5u,
     0xd807aa98u,0x12835b01u,0x243185beu,0x550c7dc3u,0x72be5d74u,0x80deb1feu,0x9bdc06a7u,0xc19bf174u,
@@ -59,9 +62,12 @@ int ln_sha256_boot_iram_init(void){
     boot_iram_ready=1;return 1;
 }
 int ln_sha256_boot_iram_active(void){return boot_iram_ready!=0;}
+#elif defined(LINNET_IMAGE_BOOT) && defined(LINNET_PLATFORM_CORE) && defined(LINNET_STORAGE)
+int ln_sha256_boot_iram_init(void){return 0;}
+int ln_sha256_boot_iram_active(void){return 0;}
 #endif
 static void compress(struct ln_sha256*s,const uint8_t*block){
-#if defined(LINNET_IMAGE_BOOT) && defined(LINNET_PLATFORM_CORE) && defined(LINNET_STORAGE)
+#if defined(LINNET_IMAGE_BOOT) && defined(LINNET_PLATFORM_CORE) && defined(LINNET_STORAGE) && LINNET_BOOT_HASH_IRAM
     if(boot_iram_ready){compress_iram(s,block);return;}
 #endif
     compress_sdram(s,block);
@@ -88,7 +94,7 @@ void ln_sha256_finish(struct ln_sha256 *s,uint8_t digest[32]) {
     s->block[s->used++]=0x80;
     if(s->used>56){while(s->used<64)s->block[s->used++]=0;compress(s,s->block);s->used=0;}
     while(s->used<56)s->block[s->used++]=0;
-    for(unsigned i=0;i<8;++i)s->block[63-i]=(uint8_t)(bits>>(8u*i));
+    for(unsigned i=0;i<8;++i){s->block[63-i]=(uint8_t)bits;bits>>=8;}
     compress(s,s->block);
     for(unsigned i=0;i<32;++i)digest[i]=(uint8_t)(s->words[i/4]>>(24u-8u*(i%4)));
 }

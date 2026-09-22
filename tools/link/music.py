@@ -26,6 +26,14 @@ def command(session,identity,action,*,path=None,sample=None):
                        display_owned=bool(words[7]),restore_error=words[20],
                        position_ms=words[24],duration_ms=words[25],active=bool(words[26]))
             return dict(identity=identity,state=state)
+        if action=='video-state':
+            from tools.studio.targets import TARGETS
+            if TARGETS[identity['target_id']].get('media_video_backend')=='native-mp4':
+                names=('magic','reserved','phase','error','active','pending','paused','next_frame',
+                       'frame_count','front_frame','read_ops','read_bytes','decoded','presented',
+                       'late_frames','max_late_ms','max_decode_call_us','frame_ready','frame_offered',
+                       'decode_wall_us','rgb_us','seek_phase','audio_frames','revision','aac_us',
+                       'io_us','dropped_frames','codec_status','codec_fault','codec_detail','position_ms','duration_ms')
         expected=64 if action=='library-state' else len(names)*4
         if len(raw)!=expected or raw[:4]!=magic:raise RuntimeError('Malformed music state reply')
         state=dict(zip(names,struct.unpack('<'+'I'*len(names),raw[:len(names)*4])))

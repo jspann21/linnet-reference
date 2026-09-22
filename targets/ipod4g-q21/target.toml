@@ -30,6 +30,7 @@ media_video_color = "gray4"
 media_video_backend = "none"
 media_video_extensions = [".ipvf"]
 cop_display = false
+runtime_policy = { resident_monitor = true }
 entry_address = 0
 load_address = 0
 mailbox_address = 33550336

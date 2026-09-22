@@ -17,7 +17,9 @@ REQUIRED_KEYS = {
     "cop_display", "entry_address", "load_address", "mailbox_address",
     "mailbox_bytes", "retail", "installer", "resources",
 }
-OPTIONAL_KEYS = {"ui", "hal_family", "audio_codec", "idle_clock_hz", "native_video"}
+OPTIONAL_KEYS = {"ui", "hal_family", "audio_codec", "idle_clock_hz", "active_clock_hz", "native_video",
+                 "sdram_address", "build_enabled", "bringup_blocker", "presentation_profile", "runtime_policy", "native_storage", "h264_decoder", "mpeg4_decoder"}
+RUNTIME_POLICIES = {"display_pipeline", "audio_render_reserve", "music_browse_index", "extended_sound", "resident_monitor"}
 CAPABILITIES = {"photos", "video", "files", "demo", "themes", "cover_flow"}
 LCD_FORMATS = {"rgb565-swapped": 1, "gray2-horizontal": 2, "rgb565": 3}
 
@@ -34,8 +36,8 @@ def _target_sources(path, spec):
     if not re.fullmatch(r"[a-z][a-z0-9-]*", spec.get("hal_family", spec["soc"])):
         raise RuntimeError(f"invalid HAL family: {path}")
     codec = spec.get("audio_codec", "wm8975")
-    if codec not in {"wm8975", "wm8758"}:
-        raise RuntimeError(f"unsupported audio codec: {path}")
+    if not re.fullmatch(r"[a-z][a-z0-9-]*", codec):
+        raise RuntimeError(f"invalid audio codec: {path}")
     display = target_root / "display.c"
     if not display.is_file():
         display = soc_root / "display.c"
@@ -47,15 +49,21 @@ def _target_sources(path, spec):
         "platform": soc_root / "platform.c",
         "lcd": target_root / "lcd.c",
         "display": display,
-        "device": target_root / "device.c",
+        "device": target_root / "device.c" if (target_root / "device.c").is_file() else target_root / "board.c",
+        "power": target_root / "power.c" if (target_root / "power.c").is_file() else soc_root / "power.c",
         "codec": ROOT / "hal" / "codecs" / (codec + ".c"),
     }
     video = target_root / "video.c"
+    if spec.get("media_video_backend") == "native-mp4":
+        video = ROOT / "services/video/native/player.c"
     if video.is_file():
         sources["video"] = video
     coprocessor = target_root / "coprocessor.c"
     if coprocessor.is_file():
         sources["coprocessor"] = coprocessor
+    display_assembly = target_root / "display.S"
+    if display_assembly.is_file():
+        sources["display_assembly"] = display_assembly
     if any(not source.is_file() for source in sources.values()):
         missing = ", ".join(
             source.relative_to(ROOT).as_posix()
@@ -85,6 +93,11 @@ def _validate_ui(path, spec):
 
 
 def _validate_identity(path, spec):
+    ram_base = spec.get("sdram_address", 0)
+    if (type(spec["sdram_bytes"]) is not int or
+            type(ram_base) is not int or ram_base < 0 or ram_base % 4096 or
+            ram_base + spec["sdram_bytes"] > 0x100000000):
+        raise RuntimeError(f"invalid SDRAM base: {path}")
     aliases = spec["aliases"]
     dimensions = (spec["lcd_width"], spec["lcd_height"],
                   spec["media_photo_width"], spec["media_photo_height"],
@@ -126,7 +139,7 @@ def _validate_identity(path, spec):
             any(type(size) is not int or size < 4096 for _, size in regions) or
             spec["stage_bytes"] < spec["os_capacity_bytes"] or
             spec["os_capacity_bytes"] % 512 or
-            any(address + size > spec["sdram_bytes"] for address, size in regions) or
+            any(address < ram_base or address + size > ram_base + spec["sdram_bytes"] for address, size in regions) or
             any(a0 < a1+s1 and a1 < a0+s0 for index,(a0,s0) in enumerate(regions)
                 for a1,s1 in regions[index+1:]) or
             spec["mailbox_address"] < 8192 or
@@ -154,6 +167,14 @@ def _validate_resources(path, spec):
 
 
 def _validate_profiles(path, spec):
+    native=spec.get("native_storage")
+    if native is not None and (not isinstance(native,dict) or
+            set(native)!={"usb_vid","usb_pid","model","friendly_name","sector_bytes"} or
+            any(type(native.get(key)) is not int or not 1<=native[key]<=0xffff for key in ("usb_vid","usb_pid")) or
+            any(not isinstance(native.get(key),str) or not re.fullmatch(r"[A-Za-z0-9 _-]{1,64}",native[key]) for key in ("model","friendly_name")) or
+            not isinstance(native.get("sector_bytes"),list) or not native["sector_bytes"] or
+            any(type(n) is not int or n not in (512,4096) for n in native["sector_bytes"])):
+        raise RuntimeError(f"invalid native storage profile: {path}")
     retail = spec["retail"]
     if (not isinstance(retail, dict) or
             type(retail.get("usb_vid")) is not int or not 0 <= retail["usb_vid"] <= 0xffff or
@@ -161,21 +182,29 @@ def _validate_profiles(path, spec):
             not _valid_ascii_list(retail.get("board_names")) or
             not _valid_ascii_list(retail.get("model_numbers")) or
             not _valid_ascii_list(retail.get("regulatory_models")) or
-            not (retail["board_names"] or retail["model_numbers"])):
+            type(retail.get("usb_identity_only", False)) is not bool or
+            not (retail["board_names"] or retail["model_numbers"] or retail.get("usb_identity_only")) or
+            not isinstance(retail.get("sector_bytes", [512]), list) or
+            not retail.get("sector_bytes", [512]) or
+            any(type(n) is not int or n not in (512, 4096) for n in retail.get("sector_bytes", [512]))):
         raise RuntimeError(f"invalid retail detection profile: {path}")
     install = spec["installer"]
     loader = PurePosixPath(str(install.get("file_loader", ""))) if isinstance(install, dict) else PurePosixPath()
-    required = {"enabled", "boot_layout", "file_loader", "wrapper_model",
-                "wrapper_checksum_seed", "firmware_header_magic", "firmware_header_field",
-                "firmware_partition_types", "media_partition_types", "firmware_entry_type",
-                "max_firmware_bytes"}
+    required = {"enabled", "boot_layout", "file_loader", "wrapper_model", "wrapper_checksum_seed"}
+    directory = isinstance(install, dict) and install.get("boot_layout") == "ipod-directory"
+    if directory:
+        required |= {"firmware_header_magic", "firmware_header_field", "firmware_partition_types",
+                     "media_partition_types", "firmware_entry_type", "max_firmware_bytes"}
     if (not isinstance(install, dict) or set(install) != required or type(install["enabled"]) is not bool or
             not re.fullmatch(r"[a-z][a-z0-9-]*", install["boot_layout"]) or
             (install["enabled"] and install["boot_layout"] != "ipod-directory") or
             loader.is_absolute() or ".." in loader.parts or len(loader.parts) < 2 or
             not re.fullmatch(r"[\x20-\x7e]{4}", install["wrapper_model"]) or
-            type(install["wrapper_checksum_seed"]) is not int or not 0 <= install["wrapper_checksum_seed"] <= 0xffffffff or
-            not re.fullmatch(r"[0-9a-fA-F]{8}", install["firmware_header_magic"]) or
+            type(install["wrapper_checksum_seed"]) is not int or not 0 <= install["wrapper_checksum_seed"] <= 0xffffffff):
+        raise RuntimeError(f"invalid installer profile: {path}")
+    if not directory:
+        return
+    if (not re.fullmatch(r"[0-9a-fA-F]{8}", install["firmware_header_magic"]) or
             type(install["firmware_header_field"]) is not int or not 0 <= install["firmware_header_field"] <= 0xffff or
             any(not isinstance(values, list) or not values or len(values) != len(set(values)) or
                 any(type(value) is not int or not 0 <= value <= 0xff for value in values)
@@ -190,17 +219,26 @@ def _validate_profiles(path, spec):
 
 def _validate_media(path, spec):
     backend = spec.get("media_video_backend")
+    decoder = spec.get("h264_decoder", "software")
+    if decoder not in ("software", "s5l8702-vpu") or (decoder == "s5l8702-vpu" and
+            (backend != "native-mp4" or spec["soc"] != "s5l8702")):
+        raise RuntimeError(f"invalid H.264 decoder for target: {path}")
+    if spec.get("mpeg4_decoder") == "s5l8702-vpu" and spec["soc"] != "s5l8702":
+        raise ValueError("S5L8702 MPEG-4 requires the S5L8702 SoC")
+    if spec.get("mpeg4_decoder", "none") not in ("none", "pvmp4", "s5l8702-vpu") or (spec.get("mpeg4_decoder", "none") != "none" and backend != "native-mp4"):
+        raise RuntimeError(f"invalid MPEG-4 decoder for target: {path}")
     enabled = spec["capabilities"].get("video", True)
-    if backend not in ("none", "ipvf", "bcm-mp4") or (backend != "none") != enabled:
+    if backend not in ("none", "ipvf", "bcm-mp4", "native-mp4") or (backend != "none") != enabled:
         raise RuntimeError(f"invalid media video backend: {path}")
-    expected = {"none": {".ipvf"}, "ipvf": {".ipvf"}, "bcm-mp4": {".mp4", ".m4v"}}[backend]
+    expected = {"none": {".ipvf"}, "ipvf": {".ipvf"}, "bcm-mp4": {".mp4", ".m4v"}, "native-mp4": {".mp4", ".m4v", ".mov"}}[backend]
     if set(spec["media_video_extensions"]) != expected:
         raise RuntimeError(f"video extensions disagree with backend: {path}")
     native = spec.get("native_video", {})
     fields = {"h264_width", "h264_height", "h264_level", "mpeg4_width", "mpeg4_height",
-              "max_fps", "video_kbps", "max_video_kbps", "buffer_kbits", "audio_kbps"}
-    if backend == "bcm-mp4":
+              "max_fps", "video_kbps", "max_video_kbps", "buffer_kbits", "audio_kbps", "sample_bytes"}
+    if backend in ("bcm-mp4", "native-mp4"):
         if (not isinstance(native, dict) or set(native) != fields or any(type(v) is not int or v <= 0 for v in native.values()) or
+                native["sample_bytes"] not in (65536, 262144) or
                 spec["media_video_width"] > native["h264_width"] or
                 spec["media_video_height"] > native["h264_height"] or
                 spec["media_video_fps"] > native["max_fps"] or
@@ -225,6 +263,8 @@ def load_targets():
             raise RuntimeError(f"invalid target manifest: {path}")
         if spec.get("idle_clock_hz",0) not in (0,30000000):
             raise RuntimeError(f"unsupported idle clock: {path}")
+        if type(spec.get("active_clock_hz",80000000)) is not int or not 1000000 <= spec.get("active_clock_hz",80000000) <= 500000000:
+            raise RuntimeError(f"invalid active clock: {path}")
         _validate_identity(path, spec)
         spec["target_define"] = "LINNET_TARGET_" + target.upper().replace("-", "_")
         number = spec["image_target"]
@@ -248,11 +288,29 @@ def load_targets():
         _validate_media(path, spec)
         _validate_resources(path, spec)
         _validate_profiles(path, spec)
+        if "native_storage" in spec and any(
+                (previous.get("native_storage",{}).get("usb_vid"),previous.get("native_storage",{}).get("usb_pid")) ==
+                (spec["native_storage"]["usb_vid"],spec["native_storage"]["usb_pid"]) for previous in targets.values()):
+            raise RuntimeError(f"duplicate native storage USB identity: {path}")
         _validate_ui(path, spec)
+        policy = spec.get("runtime_policy", {})
+        if (not isinstance(policy, dict) or set(policy) - RUNTIME_POLICIES or
+                any(type(value) is not bool for value in policy.values())):
+            raise RuntimeError(f"invalid runtime policy: {path}")
         names = [target, *spec.get("aliases", [])]
         if any(name in aliases for name in names):
             raise RuntimeError(f"duplicate or invalid target alias: {path}")
-        spec["sources"] = _target_sources(path, spec)
+        enabled = spec.get("build_enabled", True)
+        if type(enabled) is not bool or (not enabled and (
+                spec["installer"]["enabled"] or not isinstance(spec.get("bringup_blocker"), str)
+                or not spec["bringup_blocker"].strip())):
+            raise RuntimeError(f"invalid build availability: {path}")
+        profile = spec.get("presentation_profile")
+        if profile is not None and (not isinstance(profile, str) or
+                not re.fullmatch(r"[a-z][a-z0-9-]*", profile) or
+                not (ROOT / "ui/profiles" / profile / "profile.toml").is_file()):
+            raise RuntimeError(f"invalid presentation profile: {path}")
+        spec["sources"] = _target_sources(path, spec) if enabled else {}
         targets[target] = spec
         image_targets[number] = target
         aliases.update((name, target) for name in names)
@@ -281,6 +339,7 @@ def media_profile(value):
     return dict(photo_enabled=spec["capabilities"].get("photos", True),
                 video_enabled=spec["capabilities"].get("video", True),
                 video_backend=spec["media_video_backend"],
+                video_codecs=(["h264", "mpeg4"] if spec["media_video_backend"] == "bcm-mp4" or spec.get("mpeg4_decoder") in ("pvmp4", "s5l8702-vpu") else ["h264"] if spec["media_video_backend"] == "native-mp4" else []),
                 video_extensions=list(spec["media_video_extensions"]),
                 video_fps=spec["media_video_fps"], video_color=spec["media_video_color"],
                 photo_width=spec["media_photo_width"], photo_height=spec["media_photo_height"],

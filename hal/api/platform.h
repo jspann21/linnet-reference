@@ -6,6 +6,13 @@
 uint32_t ln_time_us(void);
 /* Return a CPU address that bypasses cache for target SDRAM, when required. */
 uintptr_t ln_platform_uncached_address(uintptr_t address);
+_Noreturn void ln_platform_hardware_reset(void);
+bool ln_platform_set_disk_mode(bool enabled);
+void ln_platform_boot_candidate(bool candidate);
+int ln_platform_enter(const uint8_t *payload,uint32_t size,uint32_t load,uint32_t entry);
+int ln_platform_enter_retail(const uint8_t *payload,uint32_t size);
+uint32_t ln_platform_clock_divider(void);
+void ln_platform_cache_marker(uint32_t value);
 bool ln_lcd_fill(uint16_t color);
 #if defined(LINNET_IMAGE_BOOT)
 bool ln_lcd_boot(void);

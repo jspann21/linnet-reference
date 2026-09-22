@@ -1,6 +1,6 @@
 #include "linnet_target.h"
-#if defined(LINNET_IMAGE_BOOT) && defined(LINNET_PLATFORM_CORE) && defined(LINNET_STORAGE)
-#define LINNET_BOOT_HASH_IRAM 1
+#if defined(LINNET_IMAGE_BOOT) && defined(LINNET_PLATFORM_CORE) && defined(LINNET_STORAGE) && LINNET_BOOT_HASH_IRAM
+#define LINNET_USE_BOOT_HASH_IRAM 1
 #ifdef LINNET_AUDIO
 #error Boot hash IRAM and audio IRAM cannot coexist
 #endif
@@ -26,7 +26,7 @@ MEMORY {
 #ifdef LINNET_PLATFORM_CORE
   COP_MAILBOX (rw) : ORIGIN = LINNET_MAILBOX_ADDRESS - 0x2000, LENGTH = 0x1000
   COP_IRAM (rwx) : ORIGIN = 0x40001000, LENGTH = 0x2000
-#ifdef LINNET_BOOT_HASH_IRAM
+#ifdef LINNET_USE_BOOT_HASH_IRAM
   BOOT_HASH_IRAM (rwx) : ORIGIN = 0x40003000, LENGTH = 0x1000
 #endif
   CLOCK_IRAM (rwx) : ORIGIN = 0x4000d000, LENGTH = 0x200
@@ -45,7 +45,7 @@ SECTIONS {
   .vectors : { KEEP(*(.vectors)) } > SDRAM
   .text : { *(.text.startup) *(.text*) *(.rodata*) } > SDRAM
   .data : { *(.data*) . = ALIGN(4); } > SDRAM
-#ifdef LINNET_BOOT_HASH_IRAM
+#ifdef LINNET_USE_BOOT_HASH_IRAM
   /* Separate Boot ownership, not an implicit reuse of the OS reservation. */
   .boot_hash ORIGIN(BOOT_HASH_IRAM) : ALIGN(4) {
     __boot_hash_begin = .;

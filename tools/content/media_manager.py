@@ -5,6 +5,7 @@ No device is modified by discovery or scanning.
 """
 from __future__ import annotations
 
+from contextlib import ExitStack
 import hashlib
 import json
 import os
@@ -39,12 +40,15 @@ def extensions(kind):
 
 
 def discover():
-    """Find mounted Apple USB iPods and resolve each through publication guards."""
+    """Find mounted iPods and resolve each through publication guards."""
     if os.name != "nt":
         raise RuntimeError("The media manager currently supports Windows Disk Mode.")
+    from tools.studio.targets import TARGETS
+    names=["Apple iPod"]+[spec["native_storage"]["friendly_name"] for spec in TARGETS.values() if "native_storage" in spec]
     script = r"""
 $ErrorActionPreference='Stop'
-$items=@(Get-Disk | Where-Object {$_.BusType -eq 'USB' -and $_.FriendlyName -eq 'Apple iPod'} | ForEach-Object {
+$names=ConvertFrom-Json 'NATIVE_NAMES'
+$items=@(Get-Disk | Where-Object {$_.BusType -eq 'USB' -and $_.FriendlyName -in $names} | ForEach-Object {
  $disk=$_
  Get-Partition -DiskNumber $disk.Number | Where-Object {$_.DriveLetter} | ForEach-Object {
   $drive=[string]$_.DriveLetter+':'
@@ -53,7 +57,7 @@ $items=@(Get-Disk | Where-Object {$_.BusType -eq 'USB' -and $_.FriendlyName -eq 
  }
 })
 ConvertTo-Json -InputObject $items -Compress
-"""
+""".replace('NATIVE_NAMES',json.dumps(names).replace("'","''"))
     try:
         result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
                                 capture_output=True, text=True, timeout=30,
@@ -86,7 +90,7 @@ def _identify(identity):
             storage["disk_number"] != identity["disk_number"] or
             storage["disk_bytes"] != identity["disk_bytes"] or
             storage["partition_offset"] != identity["partition_offset"]):
-        raise RuntimeError("RetailOS and mounted storage identities disagree")
+        raise RuntimeError("USB and mounted storage identities disagree")
     spec = TARGETS[detected["target_id"]]
     return dict(identity, target_id=detected["target_id"], target_name=spec["name"],
                 linnet_usb_serial=detected["linnet_usb_serial"],
@@ -113,7 +117,7 @@ def video_source_extensions(identity):
     if not profile.get("video_enabled", True):
         return set()
     allowed = set(VIDEO_EXTENSIONS)
-    if profile.get("video_backend") == "bcm-mp4":
+    if profile.get("video_backend") in ("bcm-mp4", "native-mp4"):
         allowed.discard(".ipvf")
     return allowed
 
@@ -473,6 +477,79 @@ def additions(root, pending):
     return list(planned.values())
 
 
+def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress):
+    # Queue a bounded set of writes before flushing and reading them back. On
+    # FAT devices, alternating write/flush/read/rename for every small file is
+    # expensive. Keep every handle until its flush, and publish only verified files.
+    start = 0
+    while start < len(plan):
+        batch = []
+        batch_bytes = 0
+        for item in plan[start:start + 16]:
+            if batch and batch_bytes + item['bytes'] > 64 * 1024 * 1024:
+                break
+            destination = Path(item['destination'])
+            temporary = destination.parent / ('L' + uuid.uuid4().hex[:7] + '.TMP')
+            batch.append((item, temporary))
+            batch_bytes += item['bytes']
+        checkpoint()
+        # Persist all candidate scratch paths before creating any of them. The
+        # receipt stays bounded during a batch instead of growing twice per song.
+        report['copies_in_progress'] = [dict(source=item['source'], destination=item['destination'],
+                                           temporary=str(temporary)) for item, temporary in batch]
+        record()
+        copied = []
+        with ExitStack() as handles:
+            for offset, (item, temporary) in enumerate(batch):
+                checkpoint()
+                source, destination = Path(item['source']), Path(item['destination'])
+                progress(f"Adding {start + offset + 1}/{len(plan)}: {source.name}")
+                _plain(source, Path(source.anchor))
+                _plain(destination, root)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                _plain(destination.parent, root)
+                info = source.stat()
+                if (info.st_size, info.st_mtime_ns) != (item['bytes'], item['mtime_ns']):
+                    raise ValueError(f"Source changed since selection: {source}")
+                digest = hashlib.sha256()
+                writer = handles.enter_context(temporary.open('xb'))
+                owned_temporaries.append((temporary, root))
+                with source.open('rb') as reader:
+                    while chunk := reader.read(1024 * 1024):
+                        checkpoint()
+                        writer.write(chunk)
+                        digest.update(chunk)
+                writer.flush()
+                after = source.stat()
+                if (after.st_size, after.st_mtime_ns) != (info.st_size, info.st_mtime_ns):
+                    raise ValueError(f"Source changed during copy: {source}")
+                copied.append((item, temporary, writer, digest.hexdigest()))
+            progress(f"Saving additions {start + 1}–{start + len(batch)}/{len(plan)}…")
+            for _, _, writer, _ in copied:
+                checkpoint()
+                os.fsync(writer.fileno())
+        for offset, (item, temporary, _, digest) in enumerate(copied):
+            checkpoint()
+            destination = Path(item['destination'])
+            progress(f"Verifying addition {start + offset + 1}/{len(plan)}: {destination.name}")
+            _plain(temporary, root)
+            if _hash(temporary, item['bytes']) != digest:
+                raise OSError(f"Copy verification failed: {destination}")
+        for item, temporary, _, _ in copied:
+            checkpoint()
+            destination = Path(item['destination'])
+            _plain(destination, root)
+            # Windows rename refuses an existing destination, preserving both files.
+            if destination.exists():
+                raise ValueError(f"Destination appeared during copy: {destination}")
+            temporary.rename(destination)
+            owned_temporaries.remove((temporary, root))
+            report['steps'].append(dict(added=str(destination), bytes=item['bytes']))
+        report.pop('copies_in_progress', None)
+        record()
+        start += len(batch)
+
+
 def format_size(value):
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if value < 1024 or unit == "TB":
@@ -504,7 +581,7 @@ def _save(path, value):
     temporary.replace(path)
 
 
-def _outputs_match(root, outputs):
+def _outputs_match(root, outputs, *, verified=None):
     """Treat malformed/stale host cache entries as misses, with bounded paths."""
     if not isinstance(outputs, list) or not outputs:
         return False
@@ -521,8 +598,20 @@ def _outputs_match(root, outputs):
         path = root / relative
         try:
             _plain(path, root)
-            if not path.is_file() or _hash(path) != digest:
+            info = path.stat()
+            if not stat.S_ISREG(info.st_mode):
                 return False
+            stamp = (info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+            key = (str(path), digest)
+            if verified is not None and verified.get(key) == stamp:
+                continue
+            if _hash(path) != digest:
+                return False
+            after = path.stat()
+            if stamp != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                return False
+            if verified is not None:
+                verified[key] = stamp
         except (OSError, ValueError):
             return False
     return True
@@ -533,7 +622,7 @@ class Cancelled(Exception):
 
 
 def video_jobs(root, pending=(), selection=None, skipped=(), identity=None):
-    """Resolve selected conversions plus every native IPVF already on the iPod."""
+    """Resolve selected conversions and this device's supported on-disk videos."""
     root = Path(root).resolve(strict=True)
     folder = root / "Videos"
     available = scan(root, ("Videos",), skipped={"Videos": skipped})["Videos"]["files"]
@@ -725,6 +814,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
     report = dict(started=time.time(), identity=identity, steps=[], errors=[], complete=False,
                   stopped=False, cache_directory=str(cache), cleanup=dict(removed=[], retained=[]))
     owned_temporaries = []
+    verified_outputs = {}
     receipt = cache / ("session-" + uuid.uuid4().hex + ".json")
     report["receipt"] = str(receipt)
 
@@ -755,42 +845,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         needed = sum(item["bytes"] for item in plan)
         if needed + 1024 * 1024 > identity["free_bytes"]:
             raise ValueError("There is not enough space for the selected originals. Choose fewer files.")
-        for index, item in enumerate(plan):
-            checkpoint()
-            source, destination = Path(item["source"]), Path(item["destination"])
-            progress(f"Adding {index+1}/{len(plan)}: {source.name}")
-            _plain(source, Path(source.anchor))
-            _plain(destination, root)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            _plain(destination.parent, root)
-            info = source.stat()
-            if (info.st_size, info.st_mtime_ns) != (item["bytes"], item["mtime_ns"]):
-                raise ValueError(f"Source changed since selection: {source}")
-            temporary = destination.parent / ("L" + uuid.uuid4().hex[:7] + ".TMP")
-            report["copy_in_progress"] = dict(source=str(source), destination=str(destination), temporary=str(temporary))
-            record()
-            digest = hashlib.sha256()
-            with source.open("rb") as reader, temporary.open("xb") as writer:
-                owned_temporaries.append((temporary, root))
-                while chunk := reader.read(1024 * 1024):
-                    checkpoint()
-                    writer.write(chunk)
-                    digest.update(chunk)
-                writer.flush()
-                os.fsync(writer.fileno())
-            after = source.stat()
-            if (after.st_size, after.st_mtime_ns) != (info.st_size, info.st_mtime_ns):
-                raise ValueError(f"Source changed during copy: {source}")
-            _volume_guard(identity)
-            if _hash(temporary, item["bytes"]) != digest.hexdigest():
-                raise OSError(f"Copy verification failed: {destination}")
-            # Windows rename refuses an existing destination, preserving both files.
-            if destination.exists():
-                raise ValueError(f"Destination appeared during copy: {destination}")
-            temporary.rename(destination)
-            report.pop("copy_in_progress", None)
-            report["steps"].append(dict(added=str(destination), bytes=item["bytes"]))
-            record()
+        _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress)
         checkpoint()
         if "Music" in selected:
             def renamed_music(old, new):
@@ -832,13 +887,14 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 progress(f"{kind}: no supported files; existing prepared library retained.")
                 continue
             option = preparation_option(kind, identity, photo_dimension, music_verification)
-            signature = (f"videos-v3-{json.dumps(media_profile, sort_keys=True)}:{item['fingerprint']}" if kind == "Videos"
+            video_version = 5 if media_profile.get("video_backend") == "native-mp4" else 3
+            signature = (f"videos-v{video_version}-{json.dumps(media_profile, sort_keys=True)}:{item['fingerprint']}" if kind == "Videos"
                          else f"{option}:{item['fingerprint']}")
             saved = state.get(kind, {})
             if not isinstance(saved, dict):
                 saved = {}
             outputs = saved.get("outputs", [])
-            if not force and not (kind == "Music" and music_verification == "full") and signature == saved.get("signature") and _outputs_match(root, outputs):
+            if not force and not (kind == "Music" and music_verification == "full") and signature == saved.get("signature") and _outputs_match(root, outputs, verified=verified_outputs):
                 progress(f"{kind}: already up to date.")
                 report["steps"].append(dict(kind=kind, status="unchanged"))
                 continue
@@ -870,6 +926,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     output_paths = [".LINNET/LIBRARY.PDB"] + [entry["path"].lstrip("/") for entry in preparation["entries"] if entry["storage"] == "staged"] + [
                         ".LINNET/ART/" + path.name for path in sorted((stage / "ART").glob("*.RGB"))]
                     if (stage / "COVERS.CFL").exists():output_paths.append(".LINNET/COVERS.CFL")
+                    if (stage / "BROWSE.BIN").exists():output_paths.append(".LINNET/BROWSE.BIN")
                 elif kind == "Photos":
                     from .photos import compile_photos
                     from .publish_photos import publish_photos
@@ -919,21 +976,22 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             key = hashlib.sha256(relative.encode()).hexdigest()[:8].upper()
                             source_info = source.stat()
                             source_stamp = (source_info.st_size, source_info.st_mtime_ns)
-                            if media_profile["video_backend"] == "bcm-mp4":
+                            if media_profile["video_backend"] in ("bcm-mp4", "native-mp4"):
                                 from .native_video import inspect_file as inspect_native, prepare as prepare_native
                                 from .publish_video import index_video
-                                fingerprint = hashlib.sha256(f"native-mp4-v2:{json.dumps(media_profile, sort_keys=True)}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
+                                native_version = 4 if media_profile["video_backend"] == "native-mp4" else 2
+                                fingerprint = hashlib.sha256(f"native-mp4-v{native_version}:{json.dumps(media_profile, sort_keys=True)}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
                                 from .retail_media import tracks
                                 label = video_title(job.get('catalog_title') or tracks(root).get(str(source.resolve()).casefold(), {}).get('title') or relative)
                                 cached = video_state.get(relative, {})
                                 if (not force and isinstance(cached, dict) and cached.get("signature") == fingerprint
                                         and catalog_contains(root, relative, label, path=False)
-                                        and _outputs_match(root, cached.get("outputs", []))):
+                                        and _outputs_match(root, cached.get("outputs", []), verified=verified_outputs)):
                                     output_paths.extend(name for name, digest in cached.get("outputs", []))
                                     report["steps"].append(dict(kind=kind, file=relative, status="unchanged"))
                                     continue
                                 compatible = False
-                                if source.suffix.lower() in (".mp4", ".m4v"):
+                                if source.suffix.lower() in native_video_extensions(identity):
                                     try:
                                         inspect_native(source, ffprobe=ffprobe, profile=media_profile)
                                         compatible = True
@@ -986,7 +1044,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             if (not force and cached.get("signature") == fingerprint
                                     and catalog_contains(root, relative, label, path=False)
                                     and (index_in_place or (output_name.casefold().startswith("videos/ipvf/")
-                                         and _outputs_match(root, cached.get("outputs", []))))):
+                                         and _outputs_match(root, cached.get("outputs", []), verified=verified_outputs)))):
                                 if not index_in_place:
                                     output_paths.append(output_name)
                                 progress(f"Video {index+1}/{item['count']} already ready: {relative}")

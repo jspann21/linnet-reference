@@ -148,7 +148,7 @@ static int body(struct ln_alac *a)
         if(!a->chunk_count||a->chunk_count>256||n!=8+12*a->chunk_count)return bad(a,LN_ALAC_UNSUPPORTED);
         for(uint32_t i=0;i<a->chunk_count;i++){
             uint8_t *c=b+8+i*12;a->map[i].first=be32(c);a->map[i].count=be32(c+4);
-            if(!a->map[i].first||!a->map[i].count||a->map[i].count>256||be32(c+8)!=1||(!i&&a->map[i].first!=1)||(i&&a->map[i].first<=a->map[i-1].first))return bad(a,LN_ALAC_UNSUPPORTED);
+            if(!a->map[i].first||!a->map[i].count||a->map[i].count>1000000||be32(c+8)!=1||(!i&&a->map[i].first!=1)||(i&&a->map[i].first<=a->map[i-1].first))return bad(a,LN_ALAC_UNSUPPORTED);
         }
     }else if(t==TAG('s','t','t','s')){
         if(n<16||be32(b)||!once(a,16))return bad(a,LN_ALAC_FORMAT);
@@ -257,7 +257,13 @@ int ln_m4a_read_packet(struct ln_alac *a)
     if(!a)return LN_ALAC_ARGUMENT;
     if(a->error)return a->error;if(!a->opened){int result=ln_alac_open_step(a);return result==1?0:result;}
     if(a->packet==a->packets)return 2;
-    if(!a->decode_phase){if(!locate(a))return bad(a,LN_ALAC_FORMAT);a->decode_phase=1;}
+    if(!a->decode_phase){
+        if(!locate(a))return bad(a,LN_ALAC_FORMAT);
+        a->size_scan=0;a->decode_phase=1;
+        if(!a->default_size&&a->next_valid&&a->next_packet==a->packet&&a->next_chunk==a->chunk_index){
+            a->packet_offset=a->next_offset;a->size_scan=a->chunk_ordinal;a->decode_phase=2;
+        }
+    }
     if(a->decode_phase==1){
         int result=read_bytes(a,a->chunks_offset+(uint64_t)a->chunk_index*a->chunk_width,a->chunk_width);if(result!=1)return result;
         a->packet_offset=a->chunk_width==4?be32(a->buffer):be64(a->buffer);
@@ -270,19 +276,26 @@ int ln_m4a_read_packet(struct ln_alac *a)
             if(skip>a->mdat_end-a->packet_offset)return bad(a,LN_ALAC_FORMAT);a->packet_offset+=skip;
         }
         else{
-            int result=read_bytes(a,a->sizes_offset+(uint64_t)a->chunk_first*4,(a->chunk_ordinal+1)*4);if(result!=1)return result;
-            for(uint32_t i=0;i<=a->chunk_ordinal;i++){
+            /* Sequential packets reuse the preceding end offset. Seeking scans
+             * at most 256 sizes per call, keeping large single-chunk files bounded. */
+            uint32_t count=a->chunk_ordinal+1-a->size_scan;if(count>256)count=256;
+            int result=read_bytes(a,a->sizes_offset+(uint64_t)(a->chunk_first+a->size_scan)*4,count*4);if(result!=1)return result;
+            for(uint32_t i=0;i<count;i++){
                 uint32_t size=be32(a->buffer+i*4);if(!size||size>32768)return bad(a,LN_ALAC_UNSUPPORTED);
                 if(size>a->mdat_end-a->packet_offset)return bad(a,LN_ALAC_FORMAT);
-                if(i==a->chunk_ordinal)a->packet_size=size;else a->packet_offset+=size;
+                if(a->size_scan+i==a->chunk_ordinal)a->packet_size=size;else a->packet_offset+=size;
             }
+            a->size_scan+=count;if(a->size_scan<=a->chunk_ordinal)return 0;
         }
         if(a->packet_offset<a->mdat_start||a->packet_offset>a->mdat_end||a->packet_size>a->mdat_end-a->packet_offset)return bad(a,LN_ALAC_FORMAT);
         if(a->codec==17&&a->packet_size>8191)return bad(a,LN_ALAC_UNSUPPORTED);
         a->decode_phase=3;
     }
     int result=read_bytes(a,a->packet_offset,a->packet_size);if(result!=1)return result;
-    a->current_packet_frames=packet_frames(a,a->packet);a->packet++;a->decode_phase=0;return 1;
+    a->current_packet_frames=packet_frames(a,a->packet);a->packet++;
+    a->next_packet=a->packet;a->next_chunk=a->chunk_index;
+    a->next_offset=a->packet_offset+a->packet_size;a->next_valid=true;
+    a->decode_phase=0;return 1;
 }
 int ln_alac_decode(struct ln_alac *a,int16_t *out,uint32_t capacity,uint32_t *frames)
 {

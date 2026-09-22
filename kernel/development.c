@@ -102,7 +102,7 @@ int ln_development_init(void) {
     config.capacity = LINNET_STAGE_CAPACITY;
     config.policy.target = LINNET_TARGET_NUMBER;
     config.policy.allowed_profiles = 6u;
-    config.policy.ram_start = 0;
+    config.policy.ram_start = LINNET_LOAD_ADDRESS;
     config.policy.ram_size = LINNET_OS_CAPACITY;
     config.crash_mailbox = (volatile uint8_t *)(uintptr_t)LINNET_MAILBOX_ADDRESS;
 #if defined(LINNET_AUDIO)
@@ -119,7 +119,7 @@ int ln_development_init(void) {
     config.generation = ln_recovery_generation();
     config.capabilities = LINNET_LOADER_CAP_UPLOAD | LINNET_LOADER_CAP_CRASH;
     if (ln_recovery_ready()) config.capabilities |= LINNET_LOADER_CAP_RAM_BOOT | LINNET_LOADER_CAP_REBOOT_BOOT;
-    config.capabilities |= LINNET_LOADER_CAP_REBOOT_OS | LINNET_LOADER_CAP_REBOOT_DISK;
+    config.capabilities |= ln_recovery_reboot_capabilities();
     for (unsigned i=0; i<32; ++i) config.build_id[i] = build_id[i];
     uint8_t recorded_build[32];
     if (ln_recovery_image_identity(recorded_build, config.image_sha256)) {

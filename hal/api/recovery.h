@@ -57,6 +57,8 @@ int ln_recovery_chainload(void *context, const uint8_t *payload, uint32_t size,
     const uint8_t image_sha[32], uint32_t next_generation);
 int ln_recovery_reboot(void *context, uint16_t command);
 int ln_recovery_can_reboot(uint16_t command);
+/* Implemented reboot modes, independent of transient candidate readiness. */
+uint32_t ln_recovery_reboot_capabilities(void);
 _Noreturn void ln_recovery_return(uint32_t reason);
 void ln_recovery_watchdog_interrupt(uint32_t pc, uint32_t cpsr);
 #endif

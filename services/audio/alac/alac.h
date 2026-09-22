@@ -15,6 +15,9 @@ struct ln_alac {
     uint32_t parents[8],depth,atoms,tracks,seen,atom_type,body_bytes;
     uint32_t rate,channels,packets,chunks,default_size,chunk_width,time_count,chunk_count;
     uint32_t packet,packet_size,chunk_index,chunk_first,chunk_packets,chunk_ordinal;
+    uint32_t size_scan,next_packet,next_chunk;
+    uint64_t next_offset;
+    bool next_valid;
     uint32_t pcm_count,pcm_cursor,skip,phase,decode_phase;
     uint32_t codec,asc_bytes,current_packet_frames,lead_trim;
     uint32_t movie_scale,edit_duration;
@@ -35,7 +38,7 @@ struct ln_alac {
 /* Exact immutable asynchronous reads, same ownership contract as PCM. Calls to
  * the upstream core are serialized: coefficient scratch is static. M4A support
  * is nonfragmented, one track, integer16 mono/stereo, <=4096 frames/packet,
- * <=32768 compressed bytes/packet, <=1M packets/chunks, <=256 packets/chunk,
+ * <=32768 compressed bytes/packet, <=1M packets/chunks,
  * <=128 time runs and256 sample-to-chunk runs. No resampling or encryption. */
 void ln_alac_init(struct ln_alac *,ln_alac_read_fn,void *,uint64_t file_size);
 int ln_alac_open_step(struct ln_alac *);

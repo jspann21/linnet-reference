@@ -212,6 +212,34 @@ def parser():
     ram.add_argument("--mode", choices=("ram",), default="ram")
     ram.add_argument("--image", type=Path, required=True)
     ram.add_argument("--port", required=True)
+    sram = device.add_parser("sram-bootstrap", help="Build and load the Classic's temporary Linnet Link monitor")
+    sram_actions = sram.add_subparsers(dest="sram_action", required=True)
+    sram_build = sram_actions.add_parser("build")
+    sram_build.add_argument("--device-serial", required=True)
+    sram_prepare = sram_actions.add_parser("prepare")
+    sram_prepare.add_argument("--mount", type=Path, required=True)
+    sram_update = sram_actions.add_parser("update", help="Upload and RAM-boot the current monitor through Linnet Link")
+    sram_update.add_argument("--prepared", type=Path, required=True)
+    sram_backup = sram_actions.add_parser("backup-nor", help="Read and independently verify the Classic's original boot flash")
+    sram_backup.add_argument("--prepared", type=Path, required=True)
+    sram_backup.add_argument("--output", type=Path, required=True)
+    sram_nor_prepare = sram_actions.add_parser("prepare-nor", help="Authenticate a device-bound persistent monitor image")
+    sram_nor_prepare.add_argument("--prepared", type=Path, required=True)
+    sram_nor_prepare.add_argument("--backup", type=Path, required=True)
+    sram_nor_prepare.add_argument("--output", type=Path, required=True)
+    sram_nor_prepare.add_argument("--boot-image", type=Path, help="Include the verified native Boot stage in the existing NOR slot")
+    sram_nor_install = sram_actions.add_parser("install-nor", help="Install the verified monitor in the original NOR boot slot and reboot")
+    sram_nor_install.add_argument("--prepared", type=Path, required=True)
+    sram_nor_install.add_argument("--plan-sha256", required=True)
+    sram_diagnose = sram_actions.add_parser("diagnose", help="Read Classic board and disk diagnostics through Linnet Link")
+    sram_diagnose.add_argument("--prepared", type=Path, required=True)
+    sram_diagnose.add_argument("--display", action="store_true", help="Initialize the supported panel and send color bars")
+    sram_load = sram_actions.add_parser("load")
+    sram_load.add_argument("--prepared", type=Path, required=True)
+    sram_load.add_argument("--wait-seconds", type=int, default=0)
+    sram_load.add_argument("--after-reset", action="store_true", help="Wait for the current DFU interface to disappear before opening its replacement")
+    sram_load.add_argument("--inspect-only", action="store_true", help="Read retained diagnostics and leave the device in DFU")
+    sram_load.add_argument("--probe", choices=("identity", "memory", "storage"), help="Run a board probe and return to DFU")
     bootstrap = device.add_parser("bootstrap")
     bootstrap.add_argument("--mount", type=Path, required=True)
     bootstrap.add_argument("--image", type=Path, required=True)
@@ -228,7 +256,8 @@ def parser():
 def main():
     args = parser().parse_args()
     try:
-        if os.name == "nt" and args.command in ("build", "doctor", "simulator"):
+        if os.name == "nt" and (args.command in ("build", "doctor", "simulator") or
+                                (args.command == "device" and args.action == "sram-bootstrap" and args.sram_action == "build")):
             paths = {name: getattr(args, name, None) for name in ("system", "output", "tape")}
             from tools.studio.build import wsl_command
             completed = subprocess.run(
@@ -241,7 +270,8 @@ def main():
             return completed.returncode
         if args.command == "doctor":
             emit(dict(toolchain=toolchain(), python=sys.version.split()[0],
-                      supported_targets=sorted(TARGETS)))
+                      supported_targets=sorted(target for target, spec in TARGETS.items() if spec.get('build_enabled', True)),
+                      bringup_targets={target: spec['bringup_blocker'] for target, spec in TARGETS.items() if not spec.get('build_enabled', True)}))
         elif args.command == "media":
             if os.name != 'nt':
                 raise RuntimeError('The desktop media manager currently supports Windows Disk Mode.')
@@ -427,6 +457,33 @@ def main():
                            resume_run=args.resume_run)
             emit(result)
             return 0 if result["passed"] else 2
+        elif args.command == "device" and args.action == "sram-bootstrap":
+            if args.sram_action == "build":
+                from tools.studio.s5l_bootstrap import build as build_monitor
+                emit(build_monitor(args.device_serial))
+            elif args.sram_action == "prepare":
+                from tools.link.s5l_bootstrap import prepare
+                emit(prepare(args.mount))
+            elif args.sram_action == "update":
+                from tools.link.s5l_bootstrap import update
+                emit(update(args.prepared))
+            elif args.sram_action == "backup-nor":
+                from tools.link.s5l_bootstrap import backup_nor
+                emit(backup_nor(args.prepared, args.output))
+            elif args.sram_action == "prepare-nor":
+                from tools.link.classic_nor import prepare
+                emit(prepare(args.prepared, args.backup, args.output, args.boot_image))
+            elif args.sram_action == "install-nor":
+                from tools.link.classic_nor import install
+                emit(install(args.prepared, args.plan_sha256, progress=lambda message: print(message, file=sys.stderr)))
+            elif args.sram_action == "diagnose":
+                from tools.link.s5l_bootstrap import diagnose
+                emit(diagnose(args.prepared, display=args.display))
+            else:
+                from tools.link.s5l_bootstrap import load
+                emit(load(args.prepared, wait_seconds=args.wait_seconds, inspect_only=args.inspect_only, after_reset=args.after_reset,
+                          probe_operation={None:None,"identity":0,"memory":1,"storage":2}[args.probe],
+                          progress=lambda message: print(message, file=sys.stderr)))
         elif args.command == "device" and args.action in ("bootstrap", "restore", "bootstrap-status"):
             from tools.studio.bootstrap import install, restore, status
             if args.action == "bootstrap":

@@ -49,10 +49,10 @@ void ln_display_blit_diagnostics(uint32_t output[16]);
 uint32_t ln_display_column_mismatches(void);
 #endif
 bool ln_display_busy(void);
-#if defined(LINNET_TARGET_VIDEO5G_M25)
-/* CPU scanout is waiting for BCM readiness; no framebuffer writes are runnable. */
+#if LINNET_DISPLAY_PIPELINE
+/* CPU scanout is waiting for the display controller; no framebuffer writes are runnable. */
 bool ln_display_wait_deadline(uint32_t *deadline);
-/* One Cover Flow frame may render after PIO, while BCM completes scanout. */
+/* One frame may render while the display controller completes scanout. */
 bool ln_display_can_render(void);
 #endif
 bool ln_display_cop_capable(void);

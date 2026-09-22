@@ -1,0 +1,65 @@
+"""Independent LZ4 block packing for the bounded native Boot archive."""
+import struct
+
+
+def pack(data: bytes) -> bytes:
+    output=bytearray();positions={};anchor=cursor=0
+    def remember(at):
+        matches=positions.setdefault(data[at:at+4],[])
+        matches.append(at)
+        if len(matches)>32:del matches[0]
+    def length(value):
+        while value>=255:output.append(255);value-=255
+        output.append(value)
+    while cursor+12<=len(data):
+        matches=positions.get(data[cursor:cursor+4],())
+        previous=None;size=3;limit=len(data)-5-cursor
+        for candidate in reversed(matches):
+            if cursor-candidate>65535:break
+            count=4
+            while count<limit and data[candidate+count]==data[cursor+count]:count+=1
+            if count>size:previous=candidate;size=count
+            if size==limit:break
+        remember(cursor)
+        if previous is None:
+            cursor+=1;continue
+        literals=cursor-anchor;match=size-4
+        output.append((min(literals,15)<<4)|min(match,15))
+        if literals>=15:length(literals-15)
+        output.extend(data[anchor:cursor]);output.extend(struct.pack('<H',cursor-previous))
+        if match>=15:length(match-15)
+        end=cursor+size
+        for at in range(cursor+1,end):remember(at)
+        cursor=anchor=end
+    literals=len(data)-anchor;output.append(min(literals,15)<<4)
+    if literals>=15:length(literals-15)
+    output.extend(data[anchor:])
+    result=bytes(output)
+    if unpack(result,len(data))!=data:raise ValueError('Boot compression readback mismatch')
+    return result
+
+
+def unpack(data: bytes, size: int) -> bytes:
+    output=bytearray();cursor=0
+    def length(value):
+        nonlocal cursor
+        if value==15:
+            while True:
+                if cursor>=len(data):raise ValueError('Truncated LZ4 length')
+                extra=data[cursor];cursor+=1;value+=extra
+                if value>size:raise ValueError('LZ4 length exceeds output')
+                if extra!=255:break
+        return value
+    while cursor<len(data):
+        token=data[cursor];cursor+=1;literals=length(token>>4)
+        if cursor+literals>len(data) or len(output)+literals>size:raise ValueError('LZ4 literal bounds')
+        output.extend(data[cursor:cursor+literals]);cursor+=literals
+        if cursor==len(data):
+            if len(output)!=size:raise ValueError('LZ4 output size mismatch')
+            return bytes(output)
+        if cursor+2>len(data):raise ValueError('LZ4 offset truncated')
+        offset=struct.unpack_from('<H',data,cursor)[0];cursor+=2
+        count=length(token&15)+4
+        if not offset or offset>len(output) or len(output)+count>size:raise ValueError('LZ4 match bounds')
+        for _ in range(count):output.append(output[-offset])
+    raise ValueError('LZ4 final literal sequence missing')

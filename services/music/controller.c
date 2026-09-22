@@ -235,7 +235,7 @@ bool ln_music_queue_position(uint32_t *position,uint32_t *count){
 }
 uint32_t ln_music_revision(void){return revision+ln_music_history_revision()+ln_collections_revision();}
 uint32_t ln_music_sound_count(void){
-#if defined(LINNET_TARGET_VIDEO5G_M25)
+#if LINNET_EXTENDED_SOUND
     return 13u;
 #else
     return 9u;
@@ -249,7 +249,7 @@ const char *ln_music_sound_label(uint32_t index){
         static const char *const presets[]={"EQ: Off","EQ: Acoustic","EQ: Bass Booster","EQ: Classical","EQ: Electronic","EQ: Hip Hop","EQ: Loudness","EQ: Lounge","EQ: Small Speakers","EQ: Spoken Word","EQ: Treble Booster","EQ: Vocal Booster"};
         return presets[profile.preset];
     }
-#if defined(LINNET_TARGET_VIDEO5G_M25)
+#if LINNET_EXTENDED_SOUND
     if(index==1)return profile.replaygain==2?"Sound Check: Album":profile.replaygain?"Sound Check: On":"Sound Check: Off";
 #else
     if(index==1)return profile.replaygain==2?"ReplayGain: Album":profile.replaygain?"ReplayGain: Track":"ReplayGain: Off";
@@ -266,7 +266,7 @@ const char *ln_music_sound_label(uint32_t index){
     if(index==5){uint32_t value=(uint32_t)(-profile.preamp_db_q16)/65536u,n=0;const char *prefix="Preamp: -";
         while(prefix[n]){preamp[n]=prefix[n];++n;}if(value>=10)preamp[n++]=(char)('0'+value/10u);
         preamp[n++]=(char)('0'+value%10u);preamp[n++]=' ';preamp[n++]='d';preamp[n++]='B';preamp[n]=0;return preamp;}
-#if defined(LINNET_TARGET_VIDEO5G_M25)
+#if LINNET_EXTENDED_SOUND
     if(index==6||index>=8){
         static const char *const names[]={"Max volume: ","Bass 100 Hz: ","Low 250 Hz: ","Mid 1 kHz: ","High 4 kHz: ","Treble 8 kHz: "};
         uint32_t slot=index==6?0u:index-7u,band=index>=8?index-8u:0u;
@@ -282,7 +282,7 @@ const char *ln_music_sound_label(uint32_t index){
         if(value>=10)out[n++]=(char)('0'+value/10);
         out[n++]=(char)('0'+value%10);out[n++]=' ';out[n++]='d';out[n++]='B';out[n]=0;return out;
     }
-#if defined(LINNET_TARGET_VIDEO5G_M25)
+#if LINNET_EXTENDED_SOUND
     if(index==7)return profile.lineout?"Dock line out: On":"Dock line out: Off";
 #endif
     return "";
@@ -294,7 +294,7 @@ bool ln_music_sound_adjust(uint32_t index,int32_t direction){
     if(shutting_down||manual_next_pending||index>=ln_music_sound_count()||!direction)return false;
     struct ln_music_profile next=profile;bool up=direction>0;
     if(index==0){
-#if defined(LINNET_TARGET_VIDEO5G_M25)
+#if LINNET_EXTENDED_SOUND
         next.preset=(next.preset+(up?1u:LN_MUSIC_EQ_CUSTOM))%(LN_MUSIC_EQ_CUSTOM+1u);
 #else
         static const uint8_t choices[]={LN_MUSIC_EQ_FLAT,LN_MUSIC_EQ_BASS_BOOSTER,LN_MUSIC_EQ_VOCAL_BOOSTER,LN_MUSIC_EQ_CUSTOM};
@@ -311,7 +311,7 @@ bool ln_music_sound_adjust(uint32_t index,int32_t direction){
         if(next.max_volume_db_tenths>0)next.max_volume_db_tenths=0;
         if(next.max_volume_db_tenths< -730)next.max_volume_db_tenths=-730;
     }
-#if defined(LINNET_TARGET_VIDEO5G_M25)
+#if LINNET_EXTENDED_SOUND
     else if(index==7){next.lineout=!next.lineout;}
     else {uint32_t band=index-8u;int32_t db=next.eq_db[band]+(up?1:-1);if(db>6)db=6;if(db< -6)db=-6;
         next.eq_db[band]=(int8_t)db;next.preset=LN_MUSIC_EQ_CUSTOM;}
@@ -321,7 +321,7 @@ bool ln_music_sound_adjust(uint32_t index,int32_t direction){
 #endif
     if(!ln_music_profile_valid(&next))return false;
     if(index==6){profile=next;ln_music_volume(0);return true;}
-#if defined(LINNET_TARGET_VIDEO5G_M25)
+#if LINNET_EXTENDED_SOUND
     if(index==7){if(!ln_audio_lineout(next.lineout))return false;profile=next;++revision;return true;}
 #endif
     if(have_current){struct ln_dsp_config config;

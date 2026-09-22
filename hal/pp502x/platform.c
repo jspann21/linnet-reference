@@ -12,6 +12,31 @@ static uint32_t ln_last_progress;
 
 uint32_t ln_time_us(void) { return LINNET_REG(0x60005010u); }
 uintptr_t ln_platform_uncached_address(uintptr_t address) { return address | 0x10000000u; }
+_Noreturn void ln_platform_hardware_reset(void) {
+    LINNET_REG(0x60006004u)|=4u;
+    for(;;)__asm__ volatile("nop");
+}
+void ln_platform_boot_candidate(bool candidate){(void)candidate;}
+bool ln_platform_set_disk_mode(bool enabled) {
+    static const uint8_t marker[21]="diskmode\0\0hotstuff\0\0\1";
+    volatile uint8_t *destination=(volatile uint8_t *)(uintptr_t)LINNET_DISK_MODE_MARKER;
+    for(unsigned i=0;i<21;i++)destination[i]=enabled?marker[i]:0;
+    return true;
+}
+int ln_platform_enter(const uint8_t *payload,uint32_t size,uint32_t load,uint32_t entry) {
+    extern const uint8_t ln_persistent_enter_begin[],ln_persistent_enter_end[];
+    uint32_t bytes=(uint32_t)(ln_persistent_enter_end-ln_persistent_enter_begin);
+    if(!payload || !size || bytes>256)return 0;
+    volatile uint8_t *iram=(volatile uint8_t *)(uintptr_t)0x40000000u;
+    for(unsigned i=0;i<bytes;i++)iram[i]=ln_persistent_enter_begin[i];
+    ((void (*)(const uint8_t *,uint32_t,uint32_t,uint32_t))(uintptr_t)0x40000000u)(payload,size,load,entry);
+    return 0;
+}
+int ln_platform_enter_retail(const uint8_t *payload,uint32_t size) {
+    return ln_platform_enter(payload,size,0x10000000u,0x10000000u);
+}
+uint32_t ln_platform_clock_divider(void){return LINNET_REG(0x60006044u);}
+void ln_platform_cache_marker(uint32_t value){LINNET_REG(0x11ffe098u)=value;}
 
 /* Both elapsed time and instruction-count bounds: a stopped timer cannot hang
  * an LCD operation. One budget covers the complete frame, including commands. */

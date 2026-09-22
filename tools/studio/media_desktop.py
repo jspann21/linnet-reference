@@ -1435,7 +1435,9 @@ class MediaWindow(QMainWindow):
         description = f"Make {option['label']} the default startup software?" + (f"\n\nMethod: {method['label']}" if option['kind'] == 'linnet' else '')
         if option['kind'] == 'linnet' and self.review.get('action') in ('replace', 'adopt'):
             description += ('\n\nYour settings, selected theme, playback history, and media libraries '
-                            'will be preserved. Superseded Linnet system files will be archived.')
+                            'will be preserved. ' + ('The confirmed OS will be retained for rollback.'
+                            if method['strategy'] == 'native-volume' else
+                            'Superseded Linnet system files will be archived.'))
         if not self.dialog('Update iPod setup', description + '\n\nKeep the iPod connected until the update finishes.', 'Apply to iPod'):
             return
         operation = (lambda: installer.install(identity, progress=self.events.progress.emit, build=option['build'], installation_method=method['id'])) if option['kind'] == 'linnet' else lambda: installer.restore(identity, expected=option['id'])

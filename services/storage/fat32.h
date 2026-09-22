@@ -74,11 +74,12 @@ struct ln_fat32 {
     uint32_t new_size,new_first,new_tail,candidate,allocation_count,allocation_needed;
     uint32_t source_cluster,source_sector,destination_sector,edit_phase,edit_value,volume_flags,old_next;
     uint64_t slot_sector,copy_offset;
-    uint16_t slot_offset,fsinfo,backup,mutation_return;
+    uint32_t fsinfo,backup,reserved;
+    uint16_t slot_offset,mutation_return;
     uint8_t entry[32];
     bool slot_found,mutation_started,slot_end;
-    uint16_t reserved, state;
-    uint8_t sectors_per_cluster, cluster_shift, fats, active_fat, mirrored, mounted, operation;
+    uint16_t state,sectors_per_cluster;
+    uint8_t cluster_shift, fats, active_fat, mirrored, mounted, operation;
     uint8_t *buffer;
     int result;
     char path[LN_FAT32_PATH_MAX+1];
@@ -89,8 +90,8 @@ struct ln_fat32 {
     uint8_t mirror[512] __attribute__((aligned(32)));
 };
 void ln_fat32_init(struct ln_fat32 *, const struct ln_fat32_config *);
-/* Explicit partition bounds from a validated partition table. Only 512-byte
- * FAT32 sectors are supported. Mount/open/read/write/sync return admission. */
+/* Explicit partition bounds in native 512-byte sectors. BPB sector sizes up
+ * to 4096 bytes are normalized on mount. Operations return admission. */
 bool ln_fat32_mount(struct ln_fat32 *,uint64_t lba,uint64_t sectors,uint32_t generation);
 /* Absolute, bounded 8.3 paths, depth <=16. LFN aliases may be opened using
  * their on-disk 8.3 names. The root .LINNET directory also supports its verified

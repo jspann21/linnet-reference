@@ -41,7 +41,7 @@ struct ln_coverflow_column {uint32_t step;uint8_t source,top,height,length;};
 extern const struct ln_coverflow_column ln_coverflow_columns[33][COVER_WIDTH];
 extern const uint8_t ln_coverflow_widths[33];
 extern const uint8_t ln_coverflow_ease[8][8];
-#if defined(LINNET_TARGET_VIDEO5G_M25)
+#if LINNET_COVERFLOW_SCANLINE
 extern const uint8_t ln_coverflow_glow_pairs[190][160];
 extern const uint8_t ln_coverflow_glow_colors[2][192][2];
 #else
@@ -116,7 +116,7 @@ static int32_t decode_art(uint32_t id){
     const uint32_t *words=(const uint32_t*)packed;
     for(uint32_t i=0;i<128u;i++)palette.words[i]=words[i];
     words+=128;
-#if defined(LINNET_TARGET_VIDEO5G_M25)
+#if LINNET_COVERFLOW_SCANLINE
     for(uint32_t by=0;by<128u;by+=8u)for(uint32_t bx=0;bx<96u;bx+=8u)
         for(uint32_t y=by;y<by+8u;y++)for(uint32_t x=bx;x<bx+8u;x++)
             cache[victim].pixels[y*96u+x]=palette.colors[packed[512u+x*128u+y]];
@@ -245,7 +245,7 @@ uint32_t ln_coverflow_tick(uint32_t now){
     return changed;
 }
 #if !defined(LINNET_PROFILE_RELEASE)
-#if defined(LINNET_TARGET_VIDEO5G_M25)
+#if LINNET_COVERFLOW_SCANLINE
 static uint32_t render_calls,render_us;
 void ln_coverflow_render_diagnostics(uint32_t words[16]){
     uint32_t values[16]={0x52464c43u,render_calls,render_us};
@@ -266,19 +266,10 @@ static void ambient_color(uint32_t index,uint32_t color[3]){
     }
     color[0]=color[0]*255/112;color[1]=color[1]*255/112;color[2]=color[2]*255/48;
 }
-#if defined(LINNET_TARGET_VIDEO5G_M25)
-#include "services/music/coverflow_m25.inc"
+#if LINNET_COVERFLOW_SCANLINE
+#include "services/music/coverflow_scanline.inc"
 #else
 void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
-#if defined(LINNET_TARGET_VIDEO5G_M25)
-    if(!count){
-        for(int32_t y=c->clip_y;y<c->clip_y+c->clip_h;y++){
-            uint16_t *dest=c->pixels+y*LINNET_UI_WIDTH+c->clip_x;
-            for(int32_t x=0;x<c->clip_w;x++)*dest++=0;
-        }
-        return;
-    }
-#endif
     uint16_t painted_top[LINNET_UI_WIDTH],painted_end[LINNET_UI_WIDTH];
     for(uint32_t x=0;x<LINNET_UI_WIDTH;x++){painted_top[x]=LINNET_UI_HEIGHT;painted_end[x]=0;}
     int32_t center=(position+128)/256;

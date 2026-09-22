@@ -2,6 +2,8 @@
 #include "hal/pp502x/recovery_internal.h"
 #include "hal/api/platform.h"
 #include "boot/include/linnet_boot.h"
+#include "boot/include/loader.h"
+uint32_t ln_recovery_reboot_capabilities(void){return LINNET_LOADER_CAP_REBOOT_OS|LINNET_LOADER_CAP_REBOOT_DISK;}
 #if defined(LINNET_AUDIO)
 #include "hal/api/core.h"
 #endif

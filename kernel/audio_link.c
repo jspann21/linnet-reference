@@ -1,3 +1,4 @@
+#include "hal/api/platform.h"
 #include "boot/include/linnet_bytes.h"
 #include "kernel/audio_link.h"
 #include "kernel/runtime.h"
@@ -69,7 +70,7 @@ int ln_audio_link_dispatch(const ln_link_frame *q,ln_link_frame *r){
         struct ln_mp3_timing m;ln_mp3_timing_snapshot(&m);
         struct ln_core_status c;ln_core_snapshot(&c);
         uint32_t words[31]={0x454d4954u,0,t.decode_calls,t.decode_us,t.decode_max_us,t.dsp_calls,t.dsp_frames,t.dsp_us,t.dsp_max_us,t.runtime_calls,t.runtime_us,t.runtime_max_us,t.music_us,t.storage_us,t.link_us,
-            c.clock_hz,c.cache_control,*(volatile uint32_t *)(uintptr_t)0x60006044u,c.idle_us,c.clock_source,ln_player_decoder_kind(),
+            c.clock_hz,c.cache_control,ln_platform_clock_divider(),c.idle_us,c.clock_source,ln_player_decoder_kind(),
             m.frame_calls,m.frame_us,m.frame_max_us,m.synth_calls,m.synth_us,m.synth_max_us,
             m.pcm_calls,m.pcm_frames,m.pcm_us,m.pcm_max_us};
         for(uint32_t n=0;n<31;n++)ln_write_le32(reply+n*4,words[n]);r->length=124;

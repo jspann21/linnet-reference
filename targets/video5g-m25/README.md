@@ -13,7 +13,7 @@ not source defaults.
 - `hardware.h`: ROM Disk Mode marker and bounded compatibility policies.
 - `lcd.c` / `display.c`: BCM mailbox transfer and incremental scanout.
 - `screens/`: complete native 320 × 240 screen set.
-- `themes/`: native editions of Linnet (default), Midnight, Graphite, Aurora,
+- `ui/profiles/color320/themes/`: native editions of Linnet (default), Midnight, Graphite, Aurora,
   Sunset, Blueprint, Album Colors, Minimal Dark and Minimal Light.
 - `system.toml`: default applications, features and theme.
 - `target.toml`: discovery, image, memory, media and resource contracts.
@@ -25,7 +25,7 @@ The boot font derives from `sdk/assets/font-hint11.json` under the accompanying
 `sdk/assets/FONT-LICENSE.txt`.
 
 Theme editions retain their shared IDs and palettes, with a larger Sans font
-and complete 320 × 240 scene geometry in `tools/content/video_layouts.py`.
+and complete 320 × 240 scene geometry in `ui/profiles/color320/layouts.py`.
 Graphite and Sunset retain bottom transport chrome, Aurora its side rail,
 Blueprint its bottom status bar and two-column menus, and Minimal its battery
 line. The target allowlist replaces the provisional Video palettes with these

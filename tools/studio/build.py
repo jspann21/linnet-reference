@@ -9,7 +9,7 @@ import struct
 import subprocess
 import tomllib
 from tools.inspect.image import pack, inspect, verify_release
-from tools.studio.targets import LCD_FORMATS, ROOT, TARGETS, target_id
+from tools.studio.targets import LCD_FORMATS, ROOT, TARGETS, RUNTIME_POLICIES, target_id
 
 def run(args):
     result = subprocess.run([str(a) for a in args], cwd=ROOT, text=True, capture_output=True)
@@ -79,6 +79,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
           boot_selector="none"):
     target = target_id(target)
     spec = TARGETS[target]
+    if not spec.get("build_enabled", True):
+        raise ValueError(f"{target}: {spec['bringup_blocker']}")
     if system_config is None and (ROOT / "targets" / target / "system.toml").is_file():
         system_config = f"targets/{target}/system.toml"
     chain = toolchain()
@@ -102,6 +104,9 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     dest.mkdir(parents=True, exist_ok=True)
     generated = dest / "generated"
     generated.mkdir(exist_ok=True)
+    presentation = {}
+    if spec.get("presentation_profile"):
+        presentation = tomllib.loads((ROOT / "ui/profiles" / spec["presentation_profile"] / "profile.toml").read_text())
     target_header = [
         "#ifndef LINNET_TARGET_H",
         "#define LINNET_TARGET_H",
@@ -121,6 +126,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         f'#define LINNET_LCD_WIDTH_ASM {spec["lcd_width"]}',
         f'#define LINNET_LCD_HEIGHT_ASM {spec["lcd_height"]}',
         f'#define LINNET_UI_WIDTH {spec["lcd_width"]}u',
+        f'#define LINNET_ACTIVE_CLOCK_HZ {spec.get("active_clock_hz",80000000)}u',
         f'#define LINNET_IDLE_CLOCK_HZ {spec.get("idle_clock_hz",0)}u',
         f'#define LINNET_MUSIC_TITLES_ADDRESS {spec["resources"]["music_titles_address"]}',
         f'#define LINNET_MUSIC_TITLES_BYTES {spec["resources"]["music_titles_bytes"]}',
@@ -131,9 +137,11 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         f'#define LINNET_VIDEO_WIDTH {spec["media_video_width"]}u',
         f'#define LINNET_VIDEO_HEIGHT {spec["media_video_height"]}u',
         f'#define LINNET_VIDEO_FPS {spec["media_video_fps"]}u',
+        f'#define LINNET_VIDEO_PACKET_BYTES {spec.get("native_video", {}).get("sample_bytes", 65536)}u',
         f'#define LINNET_VIDEO_COLOR_GRAY4 {int(spec["media_video_color"] == "gray4")}u',
         f'#define LINNET_STORAGE_MAX_READ_SECTORS {spec["storage_max_read_sectors"]}u',
         f'#define LINNET_COP_DISPLAY {int(spec["cop_display"])}u',
+        f'#define LINNET_COVERFLOW_SCANLINE {int(presentation.get("coverflow_renderer") == "scanline")}',
         f'#define LINNET_COP_DISPLAY_SOURCE "targets/{target}/cop-display.inc"',
         f'#define LINNET_SDRAM_BYTES {spec["sdram_bytes"]}',
         f'#define LINNET_LOAD_ADDRESS {spec["load_address"]}',
@@ -151,6 +159,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         f'#define {spec["target_define"]} 1',
         "#endif",
     ]
+    target_header[-1:-1] = [f'#define LINNET_{name.upper()} {int(spec.get("runtime_policy", {}).get(name, False))}'
+                            for name in sorted(RUNTIME_POLICIES)]
     (generated / "linnet_target.h").write_text("\n".join(target_header) + "\n")
     ui_report = None
     if kind == "os":
@@ -171,8 +181,19 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
                ROOT / target_sources["platform"], ROOT / target_sources["lcd"],
                ROOT / "kernel/main.c", ROOT / "kernel/memory.S"]
     sources += [ROOT / "boot/src/linnet_boot.c"]
-    sources += [hal / name for name in ("core.c", "input.c", "power.c")]
+    sources += [hal / name for name in ("core.c", "input.c")]
+    sources += [ROOT / target_sources["power"]]
+    for directory in (hal, ROOT / "targets" / target):
+        source_list=directory / "SOURCES"
+        if source_list.is_file():
+            for name in source_list.read_text().splitlines():
+                source=(ROOT / name).resolve()
+                if not name or not source.is_relative_to(ROOT) or not source.is_file():
+                    raise ValueError(f"Invalid platform source in {source_list}: {name}")
+                sources.append(source)
     sources += [ROOT / target_sources["display"], ROOT / target_sources["device"], ROOT / target_sources["codec"]]
+    if "display_assembly" in target_sources:
+        sources += [ROOT / target_sources["display_assembly"]]
     if kind == "os" and "coprocessor" in target_sources:
         sources += [ROOT / target_sources["coprocessor"]]
     if kind == "os" and spec.get("cop_display", False):
@@ -184,14 +205,16 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     if profile != "release":
         sources += sorted((ROOT / "hal/link").glob("*.c"))
         sources += [ROOT / name for name in ("boot/src/loader.c", "boot/src/sha256.c")]
-        sources += [hal / name for name in ("usb.c", "recovery.c", "recovery.S")]
+        sources += [hal / name for name in ("usb.c", "recovery.c")]
+        if (hal / "recovery.S").is_file():sources.append(hal / "recovery.S")
         sources += [ROOT / "kernel/development.c"]
         if kind == "os":
             sources += [ROOT / "kernel/platform_link.c"]
     sources += [ROOT / name for name in (
         "services/storage/block.c", "services/storage/fat32.c",
         "services/storage/storage.c", "services/state/store.c",
-        "services/update/update.c", "boot/src/persistent_enter.S")]
+        "services/update/update.c")]
+    sources += [hal / "persistent_enter.S"]
     sources += [hal / "ata.c"]
     if profile == "release":
         sources += [ROOT / "boot/src/sha256.c"]
@@ -236,6 +259,30 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         sources += [p for p in sorted((ROOT/'services/video').glob('*.c')) if p.name != 'video.c']
         sources += [ROOT/target_sources['video'] if 'video' in target_sources else ROOT/'services/video/video.c']
         sources += sorted((ROOT/'services/video').glob('*.S'))
+        if spec['media_video_backend'] == 'native-mp4':
+            flags += [f"-DLINNET_H264_MAX_WIDTH={spec['native_video']['h264_width']}",
+                      f"-DLINNET_H264_MAX_HEIGHT={spec['native_video']['h264_height']}"]
+            sources += [ROOT/'services/video/native/decoder.c',ROOT/'services/video/native/yuv.c']
+            sources += sorted((ROOT/'third_party/h264bsd').glob('*.c'))
+            if spec['cpu'] == 'arm926ej-s':
+                flags += ['-DLINNET_ARM926_YUV=1']
+                sources += [ROOT/'hal/arm926/yuv.S']
+            if spec.get('mpeg4_decoder') in ('pvmp4','s5l8702-vpu'):
+                flags += ['-DLINNET_MPEG4=1']
+                sources += [ROOT/'services/video/native/mpeg4_memory.c']
+                sources += [ROOT/('hal/s5l8702/mpeg4.cpp' if spec.get('mpeg4_decoder') == 's5l8702-vpu' else 'services/video/native/mpeg4.cpp')]
+                if spec.get('mpeg4_decoder') == 's5l8702-vpu':
+                    flags += ['-DLINNET_MPEG4_VPU=1']
+                    sources += [ROOT/'hal/s5l8702/mpeg4_vpu.c']
+                sources += [ROOT/'third_party/pvmp4'/name for name in (ROOT/'third_party/pvmp4/SOURCES').read_text().splitlines() if name]
+            decoder = spec.get('h264_decoder', 'software')
+            if decoder == 's5l8702-vpu' and spec['soc'] == 's5l8702':
+                flags += ['-DLINNET_H264_VPU=1']
+                sources += [ROOT/'hal/s5l8702/h264.c', ROOT/'hal/s5l8702/vpu.c']
+            elif decoder == 'software':
+                sources += [ROOT/'services/video/native/h264.c']
+            else:
+                raise ValueError(f'Unsupported H.264 decoder: {decoder}')
     if kind == 'os':
         flags += ['-DLINNET_BATTERY_GUARD=1']
         if profile!='release':flags += ['-DLINNET_AUDIO_CACHE_DIAGNOSTIC=1']
@@ -252,7 +299,13 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         obj = dest / (source.relative_to(ROOT).as_posix().replace("/", "_") + ".o")
         relative=source.relative_to(ROOT).as_posix()
         codec_flags=[]
-        if relative.startswith(('third_party/aac/','services/audio/aac/')):
+        if relative.startswith('third_party/h264bsd/'):
+            codec_flags=['-O3','-fomit-frame-pointer','-Wno-unused-parameter','-Wno-unused-but-set-variable','-include','services/video/native/compat.h']
+        elif relative.startswith('third_party/pvmp4/') or relative in ('services/video/native/mpeg4.cpp','hal/s5l8702/mpeg4.cpp'):
+            codec_flags=['-O3','-fomit-frame-pointer','-fno-exceptions','-fno-rtti','-DDEC_NOPOSTPROC','-Ithird_party/pvmp4/compat','-Ithird_party/pvmp4','-Wno-unused-parameter','-Wno-unused-but-set-variable','-Wno-sign-compare']
+        elif relative.startswith('services/video/native/') or relative == 'hal/s5l8702/h264.c':
+            codec_flags=['-O3','-fomit-frame-pointer']
+        elif relative.startswith(('third_party/aac/','services/audio/aac/')):
             codec_flags=['-Ithird_party/aac','-Ithird_party/aac/faad','-Ithird_party/aac/lib','-O3','-fomit-frame-pointer','-DCPU_ARM=1','-DARM_ARCH=4']
         elif source == generated/'linnet_ui.c' and ui_report['features'].get('cover_flow', False):
             codec_flags=['-O2']
@@ -307,7 +360,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
                   artifacts={key: str(path.relative_to(ROOT)) for key, path in dict(elf=elf, los=los, ipod=ipod, map=mapfile).items()},
                   memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=(8126464 if ui_report['features'].get('cover_flow',False) else 5505024) if kind=='os' else 1048576, retained_limit_bytes=spec['mailbox_bytes']),
                   release_exclusion=verification,
-                  limitation="FIQ watchdog depends on FIQ delivery; COP reset escalation requires a live COP monitor.")
+                  limitation=("FIQ watchdog depends on FIQ delivery; COP reset escalation requires a live COP monitor."
+                              if "coprocessor" in target_sources else "Watchdog recovery requires FIQ delivery."))
     if ui_report is not None:report["ui"]=ui_report
     (dest / (prefix + ".json")).write_text(json.dumps(report, indent=2) + "\n")
     return report

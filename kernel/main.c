@@ -35,7 +35,7 @@ static const uint8_t ln_build_id[32] = LINNET_BUILD_ID_BYTES;
 #endif
 #if defined(LINNET_AUDIO) && defined(LINNET_AUDIO_CACHE_DIAGNOSTIC)
 #define LN_CACHE_FIRST_MARK(phase) do { if(cache_first_cycle) \
-    *(volatile uint32_t *)(uintptr_t)0x11ffe098u=(phase); } while(0)
+    ln_platform_cache_marker(phase); } while(0)
 #else
 #define LN_CACHE_FIRST_MARK(phase) do { } while(0)
 #endif
@@ -67,7 +67,7 @@ _Noreturn void ln_panic(uint32_t reason, uint32_t pc, uint32_t status)
     if (ln_crash_encode(&record, encoded, sizeof encoded)) {
         volatile uint8_t *mailbox=ln_crash_mailbox;
 #if defined(LINNET_AUDIO)
-        mailbox=(volatile uint8_t *)((uintptr_t)mailbox|0x10000000u);
+        mailbox=(volatile uint8_t *)ln_platform_uncached_address((uintptr_t)mailbox);
 #endif
         for (unsigned i = 0; i < 4; ++i) mailbox[i] = 0;
         for (unsigned i = 4; i < sizeof encoded; ++i) mailbox[i] = encoded[i];
@@ -148,7 +148,7 @@ _Noreturn void ln_main(void)
 #if !defined(LINNET_PROFILE_RELEASE)
             ln_recovery_timeline_clock(2u);
 #endif
-            bool clock_ready=ln_core_clock_set(80000000u);
+            bool clock_ready=ln_core_clock_set(LINNET_ACTIVE_CLOCK_HZ);
 #if !defined(LINNET_PROFILE_RELEASE)
             ln_recovery_timeline_clock(clock_ready?3u:4u);
 #endif
@@ -168,17 +168,17 @@ _Noreturn void ln_main(void)
     bool platform_ready = ln_runtime_init();
     if (!platform_ready) ln_panic(30,0,0);
 #if defined(LINNET_AUDIO) && defined(LINNET_AUDIO_CACHE_DIAGNOSTIC)
-    *(volatile uint32_t *)(uintptr_t)0x11ffe098u=0xca0cu;
+    ln_platform_cache_marker(0xca0cu);
 #endif
 #endif
 #if !defined(LINNET_PROFILE_RELEASE)
     if (!ln_development_init()) ln_panic(17,0,0);
 #if defined(LINNET_AUDIO) && defined(LINNET_AUDIO_CACHE_DIAGNOSTIC)
-    *(volatile uint32_t *)(uintptr_t)0x11ffe098u=0xca0du;
+    ln_platform_cache_marker(0xca0du);
 #endif
     ln_recovery_arm();
 #if defined(LINNET_AUDIO) && defined(LINNET_AUDIO_CACHE_DIAGNOSTIC)
-    *(volatile uint32_t *)(uintptr_t)0x11ffe098u=0xca0eu;
+    ln_platform_cache_marker(0xca0eu);
 #endif
 #if LINNET_PROBE_CRASH
     __asm__ volatile(".word 0xe7f000f0");

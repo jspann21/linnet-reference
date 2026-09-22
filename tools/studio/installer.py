@@ -251,7 +251,7 @@ def installed_state(root, target_id):
             raise ValueError("confirmed image differs from boot metadata")
         return dict(state="installed", present=len(present), required=len(CORE_FILES),
                     build_id=build_id, profile=confirmed["profile"], build="user" if confirmed["profile"] == "release" else "dev", images=images,
-                    candidate_pending=bool(selected[3]))
+                    candidate_pending=selected[0][53] != 255 or bool(selected[3]))
     except (ValueError, OSError, KeyError, struct.error) as error:
         return dict(state="invalid", present=len(present), required=len(CORE_FILES), detail=str(error))
 
@@ -453,7 +453,17 @@ def assess(identity):
             others.append(name)
     if rockbox["present"]:
         others.insert(0, "Rockbox")
-    if external_rockbox and linnet["state"] != "absent":
+    native = identity.get("native_target_id") == target_id and install_spec["boot_layout"] == "s5l-nor"
+    if native and linnet["state"] == "installed":
+        action, strategy = "replace", "native-volume"
+        summary = "Linnet is installed. Update the OS through native Disk Mode, preserving the confirmed OS for rollback."
+    elif native and linnet["state"] in ("absent", "incomplete"):
+        action, strategy = "install", "native-volume"
+        summary = "Native Boot is running. Install Linnet on this iPod; an interrupted initial installation requires the same build."
+    elif not install_spec["enabled"]:
+        action, strategy = "unsupported", None
+        summary = spec.get("bringup_blocker", "This target is recognized, but installation is not enabled for it.")
+    elif external_rockbox and linnet["state"] != "absent":
         action, strategy = "adopt", "rockbox-file"
         summary = ("Rockbox is the current default boot. The existing Linnet files can be "
                    "preserved before switching back to Linnet.")
@@ -486,19 +496,36 @@ def assess(identity):
         linnet, rockbox, others, marker, action, resume,
         active_override="rockbox" if external_rockbox else None)
     installation_methods, default_method = _installation_methods(action, rockbox, marker, resume)
+    if native:
+        available = linnet["state"] in ("installed", "absent", "incomplete") and not linnet.get("candidate_pending")
+        initial = linnet["state"] in ("absent", "incomplete")
+        boot_options = [option for option in boot_options if option["kind"] == "linnet"]
+        for option in boot_options:
+            option["selectable"] = available
+        installation_methods = [dict(id="native-volume", label="Install Linnet" if initial else "Update installed Linnet",
+            detail="Install the OS and safely eject to start Linnet." if initial else "Publish an OS update to the inactive slot. Safely eject to start it; the confirmed OS is retained for rollback.",
+            strategy="native-volume", enabled=available, requires_admin=False)]
+        default_method = "native-volume"
+    elif not install_spec["enabled"]:
+        installation_methods, default_method = [], None
+        for option in boot_options:
+            option["selectable"] = False
+            option["active"] = False
+            if option["id"] == "apple":
+                option["detail"] = "Apple Disk Mode detected; normal firmware startup has not been verified."
     return dict(checked_at=_now(), identity=identity,
                 target=dict(id=target_id, name=spec["name"],
-                            installer_enabled=install_spec["enabled"], boot_layout=install_spec["boot_layout"],
+                            installer_enabled=install_spec["enabled"] or native, boot_layout=install_spec["boot_layout"],
                             wrapper_model=expected_model),
-                retail_os=True, linnet=linnet, rockbox=rockbox, other_installations=others,
+                retail_os=not native, linnet=linnet, rockbox=rockbox, other_installations=others,
                 boot_options=boot_options, installation_methods=installation_methods,
                 default_installation_method=default_method,
                 recovery=marker, resume=resume, action=action, strategy=strategy, summary=summary,
                 preservation=dict(formats_disk=False, repartitions_disk=False, deletes_media=False,
-                                  overwrites_existing_linnet_files=False, archives_previous_linnet=True,
+                                  overwrites_existing_linnet_files=native, archives_previous_linnet=not native,
                                   preserves_settings=True, preserves_media_libraries=True,
                                   archive_contains_superseded_system_files_only=True,
-                                  original_boot_backed_up=True))
+                                  original_boot_backed_up=not native))
 
 
 def _run_build(arguments):
@@ -936,6 +963,16 @@ def install(identity, progress=lambda _message: None, build="user", installation
     if not method or not method["enabled"]:
         raise ValueError("the selected Linnet installation method is unavailable")
     strategy = method["strategy"]
+    if strategy == "native-volume":
+        from tools.studio.native_update import publish
+        profile = "release" if build == "user" else "dev"
+        arguments = ["--target", reviewed["identity"]["target_id"], "--profile", profile, "--kind", "os", "--verify"]
+        if profile == "dev":
+            arguments += ["--device-serial", reviewed["identity"]["linnet_usb_serial"]]
+        progress("Building Linnet for this iPod…")
+        report = _run_build(arguments)
+        progress("Writing and verifying Linnet…")
+        return publish(reviewed["identity"], ROOT / report["artifacts"]["los"])
     previous_boot = _previous_boot(reviewed)
     identity = reviewed["identity"]
     archive = (_archive_destination(identity["root"])

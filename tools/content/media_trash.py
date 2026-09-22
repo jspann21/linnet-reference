@@ -74,7 +74,7 @@ def recover(identity, token, *, erase=False):
             relative = source.relative_to(trash)
             if relative.as_posix() in ('INDEX.VID.before', 'LIBRARY.PDB.before', 'COVERS.CFL.before'):
                 continue
-            allowed = relative.parts[0] in media.KINDS or relative.parts[:2] == ('iPod_Control', 'Music') or relative.as_posix() in ('.LINNET/LIBRARY.PDB', '.LINNET/PHOTOS/LIBRARY.PIM', '.LINNET/NOTES/LIBRARY.NNT') or (relative.parent.as_posix() == '.LINNET/VIDEOS' and relative.suffix.lower() in ('.ipv', '.ipvf', '.mp4', '.m4v'))
+            allowed = relative.parts[0] in media.KINDS or relative.parts[:2] == ('iPod_Control', 'Music') or relative.as_posix() in ('.LINNET/LIBRARY.PDB', '.LINNET/PHOTOS/LIBRARY.PIM', '.LINNET/NOTES/LIBRARY.NNT') or (relative.parent.as_posix() == '.LINNET/VIDEOS' and relative.suffix.lower() in ('.ipv', '.ipvf', '.mp4', '.m4v', '.mov'))
             if not allowed:
                 raise ValueError('Unexpected file in Trash; inspect the report before restoring.')
             destination = root / relative

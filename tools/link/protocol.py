@@ -74,6 +74,7 @@ class Command(IntEnum):
     NATIVE_CHUNK = 101
     NATIVE_APPLY = 102
     NATIVE_STATUS = 103
+    BOOTSTRAP_CONTROL = 0x7f00
 
 
 class ProtocolError(ValueError):

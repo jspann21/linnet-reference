@@ -2,7 +2,7 @@
  * The Apple ROM must have initialized VMCS. No copied firmware is embedded. */
 #include "targets/video5g-m25/lcd.h"
 #include "hal/api/platform.h"
-#include "targets/video5g-m25/boot_font.h"
+#include "ui/profiles/color320/boot_font.h"
 #if defined(LINNET_IMAGE_BOOT)
 #include "targets/video5g-m25/boot_wordmark.h"
 #endif

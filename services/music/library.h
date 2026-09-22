@@ -88,6 +88,10 @@ bool ln_music_library_take_track_record(struct ln_music_track *out);
 bool ln_music_library_track_ids(uint32_t first);
 bool ln_music_library_take_track_ids(uint64_t ids[LN_MUSIC_ID_BATCH],uint32_t *count);
 bool ln_music_library_group(uint32_t group_index);
+bool ln_music_library_group_range(uint32_t kind,uint32_t *first,uint32_t *count);
+bool ln_music_library_albums(uint32_t artist,uint32_t *out,uint32_t capacity,uint32_t *count);
+bool ln_music_library_group_members(uint32_t group_index,uint32_t ordinal);
+bool ln_music_library_take_members(uint32_t indices[LN_MUSIC_ID_BATCH],uint32_t *count);
 /* Range searches need the record kind, not its display name. */
 bool ln_music_library_group_record(uint32_t group_index);
 bool ln_music_library_take_group(struct ln_music_group *out,char name[256]);

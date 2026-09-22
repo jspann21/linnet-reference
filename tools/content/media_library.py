@@ -21,7 +21,7 @@ def _device_path(root, value):
     media_folder = len(parts) >= 3 and (parts[1].casefold() in ('videos', '.linnet') or
                    (len(parts) >= 4 and parts[1].casefold() in ('ipod_control', 'ipod_c~1')
                     and parts[2].casefold() == 'music'))
-    if not media_folder or PurePosixPath(value).suffix.lower() not in ('.ipv', '.ipvf', '.mp4', '.m4v'):
+    if not media_folder or PurePosixPath(value).suffix.lower() not in ('.ipv', '.ipvf', '.mp4', '.m4v', '.mov'):
         raise ValueError('Unsupported catalog media path')
     path = root.joinpath(*parts[1:])
     _plain(path, root)
@@ -120,7 +120,7 @@ def list_items(identity, *, records_by_kind=None):
     if video_dir.exists():
         _plain(video_dir, Path(video_dir.anchor))
         for path in sorted(video_dir.iterdir()):
-            if path.suffix.lower() not in {'.ipvf', '.mp4', '.m4v'}:
+            if path.suffix.lower() not in {'.ipvf', '.mp4', '.m4v', '.mov'}:
                 continue
             _plain(path, cache)
             if not path.is_file():
@@ -264,7 +264,7 @@ def organize_videos(identity):
                     continue
                 destination = source
                 if source.parent == catalog.parent:
-                    extension = source.suffix.lower() if source.suffix.lower() in ('.mp4', '.m4v') else '.ipvf'
+                    extension = source.suffix.lower() if source.suffix.lower() in ('.mp4', '.m4v', '.mov') else '.ipvf'
                     filename = video_filename(title, extension)
                     destination = source.with_name(filename)
                     if destination.exists() and destination != source:
@@ -478,6 +478,15 @@ def _remove(identity, items):
             if music_index.read_bytes() != music_after:
                 raise OSError('Music index update verification failed')
             report['music_updated'] = True
+            from .browse import prepare as prepare_browse
+            browse_index = music_index.with_name('BROWSE.BIN')
+            browse_temporary = music_index.with_name('B' + token[:7].upper() + '.TMP')
+            _plain(browse_index, root); _plain(browse_temporary, root); _volume_guard(identity)
+            browse_data = prepare_browse(music_after)
+            _write_verified(browse_temporary, browse_data, 'Browse index verification failed')
+            os.replace(browse_temporary, browse_index)
+            if browse_index.read_bytes() != browse_data:
+                raise OSError('Browse index update verification failed')
             if cover_temporary is not None:
                 _volume_guard(identity); _plain(cover_index, root)
                 if _hash(cover_index) != cover_before['sha256']:

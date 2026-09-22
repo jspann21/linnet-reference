@@ -361,13 +361,22 @@ static int next_cluster(struct ln_fat32*f){
 static int bpb(struct ln_fat32*f){
     const uint8_t*p=f->sector;
     uint32_t spc=p[13],reserved=ln_read_le16(p+14),fats=p[16],total=ln_read_le32(p+32),fat=ln_read_le32(p+36);
-    uint16_t flags=ln_read_le16(p+40),fsinfo=ln_read_le16(p+48),backup=ln_read_le16(p+50);
-    if(p[510]!=0x55||p[511]!=0xaa||ln_read_le16(p+11)!=512||!spc||spc>128||(spc&(spc-1u))||
+    uint32_t sector_bytes=ln_read_le16(p+11),fsinfo=ln_read_le16(p+48),backup=ln_read_le16(p+50);
+    uint16_t flags=ln_read_le16(p+40);
+    if(p[510]!=0x55||p[511]!=0xaa||sector_bytes<512||sector_bytes>4096||(sector_bytes&(sector_bytes-1u))||!spc||spc>128||(spc&(spc-1u))||
        !reserved||(fats!=1&&fats!=2)||ln_read_le16(p+17)||ln_read_le16(p+19)||ln_read_le16(p+22)||
        !total||total>f->partition_sectors||!fat||ln_read_le16(p+42)||
        (flags&0xff70u)||((flags&0x80u)&&(flags&15u)>=fats)||
        (fsinfo!=0xffffu&&fsinfo>=reserved)||(backup!=0xffffu&&backup>=reserved))
         return LN_FAT32_FORMAT;
+    /* The block API always addresses 512-byte units. Normalize BPB geometry
+     * once so FAT pages, directory entries and file offsets share that unit. */
+    uint32_t scale=sector_bytes>>9;
+    if((uint64_t)total*scale>UINT32_MAX||(uint64_t)total*scale>f->partition_sectors||
+       (uint64_t)fat*scale>UINT32_MAX)return LN_FAT32_FORMAT;
+    total*=scale;fat*=scale;reserved*=scale;spc*=scale;
+    if(fsinfo!=0xffffu)fsinfo*=scale;
+    if(backup!=0xffffu)backup*=scale;
     uint64_t metadata=reserved+(uint64_t)fats*fat;
     if(metadata>=total)return LN_FAT32_FORMAT;
     uint8_t shift=0;while((1u<<shift)!=spc)++shift;
@@ -376,8 +385,8 @@ static int bpb(struct ln_fat32*f){
         return LN_FAT32_FORMAT;
     f->root=ln_read_le32(p+44);f->clusters=clusters;
     if(!cluster_valid(f,f->root))return LN_FAT32_FORMAT;
-    f->sectors_per_cluster=(uint8_t)spc;f->cluster_shift=shift;
-    f->reserved=(uint16_t)reserved;f->fats=(uint8_t)fats;
+    f->sectors_per_cluster=(uint16_t)spc;f->cluster_shift=shift;
+    f->reserved=reserved;f->fats=(uint8_t)fats;
     f->mirrored=(flags&0x80u)?0:1;f->active_fat=f->mirrored?0:(uint8_t)(flags&15u);
     f->fat_sectors=fat;f->total=total;f->fat_start=f->partition+reserved;
     f->data_start=f->partition+metadata;

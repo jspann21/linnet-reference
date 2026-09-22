@@ -753,7 +753,7 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
             cache = _MetadataCache(cache_file)
         if output.exists():
             # Preserve unrelated staged content without copying obsolete music.
-            managed = {"MUSIC", "ART", "COVERS.CFL", "LIBRARY.PDB", "LIBRARY.TMP", "music-manifest.json"}
+            managed = {"MUSIC", "ART", "COVERS.CFL", "BROWSE.BIN", "LIBRARY.PDB", "LIBRARY.TMP", "music-manifest.json"}
             shutil.copytree(output, prepared, dirs_exist_ok=True, symlinks=True,
                             ignore=lambda directory, names: [name for name in names
                                 if Path(directory) == output and name in managed])
@@ -1115,6 +1115,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     keys = sorted(groups, key=lambda key: (key[0], key[1].casefold(), key[2].casefold(), key))
     group_indices = {key: index for index, key in enumerate(keys)}
     group_records, members, group_ids = [], [], set()
+    member_spans = {}
     track_order = [(entry["disc"], entry["track"], entry["title"].casefold(), i)
                    for i, entry in enumerate(entries)]
     for key in keys:
@@ -1127,9 +1128,12 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         if identity in group_ids:
             raise ValueError("stable group identifier collision")
         group_ids.add(identity)
+        span = tuple(indices)
+        if span not in member_spans:
+            member_spans[span] = len(members)
+            members.extend(indices)
         group_records.append(struct.pack("<IIIIIIQ", kind, string(name, parent if kind == 2 else None), parent_index,
-            len(members), len(indices), 0, identity))
-        members.extend(indices)
+            member_spans[span], len(indices), 0, identity))
     search = [(entry["title"].casefold(), i) for i, entry in enumerate(entries)]
     search += [(key[1].casefold(), 0x80000000 | i) for i, key in enumerate(keys) if key[0] in (1, 2)]
     search.sort()
@@ -1180,6 +1184,8 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     temporary = output / "LIBRARY.TMP"
     temporary.write_bytes(database)
     temporary.replace(output / "LIBRARY.PDB")
+    from .browse import prepare as prepare_browse
+    (output / "BROWSE.BIN").write_bytes(prepare_browse(database))
     if coverflow_enabled:
         from .coverflow import prepare
         prepare(database, output, output / 'COVERS.CFL', originals=coverflow_originals,
@@ -1217,12 +1223,16 @@ def remove_database_tracks(data: bytes, removed) -> bytes:
     kept_groups.update(group_rows[i][2] for i in tuple(kept_groups) if group_rows[i][0] == 2)
     group_map = {old: new for new, old in enumerate(sorted(kept_groups))}
     packed_groups, packed_members = [], []
+    member_spans = {}
     for i in group_map:
         row = group_rows[i]
         if row[0] == 2:
             row[2] = group_map[row[2]]
-        row[3], row[4] = len(packed_members), len(kept_members[i])
-        packed_members.extend(kept_members[i])
+        span = tuple(kept_members[i])
+        if span not in member_spans:
+            member_spans[span] = len(packed_members)
+            packed_members.extend(span)
+        row[3], row[4] = member_spans[span], len(span)
         packed_groups.append(struct.pack('<IIIIIIQ', *row))
     packed_search = []
     for i in range(searches):

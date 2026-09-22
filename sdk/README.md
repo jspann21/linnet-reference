@@ -138,7 +138,7 @@ Target editions live in `targets/<target>/themes/*/theme.toml` and replace a
 shared manifest with the same ID for that target only. Duplicate IDs within
 one scope are rejected. Keep target editions explicitly restricted with
 `targets = ["<target>"]`. M25 uses its native screens and the complete 320 × 240
-layouts in `tools/content/video_layouts.py`; it does not scale Photo geometry.
+layouts in `ui/profiles/color320/layouts.py`; it does not scale Photo geometry.
 Its default remains `linnet.theme.default` (Linnet).
 
 The bundled `linnet.theme.album-colors` theme uses `[theme] style="album-art"`.

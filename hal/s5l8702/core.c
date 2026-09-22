@@ -1,0 +1,157 @@
+#include "hal/api/core.h"
+#include "hal/api/audio.h"
+#include "hal/api/platform.h"
+#include "hal/arm926/cache.h"
+#include "hal/arm926/mmu.h"
+#include "irq.h"
+#include "timer.h"
+#include "watchdog.h"
+#include "registers.h"
+#include "board.h"
+static struct ln_core_status state;
+static volatile uint32_t wakes;
+static uint32_t clock_failure;
+static bool initialized;
+static bool pll2_owned;
+static uint32_t saved_sm1;
+static bool saved_sm1_valid;
+#ifdef LINNET_SRAM_MONITOR
+static uint32_t table[4096] __attribute__((section(".dram.mmu"),aligned(16384)));
+#else
+static uint32_t table[4096] __attribute__((aligned(16384)));
+#endif
+static void interrupt(uint32_t first,uint32_t second) {
+    uint32_t started=ln_time_us();state.irq_count++;
+    if((first&(1u<<7)) && ln_s5l_deadline_pending()) {
+        ln_s5l_deadline_stop();wakes|=LINNET_WAKE_TIMER;first&=~(1u<<7);
+    }
+#if defined(LINNET_AUDIO) || defined(LINNET_SRAM_MONITOR)
+    if(first&(1u<<16)){ln_audio_irq();first&=~(1u<<16);}
+#endif
+    if(first || second) {
+        state.unexpected_irq++;
+        for(unsigned n=0;n<32;n++) {
+            if(first&(1u<<n))ln_s5l_irq_enable(n,false);
+            if(second&(1u<<n))ln_s5l_irq_enable(n+32,false);
+        }
+    }
+    uint32_t elapsed=ln_time_us()-started;
+    if(elapsed>state.irq_max_us)state.irq_max_us=elapsed;
+}
+bool ln_core_init(void) {
+    state=(struct ln_core_status){0};wakes=0;
+    ln_s5l_irq_init(interrupt);ln_s5l_deadline_stop();ln_s5l_irq_enable(7,true);
+#ifndef LINNET_SRAM_MONITOR
+    ln_core_watchdog_arm();
+#endif
+    uint32_t started=ln_time_us(),budget=100000;
+    while(ln_time_us()==started)if(!budget--)return false;
+    state.timer_valid=1;state.sdram_valid=1;
+    state.clock_hz=108000000u;
+    uint32_t flags=ln_s5l_irq_save();ln_s5l_irq_restore(flags&~0x80u);
+    initialized=true;return true;
+}
+uint32_t ln_core_irq_save(void){return ln_s5l_irq_save();}
+void ln_core_irq_restore(uint32_t flags){ln_s5l_irq_restore(flags);}
+void ln_core_irq_dispatch(void){ln_s5l_irq_dispatch();}
+uint32_t ln_core_take_wakes(void) {
+    uint32_t flags=ln_s5l_irq_save(),result=wakes;wakes=0;
+    ln_s5l_irq_restore(flags);return result;
+}
+void ln_core_idle_until(uint32_t deadline) {
+    if(!initialized)return;
+    uint32_t flags=ln_s5l_irq_save(),start=ln_time_us();
+    int32_t delay=(int32_t)(deadline-start);
+    /* USB and clickwheel currently use their bounded foreground pollers. */
+    if(delay>1000)delay=1000;
+    if(delay>0 && ln_s5l_deadline_arm((uint32_t)delay)) {
+        ln_s5l_irq_wait();state.idle_count++;state.idle_us+=ln_time_us()-start;
+    }
+    ln_s5l_irq_restore(flags);
+    int32_t late=(int32_t)(ln_time_us()-deadline);
+    if(late>0 && (uint32_t)late>state.deadline_late_us)state.deadline_late_us=(uint32_t)late;
+}
+void ln_core_usb_rearm(void){wakes|=LINNET_WAKE_USB;}
+void ln_core_input_rearm(void){wakes|=LINNET_WAKE_INPUT;}
+void ln_core_snapshot(struct ln_core_status *out) {
+    if(!out)return;
+    uint32_t flags=ln_s5l_irq_save();
+    state.clock_source=LN_REG(0x3c500004u);state.pll_control=LN_REG(0x3c500020u);
+    state.cache_control=ln_arm926_cache_control();state.wake_sources=wakes;*out=state;
+    ln_s5l_irq_restore(flags);
+}
+bool ln_core_clock_set(uint32_t hz) {
+    uint32_t source=LN_REG(0x3c500000u)&0xffffu,divs=LN_REG(0x3c500004u);
+    bool normal=source==0x1000u&&divs==0x00404101u;
+    bool boosted=source==0x3000u&&(divs==0x00414301u||divs==0x00404303u)&&LN_REG(0x3c500028u)==0x01002401u;
+    if((hz!=108000000u&&hz!=216000000u)||LN_REG(0x3c500020u)!=0x01002402u||(!normal&&!boosted)){clock_failure=1;return false;}
+    if(hz==216000000u&&!boosted){
+        uint32_t mode=LN_REG(0x3c500044u);
+        if((mode&4u)&&(LN_REG(0x3c500028u)!=0x01002401u||(mode&64u))){clock_failure=1;return false;}
+        uint32_t sm1=LN_REG(0x38501000u);if((sm1&15u)>7u){clock_failure=1;return false;}
+        if(!ln_s5l_board_cpu_voltage(true)){(void)ln_s5l_board_cpu_voltage(false);clock_failure=2;return false;}
+        if(!(mode&4u)){
+            LN_REG(0x3c500028u)=0x01002401u;LN_REG(0x3c500038u)=32400u;
+            LN_REG(0x3c500044u)=(mode&~64u)|4u;pll2_owned=true;
+        }
+        uint32_t began=ln_time_us();
+        while((LN_REG(0x3c500040u)&0x44u)!=0x44u){
+            if(ln_time_us()-began>=10000u){
+                if(pll2_owned){LN_REG(0x3c500044u)&=~4u;pll2_owned=false;}
+                (void)ln_s5l_board_cpu_voltage(false);clock_failure=4;return false;
+            }
+        }
+        LN_REG(0x3c500044u)|=1u<<18;
+        /* CPU=216 MHz, HClk=108 MHz, PClk=27 MHz. Raise APB and SRAM
+         * dividers before switching sources; preserve their original rates. */
+        uint32_t flags=ln_s5l_irq_save();
+        saved_sm1=sm1;saved_sm1_valid=true;
+        LN_REG(0x38501000u)=(sm1&~15u)|(((sm1&15u)+1u)*2u-1u);
+        LN_REG(0x3c500004u)=0x00404303u;
+        LN_REG(0x3c500000u)=(LN_REG(0x3c500000u)&0xffff0000u)|0x3000u;
+        ln_s5l_irq_restore(flags);
+    }else if(hz==108000000u&&boosted){
+        uint32_t flags=ln_s5l_irq_save();
+        LN_REG(0x3c500000u)=(LN_REG(0x3c500000u)&0xffff0000u)|0x1000u;
+        LN_REG(0x3c500004u)=0x00404101u;
+        if(divs==0x00404303u){
+            uint32_t sm1=LN_REG(0x38501000u);
+            LN_REG(0x38501000u)=saved_sm1_valid?saved_sm1:(sm1&~15u)|(((sm1&15u)+1u)/2u-1u);
+            saved_sm1_valid=false;
+        }
+        ln_s5l_irq_restore(flags);
+        if(pll2_owned){LN_REG(0x3c500044u)&=~(1u<<18);LN_REG(0x3c500044u)&=~4u;pll2_owned=false;}
+        if(!ln_s5l_board_cpu_voltage(false)){state.clock_hz=108000000u;clock_failure=2;return false;}
+    }
+    bool valid=(LN_REG(0x3c500000u)&0xffffu)==(hz==108000000u?0x1000u:0x3000u)&&
+        LN_REG(0x3c500004u)==(hz==108000000u?0x00404101u:0x00404303u);
+    clock_failure=valid?0:5;if(valid)state.clock_hz=hz;return valid;
+}
+uint32_t ln_core_clock_failure(void){return clock_failure;}
+bool ln_core_cop_pause(bool paused){(void)paused;return true;}
+bool ln_core_cache_enable(void) {
+    uint32_t flags=ln_s5l_irq_save();
+    bool ok=ln_arm926_mmu_enable(table,0x08000000u,0x04000000u);
+    ln_s5l_irq_restore(flags);return ok;
+}
+bool ln_core_cache_clean(void){ln_arm926_data_clean();return true;}
+bool ln_core_cache_disable(void) {
+    uint32_t flags=ln_s5l_irq_save();bool ok=ln_arm926_mmu_disable();
+    ln_s5l_irq_restore(flags);return ok;
+}
+#ifndef LINNET_SRAM_MONITOR
+bool ln_core_delay_us(uint32_t delay) {
+    if(delay>100000u)return false;
+    uint32_t started=ln_time_us(),budget=20000000;
+    while(ln_time_us()-started<delay)if(!budget--)return false;
+    ln_core_watchdog_feed();
+    return true;
+}
+#endif
+void ln_core_watchdog_arm(void) {
+    if(ln_s5l_watchdog_timer(1000))ln_s5l_watchdog_route(false);
+}
+void ln_core_watchdog_feed(void){ln_s5l_watchdog_feed();}
+void ln_core_watchdog_disarm(void) {
+    __asm__ volatile("msr cpsr_c,#0xd3":::"memory");ln_s5l_watchdog_stop();
+}

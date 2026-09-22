@@ -33,7 +33,8 @@ def record(payload, generation=1):
 
 def initial_metadata(image):
     identity = inspect(image)
-    if len(image) > image_capacity(identity['target_id']) or identity['load_address'] != 0:
+    if (len(image) > image_capacity(identity['target_id']) or
+            identity['load_address'] != TARGETS[identity['target_id']]['load_address']):
         raise ValueError('persistent image exceeds the RAM staging policy')
     boot = bytearray(32)
     struct.pack_into('<4sIII3B', boot, 0, b'BOOT', 0, 0, 0, 0, 255, 0)
@@ -103,20 +104,26 @@ def _mount_identity(mount, serial):
     resolved = mount.resolve(strict=True)
     if not re.fullmatch(r'[A-Za-z]:\\', str(resolved)):
         raise ValueError('mount must be a drive root')
-    letter = resolved.drive[0]
-    script = f"""$ErrorActionPreference='Stop'
-    $p=Get-Partition -DriveLetter {letter}
-    $d=Get-Disk -Number $p.DiskNumber
-    $v=Get-Volume -DriveLetter {letter}
-    $w=Get-CimInstance Win32_DiskDrive | Where-Object Index -eq $p.DiskNumber
-    if ($v.FileSystem -ne 'FAT32' -or $d.LogicalSectorSize -ne 512 -or $w.Model -ne 'Apple iPod USB Device' -or $d.IsBoot -or $d.IsSystem -or $d.BusType -ne 'USB') {{ throw 'Unexpected storage target' }}
-    if ($w.SerialNumber.Trim() -ne '{serial}') {{ throw 'Physical serial mismatch' }}
-    @{{disk_number=$p.DiskNumber;serial=$w.SerialNumber.Trim();size=$d.Size;partition_offset=$p.Offset;partition_size=$p.Size;volume_id=$v.UniqueId}} | ConvertTo-Json -Compress
-    """
-    result = subprocess.run(['powershell', '-NoProfile', '-Command', script],
-                            capture_output=True, text=True, timeout=15, check=True,
-                            creationflags=subprocess.CREATE_NO_WINDOW)
-    return resolved, json.loads(result.stdout)
+    from tools.inspect.retail_device import detect
+    from tools.content.publish import inspect_target
+    device=detect(resolved)
+    if device['device_id'] != serial:
+        raise ValueError('Physical serial mismatch')
+    storage=device['storage']
+    # Obtain the volume serial through the ordinary logical-volume API.
+    from ctypes import wintypes as w
+    import ctypes
+    value=w.DWORD()
+    kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+    kernel.GetVolumeInformationW.argtypes=[w.LPCWSTR,w.LPWSTR,w.DWORD,ctypes.POINTER(w.DWORD),ctypes.c_void_p,ctypes.c_void_p,w.LPWSTR,w.DWORD]
+    kernel.GetVolumeInformationW.restype=w.BOOL
+    if not kernel.GetVolumeInformationW(str(resolved),None,0,ctypes.byref(value),None,None,None,0):
+        raise ctypes.WinError(ctypes.get_last_error())
+    checked=inspect_target(storage['disk_number'],serial,f'{value.value:08X}',resolved.drive)
+    return resolved,dict(disk_number=checked['disk_number'],serial=serial,size=checked['disk_bytes'],
+                         partition_offset=checked['partition_offset'],partition_size=checked['partition_bytes'],
+                         volume_id=checked['volume_unique_id'],target_id=device['target_id'])
+
 
 
 def provision(package, mount, serial):
@@ -150,6 +157,8 @@ def provision(package, mount, serial):
     if any(content[name] != record(b'') for name in ('STATE0.BIN', 'STATE1.BIN')) or any(content['SCRATCH.BIN']):
         raise ValueError('initial state/scratch content mismatch')
     root, identity = _mount_identity(mount, serial)
+    if identity['target_id'] != manifest['target_id']:
+        raise ValueError('Provisioning package targets a different device')
     destination = root / '.LINNET'
     _plain(destination, root)
     if destination.exists() and (destination.is_symlink() or destination.resolve().parent != root):

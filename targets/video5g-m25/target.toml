@@ -17,6 +17,7 @@ stage_bytes = 8388608
 recovery_snapshot_address = 31457280
 recovery_snapshot_bytes = 1048576
 storage_max_read_sectors = 384
+presentation_profile = "color320"
 lcd_width = 320
 lcd_height = 240
 lcd_format = "rgb565"
@@ -30,6 +31,7 @@ media_video_color = "rgb565"
 media_video_backend = "bcm-mp4"
 media_video_extensions = [".mp4", ".m4v"]
 cop_display = false
+runtime_policy = { resident_monitor = true, display_pipeline = true, audio_render_reserve = true, music_browse_index = true, extended_sound = true }
 entry_address = 0
 load_address = 0
 mailbox_address = 33550336
@@ -65,6 +67,7 @@ music_titles_bytes = 851968
 coverflow_catalog_slots = 1024
 
 [native_video]
+sample_bytes = 65536
 h264_width = 320
 h264_height = 240
 h264_level = 13

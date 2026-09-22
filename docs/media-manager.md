@@ -120,6 +120,11 @@ the installed Linnet build is shown separately as inactive files on the device.
 3. Check the types to prepare. Uncheck a type to skip it without removing files.
    Use **Choose music…** to select audio files from the computer to copy into the
    iPod's Music folder and include in the prepared song library.
+   Additions are copied in batches of up to 16 files or 64 MiB (a larger file
+   runs alone), then saved and verified before being accepted. The progress
+   message distinguishes copying, saving, and verification. This reduces
+   switching between disk writes and reads on large imports. Stopping retains
+   accepted files; unfinished copies are cleaned up.
    Use **Choose videos…** to open one video preparation window. Select originals
    already in the iPod's Videos folder for conversion, or add videos from the
    computer to the conversion list. Native `.ipv` and `.ipvf` files already on

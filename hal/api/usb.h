@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 /* Development CDC ACM. The selected platform owns the DMA reservation.
- * Caller must enter with the platform cache disabled.
+ * Caller must enter with the platform data cache disabled.
  * Stable serial is 1..32 ASCII characters derived from physical identity. */
 bool ln_usb_init(const char *stable_serial);
 /* Bounded nonblocking service; false means controller/transfer failure. */

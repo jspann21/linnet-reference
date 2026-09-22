@@ -1,0 +1,5 @@
+PacketVideo MPEG-4 decoder (Apache-2.0)
+https://android.googlesource.com/platform/external/opencore/
+Commit: 61bf9af643abf0011dcf82ae8a436aeb7e8aae97
+Path: codecs_v2/video/m4v_h263/dec
+Unmodified decoding sources; OSCL compatibility is supplied by Linnet.

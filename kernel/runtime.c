@@ -645,7 +645,7 @@ bool ln_runtime_init(void){
 #endif
     ln_exec_init(&executive);ln_arena_init(&scene_arena,scene_memory,sizeof scene_memory);
     if(!ln_core_init())ln_panic(30,1,0);
-    if(!ln_core_clock_set(80000000u)){
+    if(!ln_core_clock_set(LINNET_ACTIVE_CLOCK_HZ)){
         uint32_t cop[8];ln_display_cop_diagnostics(cop);
         ln_panic(30,2,(ln_core_clock_failure()<<16)|cop[0]);
     }
@@ -664,7 +664,7 @@ bool ln_runtime_init(void){
     if(!ln_display_init())ln_panic(30,5,ln_display_init_error());
 #if defined(LINNET_AUDIO)
     /* Correct the resident monitor before the first COP presentation. */
-    if(!ln_display_upgrade_monitor())ln_panic(30,12,ln_display_cop_error());
+    if(LINNET_RESIDENT_MONITOR && !ln_display_upgrade_monitor())ln_panic(30,12,ln_display_cop_error());
 #if defined(LINNET_VIDEO)
     /* Select the buffer layout before the first presentation. */
     ln_display_column_mode(ln_display_upgrade_blit());
@@ -702,7 +702,7 @@ bool ln_runtime_init(void){
      * the CPU cache; scanout/audio DMA publish through uncached aliases. */
     if(!ln_core_cache_enable())ln_panic(30,11,0);
 #if defined(LINNET_AUDIO_CACHE_DIAGNOSTIC)
-    *(volatile uint32_t *)(uintptr_t)0x11ffe098u=0xca0bu;
+    ln_platform_cache_marker(0xca0bu);
 #endif
 #endif
     LN_BOOT_STAMP(LN_BT_OS_RUNTIME_END);
@@ -988,7 +988,7 @@ void ln_runtime_step(void){
     }
     clock_save_step();
 #endif
-#if defined(LINNET_TARGET_VIDEO5G_M25)
+#if LINNET_DISPLAY_PIPELINE
     bool render_ready=!sleeping&&ln_display_can_render();
 #if defined(LINNET_NATIVE_UI)
     /* Confirm the first frame of a theme before overlapping later frames. */
@@ -997,10 +997,10 @@ void ln_runtime_step(void){
 #else
     bool render_ready=!sleeping&&!ln_display_busy();
 #endif
-#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_COVERFLOW)
-    if(render_ready&&ln_coverflow_active()){
+#if LINNET_AUDIO_RENDER_RESERVE && defined(LINNET_AUDIO)
+    if(render_ready){
         struct ln_audio_status audio;ln_audio_snapshot(&audio);
-        /* Cover drawing and PIO share the decoder's CPU. Keep a PCM reserve
+        /* Drawing and PIO share the decoder's CPU. Keep a PCM reserve
          * before starting another frame, including during sustained wheel input. */
         if(audio.playing&&!audio.paused&&audio.queued<LINNET_AUDIO_RING_FRAMES/2u){
             struct ln_player_status player;ln_player_snapshot(&player);
@@ -1021,7 +1021,8 @@ void ln_runtime_step(void){
             if(video_scene()){
                 const struct ln_ui_asset *asset=ln_video_asset();
                 const struct ln_ui_scene *c=&ln_ui_scenes[shell->scene];
-                if(asset&&asset->pixels&&asset->width==LINNET_VIDEO_WIDTH&&asset->height==LINNET_VIDEO_HEIGHT&&c->nodes){
+                if(asset&&asset->pixels&&asset->width&&asset->width<=LINNET_VIDEO_WIDTH&&
+                   asset->height&&asset->height<=LINNET_VIDEO_HEIGHT&&c->nodes){
                     for(uint32_t i=0;i<c->count&&i<1024u;++i){
                         const struct ln_ui_node *n=&c->nodes[i];
                         if(n->kind==LN_UI_VIDEO_SURFACE&&!(n->flags&2u)&&
@@ -1078,7 +1079,7 @@ void ln_runtime_idle(void){
     uint32_t now=ln_time_us();
     if(executive.used)return;
     bool display_wait=false;uint32_t display_due=now;
-#if defined(LINNET_TARGET_VIDEO5G_M25)
+#if LINNET_DISPLAY_PIPELINE
     display_wait=ln_display_wait_deadline(&display_due);
 #endif
     if(dirty&&!display_wait)return;
@@ -1139,7 +1140,7 @@ void ln_runtime_idle(void){
         if(lowered){ln_core_idle_until(next);++idle_clock_cycles;idle_clock_us+=ln_time_us()-began;}
         else ++idle_clock_failures;
         /* A partial transition must also restore the known working clock. */
-        if(!ln_core_clock_set(80000000u))ln_panic(30,14,ln_core_clock_failure());
+        if(!ln_core_clock_set(LINNET_ACTIVE_CLOCK_HZ))ln_panic(30,14,ln_core_clock_failure());
         if(lowered)return;
     }
 #endif

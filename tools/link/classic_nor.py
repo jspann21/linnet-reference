@@ -1,0 +1,202 @@
+"""Device-bound preparation and guarded installation of the N25 NOR monitor."""
+import hashlib
+import json
+from pathlib import Path
+import struct
+import time
+
+from tools.link.identity import decode
+from tools.link.protocol import Command
+from tools.link.session import Session
+from tools.link.transport import SerialTransport
+from tools.studio.targets import ROOT
+
+TARGET='classic6g-n25'
+START,END=0x8000,0x28000
+ARCHIVE=0x18000
+
+
+def _sha(data):return hashlib.sha256(data).hexdigest()
+
+
+def _backup(path, serial):
+    path=Path(path).resolve();data=path.read_bytes()
+    receipt=json.loads(path.with_suffix(path.suffix+'.json').read_text())
+    if (len(data)!=1048576 or receipt.get('target_id')!=TARGET or receipt.get('serial')!=serial or
+        receipt.get('verified') is not True or receipt.get('sha256')!=_sha(data)):
+        raise ValueError('Expected a verified complete NOR backup for this device')
+    if data[START:START+8]!=b'87021.0\x01' or struct.unpack_from('<II',data,START+8)!=(0,129024):
+        raise ValueError('Original bootloader layout differs from the verified N25 layout')
+    return data
+
+
+def _connect(plan):
+    if plan.get('target_id')!=TARGET:raise ValueError('Expected an N25 device plan')
+    session=Session(SerialTransport.reconnect(plan['serial'],timeout=15))
+    try:
+        identity=decode(session.hello())
+        if identity['target_id']!=TARGET or identity['image_kind']!='boot':
+            raise ValueError('Expected the N25 SRAM monitor')
+        return session,identity
+    except Exception:session.close();raise
+
+
+def _operation(session, operation, argument=0, data=b'', size=None):
+    raw=session.request(Command.BOOTSTRAP_CONTROL,struct.pack('<II',operation,argument)+data,
+                        timeout=5 if operation==52 else None)
+    if len(raw)<12 or struct.unpack_from('<III',raw)!=(0x4252504c,operation,1) or (size is not None and len(raw)!=12+size):
+        raise RuntimeError(f'NOR operation {operation} failed: {raw[:16].hex()}')
+    return raw[12:]
+
+
+def _sign(session, data):
+    digest=hashlib.sha1(data).digest()[:16]
+    signature=_operation(session,49,2,digest,16)
+    if _operation(session,50,2,signature,16)!=digest:raise RuntimeError('Boot authentication round trip failed')
+    return signature
+
+
+def _read(session):
+    if _operation(session,32,size=3)!=bytes.fromhex('bf258e'):raise ValueError('Unexpected NOR part')
+    return b''.join(_operation(session,33,offset,size=512) for offset in range(0,1048576,512))
+
+
+def _validate_base(session, current, original):
+    if len(current)!=len(original) or current[:START]!=original[:START] or current[END:]!=original[END:]:
+        raise ValueError('NOR contents outside the boot slot differ from the original backup')
+    if current==original:return
+    image=current[START:END]
+    entry,size=struct.unpack_from('<II',image,8)
+    if image[:8]!=b'87021.0\x02' or entry or not size or size%16 or size>0x10000:
+        raise ValueError('Current NOR boot slot is not a supported Linnet monitor')
+    if _sign(session,image[:64])!=image[64:80] or _sign(session,image[2048:2048+size])!=image[16:32]:
+        raise ValueError('Current NOR monitor authentication failed')
+
+
+def prepare(device_plan, backup, output, boot_image=None):
+    device=json.loads(Path(device_plan).read_text());output=Path(output).resolve()
+    image_path=output.with_suffix('.im3')
+    before_path=output.with_suffix('.before.bin')
+    if output.exists() or image_path.exists() or before_path.exists():raise ValueError('NOR preparation output already exists')
+    original=_backup(backup,device['serial'])
+    base=ROOT/'out/dev/classic6g-n25/bootstrap'
+    manifest=json.loads((base/'manifest.json').read_text());payload=(base/'monitor.bin').read_bytes()
+    if manifest['serial']!=device['serial'] or manifest['target_id']!=TARGET or _sha(payload)!=manifest['monitor_sha256']:
+        raise ValueError('Monitor artifact identity/hash mismatch')
+    payload+=bytes((-len(payload))%16)
+    if len(payload)>0x10000:raise ValueError('Monitor exceeds its verified SRAM window')
+    archive=b'';boot_identity=None
+    if boot_image is not None:
+        from tools.inspect.image import inspect
+        from tools.inspect.lz4 import pack
+        boot_image=Path(boot_image);boot=boot_image.read_bytes();boot_identity=inspect(boot)
+        report=json.loads(boot_image.with_suffix('.json').read_text())
+        if (report.get('kind')!='boot' or report.get('image')!=boot_identity or
+                boot_identity['target_id']!=TARGET or report.get('device_serial')!=device['serial'] or
+                boot_identity['load_address']!=0x08000000 or len(boot)>0x80000):
+            raise ValueError('Expected a matching device-bound native Boot build')
+        compressed=pack(boot);header=bytearray(64)
+        struct.pack_into('<4sIII',header,0,b'LNB1',1,len(compressed),len(boot))
+        header[16:48]=hashlib.sha256(boot).digest()
+        import zlib
+        struct.pack_into('<I',header,60,zlib.crc32(header[:60]))
+        archive=bytes(header)+compressed
+        if START+2048+len(payload)>ARCHIVE or len(archive)>END-ARCHIVE:
+            raise ValueError('Monitor and compressed Boot do not fit the original NOR boot slot')
+    session,identity=_connect(device)
+    try:
+        if identity['build_id']!=manifest['build_id']:raise ValueError('RAM-verify this monitor before preparing NOR')
+        # Authenticate the saved original header with this device's key first.
+        if _sign(session,original[START:START+64])!=original[START+64:START+80]:
+            raise ValueError('Original NOR authentication does not match this device')
+        current=_read(session)
+        _validate_base(session,current,original)
+        header=bytearray(2048);header[:8]=b'87021.0\x02'
+        struct.pack_into('<II',header,8,0,len(payload));header[16:32]=_sign(session,payload)
+        header[64:80]=_sign(session,header[:64])
+        image=bytes(header)+payload
+        if archive:image+=b'\xff'*(ARCHIVE-START-len(image))+archive
+        image+=b'\xff'*((-len(image))%4096)
+        if START+len(image)>END:raise ValueError('Boot image exceeds the original slot')
+        expected=current[:START]+image+current[START+len(image):]
+        pages=[offset for offset in range(START,START+len(image),4096) if current[offset:offset+4096]!=expected[offset:offset+4096]]
+        pages=[offset for offset in pages if offset not in (START,ARCHIVE)]+([ARCHIVE] if ARCHIVE in pages else [])+([START] if START in pages else [])
+        plan=dict(target_id=TARGET,serial=device['serial'],build_id=manifest['build_id'],
+                  original_path=str(Path(backup).resolve()),original_sha256=_sha(original),
+                  base_path=str(before_path),base_sha256=_sha(current),
+                  image_path=str(image_path),image_sha256=_sha(image),result_sha256=_sha(expected),
+                  pages=pages,boot_offset=START,boot_limit=END,ram_identity=identity)
+        if boot_identity is not None:plan['boot_image']=boot_identity
+        output.parent.mkdir(parents=True,exist_ok=True)
+        with before_path.open('xb') as destination:destination.write(current)
+        with image_path.open('xb') as destination:destination.write(image)
+        with output.open('x') as destination:json.dump(plan,destination,indent=2)
+        return dict(plan,prepared=str(output),plan_sha256=_sha(output.read_bytes()),persistent_writes=False)
+    finally:session.close()
+
+
+def install(prepared, expected_plan_sha, *, progress=print):
+    prepared=Path(prepared).resolve();raw=prepared.read_bytes()
+    if _sha(raw)!=expected_plan_sha:raise ValueError('NOR plan hash mismatch')
+    plan=json.loads(raw);original=_backup(plan['original_path'],plan['serial'])
+    before=Path(plan['base_path']).read_bytes() if 'base_path' in plan else original
+    if (len(before)!=len(original) or _sha(before)!=plan.get('base_sha256',_sha(original)) or
+        before[:START]!=original[:START] or before[END:]!=original[END:]):
+        raise ValueError('NOR transaction base differs from its verified snapshot')
+    image=Path(plan['image_path']).read_bytes()
+    if (plan.get('target_id')!=TARGET or plan.get('boot_offset')!=START or plan.get('boot_limit')!=END or
+        plan.get('original_sha256')!=_sha(original) or plan.get('image_sha256')!=_sha(image) or
+        not image or len(image)%4096 or START+len(image)>END or image[:8]!=b'87021.0\x02'):
+        raise ValueError('Invalid NOR transaction artifacts')
+    size=struct.unpack_from('<I',image,12)[0]
+    if struct.unpack_from('<I',image,8)[0]!=0 or not size or size%16 or size>0x10000 or 2048+size>len(image):
+        raise ValueError('Invalid NOR image entry or size')
+    expected=before[:START]+image+before[START+len(image):]
+    if _sha(expected)!=plan['result_sha256']:raise ValueError('Result image hash mismatch')
+    pages=[offset for offset in range(START,START+len(image),4096) if before[offset:offset+4096]!=expected[offset:offset+4096]]
+    pages=[offset for offset in pages if offset not in (START,ARCHIVE)]+([ARCHIVE] if ARCHIVE in pages else [])+([START] if START in pages else [])
+    if pages!=plan['pages']:raise ValueError('NOR sector plan mismatch')
+    receipt=dict(target_id=TARGET,serial=plan['serial'],build_id=plan['build_id'],phase='validating',
+                 persistent_writes=False,completed=[])
+    receipt_path=prepared.with_suffix('.receipt.json')
+    def record():receipt_path.write_text(json.dumps(receipt,indent=2)+'\n')
+    session=None;record()
+    try:
+        session,identity=_connect(plan)
+        if identity['build_id']!=plan['build_id']:raise ValueError('The prepared monitor must be running before installation')
+        _validate_base(session,before,original)
+        if _sign(session,image[:64])!=image[64:80] or _sign(session,image[2048:2048+size])!=image[16:32]:
+            raise ValueError('Candidate boot authentication failed')
+        progress('Verifying the complete current NOR before writing the boot slot')
+        current=_read(session)
+        # An explicit resumed invocation may encounter fully completed sectors.
+        for offset in range(0,len(current),4096):
+            actual=current[offset:offset+4096]
+            allowed=(before[offset:offset+4096],expected[offset:offset+4096]) if offset in pages else (before[offset:offset+4096],)
+            if actual not in allowed:raise ValueError(f'Unexpected flash contents at {offset:#x}; no further writes')
+        receipt['phase']='programming';record()
+        for offset in pages:
+            desired=expected[offset:offset+4096]
+            if current[offset:offset+4096]!=desired:
+                for index in range(8):
+                    result=session.request(Command.BOOTSTRAP_CONTROL,struct.pack('<II',51,index)+desired[index*512:(index+1)*512])
+                    if len(result)!=12 or struct.unpack('<III',result)!=(0x4252504c,51,(1<<(index+1))-1):
+                        raise RuntimeError('NOR sector staging failed')
+                receipt.update(persistent_writes=True,pending_sector=offset);record()
+                result=_operation(session,52,offset,hashlib.sha256(current[offset:offset+4096]).digest()+hashlib.sha256(desired).digest(),36)
+                if struct.unpack_from('<I',result)[0] or result[4:]!=hashlib.sha256(desired).digest():
+                    raise RuntimeError('NOR sector readback failed')
+            receipt['completed'].append(offset);receipt.pop('pending_sector',None);record()
+            progress(f'Verified boot sector {offset:#07x}')
+        receipt['phase']='verifying';record();actual=_read(session)
+        if actual!=expected:raise RuntimeError('Complete NOR readback differs from the planned result')
+        receipt.update(result_sha256=_sha(actual),phase='reboot-requested');record()
+        _operation(session,53,0x52454254,size=0)
+        session.close();session=None;time.sleep(1)
+        session,identity=_connect(plan)
+        if identity['build_id']!=plan['build_id']:raise RuntimeError('Persistent boot returned a different build')
+        receipt.update(phase='persistent-link-verified',identity=identity);record();return receipt
+    except Exception as error:
+        receipt['error']=str(error);record();raise
+    finally:
+        if session is not None:session.close()

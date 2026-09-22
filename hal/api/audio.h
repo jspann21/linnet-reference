@@ -12,6 +12,9 @@ struct ln_audio_status {
     int32_t volume_db_tenths;
     /* FIFO empty at completion entry is a sample, not an underflow latch. */
     uint32_t fifo_empty_irqs, max_completion_interval_us, max_completion_late_us;
+    /* Frames transferred in the current block, excluded from consumed.
+     * Backends without a hardware cursor leave this zero. */
+    uint32_t inflight_consumed;
 };
 bool ln_audio_init(uint32_t rate);
 uint32_t ln_audio_submit(const int16_t *pcm, uint32_t frames);

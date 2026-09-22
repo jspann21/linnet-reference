@@ -1,5 +1,6 @@
 /* Board policy consumed by the shared PP502x drivers. */
 #pragma once
+#define LINNET_BOOT_HASH_IRAM 1
 #define LINNET_INPUT_FIRST_PACKET_FIX 0
 #define LINNET_STORAGE_TAIL_SECTOR 1
 #define LINNET_CLOCK_SETTLE_US 0u
