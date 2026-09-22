@@ -108,6 +108,26 @@ python linnet installer restore --mount E:\
 
 ## Update content
 
+The desktop library supports **Ctrl+F** to search and **F5** to refresh.
+Search results show the matching count within the current collection or music
+group. Use **Clear filters** to return to the full collection. Empty collections
+offer **Add media**, and the disconnected view offers **Find iPod**.
+Press **Enter** on a selected music group to explore it or on a file to view
+details. **Delete** acts on selected media only while the library view has focus.
+
+Use **Open iPod folder** to browse the current media folder in Explorer (or the
+iPod root if that folder does not exist yet). **Show in folder** in file details
+selects the file in Explorer. In Preparation, select a queued entry and choose
+**Show source**, or press Enter, to inspect its source location. **Remove from
+queue** and Delete remove selected queue entries without deleting source files.
+
+**Add media** remembers the last browse location for each media type and checks
+for missing files, unsupported file types, duplicate entries, and sources already
+on the iPod before queuing them. Folder imports include subfolders. Music, Notes,
+and Photos folder imports copy supporting files too; video folders include only
+supported videos. Review the queue before preparing; no files are copied when
+they are added to the queue.
+
 The main window shows **Default boot** beneath the connected-iPod selector. It
 reports the verified active Linnet build, Rockbox, Apple iPod software, or
 Unknown when the scan cannot establish one. When another system is the default,

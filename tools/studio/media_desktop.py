@@ -7,6 +7,7 @@ import hashlib
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import threading
 
@@ -511,8 +512,10 @@ class MediaWindow(QMainWindow):
         foot.addLayout(status_row); body.addWidget(activity)
         main.addWidget(right, 1)
         QShortcut(QKeySequence.Find, self, activated=self.focus_search)
-        QShortcut(QKeySequence('Delete'), self.table, activated=self.remove_selected)
-        QShortcut(QKeySequence('Delete'), self.grid, activated=self.remove_selected)
+        QShortcut(QKeySequence.Refresh, self, activated=self.refresh)
+        for view in (self.table, self.grid):
+            shortcut = QShortcut(QKeySequence('Delete'), view, activated=self.remove_selected)
+            shortcut.setContext(Qt.WidgetWithChildrenShortcut)
 
     def heading(self, layout, title, subtitle):
         layout.addWidget(label(title, 'title'))
@@ -522,7 +525,7 @@ class MediaWindow(QMainWindow):
     def build_library(self):
         page = QWidget(); outer = box(page, margins=(30, 28, 26, 20), spacing=16)
         top = box(horizontal=True)
-        titles = box(spacing=5); self.heading_label = label('Music', 'title'); self.subtitle = label('', 'subtitle')
+        titles = box(spacing=5); self.heading_label = label('Music', 'title', True); self.subtitle = label('', 'subtitle', True)
         titles.addWidget(self.heading_label); titles.addWidget(self.subtitle); top.addLayout(titles, 1)
         self.playlists_button = button('Playlists', self.open_playlists, None, 'music'); top.addWidget(self.playlists_button)
         self.add_button = button('Add media', self.add_media, 'primary', 'plus'); top.addWidget(self.add_button)
@@ -535,19 +538,25 @@ class MediaWindow(QMainWindow):
             self.view_buttons[name] = item; segments.addWidget(item)
         toolbar.addWidget(self.segments)
         self.back_button = button('Back', self.back_to_groups, 'quiet', 'back'); toolbar.addWidget(self.back_button)
-        toolbar.addStretch()
+        outer.addLayout(toolbar)
+        toolbar = box(horizontal=True)
         self.search = QLineEdit(); self.search.setPlaceholderText('Search your collection'); self.search.setClearButtonEnabled(True); self.search.setMinimumWidth(220)
         self.search.addAction(icon('search'), QLineEdit.LeadingPosition)
+        self.search.setAccessibleName('Search collection')
+        self.search.setToolTip('Search this collection (Ctrl+F). All search words must match.')
         self.search_timer = QTimer(self); self.search_timer.setSingleShot(True); self.search_timer.setInterval(160); self.search_timer.timeout.connect(self.render_library)
         self.search.textChanged.connect(lambda: self.search_timer.start()); toolbar.addWidget(self.search)
         outer.addLayout(toolbar)
         filters = box(horizontal=True)
         self.genre_filter = ComboBox(); self.genre_filter.addItem('All genres', ''); self.genre_filter.currentIndexChanged.connect(self.render_library)
         self.artist_filter = ComboBox(); self.artist_filter.addItem('All artists', ''); self.artist_filter.currentIndexChanged.connect(self.render_library)
+        self.genre_filter.setAccessibleName('Filter by genre')
+        self.artist_filter.setAccessibleName('Filter by artist')
         filters.addWidget(self.genre_filter); filters.addWidget(self.artist_filter)
         self.clear_button = button('Clear filters', self.clear_filters, 'quiet'); filters.addWidget(self.clear_button)
         filters.addStretch(); self.result_count = label('', 'muted'); filters.addWidget(self.result_count)
         self.sync_button = button('Sync video folder', self.sync_videos, None, 'refresh'); filters.addWidget(self.sync_button)
+        self.folder_button = button('Open iPod folder', self.open_media_folder, None, 'folder'); filters.addWidget(self.folder_button)
         outer.addLayout(filters)
         self.notice = label('', 'notice', True); self.notice.hide(); outer.addWidget(self.notice)
         self.model = MediaModel(self)
@@ -569,12 +578,15 @@ class MediaWindow(QMainWindow):
         self.empty = QWidget(); empty = box(self.empty, margins=(30, 60, 30, 60)); empty.addStretch()
         self.empty_title = label('Your collection starts here', 'section'); self.empty_title.setAlignment(Qt.AlignCenter)
         self.empty_detail = label('Connect an iPod in Disk Mode to browse its media.', 'muted', True); self.empty_detail.setAlignment(Qt.AlignCenter)
-        empty.addWidget(self.empty_title); empty.addWidget(self.empty_detail); empty.addStretch(); self.views.addWidget(self.empty)
+        empty.addWidget(self.empty_title); empty.addWidget(self.empty_detail)
+        self.empty_action = button('Find iPod', self.activate_empty, 'primary')
+        empty.addWidget(self.empty_action, 0, Qt.AlignHCenter)
+        empty.addStretch(); self.views.addWidget(self.empty)
         outer.addWidget(self.views, 1)
         self.table.selectionModel().selectionChanged.connect(self.selection_changed)
         self.grid.selectionModel().selectionChanged.connect(self.selection_changed)
-        self.grid.doubleClicked.connect(self.open_group)
-        self.table.doubleClicked.connect(self.inspect_selection)
+        self.grid.activated.connect(self.open_group)
+        self.table.activated.connect(self.inspect_selection)
         self.selection_bar = QFrame(); self.selection_bar.setObjectName('selectionBar'); selection = box(self.selection_bar, horizontal=True, margins=(16, 9, 12, 9))
         self.selection_text = label(); selection.addWidget(self.selection_text, 1)
         selection.addWidget(button('Clear', self.clear_selection, 'quiet'))
@@ -582,7 +594,7 @@ class MediaWindow(QMainWindow):
         self.restore_button = button('Restore', self.restore_selected, None, 'back'); selection.addWidget(self.restore_button)
         self.remove_button = button('Move to Trash', self.remove_selected, 'danger', 'trash'); selection.addWidget(self.remove_button)
         outer.addWidget(self.selection_bar); self.selection_bar.hide()
-        self.hint = label('Double-click an item for details. Ctrl+click or Shift+click to select multiple files.', 'muted'); outer.addWidget(self.hint)
+        self.hint = label('Double-click an item for details. Ctrl+click or Shift+click to select multiple files.', 'muted', True); outer.addWidget(self.hint)
         return page
 
     def scroll_page(self):
@@ -597,6 +609,7 @@ class MediaWindow(QMainWindow):
         outer = box(page, spacing=0)
         scroll, layout = self.scroll_page()
         scroll.setObjectName('preparationScroll')
+        self.preparation_scroll = scroll
         outer.addWidget(scroll, 1)
         self.heading(layout, 'Prepare your media', 'Turn your files into an iPod-ready collection. Your originals stay on the device.')
         self.prep_checks, self.prep_labels = {}, {}
@@ -619,8 +632,15 @@ class MediaWindow(QMainWindow):
         self.queue_table.setSelectionBehavior(QAbstractItemView.SelectRows); self.queue_table.setSelectionMode(QAbstractItemView.ExtendedSelection); self.queue_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.queue_table.setMinimumHeight(125); self.queue_table.setMaximumHeight(200)
         layout.addWidget(self.queue_table)
-        queue_actions = box(horizontal=True); queue_actions.addWidget(button('Add files or folder', self.add_media, None, 'plus'))
+        queue_actions = box(horizontal=True)
+        self.queue_add = button('Add files or folder', self.add_media, None, 'plus'); queue_actions.addWidget(self.queue_add)
+        self.queue_open = button('Show source', self.open_queued, None, 'folder'); queue_actions.addWidget(self.queue_open)
         self.queue_remove = button('Remove from queue', self.remove_queued, 'quiet'); queue_actions.addWidget(self.queue_remove); queue_actions.addStretch()
+        self.queue_remove.setToolTip('Remove selected entries from this queue. Source files stay on your computer.')
+        self.queue_table.selectionModel().selectionChanged.connect(self.update_queue_controls)
+        self.queue_table.activated.connect(self.open_queued)
+        shortcut = QShortcut(QKeySequence('Delete'), self.queue_table, activated=self.remove_queued)
+        shortcut.setContext(Qt.WidgetWithChildrenShortcut)
         layout.addLayout(queue_actions)
         self.prep_results = QTextEdit(); self.prep_results.setReadOnly(True); self.prep_results.setMinimumHeight(130); self.prep_results.hide(); layout.addWidget(self.prep_results)
         self.retry_button = button('Review skipped files', self.review_skipped, 'quiet'); layout.addWidget(self.retry_button, 0, Qt.AlignLeft)
@@ -805,6 +825,16 @@ class MediaWindow(QMainWindow):
         if self.stack.currentWidget() == self.library:
             self.search.setFocus(); self.search.selectAll()
 
+    def activate_empty(self):
+        if self.busy:
+            return
+        if not self.identity:
+            self.refresh()
+        elif self.library_rows():
+            self.clear_filters()
+        elif self.page != 'Trash':
+            self.add_media()
+
     def clear_filters(self, *, render=True):
         self.search_timer.stop()
         with QSignalBlocker(self.search), QSignalBlocker(self.genre_filter), QSignalBlocker(self.artist_filter):
@@ -844,6 +874,7 @@ class MediaWindow(QMainWindow):
         self.back_button.setVisible(self.group is not None)
         self.genre_filter.setVisible(music); self.artist_filter.setVisible(music)
         self.sync_button.setVisible(self.page == 'Videos')
+        self.folder_button.setVisible(self.page != 'Trash')
         self.add_button.setVisible(self.page != 'Trash')
         self.search.setPlaceholderText('Search songs, artists, albums…' if music else f'Search {self.page.lower()}…')
         words = self.search.text().casefold().split()
@@ -851,6 +882,7 @@ class MediaWindow(QMainWindow):
         if self.group:
             ids = {r['id'] for r in self.group['members']}
             rows = [r for r in rows if r['id'] in ids]
+        scope_count = len(rows)
         if music and (artist or genre):
             rows = [r for r in rows if (not artist or (r.get('artist') or 'Unknown artist') == artist)
                     and (not genre or (r.get('genre') or 'Unknown genre') == genre)]
@@ -862,6 +894,8 @@ class MediaWindow(QMainWindow):
                 if first in text and (not remaining or all(word in text for word in remaining)):
                     matches.append(row)
             rows = matches
+        matched_count = len(rows)
+        filtered = bool(words or (music and (artist or genre)))
         grouped = music and self.view != 'Songs' and self.group is None
         if grouped:
             groups = {}
@@ -891,8 +925,10 @@ class MediaWindow(QMainWindow):
         self.views.setCurrentWidget(self.grid if grid else self.table)
         if not rows:
             self.views.setCurrentWidget(self.empty)
-            self.empty_title.setText('Reading your collection…' if self.busy and not self.identity else 'No matches' if all_rows else 'Trash is empty' if self.page == 'Trash' else f'No {self.page.lower()} yet')
-            self.empty_detail.setText('Connect an iPod in Disk Mode, then choose Refresh.' if not self.identity else 'Try another search or clear your filters.' if all_rows else 'Removed files appear here until you restore or permanently delete them.' if self.page == 'Trash' else 'Use Add media to bring files into your collection.')
+            self.empty_title.setText('Reading your collection…' if self.busy else 'Connect your iPod' if not self.identity else 'No matches' if all_rows else 'Trash is empty' if self.page == 'Trash' else f'No {self.page.lower()} yet')
+            self.empty_detail.setText('Your collection will appear here when reading finishes.' if self.busy else 'Connect an iPod in Disk Mode, then find it to browse and add media.' if not self.identity else 'Try another search or clear your filters.' if all_rows else 'Removed files appear here until you restore or permanently delete them.' if self.page == 'Trash' else 'Add files from your computer to get started.')
+        self.empty_action.setText('Find iPod' if not self.identity else 'Clear filters' if all_rows else 'Add media')
+        self.empty_action.setVisible(not self.busy and (not self.identity or bool(all_rows) or self.page != 'Trash'))
         count = len(all_rows)
         albums = len({(r.get('album'), r.get('album_artist') or r.get('artist')) for r in all_rows}) if music else 0
         self.subtitle.setText(f'{count:,} songs  ·  {albums:,} albums  ·  {size(sum(r["bytes"] for r in all_rows))}' if music else
@@ -901,8 +937,10 @@ class MediaWindow(QMainWindow):
         if self.group:
             members = self.group['members']
             self.subtitle.setText((self.group['subtitle'] + '  ·  ' if self.view == 'Albums' else '') + f'{len(members):,} songs  ·  {size(sum(r["bytes"] for r in members))}')
-        self.result_count.setText(f'{len(rows):,} {self.view.lower() if grouped else "items"}')
-        self.clear_button.setVisible(bool(words or (music and (artist or genre))))
+        unit = 'songs' if music else 'items'
+        self.result_count.setText(f'{matched_count:,} of {scope_count:,} {unit}' + (f' · {len(rows):,} {self.view.lower()}' if grouped else '') if filtered else
+                                  f'{len(rows):,} {self.view.lower() if grouped else unit}')
+        self.clear_button.setVisible(filtered)
         self.hint.setText('Delete files in LINNET / VIDEOS, then Sync video folder to update the playback library.' if self.page == 'Videos' else
                           'Double-click to explore. Select one or more groups to manage their songs.' if grouped else
                           'Select a removal to restore it, or permanently delete it to free storage.' if self.page == 'Trash' else
@@ -1009,9 +1047,30 @@ class MediaWindow(QMainWindow):
 
     def open_folder(self, path):
         try:
-            source = Path(path); os.startfile(str(source if source.is_dir() else source.parent))
+            source = Path(path).resolve(strict=True)
+            if source.is_dir():
+                os.startfile(str(source))
+            else:
+                subprocess.Popen(['explorer.exe', '/select,', str(source)])
         except OSError as error:
-            self.show_error(str(error))
+            self.dialog('Cannot open location', f'The file or folder may have moved or the device may be disconnected.\n\n{error}', 'OK', cancel=False)
+
+    def open_media_folder(self):
+        if self.busy or not self.identity or self.page not in media.KINDS:
+            return
+        root = Path(self.identity['root'])
+        folder = root / self.page
+        self.open_folder(folder if folder.is_dir() else root)
+
+    def open_queued(self, *_):
+        indices = self.queue_table.selectionModel().selectedRows()
+        if not self.busy and len(indices) == 1:
+            self.open_folder(self.queue_model.rows[indices[0].row()]['path'])
+
+    def update_queue_controls(self, *_):
+        count = len(self.queue_table.selectionModel().selectedRows())
+        self.queue_remove.setEnabled(not self.busy and count > 0)
+        self.queue_open.setEnabled(not self.busy and count == 1)
 
     def work(self, tag, operation, message):
         if self.busy:
@@ -1203,11 +1262,13 @@ class MediaWindow(QMainWindow):
         self.screen_save.setEnabled(ready and all(self.screen_state.values()))
         self.screen_items.setEnabled(not self.busy)
         self.screen_picker.setEnabled(not self.busy)
-        for item in (self.eject_button, self.add_button, self.playlists_button, self.sync_button, self.choose_videos_button, self.queue_remove):
+        for item in (self.eject_button, self.add_button, self.playlists_button, self.sync_button, self.choose_videos_button, self.queue_add, self.folder_button):
             item.setEnabled(ready)
+        self.update_queue_controls()
         self.prepare_button.setEnabled(ready and self.inventory is not None)
         self.choose_videos_button.setEnabled(ready and self.inventory is not None and self.identity.get('media_profile', {}).get('video_enabled', True))
         self.refresh_button.setEnabled(not self.busy)
+        self.empty_action.setEnabled(not self.busy)
         self.refresh_button.setVisible(not self.busy)
         for kind, check in self.prep_checks.items():
             check.setEnabled(kind in supported)
@@ -1243,6 +1304,7 @@ class MediaWindow(QMainWindow):
         self.queue_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.queue_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.queue_table.setVisible(bool(self.pending)); self.queue_remove.setVisible(bool(self.pending))
+        self.queue_open.setVisible(bool(self.pending)); self.update_queue_controls()
         self.queue_table.setFixedHeight(min(200, max(75, self.queue_table.horizontalHeader().height() + len(self.pending) * self.queue_table.verticalHeader().defaultSectionSize() + 4)))
         self.prep_summary.setText(f'{len(self.pending):,} files or folders queued. Unchanged media is reused.' if self.pending else 'Nothing queued. You can prepare existing iPod files or add media from your computer.')
 
@@ -1254,21 +1316,59 @@ class MediaWindow(QMainWindow):
         layout.addWidget(label('Bring something new', 'section'))
         layout.addWidget(label('Choose files from your computer. Review the queue in Preparation before copying them to your iPod.', 'muted', True))
         picker = ComboBox(); picker.addItems(media.supported_kinds(self.identity)); picker.setCurrentText(self.page if self.page in media.KINDS else 'Music'); layout.addWidget(picker)
+        picker.setAccessibleName('Media type to add')
+        explanation = label('', 'muted', True); layout.addWidget(explanation)
+        def explain():
+            explanation.setText('Folders include videos in all subfolders. Other file types are ignored. Originals stay on your computer.' if picker.currentText() == 'Videos' else
+                                'Folders include all subfolders and their files, including artwork and other supporting files. Choose individual files to copy only selected media. Originals stay on your computer.')
+        picker.currentTextChanged.connect(explain); explain()
+        error_label = label('', 'notice', True); error_label.hide(); layout.addWidget(error_label)
         def choose(folder=False):
             kind = picker.currentText()
+            initial = self.settings.value(f'import_folder/{kind}', str(Path.home()))
             if folder:
-                path = QFileDialog.getExistingDirectory(dialog, f'Add {kind.lower()} folder'); paths = [path] if path else []
+                path = QFileDialog.getExistingDirectory(dialog, f'Add {kind.lower()} folder', initial); paths = [path] if path else []
             else:
-                paths, _ = QFileDialog.getOpenFileNames(dialog, f'Add {kind.lower()}', '', kind + ' (' + ' '.join('*' + ext for ext in sorted(media.extensions(kind))) + ')')
+                allowed = media.video_source_extensions(self.identity) if kind == 'Videos' else media.extensions(kind)
+                paths, _ = QFileDialog.getOpenFileNames(dialog, f'Add {kind.lower()}', initial, kind + ' (' + ' '.join('*' + ext for ext in sorted(allowed)) + ')')
             if paths:
-                for path in paths:
-                    if (kind, path) not in self.pending:
-                        self.pending.append((kind, path))
+                try:
+                    added = self.queue_sources(kind, paths)
+                except (OSError, ValueError) as error:
+                    error_label.setText(str(error)); error_label.show(); return
+                source = Path(paths[0])
+                self.settings.setValue(f'import_folder/{kind}', str(source if folder else source.parent))
                 self.prep_checks[kind].setChecked(True); dialog.accept(); self.update_preparation(); self.navigate('Preparation')
+                QTimer.singleShot(0, lambda: self.preparation_scroll.ensureWidgetVisible(self.queue_table))
+                self.show_progress(f'{added:,} new queue entries added.' if added else 'These sources are already queued. Review them in Preparation.')
         actions = box(horizontal=True); actions.addWidget(button('Choose files', lambda: choose(), 'primary', 'plus')); actions.addWidget(button('Choose a folder', lambda: choose(True), None, 'folder')); layout.addLayout(actions)
+        layout.addWidget(button('Cancel', dialog.reject, 'quiet'), 0, Qt.AlignRight)
         dialog.exec()
 
+    def queue_sources(self, kind, paths):
+        if not self.identity or self.busy:
+            raise ValueError('Connect an iPod and wait for the current operation to finish before adding media.')
+        if kind not in media.supported_kinds(self.identity):
+            raise ValueError(f'{kind} is unavailable on this iPod.')
+        root = Path(self.identity['root']).resolve(strict=True)
+        allowed = media.video_source_extensions(self.identity) if kind == 'Videos' else media.extensions(kind)
+        known = {(k, os.path.normcase(str(Path(p).resolve()))) for k, p in self.pending}
+        additions = []
+        for value in paths:
+            source = Path(value).resolve(strict=True)
+            if source.is_relative_to(root):
+                raise ValueError('This source is already on your iPod. Use Refresh to find existing media, then prepare it from Preparation.')
+            if not source.is_dir() and (not source.is_file() or source.suffix.lower() not in allowed):
+                raise ValueError(f'{source.name} is not a supported {kind.lower()} file. Choose a supported file or a folder.')
+            key = (kind, os.path.normcase(str(source)))
+            if key not in known:
+                additions.append((kind, str(source))); known.add(key)
+        self.pending.extend(additions)
+        return len(additions)
+
     def remove_queued(self):
+        if self.busy:
+            return
         chosen = {index.row() for index in self.queue_table.selectionModel().selectedRows()}
         self.pending = [item for index, item in enumerate(self.pending) if index not in chosen]; self.update_preparation()
 
