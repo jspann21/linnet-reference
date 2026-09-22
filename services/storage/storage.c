@@ -5,6 +5,7 @@
 #include "services/storage/fat32.h"
 #include "hal/api/platform.h"
 #include "hal/api/core.h"
+#include "hal/api/ata.h"
 #include "hal/api/recovery.h"
 #if defined(LINNET_IMAGE_BOOT)
 #define LN_STORAGE_STAMP(name) LN_BOOT_STAMP(LN_BT_BOOT_##name)
@@ -36,6 +37,9 @@ static uint32_t phase,error,found,opening,epoch=1,request,request_generation,req
 static bool pending,locked;
 static uint32_t partition_scale;
 static uint32_t media_owner;
+#define VIDEO_WAKE_GENERATION 0x76000001u
+static uint32_t video_browse_until,video_wake_ticket;
+static bool video_browse,video_wake_requested;
 static uint32_t fixed_owner,fixed_started;
 static uint32_t media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
 static bool media_canceled,media_opening;
@@ -218,7 +222,12 @@ void ln_storage_progress(void *context){
             ln_platform_hardware_reset();
         }
     }else{progress_clock=now;progress_stalls=0;}
-    ln_block_allow_idle(phase==6&&!locked&&!pending);
+    if(video_wake_ticket){
+        struct ln_block_completion completion;
+        if(ln_block_take(VIDEO_WAKE_GENERATION,&completion))video_wake_ticket=0;
+    }
+    ln_block_allow_idle(phase==6&&!locked&&!pending&&
+        (!video_browse||(int32_t)(now-video_browse_until)>=0));
     ln_block_step(now);
 #if defined(LINNET_IMAGE_OS)
     if((int32_t)(now-background_at)>=0){background_at=now+1000u;
@@ -334,6 +343,19 @@ void ln_storage_step(void){storage_step(false);}
 void ln_storage_step_deferred(void){storage_step(true);}
 bool ln_storage_busy(void){return locked||background_running||(phase>=1&&phase<6)||phase==7||phase==10;}
 bool ln_storage_mounted(void){return phase==6&&volume.mounted;}
+void ln_storage_video_browse(bool active,bool activity){
+    uint32_t now=ln_time_us();
+    if(!active){video_browse=false;video_wake_requested=false;return;}
+    if(!video_browse||(activity&&(int32_t)(now-video_browse_until)>=0))
+        video_wake_requested=false;
+    if(!video_browse||activity)video_browse_until=now+60000000u;
+    video_browse=true;
+    if(video_wake_requested||video_wake_ticket||!ln_storage_mounted())return;
+    struct ln_ata_state device;ln_ata_state_snapshot(&device);
+    if(device.powered&&!device.sleeping&&!device.busy&&!device.initializing){video_wake_requested=true;return;}
+    if(ln_block_submit(LN_BLOCK_WAKE,0,0,0,VIDEO_WAKE_GENERATION,now+30000000u,&video_wake_ticket))
+        video_wake_requested=true;
+}
 uint32_t ln_storage_disk_sector_bytes(void){return partition_scale*512u;}
 bool ln_storage_startup_complete(void){return phase==6||phase==9;}
 bool ln_storage_prepared(void){return ln_storage_mounted()&&volume.mounted==1&&volume.write_proven&&(found&127u)==127u&&files[0].size==LINNET_OS_CAPACITY&&files[1].size==LINNET_OS_CAPACITY&&

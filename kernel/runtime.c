@@ -330,6 +330,10 @@ static void apply(uint32_t kind,int32_t value){
     handled=ln_notes_input(shell,kind,value);
 #endif
 #if defined(LINNET_VIDEO)
+    if(scene_is("linnet.system.videos")&&!shell->hold&&
+       ((kind==LN_INPUT_WHEEL&&value)||
+        (kind==LN_INPUT_BUTTON&&((uint32_t)value&~shell->buttons))))
+        ln_storage_video_browse(true,true);
     if(kind==LN_INPUT_HEADPHONE)ln_video_headphones(value!=0);
     if(!shell->hold&&scene_is("linnet.system.video-settings")&&kind==LN_INPUT_BUTTON){
         uint32_t pressed=(uint32_t)value&~shell->buttons;
@@ -860,6 +864,7 @@ void ln_runtime_step(void){
         if(ln_video_active()){video_save();ln_video_stop();}
     }
     if(scene_is("linnet.system.videos"))ln_video_library_load();
+    ln_storage_video_browse(scene_is("linnet.system.videos"),false);
     uint32_t library_revision=ln_video_library_revision();
     if(library_revision!=video_library_revision){video_library_revision=library_revision;if(scene_is("linnet.system.videos")){ln_ui_refresh(shell);dirty=true;}}
     if(video_requested&&!ln_player_busy()&&!ln_photos_pending()&&!ln_storage_busy()){

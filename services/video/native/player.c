@@ -12,6 +12,9 @@
 #define AAC (*(struct ln_aac *)(uintptr_t)LINNET_STAGE_ADDRESS)
 #define PACKET ((uint8_t *)(uintptr_t)(LINNET_STAGE_ADDRESS+0x40000u))
 #define CACHE_SLOTS 64u
+/* Start with 0.37 s at 44.1 kHz; audio_step still fills toward 49152 frames
+ * during playback. The old 32768-frame gate delayed the first video frame. */
+#define START_AUDIO_FRAMES 16384u
 _Static_assert(0x40000u+LINNET_VIDEO_PACKET_BYTES+CACHE_SLOTS*16384u<=0x200000u,"Video packet/cache overlaps decoder arena");
 #define CACHE(slot) ((uint8_t *)(uintptr_t)(LINNET_STAGE_ADDRESS+0x40000u+LINNET_VIDEO_PACKET_BYTES+(slot)*16384u))
 extern void ln_memory_copy(void *,const void *,uint32_t);
@@ -181,8 +184,8 @@ static void step(void){
     if(v.paused)return;
     struct ln_audio_status a={0};if(v.audio)ln_audio_snapshot(&a);
     if(!audio_step()){fail(7);return;}
-    if(v.audio&&a.queued<32768&&!v.audio_eof&&!(v.reading&&v.io_kind==0))return;
-    if(!v.started&&(v.frame_ready||v.video_eof)&&(!v.audio||a.queued>=32768||v.audio_eof)){
+    if(v.audio&&a.queued<START_AUDIO_FRAMES&&!v.audio_eof&&!(v.reading&&v.io_kind==0))return;
+    if(!v.started&&(v.frame_ready||v.video_eof)&&(!v.audio||a.queued>=START_AUDIO_FRAMES||v.audio_eof)){
         if(v.audio&&!ln_audio_start()){fail(8);return;}v.start=ln_time_us();v.started=true;v.phase=PLAY;
     }
     uint32_t now=clock_ms();v.position=now;
