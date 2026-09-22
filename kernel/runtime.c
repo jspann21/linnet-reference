@@ -904,7 +904,13 @@ void ln_runtime_step(void){
             wheel_scene=shell->scene;wheel_epoch=epoch;
         }
         int32_t steps=ln_wheel_motion_step(&wheel_motion,input.wheel_delta,
-            input.touched,input.hold,count,ln_time_us());
+            input.touched,input.hold,count,
+#if defined(LINNET_COVERFLOW)
+            scene_is("linnet.system.cover-flow"),
+#else
+            false,
+#endif
+            ln_time_us());
         if(steps)apply(LN_INPUT_WHEEL,steps);
     }
     if(!input.hold&&input.buttons==LINNET_BUTTON_PLAY){

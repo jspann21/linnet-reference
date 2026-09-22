@@ -12,5 +12,5 @@ void ln_wheel_motion_reset(struct ln_wheel_motion *motion);
 /* Physical sensor packets only. Call for lift/hold packets too. Synthetic
  * wheel events keep their existing exact item-count semantics. */
 int32_t ln_wheel_motion_step(struct ln_wheel_motion *motion,int32_t delta,
-    bool touched,bool hold,uint32_t list_count,uint32_t now_us);
+    bool touched,bool hold,uint32_t list_count,bool cover_flow,uint32_t now_us);
 #endif

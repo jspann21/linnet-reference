@@ -15,6 +15,9 @@ struct ln_input_state {
 bool ln_input_init(void);
 bool ln_input_poll(struct ln_input_state *out);
 void ln_input_snapshot(struct ln_input_state *out);
+#if defined(LINNET_IMAGE_OS) && defined(LINNET_TARGET_CLASSIC6G_N25)
+bool ln_input_irq(void);
+#endif
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_input_diagnostics(uint32_t output[16]);
 #endif

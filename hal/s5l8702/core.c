@@ -1,6 +1,7 @@
 #include "hal/api/core.h"
 #include "hal/api/audio.h"
 #include "hal/api/platform.h"
+#include "hal/api/input.h"
 #include "hal/arm926/cache.h"
 #include "hal/arm926/mmu.h"
 #include "irq.h"
@@ -25,6 +26,12 @@ static void interrupt(uint32_t first,uint32_t second) {
     if((first&(1u<<7)) && ln_s5l_deadline_pending()) {
         ln_s5l_deadline_stop();wakes|=LINNET_WAKE_TIMER;first&=~(1u<<7);
     }
+#if defined(LINNET_IMAGE_OS) && defined(LINNET_TARGET_CLASSIC6G_N25)
+    if(first&(1u<<23)){
+        if(ln_input_irq())wakes|=LINNET_WAKE_INPUT;
+        first&=~(1u<<23);
+    }
+#endif
 #if defined(LINNET_AUDIO) || defined(LINNET_SRAM_MONITOR)
     if(first&(1u<<16)){ln_audio_irq();first&=~(1u<<16);}
 #endif

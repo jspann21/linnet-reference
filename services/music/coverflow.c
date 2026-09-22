@@ -8,19 +8,30 @@
 #include "hal/api/platform.h"
 #define CATALOG_SLOTS LINNET_COVERFLOW_CATALOG_SLOTS
 #define CATALOG_RECORD 1024u
-#define PAGE 16u
 #define ART_RECORD 13312u
 #define SLOTS 16u
+#if defined(LINNET_TARGET_CLASSIC6G_N25)
+#define PAGE 64u
+#define ART_PAGE 14u
+#define ART_LOW 630u
+#define ART_HIGH 1418u
+#else
+#define PAGE 16u
 #define ART_PAGE 7u
 #define ART_LOW 630u
 #define ART_HIGH 469u
+#endif
 #define ART_SLOTS (ART_LOW+ART_HIGH)
 #define NONE UINT32_MAX
 #define COVER_WIDTH (96u*LINNET_UI_HEIGHT/176u)
 enum {CLOSED,OPEN,HEADER,READY,CATALOG,ART};
 static struct {uint16_t pixels[12288];uint32_t id,age;} cache[SLOTS];
 static uint32_t age;
+#if defined(LINNET_TARGET_CLASSIC6G_N25)
+static uint8_t catalog[CATALOG_SLOTS][CATALOG_RECORD] __attribute__((section(".cover_catalog"),aligned(32)));
+#else
 static uint8_t catalog[CATALOG_SLOTS][CATALOG_RECORD] __attribute__((aligned(32)));
+#endif
 static uint32_t tags[CATALOG_SLOTS];
 static struct ln_fat32_file file;
 static uint8_t header[1024] __attribute__((aligned(32)));
@@ -32,15 +43,12 @@ static bool art_ready(uint32_t id){return art_tags[id%ART_SLOTS]==id+1u;}
 static uint32_t count,arts,selected,phase,loading,length,revision,drawn,next,io_due,warm,moved_at;
 static uint32_t catalog_loaded,full_reads,read_bytes,hits,preview_hits,misses,last_full_us,max_full_us,last_preview_us;
 static int32_t position,direction=1;
-static int32_t settle_from;
-static uint32_t settle_frames,settle_step;
-static bool visible,pending,failed;
+static bool visible,pending,failed,canceling;
 static const uint32_t generation=0x79000001u;
 static const uint32_t crc_table[16]={0,0x1db71064,0x3b6e20c8,0x26d930ac,0x76dc4190,0x6b6b51f4,0x4db26158,0x5005713c,0xedb88320,0xf00f9344,0xd6d6a3e8,0xcb61b38c,0x9b64c2b0,0x86d3d2d4,0xa00ae278,0xbdbdf21c};
 struct ln_coverflow_column {uint32_t step;uint8_t source,top,height,length;};
 extern const struct ln_coverflow_column ln_coverflow_columns[33][COVER_WIDTH];
 extern const uint8_t ln_coverflow_widths[33];
-extern const uint8_t ln_coverflow_ease[8][8];
 #if LINNET_COVERFLOW_SCANLINE
 extern const uint8_t ln_coverflow_glow_pairs[190][160];
 extern const uint8_t ln_coverflow_glow_colors[2][192][2];
@@ -54,6 +62,7 @@ static bool identity(void){uint8_t hash[32];if(!ln_music_library_identity(hash))
     for(uint32_t i=0;i<32;i++)if(hash[i]!=header[16+i])return false;return true;}
 static uint8_t *row(uint32_t index){return index<count&&tags[index%CATALOG_SLOTS]==index+1u?catalog[index%CATALOG_SLOTS]:0;}
 static int32_t find_art(uint32_t id){for(uint32_t i=0;i<SLOTS;i++)if(cache[i].id==id+1u)return (int32_t)i;return -1;}
+static bool close_to_selection(uint32_t art);
 static bool selected_full(void){uint8_t *r=row(selected);return r&&art_ready(ln_read_le32(r+248));}
 static void invalidate(void){
     for(uint32_t i=0;i<CATALOG_SLOTS;i++)tags[i]=0;
@@ -65,21 +74,23 @@ void ln_coverflow_visible(bool value){if(value&&!visible)io_due=ln_time_us();vis
 uint32_t ln_coverflow_count(void){return count;}
 bool ln_coverflow_active(void){return visible;}
 void ln_coverflow_move(int32_t delta){
-    if(!count)return;int32_t n=(int32_t)selected+(delta>64?64:delta< -64?-64:delta);
+    if(!count||!delta)return;int32_t n=(int32_t)selected+(delta>64?64:delta< -64?-64:delta);
     uint32_t target=n<0?0u:(uint32_t)n>=count?count-1u:(uint32_t)n;if(target==selected)return;
     int32_t moving=target>selected?1:-1;
-    int32_t destination=(int32_t)(target*256u);
-    if(moving!=direction&&((moving>0&&position>destination)||(moving<0&&position<destination)))
-        position=destination-moving*256;
     direction=moving;
     if(target/CATALOG_SLOTS!=selected/CATALOG_SLOTS)warm=(target/CATALOG_SLOTS)*CATALOG_SLOTS;
     selected=target;
+    if(phase==ART&&!canceling){
+        bool needed=false;
+        for(uint32_t i=0;i<length/ART_RECORD;i++)if(close_to_selection(loading+i)){needed=true;break;}
+        if(!needed){
+            if(pending){ln_storage_media_cancel(generation);canceling=true;}
+            else {if(loading<art_warm)art_warm=loading;phase=READY;}
+        }
+    }
     int32_t distance=(int32_t)(selected*256u)-position;
-    if(distance>768)position=(int32_t)(selected*256u)-768;
-    else if(distance< -768)position=(int32_t)(selected*256u)+768;
-    settle_from=position;settle_step=0;settle_frames=1;
-    int32_t span=(int32_t)(selected*256u)-position;if(span<0)span=-span;
-    while(span>=8&&settle_frames<8){span=(span+1)/2;++settle_frames;}
+    if(distance>512)position=(int32_t)(selected*256u)-512;
+    else if(distance< -512)position=(int32_t)(selected*256u)+512;
     moved_at=ln_time_us();io_due=moved_at;
     if(selected_full()){++hits;last_full_us=0;}else if(row(selected))++preview_hits;else ++misses;
     last_preview_us=row(selected)?0u:NONE;
@@ -136,7 +147,6 @@ static void request_art(uint32_t id,bool bulk){
     loading=id;length=1u;
     uint32_t slot=id%ART_SLOTS,available=slot<ART_LOW?ART_LOW-slot:ART_SLOTS-slot;
     if(bulk)while(length<ART_PAGE&&length<available&&loading+length<arts&&!art_ready(loading+length))++length;
-    if(length>arts-loading)length=arts-loading;
     for(uint32_t i=0;i<length;i++)art_tags[(loading+i)%ART_SLOTS]=0;
     length*=ART_RECORD;phase=ART;
 }
@@ -160,7 +170,14 @@ void ln_coverflow_step(bool allow_read){
             if(now-began>=500u||(ln_storage_idle_wait(now,&deadline)&&(int32_t)(deadline-now)>0))break;
         }
         if(!result){io_due=ln_time_us()+1000u;return;}pending=false;
-        if(result<0){fail();return;}
+        if(result<0){
+            if(canceling&&result==LN_FAT32_STALE){
+                canceling=false;if(loading<art_warm)art_warm=loading;
+                phase=READY;io_due=ln_time_us();return;
+            }
+            fail();return;
+        }
+        canceling=false;
         if(phase==OPEN){phase=HEADER;}
         else if(phase==HEADER){
             count=ln_read_le32(header+4);arts=ln_read_le32(header+52);
@@ -196,14 +213,18 @@ void ln_coverflow_step(bool allow_read){
     if(phase==READY){
         if(visible&&count&&!row(selected))request_catalog(selected);
         else if(visible&&count){
-            static const int8_t ahead[]={0,1,2,-1,3,-2,-3,4,5,-4,6,-5};
+            static const int8_t ahead[]={0,1,-1,2,-2,3,-3};
+            bool decoded=false;
             for(uint32_t d=0;d<sizeof(ahead);d++){
+                if(d>=3u&&(uint32_t)(now-moved_at)<120000u)break;
                 int32_t index=(int32_t)selected+ahead[d]*direction;
                 if(index<0||(uint32_t)index>=count)continue;
                 uint8_t *r=row((uint32_t)index);if(!r){request_catalog((uint32_t)index);break;}
                 uint32_t art=ln_read_le32(r+248);
                 if(!art_ready(art)){request_art(art,false);break;}
+                if(find_art(art)<0){(void)decode_art(art);++revision;decoded=true;break;}
             }
+            if(decoded){io_due=now+1000u;return;}
         }
         if(phase==READY){
             uint32_t base=count<=CATALOG_SLOTS?0u:(selected>128u?((selected-128u)/PAGE)*PAGE:0u);
@@ -217,9 +238,17 @@ void ln_coverflow_step(bool allow_read){
         if(phase==READY){
             uint32_t limit=arts<ART_SLOTS?arts:ART_SLOTS;
             while(art_warm<limit&&art_ready(art_warm))++art_warm;
-            if(art_warm<limit){request_art(art_warm,true);art_warm=loading+length/ART_RECORD;}
+            if(art_warm<limit&&(!visible||(uint32_t)(now-moved_at)>=300000u)){
+                request_art(art_warm,true);art_warm=loading+length/ART_RECORD;
+            }
         }
-        if(phase==READY){io_due=NONE;return;}
+        if(phase==READY){
+            uint32_t elapsed=now-moved_at;
+            io_due=visible&&count&&elapsed<120000u?moved_at+120000u:
+                visible&&art_warm<arts&&art_warm<ART_SLOTS&&elapsed<300000u?
+                moved_at+300000u:NONE;
+            return;
+        }
     }
     int result;
     if(phase==CLOSED||phase==OPEN){phase=OPEN;result=ln_storage_media_open("/.LINNET/COVERS.CFL",generation);}
@@ -237,18 +266,18 @@ uint32_t ln_coverflow_tick(uint32_t now){
     if(next!=NONE&&next&&(int32_t)(now-next)<0)return 0;
     int32_t diff=(int32_t)(selected*256u)-position;
     if(diff){
-        int32_t target=(int32_t)(selected*256u);
-        position=settle_step<settle_frames?target-(target-settle_from)*ln_coverflow_ease[settle_frames-1][settle_step++]/256:target;
+        int32_t step=diff*2/3;
+        position+=(step?step:diff);
     }
     uint32_t changed=drawn!=revision?1u:diff?8u:0u;drawn=revision;
-    next=position!=(int32_t)(selected*256u)?now+33333u:NONE;
+    next=position!=(int32_t)(selected*256u)?now+20000u:NONE;
     return changed;
 }
 #if !defined(LINNET_PROFILE_RELEASE)
 #if LINNET_COVERFLOW_SCANLINE
 static uint32_t render_calls,render_us;
 void ln_coverflow_render_diagnostics(uint32_t words[16]){
-    uint32_t values[16]={0x52464c43u,render_calls,render_us};
+    uint32_t values[16]={0x52464c43u,render_calls,render_us,arts,art_warm};
     for(uint32_t i=0;i<16;i++)words[i]=values[i];
 }
 #endif

@@ -76,7 +76,7 @@ default_theme = "linnet.theme.ipod-classic"
 [resources]
 music_titles_address = 198334464
 music_titles_bytes = 851968
-coverflow_catalog_slots = 1024
+coverflow_catalog_slots = 4096
 
 [native_video]
 sample_bytes = 262144

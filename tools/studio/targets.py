@@ -161,7 +161,8 @@ def _validate_resources(path, spec):
         raise RuntimeError(f"invalid resource budget: {path}")
     start,size,slots=(r[k] for k in ("music_titles_address","music_titles_bytes","coverflow_catalog_slots"))
     if (any(type(v) is not int for v in (start,size,slots)) or start%32 or size<840896 or
-        not 16<=slots<=2048 or start < spec["recovery_snapshot_address"]+spec["recovery_snapshot_bytes"]+spec["lcd_width"]*spec["lcd_height"]*2 or
+        not 16<=slots<=(4096 if spec["id"]=="classic6g-n25" else 2048) or
+        start < spec["recovery_snapshot_address"]+spec["recovery_snapshot_bytes"]+spec["lcd_width"]*spec["lcd_height"]*2 or
         start+size>spec["mailbox_address"]-8192):
         raise RuntimeError(f"resource budget overlaps recovery or exceeds limits: {path}")
 

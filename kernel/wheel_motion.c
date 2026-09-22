@@ -7,7 +7,7 @@ void ln_wheel_motion_reset(struct ln_wheel_motion *motion)
     if(motion)*motion=(struct ln_wheel_motion){0};
 }
 int32_t ln_wheel_motion_step(struct ln_wheel_motion *motion,int32_t delta,
-    bool touched,bool hold,uint32_t list_count,uint32_t now_us)
+    bool touched,bool hold,uint32_t list_count,bool cover_flow,uint32_t now_us)
 {
     if(!motion)return 0;
     if(hold||!touched){ln_wheel_motion_reset(motion);return 0;}
@@ -28,11 +28,14 @@ int32_t ln_wheel_motion_step(struct ln_wheel_motion *motion,int32_t delta,
     if(!steps)return 0;
     if(!motion->streak||(uint32_t)(now_us-motion->last_detent_us)>FAST_DETENT_US)
         motion->streak=1;
-    else if(motion->streak<7u)++motion->streak;
+    else if(motion->streak<13u)++motion->streak;
     motion->last_detent_us=now_us;
     /* A batched packet is one observation, not evidence of several fast
      * detents. The first two observations remain exact at any list length. */
-    uint32_t gain=list_count<64u?1u:motion->streak>=7u?4u:motion->streak>=3u?2u:1u;
+    /* Covers stay exact through the first six fast observations, then use two
+     * and finally four albums per detent for a sustained turn. */
+    uint32_t gain=list_count<64u?1u:cover_flow?(motion->streak>=13u?4u:motion->streak>=7u?2u:1u):
+        motion->streak>=7u?4u:motion->streak>=3u?2u:1u;
     int64_t result=(int64_t)steps*gain;
     if(result>INT32_MAX)return INT32_MAX;
     if(result<INT32_MIN)return INT32_MIN;
