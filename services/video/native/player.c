@@ -9,6 +9,7 @@
 #include "hal/api/core.h"
 #include "hal/api/platform.h"
 #include "boot/include/linnet_bytes.h"
+#include <stddef.h>
 #define AAC (*(struct ln_aac *)(uintptr_t)LINNET_STAGE_ADDRESS)
 #define PACKET ((uint8_t *)(uintptr_t)(LINNET_STAGE_ADDRESS+0x40000u))
 #define CACHE_SLOTS 64u
@@ -181,7 +182,18 @@ static void step(void){
             v.video_phase=v.audio_phase=0;v.position=v.base;v.phase=PRIME;v.seek_phase=0;++v.revision;
         }return;
     }
-    if(v.paused)return;
+    if(v.paused){
+        /* A pause can arrive while a media read owns FAT and an ATA buffer.
+         * Drain its cancellation now so the disk may enter standby. The
+         * parser will retry the same read after playback resumes. */
+        if(v.io){
+            ln_storage_media_cancel(v.generation);
+            if(!ln_storage_media_poll_deferred(v.generation,0,0))return;
+            v.io=v.reading=v.cache.pending=false;
+            v.cache.bytes[v.cache.filling]=0;
+        }
+        return;
+    }
     struct ln_audio_status a={0};if(v.audio)ln_audio_snapshot(&a);
     if(!audio_step()){fail(7);return;}
     if(v.audio&&a.queued<START_AUDIO_FRAMES&&!v.audio_eof&&!(v.reading&&v.io_kind==0))return;
@@ -234,7 +246,11 @@ bool ln_video_open(const char *path){
     uint32_t n=0,id=2166136261;while(path[n]&&n<255){id=(id^(uint8_t)path[n])*16777619u;++n;}if(!n||n==255)return false;
     uint32_t generation=v.generation+1,revision=v.revision+1,resume[2]={v.resume[0],v.resume[1]};uint8_t options=v.options;
     bool headphone_known=v.headphone_known,headphones=v.headphones;
-    v=(__typeof__(v)){0};v.generation=generation?generation:1;v.revision=revision;v.options=options;v.resume[0]=resume[0];v.resume[1]=resume[1];v.identity=id;
+    /* Every displayed frame is fully written by the decoder. Clearing the
+     * three 320x240 RGB buffers here only delays the first frame. */
+    __builtin_memset(&v,0,offsetof(__typeof__(v),pixels));
+    v.asset=(struct ln_ui_asset){0};
+    v.generation=generation?generation:1;v.revision=revision;v.options=options;v.resume[0]=resume[0];v.resume[1]=resume[1];v.identity=id;
     v.headphone_known=headphone_known;v.headphones=headphones;
     if(resume[0]==id&&resume[1]){v.seek_target=resume[1];v.seek_phase=1;}
     for(uint32_t i=0;i<=n;i++)v.path[i]=path[i];const char *title=path;for(uint32_t i=0;i<n;i++)if(path[i]=='/')title=path+i+1;
@@ -279,10 +295,15 @@ void ln_video_presented(void){if(v.offered){v.offered=false;++v.presented;}}
 void ln_video_resume_get(uint32_t out[2]){out[0]=v.active?v.identity:v.resume[0];out[1]=v.active?clock_ms():v.resume[1];}
 void ln_video_resume_set(const uint32_t in[2]){v.resume[0]=in[0];v.resume[1]=in[1];}
 uint32_t ln_video_deadline(uint32_t now){
-    if(!v.active||v.paused)return now+20000u;
-    /* A decode/submit phase is runnable immediately. Sleeping between
-     * these phases spends the frame budget without progressing media. */
-    return v.frame_ready?now+1000u:now;
+    if(!v.active)return now+200000u;
+    if(v.stop||v.seek_phase||(v.paused&&v.io))return now;
+    if(v.paused)return now+200000u;
+    if(v.frame_ready)return now+1000u;
+    /* A pending read cannot be advanced by another decoder call. The storage
+     * deadline wakes the executive as soon as ATA has work to service. */
+    if(v.io)return now+200000u;
+    /* Decode and submit phases still run without an artificial frame delay. */
+    return now;
 }
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_video_diagnostics(uint32_t out[32]){uint32_t words[32]={0x53444956u,0,v.phase,v.error,v.active,v.io,v.paused,v.movie.packet,v.movie.samples,v.front,v.reads,v.read_bytes,v.decoded,v.presented,v.late,v.max_late,v.max_decode,v.frame_ready,v.offered,ln_video_decoder_time(),ln_yuv_convert_us,v.seek_phase,v.audio_frames,v.revision,v.audio_us,v.io_us,v.dropped,0,0,0,v.position,v.duration};for(unsigned i=0;i<32;i++)out[i]=words[i];ln_video_decoder_diagnostics(out+27);}

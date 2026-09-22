@@ -49,7 +49,11 @@ void ln_video_catalog_step(bool busy){
         result=ln_storage_media_poll_deferred(CATALOG_GENERATION,&catalog.file,&transferred);
         if(!result)return;catalog.pending=false;
         if(result<0){
-            catalog.phase=result==LN_FAT32_NOT_FOUND?4:5;++catalog.revision;return;
+            /* A missing index is an empty library. A missing page in an
+             * already opened index is corruption and must not be retried. */
+            catalog.phase=catalog.phase==1&&result==LN_FAT32_NOT_FOUND?4:5;
+            if(catalog.phase==5)catalog.count=0;
+            ++catalog.revision;return;
         }
         if(catalog.phase==1){
             if(catalog.file.size<CATALOG_HEADER_SIZE||catalog.file.size>CATALOG_HEADER_SIZE+CATALOG_MAX_ROWS*CATALOG_ROW_SIZE){catalog.phase=5;++catalog.revision;return;}
