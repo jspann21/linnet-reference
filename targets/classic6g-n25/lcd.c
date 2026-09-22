@@ -27,6 +27,18 @@ static void text(unsigned top,const char *message,uint16_t color) {
         left+=advances[glyph]*2u;
     }
 }
+static void small_text(unsigned top,const char *message,uint16_t color) {
+    uint16_t *frame=ln_display_framebuffer();unsigned width=0;
+    for(const char *p=message;*p;p++)if(*p>=32&&*p<=126)width+=advances[(unsigned)*p-32];
+    unsigned left=width<LINNET_UI_WIDTH?(LINNET_UI_WIDTH-width)/2:0;
+    for(;*message&&left<LINNET_UI_WIDTH;message++) {
+        if(*message<32||*message>126)continue;unsigned glyph=(unsigned)*message-32;
+        for(unsigned y=0;y<11&&top+y<LINNET_UI_HEIGHT;y++)
+            for(unsigned x=0;x<11&&left+x<LINNET_UI_WIDTH;x++)
+                if(glyphs[glyph][y]&(1u<<x))frame[(top+y)*LINNET_UI_WIDTH+left+x]=color;
+        left+=advances[glyph];
+    }
+}
 static bool present(void){return ln_display_damage(0,0,LINNET_UI_WIDTH,LINNET_UI_HEIGHT)&&ln_display_present()&&ln_display_quiesce();}
 bool ln_lcd_boot(void){
 #if defined(LINNET_IMAGE_OS) || defined(LINNET_IMAGE_BOOT)
@@ -52,9 +64,34 @@ bool ln_lcd_boot_apple(void){
     text(94,"Apple iPod Software",0x0000);text(150,"Starting",0x4208);return present();
 }
 bool ln_s5l_board_disk_screen(void){
-    if(!ln_lcd_fill(0x0841))return false;
-    text(72,"Disk Mode",0xffff);text(116,"Connected to computer",0xad75);
-    text(160,"Eject before disconnecting",0xad75);return present();
+    if(!ln_lcd_fill(0x39c7))return false;
+    uint16_t *frame=ln_display_framebuffer();
+    for(unsigned y=0;y<LINNET_UI_HEIGHT;y++){
+        unsigned shade=y<24?y*2:y<110?190u-(y-24u):104u-(y-110u)/2u;
+        unsigned red=shade*3u/4u,green=shade*7u/8u,blue=shade;
+        uint16_t color=y<24?0x18e3u:(uint16_t)(((red>>3)<<11)|((green>>2)<<5)|(blue>>3));
+        for(unsigned x=0;x<LINNET_UI_WIDTH;x++)frame[y*LINNET_UI_WIDTH+x]=color;
+    }
+    for(int y=-44;y<=44;y++)for(int x=-44;x<=44;x++){
+        int distance=x*x+y*y;
+        if(distance>44*44)continue;
+        unsigned edge=(unsigned)distance*22u/(42u*42u),depth=(unsigned)(y+44)*42u/88u;
+        unsigned red=255u-edge/2u-depth/5u,green=205u-edge-depth,blue=77u-edge/2u-depth/2u;
+        uint16_t color=distance>42*42?0x9a60u:(uint16_t)(((red>>3)<<11)|((green>>2)<<5)|(blue>>3));
+        frame[(unsigned)(104+y)*LINNET_UI_WIDTH+(unsigned)(160+x)]=color;
+    }
+    for(unsigned y=86;y<95;y++)for(unsigned x=146;x<174;x++)frame[y*LINNET_UI_WIDTH+x]=0x2104u;
+    for(unsigned y=89;y<93;y++)for(unsigned x=141;x<179;x++)frame[y*LINNET_UI_WIDTH+x]=0x2104u;
+    for(unsigned x=150;x<170;x++)frame[88u*LINNET_UI_WIDTH+x]=0xad55u;
+    for(unsigned y=95;y<113;y++)for(unsigned x=157;x<163;x++)frame[y*LINNET_UI_WIDTH+x]=0x2104u;
+    for(unsigned y=113;y<126;y++){
+        unsigned half=(126u-y)*11u/13u;
+        for(unsigned x=160u-half;x<=160u+half;x++)frame[y*LINNET_UI_WIDTH+x]=0x2104u;
+    }
+    small_text(6,"iPod",0xffff);
+    small_text(166,"Connected",0xffff);
+    small_text(185,"Eject before disconnecting.",0xffff);
+    return present();
 }
 bool ln_s5l_board_recovery_screen(void){
     if(!ln_lcd_fill(0x0841))return false;

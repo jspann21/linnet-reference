@@ -183,6 +183,15 @@ def apply_ipod_classic(scenes, theme):
             if scroll:
                 place(scroll, 312, 24, 8, 216)
         if sid == 'home' and listing:
+            # The Classic keeps its familiar top-level destinations. Linnet's
+            # own entries follow them and remain reachable when enabled.
+            listing['items'].extend(['Extras', 'Shuffle Songs'])
+            listing['targets'].extend([
+                next(i for i, candidate in enumerate(result)
+                     if candidate['id'] == 'linnet.system.extras'),
+                0xfffffffd,
+            ])
+            listing['item_count'] = listing['count'] = len(listing['items'])
             place(listing, 0, 24, 160, 216)
             if scroll:
                 scroll['flags'] |= 2
@@ -204,17 +213,22 @@ def apply_ipod_classic(scenes, theme):
             album = next(n for n in texts if n['text'] == 'Track album')
             notice = next(n for n in texts if n['text'] == 'Native playback shell')
             progress = next(n for n in nodes if n['kind'] == 10)
-            place(art, 16, 39, 120, 120)
-            place(title, 151, 45, 157, 38); title['flags'] = WRAP
-            place(artist, 151, 88, 157, fh); artist['flags'] = 0
-            place(album, 151, 111, 157, fh); album['flags'] = 0
-            place(notice, 16, 168, 140, fh); notice['flags'] = 0
-            place(progress, 16, 194, 288, 10)
+            place(art, 18, 39, 126, 126)
+            place(title, 153, 47, 153, fh); title['flags'] = 0
+            place(artist, 153, 72, 153, fh); artist['flags'] = 0
+            place(album, 153, 96, 153, fh); album['flags'] = 0
+            place(notice, 18, 171, 136, fh); notice['flags'] = 0
+            place(progress, 18, 197, 284, 9)
             nodes.extend([
-                text_node(title, 'Track position', 172, 168, 132, fh, RIGHT),
-                text_node(title, 'Track elapsed', 16, 212, 132, fh),
-                text_node(title, 'Track remaining', 172, 212, 132, fh, RIGHT),
+                text_node(title, 'Track position', 171, 171, 131, fh, RIGHT),
+                text_node(title, 'Track elapsed', 18, 211, 132, fh),
+                text_node(title, 'Track remaining', 170, 211, 132, fh, RIGHT),
             ])
+        elif sid == 'settings' and listing:
+            labels = {'About Linnet': 'About', 'Display': 'Backlight',
+                      'Clock': 'Date & Time', 'Video': 'Video Settings',
+                      'Update / Recovery': 'Update'}
+            listing['items'] = [labels.get(label, label) for label in listing['items']]
         elif sid == 'themes' and listing:
             place(listing, 0, 24, 312, 189)
             place(scroll, 312, 24, 8, 189)
