@@ -255,7 +255,7 @@ void ln_video_pause(bool pause){if(!v.active||v.paused==pause)return;
     if(pause){v.paused_at=ln_time_us();if(v.audio)ln_audio_pause();}else {uint32_t elapsed=ln_time_us()-v.paused_at;v.start+=elapsed;if(v.tail)v.tail_at+=elapsed;if(v.audio&&v.started&&!v.seek_phase&&!v.tail&&!ln_audio_start()){fail(13);return;}}
     v.paused=pause;++v.revision;
 }
-bool ln_video_controls(bool show){(void)show;ln_video_pause(!v.paused);return false;}
+bool ln_video_controls(bool show){(void)show;return true;}
 bool ln_video_paused(void){return v.paused;}
 bool ln_video_seek(int32_t seconds){
     if(!v.active||!v.started||v.stop||v.seek_phase||!seconds)return false;
