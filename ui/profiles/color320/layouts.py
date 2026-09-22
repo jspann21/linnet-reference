@@ -4,14 +4,17 @@ Use native scene bindings, with independent body, media and text geometry.
 These rectangles never pass through the Photo layout or its scaling step.
 """
 from copy import deepcopy
-from tools.content.layouts import place, text_node, CENTER, RIGHT, WRAP
+from tools.content.layouts import place, place_video_controls, text_node, CENTER, RIGHT, WRAP
 from tools.content.tsx import ContentError
 
 
 def apply_layout(scenes, theme):
     style = theme['layout']
     if style == 'native':
-        return deepcopy(scenes)
+        result = deepcopy(scenes)
+        for scene in result:
+            place_video_controls(scene, 320, 240)
+        return result
     if style == 'ipod-classic':
         return apply_ipod_classic(scenes, theme)
     # Graphite/Sunset reserve the bottom 30 pixels for transport chrome;
@@ -50,9 +53,7 @@ def apply_layout(scenes, theme):
         if sid in ('cover-flow', 'video-player'):
             continue
         if sid == 'video-controls':
-            for node in nodes:
-                if node['kind'] == 11:
-                    place(node, 0, 0, 320, 28)
+            place_video_controls(scene, 320, 240)
             continue
         if sid == 'photos-viewer':
             surface = next(n for n in nodes if n['kind'] == 15)
@@ -168,9 +169,7 @@ def apply_ipod_classic(scenes, theme):
         if sid in ('cover-flow', 'video-player'):
             continue
         if sid == 'video-controls':
-            for n in nodes:
-                if n['kind'] == 11:
-                    place(n, 0, 0, 320, 24)
+            place_video_controls(scene, 320, 240)
             continue
         if sid == 'photos-viewer':
             surface = next(n for n in nodes if n['kind'] == 15)

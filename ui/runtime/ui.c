@@ -1006,6 +1006,9 @@ static bool paint_video_overlay(struct painter*p,struct ln_ui_state*s,const stru
         else if((uint32_t)n->y>=LINNET_UI_HEIGHT*112u/176u){if((uint32_t)n->y<bottom)bottom=(uint32_t)n->y;}
         else return false;
     }
+    /* Leave breathing room above the seek track without covering any text. */
+    if(bottom<7u||bottom-7u<=top)return false;
+    bottom-=7u;
     uint32_t battery=ln_ui_battery_status(),playback=ln_ui_playback_status(),minute=ln_ui_clock_seconds()/60u;
     const struct ln_ui_node*bar=&c->nodes[3];
     uint32_t count=ln_ui_dynamic_count(bar,bar->count?bar->count:100u),value=ln_ui_dynamic_value(bar,bar->index);
@@ -1023,9 +1026,20 @@ static bool paint_video_overlay(struct painter*p,struct ln_ui_state*s,const stru
     struct rect clip=p->clip;p->clip=(struct rect){0,(int32_t)top,LINNET_UI_WIDTH,(int32_t)(bottom-top)};
     draw_node(p,&c->nodes[1],s,false);p->clip=clip;
     if(changed){
-        fill(p,(struct rect){0,0,LINNET_UI_WIDTH,(int32_t)top},color(LN_UI_PANEL));
-        fill(p,(struct rect){0,(int32_t)bottom,LINNET_UI_WIDTH,LINNET_UI_HEIGHT-(int32_t)bottom},color(LN_UI_PANEL));
-        for(uint32_t i=2;i<c->count;++i)draw_node(p,&c->nodes[i],s,i==c->focus_node);
+        const uint16_t panel=0x1082u,edge=0x4208u,track=0x528au,accent=0x4dffu;
+        const uint16_t ink=0xffffu,muted=0xbdf7u;
+        const char*hide="SELECT Hide";
+        int32_t hide_width=text_width(hide),hide_x=LINNET_UI_WIDTH-8-hide_width;
+        fill(p,(struct rect){0,0,LINNET_UI_WIDTH,(int32_t)top},panel);
+        fill(p,(struct rect){0,(int32_t)bottom,LINNET_UI_WIDTH,LINNET_UI_HEIGHT-(int32_t)bottom},panel);
+        fill(p,(struct rect){0,(int32_t)top-1,LINNET_UI_WIDTH,1},edge);
+        fill(p,(struct rect){0,(int32_t)bottom,LINNET_UI_WIDTH,1},edge);
+        fitted_text(p,8,max(0,((int32_t)top-(int32_t)ln_ui_font.height)/2),status,ink,hide_x-16);
+        fitted_text(p,hide_x,max(0,((int32_t)top-(int32_t)ln_ui_font.height)/2),hide,muted,hide_width);
+        fill(p,bounds(bar),track);
+        if(progress)fill(p,(struct rect){bar->x,bar->y,(int32_t)progress,bar->h},accent);
+        const struct ln_ui_node*hint=&c->nodes[4];
+        fitted_text(p,hint->x,hint->y+max(0,(hint->h-(int32_t)ln_ui_font.height)/2),hint->text,muted,hint->w);
         pixel_copy(video_overlay.pixels,p->pixels,top*LINNET_UI_WIDTH);
         pixel_copy(video_overlay.pixels+bottom*LINNET_UI_WIDTH,p->pixels+bottom*LINNET_UI_WIDTH,(LINNET_UI_HEIGHT-bottom)*LINNET_UI_WIDTH);
         video_overlay.scene=s->scene;video_overlay.epoch=s->scene_epoch;video_overlay.theme=active_theme;

@@ -23,6 +23,22 @@ def text_node(template,text,x,y,w,h,flags=0,fg='foreground'):
                 flags=flags,count=0,resource=0xffffffff,index=0,text=text,items=[],targets=[],item_count=0,deps=4,canvas='')
     return node
 
+def place_video_controls(scene,width,height):
+    """Keep video native size and give every theme the same compact controls."""
+    if scene['id']!='linnet.system.video-controls':return
+    nodes=scene['nodes']
+    surface=next(n for n in nodes if n['kind']==16)
+    header=next(n for n in nodes if n['kind']==11)
+    progress=next(n for n in nodes if n['kind']==10)
+    hint=next(n for n in nodes if n['kind']==3)
+    top=20 if height==176 else 24
+    bottom=145 if height==176 else 201
+    place(surface,0,0,width,height)
+    place(header,0,0,width,top);header['flags']=0
+    place(progress,8,bottom+7,width-16,4);progress['flags']=0
+    place(hint,8,bottom+15,width-16,height-bottom-15);hint['flags']=0
+    hint['text']='PLAY Pause    < > Seek' if width==220 else 'MENU Exit    PLAY Pause    < > Seek'
+
 def apply_layout(scenes,theme,compact=False):
     result=deepcopy(scenes)
     style=theme['layout']
@@ -33,6 +49,7 @@ def apply_layout(scenes,theme,compact=False):
             if style=='minimal':refine_minimal(scene,theme)
             refine_footers(scene,theme)
             align_scrollbars(scene,theme)
+            place_video_controls(scene,220,176)
         return result
     font_h=theme['font']['height']
     # Each body rectangle is its own layout, not a recolor of the default shell.
@@ -103,6 +120,7 @@ def apply_layout(scenes,theme,compact=False):
         for node in nodes:
             node['w']=max(1,min(node['w'],220-node['x']))
             node['h']=max(1,min(node['h'],176-node['y']))
+        place_video_controls(scene,220,176)
         scene['count']=len(nodes)
     return result
 
