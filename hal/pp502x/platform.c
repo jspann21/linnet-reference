@@ -33,7 +33,14 @@ int ln_platform_enter(const uint8_t *payload,uint32_t size,uint32_t load,uint32_
     return 0;
 }
 int ln_platform_enter_retail(const uint8_t *payload,uint32_t size) {
-    return ln_platform_enter(payload,size,0x10000000u,0x10000000u);
+    extern const uint8_t ln_retail_enter_begin[],ln_retail_enter_end[];
+    uint32_t bytes=(uint32_t)(ln_retail_enter_end-ln_retail_enter_begin);
+    if(!payload||!size||bytes>256u)return 0;
+    volatile uint8_t *iram=(volatile uint8_t *)(uintptr_t)0x40000000u;
+    for(uint32_t i=0;i<bytes;++i)iram[i]=ln_retail_enter_begin[i];
+    ((void (*)(const uint8_t *,uint32_t,uint32_t,uint32_t))(uintptr_t)0x40000000u)
+        (payload,size,0x10000000u,0x10000000u);
+    return 0;
 }
 uint32_t ln_platform_clock_divider(void){return LINNET_REG(0x60006044u);}
 void ln_platform_cache_marker(uint32_t value){LINNET_REG(0x11ffe098u)=value;}

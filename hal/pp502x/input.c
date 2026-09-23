@@ -72,6 +72,10 @@ bool ln_input_poll(struct ln_input_state *out)
                 next.wheel_delta = delta;
             }
             ln_last_wheel = next.touched ? next.wheel_position : -1;
+        } else if ((packet & 0x8000ffffu) == 0x8000023au) {
+            /* Startup handshakes can carry a held button before ordinary
+             * wheel packets arrive. */
+            next.buttons = (packet >> 16) & 31u;
         } else if ((packet & 0x800000ffu) != 0x8000003au && packet != UINT32_MAX) {
             ++next.invalid_packets;
             next.buttons = 0;

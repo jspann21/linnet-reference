@@ -4,6 +4,13 @@
 #include "hal/api/usb.h"
 #include "hal/api/recovery.h"
 #include "linnet_build.h"
+#if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_APPLE_FALLBACK
+#include "hal/api/input.h"
+#include "boot/include/linnet_bytes.h"
+#if defined(LINNET_TARGET_PHOTO4G_P98) || defined(LINNET_TARGET_IPOD4G_Q21)
+#include "hal/pp502x/target.h"
+#endif
+#endif
 #if defined(LINNET_AUDIO)
 #include "kernel/audio_link.h"
 #endif
@@ -24,6 +31,9 @@ static ln_link_parser parser;
 static uint32_t usb_generation;
 static uint8_t receive_bytes[512];
 static uint8_t transmit_bytes[LINNET_LINK_MAX_FRAME];
+#if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_APPLE_FALLBACK
+static uint8_t boot_input_reply[80];
+#endif
 static int (*loader_read)(void *, uint16_t, uint8_t *, uint32_t *);
 #if defined(LINNET_VIDEO)
 #include "services/video/video.h"
@@ -183,6 +193,20 @@ void ln_development_poll(void) {
         LN_BOOT_STAMP(LN_BT_OS_REQUEST);
 #endif
         int handled = 0;
+#if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_APPLE_FALLBACK
+        if(request.command==70u && !request.flags && !request.length){
+            struct ln_input_state sample;(void)ln_input_poll(&sample);
+            uint32_t words[16];ln_input_diagnostics(words);
+            for(uint32_t j=0;j<16u;++j)ln_write_le32(boot_input_reply+j*4u,words[j]);
+#if defined(LINNET_TARGET_PHOTO4G_P98) || defined(LINNET_TARGET_IPOD4G_Q21)
+            uint32_t query[4];ln_target_boot_menu_diagnostics(query);
+            for(uint32_t j=0;j<4u;++j)ln_write_le32(boot_input_reply+(16u+j)*4u,query[j]);
+#endif
+            response.command=request.command;response.sequence=request.sequence;
+            response.flags=LINNET_LINK_ACK;response.payload=boot_input_reply;
+            response.length=sizeof boot_input_reply;handled=1;
+        }
+#endif
 #if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_OS)
         handled = ln_platform_link_dispatch(&request, &response);
 #if defined(LINNET_AUDIO)

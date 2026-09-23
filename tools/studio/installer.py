@@ -40,11 +40,11 @@ INSTALLATION_METHODS = {
         strategy="rockbox-file", boot_selector="none", requires_admin=False),
     "native-preserve": dict(
         label="Linnet with Apple fallback",
-        detail="Linnet starts normally; hold MENU during power-on to start the preserved Apple software.",
+        detail="Linnet starts normally; hold MENU during power-on to choose Linnet or the preserved Apple software.",
         strategy="native-directory", boot_selector="none", requires_admin=True),
     "native-selector": dict(
         label="Linnet, Apple software, and Rockbox",
-        detail="Hold MENU during power-on for Apple software, or use the startup menu for Linnet and Rockbox.",
+        detail="Hold MENU during power-on to choose Linnet, Apple software, or the verified Rockbox image.",
         strategy="native-directory", boot_selector="rockbox", requires_admin=True),
 }
 
@@ -333,7 +333,7 @@ def _boot_options(linnet, rockbox, others, marker, action, resume, active_overri
             rockbox_detail = ("Current valid Rockbox loader; Rockbox Utility's bootloader record is "
                               "newer than Linnet's saved boot state.")
         elif marker and marker.get("phase") == "installed" and marker.get("installation_method") == "native-selector":
-            rockbox_detail = "Available in Linnet’s startup selector; Linnet starts after the five-second timeout."
+            rockbox_detail = "Available in Linnet’s Menu-held startup chooser; Linnet starts after the 30-second timeout."
             if previous == "rockbox":
                 rockbox_detail += " Restore the saved Rockbox boot path to make it the sole default."
         elif marker and marker.get("phase") == "installed" and marker.get("installation_method") == "native-preserve":

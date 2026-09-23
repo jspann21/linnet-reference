@@ -586,7 +586,9 @@ int ln_storage_disk_mode(void){
 #if !defined(LINNET_PROFILE_RELEASE)
     return ln_recovery_reboot(0,34);
 #else
+#if defined(LINNET_SOC_PP5020) || defined(LINNET_SOC_PP5022)
     uint32_t sector_bytes=ln_storage_disk_sector_bytes();
+#endif
     if(!ln_storage_quiesce()||!ln_platform_audio_idle())return 0;
 #if defined(LINNET_IMAGE_OS)
     extern bool ln_display_quiesce(void);
@@ -706,6 +708,50 @@ static int selector_read(const struct ln_fat32_file *file,uint32_t offset,uint8_
     if(!length||length>LN_STORAGE_MEDIA_MAX_READ||!ln_fat32_read(&volume,file,offset,data,length,next_generation()))return 0;
     locked=true;return finish();
 }
+uint32_t ln_storage_boot_options(void){
+    if(!ln_storage_startup_complete()||ln_storage_busy())return 0u;
+    uint32_t options=1u;
+    if(!ln_storage_mounted())return options;
+#if LINNET_BOOT_SELECTOR_ROCKBOX
+    struct ln_fat32_file rb_config,rb_image;
+    uint8_t rb_data[512],rb_header[8];char rb_path[LN_FAT32_PATH_MAX+1];
+    if(selector_open("/.LINNET/RBPATH.CFG",&rb_config)&&rb_config.size==sizeof(rb_data)&&
+       selector_read(&rb_config,0,rb_data,sizeof(rb_data))&&
+       rb_data[0]=='R'&&rb_data[1]=='B'&&rb_data[2]=='P'&&rb_data[3]=='A'&&
+       rb_data[4]=='T'&&rb_data[5]=='H'&&rb_data[6]=='1'&&rb_data[7]==0&&
+       ln_crc32(rb_data,508u)==ln_read_le32(rb_data+508u)){
+        uint32_t length=ln_read_le32(rb_data+8u);
+        if(length&&length<=LN_FAT32_PATH_MAX&&12u+length<508u&&
+           rb_data[12u]=='/'&&!rb_data[12u+length]){
+            for(uint32_t i=0;i<=length;++i)rb_path[i]=(char)rb_data[12u+i];
+            if(selector_open(rb_path,&rb_image)&&rb_image.size>=40u&&
+               rb_image.size-8u<=LINNET_STAGE_CAPACITY&&
+               selector_read(&rb_image,0,rb_header,sizeof(rb_header))){
+                static const char model[]=LINNET_FILE_WRAPPER_MODEL;
+                bool match=true;
+                for(uint32_t i=0;i<4u;++i)if(rb_header[4u+i]!=(uint8_t)model[i])match=false;
+                if(match)options|=2u;
+            }
+        }
+    }
+#endif
+#if LINNET_BOOT_APPLE_FALLBACK
+    struct ln_fat32_file apple_config,apple_image;
+    uint8_t apple_data[512];
+    if(selector_open("/.LINNET/APPLE.CFG",&apple_config)&&apple_config.size==sizeof(apple_data)&&
+       selector_read(&apple_config,0,apple_data,sizeof(apple_data))&&
+       apple_data[0]=='A'&&apple_data[1]=='P'&&apple_data[2]=='P'&&apple_data[3]=='L'&&
+       apple_data[4]=='E'&&apple_data[5]=='O'&&apple_data[6]=='S'&&apple_data[7]=='1'&&
+       ln_read_le32(apple_data+8u)==LINNET_TARGET_NUMBER&&
+       ln_crc32(apple_data,508u)==ln_read_le32(apple_data+508u)){
+        uint32_t size=ln_read_le32(apple_data+12u);
+        if(size&&size<=LINNET_STAGE_CAPACITY&&
+           selector_open("/.LINNET/APPLE.BIN",&apple_image)&&apple_image.size==size)
+            options|=4u;
+    }
+#endif
+    return options;
+}
 #if LINNET_BOOT_SELECTOR_ROCKBOX
 static int selector_rockbox(void){
     struct ln_fat32_file config_file,rockbox_file;
@@ -768,7 +814,21 @@ static int selector_apple(void){
         uint32_t chunk=payload_size-offset;
         if(chunk>LN_STORAGE_MEDIA_MAX_READ)chunk=LN_STORAGE_MEDIA_MAX_READ;
         if(!selector_read(&firmware_file,offset,payload+offset,chunk))return 0;
-        ln_sha256_update(&hash,payload+offset,chunk);offset+=chunk;
+        /* A full disk read can exceed the watchdog's 500 ms progress window
+         * when SHA-256 runs at the Boot clock. Authenticate every byte while
+         * publishing progress between bounded hash slices. */
+        for(uint32_t hashed=0;hashed<chunk;){
+            uint32_t slice=chunk-hashed;
+            if(slice>8192u)slice=8192u;
+            ln_sha256_update(&hash,payload+offset+hashed,slice);
+            hashed+=slice;
+#if !defined(LINNET_PROFILE_RELEASE)
+            ln_recovery_feed();
+#else
+            ln_core_watchdog_feed();
+#endif
+        }
+        offset+=chunk;
     }
     ln_sha256_finish(&hash,digest);
     for(uint32_t i=0;i<32u;++i)if(digest[i]!=config[16u+i])return 0;
@@ -778,9 +838,25 @@ static int selector_apple(void){
      * the complete CBC stream in one engine operation before execution. */
     if(!ln_s5l_aes_crypt(payload,payload_size,2u,false))return 0;
 #endif
-    if(!ln_storage_quiesce()||!ln_platform_audio_idle())return 0;
+    if(!ln_platform_audio_idle())return 0;
+#if defined(LINNET_SOC_PP5020) || defined(LINNET_SOC_PP5022)
+#if !defined(LINNET_PROFILE_RELEASE)
+    if(!ln_recovery_quiesce(0))return 0;
+    /* Recovery quiesce intentionally leaves its handoff watchdog armed for
+     * Linnet RAM launches. Apple owns the CPU after this jump, so withdraw
+     * the lease before executing its firmware. */
+    ln_core_watchdog_disarm();
+#else
+    if(!ln_storage_quiesce())return 0;
     ln_core_watchdog_disarm();ln_platform_quiesce();
     if(!ln_platform_dma_idle()){ln_core_watchdog_arm();return 0;}
+    if(!ln_core_cache_disable()){ln_core_watchdog_arm();return 0;}
+#endif
+#else
+    if(!ln_storage_quiesce())return 0;
+    ln_core_watchdog_disarm();ln_platform_quiesce();
+    if(!ln_platform_dma_idle()){ln_core_watchdog_arm();return 0;}
+#endif
     (void)ln_platform_enter_retail(payload,payload_size);
     ln_core_watchdog_arm();return 0;
 }

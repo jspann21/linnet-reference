@@ -208,6 +208,7 @@ static uint8_t text_pixel(const char (*lines)[24],uint32_t x,uint32_t y)
     if(c>='0'&&c<='9')mask=glyphs[c-'0'][row];
     else if(c>='A'&&c<='Z')mask=glyphs[c-'A'+10u][row];
     else if(c==':')mask=row==2u||row==5u?4u:0u;
+    else if(c=='+')mask=row==3u?14u:(row==2u||row==4u?4u:0u);
     return (mask&(16u>>bit))?3u:0u;
 }
 
@@ -251,23 +252,33 @@ bool ln_lcd_boot_apple(void)
     static const char lines[7][24]={"APPLE IPOD SOFTWARE","","STARTING"};
     return draw(0xffffu,lines,false);
 }
-#if LINNET_BOOT_SELECTOR_ROCKBOX
-bool ln_lcd_boot_selector(bool rockbox,bool starting)
+bool ln_lcd_boot_menu(uint32_t available,uint32_t selected,bool starting)
 {
-    char lines[7][24]={"CHOOSE STARTUP","","","MENU: CHANGE","CENTER: START",
-        "AUTO: LINNET 5 SEC"};
+    char lines[7][24]={"CHOOSE STARTUP","","","","WHEEL: CHOOSE",
+        "CENTER: START","AUTO: LINNET 30 SEC"};
     if(starting){
-        const char *message=rockbox?"STARTING ROCKBOX":"STARTING LINNET";
+        const char *name=selected==3u?"APPLE SOFTWARE":selected==2u?"ROCKBOX":"LINNET";
+        const char *prefix="STARTING ";uint32_t at=0;
+        while(prefix[at]){lines[2][at]=prefix[at];++at;}
+        for(uint32_t i=0;name[i];++i)lines[2][at+i]=name[i];
+        for(uint32_t row=4u;row<7u;++row)lines[row][0]=0;
+    }else if(!available){
+        const char *message="CHECKING STARTUP FILES";
         for(uint32_t i=0;message[i];++i)lines[2][i]=message[i];
     }else{
-        const char *first=rockbox?"LINNET":"SELECT LINNET";
-        const char *second=rockbox?"SELECT ROCKBOX":"ROCKBOX";
-        for(uint32_t i=0;first[i];++i)lines[1][i]=first[i];
-        for(uint32_t i=0;second[i];++i)lines[2][i]=second[i];
+        uint32_t row=1u;
+        static const char *names[3]={"LINNET","ROCKBOX","APPLE SOFTWARE"};
+        for(uint32_t choice=1u;choice<=3u;++choice){
+            if(!(available&(1u<<(choice-1u))))continue;
+            lines[row][0]=choice==selected?'+':' ';
+            lines[row][1]=' ';
+            const char *name=names[choice-1u];
+            for(uint32_t i=0;name[i];++i)lines[row][i+2u]=name[i];
+            ++row;
+        }
     }
     return draw(0xffffu,lines,false);
 }
-#endif
 #endif
 bool ln_lcd_fault(uint32_t reason,const uint8_t build_id[32])
 {

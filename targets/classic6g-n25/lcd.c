@@ -88,7 +88,7 @@ bool ln_s5l_board_disk_screen(void){
         unsigned half=(126u-y)*11u/13u;
         for(unsigned x=160u-half;x<=160u+half;x++)frame[y*LINNET_UI_WIDTH+x]=0x2104u;
     }
-    small_text(6,"iPod",0xffff);
+    small_text(6,"Linnet Disk Mode",0xffff);
     small_text(166,"Connected",0xffff);
     small_text(185,"Eject before disconnecting.",0xffff);
     return present();
@@ -100,7 +100,35 @@ bool ln_s5l_board_recovery_screen(void){
     text(134,"Play: Disk Mode",0xad75);
     text(186,"Connect USB to repair",0xad75);return present();
 }
-bool ln_lcd_boot_selector(bool alternate,bool starting){return ln_lcd_fill(starting?0x07e0:alternate?0xfd20:0x001f);}
+bool ln_lcd_boot_menu(uint32_t available,uint32_t selected,bool starting){
+    if(!ln_lcd_fill(0x0841u))return false;
+    if(starting){
+        text(74,"Starting",0xffffu);
+        text(126,selected==3u?"Apple iPod Software":selected==2u?"Rockbox":"Linnet",0x5d9du);
+        return present();
+    }
+    text(28,"Choose startup",0xffffu);
+    if(!available)small_text(106,"Checking startup files",0xad75u);
+    else{
+        static const char *names[3]={"Linnet","Rockbox","Apple iPod Software"};
+        uint32_t row=0;
+        for(uint32_t choice=1u;choice<=3u;++choice){
+            if(!(available&(1u<<(choice-1u))))continue;
+            text(67u+row*39u,names[choice-1u],choice==selected?0xffffu:0x94b2u);
+            if(choice==selected){
+                uint16_t *frame=ln_display_framebuffer();
+                uint32_t top=66u+row*39u;
+                for(uint32_t y=top;y<top+25u;++y){frame[y*LINNET_UI_WIDTH+23u]=0x5d9du;
+                    frame[y*LINNET_UI_WIDTH+24u]=0x5d9du;
+                    frame[y*LINNET_UI_WIDTH+295u]=0x5d9du;
+                    frame[y*LINNET_UI_WIDTH+296u]=0x5d9du;}
+            }
+            ++row;
+        }
+    }
+    small_text(206,"Wheel: choose   Center: start",0xad75u);
+    return present();
+}
 bool ln_lcd_fault(uint32_t reason,const uint8_t build[32]) {
     (void)build;
     if(!ln_lcd_fill(0x7800))return false;

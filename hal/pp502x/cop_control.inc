@@ -82,40 +82,42 @@ bool ln_core_cop_pause(bool pause) {
 }
 
 uint32_t ln_display_cop_error(void) { return cop_error; }
-static bool monitor_signature(uint32_t *branch)
+static bool monitor_signature(uint32_t *branch,uint32_t *offset)
 {
-    /* Boot header copied from ln_cop_begin to0x40001000. These offsets are
-     * bounded to its first184 bytes and were checked against installed Boot
-     * 3dfc7bd0a7b1. Reject any other layout rather than scanning or relocating
-     * an executing resident worker. The branch displacement stays unchanged. */
+    /* Boot header copied from ln_cop_begin to 0x40001000. The retail-capable
+     * header adds two instructions before the stable monitor sequence. Accept
+     * only these exact layouts; never scan or patch an unknown resident COP. */
     if(REG(0x11ffe0a0u)!=LINNET_DISPLAY_CAPABILITY||REG(0x11ffe018u)!=0x4c4e434fu)
         return false;
-    if(REG(0x40001040u)!=0xe5923000u|| /* ldr r3,[r2]: timer */
-       REG(0x40001044u)!=0xe580301cu|| /* publish COP tick */
-       REG(0x40001054u)!=0xe5904010u|| /* ldr r4,[r0,#16]: CPU progress */
-       REG(0x40001058u)!=0xe0434004u|| /* sub r4,r3,r4 */
-       REG(0x4000105cu)!=0xe59f504cu|| /* load750ms literal */
-       REG(0x40001060u)!=0xe1540005u|| /* cmp elapsed,deadline */
-       REG(0x400010b0u)!=750000u||REG(0x400010b8u)!=1500000u)return false;
-    *branch=REG(0x40001064u);
+    *offset=REG(0x40001040u)==0xe5923000u?0u:
+        REG(0x40001048u)==0xe5923000u?8u:UINT32_MAX;
+    if(*offset==UINT32_MAX)return false;
+    uint32_t base=*offset;
+    if(REG(0x40001044u+base)!=0xe580301cu|| /* publish COP tick */
+       REG(0x40001054u+base)!=0xe5904010u|| /* ldr r4,[r0,#16]: CPU progress */
+       REG(0x40001058u+base)!=0xe0434004u|| /* sub r4,r3,r4 */
+       REG(0x4000105cu+base)!=0xe59f504cu|| /* load750ms literal */
+       REG(0x40001060u+base)!=0xe1540005u|| /* cmp elapsed,deadline */
+       REG(0x400010b0u+base)!=750000u||REG(0x400010b8u+base)!=1500000u)return false;
+    *branch=REG(0x40001064u+base);
     return *branch==0x3afffff4u||*branch==0xbafffff4u;
 }
 bool ln_display_upgrade_monitor(void)
 {
-    uint32_t branch;
-    if(!monitor_signature(&branch)){cop_error=8;return false;}
+    uint32_t branch,offset;
+    if(!monitor_signature(&branch,&offset)){cop_error=8;return false;}
     if(branch==0xbafffff4u)return true;
     /* A monitor we did not park must not be modified or woken by this call. */
     if(REG(0x60007004u)&0x80000000u){cop_error=8;return false;}
     if(!ln_core_cop_pause(true))return false;
     bool patched=false;
     if(MB(LN_DISPLAY_PAUSED)==2u&&(REG(0x60007004u)&0x80000000u)&&
-       monitor_signature(&branch)){
+       monitor_signature(&branch,&offset)){
         /* Signed LT also rejects a future progress sample after timer wrap.
          * Normal watchdog deadlines are well inside the signed half-range. */
-        REG(0x40001064u)=(branch&0x0fffffffu)|0xb0000000u;
+        REG(0x40001064u+offset)=(branch&0x0fffffffu)|0xb0000000u;
         barrier();
-        patched=REG(0x40001064u)==0xbafffff4u;
+        patched=REG(0x40001064u+offset)==0xbafffff4u;
     }
     bool resumed=ln_core_cop_pause(false);
     if(!patched)cop_error=9;

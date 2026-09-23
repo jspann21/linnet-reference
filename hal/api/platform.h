@@ -17,7 +17,7 @@ bool ln_lcd_fill(uint16_t color);
 bool ln_lcd_boot(void);
 #if defined(LINNET_IMAGE_BOOT)
 bool ln_lcd_boot_apple(void);
-bool ln_lcd_boot_selector(bool rockbox, bool starting);
+bool ln_lcd_boot_menu(uint32_t available,uint32_t selected,bool starting);
 #endif
 /* Bounded, standalone field fault display, including release Boot. */
 bool ln_lcd_fault(uint32_t reason,const uint8_t build_id[32]);

@@ -7,6 +7,9 @@
 #if defined(LINNET_IMAGE_BOOT) && (LINNET_BOOT_APPLE_FALLBACK || LINNET_BOOT_SELECTOR_ROCKBOX)
 #include "hal/api/input.h"
 #endif
+#if defined(LINNET_IMAGE_BOOT) && (defined(LINNET_TARGET_PHOTO4G_P98) || defined(LINNET_TARGET_IPOD4G_Q21))
+#include "hal/pp502x/target.h"
+#endif
 #if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_BOOT)
 #include "hal/api/core.h"
 #endif
@@ -191,18 +194,23 @@ _Noreturn void ln_main(void)
     bool first_frame = ln_runtime_first_frame_ready();
 #elif defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_APPLE_FALLBACK
     if(!ln_input_init())ln_panic(30,3,0);
-    bool apple_done=false,apple_requested=false,apple_holding=false;
-    uint32_t apple_started=0,apple_hold_started=0;
-#if LINNET_BOOT_SELECTOR_ROCKBOX
-    bool selector_rockbox=false,selector_done=false;
-    uint32_t selector_buttons=0,selector_started=0;
+#if defined(LINNET_TARGET_PHOTO4G_P98) || defined(LINNET_TARGET_IPOD4G_Q21)
+    bool initial_menu=ln_target_boot_menu_held();
+#else
+    bool initial_menu=false;
 #endif
+    bool boot_decided=false,menu_open=false,menu_holding=false;
+    uint32_t menu_started=0,menu_hold_started=0,menu_activity=0;
+    uint32_t menu_options=0,menu_selected=1u,menu_buttons=0,menu_last_step=0;
+    int32_t menu_wheel_accum=0;
     bool first_frame = ln_lcd_boot();
 #elif defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_SELECTOR_ROCKBOX
     if(!ln_input_init())ln_panic(30,3,0);
-    bool selector_rockbox=false,selector_done=false;
-    uint32_t selector_buttons=0,selector_started=ln_time_us();
-    bool first_frame = ln_lcd_boot_selector(false,false);
+    bool boot_decided=false,menu_open=false,menu_holding=false;
+    uint32_t menu_started=0,menu_hold_started=0,menu_activity=0;
+    uint32_t menu_options=0,menu_selected=1u,menu_buttons=0,menu_last_step=0;
+    int32_t menu_wheel_accum=0;
+    bool first_frame = ln_lcd_boot();
 #elif defined(LINNET_IMAGE_BOOT)
     bool first_frame = ln_lcd_boot();
 #else
@@ -242,77 +250,93 @@ _Noreturn void ln_main(void)
     LN_CACHE_FIRST_MARK(0xca11u);
 #endif
     for (;;) {
-#if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_APPLE_FALLBACK
-        if(!apple_done){
+#if defined(LINNET_IMAGE_BOOT) && (LINNET_BOOT_APPLE_FALLBACK || LINNET_BOOT_SELECTOR_ROCKBOX)
+        if(!boot_decided){
             struct ln_input_state input;
-            (void)ln_input_poll(&input);ln_input_snapshot(&input);
+            bool changed=ln_input_poll(&input);
+            ln_input_snapshot(&input);
             uint32_t now=ln_time_us();
-            /* Start the choice window at the first selector poll. Display and
-             * disk initialization happen before this loop and can otherwise
-             * consume the entire interval on a cold mechanical-disk boot. */
-            if(!apple_started)apple_started=now;
-            /* A held button is first reported by the click-wheel handshake;
-             * ordinary data packets can arrive later. Accept either source. */
-            bool menu=!input.hold&&input.buttons==LINNET_BUTTON_MENU;
-            if(menu){
-                if(!apple_holding){apple_holding=true;apple_hold_started=now;}
-                if(now-apple_hold_started>=750000u){apple_requested=true;apple_done=true;}
-            }else{
-                apple_holding=false;
-                /* Click-wheel startup emits neutral and handshake packets before
-                 * the first held-button sample. Keep the full selection window
-                 * open instead of treating those packets as a Linnet choice. */
-                if(now-apple_started>=1500000u)apple_done=true;
-            }
-            if(apple_done){
-                if(apple_requested){
-                    (void)ln_lcd_boot_apple();ln_storage_boot_choice(3u);
-                }
-#if LINNET_BOOT_SELECTOR_ROCKBOX
-                else{
-                    selector_started=now;
-                    (void)ln_lcd_boot_selector(false,false);
-                }
+            if(!menu_started)menu_started=now;
+            if(!menu_open){
+                /* On 4G optical wheels, a button held through reset first
+                 * appears in the boot-only keypad query. */
+#if LINNET_BOOT_APPLE_FALLBACK
+                bool held=!input.hold&&(initial_menu||(input.buttons&LINNET_BUTTON_MENU)!=0u);
 #else
-                else ln_storage_boot_choice(1u);
+                bool held=!input.hold&&(input.buttons&LINNET_BUTTON_MENU)!=0u;
 #endif
-            }
-        }
-#if LINNET_BOOT_SELECTOR_ROCKBOX
-        else if(!apple_requested&&!selector_done){
-            struct ln_input_state input;
-            if(ln_input_poll(&input)){
-                uint32_t pressed=input.buttons&~selector_buttons;
-                selector_buttons=input.buttons;
-                if(pressed&(LINNET_BUTTON_MENU|LINNET_BUTTON_LEFT|LINNET_BUTTON_RIGHT|LINNET_BUTTON_PLAY)){
-                    selector_rockbox=!selector_rockbox;
-                    (void)ln_lcd_boot_selector(selector_rockbox,false);
+                if(held){
+                    if(!menu_holding){menu_holding=true;menu_hold_started=now;}
+                    if(now-menu_hold_started>=750000u){
+                        menu_open=true;menu_activity=now;menu_buttons=input.buttons;
+                        (void)ln_lcd_boot_menu(0u,1u,false);
+                    }
+                }else{
+                    menu_holding=false;
+                    if(now-menu_started>=1500000u){
+                        boot_decided=true;ln_storage_boot_choice(1u);
+                    }
                 }
-                if(pressed&LINNET_BUTTON_SELECT)selector_done=true;
-            }
-            if(ln_time_us()-selector_started>=5000000u){selector_rockbox=false;selector_done=true;}
-            if(selector_done){
-                (void)ln_lcd_boot_selector(selector_rockbox,true);
-                ln_storage_boot_choice(selector_rockbox?2u:1u);
-            }
-        }
-#endif
-#elif defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_SELECTOR_ROCKBOX
-        if(!selector_done){
-            struct ln_input_state input;
-            if(ln_input_poll(&input)){
-                uint32_t pressed=input.buttons&~selector_buttons;
-                selector_buttons=input.buttons;
-                if(pressed&(LINNET_BUTTON_MENU|LINNET_BUTTON_LEFT|LINNET_BUTTON_RIGHT|LINNET_BUTTON_PLAY)){
-                    selector_rockbox=!selector_rockbox;
-                    (void)ln_lcd_boot_selector(selector_rockbox,false);
+            }else{
+                if(!menu_options){
+                    menu_options=ln_storage_boot_options();
+                    if(menu_options){
+                        menu_activity=now;
+                        (void)ln_lcd_boot_menu(menu_options,menu_selected,false);
+                    }
                 }
-                if(pressed&LINNET_BUTTON_SELECT)selector_done=true;
-            }
-            if(ln_time_us()-selector_started>=5000000u){selector_rockbox=false;selector_done=true;}
-            if(selector_done){
-                (void)ln_lcd_boot_selector(selector_rockbox,true);
-                ln_storage_boot_choice(selector_rockbox?2u:1u);
+                uint32_t pressed=input.buttons&~menu_buttons;
+                menu_buttons=input.buttons;
+                if(menu_options&&changed&&!input.hold){
+                    int direction=0;
+                    if(input.wheel_delta){
+                        if((menu_wheel_accum>0&&input.wheel_delta<0)||
+                           (menu_wheel_accum<0&&input.wheel_delta>0))menu_wheel_accum=0;
+                        menu_wheel_accum+=input.wheel_delta;
+                        if(menu_wheel_accum>24)menu_wheel_accum=24;
+                        if(menu_wheel_accum< -24)menu_wheel_accum= -24;
+                        menu_activity=now;
+                    }
+                    if(pressed&(LINNET_BUTTON_RIGHT|LINNET_BUTTON_MENU))direction=1;
+                    else if(pressed&(LINNET_BUTTON_LEFT|LINNET_BUTTON_PLAY))direction=-1;
+                    else if(now-menu_last_step>=160000u&&
+                            (menu_wheel_accum>=12||menu_wheel_accum<= -12)){
+                        direction=menu_wheel_accum>0?1:-1;
+                        menu_wheel_accum=0;
+                        menu_last_step=now;
+                    }
+                    if(direction){
+                        if(pressed&(LINNET_BUTTON_RIGHT|LINNET_BUTTON_MENU|
+                                    LINNET_BUTTON_LEFT|LINNET_BUTTON_PLAY)){
+                            menu_wheel_accum=0;menu_last_step=now;
+                        }
+                        uint32_t next=menu_selected;
+                        if(direction>0){
+                            for(uint32_t choice=menu_selected+1u;choice<=3u;++choice)
+                                if(menu_options&(1u<<(choice-1u))){next=choice;break;}
+                        }else{
+                            for(uint32_t choice=menu_selected;choice>1u;){
+                                --choice;
+                                if(menu_options&(1u<<(choice-1u))){next=choice;break;}
+                            }
+                        }
+                        menu_activity=now;
+                        if(next!=menu_selected){
+                            menu_selected=next;
+                            (void)ln_lcd_boot_menu(menu_options,menu_selected,false);
+                        }
+                    }
+                    if(pressed&LINNET_BUTTON_SELECT){
+                        boot_decided=true;
+                        (void)ln_lcd_boot_menu(menu_options,menu_selected,true);
+                        ln_storage_boot_choice(menu_selected);
+                    }
+                }
+                if(!boot_decided&&menu_options&&now-menu_activity>=30000000u){
+                    boot_decided=true;
+                    (void)ln_lcd_boot_menu(menu_options,1u,true);
+                    ln_storage_boot_choice(1u);
+                }
             }
         }
 #endif

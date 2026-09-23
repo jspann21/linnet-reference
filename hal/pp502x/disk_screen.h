@@ -8,20 +8,21 @@
  * uses no UI state, framebuffer, cache, interrupts, or filesystem access. */
 static uint8_t ln_pp_disk_glyph(char c, uint32_t row)
 {
-    static const uint8_t letters[10][7] = {
+    static const uint8_t letters[11][7] = {
         {0,0,0,0,0,0,0},          /* space */
         {14,17,16,16,16,17,14}, /* C */
         {30,17,17,17,17,17,30}, /* D */
         {31,16,16,30,16,16,31}, /* E */
         {14,4,4,4,4,4,14},      /* I */
         {17,18,20,24,20,18,17},/* K */
+        {16,16,16,16,16,16,31},/* L */
         {17,27,21,21,17,17,17},/* M */
         {17,25,21,19,17,17,17},/* N */
         {14,17,17,17,17,17,14},/* O */
         {15,16,16,14,1,1,30}   /* S */
     };
     static const uint8_t t[7] = {31,4,4,4,4,4,4};
-    static const char names[] = " CDEIKMNOS";
+    static const char names[] = " CDEIKLMNOS";
     if (c == 'T') return t[row];
     for (uint32_t i = 0; i < sizeof names - 1u; ++i)
         if (c == names[i]) return letters[i][row];
@@ -48,7 +49,7 @@ static uint16_t ln_pp_disk_screen_pixel(uint32_t width, uint32_t height,
     uint16_t color = 0xffffu;
     if (sy < 28u) color = 0xe71cu;
     if (sy == 27u || sy == 127u) color = 0x9cd3u;
-    if (ln_pp_disk_text("DISK MODE", 9u, 26u, 7u, 2u, sx, sy)) return ink;
+    if (ln_pp_disk_text("LINNET DISK MODE", 16u, 32u, 11u, 1u, sx, sy)) return ink;
 
     int32_t dx = (int32_t)sx - 80, dy = (int32_t)sy - 68;
     int32_t distance = dx * dx + dy * dy;

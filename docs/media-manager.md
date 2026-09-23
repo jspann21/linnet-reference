@@ -22,15 +22,19 @@ connected iPod:
   reversibly. Linnet depends on the Rockbox bootloader and the saved Rockbox
   file is the restoration path.
 - **Native Linnet with Apple fallback; preserve Rockbox dormant** boots Linnet
-  directly. Hold `MENU` continuously during power-on to start the preserved
-  Apple software. The `.rockbox` folder stays unchanged, but Rockbox cannot
+  directly. Hold `MENU` continuously during power-on to open the startup chooser
+  for Linnet and the preserved Apple software. The `.rockbox` folder stays unchanged, but Rockbox cannot
   start until its bootloader is restored or Linnet is reinstalled with the selector.
 - **Native Linnet + Rockbox startup selector** retains the same Apple `MENU`
-  fallback, then boots a native Linnet loader and
-  presents Linnet and the existing Rockbox image on the iPod for five seconds.
-  Menu, Previous, Next, or Play/Pause changes the choice; Select starts it.
-  Linnet is the timeout default. A missing, changed, corrupt, or oversized
+  chooser and adds a compatible Rockbox image. Hold `MENU` during power-on;
+  the wheel, Previous, Next, Menu, or Play/Pause changes the choice and Center
+  starts it. Linnet is the default after 30 seconds. A missing, changed, corrupt, or oversized
   Rockbox image falls back to Linnet.
+
+Boot reads the startup configuration and file metadata before showing an entry.
+Apple and Rockbox payloads are authenticated when selected. iPodLinux and
+Podzilla detections remain visible in Media Manager but do not appear in the
+on-device chooser until a compatible boot path is supported.
 
 The native methods require normal Windows administrator approval. A native
 reinstall restores the saved boot state and installs the new build under one
@@ -50,6 +54,10 @@ Native installation also copies the exact original Apple OS payload to
 `.LINNET/APPLE.BIN` and publishes a target number, payload length, SHA-256, and
 record CRC in `.LINNET/APPLE.CFG`. Boot rechecks all four before handing control
 to Apple software. Missing or invalid fallback data continues into Linnet.
+This Menu fallback is available on native installations for A1238, A1099,
+MP102, and A1136. Updating only the Linnet OS through Link does not replace
+the installed Boot image; older native installations need a native reinstall
+to gain the Menu fallback.
 
 Before installing, choose **User build** for the normal release OS without
 developer transport or instrumentation, or **Developer build** for the
