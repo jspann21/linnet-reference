@@ -28,6 +28,7 @@ media_video_height = 128
 media_video_fps = 12
 media_video_color = "gray4"
 media_video_backend = "none"
+media_art_side = 64
 media_video_extensions = [".ipvf"]
 cop_display = false
 runtime_policy = { resident_monitor = true }

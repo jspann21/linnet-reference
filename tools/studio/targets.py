@@ -13,12 +13,12 @@ REQUIRED_KEYS = {
     "storage_max_read_sectors", "lcd_width",
     "lcd_height", "lcd_format", "capabilities", "media_photo_width",
     "media_photo_height", "media_video_width", "media_video_height",
-    "media_video_fps", "media_video_color", "media_video_extensions", "media_video_backend",
+    "media_video_fps", "media_video_color", "media_video_extensions", "media_video_backend", "media_art_side",
     "cop_display", "entry_address", "load_address", "mailbox_address",
     "mailbox_bytes", "retail", "installer", "resources",
 }
 OPTIONAL_KEYS = {"ui", "hal_family", "audio_codec", "idle_clock_hz", "active_clock_hz", "native_video",
-                 "sdram_address", "build_enabled", "bringup_blocker", "presentation_profile", "runtime_policy", "native_storage", "h264_decoder", "mpeg4_decoder"}
+                 "sdram_address", "build_enabled", "bringup_blocker", "presentation_profile", "runtime_policy", "native_storage", "h264_decoder", "mpeg4_decoder", "video_catalog_cache"}
 RUNTIME_POLICIES = {"display_pipeline", "audio_render_reserve", "music_browse_index", "extended_sound", "resident_monitor"}
 CAPABILITIES = {"photos", "video", "files", "demo", "themes", "cover_flow"}
 LCD_FORMATS = {"rgb565-swapped": 1, "gray2-horizontal": 2, "rgb565": 3}
@@ -227,6 +227,10 @@ def _validate_profiles(path, spec):
 
 
 def _validate_media(path, spec):
+    if (type(spec["media_art_side"]) is not int or
+            spec["media_art_side"] not in (64, 128) or
+            (spec["lcd_format"] == "gray2-horizontal" and spec["media_art_side"] != 64)):
+        raise RuntimeError(f"invalid music artwork size: {path}")
     backend = spec.get("media_video_backend")
     decoder = spec.get("h264_decoder", "software")
     if decoder not in ("software", "s5l8702-vpu") or (decoder == "s5l8702-vpu" and
@@ -239,6 +243,9 @@ def _validate_media(path, spec):
     enabled = spec["capabilities"].get("video", True)
     if backend not in ("none", "ipvf", "bcm-mp4", "native-mp4") or (backend != "none") != enabled:
         raise RuntimeError(f"invalid media video backend: {path}")
+    cache = spec.get("video_catalog_cache")
+    if cache not in ((None,) if backend == "none" else ("paged", "resident")):
+        raise RuntimeError(f"invalid video catalog cache policy: {path}")
     expected = {"none": {".ipvf"}, "ipvf": {".ipvf"}, "bcm-mp4": {".mp4", ".m4v"}, "native-mp4": {".mp4", ".m4v", ".mov"}}[backend]
     if set(spec["media_video_extensions"]) != expected:
         raise RuntimeError(f"video extensions disagree with backend: {path}")

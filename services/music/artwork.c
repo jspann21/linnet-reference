@@ -3,12 +3,7 @@
 #include "services/music/database.h"
 #include "boot/include/linnet_boot.h"
 #include "hal/api/platform.h"
-#if defined(LINNET_TARGET_CLASSIC6G_N25)
-#define LN_ART_MAX_SIDE 128u
-#else
-#define LN_ART_MAX_SIDE 64u
-#endif
-static uint16_t pixels[2][LN_ART_MAX_SIDE*LN_ART_MAX_SIDE];
+static uint16_t pixels[2][LINNET_ART_MAX_SIDE*LINNET_ART_MAX_SIDE];
 static uint16_t cached_side[2];
 static struct ln_fat32_file file;
 static char requested[256],path[256];
@@ -113,7 +108,7 @@ void ln_music_art_step(bool allow_read){
     if(!result)return;pending=false;if(result<0){finish();return;}
     if(phase==1){
         if(file.size!=8192u
-#if defined(LINNET_TARGET_CLASSIC6G_N25)
+#if LINNET_ART_MAX_SIDE == 128u
            &&file.size!=32768u
 #endif
         ){finish();return;}

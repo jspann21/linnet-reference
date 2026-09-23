@@ -76,7 +76,9 @@ lowercase, hyphenated ID matching the directory name and choose a unique
 | `storage_max_read_sectors` | Largest bounded storage read used by media code |
 | `lcd_width`, `lcd_height`, `lcd_format` | Physical display geometry and pixel format |
 | `media_photo_width`, `media_photo_height` | Native prepared-photo viewport |
+| `media_art_side` | Square album artwork size prepared by Media Manager and accepted by firmware |
 | `media_video_width`, `media_video_height`, `media_video_fps`, `media_video_color` | Native prepared-video profile |
+| `video_catalog_cache` | Video browser cache policy: `paged` or `resident` on video targets |
 | `capabilities` | Per-target feature restrictions; explicit `false` disables a feature |
 | `cop_display` | Whether to include the SoC's COP display worker |
 | `[ui]` | Optional allowed themes and required default theme |

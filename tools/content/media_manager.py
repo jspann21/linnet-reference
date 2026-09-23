@@ -207,8 +207,9 @@ def preparation_option(kind, identity, photo_dimension=640, music_verification='
     """Shared preparation version for compilation and library readiness."""
     if kind == 'Music':
         from tools.studio.targets import TARGETS
-        art_version = ('art9' if identity['target_id'] == 'classic6g-n25' else
-                       'art8' if TARGETS[identity['target_id']]['lcd_format'] == 'gray2-horizontal' else 'art7')
+        target = TARGETS[identity['target_id']]
+        art_version = ('art9' if target['media_art_side'] == 128 else
+                       'art8' if target['lcd_format'] == 'gray2-horizontal' else 'art7')
         return f"{music_verification}-duration-search-names-album-owner2-title-order1-retail2-recent-album-gain-{art_version}-{identity['target_id']}"
     if kind == 'Notes':
         return 'theme-fonts1'

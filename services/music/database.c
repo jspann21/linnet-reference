@@ -215,7 +215,7 @@ int ln_music_db_step(struct ln_music_db *d)
         d->art.id=ln_read_le64(b);d->art.path=ln_read_le32(b+8);d->art.crc=ln_read_le32(b+24);
         uint32_t side=ln_read_le16(b+12);
         if(d->art.path>=d->pool_bytes||
-#if defined(LINNET_TARGET_CLASSIC6G_N25)
+#if LINNET_ART_MAX_SIDE == 128u
            (side!=64u&&side!=128u)||
 #else
            side!=64u||

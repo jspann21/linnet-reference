@@ -29,6 +29,8 @@ media_video_height = 240
 media_video_fps = 24
 media_video_color = "rgb565"
 media_video_backend = "bcm-mp4"
+media_art_side = 64
+video_catalog_cache = "resident"
 media_video_extensions = [".mp4", ".m4v"]
 cop_display = false
 runtime_policy = { resident_monitor = true, display_pipeline = true, audio_render_reserve = true, music_browse_index = true, extended_sound = true }

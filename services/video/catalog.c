@@ -2,17 +2,13 @@
 #include "services/video/video.h"
 #include "services/storage/storage.h"
 #include "boot/include/linnet_bytes.h"
-/* The host prepares at most 256 video rows. The Photo iPod keeps its small
- * paged catalog; larger video targets retain every page while browsing. */
+/* The host prepares at most 256 video rows. Targets choose the cache policy
+ * in their manifests without changing the shared catalog format. */
 #define CATALOG_ROWS 4u
 #define CATALOG_MAX_ROWS 256u
 #define CATALOG_HEADER_SIZE 12u
 #define CATALOG_ROW_SIZE 416u
-#if defined(LINNET_TARGET_CLASSIC6G_N25) || defined(LINNET_TARGET_VIDEO5G_M25)
-#define CATALOG_PAGED 0
-#else
-#define CATALOG_PAGED 1
-#endif
+#define CATALOG_PAGED LINNET_VIDEO_CATALOG_PAGED
 static struct {
 #if CATALOG_PAGED
     uint8_t header[CATALOG_HEADER_SIZE],pages[2][CATALOG_ROWS*CATALOG_ROW_SIZE];

@@ -153,7 +153,7 @@ def _cover_pixels(cover, target: str | None = None) -> bytes:
             raise ValueError("cover dimensions exceed bound")
         if image.getexif().get(274, 1) != 1:
             image = ImageOps.exif_transpose(image)
-        side = 128 if target == "classic6g-n25" else 64
+        side = TARGETS[target]["media_art_side"] if target else 64
         image = ImageOps.fit(_cover_rgb(image), (side, side), method=Image.Resampling.LANCZOS)
         if target and TARGETS[target]["lcd_format"] == "gray2-horizontal":
             image = _mp102_cover(image)
@@ -983,7 +983,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         if coverflow_enabled:
             from .coverflow import original_cover
             coverflow_originals[index] = original_cover(cover if cover is not None else embedded)
-        side = 128 if target == "classic6g-n25" else 64
+        side = TARGETS[target]["media_art_side"] if target else 64
         artwork_records.append(struct.pack("<QIHHIIII", int.from_bytes(digest[:8], "little"),
             string("/.LINNET/ART/" + name), side, side, 1, len(pixels), zlib.crc32(pixels), 0))
         if sidecar:
