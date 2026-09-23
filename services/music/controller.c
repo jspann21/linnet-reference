@@ -335,7 +335,18 @@ bool ln_music_sound_adjust(uint32_t index,int32_t direction){
     profile=next;++revision;return true;
 }
 uint32_t ln_music_deadline(uint32_t now){
-    if(selecting||have_waiting||resolver_kind||ln_music_browser_busy()||ln_music_search_busy()||ln_music_queue_view_busy())return now;
+    /* Library and history deadlines own admitted metadata reads. A browser
+     * waiting for one must not keep the executive on its immediate path. */
+    bool browser_query_idle=ln_music_browser_query_idle();
+    if((ln_music_browser_busy()&&!ln_music_browser_waiting())||
+       (ln_music_search_busy()&&!ln_music_search_query_pending()&&browser_query_idle)||
+       (ln_music_queue_view_busy()&&!ln_music_queue_view_query_pending()&&
+        queue_opened&&!ln_music_search_active()&&browser_query_idle))return now;
+    struct ln_player_status player;ln_player_snapshot(&player);
+    if(have_waiting&&player.phase==LN_PLAYER_IDLE&&!ln_storage_busy()&&
+       (ln_music_history_error()||(ln_music_history_ready()&&
+        (ln_music_history_record_ready(waiting.track.id)||
+         ln_music_history_record_error(waiting.track.id)))))return now;
     uint32_t next=ln_player_deadline(now),library=ln_music_library_deadline(now);
     if((int32_t)(library-next)<0)next=library;
 #if defined(LINNET_COVERFLOW)

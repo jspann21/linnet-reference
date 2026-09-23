@@ -58,6 +58,7 @@ const char *ln_music_browser_title(void);
 const char *ln_music_browser_hint(void);
 uint32_t ln_music_browser_revision(void);
 bool ln_music_browser_busy(void);
+bool ln_music_browser_waiting(void);
 /* Advances for hierarchy changes, independently of cache publication. */
 uint32_t ln_music_browser_navigation(void);
 #endif

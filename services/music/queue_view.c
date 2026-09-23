@@ -123,6 +123,7 @@ bool ln_music_queue_view_select(uint32_t row,uint32_t action){
     if((action==LN_QUEUE_VIEW_MOVE_UP&&!row)||(action==LN_QUEUE_VIEW_MOVE_DOWN&&row+1u==view.queue.count))return false;
     view.selected=row;view.action=action;view.action_revision=view.queue_revision;view.action_ready=true;return true;
 }
+bool ln_music_queue_view_query_pending(void){return view.pending;}
 bool ln_music_queue_view_take_action(uint32_t *row,uint32_t *action,uint32_t *queue_revision){
     if(!row||!action||!queue_revision||!view.action_ready)return false;
     *row=view.selected;*action=view.action;*queue_revision=view.action_revision;view.action_ready=false;return true;

@@ -15,6 +15,7 @@ void ln_music_queue_view_visible_rows(uint32_t rows);
  * Root must wait !busy before granting the external slot to another service. */
 void ln_music_queue_view_step(bool allow_query);
 bool ln_music_queue_view_busy(void);
+bool ln_music_queue_view_query_pending(void);
 uint32_t ln_music_queue_view_count(void);
 const char *ln_music_queue_view_label(uint32_t playback_ordinal);
 uint32_t ln_music_queue_view_revision(void);

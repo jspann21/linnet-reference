@@ -61,6 +61,7 @@ void ln_music_search_step(void){
     }
 }
 bool ln_music_search_busy(void){return closing||pending||(opened&&results&&length&&!window_ready);}
+bool ln_music_search_query_pending(void){return pending;}
 bool ln_music_search_active(void){return opened||closing;}
 uint32_t ln_music_search_count(void){
     if(!results)return sizeof alphabet;

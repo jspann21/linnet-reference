@@ -221,6 +221,19 @@ bool ln_music_browser_save_queue(const struct ln_queue *q){
     push();enter(DESTINATION,"Add to playlist");return true;
 }
 bool ln_music_browser_busy(void){return b.catalog||b.jumping||b.bookmark_waiting||b.favorite_waiting||b.activity_scanning||b.job!=NONE||b.range||b.activity_scanning||b.resolving||b.exporting||b.expanding||b.status==LN_BROWSER_QUEUE_LOADING;}
+bool ln_music_browser_waiting(void){
+    /* An accepted library job is serviced by the library/storage deadlines.
+     * A hidden or suspended view retains navigation state without doing its
+     * speculative list work. */
+    if(b.job!=NONE)return true;
+    if(b.bookmark_waiting||b.favorite_waiting){
+        if(ln_music_history_error()||ln_music_history_record_error(b.favorite_id)||
+           ln_music_history_record_ready(b.favorite_id))return false;
+        return true;
+    }
+    return b.suspended||(!b.visible_now&&!b.exporting&&!b.expanding&&
+                         b.status!=LN_BROWSER_QUEUE_LOADING);
+}
 void ln_music_browser_step(void){
     if(ln_music_library_status()!=LN_LIBRARY_READY){b.job=NONE;b.was_ready=false;b.expanding=b.exporting=b.resolving=false;b.status=LN_BROWSER_QUEUE_IDLE;return;}
     if(!b.was_ready){b.was_ready=true;invalidate();}
