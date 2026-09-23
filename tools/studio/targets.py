@@ -53,10 +53,18 @@ def _target_sources(path, spec):
         "power": target_root / "power.c" if (target_root / "power.c").is_file() else soc_root / "power.c",
         "codec": ROOT / "hal" / "codecs" / (codec + ".c"),
     }
-    video = target_root / "video.c"
-    if spec.get("media_video_backend") == "native-mp4":
+    video_backend = spec["media_video_backend"]
+    if video_backend == "ipvf":
+        video = ROOT / "services/video/ipvf/player.c"
+    elif video_backend == "native-mp4":
         video = ROOT / "services/video/native/player.c"
-    if video.is_file():
+    elif video_backend == "bcm-mp4":
+        video = target_root / "video.c"
+    elif video_backend == "none":
+        video = None
+    else:
+        raise RuntimeError(f"unsupported video backend: {video_backend}")
+    if video is not None:
         sources["video"] = video
     coprocessor = target_root / "coprocessor.c"
     if coprocessor.is_file():

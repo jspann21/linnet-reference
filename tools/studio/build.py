@@ -260,10 +260,13 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         flags += ['-DLINNET_COVERFLOW=1']
     if kind == 'os' and ui_report['features'].get('video', True):
         flags += ['-DLINNET_VIDEO=1']
-        sources += [p for p in sorted((ROOT/'services/video').glob('*.c')) if p.name != 'video.c']
-        sources += [ROOT/target_sources['video'] if 'video' in target_sources else ROOT/'services/video/video.c']
-        sources += sorted((ROOT/'services/video').glob('*.S'))
-        if spec['media_video_backend'] == 'native-mp4':
+        video_backend = spec['media_video_backend']
+        sources += [ROOT/'services/video/catalog.c', ROOT/target_sources['video']]
+        if video_backend == 'ipvf':
+            sources += sorted((ROOT/'services/video/ipvf').glob('*.S'))
+        if video_backend in ('native-mp4', 'bcm-mp4'):
+            sources += [ROOT/'services/video/mp4.c']
+        if video_backend == 'native-mp4':
             flags += [f"-DLINNET_H264_MAX_WIDTH={spec['native_video']['h264_width']}",
                       f"-DLINNET_H264_MAX_HEIGHT={spec['native_video']['h264_height']}"]
             sources += [ROOT/'services/video/native/decoder.c',ROOT/'services/video/native/yuv.c']
@@ -317,7 +320,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
             codec_flags=['-Ithird_party/aac','-Ithird_party/aac/faad','-Ithird_party/aac/lib','-O3','-fomit-frame-pointer','-DCPU_ARM=1','-DARM_ARCH=4']
         elif source == generated/'linnet_ui.c' and ui_report['features'].get('cover_flow', False):
             codec_flags=['-O2']
-        elif relative in ('services/audio/dsp.c','services/video/video.c'):
+        elif relative in ('services/audio/dsp.c','services/video/ipvf/player.c'):
             codec_flags=['-O2']
         elif relative.startswith(('third_party/vorbis/','services/audio/vorbis/')):
             codec_flags=['-Ithird_party/vorbis','-Ithird_party/aac/lib']

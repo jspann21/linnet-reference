@@ -4,8 +4,8 @@
 #else
 #define LN_VIDEO_RECORD(...) ((void)0)
 #endif
-#include "video.h"
-#include "catalog.h"
+#include "services/video/video.h"
+#include "services/video/catalog.h"
 #include <stddef.h>
 #include "services/storage/storage.h"
 #include "hal/api/audio.h"
