@@ -2,6 +2,7 @@
 import struct
 from .identity import decode
 from .protocol import Command
+from tools.studio.targets import TARGETS
 
 STATE_FORMATS = {
     'audio-state':(Command.AUDIO_STATE,b'AUDS',('magic','reserved','rate','queued','free_frames','consumed','submitted','interrupts','underruns','silence_frames','fault','playing','paused','initialized','last_irq_us','max_irq_us','volume_db_tenths','fifo_empty_irqs','max_completion_interval_us','max_completion_late_us')),
@@ -18,7 +19,7 @@ def command(session,identity,action,*,path=None,sample=None):
     if action.endswith('-state'):
         operation,magic,names=STATE_FORMATS[action]
         raw=session.request(operation)
-        if action=='video-state' and identity['target_id']=='video5g-m25':
+        if action=='video-state' and TARGETS[identity['target_id']]['media_video_backend']=='bcm-mp4':
             if len(raw)!=128 or struct.unpack_from('<I',raw)[0]!=0x4d250002:
                 raise RuntimeError('Malformed native video state reply')
             words=struct.unpack('<32I',raw)
@@ -27,7 +28,6 @@ def command(session,identity,action,*,path=None,sample=None):
                        position_ms=words[24],duration_ms=words[25],active=bool(words[26]))
             return dict(identity=identity,state=state)
         if action=='video-state':
-            from tools.studio.targets import TARGETS
             if TARGETS[identity['target_id']].get('media_video_backend')=='native-mp4':
                 names=('magic','reserved','phase','error','active','pending','paused','next_frame',
                        'frame_count','front_frame','read_ops','read_bytes','decoded','presented',

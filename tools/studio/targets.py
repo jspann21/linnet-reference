@@ -8,17 +8,17 @@ TARGETS_ROOT = ROOT / "targets"
 REQUIRED_KEYS = {
     "id", "name", "aliases", "image_target", "board_id", "model_alias",
     "soc", "cpu", "architecture", "endianness", "sdram_bytes",
-    "os_capacity_bytes", "stage_address", "stage_bytes",
+    "os_capacity_bytes", "resident_limit_bytes", "stage_address", "stage_bytes",
     "recovery_snapshot_address", "recovery_snapshot_bytes",
     "storage_max_read_sectors", "lcd_width",
     "lcd_height", "lcd_format", "capabilities", "media_photo_width",
     "media_photo_height", "media_video_width", "media_video_height",
     "media_video_fps", "media_video_color", "media_video_extensions", "media_video_backend", "media_art_side",
     "cop_display", "entry_address", "load_address", "mailbox_address",
-    "mailbox_bytes", "retail", "installer", "resources", "coverflow_cache",
+    "mailbox_bytes", "retail", "installer", "resources",
 }
 OPTIONAL_KEYS = {"ui", "hal_family", "audio_codec", "idle_clock_hz", "active_clock_hz", "native_video",
-                 "sdram_address", "build_enabled", "bringup_blocker", "presentation_profile", "runtime_policy", "native_storage", "h264_decoder", "mpeg4_decoder", "video_catalog_cache"}
+                 "sdram_address", "build_enabled", "bringup_blocker", "presentation_profile", "runtime_policy", "native_storage", "h264_decoder", "mpeg4_decoder", "video_catalog_cache", "coverflow_cache", "boot_size_optimization"}
 RUNTIME_POLICIES = {"display_pipeline", "audio_render_reserve", "music_browse_index", "extended_sound", "resident_monitor"}
 CAPABILITIES = {"photos", "video", "files", "demo", "themes", "cover_flow"}
 LCD_FORMATS = {"rgb565-swapped": 1, "gray2-horizontal": 2, "rgb565": 3}
@@ -165,10 +165,16 @@ def _validate_identity(path, spec):
 
 def _validate_resources(path, spec):
     r=spec["resources"]
-    cache=spec["coverflow_cache"]
-    if cache not in ("compact", "expanded") or (cache == "expanded" and
+    limit=spec["resident_limit_bytes"]
+    if type(limit) is not int or not 1024 * 1024 <= limit <= spec["os_capacity_bytes"]:
+        raise RuntimeError(f"invalid resident memory limit: {path}")
+    if type(spec.get("boot_size_optimization", False)) is not bool:
+        raise RuntimeError(f"invalid Boot optimization policy: {path}")
+    cache=spec.get("coverflow_cache")
+    coverflow=spec["capabilities"].get("cover_flow", False)
+    if cache not in (("compact", "expanded") if coverflow else (None,)) or (cache == "expanded" and
             (spec["soc"] != "s5l8702" or spec["sdram_bytes"] < 64 * 1024 * 1024 or
-             not spec["capabilities"].get("cover_flow", True))):
+             not coverflow)):
         raise RuntimeError(f"invalid Cover Flow cache policy: {path}")
     if not isinstance(r,dict) or set(r)!={"music_titles_address","music_titles_bytes","coverflow_catalog_slots"}:
         raise RuntimeError(f"invalid resource budget: {path}")

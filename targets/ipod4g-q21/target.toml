@@ -12,6 +12,7 @@ architecture = "armv4t"
 endianness = "little"
 sdram_bytes = 33554432
 os_capacity_bytes = 8388608
+resident_limit_bytes = 5505024
 stage_address = 16777216
 stage_bytes = 8388608
 recovery_snapshot_address = 31457280
@@ -20,8 +21,7 @@ storage_max_read_sectors = 192
 lcd_width = 160
 lcd_height = 128
 lcd_format = "gray2-horizontal"
-capabilities = { photos = false, video = false, themes = false }
-coverflow_cache = "compact"
+capabilities = { photos = false, video = false, themes = false, cover_flow = false }
 media_photo_width = 160
 media_photo_height = 108
 media_video_width = 160

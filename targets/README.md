@@ -71,7 +71,7 @@ lowercase, hyphenated ID matching the directory name and choose a unique
 | --- | --- |
 | `id`, `name`, `aliases`, `image_target` | CLI identity, display name, aliases and image compatibility number |
 | `board_id`, `model_alias`, `soc`, `cpu`, `architecture`, `endianness` | Hardware identity and build selection |
-| `sdram_bytes`, `os_capacity_bytes`, `entry_address`, `load_address` | Native memory and image contract |
+| `sdram_bytes`, `os_capacity_bytes`, `resident_limit_bytes`, `entry_address`, `load_address` | Native memory and image contract |
 | `stage_address`, `stage_bytes`, `recovery_snapshot_address`, `recovery_snapshot_bytes`, `mailbox_address`, `mailbox_bytes` | Update, recovery and retained-memory regions |
 | `storage_max_read_sectors` | Largest bounded storage read used by media code |
 | `lcd_width`, `lcd_height`, `lcd_format` | Physical display geometry and pixel format |
@@ -79,7 +79,8 @@ lowercase, hyphenated ID matching the directory name and choose a unique
 | `media_art_side` | Square album artwork size prepared by Media Manager and accepted by firmware |
 | `media_video_width`, `media_video_height`, `media_video_fps`, `media_video_color` | Native prepared-video profile |
 | `video_catalog_cache` | Video browser cache policy: `paged` or `resident` on video targets |
-| `coverflow_cache` | Cover Flow page, artwork cache and catalog placement policy: `compact` or `expanded` |
+| `coverflow_cache` | Cover Flow page, artwork cache and catalog placement policy when enabled: `compact` or `expanded` |
+| `boot_size_optimization` | Optional smaller Boot code when constrained by a fixed NOR slot |
 | `capabilities` | Per-target feature restrictions; explicit `false` disables a feature |
 | `cop_display` | Whether to include the SoC's COP display worker |
 | `[ui]` | Optional allowed themes and required default theme |

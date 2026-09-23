@@ -4,7 +4,7 @@
 #include "hal/api/platform.h"
 #include "ui/profiles/color320/boot_font.h"
 #if defined(LINNET_IMAGE_BOOT)
-#include "targets/video5g-m25/boot_wordmark.h"
+#include "boot/include/linnet_boot_wordmark_320.h"
 #endif
 #define REG(a) (*(volatile uint32_t *)(uintptr_t)(a))
 #define HALF(a) (*(volatile uint16_t *)(uintptr_t)(a))

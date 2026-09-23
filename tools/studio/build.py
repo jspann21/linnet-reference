@@ -132,7 +132,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         f'#define LINNET_MUSIC_TITLES_ADDRESS {spec["resources"]["music_titles_address"]}',
         f'#define LINNET_MUSIC_TITLES_BYTES {spec["resources"]["music_titles_bytes"]}',
         f'#define LINNET_COVERFLOW_CATALOG_SLOTS {spec["resources"]["coverflow_catalog_slots"]}u',
-        f'#define LINNET_COVERFLOW_EXPANDED {int(spec["coverflow_cache"] == "expanded")}u',
+        f'#define LINNET_RESIDENT_LIMIT_BYTES {spec["resident_limit_bytes"]}',
+        f'#define LINNET_COVERFLOW_EXPANDED {int(spec.get("coverflow_cache") == "expanded")}u',
         f'#define LINNET_UI_HEIGHT {spec["lcd_height"]}u',
         f'#define LINNET_PHOTO_WIDTH {spec["media_photo_width"]}u',
         f'#define LINNET_PHOTO_HEIGHT {spec["media_photo_height"]}u',
@@ -230,8 +231,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     if kind == "os":
         sources += [ROOT/"ui/runtime/ui.c",generated/"linnet_ui.c",ROOT/"services/display/settings.c"]
     compiler_target = "arm-none-eabi" if spec["endianness"] == "little" else "armeb-none-eabi"
-    # N25 Boot shares a fixed NOR slot with the SRAM recovery monitor.
-    optimization = "-Oz" if target == "classic6g-n25" and kind == "boot" else "-Os"
+    # A target may trade Boot speed for size when it shares a fixed NOR slot.
+    optimization = "-Oz" if spec.get("boot_size_optimization", False) and kind == "boot" else "-Os"
     flags = [f"--target={compiler_target}", f'-mcpu={spec["cpu"]}', f'-march={spec["architecture"]}', "-marm", "-mfloat-abi=soft", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-ffunction-sections", "-fdata-sections", optimization, "-Wall", "-Wextra", "-Werror", "-I.", "-Iboot/include", f"-DLINNET_PROFILE_{profile.upper()}=1", f"-DLINNET_IMAGE_{kind.upper()}=1", f'-D{spec["target_define"]}=1']
     flags += ["-I" + str(generated), f"-DLINNET_PROBE_CRASH={int(probe == 'crash')}", f"-DLINNET_PROBE_HANG={int(probe == 'hang')}"]
     flags += ["-DLINNET_PLATFORM_CORE=1", "-DLINNET_STORAGE=1"]
@@ -372,10 +373,15 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     watchdog_limitation = None if spec.get("hal_family") == "s5l8702" else (
         "FIQ watchdog depends on FIQ delivery; COP reset escalation requires a live COP monitor."
         if "coprocessor" in target_sources else "Watchdog recovery requires FIQ delivery.")
+    resident_limit = 1048576
+    if kind == 'os':
+        resident_limit = spec['resident_limit_bytes']
+        if spec.get('hal_family', spec['soc']) == 'pp502x' and not ui_report['features'].get('cover_flow', False):
+            resident_limit = 5505024
     report = dict(**configuration, build_id=build_id, toolchain=chain, image=inspect(envelope),
                   source_files=[p.relative_to(ROOT).as_posix() for p in sources],
                   artifacts={key: str(path.relative_to(ROOT)) for key, path in dict(elf=elf, los=los, ipod=ipod, map=mapfile).items()},
-                  memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=(8126464 if ui_report['features'].get('cover_flow',False) else 5505024) if kind=='os' else 1048576, retained_limit_bytes=spec['mailbox_bytes']),
+                  memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=resident_limit, retained_limit_bytes=spec['mailbox_bytes']),
                   release_exclusion=verification, limitation=watchdog_limitation)
     if ui_report is not None:report["ui"]=ui_report
     (dest / (prefix + ".json")).write_text(json.dumps(report, indent=2) + "\n")

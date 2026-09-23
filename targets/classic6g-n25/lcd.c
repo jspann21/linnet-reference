@@ -5,7 +5,7 @@
 #include "hal/s5l8702/board.h"
 #include "ui/profiles/color320/boot_font.h"
 #if defined(LINNET_IMAGE_OS) || defined(LINNET_IMAGE_BOOT)
-#include "targets/classic6g-n25/boot_wordmark.h"
+#include "boot/include/linnet_boot_wordmark_320.h"
 #endif
 bool ln_lcd_fill(uint16_t color) {
     uint16_t *frame=ln_display_framebuffer();
