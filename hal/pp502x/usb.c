@@ -5,13 +5,13 @@
 #endif
 #include "boot/include/linnet_bytes.h"
 #include "hal/api/usb.h"
+#include "hal/pp502x/usb_storage.h"
 #include "hal/api/platform.h"
 #include "hal/api/power.h"
 #if !defined(LINNET_PROFILE_RELEASE)
 #include "hal/api/recovery.h"
 #endif
-#if defined(LINNET_IMAGE_OS) && defined(LINNET_AUDIO) && !defined(LINNET_PROFILE_RELEASE)
-#include "hal/api/power.h"
+#if defined(LINNET_IMAGE_OS) && defined(LINNET_AUDIO)
 #define LINNET_USB_NEGOTIATED_CHARGE 1
 #define LINNET_USB_MAX_POWER 250u /* bMaxPower uses 2mA units. */
 #else
@@ -63,6 +63,7 @@ static struct {
     uint32_t generation, started[6];
     uint16_t requested[6], rx_size, rx_offset;
     uint8_t active[6], running, configured, control_stage, stopped, stop_attempted;
+    uint8_t storage_mode, storage_reset;
     uint8_t pending_address, pending_configuration, notify_pending;
     uint8_t line[7], serial[66];
     uint16_t line_state;
@@ -88,10 +89,19 @@ static const uint8_t ln_usb_configuration[] = {
     9,4,1,0,2,0x0a,0,0,0,
     7,5,0x82,2,64,0,0, 7,5,0x02,2,64,0,0
 };
+static const uint8_t ln_usb_storage_configuration[] = {
+    9,2,32,0,1,1,0,0x80,LINNET_USB_MAX_POWER,
+    9,4,0,0,2,8,6,0x50,0,
+    7,5,0x82,2,64,0,0, 7,5,0x02,2,64,0,0
+};
 static const uint8_t ln_usb_language[] = {4,3,9,4};
 static const uint8_t ln_usb_manufacturer[] = {14,3,'L',0,'i',0,'n',0,'n',0,'e',0,'t',0};
 static const uint8_t ln_usb_product[] = {
     24,3,'L',0,'i',0,'n',0,'n',0,'e',0,'t',0,' ',0,'L',0,'i',0,'n',0,'k',0
+};
+static const uint8_t ln_usb_storage_product[] = {
+    34,3,'L',0,'i',0,'n',0,'n',0,'e',0,'t',0,' ',0,
+    'D',0,'i',0,'s',0,'k',0,' ',0,'M',0,'o',0,'d',0,'e',0
 };
 
 #if defined(LINNET_USB_NEGOTIATED_CHARGE)
@@ -210,9 +220,9 @@ static void endpoints(void) {
     LINNET_USB_QH[0].capability |= 0x8000u; /* setup interrupt on OUT control */
     /* Control-IN ZLP policy is selected per request against its wLength. */
     LINNET_USB_QH[3].capability = (8u << 16) | 0x20000000u;
-    LINNET_USB_QH[5].capability &= ~0x20000000u;
+    if (!ln_usb.storage_mode) LINNET_USB_QH[5].capability &= ~0x20000000u;
     LINNET_USB_EP(0) = 0x00800080u;
-    LINNET_USB_EP(1) = 0x00cc0000u;
+    LINNET_USB_EP(1) = ln_usb.storage_mode ? 0u : 0x00cc0000u;
     LINNET_USB_EP(2) = 0x00c800c8u;
 }
 
@@ -226,6 +236,7 @@ static bool configure(uint8_t value) {
     ln_usb.rx_size = ln_usb.rx_offset = 0;
     ln_usb.line_state = 0;
     ln_usb.notify_pending = 0;
+    ln_usb.storage_reset = 0;
     ++ln_usb.generation;
     LINNET_USB_EP(2) = 0x00c800c8u;
 #if defined(LINNET_USB_NEGOTIATED_CHARGE)
@@ -263,12 +274,25 @@ static bool setup_request(const uint8_t setup[8]) {
     if (type == 0x80 && request == 6) {
         const uint8_t *descriptor = 0;
         uint16_t size = 0;
-        if (value == 0x100 && index == 0) { descriptor = ln_usb_device; size = sizeof(ln_usb_device); }
-        if (value == 0x200 && index == 0) { descriptor = ln_usb_configuration; size = sizeof(ln_usb_configuration); }
+        if (value == 0x100 && index == 0) {
+            if (ln_usb.storage_mode) {
+                uint8_t copy[18];
+                for (unsigned i = 0; i < sizeof(copy); ++i) copy[i] = ln_usb_device[i];
+                copy[4] = 0;
+                copy[10] = (uint8_t)LINNET_NATIVE_STORAGE_USB_PID;
+                copy[11] = (uint8_t)(LINNET_NATIVE_STORAGE_USB_PID >> 8);
+                return control_reply(copy, sizeof(copy), length);
+            }
+            descriptor = ln_usb_device; size = sizeof(ln_usb_device);
+        }
+        if (value == 0x200 && index == 0) {
+            descriptor = ln_usb.storage_mode ? ln_usb_storage_configuration : ln_usb_configuration;
+            size = ln_usb.storage_mode ? sizeof(ln_usb_storage_configuration) : sizeof(ln_usb_configuration);
+        }
         if (value == 0x300 && index == 0) { descriptor = ln_usb_language; size = sizeof(ln_usb_language); }
         if (index == 0x409) {
             if (value == 0x301) descriptor = ln_usb_manufacturer;
-            if (value == 0x302) descriptor = ln_usb_product;
+            if (value == 0x302) descriptor = ln_usb.storage_mode ? ln_usb_storage_product : ln_usb_product;
             if (value == 0x303) descriptor = ln_usb.serial;
             if (descriptor) size = descriptor[0];
         }
@@ -287,29 +311,41 @@ static bool setup_request(const uint8_t setup[8]) {
     if ((type == 0x80 || type == 0x81 || type == 0x82) && request == 0 && !value && length == 2) {
         uint8_t status[2] = {0,0};
         if (type == 0x80 && index != 0) return false;
-        if (type == 0x81 && (index > 1 || !ln_usb.configured)) return false;
+        if (type == 0x81 && (index > (ln_usb.storage_mode ? 0u : 1u) || !ln_usb.configured)) return false;
         if (type == 0x82) {
-            if (index != 0 && index != 0x80 && index != 0x81 && index != 0x82 && index != 2) return false;
+            if (index != 0 && index != 0x80 && index != 0x82 && index != 2 &&
+                !(index == 0x81 && !ln_usb.storage_mode)) return false;
             uint32_t stall = (index & 0x80u) ? 0x10000u : 1u;
             status[0] = (LINNET_USB_EP(index & 0xfu) & stall) ? 1 : 0;
         }
         return control_reply(status, 2, length);
     }
     if (type == 2 && (request == 1 || request == 3) && !value && !length &&
-        (index == 0x81 || index == 0x82 || index == 2) && ln_usb.configured) {
+        (index == 0x82 || index == 2 || (index == 0x81 && !ln_usb.storage_mode)) && ln_usb.configured) {
         uint32_t stall = (index & 0x80u) ? 0x10000u : 1u;
         uint32_t toggle = (index & 0x80u) ? 0x400000u : 0x40u;
         if (request == 3) LINNET_USB_EP(index & 0xfu) |= stall;
         else LINNET_USB_EP(index & 0xfu) = (LINNET_USB_EP(index & 0xfu) & ~stall) | toggle;
         return status_in();
     }
-    if (type == 0x81 && request == 10 && !value && index <= 1 && length == 1 && ln_usb.configured) {
+    if (type == 0x81 && request == 10 && !value && index <= (ln_usb.storage_mode ? 0u : 1u) && length == 1 && ln_usb.configured) {
         uint8_t zero = 0;
         return control_reply(&zero, 1, length);
     }
-    if (type == 1 && request == 11 && !value && index <= 1 && !length && ln_usb.configured)
+    if (type == 1 && request == 11 && !value && index <= (ln_usb.storage_mode ? 0u : 1u) && !length && ln_usb.configured)
         return status_in();
     if (index != 0 || !ln_usb.configured) return false;
+    if (ln_usb.storage_mode) {
+        if (type == 0xa1 && request == 0xfe && !value && length == 1) {
+            uint8_t zero = 0;
+            return control_reply(&zero, 1, length);
+        }
+        if (type == 0x21 && request == 0xff && !value && !length) {
+            ln_usb.storage_reset = 1;
+            return true; /* ATA owner completes EP0 status after draining. */
+        }
+        return false;
+    }
     if (type == 0xa1 && request == 0x21 && !value && length == 7)
         return control_reply(ln_usb.line, 7, 7);
     if (type == 0x21 && request == 0x20 && !value && length == 7) {
@@ -380,7 +416,7 @@ static void enumeration_progress(void) {
 #endif
 }
 
-bool ln_usb_init(const char *stable_serial) {
+static bool usb_init(const char *stable_serial) {
 #if defined(LINNET_USB_NEGOTIATED_CHARGE)
     /* Drop any inherited high-current selection before enumeration. */
     charge_budget = UINT16_MAX; charge_limit(100);
@@ -510,6 +546,7 @@ bool ln_usb_poll(void) {
         ln_usb.control_stage = LINNET_USB_IDLE;
         ln_usb.pending_address = ln_usb.pending_configuration = 0xffu;
         ln_usb.line_state = 0; ln_usb.notify_pending = 0;
+        ln_usb.storage_reset = 0;
         LINNET_USB_ADDR = 0; endpoints(); ++ln_usb.generation;
     }
     if (status & 2u) { ln_usb.failure = 0x300u; goto failed; }
@@ -549,13 +586,13 @@ bool ln_usb_poll(void) {
             ln_usb.control_stage = LINNET_USB_IDLE;
         }
     }
-    if (ln_usb_connected()) {
+    if (ln_usb_connected() && !ln_usb.storage_reset) {
         /* Receive one full-speed packet per dTD. A host write of exactly 64
          * bytes (notably UPLOAD_BEGIN) need not append a ZLP; a 512-byte dTD
          * would wait for more data while the host waits for its command ACK. */
         if (!ln_usb.active[4] && !ln_usb.rx_size &&
             !prime(4, LINNET_USB_RX, LINNET_USB_FULL_SPEED_PACKET)) goto failed;
-        if (ln_usb.notify_pending && !ln_usb.active[3]) {
+        if (!ln_usb.storage_mode && ln_usb.notify_pending && !ln_usb.active[3]) {
             const uint8_t note[10] = {0xa1,0x20,0,0,0,0,2,0,3,0};
             for (unsigned i = 0; i < 10; ++i) LINNET_USB_NOTIFY[i] = note[i];
             if (!prime(3, LINNET_USB_NOTIFY, 10)) goto failed;
@@ -674,6 +711,44 @@ bool ln_usb_stop(void) {
     return ln_usb.stopped != 0;
 }
 
+bool ln_usb_init(const char *stable_serial) {
+    ln_usb.storage_mode = 0;
+    return usb_init(stable_serial);
+}
+
+bool ln_pp_usb_storage_init(const char *stable_serial) {
+    ln_usb.storage_mode = 1;
+    return usb_init(stable_serial);
+}
+
 uint32_t ln_usb_stop_diagnostics(void) { return ln_usb.stop_diagnostics; }
 
 void ln_usb_disconnect(void) { (void)ln_usb_stop(); }
+
+size_t ln_pp_usb_storage_read(uint8_t *output, size_t capacity) {
+    if (!ln_usb.storage_mode || ln_usb.storage_reset) return 0;
+    return ln_usb_read(output, capacity);
+}
+
+size_t ln_pp_usb_storage_write(const uint8_t *input, size_t length) {
+    if (!ln_usb.storage_mode || ln_usb.storage_reset) return 0;
+    return ln_usb_write(input, length);
+}
+
+bool ln_pp_usb_storage_zlp(void) {
+    return ln_usb.storage_mode && !ln_usb.storage_reset && ln_usb_connected() &&
+        !ln_usb.active[5] && prime(5, LINNET_USB_TX, 0);
+}
+
+void ln_pp_usb_storage_stall(bool input) {
+    if (ln_usb.storage_mode) LINNET_USB_EP(2) |= input ? 0x10000u : 1u;
+}
+
+bool ln_pp_usb_storage_reset_pending(void) { return ln_usb.storage_reset != 0; }
+
+bool ln_pp_usb_storage_reset_complete(void) {
+    if (!ln_usb.storage_reset || !flush_pipes(0x00040004u)) return false;
+    ln_usb.rx_size = ln_usb.rx_offset = 0;
+    ln_usb.storage_reset = 0;
+    return status_in();
+}

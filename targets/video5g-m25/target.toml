@@ -12,7 +12,7 @@ architecture = "armv4t"
 endianness = "little"
 sdram_bytes = 33554432
 os_capacity_bytes = 8388608
-resident_limit_bytes = 8126464
+resident_limit_bytes = 8142848
 stage_address = 16777216
 stage_bytes = 8388608
 recovery_snapshot_address = 31457280
@@ -47,6 +47,13 @@ usb_pid = 4617
 board_names = ["iPod M25"]
 model_numbers = ["MA146"]
 regulatory_models = ["A1136"]
+
+[native_storage]
+usb_vid = 4617
+usb_pid = 20558
+model = "LINNET IPOD VIDEO USB Device"
+friendly_name = "LINNET IPOD VIDEO"
+sector_bytes = [512, 4096]
 
 [installer]
 enabled = true

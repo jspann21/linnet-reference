@@ -1,4 +1,5 @@
 #include "hal/api/platform.h"
+#include "targets/photo4g-p98/disk_screen_runs.h"
 #if defined(LINNET_IMAGE_BOOT)
 #include "targets/photo4g-p98/boot_wordmark.h"
 #endif
@@ -268,6 +269,7 @@ failed:
 }
 
 bool ln_lcd_fill(uint16_t color){return ln_lcd_draw(color,0,0,0);}
+bool ln_target_disk_screen(void){return ln_lcd_draw(0,0,ln_disk_runs,ln_disk_palette);}
 #if defined(LINNET_IMAGE_BOOT)
 bool ln_lcd_boot(void){return ln_lcd_draw(0,0,ln_boot_runs,ln_boot_palette);}
 bool ln_lcd_boot_apple(void)

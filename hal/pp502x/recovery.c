@@ -3,6 +3,8 @@
 #include "hal/api/platform.h"
 #include "boot/include/linnet_boot.h"
 #include "boot/include/loader.h"
+#include "hal/pp502x/disk_mode.h"
+#include "linnet_build.h"
 uint32_t ln_recovery_reboot_capabilities(void){return LINNET_LOADER_CAP_REBOOT_OS|LINNET_LOADER_CAP_REBOOT_DISK;}
 #if defined(LINNET_AUDIO)
 #include "hal/api/core.h"
@@ -462,7 +464,7 @@ _Noreturn void ln_recovery_return(uint32_t reason)
 int ln_recovery_can_reboot(uint16_t command)
 {
     if (command == 33u) return ln_snapshot_valid();
-    if (command == 34u) return 1;
+    if (command == 34u) return ln_storage_mounted() && !ln_storage_busy();
     if (command != 32u || ln_control->magic != LINNET_RECOVERY_MAGIC) return 0;
     uint32_t address = ln_control->candidate_address, size = ln_control->candidate_size;
     return ln_control->candidate_healthy == 1u && size >= 32u && !(address & 3u) &&
@@ -484,12 +486,9 @@ int ln_recovery_reboot(void *context, uint16_t command)
         ln_copy_and_enter((const uint8_t *)(uintptr_t)address, size, 0, ln_control->candidate_entry);
     }
     if (command == 34u) {
-        static const uint8_t disk_marker[21] = "diskmode\0\0hotstuff\0\0\1";
+        uint32_t sector_bytes = ln_storage_disk_sector_bytes();
         if (!ln_recovery_quiesce(context)) return 0;
-        volatile uint8_t *marker = (volatile uint8_t *)(uintptr_t)LINNET_DISK_MODE_MARKER;
-        for (uint32_t i = 0; i < sizeof disk_marker; ++i) marker[i] = disk_marker[i];
-        LINNET_MMIO(0x60006004u) |= 4u;
-        for (;;) __asm__ volatile("nop");
+        ln_pp_disk_mode(LINNET_USB_SERIAL, sector_bytes ? sector_bytes : 512u, true);
     }
     return 0;
 }

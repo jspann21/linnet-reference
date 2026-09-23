@@ -58,16 +58,20 @@ $items=@(Get-Disk | Where-Object {$_.BusType -eq 'USB' -and $_.FriendlyName -in 
 })
 ConvertTo-Json -InputObject $items -Compress
 """.replace('NATIVE_NAMES',json.dumps(names).replace("'","''"))
-    try:
-        result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
-                                capture_output=True, text=True, timeout=30,
-                                creationflags=subprocess.CREATE_NO_WINDOW)
-    except subprocess.TimeoutExpired as error:
-        raise RuntimeError(
-            "Windows did not finish reading the iPod's storage identity within 30 seconds. "
-            "Disconnect it, resolve the disk or cable problem, then reconnect it in Disk Mode "
-            "and choose Find iPod."
-        ) from error
+    for attempt in range(2):
+        try:
+            result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                                    capture_output=True, text=True, timeout=30,
+                                    creationflags=subprocess.CREATE_NO_WINDOW)
+            break
+        except subprocess.TimeoutExpired as error:
+            if attempt:
+                raise RuntimeError(
+                    "Windows did not finish reading the iPod's storage identity. "
+                    "Reconnect it in Disk Mode and choose Find iPod."
+                ) from error
+            # A just-enumerated hard disk can finish mounting after the first
+            # storage query stalls. Retry with a fresh Windows provider query.
     if result.returncode:
         raise RuntimeError(
             "We couldn't read your iPod's storage. Reconnect your iPod in Disk Mode, "
@@ -92,11 +96,46 @@ def _identify(identity):
             storage["partition_offset"] != identity["partition_offset"]):
         raise RuntimeError("USB and mounted storage identities disagree")
     spec = TARGETS[detected["target_id"]]
-    return dict(identity, target_id=detected["target_id"], target_name=spec["name"],
+    result = dict(identity, target_id=detected["target_id"], target_name=spec["name"],
                 linnet_usb_serial=detected["linnet_usb_serial"],
                 model_number=detected["retail_os"].get("model_number"),
                 regulatory_model=(spec["retail"]["regulatory_models"] or [None])[0],
                 media_profile=media_profile(detected["target_id"]))
+    if identity.get("native_target_id"):
+        result["media_cache_disk_serial"] = _retail_cache_serial(result)
+    return result
+
+
+def _retail_cache_serial(identity):
+    """Reuse a verified cache from this volume's former Apple Disk Mode identity."""
+    from tools.inspect.retail_device import _sysinfo
+    root = Path(identity["root"])
+    try:
+        _plain(root / "iPod_Control" / "Device" / "SysInfo", root)
+        serial = _sysinfo(root).get("pszSerialNumber", "").upper()
+        if not re.fullmatch(r"[A-Z0-9]{6,16}", serial):
+            return None
+        candidate = _cache_directory(serial, identity["volume_serial"])
+        if not candidate.is_dir():
+            return None
+        for receipt in candidate.glob("session-*.json"):
+            if receipt.is_symlink():
+                continue
+            try:
+                if receipt.stat().st_size > 1048576:
+                    continue
+                record = json.loads(receipt.read_text(encoding="utf-8"))
+            except (OSError, ValueError, UnicodeError):
+                continue
+            saved = record.get("identity", {}) if isinstance(record, dict) else {}
+            if not isinstance(saved, dict):
+                continue
+            if all(saved.get(key) == identity[key] for key in
+                   ("volume_serial", "target_id", "disk_bytes", "partition_offset", "partition_bytes")) and saved.get("disk_serial") == serial:
+                return serial
+    except (OSError, ValueError, UnicodeError, KeyError, TypeError):
+        pass
+    return None
 
 
 def supported_kinds(identity):
@@ -568,8 +607,13 @@ def eject_device(identity):
 
 
 def cache_root(identity):
+    return _cache_directory(identity.get("media_cache_disk_serial") or identity["disk_serial"],
+                            identity["volume_serial"])
+
+
+def _cache_directory(disk_serial, volume_serial):
     base = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".cache")) / "Linnet" / "Media"
-    key = hashlib.sha256((identity["disk_serial"] + identity["volume_serial"]).encode()).hexdigest()[:24]
+    key = hashlib.sha256((disk_serial + volume_serial).encode()).hexdigest()[:24]
     return base / key
 
 

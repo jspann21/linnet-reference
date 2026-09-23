@@ -6,6 +6,9 @@
 #include "hal/api/platform.h"
 #include "hal/api/core.h"
 #include "hal/api/ata.h"
+#if defined(LINNET_SOC_PP5020) || defined(LINNET_SOC_PP5022)
+#include "hal/pp502x/disk_mode.h"
+#endif
 #include "hal/api/recovery.h"
 #if defined(LINNET_IMAGE_BOOT)
 #define LN_STORAGE_STAMP(name) LN_BOOT_STAMP(LN_BT_BOOT_##name)
@@ -583,6 +586,7 @@ int ln_storage_disk_mode(void){
 #if !defined(LINNET_PROFILE_RELEASE)
     return ln_recovery_reboot(0,34);
 #else
+    uint32_t sector_bytes=ln_storage_disk_sector_bytes();
     if(!ln_storage_quiesce()||!ln_platform_audio_idle())return 0;
 #if defined(LINNET_IMAGE_OS)
     extern bool ln_display_quiesce(void);
@@ -590,8 +594,13 @@ int ln_storage_disk_mode(void){
 #endif
     ln_core_watchdog_disarm();ln_platform_quiesce();
     if(!ln_platform_dma_idle()){ln_core_watchdog_arm();return 0;}
+#if defined(LINNET_SOC_PP5020) || defined(LINNET_SOC_PP5022)
+    if(!ln_core_cache_disable()){ln_core_watchdog_arm();return 0;}
+    ln_pp_disk_mode(LINNET_USB_SERIAL,sector_bytes?sector_bytes:512u,true);
+#else
     if(!ln_platform_set_disk_mode(true)){ln_core_watchdog_arm();return 0;}
     ln_platform_hardware_reset();
+#endif
 #endif
 }
 int ln_storage_restart(void){

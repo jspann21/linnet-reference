@@ -2,6 +2,7 @@
  * The Apple ROM must have initialized VMCS. No copied firmware is embedded. */
 #include "targets/video5g-m25/lcd.h"
 #include "hal/api/platform.h"
+#include "hal/pp502x/disk_screen.h"
 #include "ui/profiles/color320/boot_font.h"
 #if defined(LINNET_IMAGE_BOOT)
 #include "boot/include/linnet_boot_wordmark_320.h"
@@ -85,6 +86,16 @@ bool ln_lcd_fill(uint16_t color){
     if(!ln_m25_lcd_init()||!await_ready())return false;
     uint16_t row[320];for(uint32_t x=0;x<320u;++x)row[x]=color;
     for(uint32_t y=0;y<240u;++y)if(!ln_m25_lcd_write(y*320u,row,320u))return false;
+    return ln_m25_lcd_commit()&&await_ready();
+}
+bool ln_target_disk_screen(void){
+    if(!ln_m25_lcd_init()||!await_ready())return false;
+    uint16_t row[LINNET_LCD_WIDTH];
+    for(uint32_t y=0;y<LINNET_LCD_HEIGHT;++y){
+        for(uint32_t x=0;x<LINNET_LCD_WIDTH;++x)
+            row[x]=ln_pp_disk_screen_pixel(LINNET_LCD_WIDTH,LINNET_LCD_HEIGHT,x,y,false);
+        if(!ln_m25_lcd_write(y*LINNET_LCD_WIDTH,row,LINNET_LCD_WIDTH))return false;
+    }
     return ln_m25_lcd_commit()&&await_ready();
 }
 static void text_row(uint16_t row[320],uint32_t y,uint32_t top,const char *text,uint16_t color){

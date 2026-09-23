@@ -49,6 +49,13 @@ board_names = ["iPod Q21"]
 model_numbers = ["PE435A"]
 regulatory_models = ["MP102"]
 
+[native_storage]
+usb_vid = 4617
+usb_pid = 20557
+model = "LINNET IPOD 4G USB Device"
+friendly_name = "LINNET IPOD 4G"
+sector_bytes = [512, 4096]
+
 [installer]
 enabled = true
 boot_layout = "ipod-directory"

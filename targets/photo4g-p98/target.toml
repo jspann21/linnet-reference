@@ -46,6 +46,13 @@ board_names = ["iPod P98"]
 model_numbers = []
 regulatory_models = ["A1099"]
 
+[native_storage]
+usb_vid = 4617
+usb_pid = 20556
+model = "LINNET IPOD PHOTO USB Device"
+friendly_name = "LINNET IPOD PHOTO"
+sector_bytes = [512, 4096]
+
 [installer]
 enabled = true
 boot_layout = "ipod-directory"

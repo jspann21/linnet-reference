@@ -35,10 +35,12 @@ Prefix these commands with `python linnet device`:
 | Normal reboot | `reboot --port <port> --mode persistent` | Boots installed firmware; OS automatically stops media, saves state, and drains storage. No separate stop/preparation needed. |
 | RAM reboot | `reboot --port <port> --mode os` | Restarts the retained RAM candidate, not the installed image. |
 | Recovery Boot | `reboot --port <port> --mode boot` | Enters recovery Boot when available. |
-| Apple Disk Mode | `reboot --port <port> --mode disk` | Switches to mass storage; prepare the return path below first. |
+| Native Disk Mode | `reboot --port <port> --mode disk` | Switches to Linnet USB mass storage on A1238 and PP502x devices. Wait for the identified disk before file work. |
 
 Automatic OS save/stop applies to `persistent`; the other reboot modes use
 low-level recovery paths. On-device Sync also saves/stops before Disk Mode.
+Direct Link Disk Mode requests are rejected while storage is busy; wait for
+background work to finish or use on-device Sync.
 Recovery Boot still requires idle/prepared storage for persistent reboot.
 An ACK confirms acceptance: reconnect and verify the expected healthy build.
 Persistent reboot can reset generation to 1; release OS has no Link endpoint.
@@ -53,9 +55,24 @@ or raw addresses. Use Disk Mode for general media/library file changes.
 
 ## Disk Mode and refresh sessions
 
-**Prepare the return from Disk Mode before entering it.** Apple Disk Mode exposes
-mass storage, not the Linnet COM endpoint. Automatic return uses the host's
-verified Boot-directory refresh followed by eject:
+Linnet native Disk Mode exposes the device's disk with a model-specific Linnet
+USB identity. The A1099, MP102, and A1136 use the shared PP502x storage owner;
+the A1238 uses its S5L8702 storage owner. While the disk is mounted, Link is
+unavailable. The PP502x models show a Disk Mode screen throughout the USB
+storage session. Identify the mounted device with `python linnet device
+detect-retail --mount <drive-root>` and verify its disk number and serial before
+file work. A normal eject flushes the drive and returns to Linnet:
+
+```powershell
+python linnet device eject --disk-number <number> --expected-serial <disk-serial> --wait-link --link-serial <link-serial>
+```
+
+The Link serial on PP502x devices can be shorter than the 16-character native
+storage serial. Use the values reported for each mode. Media Manager also
+recognizes these model-specific native disks and can eject them.
+
+Older Apple Disk Mode installations still need the host's verified Boot-directory
+refresh before eject. Prepare that return path before entering Apple Disk Mode:
 
 ```powershell
 python linnet device refresh-session prepare --plan <installed-plan.json> --plan-sha256 <sha256> --hours 8 > out/refresh-session-prepared.json
@@ -69,8 +86,9 @@ Use the exact currently installed Boot plan and a live matching refresh session
 (or an already elevated process). Validate these prerequisites first. Archived
 plans may have absolute dependencies or older formats; restore and validate them
 according to [local artifacts](local-artifacts.md), without changing pinned
-hashes. Plain eject and `--wait-link` do not request a restart. Plain eject can
-leave the device in Disk Mode with Windows reporting **No Media**, preventing
+hashes. On older Apple Disk Mode installations, plain eject and `--wait-link`
+do not request a restart. Plain eject can leave the device in Disk Mode with
+Windows reporting **No Media**, preventing
 this mounted-volume refresh path until the device is reconnected/restarted.
 Always rediscover Link and confirm the expected healthy build after restarting.
 

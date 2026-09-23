@@ -49,6 +49,10 @@ def verify_release(data, symbols):
     forbidden = (b"LINK", b"LNID", b"linnet-link", b"ln_link_", b"ln_development_", b"ln_recovery_", b"devlink_", b"trace_",
                  b"inject_", b"screenshot_", b"chainload", b".dev_staging", b".dev_trace", b"ln_usb_", b"ln_crash_mailbox", b"ln_crash_encode", b"ln_crash_decode",
                  b"ln_lcd_diagnostics", b"ln_ata_diagnostics", b"history_store", b"sync_max_wait_us", b"transfer_max_us", b"max_present_us")
+    if TARGET_SPECS[identity["target_id"]].get("hal_family") == "pp502x":
+        # PP502x release Disk Mode uses the same low-level USB owner as Link.
+        # Link dispatch, protocol and development endpoints remain forbidden.
+        forbidden = tuple(item for item in forbidden if item != b"ln_usb_")
     haystack = data[128:] + symbols.encode("utf-8")
     hits = [item.decode() for item in forbidden if item in haystack]
     if hits:

@@ -54,9 +54,10 @@ def _row(category, kind, title, path, status, *, info=None, **extra):
                 removable=category != 'cache', **extra)
 
 
-def list_items(identity, *, records_by_kind=None):
+def list_items(identity, *, records_by_kind=None, _validated_identity=False):
     """Read file names, timestamps and the bounded catalog; never decode media."""
-    identity = manager.refresh(identity)
+    if not _validated_identity:
+        identity = manager.refresh(identity)
     root = Path(identity['root']).resolve(strict=True)
     if records_by_kind is None:
         records_by_kind = manager._records_by_kind(root)
@@ -67,7 +68,7 @@ def list_items(identity, *, records_by_kind=None):
     from .retail_media import metadata as retail_metadata, images as retail_images
     retail = retail_metadata(root)
     music_records = records_by_kind['Music']
-    source_metadata = _source_music_metadata(root, music_records, manager.cache_root(identity), retail)
+    source_metadata = _source_music_metadata(root, music_records, manager.cache_root(identity), retail, metadata)
     for kind in manager.KINDS:
         allowed = manager.extensions(kind)
         records = records_by_kind[kind]
@@ -131,7 +132,7 @@ def list_items(identity, *, records_by_kind=None):
     return result
 
 
-def _source_music_metadata(root, records, cache_root, retail=None):
+def _source_music_metadata(root, records, cache_root, retail=None, published=None):
     from .music import _MetadataCache, _quick_metadata, _pcm, _number, _album_artist, EXTENSIONS
     cache = _MetadataCache(cache_root / 'music-metadata.sqlite3')
     result = {}
@@ -151,6 +152,11 @@ def _source_music_metadata(root, records, cache_root, retail=None):
                     result[key] = dict(saved,
                         album_artist=_album_artist({k: str(v) for k, v in saved.items()}, saved.get('artist', '')),
                         artwork=saved.get('artwork') or str(path))
+                    continue
+                if value is None and key in (published or {}):
+                    # The verified on-device database already carries title,
+                    # credits, duration and artwork. A new host cache should
+                    # not reopen every audio file merely to show the library.
                     continue
                 if value is None:
                     value = (_pcm(path) if path.suffix.lower() in ('.wav', '.aif', '.aiff', '.aifc')

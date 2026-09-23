@@ -114,6 +114,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         f'#include "targets/{target}/hardware.h"',
         f'#define LINNET_TARGET_ID "{target}"',
         f'#define LINNET_TARGET_NAME "{spec["name"]}"',
+        f'#define LINNET_NATIVE_STORAGE_USB_PID {spec.get("native_storage", {}).get("usb_pid", 0)}u',
+        f'#define LINNET_NATIVE_STORAGE_INQUIRY "LINNET  {spec.get("native_storage", {}).get("friendly_name", "LINNET IPOD").removeprefix("LINNET ")[:16].ljust(16)}0001"',
         f'#define LINNET_BOARD_ID "{spec["board_id"]}"',
         f'#define LINNET_MODEL_ALIAS "{spec["model_alias"]}"',
         f'#define LINNET_SOC_ID "{spec["soc"]}"',
@@ -216,6 +218,10 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         sources += [ROOT / "kernel/development.c"]
         if kind == "os":
             sources += [ROOT / "kernel/platform_link.c"]
+    if spec.get("hal_family") == "pp502x" and (profile != "release" or kind == "os"):
+        sources += [hal / "disk_mode.c"]
+        if profile == "release":
+            sources += [hal / "usb.c"]
     sources += [ROOT / name for name in (
         "services/storage/block.c", "services/storage/fat32.c",
         "services/storage/storage.c", "services/state/store.c",

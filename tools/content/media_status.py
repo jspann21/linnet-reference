@@ -55,7 +55,7 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     # once, retaining excluded files for the library's removal controls.
     records = media._records_by_kind(root)
     inventory = media.scan(root, skipped=skipped, records_by_kind=records)
-    rows = media_library.list_items(identity, records_by_kind=records)
+    rows = media_library.list_items(identity, records_by_kind=records, _validated_identity=True)
     readiness = {}
     for kind in media.KINDS:
         saved = state.get(kind, {})
