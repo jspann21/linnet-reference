@@ -36,6 +36,11 @@ int ln_platform_enter_retail(const uint8_t *payload,uint32_t size) {
     extern const uint8_t ln_retail_enter_begin[],ln_retail_enter_end[];
     uint32_t bytes=(uint32_t)(ln_retail_enter_end-ln_retail_enter_begin);
     if(!payload||!size||bytes>256u)return 0;
+#if LINNET_TARGET_NUMBER == 98u
+    /* A1099 Boot routes its watchdog Timer2 to FIQ. Apple's firmware owns
+     * this interrupt after handoff; restore normal IRQ routing for it. */
+    LINNET_REG(0x6000402cu) &= ~2u;
+#endif
     volatile uint8_t *iram=(volatile uint8_t *)(uintptr_t)0x40000000u;
     for(uint32_t i=0;i<bytes;++i)iram[i]=ln_retail_enter_begin[i];
     ((void (*)(const uint8_t *,uint32_t,uint32_t,uint32_t))(uintptr_t)0x40000000u)
