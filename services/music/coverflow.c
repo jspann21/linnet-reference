@@ -10,15 +10,14 @@
 #define CATALOG_RECORD 1024u
 #define ART_RECORD 13312u
 #define SLOTS 16u
-#if defined(LINNET_TARGET_CLASSIC6G_N25)
+#define ART_LOW 630u
+#if LINNET_COVERFLOW_EXPANDED
 #define PAGE 64u
 #define ART_PAGE 14u
-#define ART_LOW 630u
 #define ART_HIGH 1418u
 #else
 #define PAGE 16u
 #define ART_PAGE 7u
-#define ART_LOW 630u
 #define ART_HIGH 469u
 #endif
 #define ART_SLOTS (ART_LOW+ART_HIGH)
@@ -27,7 +26,7 @@
 enum {CLOSED,OPEN,HEADER,READY,CATALOG,ART};
 static struct {uint16_t pixels[12288];uint32_t id,age;} cache[SLOTS];
 static uint32_t age;
-#if defined(LINNET_TARGET_CLASSIC6G_N25)
+#if LINNET_COVERFLOW_EXPANDED
 static uint8_t catalog[CATALOG_SLOTS][CATALOG_RECORD] __attribute__((section(".cover_catalog"),aligned(32)));
 #else
 static uint8_t catalog[CATALOG_SLOTS][CATALOG_RECORD] __attribute__((aligned(32)));

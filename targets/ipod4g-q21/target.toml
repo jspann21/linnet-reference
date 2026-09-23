@@ -21,6 +21,7 @@ lcd_width = 160
 lcd_height = 128
 lcd_format = "gray2-horizontal"
 capabilities = { photos = false, video = false, themes = false }
+coverflow_cache = "compact"
 media_photo_width = 160
 media_photo_height = 108
 media_video_width = 160

@@ -29,6 +29,7 @@ lcd_width = 320
 lcd_height = 240
 lcd_format = "rgb565"
 capabilities = { video = true, cover_flow = true }
+coverflow_cache = "expanded"
 media_photo_width = 320
 media_photo_height = 212
 media_video_width = 320

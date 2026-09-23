@@ -132,6 +132,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         f'#define LINNET_MUSIC_TITLES_ADDRESS {spec["resources"]["music_titles_address"]}',
         f'#define LINNET_MUSIC_TITLES_BYTES {spec["resources"]["music_titles_bytes"]}',
         f'#define LINNET_COVERFLOW_CATALOG_SLOTS {spec["resources"]["coverflow_catalog_slots"]}u',
+        f'#define LINNET_COVERFLOW_EXPANDED {int(spec["coverflow_cache"] == "expanded")}u',
         f'#define LINNET_UI_HEIGHT {spec["lcd_height"]}u',
         f'#define LINNET_PHOTO_WIDTH {spec["media_photo_width"]}u',
         f'#define LINNET_PHOTO_HEIGHT {spec["media_photo_height"]}u',

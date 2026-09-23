@@ -15,7 +15,7 @@ REQUIRED_KEYS = {
     "media_photo_height", "media_video_width", "media_video_height",
     "media_video_fps", "media_video_color", "media_video_extensions", "media_video_backend", "media_art_side",
     "cop_display", "entry_address", "load_address", "mailbox_address",
-    "mailbox_bytes", "retail", "installer", "resources",
+    "mailbox_bytes", "retail", "installer", "resources", "coverflow_cache",
 }
 OPTIONAL_KEYS = {"ui", "hal_family", "audio_codec", "idle_clock_hz", "active_clock_hz", "native_video",
                  "sdram_address", "build_enabled", "bringup_blocker", "presentation_profile", "runtime_policy", "native_storage", "h264_decoder", "mpeg4_decoder", "video_catalog_cache"}
@@ -165,11 +165,16 @@ def _validate_identity(path, spec):
 
 def _validate_resources(path, spec):
     r=spec["resources"]
+    cache=spec["coverflow_cache"]
+    if cache not in ("compact", "expanded") or (cache == "expanded" and
+            (spec["soc"] != "s5l8702" or spec["sdram_bytes"] < 64 * 1024 * 1024 or
+             not spec["capabilities"].get("cover_flow", True))):
+        raise RuntimeError(f"invalid Cover Flow cache policy: {path}")
     if not isinstance(r,dict) or set(r)!={"music_titles_address","music_titles_bytes","coverflow_catalog_slots"}:
         raise RuntimeError(f"invalid resource budget: {path}")
     start,size,slots=(r[k] for k in ("music_titles_address","music_titles_bytes","coverflow_catalog_slots"))
     if (any(type(v) is not int for v in (start,size,slots)) or start%32 or size<840896 or
-        not 16<=slots<=(4096 if spec["id"]=="classic6g-n25" else 2048) or
+        not 16<=slots<=(4096 if cache=="expanded" else 2048) or
         start < spec["recovery_snapshot_address"]+spec["recovery_snapshot_bytes"]+spec["lcd_width"]*spec["lcd_height"]*2 or
         start+size>spec["mailbox_address"]-8192):
         raise RuntimeError(f"resource budget overlaps recovery or exceeds limits: {path}")

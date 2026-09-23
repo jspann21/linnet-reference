@@ -183,7 +183,7 @@ void ln_about_emblem(const struct ln_ui_canvas_context *c) {
             unsigned top = coverage(col,row)*(256-fx) + coverage(next_col,row)*fx;
             unsigned bottom = coverage(col,next_row)*(256-fx) + coverage(next_col,next_row)*fx;
             unsigned a = (top*(256-fy) + bottom*fy + 32768u) >> 16;
-#if defined(LINNET_TARGET_IPOD4G_Q21)
+#if LINNET_LCD_FORMAT == 2u
             /* Keep thin outlines and the wheel solid on the monochrome LCD. */
             a = a >= 4u ? 15u : 0u;
 #endif

@@ -79,6 +79,7 @@ lowercase, hyphenated ID matching the directory name and choose a unique
 | `media_art_side` | Square album artwork size prepared by Media Manager and accepted by firmware |
 | `media_video_width`, `media_video_height`, `media_video_fps`, `media_video_color` | Native prepared-video profile |
 | `video_catalog_cache` | Video browser cache policy: `paged` or `resident` on video targets |
+| `coverflow_cache` | Cover Flow page, artwork cache and catalog placement policy: `compact` or `expanded` |
 | `capabilities` | Per-target feature restrictions; explicit `false` disables a feature |
 | `cop_display` | Whether to include the SoC's COP display worker |
 | `[ui]` | Optional allowed themes and required default theme |
