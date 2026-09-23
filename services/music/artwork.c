@@ -14,7 +14,7 @@ static struct ln_fat32_file file;
 static char requested[256],path[256];
 static uint32_t requested_crc,crc,token,working,revision,generation=0x20000000u;
 static uint32_t phase,front,transfer_bytes;
-static bool pending,visible,preload,prefetch_tried;
+static bool pending,visible,preload,prefetch_tried,read_allowed;
 /* Keep the previous or prefetched cover in the existing second buffer. */
 static char cached_path[2][256];
 static uint32_t cached_crc[2];
@@ -45,6 +45,12 @@ const uint16_t *ln_music_art_pixels(void){return visible?pixels[front]:0;}
 uint32_t ln_music_art_side(void){return visible?cached_side[front]:0u;}
 uint32_t ln_music_art_revision(void){return revision;}
 bool ln_music_art_loading(void){return !visible&&requested[0]&&(working!=token||(!preload&&phase));}
+uint32_t ln_music_art_deadline(uint32_t now){
+    /* Accepted reads and another storage owner are woken by storage. When
+     * idle, advance a requested cover without waiting for the idle cap. */
+    if(pending||ln_storage_busy())return now+200000u;
+    return working!=token||(phase&&read_allowed)?now:now+200000u;
+}
 void ln_music_art_request(const char *name,uint32_t checksum){
     prefetch_tried=false;
     if(!preload&&(!requested[0]||visible||phase||working!=token)&&
@@ -69,6 +75,7 @@ void ln_music_art_prefetch(const char *name,uint32_t checksum){
     if(++generation>=0x30000000u)generation=0x20000000u;
 }
 void ln_music_art_step(bool allow_read){
+    read_allowed=allow_read;
     if(working!=token){
         if(pending){ln_storage_media_cancel(generation);if(!ln_storage_media_poll(generation,0,0))return;pending=false;}
         working=token;phase=1;crc=requested_crc;preload=false;

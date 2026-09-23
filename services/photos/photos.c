@@ -382,8 +382,6 @@ uint32_t ln_photos_deadline(uint32_t now){
      * progress is possible; another photo poll cannot advance the disk. */
     if(p.pending){
         if(p.working!=p.epoch)return now;
-        if(p.slide&&p.slide_armed&&p.frame_valid&&
-           (int32_t)(p.slide_at-now)<200000)return p.slide_at;
         return now+200000u;
     }
     if(!p.active||p.error)return now+200000u;

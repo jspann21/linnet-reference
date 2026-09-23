@@ -349,6 +349,8 @@ uint32_t ln_music_deadline(uint32_t now){
          ln_music_history_record_error(waiting.track.id)))))return now;
     uint32_t next=ln_player_deadline(now),library=ln_music_library_deadline(now);
     if((int32_t)(library-next)<0)next=library;
+    uint32_t art=ln_music_art_deadline(now);
+    if((int32_t)(art-next)<0)next=art;
 #if defined(LINNET_COVERFLOW)
     uint32_t covers=ln_coverflow_io_deadline();if(covers!=UINT32_MAX&&(int32_t)(covers-next)<0)next=covers;
 #endif
