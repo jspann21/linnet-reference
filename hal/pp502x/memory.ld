@@ -144,7 +144,13 @@ SECTIONS {
   /* The metadata page cache and expanded browser rows fit below 4.5 MiB,
    * within the existing 8 MiB OS region and below all staging reservations. */
 #if defined(LINNET_COVERFLOW)
+#if defined(LINNET_TARGET_PHOTO4G_P98)
+  /* The Photo OS still leaves more than 224 KiB before COVER_LOW. Keep its
+   * full artwork cache while accommodating the development Link image. */
+  ASSERT(__stack_top <= 0x007c8000, "Photo Cover Flow resident image exceeds 7.78125 MiB")
+#else
   ASSERT(__stack_top <= 0x007c0000, "Cover Flow resident image exceeds 7.75 MiB")
+#endif
 #else
   ASSERT(__stack_top <= 0x00540000, "Music resident image exceeds 5.25 MiB")
 #endif
