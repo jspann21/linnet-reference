@@ -955,7 +955,15 @@ uint32_t ln_ui_first_visible(struct ln_ui_state*s){
 uint32_t ln_ui_focused_count(const struct ln_ui_state*s){
     theme_sync();const struct ln_ui_node*n=focus(s);return n&&(n->kind==LN_UI_MENU||n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_GRID)?total(n):0;
 }
-static bool change_scene_to(struct ln_ui_state*s,uint32_t target,bool remember){if(target>=ln_ui_scene_count||target>=32u||!(ln_ui_enabled_scenes&(1u<<target))||target==s->scene)return false;bool editor=same(ln_ui_scenes[target].id,"linnet.system.clock-edit");if(editor&&!ln_ui_clock_begin()){s->dirty|=1u;return false;}if(!target)s->history_count=0;else if(remember){if(s->history_count==sizeof s->history){for(uint32_t i=1;i<sizeof s->history;++i)s->history[i-1]=s->history[i];--s->history_count;}s->history[s->history_count++]=(uint8_t)s->scene;}s->selections[s->scene]=s->selected;s->scene=target;s->selected=editor?0u:s->selections[target];const struct ln_ui_node*n=focus(s);uint32_t count=n?total(n):0;if(theme_choices(n))s->selected=ln_ui_theme_index();if(!count)s->selected=0;else if(s->selected>=count)s->selected=count-1u;s->dirty|=1u;++s->transitions;++s->scene_epoch;return true;}
+static bool change_scene_to(struct ln_ui_state*s,uint32_t target,bool remember){if(target>=ln_ui_scene_count||target>=32u||!(ln_ui_enabled_scenes&(1u<<target))||target==s->scene)return false;bool editor=same(ln_ui_scenes[target].id,"linnet.system.clock-edit");if(editor&&!ln_ui_clock_begin()){s->dirty|=1u;return false;}
+    if(!target)s->history_count=0;
+    else if(remember){
+        /* Explicit Menu handlers return to the parent with ln_ui_show().
+         * Consume that history entry so Menu there keeps going toward Home. */
+        if(s->history_count&&s->history[s->history_count-1u]==target)--s->history_count;
+        else {if(s->history_count==sizeof s->history){for(uint32_t i=1;i<sizeof s->history;++i)s->history[i-1]=s->history[i];--s->history_count;}s->history[s->history_count++]=(uint8_t)s->scene;}
+    }
+    s->selections[s->scene]=s->selected;s->scene=target;s->selected=editor?0u:s->selections[target];const struct ln_ui_node*n=focus(s);uint32_t count=n?total(n):0;if(theme_choices(n))s->selected=ln_ui_theme_index();if(!count)s->selected=0;else if(s->selected>=count)s->selected=count-1u;s->dirty|=1u;++s->transitions;++s->scene_epoch;return true;}
 static bool change_scene(struct ln_ui_state*s,uint32_t target){return change_scene_to(s,target,true);}
 static bool previous_scene(struct ln_ui_state*s){while(s->history_count){uint32_t target=s->history[--s->history_count];if(target<ln_ui_scene_count&&(ln_ui_enabled_scenes&(1u<<target)))return change_scene_to(s,target,false);}return change_scene_to(s,0,false);}
 void ln_ui_refresh(struct ln_ui_state*s){if(!s)return;theme_sync();const struct ln_ui_node*n=focus(s);uint32_t count=n?total(n):0;if(!count)s->selected=0;else if(s->selected>=count)s->selected=count-1u;if(s->scene<32u)s->selections[s->scene]=s->selected;s->dirty|=1u;}
