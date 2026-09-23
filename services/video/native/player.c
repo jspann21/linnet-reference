@@ -26,8 +26,9 @@ enum {IDLE,OPEN,OPEN_WAIT,VIDEO_HEADER,AUDIO_HEADER,PRIME,PLAY,STOPPING,FAILED};
 static struct {
     uint32_t phase,error,generation,revision,front,back,presented,decoded,max_decode,late,max_late;
     uint32_t ready,frame_due;
-    uint32_t video_phase,audio_phase,audio_frames,start,paused_at,position,duration,identity,resume[2];
-    uint32_t seek_phase,seek_target,base,tail_at,tail_position;uint64_t audio_skip;
+    uint32_t video_phase,audio_phase,audio_frames,paused_at,position,duration,identity,resume[2];
+    uint32_t seek_phase,seek_target,base,tail_position,wall_at,wall_ms,wall_us,audio_at;
+    uint64_t audio_skip,audio_elapsed;
     uint32_t audio_us,io_started,io_us,dropped,last_picture;
     uint32_t io_kind,io_bytes,io_requested,io_at,read_bytes,reads;uint64_t io_offset;void *io_buffer;
     bool active,io,reading,stepping,paused,started,audio,audio_eof,video_eof,offered,frame_ready,stop;
@@ -47,18 +48,36 @@ static uint32_t milliseconds(uint64_t ticks,uint32_t rate){
     if(quotient>4294967u)return 0xffffffffu;
     return (uint32_t)quotient*1000u+(uint32_t)(remainder*1000u)/rate;
 }
+static void wall_reset(uint32_t now){v.wall_at=now;v.wall_ms=v.wall_us=0;}
+static uint32_t wall_position(uint32_t now,uint32_t base){
+    /* The hardware microsecond clock wraps every 71 minutes. Fold each
+     * bounded delta into playback time instead of subtracting from start. */
+    uint32_t delta=now-v.wall_at;v.wall_at=now;
+    uint32_t fraction=v.wall_us+delta%1000u;
+    uint64_t ms=(uint64_t)v.wall_ms+delta/1000u+fraction/1000u;
+    v.wall_ms=ms>UINT32_MAX?UINT32_MAX:(uint32_t)ms;
+    v.wall_us=fraction%1000u;
+    uint64_t position=(uint64_t)base+v.wall_ms;
+    return position>UINT32_MAX?UINT32_MAX:(uint32_t)position;
+}
 static uint32_t clock_raw_ms(void){
     if(!v.started)return v.base;
     uint32_t now=v.paused?v.paused_at:ln_time_us();
     if(v.audio){
         struct ln_audio_status a;ln_audio_snapshot(&a);
-        uint32_t position=v.base+milliseconds((uint64_t)a.consumed+a.inflight_consumed,a.rate);
+        uint32_t frames=a.consumed+a.inflight_consumed;
+        /* DMA progress is an estimate and can retreat slightly at a block
+         * boundary. A signed delta accepts counter wrap but ignores retreat. */
+        int32_t advance=(int32_t)(frames-v.audio_at);
+        if(advance>0){v.audio_elapsed+=(uint32_t)advance;v.audio_at=frames;}
+        uint64_t audio_position=(uint64_t)v.base+milliseconds(v.audio_elapsed,a.rate);
+        uint32_t position=audio_position>UINT32_MAX?UINT32_MAX:(uint32_t)audio_position;
         /* Audio and video tracks need not end on the same timestamp. */
         if(!v.audio_eof||a.queued)return position;
-        if(!v.tail){v.tail=true;v.tail_at=now;v.tail_position=position;}
-        return v.tail_position+(now-v.tail_at)/1000u;
+        if(!v.tail){v.tail=true;wall_reset(now);v.tail_position=position;}
+        return wall_position(now,v.tail_position);
     }
-    return v.base+(now-v.start)/1000u;
+    return wall_position(now,v.base);
 }
 static uint32_t clock_ms(void){uint32_t ms=clock_raw_ms();return ms>v.duration?v.duration:ms;}
 static uint64_t ticks(uint32_t ms,uint32_t rate){
@@ -198,7 +217,9 @@ static void step(void){
     if(!audio_step()){fail(7);return;}
     if(v.audio&&a.queued<START_AUDIO_FRAMES&&!v.audio_eof&&!(v.reading&&v.io_kind==0))return;
     if(!v.started&&(v.frame_ready||v.video_eof)&&(!v.audio||a.queued>=START_AUDIO_FRAMES||v.audio_eof)){
-        if(v.audio&&!ln_audio_start()){fail(8);return;}v.start=ln_time_us();v.started=true;v.phase=PLAY;
+        if(v.audio&&!ln_audio_start()){fail(8);return;}
+        wall_reset(ln_time_us());v.audio_at=0;v.audio_elapsed=0;
+        v.started=true;v.phase=PLAY;
     }
     uint32_t now=clock_ms();v.position=now;
     if(v.frame_ready){
@@ -268,7 +289,11 @@ void ln_video_stop(void){if(v.active){v.resume[0]=v.identity;v.resume[1]=clock_m
 bool ln_video_active(void){return v.active;}
 bool ln_video_pending(void){return v.io||ln_video_catalog_pending();}
 void ln_video_pause(bool pause){if(!v.active||v.paused==pause)return;
-    if(pause){v.paused_at=ln_time_us();if(v.audio)ln_audio_pause();}else {uint32_t elapsed=ln_time_us()-v.paused_at;v.start+=elapsed;if(v.tail)v.tail_at+=elapsed;if(v.audio&&v.started&&!v.seek_phase&&!v.tail&&!ln_audio_start()){fail(13);return;}}
+    if(pause){v.paused_at=ln_time_us();if(v.started&&(!v.audio||v.tail))
+            (void)wall_position(v.paused_at,v.tail?v.tail_position:v.base);
+        if(v.audio)ln_audio_pause();}
+    else {if(v.started&&(!v.audio||v.tail))v.wall_at=ln_time_us();
+        if(v.audio&&v.started&&!v.seek_phase&&!v.tail&&!ln_audio_start()){fail(13);return;}}
     v.paused=pause;++v.revision;
 }
 bool ln_video_controls(bool show){(void)show;return true;}
