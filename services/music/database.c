@@ -1,4 +1,5 @@
 #include "boot/include/linnet_bytes.h"
+#include "linnet_target.h"
 #include "database.h"
 #include "boot/include/linnet_boot.h"
 static void copy(void *to,const void *from,uint32_t n){uint8_t *d=to;const uint8_t *s=from;for(uint32_t i=0;i<n;i++)d[i]=s[i];}
