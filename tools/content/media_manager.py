@@ -182,7 +182,7 @@ def source_folders(root, kind):
     return [folder for folder in folders if folder.is_dir()]
 
 
-def _file_records(folder):
+def _file_records(folder, *, allowed=None):
     if not folder.exists():
         return []
     _plain(folder, Path(folder.anchor))
@@ -199,7 +199,7 @@ def _file_records(folder):
                     raise ValueError(f"Linked files or folders are unsupported: {path}")
                 if stat.S_ISDIR(info.st_mode):
                     directories.append(path)
-                elif stat.S_ISREG(info.st_mode):
+                elif stat.S_ISREG(info.st_mode) and (allowed is None or path.suffix.lower() in allowed):
                     found.append((path, info))
     return sorted(found, key=lambda item: (str(item[0]).casefold(), str(item[0])))
 
@@ -684,8 +684,9 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None):
     folder = root / "Videos"
     allowed = video_source_extensions(identity)
     excluded = {Path(value).as_posix().casefold() for value in skipped}
-    available = [str(path) for path, _ in _records_by_kind(root, ("Videos",))["Videos"]
-                 if path.suffix.lower() in allowed and path.relative_to(root).as_posix().casefold() not in excluded]
+    available = [str(path) for source in source_folders(root, "Videos")
+                 for path, _ in _file_records(source, allowed=allowed)
+                 if not excluded or path.relative_to(root).as_posix().casefold() not in excluded]
     from .video_catalog import read_file
     catalog = root / ".LINNET" / "VIDEOS" / "INDEX.VID"
     _plain(catalog, root)
