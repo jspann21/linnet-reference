@@ -687,7 +687,47 @@ def device_media_path(path: Path, device_root: Path) -> str:
     return _device_media_path(path, root)
 
 
-def _device_media_path(path: Path, root: Path) -> str:
+if os.name == "nt":
+    from ctypes import wintypes
+
+    class _FindData(ctypes.Structure):
+        _fields_ = [
+            ("attributes", wintypes.DWORD),
+            ("creation", wintypes.FILETIME),
+            ("access", wintypes.FILETIME),
+            ("write", wintypes.FILETIME),
+            ("size_high", wintypes.DWORD),
+            ("size_low", wintypes.DWORD),
+            ("reserved0", wintypes.DWORD),
+            ("reserved1", wintypes.DWORD),
+            ("name", ctypes.c_wchar * 260),
+            ("alternate", ctypes.c_wchar * 14),
+            ("file_type", wintypes.DWORD),
+            ("creator_type", wintypes.DWORD),
+            ("finder_flags", wintypes.WORD),
+        ]
+
+    _find_kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    _find_kernel.FindFirstFileW.argtypes = (wintypes.LPCWSTR, ctypes.POINTER(_FindData))
+    _find_kernel.FindFirstFileW.restype = wintypes.HANDLE
+    _find_kernel.FindClose.argtypes = (wintypes.HANDLE,)
+    _find_kernel.FindClose.restype = wintypes.BOOL
+
+
+def _actual_short_component(path: Path) -> str:
+    """Get the real alternate name even when the long name is 8.3-shaped."""
+    data = _FindData()
+    handle = _find_kernel.FindFirstFileW(str(path), ctypes.byref(data))
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return data.alternate or data.name
+    finally:
+        if not _find_kernel.FindClose(handle):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+
+def _device_media_path(path: Path, root: Path, alias_cache: dict[Path, str] | None = None) -> str:
     """Resolve one file against the compiler's already-resolved device root."""
     from .publish import _plain
     path = Path(path).absolute()
@@ -701,7 +741,25 @@ def _device_media_path(path: Path, root: Path) -> str:
         length = get_short(str(path), buffer, len(buffer))
         if not length or length >= len(buffer):
             raise ValueError(f"Cannot resolve the iPod FAT short name: {path}")
-        path = Path(buffer.value)
+        long_parts = path.relative_to(root).parts
+        short_parts = Path(buffer.value).relative_to(root).parts
+        if len(long_parts) != len(short_parts):
+            raise ValueError(f"FAT short path changed its component count: {path}")
+        actual = []
+        cursor = root
+        for long_part, short_part in zip(long_parts, short_parts):
+            cursor /= long_part
+            if long_part.casefold() == short_part.casefold():
+                # GetShortPathNameW may retain an 8.3-shaped long name despite
+                # a different primary FAT alias. The firmware opens aliases.
+                if alias_cache is not None and cursor in alias_cache:
+                    short_part = alias_cache[cursor]
+                else:
+                    short_part = _actual_short_component(cursor)
+                    if alias_cache is not None:
+                        alias_cache[cursor] = short_part
+            actual.append(short_part)
+        path = root.joinpath(*actual)
     relative = "/" + path.relative_to(root).as_posix().upper()
     if not safe_media_path(relative):
         raise UnsupportedMediaPath(f"Existing file has no firmware-compatible FAT short path: {path}")
@@ -999,13 +1057,14 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         remember_embedded(index)
         return index
 
+    alias_cache: dict[Path, str] = {}
     cache_hits = 0
     from .media_manager import _music_import_name
     for number, path, before, metadata, cached in _metadata_rows(
             paths, source, ffprobe, device_root is not None, cache, bypass_cache, metadata_pool, progress):
         location = None
         if device_root is not None:
-            location = _device_media_path(path, device_root)
+            location = _device_media_path(path, device_root, alias_cache)
         stage_audio = device_root is None
         hash_audio = verification == "full" or stage_audio
         relative = path.relative_to(source).as_posix()
