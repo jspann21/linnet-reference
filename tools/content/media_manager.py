@@ -308,9 +308,9 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
             if database.is_file():
                 info = database.stat()
                 rows.append(('iTunesDB', info.st_size, info.st_mtime_ns))
-            if kind == 'Music':
-                # Video readiness is checked from video source/output stamps;
-                # walking every artwork file adds HDD work to each video scan.
+            if kind == 'Music' and supported:
+                # Artwork affects Music only when playable audio exists. Video
+                # readiness uses source/output stamps without artwork scans.
                 artwork_folder = root / 'iPod_Control' / 'Artwork'
                 for path, info in _file_records(artwork_folder):
                     rows.append((path.relative_to(root).as_posix(), info.st_size, info.st_mtime_ns))
