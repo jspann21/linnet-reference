@@ -69,8 +69,14 @@ void ln_core_idle_until(uint32_t deadline) {
     if(!initialized)return;
     uint32_t flags=ln_s5l_irq_save(),start=ln_time_us();
     int32_t delay=(int32_t)(deadline-start);
-    /* USB and clickwheel currently use their bounded foreground pollers. */
+    /* The A1238 OS clickwheel wakes by IRQ. Release has no foreground Link
+     * USB poller; 5 ms still bounds hold/headphone switch polling. */
+#if defined(LINNET_PROFILE_RELEASE) && defined(LINNET_IMAGE_OS) && defined(LINNET_TARGET_CLASSIC6G_N25)
+    if(delay>5000)delay=5000;
+#else
+    /* Development Link and other targets retain their 1 ms poll bound. */
     if(delay>1000)delay=1000;
+#endif
     if(delay>0 && ln_s5l_deadline_arm((uint32_t)delay)) {
         ln_s5l_irq_wait();state.idle_count++;state.idle_us+=ln_time_us()-start;
     }
