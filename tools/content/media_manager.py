@@ -275,15 +275,22 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
         rows, supported = [], []
         supported_bytes = skipped_count = ignored = 0
         allowed = extensions(kind)
+        cover_names = None
+        if kind == 'Music':
+            from .music import COVER_NAMES
+            cover_names = {name.casefold() for name in COVER_NAMES}
         records = records_by_kind[kind]
         for path, info in records:
             relative = path.relative_to(root).as_posix() if fingerprint or excluded else None
             if excluded and relative.casefold() in excluded:
                 skipped_count += 1
                 continue
-            if fingerprint:
+            supported_file = path.suffix.lower() in allowed
+            # Music and Videos share iPod_Control/Music; only artwork sidecars
+            # should affect Music preparation in addition to playable audio.
+            if fingerprint and (supported_file or (cover_names is not None and path.name.casefold() in cover_names)):
                 rows.append((relative, info.st_size, info.st_mtime_ns))
-            if path.suffix.lower() in allowed:
+            if supported_file:
                 supported.append(str(path))
                 supported_bytes += info.st_size
             else:
