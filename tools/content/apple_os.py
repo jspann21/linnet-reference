@@ -463,13 +463,16 @@ def _update_photos(identity, state, selected, distribution, cache, progress):
                     temporary = target.with_name(target.name + '.linnet-tmp')
                     if temporary.exists():
                         raise ValueError('An interrupted Apple photo update needs attention.')
-                    shutil.copyfile(source_file, temporary)
-                    expected = _hash(source_file)
-                    if _hash(temporary) != expected:
-                        raise ValueError(f'Apple photo readback failed: {relative}')
-                    _volume_guard(identity)
-                    temporary.replace(target)
-                    changed.append((target, prior))
+                    try:
+                        shutil.copyfile(source_file, temporary)
+                        expected = _hash(source_file)
+                        if _hash(temporary) != expected:
+                            raise ValueError(f'Apple photo readback failed: {relative}')
+                        _volume_guard(identity)
+                        temporary.replace(target)
+                        changed.append((target, prior))
+                    finally:
+                        temporary.unlink(missing_ok=True)
             except Exception:
                 for target, prior in reversed(changed):
                     if prior.is_file():
