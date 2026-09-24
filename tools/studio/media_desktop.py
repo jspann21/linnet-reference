@@ -448,7 +448,7 @@ class MediaWindow(QMainWindow):
         self.settings = QSettings('Linnet', 'MediaManager')
         self.identity, self.inventory, self.review = None, None, None
         self.rows, self.readiness, self.pending, self.trash_rows = [], {}, [], []
-        self._library_source, self._library_cache = None, {}
+        self._library_source, self._library_cache, self._library_stats = None, {}, {}
         self.video_selection, self.stop_event = set(), threading.Event()
         self.page, self.view, self.group = 'Music', self.settings.value('music_view', 'Albums'), None
         if self.view not in ('Songs', 'Albums', 'Artists', 'Genres'):
@@ -851,7 +851,7 @@ class MediaWindow(QMainWindow):
         # Completed scans replace self.rows. Reuse page rows between searches
         # and view changes, returning a new list so model sorting stays local.
         if self._library_source is not self.rows:
-            self._library_source, self._library_cache = self.rows, {}
+            self._library_source, self._library_cache, self._library_stats = self.rows, {}, {}
         if self.page in self._library_cache:
             return list(self._library_cache[self.page])
         unique = {}
@@ -861,7 +861,10 @@ class MediaWindow(QMainWindow):
                 if row['kind'] == 'Photos':
                     copy['artwork'] = row.get('artwork') or row['path']
                 unique[str(Path(row['path'])).casefold()] = copy
-        self._library_cache[self.page] = list(unique.values())
+        page_rows = list(unique.values())
+        albums = len({(r.get('album'), r.get('album_artist') or r.get('artist')) for r in page_rows}) if self.page == 'Music' else 0
+        self._library_stats[self.page] = (len(page_rows), sum(r['bytes'] for r in page_rows), albums)
+        self._library_cache[self.page] = page_rows
         return list(self._library_cache[self.page])
 
     def render_library(self):
@@ -932,11 +935,11 @@ class MediaWindow(QMainWindow):
             self.empty_detail.setText('Your collection will appear here when reading finishes.' if self.busy else 'Connect an iPod in Disk Mode, then find it to browse and add media.' if not self.identity else 'Try another search or clear your filters.' if all_rows else 'Removed files appear here until you restore or permanently delete them.' if self.page == 'Trash' else 'Add files from your computer to get started.')
         self.empty_action.setText('Find iPod' if not self.identity else 'Clear filters' if all_rows else 'Add media')
         self.empty_action.setVisible(not self.busy and (not self.identity or bool(all_rows) or self.page != 'Trash'))
-        count = len(all_rows)
-        albums = len({(r.get('album'), r.get('album_artist') or r.get('artist')) for r in all_rows}) if music else 0
-        self.subtitle.setText(f'{count:,} songs  ·  {albums:,} albums  ·  {size(sum(r["bytes"] for r in all_rows))}' if music else
+        count, total_bytes, albums = ((len(all_rows), sum(r['bytes'] for r in all_rows), 0)
+                                      if self.page == 'Trash' else self._library_stats[self.page])
+        self.subtitle.setText(f'{count:,} songs  ·  {albums:,} albums  ·  {size(total_bytes)}' if music else
                               'Restore removed files or delete them permanently to free space.' if self.page == 'Trash' else
-                              f'{count:,} files on your iPod  ·  {size(sum(r["bytes"] for r in all_rows))}')
+                              f'{count:,} files on your iPod  ·  {size(total_bytes)}')
         if self.group:
             members = self.group['members']
             self.subtitle.setText((self.group['subtitle'] + '  ·  ' if self.view == 'Albums' else '') + f'{len(members):,} songs  ·  {size(sum(r["bytes"] for r in members))}')
