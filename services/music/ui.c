@@ -1,4 +1,5 @@
 #include "ui/runtime/ui.h"
+#include "linnet_target.h"
 #include "services/music/library.h"
 #include "services/music/controller.h"
 #include "services/music/player.h"
@@ -185,7 +186,13 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
     }
     if(n->kind==LN_UI_ALBUM_ART&&in_scene(n,"linnet.system.now-playing")&&ln_music_art_pixels())return "";
     if(in_scene(n,"linnet.system.music")){
-        if(n->kind==LN_UI_TEXT)return ln_music_browser_hint();
+        if(n->kind==LN_UI_TEXT){
+#if defined(LINNET_TARGET_IPOD4G_Q21)
+            return "Menu: Back";
+#else
+            return ln_music_browser_hint();
+#endif
+        }
         if(n->kind==LN_UI_STATUS_BAR){uint32_t status=ln_music_library_status();return status==LN_LIBRARY_READY?ln_music_browser_title():status==LN_LIBRARY_ERROR?"Music - no library":"Music - loading";}
         if(n->kind==LN_UI_VIRTUAL_LIST&&item!=UINT32_MAX)return ln_music_browser_label(item);
     }

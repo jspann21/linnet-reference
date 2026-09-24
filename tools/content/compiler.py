@@ -381,8 +381,14 @@ def compile_system(root, output, configpath=None, target_override=None):
                 if node['text']=='System version and device':
                     node['text']=f"{system['version']} / {device_name}"
         for rule in presentation.get('adjustments', []):
-            if set(rule)-{'scene','text','kind','x','y','w','h','dy'} or not ({'text','kind'} & set(rule)):
+            if set(rule)-{'scene','text','kind','x','y','w','h','dy','row_height','replace_text'} or not ({'text','kind'} & set(rule)):
                 raise ContentError('invalid target presentation adjustment')
+            if 'row_height' in rule and (type(rule['row_height']) is not int or
+                                         not font['height'] <= rule['row_height'] <= 32):
+                raise ContentError('invalid target presentation row height')
+            if 'replace_text' in rule and (not isinstance(rule['replace_text'],str) or
+                                           len(rule['replace_text']) > 128):
+                raise ContentError('invalid target presentation text')
             for scene in variant['scenes']:
                 if 'scene' in rule and rule['scene'] != scene['id']: continue
                 for node in scene['nodes']:
@@ -390,6 +396,8 @@ def compile_system(root, output, configpath=None, target_override=None):
                     for key in ('x','y','w','h'):
                         if key in rule: node[key]=rule[key]
                     if 'dy' in rule: node['y']+=rule['dy']
+                    if 'row_height' in rule: node['row_height']=rule['row_height']
+                    if 'replace_text' in rule: node['text']=rule['replace_text']
 
         if not native_screens and (width,height)!=(REFERENCE_WIDTH,REFERENCE_HEIGHT):
             variant['metrics']=dict(
@@ -470,7 +478,7 @@ def geometry_flags(node, theme, font):
     if node['text'] == 'Clock fields':
         height = 24 if layout == 'graphite' else 22 if layout == 'ipod-photo' else max(18, font['height'] + 3)
     elif node['kind'] == 6:
-        height = max(18, font['height'] + 5)
+        height = node.get('row_height', max(18, font['height'] + 5))
     elif node['kind'] == 8:
         height = 31 if layout == 'ipod-photo' else max(1, node['h'] // 2)
     else:

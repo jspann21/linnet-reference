@@ -654,14 +654,18 @@ static void battery(struct painter*p,int32_t x,int32_t y,uint16_t ink){
     symbol_mask(p,x,y,25,11,symbol_battery,ink);
     fill(p,(struct rect){x+1,y+1,21,9},color(LN_UI_STATUS_BG));
     if(status!=UINT32_MAX&&(status&255u)<=100u){
-        uint32_t width=(status&255u)*19u/100u;struct rect charge={x+2,y+2,(int32_t)width,7};
+        bool monochrome=(ln_ui_themes[active_theme].flags&LN_UI_THEME_MONOCHROME)!=0;
+        bool external=(status&(256u|512u))!=0;
+        uint32_t width=monochrome&&external?19u:(status&255u)*19u/100u;
+        struct rect charge={x+2,y+2,(int32_t)width,7};
         uint16_t charge_color=layout()==LN_UI_LAYOUT_IPOD_CLASSIC&&(status&255u)<20u?0xe986u:color(LN_UI_BATTERY);
-        gradient(p,charge,mix(charge_color,color(LN_UI_BACKGROUND),130),charge_color);
+        if(monochrome)fill(p,charge,charge_color);
+        else gradient(p,charge,mix(charge_color,color(LN_UI_BACKGROUND),130),charge_color);
         if(layout()==LN_UI_LAYOUT_IPOD_CLASSIC&&(status&512u)&&(status&255u)==100u){
             fill(p,(struct rect){x+10,y+3,3,6},ink);
             fill(p,(struct rect){x+8,y+2,2,4},ink);
             fill(p,(struct rect){x+13,y+2,2,4},ink);
-        }else if(status&(256u|512u))symbol_mask(p,x+6,y,11,11,symbol_bolt,ink);
+        }else if(external)symbol_mask(p,x+6,y,11,11,symbol_bolt,monochrome?color(LN_UI_STATUS_BG):ink);
     }else {fill(p,(struct rect){x+7,y+5,9,1},ink);}
 }
 /* Both orientations use the same compact bolt for charging or external power,

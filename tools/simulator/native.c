@@ -15,8 +15,27 @@ const struct ln_ui_asset *ln_ui_now_playing_art(uint32_t *revision){
     *revision=sample_art?1u:0u;return sample_art&&ln_ui_asset_count?&ln_ui_assets[0]:0;
 }
 /* Explicit sample metadata; device builds bind these keys to the music service. */
+static bool music_category_node(const struct ln_ui_node *node){
+    for(uint32_t i=0;i<ln_ui_scene_count;++i){
+        const struct ln_ui_scene *scene=&ln_ui_scenes[i];
+        if(strcmp(scene->id,"linnet.system.music"))continue;
+        for(uint32_t j=0;j<scene->count;++j)if(&scene->nodes[j]==node)return true;
+        break;
+    }
+    return false;
+}
+uint32_t ln_ui_dynamic_count(const struct ln_ui_node *node,uint32_t fallback){
+    if(music_category_node(node)&&(node->kind==LN_UI_VIRTUAL_LIST||node->kind==LN_UI_SCROLLBAR))return 4u;
+    return fallback;
+}
 const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){
     if(!n->text)return fallback;
+    if(item==UINT32_MAX&&strcmp(n->text,"Right: Actions  Menu: Back")==0&&music_category_node(n))
+        return "Select: Choose  Menu: Back";
+    if(item!=UINT32_MAX&&strcmp(n->text,"Track ")==0&&music_category_node(n)){
+        static const char *const categories[]={"All Tracks","Artists","Albums","Playlists"};
+        if(item<4u)return categories[item];
+    }
     if(item!=UINT32_MAX&&strcmp(n->text,"Option ")==0){
         static const char *const labels[]={"Shuffle: Off","Repeat: Off","Play queue","Sound settings","Sleep timer","Favorite: No","Save bookmark","No bookmark saved","Restart track","Back 10 seconds","Forward 10 seconds","Save queue as playlist...","Stop"};
         if(item==0)return sample_modes&1u?"Shuffle: Songs":"Shuffle: Off";
@@ -76,7 +95,8 @@ static int snapshot(const struct ln_ui_state *state,const char *directory,uint32
     return 1;
 }
 int main(int argc,char **argv){
-    if(argc!=2)return 2;struct ln_ui_state state;ln_ui_init(&state);ln_ui_render(&state,pixels,damage);
+    if(argc!=2&&(argc!=3||strcmp(argv[2],"--all-scenes")))return 2;
+    struct ln_ui_state state;ln_ui_init(&state);ln_ui_render(&state,pixels,damage);
     if(!snapshot(&state,argv[1],0))return 3;
     uint32_t kind,repeat,capture,index=0,total=0;int32_t value;
     while(scanf("%u %d %u %u",&kind,&value,&repeat,&capture)==4){
@@ -101,6 +121,15 @@ int main(int argc,char **argv){
         if(capture){if(++index>512u||!snapshot(&state,argv[1],index))return 5;}
     }
     if(!feof(stdin))return 6;
+    if(argc==3){
+        for(uint32_t scene=1;scene<ln_ui_scene_count&&scene<32u;++scene){
+            if(!(ln_ui_enabled_scenes&(1u<<scene)))continue;
+            (void)ln_ui_show(&state,ln_ui_scenes[scene].id);
+            ln_ui_refresh(&state);ln_ui_render(&state,pixels,damage);
+            if(++index>512u||!snapshot(&state,argv[1],index))return 7;
+        }
+        return 0;
+    }
     if(++index>513u||!snapshot(&state,argv[1],index))return 7;
     return 0;
 }

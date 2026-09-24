@@ -62,6 +62,8 @@ def parser():
     simulator=commands.add_parser("simulator")
     simulator.add_argument("--output",type=Path,default=Path('out/simulator'))
     simulator.add_argument("--system",type=Path)
+    simulator.add_argument("--target",choices=sorted(TARGETS))
+    simulator.add_argument("--all-scenes",action="store_true")
     simulator.add_argument("--tape",type=Path,help="JSON list of native input events")
     music=commands.add_parser('music').add_subparsers(dest='action',required=True)
     music_compile=music.add_parser('compile')
@@ -363,7 +365,7 @@ def main():
                 else:emit(inspect_photos(args.package))
         elif args.command == "simulator":
             from tools.simulator.runner import simulate
-            emit(simulate(ROOT,args.output,args.tape,args.system))
+            emit(simulate(ROOT,args.output,args.tape,args.system,args.target,args.all_scenes))
         elif args.command == "inspect":
             emit(inspect(args.image.read_bytes()))
         elif args.command == "release":

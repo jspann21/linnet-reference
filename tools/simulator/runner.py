@@ -20,9 +20,10 @@ def png(raw,width,height):
     def chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
     return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',width,height,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(b''.join(rows),9))+chunk(b'IEND',b'')
 
-def simulate(root,output,tape=None,system=None):
+def simulate(root,output,tape=None,system=None,target=None,all_scenes=False):
     root=Path(root).resolve();output=Path(output).resolve();output.mkdir(parents=True,exist_ok=True)
-    content=compile_system(root,output/'generated',system)
+    if all_scenes and tape is not None:raise ValueError('All-scenes capture cannot use an input tape')
+    content=compile_system(root,output/'generated',system,target_override=target)
     scenes=json.loads(Path(content['scenes']).read_text())
     width,height=scenes['width'],scenes['height']
     (output/'generated/linnet_target.h').write_text(
@@ -52,7 +53,8 @@ def simulate(root,output,tape=None,system=None):
         total+=repeat;captures+=capture
         if total>100000 or captures>512:raise ValueError('Input tape exceeds event/capture budget')
         lines.append(f'{kind} {value} {repeat} {int(capture)}\n')
-    run=subprocess.run([str(executable),str(output)],input=''.join(lines),capture_output=True,text=True,check=True,timeout=120)
+    run=subprocess.run([str(executable),str(output)]+(['--all-scenes'] if all_scenes else []),
+                       input=''.join(lines),capture_output=True,text=True,check=True,timeout=120)
     frames=[json.loads(line) for line in run.stdout.splitlines()]
     cards=[]
     for frame in frames:
