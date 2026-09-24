@@ -276,25 +276,32 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
         supported_bytes = skipped_count = ignored = 0
         allowed = extensions(kind)
         cover_names = None
-        if kind == 'Music':
+        if kind == 'Music' and fingerprint:
             from .music import COVER_NAMES
             cover_names = {name.casefold() for name in COVER_NAMES}
         records = records_by_kind[kind]
+        music_folders, cover_rows = set(), []
         for path, info in records:
             relative = path.relative_to(root).as_posix() if fingerprint or excluded else None
             if excluded and relative.casefold() in excluded:
                 skipped_count += 1
                 continue
             supported_file = path.suffix.lower() in allowed
-            # Music and Videos share iPod_Control/Music; only artwork sidecars
-            # should affect Music preparation in addition to playable audio.
-            if fingerprint and (supported_file or (cover_names is not None and path.name.casefold() in cover_names)):
+            # Music and Videos share iPod_Control/Music. A cover matters only
+            # when its folder also contains a playable audio source.
+            if fingerprint and supported_file:
                 rows.append((relative, info.st_size, info.st_mtime_ns))
+                if cover_names is not None:
+                    music_folders.add(path.parent)
+            elif fingerprint and cover_names is not None and path.name.casefold() in cover_names:
+                cover_rows.append((path.parent, (relative, info.st_size, info.st_mtime_ns)))
             if supported_file:
                 supported.append(str(path))
                 supported_bytes += info.st_size
             else:
                 ignored += 1
+        if fingerprint and cover_rows:
+            rows.extend(row for folder, row in cover_rows if folder in music_folders)
         if fingerprint and kind in ('Music', 'Videos'):
             database = root / 'iPod_Control/iTunes/iTunesDB'
             _plain(database, root)
