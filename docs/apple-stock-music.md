@@ -70,7 +70,7 @@ installed at `iPod_Control/iTunes/iTunesDB` (SHA-256
 The previous database was retained as
 `iPod_Control/iTunes/iTunesDB.before-full-20260924-143319`. Linnet's music
 database was rebuilt from the same files and published at `.LINNET/LIBRARY.PDB`
-(SHA-256 `e9c7a4cbd0df7bcf1867393c9ddfa17fd7f0c78abed3c0840d3c37631d65e360`).
+(current SHA-256 `e071e316fea9bfdff70970e96b828a305805138f615f6121ce21e8a93221f8f2`).
 Both databases contain 2,676 tracks. The disk was safely ejected; hardware
 playback confirmed advancing timers and audio for "Broken" by 12 Stones (a
 compact artist/album alias), "Down" by 311 (the root `/Music` traversal), and
@@ -81,6 +81,21 @@ played "A Direct Hit" through the one-character alias with the same clean
 state. A later raw FAT reparse matched all 4,694 directory entries and 2,023
 alias changes, and the saved maintenance scripts regenerated an identical
 Apple manifest.
+
+The first Linnet rebuild exposed a Windows API edge case: `GetShortPathNameW`
+returned an 8.3-shaped long name for some folders even when its actual FAT
+short alias was different. This produced 668 incorrect Linnet paths. The music
+compiler now checks `FindFirstFileW`'s alternate name for ambiguous components
+and caches directory results during the build. The corrected Linnet database
+matches the raw FAT aliases for all 2,676 tracks; "1, 2 Step" by Ciara plays
+through a path that changed in two directory components. The earlier database
+is retained locally as `out/apple-link-probe/LIBRARY.before-alias-resolver.PDB`.
+
+A separate read-only audio audit found 21 MP3s whose file size and decoded
+duration imply an implausible bitrate. Host decoding reported errors for 20 of
+them. For example, "Take a Bow" by Rihanna contains about 6.74 seconds of
+decodable audio followed by a large invalid packet; both the Linnet cache and
+host decode agree on that short duration. These source files were left intact.
 
 Future files and folders need their Apple entries and short-path budget checked
 again. An added folder depth that cannot fit within 23 characters would require
