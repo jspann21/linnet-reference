@@ -76,9 +76,11 @@ playback confirmed advancing timers and audio for "Broken" by 12 Stones (a
 compact artist/album alias), "Down" by 311 (the root `/Music` traversal), and
 "A Direct Hit" by Joris de Man (a one-character file alias). After restarting
 Linnet, its player opened "Broken" through the rebuilt index; decoded and
-rendered sample counters advanced, with zero errors and underruns. A later raw
-FAT reparse matched all 4,694 directory entries and 2,023 alias changes, and
-the saved maintenance scripts regenerated an identical Apple manifest.
+rendered sample counters advanced, with zero errors and underruns. It also
+played "A Direct Hit" through the one-character alias with the same clean
+state. A later raw FAT reparse matched all 4,694 directory entries and 2,023
+alias changes, and the saved maintenance scripts regenerated an identical
+Apple manifest.
 
 Future files and folders need their Apple entries and short-path budget checked
 again. An added folder depth that cannot fit within 23 characters would require
