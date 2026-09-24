@@ -181,10 +181,18 @@ def images(root, *, artwork=False, dbids=None):
 
 
 def metadata(root):
-    from .album_art import cached
+    from .album_art import _base, cached
     rows = tracks(root)
     if not rows:
         return {}
     used_dbids = {row['dbid'] for row in rows.values()}
     covers = {row['dbid']: row['preview'] for row in images(root, artwork=True, dbids=used_dbids)}
-    return {path: dict(row, artwork=covers.get(row['dbid']) or cached(row)) for path, row in rows.items()}
+    cached_covers = {}
+    def artwork(row):
+        if row['dbid'] in covers:
+            return covers[row['dbid']]
+        album = _base(row)
+        if album not in cached_covers:
+            cached_covers[album] = cached(row)
+        return cached_covers[album]
+    return {path: dict(row, artwork=artwork(row)) for path, row in rows.items()}
