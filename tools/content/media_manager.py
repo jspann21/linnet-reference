@@ -204,8 +204,8 @@ def _file_records(folder, *, allowed=None):
     return sorted(found, key=lambda item: (str(item[0]).casefold(), str(item[0])))
 
 
-def _files(folder):
-    return [path for path, info in _file_records(folder)]
+def _files(folder, *, allowed=None):
+    return [path for path, info in _file_records(folder, allowed=allowed)]
 
 
 def _records_by_kind(root, kinds=KINDS):
@@ -733,9 +733,7 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None):
         if source.is_relative_to(root):
             raise ValueError("Use Choose videos and select this file under Videos on this iPod.")
         is_folder = source.is_dir()
-        for path in _files(source) if is_folder else [source]:
-            if is_folder and path.suffix.lower() not in allowed:
-                continue
+        for path in _files(source, allowed=allowed) if is_folder else [source]:
             relative = (Path(source.name) / path.relative_to(source)).as_posix() if is_folder else source.name
             existing = folder / relative
             _plain(existing, root)
