@@ -1,4 +1,5 @@
 """Read-only preparation plans and verified library status for the desktop UI."""
+from functools import lru_cache
 import json
 from pathlib import Path
 import shutil
@@ -7,7 +8,14 @@ from . import media_manager as media
 from . import media_library
 
 
-def _video_readiness(inventory, published, identity=None, state=None):
+@lru_cache(maxsize=4)
+def _verified_outputs(disk_serial, volume_serial, partition_offset):
+    # A refresh still stats each file; unchanged, previously hashed outputs do
+    # not need another full read from the USB disk during this app session.
+    return {}
+
+
+def _video_readiness(inventory, published, identity=None, state=None, verified=None):
     compatible_files = [value for value in inventory['files']
                         if Path(value).suffix.lower() in media.video_source_extensions(identity)]
     published = [row for row in published
@@ -30,7 +38,7 @@ def _video_readiness(inventory, published, identity=None, state=None):
         saved = (state or {}).get('video_files', {}).get(relative, {})
         info = source.stat()
         if (saved.get('source_stamp') != [info.st_size, info.st_mtime_ns] or
-                not media._outputs_match(root, saved.get('outputs', []))):
+                not media._outputs_match(root, saved.get('outputs', []), verified=verified)):
             return 'Needs update'
     if ready:
         return 'Ready'
@@ -42,6 +50,10 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     boot_review = installer.assess(identity)
     identity = boot_review['identity']
     root = Path(identity['root'])
+    verified = _verified_outputs(identity['disk_serial'], identity['volume_serial'],
+                                 identity['partition_offset'])
+    if len(verified) > 4096:
+        verified.clear()
     identity['linnet'] = boot_review['linnet']
     identity['default_boot'] = installer.default_boot(boot_review)
     try:
@@ -63,11 +75,12 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
             saved = {}
         published = [r for r in rows if r['kind'] == kind and r['category'] in ('library', 'published')]
         if kind == 'Videos':
-            readiness[kind] = _video_readiness(inventory[kind], published, identity, state)
+            readiness[kind] = _video_readiness(inventory[kind], published, identity, state, verified)
             continue
         option = media.preparation_option(kind, identity, photo_dimension, verification)
         signature = f"{option}:{inventory[kind]['fingerprint']}"
-        if saved.get('signature') == signature and saved.get('outputs') and media._outputs_match(root, saved['outputs']):
+        if (saved.get('signature') == signature and saved.get('outputs') and
+                media._outputs_match(root, saved['outputs'], verified=verified)):
             readiness[kind] = 'Ready'
         elif published:
             readiness[kind] = 'Needs update' if inventory[kind]['count'] else 'Prepared library retained'
