@@ -896,7 +896,10 @@ class MediaWindow(QMainWindow):
             matches = []
             first, *remaining = words
             for row in rows:
-                text = ' '.join(str(row.get(field, '')) for field in ('title', 'artist', 'album', 'genre', 'path')).casefold()
+                text = row.get('_linnet_search_text')
+                if text is None:
+                    text = ' '.join(str(row.get(field, '')) for field in ('title', 'artist', 'album', 'genre', 'path')).casefold()
+                    row['_linnet_search_text'] = text
                 if first in text and (not remaining or all(word in text for word in remaining)):
                     matches.append(row)
             rows = matches
