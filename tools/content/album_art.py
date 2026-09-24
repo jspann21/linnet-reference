@@ -58,7 +58,10 @@ def signature(rows):
     bases = {_base(row) for row in rows}
     files = sorted(str(path) for base in bases if base is not None
                    if (path := base.with_suffix('.png')).is_file())
-    stamps = [(name, Path(name).stat().st_size, Path(name).stat().st_mtime_ns) for name in files]
+    stamps = []
+    for name in files:
+        info = Path(name).stat()
+        stamps.append((name, info.st_size, info.st_mtime_ns))
     return hashlib.sha256(json.dumps(stamps).encode()).hexdigest()
 
 
