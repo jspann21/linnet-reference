@@ -411,6 +411,10 @@ def _update_photos(identity, state, selected, distribution, cache, progress):
     if (published.get('photo_signature') == _signature(photos) and
             published.get('photo_database_sha256') == old_digest):
         return
+    source_bytes = sum(info.st_size for _, info in photos)
+    work_bytes = max(64 * 1024 * 1024, len(photos) * 256 * 1024) if photos else 1024 * 1024
+    if source_bytes + work_bytes > shutil.disk_usage(cache).free:
+        raise ValueError('Not enough computer space to prepare these Apple photos.')
     progress(f'Preparing {len(photos):,} photos for Apple OS…')
     writer = _writer(distribution, cache, 'photos')
     with tempfile.TemporaryDirectory(prefix='linnet-apple-photos-', dir=cache) as directory:
@@ -445,6 +449,17 @@ def _update_photos(identity, state, selected, distribution, cache, progress):
         if photos and not outputs:
             raise ValueError('Apple photo thumbnails are missing.')
         outputs.append(prepared)  # Publish the database last.
+        existing = [(source_file, root / source_file.relative_to(stage)) for source_file in outputs]
+        if any(target.exists() and not target.is_file() for _, target in existing):
+            raise ValueError('An Apple photo library path is occupied by a folder.')
+        backup_bytes = sum(target.stat().st_size for _, target in existing if target.is_file())
+        if backup_bytes + 1024 * 1024 > shutil.disk_usage(cache).free:
+            raise ValueError('Not enough computer space to retain the previous Apple photo library.')
+        new_bytes = sum(source_file.stat().st_size for source_file, target in existing if not target.exists())
+        largest_replacement = max((source_file.stat().st_size for source_file, target in existing
+                                   if target.exists()), default=0)
+        if new_bytes + largest_replacement + 1024 * 1024 > shutil.disk_usage(root).free:
+            raise ValueError('Not enough iPod space for the Apple photo library.')
         backup = cache / 'apple-photo-recovery' / uuid.uuid4().hex
         backup.mkdir(parents=True)
         changed = []
