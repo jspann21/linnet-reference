@@ -73,9 +73,10 @@ def identify(expected):
     identity = json.loads(result.stdout)
     if (identity['target_id'] != 'classic6g-n25' or
             identity['device_id'] != expected or
-            identity['storage']['disk_number'] != 4 or
             identity['storage']['disk_serial'] != expected or
-            identity['storage']['filesystem'] != 'FAT32'):
+            identity['storage']['filesystem'] != 'FAT32' or
+            identity['storage']['sector_bytes'] != SECTOR or
+            identity['storage']['drive'].upper() != 'F:'):
         raise ValueError('Connected volume is not the planned A1238')
 
 
