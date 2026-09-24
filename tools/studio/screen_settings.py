@@ -23,9 +23,13 @@ HINTS = {'Artists': 'Performers credited on individual tracks.', 'Album Artists'
 
 
 def item_availability(name, identity=None):
-    config = Path(__file__).resolve().parents[2] / 'config' / 'system.toml'
+    root = Path(__file__).resolve().parents[2]
+    target = (identity or {}).get('target_id')
+    config = root / 'targets' / target / 'system.toml' if target else root / 'config' / 'system.toml'
+    if not config.is_file():
+        config = root / 'config' / 'system.toml'
     settings = tomllib.loads(config.read_text(encoding='utf-8'))
-    target = (identity or {}).get('target_id') or settings['system']['target']
+    target = target or settings['system']['target']
     configured = resolve_features(settings)
     features = resolve_features(settings, target_spec(target))
     feature_names = {'Files': 'files', 'UI Demo': 'demo', 'Photos': 'photos',
