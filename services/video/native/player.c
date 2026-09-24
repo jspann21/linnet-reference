@@ -30,6 +30,9 @@ static struct {
     uint32_t seek_phase,seek_target,base,tail_position,wall_at,wall_ms,wall_us,audio_at;
     uint64_t audio_skip,audio_elapsed;
     uint32_t audio_us,io_started,io_us,dropped,last_picture;
+#if !defined(LINNET_PROFILE_RELEASE)
+    uint32_t opened_us,first_present_us,index_ready_us,audio_start_us,start_ready_frames;
+#endif
     uint32_t io_kind,io_bytes,io_requested,io_at,read_bytes,reads;uint64_t io_offset;void *io_buffer;
     bool active,io,reading,stepping,paused,started,audio,audio_eof,video_eof,offered,frame_ready,stop;
     bool tail,headphone_known,headphones,boosted;
@@ -177,6 +180,9 @@ static void step(void){
         else if(r<0){fail(5);return;}
         else {if(ln_aac_raw_init(&AAC,v.sound.config,v.sound.config_bytes)!=1||AAC.rate!=v.sound.rate||!ln_audio_init(AAC.rate)){fail(6);return;}
             (void)ln_audio_volume(-400);v.audio=true;}
+#if !defined(LINNET_PROFILE_RELEASE)
+        v.index_ready_us=ln_time_us()-v.opened_us;
+#endif
         v.phase=PRIME;return;
     }
     if(v.phase!=PRIME&&v.phase!=PLAY)return;
@@ -218,6 +224,12 @@ static void step(void){
     if(v.audio&&a.queued<START_AUDIO_FRAMES&&!v.audio_eof&&!(v.reading&&v.io_kind==0))return;
     if(!v.started&&(v.frame_ready||v.video_eof)&&(!v.audio||a.queued>=START_AUDIO_FRAMES||v.audio_eof)){
         if(v.audio&&!ln_audio_start()){fail(8);return;}
+#if !defined(LINNET_PROFILE_RELEASE)
+        if(v.audio&&!v.audio_start_us){
+            struct ln_audio_status started_audio;ln_audio_snapshot(&started_audio);
+            v.audio_start_us=ln_time_us()-v.opened_us;v.start_ready_frames=started_audio.queued;
+        }
+#endif
         wall_reset(ln_time_us());v.audio_at=0;v.audio_elapsed=0;
         v.started=true;v.phase=PLAY;
     }
@@ -271,6 +283,9 @@ bool ln_video_open(const char *path){
      * three 320x240 RGB buffers here only delays the first frame. */
     __builtin_memset(&v,0,offsetof(__typeof__(v),pixels));
     v.asset=(struct ln_ui_asset){0};
+#if !defined(LINNET_PROFILE_RELEASE)
+    v.opened_us=ln_time_us();
+#endif
     v.generation=generation?generation:1;v.revision=revision;v.options=options;v.resume[0]=resume[0];v.resume[1]=resume[1];v.identity=id;
     v.headphone_known=headphone_known;v.headphones=headphones;
     if(resume[0]==id&&resume[1]){v.seek_target=resume[1];v.seek_phase=1;}
@@ -316,7 +331,11 @@ const char *ln_video_title(void){return v.title;}
 const char *ln_video_status(void){return v.error?"Video unavailable":v.paused?"Paused":v.started?"Playing":v.active?"Opening":"Stopped";}
 const struct ln_ui_asset *ln_video_asset(void){return v.front==0xffffffffu?0:&v.asset;}
 uint32_t ln_video_revision(void){return v.revision;}
-void ln_video_presented(void){if(v.offered){v.offered=false;++v.presented;}}
+void ln_video_presented(void){if(v.offered){
+#if !defined(LINNET_PROFILE_RELEASE)
+    if(!v.presented)v.first_present_us=ln_time_us()-v.opened_us;
+#endif
+    v.offered=false;++v.presented;}}
 void ln_video_resume_get(uint32_t out[2]){out[0]=v.active?v.identity:v.resume[0];out[1]=v.active?clock_ms():v.resume[1];}
 void ln_video_resume_set(const uint32_t in[2]){v.resume[0]=in[0];v.resume[1]=in[1];}
 uint32_t ln_video_deadline(uint32_t now){
@@ -333,5 +352,13 @@ uint32_t ln_video_deadline(uint32_t now){
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_video_diagnostics(uint32_t out[32]){uint32_t words[32]={0x53444956u,0,v.phase,v.error,v.active,v.io,v.paused,v.movie.packet,v.movie.samples,v.front,v.reads,v.read_bytes,v.decoded,v.presented,v.late,v.max_late,v.max_decode,v.frame_ready,v.offered,ln_video_decoder_time(),ln_yuv_convert_us,v.seek_phase,v.audio_frames,v.revision,v.audio_us,v.io_us,v.dropped,0,0,0,v.position,v.duration};for(unsigned i=0;i<32;i++)out[i]=words[i];ln_video_decoder_diagnostics(out+27);}
 bool ln_video_measurement_arm(uint32_t mode){return !mode&&!v.active;}
-void ln_video_metadata(uint32_t page,uint8_t out[128]){for(unsigned i=0;i<128;i++)out[i]=0;if(!page){ln_write_le32(out,v.movie.width);ln_write_le32(out+4,v.movie.height);}}
+void ln_video_metadata(uint32_t page,uint8_t out[128]){
+    for(unsigned i=0;i<128;i++)out[i]=0;
+    if(!page){ln_write_le32(out,v.movie.width);ln_write_le32(out+4,v.movie.height);}
+    else if(page==8u){
+        uint32_t words[8]={0x41454d56u,0,v.opened_us,v.first_present_us,v.index_ready_us,
+            v.audio_start_us,v.start_ready_frames,v.dropped};
+        for(unsigned i=0;i<8;i++)ln_write_le32(out+i*4u,words[i]);
+    }
+}
 #endif

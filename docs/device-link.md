@@ -240,6 +240,10 @@ Layouts are decoded in `tools/link/music.py`; other headers/lengths are rejected
 | `video-state` | 122 / 128-byte `VIDS` | Playback, storage, audio, and timing state. |
 | `video-startup-timing` | 122, page 8 / 128-byte `VMEA` | Milestone times measured from video open; zero means not yet reached. |
 
+The `VMEA` page is available for native MP4 and IPVF video. `opened_us` is the
+device clock tick at open; `first_frame_us`, `index_ready_us`, and
+`audio_start_us` are elapsed microseconds from that tick.
+
 ## Storage commands
 
 All integers are little-endian u32. State-changing requests start with the
