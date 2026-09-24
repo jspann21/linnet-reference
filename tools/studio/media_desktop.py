@@ -20,9 +20,10 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox,
     QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QListView, QListWidget, QListWidgetItem, QMainWindow, QProgressBar, QPushButton, QScrollArea,
     QStackedWidget, QStyledItemDelegate, QStyle,
-    QTableView, QTextEdit, QVBoxLayout, QWidget, QStyleOptionButton, QSizePolicy)
+    QTableView, QTextEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QStyleOptionButton, QSizePolicy)
 
-from tools.content import media_manager as media, media_library, media_status, media_trash
+from tools.content import apple_os, media_manager as media, media_library, media_status, media_trash
 from tools.content.media_manager import format_size as size
 from tools.content.music import COVER_NAMES, EXTENSIONS as MUSIC_EXTENSIONS
 from tools.studio import installer, screen_settings
@@ -448,6 +449,7 @@ class MediaWindow(QMainWindow):
         self.settings = QSettings('Linnet', 'MediaManager')
         self.identity, self.inventory, self.review = None, None, None
         self.rows, self.readiness, self.pending, self.trash_rows = [], {}, [], []
+        self.apple_info = None
         self._library_source, self._library_cache, self._library_stats = None, {}, {}
         self.video_selection, self.stop_event = set(), threading.Event()
         self.page, self.view, self.group = 'Music', self.settings.value('music_view', 'Albums'), None
@@ -647,6 +649,18 @@ class MediaWindow(QMainWindow):
         layout.addLayout(queue_actions)
         self.prep_results = QTextEdit(); self.prep_results.setReadOnly(True); self.prep_results.setMinimumHeight(130); self.prep_results.hide(); layout.addWidget(self.prep_results)
         self.retry_button = button('Review skipped files', self.review_skipped, 'quiet'); layout.addWidget(self.retry_button, 0, Qt.AlignLeft)
+        layout.addSpacing(12)
+        apple_card = QFrame(); apple_card.setObjectName('card')
+        apple_layout = box(apple_card, margins=(20, 18, 20, 18), spacing=9)
+        apple_layout.addWidget(label('Available in Apple OS', 'cardTitle'))
+        apple_layout.addWidget(label('Choose folders already on your iPod. Update Apple OS after their files change.', 'muted', True))
+        self.apple_status = label('Connect an iPod to check Apple OS availability.', 'muted', True)
+        apple_layout.addWidget(self.apple_status)
+        apple_actions = box(horizontal=True)
+        self.apple_choose = button('Choose folders…', self.choose_apple_folders, None, 'folder')
+        self.apple_update = button('Update Apple OS', self.update_apple_os, None, 'refresh')
+        apple_actions.addWidget(self.apple_choose); apple_actions.addWidget(self.apple_update); apple_actions.addStretch()
+        apple_layout.addLayout(apple_actions); layout.addWidget(apple_card)
         layout.addStretch()
         footer = QFrame(); footer.setObjectName('preparationFooter')
         actions = box(footer, horizontal=True, margins=(34, 16, 34, 16), spacing=18)
@@ -1144,11 +1158,17 @@ class MediaWindow(QMainWindow):
             self.show_progress('Playlists loaded.'); self.edit_playlists(result); return
         if tag == 'save_playlists':
             self.show_progress('Playlists saved to iPod. Eject safely when finished.'); return
+        if tag == 'apple_selection':
+            self.show_progress('Apple OS folder choices saved. Checking availability…')
+            self.refresh(); return
+        if tag == 'apple_update':
+            self.show_progress(result['summary']); self.refresh(); return
         if tag == 'devices':
             if not result:
                 self.covers.invalidate()
                 self.screen_loaded_for = None
                 self.identity = None; self.rows = []; self.inventory = None; self.review = None
+                self.apple_info = None
                 self.trash_rows = []; self.readiness = {}; self.group = None; self.video_selection.clear()
                 self.update_preparation()
                 self.device_name.setText('No iPod connected'); self.device_info.setText('Connect in Disk Mode'); self.render_library()
@@ -1175,7 +1195,7 @@ class MediaWindow(QMainWindow):
             cached_photos = {row['path']: (row['bytes'], row['mtime_ns'], row.get('artwork')) for row in self.rows
                              if row['kind'] in ('Photos', 'Music') and
                              (row.get('artwork') in self.covers.cache or row.get('artwork') in self.covers.pending)}
-            self.identity, self.inventory, self.rows, self.readiness = result
+            self.identity, self.inventory, self.rows, self.readiness, self.apple_info = result
             if cached_photos:
                 current_photos = {row['path']: (row['bytes'], row['mtime_ns'], row.get('artwork')) for row in self.rows
                                   if row['path'] in cached_photos}
@@ -1220,6 +1240,7 @@ class MediaWindow(QMainWindow):
             self.covers.invalidate()
             self.screen_loaded_for = None
             self.identity = self.inventory = self.review = None; self.rows = []; self.trash_rows = []
+            self.apple_info = None
             self.readiness = {}; self.group = None; self.video_selection.clear()
             self.update_preparation()
             self.device_name.setText('Safely ejected'); self.device_info.setText('You can disconnect your iPod.'); self.capacity.setValue(0)
@@ -1251,7 +1272,8 @@ class MediaWindow(QMainWindow):
         identity = self.identity
         dimension = 2048 if self.photo_detail.currentIndex() else 640
         verification = 'full' if self.verify_audio.isChecked() else 'metadata'
-        self.work('scan', lambda: media_status.inspect(identity, dimension, verification), 'Reading your collection and checking prepared media…')
+        self.work('scan', lambda: media_status.inspect(identity, dimension, verification),
+                  'Reading your collection and checking prepared media…')
 
     def update_device(self):
         identity = self.identity
@@ -1278,6 +1300,9 @@ class MediaWindow(QMainWindow):
             item.setEnabled(ready)
         self.update_queue_controls()
         self.prepare_button.setEnabled(ready and self.inventory is not None)
+        apple_ready = ready and self.apple_info is not None and self.apple_info['supported']
+        self.apple_choose.setEnabled(apple_ready)
+        self.apple_update.setEnabled(apple_ready and self.apple_info.get('can_update', False))
         self.choose_videos_button.setEnabled(ready and self.inventory is not None and self.identity.get('media_profile', {}).get('video_enabled', True))
         self.refresh_button.setEnabled(not self.busy)
         self.empty_action.setEnabled(not self.busy)
@@ -1318,6 +1343,90 @@ class MediaWindow(QMainWindow):
         self.queue_open.setVisible(bool(self.pending)); self.update_queue_controls()
         self.queue_table.setFixedHeight(min(200, max(75, self.queue_table.horizontalHeader().height() + len(self.pending) * self.queue_table.verticalHeader().defaultSectionSize() + 4)))
         self.prep_summary.setText(f'{len(self.pending):,} files or folders queued. Unchanged media is reused.' if self.pending else 'Nothing queued. You can prepare existing iPod files or add media from your computer.')
+        if self.apple_info:
+            lines = [self.apple_info['status']]
+            lines.extend(f"{entry['kind']}: {entry['count']:,} files · {entry['status']}"
+                         for entry in self.apple_info['details']
+                         if entry['count'] or entry['kind'] == 'Notes')
+            if self.apple_info.get('issues'):
+                lines.append(self.apple_info['issues'][0])
+            self.apple_status.setText('\n'.join(lines))
+        else:
+            self.apple_status.setText('Connect an iPod to check Apple OS availability.')
+
+    def choose_apple_folders(self):
+        if self.busy or not self.apple_info or not self.apple_info['supported']:
+            return
+        dialog = QDialog(self); dialog.setWindowTitle('Choose folders for Apple OS')
+        dialog.resize(620, 640)
+        layout = box(dialog, margins=(24, 24, 24, 24), spacing=12)
+        layout.addWidget(label('Available in Apple OS', 'section'))
+        layout.addWidget(label('Select music, photo and video folders on your iPod. Their original names and locations stay in place. Apple reads compatible text files in Notes automatically.', 'muted', True))
+        tree = QTreeWidget(); tree.setHeaderLabels(['FOLDER', 'APPLE OS'])
+        tree.setColumnWidth(0, 420)
+        items = {}
+        selected = self.apple_info['selected']
+        for row in self.apple_info['folders']:
+            path, kind = row['path'], row['kind']
+            parent_path = path.rpartition('/')[0]
+            parent = items.get(parent_path)
+            item = QTreeWidgetItem(parent or tree, [path.rpartition('/')[2], ''])
+            item.setData(0, Qt.UserRole, path)
+            items[path] = item
+            if kind in ('Music', 'Photos', 'Videos'):
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                checked = any(path.casefold() == name.casefold() or
+                              path.casefold().startswith(name.casefold() + '/') for name in selected)
+                item.setCheckState(0, Qt.Checked if checked else Qt.Unchecked)
+                item.setText(1, 'Choose for Apple OS')
+            else:
+                item.setText(1, 'Visible in Apple Notes')
+                item.setToolTip(1, 'Apple reads compatible text files in the Notes folder automatically.')
+        for path, item in reversed(list(items.items())):
+            if path.split('/')[0] not in ('Music', 'Photos', 'Videos') or not item.childCount():
+                continue
+            states = {item.child(index).checkState(0) for index in range(item.childCount())}
+            item.setCheckState(0, states.pop() if len(states) == 1 else Qt.PartiallyChecked)
+        tree.expandToDepth(0); layout.addWidget(tree, 1)
+        def changed(item, column):
+            if column != 0 or item.data(0, Qt.UserRole).split('/')[0] not in ('Music', 'Photos', 'Videos'):
+                return
+            tree.blockSignals(True)
+            if item.checkState(0) != Qt.PartiallyChecked:
+                stack = [item.child(index) for index in range(item.childCount())]
+                while stack:
+                    child = stack.pop()
+                    child.setCheckState(0, item.checkState(0))
+                    stack.extend(child.child(index) for index in range(child.childCount()))
+            parent = item.parent()
+            while parent and parent.data(0, Qt.UserRole):
+                states = {parent.child(index).checkState(0) for index in range(parent.childCount())}
+                parent.setCheckState(0, states.pop() if len(states) == 1 else Qt.PartiallyChecked)
+                parent = parent.parent()
+            tree.blockSignals(False)
+        tree.itemChanged.connect(changed)
+        actions = box(horizontal=True)
+        actions.addStretch(); actions.addWidget(button('Cancel', dialog.reject, 'quiet'))
+        actions.addWidget(button('Save folders', dialog.accept, 'primary'))
+        layout.addLayout(actions)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        folders = [path for path, item in items.items()
+                   if path.split('/')[0] in ('Music', 'Photos', 'Videos') and item.checkState(0) == Qt.Checked and
+                   (not path.rpartition('/')[0] or
+                    items[path.rpartition('/')[0]].checkState(0) != Qt.Checked)]
+        identity = self.identity
+        self.work('apple_selection', lambda: apple_os.save_selection(identity, folders),
+                  'Saving Apple OS folder choices…')
+
+    def update_apple_os(self):
+        if self.busy or not self.identity or not self.apple_info or not self.apple_info.get('can_update'):
+            return
+        identity = self.identity
+        ffprobe = self.ffprobe
+        self.work('apple_update', lambda: apple_os.update(identity, ffprobe=ffprobe,
+                                                          progress=self.events.progress.emit),
+                  'Updating Apple OS availability…')
 
     def add_media(self):
         if self.busy or not self.identity:

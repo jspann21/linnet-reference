@@ -1,0 +1,169 @@
+/* Update Linnet-managed Apple music entries in a staged libgpod database. */
+#define _GNU_SOURCE
+#include <gpod/itdb.h>
+#include <glib.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static const char *managed_prefix = ":iPod_Control:Music:..:..:Music:";
+static const char *managed_video_prefix = ":iPod_Control:Music:..:..:Videos:";
+
+static gchar *decode(const char *encoded) {
+    gsize size = 0;
+    guchar *raw = g_base64_decode(encoded, &size);
+    gchar *value = g_strndup((const char *)raw, size);
+    g_free(raw);
+    if (!g_utf8_validate(value, -1, NULL)) {
+        g_free(value);
+        return NULL;
+    }
+    return value;
+}
+
+static unsigned long long number(const char *value) {
+    char *end = NULL;
+    unsigned long long result = strtoull(value, &end, 10);
+    if (!value[0] || !end || *end) {
+        fprintf(stderr, "Invalid manifest number: %s\n", value);
+        exit(2);
+    }
+    return result;
+}
+
+int main(int argc, char **argv) {
+    if (argc != 3) {
+        fprintf(stderr, "usage: managed_music staging-mount manifest.tsv\n");
+        return 2;
+    }
+    gchar *database = g_build_filename(argv[1], "iPod_Control", "iTunes", "iTunesDB", NULL);
+    GError *error = NULL;
+    Itdb_iTunesDB *db = g_file_test(database, G_FILE_TEST_EXISTS) ? itdb_parse(argv[1], &error) : itdb_new();
+    g_free(database);
+    if (!db) {
+        fprintf(stderr, "Could not read the Apple database: %s\n", error ? error->message : "unknown");
+        if (error) g_error_free(error);
+        return 1;
+    }
+    itdb_set_mountpoint(db, argv[1]);
+    itdb_device_set_sysinfo(db->device, "ModelNumStr", "MB147");
+    itdb_device_set_sysinfo(db->device, "FirewireGuid", "0x000A2700155D9C10");
+    Itdb_Playlist *master = itdb_playlist_mpl(db);
+    if (!master) {
+        master = itdb_playlist_new("iPod", FALSE);
+        itdb_playlist_set_mpl(master);
+        itdb_playlist_add(db, master, -1);
+    }
+    GHashTable *existing = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    GHashTable *retained = g_hash_table_new(g_direct_hash, g_direct_equal);
+    for (GList *item = db->tracks; item; item = item->next) {
+        Itdb_Track *track = item->data;
+        if (track->ipod_path && (g_str_has_prefix(track->ipod_path, managed_prefix) ||
+                                 g_str_has_prefix(track->ipod_path, managed_video_prefix)))
+            g_hash_table_insert(existing, g_strdup(track->ipod_path), track);
+    }
+    FILE *input = fopen(argv[2], "rb");
+    if (!input) {
+        perror(argv[2]);
+        itdb_free(db);
+        return 2;
+    }
+    char *line = NULL;
+    size_t capacity = 0;
+    unsigned count = 0;
+    while (getline(&line, &capacity, input) >= 0) {
+        line[strcspn(line, "\r\n")] = 0;
+        gchar **fields = g_strsplit(line, "\t", 0);
+        unsigned columns = g_strv_length(fields);
+        gboolean movie = columns == 13 && !strcmp(fields[12], "movie");
+        if (!((columns == 12 && g_str_has_prefix(fields[0], managed_prefix)) ||
+              (movie && g_str_has_prefix(fields[0], managed_video_prefix))) ||
+            strlen(fields[0]) > 55) {
+            fprintf(stderr, "Invalid manifest line %u\n", count + 1);
+            g_strfreev(fields);
+            return 2;
+        }
+        unsigned long long size = number(fields[1]);
+        unsigned long long duration = number(fields[2]);
+        unsigned long long bitrate = number(fields[3]);
+        unsigned long long sample_rate = number(fields[4]);
+        unsigned long long track_number = number(fields[5]);
+        unsigned long long disc_number = number(fields[6]);
+        if (size == 0 || size > G_MAXUINT32 || duration == 0 || duration > G_MAXINT32 ||
+            bitrate > G_MAXINT32 || sample_rate == 0 || sample_rate > G_MAXUINT16 ||
+            track_number > G_MAXINT32 || disc_number > G_MAXINT32) {
+            fprintf(stderr, "Out-of-range metadata at line %u\n", count + 1);
+            g_strfreev(fields);
+            return 2;
+        }
+        Itdb_Track *track = g_hash_table_lookup(existing, fields[0]);
+        gboolean added = track == NULL;
+        if (added) {
+            track = itdb_track_new();
+            track->ipod_path = g_strdup(fields[0]);
+        } else if (g_hash_table_contains(retained, track)) {
+            fprintf(stderr, "Duplicate Apple location at line %u\n", count + 1);
+            g_strfreev(fields);
+            return 2;
+        }
+        g_hash_table_add(retained, track);
+        track->size = (guint32)size;
+        track->tracklen = (gint32)duration;
+        track->bitrate = (gint32)bitrate;
+        track->samplerate = (guint16)sample_rate;
+        track->samplerate2 = (gdouble)track->samplerate;
+        track->track_nr = (gint32)track_number;
+        track->cd_nr = (gint32)disc_number;
+        g_free(track->title); track->title = decode(fields[7]);
+        g_free(track->artist); track->artist = decode(fields[8]);
+        g_free(track->album); track->album = decode(fields[9]);
+        g_free(track->albumartist); track->albumartist = decode(fields[10]);
+        g_free(track->genre); track->genre = decode(fields[11]);
+        if (!track->title || !track->artist || !track->album ||
+            !track->albumartist || !track->genre) {
+            fprintf(stderr, "Invalid text metadata at line %u\n", count + 1);
+            g_strfreev(fields);
+            return 2;
+        }
+        g_free(track->filetype);
+        track->filetype = g_strdup(movie ? "MPEG-4 video file" : "MPEG audio file");
+        track->filetype_marker = movie ? 0x4d345620 : 0x4d503320;
+        track->type2 = 1;
+        track->mediatype = movie ? ITDB_MEDIATYPE_MOVIE : ITDB_MEDIATYPE_AUDIO;
+        track->movie_flag = movie ? 1 : 0;
+        track->transferred = TRUE;
+        if (added) {
+            itdb_track_add(db, track, -1);
+            itdb_playlist_add_track(master, track, -1);
+        }
+        g_strfreev(fields);
+        count++;
+    }
+    free(line);
+    fclose(input);
+    /* Unselected entries leave Apple OS, while all other tracks, ratings and
+       playlist memberships remain attached to their original track objects. */
+    for (GList *item = db->tracks; item;) {
+        Itdb_Track *track = item->data;
+        item = item->next;
+        if (track->ipod_path && (g_str_has_prefix(track->ipod_path, managed_prefix) ||
+                                 g_str_has_prefix(track->ipod_path, managed_video_prefix)) &&
+            !g_hash_table_contains(retained, track)) {
+            for (GList *playlist = db->playlists; playlist; playlist = playlist->next) {
+                Itdb_Playlist *current = playlist->data;
+                while (g_list_find(current->members, track))
+                    itdb_playlist_remove_track(current, track);
+            }
+            itdb_track_remove(track);
+        }
+    }
+    g_hash_table_destroy(existing);
+    g_hash_table_destroy(retained);
+    error = NULL;
+    gboolean ok = itdb_write(db, &error);
+    if (!ok) fprintf(stderr, "Apple database write failed: %s\n", error ? error->message : "unknown");
+    if (error) g_error_free(error);
+    itdb_free(db);
+    fprintf(stderr, "updated %u managed media entries\n", count);
+    return ok ? 0 : 1;
+}

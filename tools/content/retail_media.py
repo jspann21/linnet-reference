@@ -41,6 +41,12 @@ def _list(data, magic, list_tag):
 
 def _path(root, value):
     parts = value.replace(':', '/').strip('/').split('/')
+    # Apple's tested Classic database route to a shared /Music tree begins at
+    # iPod_Control/Music, then steps back to the volume root. Accept that one
+    # fixed traversal only; all other parent components remain invalid.
+    if parts[:4] == ['iPod_Control', 'Music', '..', '..'] and len(parts) > 5 \
+            and parts[4] in ('Music', 'Videos'):
+        parts = parts[4:]
     if not parts or any(not p or p in ('.', '..') or '\\' in p for p in parts):
         raise ValueError('Unsafe iTunes media path')
     path = root.joinpath(*parts)

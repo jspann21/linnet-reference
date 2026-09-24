@@ -98,9 +98,16 @@ decodable audio followed by a large invalid packet; both the Linnet cache and
 host decode agree on that short duration. These source files were left intact.
 
 Future files and folders need their Apple entries and short-path budget checked
-again. An added folder depth that cannot fit within 23 characters would require
-a firmware resolver. FAT cluster cross-links are not a safe substitute for file
-links.
+again. A new short path beyond 23 characters needs compact FAT aliases where
+possible; enough folder levels can exceed the limit even with one-character
+aliases. FAT cluster cross-links are not a safe substitute for file links.
+
+Media Manager now exposes the validated shared-library workflow under
+**Preparation → Available in Apple OS**. It can select folders, check new files,
+and update Apple music, video and photo databases. It reports new music paths
+outside the short-path budget as needing attention without changing the user's
+files. The folder workflow and current limits are described in
+[Media Manager](media-manager.md#make-folders-available-in-apple-os).
 
 For new probes, preserve a known working libgpod control track, save the
 current database before replacing it, verify the candidate database's hash,

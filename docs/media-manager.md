@@ -173,6 +173,33 @@ the installed Linnet build is shown separately as inactive files on the device.
    contains preparation options and library recovery.
 5. Select **Eject iPod**, then restart Linnet if Disk Mode remains active.
 
+### Make folders available in Apple OS
+
+On the validated A1238, **Preparation → Available in Apple OS → Choose folders…**
+shows the Music, Photos and Videos folders on the iPod. Check a whole folder
+or individual subfolders, then choose **Save folders**. The originals retain
+their names and locations. Apple OS reads compatible plain-text `.txt` files
+from `/Notes` directly, so Notes needs no selection.
+
+Choose **Update Apple OS** when the card says **Needs Apple OS update**. Media
+Manager prepares and verifies the Apple music/video database and photo library,
+then shows **Ready in Apple OS**. After adding, removing or changing files in a
+selected folder, use **Check readiness**; the card will offer another update.
+Unchanged libraries are reused. Eject the iPod safely before switching systems.
+Apple OS choices are saved on this computer for this device.
+
+The current Apple music path supports MP3 files under `/Music` whose actual FAT
+short path fits the device's 23-character limit. Existing long artist, album and
+file names can work because the A1238 has compact FAT aliases. A new deeper path
+that cannot fit is reported as **Needs attention** and is omitted from the Apple
+database until its alias is made shorter. Music should first show **Ready** for
+Linnet preparation so its metadata is available. Selected videos in `/Videos`
+are checked by FFprobe and currently accept compatible MP4, M4V and MOV files;
+other files are listed as needing attention. Photos use the supported image
+formats from Linnet preparation. Apple OS availability is enabled only for the
+validated A1238 volume; other models continue to use their existing media
+workflow.
+
 The main window is a fixed preparation overview with no page scrollbar. Place
 source media in the Music, Notes, Photos and Videos folders on the iPod, then
 choose **Check readiness** to detect changes.

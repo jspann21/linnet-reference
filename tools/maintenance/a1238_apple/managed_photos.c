@@ -1,0 +1,51 @@
+/* Build a staged Apple Photo Database from selected image sources. */
+#define _GNU_SOURCE
+#include <gpod/itdb.h>
+#include <glib.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(int argc, char **argv) {
+    if (argc != 3) {
+        fprintf(stderr, "usage: managed_photos staging-mount image-list\n");
+        return 2;
+    }
+    Itdb_PhotoDB *db = itdb_photodb_create(argv[1]);
+    if (!db) {
+        fprintf(stderr, "Could not initialize the Apple Photo Database\n");
+        return 1;
+    }
+    itdb_device_set_sysinfo(db->device, "ModelNumStr", "MB147");
+    itdb_device_set_sysinfo(db->device, "FirewireGuid", "0x000A2700155D9C10");
+    FILE *input = fopen(argv[2], "rb");
+    if (!input) {
+        perror(argv[2]);
+        return 2;
+    }
+    char *line = NULL;
+    size_t capacity = 0;
+    unsigned count = 0;
+    while (getline(&line, &capacity, input) >= 0) {
+        line[strcspn(line, "\r\n")] = 0;
+        if (!line[0]) continue;
+        GError *error = NULL;
+        Itdb_Artwork *photo = itdb_photodb_add_photo(db, line, -1, 0, &error);
+        if (!photo) {
+            fprintf(stderr, "Could not prepare photo %u: %s\n", count + 1,
+                    error ? error->message : "unknown");
+            if (error) g_error_free(error);
+            return 1;
+        }
+        count++;
+    }
+    free(line);
+    fclose(input);
+    GError *error = NULL;
+    gboolean ok = itdb_photodb_write(db, &error);
+    if (!ok) fprintf(stderr, "Photo Database write failed: %s\n", error ? error->message : "unknown");
+    if (error) g_error_free(error);
+    itdb_photodb_free(db);
+    fprintf(stderr, "prepared %u photos\n", count);
+    return ok ? 0 : 1;
+}
