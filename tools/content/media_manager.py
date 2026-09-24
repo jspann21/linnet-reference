@@ -698,9 +698,11 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None):
     root = Path(root).resolve(strict=True)
     folder = root / "Videos"
     allowed = video_source_extensions(identity)
+    native_extensions = native_video_extensions(identity)
+    scan_allowed = native_extensions if selection else allowed
     excluded = {Path(value).as_posix().casefold() for value in skipped}
     available = [str(path) for source in source_folders(root, "Videos")
-                 for path, _ in _file_records(source, allowed=allowed)
+                 for path, _ in _file_records(source, allowed=scan_allowed)
                  if not excluded or path.relative_to(root).as_posix().casefold() not in excluded]
     from .video_catalog import read_file
     catalog = root / ".LINNET" / "VIDEOS" / "INDEX.VID"
@@ -711,7 +713,6 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None):
         path = root / name.lstrip('/')
         _plain(path, root)
         published[path.resolve()] = title
-    native_extensions = native_video_extensions(identity)
     native = [name for name in available if Path(name).suffix.lower() in native_extensions]
     chosen = available if not selection else selection
     chosen = list(dict.fromkeys([*native, *chosen]))
