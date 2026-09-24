@@ -919,7 +919,11 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 report['steps'].append(dict(kind='Music', artwork_lookup=fetch(root, progress=progress,
                     checkpoint=checkpoint, retry_missing=force)))
         progress("Scanning the iPod folders…")
-        inventory = scan(root, selected, skipped=skipped)
+        retail_photos = None
+        if "Photos" in selected:
+            from .retail_media import images
+            retail_photos = images(root)
+        inventory = scan(root, selected, skipped=skipped, retail_photos=retail_photos)
         if "Videos" in selected:
             inventory["Videos"] = _video_inventory(videos)
         for kind in KINDS:
@@ -984,7 +988,6 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 elif kind == "Photos":
                     from .photos import compile_photos
                     from .publish_photos import publish_photos
-                    from .retail_media import images
                     package = cache / "photos.pimg"
                     compile_photos(folder, package, max_dimension=photo_dimension,
                                    viewport_width=media_profile["photo_width"],
@@ -992,7 +995,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                    excluded={Path(value).relative_to("Photos").as_posix()
                                              for value in skipped["Photos"]},
                                    additional_sources={Path(p['relative']).relative_to('Photos').as_posix():
-                                                       (p['preview'], p['title']) for p in images(root)})
+                                                       (p['preview'], p['title']) for p in retail_photos})
                     checkpoint()
                     progress("Publishing prepared photos…")
                     published.append(publish_photos(package, **target_args(identity)))
