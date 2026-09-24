@@ -238,9 +238,12 @@ class Covers(QObject):
                             image = self.read_image(buffer)
                 if image.isNull() and source.suffix.lower() == '.rgb':
                     with source.open('rb') as reader:
-                        pixels = reader.read(8193)
-                    if len(pixels) == 8192:
-                        image = QImage(pixels, 64, 64, 128, QImage.Format_RGB16).copy()
+                        pixels = reader.read(32769)
+                    # Prepared artwork is RGB565: 64 pixels on older targets,
+                    # 128 on the Classic. Reject truncated or oversized files.
+                    side = {8192: 64, 32768: 128}.get(len(pixels))
+                    if side:
+                        image = QImage(pixels, side, side, side * 2, QImage.Format_RGB16).copy()
             else:
                 image = self.read_image(path)
         except (OSError, ValueError):
@@ -1295,7 +1298,6 @@ class MediaWindow(QMainWindow):
             elif not info:
                 text.setText('Connect an iPod to check this library.')
             elif kind == 'Videos':
-                prepared = sum(row['kind'] == 'Videos' and row['category'] == 'published' for row in self.rows)
                 text.setText(f"{info['count']:,} files · {self.readiness.get(kind, 'Not checked')} · " +
                              (f'{len(self.video_selection)} selected' if self.video_selection else 'All existing videos included'))
             else:

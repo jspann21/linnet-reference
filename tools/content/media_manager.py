@@ -389,7 +389,6 @@ def list_skipped_files(identity):
 def restore_skipped_files(identity, items):
     """Remove files from the persistent preparation skip list."""
     identity = refresh(identity)
-    root = Path(identity["root"]).resolve(strict=True)
     state_path = cache_root(identity) / "state.json"
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -771,6 +770,7 @@ def run(identity, selected, pending=(), **options):
     identity = refresh(identity)
     with _exclusive(identity):
         root = Path(identity["root"]).resolve(strict=True)
+        allowed = video_source_extensions(identity)
         automatically_skipped = []
         skipped_keys = set()
         excluded_sources = set()
