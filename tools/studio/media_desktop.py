@@ -1162,6 +1162,7 @@ class MediaWindow(QMainWindow):
             self.show_progress('Apple OS folder choices saved. Checking availability…')
             self.refresh(); return
         if tag == 'apple_update':
+            self.prep_results.setPlainText(result['summary']); self.prep_results.show()
             self.show_progress(result['summary']); self.refresh(); return
         if tag == 'devices':
             if not result:
@@ -1302,6 +1303,9 @@ class MediaWindow(QMainWindow):
         self.prepare_button.setEnabled(ready and self.inventory is not None)
         apple_ready = ready and self.apple_info is not None and self.apple_info['supported']
         self.apple_choose.setEnabled(apple_ready)
+        self.apple_update.setText('Retry Apple OS' if apple_ready and
+                                  self.apple_info.get('can_update') and
+                                  self.apple_info['status'] == 'Needs attention' else 'Update Apple OS')
         self.apple_update.setEnabled(apple_ready and self.apple_info.get('can_update', False))
         self.choose_videos_button.setEnabled(ready and self.inventory is not None and self.identity.get('media_profile', {}).get('video_enabled', True))
         self.refresh_button.setEnabled(not self.busy)

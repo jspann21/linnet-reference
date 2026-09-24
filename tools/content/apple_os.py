@@ -337,11 +337,12 @@ def inspect(identity, *, records_by_kind=None):
     else:
         video_status = 'No video folders selected'
     photo_conflict = photo_status.startswith(('Apple photo library', 'Existing Apple photo'))
-    can_update = not photo_conflict and any(value == 'Needs update' for value in
-                                             (music_status, photo_status, video_status))
+    can_update = not photo_conflict and (any(value == 'Needs update' for value in
+                                             (music_status, photo_status, video_status)) or
+                                         bool(issues))
     if photo_conflict:
         status = 'Needs attention'
-    elif can_update:
+    elif any(value == 'Needs update' for value in (music_status, photo_status, video_status)):
         status = 'Needs Apple OS update'
     elif issues or note_issues:
         status = 'Needs attention'
@@ -575,6 +576,7 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
             raise ValueError('The Apple photo library changed outside Linnet. Review it before updating Photos.')
     if (published.get('music_source_signature') == _signature(files) and
             published.get('video_source_signature') == _signature(videos) and
+            not published.get('music_issues') and not published.get('video_issues') and
             source_db.is_file() and published.get('database_sha256') == _hash(source_db)):
         _update_photos(identity, state, selected, distribution, cache, progress)
         counts = state['published']

@@ -187,6 +187,8 @@ then shows **Ready in Apple OS**. After adding, removing or changing files in a
 selected folder, use **Check readiness**; the card will offer another update.
 Unchanged libraries are reused. Eject the iPod safely before switching systems.
 Apple OS choices are saved on this computer for this device.
+If a media path or video format needs attention, the card shows the first issue
+and offers **Retry Apple OS** after it is fixed.
 
 The current Apple music path supports MP3 files under `/Music` whose actual FAT
 short path fits the device's 23-character limit. Existing long artist, album and
