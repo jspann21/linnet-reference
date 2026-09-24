@@ -315,8 +315,8 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
                 for path, info in _file_records(artwork_folder):
                     rows.append((path.relative_to(root).as_posix(), info.st_size, info.st_mtime_ns))
                 from .album_art import signature as artwork_signature
-                from .retail_media import tracks
-                rows.append(('album-art', artwork_signature(tracks(root).values())))
+                from .retail_media import available_tracks
+                rows.append(('album-art', artwork_signature(available_tracks(root).values())))
         if kind == 'Photos':
             from .retail_media import images
             photos = retail_photos if retail_photos is not None else images(root)
@@ -1056,8 +1056,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             source_info = source.stat()
                             source_stamp = (source_info.st_size, source_info.st_mtime_ns)
                             if not job.get('catalog_title') and retail_titles is None:
-                                from .retail_media import tracks
-                                retail_titles = tracks(root)
+                                from .retail_media import available_tracks
+                                retail_titles = available_tracks(root)
                             if media_profile["video_backend"] in ("bcm-mp4", "native-mp4"):
                                 from .native_video import inspect_file as inspect_native, prepare as prepare_native
                                 from .publish_video import index_video

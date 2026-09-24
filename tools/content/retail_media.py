@@ -60,6 +60,14 @@ def tracks(root):
     return _tracks(str(root), info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
+def available_tracks(root):
+    """Apple metadata is optional when its database cannot be read."""
+    try:
+        return tracks(root)
+    except (OSError, ValueError, UnicodeError, struct.error):
+        return {}
+
+
 @lru_cache(maxsize=4)
 def _tracks(root_name, size, mtime, ctime):
     root = Path(root_name)
@@ -182,11 +190,14 @@ def images(root, *, artwork=False, dbids=None):
 
 def metadata(root):
     from .album_art import _base, cached
-    rows = tracks(root)
+    rows = available_tracks(root)
     if not rows:
         return {}
     used_dbids = {row['dbid'] for row in rows.values()}
-    covers = {row['dbid']: row['preview'] for row in images(root, artwork=True, dbids=used_dbids)}
+    try:
+        covers = {row['dbid']: row['preview'] for row in images(root, artwork=True, dbids=used_dbids)}
+    except (OSError, ValueError, UnicodeError, struct.error):
+        covers = {}
     cached_covers = {}
     def artwork(row):
         if row['dbid'] in covers:
