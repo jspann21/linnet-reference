@@ -68,13 +68,20 @@ def _embedded_cover(path: Path) -> bytes | None:
     except ImportError:
         return None
     try:
-        audio = mutagen.File(path)
-        if audio is None:
-            return None
-        tags = audio.tags or {}
-        pictures = list(getattr(audio, "pictures", ()))
-        if hasattr(tags, "getall"):
-            pictures += tags.getall("APIC")
+        if path.suffix.lower() == ".mp3":
+            # MP3 artwork lives in ID3. Opening the full audio parser also
+            # scans MPEG frames on some files, which is costly on iPod disks.
+            from mutagen.id3 import ID3
+            tags = ID3(path)
+            pictures = tags.getall("APIC")
+        else:
+            audio = mutagen.File(path)
+            if audio is None:
+                return None
+            tags = audio.tags or {}
+            pictures = list(getattr(audio, "pictures", ()))
+            if hasattr(tags, "getall"):
+                pictures += tags.getall("APIC")
         if pictures:
             picture = next((p for p in pictures if p.type == 3), pictures[0])
             data = picture.data
