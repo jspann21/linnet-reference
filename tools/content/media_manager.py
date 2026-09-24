@@ -650,14 +650,18 @@ def _outputs_match(root, outputs, *, verified=None):
                 return False
             stamp = (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino)
             key = (str(path), digest)
-            if verified is not None and verified.get(key) == stamp:
+            # NTFS can report the same timestamps for two immediate writes of
+            # equal size. Hash recent files on every check until that window
+            # has passed, then reuse the verified stamp on later refreshes.
+            recent = os.name == "nt" and info.st_mtime_ns > time.time_ns() - 5_000_000_000
+            if verified is not None and not recent and verified.get(key) == stamp:
                 continue
             if _hash(path) != digest:
                 return False
             after = path.stat()
             if stamp != (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino):
                 return False
-            if verified is not None:
+            if verified is not None and not recent:
                 verified[key] = stamp
         except (OSError, ValueError):
             return False
