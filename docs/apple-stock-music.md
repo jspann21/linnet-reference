@@ -71,8 +71,14 @@ The previous database was retained as
 `iPod_Control/iTunes/iTunesDB.before-full-20260924-143319`. Linnet's music
 database was rebuilt from the same files and published at `.LINNET/LIBRARY.PDB`
 (SHA-256 `e9c7a4cbd0df7bcf1867393c9ddfa17fd7f0c78abed3c0840d3c37631d65e360`).
-Both databases contain 2,676 tracks. The disk was safely ejected; full-library
-Apple playback is awaiting a hardware spot check.
+Both databases contain 2,676 tracks. The disk was safely ejected; hardware
+playback confirmed advancing timers and audio for "Broken" by 12 Stones (a
+compact artist/album alias), "Down" by 311 (the root `/Music` traversal), and
+"A Direct Hit" by Joris de Man (a one-character file alias). After restarting
+Linnet, its player opened "Broken" through the rebuilt index; decoded and
+rendered sample counters advanced, with zero errors and underruns. A later raw
+FAT reparse matched all 4,694 directory entries and 2,023 alias changes, and
+the saved maintenance scripts regenerated an identical Apple manifest.
 
 Future files and folders need their Apple entries and short-path budget checked
 again. An added folder depth that cannot fit within 23 characters would require
