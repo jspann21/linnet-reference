@@ -72,11 +72,13 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, _validated
     for kind in manager.KINDS:
         allowed = manager.extensions(kind)
         records = records_by_kind[kind]
+        # Traversal already supplied absolute, reparse-free paths under root.
+        # Resolving each file again adds an iPod filesystem query per row.
         for path, info in records:
-            if kind == 'Videos' and str(path.resolve()).casefold() in published_paths:
+            if kind == 'Videos' and str(path).casefold() in published_paths:
                 continue
             if path.suffix.lower() in allowed:
-                key = str(path.resolve()).casefold()
+                key = str(path).casefold()
                 indexed = metadata.get(key, {}) if kind == 'Music' else {}
                 tags = dict(indexed, **source_metadata.get(key, {})) if kind == 'Music' else retail.get(key, {})
                 if indexed.get('artwork') and tags.get('artwork') == str(path):
@@ -103,7 +105,7 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, _validated
                 description='Remove this entire published library. Original source files and cached conversions are retained. Updating this folder can restore it.'))
     for key, name, title in entries:
         path = _device_path(root, name)
-        tags = retail.get(str(path.resolve()).casefold(), {})
+        tags = retail.get(str(path).casefold(), {})
         result.append(_row('published', 'Videos', title, path,
             ('Not supported on this iPod' if path.suffix.lower() not in manager.native_video_extensions(identity)
              else 'Ready on iPod' if path.is_file() else 'Missing published file'), key=key.hex(),
@@ -146,7 +148,7 @@ def _source_music_metadata(root, records, cache_root, retail=None, published=Non
                                                  for p, _ in records[index:index + 128]])
             try:
                 relative = path.relative_to(root).as_posix()
-                key = str(path.resolve()).casefold()
+                key = str(path).casefold()
                 saved = (retail or {}).get(key, {})
                 value = cache.get(root, relative, before, prefetched=prefetched)
                 if value is None and saved:
