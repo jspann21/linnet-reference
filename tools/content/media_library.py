@@ -54,7 +54,7 @@ def _row(category, kind, title, path, status, *, info=None, **extra):
                 removable=category != 'cache', **extra)
 
 
-def list_items(identity, *, records_by_kind=None, _validated_identity=False):
+def list_items(identity, *, records_by_kind=None, retail_photos=None, _validated_identity=False):
     """Read file names, timestamps and the bounded catalog; never decode media."""
     if not _validated_identity:
         identity = manager.refresh(identity)
@@ -88,7 +88,8 @@ def list_items(identity, *, records_by_kind=None, _validated_identity=False):
                     artwork=tags.get('artwork', ''), duration=tags.get('duration', 0), track=tags.get('track', 0),
                     album_artist=tags.get('album_artist', ''), disc=tags.get('disc', 0),
                     description='Removing this source requires preparing its media type afterward.'))
-    for photo in retail_images(root):
+    photos = retail_photos if retail_photos is not None else retail_images(root)
+    for photo in photos:
         result.append(dict(id='retail-photo:' + str(photo['key']), category='original', kind='Photos',
                            title=photo['title'], path=str(root / photo['relative']), source=photo['source'],
                            artwork=photo['preview'], bytes=photo['bytes'], mtime_ns=photo['mtime_ns'],

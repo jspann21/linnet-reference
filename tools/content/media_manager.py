@@ -258,7 +258,7 @@ def preparation_option(kind, identity, photo_dimension=640, music_verification='
     return 'default'
 
 
-def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None):
+def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos=None):
     root = Path(root).resolve(strict=True)
     kinds = tuple(kinds)
     if records_by_kind is None:
@@ -301,7 +301,8 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None):
                 rows.append(('album-art', artwork_signature(tracks(root).values())))
         if kind == 'Photos':
             from .retail_media import images
-            for photo in images(root):
+            photos = retail_photos if retail_photos is not None else images(root)
+            for photo in photos:
                 if photo['relative'].casefold() in excluded:
                     skipped_count += 1
                     continue
