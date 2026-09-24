@@ -8,6 +8,7 @@ import zlib
 from tools.inspect.image import inspect
 from tools.studio.targets import TARGETS
 from .campaign import connect, _run_directory, _save
+from .session import DeviceError
 
 FIELDS = ('magic','generation','flags','selected','scene','events_accepted','events_processed',
           'event_drops','max_latency_us','queue_high','deadline_high','arena_high','frames_submitted',
@@ -219,9 +220,27 @@ def cycle(root, image_path, scenario_path, port, progress=None):
             record('cop-queue-reset',before=base,after=reset)
 
         for index in range(3):
-            base=settled(); control(1,suite['sleep_ms'])
+            base=settled(); admission_deadline=time.monotonic()+15; retries=0
+            while True:
+                try:
+                    control(1,suite['sleep_ms']);break
+                except DeviceError:
+                    session.close();session=None
+                    if time.monotonic()>=admission_deadline:raise
+                    session,observed_device,observed_identity=connect(
+                        port=port,serial_number=device['serial_number'],
+                        deadline_seconds=min(3,admission_deadline-time.monotonic()))
+                    if (observed_device['serial_number']!=device['serial_number'] or
+                            any(observed_identity[key]!=identity[key] for key in
+                                ('target_id','build_id','image_sha256','generation'))):
+                        raise RuntimeError('platform identity changed after sleep rejection')
+                    current=_state(session,generation)
+                    if (current['sleep_count']!=base['sleep_count'] or current['flags']&2 or
+                            time.monotonic()>=admission_deadline):
+                        raise
+                    retries+=1;time.sleep(.05)
             awake=wait(lambda s:s['sleep_count']>base['sleep_count'] and s['wake_count']>base['wake_count'] and not s['flags']&2,5)
-            record('sleep-auto-wake',index=index+1,before=base,after=awake,physical_wake_verified=False)
+            record('sleep-auto-wake',index=index+1,before=base,after=awake,admission_retries=retries,physical_wake_verified=False)
         control(2); control(7); base=settled()
         time.sleep(suite['idle_observe_ms']/1000)
         idle=_state(session,generation)
