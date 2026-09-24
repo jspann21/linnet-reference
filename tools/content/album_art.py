@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import threading
 import time
 import unicodedata
@@ -56,9 +57,18 @@ def signature(rows):
     # One library may contain many tracks per album. Check each cached cover
     # only once instead of issuing a host filesystem lookup for every track.
     bases = {_base(row) for row in rows}
-    files = sorted(str(path) for base in bases if base is not None
-                   if (path := base.with_suffix('.png')).is_file())
-    stamps = [(name, Path(name).stat().st_size, Path(name).stat().st_mtime_ns) for name in files]
+    stamps = []
+    for base in bases:
+        if base is None:
+            continue
+        path = base.with_suffix('.png')
+        try:
+            info = path.stat()
+        except OSError:
+            continue
+        if stat.S_ISREG(info.st_mode):
+            stamps.append((str(path), info.st_size, info.st_mtime_ns))
+    stamps.sort()
     return hashlib.sha256(json.dumps(stamps).encode()).hexdigest()
 
 
