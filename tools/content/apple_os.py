@@ -141,8 +141,10 @@ def _signature(files):
 
 
 def _apple_music_path(path, root, aliases):
-    if path.suffix.lower() != '.mp3' or not path.is_relative_to(root / 'Music'):
-        raise ValueError('Apple music currently supports MP3 files under /Music')
+    if not path.is_relative_to(root / 'Music'):
+        raise ValueError('Apple music must be under /Music')
+    if path.suffix.lower() != '.mp3':
+        raise ValueError(f'Apple music currently supports MP3 only: {path.relative_to(root)}')
     short = _device_media_path(path, root, aliases)
     if not short.startswith('/MUSIC/'):
         raise ValueError(f'Cannot resolve Apple music path: {path}')
@@ -174,9 +176,12 @@ def _apple_video_path(path, root, aliases):
 def _video_probe(path, ffprobe):
     if not ffprobe:
         raise ValueError('FFprobe is needed to check video for Apple OS.')
-    result = subprocess.run([ffprobe, '-v', 'error', '-show_entries',
-                             'format=duration,bit_rate:format_tags=title,artist:stream=codec_type,codec_name,profile,width,height,level,r_frame_rate,sample_rate,channels,bit_rate',
-                             '-of', 'json', str(path)], capture_output=True, text=True, timeout=30)
+    try:
+        result = subprocess.run([ffprobe, '-v', 'error', '-show_entries',
+                                 'format=duration,bit_rate:format_tags=title,artist:stream=codec_type,codec_name,profile,width,height,level,r_frame_rate,sample_rate,channels,bit_rate',
+                                 '-of', 'json', str(path)], capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        raise ValueError(f'Video inspection timed out: {path.name}') from None
     if result.returncode:
         raise ValueError(f'Could not inspect video: {path.name}')
     data = json.loads(result.stdout)
@@ -244,7 +249,7 @@ def inspect(identity, *, records_by_kind=None):
                 adopted = True
         except (OSError, ValueError):
             pass
-    music = _files(root, selected, 'Music', {'.mp3'}, records_by_kind)
+    music = _files(root, selected, 'Music', media.extensions('Music'), records_by_kind)
     published = state.get('published') if isinstance(state.get('published'), dict) else {}
     db = root / 'iPod_Control/iTunes/iTunesDB'
     source_stamp = _signature(music)
@@ -573,7 +578,7 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
     root = Path(identity['root']).resolve(strict=True)
     state = _load(identity)
     selected = _normalize(root, state.get('folders', []))
-    files = _files(root, selected, 'Music', {'.mp3'})
+    files = _files(root, selected, 'Music', media.extensions('Music'))
     videos = _files(root, selected, 'Videos', media.extensions('Videos'))
     cache = media.cache_root(identity)
     cache.mkdir(parents=True, exist_ok=True)

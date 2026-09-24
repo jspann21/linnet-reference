@@ -194,7 +194,8 @@ The current Apple music path supports MP3 files under `/Music` whose actual FAT
 short path fits the device's 23-character limit. Existing long artist, album and
 file names can work because the A1238 has compact FAT aliases. A new deeper path
 that cannot fit is reported as **Needs attention** and is omitted from the Apple
-database until its alias is made shorter. Music should first show **Ready** for
+database until its alias is made shorter. Other audio formats are reported as
+needing attention for this Apple workflow. Music should first show **Ready** for
 Linnet preparation so its metadata is available. Selected videos in `/Videos`
 are checked by FFprobe and currently accept compatible MP4, M4V and MOV files;
 other files are listed as needing attention. Photos use the supported image
