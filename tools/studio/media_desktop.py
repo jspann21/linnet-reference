@@ -920,7 +920,10 @@ class MediaWindow(QMainWindow):
                 cards.append(dict(title=members[0].get(field) or f'Unknown {field}', subtitle=subtitle,
                     kind='Music', group_kind=self.view, group_key=key, members=members, artwork=art_row.get('artwork', '') if self.view != 'Genres' else '', cover_source=art_row['path'], bytes=sum(r['bytes'] for r in members)))
             rows = cards
-        rows.sort(key=lambda r: (r.get('disc', 0), r.get('track', 0), r['title'].casefold()) if self.group and self.view == 'Albums' else (r['title'].casefold(),))
+        # The table applies its own title sort after reset. Keep this first
+        # sort for grids and as a stable title tie-break for other columns.
+        if grouped or self.group is not None or self.table.horizontalHeader().sortIndicatorSection() > 0:
+            rows.sort(key=lambda r: (r.get('disc', 0), r.get('track', 0), r['title'].casefold()) if self.group and self.view == 'Albums' else (r['title'].casefold(),))
         self.model.reset(rows, [('title', 'TITLE'), ('album', 'ALBUM'), ('genre', 'GENRE'), ('duration', 'TIME'), ('bytes', 'SIZE')] if music and not grouped else
                          [('title', 'NAME'), ('status', 'STATUS'), ('bytes', 'SIZE')])
         if not grouped and self.group is None:
