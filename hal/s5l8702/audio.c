@@ -14,7 +14,12 @@ extern uint32_t ln_time_us(void);
 #define BLOCK 1024u
 #define MASK (LINNET_AUDIO_RING_FRAMES-1u)
 static uint32_t ring[LINNET_AUDIO_RING_FRAMES] AUDIO_MEMORY;
+#ifdef LINNET_SRAM_MONITOR
+/* The monitor clears BSS on entry; keep this zeroed DMA buffer out of NOR. */
+static uint32_t silence[BLOCK] AUDIO_MEMORY;
+#else
 static const uint32_t silence[BLOCK] __attribute__((aligned(32)))={0};
+#endif
 static volatile struct ln_audio_status status;
 static volatile uint32_t head,tail,inflight,armed,expected,previous,drain_until;
 static volatile bool active,real,finishing,pause_pending,draining,starved;

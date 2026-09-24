@@ -70,3 +70,29 @@ def publish(root, target_id, payload, expected_sha256=None):
         published.append(dict(path=str(target.relative_to(root)).replace("\\", "/"),
                               bytes=len(data), sha256=digest(data)))
     return dict(target_id=target_id, payload_sha256=digest(payload), files=published)
+
+
+def available(root, target_id):
+    """Match Boot's on-disk Apple fallback checks before listing it in Media Manager."""
+    if target_id not in TARGETS:
+        return False
+    system = Path(root) / ".LINNET"
+    config_path, image_path = system / "APPLE.CFG", system / "APPLE.BIN"
+    try:
+        if not config_path.is_file() or not image_path.is_file():
+            return False
+        if config_path.is_symlink() or image_path.is_symlink():
+            return False
+        config = config_path.read_bytes()
+        if len(config) != 512 or config[:8] != b"APPLEOS1" or any(config[48:508]):
+            return False
+        target, size = struct.unpack_from("<II", config, 8)
+        if (target != TARGETS[target_id]["image_target"] or not 32 <= size <= TARGETS[target_id]["stage_bytes"] or
+                image_path.stat().st_size != size or zlib.crc32(config[:508]) != struct.unpack_from("<I", config, 508)[0]):
+            return False
+        image = image_path.read_bytes()
+        return (len(image) == size and hashlib.sha256(image).digest() == config[16:48] and
+                matches_signature(target_id, image))
+    except OSError:
+        # The volume may disappear during a Media Manager refresh.
+        return False

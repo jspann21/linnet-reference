@@ -12,7 +12,8 @@ from tools.link.transport import SerialTransport
 from tools.studio.targets import ROOT
 
 TARGET='classic6g-n25'
-START,END=0x8000,0x28000
+START,END=0x8000,0x29000
+SPARE=0x28000
 ARCHIVE=0x17800
 ARCHIVE_SECTOR=ARCHIVE&~0xfff
 
@@ -28,6 +29,10 @@ def _backup(path, serial):
         raise ValueError('Expected a verified complete NOR backup for this device')
     if data[START:START+8]!=b'87021.0\x01' or struct.unpack_from('<II',data,START+8)!=(0,129024):
         raise ValueError('Original bootloader layout differs from the verified N25 layout')
+    # The archive may use one additional sector only when the original NOR
+    # proves that sector was erased. The next firmware region starts at 0x30000.
+    if data[SPARE:END]!=b'\xff'*(END-SPARE):
+        raise ValueError('The extra A1238 boot archive sector is not erased in the original NOR')
     return data
 
 
@@ -122,21 +127,24 @@ def prepare(device_plan, backup, output, boot_image=None):
     archive=b'';boot_identity=None
     if boot_image is not None:
         from tools.inspect.image import inspect
-        from tools.inspect.lz4 import pack
+        from tools.inspect.lz4 import pack_hc,unpack
         boot_image=Path(boot_image);boot=boot_image.read_bytes();boot_identity=inspect(boot)
         report=json.loads(boot_image.with_suffix('.json').read_text())
         if (report.get('kind')!='boot' or report.get('image')!=boot_identity or
                 boot_identity['target_id']!=TARGET or report.get('device_serial')!=device['serial'] or
                 boot_identity['load_address']!=0x08000000 or len(boot)>0x80000):
             raise ValueError('Expected a matching device-bound native Boot build')
-        compressed=pack(boot);header=bytearray(64)
+        compressed=pack_hc(boot)
+        if unpack(compressed,len(boot))!=boot:
+            raise ValueError('Packed Boot archive does not match the verified Boot image')
+        header=bytearray(64)
         struct.pack_into('<4sIII',header,0,b'LNB1',1,len(compressed),len(boot))
         header[16:48]=hashlib.sha256(boot).digest()
         import zlib
         struct.pack_into('<I',header,60,zlib.crc32(header[:60]))
         archive=bytes(header)+compressed
         if START+2048+len(payload)>ARCHIVE or len(archive)>END-ARCHIVE:
-            raise ValueError('Monitor and compressed Boot do not fit the original NOR boot slot')
+            raise ValueError('Monitor and compressed Boot do not fit the verified NOR boot region')
     session,identity=_connect(device)
     try:
         if identity['build_id']!=manifest['build_id']:raise ValueError('RAM-verify this monitor before preparing NOR')
@@ -151,7 +159,7 @@ def prepare(device_plan, backup, output, boot_image=None):
         image=bytes(header)+payload
         if archive:image+=b'\xff'*(ARCHIVE-START-len(image))+archive
         image+=b'\xff'*((-len(image))%4096)
-        if START+len(image)>END:raise ValueError('Boot image exceeds the original slot')
+        if START+len(image)>END:raise ValueError('Boot image exceeds the verified NOR boot region')
         expected=current[:START]+image+current[START+len(image):]
         pages=[offset for offset in range(START,START+len(image),4096) if current[offset:offset+4096]!=expected[offset:offset+4096]]
         pages=[offset for offset in pages if offset not in (START,ARCHIVE_SECTOR)]+([ARCHIVE_SECTOR] if ARCHIVE_SECTOR in pages else [])+([START] if START in pages else [])

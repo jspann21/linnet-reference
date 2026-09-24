@@ -1490,7 +1490,9 @@ class MediaWindow(QMainWindow):
         self.boot_choice.blockSignals(True); self.boot_choice.clear()
         available_boot = review['boot_options']
         for option in available_boot:
-            suffix = ' · Current' if option.get('active') else ' · Unavailable' if not option.get('selectable') else ''
+            suffix = (' · Current' if option.get('active') else
+                      ' · Hold Menu' if option.get('chooser_available') else
+                      ' · Unavailable' if not option.get('selectable') else '')
             self.boot_choice.addItem(option['label'] + suffix, option)
             self.boot_choice.setItemData(self.boot_choice.count() - 1, option.get('detail', ''), Qt.ToolTipRole)
         selected = next((i for i, option in enumerate(available_boot) if option.get('active')),
@@ -1524,7 +1526,9 @@ class MediaWindow(QMainWindow):
         self.boot_choice.setEnabled(not self.busy and self.review is not None and self.boot_choice.count() > 0)
         self.install_button.setEnabled(enabled)
         if option and not option.get('selectable'):
-            self.install_button.setText('Current startup software' if option.get('active') else 'Startup change unavailable')
+            self.install_button.setText('Current startup software' if option.get('active') else
+                                        'Choose on iPod at startup' if option.get('chooser_available') else
+                                        'Startup change unavailable')
         else:
             self.install_button.setText(('Reinstall ' if option.get('active') else 'Install ') + option['label'] if linnet else 'Set as default boot')
 

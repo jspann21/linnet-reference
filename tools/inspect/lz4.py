@@ -1,5 +1,11 @@
-"""Independent LZ4 block packing for the bounded native Boot archive."""
+"""LZ4 block packing and independent unpacking for the native Boot archive."""
+import ctypes
+import os
+from pathlib import Path
+import subprocess
 import struct
+import sys
+import tomllib
 
 
 def pack(data: bytes) -> bytes:
@@ -42,6 +48,47 @@ def pack(data: bytes) -> bytes:
     return result
 
 
+def pack_hc(data: bytes) -> bytes:
+    """Compress Boot with liblz4's high-compression block encoder.
+
+    Windows builds already use the pinned WSL distribution for their compiler;
+    run this same module there so NOR preparation needs no separate artifact.
+    The independent decoder below verifies every byte before installation.
+    """
+    if os.name == 'nt':
+        root = Path(__file__).resolve().parents[2]
+        spec = tomllib.loads((root / 'config/toolchain.toml').read_text())['toolchain']
+        distribution = spec['windows_wsl_distribution']
+        flags = subprocess.CREATE_NO_WINDOW
+        directory = subprocess.run(
+            ['wsl', '-d', distribution, '--', 'wslpath', '-a', root.as_posix()],
+            capture_output=True, check=True, creationflags=flags).stdout.decode().strip()
+        result = subprocess.run(
+            ['wsl', '-d', distribution, '--cd', directory, '--',
+             'python3', '-m', 'tools.inspect.lz4', '--hc-stdin'],
+            input=data, capture_output=True, creationflags=flags)
+        if result.returncode:
+            raise RuntimeError('LZ4 high-compression failed: ' + result.stderr.decode(errors='replace'))
+        compressed = result.stdout
+    else:
+        library = ctypes.CDLL('liblz4.so.1')
+        library.LZ4_compressBound.argtypes = (ctypes.c_int,)
+        library.LZ4_compressBound.restype = ctypes.c_int
+        library.LZ4_compress_HC.argtypes = (
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int)
+        library.LZ4_compress_HC.restype = ctypes.c_int
+        source = ctypes.create_string_buffer(data)
+        bound = library.LZ4_compressBound(len(data))
+        output = ctypes.create_string_buffer(bound)
+        count = library.LZ4_compress_HC(source, output, len(data), bound, 12)
+        if count <= 0:
+            raise RuntimeError('LZ4 high-compression failed')
+        compressed = output.raw[:count]
+    if unpack(compressed, len(data)) != data:
+        raise ValueError('Boot compression readback mismatch')
+    return compressed
+
+
 def unpack(data: bytes, size: int) -> bytes:
     output=bytearray();cursor=0
     def length(value):
@@ -66,3 +113,9 @@ def unpack(data: bytes, size: int) -> bytes:
         if not offset or offset>len(output) or len(output)+count>size:raise ValueError('LZ4 match bounds')
         for _ in range(count):output.append(output[-offset])
     raise ValueError('LZ4 final literal sequence missing')
+
+
+if __name__ == '__main__':
+    if sys.argv[1:] != ['--hc-stdin']:
+        raise SystemExit('usage: python3 -m tools.inspect.lz4 --hc-stdin')
+    sys.stdout.buffer.write(pack_hc(sys.stdin.buffer.read()))

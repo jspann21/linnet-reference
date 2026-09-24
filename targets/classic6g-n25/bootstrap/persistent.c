@@ -8,7 +8,7 @@
  * padding, so the installer can still program every archive sector before the
  * boot header sector that makes the new image executable. */
 #define ARCHIVE 0x17800u
-#define ARCHIVE_BYTES 0x10800u
+#define ARCHIVE_BYTES 0x11800u
 static bool unpack(const uint8_t *source,uint32_t size,uint8_t *out,uint32_t capacity) {
     uint32_t input=0,used=0;
     while(input<size) {

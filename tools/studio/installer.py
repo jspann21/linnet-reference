@@ -502,6 +502,12 @@ def assess(identity):
         boot_options = [option for option in boot_options if option["kind"] == "linnet"]
         for option in boot_options:
             option["selectable"] = available
+        if linnet["state"] == "installed":
+            from tools.studio.apple_firmware import available as apple_available
+            if apple_available(root, target_id):
+                boot_options.append(dict(id="apple", label="Apple iPod software", kind="previous",
+                    detected=True, active=False, selectable=False, chooser_available=True,
+                    detail="Available on the iPod: hold Menu during startup, then choose Apple iPod software."))
         installation_methods = [dict(id="native-volume", label="Install Linnet" if initial else "Update installed Linnet",
             detail="Install the OS and safely eject to start Linnet." if initial else "Publish an OS update to the inactive slot. Safely eject to start it; the confirmed OS is retained for rollback.",
             strategy="native-volume", enabled=available, requires_admin=False)]

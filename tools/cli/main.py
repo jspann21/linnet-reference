@@ -65,6 +65,7 @@ def parser():
     simulator.add_argument("--target",choices=sorted(TARGETS))
     simulator.add_argument("--all-scenes",action="store_true")
     simulator.add_argument("--tape",type=Path,help="JSON list of native input events")
+    simulator.add_argument("--boot-menu",action="store_true",help="Render the native 320-pixel Boot chooser")
     music=commands.add_parser('music').add_subparsers(dest='action',required=True)
     music_compile=music.add_parser('compile')
     _source_output_arguments(music_compile)
@@ -364,8 +365,14 @@ def main():
                         viewport_width=spec['media_photo_width'],viewport_height=spec['media_photo_height']))
                 else:emit(inspect_photos(args.package))
         elif args.command == "simulator":
-            from tools.simulator.runner import simulate
-            emit(simulate(ROOT,args.output,args.tape,args.system,args.target,args.all_scenes))
+            if args.boot_menu:
+                if args.tape or args.system or args.all_scenes:
+                    raise ValueError("Boot chooser simulation does not accept UI scene options")
+                from tools.simulator.boot import simulate_boot
+                emit(simulate_boot(args.output,args.target or "classic6g-n25"))
+            else:
+                from tools.simulator.runner import simulate
+                emit(simulate(ROOT,args.output,args.tape,args.system,args.target,args.all_scenes))
         elif args.command == "inspect":
             emit(inspect(args.image.read_bytes()))
         elif args.command == "release":

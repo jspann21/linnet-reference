@@ -33,9 +33,19 @@ def prepare(mount):
     from tools.inspect.retail_device import detect
     device=detect(mount)
     if device['target_id']!='classic6g-n25':raise ValueError('Expected a live Classic in Disk Mode')
-    plan=dict(target_id=device['target_id'],serial=device['linnet_usb_serial'],
-              disk_serial=device['device_id'],usb_location=location(device['retail_usb']['pnp_id']))
+    usb=device.get('retail_usb') or device.get('native_usb')
+    if not usb:raise ValueError('Expected a Classic USB Disk Mode endpoint')
+    usb_location=location(usb['pnp_id'])
     destination=ROOT/'out/classic6g-n25/bootstrap-device.json'
+    disk_serial=device['device_id']
+    if 'native_usb' in device and destination.exists():
+        previous=json.loads(destination.read_text())
+        if (previous.get('target_id')==device['target_id'] and
+            previous.get('serial')==device['linnet_usb_serial'] and
+            sorted(previous.get('usb_location',[]))==usb_location):
+            disk_serial=previous.get('disk_serial') or disk_serial
+    plan=dict(target_id=device['target_id'],serial=device['linnet_usb_serial'],
+              disk_serial=disk_serial,usb_location=usb_location)
     destination.parent.mkdir(parents=True,exist_ok=True)
     destination.write_text(json.dumps(plan,indent=2)+'\n')
     return dict(plan,prepared=str(destination))
@@ -69,20 +79,27 @@ def update(prepared):
         before=decode(session.hello())
         if before['target_id']!=plan['target_id'] or before['capabilities']&3!=3:
             raise RuntimeError('Running monitor does not support verified RAM updates')
-        transfer=image if before['image_kind']=='boot' else bridge
-        receipt.update(phase='uploading',previous_generation=before['generation']);record()
-        session.upload(transfer)
-        digest=hashlib.sha256(transfer).digest()
-        if session.verify()!=digest:raise RuntimeError('Device upload digest mismatch')
-        receipt['phase']='handoff-requested';record()
-        session.boot_ram();session.close();session=None
-        time.sleep(.3)
-        from tools.link.campaign import connect
-        session, _, after=connect(serial_number=plan['serial'],deadline_seconds=20)
-        if (after['target_id']!=plan['target_id'] or after['build_id']!=report['build_id'] or
-            after['image_sha256']!=digest.hex() or after['generation']!=before['generation']+1):
+        for stage in range(2):
+            transfer=image if before['image_kind']=='boot' else bridge
+            receipt.update(phase='uploading',previous_generation=before['generation'],stage=stage+1);record()
+            session.upload(transfer)
+            digest=hashlib.sha256(transfer).digest()
+            if session.verify()!=digest:raise RuntimeError('Device upload digest mismatch')
+            receipt['phase']='handoff-requested';record()
+            session.boot_ram();session.close();session=None
+            time.sleep(.3)
+            from tools.link.campaign import connect
+            session, _, after=connect(serial_number=plan['serial'],deadline_seconds=20)
+            if (after['target_id']==plan['target_id'] and after['build_id']==report['build_id'] and
+                after['image_sha256']==digest.hex() and after['generation']==before['generation']+1):
+                receipt.update(phase='link-verified',identity=after);record();return receipt
+            # The OS bridge can enter the previously installed NOR monitor.
+            # Upload the verified new monitor from that boot endpoint once.
+            if (stage==0 and before['image_kind']!='boot' and after['target_id']==plan['target_id'] and
+                after['image_kind']=='boot' and after['capabilities']&3==3):
+                before=after
+                continue
             raise RuntimeError('RAM update did not return the expected image and generation')
-        receipt.update(phase='link-verified',identity=after);record();return receipt
     except Exception as error:
         receipt['error']=str(error);record();raise
     finally:

@@ -346,10 +346,12 @@ static uint32_t ln_menu_text_width(const char *message)
         width+=ln_boot_menu_advances[(uint8_t)*message-32u];
     return width;
 }
-static void ln_menu_text(uint32_t top,const char *message,uint16_t ink,uint16_t background)
+static void ln_menu_text(uint32_t top,const char *message,uint16_t ink,uint16_t background,uint32_t left)
 {
-    uint32_t width=ln_menu_text_width(message);
-    uint32_t left=width<LINNET_LCD_WIDTH?(LINNET_LCD_WIDTH-width)/2u:0u;
+    if(left==UINT32_MAX){
+        uint32_t width=ln_menu_text_width(message);
+        left=width<LINNET_LCD_WIDTH?(LINNET_LCD_WIDTH-width)/2u:0u;
+    }
     uint16_t shades[4]={background,ln_menu_blend(background,ink,1u),
         ln_menu_blend(background,ink,2u),ink};
     for(;*message;++message){
@@ -372,34 +374,31 @@ static void ln_menu_text(uint32_t top,const char *message,uint16_t ink,uint16_t 
 bool ln_lcd_boot_menu(uint32_t available,uint32_t selected,bool starting)
 {
     /* Match the Linnet Boot artwork's charcoal, silver, and cyan palette. */
-    const uint16_t paper=0x0862u,header=0x10a3u,ink=0xefbfu,muted=0xa5d8u;
+    const uint16_t paper=0x0841u,header=0x1083u,ink=0xefbfu,muted=0xa5d8u;
     ln_menu_rect(0u,0u,LINNET_LCD_WIDTH,LINNET_LCD_HEIGHT,paper);
     ln_menu_rect(0u,0u,LINNET_LCD_WIDTH,37u,header);
     ln_menu_rect(0u,36u,LINNET_LCD_WIDTH,37u,0x328cu);
     if(starting){
-        ln_menu_text(9u,"Starting",ink,header);
+        ln_menu_text(9u,"Starting",ink,header,14u);
         ln_menu_text(78u,selected==3u?"Apple iPod software":
-            selected==2u?"Rockbox":"Linnet",ink,paper);
+            selected==2u?"Rockbox":"Linnet",ink,paper,UINT32_MAX);
     }else if(!available){
-        ln_menu_text(9u,"Choose startup",ink,header);
-        ln_menu_text(82u,"Checking startup files",muted,paper);
+        ln_menu_text(9u,"Choose startup",ink,header,14u);
+        ln_menu_text(82u,"Checking startup files",muted,paper,UINT32_MAX);
     }else{
-        ln_menu_text(9u,"Choose startup",ink,header);
+        ln_menu_text(9u,"Choose startup",ink,header,14u);
         uint32_t row=0u;
         static const char *names[3]={"Linnet","Rockbox","Apple iPod software"};
         for(uint32_t choice=1u;choice<=3u;++choice){
             if(!(available&(1u<<(choice-1u))))continue;
             uint32_t top=43u+row*31u;
-            uint16_t background=choice==selected?0x11c9u:paper;
-            if(choice==selected){
-                ln_menu_rect(8u,top,212u,top+29u,background);
-                ln_menu_rect(8u,top,12u,top+29u,0x5e7eu);
-            }
-            ln_menu_text(top+6u,names[choice-1u],choice==selected?ink:muted,background);
+            uint16_t background=choice==selected?0x118au:0x10a4u;
+            ln_menu_rect(8u,top,212u,top+29u,background);
+            ln_menu_text(top+6u,names[choice-1u],choice==selected?ink:muted,background,22u);
             ++row;
         }
         ln_menu_rect(8u,143u,212u,144u,0x328cu);
-        ln_menu_text(151u,"Wheel: choose  Center: start",muted,paper);
+        ln_menu_text(151u,"Wheel: choose  Center: start",muted,paper,UINT32_MAX);
     }
     return ln_lcd_draw(0u,0,0,0,ln_text_pairs);
 }

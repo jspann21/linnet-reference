@@ -4,6 +4,7 @@
 #include "hal/s5l8702/registers.h"
 #include "hal/s5l8702/board.h"
 #include "ui/profiles/color320/boot_font.h"
+#include "ui/profiles/color320/boot_menu.h"
 #if defined(LINNET_IMAGE_OS) || defined(LINNET_IMAGE_BOOT)
 #include "boot/include/linnet_boot_wordmark_320.h"
 #endif
@@ -40,6 +41,12 @@ static void small_text(unsigned top,const char *message,uint16_t color) {
     }
 }
 static bool present(void){return ln_display_damage(0,0,LINNET_UI_WIDTH,LINNET_UI_HEIGHT)&&ln_display_present()&&ln_display_quiesce();}
+/* Boot has no compiler division runtime; Disk Mode only needs small quotients. */
+static unsigned small_quotient(unsigned numerator,unsigned denominator){
+    unsigned result=0;
+    while(numerator>=denominator){numerator-=denominator;++result;}
+    return result;
+}
 bool ln_lcd_boot(void){
 #if defined(LINNET_IMAGE_OS) || defined(LINNET_IMAGE_BOOT)
     uint16_t *frame=ln_display_framebuffer();
@@ -75,8 +82,9 @@ bool ln_s5l_board_disk_screen(void){
     for(int y=-44;y<=44;y++)for(int x=-44;x<=44;x++){
         int distance=x*x+y*y;
         if(distance>44*44)continue;
-        unsigned edge=(unsigned)distance*22u/(42u*42u),depth=(unsigned)(y+44)*42u/88u;
-        unsigned red=255u-edge/2u-depth/5u,green=205u-edge-depth,blue=77u-edge/2u-depth/2u;
+        unsigned edge=small_quotient((unsigned)distance*22u,42u*42u);
+        unsigned depth=small_quotient((unsigned)(y+44)*42u,88u);
+        unsigned red=255u-edge/2u-small_quotient(depth,5u),green=205u-edge-depth,blue=77u-edge/2u-depth/2u;
         uint16_t color=distance>42*42?0x9a60u:(uint16_t)(((red>>3)<<11)|((green>>2)<<5)|(blue>>3));
         frame[(unsigned)(104+y)*LINNET_UI_WIDTH+(unsigned)(160+x)]=color;
     }
@@ -85,7 +93,7 @@ bool ln_s5l_board_disk_screen(void){
     for(unsigned x=150;x<170;x++)frame[88u*LINNET_UI_WIDTH+x]=0xad55u;
     for(unsigned y=95;y<113;y++)for(unsigned x=157;x<163;x++)frame[y*LINNET_UI_WIDTH+x]=0x2104u;
     for(unsigned y=113;y<126;y++){
-        unsigned half=(126u-y)*11u/13u;
+        unsigned half=small_quotient((126u-y)*11u,13u);
         for(unsigned x=160u-half;x<=160u+half;x++)frame[y*LINNET_UI_WIDTH+x]=0x2104u;
     }
     small_text(6,"Linnet Disk Mode",0xffff);
@@ -101,32 +109,11 @@ bool ln_s5l_board_recovery_screen(void){
     text(186,"Connect USB to repair",0xad75);return present();
 }
 bool ln_lcd_boot_menu(uint32_t available,uint32_t selected,bool starting){
-    if(!ln_lcd_fill(0x0841u))return false;
-    if(starting){
-        text(74,"Starting",0xffffu);
-        text(126,selected==3u?"Apple iPod Software":selected==2u?"Rockbox":"Linnet",0x5d9du);
-        return present();
-    }
-    text(28,"Choose startup",0xffffu);
-    if(!available)small_text(106,"Checking startup files",0xad75u);
-    else{
-        static const char *names[3]={"Linnet","Rockbox","Apple iPod Software"};
-        uint32_t row=0;
-        for(uint32_t choice=1u;choice<=3u;++choice){
-            if(!(available&(1u<<(choice-1u))))continue;
-            text(67u+row*39u,names[choice-1u],choice==selected?0xffffu:0x94b2u);
-            if(choice==selected){
-                uint16_t *frame=ln_display_framebuffer();
-                uint32_t top=66u+row*39u;
-                for(uint32_t y=top;y<top+25u;++y){frame[y*LINNET_UI_WIDTH+23u]=0x5d9du;
-                    frame[y*LINNET_UI_WIDTH+24u]=0x5d9du;
-                    frame[y*LINNET_UI_WIDTH+295u]=0x5d9du;
-                    frame[y*LINNET_UI_WIDTH+296u]=0x5d9du;}
-            }
-            ++row;
-        }
-    }
-    small_text(206,"Wheel: choose   Center: start",0xad75u);
+    uint16_t *frame=ln_display_framebuffer();
+    if(!frame){if(!ln_display_init())return false;frame=ln_display_framebuffer();}
+    if(!frame||!ln_display_quiesce())return false;
+    for(uint32_t y=0;y<LN_MENU_HEIGHT;++y)
+        ln_menu_320_row(frame+y*LN_MENU_WIDTH,y,available,selected,starting);
     return present();
 }
 bool ln_lcd_fault(uint32_t reason,const uint8_t build[32]) {

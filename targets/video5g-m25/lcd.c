@@ -4,6 +4,7 @@
 #include "hal/api/platform.h"
 #include "hal/pp502x/disk_screen.h"
 #include "ui/profiles/color320/boot_font.h"
+#include "ui/profiles/color320/boot_menu.h"
 #if defined(LINNET_IMAGE_BOOT)
 #include "boot/include/linnet_boot_wordmark_320.h"
 #endif
@@ -140,28 +141,11 @@ bool ln_lcd_boot(void){
 }
 bool ln_lcd_boot_apple(void){return ln_lcd_fill(0xffffu);}
 bool ln_lcd_boot_menu(uint32_t available,uint32_t selected,bool starting){
-    if(starting)return message("Starting",selected==3u?"Apple iPod Software":
-        selected==2u?"Rockbox":"Linnet",0x39e7u);
     if(!ln_m25_lcd_init()||!await_ready())return false;
-    uint16_t row[320];uint32_t choice_row=0u;
-    for(uint32_t y=0;y<240u;++y){
-        for(uint32_t x=0;x<320u;++x)row[x]=0x0841u;
-        text_row(row,y,24u,"Choose startup",0xffffu);
-        if(!available)text_row(row,y,108u,"Checking startup files",0xad75u);
-        else{
-            choice_row=0u;
-            static const char *names[3]={"Linnet","Rockbox","Apple iPod Software"};
-            for(uint32_t choice=1u;choice<=3u;++choice){
-                if(!(available&(1u<<(choice-1u))))continue;
-                uint32_t top=68u+choice_row*38u;
-                if(choice==selected&&y>=top-5u&&y<top+29u)
-                    for(uint32_t x=24u;x<296u;++x)row[x]=0x2147u;
-                text_row(row,y,top,names[choice-1u],choice==selected?0xffffu:0xbdf7u);
-                ++choice_row;
-            }
-        }
-        text_row(row,y,205u,"Wheel: choose   Center: start",0xad75u);
-        if(!ln_m25_lcd_write(y*320u,row,320u))return false;
+    uint16_t row[LN_MENU_WIDTH];
+    for(uint32_t y=0;y<LN_MENU_HEIGHT;++y){
+        ln_menu_320_row(row,y,available,selected,starting);
+        if(!ln_m25_lcd_write(y*LN_MENU_WIDTH,row,LN_MENU_WIDTH))return false;
     }
     return ln_m25_lcd_commit()&&await_ready();
 }

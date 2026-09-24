@@ -48,7 +48,7 @@ static bool write_at(uint8_t command,uint32_t address,int byte) {
     ln_s5l_spi0_end();return ok && ready(command==0x20?100000u:1000u);
 }
 uint32_t ln_n25_flash_replace_sector(uint32_t offset,const uint8_t bytes[4096]) {
-    if(!bytes || (offset&4095u) || offset<0x8000u || offset>=0x28000u)return 1;
+    if(!bytes || (offset&4095u) || offset<0x8000u || offset>=0x29000u)return 1;
     uint8_t id[3],before,after,scratch[512];
     if(!ln_n25_flash_identity(id) || id[0]!=0xbf || id[1]!=0x25 || id[2]!=0x8e ||
        !status_read(&before) || (before&0x41u))return 2;
