@@ -118,6 +118,18 @@ def _image_string(data, at, end):
     return data[at + 36:at + 36 + length].decode('utf-16-le' if data[at + 28] == 2 else 'utf-8').rstrip('\0')
 
 
+def image_count(root):
+    """Validate the image list without rendering every thumbnail."""
+    root = Path(root).resolve()
+    database = root / 'Photos/Photo Database'
+    _plain(database, root)
+    data = _bounded(database, 64 * 1024 * 1024)
+    at, end, count = _list(data, b'mhfd', b'mhli')
+    for _ in range(count):
+        _, at = _record(data, at, end, b'mhii')
+    return count
+
+
 def images(root, *, artwork=False, dbids=None):
     root = Path(root).resolve()
     folder = root / ('iPod_Control/Artwork' if artwork else 'Photos')

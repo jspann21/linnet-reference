@@ -449,10 +449,10 @@ def _update_photos(identity, state, selected, distribution, cache, progress):
         prepared = stage / 'Photos/Photo Database'
         if not prepared.is_file() or prepared.stat().st_size < 128:
             raise ValueError('Apple photo writer produced no valid database.')
-        from .retail_media import images
-        visible = images(stage)
-        if len(visible) != len(photos):
-            raise ValueError(f'Apple photo database contains {len(visible)} images, expected {len(photos)}.')
+        from .retail_media import image_count
+        visible = image_count(stage)
+        if visible != len(photos):
+            raise ValueError(f'Apple photo database contains {visible} images, expected {len(photos)}.')
         outputs = [p for p in (stage / 'Photos').rglob('*') if p.is_file() and p != prepared]
         if photos and not outputs:
             raise ValueError('Apple photo thumbnails are missing.')
