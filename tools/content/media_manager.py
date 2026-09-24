@@ -1032,6 +1032,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                         video_state = {}
                     state["video_files"] = video_state
                     failed = 0
+                    retail_titles = None
                     for index, job in enumerate(videos):
                         checkpoint()
                         source = Path(job["source"])
@@ -1040,13 +1041,15 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             key = hashlib.sha256(relative.encode()).hexdigest()[:8].upper()
                             source_info = source.stat()
                             source_stamp = (source_info.st_size, source_info.st_mtime_ns)
+                            if not job.get('catalog_title') and retail_titles is None:
+                                from .retail_media import tracks
+                                retail_titles = tracks(root)
                             if media_profile["video_backend"] in ("bcm-mp4", "native-mp4"):
                                 from .native_video import inspect_file as inspect_native, prepare as prepare_native
                                 from .publish_video import index_video
                                 native_version = 4 if media_profile["video_backend"] == "native-mp4" else 2
                                 fingerprint = hashlib.sha256(f"native-mp4-v{native_version}:{json.dumps(media_profile, sort_keys=True)}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
-                                from .retail_media import tracks
-                                label = video_title(job.get('catalog_title') or tracks(root).get(str(source.resolve()).casefold(), {}).get('title') or relative)
+                                label = video_title(job.get('catalog_title') or retail_titles.get(str(source).casefold(), {}).get('title') or relative)
                                 cached = video_state.get(relative, {})
                                 if (not force and isinstance(cached, dict) and cached.get("signature") == fingerprint
                                         and catalog_contains(root, relative, label, path=False)
@@ -1094,8 +1097,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             profile_key = (f"{media_profile['video_width']}x{media_profile['video_height']}-"
                                            f"{media_profile['video_fps']}-{media_profile['video_color']}-realtime")
                             fingerprint = hashlib.sha256(f"ipvf-{profile_key}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
-                            from .retail_media import tracks
-                            label = video_title(job.get('catalog_title') or tracks(root).get(str(source.resolve()).casefold(), {}).get('title') or relative)
+                            label = video_title(job.get('catalog_title') or retail_titles.get(str(source).casefold(), {}).get('title') or relative)
                             cached = video_state.get(relative, {})
                             if not isinstance(cached, dict):
                                 cached = {}
