@@ -316,7 +316,7 @@ def organize_videos(identity):
             manager._save(state_path, state)
         except (OSError, ValueError, AttributeError, TypeError):
             pass  # A missing preparation cache is rebuilt on the next update.
-        return dict(summary=f'{len(moves)} videos renamed · {len(entries) - len(updated)} missing entries cleared. Videos are in {root / "Videos" / "IPVF"}.', receipt='', **cleanup)
+        return dict(summary=f'{len(moves)} videos renamed · {len(entries) - len(updated)} missing entries cleared.', receipt='', **cleanup)
 
 
 def _remove(identity, items):
