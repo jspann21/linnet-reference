@@ -16,11 +16,18 @@ def _verified_outputs(disk_serial, volume_serial, partition_offset):
 
 
 def _video_readiness(inventory, published, identity=None, state=None, verified=None):
+    state = state if isinstance(state, dict) else {}
+    video_state = state.get('Videos', {})
+    if not isinstance(video_state, dict):
+        video_state = {}
+    video_files = state.get('video_files', {})
+    if not isinstance(video_files, dict):
+        video_files = {}
     compatible_files = [value for value in inventory['files']
                         if Path(value).suffix.lower() in media.video_source_extensions(identity)]
     published = [row for row in published
                  if Path(row['path']).suffix.lower() in media.native_video_extensions(identity)]
-    if compatible_files and identity and (state or {}).get('Videos', {}).get('media_profile') != identity['media_profile']:
+    if compatible_files and identity and video_state.get('media_profile') != identity['media_profile']:
         return 'Needs update'
     ready = [row for row in published if row['status'] == 'Ready on iPod']
     missing = [row for row in published if row['status'] != 'Ready on iPod']
@@ -35,8 +42,13 @@ def _video_readiness(inventory, published, identity=None, state=None, verified=N
         if root is None:
             return 'Needs update'
         relative = source.relative_to(root / 'Videos').as_posix() if source.is_relative_to(root / 'Videos') else source.relative_to(root).as_posix()
-        saved = (state or {}).get('video_files', {}).get(relative, {})
-        info = source.stat()
+        saved = video_files.get(relative, {})
+        if not isinstance(saved, dict):
+            return 'Needs update'
+        try:
+            info = source.stat()
+        except OSError:
+            return 'Needs update'
         if (saved.get('source_stamp') != [info.st_size, info.st_mtime_ns] or
                 not media._outputs_match(root, saved.get('outputs', []), verified=verified)):
             return 'Needs update'
