@@ -586,7 +586,8 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
     distribution = tomllib.loads(config.read_text(encoding='utf-8'))['toolchain']['windows_wsl_distribution']
     source_db = root / 'iPod_Control/iTunes/iTunesDB'
     sysinfo = root / 'iPod_Control/Device/SysInfo'
-    _plain(source_db, root); _plain(sysinfo, root)
+    _plain(source_db, root)
+    _plain(sysinfo, root)
     if not sysinfo.is_file():
         raise ValueError('Apple device identity is missing from this iPod.')
     published = state.get('published') if isinstance(state.get('published'), dict) else {}
