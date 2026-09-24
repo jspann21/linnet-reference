@@ -32,13 +32,15 @@ def pack(data: bytes) -> bytes:
         remember(cursor)
         if previous is None:
             cursor+=1;continue
-        literals=cursor-anchor;match=size-4
+        literals=cursor-anchor
+        match=size-4
         output.append((min(literals,15)<<4)|min(match,15))
         if literals>=15:length(literals-15)
         output.extend(data[anchor:cursor]);output.extend(struct.pack('<H',cursor-previous))
         if match>=15:length(match-15)
         end=cursor+size
-        for at in range(cursor+1,end):remember(at)
+        for at in range(cursor+1,end):
+            remember(at)
         cursor=anchor=end
     literals=len(data)-anchor;output.append(min(literals,15)<<4)
     if literals>=15:length(literals-15)

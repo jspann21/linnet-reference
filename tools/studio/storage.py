@@ -4,7 +4,6 @@ import json
 import os
 import re
 import struct
-import subprocess
 import zlib
 from tools.inspect.image import inspect
 from tools.studio.targets import TARGETS

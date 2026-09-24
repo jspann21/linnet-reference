@@ -11,7 +11,7 @@ from ctypes import wintypes as w
 from datetime import datetime, timezone
 import hashlib
 import json
-import locale  # preload subprocess text decoding before elevated readiness
+import locale  # noqa: F401 - preload subprocess text decoding before elevated readiness
 import os
 from pathlib import Path
 import re
