@@ -13,9 +13,13 @@
 #define AAC (*(struct ln_aac *)(uintptr_t)LINNET_STAGE_ADDRESS)
 #define PACKET ((uint8_t *)(uintptr_t)(LINNET_STAGE_ADDRESS+0x40000u))
 #define CACHE_SLOTS 64u
-/* Start with 0.37 s at 44.1 kHz; audio_step still fills toward 49152 frames
- * during playback. The old 32768-frame gate delayed the first video frame. */
+/* Start with roughly 0.28 s on the A1238's 44.1 kHz AAC path; audio_step
+ * continues filling the ring during playback. Other targets keep 0.37 s. */
+#if defined(LINNET_TARGET_CLASSIC6G_N25)
+#define START_AUDIO_FRAMES 12288u
+#else
 #define START_AUDIO_FRAMES 16384u
+#endif
 _Static_assert(0x40000u+LINNET_VIDEO_PACKET_BYTES+CACHE_SLOTS*16384u<=0x200000u,"Video packet/cache overlaps decoder arena");
 #define CACHE(slot) ((uint8_t *)(uintptr_t)(LINNET_STAGE_ADDRESS+0x40000u+LINNET_VIDEO_PACKET_BYTES+(slot)*16384u))
 extern void ln_memory_copy(void *,const void *,uint32_t);
