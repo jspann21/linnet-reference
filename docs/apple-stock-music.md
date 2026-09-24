@@ -56,6 +56,14 @@ the before/after sector journal is archived under
 opened every original long path and every planned short path, with expected
 sizes totaling 15,065,620,907 bytes.
 
+The exact writer used for the one-file rehearsal and full change is preserved
+at `tools/maintenance/a1238_apple_alias_journal.py`. Its `restore` mode requires
+all 829 current sectors to match the archived after image; its `recover` mode
+accepts a mix of archived before and after sectors and returns them to the
+before image. Both modes verify the connected device identity, FAT boot sector,
+and journal hashes, then lock and dismount the volume around writes. Rebuilding
+both databases is necessary after restoring the old aliases.
+
 The stock Apple database was generated with libgpod for all 2,676 MP3s and
 installed at `iPod_Control/iTunes/iTunesDB` (SHA-256
 `546ecacfe9bdbf5e9cf758107fffcc3eb69ae4c98de82ea8f0d201ddaf7ff375`).
