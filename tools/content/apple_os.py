@@ -26,6 +26,7 @@ from .publish import _exclusive, _hash, _plain, _volume_guard
 
 
 APPLE_SERIAL = '000A2700155D9C10'
+APPLE_VOLUME_SERIAL = '5FC88A5C'
 APPLE_TARGET = 'classic6g-n25'
 ROOTS = ('Music', 'Photos', 'Videos', 'Notes')
 SELECTABLE_ROOTS = ROOTS[:3]
@@ -35,6 +36,8 @@ APPLE_MUSIC_PREFIX = ':iPod_Control:Music:..:..:Music:'
 def supported(identity):
     return (identity.get('target_id') == APPLE_TARGET and
             identity.get('disk_serial') == APPLE_SERIAL and
+            identity.get('volume_serial') == APPLE_VOLUME_SERIAL and
+            identity.get('sector_bytes') == 4096 and
             identity.get('filesystem') == 'FAT32')
 
 
