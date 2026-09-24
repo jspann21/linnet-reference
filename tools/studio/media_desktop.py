@@ -944,7 +944,7 @@ class MediaWindow(QMainWindow):
         self.result_count.setText(f'{matched_count:,} of {scope_count:,} {unit}' + (f' · {len(rows):,} {self.view.lower()}' if grouped else '') if filtered else
                                   f'{len(rows):,} {self.view.lower() if grouped else unit}')
         self.clear_button.setVisible(filtered)
-        self.hint.setText('Delete files in LINNET / VIDEOS, then Sync video folder to update the playback library.' if self.page == 'Videos' else
+        self.hint.setText('Select videos to move them to Trash. Sync video folder reconciles files changed in Explorer.' if self.page == 'Videos' else
                           'Double-click to explore. Select one or more groups to manage their songs.' if grouped else
                           'Select a removal to restore it, or permanently delete it to free storage.' if self.page == 'Trash' else
                           'Ctrl+click or Shift+click to select multiple files. Double-click for details.')
