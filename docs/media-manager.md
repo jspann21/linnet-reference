@@ -9,7 +9,8 @@ if the tools are not on PATH. Optional Mutagen speeds up music metadata imports.
 Select **Linnet installation…** in Linnet Media. The installer identifies
 the mounted iPod from its RetailOS hardware records, USB identity and storage
 geometry, then chooses the build target automatically. Current targets are the
-iPod Photo A1099 (`photo4g-p98`) and iPod 4G MP102 (`ipod4g-q21`).
+iPod Photo A1099 (`photo4g-p98`), iPod Video A1136 (`video5g-m25`), iPod 4G
+MP102 (`ipod4g-q21`) and iPod Classic A1238 (`classic6g-n25`).
 Additional compatible models are discovered from their target manifests; see
 [adding a target](../targets/README.md).
 

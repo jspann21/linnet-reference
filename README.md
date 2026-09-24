@@ -10,6 +10,7 @@ persistent updates. See the [roadmap](docs/roadmap.md) for planned improvements.
 | --- | --- | --- |
 | `photo4g-p98` | iPod Photo A1099, 220 × 176 color | Primary development target. |
 | `video5g-m25` | iPod Video A1136 30 GB, 320 × 240 color | Native Boot, Link and device qualification; see [target status](targets/video5g-m25/README.md). |
+| `classic6g-n25` | iPod Classic A1238, 320 × 240 color | Native Boot, OS, Link, Disk Mode and H.264 VGA playback verified; MPEG-4 qualification continues. |
 | `ipod4g-q21` | iPod 4G MP102, 160 × 128 monochrome | Photos, video and theme selection disabled. |
 
 Installer profiles exist for all listed targets.
