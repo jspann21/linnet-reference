@@ -3,6 +3,7 @@ from functools import lru_cache
 import json
 from pathlib import Path
 import shutil
+import stat
 
 from . import media_manager as media
 from . import media_library
@@ -35,7 +36,8 @@ def _video_readiness(inventory, published, identity=None, state=None, verified=N
     if missing:
         return 'Needs update'
     root = Path(identity['root']).resolve() if identity else None
-    # Scan and library rows already carry absolute, guarded device paths.
+    # Scan and library rows already carry absolute device paths. Recheck each
+    # source without following a link that appeared since traversal.
     for value in compatible_files:
         source = Path(value)
         if str(source).casefold() in cataloged:
@@ -47,8 +49,10 @@ def _video_readiness(inventory, published, identity=None, state=None, verified=N
         if not isinstance(saved, dict):
             return 'Needs update'
         try:
-            info = source.stat()
+            info = source.lstat()
         except OSError:
+            return 'Needs update'
+        if not stat.S_ISREG(info.st_mode) or getattr(info, 'st_file_attributes', 0) & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400):
             return 'Needs update'
         if (saved.get('source_stamp') != [info.st_size, info.st_mtime_ns] or
                 not media._outputs_match(root, saved.get('outputs', []), verified=verified)):
