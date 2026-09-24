@@ -80,7 +80,8 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     records = media._records_by_kind(root)
     from .retail_media import images
     retail_photos = images(root)
-    inventory = media.scan(root, skipped=skipped, records_by_kind=records, retail_photos=retail_photos)
+    inventory = media.scan(root, skipped=skipped, records_by_kind=records, retail_photos=retail_photos,
+                           fingerprint_kinds=('Music', 'Notes', 'Photos'))
     rows = media_library.list_items(identity, records_by_kind=records, retail_photos=retail_photos,
                                     _validated_identity=True)
     readiness = {}

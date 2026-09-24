@@ -258,33 +258,37 @@ def preparation_option(kind, identity, photo_dimension=640, music_verification='
     return 'default'
 
 
-def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos=None):
+def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos=None,
+         fingerprint_kinds=None):
     root = Path(root).resolve(strict=True)
     kinds = tuple(kinds)
     if records_by_kind is None:
         records_by_kind = _records_by_kind(root, kinds)
     skipped = skipped or {}
+    fingerprint_kinds = set(KINDS if fingerprint_kinds is None else fingerprint_kinds)
     result = {}
     for kind in kinds:
         if kind not in KINDS:
             raise ValueError("Unknown media folder")
         excluded = {Path(value).as_posix().casefold() for value in skipped.get(kind, ())}
+        fingerprint = kind in fingerprint_kinds
         rows, supported = [], []
         supported_bytes = skipped_count = ignored = 0
         allowed = extensions(kind)
         records = records_by_kind[kind]
         for path, info in records:
-            relative = path.relative_to(root).as_posix()
-            if relative.casefold() in excluded:
+            relative = path.relative_to(root).as_posix() if fingerprint or excluded else None
+            if excluded and relative.casefold() in excluded:
                 skipped_count += 1
                 continue
-            rows.append((relative, info.st_size, info.st_mtime_ns))
+            if fingerprint:
+                rows.append((relative, info.st_size, info.st_mtime_ns))
             if path.suffix.lower() in allowed:
                 supported.append(str(path))
                 supported_bytes += info.st_size
             else:
                 ignored += 1
-        if kind in ('Music', 'Videos'):
+        if fingerprint and kind in ('Music', 'Videos'):
             database = root / 'iPod_Control/iTunes/iTunesDB'
             _plain(database, root)
             if database.is_file():
@@ -308,11 +312,12 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
                     continue
                 supported.append(str(root / photo['relative']))
                 supported_bytes += photo['bytes']
-                rows.append((photo['relative'], photo['bytes'], photo['mtime_ns'], photo['preview']))
+                if fingerprint:
+                    rows.append((photo['relative'], photo['bytes'], photo['mtime_ns'], photo['preview']))
         result[kind] = dict(count=len(supported), bytes=supported_bytes,
                             ignored=ignored, files=supported,
                             skipped=skipped_count,
-                            fingerprint=hashlib.sha256(json.dumps(rows).encode()).hexdigest())
+                            fingerprint=hashlib.sha256(json.dumps(rows).encode()).hexdigest() if fingerprint else None)
     return result
 
 
@@ -924,7 +929,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         if "Photos" in selected:
             from .retail_media import images
             retail_photos = images(root)
-        inventory = scan(root, selected, skipped=skipped, retail_photos=retail_photos)
+        inventory = scan(root, selected, skipped=skipped, retail_photos=retail_photos,
+                         fingerprint_kinds=(kind for kind in selected if kind != "Videos"))
         if "Videos" in selected:
             inventory["Videos"] = _video_inventory(videos)
         for kind in KINDS:
