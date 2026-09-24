@@ -7,9 +7,6 @@
 #if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_APPLE_FALLBACK
 #include "hal/api/input.h"
 #include "boot/include/linnet_bytes.h"
-#if defined(LINNET_TARGET_PHOTO4G_P98) || defined(LINNET_TARGET_IPOD4G_Q21)
-#include "hal/pp502x/target.h"
-#endif
 #endif
 #if defined(LINNET_AUDIO)
 #include "kernel/audio_link.h"
@@ -198,8 +195,8 @@ void ln_development_poll(void) {
             struct ln_input_state sample;(void)ln_input_poll(&sample);
             uint32_t words[16];ln_input_diagnostics(words);
             for(uint32_t j=0;j<16u;++j)ln_write_le32(boot_input_reply+j*4u,words[j]);
-#if defined(LINNET_TARGET_PHOTO4G_P98) || defined(LINNET_TARGET_IPOD4G_Q21)
-            uint32_t query[4];ln_target_boot_menu_diagnostics(query);
+#if LINNET_BOOT_MENU_QUERY_BEFORE_INPUT || LINNET_BOOT_MENU_QUERY_AFTER_INPUT
+            uint32_t query[4];ln_input_boot_menu_diagnostics(query);
             for(uint32_t j=0;j<4u;++j)ln_write_le32(boot_input_reply+(16u+j)*4u,query[j]);
 #endif
             response.command=request.command;response.sequence=request.sequence;

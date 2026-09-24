@@ -763,7 +763,7 @@ def _install_selector_config(identity):
     return dict(path=firmware_path, bytes=len(data), sha256=_sha(data))
 
 
-def _install_apple_firmware(identity, plan_path, plan_sha256):
+def _install_apple_firmware(identity, plan_path, plan_sha256, archive=None):
     """Publish the exact preserved RetailOS payload consumed by native Boot."""
     from tools.studio import native_bootstrap as native
     manifest, _artifacts, firmware = native.load_plan(plan_path, plan_sha256)
@@ -772,7 +772,26 @@ def _install_apple_firmware(identity, plan_path, plan_sha256):
     original = manifest["original_osos"]
     start, size = original["payload_offset"], original["payload_bytes"]
     payload = firmware[start:start + size]
-    from tools.studio.apple_firmware import publish
+    from tools.studio.apple_firmware import encode, matches_signature, publish
+    if not matches_signature(identity["target_id"], payload):
+        # Reinstall may find Linnet Boot in OSOS. Preserve an archived Apple
+        # image only when its target-bound configuration verifies exactly.
+        sources = []
+        if archive is not None:
+            sources.append(Path(archive) / "APPLE.BIN")
+        sources.append(Path(identity["root"]) / ".LINNET" / "APPLE.BIN")
+        for source in sources:
+            config = source.with_name("APPLE.CFG")
+            if not source.is_file() or source.is_symlink() or not config.is_file() or config.is_symlink():
+                continue
+            preserved = source.read_bytes()
+            try:
+                expected_config = encode(identity["target_id"], preserved)[1]
+            except ValueError:
+                continue
+            if config.read_bytes() == expected_config:
+                return publish(identity["root"], identity["target_id"], preserved)
+        raise ValueError("Preserved Apple firmware is unavailable; the original OSOS image lacks its target signature")
     return publish(identity["root"], identity["target_id"], payload,
                    original["payload_sha256"])
 
@@ -1222,7 +1241,7 @@ def _native_worker(job):
         plan_path, plan_sha = Path(planned["plan"]), planned["plan_sha256"]
         hash_path.write_text(plan_sha + "\n", encoding="ascii")
     storage_receipt = _package_storage(expected, job["artifacts"], transaction, job.get("archive"))
-    apple_firmware = _install_apple_firmware(expected, plan_path, plan_sha)
+    apple_firmware = _install_apple_firmware(expected, plan_path, plan_sha, job.get("archive"))
     selector = (_install_selector_config(expected)
                 if job.get("installation_method") == "native-selector" else None)
     applied = native.execute("apply", plan_path, plan_sha, expected["disk_number"])

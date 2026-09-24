@@ -1,5 +1,6 @@
 /* Board wiring shared by Q21 and P98, not the PortalPlayer family. */
 #include "hal/api/power.h"
+#include "hal/api/input.h"
 uint8_t ln_target_power_sources(void) {
     return ((REG(0x6000d03cu)&8u)?LINNET_POWER_USB:0u)|
            ((REG(0x6000d038u)&4u)?0u:LINNET_POWER_FIREWIRE);
@@ -49,11 +50,11 @@ void ln_target_switches_rearm(uint32_t sample) {
 #if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_APPLE_FALLBACK
 #if !defined(LINNET_PROFILE_RELEASE)
 static uint32_t ln_boot_menu_query[4];
-void ln_target_boot_menu_diagnostics(uint32_t output[4]) {
+void ln_input_boot_menu_diagnostics(uint32_t output[4]) {
     for(uint32_t i=0;i<4u;++i)output[i]=ln_boot_menu_query[i];
 }
 #endif
-bool ln_target_boot_menu_held(void) {
+bool ln_input_boot_menu_held(void) {
     /* The 4G optical wheel does not report a button already held at reset
      * until asked for its current keypad state. Keep this boot-only so the
      * normal input stream and OS image are unaffected. */

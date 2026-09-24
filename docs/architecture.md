@@ -59,9 +59,17 @@ and backups together; see [local artifacts](local-artifacts.md).
 
 Every native Linnet installation preserves a bootable copy of the device's
 original Apple firmware. Normal power-on starts Linnet. Holding `MENU`
-continuously during the early boot window requests Apple software. Boot verifies
+continuously during the early boot window opens the startup chooser; use the
+wheel and Center to select Apple software. Boot verifies
 the preserved payload's target, length, SHA-256, and configuration CRC before
 handoff; missing or invalid fallback data never replaces the normal Linnet path.
+
+MP102 additionally restores Apple's I2C timing after codec shutdown, returns
+Timer2 to IRQ routing and waits for the COP to acknowledge handoff before the
+CPU enters Apple. These choices live in the target's board policy; the shared
+PP502x HAL performs the register and cache operations. The Apple payload itself
+is not patched. The native chooser, Apple menu and controls, and return to
+Linnet have been verified on MP102 hardware.
 
 ## Runtime and media
 

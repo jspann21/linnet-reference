@@ -3,6 +3,7 @@
 .arm
 #include "hal/api/recovery.h"
 #include "hal/pp502x/recovery_internal.h"
+#include "linnet_target.h"
 #if defined(LINNET_PLATFORM_CORE)
 #include "hal/api/display.h"
 #include "hal/pp502x/display_internal.h"
@@ -250,15 +251,37 @@ ln_cop_retail_step:
     ldr r3, [r1]
     orr r3, r3, #6
     str r3, [r1]
+#if LINNET_RETAIL_COP_ACK
+    ldr r3, ln_cop_cache_wait_budget
+20: ldr r1, ln_cop_cache_control
+    ldr r1, [r1]
+    tst r1, #0x8000
+    beq 22f
+    subs r3, r3, #1
+    bne 20b
+23: b 23b
+22:
+#endif
     ldr r1, ln_cop_cache_control
     mov r3, #0
     str r3, [r1]
-21: ldr r1, ln_cop_retail_entry
+21:
+#if LINNET_RETAIL_COP_ACK
+    ldr r1, ln_cop_retail_ack_address
+    ldr r3, ln_cop_retail_ack_value
+    str r3, [r1]
+#endif
+    ldr r1, ln_cop_retail_entry
     bx r1
 ln_cop_retail_magic: .word 0x4c4e4150
 ln_cop_cache_control: .word 0x6000c000
 ln_cop_cache_flush: .word 0xf000f044
 ln_cop_retail_entry: .word 0x10000000
+#if LINNET_RETAIL_COP_ACK
+ln_cop_retail_ack_address: .word 0x11ffe0a8
+ln_cop_retail_ack_value: .word 0x4c4e4152
+ln_cop_cache_wait_budget: .word 0x100000
+#endif
 #endif
 ln_cop_end:
     .ltorg

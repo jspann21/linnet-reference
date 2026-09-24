@@ -41,8 +41,18 @@ def _source_closure():
         if (board/'native_update.c').is_file(): paths.add((board/'native_update.c').relative_to(ROOT).as_posix())
         display = board/'display.c'
         if not display.is_file(): display = hal/'display.c'
+        device = board/'device.c'
+        if not device.is_file(): device = board/'board.c'
+        power = board/'power.c'
+        if not power.is_file(): power = hal/'power.c'
+        video = {'ipvf': ROOT/'services/video/ipvf/player.c',
+                 'native-mp4': ROOT/'services/video/native/player.c',
+                 'bcm-mp4': board/'video.c', 'none': None}[spec['media_video_backend']]
+        if video is not None: paths.add(video.relative_to(ROOT).as_posix())
+        for optional in (board/'coprocessor.c', board/'display.S'):
+            if optional.is_file(): paths.add(optional.relative_to(ROOT).as_posix())
         for path in (manifest,hal/'startup.S',hal/'memory.ld',hal/'platform.c',
-                     board/'lcd.c',board/'device.c',board/'hardware.h',display,
+                     board/'lcd.c',device,power,board/'hardware.h',display,
                      ROOT/'hal'/'codecs'/(spec.get('audio_codec','wm8975')+'.c')):
             paths.add(path.resolve().relative_to(ROOT.resolve()).as_posix())
     return ('tools/link/refresh_session.py', *sorted(paths))

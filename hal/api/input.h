@@ -2,6 +2,7 @@
 #define LINNET_HAL_INPUT_H
 #include <stdbool.h>
 #include <stdint.h>
+#include "linnet_target.h"
 #define LINNET_BUTTON_SELECT 1u
 #define LINNET_BUTTON_RIGHT 2u
 #define LINNET_BUTTON_LEFT 4u
@@ -13,6 +14,14 @@ struct ln_input_state {
     uint8_t wheel_position, touched, hold, headphones;
 };
 bool ln_input_init(void);
+#if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_APPLE_FALLBACK && \
+    (LINNET_BOOT_MENU_QUERY_BEFORE_INPUT || LINNET_BOOT_MENU_QUERY_AFTER_INPUT)
+/* Board policy selects whether this held-key query precedes input init. */
+bool ln_input_boot_menu_held(void);
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_input_boot_menu_diagnostics(uint32_t output[4]);
+#endif
+#endif
 bool ln_input_poll(struct ln_input_state *out);
 void ln_input_snapshot(struct ln_input_state *out);
 #if defined(LINNET_IMAGE_OS) && defined(LINNET_TARGET_CLASSIC6G_N25)

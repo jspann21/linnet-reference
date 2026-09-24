@@ -48,6 +48,7 @@ usb_pid = 4611
 board_names = ["iPod Q21"]
 model_numbers = ["PE435A"]
 regulatory_models = ["MP102"]
+firmware_signature = { offset = 32, ascii = "portalplayer" }
 
 [native_storage]
 usb_vid = 4617

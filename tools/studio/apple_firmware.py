@@ -12,6 +12,16 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def matches_signature(target_id, payload):
+    """Apply an optional target-owned marker for the archived Apple format."""
+    signature = TARGETS[target_id]["retail"].get("firmware_signature")
+    if signature is None:
+        return True
+    marker = signature["ascii"].encode("ascii")
+    start = signature["offset"]
+    return payload[start:start + len(marker)] == marker
+
+
 def encode(target_id, payload, expected_sha256=None):
     if target_id not in TARGETS:
         raise ValueError("Apple firmware fallback target is unsupported")
@@ -19,6 +29,8 @@ def encode(target_id, payload, expected_sha256=None):
     actual = digest(payload)
     if (expected_sha256 is not None and actual != expected_sha256.lower()) or not 32 <= len(payload) <= TARGETS[target_id]["stage_bytes"]:
         raise ValueError("Apple firmware fallback failed its reviewed bounds or hash")
+    if not matches_signature(target_id, payload):
+        raise ValueError("Apple firmware is missing its target's image signature")
     config = bytearray(512)
     config[:8] = b"APPLEOS1"
     struct.pack_into("<II", config, 8, TARGETS[target_id]["image_target"], len(payload))

@@ -104,6 +104,14 @@ selects bounded clock settling, ATA write/flush behavior, ROM restart markers
 and documented storage quirks. Services consume capabilities and policy rather
 than naming a board.
 
+Boot quirks follow the same rule. Optional `hardware.h` policies select a held-key
+query before or after input initialization (`LINNET_BOOT_MENU_QUERY_BEFORE_INPUT`
+or `LINNET_BOOT_MENU_QUERY_AFTER_INPUT`) and a delayed chooser refresh
+(`LINNET_BOOT_MENU_REDRAW_US`). PP502x handoff policies select Timer2 IRQ routing,
+the retail I2C divider and a bounded COP acknowledgement. The register operations
+and two-core handoff protocol remain in the shared HAL; kernel code uses the
+portable input API. Omitted policies are disabled.
+
 The Photo COP LCD worker and blitter belong to the Photo target. Its legacy
 firmware maintenance writer is also target-local and retains its exact reviewed
 unit checks. Targets without an audited native writer reject those commands;
@@ -124,6 +132,12 @@ Populate `[retail]` with observed USB VID/PID and exact board or model strings
 from `iPod_Control/Device/SysInfo` and USB enumeration. Keep serial numbers,
 hardware GUIDs and firmware backups local. Regulatory labels and volume names
 are not sufficient detection keys.
+
+When a model's archived Apple image has a verified marker, `[retail]` can declare
+`firmware_signature = { offset = 32, ascii = "portalplayer" }`. The installer uses
+that target-owned format check along with image bounds, SHA-256 and configuration
+CRC. On reinstall, an OSOS slot containing Linnet must not replace the preserved
+Apple archive; an existing archive must pass the same target-bound checks.
 
 Start `[installer]` with `enabled = false`. The directory installer requires its partition and header fields; other disabled boot layouts do not inherit those fields. Only the `ipod-directory` boot
 layout can currently be enabled. Verify the wrapper, firmware directory, memory

@@ -7,12 +7,6 @@
 bool ln_target_battery_charging(void);
 
 void ln_target_input_prepare(void);
-#if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_APPLE_FALLBACK
-bool ln_target_boot_menu_held(void);
-#if !defined(LINNET_PROFILE_RELEASE)
-void ln_target_boot_menu_diagnostics(uint32_t output[4]);
-#endif
-#endif
 uint8_t ln_target_power_sources(void);
 struct ln_power_state;
 void ln_target_power_prepare(struct ln_power_state *state);

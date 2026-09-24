@@ -36,10 +36,15 @@ int ln_platform_enter_retail(const uint8_t *payload,uint32_t size) {
     extern const uint8_t ln_retail_enter_begin[],ln_retail_enter_end[];
     uint32_t bytes=(uint32_t)(ln_retail_enter_end-ln_retail_enter_begin);
     if(!payload||!size||bytes>256u)return 0;
-#if LINNET_TARGET_NUMBER == 98u
-    /* A1099 Boot routes its watchdog Timer2 to FIQ. Apple's firmware owns
-     * this interrupt after handoff; restore normal IRQ routing for it. */
+#if LINNET_RETAIL_TIMER2_IRQ
+    /* Restore normal IRQ routing before Apple's firmware owns interrupts. */
     LINNET_REG(0x6000402cu) &= ~2u;
+#endif
+#if defined(LINNET_RETAIL_I2C_DIVIDER)
+    /* Restore the board's Apple I2C timing after codec shutdown. The bus
+     * is idle here; the runtime divider can exceed Apple's write timeout. */
+    LINNET_REG(0x600060a4u) = 0;
+    LINNET_REG(0x600060a4u) = LINNET_RETAIL_I2C_DIVIDER;
 #endif
     volatile uint8_t *iram=(volatile uint8_t *)(uintptr_t)0x40000000u;
     for(uint32_t i=0;i<bytes;++i)iram[i]=ln_retail_enter_begin[i];

@@ -7,9 +7,6 @@
 #if defined(LINNET_IMAGE_BOOT) && (LINNET_BOOT_APPLE_FALLBACK || LINNET_BOOT_SELECTOR_ROCKBOX)
 #include "hal/api/input.h"
 #endif
-#if defined(LINNET_IMAGE_BOOT) && (defined(LINNET_TARGET_PHOTO4G_P98) || defined(LINNET_TARGET_IPOD4G_Q21))
-#include "hal/pp502x/target.h"
-#endif
 #if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_BOOT)
 #include "hal/api/core.h"
 #endif
@@ -193,16 +190,22 @@ _Noreturn void ln_main(void)
 #if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_OS)
     bool first_frame = ln_runtime_first_frame_ready();
 #elif defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_APPLE_FALLBACK
+#if LINNET_BOOT_MENU_QUERY_BEFORE_INPUT
+    bool initial_menu=ln_input_boot_menu_held();
+#endif
     if(!ln_input_init())ln_panic(30,3,0);
-#if defined(LINNET_TARGET_PHOTO4G_P98) || defined(LINNET_TARGET_IPOD4G_Q21)
-    bool initial_menu=ln_target_boot_menu_held();
-#else
+#if LINNET_BOOT_MENU_QUERY_AFTER_INPUT
+    bool initial_menu=ln_input_boot_menu_held();
+#elif !LINNET_BOOT_MENU_QUERY_BEFORE_INPUT
     bool initial_menu=false;
 #endif
     bool boot_decided=false,menu_open=false,menu_holding=false;
     uint32_t menu_started=0,menu_hold_started=0,menu_activity=0;
     uint32_t menu_options=0,menu_selected=1u,menu_buttons=0,menu_last_step=0;
     int32_t menu_wheel_accum=0;
+#if LINNET_BOOT_MENU_REDRAW_US
+    uint32_t menu_redraw_due=0;
+#endif
     bool first_frame = ln_lcd_boot();
 #elif defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_SELECTOR_ROCKBOX
     if(!ln_input_init())ln_panic(30,3,0);
@@ -283,8 +286,19 @@ _Noreturn void ln_main(void)
                     if(menu_options){
                         menu_activity=now;
                         (void)ln_lcd_boot_menu(menu_options,menu_selected,false);
+#if LINNET_BOOT_MENU_REDRAW_US
+                        menu_redraw_due=ln_time_us()+LINNET_BOOT_MENU_REDRAW_US;
+#endif
                     }
                 }
+#if LINNET_BOOT_MENU_REDRAW_US
+                /* Refresh panels that need another frame after settling. */
+                if(menu_options&&menu_redraw_due&&
+                   (int32_t)(ln_time_us()-menu_redraw_due)>=0){
+                    menu_redraw_due=0;
+                    (void)ln_lcd_boot_menu(menu_options,menu_selected,false);
+                }
+#endif
                 uint32_t pressed=input.buttons&~menu_buttons;
                 menu_buttons=input.buttons;
                 if(menu_options&&changed&&!input.hold){
@@ -324,6 +338,9 @@ _Noreturn void ln_main(void)
                         if(next!=menu_selected){
                             menu_selected=next;
                             (void)ln_lcd_boot_menu(menu_options,menu_selected,false);
+#if LINNET_BOOT_MENU_REDRAW_US
+                            menu_redraw_due=ln_time_us()+LINNET_BOOT_MENU_REDRAW_US;
+#endif
                         }
                     }
                     if(pressed&LINNET_BUTTON_SELECT){

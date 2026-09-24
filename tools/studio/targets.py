@@ -208,6 +208,14 @@ def _validate_profiles(path, spec):
             not retail.get("sector_bytes", [512]) or
             any(type(n) is not int or n not in (512, 4096) for n in retail.get("sector_bytes", [512]))):
         raise RuntimeError(f"invalid retail detection profile: {path}")
+    signature = retail.get("firmware_signature")
+    if signature is not None and (
+            not isinstance(signature, dict) or set(signature) != {"offset", "ascii"} or
+            type(signature["offset"]) is not int or signature["offset"] < 0 or
+            not isinstance(signature["ascii"], str) or
+            not re.fullmatch(r"[\x20-\x7e]{1,64}", signature["ascii"]) or
+            signature["offset"] + len(signature["ascii"]) > spec["stage_bytes"]):
+        raise RuntimeError(f"invalid Apple firmware signature: {path}")
     install = spec["installer"]
     loader = PurePosixPath(str(install.get("file_loader", ""))) if isinstance(install, dict) else PurePosixPath()
     required = {"enabled", "boot_layout", "file_loader", "wrapper_model", "wrapper_checksum_seed"}
