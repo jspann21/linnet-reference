@@ -1,9 +1,11 @@
 # Architecture
 
-Linnet is freestanding native firmware for the PP502x iPod family: Photo
-A1099 (`photo4g-p98`, 220 x 176 color), 4G MP102 (`ipod4g-q21`,
-160 x 128 monochrome), and Video A1136 30 GB (`video5g-m25`, 320 x 240 color). Host tools prepare media and compile static
-TSX layouts; the device uses fixed memory pools and cooperative service work.
+Linnet is freestanding native firmware for classic iPods. The PP502x targets are
+Photo A1099 (`photo4g-p98`, 220 x 176 color), 4G MP102 (`ipod4g-q21`,
+160 x 128 monochrome), and Video A1136 30 GB (`video5g-m25`, 320 x 240 color).
+Classic A1238 (`classic6g-n25`, 320 x 240 color) uses the S5L8702 HAL. Host
+tools prepare media and compile static TSX layouts; the device uses fixed memory
+pools and cooperative service work.
 There is no runtime JavaScript VM or general-purpose allocator.
 
 ## Source map
