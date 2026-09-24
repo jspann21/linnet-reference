@@ -153,12 +153,17 @@ def inventory(volume):
     directories = [x for x in items if x['directory']]
     if not files or any(not x['name'].lower().endswith('.mp3') for x in files):
         raise ValueError('Expected a nonempty MP3-only /Music tree')
+    by_path = {item['path']: item for item in items}
+    if len(by_path) != len(items):
+        raise ValueError('Duplicate path in /Music directory tree')
+    def short_path_length(path):
+        parts = path.split('/')
+        return len('/'.join(by_path['/'.join(parts[:index])]['short']
+                            for index in range(1, len(parts) + 1)))
     summary = dict(serial=f'{volume.serial:08x}', boot_sha256=volume.boot_hash,
                    music_cluster=music[0]['cluster'], files=len(files), directories=len(directories),
                    lfn_files=sum(x['lfn'] for x in files), lfn_directories=sum(x['lfn'] for x in directories),
-                   longest_existing_short_path=max(len('/'.join(next(y['short'] for y in items
-                          if y['path'] == '/'.join(x['path'].split('/')[:j]))
-                          for j in range(1, len(x['path'].split('/')) + 1))) for x in files))
+                   longest_existing_short_path=max(short_path_length(x['path']) for x in files))
     return summary, items
 
 
