@@ -92,12 +92,6 @@ def recover(identity, token, *, erase=False):
             _, old = _read_catalog_file(backup)
             selected_keys = {r.get('key') for r in report.get('selected', []) if r.get('category') == 'published'}
             restored_paths = {str(d).casefold() for _, d, _ in moves}
-            for row in report.get('selected', []):
-                if row.get('category') == 'original' and row.get('kind') == 'Videos':
-                    path = root / 'Videos' / row['title']
-                    _plain(path, root / 'Videos')
-                    if path.is_file():
-                        restored_paths.add(str(path).casefold())
             for entry in old:
                 relative = report.get('catalog_paths', {}).get(entry[0].hex())
                 path = library._device_path(root, '/' + relative if relative else entry[1])
