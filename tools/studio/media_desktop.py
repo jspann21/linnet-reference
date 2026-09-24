@@ -760,7 +760,7 @@ class MediaWindow(QMainWindow):
         self.setup_progress.setTextVisible(False); self.setup_progress.hide(); details.addWidget(self.setup_progress)
         layout.addWidget(card)
         layout.addSpacing(12); layout.addWidget(label('Startup software', 'section'))
-        layout.addWidget(label('Choose the software that opens by default.', 'muted'))
+        layout.addWidget(label('Choose a default or see options available by holding Menu at startup.', 'muted'))
         self.boot_choice = ComboBox(); self.boot_choice.currentIndexChanged.connect(self.update_install_action); layout.addWidget(self.boot_choice)
         self.boot_detail = label('', 'muted', True); layout.addWidget(self.boot_detail)
         self.method_title = label('Startup behavior', 'section'); layout.addWidget(self.method_title)

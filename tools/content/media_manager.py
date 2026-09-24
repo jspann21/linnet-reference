@@ -649,14 +649,14 @@ def _outputs_match(root, outputs, *, verified=None):
             info = path.stat()
             if not stat.S_ISREG(info.st_mode):
                 return False
-            stamp = (info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+            stamp = (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino)
             key = (str(path), digest)
             if verified is not None and verified.get(key) == stamp:
                 continue
             if _hash(path) != digest:
                 return False
             after = path.stat()
-            if stamp != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+            if stamp != (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino):
                 return False
             if verified is not None:
                 verified[key] = stamp
@@ -689,6 +689,7 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None):
     native = [name for name in available if Path(name).suffix.lower() in native_extensions]
     chosen = available if not selection else selection
     chosen = list(dict.fromkeys([*native, *chosen]))
+    source_roots = [path.resolve() for path in source_folders(root, 'Videos')]
     jobs = {}
 
     def include(source, relative):
@@ -707,7 +708,7 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None):
         source = Path(name).absolute()
         _plain(source, root)
         source = source.resolve(strict=True)
-        if not any(source.is_relative_to(p.resolve()) for p in source_folders(root, 'Videos')):
+        if not any(source.is_relative_to(folder) for folder in source_roots):
             raise ValueError(f"Selected video is outside this iPod's video sources: {source}")
         include(source, source.relative_to(folder).as_posix() if source.is_relative_to(folder)
                 else source.relative_to(root).as_posix())
