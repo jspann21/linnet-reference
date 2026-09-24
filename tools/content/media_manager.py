@@ -363,7 +363,8 @@ def skip_files(identity, items):
         if kind == "Videos":
             video_state = state.get("video_files", {})
             if isinstance(video_state, dict):
-                video_state.pop(path.relative_to(root / "Videos").as_posix(), None)
+                video_key = path.relative_to(root / "Videos").as_posix() if path.is_relative_to(root / "Videos") else relative
+                video_state.pop(video_key, None)
     _save(state_path, state)
     return added
 
