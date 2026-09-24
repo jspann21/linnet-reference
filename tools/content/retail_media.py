@@ -145,30 +145,37 @@ def images(root, *, artwork=False):
                                        horizontal, vertical, image_w, image_h))
             child = next_child
         if candidates:
-            _, path, offset, length, width, height, x, y, iw, ih = max(candidates, key=lambda c: c[0])
-            info = path.stat()
-            if length < width * height * 2 or offset + length > info.st_size:
-                raise ValueError('iTunes thumbnail extends beyond its file')
-            stamp = f'{key}-{info.st_size}-{info.st_mtime_ns}'
-            preview = cache / (stamp + '.png')
-            if not preview.is_file():
-                from PIL import Image
-                with path.open('rb') as reader:
-                    reader.seek(offset)
-                    pixels = reader.read(width * height * 2)
-                image = Image.frombytes('RGB', (width, height), pixels, 'raw', 'BGR;16')
-                if 0 < iw <= width and 0 < ih <= height and x < iw and y < ih:
-                    image = image.crop((x, y, iw, ih))
-                cache.mkdir(parents=True, exist_ok=True)
-                temporary = preview.with_name(uuid.uuid4().hex + '.tmp')
+            for _, path, offset, length, width, height, x, y, iw, ih in sorted(candidates, key=lambda c: c[0], reverse=True):
                 try:
-                    image.save(temporary, format='PNG')
-                    os.replace(temporary, preview)
-                finally:
-                    temporary.unlink(missing_ok=True)
-            result.append(dict(key=key, dbid=dbid, title=title, preview=str(preview),
-                               source=str(database), bytes=length, mtime_ns=info.st_mtime_ns,
-                               relative=f'Photos/@iTunes/{key}.png'))
+                    info = path.stat()
+                except FileNotFoundError:
+                    continue
+                if length < width * height * 2 or offset + length > info.st_size:
+                    raise ValueError('iTunes thumbnail extends beyond its file')
+                stamp = f'{key}-{info.st_size}-{info.st_mtime_ns}'
+                preview = cache / (stamp + '.png')
+                if not preview.is_file():
+                    from PIL import Image
+                    try:
+                        with path.open('rb') as reader:
+                            reader.seek(offset)
+                            pixels = reader.read(width * height * 2)
+                    except FileNotFoundError:
+                        continue
+                    image = Image.frombytes('RGB', (width, height), pixels, 'raw', 'BGR;16')
+                    if 0 < iw <= width and 0 < ih <= height and x < iw and y < ih:
+                        image = image.crop((x, y, iw, ih))
+                    cache.mkdir(parents=True, exist_ok=True)
+                    temporary = preview.with_name(uuid.uuid4().hex + '.tmp')
+                    try:
+                        image.save(temporary, format='PNG')
+                        os.replace(temporary, preview)
+                    finally:
+                        temporary.unlink(missing_ok=True)
+                result.append(dict(key=key, dbid=dbid, title=title, preview=str(preview),
+                                   source=str(database), bytes=length, mtime_ns=info.st_mtime_ns,
+                                   relative=f'Photos/@iTunes/{key}.png'))
+                break
         at = following
     return result
 
