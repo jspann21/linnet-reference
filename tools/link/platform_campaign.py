@@ -119,6 +119,24 @@ def cycle(root, image_path, scenario_path, port, progress=None):
             raise TimeoutError('platform state did not reach expected condition')
         def settled():
             return wait(lambda s:s['frames_submitted']==s['frames_completed'] and s['events_accepted']==s['events_processed'])
+        # HELLO can become healthy before FAT discovery and the first idle turn.
+        # A navigation event queued during that work measures startup latency,
+        # not the platform's steady-state input path.
+        wait_started=time.monotonic()
+        deadline=wait_started+30
+        stable_since=None
+        while time.monotonic()<deadline:
+            state=_state(session,generation)
+            storage=session.storage_state()
+            quiet=(storage[1] in (6,9) and storage[9]==0 and state['idle_entries']>0 and
+                   state['frames_submitted']==state['frames_completed'])
+            if quiet:
+                if stable_since is None:stable_since=time.monotonic()
+                if time.monotonic()-stable_since>=.5:break
+            else:stable_since=None
+            time.sleep(.02)
+        else:raise TimeoutError('platform startup did not settle before input campaign')
+        record('startup-settled',state=state,storage_phase=storage[1],startup_wait_seconds=round(time.monotonic()-wait_started,6))
         def capture(name):
             info,pixels=session.capture_screen(generation)
             (directory/f'{name}.rgb565').write_bytes(pixels)
