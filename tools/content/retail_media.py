@@ -104,7 +104,7 @@ def _image_string(data, at, end):
     return data[at + 36:at + 36 + length].decode('utf-16-le' if data[at + 28] == 2 else 'utf-8').rstrip('\0')
 
 
-def images(root, *, artwork=False):
+def images(root, *, artwork=False, dbids=None):
     root = Path(root).resolve()
     folder = root / ('iPod_Control/Artwork' if artwork else 'Photos')
     database = folder / ('ArtworkDB' if artwork else 'Photo Database')
@@ -144,7 +144,7 @@ def images(root, *, artwork=False):
                     candidates.append((width * height, path, offset, length, width, height,
                                        horizontal, vertical, image_w, image_h))
             child = next_child
-        if candidates:
+        if candidates and (dbids is None or dbid in dbids):
             for _, path, offset, length, width, height, x, y, iw, ih in sorted(candidates, key=lambda c: c[0], reverse=True):
                 try:
                     info = path.stat()
@@ -185,5 +185,6 @@ def metadata(root):
     rows = tracks(root)
     if not rows:
         return {}
-    covers = {row['dbid']: row['preview'] for row in images(root, artwork=True)}
+    used_dbids = {row['dbid'] for row in rows.values()}
+    covers = {row['dbid']: row['preview'] for row in images(root, artwork=True, dbids=used_dbids)}
     return {path: dict(row, artwork=covers.get(row['dbid']) or cached(row)) for path, row in rows.items()}
