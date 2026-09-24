@@ -72,6 +72,8 @@ def parser():
     music_compile.add_argument('--target', choices=sorted(TARGETS), help='Prepare artwork for this display')
     music_compile.add_argument('--ffprobe',help='Optional executable for compressed-source metadata')
     music_compile.add_argument('--device-root',type=Path,help='Index existing files on this mounted iPod without copying audio')
+    music_compile.add_argument('--include-root',type=Path,action='append',help='Limit an existing-device import to this root (repeatable)')
+    music_compile.add_argument('--cache-path',type=Path,help='Reuse an existing music metadata cache outside the iPod')
     music_compile.add_argument('--verification',choices=('metadata','full'),help='Existing music defaults to fast metadata checks; full reads complete audio files')
     music_compile.add_argument('--refresh-metadata',action='store_true',help='Ignore cached metadata for this import')
     music_check=music.add_parser('inspect')
@@ -310,7 +312,8 @@ def main():
                 emit(publish_music(args.stage,disk_number=args.disk_number,expected_disk_serial=args.disk_serial,
                                    expected_volume_serial=args.volume_serial,expected_drive=args.drive))
             else:emit(compile_music(args.source,args.output,ffprobe=args.ffprobe,device_root=args.device_root,
-                                   verification=args.verification,bypass_cache=args.refresh_metadata,target=args.target) if args.action=='compile' else validate_database(args.database.read_bytes()))
+                                   verification=args.verification,bypass_cache=args.refresh_metadata,target=args.target,
+                                   include_roots=args.include_root,cache_path=args.cache_path) if args.action=='compile' else validate_database(args.database.read_bytes()))
         elif args.command=='video':
             if args.action=='compile':
                 from tools.content.ipvf_encode import encode_ipvf
