@@ -31,12 +31,13 @@ def _video_readiness(inventory, published, identity=None, state=None, verified=N
         return 'Needs update'
     ready = [row for row in published if row['status'] == 'Ready on iPod']
     missing = [row for row in published if row['status'] != 'Ready on iPod']
-    cataloged = {str(Path(row['path']).resolve()).casefold() for row in ready}
+    cataloged = {row['path'].casefold() for row in ready}
     if missing:
         return 'Needs update'
     root = Path(identity['root']).resolve() if identity else None
+    # Scan and library rows already carry absolute, guarded device paths.
     for value in compatible_files:
-        source = Path(value).resolve()
+        source = Path(value)
         if str(source).casefold() in cataloged:
             continue
         if root is None:
