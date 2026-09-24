@@ -658,6 +658,10 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
             raise ValueError('Apple database did not retain the selected songs and videos.')
         digest = _hash(stage_db)
         backup = cache / ('apple-itunesdb-' + _hash(source_db)[:16] + '.bak') if source_db.is_file() else None
+        for path, original in (*files, *videos):
+            current = path.stat()
+            if (current.st_size, current.st_mtime_ns) != (original.st_size, original.st_mtime_ns):
+                raise ValueError(f'Media changed during Apple OS preparation: {path.relative_to(root)}')
         with _exclusive(identity):
             _volume_guard(identity)
             current = media.refresh(identity)
