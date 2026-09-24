@@ -23,6 +23,9 @@ def png(raw,width,height):
 def simulate(root,output,tape=None,system=None,target=None,all_scenes=False):
     root=Path(root).resolve();output=Path(output).resolve();output.mkdir(parents=True,exist_ok=True)
     if all_scenes and tape is not None:raise ValueError('All-scenes capture cannot use an input tape')
+    if system is None and target is not None:
+        target_system=root/'targets'/target/'system.toml'
+        if target_system.is_file():system=target_system
     content=compile_system(root,output/'generated',system,target_override=target)
     scenes=json.loads(Path(content['scenes']).read_text())
     width,height=scenes['width'],scenes['height']
