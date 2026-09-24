@@ -182,5 +182,8 @@ def images(root, *, artwork=False):
 
 def metadata(root):
     from .album_art import cached
+    rows = tracks(root)
+    if not rows:
+        return {}
     covers = {row['dbid']: row['preview'] for row in images(root, artwork=True)}
-    return {path: dict(row, artwork=covers.get(row['dbid']) or cached(row)) for path, row in tracks(root).items()}
+    return {path: dict(row, artwork=covers.get(row['dbid']) or cached(row)) for path, row in rows.items()}
