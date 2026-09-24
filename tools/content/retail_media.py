@@ -57,11 +57,11 @@ def tracks(root):
     if not path.is_file():
         return {}
     info = path.stat()
-    return _tracks(str(root), info.st_size, info.st_mtime_ns)
+    return _tracks(str(root), info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
 @lru_cache(maxsize=4)
-def _tracks(root_name, size, mtime):
+def _tracks(root_name, size, mtime, ctime):
     root = Path(root_name)
     data = _bounded(root / 'iPod_Control/iTunes/iTunesDB', 128 * 1024 * 1024)
     at, end, count = _list(data, b'mhbd', b'mhlt')

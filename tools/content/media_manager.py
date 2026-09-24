@@ -290,10 +290,12 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None):
             if database.is_file():
                 info = database.stat()
                 rows.append(('iTunesDB', info.st_size, info.st_mtime_ns))
-            artwork_folder = root / 'iPod_Control' / 'Artwork'
-            for path, info in _file_records(artwork_folder):
-                rows.append((path.relative_to(root).as_posix(), info.st_size, info.st_mtime_ns))
             if kind == 'Music':
+                # Video readiness is checked from video source/output stamps;
+                # walking every artwork file adds HDD work to each video scan.
+                artwork_folder = root / 'iPod_Control' / 'Artwork'
+                for path, info in _file_records(artwork_folder):
+                    rows.append((path.relative_to(root).as_posix(), info.st_size, info.st_mtime_ns))
                 from .album_art import signature as artwork_signature
                 from .retail_media import tracks
                 rows.append(('album-art', artwork_signature(tracks(root).values())))

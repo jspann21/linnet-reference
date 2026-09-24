@@ -53,7 +53,11 @@ def cached(row):
 
 
 def signature(rows):
-    files = sorted({cached(row) for row in rows} - {''})
+    # One library may contain many tracks per album. Check each cached cover
+    # only once instead of issuing a host filesystem lookup for every track.
+    bases = {_base(row) for row in rows}
+    files = sorted(str(path) for base in bases if base is not None
+                   if (path := base.with_suffix('.png')).is_file())
     stamps = [(name, Path(name).stat().st_size, Path(name).stat().st_mtime_ns) for name in files]
     return hashlib.sha256(json.dumps(stamps).encode()).hexdigest()
 
