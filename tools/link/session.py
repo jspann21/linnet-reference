@@ -585,7 +585,7 @@ class Session:
         reply=self.request(Command.NATIVE_STATUS,timeout=15)
         if reply == struct.pack('<16I', 0x32424e4c, 11, 12, *([0] * 13)):
             return dict(supported=False, phase=11, error=12)
-        if len(reply)!=64 or reply[:4]!=b'LNPK':
+        if len(reply)!=64 or reply[:4]!=b'LNB2':
             raise ProtocolError('invalid native updater status')
         words=struct.unpack('<8I',reply[:32])
         return dict(zip(('magic','phase','error','offset','writes','bytes_read','elapsed_us','request_generation'),words),
