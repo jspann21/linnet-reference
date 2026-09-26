@@ -7,8 +7,8 @@
 #include <string.h>
 
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        fprintf(stderr, "usage: managed_photos staging-mount image-list\n");
+    if (argc != 5) {
+        fprintf(stderr, "usage: managed_photos staging-mount image-list model guid\n");
         return 2;
     }
     Itdb_PhotoDB *db = itdb_photodb_create(argv[1]);
@@ -16,8 +16,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Could not initialize the Apple Photo Database\n");
         return 1;
     }
-    itdb_device_set_sysinfo(db->device, "ModelNumStr", "MB147");
-    itdb_device_set_sysinfo(db->device, "FirewireGuid", "0x000A2700155D9C10");
+    itdb_device_set_sysinfo(db->device, "ModelNumStr", argv[3]);
+    itdb_device_set_sysinfo(db->device, "FirewireGuid", argv[4]);
     FILE *input = fopen(argv[2], "rb");
     if (!input) {
         perror(argv[2]);

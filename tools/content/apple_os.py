@@ -1,4 +1,4 @@
-"""Apple OS folder availability on the validated A1238 volume.
+"""Apple OS folder availability on validated iPod volumes.
 
 Selections live on the computer. Discovery never changes the iPod. The Apple
 database writer runs against a staged mount and installs only a verified DB.
@@ -25,19 +25,23 @@ from .music import _device_media_path
 from .publish import _exclusive, _hash, _plain, _volume_guard
 
 
-APPLE_SERIAL = '000A2700155D9C10'
-APPLE_VOLUME_SERIAL = '5FC88A5C'
-APPLE_TARGET = 'classic6g-n25'
+APPLE_DEVICES = {
+    'classic6g-n25': dict(serial='000A2700155D9C10', volume='5FC88A5C',
+                         sector=4096, model='MB147'),
+    'video5g-m25': dict(serial='000A27001596FB5F', volume='5FC88A5C',
+                       sector=512, model='MA146'),
+}
 ROOTS = ('Music', 'Photos', 'Videos', 'Notes')
 SELECTABLE_ROOTS = ROOTS[:3]
 APPLE_MUSIC_PREFIX = ':iPod_Control:Music:..:..:Music:'
 
 
 def supported(identity):
-    return (identity.get('target_id') == APPLE_TARGET and
-            identity.get('disk_serial') == APPLE_SERIAL and
-            identity.get('volume_serial') == APPLE_VOLUME_SERIAL and
-            identity.get('sector_bytes') == 4096 and
+    device = APPLE_DEVICES.get(identity.get('target_id'))
+    return (device is not None and
+            identity.get('disk_serial') == device['serial'] and
+            identity.get('volume_serial') == device['volume'] and
+            identity.get('sector_bytes') == device['sector'] and
             identity.get('filesystem') == 'FAT32')
 
 
@@ -240,14 +244,16 @@ def inspect(identity, *, records_by_kind=None):
     state = _load(identity)
     selected = [value for value in state.get('folders', [])
                 if isinstance(value, str) and (root / value).is_dir()]
-    # Adopt the existing validated Apple music library on this A1238 once.
+    # Adopt an existing validated Apple music library once.
     adopted = False
+    adopted_tracks = None
     if (not selected and not state.get('configured') and state.get('published') is None
             and (root / 'Music').is_dir()):
         try:
             from .retail_media import available_tracks
-            if any(row.get('path', '').casefold().startswith(str(root / 'Music').casefold())
-                   for row in available_tracks(root).values()):
+            adopted_tracks = set(available_tracks(root))
+            prefix = str(root / 'Music').casefold() + os.sep
+            if any(path.startswith(prefix) for path in adopted_tracks):
                 selected = ['Music']
                 adopted = True
         except (OSError, ValueError):
@@ -257,6 +263,16 @@ def inspect(identity, *, records_by_kind=None):
     db = root / 'iPod_Control/iTunes/iTunesDB'
     source_stamp = _signature(music)
     digest = _hash(db) if db.is_file() else None
+    adopted_ready = False
+    if adopted and adopted_tracks is not None and digest:
+        local_paths = {str(path.resolve()).casefold() for path, _ in music}
+        if (music and all(path.suffix.lower() == '.mp3' and 0 < info.st_size <= 0xffffffff
+                for path, info in music) and local_paths <= adopted_tracks):
+            adopted_ready = True
+            published.update(music_signature=source_stamp, music_source_signature=source_stamp,
+                             database_sha256=digest, music_count=len(music), music_issues=[])
+            state.update(folders=selected, configured=True, published=published)
+            media._save(_state_path(identity), state)
     same_published = (published.get('music_source_signature') == source_stamp and
                       published.get('database_sha256') == digest and
                       isinstance(published.get('music_count'), int))
@@ -287,10 +303,7 @@ def inspect(identity, *, records_by_kind=None):
     elif not selected:
         music_status = 'No music folders selected'
     elif adopted:
-        from .retail_media import available_tracks
-        apple_paths = set(available_tracks(root))
-        local_paths = {str(path.resolve()).casefold() for path, _ in music}
-        music_status = ('Ready' if local_paths <= apple_paths else 'Needs update')
+        music_status = 'Ready' if adopted_ready else 'Needs update'
     elif (published.get('music_signature') == stamp and
           published.get('database_sha256') == digest):
         music_status = 'Ready'
@@ -445,7 +458,10 @@ def _update_photos(identity, state, selected, distribution, cache, progress):
         manifest = stage / 'photos.txt'
         manifest.write_text('\n'.join(lines) + '\n', encoding='utf-8')
         _run_wsl(distribution, [_wsl_path(writer, distribution), _wsl_path(stage, distribution),
-                                _wsl_path(manifest, distribution)], timeout=max(300, len(photos) * 2))
+                                _wsl_path(manifest, distribution),
+                                APPLE_DEVICES[identity['target_id']]['model'],
+                                '0x' + APPLE_DEVICES[identity['target_id']]['serial']],
+                 timeout=max(300, len(photos) * 2))
         prepared = stage / 'Photos/Photo Database'
         if not prepared.is_file() or prepared.stat().st_size < 128:
             raise ValueError('Apple photo writer produced no valid database.')
@@ -645,7 +661,9 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
             for row in manifest:
                 output.write('\t'.join(map(str, row)) + '\n')
         _run_wsl(distribution, [_wsl_path(writer, distribution), _wsl_path(stage, distribution),
-                                _wsl_path(manifest_path, distribution)], timeout=300)
+                                _wsl_path(manifest_path, distribution),
+                                APPLE_DEVICES[identity['target_id']]['model'],
+                                '0x' + APPLE_DEVICES[identity['target_id']]['serial']], timeout=300)
         if not stage_db.is_file() or stage_db.stat().st_size < 128:
             raise ValueError('Apple database writer produced no valid database.')
         from .retail_media import tracks

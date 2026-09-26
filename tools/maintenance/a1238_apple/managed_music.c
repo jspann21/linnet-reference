@@ -32,8 +32,8 @@ static unsigned long long number(const char *value) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        fprintf(stderr, "usage: managed_music staging-mount manifest.tsv\n");
+    if (argc != 5) {
+        fprintf(stderr, "usage: managed_music staging-mount manifest.tsv model guid\n");
         return 2;
     }
     gchar *database = g_build_filename(argv[1], "iPod_Control", "iTunes", "iTunesDB", NULL);
@@ -46,8 +46,8 @@ int main(int argc, char **argv) {
         return 1;
     }
     itdb_set_mountpoint(db, argv[1]);
-    itdb_device_set_sysinfo(db->device, "ModelNumStr", "MB147");
-    itdb_device_set_sysinfo(db->device, "FirewireGuid", "0x000A2700155D9C10");
+    itdb_device_set_sysinfo(db->device, "ModelNumStr", argv[3]);
+    itdb_device_set_sysinfo(db->device, "FirewireGuid", argv[4]);
     Itdb_Playlist *master = itdb_playlist_mpl(db);
     if (!master) {
         master = itdb_playlist_new("iPod", FALSE);
