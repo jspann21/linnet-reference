@@ -16,7 +16,7 @@ def _verified_outputs(disk_serial, volume_serial, partition_offset):
     # only for this exact disk, volume and partition; changed stamps are read.
     path = media._cache_directory(disk_serial, volume_serial) / 'verified-outputs.json'
     try:
-        if path.stat().st_size > 1024 * 1024:
+        if path.stat().st_size > 4 * 1024 * 1024:
             return {}
         saved = json.loads(path.read_text(encoding='utf-8'))
         if (saved.get('partition_offset') != partition_offset or
@@ -38,6 +38,11 @@ def _remember_verified(identity, verified, before):
         return
     path = media.cache_root(identity) / 'verified-outputs.json'
     try:
+        # Keep the newest verified stamps when a large library exceeds the
+        # cache bound. Older outputs will simply be hashed on the next launch.
+        if len(verified) > 4096:
+            for key in list(verified)[:-4096]:
+                del verified[key]
         verified_at = time.time()
         try:
             previous = json.loads(path.read_text(encoding='utf-8'))
