@@ -1044,6 +1044,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     from .retail_media import metadata as retail_metadata
     retail = retail_metadata(device_root) if device_root is not None else {}
     folder_covers: dict[Path, Path | None] = {}
+    file_covers: dict[Path, tuple[tuple[int, int, int, int], int]] = {}
     art_indices: dict[bytes, int] = {}
     embedded_cache: OrderedDict[bytes, int] = OrderedDict()
     embedded_cache_bytes = 0
@@ -1080,8 +1081,19 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         if embedded is not None and embedded in embedded_cache:
             embedded_cache.move_to_end(embedded)
             return embedded_cache[embedded]
-        if cover is not None and cover.stat().st_size > 32 * 1024 * 1024:
-            raise ValueError("cover source exceeds 32 MiB")
+        cover_stamp = None
+        if cover is not None:
+            info = cover.stat()
+            if info.st_size > 32 * 1024 * 1024:
+                raise ValueError("cover source exceeds 32 MiB")
+            cover_stamp = (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino)
+            saved = file_covers.get(cover)
+            # Apple and downloaded covers can serve many tracks or folders.
+            # Reuse their conversion only within this build and this file stamp.
+            if saved is not None and saved[0] == cover_stamp:
+                if sidecar:
+                    art_cache[folder] = saved[1]
+                return saved[1]
         try:
             pixels = _cover_pixels(cover if cover is not None else io.BytesIO(embedded), target)
         except ImportError as exc:
@@ -1091,8 +1103,12 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                 raise
             return NO_INDEX
         digest = hashlib.sha256(pixels).digest()
-        def remember_embedded(index):
+        def remember_cover(index):
             nonlocal embedded_cache_bytes
+            if cover is not None:
+                file_covers[cover] = (cover_stamp, index)
+            if sidecar:
+                art_cache[folder] = index
             if embedded is not None:
                 while embedded_cache and embedded_cache_bytes + len(embedded) > 32 * 1024 * 1024:
                     old, _ = embedded_cache.popitem(last=False)
@@ -1101,9 +1117,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                 embedded_cache_bytes += len(embedded)
 
         if digest in art_indices:
-            if sidecar:
-                art_cache[folder] = art_indices[digest]
-            remember_embedded(art_indices[digest])
+            remember_cover(art_indices[digest])
             return art_indices[digest]
         name = digest[:4].hex().upper() + ".RGB"
         (output / "ART").mkdir(exist_ok=True)
@@ -1118,10 +1132,8 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         side = TARGETS[target]["media_art_side"] if target else 64
         artwork_records.append(struct.pack("<QIHHIIII", int.from_bytes(digest[:8], "little"),
             string("/.LINNET/ART/" + name), side, side, 1, len(pixels), zlib.crc32(pixels), 0))
-        if sidecar:
-            art_cache[folder] = index
         art_indices[digest] = index
-        remember_embedded(index)
+        remember_cover(index)
         return index
 
     alias_cache: dict[Path, str] = {}
