@@ -20,9 +20,7 @@ static uint32_t cop_error;
 static void barrier(void){__asm__ volatile("":::"memory");}
 #include "hal/pp502x/cop_control.inc"
 static uint16_t draw[LINNET_DISPLAY_PIXELS] __attribute__((aligned(32)));
-static uint16_t scan[LINNET_DISPLAY_PIXELS] __attribute__((aligned(32)));
-static const uint16_t *presented=scan;
-extern void ln_memory_copy(void *,const void *,uint32_t);
+static const uint16_t *presented=draw;
 static bool initialized,dirty,direct,queued;
 static uint32_t queued_started,queue_high_water=1u;
 static uint32_t phase,cursor,started,wait_started,poll_at,error,submitted,completed,failures,resets,generation,pairs;
@@ -63,13 +61,10 @@ bool ln_display_present(void){
     if(ln_m25_coprocessor_owned())return false;
 #endif
     if(!initialized||!dirty||!ln_display_can_render())return false;
-#if defined(LINNET_IMAGE_OS) && defined(LINNET_COVERFLOW)
-    /* Once PIO finishes, BCM owns its own pixels. CPU rendering can overlap
-     * that scanout, with at most one queued frame owning the draw buffer. */
-    if(ln_coverflow_active()||ln_games_playing())presented=draw;
-    else
-#endif
-    {ln_memory_copy(scan,draw,sizeof scan);presented=scan;}
+    /* The draw buffer remains untouched while its pixels are transferred.
+     * Queued scenes may draw again only after PIO finishes and BCM owns the
+     * submitted frame. No second full-frame copy is needed. */
+    presented=draw;
     direct=false;dirty=false;++submitted;
     if(phase==3u){queued=true;queued_started=ln_time_us();queue_high_water=2u;return true;}
     cursor=0;phase=1;started=wait_started=poll_at=ln_time_us();return true;
