@@ -23,6 +23,7 @@ uint32_t ln_display_settings_revision(void);
 /* UINT32_MAX keeps the compiled default; persistence stores the stable theme ID. */
 uint32_t ln_display_theme_index(void);
 bool ln_display_theme_set(uint32_t index);
+void ln_display_game_best_set(uint32_t index,uint16_t score);
 const char *ln_display_theme_status(void);
 bool ln_display_settings_pending(void);
 bool ln_display_settings_adjust(int32_t direction);

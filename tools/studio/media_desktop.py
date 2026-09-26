@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox,
     QTableView, QTextEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
     QStyleOptionButton, QSizePolicy)
 
-from tools.content import apple_os, media_manager as media, media_library, media_status, media_trash
+from tools.content import apple_os, games, media_manager as media, media_library, media_status, media_trash
 from tools.content.media_manager import format_size as size
 from tools.content.music import COVER_NAMES, EXTENSIONS as MUSIC_EXTENSIONS
 from tools.studio import installer, screen_settings
@@ -483,7 +483,7 @@ class MediaWindow(QMainWindow):
         side.addWidget(label('LIBRARY', 'eyebrow')); side.addSpacing(7)
         self.navigation = {}
         for name, glyph in [('Music', 'music'), ('Photos', 'photos'), ('Videos', 'videos'), ('Notes', 'notes'),
-                            ('Preparation', 'prepare'), ('Screens', 'settings'), ('iPod setup', 'setup'), ('Trash', 'trash'), ('Settings', 'settings')]:
+                            ('Preparation', 'prepare'), ('Games', 'setup'), ('Screens', 'settings'), ('iPod setup', 'setup'), ('Trash', 'trash'), ('Settings', 'settings')]:
             if name == 'Preparation':
                 side.addSpacing(18); side.addWidget(label('DEVICE', 'eyebrow')); side.addSpacing(7)
             item = button(name, lambda _=False, n=name: self.navigate(n), 'nav')
@@ -507,6 +507,7 @@ class MediaWindow(QMainWindow):
         self.preparation = self.build_preparation(); self.stack.addWidget(self.preparation)
         self.setup = self.build_setup(); self.stack.addWidget(self.setup)
         self.screens = self.build_screens(); self.stack.addWidget(self.screens)
+        self.games_page = self.build_games(); self.stack.addWidget(self.games_page)
         self.preferences = self.build_settings(); self.stack.addWidget(self.preferences)
         activity = QFrame(); activity.setObjectName('activity'); foot = box(activity, margins=(28, 10, 28, 12), spacing=7)
         self.progress = QProgressBar(); self.progress.setTextVisible(False); self.progress.hide(); foot.addWidget(self.progress)
@@ -702,6 +703,43 @@ class MediaWindow(QMainWindow):
         self.render_screen_items()
         return page
 
+    def build_games(self):
+        page, layout = self.scroll_page()
+        self.heading(layout, 'Games', 'Choose the games that appear on your iPod Video.')
+        self.games_loaded_for = None
+        self.game_checks = []
+        for index, (title, description) in enumerate(games.GAMES):
+            card = QFrame(); card.setObjectName('card')
+            row = box(card, horizontal=True, margins=(20, 18, 20, 18), spacing=15)
+            check = CheckBox(title); check.setChecked(True); check.setMinimumWidth(145)
+            check.toggled.connect(self.games_changed)
+            self.game_checks.append(check); row.addWidget(check)
+            row.addWidget(label(description, 'muted', True), 1)
+            layout.addWidget(card)
+        self.games_status = label('Connect an iPod Video to check installed games.', 'muted', True)
+        layout.addWidget(self.games_status)
+        self.games_save = button('Update games on iPod', self.save_games, 'primary')
+        layout.addWidget(self.games_save, 0, Qt.AlignLeft)
+        layout.addStretch()
+        return page
+
+    def games_changed(self, *_):
+        if self.games_loaded_for:
+            self.games_status.setText('Selection changed. Update games on iPod, then eject safely.')
+
+    def load_games(self):
+        if (self.identity and self.identity['target_id'] == 'video5g-m25' and not self.busy
+                and self.games_loaded_for != self.identity['root']):
+            identity = self.identity
+            self.work('games', lambda: games.read(identity), 'Reading installed games…')
+
+    def save_games(self):
+        if not self.identity or self.busy or self.identity['target_id'] != 'video5g-m25':
+            return
+        selected = {index for index, check in enumerate(self.game_checks) if check.isChecked()}
+        identity = self.identity
+        self.work('save_games', lambda: games.save(identity, selected), 'Updating games on iPod…')
+
     def render_screen_items(self, *_):
         name = self.screen_picker.currentText()
         labels = screen_settings.SCREENS[name]
@@ -712,7 +750,8 @@ class MediaWindow(QMainWindow):
         order = [i for i in selected if i in available] + [i for i in available if i not in selected]
         self.screen_items.blockSignals(True); self.screen_items.clear()
         for i in order:
-            item = QListWidgetItem(labels[i]); item.setData(Qt.UserRole, i)
+            shown = 'Games' if name == 'Home' and i == 7 and self.identity and self.identity['target_id'] == 'video5g-m25' else labels[i]
+            item = QListWidgetItem(shown); item.setData(Qt.UserRole, i)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled)
             item.setCheckState(Qt.Checked if i in selected else Qt.Unchecked)
             if i in screen_settings.REQUIRED.get(name, set()):
@@ -822,6 +861,8 @@ class MediaWindow(QMainWindow):
             self.stack.setCurrentWidget(self.preparation)
         elif page == 'Screens':
             self.stack.setCurrentWidget(self.screens); self.load_screens()
+        elif page == 'Games':
+            self.stack.setCurrentWidget(self.games_page); self.load_games()
         elif page == 'iPod setup':
             self.stack.setCurrentWidget(self.setup)
             if self.identity and not self.busy and self.review is None:
@@ -1154,6 +1195,15 @@ class MediaWindow(QMainWindow):
             self.screen_status.setText('Loaded from iPod. Changes apply after saving and restarting Linnet.'); self.update_controls(); return
         if tag == 'save_screens':
             self.screen_status.setText('Saved to iPod. Eject safely to apply on startup.'); return
+        if tag == 'games':
+            for index, check in enumerate(self.game_checks):
+                check.blockSignals(True); check.setChecked(index in result); check.blockSignals(False)
+            self.games_loaded_for = self.identity['root']
+            self.games_status.setText('Loaded from iPod. Uncheck a game to remove it from the Games menu.')
+            self.update_controls(); return
+        if tag == 'save_games':
+            self.games_status.setText('Games updated. Eject safely and restart Linnet to apply.')
+            self.update_controls(); return
         if tag == 'playlists':
             self.show_progress('Playlists loaded.'); self.edit_playlists(result); return
         if tag == 'save_playlists':
@@ -1167,7 +1217,7 @@ class MediaWindow(QMainWindow):
         if tag == 'devices':
             if not result:
                 self.covers.invalidate()
-                self.screen_loaded_for = None
+                self.screen_loaded_for = None; self.games_loaded_for = None
                 self.identity = None; self.rows = []; self.inventory = None; self.review = None
                 self.apple_info = None
                 self.trash_rows = []; self.readiness = {}; self.group = None; self.video_selection.clear()
@@ -1189,7 +1239,7 @@ class MediaWindow(QMainWindow):
             if self.identity and any(self.identity.get(key) != identity.get(key)
                                      for key in ('disk_serial', 'volume_serial', 'root')):
                 self.covers.invalidate(); self.video_selection.clear(); self.group = None
-                self.screen_loaded_for = None
+                self.screen_loaded_for = None; self.games_loaded_for = None
             self.identity = identity
             self.refresh()
         elif tag == 'scan':
@@ -1216,6 +1266,8 @@ class MediaWindow(QMainWindow):
             self.show_progress('Ready. Eject safely when you’re finished.')
             if self.page == 'Screens':
                 self.load_screens()
+            if self.page == 'Games':
+                self.load_games()
             if self.page == 'iPod setup':
                 self.work('setup', lambda: installer.assess(self.identity), 'Checking installed software…')
             elif self.page == 'Trash':
@@ -1239,7 +1291,7 @@ class MediaWindow(QMainWindow):
             self.refresh()
         elif tag == 'eject':
             self.covers.invalidate()
-            self.screen_loaded_for = None
+            self.screen_loaded_for = None; self.games_loaded_for = None
             self.identity = self.inventory = self.review = None; self.rows = []; self.trash_rows = []
             self.apple_info = None
             self.readiness = {}; self.group = None; self.video_selection.clear()
@@ -1292,6 +1344,12 @@ class MediaWindow(QMainWindow):
 
     def update_controls(self):
         ready = self.identity is not None and not self.busy
+        games_ready = ready and self.identity['target_id'] == 'video5g-m25'
+        self.games_save.setEnabled(games_ready and self.games_loaded_for == self.identity['root'])
+        for check in self.game_checks:
+            check.setEnabled(games_ready and self.games_loaded_for == self.identity['root'])
+        if ready and not games_ready:
+            self.games_status.setText('Games are currently available on the iPod Video A1136.')
         supported = media.supported_kinds(self.identity) if ready else ()
         self.screens.setEnabled(not self.busy)
         self.screen_save.setEnabled(ready and all(self.screen_state.values()))

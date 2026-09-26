@@ -11,6 +11,7 @@
 #include "services/video/video.h"
 #include "services/photos/photos.h"
 #include "services/music/coverflow.h"
+#include "ui/runtime/ui.h"
 #endif
 #define REG(a) (*(volatile uint32_t *)(uintptr_t)(a))
 #define MB(o) REG(LINNET_DISPLAY_MAILBOX+(o))
@@ -105,7 +106,7 @@ bool ln_display_service(uint32_t max_pairs){
     }
     if(!max_pairs)return true;if(max_pairs>LINNET_DISPLAY_SERVICE_PAIRS)max_pairs=LINNET_DISPLAY_SERVICE_PAIRS;
 #if defined(LINNET_IMAGE_OS) && defined(LINNET_COVERFLOW)
-    if(max_pairs==LINNET_DISPLAY_SERVICE_PAIRS&&ln_coverflow_active()){
+    if(max_pairs==LINNET_DISPLAY_SERVICE_PAIRS&&(ln_coverflow_active()||ln_games_playing())){
         struct ln_audio_status audio;ln_audio_snapshot(&audio);
         /* A full frame takes about 13 ms with IRQs enabled. Reserve at least
          * half the PCM ring before avoiding decoder gaps between LCD chunks. */

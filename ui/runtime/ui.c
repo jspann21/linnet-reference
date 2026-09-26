@@ -15,6 +15,19 @@ __attribute__((weak)) bool ln_ui_clock_input(struct ln_ui_state*s,uint32_t kind,
 __attribute__((weak)) void ln_ui_clock_cancel(void){}
 __attribute__((weak)) const char *ln_ui_clock_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){(void)n;(void)item;return fallback;}
 __attribute__((weak)) bool ln_ui_dynamic_navigation(const struct ln_ui_node*n,uint32_t item){(void)n;(void)item;return false;}
+__attribute__((weak)) uint32_t ln_games_count(void){return 0;}
+__attribute__((weak)) const char *ln_games_label(uint32_t row){(void)row;return 0;}
+__attribute__((weak)) const char *ln_games_description(uint32_t row){(void)row;return "";}
+__attribute__((weak)) void ln_games_start(uint32_t row){(void)row;}
+__attribute__((weak)) int ln_games_input(uint32_t kind,int32_t value){(void)kind;(void)value;return 0;}
+__attribute__((weak)) bool ln_games_tick(uint32_t now){(void)now;return false;}
+__attribute__((weak)) uint32_t ln_games_hud_revision(void){return 0;}
+__attribute__((weak)) const char *ln_games_text(const char *key){return key;}
+__attribute__((weak)) void ln_games_configure(uint8_t mask){(void)mask;}
+__attribute__((weak)) void ln_games_best_set(uint32_t index,uint16_t value){(void)index;(void)value;}
+__attribute__((weak)) bool ln_games_playing(void){return false;}
+__attribute__((weak)) void ln_games_audio_step(void){}
+__attribute__((weak)) void ln_games_audio_stop(void){}
 static void theme_sync(void);
 __attribute__((weak)) uint32_t ln_ui_theme_preference(void){return session_theme;}
 __attribute__((weak)) void ln_ui_theme_changed(uint32_t index){session_theme=index;}
@@ -113,6 +126,7 @@ static uint32_t menu_source(const struct ln_ui_node *n,uint32_t row){
             for(uint32_t j=0;j<n->item_count;++j)if(n->targets[j]==action){if(!row)return j;--row;break;}
     }
     for(uint32_t i=0;i<menu_counts[group];++i){const char *id=menu_targets[group][menu_order[group][i]];
+        if(group==LN_MENU_HOME&&menu_order[group][i]==7u&&ln_games_count())id="linnet.system.games";
         for(uint32_t j=0;j<n->item_count;++j){uint32_t target=n->targets[j];const char *actual=target==LINNET_UI_ACTION_SYNC?"@sync":target<ln_ui_scene_count?ln_ui_scenes[target].id:"";
             if(same(id,actual)){if(!row)return j;--row;break;}}}
     return UINT32_MAX;
@@ -478,7 +492,11 @@ static uint32_t fraction(uint32_t value,uint32_t scale,uint32_t denominator){
     for(uint32_t i=0;i<scale;++i){if(remainder>=denominator-value){remainder-=denominator-value;++result;}else remainder+=value;}return result;
 }
 static void number(char out[11],uint32_t n){char rev[10];uint32_t len=0;do{rev[len++]=(char)('0'+n%10u);n/=10u;}while(n&&len<10u);for(uint32_t i=0;i<len;++i)out[i]=rev[len-i-1u];out[len]=0;}
-static uint32_t total(const struct ln_ui_node*n){return theme_choices(n)?ln_ui_theme_count:ln_ui_dynamic_count(n,menu_total(n,n->count?n->count:n->item_count));}
+static bool games_menu(const struct ln_ui_node*n){
+    if(!n||n->kind!=LN_UI_MENU||!same(n->text,"Game choices"))return false;
+    return true;
+}
+static uint32_t total(const struct ln_ui_node*n){return games_menu(n)?ln_games_count():theme_choices(n)?ln_ui_theme_count:ln_ui_dynamic_count(n,menu_total(n,n->count?n->count:n->item_count));}
 static bool baked_geometry(const struct ln_ui_node*n){
     uint32_t f=n->flags;
     return n->kind>=LN_UI_VIRTUAL_LIST&&n->kind<=LN_UI_GRID&&
@@ -744,7 +762,11 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
     if(n->flags&2u)return;
     struct rect previous=p->clip;p->clip=intersect(previous,bounds(n));if(!p->clip.w||!p->clip.h){p->clip=previous;return;}
     uint16_t fg=ln_ui_color(n->fg),bg=ln_ui_color(n->bg);int32_t row_h=(int32_t)row_height(n);
-    const char *node_text=ln_ui_clock_text(n,UINT32_MAX,ln_display_settings_text(n,UINT32_MAX,ln_ui_dynamic_text(n,UINT32_MAX,n->text)));
+    const char *node_text=same(ln_ui_scenes[s->scene].id,"linnet.system.games")&&same(n->text,"Game description")?
+        ln_games_description(s->selected):same(ln_ui_scenes[s->scene].id,"linnet.system.game-play")&&n->text&&
+        (same(n->text,"Game title")||same(n->text,"Game score")||same(n->text,"Game hint")||
+         same(n->text,"Game overlay")||same(n->text,"Game detail"))?
+        ln_games_text(n->text):ln_ui_clock_text(n,UINT32_MAX,ln_display_settings_text(n,UINT32_MAX,ln_ui_dynamic_text(n,UINT32_MAX,n->text)));
     struct ln_ui_node metadata;
     if(scrolling_field(n)){
         uint32_t revision;const struct ln_ui_asset*art=ln_ui_now_playing_art(&revision);
@@ -816,7 +838,7 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
 
             if(chosen&&(ln_ui_themes[active_theme].flags&LN_UI_THEME_APPLE_PHOTO))photo_stripes(p,r,photo_selection,22);
             struct rect saved=p->clip;p->clip=intersect(saved,r);char num[11],fallback_label[144];const char*label=0;
-            uint32_t source=menu_source(n,i);if(n->items&&source<n->item_count)label=n->items[source];label=theme_choices(n)?ln_ui_themes[i].name:ln_ui_clock_text(n,i,ln_display_settings_text(n,i,ln_ui_dynamic_text(n,i,label)));if(same(n->text,"Clock settings")&&i==1u)label=ln_ui_clock_12()?"Time format: 12-hour":"Time format: 24-hour";if(!label){number(num,i+1u);label=num;
+            uint32_t source=menu_source(n,i);if(n->items&&source<n->item_count)label=n->items[source];label=games_menu(n)?ln_games_label(i):theme_choices(n)?ln_ui_themes[i].name:ln_ui_clock_text(n,i,ln_display_settings_text(n,i,ln_ui_dynamic_text(n,i,label)));if(same(n->text,"Clock settings")&&i==1u)label=ln_ui_clock_12()?"Time format: 12-hour":"Time format: 24-hour";if(!label){number(num,i+1u);label=num;
                 if(node_text&&n->kind!=LN_UI_GRID){uint32_t len=0;while(len<128u&&node_text[len]){fallback_label[len]=node_text[len];++len;}
                     fallback_label[len++]=' ';for(uint32_t digit=0;num[digit]&&len<143u;++digit)fallback_label[len++]=num[digit];fallback_label[len]=0;label=fallback_label;}
             }
@@ -981,12 +1003,20 @@ void ln_ui_refresh_content(struct ln_ui_state*s){
     if(s->scene<32u)s->selections[s->scene]=s->selected;s->dirty|=16u;
 }
 bool ln_ui_show(struct ln_ui_state*s,const char*id){if(!s||!id)return false;for(uint32_t i=0;i<ln_ui_scene_count&&i<32u;++i){const char*other=ln_ui_scenes[i].id;uint32_t j=0;if(!other)continue;while(j<128u&&id[j]&&id[j]==other[j])++j;if(j<128u&&!id[j]&&!other[j])return change_scene(s,i);}return false;}
-void ln_ui_init(struct ln_ui_state*s){if(!s)return;theme_sync();*s=(struct ln_ui_state){.dirty=1u,.action=UINT32_MAX,.scene_epoch=1u};
+void ln_ui_init(struct ln_ui_state*s){if(!s)return;theme_sync();if(ln_games_count()&&classic_stock_order(LN_MENU_HOME))menu_order[LN_MENU_HOME][menu_counts[LN_MENU_HOME]++]=7u;*s=(struct ln_ui_state){.dirty=1u,.action=UINT32_MAX,.scene_epoch=1u};
     for(uint32_t i=0;i<ln_ui_scene_count&&i<32u;++i){const struct ln_ui_scene*c=&ln_ui_scenes[i];if(c->focus_node<c->count){const struct ln_ui_node*n=&c->nodes[c->focus_node];uint32_t count=total(n);s->selections[i]=count?(n->index<count?n->index:count-1u):0;}}s->selected=s->selections[0];
 }
 bool ln_ui_input(struct ln_ui_state*s,uint32_t kind,int32_t value){if(!s)return false;theme_sync();
     if(kind==3u||kind==4u){bool v=value!=0;bool *old=kind==3u?&s->hold:&s->headphones;if(*old==v)return false;*old=v;s->dirty|=4u;return true;}
     bool clock_edit=same(ln_ui_scenes[s->scene].id,"linnet.system.clock-edit");
+    if(!s->hold&&same(ln_ui_scenes[s->scene].id,"linnet.system.game-play")&&(kind==1u||kind==2u)){
+        int result=ln_games_input(kind,value);if(kind==2u)s->buttons=(uint32_t)value;
+        if(result==2){(void)ln_ui_show(s,"linnet.system.games");return true;}
+        if(result){s->dirty|=8u;if(kind==2u)ln_ui_refresh(s);return true;}
+    }
+    if(!s->hold&&kind==2u&&same(ln_ui_scenes[s->scene].id,"linnet.system.games")&&((uint32_t)value&~s->buttons&16u)&&ln_games_count()){
+        ln_games_start(s->selected);s->buttons=(uint32_t)value;return ln_ui_show(s,"linnet.system.game-play");
+    }
     if(clock_edit&&(kind==1u||kind==2u)){
         uint32_t pressed=kind==2u?(uint32_t)value&~s->buttons:0;
         if(ln_ui_clock_input(s,kind,value)){s->dirty|=1u;return true;}

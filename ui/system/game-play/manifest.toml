@@ -1,0 +1,7 @@
+[app]
+id = "linnet.system.game-play"
+title = "Game"
+entry = "screen.tsx"
+capabilities = ["ui", "canvas"]
+[canvas]
+draw = { source = "../../../targets/video5g-m25/games.c", symbol = "ln_games_draw" }

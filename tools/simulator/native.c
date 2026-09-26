@@ -98,7 +98,7 @@ int main(int argc,char **argv){
     if(argc!=2&&(argc!=3||strcmp(argv[2],"--all-scenes")))return 2;
     struct ln_ui_state state;ln_ui_init(&state);ln_ui_render(&state,pixels,damage);
     if(!snapshot(&state,argv[1],0))return 3;
-    uint32_t kind,repeat,capture,index=0,total=0;int32_t value;
+    uint32_t kind,repeat,capture,index=0,total=0,simulated_us=0;int32_t value;
     while(scanf("%u %d %u %u",&kind,&value,&repeat,&capture)==4){
         if(kind>12u||!repeat||repeat>100000u||total>100000u-repeat||capture>1u)return 4;
         for(uint32_t i=0;i<repeat;++i){if(kind<=4u&&kind)ln_ui_input(&state,kind,value);
@@ -116,6 +116,7 @@ int main(int argc,char **argv){
                 sample_modes=action==LINNET_UI_ACTION_SHUFFLE?sample_modes^1u:(sample_modes&1u)|((((sample_modes>>1)+1u)%3u)<<1);
                 ln_ui_refresh(&state);
             }
+            simulated_us+=33333u;if(ln_games_tick(simulated_us))ln_ui_refresh(&state);
             clock_step(&state);ln_ui_render(&state,pixels,damage);save_presented=ln_clock_editor_pending();}
         total+=repeat;
         if(capture){if(++index>512u||!snapshot(&state,argv[1],index))return 5;}

@@ -11,11 +11,13 @@ from tools.studio.update_history import _boot_snapshot, _read_record
 def _theme_record(path):
     data, generation, payload = _read_record(path)
     if payload:
-        if (not 9 <= len(payload) <= 89
-                or struct.unpack_from('<4sI', payload) != (b'THMS', 0)
-                or payload[-1] != 0
-                or (payload[8:-1] and not re.fullmatch(
-                    rb'[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+', payload[8:-1]))):
+        header = struct.unpack_from('<4sI', payload) if len(payload) >= 8 else None
+        suffix = 1 if header == (b'THMS', 0) else 5 if header == (b'THMS', 1) else 0
+        theme_id = payload[8:-suffix] if suffix else b''
+        if (not suffix or not 8 + suffix <= len(payload) <= 96
+                or payload[-suffix] != 0
+                or (theme_id and not re.fullmatch(
+                    rb'[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+', theme_id))):
             raise ValueError('invalid theme selection payload: ' + path.name)
     return data, generation
 

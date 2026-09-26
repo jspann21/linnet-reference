@@ -12,6 +12,7 @@ not source defaults.
 - `device.c`: board pin wiring, disk power, charging and backlight steps.
 - `hardware.h`: ROM Disk Mode marker and bounded compatibility policies.
 - `lcd.c` / `display.c`: BCM mailbox transfer and incremental scanout.
+- `games.c`: native Comet Run and Pulse Path gameplay, drawing and sound cues.
 - `screens/`: complete native 320 × 240 screen set.
 - `ui/profiles/color320/themes/`: native editions of Linnet (default), Midnight, Graphite, Aurora,
   Sunset, Blueprint, Album Colors, Minimal Dark and Minimal Light.
@@ -31,6 +32,20 @@ Blueprint its bottom status bar and two-column menus, and Minimal its battery
 line. The target allowlist replaces the provisional Video palettes with these
 nine themes. iPod Photo remains exclusive to `photo4g-p98`; an iPod-style M25
 theme is not included.
+
+## Games
+
+Open **Games** from Home to play Comet Run or Pulse Path. Use the wheel to steer
+or choose a pad, Select to activate a shield or tap a pad, Play to pause, and
+Menu to leave. Comet Run awards points for dodged meteors. Pulse Path awards
+points for repeating each growing light pattern. Both games have three lives,
+retry from the result screen, and save their best scores in the optional theme
+state records created by a current Linnet installation.
+
+In Linnet Media Manager, open **Games** while this iPod is in Disk Mode. Choose
+the games to show, save, then eject safely. The selection is read from
+`.LINNET/GAMES.BIN` at the next Linnet startup. An empty selection removes Games
+from Home until a game is selected again.
 
 ## Hardware evidence (2026-09-19)
 
