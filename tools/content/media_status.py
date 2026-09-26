@@ -11,26 +11,44 @@ from . import media_library
 
 
 @lru_cache(maxsize=4)
-def _verified_outputs(disk_serial, volume_serial, partition_offset):
+def _verification_cache(disk_serial, volume_serial, partition_offset, cache_disk_serial):
     # A refresh still stats each file. Reuse a recent hash across app restarts
     # only for this exact disk, volume and partition; changed stamps are read.
-    path = media._cache_directory(disk_serial, volume_serial) / 'verified-outputs.json'
+    # Native Disk Mode can reuse a verified Apple cache directory. Keep the
+    # live disk identity in the memory key while reading the same file we save.
+    path = media._cache_directory(cache_disk_serial or disk_serial, volume_serial) / 'verified-outputs.json'
+    cache = dict(verified_at=time.time(), files={})
     try:
         if path.stat().st_size > 4 * 1024 * 1024:
-            return {}
+            return cache
         saved = json.loads(path.read_text(encoding='utf-8'))
+        verified_at = saved.get('verified_at')
         if (saved.get('partition_offset') != partition_offset or
-                not 0 <= time.time() - saved.get('verified_at', 0) <= 3600):
-            return {}
+                type(verified_at) not in (int, float) or
+                not 0 <= cache['verified_at'] - verified_at <= 3600):
+            return cache
         rows = saved.get('files', [])
         if not isinstance(rows, list) or len(rows) > 4096:
-            return {}
-        return {(row[0], row[1]): tuple(row[2:]) for row in rows
+            return cache
+        cache['files'] = {(row[0], row[1]): tuple(row[2:]) for row in rows
                 if (isinstance(row, list) and len(row) == 6 and
                     isinstance(row[0], str) and isinstance(row[1], str) and
                     all(type(value) is int for value in row[2:]))}
+        cache['verified_at'] = verified_at
     except (OSError, ValueError, TypeError, AttributeError):
-        return {}
+        pass
+    return cache
+
+
+def _verified_outputs(disk_serial, volume_serial, partition_offset, *, cache_disk_serial=None):
+    cache = _verification_cache(disk_serial, volume_serial, partition_offset, cache_disk_serial)
+    now = time.time()
+    # Expire memory entries too, including after a clock rollback. Preserving
+    # the loaded timestamp prevents refreshes from extending persisted hashes.
+    if not 0 <= now - cache['verified_at'] <= 3600:
+        cache['files'].clear()
+        cache['verified_at'] = now
+    return cache['files']
 
 
 def _remember_verified(identity, verified, before):
@@ -120,7 +138,8 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     identity = boot_review['identity']
     root = Path(identity['root'])
     verified = _verified_outputs(identity['disk_serial'], identity['volume_serial'],
-                                 identity['partition_offset'])
+                                 identity['partition_offset'],
+                                 cache_disk_serial=identity.get('media_cache_disk_serial'))
     if len(verified) > 4096:
         verified.clear()
     verified_before = verified.copy()
