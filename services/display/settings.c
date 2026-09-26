@@ -12,7 +12,7 @@ static char shutdown_label[2][32];
 static uint32_t choice=4,revision,record_revision,battery_capacity=1200;
 static uint32_t theme_index=UINT32_MAX,theme_revision;
 static bool theme_loaded,theme_dirty,theme_available;
-static uint16_t game_best[2];
+static uint16_t game_best[3];
 extern void ln_games_best_set(uint32_t index,uint16_t value);
 static bool menus_loaded;
 static uint32_t menus_phase;
@@ -34,7 +34,7 @@ static bool loaded,dirty,clock_12;
 static uint8_t photo_resume[16];
 static uint32_t video_resume[2];
 static uint8_t video_options;
-void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loaded=false;games_phase=0;game_best[0]=game_best[1]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;}
+void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loaded=false;games_phase=0;game_best[0]=game_best[1]=game_best[2]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;}
 bool ln_display_clock_12(void){return clock_12;}
 void ln_display_clock_toggle(void){clock_12=!clock_12;dirty=true;++revision;++record_revision;}
 uint32_t ln_display_backlight_timeout_us(void){return seconds[choice]*1000000u;}
@@ -152,7 +152,7 @@ void ln_display_settings_video_set(const uint32_t in[2]){
     video_resume[0]=in[0];video_resume[1]=in[1];dirty=true;++record_revision;
 }
 void ln_display_game_best_set(uint32_t index,uint16_t score){
-    if(index>=2u||score<=game_best[index])return;
+    if(index>=3u||score<=game_best[index])return;
     game_best[index]=score;theme_dirty=true;++theme_revision;++revision;
 }
 bool ln_display_settings_video_options_get(uint8_t *out){if(!loaded||!out)return false;*out=video_options;return true;}
@@ -199,7 +199,7 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
         uint32_t saved=UINT32_MAX;
         if(theme_available&&length){
             uint32_t version=length>=8u?ln_read_le32(payload+4):UINT32_MAX;
-            uint32_t suffix=version==0u?1u:version==1u?5u:0u;
+            uint32_t suffix=version==0u?1u:version==1u?5u:version==2u?7u:0u;
             uint32_t id_length=length>=8u+suffix?length-8u-suffix:0u;
             if(length<9u||length>sizeof payload||(version==0u&&length>89u)||!suffix||length<8u+suffix||
                ln_read_le32(payload)!=0x534d4854u||payload[8u+id_length]||
@@ -211,10 +211,13 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
                     if(at==id_length&&!id[at]){saved=i;break;}
                 }
             }
-            if(theme_available&&version==1u){
-                game_best[0]=ln_read_le16(payload+length-4u);
-                game_best[1]=ln_read_le16(payload+length-2u);
+            if(theme_available&&(version==1u||version==2u)){
+                uint32_t scores=version==2u?length-6u:length-4u;
+                game_best[0]=ln_read_le16(payload+scores);
+                game_best[1]=ln_read_le16(payload+scores+2u);
+                if(version==2u)game_best[2]=ln_read_le16(payload+scores+4u);
                 ln_games_best_set(0u,game_best[0]);ln_games_best_set(1u,game_best[1]);
+                ln_games_best_set(2u,game_best[2]);
             }
         }
         if(!theme_dirty)theme_index=saved;
@@ -238,14 +241,15 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
     if(id[count]){theme_available=false;theme_dirty=false;++revision;return;}
     ln_write_le32(payload,0x534d4854u);
 #if defined(LINNET_TARGET_VIDEO5G_M25)
-    ln_write_le32(payload+4,1u);
+    ln_write_le32(payload+4,2u);
 #else
     ln_write_le32(payload+4,0u);
 #endif
     for(uint32_t i=0;i<count;++i)payload[8+i]=(uint8_t)id[i];payload[8+count]=0;
 #if defined(LINNET_TARGET_VIDEO5G_M25)
     ln_write_le16(payload+9u+count,game_best[0]);ln_write_le16(payload+11u+count,game_best[1]);
-    length=13u+count;
+    ln_write_le16(payload+13u+count,game_best[2]);
+    length=15u+count;
 #else
     length=9u+count;
 #endif
@@ -272,7 +276,7 @@ static void games_step(void){
     if(games_phase==2){result=ln_storage_media_read(&games_file,0,games_data,sizeof games_data,generation);if(!result)return;if(result<0){games_loaded=true;return;}games_phase=3;return;}
     result=ln_storage_media_poll_deferred(generation,0,&transferred);if(!result)return;
     if(result>0&&transferred==sizeof games_data&&ln_read_le32(games_data)==0x454d4147u&&
-       games_data[4]==1u&&!(games_data[5]&~3u)&&!games_data[6]&&!games_data[7]&&
+       games_data[4]==1u&&!(games_data[5]&~7u)&&!games_data[6]&&!games_data[7]&&
        ln_read_le32(games_data+8)==ln_crc32(games_data,8u))ln_games_configure(games_data[5]);
     games_loaded=true;++revision;
 }

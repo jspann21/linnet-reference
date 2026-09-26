@@ -12,7 +12,7 @@ not source defaults.
 - `device.c`: board pin wiring, disk power, charging and backlight steps.
 - `hardware.h`: ROM Disk Mode marker and bounded compatibility policies.
 - `lcd.c` / `display.c`: BCM mailbox transfer and incremental scanout.
-- `games.c`: native Comet Run and Pulse Path gameplay, drawing and sound cues.
+- `games.c`: native Comet Run, Pulse Path and Solitaire gameplay, drawing and sound cues.
 - `screens/`: complete native 320 × 240 screen set.
 - `ui/profiles/color320/themes/`: native editions of Linnet (default), Midnight, Graphite, Aurora,
   Sunset, Blueprint, Album Colors, Minimal Dark and Minimal Light.
@@ -35,13 +35,28 @@ theme is not included.
 
 ## Games
 
-Open **Games** from Home to play Comet Run or Pulse Path. Use the wheel to steer
-or choose a pad, Select to activate a shield or tap a pad, Play to pause, and
+Open **Games** from Home to play Comet Run, Pulse Path or Solitaire. In Comet
+Run and Pulse Path, use the wheel to steer or choose a pad, Select to activate a shield or tap a pad, Play to pause, and
 Menu to leave. Comet Run awards points for dodged meteors. Pulse Path awards
 points for repeating each growing light pattern. A wrong pad costs one life and
 replays the pattern; clearing all 24 rounds ends the game. Both games have three
 lives, retry from the result screen, and save their best scores in the optional
 theme state records created by a current Linnet installation.
+
+Solitaire uses draw-one Klondike. The wheel cycles through stock, waste, four
+foundations, and seven tableau piles. Select on stock draws one card; after the
+stock empties, Select turns the entire waste over for another pass. Select a
+face-up card, turn the wheel to its destination, and Select again to move it.
+Previous/Next chooses a different face-up card in the focused tableau pile so
+you can move a sequence; Select on the same pile cancels a pickup. Tableau
+stacks descend in alternating colors, empty columns take Kings, and foundations
+build by suit from Ace to King. Revealing a covered card happens automatically.
+Play pauses or resumes, Select while paused starts a new deal, Menu returns to
+Games, and Select after a win deals again. The move counter resets on each deal
+and completed games add to the persistent win count.
+The J/Q/K card illustrations are downsampled from Austin Gabriel's
+[Public Domain Playing Cards](https://github.com/AustinGabriel/Public-Domain-and-CC0-Playing-Cards)
+(CC0); they are stored as a compact RGB565 palette in `solitaire_courts.h`.
 
 In Linnet Media Manager, open **Games** while this iPod is in Disk Mode. Choose
 the games to show, save, then eject safely. The selection is read from
