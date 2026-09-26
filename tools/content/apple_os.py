@@ -130,14 +130,20 @@ def _folder_rows(root, records_by_kind):
 
 def _files(root, folders, kind, extensions, records_by_kind=None):
     found = {}
-    for value in folders:
-        if value.split('/')[0] != kind:
-            continue
-        folder = _valid_folder(root, value)
-        records = (media._file_records(folder, allowed=extensions) if records_by_kind is None else
-                   ((path, info) for path, info in records_by_kind[kind]
-                    if path.is_relative_to(folder) and path.suffix.lower() in extensions))
-        for path, info in records:
+    selected = [_valid_folder(root, value) for value in folders
+                if value.split('/')[0] == kind]
+    if not selected:
+        return []
+    if records_by_kind is not None:
+        selected_dirs = set(selected)
+        whole_kind = root / kind in selected_dirs
+        for path, info in records_by_kind[kind]:
+            if path.suffix.lower() in extensions and ((whole_kind and path.is_relative_to(root / kind)) or
+                    any(parent in selected_dirs for parent in path.parents)):
+                found[path.relative_to(root).as_posix().casefold()] = (path, info)
+        return [found[key] for key in sorted(found)]
+    for folder in selected:
+        for path, info in media._file_records(folder, allowed=extensions):
             found[path.relative_to(root).as_posix().casefold()] = (path, info)
     return [found[key] for key in sorted(found)]
 
