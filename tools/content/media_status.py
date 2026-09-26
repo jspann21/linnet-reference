@@ -28,6 +28,13 @@ def _video_readiness(inventory, published, identity=None, state=None, verified=N
                         if Path(value).suffix.lower() in media.video_source_extensions(identity)]
     published = [row for row in published
                  if Path(row['path']).suffix.lower() in media.native_video_extensions(identity)]
+    root = Path(identity['root']).resolve() if identity else None
+    if ((compatible_files or published) and identity and
+            identity['media_profile'].get('video_backend') == 'bcm-mp4' and
+            any(not (root / '.LINNET' / 'BCM' / name).is_file() for name in
+                ('VMCS.BIN', 'MPLAYER.VLL', 'H264DEC.VLL', 'MPG4DEC.VLL',
+                 'AACDEC.VLL', 'PASSTHRU.VLL'))):
+        return 'Video resources missing on iPod'
     if compatible_files and identity and video_state.get('media_profile') != identity['media_profile']:
         return 'Needs update'
     ready = [row for row in published if row['status'] == 'Ready on iPod']
@@ -35,7 +42,6 @@ def _video_readiness(inventory, published, identity=None, state=None, verified=N
     cataloged = {row['path'].casefold() for row in ready}
     if missing:
         return 'Needs update'
-    root = Path(identity['root']).resolve() if identity else None
     # Scan and library rows already carry absolute device paths. Recheck each
     # source without following a link that appeared since traversal.
     for value in compatible_files:
