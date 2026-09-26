@@ -275,16 +275,19 @@ class Covers(QObject):
 
 
 def paint_cover(painter, rect, row, covers, rounded=9):
+    if rect.isEmpty():
+        return
     painter.save()
     clip = QPainterPath()
     clip.addRoundedRect(QRectF(rect), rounded, rounded)
     painter.setClipPath(clip)
     picture = covers.get(row.get('artwork', ''), row.get('cover_source') or row.get('path'))
     if picture:
-        scaled = picture.scaled(rect.size().toSize(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-        painter.drawPixmap(rect.toRect(), scaled, scaled.rect().adjusted(
-            max(0, (scaled.width() - int(rect.width())) // 2), max(0, (scaled.height() - int(rect.height())) // 2),
-            -max(0, (scaled.width() - int(rect.width())) // 2), -max(0, (scaled.height() - int(rect.height())) // 2)))
+        scale = max(rect.width() / picture.width(), rect.height() / picture.height())
+        source = QRectF(0, 0, rect.width() / scale, rect.height() / scale)
+        source.moveCenter(QPointF(picture.width() / 2, picture.height() / 2))
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        painter.drawPixmap(rect, picture, source)
     else:
         colors = [('#9c8cce', '#615285'), ('#8fbdba', '#457676'), ('#d4ac9a', '#926769'), ('#a1afce', '#546884')]
         a, b = colors[hashlib.sha256(row['title'].encode()).digest()[0] % len(colors)]
