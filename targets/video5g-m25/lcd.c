@@ -3,6 +3,7 @@
 #include "targets/video5g-m25/lcd.h"
 #include "hal/api/platform.h"
 #include "hal/api/core.h"
+#include "hal/pp502x/target.h"
 #include "hal/pp502x/disk_screen.h"
 #include "ui/profiles/color320/boot_font.h"
 #include "ui/profiles/color320/boot_menu.h"
@@ -143,6 +144,7 @@ bool ln_lcd_boot(void){
 }
 bool ln_lcd_boot_apple(void){return ln_lcd_fill(0xffffu);}
 bool ln_lcd_boot_menu(uint32_t available,uint32_t selected,bool starting){
+    ln_target_backlight(true,128u);
     if(!ln_m25_lcd_init()||!await_ready())return false;
     uint16_t row[LN_MENU_WIDTH];
     for(uint32_t y=0;y<LN_MENU_HEIGHT;++y){

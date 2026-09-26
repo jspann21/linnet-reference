@@ -264,7 +264,11 @@ _Noreturn void ln_main(void)
                 /* On 4G optical wheels, a button held through reset first
                  * appears in the boot-only keypad query. */
 #if LINNET_BOOT_APPLE_FALLBACK
+#if LINNET_BOOT_HOLD_SELECTOR
+                bool held=input.hold||initial_menu||(input.buttons&LINNET_BUTTON_MENU)!=0u;
+#else
                 bool held=!input.hold&&(initial_menu||(input.buttons&LINNET_BUTTON_MENU)!=0u);
+#endif
 #else
                 bool held=!input.hold&&(input.buttons&LINNET_BUTTON_MENU)!=0u;
 #endif
