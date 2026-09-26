@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QSignalBlocker
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout,
@@ -156,12 +156,16 @@ class PlaylistEditor(QDialog):
 
     def select(self, *_):
         item = self.playlists.currentItem(); self.slot = item.data(Qt.UserRole) if item else None
-        self.name.setEnabled(item is not None); self.members.clear()
+        self.name.setEnabled(item is not None)
         playlist = self.state['lists'][self.slot] if item else dict(name='', ids=[])
         self.name.setText(playlist['name'])
-        for identity in playlist['ids']:
-            member = QListWidgetItem(self.state['tracks'].get(identity, f'Missing track · {identity:016x}'))
-            member.setToolTip(member.text()); self.members.addItem(member)
+        # Clearing a selection emits repeatedly; update controls after the
+        # complete list is ready instead of rescanning it for each removed row.
+        with QSignalBlocker(self.members):
+            self.members.clear()
+            for identity in playlist['ids']:
+                member = QListWidgetItem(self.state['tracks'].get(identity, f'Missing track · {identity:016x}'))
+                member.setToolTip(member.text()); self.members.addItem(member)
         self.track_count.setText(f"{len(playlist['ids'])} / 1024 songs" if item else 'No playlist selected')
         self.empty_members.setText('This playlist is empty\n\nSelect songs on the right and choose Add to playlist.' if item else
                                   'Create a playlist to get started\n\nYour songs will appear here in playback order.')
@@ -216,7 +220,12 @@ class PlaylistEditor(QDialog):
         ids = self.state['lists'][self.slot]['ids']; target = row + direction
         if 0 <= target < len(ids):
             ids[row], ids[target] = ids[target], ids[row]
-            self.select(); self.members.setCurrentRow(target)
+            with QSignalBlocker(self.members):
+                member = self.members.takeItem(row)
+                self.members.insertItem(target, member)
+                self.members.setCurrentItem(member)
+            self.message.setText('Changes are saved when you choose Save to iPod.')
+            self.update_actions()
 
     def filter(self, text):
         query, count = text.casefold(), 0
