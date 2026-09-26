@@ -1026,9 +1026,17 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     from .photos import compile_photos
                     from .publish_photos import publish_photos
                     package = cache / "photos.pimg"
+                    last_progress = [0.0]
+                    def photo_progress(event):
+                        checkpoint()
+                        now = time.monotonic()
+                        if now - last_progress[0] >= 0.2 or event['current'] + 1 == event['total']:
+                            progress(f"Preparing photos {event['current']+1}/{event['total']}: {Path(event['file']).name}")
+                            last_progress[0] = now
                     compile_photos(folder, package, max_dimension=photo_dimension,
                                    viewport_width=media_profile["photo_width"],
                                    viewport_height=media_profile["photo_height"],
+                                   progress=photo_progress,
                                    excluded={Path(value).relative_to("Photos").as_posix()
                                              for value in skipped["Photos"]},
                                    additional_sources={Path(p['relative']).relative_to('Photos').as_posix():
@@ -1071,15 +1079,18 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             key = hashlib.sha256(relative.encode()).hexdigest()[:8].upper()
                             source_info = source.stat()
                             source_stamp = (source_info.st_size, source_info.st_mtime_ns)
-                            if not job.get('catalog_title') and retail_titles is None:
-                                from .retail_media import available_tracks
-                                retail_titles = available_tracks(root)
+                            label = job.get('catalog_title')
+                            if not label and source.is_relative_to(root):
+                                if retail_titles is None:
+                                    from .retail_media import available_tracks
+                                    retail_titles = available_tracks(root)
+                                label = retail_titles.get(str(source).casefold(), {}).get('title')
+                            label = video_title(label or relative)
                             if media_profile["video_backend"] in ("bcm-mp4", "native-mp4"):
                                 from .native_video import inspect_file as inspect_native, prepare as prepare_native
                                 from .publish_video import device_video_path, index_video
                                 native_version = 4 if media_profile["video_backend"] == "native-mp4" else 2
                                 fingerprint = hashlib.sha256(f"native-mp4-v{native_version}:{json.dumps(media_profile, sort_keys=True)}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
-                                label = video_title(job.get('catalog_title') or retail_titles.get(str(source).casefold(), {}).get('title') or relative)
                                 cached = video_state.get(relative, {})
                                 if not isinstance(cached, dict):
                                     cached = {}
@@ -1144,7 +1155,6 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             profile_key = (f"{media_profile['video_width']}x{media_profile['video_height']}-"
                                            f"{media_profile['video_fps']}-{media_profile['video_color']}-realtime")
                             fingerprint = hashlib.sha256(f"ipvf-{profile_key}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
-                            label = video_title(job.get('catalog_title') or retail_titles.get(str(source).casefold(), {}).get('title') or relative)
                             cached = video_state.get(relative, {})
                             if not isinstance(cached, dict):
                                 cached = {}

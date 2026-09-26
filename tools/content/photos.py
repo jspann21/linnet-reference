@@ -75,7 +75,8 @@ def _sizes(width, height, max_dimension, viewport_width, viewport_height):
 
 
 def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
-                   viewport_height=156, fallback_paths=None, excluded=None, additional_sources=None):
+                   viewport_height=156, fallback_paths=None, excluded=None, additional_sources=None,
+                   progress=None):
     """Prepare a folder into one .pimg; optional mapping names existing JPEG copies.
 
     The default keeps zoom detail without a desktop-sized tile pyramid.
@@ -131,6 +132,8 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
     photos, levels, tile_crcs = [], [], []
     with tempfile.TemporaryFile() as thumbs, tempfile.TemporaryFile() as tiles:
         for index, path in enumerate(paths):
+            if progress:
+                progress(dict(phase='photos', current=index, total=len(paths), file=str(path)))
             try:
                 title = _title(titles.get(path, path.stem))
             except ValueError as error:
@@ -195,10 +198,12 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                 del resized
                 raw = _rgb565(padded)
                 stride = tx * EDGE * 2
+                # Gather the 32 strided rows in C, retaining exact RGB565 bytes.
+                tile_rows = struct.Struct(f'<{EDGE*2}s' + f'{stride-EDGE*2}x{EDGE*2}s' * (EDGE-1))
                 for y in range(ty):
                     for x in range(tx):
                         start = y * EDGE * stride + x * EDGE * 2
-                        tile = b''.join(raw[start + row*stride:start + row*stride + EDGE*2] for row in range(EDGE))
+                        tile = b''.join(tile_rows.unpack_from(raw, start))
                         tiles.write(tile)
                         tile_crcs.append(_crc(tile))
                 levels.append((index, lw, lh, tx, ty, first_tile, count))
