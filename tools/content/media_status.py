@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import shutil
 import stat
+import time
 
 from . import media_manager as media
 from . import media_library
@@ -11,9 +12,49 @@ from . import media_library
 
 @lru_cache(maxsize=4)
 def _verified_outputs(disk_serial, volume_serial, partition_offset):
-    # A refresh still stats each file; unchanged, previously hashed outputs do
-    # not need another full read from the USB disk during this app session.
-    return {}
+    # A refresh still stats each file. Reuse a recent hash across app restarts
+    # only for this exact disk, volume and partition; changed stamps are read.
+    path = media._cache_directory(disk_serial, volume_serial) / 'verified-outputs.json'
+    try:
+        if path.stat().st_size > 1024 * 1024:
+            return {}
+        saved = json.loads(path.read_text(encoding='utf-8'))
+        if (saved.get('partition_offset') != partition_offset or
+                not 0 <= time.time() - saved.get('verified_at', 0) <= 3600):
+            return {}
+        rows = saved.get('files', [])
+        if not isinstance(rows, list) or len(rows) > 4096:
+            return {}
+        return {(row[0], row[1]): tuple(row[2:]) for row in rows
+                if (isinstance(row, list) and len(row) == 6 and
+                    isinstance(row[0], str) and isinstance(row[1], str) and
+                    all(type(value) is int for value in row[2:]))}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+
+
+def _remember_verified(identity, verified, before):
+    if verified == before:
+        return
+    path = media.cache_root(identity) / 'verified-outputs.json'
+    try:
+        verified_at = time.time()
+        try:
+            previous = json.loads(path.read_text(encoding='utf-8'))
+            old_time = previous.get('verified_at')
+            if (previous.get('partition_offset') == identity['partition_offset'] and
+                    type(old_time) in (int, float) and
+                    0 <= verified_at - old_time <= 3600):
+                verified_at = old_time
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+        media._save(path, {'partition_offset': identity['partition_offset'],
+                           'verified_at': verified_at,
+                           'files': [[name, digest, *stamp]
+                                     for (name, digest), stamp in verified.items()]})
+    except OSError:
+        # This optional host cache must not change device readiness.
+        pass
 
 
 def _video_readiness(inventory, published, identity=None, state=None, verified=None):
@@ -77,6 +118,7 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
                                  identity['partition_offset'])
     if len(verified) > 4096:
         verified.clear()
+    verified_before = verified.copy()
     identity['linnet'] = boot_review['linnet']
     identity['default_boot'] = installer.default_boot(boot_review)
     try:
@@ -124,6 +166,7 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
             row['status'] = 'Excluded from preparation'
     from . import apple_os
     apple = apple_os.inspect(identity, records_by_kind=records)
+    _remember_verified(identity, verified, verified_before)
     return identity, inventory, rows, readiness, apple
 
 
