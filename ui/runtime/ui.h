@@ -37,6 +37,7 @@ uint32_t ln_ui_menu_count(uint32_t group);
 uint32_t ln_ui_menu_item(uint32_t group,uint32_t row);
 bool ln_ui_menu_load(const uint8_t *data,uint32_t length);
 bool ln_games_tick(uint32_t now);
+uint32_t ln_games_deadline(uint32_t now);
 uint32_t ln_games_hud_revision(void);
 bool ln_games_playing(void);
 void ln_games_audio_step(void);

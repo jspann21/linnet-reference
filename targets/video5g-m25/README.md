@@ -38,9 +38,10 @@ theme is not included.
 Open **Games** from Home to play Comet Run or Pulse Path. Use the wheel to steer
 or choose a pad, Select to activate a shield or tap a pad, Play to pause, and
 Menu to leave. Comet Run awards points for dodged meteors. Pulse Path awards
-points for repeating each growing light pattern. Both games have three lives,
-retry from the result screen, and save their best scores in the optional theme
-state records created by a current Linnet installation.
+points for repeating each growing light pattern. A wrong pad costs one life and
+replays the pattern; clearing all 24 rounds ends the game. Both games have three
+lives, retry from the result screen, and save their best scores in the optional
+theme state records created by a current Linnet installation.
 
 In Linnet Media Manager, open **Games** while this iPod is in Disk Mode. Choose
 the games to show, save, then eject safely. The selection is read from

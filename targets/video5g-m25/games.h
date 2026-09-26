@@ -9,6 +9,7 @@ const char *ln_games_description(uint32_t row);
 void ln_games_start(uint32_t row);
 int ln_games_input(uint32_t kind,int32_t value);
 bool ln_games_tick(uint32_t now);
+uint32_t ln_games_deadline(uint32_t now);
 uint32_t ln_games_hud_revision(void);
 bool ln_games_playing(void);
 void ln_games_audio_step(void);

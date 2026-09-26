@@ -53,7 +53,7 @@ bool ln_display_can_render(void){
 #endif
     if(!phase)return true;
 #if defined(LINNET_IMAGE_OS) && defined(LINNET_COVERFLOW)
-    return phase==3u&&!queued&&ln_coverflow_active();
+    return phase==3u&&!queued&&(ln_coverflow_active()||ln_games_playing());
 #else
     return false;
 #endif
@@ -66,7 +66,7 @@ bool ln_display_present(void){
 #if defined(LINNET_IMAGE_OS) && defined(LINNET_COVERFLOW)
     /* Once PIO finishes, BCM owns its own pixels. CPU rendering can overlap
      * that scanout, with at most one queued frame owning the draw buffer. */
-    if(ln_coverflow_active())presented=draw;
+    if(ln_coverflow_active()||ln_games_playing())presented=draw;
     else
 #endif
     {ln_memory_copy(scan,draw,sizeof scan);presented=scan;}

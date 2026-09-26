@@ -1121,7 +1121,10 @@ void ln_runtime_idle(void){
     if(ln_display_busy()&&!display.cop_active&&!display_wait)return;
     uint32_t next=now+200000u;
 #if defined(LINNET_NATIVE_UI)
-    if(scene_is("linnet.system.game-play")&&ln_games_playing())next=now+33333u;
+    if(scene_is("linnet.system.game-play")&&ln_games_playing()){
+        uint32_t game_due=ln_games_deadline(now);
+        if(game_due!=UINT32_MAX&&(int32_t)(game_due-next)<0)next=game_due;
+    }
 #endif
     if(display_wait&&(int32_t)(display_due-next)<0)next=display_due;
 #if defined(LINNET_COVERFLOW)

@@ -21,6 +21,7 @@ __attribute__((weak)) const char *ln_games_description(uint32_t row){(void)row;r
 __attribute__((weak)) void ln_games_start(uint32_t row){(void)row;}
 __attribute__((weak)) int ln_games_input(uint32_t kind,int32_t value){(void)kind;(void)value;return 0;}
 __attribute__((weak)) bool ln_games_tick(uint32_t now){(void)now;return false;}
+__attribute__((weak)) uint32_t ln_games_deadline(uint32_t now){(void)now;return UINT32_MAX;}
 __attribute__((weak)) uint32_t ln_games_hud_revision(void){return 0;}
 __attribute__((weak)) const char *ln_games_text(const char *key){return key;}
 __attribute__((weak)) void ln_games_configure(uint8_t mask){(void)mask;}
