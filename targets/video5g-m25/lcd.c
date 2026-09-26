@@ -2,6 +2,7 @@
  * The Apple ROM must have initialized VMCS. No copied firmware is embedded. */
 #include "targets/video5g-m25/lcd.h"
 #include "hal/api/platform.h"
+#include "hal/api/core.h"
 #include "hal/pp502x/disk_screen.h"
 #include "ui/profiles/color320/boot_font.h"
 #include "ui/profiles/color320/boot_menu.h"
@@ -93,6 +94,7 @@ bool ln_target_disk_screen(void){
     if(!ln_m25_lcd_init()||!await_ready())return false;
     uint16_t row[LINNET_LCD_WIDTH];
     for(uint32_t y=0;y<LINNET_LCD_HEIGHT;++y){
+        ln_core_watchdog_feed();
         for(uint32_t x=0;x<LINNET_LCD_WIDTH;++x)
             row[x]=ln_pp_disk_screen_pixel(LINNET_LCD_WIDTH,LINNET_LCD_HEIGHT,x,y,false);
         if(!ln_m25_lcd_write(y*LINNET_LCD_WIDTH,row,LINNET_LCD_WIDTH))return false;
