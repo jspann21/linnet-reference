@@ -61,7 +61,8 @@ def _target_check(candidate, root, profile=None):
 
 
 def publish_video(package, *, disk_number, expected_disk_serial,
-                   expected_volume_serial, expected_drive=None, library_key=None, title=None, ffprobe=None):
+                   expected_volume_serial, expected_drive=None, library_key=None, title=None,
+                   ffprobe=None, source_to_preserve=None):
     """Validate all local bytes, preserve the previous package, publish last.
 
     A failure after replacement is an uncertain publication; inspect the host
@@ -73,6 +74,13 @@ def publish_video(package, *, disk_number, expected_disk_serial,
     package = package.resolve(strict=True)
     identity = inspect_target(disk_number, expected_disk_serial, expected_volume_serial, expected_drive)
     root = Path(identity["root"])
+    protected = None
+    if source_to_preserve is not None:
+        protected = Path(os.path.abspath(source_to_preserve))
+        _plain(protected, root)
+        protected = protected.resolve(strict=True)
+        if not protected.is_file() or not protected.is_relative_to(root):
+            raise ValueError('Video source to preserve is outside this iPod')
     profile = _media_profile(root)
     digest = _hash(package)
     if package.suffix.lower() in ('.mp4', '.m4v', '.mov'):
@@ -89,10 +97,12 @@ def publish_video(package, *, disk_number, expected_disk_serial,
         raise ValueError('video package must be staged on a different volume from the iPod')
     with _exclusive(identity):
         return _publish(package, candidate, identity, root, disk_number,
-                        expected_disk_serial, expected_volume_serial, expected_drive, library_key, title)
+                        expected_disk_serial, expected_volume_serial, expected_drive,
+                        library_key, title, protected)
 
 
-def _publish(package, candidate, identity, root, number, serial, volume, drive, library_key=None, title=None):
+def _publish(package, candidate, identity, root, number, serial, volume, drive,
+             library_key=None, title=None, protected=None):
     def guard():
         _volume_guard(identity)
     linnet, metadata = root/'.LINNET', root/'.LINNET'/'VIDEOS'
@@ -113,7 +123,8 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
     if native:
         entries = [entry for entry in entries if Path(entry[1]).suffix.lower() in ('.mp4', '.m4v', '.mov')]
     existing = next((root / entry[1].lstrip('/') for entry in entries if entry[0] == key), None)
-    if existing is not None and existing.is_file() and existing.parent == directory:
+    if (existing is not None and existing.is_file() and existing.parent == directory and
+            (protected is None or existing.resolve() != protected)):
         active = existing.resolve()
     elif active.exists():
         active = directory / (Path(filename).stem + ' [' + key.hex()[:8] + ']' + extension)

@@ -14,8 +14,10 @@ def catalog_contains(root, relative, title, path=None):
             return False
         _, entries = read_file(catalog)
         key = hashlib.sha256(relative.encode("utf-8")).digest()
-        return ((key, path, title) in entries if path else
-                any(k == key and t == title and (Path(root) / p.lstrip('/')).is_file() for k, p, t in entries))
+        return (any(k == key and p == path and (title is None or t == title)
+                    for k, p, t in entries) if path else
+                any(k == key and (title is None or t == title) and
+                    (Path(root) / p.lstrip('/')).is_file() for k, p, t in entries))
     except (OSError, ValueError):
         return False
 

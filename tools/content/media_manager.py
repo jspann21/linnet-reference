@@ -701,9 +701,24 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None):
     native_extensions = native_video_extensions(identity)
     scan_allowed = native_extensions if selection else allowed
     excluded = {Path(value).as_posix().casefold() for value in skipped}
+    generated = set()
+    if identity is not None:
+        try:
+            saved = json.loads((cache_root(identity) / 'state.json').read_text(encoding='utf-8'))
+            for relative, item in saved.get('video_files', {}).items():
+                for output in item.get('outputs', []):
+                    name = output[0]
+                    path = Path(name)
+                    if (path.parts and path.parts[0].casefold() == 'videos' and
+                            not path.is_absolute() and '..' not in path.parts and
+                            name.casefold() != ('Videos/' + relative).casefold()):
+                        generated.add(str(root / path).casefold())
+        except (OSError, ValueError, UnicodeError, TypeError, AttributeError, IndexError):
+            pass
     available = [str(path) for source in source_folders(root, "Videos")
                  for path, _ in _file_records(source, allowed=scan_allowed)
-                 if not excluded or path.relative_to(root).as_posix().casefold() not in excluded]
+                 if str(path).casefold() not in generated and
+                 (not excluded or path.relative_to(root).as_posix().casefold() not in excluded)]
     from .video_catalog import read_file
     catalog = root / ".LINNET" / "VIDEOS" / "INDEX.VID"
     _plain(catalog, root)
@@ -1061,17 +1076,32 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                 retail_titles = available_tracks(root)
                             if media_profile["video_backend"] in ("bcm-mp4", "native-mp4"):
                                 from .native_video import inspect_file as inspect_native, prepare as prepare_native
-                                from .publish_video import index_video
+                                from .publish_video import device_video_path, index_video
                                 native_version = 4 if media_profile["video_backend"] == "native-mp4" else 2
                                 fingerprint = hashlib.sha256(f"native-mp4-v{native_version}:{json.dumps(media_profile, sort_keys=True)}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
                                 label = video_title(job.get('catalog_title') or retail_titles.get(str(source).casefold(), {}).get('title') or relative)
                                 cached = video_state.get(relative, {})
-                                if (not force and isinstance(cached, dict) and cached.get("signature") == fingerprint
-                                        and catalog_contains(root, relative, label, path=False)
-                                        and _outputs_match(root, cached.get("outputs", []), verified=verified_outputs)):
-                                    output_paths.extend(name for name, digest in cached.get("outputs", []))
-                                    report["steps"].append(dict(kind=kind, file=relative, status="unchanged"))
-                                    continue
+                                if not isinstance(cached, dict):
+                                    cached = {}
+                                outputs = cached.get('outputs', [])
+                                if (not force and cached.get("signature") == fingerprint and
+                                        _outputs_match(root, outputs, verified=verified_outputs)):
+                                    if catalog_contains(root, relative, label, path=False):
+                                        output_paths.extend(name for name, digest in outputs)
+                                        report["steps"].append(dict(kind=kind, file=relative, status="unchanged"))
+                                        continue
+                                    if len(outputs) == 1:
+                                        published_path = root / outputs[0][0]
+                                        if catalog_contains(root, relative, None,
+                                                            path=device_video_path(published_path, root)):
+                                            result = index_video(published_path, title=label,
+                                                                 library_key=relative, ffprobe=ffprobe,
+                                                                 **target_args(identity))
+                                            output_paths.append(outputs[0][0])
+                                            report["steps"].append(dict(kind=kind, file=relative,
+                                                                        status="catalog-updated", publication=result))
+                                            record()
+                                            continue
                                 compatible = False
                                 if source.suffix.lower() in native_video_extensions(identity):
                                     try:
@@ -1096,7 +1126,9 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                     after = source.stat()
                                     if (after.st_size, after.st_mtime_ns) != source_stamp:
                                         raise ValueError("Video changed during preparation; scan again")
-                                    result = publish_video(package, title=label, library_key=relative, ffprobe=ffprobe, **target_args(identity))
+                                    result = publish_video(package, title=label, library_key=relative,
+                                                           ffprobe=ffprobe, source_to_preserve=source,
+                                                           **target_args(identity))
                                     output_name = Path(result['package']).relative_to(root).as_posix()
                                     outputs = [(output_name, result["candidate_sha256"])]
                                     output_paths.append(output_name)
@@ -1185,7 +1217,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             if (after.st_size, after.st_mtime_ns) != source_stamp:
                                 raise ValueError("Video changed during preparation; scan again before updating")
                             progress(f"Publishing video {index+1}/{item['count']}: {relative}")
-                            result = publish_video(package, title=label, library_key=relative, **target_args(identity))
+                            result = publish_video(package, title=label, library_key=relative,
+                                                   source_to_preserve=source, **target_args(identity))
                             output_name = Path(result['package']).relative_to(root).as_posix()
                             published.append(result)
                             output_paths.append(output_name)
