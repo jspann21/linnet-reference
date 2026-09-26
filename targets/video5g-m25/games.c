@@ -14,6 +14,7 @@ static uint16_t ship=160,energy,score,best[2];
 static uint32_t random_state=0x9e3779b9u,last_tick,spawn_at,flash_until,invulnerable_until,hud_revision,energy_carry;
 static uint32_t buttons;
 static uint8_t sound_pending;
+static bool resume_pending;
 static struct {int16_t x,y;uint8_t size,live;uint32_t fraction;} rock[12];
 static char score_text[48];
 static const char *const names[]={"Comet Run","Pulse Path"};
@@ -52,6 +53,7 @@ static void new_pulse(void){
 void ln_games_start(uint32_t row){
     for(uint32_t i=0;i<2u;++i)if(installed&(1u<<i)){if(!row){game=(uint8_t)i;break;}--row;}
     random_state^=last_tick+0x6d2b79f5u;games_phase=paused_phase=PLAY;score=0;hearts=3u;focus=0u;sound_pending=1u;
+    resume_pending=false;
     if(game==COMET){ship=160u;energy=100u;energy_carry=0;spawn_at=last_tick+600000u;invulnerable_until=last_tick+1200000u;for(uint32_t i=0;i<12u;++i)rock[i].live=0;}
     else{level=0u;new_pulse();}
     last_tick=0;++hud_revision;
@@ -69,17 +71,19 @@ int ln_games_input(uint32_t kind,int32_t value){
         else if(games_phase==PLAY&&game==PULSE)focus=(uint8_t)((focus+value%4+4)&3u);return 1;}
     if(kind!=2u)return 0;
     uint32_t pressed=(uint32_t)value&~buttons;buttons=(uint32_t)value;
-    if(pressed&1u){if(games_phase==PAUSED||games_phase==LOST||games_phase==WON)return 2;
-        paused_phase=games_phase;games_phase=PAUSED;return 1;}
+    if(pressed&1u)return 2;
     if(pressed&2u){if(games_phase==PLAY||games_phase==WATCH||games_phase==MISTAKE){paused_phase=games_phase;games_phase=PAUSED;}
-        else if(games_phase==PAUSED){games_phase=paused_phase;if(game==PULSE)last_tick=0;}return 1;}
+        else if(games_phase==PAUSED){games_phase=paused_phase;resume_pending=true;}return 1;}
     if((games_phase==LOST||games_phase==WON)&&(pressed&16u)){
         ln_games_start(game==PULSE&&(installed&1u)?1u:0u);return 1;}
     if(games_phase!=PLAY)return 1;
     if(game==COMET){
         if(pressed&4u)ship=ship<286u?ship+16u:302u;
         if(pressed&8u)ship=ship>34u?ship-16u:18u;
-        if((pressed&16u)&&energy>=40u){energy-=40u;invulnerable_until=last_tick+800000u;sound_pending=2u;}
+        if((pressed&16u)&&energy>=40u){energy-=40u;
+            uint32_t shield_until=last_tick+800000u;
+            if((int32_t)(shield_until-invulnerable_until)>0)invulnerable_until=shield_until;
+            sound_pending=2u;}
     }else{
         if(pressed&4u)focus=(focus+1u)&3u;
         if(pressed&8u)focus=(focus+3u)&3u;
@@ -96,6 +100,14 @@ int ln_games_input(uint32_t kind,int32_t value){
 }
 bool ln_games_tick(uint32_t now){
     uint16_t old_score=score;uint8_t old_hearts=hearts,old_phase=games_phase;
+    if(games_phase==PAUSED)return false;
+    if(resume_pending){resume_pending=false;
+        if(last_tick){uint32_t paused_for=now-last_tick;
+            if(game==COMET){spawn_at+=paused_for;invulnerable_until+=paused_for;}
+            else flash_until+=paused_for;
+            last_tick=now;return false;
+        }
+    }
     if(!last_tick){last_tick=now;
         if(game==COMET){spawn_at=now+600000u;invulnerable_until=now+1200000u;}
         else if(flash)flash_until=now+(games_phase==MISTAKE?450000u:games_phase==WATCH?500000u:230000u);
@@ -168,13 +180,21 @@ void ln_games_draw(const struct ln_ui_canvas_context *c){
     box(c,0,203,320,1,0x2bd1u);
     for(uint32_t i=0;i<4u;++i){
         int32_t y=64+(int32_t)i*35;
-        box(c,0,y,320,1,i&1u?0x1048u:0x186au);
+        uint16_t stripe=i&1u?0x1048u:0x186au;
+        if(game==PULSE){box(c,0,y,45,1,stripe);box(c,139,y,22,1,stripe);box(c,255,y,65,1,stripe);}
+        else box(c,0,y,320,1,stripe);
         box(c,12+(int32_t)i*7,y-4,1,8,0x1870u);
         box(c,307-(int32_t)i*7,y-4,1,8,0x1870u);
     }
     if(game==COMET){
-        for(uint32_t i=0;i<38u;++i){uint32_t x=(i*113u+37u)%320u,y=(i*71u+19u+last_tick/30000u*(i%3u+1u))%143u+59u;
-            box(c,(int32_t)x,(int32_t)y,i%5u?1:2,i%5u?2:3,i%5u?0x6b9fu:0xa69fu);}
+        uint32_t phase=(last_tick/30000u)%143u,x=37u,base_y=19u,speed=1u;
+        for(uint32_t i=0;i<38u;++i){uint32_t y=base_y+phase*speed;
+            while(y>=143u)y-=143u;
+            box(c,(int32_t)x,(int32_t)(y+59u),i%5u?1:2,i%5u?2:3,i%5u?0x6b9fu:0xa69fu);
+            x+=113u;if(x>=320u)x-=320u;
+            base_y+=71u;if(base_y>=143u)base_y-=143u;
+            if(++speed==4u)speed=1u;
+        }
         for(uint32_t i=0;i<12u;++i)if(rock[i].live){int32_t x=rock[i].x,y=rock[i].y,r=rock[i].size;
             box(c,x-r-2,y-r-2,r*2+4,r*2+4,0x5069u);
             box(c,x-r,y-r,r*2,r*2,0xb9a9u);box(c,x-r+2,y-r+2,r*2-4,r*2-4,0xfaa8u);
@@ -192,7 +212,7 @@ void ln_games_draw(const struct ln_ui_canvas_context *c){
         box(c,238,198,68,3,0x184au);box(c,238,198,(int32_t)(energy*68u/100u),3,0x4e9fu);
     }else{
         for(uint32_t i=0;i<4u;++i){int32_t x=50+(int32_t)(i&1u)*116,y=66+(int32_t)(i>>1)*65;
-            uint16_t ink=pad[i];box(c,x-5,y-5,94,56,0x0825u);
+            uint16_t ink=pad[i];
             box(c,x-3,y-3,90,52,i==focus&&games_phase==PLAY?0xffffu:0x39cdu);
             box(c,x,y,84,46,flash==i+1u?(games_phase==MISTAKE?0xf9a6u:0xffffu):ink);
             box(c,x+3,y+3,78,2,0xffffu);box(c,x+20,y+12,44,22,0x0825u);
