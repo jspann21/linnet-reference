@@ -259,6 +259,10 @@ def inspect_file(path, *, profile, ffprobe=None):
         raise ValueError("This target does not support this native video codec")
     elif v.get("codec_name") != "mpeg4" or v.get("profile") not in ("Simple Profile", "0"):
         raise ValueError("MPEG-4 needs Simple Profile")
+    if (profile["video_backend"] == "bcm-mp4" and v.get("codec_name") == "mpeg4" and
+            (width > limits["h264_width"] or height > limits["h264_height"]) and
+            int(v.get("bit_rate") or 0) > limits["max_video_kbps"] * 1000):
+        raise ValueError("MPEG-4 VGA bitrate exceeds this iPod's video limit")
     if profile["video_backend"] == "native-mp4" and v.get("codec_name") == "mpeg4":
         if (width | height) & 1:
             raise ValueError("MPEG-4 needs even video dimensions")
