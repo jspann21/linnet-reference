@@ -728,13 +728,13 @@ class MediaWindow(QMainWindow):
             self.games_status.setText('Selection changed. Update games on iPod, then eject safely.')
 
     def load_games(self):
-        if (self.identity and self.identity['target_id'] == 'video5g-m25' and not self.busy
+        if (self.identity and self.identity['target_id'] in ('video5g-m25', 'photo4g-p98') and not self.busy
                 and self.games_loaded_for != self.identity['root']):
             identity = self.identity
             self.work('games', lambda: games.read(identity), 'Reading installed games…')
 
     def save_games(self):
-        if not self.identity or self.busy or self.identity['target_id'] != 'video5g-m25':
+        if not self.identity or self.busy or self.identity['target_id'] not in ('video5g-m25', 'photo4g-p98'):
             return
         selected = {index for index, check in enumerate(self.game_checks) if check.isChecked()}
         identity = self.identity
@@ -750,7 +750,7 @@ class MediaWindow(QMainWindow):
         order = [i for i in selected if i in available] + [i for i in available if i not in selected]
         self.screen_items.blockSignals(True); self.screen_items.clear()
         for i in order:
-            shown = 'Games' if name == 'Home' and i == 7 and self.identity and self.identity['target_id'] == 'video5g-m25' else labels[i]
+            shown = 'Games' if name == 'Home' and i == 7 and self.identity and self.identity['target_id'] in ('video5g-m25', 'photo4g-p98') else labels[i]
             item = QListWidgetItem(shown); item.setData(Qt.UserRole, i)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled)
             item.setCheckState(Qt.Checked if i in selected else Qt.Unchecked)
@@ -1344,12 +1344,12 @@ class MediaWindow(QMainWindow):
 
     def update_controls(self):
         ready = self.identity is not None and not self.busy
-        games_ready = ready and self.identity['target_id'] == 'video5g-m25'
+        games_ready = ready and self.identity['target_id'] in ('video5g-m25', 'photo4g-p98')
         self.games_save.setEnabled(games_ready and self.games_loaded_for == self.identity['root'])
         for check in self.game_checks:
             check.setEnabled(games_ready and self.games_loaded_for == self.identity['root'])
         if ready and not games_ready:
-            self.games_status.setText('Games are currently available on the iPod Video A1136.')
+            self.games_status.setText('Games are available on the iPod Photo A1099 and Video A1136.')
         supported = media.supported_kinds(self.identity) if ready else ()
         self.screens.setEnabled(not self.busy)
         self.screen_save.setEnabled(ready and all(self.screen_state.values()))

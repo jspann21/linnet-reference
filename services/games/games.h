@@ -1,5 +1,5 @@
-#ifndef LINNET_M25_GAMES_H
-#define LINNET_M25_GAMES_H
+#ifndef LINNET_GAMES_H
+#define LINNET_GAMES_H
 #include <stdint.h>
 #include <stdbool.h>
 #include "ui/runtime/ui.h"

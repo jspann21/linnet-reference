@@ -39,7 +39,7 @@ def item_availability(name, identity=None):
         if label == 'Extras':
             continue
         feature = feature_names.get(label)
-        if name == 'Home' and i == 7 and target == 'video5g-m25':
+        if name == 'Home' and i == 7 and target in ('video5g-m25', 'photo4g-p98'):
             available.append(i)
             continue
         if feature and not feature_enabled(configured, feature):
@@ -58,7 +58,7 @@ def available_items(name, identity=None):
 def defaults(identity=None):
     result = {}
     for name, rows in DEFAULTS.items():
-        if name == 'Home' and identity and identity.get('target_id') == 'video5g-m25':
+        if name == 'Home' and identity and identity.get('target_id') in ('video5g-m25', 'photo4g-p98'):
             rows = rows + [7]
         available = available_items(name, identity) if identity is not None else rows
         result[name] = [i for i in rows if i in available]

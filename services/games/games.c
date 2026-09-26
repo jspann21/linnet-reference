@@ -1,4 +1,4 @@
-#include "targets/video5g-m25/games.h"
+#include "services/games/games.h"
 #if defined(LINNET_AUDIO)
 #include "hal/api/audio.h"
 #include "services/music/player.h"
@@ -6,7 +6,11 @@
 #if defined(LINNET_STORAGE)
 #include "services/display/settings.h"
 #endif
+#if LINNET_UI_WIDTH == 220
+#include "targets/photo4g-p98/solitaire_courts.h"
+#else
 #include "targets/video5g-m25/solitaire_courts.h"
+#endif
 
 enum { COMET, PULSE, SOLITAIRE, GAME_COUNT };
 enum { PLAY=1u, PAUSED, LOST, WATCH, MISTAKE, WON, ARCADE_READY, SOL_CONFIRM };
@@ -323,9 +327,13 @@ static void box(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,int32_t
     int32_t left=x>c->clip_x?x:c->clip_x,top=y>c->clip_y?y:c->clip_y;
     int32_t right=x+w<c->clip_x+c->clip_w?x+w:c->clip_x+c->clip_w;
     int32_t bottom=y+h<c->clip_y+c->clip_h?y+h:c->clip_y+c->clip_h;
-    if(left<0)left=0;if(top<0)top=0;if(right>320)right=320;if(bottom>240)bottom=240;
-    for(int32_t yy=top;yy<bottom;++yy)for(int32_t xx=left;xx<right;++xx)c->pixels[yy*320+xx]=ink;
+    if(left<0)left=0;if(top<0)top=0;if(right>(int32_t)LINNET_UI_WIDTH)right=LINNET_UI_WIDTH;if(bottom>(int32_t)LINNET_UI_HEIGHT)bottom=LINNET_UI_HEIGHT;
+    for(int32_t yy=top;yy<bottom;++yy)for(int32_t xx=left;xx<right;++xx)c->pixels[yy*LINNET_UI_WIDTH+xx]=ink;
 }
+#include "services/games/drawing.h"
+#if LINNET_UI_WIDTH == 220
+#include "targets/photo4g-p98/games_graphics.h"
+#else
 #include "targets/video5g-m25/games_arcade.h"
 static void sol_glyph(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,char ch,uint16_t ink){
     char text[2]={ch,0};arcade_text(c,x,y-2,text,ink,true);
@@ -406,6 +414,8 @@ void ln_games_draw(const struct ln_ui_canvas_context *c){
     if(game==SOLITAIRE){sol_draw_scene(c);return;}
     arcade_draw(c);
 }
+
+#endif /* native display presentation */
 
 #if defined(LINNET_AUDIO)
 static bool games_audio_owned;

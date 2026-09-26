@@ -12,7 +12,8 @@ not source defaults.
 - `device.c`: board pin wiring, disk power, charging and backlight steps.
 - `hardware.h`: ROM Disk Mode marker and bounded compatibility policies.
 - `lcd.c` / `display.c`: BCM mailbox transfer and incremental scanout.
-- `games.c`: native Comet Run, Pulse Path and Solitaire gameplay, drawing and sound cues.
+- `../../services/games/`: shared game rules and sound.
+- `games_arcade.h` / `games_solitaire.h`: native 320 x 240 game presentation.
 - `screens/`: complete native 320 × 240 screen set.
 - `ui/profiles/color320/themes/`: native editions of Linnet (default), Midnight, Graphite, Aurora,
   Sunset, Blueprint, Album Colors, Minimal Dark and Minimal Light.

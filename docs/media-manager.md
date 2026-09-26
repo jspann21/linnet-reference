@@ -124,7 +124,7 @@ python linnet installer restore --mount E:\
 
 ## Update content
 
-On an iPod Video A1136 in Disk Mode, open **Games** to choose which native
+On an iPod Photo A1099 or Video A1136 in Disk Mode, open **Games** to choose which native
 games appear on the iPod. Comet Run, Pulse Path and draw-one Klondike Solitaire
 are selected by default on a new installation. Save the selection, safely eject,
 and restart Linnet to apply it. Existing two-game selections remain valid and

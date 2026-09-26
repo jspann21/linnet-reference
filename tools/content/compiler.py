@@ -331,6 +331,11 @@ def compile_system(root, output, configpath=None, target_override=None):
             node['resource']=asset_names.get(resource,0xffffffff)
             if node['canvas'] and node['canvas'] not in callbacks: raise ContentError('undeclared native canvas callback')
             node['canvas']=callbacks.get(node['canvas'],'')
+            if scene['id']=='linnet.system.home' and 'linnet.system.games' in selected:
+                for i, target_id in enumerate(node['targets']):
+                    if target_id=='local.example.notes':
+                        node['targets'][i]='linnet.system.games'
+                        node['items'][i]='Games'
             targets=[]
             for navigation_target in node['targets']:
                 actions={'@sync':0xfffffffe,'@shuffle':0xfffffffd,'@repeat':0xfffffffc}
@@ -365,6 +370,11 @@ def compile_system(root, output, configpath=None, target_override=None):
             if variant['layout'] == 'native': raise ContentError('native theme requires target screens')
             layouts=apply_layout(scenes,variant,compact=monochrome)
         for i, scene in enumerate(scenes):
+            if scene['id']=='linnet.system.game-play':
+                import copy
+                layouts[i]=copy.deepcopy(scene)
+                for node in layouts[i]['nodes']:
+                    if node['kind']==17:node['flags'] |= 64
             if scene['id']=='linnet.system.cover-flow':
                 import copy
                 layouts[i]=copy.deepcopy(scene)

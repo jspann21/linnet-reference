@@ -11,7 +11,8 @@ architecture = "armv4t"
 endianness = "little"
 sdram_bytes = 33554432
 os_capacity_bytes = 8388608
-resident_limit_bytes = 8159232
+# Includes native games; keep 128 KiB free below the 8 MiB OS boundary.
+resident_limit_bytes = 8257536
 stage_address = 16777216
 stage_bytes = 8388608
 recovery_snapshot_address = 31457280

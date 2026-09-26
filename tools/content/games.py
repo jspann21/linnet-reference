@@ -1,4 +1,4 @@
-"""Guarded selection of firmware games for the A1136."""
+"""Guarded selection of firmware games for the iPod Photo and Video."""
 import os
 from pathlib import Path
 import struct
@@ -29,8 +29,8 @@ def decode(data):
 
 
 def _path(identity):
-    if identity['target_id'] != 'video5g-m25':
-        raise ValueError("Games are currently available on the iPod Video A1136.")
+    if identity['target_id'] not in ('video5g-m25', 'photo4g-p98'):
+        raise ValueError("Games are available on the iPod Photo A1099 and Video A1136.")
     root = Path(identity['root'])
     path = root / '.LINNET' / 'GAMES.BIN'
     _plain(path, root)
