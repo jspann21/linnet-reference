@@ -9,7 +9,7 @@
 #include "targets/video5g-m25/solitaire_courts.h"
 
 enum { COMET, PULSE, SOLITAIRE, GAME_COUNT };
-enum { PLAY=1u, PAUSED, LOST, WATCH, MISTAKE, WON };
+enum { PLAY=1u, PAUSED, LOST, WATCH, MISTAKE, WON, ARCADE_READY };
 static uint8_t installed=7u,game,games_phase,paused_phase,hearts,focus,sequence[24],entered,level,flash;
 static uint16_t ship=160,energy,score,best[GAME_COUNT];
 static uint32_t random_state=0x9e3779b9u,last_tick,spawn_at,flash_until,invulnerable_until,hud_revision,energy_carry;
@@ -18,6 +18,10 @@ static uint8_t sound_pending;
 static bool resume_pending;
 static uint32_t hit_until,shield_notice_until;
 static bool shield_failed;
+static uint16_t previous_best;
+static uint32_t burst_until;
+static int16_t burst_x,burst_y;
+static bool burst_shield;
 static struct {int16_t x,y;uint8_t size,live;uint32_t fraction;} rock[12];
 static char score_text[48];
 static const char *const names[]={"Comet Run","Pulse Path","Solitaire"};
@@ -135,10 +139,11 @@ void ln_games_start(uint32_t row){
     for(uint32_t i=0;i<GAME_COUNT;++i)if(installed&(1u<<i)){if(!row){game=(uint8_t)i;break;}--row;}
     random_state^=last_tick+0x6d2b79f5u;games_phase=paused_phase=PLAY;score=0;hearts=3u;focus=0u;sound_pending=1u;
     resume_pending=false;
-    hit_until=shield_notice_until=0;shield_failed=false;
+    hit_until=shield_notice_until=burst_until=0;shield_failed=false;previous_best=best[game];
     if(game==COMET){ship=160u;energy=100u;energy_carry=0;spawn_at=last_tick+600000u;invulnerable_until=last_tick+1200000u;for(uint32_t i=0;i<12u;++i)rock[i].live=0;}
     else if(game==PULSE){level=0u;new_pulse();}
     else sol_new();
+    if(game!=SOLITAIRE)games_phase=ARCADE_READY;
     last_tick=0;++hud_revision;
 }
 static void finish(bool won){games_phase=won?WON:LOST;sound_pending=4u;if(score>best[game]){
@@ -159,6 +164,7 @@ int ln_games_input(uint32_t kind,int32_t value){
     if(kind!=2u)return 0;
     uint32_t pressed=(uint32_t)value&~buttons;buttons=(uint32_t)value;
     if(pressed&1u)return 2;
+    if(games_phase==ARCADE_READY){if(pressed&16u){games_phase=game==COMET?PLAY:WATCH;last_tick=0;++hud_revision;}return 1;}
     if(pressed&2u){if(games_phase==PLAY||games_phase==WATCH||games_phase==MISTAKE){paused_phase=games_phase;games_phase=PAUSED;}
         else if(games_phase==PAUSED){games_phase=paused_phase;resume_pending=true;}return 1;}
     if(game==SOLITAIRE&&games_phase==PAUSED&&(pressed&16u)){
@@ -166,7 +172,7 @@ int ln_games_input(uint32_t kind,int32_t value){
         ln_games_start(row);return 1;}
     if((games_phase==LOST||games_phase==WON)&&(pressed&16u)){
         uint32_t row=0;for(uint32_t i=0;i<game;++i)if(installed&(1u<<i))++row;
-        ln_games_start(row);return 1;}
+        ln_games_start(row);if(game!=SOLITAIRE)games_phase=game==COMET?PLAY:WATCH;return 1;}
     if(games_phase!=PLAY)return 1;
     if(game==SOLITAIRE){
         if(sol_cursor>=6u&&sol_source==255u){uint8_t col=(uint8_t)(sol_cursor-6u);
@@ -191,7 +197,7 @@ int ln_games_input(uint32_t kind,int32_t value){
     }else{
         if(pressed&4u)focus=(focus+1u)&3u;
         if(pressed&8u)focus=(focus+3u)&3u;
-        if((pressed&16u)&&!flash){
+        if((pressed&16u)&&entered<level){
             flash=focus+1u;flash_until=last_tick+230000u;
             if(focus!=sequence[entered]){
                 sound_pending=3u;if(hearts)--hearts;++hud_revision;
@@ -206,11 +212,12 @@ bool ln_games_tick(uint32_t now){
     if(!games_phase){last_tick=now;return false;}
     if(game==SOLITAIRE)return false;
     uint16_t old_score=score;uint8_t old_hearts=hearts,old_phase=games_phase;
-    if(games_phase==PAUSED)return false;
+    if(games_phase==PAUSED||games_phase==ARCADE_READY)return false;
     if(resume_pending){resume_pending=false;
         if(last_tick){uint32_t paused_for=now-last_tick;
             if(game==COMET){spawn_at+=paused_for;invulnerable_until+=paused_for;
-                if(hit_until)hit_until+=paused_for;if(shield_notice_until)shield_notice_until+=paused_for;}
+                if(hit_until)hit_until+=paused_for;if(shield_notice_until)shield_notice_until+=paused_for;
+                if(burst_until)burst_until+=paused_for;}
             else flash_until+=paused_for;
             last_tick=now;return false;
         }
@@ -253,8 +260,11 @@ bool ln_games_tick(uint32_t now){
         int32_t x=rock[i].x,y=rock[i].y,r=rock[i].size;
         if(y-r-2>203){rock[i].live=0u;if(score<65530u)score+=5u;}
         else if(x+r+2>(int32_t)ship-11&&x-r-2<(int32_t)ship+11&&
-                y+r+2>167&&y-r-2<201&&
-                (int32_t)(now-invulnerable_until)>=0){rock[i].live=0u;if(hearts)--hearts;sound_pending=3u;
+                y+r+2>167&&y-r-2<201){
+            rock[i].live=0u;burst_x=(int16_t)x;burst_y=(int16_t)y;burst_until=now+350000u;
+            burst_shield=(int32_t)(now-invulnerable_until)<0;
+            if(burst_shield){if(score<65530u)score+=5u;sound_pending=2u;continue;}
+            if(hearts)--hearts;sound_pending=3u;
             hit_until=now+350000u;invulnerable_until=now+1200000u;if(!hearts){finish(false);break;}}
     }
     if(score!=old_score||hearts!=old_hearts||games_phase!=old_phase)++hud_revision;

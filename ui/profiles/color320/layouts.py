@@ -29,6 +29,14 @@ def mark_control_footer(scene, footer=None):
 
 
 def apply_layout(scenes, theme):
+    # The game callback paints every pixel, including Solitaire's chrome.
+    # Skip redundant screen/canvas clears on the full-size arcade surface.
+    scenes = deepcopy(scenes)
+    for scene in scenes:
+        if scene['id'] == 'linnet.system.game-play':
+            for node in scene['nodes']:
+                if node['kind'] == 17 and (node['x'], node['y'], node['w'], node['h']) == (0, 0, 320, 240):
+                    node['flags'] |= 64
     style = theme['layout']
     if style == 'native':
         result = deepcopy(scenes)

@@ -36,16 +36,20 @@ theme is not included.
 ## Games
 
 Open **Games** from Home to play Comet Run, Pulse Path or Solitaire. In Comet
-Run and Pulse Path, use the wheel to steer or choose a pad, Select to activate
+Run and Pulse Path, Select on the illustrated launch screen begins play.
+Use the wheel to steer or choose a pad, Select to activate
 a shield or tap a pad, Play to pause, and Menu to leave. Comet Run awards
 points for dodged meteors. Its shield meter marks the 40% activation cost;
-shield, recharge and impact feedback appear during play. Previous/Next also
+shield, recharge and impact feedback appear during play. Protected collisions
+break meteors into sparks and earn the same five points as a dodge. Previous/Next also
 steers the ship. Pulse Path uses four numbered symbols arranged clockwise to
 match wheel navigation, and awards points for repeating each growing pattern.
 A short lead-in precedes each round, with a beat counter showing progress;
-Previous/Next also selects a symbol. A wrong pad costs one life and
+Previous/Next also selects a symbol. Quick successive taps are accepted while
+the previous light fades. A wrong pad costs one life and
 replays the pattern; clearing all 24 rounds ends the game. Both games have three
-lives, retry from the result screen, and save their best scores in the optional
+lives and a one-press retry from the result screen, which highlights a new
+personal best. They save their best scores in the optional
 theme state records created by a current Linnet installation.
 
 Solitaire uses draw-one Klondike. The wheel cycles through stock, waste, four
