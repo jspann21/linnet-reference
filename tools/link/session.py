@@ -41,6 +41,9 @@ class Session:
         if len(raw) != 128:
             raise ProtocolError('invalid video startup timing length')
         words = struct.unpack('<32I', raw)
+        if not any(words):
+            # Backends without this measurement page (BCM2722) return zeros.
+            return dict(available=False)
         if words[:2] != (int.from_bytes(b'VMEA', 'little'), 0) or any(words[8:]):
             raise ProtocolError('invalid video startup timing header')
         return dict(zip(('magic', 'reserved', 'opened_us', 'first_frame_us',

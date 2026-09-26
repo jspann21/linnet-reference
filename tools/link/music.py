@@ -23,7 +23,10 @@ def command(session,identity,action,*,path=None,sample=None):
             if len(raw)!=128 or struct.unpack_from('<I',raw)[0]!=0x4d250002:
                 raise RuntimeError('Malformed native video state reply')
             words=struct.unpack('<32I',raw)
-            state=dict(backend='bcm2722',phase=words[1],error=words[2],restoring=bool(words[3]),
+            # The recovery-mode latch stays set in RESTORED (17) and FAILED
+            # (18). It does not mean recovery is still running in those states.
+            state=dict(backend='bcm2722',phase=words[1],error=words[2],
+                       restoring=bool(words[3]) and words[1] not in (0,17,18),
                        display_owned=bool(words[7]),restore_error=words[20],
                        position_ms=words[24],duration_ms=words[25],active=bool(words[26]))
             return dict(identity=identity,state=state)
