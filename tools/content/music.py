@@ -23,6 +23,7 @@ import struct
 import subprocess
 import threading
 import tempfile
+import time
 import zlib
 
 from tools.studio.targets import TARGETS
@@ -520,6 +521,7 @@ class _MetadataCache:
     def __init__(self, path: Path):
         self.connection = None
         self.pending_writes = 0
+        self.artwork_bytes = None
         self.status = "enabled"
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -633,6 +635,68 @@ class _MetadataCache:
             return
         except sqlite3.Error:
             self._disable()
+
+    def embedded_cover(self, path, before, *, bypass=False):
+        # Keep original encoded bytes so all target artwork recipes remain exact.
+        # Equal covers share one blob; source stamps expire after one hour even
+        # when repeated imports keep using them. A refresh always rereads tags.
+        now = time.time()
+        if self.connection is not None and self.artwork_bytes is None:
+            # Library browsing uses this metadata cache too. Defer artwork
+            # maintenance until preparation actually needs embedded covers.
+            try:
+                self.connection.execute("CREATE TABLE IF NOT EXISTS embedded_sources "
+                    "(path TEXT PRIMARY KEY, size INTEGER, mtime INTEGER, checked REAL, digest BLOB)")
+                self.connection.execute("CREATE TABLE IF NOT EXISTS embedded_images "
+                    "(digest BLOB PRIMARY KEY, value BLOB)")
+                self.connection.execute("DELETE FROM embedded_sources WHERE checked < ? OR checked > ?",
+                                        (now - 3600, now))
+                self.connection.execute("DELETE FROM embedded_images WHERE digest NOT IN "
+                                        "(SELECT digest FROM embedded_sources)")
+                self.artwork_bytes = self.connection.execute(
+                    "SELECT COALESCE(SUM(length(value)),0) FROM embedded_images").fetchone()[0]
+                self.connection.commit()
+            except sqlite3.Error:
+                self._disable()
+        if self.connection is not None and not bypass:
+            try:
+                row = self.connection.execute(
+                    "SELECT i.value,i.digest,s.checked FROM embedded_sources s "
+                    "JOIN embedded_images i ON i.digest=s.digest "
+                    "WHERE s.path=? AND s.size=? AND s.mtime=? AND length(i.value)<=?",
+                    (str(path), before.st_size, before.st_mtime_ns, 32 * 1024 * 1024)).fetchone()
+                if (row and type(row[2]) in (int, float) and 0 <= now - row[2] <= 3600 and
+                        isinstance(row[0], bytes) and hashlib.sha256(row[0]).digest() == row[1]):
+                    return row[0] or None
+            except OverflowError:
+                pass
+            except sqlite3.Error:
+                self._disable()
+        cover = _embedded_cover(path)
+        after = path.stat()
+        if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+            raise ValueError("audio source changed during artwork extraction")
+        if self.connection is not None:
+            try:
+                value = cover or b""
+                digest = hashlib.sha256(value).digest()
+                exists = self.connection.execute(
+                    "SELECT 1 FROM embedded_images WHERE digest=?", (digest,)).fetchone()
+                if exists or self.artwork_bytes + len(value) <= 128 * 1024 * 1024:
+                    self.connection.execute("INSERT OR REPLACE INTO embedded_images VALUES (?,?)", (digest, value))
+                    if not exists:
+                        self.artwork_bytes += len(value)
+                    self.connection.execute("INSERT OR REPLACE INTO embedded_sources VALUES (?,?,?,?,?)",
+                        (str(path), before.st_size, before.st_mtime_ns, now, digest))
+                    self.pending_writes += 1
+                    if self.pending_writes >= 128:
+                        self.connection.commit()
+                        self.pending_writes = 0
+            except OverflowError:
+                pass
+            except sqlite3.Error:
+                self._disable()
+        return cover
 
     def coverflow_get(self, key):
         if self.connection is None:
@@ -988,7 +1052,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     stable_ids: set[int] = set()
     groups: dict[tuple[int, str, str], list[int]] = {}
 
-    def art_for(path: Path) -> int:
+    def art_for(path: Path, before) -> int:
         nonlocal embedded_cache_bytes
         if not artwork:
             return NO_INDEX
@@ -1002,7 +1066,10 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             folder_covers[folder] = next((p for p in candidates if p.is_file()), None)
         cover = folder_covers[folder]
         sidecar = cover is not None
-        embedded = _embedded_cover(path) if cover is None else None
+        embedded = None
+        if cover is None:
+            embedded = (cache.embedded_cover(path, before, bypass=bypass_cache)
+                        if cache else _embedded_cover(path))
         if cover is None and embedded is None:
             saved_cover = retail.get(str(path.resolve()).casefold(), {}).get('artwork')
             if saved_cover:
@@ -1139,7 +1206,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             metadata["rate"], metadata["channels"], metadata["bits"])
         struct.pack_into("<IIIIIIIIIIIi", record, 48, metadata["codec"], string(title), string(artist),
             string(album, album_artist), string(location), string(genre), string(composer),
-            year, track, disc, art_for(path), gain)
+            year, track, disc, art_for(path, before), gain)
         record[96:128] = hasher.digest() if hash_audio else bytes(32)
         struct.pack_into("<i", record, 128, replaygain("replaygain_album_gain"))
         index = len(records)
