@@ -16,6 +16,8 @@ static uint32_t random_state=0x9e3779b9u,last_tick,spawn_at,flash_until,invulner
 static uint32_t buttons;
 static uint8_t sound_pending;
 static bool resume_pending;
+static uint32_t hit_until,shield_notice_until;
+static bool shield_failed;
 static struct {int16_t x,y;uint8_t size,live;uint32_t fraction;} rock[12];
 static char score_text[48];
 static const char *const names[]={"Comet Run","Pulse Path","Solitaire"};
@@ -127,12 +129,13 @@ static void finish(bool won);
 static void new_pulse(void){
     if(level>=24u){finish(true);return;}
     sequence[level]=(uint8_t)(random_next()&3u);++level;entered=0;
-    flash=sequence[0]+1u;flash_until=last_tick+500000u;games_phase=WATCH;sound_pending=(uint8_t)(5u+sequence[0]);
+    flash=0;entered=255u;flash_until=last_tick+700000u;games_phase=WATCH;
 }
 void ln_games_start(uint32_t row){
     for(uint32_t i=0;i<GAME_COUNT;++i)if(installed&(1u<<i)){if(!row){game=(uint8_t)i;break;}--row;}
     random_state^=last_tick+0x6d2b79f5u;games_phase=paused_phase=PLAY;score=0;hearts=3u;focus=0u;sound_pending=1u;
     resume_pending=false;
+    hit_until=shield_notice_until=0;shield_failed=false;
     if(game==COMET){ship=160u;energy=100u;energy_carry=0;spawn_at=last_tick+600000u;invulnerable_until=last_tick+1200000u;for(uint32_t i=0;i<12u;++i)rock[i].live=0;}
     else if(game==PULSE){level=0u;new_pulse();}
     else sol_new();
@@ -151,7 +154,7 @@ int ln_games_input(uint32_t kind,int32_t value){
             sol_focus((uint8_t)next);++hud_revision;return 1;
         }if(games_phase==PLAY&&game==COMET){
             int32_t steps=value<-24?-24:value>24?24:value;
-            int32_t next=(int32_t)ship+steps*12;if(next<18)next=18;if(next>302)next=302;ship=(uint16_t)next;}
+            int32_t next=(int32_t)ship+steps*6;if(next<18)next=18;if(next>302)next=302;ship=(uint16_t)next;}
         else if(games_phase==PLAY&&game==PULSE)focus=(uint8_t)((focus+value%4+4)&3u);return 1;}
     if(kind!=2u)return 0;
     uint32_t pressed=(uint32_t)value&~buttons;buttons=(uint32_t)value;
@@ -180,19 +183,21 @@ int ln_games_input(uint32_t kind,int32_t value){
         if(pressed&4u)ship=ship<286u?ship+16u:302u;
         if(pressed&8u)ship=ship>34u?ship-16u:18u;
         if((pressed&16u)&&energy>=40u){energy-=40u;
+            shield_failed=false;shield_notice_until=last_tick+800000u;
             uint32_t shield_until=last_tick+800000u;
             if((int32_t)(shield_until-invulnerable_until)>0)invulnerable_until=shield_until;
             sound_pending=2u;}
+        else if(pressed&16u){shield_failed=true;shield_notice_until=last_tick+600000u;sound_pending=3u;}
     }else{
         if(pressed&4u)focus=(focus+1u)&3u;
         if(pressed&8u)focus=(focus+3u)&3u;
-        if(pressed&16u){
+        if((pressed&16u)&&!flash){
             flash=focus+1u;flash_until=last_tick+230000u;
             if(focus!=sequence[entered]){
-                sound_pending=3u;if(hearts)--hearts;
+                sound_pending=3u;if(hearts)--hearts;++hud_revision;
                 if(!hearts)finish(false);
                 else{entered=0;games_phase=MISTAKE;flash_until=last_tick+450000u;}
-            }else {sound_pending=(uint8_t)(5u+focus);if(++entered==level){score+=level*10u;new_pulse();}}
+            }else {sound_pending=(uint8_t)(5u+focus);++entered;++hud_revision;}
         }
     }
     return 1;
@@ -204,14 +209,15 @@ bool ln_games_tick(uint32_t now){
     if(games_phase==PAUSED)return false;
     if(resume_pending){resume_pending=false;
         if(last_tick){uint32_t paused_for=now-last_tick;
-            if(game==COMET){spawn_at+=paused_for;invulnerable_until+=paused_for;}
+            if(game==COMET){spawn_at+=paused_for;invulnerable_until+=paused_for;
+                if(hit_until)hit_until+=paused_for;if(shield_notice_until)shield_notice_until+=paused_for;}
             else flash_until+=paused_for;
             last_tick=now;return false;
         }
     }
     if(!last_tick){last_tick=now;
         if(game==COMET){spawn_at=now+600000u;invulnerable_until=now+1200000u;}
-        else if(flash)flash_until=now+(games_phase==MISTAKE?450000u:games_phase==WATCH?500000u:230000u);
+        else if(flash||games_phase==WATCH)flash_until=now+(games_phase==MISTAKE?450000u:games_phase==WATCH?700000u:230000u);
         return false;}
     if(game==PULSE){
         last_tick=now;
@@ -221,12 +227,13 @@ bool ln_games_tick(uint32_t now){
         }
         if(games_phase==WATCH&&(int32_t)(now-flash_until)>=0){
             if(flash){flash=0;flash_until=now+170000u;}
-            else if(++entered<level){flash=sequence[entered]+1u;flash_until=now+430000u;
+            else if(entered==255u||entered+1u<level){entered=entered==255u?0u:(uint8_t)(entered+1u);flash=sequence[entered]+1u;flash_until=now+500000u;
                 sound_pending=(uint8_t)(5u+sequence[entered]);}
             else{entered=0;games_phase=PLAY;++hud_revision;}
             return true;
         }
-        if(games_phase==PLAY&&flash&&(int32_t)(now-flash_until)>=0){flash=0;return true;}
+        if(games_phase==PLAY&&flash&&(int32_t)(now-flash_until)>=0){flash=0;
+            if(entered==level){score+=level*10u;new_pulse();++hud_revision;}return true;}
         return false;
     }
     uint32_t elapsed=now-last_tick;if(elapsed<33333u)return false;if(elapsed>100000u)elapsed=100000u;last_tick=now;
@@ -248,12 +255,13 @@ bool ln_games_tick(uint32_t now){
         else if(x+r+2>(int32_t)ship-11&&x-r-2<(int32_t)ship+11&&
                 y+r+2>167&&y-r-2<201&&
                 (int32_t)(now-invulnerable_until)>=0){rock[i].live=0u;if(hearts)--hearts;sound_pending=3u;
-            invulnerable_until=now+1200000u;if(!hearts){finish(false);break;}}
+            hit_until=now+350000u;invulnerable_until=now+1200000u;if(!hearts){finish(false);break;}}
     }
     if(score!=old_score||hearts!=old_hearts||games_phase!=old_phase)++hud_revision;
     return true;
 }
 const char *ln_games_text(const char *key){
+    if(game!=SOLITAIRE)return ""; /* Arcade canvas owns its HUD and result layout. */
     if(key[5]=='t')return names[game];
     if(key[5]=='s'){
         if(game==SOLITAIRE){char *p=score_text;append(&p,"Moves ");number(&p,sol_moves);
@@ -405,58 +413,16 @@ static void sol_draw_board(const struct ln_ui_canvas_context *c){
             if(sy>165)sy=165;sol_outline(c,x,sy,sol_source_depth+1u<length?step:50,0x07ffu);}
     }
 }
+#include "targets/video5g-m25/games_arcade.h"
 void ln_games_draw(const struct ln_ui_canvas_context *c){
-    if(game==SOLITAIRE){sol_draw_board(c);
+    if(game==SOLITAIRE){
+        box(c,0,0,320,43,0x1167u);box(c,0,215,320,25,0x1167u);
+        sol_draw_board(c);
         if(games_phase==PAUSED||games_phase==WON){box(c,76,88,168,60,0x0843u);
             box(c,80,92,160,52,games_phase==PAUSED?0x218bu:0x354au);}
         return;
     }
-    static const uint16_t pad[]={0xfca6u,0x35dbu,0xfec0u,0x9b5fu};
-    box(c,0,203,320,1,0x2bd1u);
-    for(uint32_t i=0;i<4u;++i){
-        int32_t y=64+(int32_t)i*35;
-        uint16_t stripe=i&1u?0x1048u:0x186au;
-        if(game==PULSE){box(c,0,y,45,1,stripe);box(c,139,y,22,1,stripe);box(c,255,y,65,1,stripe);}
-        else box(c,0,y,320,1,stripe);
-        box(c,12+(int32_t)i*7,y-4,1,8,0x1870u);
-        box(c,307-(int32_t)i*7,y-4,1,8,0x1870u);
-    }
-    if(game==COMET){
-        uint32_t phase=(last_tick/30000u)%143u,x=37u,base_y=19u,speed=1u;
-        for(uint32_t i=0;i<38u;++i){uint32_t y=base_y+phase*speed;
-            while(y>=143u)y-=143u;
-            box(c,(int32_t)x,(int32_t)(y+59u),i%5u?1:2,i%5u?2:3,i%5u?0x6b9fu:0xa69fu);
-            x+=113u;if(x>=320u)x-=320u;
-            base_y+=71u;if(base_y>=143u)base_y-=143u;
-            if(++speed==4u)speed=1u;
-        }
-        for(uint32_t i=0;i<12u;++i)if(rock[i].live){int32_t x=rock[i].x,y=rock[i].y,r=rock[i].size;
-            box(c,x-r-2,y-r-2,r*2+4,r*2+4,0x5069u);
-            box(c,x-r,y-r,r*2,r*2,0xb9a9u);box(c,x-r+2,y-r+2,r*2-4,r*2-4,0xfaa8u);
-            box(c,x-r+3,y-r+3,r-2,2,0xffdbu);box(c,x-2,y-2,4,4,0xffdbu);}
-        bool bright=(int32_t)(last_tick-invulnerable_until)<0;
-        if(bright){box(c,ship-17,166,12,2,0x4e9fu);box(c,ship+5,166,12,2,0x4e9fu);
-            box(c,ship-17,168,2,25,0x4e9fu);box(c,ship+15,168,2,25,0x4e9fu);}
-        if(!bright||((last_tick/90000u)&1u)==0){
-            box(c,ship-10,190,20,3,0x2bd1u);box(c,ship-4,188,8,7,0x7fffu);
-            for(int32_t y=0;y<19;++y)box(c,(int32_t)ship-y/2,186-y,y+2,1,bright?0xffffu:0x4e9fu);
-            box(c,ship-3,182,6,5,0xffffu);
-            uint32_t flame=4u+(last_tick/90000u)%8u;
-            box(c,ship-2,193,4,(int32_t)flame,0xfbc0u);box(c,ship-1,193,2,(int32_t)flame/2,0xffffu);
-        }
-        box(c,238,198,68,3,0x184au);box(c,238,198,(int32_t)(energy*68u/100u),3,0x4e9fu);
-    }else{
-        for(uint32_t i=0;i<4u;++i){int32_t x=50+(int32_t)(i&1u)*116,y=66+(int32_t)(i>>1)*65;
-            uint16_t ink=pad[i];
-            box(c,x-3,y-3,90,52,i==focus&&games_phase==PLAY?0xffffu:0x39cdu);
-            box(c,x,y,84,46,flash==i+1u?(games_phase==MISTAKE?0xf9a6u:0xffffu):ink);
-            box(c,x+3,y+3,78,2,0xffffu);box(c,x+20,y+12,44,22,0x0825u);
-            box(c,x+27,y+15,30,16,ink);box(c,x+3,y+40,78,3,0x186au);
-        }
-        box(c,50,195,220,4,0x184au);box(c,50,195,level*220u/24u,4,0x7fffu);
-    }
-    if(games_phase==PAUSED||games_phase==LOST||games_phase==WON){box(c,26,75,268,85,0x0843u);
-        box(c,30,79,260,77,games_phase==PAUSED?0x218bu:games_phase==WON?0x354au:0x5069u);}
+    arcade_draw(c);
 }
 
 #if defined(LINNET_AUDIO)
