@@ -190,7 +190,7 @@ class Covers(QObject):
     """Load only visible artwork; keep device IO off the GUI thread."""
     def __init__(self, parent):
         super().__init__(parent)
-        self.cache, self.pending = OrderedDict(), set()
+        self.cache, self.pending = OrderedDict(), {}
         self.generation = 0
         self.closed = False
         self.pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix='linnet-art')
@@ -199,18 +199,21 @@ class Covers(QObject):
         self.views = []
 
     def get(self, path, source=None):
-        if not path:
+        if not path or self.closed:
             return None
         if path in self.cache:
             self.cache.move_to_end(path)
             return self.cache[path]
-        if path not in self.pending:
-            self.pending.add(path)
-            self.pool.submit(self.read, path, source, self.generation)
+        # Completions repaint the views, which request any still-visible covers
+        # again. Keep rapid scrolling from queuing an entire library of reads.
+        if path not in self.pending and len(self.pending) < 6:
+            self.pending[path] = self.pool.submit(self.read, path, source, self.generation)
         return None
 
     def invalidate(self, paths=None):
         self.generation += 1
+        for future in self.pending.values():
+            future.cancel()
         self.pending.clear()
         if paths is None:
             self.cache.clear()
@@ -265,7 +268,7 @@ class Covers(QObject):
     def receive(self, generation, path, image):
         if generation != self.generation:
             return
-        self.pending.discard(path)
+        self.pending.pop(path, None)
         self.cache[path] = QPixmap.fromImage(image) if not image.isNull() else None
         self.cache.move_to_end(path)
         if len(self.cache) > 600:
@@ -374,7 +377,8 @@ class Artwork(QWidget):
 
     @Slot(int, str, object)
     def art_ready(self, generation, path, _image):
-        if generation == self.covers.generation and path == self.row.get('artwork'):
+        artwork = self.row.get('artwork')
+        if generation == self.covers.generation and (path == artwork or artwork not in self.covers.cache):
             self.update()
 
     def paintEvent(self, event):
