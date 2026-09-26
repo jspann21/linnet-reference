@@ -9,7 +9,7 @@
 #include "targets/video5g-m25/solitaire_courts.h"
 
 enum { COMET, PULSE, SOLITAIRE, GAME_COUNT };
-enum { PLAY=1u, PAUSED, LOST, WATCH, MISTAKE, WON, ARCADE_READY };
+enum { PLAY=1u, PAUSED, LOST, WATCH, MISTAKE, WON, ARCADE_READY, SOL_CONFIRM };
 static uint8_t installed=7u,game,games_phase,paused_phase,hearts,focus,sequence[24],entered,level,flash;
 static uint16_t ship=160,energy,score,best[GAME_COUNT];
 static uint32_t random_state=0x9e3779b9u,last_tick,spawn_at,flash_until,invulnerable_until,hud_revision,energy_carry;
@@ -23,7 +23,6 @@ static uint32_t burst_until;
 static int16_t burst_x,burst_y;
 static bool burst_shield;
 static struct {int16_t x,y;uint8_t size,live;uint32_t fraction;} rock[12];
-static char score_text[48];
 static const char *const names[]={"Comet Run","Pulse Path","Solitaire"};
 static uint32_t random_next(void);
 
@@ -33,6 +32,32 @@ static uint8_t sol_stock[52],sol_waste[52],sol_tableau[7][52];
 static uint8_t sol_stock_count,sol_waste_count,sol_count[7],sol_hidden[7],sol_foundation[4];
 static uint8_t sol_cursor,sol_depth,sol_source=255u,sol_source_depth;
 static uint16_t sol_moves;
+static uint8_t sol_menu,sol_history_head,sol_history_count;
+static const char *sol_message;
+static struct sol_snapshot {
+    uint8_t stock[52],waste[52],tableau[7][52],stock_count,waste_count,count[7],hidden[7],foundation[4],cursor,depth;
+    uint16_t moves;
+} sol_history[16];
+static void sol_remember(void){
+    struct sol_snapshot *s=&sol_history[sol_history_head];
+    for(uint8_t i=0;i<52u;++i){s->stock[i]=sol_stock[i];s->waste[i]=sol_waste[i];
+        for(uint8_t col=0;col<7u;++col)s->tableau[col][i]=sol_tableau[col][i];}
+    for(uint8_t i=0;i<7u;++i){s->count[i]=sol_count[i];s->hidden[i]=sol_hidden[i];}
+    for(uint8_t i=0;i<4u;++i)s->foundation[i]=sol_foundation[i];
+    s->stock_count=sol_stock_count;s->waste_count=sol_waste_count;s->cursor=sol_cursor;s->depth=sol_depth;s->moves=sol_moves;
+    sol_history_head=(sol_history_head+1u)&15u;if(sol_history_count<16u)++sol_history_count;
+}
+static void sol_undo(void){
+    if(!sol_history_count){sol_message="No moves to undo yet.";sound_pending=3u;return;}
+    sol_history_head=(sol_history_head+15u)&15u;--sol_history_count;
+    const struct sol_snapshot *s=&sol_history[sol_history_head];
+    for(uint8_t i=0;i<52u;++i){sol_stock[i]=s->stock[i];sol_waste[i]=s->waste[i];
+        for(uint8_t col=0;col<7u;++col)sol_tableau[col][i]=s->tableau[col][i];}
+    for(uint8_t i=0;i<7u;++i){sol_count[i]=s->count[i];sol_hidden[i]=s->hidden[i];}
+    for(uint8_t i=0;i<4u;++i)sol_foundation[i]=s->foundation[i];
+    sol_stock_count=s->stock_count;sol_waste_count=s->waste_count;sol_cursor=s->cursor;sol_depth=s->depth;sol_moves=s->moves;
+    sol_source=255u;sol_message="Move undone.";sound_pending=2u;games_phase=PLAY;++hud_revision;
+}
 static uint8_t sol_rank(uint8_t card){return (uint8_t)(card%13u+1u);}
 static uint8_t sol_suit(uint8_t card){return card/13u;}
 static bool sol_red(uint8_t card){uint8_t suit=sol_suit(card);return suit==1u||suit==2u;}
@@ -51,6 +76,7 @@ static void sol_new(void){
     for(uint8_t i=0;i<24u;++i)sol_stock[i]=deck[next++];
     for(uint8_t i=0;i<4u;++i)sol_foundation[i]=0u;
     sol_source=255u;sol_source_depth=0u;sol_moves=0u;sol_focus(0u);
+    sol_menu=sol_history_head=sol_history_count=0u;sol_message=0;
 }
 static void sol_win(void){
     for(uint8_t i=0;i<4u;++i)if(sol_foundation[i]!=13u)return;
@@ -62,10 +88,11 @@ static void sol_win(void){
     }
 }
 static bool sol_draw(void){
-    if(sol_stock_count){sol_waste[sol_waste_count++]=sol_stock[--sol_stock_count];++sol_moves;sound_pending=2u;return true;}
+    if(sol_stock_count){sol_remember();sol_waste[sol_waste_count++]=sol_stock[--sol_stock_count];if(sol_moves<UINT16_MAX)++sol_moves;sound_pending=2u;return true;}
     if(!sol_waste_count)return false;
+    sol_remember();
     while(sol_waste_count)sol_stock[sol_stock_count++]=sol_waste[--sol_waste_count];
-    ++sol_moves;sound_pending=2u;return true;
+    if(sol_moves<UINT16_MAX)++sol_moves;sol_message="Waste recycled. Draw again.";sound_pending=2u;return true;
 }
 static bool sol_select_source(void){
     if(sol_cursor==1u&&!sol_waste_count)return false;
@@ -75,21 +102,31 @@ static bool sol_select_source(void){
     }
     sol_source=sol_cursor;sol_source_depth=sol_depth;sound_pending=1u;return true;
 }
+static uint8_t sol_visible_card(uint8_t spot,uint8_t depth){
+    if(spot==1u&&sol_waste_count)return sol_waste[sol_waste_count-1u];
+    if(spot>=2u&&spot<6u&&sol_foundation[spot-2u])return (uint8_t)((spot-2u)*13u+sol_foundation[spot-2u]-1u);
+    if(spot>=6u&&spot<13u&&depth<sol_count[spot-6u]&&depth>=sol_hidden[spot-6u])return sol_tableau[spot-6u][depth];
+    return 255u;
+}
+static bool sol_can_place(uint8_t dest){
+    if(sol_source==255u||dest==sol_source||dest<2u||dest>=13u)return false;
+    uint8_t card=sol_visible_card(sol_source,sol_source_depth);if(card==255u)return false;
+    uint8_t count=sol_source>=6u?sol_count[sol_source-6u]-sol_source_depth:1u;
+    if(dest<6u)return count==1u&&sol_suit(card)==dest-2u&&sol_rank(card)==sol_foundation[dest-2u]+1u;
+    uint8_t col=dest-6u,length=sol_count[col];if(length+count>52u)return false;
+    if(!length)return sol_rank(card)==13u;
+    uint8_t top=sol_tableau[col][length-1u];return sol_red(top)!=sol_red(card)&&sol_rank(top)==sol_rank(card)+1u;
+}
 static bool sol_move(void){
     uint8_t source=sol_source,dest=sol_cursor,first,count,card;
-    if(source==255u||source==dest||dest==0u||dest==1u)return false;
+    if(!sol_can_place(dest)){
+        sol_message=dest<2u?"Choose a column or a foundation.":dest<6u?"Build each suit from Ace to King.":
+            !sol_count[dest-6u]?"Only Kings fit an empty column.":"Alternate colors, one rank lower.";return false;}
     if(source==1u){first=(uint8_t)(sol_waste_count-1u);count=1u;card=sol_waste[first];}
     else if(source<6u){first=0u;count=1u;card=(uint8_t)((source-2u)*13u+sol_foundation[source-2u]-1u);}
     else {uint8_t col=(uint8_t)(source-6u);first=sol_source_depth;
         count=(uint8_t)(sol_count[col]-first);card=sol_tableau[col][first];}
-    if(dest<6u){uint8_t suit=(uint8_t)(dest-2u);
-        if(count!=1u||sol_suit(card)!=suit||sol_rank(card)!=sol_foundation[suit]+1u)return false;
-    }else{uint8_t col=(uint8_t)(dest-6u),length=sol_count[col];
-        if(length>=52u-count+1u)return false;
-        if(length){uint8_t top=sol_tableau[col][length-1u];
-            if(sol_red(top)==sol_red(card)||sol_rank(top)!=sol_rank(card)+1u)return false;
-        }else if(sol_rank(card)!=13u)return false;
-    }
+    sol_remember();
     if(dest<6u)++sol_foundation[dest-2u];
     else {uint8_t col=(uint8_t)(dest-6u);
         for(uint8_t i=0;i<count;++i)sol_tableau[col][sol_count[col]++]=source==1u?card:
@@ -101,7 +138,7 @@ static bool sol_move(void){
         if(sol_count[col]&&sol_hidden[col]==sol_count[col]){--sol_hidden[col];sound_pending=5u;}
         else sound_pending=2u;
     }
-    ++sol_moves;sol_source=255u;sol_focus(dest);sol_win();return true;
+    if(sol_moves<UINT16_MAX)++sol_moves;sol_source=255u;sol_focus(dest);sol_message="Card placed.";sol_win();return true;
 }
 
 static uint32_t random_next(void){random_state^=random_state<<13;random_state^=random_state>>17;random_state^=random_state<<5;return random_state;}
@@ -153,28 +190,39 @@ static void finish(bool won){games_phase=won?WON:LOST;sound_pending=4u;if(score>
 #endif
     }}
 int ln_games_input(uint32_t kind,int32_t value){
-    if(kind==1u){if(!value)return 1;if(games_phase==PLAY&&game==SOLITAIRE){
+    if(kind==1u){if(!value)return 1;
+        if(game==SOLITAIRE&&games_phase==PAUSED){sol_menu=(uint8_t)((sol_menu+value%3+3)%3);sol_message=0;return 1;}
+        if(games_phase==PLAY&&game==SOLITAIRE){
             int32_t next=(int32_t)sol_cursor+value%13;
             while(next<0)next+=13;while(next>=13)next-=13;
-            sol_focus((uint8_t)next);++hud_revision;return 1;
+            sol_focus((uint8_t)next);sol_message=0;++hud_revision;return 1;
         }if(games_phase==PLAY&&game==COMET){
             int32_t steps=value<-24?-24:value>24?24:value;
             int32_t next=(int32_t)ship+steps*6;if(next<18)next=18;if(next>302)next=302;ship=(uint16_t)next;}
         else if(games_phase==PLAY&&game==PULSE)focus=(uint8_t)((focus+value%4+4)&3u);return 1;}
     if(kind!=2u)return 0;
     uint32_t pressed=(uint32_t)value&~buttons;buttons=(uint32_t)value;
+    if(game==SOLITAIRE&&games_phase==SOL_CONFIRM){
+        if(pressed&(1u|2u)){games_phase=PAUSED;return 1;}
+        if(pressed&16u){sol_new();games_phase=PLAY;++hud_revision;}return 1;}
+    if(game==SOLITAIRE&&games_phase==PAUSED){
+        if(pressed&(1u|2u)){games_phase=PLAY;return 1;}
+        if(pressed&4u)sol_menu=(sol_menu+1u)%3u;
+        if(pressed&8u)sol_menu=(sol_menu+2u)%3u;
+        if(pressed&16u){if(!sol_menu)games_phase=PLAY;else if(sol_menu==1u)sol_undo();else games_phase=SOL_CONFIRM;}
+        return 1;}
+    if(game==SOLITAIRE&&games_phase==PLAY&&sol_source!=255u&&(pressed&1u)){
+        sol_source=255u;sol_message="Pickup cancelled.";return 1;}
     if(pressed&1u)return 2;
     if(games_phase==ARCADE_READY){if(pressed&16u){games_phase=game==COMET?PLAY:WATCH;last_tick=0;++hud_revision;}return 1;}
-    if(pressed&2u){if(games_phase==PLAY||games_phase==WATCH||games_phase==MISTAKE){paused_phase=games_phase;games_phase=PAUSED;}
+    if(pressed&2u){if(games_phase==PLAY||games_phase==WATCH||games_phase==MISTAKE){paused_phase=games_phase;games_phase=PAUSED;sol_menu=0;sol_message=0;}
         else if(games_phase==PAUSED){games_phase=paused_phase;resume_pending=true;}return 1;}
-    if(game==SOLITAIRE&&games_phase==PAUSED&&(pressed&16u)){
-        uint32_t row=0;for(uint32_t i=0;i<game;++i)if(installed&(1u<<i))++row;
-        ln_games_start(row);return 1;}
     if((games_phase==LOST||games_phase==WON)&&(pressed&16u)){
         uint32_t row=0;for(uint32_t i=0;i<game;++i)if(installed&(1u<<i))++row;
         ln_games_start(row);if(game!=SOLITAIRE)games_phase=game==COMET?PLAY:WATCH;return 1;}
     if(games_phase!=PLAY)return 1;
     if(game==SOLITAIRE){
+        if(pressed)sol_message=0;
         if(sol_cursor>=6u&&sol_source==255u){uint8_t col=(uint8_t)(sol_cursor-6u);
             if((pressed&8u)&&sol_depth>sol_hidden[col]){--sol_depth;++hud_revision;}
             if((pressed&4u)&&sol_depth+1u<sol_count[col]){++sol_depth;++hud_revision;}
@@ -183,7 +231,7 @@ int ln_games_input(uint32_t kind,int32_t value){
             if(sol_source==255u)changed=sol_cursor==0u?sol_draw():sol_select_source();
             else if(sol_source==sol_cursor){sol_source=255u;changed=true;}
             else changed=sol_move();
-            if(changed)++hud_revision;else sound_pending=3u;
+            if(changed)++hud_revision;else{sound_pending=3u;if(!sol_message)sol_message="No face-up card here.";}
         }
     }else if(game==COMET){
         if(pressed&4u)ship=ship<286u?ship+16u:302u;
@@ -270,40 +318,7 @@ bool ln_games_tick(uint32_t now){
     if(score!=old_score||hearts!=old_hearts||games_phase!=old_phase)++hud_revision;
     return true;
 }
-const char *ln_games_text(const char *key){
-    if(game!=SOLITAIRE)return ""; /* Arcade canvas owns its HUD and result layout. */
-    if(key[5]=='t')return names[game];
-    if(key[5]=='s'){
-        if(game==SOLITAIRE){char *p=score_text;append(&p,"Moves ");number(&p,sol_moves);
-            append(&p,"  Wins ");number(&p,best[SOLITAIRE]);
-            uint8_t spot=sol_source!=255u?sol_source:sol_cursor,card=255u;
-            uint8_t depth=sol_source!=255u?sol_source_depth:sol_depth;
-            if(spot==1u&&sol_waste_count)card=sol_waste[sol_waste_count-1u];
-            else if(spot>=2u&&spot<6u&&sol_foundation[spot-2u])
-                card=(uint8_t)((spot-2u)*13u+sol_foundation[spot-2u]-1u);
-            else if(spot>=6u&&depth<sol_count[spot-6u]&&depth>=sol_hidden[spot-6u])
-                card=sol_tableau[spot-6u][depth];
-            if(card<52u){static const char *const suits[]={"Clubs","Diamonds","Hearts","Spades"};
-                append(&p,"  ");uint8_t rank=sol_rank(card);
-                if(rank==1u)*p++='A';else if(rank==11u)*p++='J';else if(rank==12u)*p++='Q';
-                else if(rank==13u)*p++='K';else number(&p,rank);
-                *p++=' ';append(&p,suits[sol_suit(card)]);
-            }
-            *p=0;return score_text;}
-        char *p=score_text;append(&p,"Score ");number(&p,score);append(&p,"  Best ");number(&p,best[game]);
-        if(game==PULSE){append(&p,"  Round ");number(&p,level);}
-        append(&p,"  Lives ");number(&p,hearts);*p=0;return score_text;
-    }
-    if(key[5]=='o')return games_phase==PAUSED?"PAUSED":games_phase==LOST?"GAME OVER":games_phase==WON?"CLEARED":"";
-    if(key[5]=='d')return games_phase==PAUSED?game==SOLITAIRE?"Select: new deal":"Play to resume":games_phase==LOST?"Select to retry":games_phase==WON?"Select to replay":"";
-    if(games_phase==PAUSED)return game==SOLITAIRE?"PAUSED  Play: resume  Select: new deal":"PAUSED   Play: resume   Menu: Games";
-    if(games_phase==LOST)return "GAME OVER   Select: retry   Menu: Games";
-    if(games_phase==WON)return game==SOLITAIRE?"SOLVED   Select: new deal   Menu: Games":"CLEARED   Select: replay   Menu: Games";
-    if(game==SOLITAIRE)return sol_source!=255u?"Wheel: target  Select: move/cancel":"Wheel: pile  </>: card  Select: pick";
-    if(games_phase==MISTAKE)return "Wrong pad. Watch the pattern again";
-    if(games_phase==WATCH)return "Watch the pattern, then repeat it";
-    return game==COMET?"Wheel: steer  Select: shield  Play: pause":"Wheel: pick  Select: tap  Play: pause";
-}
+const char *ln_games_text(const char *key){(void)key;return "";}
 static void box(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,int32_t w,int32_t h,uint16_t ink){
     int32_t left=x>c->clip_x?x:c->clip_x,top=y>c->clip_y?y:c->clip_y;
     int32_t right=x+w<c->clip_x+c->clip_w?x+w:c->clip_x+c->clip_w;
@@ -311,21 +326,9 @@ static void box(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,int32_t
     if(left<0)left=0;if(top<0)top=0;if(right>320)right=320;if(bottom>240)bottom=240;
     for(int32_t yy=top;yy<bottom;++yy)for(int32_t xx=left;xx<right;++xx)c->pixels[yy*320+xx]=ink;
 }
+#include "targets/video5g-m25/games_arcade.h"
 static void sol_glyph(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,char ch,uint16_t ink){
-    static const char letters[]="A23456789TJQK10";
-    static const uint8_t bits[15][7]={
-        {14,17,17,31,17,17,17},{14,17,1,6,8,16,31},
-        {30,1,1,14,1,1,30},{2,6,10,18,31,2,2},
-        {31,16,30,1,1,17,14},{7,8,16,30,17,17,14},
-        {31,1,2,4,8,8,8},{14,17,17,14,17,17,14},
-        {14,17,17,15,1,2,28},{31,4,4,4,4,4,4},
-        {7,2,2,2,18,18,12},{14,17,17,17,21,18,13},
-        {17,18,20,24,20,18,17},{4,12,4,4,4,4,14},
-        {14,17,19,21,25,17,14}
-    };
-    uint8_t at=0;while(at<15u&&letters[at]!=ch)++at;if(at==15u)return;
-    for(uint8_t row=0;row<7u;++row)for(uint8_t col=0;col<5u;++col)
-        if(bits[at][row]&(16u>>col))box(c,x+col,y+row,1,1,ink);
+    char text[2]={ch,0};arcade_text(c,x,y-2,text,ink,true);
 }
 static void sol_outline(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,int32_t h,uint16_t ink){
     box(c,x-2,y-2,42,2,ink);box(c,x-2,y+h,42,2,ink);
@@ -362,15 +365,20 @@ static void sol_court_card(const struct ln_ui_canvas_context *c,int32_t x,int32_
     }
 }
 static void sol_card(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,uint8_t card,bool back,int32_t height){
-    box(c,x+1,y+1,38,height,0x02c2u);
+    struct ln_ui_canvas_context clipped=*c;
+    int32_t bottom=y+height;if(bottom>c->clip_y+c->clip_h)bottom=c->clip_y+c->clip_h;
+    clipped.clip_h=bottom>clipped.clip_y?bottom-clipped.clip_y:0;c=&clipped;
+    box(c,x+1,y+1,38,height,0x0985u);
     if(!back&&height>=50&&sol_rank(card)>=11u){sol_court_card(c,x,y,sol_rank(card),sol_suit(card));return;}
-    box(c,x,y,38,height,back?0xffffu:0xc618u);
+    arcade_panel(c,x,y,38,height,back?0xe73cu:0xc618u);
     box(c,x+1,y+1,36,height>2?height-2:1,back?0x2254u:0xffffu);
     if(back){
-        box(c,x+3,y+3,32,height>6?height-6:1,0x54f9u);
-        for(int32_t dx=5;dx<34;dx+=6)for(int32_t dy=5;dy<height-4;dy+=6){
-            box(c,x+dx,y+dy,2,2,0xffffu);box(c,x+dx+2,y+dy+2,2,2,0x1a4du);
-        }
+        box(c,x+3,y+3,32,height>6?height-6:1,0x8d37u);box(c,x+4,y+4,30,height>8?height-8:1,0x1a0fu);
+        for(int32_t dy=6;dy<height-5;dy+=3)for(int32_t dx=6+(dy%2);dx<33;dx+=4)box(c,x+dx,y+dy,1,1,0x6474u);
+        if(height>=50){for(int32_t dy=-11;dy<=11;++dy){int32_t half=11-(dy<0?-dy:dy);
+            box(c,x+19-half,y+25+dy,half*2+1,1,0x8d37u);
+            if(half>2)box(c,x+21-half,y+25+dy,half*2-3,1,0x1a0fu);}
+            box(c,x+17,y+23,5,5,0xded9u);}
         return;
     }
     uint16_t ink=sol_red(card)?0xd0c3u:0x18a7u;
@@ -393,45 +401,9 @@ static void sol_card(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,ui
             sol_small_suit(c,x+slot_x[slot],y+slot_y[slot],suit,ink);}
     }
 }
-static void sol_draw_board(const struct ln_ui_canvas_context *c){
-    static const int16_t top_x[6]={7,51,139,183,227,271};
-    box(c,0,43,320,172,0x1b48u);
-    for(uint8_t spot=0;spot<6u;++spot){int32_t x=top_x[spot],y=49;
-        box(c,x,y,38,50,0x340du);box(c,x+1,y+1,36,48,0x1b48u);
-        if(spot==0u&&sol_stock_count)sol_card(c,x,y,0,true,50);
-        else if(spot==1u&&sol_waste_count)sol_card(c,x,y,sol_waste[sol_waste_count-1u],false,50);
-        else if(spot>=2u){uint8_t suit=(uint8_t)(spot-2u),rank=sol_foundation[suit];
-            if(rank)sol_card(c,x,y,(uint8_t)(suit*13u+rank-1u),false,50);
-            else sol_suit_mark(c,x+12,y+18,suit,2u,suit==1u||suit==2u?0x9045u:0x3a12u);
-        }
-        if(sol_cursor==spot)sol_outline(c,x,y,50,0xffc0u);
-        if(sol_source==spot)sol_outline(c,x,y,50,0x07ffu);
-    }
-    for(uint8_t col=0;col<7u;++col){
-        int32_t x=7+(int32_t)col*44,y=106,step=13;
-        uint8_t length=sol_count[col];
-        if(length>5u){step=60/(length-1u);if(step<3)step=3;}
-        if(!length){box(c,x,y,38,50,0x340du);box(c,x+1,y+1,36,48,0x1b48u);}
-        for(uint8_t i=0;i<length;++i){int32_t at=y+(int32_t)i*step;
-            if(at>165)at=165;
-            sol_card(c,x,at,sol_tableau[col][i],i<sol_hidden[col],i+1u<length?step:50);
-        }
-        int32_t selected_y=length?y+(int32_t)sol_depth*step:y;
-        if(selected_y>165)selected_y=165;
-        if(sol_cursor==col+6u)sol_outline(c,x,selected_y,length?sol_depth+1u<length?step:50:50,0xffc0u);
-        if(sol_source==col+6u){int32_t sy=y+(int32_t)sol_source_depth*step;
-            if(sy>165)sy=165;sol_outline(c,x,sy,sol_source_depth+1u<length?step:50,0x07ffu);}
-    }
-}
-#include "targets/video5g-m25/games_arcade.h"
+#include "targets/video5g-m25/games_solitaire.h"
 void ln_games_draw(const struct ln_ui_canvas_context *c){
-    if(game==SOLITAIRE){
-        box(c,0,0,320,43,0x1167u);box(c,0,215,320,25,0x1167u);
-        sol_draw_board(c);
-        if(games_phase==PAUSED||games_phase==WON){box(c,76,88,168,60,0x0843u);
-            box(c,80,92,160,52,games_phase==PAUSED?0x218bu:0x354au);}
-        return;
-    }
+    if(game==SOLITAIRE){sol_draw_scene(c);return;}
     arcade_draw(c);
 }
 

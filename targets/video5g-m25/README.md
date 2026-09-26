@@ -60,8 +60,11 @@ Previous/Next chooses a different face-up card in the focused tableau pile so
 you can move a sequence; Select on the same pile cancels a pickup. Tableau
 stacks descend in alternating colors, empty columns take Kings, and foundations
 build by suit from Ace to King. Revealing a covered card happens automatically.
-Play pauses or resumes, Select while paused starts a new deal, Menu returns to
-Games, and Select after a win deals again. The move counter resets on each deal
+Green outlines mark legal destinations, and a full card preview keeps picked
+cards and compressed stacks readable. Menu cancels a pickup before returning
+to Games. Play opens options to resume, undo up to 16 moves (including draws,
+recycling and reveals), or confirm a new deal. Play or Menu resumes from options.
+Select after a win deals again. The move counter resets on each deal
 and completed games add to the persistent win count.
 The J/Q/K card illustrations are downsampled from Austin Gabriel's
 [Public Domain Playing Cards](https://github.com/AustinGabriel/Public-Domain-and-CC0-Playing-Cards)
