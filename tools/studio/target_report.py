@@ -117,7 +117,7 @@ def describe(value: str) -> dict:
     placeholders = []
     if not spec.get('build_enabled', True):
         placeholders.extend(name for name in ('board_id', 'model_alias', 'soc', 'hal_family',
-                                              'audio_codec') if spec.get(name) == 'unassigned')
+                                              'cpu', 'audio_codec') if spec.get(name) == 'unassigned')
         placeholders.extend(f'retail.{name}' for name in ('usb_vid', 'usb_pid')
                             if spec['retail'].get(name) == 0)
         for role, entry in sources['conventional'].items():
