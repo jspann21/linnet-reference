@@ -999,6 +999,16 @@ class MediaWindow(QMainWindow):
     def render_library(self):
         if self.page not in (*media.KINDS, 'Trash'):
             return
+        context = (self.page, self.view, (self.group['group_kind'], self.group['group_key']) if self.group else None)
+        selected_keys = set()
+        active = self.views.currentWidget()
+        if getattr(self, '_selection_context', None) == context and active in (self.table, self.grid):
+            indices = active.selectionModel().selectedRows() if active is self.table else active.selectionModel().selectedIndexes()
+            for index in indices:
+                if 0 <= index.row() < len(self.model.rows):
+                    row = self.model.rows[index.row()]
+                    selected_keys.add(('group', row['group_kind'], row['group_key']) if 'group_key' in row else ('row', row['id']))
+        self._selection_context = context
         rows = self.library_rows()
         all_rows = rows
         music = self.page == 'Music'
@@ -1094,6 +1104,26 @@ class MediaWindow(QMainWindow):
                           'Select a removal to restore it, or permanently delete it to free storage.' if self.page == 'Trash' else
                           'Ctrl+click or Shift+click to select multiple files. Double-click for details.')
         self.selection_bar.hide()
+        active = self.views.currentWidget()
+        if selected_keys and active in (self.table, self.grid):
+            selection = QItemSelection()
+            start = None
+            for index in range(len(self.model.rows) + 1):
+                if index < len(self.model.rows):
+                    row = self.model.rows[index]
+                    key = ('group', row['group_kind'], row['group_key']) if 'group_key' in row else ('row', row['id'])
+                    chosen = key in selected_keys
+                else:
+                    chosen = False
+                if chosen and start is None:
+                    start = index
+                elif not chosen and start is not None:
+                    selection.select(self.model.index(start, 0), self.model.index(index - 1, 0))
+                    start = None
+            if not selection.isEmpty():
+                flags = QItemSelectionModel.Select | (QItemSelectionModel.Rows if active is self.table else QItemSelectionModel.NoUpdate)
+                active.selectionModel().select(selection, flags)
+                self.selection_changed()
 
     def selected(self):
         view = self.views.currentWidget()
@@ -1472,6 +1502,7 @@ class MediaWindow(QMainWindow):
             self.prep_results.hide()
         self.covers.invalidate()
         self.identity = identity
+        self._selection_context = None
         self.inventory = self.review = self.apple_info = None
         self.rows = []
         self.trash_rows = []

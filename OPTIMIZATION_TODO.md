@@ -192,11 +192,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Verification note: With A1099's 2,895 visible Music rows, five repeat renders of Albums, Artists, and Genres had median times of 4.23, 4.32, and 1.57 ms before caching, and 0.53, 0.58, and 0.13 ms afterward. All 1,222 album, 1,036 artist, and 292 genre cards matched the previous content and membership exactly. Search-filtered cards matched as well, and replacing the row snapshot dropped cached members from removed rows.
 
-- [ ] **27 · P2 · Profile: Preserve useful selection across equivalent model refreshes.** A full model reset clears selections even when most rows are unchanged. Investigate restoring stable row identities or using smaller model updates where measured worthwhile.
+- [x] **27 · P2 · Profile: Preserve useful selection across equivalent model refreshes.** A full model reset clears selections even when most rows are unchanged. Investigate restoring stable row identities or using smaller model updates where measured worthwhile.
 
   Location: [tools/studio/media_desktop.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/media_desktop.py) — `MediaModel.reset / MediaWindow.render_library`.
 
   Completion check: Selection follows the same media IDs through filtering, sorting, and refresh; removed items disappear and group selections cannot target stale files.
+
+  Verification note: On A1099's Music library, two selected songs retained their IDs through table sorting and an equivalent render. Filtering to one matching song retained only that selection; removing it from a refreshed row snapshot cleared the selection. A selected album card survived a refresh with one member removed and expanded only to its current members. Device transitions clear the selection context.
 
 - [x] **28 · P2 · Profile: Filter an open group from its current membership.** An open group constructs an ID set and scans all page rows to recover its members. Evaluate using the group's already-refreshed member snapshot directly.
 
