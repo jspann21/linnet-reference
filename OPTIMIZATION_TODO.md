@@ -625,11 +625,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Page behavior and settings remain compatible, widget work stays on the GUI thread, and changes to one workflow do not require editing unrelated page logic. This complements the preparation split in item 45.
 
-- [ ] **84 · P2 · Profile: Give background jobs explicit context and results.** work and completed route operations through string tags, mutable window state, and an error string. Define an operation context containing the captured device identity, operation ID, cancellation contract, and structured outcome; use explicit completion handlers.
+- [x] **84 · P2 · Profile: Give background jobs explicit context and results.** work and completed route operations through string tags, mutable window state, and an error string. Define an operation context containing the captured device identity, operation ID, cancellation contract, and structured outcome; use explicit completion handlers.
 
   Location: [tools/studio/media_desktop.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/media_desktop.py) — `Events / work / completed`.
 
   Completion check: Completions apply only to the device and operation that started them, unknown outcomes fail clearly, and cancellation, partial success, and failure are distinguishable without parsing messages.
+
+  Verification note: Jobs now capture device identity, operation ID, and a per-operation cancellation contract; outcomes carry success, partial, cancelled, or failed status plus error type. Completion rejects stale IDs and changed devices, reports unknown tags/status, and dispatches named handlers. The moved handler bodies match the prior Python AST except for the deliberate device snapshot in Scan. Offscreen window, worker, routing, and cancellation checks, Python compilation, and Ruff F passed.
 
 - [x] **85 · P1 · Code: Reuse the setup assessment already produced during a scan.** media_status.inspect calls installer.assess but returns only selected assessment fields. When the setup page is active, completed('scan') immediately schedules installer.assess again. Carry the full read-only assessment with the scan result for that page.
 

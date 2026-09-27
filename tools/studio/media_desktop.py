@@ -1,6 +1,7 @@
 """Linnet's native media library and device workspace."""
 from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
 import hashlib
@@ -190,8 +191,30 @@ class CheckBox(QCheckBox):
             painter.drawPath(path); painter.end()
 
 
+@dataclass(frozen=True)
+class OperationContext:
+    id: int
+    tag: str
+    identity: dict | None
+    cancel_event: threading.Event | None
+
+    @property
+    def can_cancel(self):
+        return self.cancel_event is not None
+
+
+@dataclass(frozen=True)
+class OperationOutcome:
+    context: OperationContext
+    value: object = None
+    status: str = 'succeeded'
+    error: str = ''
+    error_type: str = ''
+    cancel_requested: bool = False
+
+
 class Events(QObject):
-    done = Signal(str, object, str)
+    done = Signal(object)
     progress = Signal(str)
     stage = Signal(object)
     conversion = Signal(object)
@@ -526,6 +549,8 @@ class MediaWindow(QMainWindow):
             self.view = 'Albums'
         self.busy = False
         self.closed = False
+        self.operation_id = 0
+        self.active_operation = None
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='linnet-media')
         self.tool_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='linnet-tools')
         self.tool_check_id = 0
@@ -950,7 +975,8 @@ class MediaWindow(QMainWindow):
             self.stack.setCurrentWidget(self.library)
             self.render_library()
             if page == 'Trash' and self.identity and not self.busy:
-                self.work('trash', lambda: media_trash.removals(self.identity), 'Reading Trash…')
+                identity = self.identity
+                self.work('trash', lambda: media_trash.removals(identity), 'Reading Trash…')
         elif page == 'Preparation':
             self.stack.setCurrentWidget(self.preparation)
         elif page == 'Screens':
@@ -962,7 +988,8 @@ class MediaWindow(QMainWindow):
             if self.identity and self.review is not None:
                 self.render_setup()
             elif self.identity and not self.busy:
-                self.work('setup', lambda: installer.assess(self.identity), 'Checking installed software…')
+                identity = self.identity
+                self.work('setup', lambda: installer.assess(identity), 'Checking installed software…')
         else:
             self.stack.setCurrentWidget(self.preferences)
         self.update_controls()
@@ -1276,6 +1303,11 @@ class MediaWindow(QMainWindow):
     def work(self, tag, operation, message):
         if self.busy or self.closed:
             return
+        self.operation_id += 1
+        context = OperationContext(self.operation_id, tag,
+            dict(self.identity) if self.identity and tag != 'devices' else None,
+            self.stop_event if tag in ('prepare', 'remove', 'restore') else None)
+        self.active_operation = context
         self.busy = True
         self.stop_event.clear()
         self.progress.setRange(0, 0)
@@ -1283,14 +1315,24 @@ class MediaWindow(QMainWindow):
         self.cancel_button.setEnabled(True)
         self.cancel_button.setText('Stop')
         self.cancel_button.setToolTip('Stop after the current step finishes')
-        self.cancel_button.setVisible(tag in ('prepare', 'remove', 'restore'))
+        self.cancel_button.setVisible(context.can_cancel)
         self.show_progress(message)
         self.update_controls()
         def run():
             try:
-                self.events.done.emit(tag, operation(), '')
+                value = operation()
+                status = ('cancelled' if isinstance(value, dict) and value.get('stopped') else
+                          'partial' if isinstance(value, dict) and value.get('complete') is False else
+                          'succeeded')
+                outcome = OperationOutcome(context, value, status=status,
+                    cancel_requested=bool(context.cancel_event and context.cancel_event.is_set()))
             except Exception as error:
-                self.events.done.emit(tag, None, str(error) or type(error).__name__)
+                outcome = OperationOutcome(context,
+                    status='cancelled' if type(error).__name__ == 'Cancelled' else 'failed',
+                    error=str(error) or type(error).__name__,
+                    error_type=type(error).__name__,
+                    cancel_requested=bool(context.cancel_event and context.cancel_event.is_set()))
+            self.events.done.emit(outcome)
         self.pool.submit(run)
 
     @Slot(str)
@@ -1305,7 +1347,9 @@ class MediaWindow(QMainWindow):
         value = min(999, round(1000 * (event['completed'] + fraction) / event['total']))
         self.progress.setRange(0, 1000)
         self.progress.setValue(value)
-        can_stop = event['can_stop'] and not self.stop_event.is_set()
+        context = self.active_operation
+        can_stop = bool(context and context.cancel_event and event['can_stop']
+                        and not context.cancel_event.is_set())
         self.cancel_button.setEnabled(can_stop)
         self.cancel_button.setText('Stop' if can_stop else 'Finishing current step')
         self.cancel_button.setToolTip('Stop after the current step finishes' if can_stop else
@@ -1331,224 +1375,282 @@ class MediaWindow(QMainWindow):
             parts.append(event['name'])
         self.status.set_message(' · '.join(parts), event['message'])
 
-    @Slot(str, object, str)
-    def completed(self, tag, result, error):
+    @Slot(object)
+    def completed(self, outcome):
+        context = outcome.context
+        if self.active_operation is None or context.id != self.active_operation.id:
+            return
+        self.active_operation = None
+        tag, result, error = context.tag, outcome.value, outcome.error
         self.busy = False
         self.progress.hide()
         self.cancel_button.hide()
         self.update_controls()
+        if outcome.status not in ('succeeded', 'partial', 'cancelled', 'failed'):
+            self.show_error(f'Unknown background outcome: {outcome.status}')
+            return
+        if context.identity and not self.same_device(self.identity, context.identity):
+            self.show_error('The selected iPod changed while this operation was running. Refresh and try again.')
+            return
         if tag == 'queue':
-            context = self.queue_context
-            self.queue_context = None
-            if context is None or not context['dialog'].isVisible():
-                return
-            if not self.same_device(self.identity, context['identity']):
-                context['error'].setText('The selected iPod changed while checking these sources. Choose them again.')
-                context['error'].show()
-                return
-            if error:
-                context['error'].setText(error)
-                context['error'].show()
-                return
-            additions = result
-            self.pending.extend(additions)
-            self.pending_keys.update((kind, os.path.normcase(path)) for kind, path in additions)
-            for kind, path in additions:
-                self.queue_outcomes.pop((kind, os.path.normcase(path)), None)
-            if self.pending:
-                self.pending_for = dict(context['identity'])
-            self.validate_draft()
-            self.save_draft()
-            kind, source = context['kind'], Path(context['paths'][0])
-            self.settings.setValue(f'import_folder/{kind}', str(source if context['folder'] else source.parent))
-            self.prep_checks[kind].setChecked(True)
-            context['dialog'].accept()
-            self.update_preparation()
-            self.navigate('Preparation')
-            QTimer.singleShot(0, lambda: self.preparation_scroll.ensureWidgetVisible(self.queue_table))
-            self.show_progress(f'{len(additions):,} new queue entries added.' if additions else
-                               'These sources are already queued. Review them in Preparation.')
+            self._complete_queue(result, error)
             return
         if error:
-            if tag == 'plan':
-                self.plan_context = None
-            if tag == 'screens':
-                self.screen_state = screen_settings.defaults(self.identity)
-                self.render_screen_items()
-                self.screen_status.setText('Could not read settings. Showing defaults for this iPod; saving will replace its screen settings.')
-            if tag in ('setup', 'devices', 'scan'):
-                self.setup_progress.hide()
-                self.setup_software.setText('Could not check iPod setup. Choose Refresh to try again.')
-            self.show_error(error)
-            if tag == 'save_playlists':
-                self.edit_playlists(self.playlist_draft)
+            self._complete_error(tag, error)
             return
-        if tag == 'screens':
-            self.screen_state = result; self.screen_loaded_for = self.identity['root']; self.render_screen_items()
-            self.screen_status.setText('Loaded from iPod. Changes apply after saving and restarting Linnet.'); self.update_controls(); return
-        if tag == 'plan':
-            context = self.plan_context
-            self.plan_context = None
-            if context is None or not self.same_device(self.identity, context['identity']):
-                self.show_error('The selected iPod changed while preparing the plan. Review it again.')
-                return
-            copies = ', '.join(f'{kind}: {count}' for kind, count in result['copy_kinds'].items() if count)
-            preview = [f"Prepare: {', '.join(result['selected'])}",
-                       f"Copy originals: {result['copies']:,} files ({size(result['bytes'])})" +
-                       (f' · {copies}' if copies else ''),
-                       f"iPod free before copying: {size(result['free'])}",
-                       f"Computer free for preparation: {size(result['computer_free'])}",
-                       f"Video jobs: {result['videos']:,}" +
-                       (' · conversion output size is unknown' if result['conversion'] else '')]
-            if result['reusable']:
-                preview.append('Likely reusable prepared libraries: ' + ', '.join(result['reusable']))
-            if result['excluded']:
-                preview.append(f"Queue entries outside this selection: {result['excluded']:,}")
-            for source, description in list(result['previews'].items())[:5]:
-                preview.append(f'{Path(source).name}: {description}')
-            if len(result['previews']) > 5:
-                preview.append(f"…and {len(result['previews']) - 5:,} more queued sources")
-            preview.append('Sources, available space, and prepared outputs are checked again during preparation.')
-            if self.dialog('Review preparation plan', '\n'.join(preview), 'Start preparation'):
-                self.submitted, self.submitted_videos = context['pending'], context['submitted_videos']
-                self.prep_results.hide()
-                self.work('prepare', context['run'], 'Preparing your selected media…')
+        handlers = {
+            'screens': self._complete_screens, 'plan': self._complete_plan,
+            'save_screens': self._complete_save_screens, 'games': self._complete_games,
+            'save_games': self._complete_save_games, 'review_skipped': self._complete_review_skipped,
+            'playlists': self._complete_playlists, 'save_playlists': self._complete_save_playlists,
+            'apple_selection': self._complete_apple_selection, 'apple_update': self._complete_apple_update,
+            'devices': self._complete_devices, 'scan': self._complete_scan,
+            'trash': self._complete_trash, 'setup': self._complete_setup,
+            'prepare': self._complete_prepare, 'eject': self._complete_eject,
+        }
+        for change in ('remove', 'restore', 'erase', 'sync', 'install', 'skipped'):
+            handlers[change] = self._complete_change
+        handler = handlers.get(tag)
+        if handler is None:
+            self.show_error(f'Unknown background operation: {tag}')
             return
-        if tag == 'save_screens':
-            self.screen_status.setText('Saved to iPod. Eject safely to apply on startup.'); return
-        if tag == 'games':
-            for index, check in enumerate(self.game_checks):
-                with QSignalBlocker(check):
-                    check.setChecked(index in result)
-            self.games_loaded_for = self.identity['root']
-            self.games_status.setText('Loaded from iPod. Uncheck a game to remove it from the Games menu.')
-            self.update_controls(); return
-        if tag == 'save_games':
-            self.games_status.setText('Games updated. Eject safely and restart Linnet to apply.')
-            self.update_controls(); return
-        if tag == 'review_skipped':
-            identity, rows = result
-            if not self.identity or any(self.identity.get(key) != identity.get(key)
-                                        for key in ('root', 'disk_serial', 'volume_serial', 'target_id')):
-                self.show_error('The selected iPod changed while skipped files were loading. Try again.')
-            elif rows:
-                self.show_skipped_dialog(identity, rows)
-            else:
-                self.show_progress('No skipped files on this iPod.')
-            return
-        if tag == 'playlists':
-            self.show_progress('Playlists loaded.'); self.edit_playlists(result); return
-        if tag == 'save_playlists':
-            self.show_progress('Playlists saved to iPod. Eject safely when finished.'); return
-        if tag == 'apple_selection':
-            self.show_progress('Apple OS folder choices saved. Checking availability…')
-            self.refresh(); return
-        if tag == 'apple_update':
-            self.prep_results.setPlainText(result['summary']); self.prep_results.show()
-            self.show_progress(result['summary']); self.refresh(); return
-        if tag == 'devices':
-            devices, errors = result['devices'], result['errors']
-            self.discovery_errors = errors
-            if not devices:
-                self.transition_device(None)
-                self.device_name.setText('No iPod connected'); self.device_info.setText('Connect in Disk Mode')
-                if errors:
-                    self.show_error('Could not read a connected iPod: ' + '; '.join(errors))
-                else:
-                    self.show_progress('Connect your iPod, then choose Refresh.')
-                return
-            if len(devices) > 1:
-                dialog = QDialog(self); dialog.setWindowTitle('Choose an iPod'); layout = box(dialog, margins=(24, 24, 24, 24))
-                picker = ComboBox()
-                for device in devices:
-                    picker.addItem(f"{device['drive']} · {device['target_name']}", device)
-                layout.addWidget(picker); layout.addWidget(button('Use this iPod', dialog.accept, 'primary'))
-                if dialog.exec() != QDialog.Accepted:
-                    return
-                identity = picker.currentData()
-            else:
-                identity = devices[0]
-            if errors:
-                self.notice.setText('Other connected iPods could not be read: ' + '; '.join(errors))
-                self.notice.show()
-            self.transition_device(identity)
-            self.refresh()
-        elif tag == 'scan':
-            cached_photos = {row['path']: (row['bytes'], row['mtime_ns'], row.get('artwork')) for row in self.rows
-                             if row['kind'] in ('Photos', 'Music') and
-                             (row.get('artwork') in self.covers.cache or row.get('artwork') in self.covers.pending)}
-            self.identity, self.inventory, self.rows, self.readiness, self.apple_info, self.review = result
-            if cached_photos:
-                current_photos = {row['path']: (row['bytes'], row['mtime_ns'], row.get('artwork')) for row in self.rows
-                                  if row['path'] in cached_photos}
-                changed = [stamp[2] for path, stamp in cached_photos.items() if current_photos.get(path) != stamp]
-                if changed:
-                    self.covers.invalidate(changed)
-            if self.group:
-                field = {'Albums': 'album', 'Artists': 'artist', 'Genres': 'genre'}[self.group['group_kind']]
-                members = [row for row in self.library_rows()
-                           if music_group_key(row, field) == self.group['group_key']]
-                if members:
-                    self.group['members'] = members
-                else:
-                    self.group = None
-            previous_videos = len(self.video_selection)
-            self.video_selection.intersection_update(self.inventory['Videos']['files'])
-            self.stale_videos = previous_videos - len(self.video_selection)
-            self.validate_draft()
-            self.save_draft()
-            if self.discovery_errors:
-                self.notice.setText('Other connected iPods could not be read: ' + '; '.join(self.discovery_errors))
-                self.notice.show()
-            else:
-                self.notice.hide()
-            self.update_device(); self.update_filters(); self.update_preparation(); self.render_library()
-            self.show_progress('Ready. Eject safely when you’re finished.')
-            if self.page == 'Screens':
-                self.load_screens()
-            if self.page == 'Games':
-                self.load_games()
-            if self.page == 'iPod setup':
-                self.render_setup()
-            elif self.page == 'Trash':
-                self.work('trash', lambda: media_trash.removals(self.identity), 'Reading Trash…')
-        elif tag == 'trash':
-            self.trash_rows = result; self.render_library(); self.show_progress('Trash uses storage until files are permanently deleted.')
-        elif tag == 'setup':
-            self.review = result; self.render_setup(); self.show_progress('Device setup is ready.')
-        elif tag == 'prepare':
-            self.last_preparation = (result['identity'], result)
+        handler(result)
+        if tag not in ('screens', 'plan', 'save_screens', 'games', 'save_games',
+                       'review_skipped', 'playlists', 'save_playlists',
+                       'apple_selection', 'apple_update'):
             self.update_controls()
-            lines = [result.get('summary') or ('Preparation complete.' if result['complete'] else 'Preparation needs attention.')]
-            lines.extend(e['message'] for e in result.get('errors', []))
-            self.prep_results.setPlainText('\n'.join(lines)); self.prep_results.show()
-            outcomes = {(row['kind'], os.path.normcase(row['source'])): row
-                        for row in result.get('source_outcomes', [])}
-            submitted_keys = {(kind, os.path.normcase(path)) for kind, path in self.submitted}
-            finished = {key for key, row in outcomes.items() if row['status'] == 'completed'}
-            self.pending = [item for item in self.pending
-                            if (item[0], os.path.normcase(item[1])) not in submitted_keys or
-                            (item[0], os.path.normcase(item[1])) not in finished]
-            self.pending_keys = {(kind, os.path.normcase(path)) for kind, path in self.pending}
-            self.queue_outcomes = {key: row for key, row in outcomes.items()
-                                   if key in self.pending_keys and row['status'] != 'completed'}
-            if not self.pending:
-                self.pending_for = None
-            if result['complete']:
-                self.video_selection.difference_update(self.submitted_videos)
-            self.validate_draft()
-            self.save_draft()
-            self.update_preparation(); self.refresh()
-        elif tag in ('remove', 'restore', 'erase', 'sync', 'install', 'skipped'):
-            self.show_progress(result.get('summary', 'Changes saved.'))
-            if result.get('needs_preparation'):
-                self.prep_results.setPlainText(result['summary']); self.prep_results.show(); self.navigate('Preparation')
-            self.refresh()
-        elif tag == 'eject':
+
+    def _complete_queue(self, result, error):
+        context = self.queue_context
+        self.queue_context = None
+        if context is None or not context['dialog'].isVisible():
+            return
+        if not self.same_device(self.identity, context['identity']):
+            context['error'].setText('The selected iPod changed while checking these sources. Choose them again.')
+            context['error'].show()
+            return
+        if error:
+            context['error'].setText(error)
+            context['error'].show()
+            return
+        additions = result
+        self.pending.extend(additions)
+        self.pending_keys.update((kind, os.path.normcase(path)) for kind, path in additions)
+        for kind, path in additions:
+            self.queue_outcomes.pop((kind, os.path.normcase(path)), None)
+        if self.pending:
+            self.pending_for = dict(context['identity'])
+        self.validate_draft()
+        self.save_draft()
+        kind, source = context['kind'], Path(context['paths'][0])
+        self.settings.setValue(f'import_folder/{kind}', str(source if context['folder'] else source.parent))
+        self.prep_checks[kind].setChecked(True)
+        context['dialog'].accept()
+        self.update_preparation()
+        self.navigate('Preparation')
+        QTimer.singleShot(0, lambda: self.preparation_scroll.ensureWidgetVisible(self.queue_table))
+        self.show_progress(f'{len(additions):,} new queue entries added.' if additions else
+                           'These sources are already queued. Review them in Preparation.')
+        return
+
+    def _complete_error(self, tag, error):
+        if tag == 'plan':
+            self.plan_context = None
+        if tag == 'screens':
+            self.screen_state = screen_settings.defaults(self.identity)
+            self.render_screen_items()
+            self.screen_status.setText('Could not read settings. Showing defaults for this iPod; saving will replace its screen settings.')
+        if tag in ('setup', 'devices', 'scan'):
+            self.setup_progress.hide()
+            self.setup_software.setText('Could not check iPod setup. Choose Refresh to try again.')
+        self.show_error(error)
+        if tag == 'save_playlists':
+            self.edit_playlists(self.playlist_draft)
+        return
+
+    def _complete_screens(self, result):
+        self.screen_state = result; self.screen_loaded_for = self.identity['root']; self.render_screen_items()
+        self.screen_status.setText('Loaded from iPod. Changes apply after saving and restarting Linnet.'); self.update_controls(); return
+
+    def _complete_plan(self, result):
+        context = self.plan_context
+        self.plan_context = None
+        if context is None or not self.same_device(self.identity, context['identity']):
+            self.show_error('The selected iPod changed while preparing the plan. Review it again.')
+            return
+        copies = ', '.join(f'{kind}: {count}' for kind, count in result['copy_kinds'].items() if count)
+        preview = [f"Prepare: {', '.join(result['selected'])}",
+                   f"Copy originals: {result['copies']:,} files ({size(result['bytes'])})" +
+                   (f' · {copies}' if copies else ''),
+                   f"iPod free before copying: {size(result['free'])}",
+                   f"Computer free for preparation: {size(result['computer_free'])}",
+                   f"Video jobs: {result['videos']:,}" +
+                   (' · conversion output size is unknown' if result['conversion'] else '')]
+        if result['reusable']:
+            preview.append('Likely reusable prepared libraries: ' + ', '.join(result['reusable']))
+        if result['excluded']:
+            preview.append(f"Queue entries outside this selection: {result['excluded']:,}")
+        for source, description in list(result['previews'].items())[:5]:
+            preview.append(f'{Path(source).name}: {description}')
+        if len(result['previews']) > 5:
+            preview.append(f"…and {len(result['previews']) - 5:,} more queued sources")
+        preview.append('Sources, available space, and prepared outputs are checked again during preparation.')
+        if self.dialog('Review preparation plan', '\n'.join(preview), 'Start preparation'):
+            self.submitted, self.submitted_videos = context['pending'], context['submitted_videos']
+            self.prep_results.hide()
+            self.work('prepare', context['run'], 'Preparing your selected media…')
+        return
+
+    def _complete_save_screens(self, result):
+        self.screen_status.setText('Saved to iPod. Eject safely to apply on startup.'); return
+
+    def _complete_games(self, result):
+        for index, check in enumerate(self.game_checks):
+            with QSignalBlocker(check):
+                check.setChecked(index in result)
+        self.games_loaded_for = self.identity['root']
+        self.games_status.setText('Loaded from iPod. Uncheck a game to remove it from the Games menu.')
+        self.update_controls(); return
+
+    def _complete_save_games(self, result):
+        self.games_status.setText('Games updated. Eject safely and restart Linnet to apply.')
+        self.update_controls(); return
+
+    def _complete_review_skipped(self, result):
+        identity, rows = result
+        if not self.identity or any(self.identity.get(key) != identity.get(key)
+                                    for key in ('root', 'disk_serial', 'volume_serial', 'target_id')):
+            self.show_error('The selected iPod changed while skipped files were loading. Try again.')
+        elif rows:
+            self.show_skipped_dialog(identity, rows)
+        else:
+            self.show_progress('No skipped files on this iPod.')
+        return
+
+    def _complete_playlists(self, result):
+        self.show_progress('Playlists loaded.'); self.edit_playlists(result); return
+
+    def _complete_save_playlists(self, result):
+        self.show_progress('Playlists saved to iPod. Eject safely when finished.'); return
+
+    def _complete_apple_selection(self, result):
+        self.show_progress('Apple OS folder choices saved. Checking availability…')
+        self.refresh(); return
+
+    def _complete_apple_update(self, result):
+        self.prep_results.setPlainText(result['summary']); self.prep_results.show()
+        self.show_progress(result['summary']); self.refresh(); return
+
+    def _complete_devices(self, result):
+        devices, errors = result['devices'], result['errors']
+        self.discovery_errors = errors
+        if not devices:
             self.transition_device(None)
-            self.device_name.setText('Safely ejected'); self.device_info.setText('You can disconnect your iPod.'); self.capacity.setValue(0)
-            self.show_progress('Your iPod is safe to disconnect.')
+            self.device_name.setText('No iPod connected'); self.device_info.setText('Connect in Disk Mode')
+            if errors:
+                self.show_error('Could not read a connected iPod: ' + '; '.join(errors))
+            else:
+                self.show_progress('Connect your iPod, then choose Refresh.')
+            return
+        if len(devices) > 1:
+            dialog = QDialog(self); dialog.setWindowTitle('Choose an iPod'); layout = box(dialog, margins=(24, 24, 24, 24))
+            picker = ComboBox()
+            for device in devices:
+                picker.addItem(f"{device['drive']} · {device['target_name']}", device)
+            layout.addWidget(picker); layout.addWidget(button('Use this iPod', dialog.accept, 'primary'))
+            if dialog.exec() != QDialog.Accepted:
+                return
+            identity = picker.currentData()
+        else:
+            identity = devices[0]
+        if errors:
+            self.notice.setText('Other connected iPods could not be read: ' + '; '.join(errors))
+            self.notice.show()
+        self.transition_device(identity)
+        self.refresh()
+
+    def _complete_scan(self, result):
+        cached_photos = {row['path']: (row['bytes'], row['mtime_ns'], row.get('artwork')) for row in self.rows
+                         if row['kind'] in ('Photos', 'Music') and
+                         (row.get('artwork') in self.covers.cache or row.get('artwork') in self.covers.pending)}
+        self.identity, self.inventory, self.rows, self.readiness, self.apple_info, self.review = result
+        if cached_photos:
+            current_photos = {row['path']: (row['bytes'], row['mtime_ns'], row.get('artwork')) for row in self.rows
+                              if row['path'] in cached_photos}
+            changed = [stamp[2] for path, stamp in cached_photos.items() if current_photos.get(path) != stamp]
+            if changed:
+                self.covers.invalidate(changed)
+        if self.group:
+            field = {'Albums': 'album', 'Artists': 'artist', 'Genres': 'genre'}[self.group['group_kind']]
+            members = [row for row in self.library_rows()
+                       if music_group_key(row, field) == self.group['group_key']]
+            if members:
+                self.group['members'] = members
+            else:
+                self.group = None
+        previous_videos = len(self.video_selection)
+        self.video_selection.intersection_update(self.inventory['Videos']['files'])
+        self.stale_videos = previous_videos - len(self.video_selection)
+        self.validate_draft()
+        self.save_draft()
+        if self.discovery_errors:
+            self.notice.setText('Other connected iPods could not be read: ' + '; '.join(self.discovery_errors))
+            self.notice.show()
+        else:
+            self.notice.hide()
+        self.update_device(); self.update_filters(); self.update_preparation(); self.render_library()
+        self.show_progress('Ready. Eject safely when you’re finished.')
+        if self.page == 'Screens':
+            self.load_screens()
+        if self.page == 'Games':
+            self.load_games()
+        if self.page == 'iPod setup':
+            self.render_setup()
+        elif self.page == 'Trash':
+            identity = self.identity
+            self.work('trash', lambda: media_trash.removals(identity), 'Reading Trash…')
+
+    def _complete_trash(self, result):
+        self.trash_rows = result; self.render_library(); self.show_progress('Trash uses storage until files are permanently deleted.')
+
+    def _complete_setup(self, result):
+        self.review = result; self.render_setup(); self.show_progress('Device setup is ready.')
+
+    def _complete_prepare(self, result):
+        self.last_preparation = (result['identity'], result)
         self.update_controls()
+        lines = [result.get('summary') or ('Preparation complete.' if result['complete'] else 'Preparation needs attention.')]
+        lines.extend(e['message'] for e in result.get('errors', []))
+        self.prep_results.setPlainText('\n'.join(lines)); self.prep_results.show()
+        outcomes = {(row['kind'], os.path.normcase(row['source'])): row
+                    for row in result.get('source_outcomes', [])}
+        submitted_keys = {(kind, os.path.normcase(path)) for kind, path in self.submitted}
+        finished = {key for key, row in outcomes.items() if row['status'] == 'completed'}
+        self.pending = [item for item in self.pending
+                        if (item[0], os.path.normcase(item[1])) not in submitted_keys or
+                        (item[0], os.path.normcase(item[1])) not in finished]
+        self.pending_keys = {(kind, os.path.normcase(path)) for kind, path in self.pending}
+        self.queue_outcomes = {key: row for key, row in outcomes.items()
+                               if key in self.pending_keys and row['status'] != 'completed'}
+        if not self.pending:
+            self.pending_for = None
+        if result['complete']:
+            self.video_selection.difference_update(self.submitted_videos)
+        self.validate_draft()
+        self.save_draft()
+        self.update_preparation(); self.refresh()
+
+    def _complete_change(self, result):
+        self.show_progress(result.get('summary', 'Changes saved.'))
+        if result.get('needs_preparation'):
+            self.prep_results.setPlainText(result['summary']); self.prep_results.show(); self.navigate('Preparation')
+        self.refresh()
+
+    def _complete_eject(self, result):
+        self.transition_device(None)
+        self.device_name.setText('Safely ejected'); self.device_info.setText('You can disconnect your iPod.'); self.capacity.setValue(0)
+        self.show_progress('Your iPod is safe to disconnect.')
+
 
     def discover(self):
         self.work('devices', lambda: media.discover(detailed=True), 'Looking for your iPod…')
@@ -2315,7 +2417,11 @@ class MediaWindow(QMainWindow):
         self.work('eject', run, 'Safely ejecting your iPod…')
 
     def stop(self):
-        self.stop_event.set(); self.cancel_button.setEnabled(False); self.show_progress('Finishing the current step before stopping…')
+        context = self.active_operation
+        if context and context.cancel_event:
+            context.cancel_event.set()
+            self.cancel_button.setEnabled(False)
+            self.show_progress('Finishing the current step before stopping…')
 
     def show_error(self, message):
         self.notice.setText(message); self.notice.show(); self.show_progress(message)
