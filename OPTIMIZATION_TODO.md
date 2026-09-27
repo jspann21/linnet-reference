@@ -413,6 +413,8 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Unsupported resolutions fail clearly during content/build validation; current game pixels and behavior remain unchanged. Coordinate with item 61 before enabling games on another model.
 
+  Verification note: A1099 ran the Photo development OS in RAM and rendered the Games menu, Comet Run, and Solitaire on its 220 × 176 framebuffer. Its saved Home menu was temporarily extended to expose Games, then restored byte for byte (SHA-256 `7e9e981b4ccaccb140cb0ecb78cae5f8f7f498726093d14cc1b1eea373623b36`); the original persistent OS returned healthy. A1136 rendered the color320 Games scene in its RAM OS. These observations used synthetic Link input and framebuffer captures.
+
 - [ ] **63 · P2 · Profile: Give editable menus a shared definition with stable item identifiers.** The host repeats menu labels, defaults, and required indices; Home index 7 changes from UI Demo to Games for certain targets. Design a shared menu definition for host and firmware, preserving the existing MENUS.BIN numbering and migration behavior.
 
   Location: [tools/studio/screen_settings.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/screen_settings.py), [tools/studio/media_desktop.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/media_desktop.py), [services/display/settings.c](C:/Users/user/Desktop/Projects/linnet/services/display/settings.c) — `SCREENS / DEFAULTS / REQUIRED / menu decoding`.
