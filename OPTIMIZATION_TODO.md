@@ -168,11 +168,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Progress: The LRU now tracks estimated pixmap bytes and evicts above 64 MiB while retaining the 600-entry ceiling for small and failed covers. Offscreen mixed-size and high-DPI cache checks passed. Real library scrolling and repaint behavior still need measurement before settling the budget.
 
-- [ ] **24 · P2 · Profile: Coalesce artwork-completion repaints.** Every completed cover requests an update of every registered view. Measure redundant paints and schedule a shared update for visible views, retaining retries for deferred artwork requests.
+- [x] **24 · P2 · Profile: Coalesce artwork-completion repaints.** Every completed cover requests an update of every registered view. Measure redundant paints and schedule a shared update for visible views, retaining retries for deferred artwork requests.
 
   Location: [tools/studio/media_desktop.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/media_desktop.py) — `Covers.receive`.
 
   Completion check: A burst of completions causes fewer paints, visible covers still fill in, and the previously fixed deferred-details artwork case stays working.
+
+  Verification note: In an offscreen Qt burst of 100 completions, two visible list views now receive one viewport update each instead of 100, while a hidden view receives none. A later completion schedules another update. A details artwork widget whose request was deferred by the six-request limit queued its own cover after another completion freed a slot; its direct completion signal remains in place.
 
 - [ ] **25 · P2 · Profile: Share sidecar discovery across artwork requests in one folder.** Separate requests for songs in one folder repeat the COVER_NAMES search. Consider a bounded, generation-scoped folder lookup shared safely by the artwork workers.
 

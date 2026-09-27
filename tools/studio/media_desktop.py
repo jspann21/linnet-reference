@@ -211,6 +211,7 @@ class Covers(QObject):
         self.events = Events(self)
         self.events.artwork.connect(self.receive)
         self.views = []
+        self.repaint_queued = False
 
     def get(self, path, source=None):
         if not path or self.closed:
@@ -297,8 +298,15 @@ class Covers(QObject):
         while len(self.cache) > 600 or self.cache_bytes > self.MAX_CACHE_BYTES:
             oldest, _ = self.cache.popitem(last=False)
             self.cache_bytes -= self.cache_costs.pop(oldest)
+        if not self.repaint_queued:
+            self.repaint_queued = True
+            QTimer.singleShot(0, self.repaint_views)
+
+    def repaint_views(self):
+        self.repaint_queued = False
         for view in self.views:
-            view.viewport().update()
+            if view.isVisible():
+                view.viewport().update()
 
 
 def paint_cover(painter, rect, row, covers, rounded=9):
