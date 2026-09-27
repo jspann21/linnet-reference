@@ -9,12 +9,32 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from functools import lru_cache
 from pathlib import Path
 import tempfile
 
 
-MAX_OBJECT_BYTES = 16 * 1024 * 1024
+MAX_OBJECT_BYTES = 64 * 1024 * 1024
 MAX_CACHE_BYTES = 1024 * 1024 * 1024
+INCLUDE_SUFFIXES = {'.h', '.hh', '.hpp', '.hxx', '.inc', '.inl', '.c', '.cc', '.cpp', '.s', '.def', '.asm'}
+
+
+def include_names(root, generated, compiler, source_paths, run):
+    """Fingerprint candidate include names, including newly shadowing files."""
+    resource = Path(run([compiler, '-print-resource-dir']))
+    paths = ((path, 'source/' + path.relative_to(root).as_posix())
+             for path in source_paths if path.suffix.lower() in INCLUDE_SUFFIXES)
+    generated_paths = ((path, 'generated/' + path.relative_to(generated).as_posix())
+                       for path in generated.rglob('*') if path.is_file())
+    resource_paths = ((path, 'resource/' + path.relative_to(resource).as_posix())
+                      for path in resource.rglob('*') if path.is_file()
+                      and path.suffix.lower() in INCLUDE_SUFFIXES)
+    digest = hashlib.sha256()
+    for _, name in sorted((*paths, *generated_paths, *resource_paths), key=lambda item: item[1]):
+        encoded = name.encode()
+        digest.update(len(encoded).to_bytes(4, 'little'))
+        digest.update(encoded)
+    return digest.hexdigest()
 
 
 def _dependencies(path):
@@ -61,21 +81,31 @@ def _path(identity, root, generated):
     raise ValueError('invalid object dependency identity')
 
 
-def _base_key(command, source, root, generated, compiler_sha256):
+def _base_key(command, source, root, generated, compiler_sha256, name_inventory):
     flags = [str(value).replace(str(generated), '<generated>')
              for value in command[1:-4]]
     source_name = _identity(source, root, generated)
-    return hashlib.sha256(json.dumps([compiler_sha256, flags, source_name],
+    return hashlib.sha256(json.dumps([compiler_sha256, flags, source_name, name_inventory],
         separators=(',', ':')).encode()).hexdigest()
 
 
 def _hash_file(path):
-    with path.open('rb') as stream:
+    info = path.stat()
+    stamp = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    return _hash_stamp(str(path), stamp)
+
+
+@lru_cache(maxsize=8192)
+def _hash_stamp(path, stamp):
+    with Path(path).open('rb') as stream:
         before = os.fstat(stream.fileno())
+        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns,
+                before.st_ctime_ns) != stamp:
+            raise RuntimeError(f'build dependency changed while hashing: {path}')
         checksum = hashlib.file_digest(stream, 'sha256').hexdigest()
         after = os.fstat(stream.fileno())
-    if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
-            after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+    if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns,
+            after.st_ctime_ns) != stamp:
         raise RuntimeError(f'build dependency changed while hashing: {path}')
     return checksum
 
@@ -151,11 +181,11 @@ def _save(directory, dependencies, output):
         pass  # A host cache failure does not invalidate the compiled object.
 
 
-def compile_object(command, root, generated, compiler_sha256, cache_root, run):
+def compile_object(command, root, generated, compiler_sha256, name_inventory, cache_root, run):
     """Return whether a validated cached object replaced a compiler invocation."""
     source, output = Path(command[-3]), Path(command[-1])
     source_name = _identity(source, root, generated)
-    base = _base_key(command, source, root, generated, compiler_sha256)
+    base = _base_key(command, source, root, generated, compiler_sha256, name_inventory)
     directory = cache_root / base[:2] / base
     if _restore(directory, output, root, generated, source_name):
         return True

@@ -111,9 +111,11 @@ def source_paths(*, with_sizes=False):
     paths.sort(key=lambda item: item[0])
     return paths if with_sizes else [path for path, _ in paths]
 
-def source_identity(configuration, chain):
+def source_identity(configuration, chain, source_inventory=None):
     digest = hashlib.sha256()
     for path, size in source_paths(with_sizes=True):
+        if source_inventory is not None:
+            source_inventory.append(path)
         name = path.relative_to(ROOT).as_posix().encode()
         digest.update(struct.pack("<I", len(name)))
         digest.update(name)
@@ -279,7 +281,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         # The compiler identity covers the exact selected input bytes, including
         # configuration/assets under excluded output or cache directories.
         configuration["content_id"] = ui_report["content_id"]
-    build_id = source_identity(configuration, chain)
+    source_inventory = []
+    build_id = source_identity(configuration, chain, source_inventory)
     (generated / "linnet_build.h").write_text('#define LINNET_BUILD_ID "' + build_id + '"\n#define LINNET_BUILD_ID_BYTES {' + ','.join('0x' + build_id[i:i+2] for i in range(0, 64, 2)) + '}\n')
     with (generated / "linnet_build.h").open('a') as header:
         header.write('#define LINNET_USB_SERIAL "' + device_serial + '"\n')
@@ -486,12 +489,14 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     use_object_cache = os.environ.get('LINNET_OBJECT_CACHE', '1') != '0'
     cache_hits = 0
     if use_object_cache:
-        from .object_cache import compile_object
+        from .object_cache import compile_object, include_names
         object_cache_root = ROOT / 'out' / 'object-cache-v1'
+        name_inventory = include_names(ROOT, generated, chain['compiler']['path'],
+                                       source_inventory, run)
 
         def compile_one(command):
             return compile_object(command, ROOT, generated, chain['compiler']['sha256'],
-                                  object_cache_root, run)
+                                  name_inventory, object_cache_root, run)
     else:
         def compile_one(command):
             run(command)

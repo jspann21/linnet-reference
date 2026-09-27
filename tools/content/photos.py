@@ -119,7 +119,8 @@ class _PhotoCache:
             if (not isinstance(metadata, dict) or metadata.get('key') != key or
                     len(payload) > PHOTO_CACHE_ENTRY_BYTES or
                     len(payload) != metadata.get('bytes') or
-                    hashlib.sha256(payload).hexdigest() != metadata.get('sha256')):
+                    hashlib.sha256(payload).hexdigest() != metadata.get('sha256') or
+                    _cache_digest(metadata, payload) != metadata.get('entry_sha256')):
                 return None
             if not _cached_photo_valid(metadata, payload, checkpoint):
                 return None
@@ -136,6 +137,7 @@ class _PhotoCache:
         payload = thumb + tile_bytes
         metadata = dict(metadata, key=key, bytes=len(payload),
                         sha256=hashlib.sha256(payload).hexdigest())
+        metadata['entry_sha256'] = _cache_digest(metadata, payload)
         header = json.dumps(metadata, separators=(',', ':')).encode()
         if len(header) + len(payload) + 4 > PHOTO_CACHE_ENTRY_BYTES:
             return
@@ -182,18 +184,21 @@ class _PhotoCache:
 def _cached_photo_valid(meta, payload, checkpoint):
     if (type(meta.get('width')) is not int or type(meta.get('height')) is not int or
             not 1 <= meta['width'] <= 16384 or not 1 <= meta['height'] <= 16384 or
-            type(meta.get('fallback_bytes')) is not int or type(meta.get('fallback_crc')) is not int or
-            type(meta.get('orientation')) is not int or
+            type(meta.get('fallback_bytes')) is not int or not 0 <= meta['fallback_bytes'] <= 262144 or
+            type(meta.get('fallback_crc')) is not int or not 0 <= meta['fallback_crc'] <= 0xffffffff or
+            type(meta.get('orientation')) is not int or not 0 <= meta['orientation'] <= 8 or
+            type(meta.get('thumb_crc')) is not int or not 0 <= meta['thumb_crc'] <= 0xffffffff or
             not isinstance(meta.get('levels'), list) or not 1 <= len(meta['levels']) <= MAX_LEVELS or
             not isinstance(meta.get('tile_crcs'), list)):
         return False
     counts = 0
     for level in meta['levels']:
         if (not isinstance(level, list) or len(level) != 5 or
-                any(type(value) is not int or value < 1 for value in level)):
+                any(type(value) is not int or value < 1 or value > MAX_TILES for value in level)):
             return False
         width, height, tx, ty, count = level
-        if tx != (width + EDGE - 1)//EDGE or ty != (height + EDGE - 1)//EDGE or count != tx*ty:
+        if (width > 2048 or height > 2048 or tx != (width + EDGE - 1)//EDGE or
+                ty != (height + EDGE - 1)//EDGE or count != tx*ty):
             return False
         counts += count
     if (counts != len(meta['tile_crcs']) or len(payload) != THUMB*THUMB*2 + counts*EDGE*EDGE*2 or
@@ -206,6 +211,13 @@ def _cached_photo_valid(meta, payload, checkpoint):
                                                    THUMB*THUMB*2 + (index+1)*2048]) != expected:
             return False
     return True
+
+
+def _cache_digest(metadata, payload):
+    signed = {name: value for name, value in metadata.items() if name != 'entry_sha256'}
+    digest = hashlib.sha256(json.dumps(signed, sort_keys=True, separators=(',', ':')).encode())
+    digest.update(payload)
+    return digest.hexdigest()
 
 
 def _render_photo(path, fallback, max_dimension, viewport_width, viewport_height,
