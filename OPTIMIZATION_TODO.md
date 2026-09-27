@@ -129,11 +129,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Verification note: A1099's 145 Apple photos reference two thumbnail files. A warm profile recorded 290 path validations and 1,458 filesystem stat calls before this change; call-local snapshots reduced those to two path validations and 166 stat calls. Each used thumbnail file is revalidated at the end of the scan, so a source change rejects the scan rather than returning mixed stamps.
 
-- [ ] **19 · P2 · Profile: Reuse bounded readers for shared Apple thumbnail files.** Uncached previews open and seek a thumbnail file separately for each image. Investigate a small set of readers, or contiguous read batches, scoped to one extraction.
+- [x] **19 · P2 · Profile: Reuse bounded readers for shared Apple thumbnail files.** Uncached previews open and seek a thumbnail file separately for each image. Investigate a small set of readers, or contiguous read batches, scoped to one extraction.
 
   Location: [tools/content/retail_media.py](C:/Users/user/Desktop/Projects/linnet/tools/content/retail_media.py) — `images`.
 
   Completion check: Cold extraction reduces opens or seeks; all handles close on failure, memory remains bounded, and extracted preview pixels match.
+
+  Verification note: On A1099's 145 Apple photos, fresh preview extraction opened the two shared .ithmb files once each instead of once per image; process open calls fell from 332 to 147 while seeks remained at 145. The ordered reader cache is capped at four files and closes on success or failure. All 145 generated PNGs matched the previous byte digest (`61617ddff9e2bb3ca826e6a707661a6309e68bd3a3dc738bdc430b464fc1c6ea`); an injected decode failure closed its open reader. Warmed-device extractions were about 0.8 s in both versions, so no latency gain is claimed from that timing.
 
 - [x] **20 · P2 · Code: Stop repeated ancestor walks in Apple folder discovery.** Each file climbs through every parent even when those parents were already added by another file in the same folder. Stop once the remaining ancestor chain is already known.
 

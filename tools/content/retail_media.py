@@ -1,4 +1,5 @@
 """Read existing iTunes media without modifying Apple's databases or originals."""
+from collections import OrderedDict
 from functools import lru_cache
 import hashlib
 import os
@@ -131,6 +132,35 @@ def image_count(root):
     return count
 
 
+class _ThumbnailReaders:
+    """Keep a few shared thumbnail files open for one cold extraction."""
+
+    def __init__(self):
+        self._open = OrderedDict()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        for reader in self._open.values():
+            reader.close()
+        self._open.clear()
+
+    def read(self, path, offset, size):
+        reader = self._open.pop(path, None)
+        if reader is None:
+            reader = path.open('rb')
+        self._open[path] = reader
+        if len(self._open) > 4:
+            _, retired = self._open.popitem(last=False)
+            retired.close()
+        reader.seek(offset)
+        pixels = reader.read(size)
+        if len(pixels) != size:
+            raise ValueError('Truncated iTunes thumbnail')
+        return pixels
+
+
 def images(root, *, artwork=False, dbids=None):
     root = Path(root).resolve()
     folder = root / ('iPod_Control/Artwork' if artwork else 'Photos')
@@ -147,76 +177,75 @@ def images(root, *, artwork=False, dbids=None):
     result = []
     paths = {}
     file_info = {}
-    for _ in range(count):
-        child, following = _record(data, at, end, b'mhii')
-        if child - at < 28:
-            raise ValueError('Truncated iTunes image')
-        key = _u32(data, at + 16)
-        dbid = struct.unpack_from('<Q', data, at + 20)[0]
-        title, candidates = f'Photo {key}', []
-        while child < following:
-            body, next_child = _record(data, child, following, b'mhod')
-            kind = struct.unpack_from('<H', data, child + 12)[0]
-            if kind == 1:
-                title = _image_string(data, child, next_child) or title
-            elif kind == 2:
-                name_at, thumb_end = _record(data, body, next_child, b'mhni')
-                if name_at - body < 36:
-                    raise ValueError('Truncated iTunes thumbnail')
-                format_id, offset, length = struct.unpack_from('<III', data, body + 16)
-                if format_id in formats:
-                    _, name_end = _record(data, name_at, thumb_end, b'mhod')
-                    name = _image_string(data, name_at, name_end)
-                    if name not in paths:
-                        paths[name] = _path(folder, name)
-                    path = paths[name]
-                    width, height = formats[format_id]
-                    vertical, horizontal, image_h, image_w = struct.unpack_from('<4H', data, body + 28)
-                    candidates.append((width * height, path, offset, length, width, height,
-                                       horizontal, vertical, image_w, image_h))
-            child = next_child
-        if candidates and (dbids is None or dbid in dbids):
-            for _, path, offset, length, width, height, x, y, iw, ih in sorted(candidates, key=lambda c: c[0], reverse=True):
-                info = file_info.get(path)
-                if info is None:
-                    try:
-                        info = path.stat()
-                    except FileNotFoundError:
-                        continue
-                    file_info[path] = info
-                if length < width * height * 2 or offset + length > info.st_size:
-                    raise ValueError('iTunes thumbnail extends beyond its file')
-                stamp = f'{key}-{info.st_size}-{info.st_mtime_ns}'
-                preview = cache / (stamp + '.png')
-                if not preview.is_file():
-                    from PIL import Image
-                    try:
-                        with path.open('rb') as reader:
-                            reader.seek(offset)
-                            pixels = reader.read(width * height * 2)
-                    except FileNotFoundError:
-                        continue
-                    image = Image.frombytes('RGB', (width, height), pixels, 'raw', 'BGR;16')
-                    if 0 < iw <= width and 0 < ih <= height and x < iw and y < ih:
-                        image = image.crop((x, y, iw, ih))
-                    cache.mkdir(parents=True, exist_ok=True)
-                    temporary = preview.with_name(uuid.uuid4().hex + '.tmp')
-                    try:
-                        image.save(temporary, format='PNG')
-                        os.replace(temporary, preview)
-                    finally:
-                        temporary.unlink(missing_ok=True)
-                result.append(dict(key=key, dbid=dbid, title=title, preview=str(preview),
-                                   source=str(database), bytes=length, mtime_ns=info.st_mtime_ns,
-                                   relative=f'Photos/@iTunes/{key}.png'))
-                break
-        at = following
-    for path, before in file_info.items():
-        _plain(path, folder)
-        after = path.stat()
-        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
-                after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
-            raise ValueError('iTunes thumbnail changed during scan')
+    with _ThumbnailReaders() as readers:
+        for _ in range(count):
+            child, following = _record(data, at, end, b'mhii')
+            if child - at < 28:
+                raise ValueError('Truncated iTunes image')
+            key = _u32(data, at + 16)
+            dbid = struct.unpack_from('<Q', data, at + 20)[0]
+            title, candidates = f'Photo {key}', []
+            while child < following:
+                body, next_child = _record(data, child, following, b'mhod')
+                kind = struct.unpack_from('<H', data, child + 12)[0]
+                if kind == 1:
+                    title = _image_string(data, child, next_child) or title
+                elif kind == 2:
+                    name_at, thumb_end = _record(data, body, next_child, b'mhni')
+                    if name_at - body < 36:
+                        raise ValueError('Truncated iTunes thumbnail')
+                    format_id, offset, length = struct.unpack_from('<III', data, body + 16)
+                    if format_id in formats:
+                        _, name_end = _record(data, name_at, thumb_end, b'mhod')
+                        name = _image_string(data, name_at, name_end)
+                        if name not in paths:
+                            paths[name] = _path(folder, name)
+                        path = paths[name]
+                        width, height = formats[format_id]
+                        vertical, horizontal, image_h, image_w = struct.unpack_from('<4H', data, body + 28)
+                        candidates.append((width * height, path, offset, length, width, height,
+                                           horizontal, vertical, image_w, image_h))
+                child = next_child
+            if candidates and (dbids is None or dbid in dbids):
+                for _, path, offset, length, width, height, x, y, iw, ih in sorted(candidates, key=lambda c: c[0], reverse=True):
+                    info = file_info.get(path)
+                    if info is None:
+                        try:
+                            info = path.stat()
+                        except FileNotFoundError:
+                            continue
+                        file_info[path] = info
+                    if length < width * height * 2 or offset + length > info.st_size:
+                        raise ValueError('iTunes thumbnail extends beyond its file')
+                    stamp = f'{key}-{info.st_size}-{info.st_mtime_ns}'
+                    preview = cache / (stamp + '.png')
+                    if not preview.is_file():
+                        from PIL import Image
+                        try:
+                            pixels = readers.read(path, offset, width * height * 2)
+                        except FileNotFoundError:
+                            continue
+                        image = Image.frombytes('RGB', (width, height), pixels, 'raw', 'BGR;16')
+                        if 0 < iw <= width and 0 < ih <= height and x < iw and y < ih:
+                            image = image.crop((x, y, iw, ih))
+                        cache.mkdir(parents=True, exist_ok=True)
+                        temporary = preview.with_name(uuid.uuid4().hex + '.tmp')
+                        try:
+                            image.save(temporary, format='PNG')
+                            os.replace(temporary, preview)
+                        finally:
+                            temporary.unlink(missing_ok=True)
+                    result.append(dict(key=key, dbid=dbid, title=title, preview=str(preview),
+                                       source=str(database), bytes=length, mtime_ns=info.st_mtime_ns,
+                                       relative=f'Photos/@iTunes/{key}.png'))
+                    break
+            at = following
+        for path, before in file_info.items():
+            _plain(path, folder)
+            after = path.stat()
+            if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                    after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                raise ValueError('iTunes thumbnail changed during scan')
     return result
 
 
