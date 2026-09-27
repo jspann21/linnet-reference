@@ -1144,7 +1144,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     preparation = compile_music(root, stage, ffprobe=ffprobe or shutil.which("ffprobe"), device_root=root,
                                   verification=music_verification, cache_path=cache / "music-metadata.sqlite3",
                                   bypass_cache=force, progress=music_progress, include_roots=roots,
-                                  excluded=skipped["Music"], target=identity["target_id"])
+                                  excluded=skipped["Music"], target=identity["target_id"],
+                                  cancelled=cancelled)
                     report["steps"].append(dict(kind=kind, metadata=preparation.get("cache"), integrity=music_verification))
                     checkpoint()
                     progress("Publishing the music index and artwork…")

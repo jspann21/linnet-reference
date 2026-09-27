@@ -281,11 +281,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Verification note: New covers now open and decode once, then pass the loaded image through the separate playback and Cover Flow recipes; already-seen playback digests still skip Cover Flow rendering. A1099's real sidecar and A1136's real embedded cover produced byte-identical playback RGB565 and Cover Flow pixels for all four targets. Local alpha, EXIF-rotated, and ICC-tagged examples also matched. On A1099's sidecar, a warm ten-run median fell from 1.59 to 1.22 ms per paired render; file opens fell from two to one. The full-resolution image is closed after each cover, and only the bounded 96 × 96 Cover Flow image is retained.
 
-- [ ] **39 · P2 · Profile: Bound cancellation latency while waiting for music metadata.** Cancellation is checked around progress callbacks, but future.result and executor shutdown can wait for an active metadata parser or decoder. Measure the longest waits and thread cancellation through the underlying work.
+- [x] **39 · P2 · Profile: Bound cancellation latency while waiting for music metadata.** Cancellation is checked around progress callbacks, but future.result and executor shutdown can wait for an active metadata parser or decoder. Measure the longest waits and thread cancellation through the underlying work.
 
   Location: [tools/content/music.py](C:/Users/user/Desktop/Projects/linnet/tools/content/music.py) — `_metadata_rows / compile_music`.
 
   Completion check: Stop latency improves for slow inputs; subprocesses and worker tasks finish cleanly and no incomplete stage replaces the previous library.
+
+  Verification note: Metadata futures now poll Stop, in-process tag and PCM readers check between reads, and a cancellation watcher terminates active FFprobe processes before the executor joins. With identical three-second stalled subprocesses, the previous metadata and frame probes waited 3.05 seconds; the new paths returned Cancelled in 0.35 and 0.31 seconds. A blocked metadata future returned in 0.31 seconds. On A1099's real music source, a cold cancelled import took 9.52 seconds from first progress before cancellable reads were added; a warm run with the new reader took 0.81 seconds, with the previous host stage marker intact. Old and new metadata matched for MP3, M4A, FLAC, and WAV; a one-track PDB matched byte for byte. A1099 returned to healthy Link after safe eject.
 
 - [x] **40 · P2 · Code: Bound the persistent Cover Flow cache.** The embedded-image cache has a byte cap, but the coverflow table has no visible eviction policy. Add a measured size or age policy for disposable generated artwork.
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import ctypes
 from collections import OrderedDict, deque
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import os
 from typing import Callable
 import hashlib
@@ -220,7 +220,7 @@ def _extended(raw: bytes) -> int:
     return rate
 
 
-def _pcm(path: Path) -> dict:
+def _pcm(path: Path, cancelled=lambda: False) -> dict:
     size = path.stat().st_size
     with path.open("rb") as stream:
         top = stream.read(12)
@@ -237,6 +237,7 @@ def _pcm(path: Path) -> dict:
         chunks = 0
         have_data = False
         while position < end:
+            _check_cancel(cancelled)
             chunks += 1
             if chunks > 10000 or end - position < 8:
                 raise ValueError("audio chunk bounds")
@@ -325,7 +326,7 @@ def _pcm(path: Path) -> dict:
 
 
 def _decoded_frames(path: Path, executable: str, *, recover: bool = False,
-                    codec: int | None = None) -> int:
+                    codec: int | None = None, cancelled=lambda: False) -> int:
     """Count decoded samples, never estimate duration from bitrate/container time.
 
     No PCM is emitted. Bound decoding to 30 seconds and probe output to 1 MiB;
@@ -343,6 +344,7 @@ def _decoded_frames(path: Path, executable: str, *, recover: bool = False,
                "-of", "csv=p=0", str(path)]
     with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT, creationflags=NO_WINDOW) as process:
+        stop_watch, was_cancelled, watcher = _watch_cancellation(process, cancelled)
         timed_out = threading.Event()
         def expire():
             if process.poll() is None:
@@ -358,15 +360,18 @@ def _decoded_frames(path: Path, executable: str, *, recover: bool = False,
                 if len(output) > 1024 * 1024:
                     raise ValueError(f"{path}: decoded sample-count output exceeds limit")
             returncode = process.wait()
+            _check_cancel(cancelled, was_cancelled)
             if timed_out.is_set():
                 raise ValueError(f"{path}: decoded sample-count probe exceeded 30 seconds")
             if returncode:
                 raise ValueError(f"{path}: decoded sample-count probe failed (exit {returncode})")
         finally:
+            stop_watch.set()
             timer.cancel()
             if process.poll() is None:
                 process.kill()
             process.wait()
+            watcher.join()
     frames = 0
     for line in output.splitlines():
         if not line:
@@ -382,7 +387,34 @@ def _decoded_frames(path: Path, executable: str, *, recover: bool = False,
     return frames
 
 
-def _probe(path: Path, executable: str, *, exact_frames: bool = True) -> dict:
+def _check_cancel(cancelled, observed=None):
+    if (observed is not None and observed.is_set()) or cancelled():
+        from .media_manager import Cancelled
+        raise Cancelled('Stopped while reading music metadata')
+
+
+def _watch_cancellation(process, cancelled):
+    stop = threading.Event()
+    observed = threading.Event()
+
+    def watch():
+        while not stop.wait(0.05):
+            if cancelled():
+                observed.set()
+                if process.poll() is None:
+                    try:
+                        process.kill()
+                    except OSError:
+                        pass  # The process exited between poll and kill.
+                return
+
+    watcher = threading.Thread(target=watch, name='music-probe-cancel', daemon=True)
+    watcher.start()
+    return stop, observed, watcher
+
+
+def _probe(path: Path, executable: str, *, exact_frames: bool = True,
+           cancelled=lambda: False) -> dict:
     # ffprobe is optional host metadata tooling, never a native decoder substitute.
     command = [executable, "-v", "error", "-show_entries",
                "stream=codec_name,codec_type,sample_rate,channels,bits_per_raw_sample:format_tags:stream_tags",
@@ -390,11 +422,30 @@ def _probe(path: Path, executable: str, *, exact_frames: bool = True) -> dict:
     if not exact_frames:
         command += ["-probesize", "262144", "-analyzeduration", "1000000"]
     command.append(str(path))
-    completed = subprocess.run(command, capture_output=True, timeout=30, check=True,
-                               creationflags=NO_WINDOW)
-    if len(completed.stdout) > 1024 * 1024:
+    _check_cancel(cancelled)
+    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          creationflags=NO_WINDOW) as process:
+        stop_watch, was_cancelled, watcher = _watch_cancellation(process, cancelled)
+        try:
+            try:
+                stdout, stderr = process.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate()
+                _check_cancel(cancelled, was_cancelled)
+                raise
+            _check_cancel(cancelled, was_cancelled)
+            if process.returncode:
+                raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
+        finally:
+            stop_watch.set()
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            watcher.join()
+    if len(stdout) > 1024 * 1024:
         raise ValueError("ffprobe metadata exceeds limit")
-    info = json.loads(completed.stdout)
+    info = json.loads(stdout)
     streams = [item for item in info.get("streams", []) if item.get("codec_type") == "audio"]
     if len(streams) != 1:
         raise ValueError("exactly one audio stream required")
@@ -411,11 +462,11 @@ def _probe(path: Path, executable: str, *, exact_frames: bool = True) -> dict:
     if bits > 64:
         raise ValueError("compressed source bit-depth bound")
     return dict(codec=codec, channels=channels, rate=rate, bits=bits,
-                frames=_decoded_frames(path, executable, codec=codec) if exact_frames else 0, data_offset=0,
+                frames=_decoded_frames(path, executable, codec=codec, cancelled=cancelled) if exact_frames else 0, data_offset=0,
                  data_bytes=path.stat().st_size, tags=tags)
 
 
-def _mp3_header_frames(path: Path, info) -> int:
+def _mp3_header_frames(path: Path, info, cancelled=lambda: False) -> int:
     """Read an exact Xing/Info or VBRI sample count without scanning the MP3."""
     rate = int(info.sample_rate)
     # Mutagen only assigns a known bitrate mode after finding a Xing/Info or
@@ -428,7 +479,8 @@ def _mp3_header_frames(path: Path, info) -> int:
         return 0
     version, mode = float(info.version), int(info.mode)
     side = (21 if mode == 3 else 36) if version == 1 else (13 if mode == 3 else 21)
-    with path.open("rb") as stream:
+    with path.open("rb") as raw_stream:
+        stream = _CancellableReader(raw_stream, cancelled)
         stream.seek(int(info.frame_offset) + side)
         marker = stream.read(4)
         if marker not in (b"Xing", b"Info"):
@@ -470,12 +522,13 @@ def _mp3_header_frames(path: Path, info) -> int:
     return samples if 0 < samples <= 0xFFFFFFFFFFFFFFFF else 0
 
 
-def _quick_frames(path: Path, info, codec_name: str, rate: int) -> int:
+def _quick_frames(path: Path, info, codec_name: str, rate: int,
+                  cancelled=lambda: False) -> int:
     """Return exact container/header samples, or zero to request full probing."""
     if codec_name == "flac":
         frames = int(getattr(info, "total_samples", 0))
     elif codec_name == "mp3":
-        frames = _mp3_header_frames(path, info)
+        frames = _mp3_header_frames(path, info, cancelled)
     else:
         # Ogg uses the final granule position and WavPack uses its total-sample
         # header (or block indices), all of which Mutagen exposes as length.
@@ -483,7 +536,33 @@ def _quick_frames(path: Path, info, codec_name: str, rate: int) -> int:
     return frames if 0 < frames <= 0xFFFFFFFFFFFFFFFF else 0
 
 
-def _quick_metadata(path: Path) -> dict | None:
+class _CancellableReader:
+    """Check Stop between the bounded reads and seeks made by tag parsers."""
+    def __init__(self, stream, cancelled):
+        self.stream = stream
+        self.cancelled = cancelled
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+    def read(self, *args):
+        _check_cancel(self.cancelled)
+        return self.stream.read(*args)
+
+    def seek(self, *args):
+        _check_cancel(self.cancelled)
+        return self.stream.seek(*args)
+
+    def readline(self, *args):
+        _check_cancel(self.cancelled)
+        return self.stream.readline(*args)
+
+    def readinto(self, *args):
+        _check_cancel(self.cancelled)
+        return self.stream.readinto(*args)
+
+
+def _quick_metadata(path: Path, cancelled=lambda: False) -> dict | None:
     """Use optional in-process tag readers for well identified containers."""
     try:
         import mutagen
@@ -493,13 +572,17 @@ def _quick_metadata(path: Path) -> dict | None:
     if path.suffix.lower() not in (".mp3", ".m4a", ".m4b", ".flac", ".flc", ".ogg", ".opus", ".ops", ".wv"):
         return None
     try:
-        audio = mutagen.File(path, easy=path.suffix.lower() not in ('.m4a', '.m4b'))
+        with path.open('rb') as stream:
+            audio = mutagen.File(_CancellableReader(stream, cancelled),
+                                 easy=path.suffix.lower() not in ('.m4a', '.m4b'))
+        _check_cancel(cancelled)
         codec_name = {"MP3": "mp3", "EasyMP3": "mp3", "FLAC": "flac", "OggVorbis": "vorbis",
                       "OggOpus": "opus", "WavPack": "wavpack"}.get(type(audio).__name__)
         if type(audio).__name__ == "MP4":
             codec_name = {"mp4a.40.2": "aac", "alac": "alac"}.get(audio.info.codec)
             from mutagen.mp4 import Atoms
-            with path.open('rb') as reader:
+            with path.open('rb') as stream:
+                reader = _CancellableReader(stream, cancelled)
                 atoms = Atoms(reader)
                 audio_tracks = 0
                 for track in atoms[b'moov'].findall(b'trak'):
@@ -533,7 +616,7 @@ def _quick_metadata(path: Path) -> dict | None:
             if key + "number" in tags:
                 tags[key] = tags[key + "number"]
         return dict(codec=CODECS[codec_name], channels=channels, rate=rate, bits=bits,
-                    frames=_quick_frames(path, info, codec_name, rate), data_offset=0,
+                    frames=_quick_frames(path, info, codec_name, rate, cancelled), data_offset=0,
                     data_bytes=path.stat().st_size, tags=tags)
     except (mutagen.MutagenError, ValueError, AttributeError, TypeError, KeyError, struct.error):
         return None
@@ -879,7 +962,8 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
                   verification: str | None = None, cache_path: Path | None = None,
                   bypass_cache: bool = False,
                   include_roots: list[Path] | tuple[Path, ...] | None = None,
-                  excluded: set[str] | tuple[str, ...] | None = None) -> dict:
+                  excluded: set[str] | tuple[str, ...] | None = None,
+                  cancelled: Callable[[], bool] = lambda: False) -> dict:
     """Prepare and validate a complete stage before replacing the old directory.
 
     An interrupted directory swap leaves a sibling backup, restored on the next
@@ -931,11 +1015,18 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
                                 if Path(directory) == output and name in managed])
         previous_database = (Path(device_root) / '.LINNET' / 'LIBRARY.PDB') if device_root is not None else output / 'LIBRARY.PDB'
         recent_ids = _recent_track_ids(previous_database)
+        stop_metadata = threading.Event()
+        def stop_requested():
+            return stop_metadata.is_set() or cancelled()
         with ThreadPoolExecutor(max_workers=4, thread_name_prefix="music-metadata") as metadata_pool:
-            report = _compile_music_stage(source, prepared, metadata_pool=metadata_pool, ffprobe=ffprobe,
-                                      artwork=artwork, playlists=playlists, target=target, device_root=device_root, progress=progress,
-                                       verification=verification, cache=cache, bypass_cache=bypass_cache,
-                                       include_roots=roots, excluded=excluded, recent_ids=recent_ids)
+            try:
+                report = _compile_music_stage(source, prepared, metadata_pool=metadata_pool, ffprobe=ffprobe,
+                                          artwork=artwork, playlists=playlists, target=target, device_root=device_root, progress=progress,
+                                           verification=verification, cache=cache, bypass_cache=bypass_cache,
+                                           include_roots=roots, excluded=excluded, recent_ids=recent_ids,
+                                           cancelled=stop_requested)
+            finally:
+                stop_metadata.set()
         report["database"] = str(output / "LIBRARY.PDB")
         (prepared / "music-manifest.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         validate_stage(prepared, device_root=device_root)
@@ -963,22 +1054,27 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
             shutil.rmtree(prepared, ignore_errors=True)
 
 
-def _read_metadata(path: Path, ffprobe: str | None, existing: bool) -> dict:
+def _read_metadata(path: Path, ffprobe: str | None, existing: bool, cancelled=lambda: False) -> dict:
+    _check_cancel(cancelled)
     if path.suffix.lower() in (".wav", ".aif", ".aiff", ".aifc"):
-        return _pcm(path)
-    metadata = _quick_metadata(path) if existing else None
+        return _pcm(path, cancelled)
+    metadata = _quick_metadata(path, cancelled) if existing else None
+    _check_cancel(cancelled)
     if metadata is None and ffprobe:
-        metadata = _probe(path, ffprobe, exact_frames=not existing)
+        metadata = _probe(path, ffprobe, exact_frames=not existing, cancelled=cancelled)
     if metadata is None:
         raise ValueError(f"{path}: compressed metadata requires explicit ffprobe executable")
     if not metadata["frames"]:
         if not ffprobe:
             raise ValueError(f"{path}: track duration requires explicit ffprobe executable")
-        metadata["frames"] = _decoded_frames(path, ffprobe, recover=existing, codec=metadata["codec"])
+        metadata["frames"] = _decoded_frames(path, ffprobe, recover=existing,
+                                               codec=metadata["codec"], cancelled=cancelled)
+    _check_cancel(cancelled)
     return metadata
 
 
-def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, progress):
+def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, progress,
+                   cancelled):
     # Keep SQLite and progress callbacks on the caller's thread. Bound both
     # concurrent device reads and queued results, including on cancellation.
     pending = deque()
@@ -987,6 +1083,7 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
     cache_relatives = []
     def enqueue():
         nonlocal cache_rows, cache_relatives
+        _check_cancel(cancelled)
         item = next(iterator, None)
         if item is None:
             return
@@ -1001,7 +1098,7 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
         relative = (cache_relatives[number % 128] if cache and not bypass_cache
                     else path.relative_to(source).as_posix())
         metadata = cache.get(source, relative, before, prefetched=cache_rows) if cache and not bypass_cache else None
-        future = pool.submit(_read_metadata, path, ffprobe, existing) if metadata is None else None
+        future = pool.submit(_read_metadata, path, ffprobe, existing, cancelled) if metadata is None else None
         pending.append((number, path, before, metadata, future))
     try:
         for _ in range(4):
@@ -1012,7 +1109,14 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
             if progress:
                 progress(dict(phase="music", current=number, total=len(paths), file=str(path), cached=cached))
             try:
-                metadata = metadata if cached else future.result()
+                if not cached:
+                    while True:
+                        _check_cancel(cancelled)
+                        try:
+                            metadata = future.result(timeout=0.1)
+                            break
+                        except FutureTimeout:
+                            continue
             except (ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
                 from . import SourceError
                 raise SourceError(f"{path}: {error}", path) from error
@@ -1033,7 +1137,8 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                    bypass_cache: bool = False,
                    include_roots: list[Path] | None = None,
                    excluded: set[str] | tuple[str, ...] | None = None,
-                   recent_ids: list[int] | None = None) -> dict:
+                   recent_ids: list[int] | None = None,
+                   cancelled: Callable[[], bool] = lambda: False) -> dict:
     """Stage source audio under MUSIC and write LIBRARY.PDB.
 
     Install MUSIC at /Music, ART below /.LINNET and LIBRARY.PDB at /.LINNET/LIBRARY.PDB.
@@ -1181,7 +1286,8 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     cache_hits = 0
     from .media_manager import _music_import_name
     for number, path, before, metadata, cached in _metadata_rows(
-            paths, source, ffprobe, device_root is not None, cache, bypass_cache, metadata_pool, progress):
+            paths, source, ffprobe, device_root is not None, cache, bypass_cache,
+            metadata_pool, progress, cancelled):
         location = None
         if device_root is not None:
             location = _device_media_path(path, device_root, alias_cache)
