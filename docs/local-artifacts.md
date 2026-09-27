@@ -16,6 +16,10 @@ them. The inventory does not delete, relocate, or classify unrecognized files
 as safe to remove. Inspect any scan errors before relying on its counts.
 Compilation uses two workers by default. Set `--jobs` to an integer from 1 to 4
 to adjust its CPU and memory use; linking remains serial.
+Unchanged objects are reused from the disposable, bounded `out/object-cache-v1/`
+cache after source, included-header, generated-input, flags, and compiler checks.
+Set `LINNET_OBJECT_CACHE=0` to compile every object for comparison. Whole-image
+build IDs and per-invocation artifacts remain independent of object reuse.
 
 Firmware backups, installation plans, predecessor files and recovery receipts
 belong to the physical device and installation that produced them. Preserve them

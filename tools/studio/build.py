@@ -483,15 +483,28 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         objects.append(obj)
     # Header generation and source selection have finished. Compile only the
     # independent translation units here; the linker retains source order.
+    use_object_cache = os.environ.get('LINNET_OBJECT_CACHE', '1') != '0'
+    cache_hits = 0
+    if use_object_cache:
+        from .object_cache import compile_object
+        object_cache_root = ROOT / 'out' / 'object-cache-v1'
+
+        def compile_one(command):
+            return compile_object(command, ROOT, generated, chain['compiler']['sha256'],
+                                  object_cache_root, run)
+    else:
+        def compile_one(command):
+            run(command)
+            return False
     if jobs == 1:
         for command in compile_commands:
-            run(command)
+            cache_hits += compile_one(command)
     else:
         with ThreadPoolExecutor(max_workers=jobs) as executor:
-            futures = [executor.submit(run, command) for command in compile_commands]
+            futures = [executor.submit(compile_one, command) for command in compile_commands]
             try:
                 for future in as_completed(futures):
-                    future.result()
+                    cache_hits += future.result()
             except Exception:
                 for future in futures:
                     future.cancel()
@@ -540,6 +553,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         if spec['hal_family'] == 'pp502x' and not ui_report['features'].get('cover_flow', False):
             resident_limit = 5505024
     report = dict(**configuration, build_id=build_id, toolchain=chain, image=inspect(envelope),
+                  object_cache=dict(enabled=use_object_cache, hits=cache_hits,
+                                    misses=len(compile_commands)-cache_hits),
                   source_files=[selection['path'] for selection in source_selections],
                   source_selections=source_selections,
                   artifacts={key: str(path.relative_to(ROOT)) for key, path in dict(elf=elf, los=los, ipod=ipod, map=mapfile).items()},
@@ -548,4 +563,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
                   release_exclusion=verification, limitation=watchdog_limitation)
     if ui_report is not None:report["ui"]=ui_report
     (dest / (prefix + ".json")).write_text(json.dumps(report, indent=2) + "\n")
+    if use_object_cache:
+        from .object_cache import trim
+        trim(object_cache_root)
     return report

@@ -565,11 +565,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Verification note: Two compiler jobs are the default, with `--jobs 1..4` available. Earlier WSL runs took 24.4/13.4 s for Photo and 24.2/14.4 s for Video at one/two jobs. A current Photo release run took 23.33, 14.06, and 10.35 s at one, two, and four jobs. All three had identical build IDs and byte-identical ELF, LOS, and iPod images. An injected worker failure named the source and caused the build to raise before publication. The worker cap bounds concurrent compiler processes; header generation and linking stay ordered. This machine has no separate native Linux host for a second platform measurement.
 
-- [ ] **77 · P2 · Profile: Reuse unchanged object files with complete dependency keys.** Every build recompiles every selected source. Investigate an object cache keyed by compiler fingerprint, effective flags, source and included-header contents, target/profile, and generated inputs; keep whole-image provenance separate from object reuse.
+- [x] **77 · P2 · Profile: Reuse unchanged object files with complete dependency keys.** Every build recompiles every selected source. Investigate an object cache keyed by compiler fingerprint, effective flags, source and included-header contents, target/profile, and generated inputs; keep whole-image provenance separate from object reuse.
 
   Location: [tools/studio/build.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/build.py) — `source_identity / compiler loop / generated headers`.
 
   Completion check: Clean and cached builds produce equivalent artifacts after source edits, header edits, configuration changes, and branch switches. Sources consuming linnet_build.h rebuild whenever image identity changes.
+
+  Verification note: The compiler records the effective dependency set on misses; cached objects are reused only after every source, included header, generated input, compiler fingerprint, and effective flag matches. Cache entries are hash-checked and bounded to 1 GiB; `LINNET_OBJECT_CACHE=0` bypasses reuse. A Photo release warm build reused 114/114 objects and took 8.84 s versus 10.78 s uncached. Source and header edits rebuilt 4 and 5 objects respectively, and restoring the source reused all 114 prior objects. A changed theme configuration rebuilt 4 objects. Cached and uncached ELF and LOS images matched byte for byte in all three edit cases and in Photo/Video development builds. Those development images RAM booted on A1099 and A1136; both reached healthy Link and rendered Home.
 
 - [x] **78 · P1 · Code: Isolate intermediate output for concurrent builds.** Generated headers and object files share out/<profile>/<target>/<kind> even when build identities differ. Add explicit workspace ownership or per-invocation staging so two builds with different content, serials, or branch states cannot overwrite each other's inputs.
 
