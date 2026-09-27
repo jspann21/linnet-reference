@@ -13,6 +13,7 @@ void ln_runtime_restart(void);
 #if !defined(LINNET_PROFILE_RELEASE)
 /* Dirty-render and publication inclusive timing; development OS only. */
 void ln_runtime_render_timing(uint32_t words[16]);
+void ln_runtime_exec_diagnostics(uint32_t words[24]);
 #endif
 void ln_runtime_idle(void);
 int ln_runtime_inject(uint32_t kind,int32_t value,uint32_t sequence);

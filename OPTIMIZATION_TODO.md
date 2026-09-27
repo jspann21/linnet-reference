@@ -721,11 +721,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
 **Device scheduling, power, memory, and rendering**
 
-- [ ] **97 · P2 · Profile: Measure service fairness under sustained executive load.** ln_exec_take always scans service queues from index zero; metrics aggregate accepted, processed, dropped, and maximum latency. Measure per-service latency under combined input, display, media, and transport load before considering a different fairness policy.
+- [x] **97 · P2 · Profile: Measure service fairness under sustained executive load.** ln_exec_take always scans service queues from index zero; metrics aggregate accepted, processed, dropped, and maximum latency. Measure per-service latency under combined input, display, media, and transport load before considering a different fairness policy.
 
   Location: [kernel/executive.c](C:/Users/user/Desktop/Projects/linnet/kernel/executive.c), [kernel/runtime.c](C:/Users/user/Desktop/Projects/linnet/kernel/runtime.c) — `ln_exec_take / executive service loop`.
 
   Completion check: Any scheduling change reduces demonstrated starvation or tail latency while preserving deliberate priorities, watchdog progress, button handling, and audio continuity.
+
+  Hardware check: Development diagnostics now count accepted, processed, dropped, and maximum queued latency per service. On A1099, photo browsing during music playback reached 18.956 ms maximum input latency with zero drops and audio underruns; photo browsing alone reached 4.365 ms. On A1136, Cover Flow reversal during playback reached 19.593 ms with zero drops and underruns. A scheduled power wake was accepted and processed in 597 us. Source tracing confirmed display, media, and Link work is serviced outside these executive queues; the measured queues did not show starvation requiring a priority change.
 
 - [ ] **98 · P2 · Profile: Measure idle wake sources and clock-switch break-even.** ln_runtime_idle already computes service deadlines, caps its fallback wait, and lowers the clock only for waits of at least 20 ms under strict conditions. Attribute wakeups and measure the actual energy and latency tradeoff before adjusting thresholds.
 
@@ -733,11 +735,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Representative battery and external-power sessions show fewer unnecessary wakes or lower energy use without changing active audio/storage clocks, increasing missed deadlines, or compromising wake reliability.
 
-- [ ] **99 · P2 · Profile: Tune block read-ahead against physical I/O amplification.** The block layer has two cache ways, sequential-read detection, bounded read-ahead, request merging, and power management. Compare physical sectors read versus requested sectors during mixed browsing and playback on rotating and flash storage.
+- [x] **99 · P2 · Profile: Tune block read-ahead against physical I/O amplification.** The block layer has two cache ways, sequential-read detection, bounded read-ahead, request merging, and power management. Compare physical sectors read versus requested sectors during mixed browsing and playback on rotating and flash storage.
 
   Location: [services/storage/block.c](C:/Users/user/Desktop/Projects/linnet/services/storage/block.c) — `cache / sequential ceiling / read_ahead_sectors`.
 
   Completion check: Any tuning improves measured latency or disk activity rather than only cache-hit counts, preserves deadlines and write barriers, and does not cause additional wake cycles or audio underruns.
+
+  Hardware check: Development counters separate requested sectors from physical transfer, cache hits, read-ahead, cancellation, and failures. A1099 photo browsing requested 1,872 sectors and physically read 2,006, including 315 read-ahead sectors and 181 cache hits; one cancellation was expected after rapid browsing. A1136 rotating Cover Flow browsing during playback requested 198 sectors and physically read 366, with 246 read-ahead sectors. Playback alone requested 132 sectors and physically read 238, with 211 read-ahead sectors. Neither device reported block failures or audio underruns, and input latency remained bounded. The amplification did not demonstrate that a different ceiling would improve latency or disk activity, so the read-ahead policy was retained.
 
 - [ ] **100 · P2 · Profile: Measure the competing background work budgets during playback.** Music controller scheduling contains separate reserves and bounded loops for audio, visible artwork, photos, metadata, history, and next-track preparation. Use existing counters and timing spans to identify which budget limits responsiveness at track boundaries.
 
@@ -745,11 +749,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: A targeted adjustment improves a measured interaction while preserving gapless transitions, PCM reserve, bounded service time, and existing storage-priority behavior.
 
-- [ ] **101 · P2 · Profile: Measure avoidable settings publications during rapid interactions.** Settings already track dirty state and revision snapshots, yet resume, menu, and theme interactions can repeatedly make state publishable. Count completed writes and disk wakeups during scrolling, zooming, and repeated preference changes before introducing bounded coalescing.
+- [x] **101 · P2 · Profile: Measure avoidable settings publications during rapid interactions.** Settings already track dirty state and revision snapshots, yet resume, menu, and theme interactions can repeatedly make state publishable. Count completed writes and disk wakeups during scrolling, zooming, and repeated preference changes before introducing bounded coalescing.
 
   Location: [services/display/settings.c](C:/Users/user/Desktop/Projects/linnet/services/display/settings.c), [services/state/store.c](C:/Users/user/Desktop/Projects/linnet/services/state/store.c), [kernel/runtime.c](C:/Users/user/Desktop/Projects/linnet/kernel/runtime.c) — `settings_work / settings_step / ln_state_publish`.
 
   Completion check: Only measured redundant writes are reduced; acknowledged theme frames, revision matching, shutdown flushes, readback verification, and recovery behavior remain intact.
+
+  Hardware check: On prepared A1136 rotating storage, ten rapid Display timeout forward/back pairs originally published 20 unchanged settings records, wrote 20 sectors, and caused one disk spinup. A 500 ms quiet window with a 2 s maximum wait and verified-record comparison reduced the same interaction to zero publications, write sectors, and spinups. One real preference change published once and changed the Link readback; restoring it published once more and restored the exact original 36-byte record. A1099 flash was also booted with the revised image, but it rejected write preparation, so publication behavior could not be qualified there. Terminal flush bypasses the window; the theme acknowledgement path was left intact.
 
 - [ ] **102 · P2 · Profile: Measure native video startup and buffer usage by decoder.** The native player reserves 64 cache slots and three frame buffers and already tracks index-ready, first-present, audio-start, decode, and lateness timing. Compare these stages and cache usage for each supported decoder before changing buffer counts or priming policy.
 

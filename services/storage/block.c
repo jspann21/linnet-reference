@@ -35,6 +35,7 @@ static struct ln_block_info metrics;
 static uint32_t injected,active_fault;
 static struct block_performance {
     uint32_t calls,service,gaps,gap_us,max_gap,last_end,last_id;
+    uint32_t read_calls,requested_read_sectors,requested_write_sectors;
     bool tracking,saturated;
 } perf;
 static struct block_schedule_performance {
@@ -109,7 +110,12 @@ static bool submit(enum ln_block_op op,uint64_t lba,uint32_t sectors,void *bytes
         s->read_ahead=read_ahead;
         s->id=next_id;s->caller=bytes;s->canceled=false;s->direct=direct;s->transferred=0;
         if(op==LN_BLOCK_WRITE)copy(s->data,bytes,sectors*512u);
-        s->state=QUEUED;*id=s->id;++metrics.submitted;return true;
+        s->state=QUEUED;*id=s->id;++metrics.submitted;
+#if !defined(LINNET_PROFILE_RELEASE)
+        if(op==LN_BLOCK_READ){perf_add(&perf.read_calls,1u);perf_add(&perf.requested_read_sectors,sectors);}
+        else if(op==LN_BLOCK_WRITE)perf_add(&perf.requested_write_sectors,sectors);
+#endif
+        return true;
     }
     return false;
 }
@@ -364,6 +370,12 @@ void ln_block_performance(uint32_t out[32]){
     out[24]=metrics.submitted;out[25]=metrics.completed;out[26]=metrics.failed;
     out[27]=metrics.retries;out[28]=metrics.canceled;out[29]=0;
     for(uint32_t i=0;i<8u;i++)if(slots[i].state==QUEUED||slots[i].state==ACTIVE)++out[29];
+}
+void ln_block_workload_diagnostics(uint32_t out[8]){
+    out[0]=0x514f4942u;out[1]=perf.read_calls;
+    out[2]=perf.requested_read_sectors;out[3]=perf.requested_write_sectors;
+    out[4]=metrics.cache_hits;out[5]=metrics.read_ahead_sectors;
+    out[6]=metrics.failed;out[7]=metrics.canceled;
 }
 #endif
 bool ln_block_take(uint32_t generation,struct ln_block_completion *out) {

@@ -73,5 +73,6 @@ bool ln_block_inject(uint32_t fault);
 /* SIOP read-only snapshot,32words. New cumulative counters saturate; bit31
  * invalidates deltas. Use same-reset-epoch idle/drained endpoints for totals. */
 void ln_block_performance(uint32_t out[32]);
+void ln_block_workload_diagnostics(uint32_t out[8]);
 #endif
 #endif

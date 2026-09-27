@@ -1,6 +1,7 @@
 #include "boot/include/linnet_bytes.h"
 #include "settings.h"
 #include "services/storage/storage.h"
+#include "hal/api/platform.h"
 #include "boot/include/linnet_boot.h"
 #include "ui/runtime/ui.h"
 static const uint32_t seconds[]={0,5,10,15,30,60,120};
@@ -34,9 +35,32 @@ static bool loaded,dirty,clock_12;
 static uint8_t photo_resume[16];
 static uint32_t video_resume[2];
 static uint8_t video_options;
-void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loaded=false;games_phase=0;game_best[0]=game_best[1]=game_best[2]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;}
+static uint32_t record_first_dirty_at,record_last_dirty_at;
+static void mark_record_dirty(void){
+    uint32_t now=ln_time_us();
+    if(!dirty)record_first_dirty_at=now;
+    record_last_dirty_at=now;dirty=true;++record_revision;
+}
+static bool record_publish_due(void){
+    uint32_t now=ln_time_us();
+    return now-record_last_dirty_at>=500000u||now-record_first_dirty_at>=2000000u;
+}
+#if !defined(LINNET_PROFILE_RELEASE)
+static uint32_t record_publishes,theme_publishes;
+void ln_display_settings_diagnostics(uint32_t words[8]){
+    words[0]=0x50544553u;words[1]=revision;words[2]=record_revision;words[3]=theme_revision;
+    words[4]=record_publishes;words[5]=theme_publishes;
+    words[6]=(dirty?1u:0u)|(theme_dirty?2u:0u);
+    words[7]=(loaded?1u:0u)|(theme_loaded?2u:0u);
+}
+#endif
+void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loaded=false;games_phase=0;game_best[0]=game_best[1]=game_best[2]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;record_first_dirty_at=record_last_dirty_at=0;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;
+#if !defined(LINNET_PROFILE_RELEASE)
+    record_publishes=theme_publishes=0;
+#endif
+}
 bool ln_display_clock_12(void){return clock_12;}
-void ln_display_clock_toggle(void){clock_12=!clock_12;dirty=true;++revision;++record_revision;}
+void ln_display_clock_toggle(void){clock_12=!clock_12;mark_record_dirty();++revision;}
 uint32_t ln_display_backlight_timeout_us(void){return seconds[choice]*1000000u;}
 uint32_t ln_display_settings_revision(void){return revision;}
 uint32_t ln_display_theme_index(void){return theme_index;}
@@ -55,14 +79,14 @@ const char *ln_display_settings_label(void){return labels[choice];}
 bool ln_display_settings_adjust(int32_t direction){
     if(!direction)return false;
     choice=direction<0?(choice?choice-1u:6u):(choice==6u?0u:choice+1u);
-    dirty=true;++revision;++record_revision;return true;
+    mark_record_dirty();++revision;return true;
 }
 uint32_t ln_auto_shutdown_seconds(bool headphones){return shutdown_seconds[shutdown_choice[headphones?1:0]];}
 bool ln_auto_shutdown_adjust(bool headphones,int32_t direction){
     if(!direction)return false;
     uint8_t *value=&shutdown_choice[headphones?1:0];
     *value=direction<0?(*value?*value-1u:8u):(*value==8u?0u:*value+1u);
-    dirty=true;++revision;++record_revision;return true;
+    mark_record_dirty();++revision;return true;
 }
 static const char *auto_shutdown_label(uint32_t item){
     char *out=shutdown_label[item];uint32_t at=0;
@@ -82,7 +106,7 @@ const char *ln_battery_capacity_label(void){
 bool ln_battery_capacity_adjust(int32_t direction){
     if(!direction||(direction<0&&battery_capacity==50u)||(direction>0&&battery_capacity==10000u))return false;
     battery_capacity=direction<0?battery_capacity-50u:battery_capacity+50u;
-    dirty=true;++revision;++record_revision;return true;
+    mark_record_dirty();++revision;return true;
 }
 /* SETT stores display, photo, video, battery and music state in one current
  * envelope. Its 36-byte overhead leaves 444 bytes for the music payload. */
@@ -119,19 +143,33 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
     }
     *offset=out_offset;*length=out_length;loaded=true;return 1;
 }
-static int write_record(uint8_t raw[480],const uint8_t *data,uint32_t length){
+static int write_record(uint8_t raw[480],const uint8_t *data,uint32_t length,bool existing){
     if(length>444||!valid_photo(photo_resume)||battery_capacity<50u||battery_capacity>10000u||battery_capacity%50u)return 0;
-    for(uint32_t i=length;i;--i)raw[32+i-1]=data[i-1];
     uint32_t index=ln_read_le32(photo_resume+4),flags=ln_read_le32(photo_resume+8);
     if(index>65535u||(flags&255u)>5u||((flags>>8)&255u)>3u||(flags>>16)>2u)return 0;
+    uint8_t packed7=(uint8_t)((clock_12?1u:0u)|((video_options&3u)<<1)|(((video_options>>2)&1u)<<3)|(((video_options&8u)?0u:1u)<<4)|(((video_options>>4)&1u)<<5));
+    uint8_t packed14=(uint8_t)((flags&7u)|(((flags>>8)&3u)<<3)|(((flags>>16)&3u)<<5));
+    uint8_t packed15=(uint8_t)(shutdown_choice[0]|(shutdown_choice[1]<<4));
+    uint32_t snapshot_revision=record_revision;
+    bool unchanged=existing&&raw[4]==(uint8_t)length&&raw[5]==(uint8_t)(length>>8)&&raw[6]==choice&&
+        raw[7]==packed7&&ln_read_le32(raw+8)==ln_read_le32(photo_resume)&&
+        raw[12]==(uint8_t)index&&raw[13]==(uint8_t)(index>>8)&&raw[14]==packed14&&raw[15]==packed15&&
+        ln_read_le32(raw+16)==ln_read_le32(photo_resume+12)&&ln_read_le32(raw+20)==video_resume[0]&&
+        ln_read_le32(raw+24)==video_resume[1]&&ln_read_le32(raw+28)==battery_capacity;
+    if(unchanged)for(uint32_t i=0;i<length;++i)if(raw[32+i]!=data[i]){unchanged=false;break;}
+    if(unchanged){if(record_revision==snapshot_revision)dirty=false;return 1;}
+    for(uint32_t i=length;i;--i)raw[32+i-1]=data[i-1];
     ln_write_le32(raw,0x54544553u);raw[4]=(uint8_t)length;raw[5]=(uint8_t)(length>>8);raw[6]=(uint8_t)choice;
-    raw[7]=(uint8_t)((clock_12?1u:0u)|((video_options&3u)<<1)|(((video_options>>2)&1u)<<3)|(((video_options&8u)?0u:1u)<<4)|(((video_options>>4)&1u)<<5));
+    raw[7]=packed7;
     ln_write_le32(raw+8,ln_read_le32(photo_resume));raw[12]=(uint8_t)index;raw[13]=(uint8_t)(index>>8);
-    raw[14]=(uint8_t)((flags&7u)|(((flags>>8)&3u)<<3)|(((flags>>16)&3u)<<5));raw[15]=(uint8_t)(shutdown_choice[0]|(shutdown_choice[1]<<4));
+    raw[14]=packed14;raw[15]=packed15;
     ln_write_le32(raw+16,ln_read_le32(photo_resume+12));ln_write_le32(raw+20,video_resume[0]);ln_write_le32(raw+24,video_resume[1]);
     ln_write_le32(raw+28,battery_capacity);ln_write_le32(raw+32+length,ln_crc32(raw,32+length));
-    uint32_t bytes=length+36,snapshot_revision=record_revision;
+    uint32_t bytes=length+36;
     if(!ln_storage_settings(true,raw,&bytes))return 0;
+#if !defined(LINNET_PROFILE_RELEASE)
+    if(record_publishes!=UINT32_MAX)++record_publishes;
+#endif
     if(record_revision==snapshot_revision)dirty=false;return 1;
 }
 bool ln_display_settings_photo_get(uint8_t out[16]){
@@ -142,14 +180,14 @@ void ln_display_settings_photo_set(const uint8_t in[16]){
     if(!loaded||!in)return;bool changed=false;
     for(uint32_t i=0;i<16;++i)if(photo_resume[i]!=in[i])changed=true;
     if(!changed)return;
-    for(uint32_t i=0;i<16;++i)photo_resume[i]=in[i];dirty=true;++record_revision;
+    for(uint32_t i=0;i<16;++i)photo_resume[i]=in[i];mark_record_dirty();
 }
 bool ln_display_settings_video_get(uint32_t out[2]){
     if(!loaded||!out)return false;out[0]=video_resume[0];out[1]=video_resume[1];return true;
 }
 void ln_display_settings_video_set(const uint32_t in[2]){
     if(!loaded||!in||(in[0]==video_resume[0]&&in[1]==video_resume[1]))return;
-    video_resume[0]=in[0];video_resume[1]=in[1];dirty=true;++record_revision;
+    video_resume[0]=in[0];video_resume[1]=in[1];mark_record_dirty();
 }
 void ln_display_game_best_set(uint32_t index,uint16_t score){
     if(index>=3u||score<=game_best[index])return;
@@ -158,7 +196,7 @@ void ln_display_game_best_set(uint32_t index,uint16_t score){
 bool ln_display_settings_video_options_get(uint8_t *out){if(!loaded||!out)return false;*out=video_options;return true;}
 void ln_display_settings_video_options_set(uint8_t options){
     options&=31u;if(!loaded||options==video_options)return;
-    video_options=options;dirty=true;++revision;++record_revision;
+    video_options=options;mark_record_dirty();++revision;
 }
 int ln_display_settings_music_restore(uint8_t *data,uint32_t *length){
     if(!data||!length)return -1;
@@ -172,7 +210,7 @@ int ln_display_settings_music(bool write,uint8_t *data,uint32_t *length){
     if(!data||!length)return 0;
     uint8_t raw[480];uint32_t offset,bytes;
     if(read_record(raw,&offset,&bytes)!=1)return 0;
-    if(write)return write_record(raw,data,*length);
+    if(write)return write_record(raw,data,*length,offset==32u);
     if(*length<bytes)return 0;
     for(uint32_t i=0;i<bytes;++i)data[i]=raw[offset+i];
     *length=bytes;return 1;
@@ -255,6 +293,9 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
 #endif
     uint32_t snapshot_revision=theme_revision;
     int result=ln_storage_theme(true,payload,&length);
+#if !defined(LINNET_PROFILE_RELEASE)
+    if(result==1&&theme_publishes!=UINT32_MAX)++theme_publishes;
+#endif
     if(result<0){theme_available=false;theme_dirty=false;++revision;}
     else if(result==1&&snapshot_revision==theme_revision){theme_dirty=false;++revision;}
 }
@@ -282,6 +323,7 @@ static void games_step(void){
 }
 static void settings_work(bool may_write,bool presented,uint32_t presented_revision,bool flush){
     if(!may_write||((loaded&&!dirty)&&(theme_loaded&&!theme_dirty))||ln_storage_busy()||!ln_storage_mounted())return;
+    if(!flush&&loaded&&dirty&&theme_loaded&&!theme_dirty&&!record_publish_due())return;
     /* Once loading is complete, a theme waiting for its first frame must not
      * start disk write preparation. Independent settings work may still proceed. */
     if(loaded&&!dirty&&theme_loaded&&theme_dirty&&!flush&&
@@ -294,11 +336,12 @@ static void settings_work(bool may_write,bool presented,uint32_t presented_revis
     if(!ln_storage_prepared()&&ln_storage_prepare_writes()!=1)return;
     theme_step(presented,presented_revision,flush);
     if(loaded&&!dirty)return;
+    if(!flush&&dirty&&!record_publish_due())return;
     uint8_t raw[480];uint32_t offset,bytes;
     if(read_record(raw,&offset,&bytes)!=1||!dirty||!may_write)return;
     /* Preparation can yield to other owners; re-read before publication. */
     if(read_record(raw,&offset,&bytes)!=1)return;
-    (void)write_record(raw,raw+offset,bytes);
+    (void)write_record(raw,raw+offset,bytes,offset==32u);
 }
 static void settings_step(bool may_write,bool presented,uint32_t presented_revision,bool flush){
     if(step_busy)return;

@@ -53,6 +53,9 @@ static char video_path[256];
 static bool video_requested,video_resume_loaded;
 #endif
 static ln_executive executive;
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_runtime_exec_diagnostics(uint32_t words[24]){ln_exec_diagnostics(&executive,words);}
+#endif
 static ln_arena scene_arena;
 static uint8_t scene_memory[2048] __attribute__((aligned(8)));
 static ln_shell *shell;

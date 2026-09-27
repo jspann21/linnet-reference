@@ -374,6 +374,41 @@ class Session:
         result['idle_endpoint'] = not (words[3] & 15) and words[29] == 0
         return result
 
+    def block_workload(self) -> dict:
+        raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 13))
+        if len(raw) != 32:
+            raise ProtocolError('invalid block workload length')
+        words = struct.unpack('<8I', raw)
+        if words[0] != int.from_bytes(b'BIOQ', 'little'):
+            raise ProtocolError('invalid block workload header')
+        keys = ('magic', 'read_calls', 'requested_read_sectors', 'requested_write_sectors',
+                'cache_hits', 'read_ahead_sectors', 'failed', 'canceled')
+        return dict(zip(keys, words))
+
+    def executive_workload(self) -> dict:
+        raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 14))
+        if len(raw) != 96:
+            raise ProtocolError('invalid executive workload length')
+        words = struct.unpack('<24I', raw)
+        if words[0] != int.from_bytes(b'EXSV', 'little') or words[1] != 5 or words[2] > 64:
+            raise ProtocolError('invalid executive workload header')
+        services = ('input', 'power', 'display', 'shell', 'link')
+        return {'queued': words[2], 'queue_high': words[3],
+                'services': {name: dict(accepted=words[4+i], processed=words[9+i],
+                                        dropped=words[14+i], max_latency_us=words[19+i])
+                             for i, name in enumerate(services)}}
+
+    def settings_publications(self) -> dict:
+        raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 15))
+        if len(raw) != 32:
+            raise ProtocolError('invalid settings publication length')
+        words = struct.unpack('<8I', raw)
+        if words[0] != int.from_bytes(b'SETP', 'little') or words[6] & ~3 or words[7] & ~3:
+            raise ProtocolError('invalid settings publication header')
+        keys = ('magic', 'revision', 'record_revision', 'theme_revision',
+                'record_publishes', 'theme_publishes', 'dirty_flags', 'loaded_flags')
+        return dict(zip(keys, words))
+
     def storage_poll_timing(self) -> dict:
         """Read inclusive storage-function timing; no reset or I/O.
 

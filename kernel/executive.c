@@ -7,11 +7,18 @@ void ln_exec_init(ln_executive *s) {
     for (uint32_t i=0;i<LINNET_SERVICE_COUNT;++i) s->head[i]=s->tail[i]=NONE;
     s->free_head=0;s->used=s->high=s->accepted=s->processed=s->dropped=s->max_latency=0;
     s->deadline_used=s->deadline_high=0;
+#if !defined(LINNET_PROFILE_RELEASE)
+    for(uint32_t i=0;i<LINNET_SERVICE_COUNT;++i)
+        s->service_accepted[i]=s->service_processed[i]=s->service_dropped[i]=s->service_max_latency[i]=0;
+#endif
     for(uint32_t i=0;i<LINNET_DEADLINE_CAPACITY;++i)s->deadlines[i].active=0;
 }
 bool ln_exec_post(ln_executive *s,uint32_t owner,ln_event event) {
     if(owner>=LINNET_SERVICE_COUNT||s->free_head==NONE){
         count(&s->dropped);
+#if !defined(LINNET_PROFILE_RELEASE)
+        if(owner<LINNET_SERVICE_COUNT)count(&s->service_dropped[owner]);
+#endif
         return false;
     }
     uint16_t index=s->free_head;
@@ -27,6 +34,9 @@ bool ln_exec_post(ln_executive *s,uint32_t owner,ln_event event) {
     ++s->used;
     if(s->used>s->high)s->high=s->used;
     count(&s->accepted);
+#if !defined(LINNET_PROFILE_RELEASE)
+    count(&s->service_accepted[owner]);
+#endif
     return true;
 }
 bool ln_exec_take(ln_executive *s,uint32_t now,uint32_t *owner,ln_event *event) {
@@ -44,10 +54,23 @@ bool ln_exec_take(ln_executive *s,uint32_t now,uint32_t *owner,ln_event *event) 
         count(&s->processed);
         uint32_t latency=now-event->time;
         if(latency>s->max_latency)s->max_latency=latency;
+#if !defined(LINNET_PROFILE_RELEASE)
+        count(&s->service_processed[service]);
+        if(latency>s->service_max_latency[service])s->service_max_latency[service]=latency;
+#endif
         return true;
     }
     return false;
 }
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_exec_diagnostics(const ln_executive *s,uint32_t words[24]){
+    words[0]=0x56535845u;words[1]=LINNET_SERVICE_COUNT;words[2]=s->used;words[3]=s->high;
+    for(uint32_t i=0;i<LINNET_SERVICE_COUNT;++i){
+        words[4+i]=s->service_accepted[i];words[9+i]=s->service_processed[i];
+        words[14+i]=s->service_dropped[i];words[19+i]=s->service_max_latency[i];
+    }
+}
+#endif
 bool ln_exec_schedule(ln_executive *s,uint32_t owner,uint16_t key,uint32_t due,ln_event event){
     if(owner>=LINNET_SERVICE_COUNT)return false;
     uint32_t free_slot=LINNET_DEADLINE_CAPACITY;
@@ -62,6 +85,9 @@ bool ln_exec_schedule(ln_executive *s,uint32_t owner,uint16_t key,uint32_t due,l
     }
     if(free_slot==LINNET_DEADLINE_CAPACITY){
         count(&s->dropped);
+#if !defined(LINNET_PROFILE_RELEASE)
+        count(&s->service_dropped[owner]);
+#endif
         return false;
     }
     ln_deadline *d=&s->deadlines[free_slot];

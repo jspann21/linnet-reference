@@ -7,6 +7,7 @@
 #if defined(LINNET_IMAGE_OS)
 #include "services/update/native.h"
 #include "kernel/runtime.h"
+#include "services/display/settings.h"
 #include "services/music/coverflow.h"
 #include "hal/api/display.h"
 #endif
@@ -57,8 +58,11 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r){
         else if(q->length==4u&&ln_read_le32(q->payload)==1u){ln_block_performance(words);count=32u;}
         else if(q->length==4u&&ln_read_le32(q->payload)==2u){ln_storage_media_performance(words);count=16u;}
         else if(q->length==4u&&ln_read_le32(q->payload)==3u){ln_ata_capabilities(words);count=16u;}
+        else if(q->length==4u&&ln_read_le32(q->payload)==13u){ln_block_workload_diagnostics(words);count=8u;}
 #if defined(LINNET_IMAGE_OS)
         else if(q->length==4u&&ln_read_le32(q->payload)==4u){ln_runtime_render_timing(words);count=16u;}
+        else if(q->length==4u&&ln_read_le32(q->payload)==14u){ln_runtime_exec_diagnostics(words);count=24u;}
+        else if(q->length==4u&&ln_read_le32(q->payload)==15u){ln_display_settings_diagnostics(words);count=8u;}
         else if(q->length==4u&&ln_read_le32(q->payload)==7u){ln_display_sync_diagnostics(words);count=16u;}
 #if defined(LINNET_COVERFLOW)
         else if(q->length==4u&&ln_read_le32(q->payload)==11u){ln_coverflow_diagnostics(words);count=16u;}

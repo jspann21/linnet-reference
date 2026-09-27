@@ -3,6 +3,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 void ln_display_settings_init(void);
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_display_settings_diagnostics(uint32_t words[8]);
+#endif
 bool ln_display_settings_boot_ready(void);
 bool ln_display_clock_12(void);
 void ln_display_clock_toggle(void);
