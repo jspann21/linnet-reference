@@ -17,9 +17,10 @@ REQUIRED_KEYS = {
     "cop_display", "entry_address", "load_address", "mailbox_address",
     "mailbox_bytes", "retail", "installer", "resources",
 }
-OPTIONAL_KEYS = {"ui", "hal_family", "audio_codec", "idle_clock_hz", "active_clock_hz", "native_video", "game_presentation",
+OPTIONAL_KEYS = {"ui", "hal_family", "audio_codec", "idle_clock_hz", "active_clock_hz", "native_video", "game_presentation", "presentation_policy", "video_start_audio_frames",
                  "sdram_address", "build_enabled", "bringup_blocker", "presentation_profile", "runtime_policy", "native_storage", "h264_decoder", "mpeg4_decoder", "video_catalog_cache", "coverflow_cache", "boot_size_optimization"}
 RUNTIME_POLICIES = {"display_pipeline", "audio_render_reserve", "music_browse_index", "extended_sound", "resident_monitor"}
+PRESENTATION_POLICIES = {"music_hint_menu_back", "battery_theme_monochrome"}
 CAPABILITIES = {"photos", "video", "files", "demo", "themes", "cover_flow", "games"}
 GAME_PRESENTATIONS = {"photo220": (220, 176), "color320": (320, 240)}
 LCD_FORMATS = {"rgb565-swapped": 1, "gray2-horizontal": 2, "rgb565": 3}
@@ -393,6 +394,14 @@ def load_targets():
         if (not isinstance(policy, dict) or set(policy) - RUNTIME_POLICIES or
                 any(type(value) is not bool for value in policy.values())):
             raise RuntimeError(f"invalid runtime policy: {path}")
+        presentation_policy = spec.get("presentation_policy", {})
+        if (not isinstance(presentation_policy, dict) or
+                set(presentation_policy) - PRESENTATION_POLICIES or
+                any(type(value) is not bool for value in presentation_policy.values())):
+            raise RuntimeError(f"invalid presentation policy: {path}")
+        audio_frames = spec.get("video_start_audio_frames", 16384)
+        if type(audio_frames) is not int or not 1024 <= audio_frames <= 32768:
+            raise RuntimeError(f"invalid video startup audio frame count: {path}")
         names = [target, *spec.get("aliases", [])]
         duplicate = next((name for name in names if name in aliases), None)
         _require(path, spec, 'aliases', duplicate is None,
@@ -432,6 +441,7 @@ def target_spec(value):
 
 def presentation_defines(spec):
     """C definitions shared by firmware and native UI simulation."""
+    policy = spec.get('presentation_policy', {})
     return {
         spec['target_define']: 1,
         'LINNET_UI_WIDTH': f'{spec["lcd_width"]}u',
@@ -439,6 +449,8 @@ def presentation_defines(spec):
         'LINNET_HAS_GAMES': int(spec['capabilities'].get('games', False)),
         'LINNET_GAME_PRESENTATION_PHOTO220': int(spec.get('game_presentation') == 'photo220'),
         'LINNET_GAME_PRESENTATION_COLOR320': int(spec.get('game_presentation') == 'color320'),
+        'LINNET_MUSIC_HINT_MENU_BACK': int(policy.get('music_hint_menu_back', False)),
+        'LINNET_BATTERY_THEME_MONOCHROME': int(policy.get('battery_theme_monochrome', True)),
     }
 
 

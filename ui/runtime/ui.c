@@ -674,11 +674,8 @@ static void battery(struct painter*p,int32_t x,int32_t y,uint16_t ink){
     fill(p,(struct rect){x+1,y+1,21,9},color(LN_UI_STATUS_BG));
     if(status!=UINT32_MAX&&(status&255u)<=100u){
         bool external=(status&(256u|512u))!=0;
-#if defined(LINNET_TARGET_PHOTO4G_P98)
-        const bool monochrome=false;
-#else
-        bool monochrome=(ln_ui_themes[active_theme].flags&LN_UI_THEME_MONOCHROME)!=0;
-#endif
+        bool monochrome=LINNET_BATTERY_THEME_MONOCHROME&&
+            (ln_ui_themes[active_theme].flags&LN_UI_THEME_MONOCHROME)!=0;
         uint32_t width=monochrome&&external?19u:(status&255u)*19u/100u;
         struct rect charge={x+2,y+2,(int32_t)width,7};
         uint16_t charge_color=layout()==LN_UI_LAYOUT_IPOD_CLASSIC&&(status&255u)<20u?0xe986u:color(LN_UI_BATTERY);

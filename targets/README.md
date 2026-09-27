@@ -103,6 +103,8 @@ lowercase, hyphenated ID matching the directory name and choose a unique
 | `media_video_width`, `media_video_height`, `media_video_fps`, `media_video_color` | Native prepared-video profile |
 | `video_catalog_cache` | Video browser cache policy: `paged` or `resident` on video targets |
 | `coverflow_cache` | Cover Flow page, artwork cache and catalog placement policy when enabled: `compact` or `expanded` |
+| `presentation_policy` | Optional named UI choices: `music_hint_menu_back` for a compact music hint and `battery_theme_monochrome` for a monochrome battery fill. Defaults are `false` and `true` respectively. |
+| `video_start_audio_frames` | Native video AAC priming target in PCM frames, from 1024 to 32768; defaults to 16384. The Classic uses 12288 for its shorter measured startup interval. |
 | `boot_size_optimization` | Optional smaller Boot code when constrained by a fixed NOR slot |
 | `capabilities` | Per-target feature restrictions; explicit `false` disables a feature |
 | `cop_display` | Whether to include the SoC's COP display worker |

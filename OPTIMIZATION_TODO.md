@@ -453,11 +453,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Portable storage code no longer includes these family-private headers; retail handoff, decryption, quiescence, watchdog behavior, and target checks remain equivalent on qualified hardware.
 
-- [ ] **70 · P2 · Code: Replace remaining board-name UI and playback policies with named settings.** The music hint names Q21, the battery renderer names Photo, and native video priming names Classic. Record the actual reason for each exception and represent it as an explicit presentation or runtime policy where appropriate.
+- [x] **70 · P2 · Code: Replace remaining board-name UI and playback policies with named settings.** The music hint names Q21, the battery renderer names Photo, and native video priming names Classic. Record the actual reason for each exception and represent it as an explicit presentation or runtime policy where appropriate.
 
   Location: [services/music/ui.c](C:/Users/user/Desktop/Projects/linnet/services/music/ui.c), [ui/runtime/ui.c](C:/Users/user/Desktop/Projects/linnet/ui/runtime/ui.c), [services/video/native/player.c](C:/Users/user/Desktop/Projects/linnet/services/video/native/player.c) — `music hint / battery monochrome choice / START_AUDIO_FRAMES`.
 
   Completion check: Each existing exception keeps its behavior and rationale; a future target with the same requirement selects the policy without adding a target-name branch. Do not infer policy solely from resolution.
+
+  Verification note: Q21 explicitly chooses the compact Menu hint, Photo keeps its color battery gradient independent of a theme's monochrome flag, and Classic starts native video with 12288 PCM frames (about 0.28 s at 44.1 kHz). Other targets retain their previous defaults. Release OS builds passed for all four targets, including a local Q21 content configuration, and Q21, Photo, and Classic simulators passed.
 
 - [x] **71 · P2 · Code: Share relevant target defines with the simulator.** The simulator writes a target header containing only UI dimensions, while firmware generates a larger header and passes target defines; ui.c contains a Photo-specific rendering branch. Share the presentation-related definitions so simulation follows the intended target behavior.
 

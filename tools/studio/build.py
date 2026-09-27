@@ -192,6 +192,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         f'#define LINNET_ART_MAX_SIDE {spec["media_art_side"]}u',
         f'#define LINNET_VIDEO_CATALOG_PAGED {int(spec.get("video_catalog_cache") == "paged")}u',
         f'#define LINNET_VIDEO_PACKET_BYTES {spec.get("native_video", {}).get("sample_bytes", 65536)}u',
+        f'#define LINNET_VIDEO_START_AUDIO_FRAMES {spec.get("video_start_audio_frames", 16384)}u',
         f'#define LINNET_VIDEO_COLOR_GRAY4 {int(spec["media_video_color"] == "gray4")}u',
         f'#define LINNET_STORAGE_MAX_READ_SECTORS {spec["storage_max_read_sectors"]}u',
         f'#define LINNET_COP_DISPLAY {int(spec["cop_display"])}u',

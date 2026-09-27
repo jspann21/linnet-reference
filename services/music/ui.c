@@ -187,7 +187,7 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
     if(n->kind==LN_UI_ALBUM_ART&&in_scene(n,"linnet.system.now-playing")&&ln_music_art_pixels())return "";
     if(in_scene(n,"linnet.system.music")){
         if(n->kind==LN_UI_TEXT){
-#if defined(LINNET_TARGET_IPOD4G_Q21)
+#if LINNET_MUSIC_HINT_MENU_BACK
             return "Menu: Back";
 #else
             return ln_music_browser_hint();

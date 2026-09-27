@@ -21,6 +21,7 @@ storage_max_read_sectors = 192
 lcd_width = 160
 lcd_height = 128
 lcd_format = "gray2-horizontal"
+presentation_policy = { music_hint_menu_back = true }
 capabilities = { photos = false, video = false, themes = false, cover_flow = false }
 media_photo_width = 160
 media_photo_height = 108
