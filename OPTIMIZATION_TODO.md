@@ -449,7 +449,7 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Visible covers become ready sooner without extra idle disk activity, audio underruns, stale artwork, or regressions in existing device and simulator checks.
 
-  Hardware check: On A1099 flash, eight 64-album moves and a reversal produced ten cache hits, no misses or full-art reads, and no additional physical sectors. On A1136 rotating storage, traversal to album 1024 and reversal produced four then two hits and 14 catalog misses; the selected full cover was ready while background catalog loading continued, with 109 full-art reads unchanged. Three 64-album reversals during playback kept player phase 4 and zero underruns. No scheduling or eviction change was justified by these runs.
+  Hardware check: After booting the exact development images, a cold traversal and reversal to album 192 produced a selected full cover in 54.6 ms on A1099 flash and 634.2 ms on A1136 rotating storage. The flash run's longest selected full-art latency was 124.0 ms. The rotating run reached its full cover while catalog loading continued; device-wide physical reads rose from 4349 to 4591 sectors during that interval, including concurrent startup work. After both caches settled, reversing away and back added zero physical sectors and left the same framebuffer CRC (`9fd58599` flash, `51e9143a` rotating). A separate warm long traversal to album 1024 and reversal on A1136 found 14 catalog misses but no additional full-art reads. Three 64-album reversals during playback kept player phase 4 and zero underruns. The existing priority and eviction behavior met this workload, so no scheduling change was made.
 
 **Device additions, target policy, and porting**
 
