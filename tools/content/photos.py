@@ -1,11 +1,11 @@
 """Deterministic PIMG compiler and bounded, streaming package validator."""
 from __future__ import annotations
 
+from array import array
 import hashlib
 import os
 from pathlib import Path
 import re
-import shutil
 import struct
 import tempfile
 import unicodedata
@@ -76,7 +76,7 @@ def _sizes(width, height, max_dimension, viewport_width, viewport_height):
 
 def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                    viewport_height=156, fallback_paths=None, excluded=None, additional_sources=None,
-                   progress=None):
+                   progress=None, checkpoint=None):
     """Prepare a folder into one .pimg; optional mapping names existing JPEG copies.
 
     The default keeps zoom detail without a desktop-sized tile pyramid.
@@ -84,6 +84,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
     absolute FAT8.3 device paths. The compiler never copies or modifies originals.
     """
     from PIL import Image, ImageOps
+    check = checkpoint or (lambda: None)
     source, output = Path(source).resolve(), Path(output).resolve()
     if (not source.is_dir() or type(viewport_width) is not int or
             type(viewport_height) is not int or type(max_dimension) is not int or not 1 <= viewport_width <= 1024 or
@@ -129,9 +130,10 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
             strings.extend(raw + b'\0')
         return string_index[value]
 
-    photos, levels, tile_crcs = [], [], []
+    photos, levels, tile_crcs = [], [], array('I')
     with tempfile.TemporaryFile() as thumbs, tempfile.TemporaryFile() as tiles:
         for index, path in enumerate(paths):
+            check()
             if progress:
                 progress(dict(phase='photos', current=index, total=len(paths), file=str(path)))
             try:
@@ -231,6 +233,8 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
         for level in levels:
             metadata.extend(_record(struct.pack('<I4H2I', *level)))
         for index, crc in enumerate(tile_crcs):
+            if index % 4096 == 0:
+                check()
             metadata.extend(struct.pack('<II', tile_base+index*2048, crc))
         metadata.extend(strings)
         metadata.extend(bytes(data_offset - HEADER - len(metadata)))
@@ -250,10 +254,13 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                 result.write(metadata)
                 for spool in (thumbs, tiles):
                     spool.seek(0)
-                    shutil.copyfileobj(spool, result, 1024*1024)
+                    while chunk := spool.read(1024*1024):
+                        check()
+                        result.write(chunk)
                 result.flush()
                 os.fsync(result.fileno())
-            report = inspect(temporary)
+            report = inspect(temporary, checkpoint=checkpoint)
+            check()
             temporary.replace(output)
         finally:
             temporary.unlink(missing_ok=True)
@@ -262,14 +269,16 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
     return report
 
 
-def inspect(path, *, verify_payloads=True):
+def inspect(path, *, verify_payloads=True, checkpoint=None):
     """Validate every record and metadata range; optionally read all tile payloads."""
+    check = checkpoint or (lambda: None)
     path = Path(path)
     size = path.stat().st_size
     if not HEADER <= size <= MAX_FILE:
         raise ValueError('invalid PIMG file size')
     with path.open('rb') as stream:
         def read(offset, count):
+            check()
             if offset < 0 or count < 0 or offset > size or count > size-offset:
                 raise ValueError('PIMG read outside package bounds')
             stream.seek(offset)
@@ -380,7 +389,14 @@ def inspect(path, *, verify_payloads=True):
                 if verify_payloads and _crc(payload[ordinal*2048:(ordinal+1)*2048]) != crc:
                     raise ValueError('PIMG tile CRC mismatch')
     with path.open('rb') as stream:
-        digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+        if checkpoint is None:
+            digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+        else:
+            hashed = hashlib.sha256()
+            while chunk := stream.read(1024*1024):
+                check()
+                hashed.update(chunk)
+            digest = hashed.hexdigest()
     return dict(format='PIMG', passed=True, photos=pc, albums=ac,
                 levels=lc, tiles=tc, bytes=size, sha256=digest,
                 album_titles=album_titles, payloads_verified=bool(verify_payloads))

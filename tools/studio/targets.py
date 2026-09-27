@@ -17,10 +17,11 @@ REQUIRED_KEYS = {
     "cop_display", "entry_address", "load_address", "mailbox_address",
     "mailbox_bytes", "retail", "installer", "resources",
 }
-OPTIONAL_KEYS = {"ui", "hal_family", "audio_codec", "idle_clock_hz", "active_clock_hz", "native_video",
+OPTIONAL_KEYS = {"ui", "hal_family", "audio_codec", "idle_clock_hz", "active_clock_hz", "native_video", "game_presentation",
                  "sdram_address", "build_enabled", "bringup_blocker", "presentation_profile", "runtime_policy", "native_storage", "h264_decoder", "mpeg4_decoder", "video_catalog_cache", "coverflow_cache", "boot_size_optimization"}
 RUNTIME_POLICIES = {"display_pipeline", "audio_render_reserve", "music_browse_index", "extended_sound", "resident_monitor"}
-CAPABILITIES = {"photos", "video", "files", "demo", "themes", "cover_flow"}
+CAPABILITIES = {"photos", "video", "files", "demo", "themes", "cover_flow", "games"}
+GAME_PRESENTATIONS = {"photo220": (220, 176), "color320": (320, 240)}
 LCD_FORMATS = {"rgb565-swapped": 1, "gray2-horizontal": 2, "rgb565": 3}
 
 
@@ -100,67 +101,90 @@ def _validate_ui(path, spec):
         raise RuntimeError(f"invalid UI profile: {path}")
 
 
+def _require(path, spec, field, valid, rule, *, value=None):
+    if not valid:
+        rejected = spec.get(field) if value is None else value
+        raise RuntimeError(f"{spec.get('id', path.parent.name)}: {field}={repr(rejected)[:160]} must {rule} ({path})")
+
+
 def _validate_identity(path, spec):
-    ram_base = spec.get("sdram_address", 0)
-    if (type(spec["sdram_bytes"]) is not int or
-            type(ram_base) is not int or ram_base < 0 or ram_base % 4096 or
-            ram_base + spec["sdram_bytes"] > 0x100000000):
-        raise RuntimeError(f"invalid SDRAM base: {path}")
-    aliases = spec["aliases"]
-    dimensions = (spec["lcd_width"], spec["lcd_height"],
-                  spec["media_photo_width"], spec["media_photo_height"],
-                  spec["media_video_width"], spec["media_video_height"])
-    addresses = (spec["entry_address"], spec["load_address"],
-                 spec["stage_address"], spec["recovery_snapshot_address"],
-                 spec["mailbox_address"])
-    regions = ((spec["load_address"], spec["os_capacity_bytes"]),
-               (spec["stage_address"], spec["stage_bytes"]),
-               (spec["recovery_snapshot_address"], spec["recovery_snapshot_bytes"]),
-               (spec["mailbox_address"], spec["mailbox_bytes"]))
-    if (not isinstance(spec["name"], str) or not spec["name"] or
-            not isinstance(aliases, list) or
-            any(not isinstance(alias, str) or
-                not re.fullmatch(r"[a-z0-9][a-z0-9-]*", alias)
-                for alias in aliases) or
-            len(aliases) != len(set(aliases)) or
-            not isinstance(spec["board_id"], str) or
-            not re.fullmatch(r"[a-z0-9][a-z0-9-]*", spec["board_id"]) or
-            not isinstance(spec["model_alias"], str) or
-            not re.fullmatch(r"[a-z0-9][a-z0-9-]*", spec["model_alias"]) or
-            not isinstance(spec["soc"], str) or
-            not re.fullmatch(r"[a-z][a-z0-9-]*", spec["soc"]) or
-            not isinstance(spec["cpu"], str) or
-            not re.fullmatch(r"[a-z0-9][a-z0-9-]*", spec["cpu"]) or
-            any(type(value) is not int or value < 1 for value in dimensions) or
-            spec["lcd_width"] > 1024 or spec["lcd_height"] > 1024 or
-            spec["lcd_width"] * spec["lcd_height"] > 131072 or
-            spec["media_photo_width"] > spec["lcd_width"] or
-            spec["media_photo_height"] > spec["lcd_height"] or
-            spec["media_video_width"] > spec["lcd_width"] or
-            spec["media_video_height"] > spec["lcd_height"] or
-            spec["lcd_format"] not in LCD_FORMATS or
-            spec["architecture"] not in {"armv4t", "armv5te", "armv6"} or
-            spec["endianness"] not in {"little", "big"} or
-            type(spec["sdram_bytes"]) is not int or spec["sdram_bytes"] < 8 * 1024 * 1024 or
-            any(type(value) is not int or not 0 <= value <= 0xffffffff
-                for value in addresses) or
-            any(type(size) is not int or size < 4096 for _, size in regions) or
-            spec["stage_bytes"] < spec["os_capacity_bytes"] or
-            spec["os_capacity_bytes"] % 512 or
-            any(address < ram_base or address + size > ram_base + spec["sdram_bytes"] for address, size in regions) or
-            any(a0 < a1+s1 and a1 < a0+s0 for index,(a0,s0) in enumerate(regions)
-                for a1,s1 in regions[index+1:]) or
-            spec["mailbox_address"] < 8192 or
-            spec["recovery_snapshot_address"] + spec["recovery_snapshot_bytes"] +
-                spec["lcd_width"] * spec["lcd_height"] * 2 > spec["mailbox_address"] - 8192 or
-            spec["entry_address"] < spec["load_address"] or
-            spec["entry_address"] >= spec["load_address"] + spec["os_capacity_bytes"] or
-            type(spec["storage_max_read_sectors"]) is not int or
-            not 8 <= spec["storage_max_read_sectors"] <= 1024 or
-            type(spec["mailbox_bytes"]) is not int or spec["mailbox_bytes"] < 1 or
-            spec["mailbox_address"] + spec["mailbox_bytes"] > 0x100000000 or
-            type(spec["cop_display"]) is not bool):
-        raise RuntimeError(f"invalid target identity: {path}")
+    _require(path, spec, 'name', isinstance(spec['name'], str) and bool(spec['name']), 'be a nonempty string')
+    aliases = spec['aliases']
+    _require(path, spec, 'aliases', isinstance(aliases, list) and
+             all(isinstance(alias, str) and re.fullmatch(r'[a-z0-9][a-z0-9-]*', alias) for alias in aliases) and
+             len(aliases) == len(set(aliases)), 'contain distinct lowercase target aliases')
+    for field, pattern in (('board_id', r'[a-z0-9][a-z0-9-]*'),
+                           ('model_alias', r'[a-z0-9][a-z0-9-]*'),
+                           ('soc', r'[a-z][a-z0-9-]*'),
+                           ('cpu', r'[a-z0-9][a-z0-9-]*')):
+        value = spec[field]
+        _require(path, spec, field, isinstance(value, str) and bool(re.fullmatch(pattern, value)),
+                 f'match {pattern}')
+    for field, allowed in (('lcd_format', LCD_FORMATS),
+                           ('architecture', {'armv4t', 'armv5te', 'armv6'}),
+                           ('endianness', {'little', 'big'})):
+        value = spec[field]
+        _require(path, spec, field, isinstance(value, str) and value in allowed,
+                 f'be one of {sorted(allowed)}')
+    for field in ('lcd_width', 'lcd_height', 'media_photo_width', 'media_photo_height',
+                  'media_video_width', 'media_video_height'):
+        value = spec[field]
+        _require(path, spec, field, type(value) is int and 1 <= value <= 1024,
+                 'be an integer from 1 through 1024')
+    _require(path, spec, 'lcd_width/lcd_height',
+             spec['lcd_width'] * spec['lcd_height'] <= 131072,
+             'fit within 131072 pixels', value=(spec['lcd_width'], spec['lcd_height']))
+    for kind in ('photo', 'video'):
+        for axis in ('width', 'height'):
+            field = f'media_{kind}_{axis}'
+            _require(path, spec, field, spec[field] <= spec[f'lcd_{axis}'],
+                     f'not exceed lcd_{axis}={spec[f"lcd_{axis}"]}')
+    ram_base = spec.get('sdram_address', 0)
+    _require(path, spec, 'sdram_address', type(ram_base) is int and ram_base >= 0 and ram_base % 4096 == 0,
+             'be a nonnegative 4096-byte-aligned integer', value=ram_base)
+    ram_bytes = spec['sdram_bytes']
+    _require(path, spec, 'sdram_bytes', type(ram_bytes) is int and ram_bytes >= 8 * 1024 * 1024,
+             'be at least 8 MiB')
+    _require(path, spec, 'sdram_address/sdram_bytes', ram_base + ram_bytes <= 0x100000000,
+             'fit within the 32-bit address space', value=(ram_base, ram_bytes))
+    for field in ('entry_address', 'load_address', 'stage_address',
+                  'recovery_snapshot_address', 'mailbox_address'):
+        value = spec[field]
+        _require(path, spec, field, type(value) is int and 0 <= value <= 0xffffffff,
+                 'be a 32-bit address')
+    for field in ('os_capacity_bytes', 'stage_bytes', 'recovery_snapshot_bytes', 'mailbox_bytes'):
+        value = spec[field]
+        _require(path, spec, field, type(value) is int and value >= 4096,
+                 'reserve at least 4096 bytes')
+    _require(path, spec, 'stage_bytes', spec['stage_bytes'] >= spec['os_capacity_bytes'],
+             f'cover os_capacity_bytes={spec["os_capacity_bytes"]}')
+    _require(path, spec, 'os_capacity_bytes', spec['os_capacity_bytes'] % 512 == 0,
+             'be a multiple of 512 bytes')
+    regions = [(name, spec[f'{name}_address' if name != 'load' else 'load_address'],
+                spec[f'{name}_bytes' if name != 'load' else 'os_capacity_bytes'])
+               for name in ('load', 'stage', 'recovery_snapshot', 'mailbox')]
+    for name, address, size in regions:
+        _require(path, spec, f'{name}_region', ram_base <= address and address + size <= ram_base + ram_bytes,
+                 'fit within SDRAM', value=(address, size))
+    for index, (name, address, size) in enumerate(regions):
+        for other_name, other_address, other_size in regions[index + 1:]:
+            _require(path, spec, f'{name}/{other_name}_regions',
+                     not (address < other_address + other_size and other_address < address + size),
+                     'not overlap', value=((address, size), (other_address, other_size)))
+    _require(path, spec, 'mailbox_address', spec['mailbox_address'] >= 8192,
+             'leave at least 8192 bytes before the mailbox')
+    _require(path, spec, 'recovery_snapshot_address/recovery_snapshot_bytes',
+             spec['recovery_snapshot_address'] + spec['recovery_snapshot_bytes'] +
+             spec['lcd_width'] * spec['lcd_height'] * 2 <= spec['mailbox_address'] - 8192,
+             'leave one framebuffer and 8192 bytes before the mailbox',
+             value=(spec['recovery_snapshot_address'], spec['recovery_snapshot_bytes']))
+    _require(path, spec, 'entry_address',
+             spec['load_address'] <= spec['entry_address'] < spec['load_address'] + spec['os_capacity_bytes'],
+             'fall within the OS load region')
+    sectors = spec['storage_max_read_sectors']
+    _require(path, spec, 'storage_max_read_sectors', type(sectors) is int and 8 <= sectors <= 1024,
+             'be an integer from 8 through 1024')
+    _require(path, spec, 'cop_display', type(spec['cop_display']) is bool, 'be a boolean')
 
 
 def _validate_resources(path, spec):
@@ -246,39 +270,53 @@ def _validate_profiles(path, spec):
 
 
 def _validate_media(path, spec):
-    if (type(spec["media_art_side"]) is not int or
-            spec["media_art_side"] not in (64, 128) or
-            (spec["lcd_format"] == "gray2-horizontal" and spec["media_art_side"] != 64)):
-        raise RuntimeError(f"invalid music artwork size: {path}")
+    _require(path, spec, 'media_art_side', type(spec['media_art_side']) is int and
+             spec['media_art_side'] in (64, 128) and
+             (spec['lcd_format'] != 'gray2-horizontal' or spec['media_art_side'] == 64),
+             'be 64 or 128, and 64 for gray2-horizontal displays')
     backend = spec.get("media_video_backend")
     decoder = spec.get("h264_decoder", "software")
-    if decoder not in ("software", "s5l8702-vpu") or (decoder == "s5l8702-vpu" and
-            (backend != "native-mp4" or spec["soc"] != "s5l8702")):
-        raise RuntimeError(f"invalid H.264 decoder for target: {path}")
-    if spec.get("mpeg4_decoder") == "s5l8702-vpu" and spec["soc"] != "s5l8702":
-        raise ValueError("S5L8702 MPEG-4 requires the S5L8702 SoC")
-    if spec.get("mpeg4_decoder", "none") not in ("none", "pvmp4", "s5l8702-vpu") or (spec.get("mpeg4_decoder", "none") != "none" and backend != "native-mp4"):
-        raise RuntimeError(f"invalid MPEG-4 decoder for target: {path}")
+    _require(path, spec, 'h264_decoder', decoder in ('software', 's5l8702-vpu') and
+             (decoder != 's5l8702-vpu' or (backend == 'native-mp4' and spec['soc'] == 's5l8702')),
+             'be software, or s5l8702-vpu with native-mp4 on s5l8702', value=decoder)
+    mpeg4_decoder = spec.get('mpeg4_decoder', 'none')
+    _require(path, spec, 'mpeg4_decoder',
+             mpeg4_decoder in ('none', 'pvmp4', 's5l8702-vpu') and
+             (mpeg4_decoder != 's5l8702-vpu' or spec['soc'] == 's5l8702') and
+             (mpeg4_decoder == 'none' or backend == 'native-mp4'),
+             'be none, or a decoder compatible with native-mp4 and its SoC', value=mpeg4_decoder)
     enabled = spec["capabilities"].get("video", True)
-    if backend not in ("none", "ipvf", "bcm-mp4", "native-mp4") or (backend != "none") != enabled:
-        raise RuntimeError(f"invalid media video backend: {path}")
+    _require(path, spec, 'media_video_backend',
+             backend in ('none', 'ipvf', 'bcm-mp4', 'native-mp4') and (backend != 'none') == enabled,
+             f'match capabilities.video={enabled} and use a supported backend', value=backend)
     cache = spec.get("video_catalog_cache")
-    if cache not in ((None,) if backend == "none" else ("paged", "resident")):
-        raise RuntimeError(f"invalid video catalog cache policy: {path}")
+    _require(path, spec, 'video_catalog_cache',
+             cache in ((None,) if backend == 'none' else ('paged', 'resident')),
+             'be absent without video, or paged/resident with video', value=cache)
     expected = {"none": {".ipvf"}, "ipvf": {".ipvf"}, "bcm-mp4": {".mp4", ".m4v"}, "native-mp4": {".mp4", ".m4v", ".mov"}}[backend]
-    if set(spec["media_video_extensions"]) != expected:
-        raise RuntimeError(f"video extensions disagree with backend: {path}")
+    _require(path, spec, 'media_video_extensions', set(spec['media_video_extensions']) == expected,
+             f'match {backend} extensions {sorted(expected)}')
     native = spec.get("native_video", {})
     fields = {"h264_width", "h264_height", "h264_level", "mpeg4_width", "mpeg4_height",
               "max_fps", "video_kbps", "max_video_kbps", "buffer_kbits", "audio_kbps", "sample_bytes"}
     if backend in ("bcm-mp4", "native-mp4"):
-        if (not isinstance(native, dict) or set(native) != fields or any(type(v) is not int or v <= 0 for v in native.values()) or
-                native["sample_bytes"] not in (65536, 262144) or
-                spec["media_video_width"] > native["h264_width"] or
-                spec["media_video_height"] > native["h264_height"] or
-                spec["media_video_fps"] > native["max_fps"] or
-                native["video_kbps"] > native["max_video_kbps"]):
-            raise RuntimeError(f"invalid native video profile: {path}")
+        _require(path, spec, 'native_video', isinstance(native, dict), 'be a table', value=native)
+        _require(path, spec, 'native_video fields', set(native) == fields,
+                 f'contain exactly {sorted(fields)}', value=sorted(native))
+        for field, value in native.items():
+            _require(path, spec, f'native_video.{field}', type(value) is int and value > 0,
+                     'be a positive integer', value=value)
+        _require(path, spec, 'native_video.sample_bytes', native['sample_bytes'] in (65536, 262144),
+                 'be 65536 or 262144', value=native['sample_bytes'])
+        for axis in ('width', 'height'):
+            field = f'media_video_{axis}'
+            _require(path, spec, field, spec[field] <= native[f'h264_{axis}'],
+                     f'not exceed native_video.h264_{axis}={native[f"h264_{axis}"]}')
+        _require(path, spec, 'media_video_fps', spec['media_video_fps'] <= native['max_fps'],
+                 f'not exceed native_video.max_fps={native["max_fps"]}')
+        _require(path, spec, 'native_video.video_kbps', native['video_kbps'] <= native['max_video_kbps'],
+                 f'not exceed native_video.max_video_kbps={native["max_video_kbps"]}',
+                 value=native['video_kbps'])
     elif native:
         raise RuntimeError(f"unexpected native video profile: {path}")
 
@@ -290,36 +328,59 @@ def load_targets():
     for path in sorted(TARGETS_ROOT.glob("*/target.toml")):
         spec = tomllib.loads(path.read_text(encoding="utf-8"))
         target = spec.get("id")
-        if (not isinstance(target, str) or
-                not re.fullmatch(r"[a-z][a-z0-9-]*", target) or
-                path.parent.name != target or
-                not REQUIRED_KEYS <= set(spec) or
-                set(spec) - REQUIRED_KEYS - OPTIONAL_KEYS):
-            raise RuntimeError(f"invalid target manifest: {path}")
-        if spec.get("idle_clock_hz",0) not in (0,30000000):
-            raise RuntimeError(f"unsupported idle clock: {path}")
-        if type(spec.get("active_clock_hz",80000000)) is not int or not 1000000 <= spec.get("active_clock_hz",80000000) <= 500000000:
-            raise RuntimeError(f"invalid active clock: {path}")
+        _require(path, spec, 'id', isinstance(target, str) and
+                 bool(re.fullmatch(r'[a-z][a-z0-9-]*', target)) and path.parent.name == target,
+                 f'match the lowercase directory name {path.parent.name!r}')
+        missing = REQUIRED_KEYS - set(spec)
+        unknown = set(spec) - REQUIRED_KEYS - OPTIONAL_KEYS
+        _require(path, spec, 'manifest fields', not missing and not unknown,
+                 f'include required fields and exclude unknown fields (missing={sorted(missing)}, unknown={sorted(unknown)})',
+                 value=sorted(spec))
+        idle_clock = spec.get('idle_clock_hz', 0)
+        _require(path, spec, 'idle_clock_hz', type(idle_clock) is int and idle_clock in (0, 30000000),
+                 'be 0 or 30000000', value=idle_clock)
+        active_clock = spec.get('active_clock_hz', 80000000)
+        _require(path, spec, 'active_clock_hz', type(active_clock) is int and
+                 1000000 <= active_clock <= 500000000,
+                 'be an integer from 1000000 through 500000000', value=active_clock)
         _validate_identity(path, spec)
         spec["target_define"] = "LINNET_TARGET_" + target.upper().replace("-", "_")
         number = spec["image_target"]
-        if (type(number) is not int or not 0 <= number <= 0xffffffff or
-                number in image_targets or target in spec["aliases"] or
-                not isinstance(spec["capabilities"], dict) or
-                any(key not in CAPABILITIES or type(value) is not bool
-                    for key, value in spec["capabilities"].items()) or
-                type(spec["media_video_fps"]) is not int or
-                not 4 <= spec["media_video_fps"] <= 30 or
-                spec["media_video_color"] not in ("rgb565", "gray4") or
-                not _valid_ascii_list(spec["media_video_extensions"]) or
-                not spec["media_video_extensions"] or
-                len(set(spec["media_video_extensions"])) != len(spec["media_video_extensions"]) or
-                any(not re.fullmatch(r"\.[a-z0-9]+", extension)
-                    for extension in spec["media_video_extensions"]) or
-                (spec["capabilities"].get("video", True) and
-                 spec["storage_max_read_sectors"] * 512 <
-                 spec["media_video_width"] * spec["media_video_height"] * 2 + 16384)):
-            raise RuntimeError(f"invalid target identity: {path}")
+        _require(path, spec, 'image_target', type(number) is int and 0 <= number <= 0xffffffff,
+                 'be a unique 32-bit unsigned integer')
+        _require(path, spec, 'image_target', number not in image_targets,
+                 f'differ from {image_targets.get(number)}')
+        _require(path, spec, 'aliases', target not in spec['aliases'], 'not contain the target ID')
+        capabilities = spec['capabilities']
+        _require(path, spec, 'capabilities', isinstance(capabilities, dict), 'be a table')
+        for key, value in capabilities.items():
+            _require(path, spec, f'capabilities.{key}', key in CAPABILITIES and type(value) is bool,
+                     f'be a boolean for a supported capability in {sorted(CAPABILITIES)}', value=value)
+        game_presentation = spec.get('game_presentation')
+        _require(path, spec, 'game_presentation',
+                 (isinstance(game_presentation, str) and game_presentation in GAME_PRESENTATIONS and
+                  (spec['lcd_width'], spec['lcd_height']) == GAME_PRESENTATIONS[game_presentation])
+                 if capabilities.get('games', False) else game_presentation is None,
+                 f'be absent without games, or name a supported layout matching the LCD: {GAME_PRESENTATIONS}',
+                 value=game_presentation)
+        fps = spec['media_video_fps']
+        _require(path, spec, 'media_video_fps', type(fps) is int and 4 <= fps <= 30,
+                 'be an integer from 4 through 30')
+        _require(path, spec, 'media_video_color', spec['media_video_color'] in ('rgb565', 'gray4'),
+                 "be 'rgb565' or 'gray4'")
+        extensions = spec['media_video_extensions']
+        _require(path, spec, 'media_video_extensions',
+                 _valid_ascii_list(extensions) and bool(extensions) and
+                 len(set(extensions)) == len(extensions) and
+                 all(re.fullmatch(r'\.[a-z0-9]+', extension) for extension in extensions),
+                 'contain distinct lowercase file extensions')
+        if capabilities.get('video', True):
+            required_bytes = spec['media_video_width'] * spec['media_video_height'] * 2 + 16384
+            _require(path, spec, 'storage_max_read_sectors/media_video_width/media_video_height',
+                     spec['storage_max_read_sectors'] * 512 >= required_bytes,
+                     f'provide a read window of at least {required_bytes} bytes',
+                     value=(spec['storage_max_read_sectors'], spec['media_video_width'],
+                            spec['media_video_height']))
         _validate_media(path, spec)
         _validate_resources(path, spec)
         _validate_profiles(path, spec)
@@ -333,8 +394,9 @@ def load_targets():
                 any(type(value) is not bool for value in policy.values())):
             raise RuntimeError(f"invalid runtime policy: {path}")
         names = [target, *spec.get("aliases", [])]
-        if any(name in aliases for name in names):
-            raise RuntimeError(f"duplicate or invalid target alias: {path}")
+        duplicate = next((name for name in names if name in aliases), None)
+        _require(path, spec, 'aliases', duplicate is None,
+                 f'not reuse {duplicate!r} from {aliases.get(duplicate)}', value=duplicate)
         enabled = spec.get("build_enabled", True)
         if type(enabled) is not bool or (not enabled and (
                 spec["installer"]["enabled"] or not isinstance(spec.get("bringup_blocker"), str)
@@ -366,6 +428,18 @@ def target_id(value):
 
 def target_spec(value):
     return TARGETS[target_id(value)]
+
+
+def presentation_defines(spec):
+    """C definitions shared by firmware and native UI simulation."""
+    return {
+        spec['target_define']: 1,
+        'LINNET_UI_WIDTH': f'{spec["lcd_width"]}u',
+        'LINNET_UI_HEIGHT': f'{spec["lcd_height"]}u',
+        'LINNET_HAS_GAMES': int(spec['capabilities'].get('games', False)),
+        'LINNET_GAME_PRESENTATION_PHOTO220': int(spec.get('game_presentation') == 'photo220'),
+        'LINNET_GAME_PRESENTATION_COLOR320': int(spec.get('game_presentation') == 'color320'),
+    }
 
 
 def media_profile(value):

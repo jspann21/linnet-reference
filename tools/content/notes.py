@@ -70,7 +70,7 @@ def _ascii(text):
     return normalized.encode('ascii', 'replace').decode('ascii')
 
 
-def compile_notes(source, output, *, excluded=None):
+def compile_notes(source, output, *, excluded=None, progress=None, checkpoint=lambda: None):
     from .publish import _plain
     original_source = Path(os.path.abspath(source))
     _plain(original_source, Path(original_source.anchor))
@@ -80,15 +80,20 @@ def compile_notes(source, output, *, excluded=None):
     if output.is_relative_to(source):
         raise ValueError('Stage the Notes package outside the source folder')
     excluded = {Path(value).as_posix().casefold() for value in (excluded or ())}
-    files = sorted((p for p in source.rglob('*')
-                    if p.suffix.lower() in EXTENSIONS
-                    and p.relative_to(source).as_posix().casefold() not in excluded and p.is_file()),
-                   key=lambda p: p.as_posix().casefold())
-    if len(files) > MAX_NOTES:
-        raise ValueError(f'Notes supports at most {MAX_NOTES} documents; found {len(files)}')
+    files = []
+    for path in source.rglob('*'):
+        if (path.suffix.lower() in EXTENSIONS and
+                path.relative_to(source).as_posix().casefold() not in excluded and path.is_file()):
+            files.append(path)
+            if len(files) > MAX_NOTES:
+                raise ValueError(f'Notes supports at most {MAX_NOTES} documents; found more than {MAX_NOTES}')
+    files.sort(key=lambda p: p.as_posix().casefold())
     titles, records, changed = bytearray(), bytearray(), []
     widths = _display_widths()
-    for path in files:
+    for index, path in enumerate(files):
+        checkpoint()
+        if progress:
+            progress(dict(phase='notes', current=index, total=len(files), file=str(path)))
         _plain(path, source)
         if path.is_symlink() or not path.resolve().is_relative_to(source):
             raise ValueError(f'Note links cannot escape or alias the source: {path}')
@@ -117,6 +122,7 @@ def compile_notes(source, output, *, excluded=None):
         record = struct.pack('<I', len(lines)) + b''.join(line.encode('ascii').ljust(LINE, b'\0') for line in lines)
         records += record.ljust(RECORD, b'\0')
     data = struct.pack('<4sIII', b'NOTE', 0, len(files), RECORD) + titles + records
+    checkpoint()
     output.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix=output.name+'.', suffix='.tmp', dir=output.parent)
     temporary = Path(name)
@@ -126,6 +132,7 @@ def compile_notes(source, output, *, excluded=None):
             writer.flush()
             os.fsync(writer.fileno())
         report = inspect(temporary)
+        checkpoint()
         temporary.replace(output)
     finally:
         temporary.unlink(missing_ok=True)

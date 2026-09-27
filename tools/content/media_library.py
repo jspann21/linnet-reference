@@ -31,15 +31,14 @@ def _device_path(root, value):
     return resolved
 
 
-def _catalog(root):
+def _catalog(root, *, with_paths=False):
     path = root / '.LINNET' / 'VIDEOS' / 'INDEX.VID'
     _plain(path, root)
     if not path.exists():
-        return path, None, []
+        return (path, None, [], []) if with_paths else (path, None, [])
     data, entries = _read_catalog_file(path)
-    for _, name, _ in entries:
-        _device_path(root, name)
-    return path, data, entries
+    resolved = [_device_path(root, name) for _, name, _ in entries]
+    return (path, data, entries, resolved) if with_paths else (path, data, entries)
 
 
 def _row(category, kind, title, path, status, *, info=None, **extra):
@@ -61,8 +60,8 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, _validated
     root = Path(identity['root']).resolve(strict=True)
     if records_by_kind is None:
         records_by_kind = manager._records_by_kind(root)
-    _, _, entries = _catalog(root)
-    published_paths = {str(_device_path(root, name)).casefold() for _, name, _ in entries}
+    _, _, entries, resolved_videos = _catalog(root, with_paths=True)
+    published_paths = {str(path).casefold() for path in resolved_videos}
     result = []
     metadata = _music_metadata(root)
     from .retail_media import metadata as retail_metadata, images as retail_images
@@ -103,8 +102,7 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, _validated
         if path.is_file():
             result.append(_row('library', kind, 'Entire published ' + kind.lower() + ' library', path, 'Published library on iPod',
                 description='Remove this entire published library. Original source files and cached conversions are retained. Updating this folder can restore it.'))
-    for key, name, title in entries:
-        path = _device_path(root, name)
+    for (key, _, title), path in zip(entries, resolved_videos):
         tags = retail.get(str(path).casefold(), {})
         result.append(_row('published', 'Videos', title, path,
             ('Not supported on this iPod' if path.suffix.lower() not in manager.native_video_extensions(identity)

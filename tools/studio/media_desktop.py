@@ -11,9 +11,9 @@ import subprocess
 import sys
 import threading
 
-from PySide6.QtCore import (QAbstractTableModel, QModelIndex, QObject, QRectF, QSize, QPointF,
+from PySide6.QtCore import (QAbstractTableModel, QItemSelection, QItemSelectionModel, QModelIndex, QObject, QRectF, QSize, QPointF, QUrl,
                            Qt, QTimer, Signal, Slot, QSettings, QBuffer, QIODevice, QLoggingCategory, QSignalBlocker)
-from PySide6.QtGui import (QColor, QFont, QIcon, QImage, QImageReader, QKeySequence, QPalette,
+from PySide6.QtGui import (QColor, QDesktopServices, QFont, QIcon, QImage, QImageReader, QKeySequence, QPalette,
                           QLinearGradient, QPainter, QPainterPath, QPixmap, QShortcut, QPen)
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox,
@@ -184,6 +184,7 @@ class Events(QObject):
     progress = Signal(str)
     conversion = Signal(object)
     artwork = Signal(int, str, object)
+    tools_checked = Signal(int, object)
 
 
 class Covers(QObject):
@@ -260,7 +261,8 @@ class Covers(QObject):
         reader = QImageReader(source); reader.setAutoTransform(True)
         dimensions = reader.size()
         if dimensions.isValid() and dimensions.width() * dimensions.height() <= 32_000_000:
-            reader.setScaledSize(dimensions.scaled(320, 320, Qt.KeepAspectRatio))
+            if dimensions.width() > 320 or dimensions.height() > 320:
+                reader.setScaledSize(dimensions.scaled(320, 320, Qt.KeepAspectRatio))
             return reader.read()
         return QImage()
 
@@ -455,19 +457,27 @@ class MediaWindow(QMainWindow):
         self.setWindowIcon(QIcon(boot_artwork((594, 180, 310, 445), 32, 32)))
         self.settings = QSettings('Linnet', 'MediaManager')
         self.identity, self.inventory, self.review = None, None, None
+        self.last_preparation = None
         self.rows, self.readiness, self.pending, self.trash_rows = [], {}, [], []
+        self.pending_keys = set()
+        self.queue_context = None
+        self.discovery_errors = []
         self.apple_info = None
         self._library_source, self._library_cache, self._library_stats = None, {}, {}
-        self.video_selection, self.stop_event = set(), threading.Event()
+        self.video_selection, self.video_mode, self.stop_event = set(), 'all', threading.Event()
         self.page, self.view, self.group = 'Music', self.settings.value('music_view', 'Albums'), None
         if self.view not in ('Songs', 'Albums', 'Artists', 'Genres'):
             self.view = 'Albums'
         self.busy = False
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='linnet-media')
+        self.tool_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='linnet-tools')
+        self.tool_check_id = 0
+        self.tools_ready = False
         self.events = Events(self)
         self.events.done.connect(self.completed)
         self.events.progress.connect(self.show_progress)
         self.events.conversion.connect(self.show_conversion_progress)
+        self.events.tools_checked.connect(self.tools_checked)
         self.covers = Covers(self)
         self.ffmpeg = self.settings.value('ffmpeg', shutil.which('ffmpeg') or '')
         self.ffprobe = self.settings.value('ffprobe', shutil.which('ffprobe') or '')
@@ -656,6 +666,8 @@ class MediaWindow(QMainWindow):
         shortcut.setContext(Qt.WidgetWithChildrenShortcut)
         layout.addLayout(queue_actions)
         self.prep_results = QTextEdit(); self.prep_results.setReadOnly(True); self.prep_results.setMinimumHeight(130); self.prep_results.hide(); layout.addWidget(self.prep_results)
+        self.prep_details = button('View preparation details', self.show_preparation_details, 'quiet')
+        self.prep_details.hide(); layout.addWidget(self.prep_details, 0, Qt.AlignLeft)
         self.retry_button = button('Review skipped files', self.review_skipped, 'quiet'); layout.addWidget(self.retry_button, 0, Qt.AlignLeft)
         layout.addSpacing(12)
         apple_card = QFrame(); apple_card.setObjectName('card')
@@ -672,7 +684,7 @@ class MediaWindow(QMainWindow):
         layout.addStretch()
         footer = QFrame(); footer.setObjectName('preparationFooter')
         actions = box(footer, horizontal=True, margins=(34, 16, 34, 16), spacing=18)
-        self.prep_summary = label('Unchanged media is reused. All existing videos are included unless you choose a selection.', 'muted', True)
+        self.prep_summary = label('Unchanged media is reused. Choose which videos to convert.', 'muted', True)
         actions.addWidget(self.prep_summary, 1)
         self.prepare_button = button('Prepare selected media', self.prepare, 'primary', 'prepare')
         actions.addWidget(self.prepare_button)
@@ -712,7 +724,7 @@ class MediaWindow(QMainWindow):
 
     def build_games(self):
         page, layout = self.scroll_page()
-        self.heading(layout, 'Games', 'Choose the games that appear on your iPod Video.')
+        self.heading(layout, 'Games', 'Choose the games that appear on your iPod.')
         self.games_loaded_for = None
         self.game_checks = []
         for index, (title, description) in enumerate(games.GAMES):
@@ -723,7 +735,7 @@ class MediaWindow(QMainWindow):
             self.game_checks.append(check); row.addWidget(check)
             row.addWidget(label(description, 'muted', True), 1)
             layout.addWidget(card)
-        self.games_status = label('Connect an iPod Video to check installed games.', 'muted', True)
+        self.games_status = label('Connect an iPod with games to check installed games.', 'muted', True)
         layout.addWidget(self.games_status)
         self.games_save = button('Update games on iPod', self.save_games, 'primary')
         layout.addWidget(self.games_save, 0, Qt.AlignLeft)
@@ -735,13 +747,13 @@ class MediaWindow(QMainWindow):
             self.games_status.setText('Selection changed. Update games on iPod, then eject safely.')
 
     def load_games(self):
-        if (self.identity and self.identity['target_id'] in ('video5g-m25', 'photo4g-p98') and not self.busy
+        if (self.identity and games.available(self.identity) and not self.busy
                 and self.games_loaded_for != self.identity['root']):
             identity = self.identity
             self.work('games', lambda: games.read(identity), 'Reading installed games…')
 
     def save_games(self):
-        if not self.identity or self.busy or self.identity['target_id'] not in ('video5g-m25', 'photo4g-p98'):
+        if not self.identity or self.busy or not games.available(self.identity):
             return
         selected = {index for index, check in enumerate(self.game_checks) if check.isChecked()}
         identity = self.identity
@@ -755,20 +767,20 @@ class MediaWindow(QMainWindow):
         self.screen_unavailable.setText('Not available on this device: ' + ', '.join(labels[i] for i in unavailable))
         self.screen_unavailable.setVisible(bool(unavailable))
         order = [i for i in selected if i in available] + [i for i in available if i not in selected]
-        self.screen_items.blockSignals(True); self.screen_items.clear()
-        for i in order:
-            shown = 'Games' if name == 'Home' and i == 7 and self.identity and self.identity['target_id'] in ('video5g-m25', 'photo4g-p98') else labels[i]
-            item = QListWidgetItem(shown); item.setData(Qt.UserRole, i)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled)
-            item.setCheckState(Qt.Checked if i in selected else Qt.Unchecked)
-            if i in screen_settings.REQUIRED.get(name, set()):
-                item.setFlags(item.flags() & ~Qt.ItemIsUserCheckable)
-                item.setText(labels[i] + ' (always included)')
-                item.setToolTip('Always available so you can reach settings and USB access.')
-            elif labels[i] in screen_settings.HINTS:
-                item.setToolTip(screen_settings.HINTS[labels[i]])
-            self.screen_items.addItem(item)
-        self.screen_items.blockSignals(False)
+        with QSignalBlocker(self.screen_items):
+            self.screen_items.clear()
+            for i in order:
+                shown = 'Games' if name == 'Home' and i == 7 and self.identity and games.available(self.identity) else labels[i]
+                item = QListWidgetItem(shown); item.setData(Qt.UserRole, i)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled)
+                item.setCheckState(Qt.Checked if i in selected else Qt.Unchecked)
+                if i in screen_settings.REQUIRED.get(name, set()):
+                    item.setFlags(item.flags() & ~Qt.ItemIsUserCheckable)
+                    item.setText(labels[i] + ' (always included)')
+                    item.setToolTip('Always available so you can reach settings and USB access.')
+                elif labels[i] in screen_settings.HINTS:
+                    item.setToolTip(screen_settings.HINTS[labels[i]])
+                self.screen_items.addItem(item)
         self.screen_items.setCurrentRow(0)
 
     def screen_items_changed(self, *_):
@@ -872,7 +884,9 @@ class MediaWindow(QMainWindow):
             self.stack.setCurrentWidget(self.games_page); self.load_games()
         elif page == 'iPod setup':
             self.stack.setCurrentWidget(self.setup)
-            if self.identity and not self.busy and self.review is None:
+            if self.identity and self.review is not None:
+                self.render_setup()
+            elif self.identity and not self.busy:
                 self.work('setup', lambda: installer.assess(self.identity), 'Checking installed software…')
         else:
             self.stack.setCurrentWidget(self.preferences)
@@ -986,15 +1000,19 @@ class MediaWindow(QMainWindow):
         # sort for grids and as a stable title tie-break for other columns.
         if grouped or self.group is not None or self.table.horizontalHeader().sortIndicatorSection() > 0:
             rows.sort(key=lambda r: (r.get('disc', 0), r.get('track', 0), r['title'].casefold()) if self.group and self.view == 'Albums' else (r['title'].casefold(),))
-        self.model.reset(rows, [('title', 'TITLE'), ('album', 'ALBUM'), ('genre', 'GENRE'), ('duration', 'TIME'), ('bytes', 'SIZE')] if music and not grouped else
-                         [('title', 'NAME'), ('status', 'STATUS'), ('bytes', 'SIZE')])
+        columns = ([('title', 'TITLE'), ('album', 'ALBUM'), ('genre', 'GENRE'), ('duration', 'TIME'), ('bytes', 'SIZE')]
+                   if music and not grouped else [('title', 'NAME'), ('status', 'STATUS'), ('bytes', 'SIZE')])
+        self.model.reset(rows, columns)
         if not grouped and self.group is None:
             header = self.table.horizontalHeader()
             self.model.sort(max(0, min(header.sortIndicatorSection(), self.model.columnCount() - 1)), header.sortIndicatorOrder())
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        for col in range(1, self.model.columnCount()):
-            self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.Interactive)
-            self.table.setColumnWidth(col, 220 if col == 1 and music else 130 if col < 3 else 80)
+        layout = tuple(columns)
+        if getattr(self, '_table_layout', None) != layout:
+            self._table_layout = layout
+            self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+            for col in range(1, self.model.columnCount()):
+                self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.Interactive)
+                self.table.setColumnWidth(col, 220 if col == 1 and music else 130 if col < 3 else 80)
         grid = grouped or self.page in ('Photos', 'Videos')
         self.views.setCurrentWidget(self.grid if grid else self.table)
         if not rows:
@@ -1185,6 +1203,28 @@ class MediaWindow(QMainWindow):
     @Slot(str, object, str)
     def completed(self, tag, result, error):
         self.busy = False; self.progress.hide(); self.cancel_button.hide(); self.update_controls()
+        if tag == 'queue':
+            context = self.queue_context
+            self.queue_context = None
+            if context is None or not context['dialog'].isVisible():
+                return
+            if error:
+                context['error'].setText(error)
+                context['error'].show()
+                return
+            additions = result
+            self.pending.extend(additions)
+            self.pending_keys.update((kind, os.path.normcase(path)) for kind, path in additions)
+            kind, source = context['kind'], Path(context['paths'][0])
+            self.settings.setValue(f'import_folder/{kind}', str(source if context['folder'] else source.parent))
+            self.prep_checks[kind].setChecked(True)
+            context['dialog'].accept()
+            self.update_preparation()
+            self.navigate('Preparation')
+            QTimer.singleShot(0, lambda: self.preparation_scroll.ensureWidgetVisible(self.queue_table))
+            self.show_progress(f'{len(additions):,} new queue entries added.' if additions else
+                               'These sources are already queued. Review them in Preparation.')
+            return
         if error:
             if tag == 'screens':
                 self.screen_state = screen_settings.defaults(self.identity)
@@ -1204,13 +1244,24 @@ class MediaWindow(QMainWindow):
             self.screen_status.setText('Saved to iPod. Eject safely to apply on startup.'); return
         if tag == 'games':
             for index, check in enumerate(self.game_checks):
-                check.blockSignals(True); check.setChecked(index in result); check.blockSignals(False)
+                with QSignalBlocker(check):
+                    check.setChecked(index in result)
             self.games_loaded_for = self.identity['root']
             self.games_status.setText('Loaded from iPod. Uncheck a game to remove it from the Games menu.')
             self.update_controls(); return
         if tag == 'save_games':
             self.games_status.setText('Games updated. Eject safely and restart Linnet to apply.')
             self.update_controls(); return
+        if tag == 'review_skipped':
+            identity, rows = result
+            if not self.identity or any(self.identity.get(key) != identity.get(key)
+                                        for key in ('root', 'disk_serial', 'volume_serial', 'target_id')):
+                self.show_error('The selected iPod changed while skipped files were loading. Try again.')
+            elif rows:
+                self.show_skipped_dialog(identity, rows)
+            else:
+                self.show_progress('No skipped files on this iPod.')
+            return
         if tag == 'playlists':
             self.show_progress('Playlists loaded.'); self.edit_playlists(result); return
         if tag == 'save_playlists':
@@ -1222,30 +1273,40 @@ class MediaWindow(QMainWindow):
             self.prep_results.setPlainText(result['summary']); self.prep_results.show()
             self.show_progress(result['summary']); self.refresh(); return
         if tag == 'devices':
-            if not result:
+            devices, errors = result['devices'], result['errors']
+            self.discovery_errors = errors
+            if not devices:
                 self.covers.invalidate()
                 self.screen_loaded_for = None; self.games_loaded_for = None
                 self.identity = None; self.rows = []; self.inventory = None; self.review = None
                 self.apple_info = None
-                self.trash_rows = []; self.readiness = {}; self.group = None; self.video_selection.clear()
+                self.trash_rows = []; self.readiness = {}; self.group = None
+                self.video_selection.clear(); self.video_mode = 'all'
                 self.update_preparation()
                 self.device_name.setText('No iPod connected'); self.device_info.setText('Connect in Disk Mode'); self.render_library()
                 self.update_controls()
-                self.show_progress('Connect your iPod, then choose Refresh.'); return
-            if len(result) > 1:
+                if errors:
+                    self.show_error('Could not read a connected iPod: ' + '; '.join(errors))
+                else:
+                    self.show_progress('Connect your iPod, then choose Refresh.')
+                return
+            if len(devices) > 1:
                 dialog = QDialog(self); dialog.setWindowTitle('Choose an iPod'); layout = box(dialog, margins=(24, 24, 24, 24))
                 picker = ComboBox()
-                for device in result:
+                for device in devices:
                     picker.addItem(f"{device['drive']} · {device['target_name']}", device)
                 layout.addWidget(picker); layout.addWidget(button('Use this iPod', dialog.accept, 'primary'))
                 if dialog.exec() != QDialog.Accepted:
                     return
                 identity = picker.currentData()
             else:
-                identity = result[0]
+                identity = devices[0]
+            if errors:
+                self.notice.setText('Other connected iPods could not be read: ' + '; '.join(errors))
+                self.notice.show()
             if self.identity and any(self.identity.get(key) != identity.get(key)
                                      for key in ('disk_serial', 'volume_serial', 'root')):
-                self.covers.invalidate(); self.video_selection.clear(); self.group = None
+                self.covers.invalidate(); self.video_selection.clear(); self.video_mode = 'all'; self.group = None
                 self.screen_loaded_for = None; self.games_loaded_for = None
             self.identity = identity
             self.refresh()
@@ -1253,7 +1314,7 @@ class MediaWindow(QMainWindow):
             cached_photos = {row['path']: (row['bytes'], row['mtime_ns'], row.get('artwork')) for row in self.rows
                              if row['kind'] in ('Photos', 'Music') and
                              (row.get('artwork') in self.covers.cache or row.get('artwork') in self.covers.pending)}
-            self.identity, self.inventory, self.rows, self.readiness, self.apple_info = result
+            self.identity, self.inventory, self.rows, self.readiness, self.apple_info, self.review = result
             if cached_photos:
                 current_photos = {row['path']: (row['bytes'], row['mtime_ns'], row.get('artwork')) for row in self.rows
                                   if row['path'] in cached_photos}
@@ -1269,14 +1330,19 @@ class MediaWindow(QMainWindow):
                 else:
                     self.group = None
             self.video_selection.intersection_update(self.inventory['Videos']['files'])
-            self.review = None; self.notice.hide(); self.update_device(); self.update_filters(); self.update_preparation(); self.render_library()
+            if self.discovery_errors:
+                self.notice.setText('Other connected iPods could not be read: ' + '; '.join(self.discovery_errors))
+                self.notice.show()
+            else:
+                self.notice.hide()
+            self.update_device(); self.update_filters(); self.update_preparation(); self.render_library()
             self.show_progress('Ready. Eject safely when you’re finished.')
             if self.page == 'Screens':
                 self.load_screens()
             if self.page == 'Games':
                 self.load_games()
             if self.page == 'iPod setup':
-                self.work('setup', lambda: installer.assess(self.identity), 'Checking installed software…')
+                self.render_setup()
             elif self.page == 'Trash':
                 self.work('trash', lambda: media_trash.removals(self.identity), 'Reading Trash…')
         elif tag == 'trash':
@@ -1284,11 +1350,14 @@ class MediaWindow(QMainWindow):
         elif tag == 'setup':
             self.review = result; self.render_setup(); self.show_progress('Device setup is ready.')
         elif tag == 'prepare':
+            self.last_preparation = (result['identity'], result)
+            self.update_controls()
             lines = [result.get('summary') or ('Preparation complete.' if result['complete'] else 'Preparation needs attention.')]
             lines.extend(e['message'] for e in result.get('errors', []))
             self.prep_results.setPlainText('\n'.join(lines)); self.prep_results.show()
             if result['complete']:
                 self.pending = [p for p in self.pending if p not in self.submitted]
+                self.pending_keys = {(kind, os.path.normcase(path)) for kind, path in self.pending}
                 self.video_selection.difference_update(self.submitted_videos)
             self.update_preparation(); self.refresh()
         elif tag in ('remove', 'restore', 'erase', 'sync', 'install', 'skipped'):
@@ -1301,14 +1370,14 @@ class MediaWindow(QMainWindow):
             self.screen_loaded_for = None; self.games_loaded_for = None
             self.identity = self.inventory = self.review = None; self.rows = []; self.trash_rows = []
             self.apple_info = None
-            self.readiness = {}; self.group = None; self.video_selection.clear()
+            self.readiness = {}; self.group = None; self.video_selection.clear(); self.video_mode = 'all'
             self.update_preparation()
             self.device_name.setText('Safely ejected'); self.device_info.setText('You can disconnect your iPod.'); self.capacity.setValue(0)
             self.render_library(); self.show_progress('Your iPod is safe to disconnect.')
         self.update_controls()
 
     def discover(self):
-        self.work('devices', media.discover, 'Looking for your iPod…')
+        self.work('devices', lambda: media.discover(detailed=True), 'Looking for your iPod…')
 
     def open_playlists(self):
         if self.identity and not self.busy:
@@ -1344,19 +1413,26 @@ class MediaWindow(QMainWindow):
 
     def update_filters(self):
         for picker, field, title in ((self.genre_filter, 'genre', 'All genres'), (self.artist_filter, 'artist', 'All artists')):
-            old = picker.currentData(); picker.blockSignals(True); picker.clear(); picker.addItem(title, '')
-            for value in sorted({row.get(field) or f'Unknown {field}' for row in self.rows if row['kind'] == 'Music' and row['category'] == 'original'}, key=str.casefold):
-                picker.addItem(value, value)
-            picker.setCurrentIndex(max(0, picker.findData(old))); picker.blockSignals(False)
+            old = picker.currentData()
+            with QSignalBlocker(picker):
+                picker.clear(); picker.addItem(title, '')
+                for value in sorted({row.get(field) or f'Unknown {field}' for row in self.rows if row['kind'] == 'Music' and row['category'] == 'original'}, key=str.casefold):
+                    picker.addItem(value, value)
+                picker.setCurrentIndex(max(0, picker.findData(old)))
 
     def update_controls(self):
         ready = self.identity is not None and not self.busy
-        games_ready = ready and self.identity['target_id'] in ('video5g-m25', 'photo4g-p98')
+        self.retry_button.setEnabled(ready)
+        self.prep_details.setVisible(self.last_preparation is not None)
+        self.prep_details.setEnabled(ready and self.last_preparation is not None and
+                                     all(self.identity.get(key) == self.last_preparation[0].get(key)
+                                         for key in ('root', 'disk_serial', 'volume_serial', 'target_id')))
+        games_ready = ready and games.available(self.identity)
         self.games_save.setEnabled(games_ready and self.games_loaded_for == self.identity['root'])
         for check in self.game_checks:
             check.setEnabled(games_ready and self.games_loaded_for == self.identity['root'])
         if ready and not games_ready:
-            self.games_status.setText('Games are available on the iPod Photo A1099 and Video A1136.')
+            self.games_status.setText('Games are unavailable on this iPod.')
         supported = media.supported_kinds(self.identity) if ready else ()
         self.screens.setEnabled(not self.busy)
         self.screen_save.setEnabled(ready and all(self.screen_state.values()))
@@ -1401,8 +1477,11 @@ class MediaWindow(QMainWindow):
             elif not info:
                 text.setText('Connect an iPod to check this library.')
             elif kind == 'Videos':
+                scope = ('All existing videos included' if self.video_mode == 'all' else
+                         f'{len(self.video_selection)} selected for conversion' if self.video_mode == 'selected' else
+                         'No conversions selected')
                 text.setText(f"{info['count']:,} files · {self.readiness.get(kind, 'Not checked')} · " +
-                             (f'{len(self.video_selection)} selected' if self.video_selection else 'All existing videos included'))
+                             scope)
             else:
                 text.setText(f"{info['count']:,} files · {self.readiness.get(kind, 'Not checked')}")
         self.queue_model.reset([dict(title=Path(path).name, kind=kind, path=path) for kind, path in self.pending], [('title', 'FILE'), ('kind', 'TYPE'), ('path', 'FROM YOUR COMPUTER')])
@@ -1460,19 +1539,18 @@ class MediaWindow(QMainWindow):
         def changed(item, column):
             if column != 0 or item.data(0, Qt.UserRole).split('/')[0] not in ('Music', 'Photos', 'Videos'):
                 return
-            tree.blockSignals(True)
-            if item.checkState(0) != Qt.PartiallyChecked:
-                stack = [item.child(index) for index in range(item.childCount())]
-                while stack:
-                    child = stack.pop()
-                    child.setCheckState(0, item.checkState(0))
-                    stack.extend(child.child(index) for index in range(child.childCount()))
-            parent = item.parent()
-            while parent and parent.data(0, Qt.UserRole):
-                states = {parent.child(index).checkState(0) for index in range(parent.childCount())}
-                parent.setCheckState(0, states.pop() if len(states) == 1 else Qt.PartiallyChecked)
-                parent = parent.parent()
-            tree.blockSignals(False)
+            with QSignalBlocker(tree):
+                if item.checkState(0) != Qt.PartiallyChecked:
+                    stack = [item.child(index) for index in range(item.childCount())]
+                    while stack:
+                        child = stack.pop()
+                        child.setCheckState(0, item.checkState(0))
+                        stack.extend(child.child(index) for index in range(child.childCount()))
+                parent = item.parent()
+                while parent and parent.data(0, Qt.UserRole):
+                    states = {parent.child(index).checkState(0) for index in range(parent.childCount())}
+                    parent.setCheckState(0, states.pop() if len(states) == 1 else Qt.PartiallyChecked)
+                    parent = parent.parent()
         tree.itemChanged.connect(changed)
         actions = box(horizontal=True)
         actions.addStretch(); actions.addWidget(button('Cancel', dialog.reject, 'quiet'))
@@ -1522,71 +1600,96 @@ class MediaWindow(QMainWindow):
                 paths, _ = QFileDialog.getOpenFileNames(dialog, f'Add {kind.lower()}', initial, kind + ' (' + ' '.join('*' + ext for ext in sorted(allowed)) + ')')
             if paths:
                 try:
-                    added = self.queue_sources(kind, paths)
+                    self.queue_sources(kind, paths, dialog, error_label, folder)
                 except (OSError, ValueError) as error:
                     error_label.setText(str(error)); error_label.show(); return
-                source = Path(paths[0])
-                self.settings.setValue(f'import_folder/{kind}', str(source if folder else source.parent))
-                self.prep_checks[kind].setChecked(True); dialog.accept(); self.update_preparation(); self.navigate('Preparation')
-                QTimer.singleShot(0, lambda: self.preparation_scroll.ensureWidgetVisible(self.queue_table))
-                self.show_progress(f'{added:,} new queue entries added.' if added else 'These sources are already queued. Review them in Preparation.')
         actions = box(horizontal=True); actions.addWidget(button('Choose files', lambda: choose(), 'primary', 'plus')); actions.addWidget(button('Choose a folder', lambda: choose(True), None, 'folder')); layout.addLayout(actions)
         layout.addWidget(button('Cancel', dialog.reject, 'quiet'), 0, Qt.AlignRight)
         dialog.exec()
 
-    def queue_sources(self, kind, paths):
+    def queue_sources(self, kind, paths, dialog, error_label, folder):
         if not self.identity or self.busy:
             raise ValueError('Connect an iPod and wait for the current operation to finish before adding media.')
         if kind not in media.supported_kinds(self.identity):
             raise ValueError(f'{kind} is unavailable on this iPod.')
-        root = Path(self.identity['root']).resolve(strict=True)
-        allowed = media.video_source_extensions(self.identity) if kind == 'Videos' else media.extensions(kind)
-        known = {(k, os.path.normcase(str(Path(p).resolve()))) for k, p in self.pending}
-        additions = []
-        for value in paths:
-            source = Path(value).resolve(strict=True)
-            if source.is_relative_to(root):
-                raise ValueError('This source is already on your iPod. Use Refresh to find existing media, then prepare it from Preparation.')
-            if not source.is_dir() and (not source.is_file() or source.suffix.lower() not in allowed):
-                raise ValueError(f'{source.name} is not a supported {kind.lower()} file. Choose a supported file or a folder.')
-            key = (kind, os.path.normcase(str(source)))
-            if key not in known:
-                additions.append((kind, str(source))); known.add(key)
-        self.pending.extend(additions)
-        return len(additions)
+        identity, known = self.identity, set(self.pending_keys)
+        def validate():
+            root = Path(identity['root']).resolve(strict=True)
+            allowed = media.video_source_extensions(identity) if kind == 'Videos' else media.extensions(kind)
+            additions = []
+            for value in paths:
+                source = Path(value).resolve(strict=True)
+                if source.is_relative_to(root):
+                    raise ValueError('This source is already on your iPod. Use Refresh to find existing media, then prepare it from Preparation.')
+                if not source.is_dir() and (not source.is_file() or source.suffix.lower() not in allowed):
+                    raise ValueError(f'{source.name} is not a supported {kind.lower()} file. Choose a supported file or a folder.')
+                key = (kind, os.path.normcase(str(source)))
+                if key not in known:
+                    additions.append((kind, str(source)))
+                    known.add(key)
+            return additions
+        self.queue_context = dict(kind=kind, paths=paths, dialog=dialog, error=error_label, folder=folder)
+        self.work('queue', validate, 'Checking selected sources…')
 
     def remove_queued(self):
         if self.busy:
             return
         chosen = {index.row() for index in self.queue_table.selectionModel().selectedRows()}
-        self.pending = [item for index, item in enumerate(self.pending) if index not in chosen]; self.update_preparation()
+        self.pending = [item for index, item in enumerate(self.pending) if index not in chosen]
+        self.pending_keys = {(kind, os.path.normcase(path)) for kind, path in self.pending}
+        self.update_preparation()
 
     def choose_videos(self):
         if not self.inventory or self.busy:
             return
+        allowed = media.video_source_extensions(self.identity)
+        native = media.native_video_extensions(self.identity)
         sources = [p for p in self.inventory['Videos']['files']
-                   if Path(p).suffix.lower() in media.video_source_extensions(self.identity)
-                   and Path(p).suffix.lower() not in media.native_video_extensions(self.identity)]
+                   if Path(p).suffix.lower() in allowed and Path(p).suffix.lower() not in native]
+        search_rows = [(dict(title=Path(path).name, path=path), path.casefold()) for path in sources]
         dialog = QDialog(self); dialog.setWindowTitle('Choose videos to convert'); dialog.resize(700, 520)
         layout = box(dialog, margins=(24, 24, 24, 24)); layout.addWidget(label('Choose video originals', 'section'))
-        layout.addWidget(label('Device-format videos are included automatically. Select other originals to convert; an empty selection includes all.', 'muted', True))
+        layout.addWidget(label('Device-format videos are included automatically. Choose all, selected, or no additional conversions.', 'muted', True))
+        mode = ComboBox()
+        for title, value in (('Convert all existing videos', 'all'),
+                             ('Convert selected videos', 'selected'),
+                             ('No conversions', 'none')):
+            mode.addItem(title, value)
+        mode.setCurrentIndex(mode.findData(self.video_mode))
+        layout.addWidget(mode)
         search = QLineEdit(); search.setPlaceholderText('Find a video…'); layout.addWidget(search)
         table = QTableView(); model = MediaModel(table); table.setModel(model); table.setSelectionBehavior(QAbstractItemView.SelectRows); table.setSelectionMode(QAbstractItemView.ExtendedSelection); table.setEditTriggers(QAbstractItemView.NoEditTriggers); table.verticalHeader().hide(); layout.addWidget(table)
         selected = set(self.video_selection)
+        search_timer = QTimer(dialog)
+        search_timer.setSingleShot(True)
+        search_timer.setInterval(160)
         def render():
             if model.rows:
                 selected.difference_update(r['path'] for r in model.rows)
                 selected.update(model.rows[i.row()]['path'] for i in table.selectionModel().selectedRows())
-            model.reset([dict(title=Path(p).name, path=p) for p in sources if search.text().casefold() in p.casefold()], [('title', 'VIDEO'), ('path', 'LOCATION')])
-            from PySide6.QtCore import QItemSelectionModel
-            for index, row in enumerate(model.rows):
-                if row['path'] in selected:
-                    table.selectionModel().select(model.index(index, 0), QItemSelectionModel.Select | QItemSelectionModel.Rows)
+            query = search.text().casefold()
+            model.reset([row for row, folded in search_rows if query in folded],
+                        [('title', 'VIDEO'), ('path', 'LOCATION')])
+            selection = QItemSelection()
+            start = None
+            for index in range(len(model.rows) + 1):
+                chosen = index < len(model.rows) and model.rows[index]['path'] in selected
+                if chosen and start is None:
+                    start = index
+                elif not chosen and start is not None:
+                    selection.select(model.index(start, 0), model.index(index - 1, 0))
+                    start = None
+            if not selection.isEmpty():
+                table.selectionModel().select(selection, QItemSelectionModel.Select | QItemSelectionModel.Rows)
             table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        search.textChanged.connect(render); render()
+        search.textChanged.connect(search_timer.start)
+        search_timer.timeout.connect(render)
+        render()
         def accept():
-            render(); self.video_selection = selected; self.update_preparation(); dialog.accept()
-        layout.addWidget(button('Use selected videos', accept, 'primary'), 0, Qt.AlignRight); dialog.exec()
+            search_timer.stop()
+            render(); self.video_selection = selected; self.video_mode = mode.currentData()
+            self.update_preparation(); dialog.accept()
+        layout.addWidget(button('Apply video choices', accept, 'primary'), 0, Qt.AlignRight); dialog.exec()
 
     def prepare(self):
         if self.busy or not self.inventory:
@@ -1595,11 +1698,13 @@ class MediaWindow(QMainWindow):
         if not selected:
             self.show_error('Choose at least one media type to prepare.'); return
         identity = self.identity; pending = [item for item in self.pending if item[0] in selected]
-        videos = list(self.video_selection); dimension = 2048 if self.photo_detail.currentIndex() else 640
+        videos = (None if self.video_mode == 'all' else
+                  list(self.video_selection) if self.video_mode == 'selected' else [])
+        dimension = 2048 if self.photo_detail.currentIndex() else 640
         online_artwork = self.online_artwork.isChecked()
         force, verification = self.rebuild.isChecked(), 'full' if self.verify_audio.isChecked() else 'metadata'
-        ffmpeg, ffprobe = self.ffmpeg, self.ffprobe
-        self.submitted, self.submitted_videos = pending, set(videos) if 'Videos' in selected else set()
+        ffmpeg, ffprobe = (self.ffmpeg, self.ffprobe) if self.tools_ready else (None, None)
+        self.submitted, self.submitted_videos = pending, set(videos or ()) if 'Videos' in selected else set()
         def run():
             plan = media_status.plan(identity, pending, selected, videos)
             if plan['conversion'] and (not ffmpeg or not ffprobe):
@@ -1676,27 +1781,28 @@ class MediaWindow(QMainWindow):
         review = self.review
         self.setup_device.setText(f"{review['identity']['target_name']} · {review['identity']['drive']}")
         self.setup_software.setText('Linnet: ' + installer.build_description(review['linnet']))
-        self.boot_choice.blockSignals(True); self.boot_choice.clear()
         available_boot = review['boot_options']
-        for option in available_boot:
-            suffix = (' · Current' if option.get('active') else
-                      ' · Hold Menu' if option.get('chooser_available') else
-                      ' · Unavailable' if not option.get('selectable') else '')
-            self.boot_choice.addItem(option['label'] + suffix, option)
-            self.boot_choice.setItemData(self.boot_choice.count() - 1, option.get('detail', ''), Qt.ToolTipRole)
-        selected = next((i for i, option in enumerate(available_boot) if option.get('active')),
-                        next((i for i, option in enumerate(available_boot) if option.get('selectable')), -1))
-        self.boot_choice.setPlaceholderText('No verified startup software')
-        self.boot_choice.setCurrentIndex(selected); self.boot_choice.blockSignals(False)
-        self.method_choice.blockSignals(True); self.method_choice.clear()
-        for method in review['installation_methods']:
-            if not method.get('enabled'):
-                continue
-            self.method_choice.addItem(method['label'], method)
-            self.method_choice.setItemData(self.method_choice.count() - 1, method['detail'], Qt.ToolTipRole)
-            if method['id'] == review.get('default_installation_method'):
-                self.method_choice.setCurrentIndex(self.method_choice.count() - 1)
-        self.method_choice.blockSignals(False)
+        with QSignalBlocker(self.boot_choice):
+            self.boot_choice.clear()
+            for option in available_boot:
+                suffix = (' · Current' if option.get('active') else
+                          ' · Hold Menu' if option.get('chooser_available') else
+                          ' · Unavailable' if not option.get('selectable') else '')
+                self.boot_choice.addItem(option['label'] + suffix, option)
+                self.boot_choice.setItemData(self.boot_choice.count() - 1, option.get('detail', ''), Qt.ToolTipRole)
+            selected = next((i for i, option in enumerate(available_boot) if option.get('active')),
+                            next((i for i, option in enumerate(available_boot) if option.get('selectable')), -1))
+            self.boot_choice.setPlaceholderText('No verified startup software')
+            self.boot_choice.setCurrentIndex(selected)
+        with QSignalBlocker(self.method_choice):
+            self.method_choice.clear()
+            for method in review['installation_methods']:
+                if not method.get('enabled'):
+                    continue
+                self.method_choice.addItem(method['label'], method)
+                self.method_choice.setItemData(self.method_choice.count() - 1, method['detail'], Qt.ToolTipRole)
+                if method['id'] == review.get('default_installation_method'):
+                    self.method_choice.setCurrentIndex(self.method_choice.count() - 1)
         self.install_detail.setText(review['summary'])
         self.install_detail.setVisible(review['action'] not in ('install', 'replace', 'adopt') or review['linnet']['state'] in ('invalid', 'incomplete'))
         self.update_install_action()
@@ -1739,27 +1845,100 @@ class MediaWindow(QMainWindow):
     def locate_tools(self):
         folder = QFileDialog.getExistingDirectory(self, 'Choose the folder containing FFmpeg and FFprobe')
         if folder:
-            for name in ('ffmpeg', 'ffprobe'):
-                candidate = Path(folder) / (name + '.exe')
-                if candidate.is_file():
-                    setattr(self, name, str(candidate)); self.settings.setValue(name, str(candidate))
-            self.update_tools()
+            self.update_tools(candidate=(str(Path(folder) / 'ffmpeg.exe'),
+                                         str(Path(folder) / 'ffprobe.exe')))
 
-    def update_tools(self):
-        self.tools_label.setText('FFmpeg and FFprobe are ready.' if self.ffmpeg and self.ffprobe else 'Choose the folder containing ffmpeg.exe and ffprobe.exe to enable conversion.')
+    def update_tools(self, *, candidate=None):
+        self.tool_check_id += 1
+        request = self.tool_check_id
+        paths = candidate or (self.ffmpeg, self.ffprobe)
+        self.tools_label.setText('Checking FFmpeg and FFprobe…')
+        def check():
+            errors = []
+            resolved = []
+            for name, value in zip(('FFmpeg', 'FFprobe'), paths):
+                if not value:
+                    errors.append(f'{name} is not configured.')
+                    continue
+                try:
+                    path = Path(value).resolve(strict=True)
+                    if not path.is_file() or path.stem.casefold() != name.casefold():
+                        raise OSError(f'expected {name.lower()}.exe')
+                    result = subprocess.run([str(path), '-version'], stdin=subprocess.DEVNULL,
+                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                            timeout=5, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                    if result.returncode:
+                        raise OSError(f'version check exited with status {result.returncode}')
+                    resolved.append(str(path))
+                except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+                    errors.append(f'{name} at {value} could not run: {error}')
+            self.events.tools_checked.emit(request, dict(candidate=candidate, paths=resolved, errors=errors))
+        self.tool_pool.submit(check)
+
+    @Slot(int, object)
+    def tools_checked(self, request, result):
+        if request != self.tool_check_id:
+            return
+        if result['errors']:
+            self.tools_label.setText(' '.join(result['errors']) + ' Choose a folder containing both tools.')
+            self.tools_ready = False
+            return
+        self.tools_ready = True
+        if result['candidate'] is not None:
+            self.ffmpeg, self.ffprobe = result['paths']
+            self.settings.setValue('ffmpeg', self.ffmpeg)
+            self.settings.setValue('ffprobe', self.ffprobe)
+        self.tools_label.setText('FFmpeg and FFprobe are ready.')
+
+    def show_preparation_details(self):
+        if not self.identity or self.last_preparation is None:
+            return
+        identity, report = self.last_preparation
+        if any(self.identity.get(key) != identity.get(key)
+               for key in ('root', 'disk_serial', 'volume_serial', 'target_id')):
+            return
+        lines = [report.get('summary') or 'Preparation result', '']
+        for step in report.get('steps', [])[:500]:
+            name = step.get('file') or step.get('added') or step.get('renamed') or step.get('kind') or 'Step'
+            status = step.get('status') or ('copied' if 'added' in step else 'renamed' if 'renamed' in step else 'prepared')
+            lines.append(f'{status}: {name}')
+        if len(report.get('steps', [])) > 500:
+            lines.append(f'... {len(report["steps"]) - 500} more steps are in the saved receipt.')
+        if report.get('errors'):
+            lines.extend(('', 'Skipped or failed:'))
+            for error in report['errors'][:500]:
+                name = error.get('file') or error.get('source') or error.get('kind') or 'Operation'
+                lines.append(f'{error.get("status", "failed")}: {name} — {error.get("message", "Unknown error")}')
+            if len(report['errors']) > 500:
+                lines.append(f'... {len(report["errors"]) - 500} more entries are in the saved receipt.')
+        receipt = Path(report['receipt'])
+        lines.extend(('', f'Saved receipt: {receipt}'))
+        dialog = QDialog(self); dialog.setWindowTitle('Preparation details'); dialog.resize(780, 500)
+        layout = box(dialog, margins=(24, 24, 24, 24))
+        details = QTextEdit(); details.setReadOnly(True); details.setPlainText('\n'.join(lines)); layout.addWidget(details)
+        open_receipt = button('Open saved receipt', lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(receipt))), 'quiet')
+        open_receipt.setEnabled(receipt.is_file())
+        layout.addWidget(open_receipt, 0, Qt.AlignLeft)
+        dialog.exec()
 
     def review_skipped(self):
         if self.busy or not self.identity:
             return
-        rows = media.list_skipped_files(self.identity)
+        identity = self.identity
+        self.work('review_skipped', lambda: (identity, media.list_skipped_files(identity)), 'Loading skipped files…')
+
+    def show_skipped_dialog(self, identity, rows):
         dialog = QDialog(self); dialog.setWindowTitle('Skipped files'); dialog.resize(680, 400)
         layout = box(dialog, margins=(24, 24, 24, 24)); layout.addWidget(label('Skipped during preparation', 'section'))
         table = QTableView(); model = MediaModel(table); model.reset([dict(title=row['relative'], kind=row['kind']) for row in rows], [('title', 'FILE'), ('kind', 'TYPE')]); table.setModel(model)
         table.setSelectionBehavior(QAbstractItemView.SelectRows); table.setSelectionMode(QAbstractItemView.ExtendedSelection); table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch); layout.addWidget(table)
         def restore():
+            if not self.identity or any(self.identity.get(key) != identity.get(key)
+                                        for key in ('root', 'disk_serial', 'volume_serial', 'target_id')):
+                dialog.reject(); self.show_error('The selected iPod changed. Load skipped files again.'); return
             selected = [rows[i.row()] for i in table.selectionModel().selectedRows()]
             if selected:
-                identity = self.identity; dialog.accept()
+                dialog.accept()
                 def run():
                     media.restore_skipped_files(identity, [(r['kind'], r['relative']) for r in selected])
                     return dict(summary='Selected files will be included in the next preparation.')
@@ -1788,7 +1967,9 @@ class MediaWindow(QMainWindow):
         if self.busy:
             self.show_progress('Wait for the current operation to finish before closing.'); event.ignore(); return
         self.covers.closed = True
-        self.covers.pool.shutdown(wait=False, cancel_futures=True); self.pool.shutdown(wait=False, cancel_futures=True)
+        self.covers.pool.shutdown(wait=False, cancel_futures=True)
+        self.pool.shutdown(wait=False, cancel_futures=True)
+        self.tool_pool.shutdown(wait=False, cancel_futures=True)
         event.accept()
 
 

@@ -15,7 +15,7 @@ follow fixed paths, so adding a model does not require another build table.
 
 All targets expose their installation status through the same Media Manager. `build_enabled = false` explicitly marks an incomplete port and requires a `bringup_blocker`; it cannot enable installation. A1238 uses the independent S5L8702 HAL and target-owned NOR maintenance path.
 
-`presentation_profile = "color320"` shares native screens, themes and layout generation from `ui/profiles/color320/` between A1136 and A1238. Target-local screens and themes override the shared profile. Display dimensions must match. The Classic owns its Cobalt and Ember themes under its target directory. `sdram_address` supports nonzero physical RAM bases; it defaults to zero for PortalPlayer targets.
+`presentation_profile = "color320"` shares native screens, themes and layout generation from `ui/profiles/color320/` between A1136 and A1238. A target `screens/` directory replaces the profile's complete screen set; target-local themes are added after profile themes and replace matching theme IDs. Display dimensions must match. The Classic owns its Cobalt and Ember themes under its target directory. `sdram_address` supports nonzero physical RAM bases; it defaults to zero for PortalPlayer targets.
 
 ## Repository contract
 
@@ -38,7 +38,8 @@ targets/
   <target-id>/
     target.toml         complete target description
     hardware.h          board policy constants and ROM restart address
-    device.c            board wiring and power hooks
+    device.c            board wiring (board.c is the supported fallback)
+    power.c             optional board power hooks (otherwise hal/<family>/power.c)
     lcd.c               LCD controller driver
     lcd.h               optional private LCD declarations
     display.c           target display adapter
@@ -47,11 +48,15 @@ targets/
     presentation.toml   optional clock font and reference-layout adjustments
     system.toml         optional target-specific default content
     native_update.c     optional audited firmware maintenance implementation
+    SOURCES             optional root-relative paths for additional native files
 ```
 
-When `display.c` is absent, the build uses `hal/<family>/display.c`. The loader also
-resolves `startup.S`, `memory.ld` and `platform.c` by convention. Manifests do
-not contain source-file lists.
+When `display.c` is absent, the build uses `hal/<family>/display.c`. It selects
+`device.c` or falls back to `board.c`; it selects target `power.c` or falls back
+to `hal/<family>/power.c`. The loader resolves `startup.S`, `memory.ld` and
+`platform.c` by convention. Additional native files can be listed in
+`hal/<family>/SOURCES` or `targets/<target-id>/SOURCES`, one root-relative path
+per line. Manifests do not contain source-file lists.
 
 The build derives the C target macro from the target ID and generates
 `linnet_target.h`. That header carries target identity, display and media sizes,
@@ -93,8 +98,8 @@ build description; they do not prove hardware behavior.
 Existing targets may use the shared 220 × 176 reference screens. A target with
 a `screens/` directory must provide every selected app at its actual LCD size,
 with `native` theme layouts. Missing screens fail compilation; there is no silent
-reference-screen fallback. M25 uses 29 native 320 × 240 screens and three local
-themes. Native font pixels are retained. Legacy layout adjustments belong in
+profile or reference-screen fallback. M25 uses the shared `color320` 320 × 240
+screen set and themes. Native font pixels are retained. Legacy layout adjustments belong in
 `presentation.toml`, not target-name branches in the compiler.
 
 `[resources]` declares title-cache placement and cover-flow catalog capacity.

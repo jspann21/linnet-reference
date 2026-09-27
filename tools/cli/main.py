@@ -282,14 +282,7 @@ def main():
                       supported_targets=sorted(target for target, spec in TARGETS.items() if spec.get('build_enabled', True)),
                       bringup_targets={target: spec['bringup_blocker'] for target, spec in TARGETS.items() if not spec.get('build_enabled', True)}))
         elif args.command == "media":
-            if os.name != 'nt':
-                raise RuntimeError('The desktop media manager currently supports Windows Disk Mode.')
-            try:
-                from tools.studio.media_desktop import launch
-            except ModuleNotFoundError as error:
-                if not (error.name or '').startswith(('PySide6', 'shiboken6')):
-                    raise
-                raise RuntimeError('Install the Media Manager with: python -m pip install -r tools/studio/requirements.txt') from error
+            from tools.studio.media_app import launch
             launch()
         elif args.command == "installer":
             from tools.studio.installer import assess, identity_for_mount, install, restore

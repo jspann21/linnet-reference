@@ -191,7 +191,7 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     from . import apple_os
     apple = apple_os.inspect(identity, records_by_kind=records)
     _remember_verified(identity, verified, verified_before)
-    return identity, inventory, rows, readiness, apple
+    return identity, inventory, rows, readiness, apple, boot_review
 
 
 def plan(identity, pending, selected, videos):
@@ -207,16 +207,19 @@ def plan(identity, pending, selected, videos):
     except (OSError, ValueError):
         state = {}
     skipped = {kind: media._skipped_paths(state, kind) for kind in media.KINDS}
-    videos = [value for value in videos
-              if Path(value).resolve().relative_to(root).as_posix().casefold()
-              not in skipped['Videos']]
+    if videos is not None:
+        videos = [value for value in videos
+                  if Path(value).resolve().relative_to(root).as_posix().casefold()
+                  not in skipped['Videos']]
     included = [p for p in pending if p[0] in selected]
-    copies = media.additions(root, [p for p in included if p[0] != 'Videos'])
-    jobs = media.video_jobs(root, included, videos, skipped=skipped['Videos'], identity=identity) if 'Videos' in selected else []
+    snapshots = {}
+    copies = media.additions(root, [p for p in included if p[0] != 'Videos'], snapshots=snapshots)
+    jobs = media.video_jobs(root, included, videos, skipped=skipped['Videos'], identity=identity,
+                            snapshots=snapshots) if 'Videos' in selected else []
     previews = {}
     for kind, name in included:
-        source = Path(name)
-        records = media._file_records(source) if source.is_dir() else [(source, source.stat())]
+        source = Path(name).absolute().resolve(strict=True)
+        records = snapshots[source]
         allowed = media.video_source_extensions(identity) if kind == 'Videos' else media.extensions(kind)
         supported = sum(p.suffix.lower() in allowed for p, _ in records)
         other = len(records) - supported

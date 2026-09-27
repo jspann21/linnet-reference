@@ -10,31 +10,37 @@ from .publish import _plain, _volume_guard, _exclusive, _write_verified
 from .video_catalog import encode as _encode_catalog, read_file as _read_catalog_file
 
 
+def _removal(identity, root, token):
+    if len(token) != 32 or any(c not in '0123456789abcdef' for c in token):
+        return None
+    receipt = media.cache_root(identity) / f'remove-{token}.json'
+    try:
+        report = json.loads(receipt.read_text(encoding='utf-8'))
+        if not isinstance(report, dict):
+            return None
+        started = report.get('started', 0)
+        if type(started) not in (int, float):
+            return None
+        datetime.fromtimestamp(started)
+        trash = root / '.LINNET' / 'TRASH' / token
+        _plain(trash, root)
+        if not trash.is_dir():
+            return None
+        files = media._file_records(trash)
+        return (dict(id=token, receipt=str(receipt), path=str(trash), bytes=sum(i.st_size for _, i in files),
+                     title=', '.join(r['title'] for r in report.get('selected', [])[:3]),
+                     started=started), report)
+    except (OSError, ValueError, TypeError, KeyError, OverflowError):
+        return None
+
+
 def removals(identity):
     root = Path(identity['root']).resolve(strict=True)
     found = []
     for receipt in media.cache_root(identity).glob('remove-*.json'):
-        try:
-            report = json.loads(receipt.read_text(encoding='utf-8'))
-            if not isinstance(report, dict):
-                continue
-            started = report.get('started', 0)
-            if type(started) not in (int, float):
-                continue
-            datetime.fromtimestamp(started)
-            token = receipt.stem.removeprefix('remove-')
-            if len(token) != 32 or any(c not in '0123456789abcdef' for c in token):
-                continue
-            trash = root / '.LINNET' / 'TRASH' / token
-            _plain(trash, root)
-            if not trash.is_dir():
-                continue
-            files = media._file_records(trash)
-            found.append(dict(id=token, receipt=str(receipt), path=str(trash), bytes=sum(i.st_size for _, i in files),
-                              title=', '.join(r['title'] for r in report.get('selected', [])[:3]),
-                              started=started))
-        except (OSError, ValueError, TypeError, KeyError, OverflowError):
-            continue
+        removal = _removal(identity, root, receipt.stem.removeprefix('remove-'))
+        if removal is not None:
+            found.append(removal[0])
     return sorted(found, key=lambda r: r['started'], reverse=True)
 
 
@@ -42,12 +48,12 @@ def recover(identity, token, *, erase=False):
     identity = media.refresh(identity)
     with _exclusive(identity):
         root = Path(identity['root']).resolve(strict=True)
-        removal = next((item for item in removals(identity) if item['id'] == token), None)
-        if removal is None:
+        found = _removal(identity, root, token)
+        if found is None:
             raise ValueError('This Trash removal changed. Refresh before continuing.')
+        removal, report = found
         trash = Path(removal['path'])
         receipt = Path(removal['receipt'])
-        report = json.loads(receipt.read_text(encoding='utf-8'))
         if erase:
             # Enumerate guarded ordinary files before deleting any of them.
             files = media._file_records(trash)

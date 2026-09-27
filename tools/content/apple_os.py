@@ -121,7 +121,10 @@ def _folder_rows(root, records_by_kind):
                 continue
             parent = path.parent
             while parent.is_relative_to(root / kind):
-                paths.add(parent.relative_to(root).as_posix())
+                relative = parent.relative_to(root).as_posix()
+                if relative in paths:
+                    break
+                paths.add(relative)
                 parent = parent.parent
     return [{'path': value, 'kind': value.split('/')[0]}
             for value in sorted(paths, key=lambda x: (ROOTS.index(x.split('/')[0]),

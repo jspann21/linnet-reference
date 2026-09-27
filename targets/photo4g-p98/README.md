@@ -21,9 +21,11 @@ in its default system and appear under **Games** on Home.
 
 In the arcade games, Play pauses/resumes and Menu returns to Games. Each game
 has its own native Photo layout; text and controls are not scaled from the Video
-screen. The game rules and audio live in `services/games/`; Photo presentation
-is in `games_graphics.h`. Court interiors retain the CC0 artwork credited in
-`solitaire_courts.h`, with ranks and suits drawn separately for legibility.
+screen. The game rules and audio live in `services/games/`; the
+`presentations/photo220/` drawing code and artwork are selected by
+`game_presentation`. Court interiors retain the CC0 artwork credited in
+`../../services/games/presentations/photo220/solitaire_courts.h`, with ranks
+and suits drawn separately for legibility.
 
 Use **Games** in Linnet Media Manager while the iPod is in Disk Mode to select
 installed games. Save, eject safely, and restart Linnet to apply the selection.

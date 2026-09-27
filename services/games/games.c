@@ -6,10 +6,12 @@
 #if defined(LINNET_STORAGE)
 #include "services/display/settings.h"
 #endif
-#if LINNET_UI_WIDTH == 220
-#include "targets/photo4g-p98/solitaire_courts.h"
+#if LINNET_GAME_PRESENTATION_PHOTO220
+#include "services/games/presentations/photo220/solitaire_courts.h"
+#elif LINNET_GAME_PRESENTATION_COLOR320
+#include "services/games/presentations/color320/solitaire_courts.h"
 #else
-#include "targets/video5g-m25/solitaire_courts.h"
+#error Games require a supported presentation profile
 #endif
 
 enum { COMET, PULSE, SOLITAIRE, GAME_COUNT };
@@ -331,10 +333,10 @@ static void box(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,int32_t
     for(int32_t yy=top;yy<bottom;++yy)for(int32_t xx=left;xx<right;++xx)c->pixels[yy*LINNET_UI_WIDTH+xx]=ink;
 }
 #include "services/games/drawing.h"
-#if LINNET_UI_WIDTH == 220
-#include "targets/photo4g-p98/games_graphics.h"
-#else
-#include "targets/video5g-m25/games_arcade.h"
+#if LINNET_GAME_PRESENTATION_PHOTO220
+#include "services/games/presentations/photo220/games_graphics.h"
+#elif LINNET_GAME_PRESENTATION_COLOR320
+#include "services/games/presentations/color320/games_arcade.h"
 static void sol_glyph(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,char ch,uint16_t ink){
     char text[2]={ch,0};arcade_text(c,x,y-2,text,ink,true);
 }
@@ -409,7 +411,7 @@ static void sol_card(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,ui
             sol_small_suit(c,x+slot_x[slot],y+slot_y[slot],suit,ink);}
     }
 }
-#include "targets/video5g-m25/games_solitaire.h"
+#include "services/games/presentations/color320/games_solitaire.h"
 void ln_games_draw(const struct ln_ui_canvas_context *c){
     if(game==SOLITAIRE){sol_draw_scene(c);return;}
     arcade_draw(c);

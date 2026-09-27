@@ -22,7 +22,8 @@ presentation_profile = "color320"
 lcd_width = 320
 lcd_height = 240
 lcd_format = "rgb565"
-capabilities = { video = true, cover_flow = true }
+capabilities = { video = true, cover_flow = true, games = true }
+game_presentation = "color320"
 coverflow_cache = "compact"
 media_photo_width = 320
 media_photo_height = 212

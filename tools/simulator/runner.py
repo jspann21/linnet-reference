@@ -8,6 +8,7 @@ import subprocess
 import zlib
 from tools.content.compiler import compile_system
 from tools.studio.build import toolchain
+from tools.studio.targets import presentation_defines, target_spec
 
 def png(raw,width,height):
     rows=[]
@@ -29,8 +30,11 @@ def simulate(root,output,tape=None,system=None,target=None,all_scenes=False):
     content=compile_system(root,output/'generated',system,target_override=target)
     scenes=json.loads(Path(content['scenes']).read_text())
     width,height=scenes['width'],scenes['height']
+    spec=target_spec(scenes['target'])
+    if (width, height) != (spec['lcd_width'], spec['lcd_height']):
+        raise ValueError('simulator scene dimensions differ from the target manifest')
     (output/'generated/linnet_target.h').write_text(
-        f'#define LINNET_UI_WIDTH {width}u\n#define LINNET_UI_HEIGHT {height}u\n')
+        ''.join(f'#define {name} {value}\n' for name, value in presentation_defines(spec).items()))
     executable=output/'linnet-simulator'
     chain=toolchain()
     command=[chain['compiler']['path'],'-std=c11','-O2','-Wall','-Wextra','-Werror','-I'+str(output/'generated'),'-I'+str(root),

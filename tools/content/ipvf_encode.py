@@ -145,7 +145,7 @@ def encode_ipvf(source, destination, *, title=None, cancelled=None,
     ``progress_detail(dict)`` (stage, percent, message, frames, total_frames,
     eta_seconds). Percent and ETA can be None; ETA covers only the named stage. The
     destination is replaced atomically only after complete strict validation.
-    Cancellation raises RuntimeError; conversion failures raise ValueError.
+    Cancellation raises media_manager.Cancelled (also a RuntimeError); conversion failures raise ValueError.
     FFmpeg and FFprobe are required; liblz4 is optional (built-in fallback).
     """
     source, destination = Path(source).resolve(), Path(destination).resolve()
@@ -159,9 +159,10 @@ def encode_ipvf(source, destination, *, title=None, cancelled=None,
             type(max_record_sectors) is not int or not 8 <= max_record_sectors <= 1024):
         raise ValueError("IPVF media profile geometry is unsupported")
     cancelled = cancelled or (lambda: False)
+    from .media_manager import Cancelled
     progress = progress or (lambda message: None)
     if cancelled():
-        raise RuntimeError("Update cancelled")
+        raise Cancelled("Update cancelled")
     if not source.is_file():
         raise ValueError(f"Video source does not exist: {source}")
     if source == destination:
@@ -197,7 +198,7 @@ def encode_ipvf(source, destination, *, title=None, cancelled=None,
                 last_refresh = time.monotonic()
                 while True:
                     if cancelled():
-                        raise RuntimeError("Update cancelled")
+                        raise Cancelled("Update cancelled")
                     pending += updates.read(65536)
                     lines = pending.split(b"\n")
                     pending = lines.pop()[-4096:]
@@ -228,7 +229,7 @@ def encode_ipvf(source, destination, *, title=None, cancelled=None,
             finally:
                 _stop(process)
         if cancelled():
-            raise RuntimeError("Update cancelled")
+            raise Cancelled("Update cancelled")
         if process.returncode:
             with log_path.open("rb") as log:
                 log.seek(max(0, log_path.stat().st_size - 2000))
@@ -248,7 +249,7 @@ def encode_ipvf(source, destination, *, title=None, cancelled=None,
                               expected_width=width, expected_height=height,
                               max_record_sectors=max_record_sectors)
         if cancelled():
-            raise RuntimeError("Update cancelled")
+            raise Cancelled("Update cancelled")
         os.replace(encoded, destination)
         verification.emit(result["frames"], result["frames"], complete=True)
         result["path"] = str(destination)

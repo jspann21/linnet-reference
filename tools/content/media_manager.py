@@ -39,7 +39,7 @@ def extensions(kind):
     raise ValueError("Unknown media folder")
 
 
-def discover():
+def discover(*, detailed=False):
     """Find mounted iPods and resolve each through publication guards."""
     if os.name != "nt":
         raise RuntimeError("The media manager currently supports Windows Disk Mode.")
@@ -48,15 +48,22 @@ def discover():
     script = r"""
 $ErrorActionPreference='Stop'
 $names=ConvertFrom-Json 'NATIVE_NAMES'
-$items=@(Get-Disk | Where-Object {$_.BusType -eq 'USB' -and $_.FriendlyName -in $names} | ForEach-Object {
- $disk=$_
- Get-Partition -DiskNumber $disk.Number | Where-Object {$_.DriveLetter} | ForEach-Object {
-  $drive=[string]$_.DriveLetter+':'
-  $logical=Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='"+$drive+"'")
-  @{number=[int]$disk.Number;serial=$disk.SerialNumber.Trim();volume=$logical.VolumeSerialNumber;drive=$drive}
+$items=@()
+$errors=@()
+foreach ($disk in @(Get-Disk | Where-Object {$_.BusType -eq 'USB' -and $_.FriendlyName -in $names})) {
+ try {$partitions=@(Get-Partition -DiskNumber $disk.Number | Where-Object {$_.DriveLetter})}
+ catch {$errors+=@{drive="Disk $($disk.Number)";message=[string]$_};continue}
+ foreach ($partition in $partitions) {
+  $drive=[string]$partition.DriveLetter+':'
+  try {
+   $logical=Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='"+$drive+"'")
+   if (!$logical) {throw 'Volume identity is unavailable'}
+   $items+=@{number=[int]$disk.Number;serial=$disk.SerialNumber.Trim();volume=$logical.VolumeSerialNumber;drive=$drive}
+  }
+  catch {$errors+=@{drive=$drive;message=[string]$_}}
  }
-})
-ConvertTo-Json -InputObject $items -Compress
+}
+ConvertTo-Json -InputObject @{items=@($items);errors=@($errors)} -Compress
 """.replace('NATIVE_NAMES',json.dumps(names).replace("'","''"))
     for attempt in range(2):
         try:
@@ -80,8 +87,24 @@ ConvertTo-Json -InputObject $items -Compress
         ) from subprocess.CalledProcessError(
             result.returncode, result.args, output=result.stdout, stderr=result.stderr
         )
-    items = json.loads(result.stdout.lstrip("\ufeff") or "[]")
-    return [_identify(inspect_target(item["number"], item["serial"], item["volume"], item["drive"])) for item in items]
+    discovered = json.loads(result.stdout.lstrip("\ufeff") or "{}")
+    items = discovered.get('items', [])
+    devices = []
+    errors = [f"{entry.get('drive', '?')}: {entry.get('message', '')[:240]}"
+              for entry in discovered.get('errors', [])[:16] if isinstance(entry, dict)]
+    for item in items:
+        try:
+            devices.append(_identify(inspect_target(item["number"], item["serial"],
+                                                    item["volume"], item["drive"])))
+        except Exception as error:
+            if len(errors) < 16:
+                drive = item.get('drive', '?') if isinstance(item, dict) else '?'
+                errors.append(f"{drive}: {(str(error) or type(error).__name__)[:240]}")
+    if detailed:
+        return dict(devices=devices, errors=errors)
+    if not devices and errors:
+        raise RuntimeError('Could not read a connected iPod: ' + '; '.join(errors))
+    return devices
 
 
 def _identify(identity):
@@ -340,25 +363,23 @@ def skip_files(identity, items):
     identity = refresh(identity)
     root = Path(identity["root"]).resolve(strict=True)
     state_path = cache_root(identity) / "state.json"
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        state = {}
-    if not isinstance(state, dict):
-        state = {}
+    state = _optional_state(state_path)
     skipped = state.setdefault("skipped_files", {})
     if not isinstance(skipped, dict):
         skipped = state["skipped_files"] = {}
     added = []
     known_by_kind = {}
+    retail_photo_paths = None
     for kind, value in items:
         if kind not in KINDS:
             raise ValueError("Unknown media folder")
         path = Path(value).resolve()
         retail_photo = False
         if kind == 'Photos' and path.is_relative_to(root / 'Photos' / '@iTunes'):
-            from .retail_media import images
-            retail_photo = any(path == root / photo['relative'] for photo in images(root))
+            if retail_photo_paths is None:
+                from .retail_media import images
+                retail_photo_paths = {root / photo['relative'] for photo in images(root)}
+            retail_photo = path in retail_photo_paths
         if not retail_photo and (not path.is_file() or path.suffix.lower() not in extensions(kind)):
             raise ValueError(f"This is not a supported {kind.lower()} file: {path}")
         if not any(path.is_relative_to(folder.resolve()) for folder in source_folders(root, kind)):
@@ -387,11 +408,8 @@ def list_skipped_files(identity):
     """Return cached skip entries with their current source locations."""
     root = Path(identity["root"]).resolve()
     state_path = cache_root(identity) / "state.json"
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        state = {}
-    skipped = state.get("skipped_files", {}) if isinstance(state, dict) else {}
+    state = _optional_state(state_path)
+    skipped = state.get("skipped_files", {})
     if not isinstance(skipped, dict):
         return []
     result = []
@@ -411,30 +429,34 @@ def restore_skipped_files(identity, items):
     """Remove files from the persistent preparation skip list."""
     identity = refresh(identity)
     state_path = cache_root(identity) / "state.json"
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        state = {}
-    if not isinstance(state, dict):
-        state = {}
+    state = _optional_state(state_path)
     skipped = state.get("skipped_files", {})
     if not isinstance(skipped, dict):
         return []
-    restored = []
+    requested = {}
+    requested_order = []
     for kind, value in items:
         if kind not in KINDS:
             raise ValueError("Unknown media folder")
         relative = Path(value).as_posix()
+        key = relative.casefold()
+        if key not in requested.setdefault(kind, {}):
+            requested[kind][key] = relative
+            requested_order.append((kind, key, relative))
+    restored_keys = set()
+    for kind, relatives in requested.items():
         values = skipped.get(kind, [])
         if not isinstance(values, list):
             continue
-        kept = [item for item in values if not isinstance(item, str) or Path(item).as_posix().casefold() != relative.casefold()]
+        present = {Path(item).as_posix().casefold() for item in values if isinstance(item, str)}
+        kept = [item for item in values if not isinstance(item, str) or
+                Path(item).as_posix().casefold() not in relatives]
         if len(kept) != len(values):
             skipped[kind] = kept
-            restored.append(relative)
+            restored_keys.update((kind, key) for key in relatives if key in present)
             state.pop(kind, None)
     _save(state_path, state)
-    return restored
+    return [relative for kind, key, relative in requested_order if (kind, key) in restored_keys]
 
 
 def _music_import_name(name):
@@ -503,7 +525,16 @@ def _normalize_music_paths(root, checkpoint, renamed):
                 directories.append(path)
 
 
-def additions(root, pending):
+def _planning_records(source, snapshots):
+    if snapshots is not None and source in snapshots:
+        return snapshots[source]
+    records = _file_records(source) if source.is_dir() else [(source, source.stat())]
+    if snapshots is not None:
+        snapshots[source] = records
+    return records
+
+
+def additions(root, pending, *, snapshots=None):
     """Resolve selected files/folders to concrete destinations without writing."""
     root = Path(root).resolve(strict=True)
     planned = {}
@@ -516,7 +547,7 @@ def additions(root, pending):
         if source.is_relative_to(root):
             raise ValueError(f"{source.name} is already on this iPod. Use its existing {kind} folder.")
         is_folder = source.is_dir()
-        records = _file_records(source) if is_folder else [(source, source.stat())]
+        records = _planning_records(source, snapshots)
         for path, info in records:
             # Preserve supporting files (cover art, playlists) inside selected folders.
             if not is_folder and path.suffix.lower() not in extensions(kind):
@@ -639,14 +670,41 @@ def _cache_directory(disk_serial, volume_serial):
     return base / key
 
 
+def _optional_state(path):
+    """Missing or unreadable host preparation state is a disposable cache miss."""
+    try:
+        value = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _throttled_progress(checkpoint, progress, describe):
+    last = 0.0
+    def report(event):
+        nonlocal last
+        checkpoint()
+        now = time.monotonic()
+        if now - last >= 0.2 or event['current'] + 1 == event['total']:
+            progress(describe(event))
+            last = now
+    return report
+
+
 def _save(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    with temporary.open("w", encoding="utf-8") as writer:
-        json.dump(value, writer, indent=2)
-        writer.flush()
-        os.fsync(writer.fileno())
-    temporary.replace(path)
+    temporary = path.with_name(path.name + '-' + uuid.uuid4().hex + '.tmp')
+    owned = False
+    try:
+        with temporary.open('x', encoding='utf-8') as writer:
+            owned = True
+            json.dump(value, writer, indent=2)
+            writer.flush()
+            os.fsync(writer.fileno())
+        temporary.replace(path)
+    finally:
+        if owned:
+            temporary.unlink(missing_ok=True)
 
 
 def _outputs_match(root, outputs, *, verified=None):
@@ -689,17 +747,17 @@ def _outputs_match(root, outputs, *, verified=None):
     return True
 
 
-class Cancelled(Exception):
+class Cancelled(RuntimeError):
     pass
 
 
-def video_jobs(root, pending=(), selection=None, skipped=(), identity=None):
+def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, snapshots=None):
     """Resolve selected conversions and this device's supported on-disk videos."""
     root = Path(root).resolve(strict=True)
     folder = root / "Videos"
     allowed = video_source_extensions(identity)
     native_extensions = native_video_extensions(identity)
-    scan_allowed = native_extensions if selection else allowed
+    scan_allowed = native_extensions if selection is not None else allowed
     excluded = {Path(value).as_posix().casefold() for value in skipped}
     generated = set()
     if identity is not None:
@@ -729,7 +787,7 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None):
         _plain(path, root)
         published[path.resolve()] = title
     native = [name for name in available if Path(name).suffix.lower() in native_extensions]
-    chosen = available if not selection else selection
+    chosen = available if selection is None else selection
     chosen = list(dict.fromkeys([*native, *chosen]))
     source_roots = [path.resolve() for path in source_folders(root, 'Videos')]
     jobs = {}
@@ -763,7 +821,9 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None):
         if source.is_relative_to(root):
             raise ValueError("Use Choose videos and select this file under Videos on this iPod.")
         is_folder = source.is_dir()
-        for path in _files(source, allowed=allowed) if is_folder else [source]:
+        records = _planning_records(source, snapshots)
+        for path, _ in (records if not is_folder else
+                        ((path, info) for path, info in records if path.suffix.lower() in allowed)):
             relative = (Path(source.name) / path.relative_to(source)).as_posix() if is_folder else source.name
             existing = folder / relative
             _plain(existing, root)
@@ -892,12 +952,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         raise ValueError("The preparation cache must be on the computer, not the iPod.")
     cache.mkdir(parents=True, exist_ok=True)
     state_path = cache / "state.json"
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        state = {}
-    if not isinstance(state, dict):
-        state = {}
+    state = _optional_state(state_path)
     if not isinstance(state.get("skipped_files", {}), dict):
         state["skipped_files"] = {}
     skipped = {kind: _skipped_paths(state, kind) for kind in KINDS}
@@ -1001,14 +1056,9 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     from .music import compile_music
                     from .publish import publish_music
                     stage = cache / "music"
-                    last_progress = [0.0]
-                    def music_progress(event):
-                        checkpoint()
-                        now = time.monotonic()
-                        if now - last_progress[0] >= 0.2 or event['current'] + 1 == event['total']:
-                            action = "Using saved metadata" if event.get("cached") else "Reading metadata"
-                            progress(f"{action} {event['current']+1}/{event['total']}: {Path(event['file']).name}")
-                            last_progress[0] = now
+                    music_progress = _throttled_progress(checkpoint, progress,
+                        lambda event: f'{"Using saved metadata" if event.get("cached") else "Reading metadata"} '
+                                      f'{event["current"]+1}/{event["total"]}: {Path(event["file"]).name}')
                     roots = source_folders(root, "Music")
                     preparation = compile_music(root, stage, ffprobe=ffprobe or shutil.which("ffprobe"), device_root=root,
                                   verification=music_verification, cache_path=cache / "music-metadata.sqlite3",
@@ -1026,17 +1076,12 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     from .photos import compile_photos
                     from .publish_photos import publish_photos
                     package = cache / "photos.pimg"
-                    last_progress = [0.0]
-                    def photo_progress(event):
-                        checkpoint()
-                        now = time.monotonic()
-                        if now - last_progress[0] >= 0.2 or event['current'] + 1 == event['total']:
-                            progress(f"Preparing photos {event['current']+1}/{event['total']}: {Path(event['file']).name}")
-                            last_progress[0] = now
+                    photo_progress = _throttled_progress(checkpoint, progress,
+                        lambda event: f'Preparing photos {event["current"]+1}/{event["total"]}: {Path(event["file"]).name}')
                     compile_photos(folder, package, max_dimension=photo_dimension,
                                    viewport_width=media_profile["photo_width"],
                                    viewport_height=media_profile["photo_height"],
-                                   progress=photo_progress,
+                                   progress=photo_progress, checkpoint=checkpoint,
                                    excluded={Path(value).relative_to("Photos").as_posix()
                                              for value in skipped["Photos"]},
                                    additional_sources={Path(p['relative']).relative_to('Photos').as_posix():
@@ -1049,7 +1094,10 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     from .notes import compile_notes
                     from .publish_notes import publish_notes
                     package = cache / "notes.pnot"
+                    note_progress = _throttled_progress(checkpoint, progress,
+                        lambda event: f'Preparing notes {event["current"]+1}/{event["total"]}: {Path(event["file"]).name}')
                     preparation = compile_notes(folder, package,
+                        progress=note_progress, checkpoint=checkpoint,
                         excluded={Path(value).relative_to("Notes").as_posix()
                                   for value in skipped["Notes"]})
                     report["steps"].append(dict(kind=kind, preparation=preparation))
@@ -1071,6 +1119,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     state["video_files"] = video_state
                     failed = 0
                     retail_titles = None
+                    catalog_snapshot = {}
                     for index, job in enumerate(videos):
                         checkpoint()
                         source = Path(job["source"])
@@ -1097,17 +1146,20 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                 outputs = cached.get('outputs', [])
                                 if (not force and cached.get("signature") == fingerprint and
                                         _outputs_match(root, outputs, verified=verified_outputs)):
-                                    if catalog_contains(root, relative, label, path=False):
+                                    if catalog_contains(root, relative, label, path=False,
+                                                        snapshot=catalog_snapshot):
                                         output_paths.extend(name for name, digest in outputs)
                                         report["steps"].append(dict(kind=kind, file=relative, status="unchanged"))
                                         continue
                                     if len(outputs) == 1:
                                         published_path = root / outputs[0][0]
                                         if catalog_contains(root, relative, None,
-                                                            path=device_video_path(published_path, root)):
+                                                            path=device_video_path(published_path, root),
+                                                            snapshot=catalog_snapshot):
                                             result = index_video(published_path, title=label,
                                                                  library_key=relative, ffprobe=ffprobe,
                                                                  **target_args(identity))
+                                            catalog_snapshot.clear()
                                             output_paths.append(outputs[0][0])
                                             report["steps"].append(dict(kind=kind, file=relative,
                                                                         status="catalog-updated", publication=result))
@@ -1116,7 +1168,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                 compatible = False
                                 if source.suffix.lower() in native_video_extensions(identity):
                                     try:
-                                        inspect_native(source, ffprobe=ffprobe, profile=media_profile)
+                                        inspect_native(source, ffprobe=ffprobe, profile=media_profile, cancelled=cancelled)
                                         compatible = True
                                     except ValueError:
                                         pass
@@ -1129,8 +1181,11 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                     package = cache / "videos" / (key + "-" + fingerprint[:16] + ".mp4")
                                     reusable = package.exists() and not force
                                     if reusable:
-                                        try: inspect_native(package, ffprobe=ffprobe, profile=media_profile)
-                                        except (OSError, ValueError): reusable = False
+                                        try:
+                                            inspect_native(package, ffprobe=ffprobe, profile=media_profile,
+                                                           cancelled=cancelled)
+                                        except (OSError, ValueError):
+                                            reusable = False
                                     if not reusable:
                                         prepare_native(source, package, profile=media_profile, ffmpeg=ffmpeg, ffprobe=ffprobe, progress=progress, cancelled=cancelled)
                                     checkpoint()
@@ -1147,6 +1202,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                 if (after.st_size, after.st_mtime_ns) != source_stamp:
                                     raise ValueError("Video changed during publication; scan again")
                                 published.append(result)
+                                catalog_snapshot.clear()
                                 video_state[relative] = dict(signature=fingerprint, outputs=outputs, source_stamp=source_stamp)
                                 _save(state_path, state)
                                 report["steps"].append(dict(kind=kind, file=relative, status="published", publication=result))
@@ -1165,7 +1221,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             native_ipvf = source.suffix.lower() in native_video_extensions(identity)
                             index_in_place = native_ipvf and source.is_relative_to(root)
                             if (not force and cached.get("signature") == fingerprint
-                                    and catalog_contains(root, relative, label, path=False)
+                                    and catalog_contains(root, relative, label, path=False,
+                                                         snapshot=catalog_snapshot)
                                     and (index_in_place or (output_name.casefold().startswith("videos/ipvf/")
                                          and _outputs_match(root, cached.get("outputs", []), verified=verified_outputs)))):
                                 if not index_in_place:
@@ -1179,6 +1236,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                 from .publish_video import index_ipvf
                                 result = index_ipvf(source, title=label, library_key=relative, **target_args(identity))
                                 published.append(result)
+                                catalog_snapshot.clear()
                                 video_state[relative] = dict(signature=fingerprint, outputs=[], source_stamp=source_stamp)
                                 _save(state_path, state)
                                 report["steps"].append(dict(kind=kind, file=relative, status="published", publication=result))
@@ -1229,6 +1287,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             progress(f"Publishing video {index+1}/{item['count']}: {relative}")
                             result = publish_video(package, title=label, library_key=relative,
                                                    source_to_preserve=source, **target_args(identity))
+                            catalog_snapshot.clear()
                             output_name = Path(result['package']).relative_to(root).as_posix()
                             published.append(result)
                             output_paths.append(output_name)
@@ -1243,6 +1302,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                         except Cancelled:
                             raise
                         except Exception as error:
+                            catalog_snapshot.clear()
                             checkpoint()
                             failed += 1
                             video_state.pop(relative, None)

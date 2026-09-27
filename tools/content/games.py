@@ -1,4 +1,4 @@
-"""Guarded selection of firmware games for the iPod Photo and Video."""
+"""Guarded selection of firmware games on capable targets."""
 import os
 from pathlib import Path
 import struct
@@ -7,6 +7,7 @@ import zlib
 
 from . import media_manager as media
 from .publish import _plain, _volume_guard
+from tools.studio.targets import target_spec
 
 GAMES = (("Comet Run", "Steer through a rising meteor storm."),
          ("Pulse Path", "Remember and repeat an expanding light pattern."),
@@ -28,9 +29,13 @@ def decode(data):
     return {i for i in range(3) if data[5] & (1 << i)}
 
 
+def available(identity):
+    return target_spec(identity['target_id'])['capabilities'].get('games', False)
+
+
 def _path(identity):
-    if identity['target_id'] not in ('video5g-m25', 'photo4g-p98'):
-        raise ValueError("Games are available on the iPod Photo A1099 and Video A1136.")
+    if not available(identity):
+        raise ValueError("Games are unavailable on this iPod.")
     root = Path(identity['root'])
     path = root / '.LINNET' / 'GAMES.BIN'
     _plain(path, root)

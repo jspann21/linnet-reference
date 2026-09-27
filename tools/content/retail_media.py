@@ -39,7 +39,7 @@ def _list(data, magic, list_tag):
     return 0, 0, 0
 
 
-def _path(root, value):
+def _path(root, value, *, with_identity=False):
     parts = value.replace(':', '/').strip('/').split('/')
     # Apple's tested Classic database route to a shared /Music tree begins at
     # iPod_Control/Music, then steps back to the volume root. Accept that one
@@ -51,9 +51,10 @@ def _path(root, value):
         raise ValueError('Unsafe iTunes media path')
     path = root.joinpath(*parts)
     _plain(path, root)
-    if not path.resolve().is_relative_to(root):
+    resolved = path.resolve()
+    if not resolved.is_relative_to(root):
         raise ValueError('iTunes media path escaped the iPod')
-    return path
+    return (path, resolved) if with_identity else path
 
 
 def tracks(root):
@@ -102,9 +103,9 @@ def _tracks(root_name, size, mtime, ctime):
                 row[fields[kind]] = data[body + 16:body + 16 + length].decode('utf-16-le').rstrip('\0')
             child = next_child
         if row.get('path'):
-            path = _path(root, row.pop('path'))
+            path, resolved = _path(root, row.pop('path'), with_identity=True)
             row['path'] = str(path)
-            result[str(path.resolve()).casefold()] = row
+            result[str(resolved).casefold()] = row
         at = following
     return result
 

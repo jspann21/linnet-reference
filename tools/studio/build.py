@@ -2,14 +2,16 @@
 import hashlib
 import json
 import os
+from collections import Counter
 from pathlib import Path
 import re
 import shutil
+import stat
 import struct
 import subprocess
 import tomllib
 from tools.inspect.image import pack, inspect, verify_release
-from tools.studio.targets import LCD_FORMATS, ROOT, TARGETS, RUNTIME_POLICIES, target_id
+from tools.studio.targets import LCD_FORMATS, ROOT, TARGETS, RUNTIME_POLICIES, presentation_defines, target_id
 
 def run(args):
     result = subprocess.run([str(a) for a in args], cwd=ROOT, text=True, capture_output=True)
@@ -19,20 +21,31 @@ def run(args):
 
 def wsl_command(arguments, *, paths=None):
     distribution = tomllib.loads((ROOT / "config/toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["windows_wsl_distribution"]
-    def convert(path):
-        return subprocess.run(
-            ["wsl", "-d", distribution, "--", "wslpath", "-a", path.as_posix()],
-            capture_output=True, text=True, encoding="utf-8", check=True,
-            creationflags=subprocess.CREATE_NO_WINDOW).stdout.strip()
-    converted = convert(ROOT)
+    windows_paths = [ROOT.as_posix()]
+    for path in (paths or {}).values():
+        if path is not None and path.drive:
+            value = path.resolve().as_posix()
+            if value not in windows_paths:
+                windows_paths.append(value)
+    convert_script = (
+        "import json, subprocess, sys\n"
+        "paths = json.loads(sys.argv[1])\n"
+        "print(json.dumps([subprocess.run(['wslpath', '-a', path], "
+        "capture_output=True, text=True, check=True).stdout.strip() for path in paths]))\n"
+    )
+    converted = json.loads(subprocess.run(
+        ["wsl", "-d", distribution, "--", "python3", "-c", convert_script, json.dumps(windows_paths)],
+        capture_output=True, text=True, encoding="utf-8", check=True,
+        creationflags=subprocess.CREATE_NO_WINDOW).stdout)
+    translations = dict(zip(windows_paths, converted))
     forwarded = list(arguments)
     for option, path in (paths or {}).items():
         if path is None:
             continue
-        value = convert(path.resolve()) if path.drive else path.as_posix()
+        value = translations[path.resolve().as_posix()] if path.drive else path.as_posix()
         # Last occurrence wins for both --option=value and abbreviated flags.
         forwarded.extend(("--" + option, value))
-    return ["wsl", "-d", distribution, "--cd", converted, "--", "python3", "linnet", *forwarded]
+    return ["wsl", "-d", distribution, "--cd", translations[ROOT.as_posix()], "--", "python3", "linnet", *forwarded]
 
 def toolchain():
     spec = tomllib.loads((ROOT / "config/toolchain.toml").read_text())["toolchain"]
@@ -49,28 +62,51 @@ def toolchain():
         result[name] = dict(path=executable, version=version, sha256=checksum)
     return result
 
-def source_paths():
+def source_paths(*, with_sizes=False):
     """Prune generated trees before descent; sort only source inputs."""
-    excluded = {".git", "out", "__pycache__", ".venv"}
+    excluded = {".git", "out", "__pycache__", ".venv",
+                ".ruff_cache", ".pytest_cache", ".mypy_cache"}
     paths = []
     def fail(error):
         raise error
     for directory, directories, files in os.walk(ROOT, onerror=fail, followlinks=False):
         directories[:] = [name for name in directories if name not in excluded]
-        paths.extend(Path(directory) / name for name in files
-                     if name not in excluded and Path(name).suffix != ".pyc"
-                     and (Path(directory) / name).is_file())
-    return sorted(paths)
+        for name in files:
+            if name in excluded or Path(name).suffix == '.pyc':
+                continue
+            path = Path(directory) / name
+            try:
+                info = path.stat()
+            except OSError:
+                continue
+            if stat.S_ISREG(info.st_mode):
+                paths.append((path, info.st_size))
+    paths.sort(key=lambda item: item[0])
+    return paths if with_sizes else [path for path, _ in paths]
 
 def source_identity(configuration, chain):
     digest = hashlib.sha256()
-    for path in source_paths():
-        data = path.read_bytes()
+    for path, size in source_paths(with_sizes=True):
         name = path.relative_to(ROOT).as_posix().encode()
         digest.update(struct.pack("<I", len(name)))
         digest.update(name)
-        digest.update(struct.pack("<Q", len(data)))
-        digest.update(data)
+        with path.open("rb") as reader:
+            before = os.fstat(reader.fileno())
+            if before.st_size != size:
+                raise RuntimeError(f"Source changed during build identity calculation: {path}")
+            digest.update(struct.pack("<Q", before.st_size))
+            if size <= 1024 * 1024:
+                data = reader.read(before.st_size + 1)
+                digest.update(data)
+                counted = len(data)
+            else:
+                counted = 0
+                while chunk := reader.read(1024 * 1024):
+                    digest.update(chunk)
+                    counted += len(chunk)
+            after = os.fstat(reader.fileno())
+            if counted != before.st_size or (after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (before.st_size, before.st_mtime_ns, before.st_ctime_ns):
+                raise RuntimeError(f"Source changed during build identity calculation: {path}")
     digest.update(json.dumps(configuration, sort_keys=True).encode())
     digest.update(json.dumps({k: {field: v[field] for field in ('version', 'sha256')} for k, v in chain.items()}, sort_keys=True).encode())
     return digest.hexdigest()
@@ -83,7 +119,12 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         raise ValueError(f"{target}: {spec['bringup_blocker']}")
     if system_config is None and (ROOT / "targets" / target / "system.toml").is_file():
         system_config = f"targets/{target}/system.toml"
-    chain = toolchain()
+    if profile not in ("release", "dev", "trace"):
+        raise ValueError("profile must be release, dev or trace")
+    if kind not in ("os", "boot"):
+        raise ValueError("image kind must be os or boot")
+    if probe not in ("frame", "crash", "hang"):
+        raise ValueError("probe must be frame, crash or hang")
     if profile == "release" and probe != "frame":
         raise ValueError("deliberate crash probes require dev or trace")
     if device_serial and not re.fullmatch(r"[A-Za-z0-9-]{1,32}", device_serial):
@@ -94,6 +135,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         raise ValueError("boot selector must be none or rockbox")
     if kind != "boot" and boot_selector != "none":
         raise ValueError("a startup selector is valid only for Boot images")
+    chain = toolchain()
     configuration = dict(profile=profile, target_id=target, kind=kind,
                           probe=probe, device_serial=device_serial)
     if kind == "boot":
@@ -128,7 +170,6 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         f'#define LINNET_LCD_FORMAT {LCD_FORMATS[spec["lcd_format"]]}u',
         f'#define LINNET_LCD_WIDTH_ASM {spec["lcd_width"]}',
         f'#define LINNET_LCD_HEIGHT_ASM {spec["lcd_height"]}',
-        f'#define LINNET_UI_WIDTH {spec["lcd_width"]}u',
         f'#define LINNET_ACTIVE_CLOCK_HZ {spec.get("active_clock_hz",80000000)}u',
         f'#define LINNET_IDLE_CLOCK_HZ {spec.get("idle_clock_hz",0)}u',
         f'#define LINNET_MUSIC_TITLES_ADDRESS {spec["resources"]["music_titles_address"]}',
@@ -136,7 +177,6 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         f'#define LINNET_COVERFLOW_CATALOG_SLOTS {spec["resources"]["coverflow_catalog_slots"]}u',
         f'#define LINNET_RESIDENT_LIMIT_BYTES {spec["resident_limit_bytes"]}',
         f'#define LINNET_COVERFLOW_EXPANDED {int(spec.get("coverflow_cache") == "expanded")}u',
-        f'#define LINNET_UI_HEIGHT {spec["lcd_height"]}u',
         f'#define LINNET_PHOTO_WIDTH {spec["media_photo_width"]}u',
         f'#define LINNET_PHOTO_HEIGHT {spec["media_photo_height"]}u',
         f'#define LINNET_VIDEO_WIDTH {spec["media_video_width"]}u',
@@ -164,9 +204,9 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         f'#define LINNET_FILE_WRAPPER_CHECKSUM_SEED {spec["installer"]["wrapper_checksum_seed"]}u',
         '#define LINNET_BOOT_APPLE_FALLBACK 1',
         f'#define LINNET_BOOT_SELECTOR_ROCKBOX {int(boot_selector == "rockbox")}',
-        f'#define {spec["target_define"]} 1',
         "#endif",
     ]
+    target_header[-1:-1] = [f'#define {name} {value}' for name, value in presentation_defines(spec).items()]
     target_header[-1:-1] = [f'#define LINNET_{name.upper()} {int(spec.get("runtime_policy", {}).get(name, False))}'
                             for name in sorted(RUNTIME_POLICIES)]
     (generated / "linnet_target.h").write_text("\n".join(target_header) + "\n")
@@ -312,9 +352,15 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         sources += sorted((ROOT/'services/photos').glob('*.c'))
         sources += sorted((ROOT/'third_party/jpeg').glob('*.c'))
     objects = []
+    object_names = Counter(source.relative_to(ROOT).as_posix().replace('/', '_') + '.o'
+                           for source in sources)
     for source in sources:
-        obj = dest / (source.relative_to(ROOT).as_posix().replace("/", "_") + ".o")
-        relative=source.relative_to(ROOT).as_posix()
+        source_path = source.relative_to(ROOT)
+        flat_name = source_path.as_posix().replace('/', '_') + '.o'
+        obj = (dest / flat_name if object_names[flat_name] == 1 else
+               dest / 'objects' / source_path.with_suffix(source_path.suffix + '.o'))
+        obj.parent.mkdir(parents=True, exist_ok=True)
+        relative=source_path.as_posix()
         codec_flags=[]
         if optimization == '-Oz' and relative == 'services/storage/block.c':
             # Keep constant pointer-distance division inline; -Oz emits an

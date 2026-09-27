@@ -3,16 +3,22 @@ import hashlib
 from pathlib import Path
 
 
-def catalog_contains(root, relative, title, path=None):
+def catalog_contains(root, relative, title, path=None, *, snapshot=None):
     """Check the small bounded device catalog before trusting a video cache hit."""
     from .publish import _plain
     from .video_catalog import read_file
     catalog = Path(root) / ".LINNET" / "VIDEOS" / "INDEX.VID"
     try:
-        _plain(catalog, Path(root))
-        if not catalog.is_file():
-            return False
-        _, entries = read_file(catalog)
+        if snapshot is not None and 'entries' in snapshot:
+            entries = snapshot['entries']
+        else:
+            _plain(catalog, Path(root))
+            if not catalog.is_file():
+                entries = []
+            else:
+                _, entries = read_file(catalog)
+            if snapshot is not None:
+                snapshot['entries'] = entries
         key = hashlib.sha256(relative.encode("utf-8")).digest()
         return (any(k == key and p == path and (title is None or t == title)
                     for k, p, t in entries) if path else

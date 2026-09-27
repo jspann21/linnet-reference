@@ -208,11 +208,14 @@ def _check_tables(path, size, sample_bytes=65536):
                         if not 0 < entries <= maximum: raise ValueError("MP4 index exceeds device limits")
                         if kind == b"stsc":
                             if entries*12 != limit-body-8: raise ValueError("Truncated chunk map")
-                            source.seek(body+8);previous=0
-                            for index in range(entries):
-                                first,samples_per_chunk,description=struct.unpack(">III",source.read(12))
-                                if first<=previous or (index==0 and first!=1) or not 0<samples_per_chunk<=65536 or description!=1: raise ValueError("Unsupported chunk map")
-                                previous=first
+                            source.seek(body+8);previous=0;processed=0
+                            while processed<entries:
+                                batch=min(entries-processed,4096)
+                                values=source.read(batch*12)
+                                if len(values)!=batch*12: raise ValueError("Truncated chunk map")
+                                for first,samples_per_chunk,description in struct.iter_unpack(">III",values):
+                                    if first<=previous or (processed==0 and first!=1) or not 0<samples_per_chunk<=65536 or description!=1: raise ValueError("Unsupported chunk map")
+                                    previous=first;processed+=1
                         if kind == b"ctts":
                             source.seek(body+8)
                             for _ in range(entries):
@@ -221,7 +224,12 @@ def _check_tables(path, size, sample_bytes=65536):
                 start = limit
         atoms(0, size)
 
-def inspect_file(path, *, profile, ffprobe=None):
+def inspect_file(path, *, profile, ffprobe=None, cancelled=None):
+    def checkpoint():
+        if cancelled and cancelled():
+            from .media_manager import Cancelled
+            raise Cancelled("Native video preparation cancelled")
+
     if profile["video_backend"] not in ("bcm-mp4", "native-mp4"):
         raise ValueError("This target does not support native MP4")
     limits = profile["native_video"]
@@ -229,14 +237,37 @@ def inspect_file(path, *, profile, ffprobe=None):
     size = path.stat().st_size
     if not 8 <= size <= 0x7fffffff:
         raise ValueError("Native video must fit the supported 2 GiB file range")
+    checkpoint()
     _check_tables(path, size, limits.get("sample_bytes", 65536))
+    checkpoint()
     probe = ffprobe or shutil.which("ffprobe")
     if not probe:
         raise ValueError("ffprobe is required to validate native video")
-    result = subprocess.run([str(probe), "-v", "error", "-show_streams", "-show_data", "-show_format", "-of", "json", str(path)], capture_output=True, text=True, timeout=60, creationflags=NO_WINDOW)
-    if result.returncode:
-        raise ValueError("Could not inspect native video: " + result.stderr[-1000:])
-    data = json.loads(result.stdout)
+    command = [str(probe), "-v", "error", "-show_streams", "-show_data", "-show_format", "-of", "json", str(path)]
+    with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=errors,
+                                   creationflags=NO_WINDOW)
+        started = time.monotonic()
+        try:
+            while process.poll() is None:
+                checkpoint()
+                if time.monotonic() - started >= 60:
+                    raise subprocess.TimeoutExpired(command, 60)
+                time.sleep(.1)
+            checkpoint()
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+        if process.returncode:
+            errors.seek(0, os.SEEK_END)
+            errors.seek(max(0, errors.tell() - 4000))
+            raise ValueError("Could not inspect native video: " + errors.read().decode('utf-8', errors='replace')[-1000:])
+        output.seek(0, os.SEEK_END)
+        if output.tell() > 8 * 1024 * 1024:
+            raise ValueError("Native video probe metadata exceeds 8 MiB")
+        output.seek(0)
+        data = json.loads(output.read().decode('utf-8'))
     streams = data.get("streams", [])
     video = [s for s in streams if s.get("codec_type") == "video"]
     audio = [s for s in streams if s.get("codec_type") == "audio"]
@@ -294,7 +325,7 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lamb
     temporary = output.with_name(output.stem + "." + uuid.uuid4().hex + ".mp4")
     try:
         try:
-            inspect_file(source, profile=profile, ffprobe=ffprobe)
+            inspect_file(source, profile=profile, ffprobe=ffprobe, cancelled=cancelled)
             compatible = True
         except ValueError:
             compatible = False
@@ -320,11 +351,13 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lamb
                     while process.poll() is None:
                         checkpoint(); time.sleep(.2)
                     if process.returncode:
-                        errors.seek(0); raise ValueError("Native video conversion failed: " + errors.read()[-4000:].decode("utf-8", errors="replace"))
+                        errors.seek(0, os.SEEK_END)
+                        errors.seek(max(0, errors.tell() - 4000))
+                        raise ValueError("Native video conversion failed: " + errors.read().decode("utf-8", errors="replace"))
                 finally:
                     if process.poll() is None:
                         process.kill(); process.wait()
-        candidate = inspect_file(temporary, profile=profile, ffprobe=ffprobe)
+        candidate = inspect_file(temporary, profile=profile, ffprobe=ffprobe, cancelled=cancelled)
         checkpoint(); os.replace(temporary, output)
         return candidate
     finally:

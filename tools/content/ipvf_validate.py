@@ -174,7 +174,8 @@ def inspect_file(
 
         for frame in range(frame_count):
             if cancelled is not None and cancelled():
-                raise RuntimeError("Update cancelled")
+                from .media_manager import Cancelled
+                raise Cancelled("Update cancelled")
             _require(1 <= current_sectors <= max_record_sectors,
                      f"frame {frame}: invalid sector chain")
             record_size = current_sectors * ipvf.RECORD_SECTOR_SIZE

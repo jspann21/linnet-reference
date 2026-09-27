@@ -12,8 +12,7 @@ not source defaults.
 - `device.c`: board pin wiring, disk power, charging and backlight steps.
 - `hardware.h`: ROM Disk Mode marker and bounded compatibility policies.
 - `lcd.c` / `display.c`: BCM mailbox transfer and incremental scanout.
-- `../../services/games/`: shared game rules and sound.
-- `games_arcade.h` / `games_solitaire.h`: native 320 x 240 game presentation.
+- `../../services/games/`: shared game rules, sound, and the `presentations/color320/` artwork and drawing code selected by `game_presentation`.
 - `screens/`: complete native 320 × 240 screen set.
 - `ui/profiles/color320/themes/`: native editions of Linnet (default), Midnight, Graphite, Aurora,
   Sunset, Blueprint, Album Colors, Minimal Dark and Minimal Light.
@@ -69,7 +68,7 @@ Select after a win deals again. The move counter resets on each deal
 and completed games add to the persistent win count.
 The J/Q/K card illustrations are downsampled from Austin Gabriel's
 [Public Domain Playing Cards](https://github.com/AustinGabriel/Public-Domain-and-CC0-Playing-Cards)
-(CC0); they are stored as a compact RGB565 palette in `solitaire_courts.h`.
+(CC0); they are stored as a compact RGB565 palette in `../../services/games/presentations/color320/solitaire_courts.h`.
 
 In Linnet Media Manager, open **Games** while this iPod is in Disk Mode. Choose
 the games to show, save, then eject safely. The selection is read from

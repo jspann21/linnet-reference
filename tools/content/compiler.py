@@ -119,7 +119,7 @@ def ppm(data):
 
 def resolve_features(config, target_manifest=None):
     features=config.get('features',{})
-    names=('photos','video','files','demo','themes','cover_flow')
+    names=('photos','video','files','demo','themes','cover_flow','games')
     if not isinstance(features,dict) or any(key not in names or type(value) is not bool for key,value in features.items()):
         raise ContentError('feature flags must use supported names and boolean values')
     features=dict(features)
@@ -192,6 +192,18 @@ def compile_system(root, output, configpath=None, target_override=None):
     for app_id in selected: identifier(app_id)
     if len(selected)!=len(set(selected)):
         raise ContentError('ui.apps must select 1..32 distinct app IDs')
+    game_apps={'linnet.system.games', 'linnet.system.game-play'}
+    chosen_games=game_apps.intersection(selected)
+    if chosen_games and not target_manifest['capabilities'].get('games', False):
+        raise ContentError(f'{target}: game apps require capabilities.games=true')
+    if chosen_games and chosen_games != game_apps:
+        raise ContentError('game menu and game play must be selected together')
+    if chosen_games:
+        from tools.studio.targets import GAME_PRESENTATIONS
+        game_presentation=target_manifest.get('game_presentation')
+        if (not isinstance(game_presentation, str) or game_presentation not in GAME_PRESENTATIONS or
+                (width, height) != GAME_PRESENTATIONS[game_presentation]):
+            raise ContentError(f'{target}: game_presentation={game_presentation!r} must match a supported game layout {GAME_PRESENTATIONS}')
     theme_id=identifier(ui.get('theme'))
     theme_manifests={}; seen_theme_ids=set()
     # Target editions replace shared manifests by stable ID; duplicates within

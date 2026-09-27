@@ -240,13 +240,13 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
     uint32_t count=0;while(id[count]&&count<80u&&theme_id_char((uint8_t)id[count]))++count;
     if(id[count]){theme_available=false;theme_dirty=false;++revision;return;}
     ln_write_le32(payload,0x534d4854u);
-#if defined(LINNET_TARGET_VIDEO5G_M25) || defined(LINNET_TARGET_PHOTO4G_P98)
+#if LINNET_HAS_GAMES
     ln_write_le32(payload+4,2u);
 #else
     ln_write_le32(payload+4,0u);
 #endif
     for(uint32_t i=0;i<count;++i)payload[8+i]=(uint8_t)id[i];payload[8+count]=0;
-#if defined(LINNET_TARGET_VIDEO5G_M25) || defined(LINNET_TARGET_PHOTO4G_P98)
+#if LINNET_HAS_GAMES
     ln_write_le16(payload+9u+count,game_best[0]);ln_write_le16(payload+11u+count,game_best[1]);
     ln_write_le16(payload+13u+count,game_best[2]);
     length=15u+count;

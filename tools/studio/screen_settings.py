@@ -31,7 +31,9 @@ def item_availability(name, identity=None):
     settings = tomllib.loads(config.read_text(encoding='utf-8'))
     target = target or settings['system']['target']
     configured = resolve_features(settings)
-    features = resolve_features(settings, target_spec(target))
+    spec = target_spec(target)
+    features = resolve_features(settings, spec)
+    game_app = spec['capabilities'].get('games', False) and 'linnet.system.games' in settings.get('ui', {}).get('apps', [])
     feature_names = {'Files': 'files', 'UI Demo': 'demo', 'Photos': 'photos',
                      'Videos': 'video', 'Cover Flow': 'cover_flow', 'Themes': 'themes'}
     available, unavailable = [], []
@@ -39,7 +41,7 @@ def item_availability(name, identity=None):
         if label == 'Extras':
             continue
         feature = feature_names.get(label)
-        if name == 'Home' and i == 7 and target in ('video5g-m25', 'photo4g-p98'):
+        if name == 'Home' and i == 7 and game_app:
             available.append(i)
             continue
         if feature and not feature_enabled(configured, feature):
@@ -58,7 +60,7 @@ def available_items(name, identity=None):
 def defaults(identity=None):
     result = {}
     for name, rows in DEFAULTS.items():
-        if name == 'Home' and identity and identity.get('target_id') in ('video5g-m25', 'photo4g-p98'):
+        if name == 'Home' and identity and target_spec(identity['target_id'])['capabilities'].get('games', False):
             rows = rows + [7]
         available = available_items(name, identity) if identity is not None else rows
         result[name] = [i for i in rows if i in available]
