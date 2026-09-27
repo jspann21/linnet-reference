@@ -192,6 +192,7 @@ class CheckBox(QCheckBox):
 class Events(QObject):
     done = Signal(str, object, str)
     progress = Signal(str)
+    stage = Signal(object)
     conversion = Signal(object)
     artwork = Signal(int, str, object)
     tools_checked = Signal(int, object)
@@ -528,6 +529,7 @@ class MediaWindow(QMainWindow):
         self.events = Events(self)
         self.events.done.connect(self.completed)
         self.events.progress.connect(self.show_progress)
+        self.events.stage.connect(self.show_operation_stage)
         self.events.conversion.connect(self.show_conversion_progress)
         self.events.tools_checked.connect(self.tools_checked)
         self.covers = Covers(self)
@@ -1255,6 +1257,8 @@ class MediaWindow(QMainWindow):
             return
         self.busy = True; self.stop_event.clear(); self.progress.setRange(0, 0); self.progress.show()
         self.cancel_button.setEnabled(True)
+        self.cancel_button.setText('Stop')
+        self.cancel_button.setToolTip('Stop after the current step finishes')
         self.cancel_button.setVisible(tag in ('prepare', 'remove', 'restore')); self.show_progress(message); self.update_controls()
         def run():
             try:
@@ -1266,6 +1270,21 @@ class MediaWindow(QMainWindow):
     @Slot(str)
     def show_progress(self, text):
         self.status.set_message(text)
+
+    @Slot(object)
+    def show_operation_stage(self, event):
+        if not self.busy:
+            return
+        fraction = min(1.0, max(0.0, event.get('fraction', 0)))
+        value = min(999, round(1000 * (event['completed'] + fraction) / event['total']))
+        self.progress.setRange(0, 1000)
+        self.progress.setValue(value)
+        can_stop = event['can_stop'] and not self.stop_event.is_set()
+        self.cancel_button.setEnabled(can_stop)
+        self.cancel_button.setText('Stop' if can_stop else 'Finishing current step')
+        self.cancel_button.setToolTip('Stop after the current step finishes' if can_stop else
+                                      'The current guarded write or cleanup must finish.')
+        self.status.set_message(event['name'])
 
     @Slot(object)
     def show_conversion_progress(self, event):
@@ -1868,6 +1887,7 @@ class MediaWindow(QMainWindow):
                 music_verification=verification, ffmpeg=ffmpeg, ffprobe=ffprobe, video_selection=videos,
                 online_artwork=online_artwork,
                 progress=self.events.progress.emit, progress_detail=self.events.conversion.emit,
+                progress_stage=self.events.stage.emit,
                 cancelled=self.stop_event.is_set)
         self.plan_context = dict(identity=identity, pending=pending,
                                  submitted_videos=set(videos or ()) if 'Videos' in selected else set(), run=run)

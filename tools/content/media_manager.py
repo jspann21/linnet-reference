@@ -591,7 +591,8 @@ def additions(root, pending, *, snapshots=None):
     return list(planned.values())
 
 
-def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress):
+def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress,
+                    stage_progress=lambda current, total, phase: None):
     # Queue a bounded set of writes before flushing and reading them back. On
     # FAT devices, alternating write/flush/read/rename for every small file is
     # expensive. Keep every handle until its flush, and publish only verified files.
@@ -616,6 +617,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
         with ExitStack() as handles:
             for offset, (item, temporary) in enumerate(batch):
                 checkpoint()
+                stage_progress(start + offset / 2, len(plan), 'Copying originals')
                 source, destination = Path(item['source']), Path(item['destination'])
                 progress(f"Adding {start + offset + 1}/{len(plan)}: {source.name}")
                 _plain(source, Path(source.anchor))
@@ -644,6 +646,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                 os.fsync(writer.fileno())
         for offset, (item, temporary, _, digest) in enumerate(copied):
             checkpoint()
+            stage_progress(start + (len(batch) + offset) / 2, len(plan), 'Checking copied files')
             destination = Path(item['destination'])
             progress(f"Verifying addition {start + offset + 1}/{len(plan)}: {destination.name}")
             _plain(temporary, root)
@@ -662,6 +665,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
         report.pop('copies_in_progress', None)
         record()
         start += len(batch)
+        stage_progress(start, len(plan), 'Copying originals')
 
 
 def format_size(value):
@@ -950,7 +954,8 @@ def run(identity, selected, pending=(), **options):
 
 def _run(identity, selected, pending=(), *, progress=lambda message: None, cancelled=lambda: False,
         photo_dimension=640, ffmpeg=None, ffprobe=None, force=False, music_verification="metadata",
-        video_selection=None, progress_detail=None, excluded_sources=None, online_artwork=False):
+        video_selection=None, progress_detail=None, progress_stage=lambda event: None,
+        excluded_sources=None, online_artwork=False):
     """Copy additions, prepare and publish selected folders; retain per-step receipts.
 
     Stop requests are honored between files and between compiler/publication calls.
@@ -963,6 +968,10 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
     selected = requested
     if not selected:
         raise ValueError("Select at least one media folder to prepare.")
+    total_stages = 4 + 2 * len(selected)
+    def emit_stage(name, unit, fraction=0, can_stop=True):
+        progress_stage(dict(name=name, completed=unit, total=total_stages,
+                            fraction=fraction, can_stop=can_stop))
     if music_verification not in ("metadata", "full"):
         raise ValueError("Music verification must be metadata or full")
     root = Path(identity["root"])
@@ -1010,7 +1019,10 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         needed = sum(item["bytes"] for item in plan)
         if needed + 1024 * 1024 > identity["free_bytes"]:
             raise ValueError("There is not enough space for the selected originals. Choose fewer files.")
-        _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress)
+        emit_stage('Copying originals', 0)
+        _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress,
+                        stage_progress=lambda current, total, name:
+                            emit_stage(name, 0, current / total if total else 1))
         checkpoint()
         if "Music" in selected:
             def renamed_music(old, new):
@@ -1029,6 +1041,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 from .album_art import fetch
                 report['steps'].append(dict(kind='Music', artwork_lookup=fetch(root, progress=progress,
                     checkpoint=checkpoint, retry_missing=force)))
+        emit_stage('Scanning folders', 1)
         progress("Scanning the iPod folders…")
         retail_photos = None
         if "Photos" in selected:
@@ -1041,6 +1054,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         for kind in KINDS:
             if kind not in selected:
                 continue
+            unit = 2 + 2 * selected.index(kind)
+            emit_stage(f'Preparing {kind}', unit)
             checkpoint()
             item = inventory[kind]
             if not item["count"]:
@@ -1087,6 +1102,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     report["steps"].append(dict(kind=kind, metadata=preparation.get("cache"), integrity=music_verification))
                     checkpoint()
                     progress("Publishing the music index and artwork…")
+                    emit_stage('Publishing Music', unit + 1, can_stop=False)
                     published.append(publish_music(stage, progress=progress, **target_args(identity)))
                     output_paths = [".LINNET/LIBRARY.PDB"] + [entry["path"].lstrip("/") for entry in preparation["entries"] if entry["storage"] == "staged"] + [
                         ".LINNET/ART/" + path.name for path in sorted((stage / "ART").glob("*.RGB"))]
@@ -1108,6 +1124,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                                        (p['preview'], p['title']) for p in retail_photos})
                     checkpoint()
                     progress("Publishing prepared photos…")
+                    emit_stage('Publishing Photos', unit + 1, can_stop=False)
                     published.append(publish_photos(package, **target_args(identity)))
                     output_paths = [".LINNET/PHOTOS/LIBRARY.PIM"]
                 elif kind == "Notes":
@@ -1125,6 +1142,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                         progress("Notes: non-ASCII text was adapted for the iPod font; originals are unchanged. See the report.")
                     checkpoint()
                     progress("Publishing prepared notes…")
+                    emit_stage('Publishing Notes', unit + 1, can_stop=False)
                     published.append(publish_notes(package, **target_args(identity)))
                     output_paths = [".LINNET/NOTES/LIBRARY.NNT"]
                 else:
@@ -1141,6 +1159,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     retail_titles = None
                     catalog_snapshot = {}
                     for index, job in enumerate(videos):
+                        emit_stage('Preparing Videos', unit, index / len(videos))
                         checkpoint()
                         source = Path(job["source"])
                         relative = job["relative"]
@@ -1176,6 +1195,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                         if catalog_contains(root, relative, None,
                                                             path=device_video_path(published_path, root),
                                                             snapshot=catalog_snapshot):
+                                            emit_stage('Publishing Videos', unit,
+                                                       (index + 0.5) / len(videos), can_stop=False)
                                             result = index_video(published_path, title=label,
                                                                  library_key=relative, ffprobe=ffprobe,
                                                                  **target_args(identity))
@@ -1194,6 +1215,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                         pass
                                 progress(f"Preparing native video {index+1}/{item['count']}: {relative}")
                                 if compatible and source.is_relative_to(root):
+                                    emit_stage('Publishing Videos', unit,
+                                               (index + 0.5) / len(videos), can_stop=False)
                                     result = index_video(source, title=label, library_key=relative, ffprobe=ffprobe, **target_args(identity))
                                     outputs = [(source.relative_to(root).as_posix(), _hash(source))]
                                     output_paths.append(source.relative_to(root).as_posix())
@@ -1212,6 +1235,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                     after = source.stat()
                                     if (after.st_size, after.st_mtime_ns) != source_stamp:
                                         raise ValueError("Video changed during preparation; scan again")
+                                    emit_stage('Publishing Videos', unit,
+                                               (index + 0.5) / len(videos), can_stop=False)
                                     result = publish_video(package, title=label, library_key=relative,
                                                            ffprobe=ffprobe, source_to_preserve=source,
                                                            **target_args(identity))
@@ -1254,6 +1279,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             progress(f"Preparing video {index+1}/{item['count']}: {relative}")
                             if index_in_place:
                                 from .publish_video import index_ipvf
+                                emit_stage('Publishing Videos', unit,
+                                           (index + 0.5) / len(videos), can_stop=False)
                                 result = index_ipvf(source, title=label, library_key=relative, **target_args(identity))
                                 published.append(result)
                                 catalog_snapshot.clear()
@@ -1305,6 +1332,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             if (after.st_size, after.st_mtime_ns) != source_stamp:
                                 raise ValueError("Video changed during preparation; scan again before updating")
                             progress(f"Publishing video {index+1}/{item['count']}: {relative}")
+                            emit_stage('Publishing Videos', unit,
+                                       (index + 0.5) / len(videos), can_stop=False)
                             result = publish_video(package, title=label, library_key=relative,
                                                    source_to_preserve=source, **target_args(identity))
                             catalog_snapshot.clear()
@@ -1335,6 +1364,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     if failed:
                         progress(f"Videos: {failed} file(s) need attention; completed videos are saved.")
                         continue
+                emit_stage(f'Checking {kind}', unit + 1, 0.5)
                 checkpoint()
                 # Do not mark a changed source tree up to date.
                 current = (_video_inventory(videos) if kind == "Videos" else
@@ -1355,12 +1385,14 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 report["errors"].append(_error_record(kind, error, item, root))
                 progress(f"{kind} could not finish: {error}")
                 record()
+        emit_stage('Finishing checks', total_stages - 2)
         report["complete"] = not report["errors"]
     except Exception as error:
         report["stopped"] = isinstance(error, Cancelled) or cancelled()
         report["errors"].append(dict(message=str(error)))
         progress(str(error))
     finally:
+        emit_stage('Cleaning up', total_stages - 1, can_stop=False)
         for temporary, boundary in owned_temporaries:
             try:
                 if boundary == root:

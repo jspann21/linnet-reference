@@ -177,6 +177,9 @@ the installed Linnet build is shown separately as inactive files on the device.
    output sizes are unknown until the files are processed. Linnet checks sources,
    available space, and prepared outputs again while running. Unchanged content
    is reused. **View report**
+   The progress bar covers copying, scanning, preparation, publication checks,
+   and cleanup. Stop is available between guarded writes; the button shows when
+   the current write or cleanup must finish first.
    provides operation details. If a specific file fails, Media Manager skips it
    automatically and finishes the rest of the update. Select it in **Files that
    need attention** to open its folder or retry it after fixing it. Settings
