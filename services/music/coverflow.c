@@ -39,7 +39,7 @@ static uint8_t art_high[ART_HIGH][ART_RECORD] __attribute__((section(".cover_hig
 static uint32_t art_tags[ART_SLOTS],art_warm,art_loaded;
 static uint8_t *art_record(uint32_t id){uint32_t slot=id%ART_SLOTS;return slot<ART_LOW?art_low[slot]:art_high[slot-ART_LOW];}
 static bool art_ready(uint32_t id){return art_tags[id%ART_SLOTS]==id+1u;}
-static uint32_t count,arts,selected,phase,loading,length,revision,drawn,next,io_due,warm,moved_at;
+static uint32_t count,arts,selected,phase,loading,length,revision,drawn,next,io_due,warm,moved_at,visible_at;
 static uint32_t catalog_loaded,full_reads,read_bytes,hits,preview_hits,misses,last_full_us,max_full_us,last_preview_us;
 static int32_t position,direction=1;
 static bool visible,pending,failed,canceling;
@@ -69,7 +69,10 @@ static void invalidate(void){
     for(uint32_t i=0;i<ART_SLOTS;i++)art_tags[i]=0;
     art_warm=art_loaded=0;count=arts=selected=warm=catalog_loaded=0;position=0;phase=CLOSED;++revision;
 }
-void ln_coverflow_visible(bool value){if(value&&!visible)io_due=ln_time_us();visible=value;}
+void ln_coverflow_visible(bool value){
+    if(value&&!visible){visible_at=ln_time_us();io_due=visible_at;}
+    visible=value;
+}
 uint32_t ln_coverflow_count(void){return count;}
 bool ln_coverflow_active(void){return visible;}
 void ln_coverflow_move(int32_t delta){
@@ -156,7 +159,11 @@ static void accept_art(void){
         art_tags[id%ART_SLOTS]=id+1u;++art_loaded;
         if(close_to_selection(id))++revision;
         uint8_t *r=row(selected);
-        if(r&&ln_read_le32(r+248)==id){last_full_us=ln_time_us()-moved_at;if(last_full_us>max_full_us)max_full_us=last_full_us;}
+        if(r&&ln_read_le32(r+248)==id&&visible&&moved_at&&
+           (int32_t)(moved_at-visible_at)>=0){
+            last_full_us=ln_time_us()-moved_at;
+            if(last_full_us>max_full_us)max_full_us=last_full_us;
+        }
     }
 }
 void ln_coverflow_step(bool allow_read){
@@ -197,7 +204,11 @@ void ln_coverflow_step(bool allow_read){
                     fail();return;}
                 tags[index%CATALOG_SLOTS]=index+1u;++catalog_loaded;
             }
-            if(selected>=loading&&selected<loading+length/CATALOG_RECORD){last_preview_us=ln_time_us()-moved_at;++revision;}
+            if(selected>=loading&&selected<loading+length/CATALOG_RECORD){
+                if(visible&&moved_at&&(int32_t)(moved_at-visible_at)>=0)
+                    last_preview_us=ln_time_us()-moved_at;
+                ++revision;
+            }
             else if(visible&&loading<selected+4u&&loading+length/CATALOG_RECORD+3u>selected)++revision;
             phase=READY;
         }else if(phase==ART){
