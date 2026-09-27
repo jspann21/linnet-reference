@@ -166,12 +166,23 @@ class PlaylistEditor(QDialog):
         with QSignalBlocker(self.members):
             self.members.clear()
             for identity in playlist['ids']:
-                member = QListWidgetItem(self.state['tracks'].get(identity, f'Missing track · {identity:016x}'))
-                member.setToolTip(member.text()); self.members.addItem(member)
+                self.members.addItem(self.member_item(identity))
         self.track_count.setText(f"{len(playlist['ids'])} / 1024 songs" if item else 'No playlist selected')
         self.empty_members.setText('This playlist is empty\n\nSelect songs on the right and choose Add to playlist.' if item else
                                   'Create a playlist to get started\n\nYour songs will appear here in playback order.')
         self.member_stack.setCurrentIndex(0 if playlist['ids'] else 1)
+        self.message.setText('Changes are saved when you choose Save to iPod.')
+        self.update_actions()
+
+    def member_item(self, identity):
+        member = QListWidgetItem(self.state['tracks'].get(identity, f'Missing track · {identity:016x}'))
+        member.setToolTip(member.text())
+        return member
+
+    def members_changed(self):
+        ids = self.state['lists'][self.slot]['ids']
+        self.track_count.setText(f'{len(ids)} / 1024 songs')
+        self.member_stack.setCurrentIndex(0 if ids else 1)
         self.message.setText('Changes are saved when you choose Save to iPod.')
         self.update_actions()
 
@@ -205,14 +216,25 @@ class PlaylistEditor(QDialog):
         selected = sorted((item for item in self.songs.selectedItems() if not item.isHidden()), key=self.songs.row)
         if len(ids) + len(selected) > 1024:
             self.message.setText('A playlist can contain at most 1024 songs.'); return
-        ids.extend(int(item.data(Qt.UserRole)) for item in selected); self.select()
+        added = [int(item.data(Qt.UserRole)) for item in selected]
+        ids.extend(added)
+        with QSignalBlocker(self.members):
+            self.members.clearSelection()
+            for identity in added:
+                self.members.addItem(self.member_item(identity))
+            self.members.setCurrentRow(-1)
+        self.members_changed()
 
     def remove(self):
         if self.slot is not None:
             ids = self.state['lists'][self.slot]['ids']
-            for row in sorted((self.members.row(item) for item in self.members.selectedItems()), reverse=True):
-                ids.pop(row)
-            self.select()
+            with QSignalBlocker(self.members):
+                for row in sorted((self.members.row(item) for item in self.members.selectedItems()), reverse=True):
+                    ids.pop(row)
+                self.members.takeItem(row)
+                self.members.clearSelection()
+                self.members.setCurrentRow(-1)
+            self.members_changed()
 
     def move(self, direction):
         selected = self.members.selectedItems()

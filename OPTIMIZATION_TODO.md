@@ -228,11 +228,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Verification note: The actual A1099 library has 2,894 tracks. Across five offscreen Qt queries, median filtering time fell from 3.98 to 0.76 ms there, and from 19.44 to 3.58 ms for a 10,000-row library built from its labels. Every visible/hidden row matched the previous implementation. A Unicode `Straße`/`STRASSE` query preserved hidden selection, Add-button state, and the single visible track added to a playlist.
 
-- [ ] **32 · P2 · Profile: Update playlist rows incrementally after additions and removals.** Single-row moves now reuse their item, but add and remove still rebuild all members. Measure whether targeted insertions/removals improve large playlists enough to justify the extra bookkeeping.
+- [x] **32 · P2 · Profile: Update playlist rows incrementally after additions and removals.** Single-row moves now reuse their item, but add and remove still rebuild all members. Measure whether targeted insertions/removals improve large playlists enough to justify the extra bookkeeping.
 
   Location: [tools/studio/playlist_editor.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/playlist_editor.py) — `PlaylistEditor.add / remove / select`.
 
   Completion check: Order, duplicate track IDs, missing-track labels, limits, selection, scrolling, and button states match the existing behavior.
+
+  Verification note: With a 1,000-song playlist from A1099's library, the median of 20 single-track add/remove cycles fell from 17.22/19.20 ms to about 0.01/0.01 ms. Incremental rows matched the previous editor after adding duplicates, removing noncontiguous rows including a missing-track label, and rejecting an addition over the 1,024-song limit. Counts, selection controls, and the scrollbar position in a visible dialog matched the previous editor.
 
 - [x] **33 · P3 · Code: Use scoped signal blockers in remaining bulk UI updates.** Several bulk updates still pair blockSignals(True) with blockSignals(False) manually. Convert suitable sites to QSignalBlocker, and apply the same cleanup to PlaylistEditor.render.
 
