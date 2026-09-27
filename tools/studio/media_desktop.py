@@ -292,7 +292,7 @@ def paint_cover(painter, rect, row, covers, rounded=9):
         source = QRectF(0, 0, rect.width() / scale, rect.height() / scale)
         source.moveCenter(QPointF(picture.width() / 2, picture.height() / 2))
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
-        painter.drawPixmap(rect, picture, source)
+        painter.drawPixmap(QRectF(rect), picture, source)
     else:
         colors = [('#9c8cce', '#615285'), ('#8fbdba', '#457676'), ('#d4ac9a', '#926769'), ('#a1afce', '#546884')]
         a, b = colors[hashlib.sha256(row['title'].encode()).digest()[0] % len(colors)]

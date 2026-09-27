@@ -67,7 +67,8 @@ python linnet simulator --output out/simulator
 trace builds require it. Release builds do not. Every build contains the current
 integrated firmware for its selected target, profile and image kind.
 
-On Linux use `python3 linnet`. Build artifacts go under `out/<profile>/<target>/<kind>/`.
+On Linux use `python3 linnet`. Each build's artifacts go under a unique
+`out/<profile>/<target>/<kind>/runs/<invocation>/` directory.
 Use `python linnet --help` and subcommand `--help` for available operations.
 Device Link access requires `pyserial==3.5` and the observed device identity.
 

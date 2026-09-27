@@ -49,6 +49,8 @@ def parser():
     compile_ = commands.add_parser("build")
     compile_.add_argument("--target", default="photo4g-p98", type=target_id)
     compile_.add_argument("--profile", choices=("release", "dev", "trace"), required=True)
+    compile_.add_argument("--jobs", type=int, choices=range(1, 5), default=2,
+                          help="parallel compiler jobs, 1–4 (default: 2)")
     compile_.add_argument("--verify", action="store_true")
     compile_.add_argument("--kind", choices=("os", "boot"), default="os")
     compile_.add_argument("--probe", choices=("frame", "crash", "hang"), default="frame")
@@ -294,7 +296,7 @@ def main():
         elif args.command == "build":
             emit(build(args.profile, args.target, args.verify, args.kind, args.probe,
                        args.device_serial, system_config=args.system,
-                       boot_selector=args.boot_selector))
+                       boot_selector=args.boot_selector, jobs=args.jobs))
         elif args.command == "ui":
             from tools.content.compiler import compile_system
             emit(compile_system(ROOT,args.output,args.system))

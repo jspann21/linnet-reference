@@ -2,7 +2,12 @@
 
 `out/` is ignored scratch space for builds, simulator output and temporary reports.
 Keep durable documentation in the source tree and retain useful local outputs.
-Build artifacts are written to `out/<profile>/<target>/<kind>/`.
+Each build writes its generated inputs, objects, images, and report to a unique
+`out/<profile>/<target>/<kind>/runs/<invocation>/` directory. The paths in a
+build report refer to artifacts from that invocation, including when builds
+overlap or the source branch changes between builds.
+Compilation uses two workers by default. Set `--jobs` to an integer from 1 to 4
+to adjust its CPU and memory use; linking remains serial.
 
 Firmware backups, installation plans, predecessor files and recovery receipts
 belong to the physical device and installation that produced them. Preserve them

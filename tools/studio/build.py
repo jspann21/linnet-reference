@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import re
 import shutil
@@ -10,6 +11,7 @@ import stat
 import struct
 import subprocess
 import tomllib
+import uuid
 from tools.inspect.image import pack, inspect, verify_release
 from tools.studio.targets import LCD_FORMATS, ROOT, TARGETS, RUNTIME_POLICIES, presentation_defines, target_id
 
@@ -112,7 +114,7 @@ def source_identity(configuration, chain):
     return digest.hexdigest()
 
 def build(profile, target, verify=False, kind="os", probe="frame", device_serial="", system_config=None,
-          boot_selector="none"):
+          boot_selector="none", jobs=2):
     target = target_id(target)
     spec = TARGETS[target]
     if not spec.get("build_enabled", True):
@@ -135,6 +137,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         raise ValueError("boot selector must be none or rockbox")
     if kind != "boot" and boot_selector != "none":
         raise ValueError("a startup selector is valid only for Boot images")
+    if type(jobs) is not int or not 1 <= jobs <= 4:
+        raise ValueError("build jobs must be an integer from 1 to 4")
     chain = toolchain()
     configuration = dict(profile=profile, target_id=target, kind=kind,
                           probe=probe, device_serial=device_serial)
@@ -143,8 +147,11 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         configuration["apple_firmware_fallback"] = True
     if kind == "os":
         configuration["system_config"] = str(system_config or "config/system.toml")
-    dest = ROOT / "out" / profile / target / kind
-    dest.mkdir(parents=True, exist_ok=True)
+    # Keep generated inputs, objects, and final artifacts together for this
+    # invocation. Build identities alone are insufficient: two builds with the
+    # same identity can still overlap while one is writing its objects.
+    dest = ROOT / "out" / profile / target / kind / "runs" / uuid.uuid4().hex
+    dest.mkdir(parents=True, exist_ok=False)
     generated = dest / "generated"
     generated.mkdir(exist_ok=True)
     presentation = {}
@@ -225,57 +232,65 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     prefix = f"linnet-{kind}-0.1.0-{target}-{profile}-{build_id[:12]}"
     target_sources = spec["sources"]
     hal = ROOT / "hal" / spec.get("hal_family", spec["soc"])
-    sources = [ROOT / target_sources["startup"], hal / "entry.S",
-               ROOT / target_sources["platform"], ROOT / target_sources["lcd"],
-               ROOT / "kernel/main.c", ROOT / "kernel/memory.S"]
-    sources += [ROOT / "boot/src/linnet_boot.c"]
-    sources += [hal / name for name in ("core.c", "input.c")]
-    sources += [ROOT / target_sources["power"]]
+    sources, source_origins = [], []
+    def add_sources(paths, origin):
+        if not paths:
+            raise ValueError(f"no build sources selected for {origin}")
+        sources.extend(paths)
+        source_origins.extend([origin] * len(paths))
+    add_sources([ROOT / target_sources["startup"], hal / "entry.S",
+                 ROOT / target_sources["platform"], ROOT / target_sources["lcd"],
+                 ROOT / "kernel/main.c", ROOT / "kernel/memory.S"], "base startup")
+    add_sources([ROOT / "boot/src/linnet_boot.c"], "boot service")
+    add_sources([hal / name for name in ("core.c", "input.c")], "HAL core")
+    add_sources([ROOT / target_sources["power"]], "target power")
     for directory in (hal, ROOT / "targets" / target):
         source_list=directory / "SOURCES"
         if source_list.is_file():
-            for name in source_list.read_text().splitlines():
+            for line_number, name in enumerate(source_list.read_text().splitlines(), 1):
                 source=(ROOT / name).resolve()
                 if not name or not source.is_relative_to(ROOT) or not source.is_file():
                     raise ValueError(f"Invalid platform source in {source_list}: {name}")
-                sources.append(source)
-    sources += [ROOT / target_sources["display"], ROOT / target_sources["device"], ROOT / target_sources["codec"]]
+                add_sources([source], f"{source_list.relative_to(ROOT).as_posix()}:{line_number}")
+    add_sources([ROOT / target_sources["display"], ROOT / target_sources["device"],
+                 ROOT / target_sources["codec"]], "target display, device, codec")
     if "display_assembly" in target_sources:
-        sources += [ROOT / target_sources["display_assembly"]]
+        add_sources([ROOT / target_sources["display_assembly"]], "target display assembly")
     if kind == "os" and "coprocessor" in target_sources:
-        sources += [ROOT / target_sources["coprocessor"]]
+        add_sources([ROOT / target_sources["coprocessor"]], "target coprocessor")
     if kind == "os" and spec.get("cop_display", False):
-        sources += [ROOT / "targets" / target / name for name in ("video_blit.c", "video_blit.S")]
+        add_sources([ROOT / "targets" / target / name for name in ("video_blit.c", "video_blit.S")], "COP display")
     if kind == "os":
-        sources += [ROOT / name for name in
-                    ("kernel/executive.c", "kernel/runtime.c", "kernel/wheel_motion.c")]
-        sources += [ROOT / "ui/runtime/shell_adapter.c", ROOT / "services/display/clock.c"]
+        add_sources([ROOT / name for name in
+                     ("kernel/executive.c", "kernel/runtime.c", "kernel/wheel_motion.c")], "OS runtime")
+        add_sources([ROOT / "ui/runtime/shell_adapter.c", ROOT / "services/display/clock.c"], "OS display")
     if profile != "release":
-        sources += sorted((ROOT / "hal/link").glob("*.c"))
-        sources += [ROOT / name for name in ("boot/src/loader.c", "boot/src/sha256.c")]
-        sources += [hal / name for name in ("usb.c", "recovery.c")]
-        if (hal / "recovery.S").is_file():sources.append(hal / "recovery.S")
-        sources += [ROOT / "kernel/development.c"]
+        add_sources(sorted((ROOT / "hal/link").glob("*.c")), "development link")
+        add_sources([ROOT / name for name in ("boot/src/loader.c", "boot/src/sha256.c")], "development loader")
+        add_sources([hal / name for name in ("usb.c", "recovery.c")], "development HAL")
+        if (hal / "recovery.S").is_file():
+            add_sources([hal / "recovery.S"], "development recovery")
+        add_sources([ROOT / "kernel/development.c"], "development kernel")
         if kind == "os":
-            sources += [ROOT / "kernel/platform_link.c"]
+            add_sources([ROOT / "kernel/platform_link.c"], "development OS")
     if spec.get("hal_family") == "pp502x" and (profile != "release" or kind == "os"):
-        sources += [hal / "disk_mode.c"]
+        add_sources([hal / "disk_mode.c"], "PP502x disk mode")
         if profile == "release":
-            sources += [hal / "usb.c"]
-    sources += [ROOT / name for name in (
+            add_sources([hal / "usb.c"], "PP502x release USB")
+    add_sources([ROOT / name for name in (
         "services/storage/block.c", "services/storage/fat32.c",
         "services/storage/storage.c", "services/state/store.c",
-        "services/update/update.c")]
-    sources += [hal / "persistent_enter.S"]
-    sources += [hal / "ata.c"]
+        "services/update/update.c")], "storage and state")
+    add_sources([hal / "persistent_enter.S"], "HAL persistence")
+    add_sources([hal / "ata.c"], "HAL ATA")
     if profile == "release":
-        sources += [ROOT / "boot/src/sha256.c"]
+        add_sources([ROOT / "boot/src/sha256.c"], "release integrity")
     else:
-        sources += [ROOT / "kernel/storage_link.c"]
+        add_sources([ROOT / "kernel/storage_link.c"], "development storage")
         if kind == "os":
-            sources += [ROOT / target_sources["native_update"]]
+            add_sources([ROOT / target_sources["native_update"]], "target native update")
     if kind == "os":
-        sources += [ROOT/"ui/runtime/ui.c",generated/"linnet_ui.c",ROOT/"services/display/settings.c"]
+        add_sources([ROOT/"ui/runtime/ui.c",generated/"linnet_ui.c",ROOT/"services/display/settings.c"], "OS UI")
     compiler_target = "arm-none-eabi" if spec["endianness"] == "little" else "armeb-none-eabi"
     # A target may trade Boot speed for size when it shares a fixed NOR slot.
     optimization = "-Oz" if spec.get("boot_size_optimization", False) and kind == "boot" else "-Os"
@@ -285,73 +300,88 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     if kind == "os":
         flags += ["-DLINNET_NATIVE_UI=1"]
         flags += ["-DLINNET_AUDIO=1"]
-        sources += [hal/'audio.c',ROOT/'services/audio/codec_pcm.c']
-        sources += [ROOT/'services/music/player.c',ROOT/'services/music/database.c']
-        sources += [ROOT/'services/music/library.c',ROOT/'services/music/controller.c',ROOT/'services/music/queue.c',ROOT/'services/music/ui.c']
-        sources += [ROOT/'services/music/artwork.c']
-        sources += [ROOT/'services/music/browser.c']
-        sources += [ROOT/'services/music/search.c',ROOT/'services/music/profile.c',ROOT/'services/music/settings.c']
-        sources += [ROOT/'services/music/queue_view.c',ROOT/'services/music/collections.c']
-        sources += [ROOT/'services/music/decoder.c']
-        sources += [ROOT/'services/audio/dsp.c',ROOT/'services/audio/dsp_arm.S']
-        sources += [ROOT/'services/audio/mp3/mp3.c']
-        sources += [ROOT/'services/music/history.c']
-        sources += [ROOT/'services/music/history_pages.c',ROOT/'services/music/journal_pages.c']
-        sources += [ROOT/'services/audio/flac/flac.c',ROOT/'third_party/flac/decoder.c']
-        sources += [ROOT/'services/audio/alac/alac.c',ROOT/'third_party/alac/alac.c']
-        sources += [ROOT/'services/audio/aac/aac.c',ROOT/'services/audio/aac/m4a.c']
-        sources += [ROOT/'third_party/aac'/name for name in (ROOT/'third_party/aac/SOURCES').read_text().splitlines() if name]
-        sources += [ROOT/'services/audio/vorbis'/name for name in ('vorbis.c','pool.c','division.c')]
-        sources += [ROOT/'third_party/vorbis'/name for name in ('bitwise.c','block.c','codebook.c','floor0.c','floor1.c','info.c','mapping0.c','registry.c','res012.c','sharedbook.c','synthesis.c','window.c')]
-        sources += [ROOT/'third_party/libmad'/name for name in ('bit.c','frame.c','huffman.c','layer12.c','layer3.c','stream.c','synth.c','imdct_l_arm.S','synth_full_arm.S')]
+        add_sources([hal/'audio.c',ROOT/'services/audio/codec_pcm.c'], "OS audio")
+        add_sources([ROOT/'services/music/player.c',ROOT/'services/music/database.c'], "music playback")
+        add_sources([ROOT/'services/music/library.c',ROOT/'services/music/controller.c',ROOT/'services/music/queue.c',ROOT/'services/music/ui.c'], "music library")
+        add_sources([ROOT/'services/music/artwork.c'], "music artwork")
+        add_sources([ROOT/'services/music/browser.c'], "music browser")
+        add_sources([ROOT/'services/music/search.c',ROOT/'services/music/profile.c',ROOT/'services/music/settings.c'], "music settings")
+        add_sources([ROOT/'services/music/queue_view.c',ROOT/'services/music/collections.c'], "music views")
+        add_sources([ROOT/'services/music/decoder.c'], "music decoder")
+        add_sources([ROOT/'services/audio/dsp.c',ROOT/'services/audio/dsp_arm.S'], "audio DSP")
+        add_sources([ROOT/'services/audio/mp3/mp3.c'], "MP3 service")
+        add_sources([ROOT/'services/music/history.c'], "music history")
+        add_sources([ROOT/'services/music/history_pages.c',ROOT/'services/music/journal_pages.c'], "music history pages")
+        add_sources([ROOT/'services/audio/flac/flac.c',ROOT/'third_party/flac/decoder.c'], "FLAC backend")
+        add_sources([ROOT/'services/audio/alac/alac.c',ROOT/'third_party/alac/alac.c'], "ALAC backend")
+        add_sources([ROOT/'services/audio/aac/aac.c',ROOT/'services/audio/aac/m4a.c'], "AAC service")
+        add_sources([ROOT/'third_party/aac'/name for name in (ROOT/'third_party/aac/SOURCES').read_text().splitlines() if name], "third_party/aac/SOURCES")
+        add_sources([ROOT/'services/audio/vorbis'/name for name in ('vorbis.c','pool.c','division.c')], "Vorbis service")
+        add_sources([ROOT/'third_party/vorbis'/name for name in ('bitwise.c','block.c','codebook.c','floor0.c','floor1.c','info.c','mapping0.c','registry.c','res012.c','sharedbook.c','synthesis.c','window.c')], "Vorbis backend")
+        add_sources([ROOT/'third_party/libmad'/name for name in ('bit.c','frame.c','huffman.c','layer12.c','layer3.c','stream.c','synth.c','imdct_l_arm.S','synth_full_arm.S')], "MP3 backend")
         flags += ['-fwrapv']
-        if profile!='release':sources += [ROOT/'kernel/audio_link.c']
+        if profile!='release':
+            add_sources([ROOT/'kernel/audio_link.c'], "development audio")
     if kind == 'os' and ui_report['features'].get('cover_flow', False):
         flags += ['-DLINNET_COVERFLOW=1']
     if kind == 'os' and ui_report['features'].get('video', True):
         flags += ['-DLINNET_VIDEO=1']
         video_backend = spec['media_video_backend']
-        sources += [ROOT/'services/video/catalog.c', ROOT/target_sources['video']]
+        add_sources([ROOT/'services/video/catalog.c', ROOT/target_sources['video']], "video catalog and target player")
         if video_backend == 'ipvf':
-            sources += sorted((ROOT/'services/video/ipvf').glob('*.S'))
+            add_sources(sorted((ROOT/'services/video/ipvf').glob('*.S')), "IPVF assembly")
         if video_backend in ('native-mp4', 'bcm-mp4'):
-            sources += [ROOT/'services/video/mp4.c']
+            add_sources([ROOT/'services/video/mp4.c'], "MP4 service")
         if video_backend == 'native-mp4':
             flags += [f"-DLINNET_H264_MAX_WIDTH={spec['native_video']['h264_width']}",
                       f"-DLINNET_H264_MAX_HEIGHT={spec['native_video']['h264_height']}"]
-            sources += [ROOT/'services/video/native/decoder.c',ROOT/'services/video/native/yuv.c']
-            sources += sorted((ROOT/'third_party/h264bsd').glob('*.c'))
+            add_sources([ROOT/'services/video/native/decoder.c',ROOT/'services/video/native/yuv.c'], "native video decoder")
+            add_sources(sorted((ROOT/'third_party/h264bsd').glob('*.c')), "H.264 backend")
             if spec['cpu'] == 'arm926ej-s':
                 flags += ['-DLINNET_ARM926_YUV=1']
-                sources += [ROOT/'hal/arm926/yuv.S']
+                add_sources([ROOT/'hal/arm926/yuv.S'], "ARM926 YUV")
             if spec.get('mpeg4_decoder') in ('pvmp4','s5l8702-vpu'):
                 flags += ['-DLINNET_MPEG4=1']
-                sources += [ROOT/'services/video/native/mpeg4_memory.c']
-                sources += [ROOT/('hal/s5l8702/mpeg4.cpp' if spec.get('mpeg4_decoder') == 's5l8702-vpu' else 'services/video/native/mpeg4.cpp')]
+                add_sources([ROOT/'services/video/native/mpeg4_memory.c'], "MPEG-4 memory")
+                add_sources([ROOT/('hal/s5l8702/mpeg4.cpp' if spec.get('mpeg4_decoder') == 's5l8702-vpu' else 'services/video/native/mpeg4.cpp')], "MPEG-4 decoder")
                 if spec.get('mpeg4_decoder') == 's5l8702-vpu':
                     flags += ['-DLINNET_MPEG4_VPU=1']
-                    sources += [ROOT/'hal/s5l8702/mpeg4_vpu.c']
-                sources += [ROOT/'third_party/pvmp4'/name for name in (ROOT/'third_party/pvmp4/SOURCES').read_text().splitlines() if name]
+                    add_sources([ROOT/'hal/s5l8702/mpeg4_vpu.c'], "S5L8702 MPEG-4 VPU")
+                add_sources([ROOT/'third_party/pvmp4'/name for name in (ROOT/'third_party/pvmp4/SOURCES').read_text().splitlines() if name], "third_party/pvmp4/SOURCES")
             decoder = spec.get('h264_decoder', 'software')
             if decoder == 's5l8702-vpu' and spec['soc'] == 's5l8702':
                 flags += ['-DLINNET_H264_VPU=1']
-                sources += [ROOT/'hal/s5l8702/h264.c', ROOT/'hal/s5l8702/vpu.c']
+                add_sources([ROOT/'hal/s5l8702/h264.c', ROOT/'hal/s5l8702/vpu.c'], "S5L8702 H.264 VPU")
             elif decoder == 'software':
-                sources += [ROOT/'services/video/native/h264.c']
+                add_sources([ROOT/'services/video/native/h264.c'], "software H.264 decoder")
             else:
                 raise ValueError(f'Unsupported H.264 decoder: {decoder}')
     if kind == 'os':
         flags += ['-DLINNET_BATTERY_GUARD=1']
         if profile!='release':flags += ['-DLINNET_AUDIO_CACHE_DIAGNOSTIC=1']
-        sources += [ROOT/'services/power/battery.c']
+        add_sources([ROOT/'services/power/battery.c'], "OS battery")
     if kind == 'os':
         flags += ['-DLINNET_NOTES=1']
-        sources += sorted((ROOT/'services/notes').glob('*.c'))
+        add_sources(sorted((ROOT/'services/notes').glob('*.c')), "Notes service")
     if kind == 'os' and ui_report['features'].get('photos', True):
         flags += ['-DLINNET_PHOTOS=1']
-        sources += sorted((ROOT/'services/photos').glob('*.c'))
-        sources += sorted((ROOT/'third_party/jpeg').glob('*.c'))
+        add_sources(sorted((ROOT/'services/photos').glob('*.c')), "Photos service")
+        add_sources(sorted((ROOT/'third_party/jpeg').glob('*.c')), "JPEG backend")
+    seen_sources = {}
+    source_selections = []
+    for source, origin in zip(sources, source_origins):
+        if not source.is_relative_to(ROOT) or not source.is_file():
+            raise ValueError(f"missing or external build source {source} selected by {origin}")
+        resolved = source.resolve()
+        if not resolved.is_relative_to(ROOT):
+            raise ValueError(f"external build source {source} selected by {origin}")
+        if resolved in seen_sources:
+            raise ValueError(f"duplicate build source {source.relative_to(ROOT)} selected by "
+                             f"{seen_sources[resolved]} and {origin}")
+        seen_sources[resolved] = origin
+        source_selections.append(dict(path=source.relative_to(ROOT).as_posix(), origin=origin))
     objects = []
+    compile_commands = []
     object_names = Counter(source.relative_to(ROOT).as_posix().replace('/', '_') + '.o'
                            for source in sources)
     for source in sources:
@@ -385,8 +415,24 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
             # size-oriented default and -O2 both leave useful loop transforms on
             # the table in libmad's requantization and synthesis hot paths.
             codec_flags=['-Ithird_party/libmad','-O3','-fomit-frame-pointer','-DCPU_ARM_CLASSIC=1']
-        run([chain['compiler']['path'], *flags, *codec_flags, "-c", source, "-o", obj])
+        compile_commands.append([chain['compiler']['path'], *flags, *codec_flags,
+                                 "-c", source, "-o", obj])
         objects.append(obj)
+    # Header generation and source selection have finished. Compile only the
+    # independent translation units here; the linker retains source order.
+    if jobs == 1:
+        for command in compile_commands:
+            run(command)
+    else:
+        with ThreadPoolExecutor(max_workers=jobs) as executor:
+            futures = [executor.submit(run, command) for command in compile_commands]
+            try:
+                for future in as_completed(futures):
+                    future.result()
+            except Exception:
+                for future in futures:
+                    future.cancel()
+                raise
     elf = dest / (prefix + ".elf")
     mapfile = dest / (prefix + ".map")
     script = generated / "memory.ld"
@@ -431,7 +477,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         if spec.get('hal_family', spec['soc']) == 'pp502x' and not ui_report['features'].get('cover_flow', False):
             resident_limit = 5505024
     report = dict(**configuration, build_id=build_id, toolchain=chain, image=inspect(envelope),
-                  source_files=[p.relative_to(ROOT).as_posix() for p in sources],
+                  source_files=[selection['path'] for selection in source_selections],
+                  source_selections=source_selections,
                   artifacts={key: str(path.relative_to(ROOT)) for key, path in dict(elf=elf, los=los, ipod=ipod, map=mapfile).items()},
                   memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=resident_limit, retained_limit_bytes=spec['mailbox_bytes']),
                   release_exclusion=verification, limitation=watchdog_limitation)

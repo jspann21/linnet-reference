@@ -1,6 +1,6 @@
 **Linnet performance and cleanup backlog**
 
-Created and expanded September 26, 2026, from the current code at `55a82c0`. This is a proposed backlog; checked items have passed their stated local completion checks. Device-only checks remain explicit where needed. Items 61–110 extend the review into device additions, target policy, build workflows, Media Manager, device performance, and file organization. Current instruction: leave this work uncommitted.
+Created and expanded September 26, 2026, from the current code at `55a82c0`. This is a proposed backlog; checked items have passed their stated local completion checks. Device-only checks remain explicit where needed. Items 61–110 extend the review into device additions, target policy, build workflows, Media Manager, device performance, and file organization.
 
 `P1` means start here, `P2` means a useful follow-up, and `P3` means lower expected payoff or cleanup after higher-priority work. `Code` identifies a concrete pattern observed in the source, not a proven speedup. `Profile` requires measurement or design investigation before implementation. Priority reflects expected value and scope, not a confirmed defect severity.
 
@@ -40,13 +40,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Restoring one removal does not enumerate unrelated Trash trees. Receipt validation, current-file checks, recovery conflicts, and guarded writes still run.
 
-- [ ] **06 · P1 · Code: Keep small artwork at its native decode size.** The requested decode size always fits the image into 320 by 320, including smaller images. Avoid enlarging small previews during loading; let painting handle display scaling.
+- [x] **06 · P1 · Code: Keep small artwork at its native decode size.** The requested decode size always fits the image into 320 by 320, including smaller images. Avoid enlarging small previews during loading; let painting handle display scaling.
 
   Location: [tools/studio/media_desktop.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/media_desktop.py) — `Covers.read_image`.
 
   Completion check: Small covers occupy less cache memory, large images retain bounded decoding, and visual checks cover sharpness, aspect ratio, orientation, and high-DPI displays.
 
-  Progress: Native-size decoding is implemented; local small and large decode dimensions match the intended bounds. Final visual checks of sharpness, orientation, and high-DPI rendering remain.
+  Verification note: A rotated 80 × 50 JPEG decoded to 50 × 80, while a 1600 × 800 image decoded to 320 × 160. Offscreen 1× and 2× renderings preserved aspect ratio, orientation, and smooth scaling. The visual check also exposed and fixed a Qt rectangle overload error in `paint_cover`.
 
 - [x] **07 · P1 · Code: Preserve user column widths during search and view refresh.** Every render resets column widths and resize modes. Apply defaults when the column layout changes rather than on every search, filter, or refresh.
 
@@ -439,11 +439,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: A contributor can inspect a disabled or enabled port without compiling or connecting hardware and see missing prerequisites, selected sources, capabilities, and memory ranges.
 
-- [ ] **68 · P2 · Code: Validate the complete build source set before compilation.** _target_sources validates conventional files, while build.py later adds SOURCES entries, optional blitters, codec groups, and feature sources. Resolve the final ordered source set in one preflight step, detect duplicates, and retain each selection's origin.
+- [x] **68 · P2 · Code: Validate the complete build source set before compilation.** _target_sources validates conventional files, while build.py later adds SOURCES entries, optional blitters, codec groups, and feature sources. Resolve the final ordered source set in one preflight step, detect duplicates, and retain each selection's origin.
 
   Location: [tools/studio/targets.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/targets.py), [tools/studio/build.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/build.py), [hal/s5l8702/SOURCES](C:/Users/user/Desktop/Projects/linnet/hal/s5l8702/SOURCES) — `_target_sources / source-list assembly`.
 
   Completion check: Missing or duplicate selected sources fail before compiler work begins; existing targets retain their intended source and link order, including Boot versus OS differences.
+
+  Verification note: The source list now records each selection origin in the build report and checks missing, external, and duplicate paths before starting compiler workers. Injected missing and duplicate S5L8702 SOURCES entries failed before compilation, then the original file was restored. Photo and Video OS source order matched prior reports after normalizing invocation paths; Photo Boot, Photo dev OS, Classic Boot, and Classic OS builds passed. The Classic OS check also exposed a color320 Home target mismatch, which was repaired and verified through all three target UI configurations.
 
 - [ ] **69 · P2 · Profile: Move remaining private hardware dependencies behind portable interfaces.** storage.c directly includes PP502x disk-mode and S5L8702 AES headers despite the portable-layer contract. Review those operations and expose narrowly scoped HAL interfaces or adapters so adding a family does not grow storage-service hardware branches.
 
@@ -495,17 +497,21 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Clean builds become faster within a bounded memory budget, diagnostics identify the failing source, failed workers cannot publish a successful report, and output is equivalent to the serial build.
 
+  Progress: Two compiler jobs are the default, with `--jobs 1..4` available. On this WSL toolchain, Photo release took 24.4 s serial and 13.4 s with two jobs; Video release took 24.2 s serial and 14.4 s with two jobs. Both pairs had identical build IDs and byte-identical ELF, LOS, and iPod images. A separate native Linux host is unavailable for the remaining measurement.
+
 - [ ] **77 · P2 · Profile: Reuse unchanged object files with complete dependency keys.** Every build recompiles every selected source. Investigate an object cache keyed by compiler fingerprint, effective flags, source and included-header contents, target/profile, and generated inputs; keep whole-image provenance separate from object reuse.
 
   Location: [tools/studio/build.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/build.py) — `source_identity / compiler loop / generated headers`.
 
   Completion check: Clean and cached builds produce equivalent artifacts after source edits, header edits, configuration changes, and branch switches. Sources consuming linnet_build.h rebuild whenever image identity changes.
 
-- [ ] **78 · P1 · Code: Isolate intermediate output for concurrent builds.** Generated headers and object files share out/<profile>/<target>/<kind> even when build identities differ. Add explicit workspace ownership or per-invocation staging so two builds with different content, serials, or branch states cannot overwrite each other's inputs.
+- [x] **78 · P1 · Code: Isolate intermediate output for concurrent builds.** Generated headers and object files share out/<profile>/<target>/<kind> even when build identities differ. Add explicit workspace ownership or per-invocation staging so two builds with different content, serials, or branch states cannot overwrite each other's inputs.
 
   Location: [tools/studio/build.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/build.py), [docs/local-artifacts.md](C:/Users/user/Desktop/Projects/linnet/docs/local-artifacts.md) — `dest / generated / object outputs`.
 
   Completion check: Overlapping builds are either safely isolated or rejected clearly; each published report references its own complete artifacts, and sequential branch switching leaves no ambiguous intermediate state.
+
+  Verification note: Two overlapping Photo release builds with the same identity wrote distinct invocation directories and produced identical image hashes. Every artifact path in each report stays inside its invocation directory; branch changes likewise get a fresh directory.
 
 - [x] **79 · P2 · Code: Use collision-free object paths.** Object names flatten repository paths by replacing slashes with underscores, which can collide as directories and filenames grow. Preserve the source directory structure under an object root or use a deterministic unambiguous mapping.
 
