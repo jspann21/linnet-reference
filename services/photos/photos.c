@@ -450,6 +450,9 @@ static void photo_step(void){
     if(p.phase==THUMB){struct row*row=&p.rows[p.job_slot];r=read_at(&p.file,row->data.p.thumb,p.scratch,8192);
         if(!r)return;if(r<0||ln_crc32(p.scratch,8192)!=row->data.p.thumb_crc){fail(8);return;}
         /* Cache at the largest displayed thumbnail size; keep all 25 resident. */
+        /* Thumbnail pixels overlap viewer tiles, so their metadata can no
+         * longer certify the cached tile contents after this write. */
+        for(uint32_t i=0;i<TILES;i++)p.tiles[i].valid=false;
         for(uint32_t y=0;y<THUMB_SIZE;++y)for(uint32_t x=0;x<THUMB_SIZE;++x)
             p.pixels.thumbs[p.job_slot][y*THUMB_SIZE+x]=ln_read_le16(p.scratch+2u*((y*64u/THUMB_SIZE)*64u+x*64u/THUMB_SIZE));
         row->thumb=true;p.phase=IDLE;++p.revision;return;}

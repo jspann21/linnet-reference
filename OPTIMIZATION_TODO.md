@@ -439,7 +439,7 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: A targeted change improves frame-ready latency with identical visible output, bounded memory, correct cancellation, and no interference with audio playback.
 
-  Verification note: On A1099, a matched photo 159 zoom and pan reversal fell from 79.8 ms and 21 physical sectors to 65.6 ms and one sector. The viewer screenshot CRC stayed `56381ec1`; returning to the grid reloaded its thumbnails. Repeated pans during music playback produced zero audio underruns and zero silence frames. Both A1099 and A1136 booted the development images, and Photo 4G, Video 5G, and Classic release builds passed their memory budgets.
+  Verification note: On A1099, a matched photo 159 zoom and pan reversal fell from 79.8 ms and 21 physical sectors to 65.6 ms and one sector. The viewer screenshot CRC stayed `56381ec1`; returning to the grid reloaded its thumbnails. A settled viewer → grid → same viewer round trip also kept CRC `e602f4eb` after thumbnail writes invalidated overlapping tile metadata. Repeated pans during music playback produced zero audio underruns and zero silence frames. Both A1099 and A1136 booted development images, and Photo 4G, Video 5G, and Classic release builds passed their memory budgets.
 
 - [ ] **60 · P2 · Profile: Tune Cover Flow scheduling from cache and I/O measurements.** Cover Flow already has packed-art caches, decoded slots, preview fallback, and hit/miss counters. Measure rapid reversal, long traversal, and playback before tuning read scheduling or eviction.
 
