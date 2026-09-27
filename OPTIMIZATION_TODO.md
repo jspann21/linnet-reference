@@ -647,11 +647,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Selecting no conversions never expands to all conversions after refresh, and selecting all remains intentional. Preserve the separate automatic inclusion of compatible device-format videos.
 
-- [ ] **91 · P2 · Profile: Show the preparation plan before starting substantial work.** plan already computes copy counts, source previews, free device space, computer free space, and conversion need, but prepare mainly uses its conversion flag. Present a concise plan with reusable outputs and space estimates, including unknown conversion sizes.
+- [x] **91 · P2 · Profile: Show the preparation plan before starting substantial work.** plan already computes copy counts, source previews, free device space, computer free space, and conversion need, but prepare mainly uses its conversion flag. Present a concise plan with reusable outputs and space estimates, including unknown conversion sizes.
 
   Location: [tools/content/media_status.py](C:/Users/user/Desktop/Projects/linnet/tools/content/media_status.py), [tools/studio/media_desktop.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/media_desktop.py) — `plan / prepare`.
 
   Completion check: Users can see what will be copied, prepared, reused, or excluded and which volume needs space; execution revalidates changing conditions and no estimate is presented as guaranteed. Reuse item 02's scan work.
+
+  Verification note: Preparation now runs a read-only plan in the existing worker and presents a bounded review before starting. It shows selected types, original-copy counts and bytes by kind, host and iPod free space, video jobs, likely reusable libraries from the current scan, skipped queue entries, and the unknown conversion-size caveat. The actual operation still refreshes identity and rechecks sources, space, signatures, and outputs. On A1136 native Disk Mode, the plan reported zero queued copies and seven existing video jobs; a read-only README.md Notes candidate reported one 5,787-byte copy; a matching saved Music signature appeared as likely reusable. Compileall and Ruff F passed.
 
 - [ ] **92 · P2 · Profile: Show whole-operation progress and the current stopping boundary.** Detailed percentages currently describe video conversion/checking, while the main progress bar remains indeterminate. Define stage-aware progress for copying, preparing, checking, and publishing, and expose whether the current stage can stop immediately or must finish its guarded write.
 

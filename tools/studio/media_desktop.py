@@ -1318,6 +1318,8 @@ class MediaWindow(QMainWindow):
                                'These sources are already queued. Review them in Preparation.')
             return
         if error:
+            if tag == 'plan':
+                self.plan_context = None
             if tag == 'screens':
                 self.screen_state = screen_settings.defaults(self.identity)
                 self.render_screen_items()
@@ -1332,6 +1334,34 @@ class MediaWindow(QMainWindow):
         if tag == 'screens':
             self.screen_state = result; self.screen_loaded_for = self.identity['root']; self.render_screen_items()
             self.screen_status.setText('Loaded from iPod. Changes apply after saving and restarting Linnet.'); self.update_controls(); return
+        if tag == 'plan':
+            context = self.plan_context
+            self.plan_context = None
+            if context is None or not self.same_device(self.identity, context['identity']):
+                self.show_error('The selected iPod changed while preparing the plan. Review it again.')
+                return
+            copies = ', '.join(f'{kind}: {count}' for kind, count in result['copy_kinds'].items() if count)
+            preview = [f"Prepare: {', '.join(result['selected'])}",
+                       f"Copy originals: {result['copies']:,} files ({size(result['bytes'])})" +
+                       (f' · {copies}' if copies else ''),
+                       f"iPod free before copying: {size(result['free'])}",
+                       f"Computer free for preparation: {size(result['computer_free'])}",
+                       f"Video jobs: {result['videos']:,}" +
+                       (' · conversion output size is unknown' if result['conversion'] else '')]
+            if result['reusable']:
+                preview.append('Likely reusable prepared libraries: ' + ', '.join(result['reusable']))
+            if result['excluded']:
+                preview.append(f"Queue entries outside this selection: {result['excluded']:,}")
+            for source, description in list(result['previews'].items())[:5]:
+                preview.append(f'{Path(source).name}: {description}')
+            if len(result['previews']) > 5:
+                preview.append(f"…and {len(result['previews']) - 5:,} more queued sources")
+            preview.append('Sources, available space, and prepared outputs are checked again during preparation.')
+            if self.dialog('Review preparation plan', '\n'.join(preview), 'Start preparation'):
+                self.submitted, self.submitted_videos = context['pending'], context['submitted_videos']
+                self.prep_results.hide()
+                self.work('prepare', context['run'], 'Preparing your selected media…')
+            return
         if tag == 'save_screens':
             self.screen_status.setText('Saved to iPod. Eject safely to apply on startup.'); return
         if tag == 'games':
@@ -1826,23 +1856,29 @@ class MediaWindow(QMainWindow):
         if not selected:
             self.show_error('Choose at least one media type to prepare.'); return
         identity = self.identity; pending = [item for item in self.pending if item[0] in selected]
+        all_pending = list(self.pending)
         videos = (None if self.video_mode == 'all' else
                   list(self.video_selection) if self.video_mode == 'selected' else [])
         dimension = 2048 if self.photo_detail.currentIndex() else 640
         online_artwork = self.online_artwork.isChecked()
         force, verification = self.rebuild.isChecked(), 'full' if self.verify_audio.isChecked() else 'metadata'
         ffmpeg, ffprobe = (self.ffmpeg, self.ffprobe) if self.tools_ready else (None, None)
-        self.submitted, self.submitted_videos = pending, set(videos or ()) if 'Videos' in selected else set()
         def run():
-            plan = media_status.plan(identity, pending, selected, videos)
-            if plan['conversion'] and (not ffmpeg or not ffprobe):
-                raise ValueError('Video conversion needs FFmpeg and FFprobe. Choose their folder in Settings.')
             return media.run(identity, selected, pending, photo_dimension=dimension, force=force,
                 music_verification=verification, ffmpeg=ffmpeg, ffprobe=ffprobe, video_selection=videos,
                 online_artwork=online_artwork,
                 progress=self.events.progress.emit, progress_detail=self.events.conversion.emit,
                 cancelled=self.stop_event.is_set)
-        self.prep_results.hide(); self.work('prepare', run, 'Preparing your selected media…')
+        self.plan_context = dict(identity=identity, pending=pending,
+                                 submitted_videos=set(videos or ()) if 'Videos' in selected else set(), run=run)
+        def inspect_plan():
+            result = media_status.plan(identity, all_pending, selected, videos,
+                current_inventory=self.inventory, photo_dimension=dimension,
+                music_verification=verification, force=force, online_artwork=online_artwork)
+            if result['conversion'] and (not ffmpeg or not ffprobe):
+                raise ValueError('Video conversion needs FFmpeg and FFprobe. Choose their folder in Settings.')
+            return result
+        self.work('plan', inspect_plan, 'Checking the preparation plan…')
 
     def remove_selected(self):
         rows = self.selected()

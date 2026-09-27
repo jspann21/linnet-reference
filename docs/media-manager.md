@@ -172,7 +172,11 @@ the installed Linnet build is shown separately as inactive files on the device.
    computer to the conversion list. Native `.ipv` and `.ipvf` files already on
    the iPod are shown separately, cannot be selected for conversion, and are
    added to the playback library automatically.
-4. Select **Prepare selected media**. Unchanged content is reused. **View report**
+4. Select **Prepare selected media**. Review the copy counts, space estimates,
+   video jobs, and likely reusable libraries, then start preparation. Conversion
+   output sizes are unknown until the files are processed. Linnet checks sources,
+   available space, and prepared outputs again while running. Unchanged content
+   is reused. **View report**
    provides operation details. If a specific file fails, Media Manager skips it
    automatically and finishes the rest of the update. Select it in **Files that
    need attention** to open its folder or retry it after fixing it. Settings

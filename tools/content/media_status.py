@@ -194,7 +194,9 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     return identity, inventory, rows, readiness, apple, boot_review
 
 
-def plan(identity, pending, selected, videos):
+def plan(identity, pending, selected, videos, *, current_inventory=None,
+         photo_dimension=640, music_verification='metadata', force=False,
+         online_artwork=False):
     identity = media.refresh(identity)
     unsupported = [kind for kind in selected if kind not in media.supported_kinds(identity)]
     if unsupported:
@@ -237,6 +239,22 @@ def plan(identity, pending, selected, videos):
     parent = cache
     while not parent.exists():
         parent = parent.parent
+    copy_kinds = {kind: sum(item['kind'] == kind for item in copies) for kind in selected}
+    reusable = []
+    if current_inventory and not force:
+        for kind in selected:
+            if copy_kinds[kind] or kind == 'Videos' or (kind == 'Music' and
+                    (online_artwork or music_verification == 'full')):
+                continue
+            item = current_inventory.get(kind)
+            saved = state.get(kind)
+            if not isinstance(item, dict) or not isinstance(saved, dict) or not item.get('count'):
+                continue
+            option = media.preparation_option(kind, identity, photo_dimension, music_verification)
+            if (saved.get('signature') == f"{option}:{item.get('fingerprint')}" and
+                    isinstance(saved.get('outputs'), list) and saved['outputs']):
+                reusable.append(kind)
     return dict(copies=len(copies), bytes=needed, videos=len(jobs), free=identity['free_bytes'], previews=previews,
                 conversion=any(Path(j['source']).suffix.lower() not in media.native_video_extensions(identity) for j in jobs),
-                computer_free=shutil.disk_usage(parent).free, excluded=len(pending)-len(included))
+                computer_free=shutil.disk_usage(parent).free, excluded=len(pending)-len(included),
+                copy_kinds=copy_kinds, selected=list(selected), reusable=reusable)
