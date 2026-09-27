@@ -261,12 +261,31 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     prefix = f"linnet-{kind}-0.1.0-{target}-{profile}-{build_id[:12]}"
     target_sources = spec["sources"]
     hal = ROOT / "hal" / spec.get("hal_family", spec["soc"])
-    sources, source_origins = [], []
-    def add_sources(paths, origin):
+    # A target may trade Boot speed for size when it shares a fixed NOR slot.
+    optimization = "-Oz" if spec.get("boot_size_optimization", False) and kind == "boot" else "-Os"
+    # Each backend keeps its include paths, optimization, and warning exceptions
+    # beside its selected sources below. ARM4 codec tuning also applies to the
+    # ARM926 build; native video decoding has its own target-independent rule.
+    backend_flags = {
+        'aac': ['-Ithird_party/aac','-Ithird_party/aac/faad','-Ithird_party/aac/lib',
+                '-O3','-fomit-frame-pointer','-DCPU_ARM=1','-DARM_ARCH=4'],
+        # libmad requantization and synthesis need O3 on the ARM7 playback path.
+        'mp3': ['-Ithird_party/libmad','-O3','-fomit-frame-pointer','-DCPU_ARM_CLASSIC=1'],
+        'vorbis': ['-Ithird_party/vorbis','-Ithird_party/aac/lib'],
+        'h264bsd': ['-O3','-fomit-frame-pointer','-Wno-unused-parameter',
+                    '-Wno-unused-but-set-variable','-include','services/video/native/compat.h'],
+        'pvmp4': ['-O3','-fomit-frame-pointer','-fno-exceptions','-fno-rtti',
+                  '-DDEC_NOPOSTPROC','-Ithird_party/pvmp4/compat','-Ithird_party/pvmp4',
+                  '-Wno-unused-parameter','-Wno-unused-but-set-variable','-Wno-sign-compare'],
+        'native_video': ['-O3','-fomit-frame-pointer'],
+    }
+    sources, source_origins, source_flags = [], [], []
+    def add_sources(paths, origin, extra_flags=()):
         if not paths:
             raise ValueError(f"no build sources selected for {origin}")
         sources.extend(paths)
         source_origins.extend([origin] * len(paths))
+        source_flags.extend([list(extra_flags) for _ in paths])
     add_sources([ROOT / target_sources["startup"], hal / "entry.S",
                  ROOT / target_sources["platform"], ROOT / target_sources["lcd"],
                  ROOT / "kernel/main.c", ROOT / "kernel/memory.S"], "base startup")
@@ -306,8 +325,12 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         add_sources([hal / "disk_mode.c"], "PP502x disk mode")
         if profile == "release":
             add_sources([hal / "usb.c"], "PP502x release USB")
+    # -Oz emits an unavailable __aeabi_idiv helper for block's pointer-distance
+    # division, so this translation unit keeps -Os in a size-tuned Boot.
+    add_sources([ROOT / "services/storage/block.c"], "storage block",
+                ['-Os'] if optimization == '-Oz' else ())
     add_sources([ROOT / name for name in (
-        "services/storage/block.c", "services/storage/fat32.c",
+        "services/storage/fat32.c",
         "services/storage/storage.c", "services/state/store.c",
         "services/update/update.c")], "storage and state")
     add_sources([hal / "persistent_enter.S"], "HAL persistence")
@@ -319,10 +342,11 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         if kind == "os":
             add_sources([ROOT / target_sources["native_update"]], "target native update")
     if kind == "os":
-        add_sources([ROOT/"ui/runtime/ui.c",generated/"linnet_ui.c",ROOT/"services/display/settings.c"], "OS UI")
+        add_sources([ROOT/"ui/runtime/ui.c"], "OS UI runtime")
+        add_sources([generated/"linnet_ui.c"], "generated OS UI",
+                    ('-O2',) if ui_report['features'].get('cover_flow', False) else ())
+        add_sources([ROOT/"services/display/settings.c"], "OS display settings")
     compiler_target = "arm-none-eabi" if spec["endianness"] == "little" else "armeb-none-eabi"
-    # A target may trade Boot speed for size when it shares a fixed NOR slot.
-    optimization = "-Oz" if spec.get("boot_size_optimization", False) and kind == "boot" else "-Os"
     flags = [f"--target={compiler_target}", f'-mcpu={spec["cpu"]}', f'-march={spec["architecture"]}', "-marm", "-mfloat-abi=soft", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-ffunction-sections", "-fdata-sections", optimization, "-Wall", "-Wextra", "-Werror", "-I.", "-Iboot/include", f"-DLINNET_PROFILE_{profile.upper()}=1", f"-DLINNET_IMAGE_{kind.upper()}=1", f'-D{spec["target_define"]}=1']
     flags += ["-I" + str(generated), f"-DLINNET_PROBE_CRASH={int(probe == 'crash')}", f"-DLINNET_PROBE_HANG={int(probe == 'hang')}"]
     flags += ["-DLINNET_PLATFORM_CORE=1", "-DLINNET_STORAGE=1"]
@@ -337,17 +361,18 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         add_sources([ROOT/'services/music/search.c',ROOT/'services/music/profile.c',ROOT/'services/music/settings.c'], "music settings")
         add_sources([ROOT/'services/music/queue_view.c',ROOT/'services/music/collections.c'], "music views")
         add_sources([ROOT/'services/music/decoder.c'], "music decoder")
-        add_sources([ROOT/'services/audio/dsp.c',ROOT/'services/audio/dsp_arm.S'], "audio DSP")
-        add_sources([ROOT/'services/audio/mp3/mp3.c'], "MP3 service")
+        add_sources([ROOT/'services/audio/dsp.c'], "audio DSP", ['-O2'])
+        add_sources([ROOT/'services/audio/dsp_arm.S'], "audio DSP assembly")
+        add_sources([ROOT/'services/audio/mp3/mp3.c'], "MP3 service", backend_flags['mp3'])
         add_sources([ROOT/'services/music/history.c'], "music history")
         add_sources([ROOT/'services/music/history_pages.c',ROOT/'services/music/journal_pages.c'], "music history pages")
         add_sources([ROOT/'services/audio/flac/flac.c',ROOT/'third_party/flac/decoder.c'], "FLAC backend")
         add_sources([ROOT/'services/audio/alac/alac.c',ROOT/'third_party/alac/alac.c'], "ALAC backend")
-        add_sources([ROOT/'services/audio/aac/aac.c',ROOT/'services/audio/aac/m4a.c'], "AAC service")
-        add_sources([ROOT/'third_party/aac'/name for name in (ROOT/'third_party/aac/SOURCES').read_text().splitlines() if name], "third_party/aac/SOURCES")
-        add_sources([ROOT/'services/audio/vorbis'/name for name in ('vorbis.c','pool.c','division.c')], "Vorbis service")
-        add_sources([ROOT/'third_party/vorbis'/name for name in ('bitwise.c','block.c','codebook.c','floor0.c','floor1.c','info.c','mapping0.c','registry.c','res012.c','sharedbook.c','synthesis.c','window.c')], "Vorbis backend")
-        add_sources([ROOT/'third_party/libmad'/name for name in ('bit.c','frame.c','huffman.c','layer12.c','layer3.c','stream.c','synth.c','imdct_l_arm.S','synth_full_arm.S')], "MP3 backend")
+        add_sources([ROOT/'services/audio/aac/aac.c',ROOT/'services/audio/aac/m4a.c'], "AAC service", backend_flags['aac'])
+        add_sources([ROOT/'third_party/aac'/name for name in (ROOT/'third_party/aac/SOURCES').read_text().splitlines() if name], "third_party/aac/SOURCES", backend_flags['aac'])
+        add_sources([ROOT/'services/audio/vorbis'/name for name in ('vorbis.c','pool.c','division.c')], "Vorbis service", backend_flags['vorbis'])
+        add_sources([ROOT/'third_party/vorbis'/name for name in ('bitwise.c','block.c','codebook.c','floor0.c','floor1.c','info.c','mapping0.c','registry.c','res012.c','sharedbook.c','synthesis.c','window.c')], "Vorbis backend", backend_flags['vorbis'])
+        add_sources([ROOT/'third_party/libmad'/name for name in ('bit.c','frame.c','huffman.c','layer12.c','layer3.c','stream.c','synth.c','imdct_l_arm.S','synth_full_arm.S')], "MP3 backend", backend_flags['mp3'])
         flags += ['-fwrapv']
         if profile!='release':
             add_sources([ROOT/'kernel/audio_link.c'], "development audio")
@@ -356,7 +381,10 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     if kind == 'os' and ui_report['features'].get('video', True):
         flags += ['-DLINNET_VIDEO=1']
         video_backend = spec['media_video_backend']
-        add_sources([ROOT/'services/video/catalog.c', ROOT/target_sources['video']], "video catalog and target player")
+        add_sources([ROOT/'services/video/catalog.c'], "video catalog")
+        player_flags = (backend_flags['native_video'] if video_backend == 'native-mp4' else
+                        ['-O2'] if video_backend == 'ipvf' else ())
+        add_sources([ROOT/target_sources['video']], "target video player", player_flags)
         if video_backend == 'ipvf':
             add_sources(sorted((ROOT/'services/video/ipvf').glob('*.S')), "IPVF assembly")
         if video_backend in ('native-mp4', 'bcm-mp4'):
@@ -364,25 +392,30 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         if video_backend == 'native-mp4':
             flags += [f"-DLINNET_H264_MAX_WIDTH={spec['native_video']['h264_width']}",
                       f"-DLINNET_H264_MAX_HEIGHT={spec['native_video']['h264_height']}"]
-            add_sources([ROOT/'services/video/native/decoder.c',ROOT/'services/video/native/yuv.c'], "native video decoder")
-            add_sources(sorted((ROOT/'third_party/h264bsd').glob('*.c')), "H.264 backend")
+            add_sources([ROOT/'services/video/native/decoder.c',ROOT/'services/video/native/yuv.c'],
+                        "native video decoder", backend_flags['native_video'])
+            add_sources(sorted((ROOT/'third_party/h264bsd').glob('*.c')), "H.264 backend", backend_flags['h264bsd'])
             if spec['cpu'] == 'arm926ej-s':
                 flags += ['-DLINNET_ARM926_YUV=1']
                 add_sources([ROOT/'hal/arm926/yuv.S'], "ARM926 YUV")
             if spec.get('mpeg4_decoder') in ('pvmp4','s5l8702-vpu'):
                 flags += ['-DLINNET_MPEG4=1']
-                add_sources([ROOT/'services/video/native/mpeg4_memory.c'], "MPEG-4 memory")
-                add_sources([ROOT/('hal/s5l8702/mpeg4.cpp' if spec.get('mpeg4_decoder') == 's5l8702-vpu' else 'services/video/native/mpeg4.cpp')], "MPEG-4 decoder")
+                add_sources([ROOT/'services/video/native/mpeg4_memory.c'],
+                            "MPEG-4 memory", backend_flags['native_video'])
+                add_sources([ROOT/('hal/s5l8702/mpeg4.cpp' if spec.get('mpeg4_decoder') == 's5l8702-vpu' else 'services/video/native/mpeg4.cpp')],
+                            "MPEG-4 decoder", backend_flags['pvmp4'])
                 if spec.get('mpeg4_decoder') == 's5l8702-vpu':
                     flags += ['-DLINNET_MPEG4_VPU=1']
                     add_sources([ROOT/'hal/s5l8702/mpeg4_vpu.c'], "S5L8702 MPEG-4 VPU")
-                add_sources([ROOT/'third_party/pvmp4'/name for name in (ROOT/'third_party/pvmp4/SOURCES').read_text().splitlines() if name], "third_party/pvmp4/SOURCES")
+                add_sources([ROOT/'third_party/pvmp4'/name for name in (ROOT/'third_party/pvmp4/SOURCES').read_text().splitlines() if name],
+                            "third_party/pvmp4/SOURCES", backend_flags['pvmp4'])
             decoder = spec.get('h264_decoder', 'software')
             if decoder == 's5l8702-vpu' and spec['soc'] == 's5l8702':
                 flags += ['-DLINNET_H264_VPU=1']
-                add_sources([ROOT/'hal/s5l8702/h264.c', ROOT/'hal/s5l8702/vpu.c'], "S5L8702 H.264 VPU")
+                add_sources([ROOT/'hal/s5l8702/h264.c'], "S5L8702 H.264 decoder", backend_flags['native_video'])
+                add_sources([ROOT/'hal/s5l8702/vpu.c'], "S5L8702 VPU")
             elif decoder == 'software':
-                add_sources([ROOT/'services/video/native/h264.c'], "software H.264 decoder")
+                add_sources([ROOT/'services/video/native/h264.c'], "software H.264 decoder", backend_flags['native_video'])
             else:
                 raise ValueError(f'Unsupported H.264 decoder: {decoder}')
     if kind == 'os':
@@ -398,7 +431,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         add_sources(sorted((ROOT/'third_party/jpeg').glob('*.c')), "JPEG backend")
     seen_sources = {}
     source_selections = []
-    for source, origin in zip(sources, source_origins):
+    for source, origin, extra_flags in zip(sources, source_origins, source_flags):
         if not source.is_relative_to(ROOT) or not source.is_file():
             raise ValueError(f"missing or external build source {source} selected by {origin}")
         resolved = source.resolve()
@@ -408,42 +441,18 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
             raise ValueError(f"duplicate build source {source.relative_to(ROOT)} selected by "
                              f"{seen_sources[resolved]} and {origin}")
         seen_sources[resolved] = origin
-        source_selections.append(dict(path=source.relative_to(ROOT).as_posix(), origin=origin))
+        source_selections.append(dict(path=source.relative_to(ROOT).as_posix(),
+                                      origin=origin, compiler_flags=extra_flags))
     objects = []
     compile_commands = []
     object_names = Counter(source.relative_to(ROOT).as_posix().replace('/', '_') + '.o'
                            for source in sources)
-    for source in sources:
+    for source, codec_flags in zip(sources, source_flags):
         source_path = source.relative_to(ROOT)
         flat_name = source_path.as_posix().replace('/', '_') + '.o'
         obj = (dest / flat_name if object_names[flat_name] == 1 else
                dest / 'objects' / source_path.with_suffix(source_path.suffix + '.o'))
         obj.parent.mkdir(parents=True, exist_ok=True)
-        relative=source_path.as_posix()
-        codec_flags=[]
-        if optimization == '-Oz' and relative == 'services/storage/block.c':
-            # Keep constant pointer-distance division inline; -Oz emits an
-            # unavailable __aeabi_idiv helper in this freestanding build.
-            codec_flags=['-Os']
-        if relative.startswith('third_party/h264bsd/'):
-            codec_flags=['-O3','-fomit-frame-pointer','-Wno-unused-parameter','-Wno-unused-but-set-variable','-include','services/video/native/compat.h']
-        elif relative.startswith('third_party/pvmp4/') or relative in ('services/video/native/mpeg4.cpp','hal/s5l8702/mpeg4.cpp'):
-            codec_flags=['-O3','-fomit-frame-pointer','-fno-exceptions','-fno-rtti','-DDEC_NOPOSTPROC','-Ithird_party/pvmp4/compat','-Ithird_party/pvmp4','-Wno-unused-parameter','-Wno-unused-but-set-variable','-Wno-sign-compare']
-        elif relative.startswith('services/video/native/') or relative == 'hal/s5l8702/h264.c':
-            codec_flags=['-O3','-fomit-frame-pointer']
-        elif relative.startswith(('third_party/aac/','services/audio/aac/')):
-            codec_flags=['-Ithird_party/aac','-Ithird_party/aac/faad','-Ithird_party/aac/lib','-O3','-fomit-frame-pointer','-DCPU_ARM=1','-DARM_ARCH=4']
-        elif source == generated/'linnet_ui.c' and ui_report['features'].get('cover_flow', False):
-            codec_flags=['-O2']
-        elif relative in ('services/audio/dsp.c','services/video/ipvf/player.c'):
-            codec_flags=['-O2']
-        elif relative.startswith(('third_party/vorbis/','services/audio/vorbis/')):
-            codec_flags=['-Ithird_party/vorbis','-Ithird_party/aac/lib']
-        elif relative.startswith(('third_party/libmad/','services/audio/mp3/')):
-            # MP3 decoding dominates 44.1 kHz playback CPU time on ARM7.  Clang's
-            # size-oriented default and -O2 both leave useful loop transforms on
-            # the table in libmad's requantization and synthesis hot paths.
-            codec_flags=['-Ithird_party/libmad','-O3','-fomit-frame-pointer','-DCPU_ARM_CLASSIC=1']
         compile_commands.append([chain['compiler']['path'], *flags, *codec_flags,
                                  "-c", source, "-o", obj])
         objects.append(obj)

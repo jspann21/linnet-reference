@@ -529,11 +529,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Verification note: The current Video source set has no flattened collisions, so its object names and linker map are unchanged. Two repeat builds had the same firmware hash. As expected, the source edit changes the embedded build identity, so binaries from before and after the edit are not byte-identical.
 
-- [ ] **80 · P2 · Code: Organize codec source and compiler rules by backend.** Build source lists and per-source optimization flags are spread across long branches for AAC, MP3, Vorbis, H.264, and MPEG-4. Group each backend's sources, include paths, flags, and rationale into a small explicit build description.
+- [x] **80 · P2 · Code: Organize codec source and compiler rules by backend.** Build source lists and per-source optimization flags are spread across long branches for AAC, MP3, Vorbis, H.264, and MPEG-4. Group each backend's sources, include paths, flags, and rationale into a small explicit build description.
 
   Location: [tools/studio/build.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/build.py), [third_party/aac/SOURCES](C:/Users/user/Desktop/Projects/linnet/third_party/aac/SOURCES), [third_party/pvmp4/SOURCES](C:/Users/user/Desktop/Projects/linnet/third_party/pvmp4/SOURCES) — `codec source selection / codec_flags`.
 
   Completion check: Each backend is reviewable in one place, ARM4 versus ARM926 assumptions remain explicit, and existing release exclusions, source order, warning exceptions, and optimization choices are unchanged.
+
+  Verification note: Backend flags now travel with selected sources and are recorded in `source_selections`. Before/after builds using the same source tree and build identity produced byte-identical ELF and LOS files for Video OS, Photo OS, Classic OS (native H.264/MPEG-4), and size-tuned Classic Boot. Link order, existing release exclusions, and the block-source `-Os` exception remained intact.
 
 - [ ] **81 · P2 · Code: Split CLI command registration and execution by domain.** parser and main contain the full build, media, simulator, device, and installation command surface. Move cohesive command groups into modules while retaining one public linnet entry point and shared argument helpers.
 
