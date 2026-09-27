@@ -64,6 +64,24 @@ storage limits, memory bounds and capabilities into native code. The manifest's
 CPU, architecture and endianness select the compiler target and flags; the
 linker script consumes its SDRAM and mailbox contract.
 
+## Native presentation assets
+
+Run generator commands from the repository root. Generated headers are checked
+in because Boot and the LCD driver include them directly. Keep the input font
+files and their [license](../sdk/assets/FONT-LICENSE.txt) with any regenerated
+output.
+
+| Output | Authoritative input and regeneration | Ownership |
+| --- | --- | --- |
+| [`photo4g-p98/boot_menu_font.h`](photo4g-p98/boot_menu_font.h) | `sdk/assets/font-sans14.json`; `python tools/studio/boot_menu_font.py --output targets/photo4g-p98/boot_menu_font.h` | Generated from licensed DejaVu font data |
+| [`photo4g-p98/disk_screen_runs.h`](photo4g-p98/disk_screen_runs.h) | `sdk/assets/font-sans12.json`, `sdk/assets/font-sans14.json`, and the drawing recipe in `tools/studio/disk_screen_asset.py`; `python tools/studio/disk_screen_asset.py --output targets/photo4g-p98/disk_screen_runs.h` | Generated from licensed DejaVu font data and the in-tree Disk Mode design |
+| [`photo220/games_graphics.h`](../services/games/presentations/photo220/games_graphics.h), [`color320/games_arcade.h`](../services/games/presentations/color320/games_arcade.h), [`color320/games_solitaire.h`](../services/games/presentations/color320/games_solitaire.h) | Edit these native drawing sources directly; there is no generator or external bitmap input. | In-tree game presentation code |
+| [`photo220/solitaire_courts.h`](../services/games/presentations/photo220/solitaire_courts.h), [`color320/solitaire_courts.h`](../services/games/presentations/color320/solitaire_courts.h) | Manually maintained RGB565 palette and samples derived from [Austin Gabriel's Public Domain Playing Cards](https://github.com/AustinGabriel/Public-Domain-and-CC0-Playing-Cards); the headers record the sampling sizes. | External card artwork released under CC0; retain the attribution in both headers |
+
+The build also generates target, build, and UI headers inside each invocation's
+`out/<profile>/<target>/<kind>/runs/<invocation>/generated/` directory. Those
+files are outputs of the manifest and content compiler, not checked in assets.
+
 ## Add a model
 
 Create `targets/<target-id>/target.toml` and the conventional native files. Use

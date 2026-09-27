@@ -677,11 +677,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
 **File organization, ownership, and reviewable cleanup**
 
-- [ ] **105 · P2 · Code: Document ownership and regeneration of generated target assets.** Boot fonts, disk-screen runs, game graphics, and court assets sit beside native target sources, while generation entry points live elsewhere. Add a small asset index identifying authoritative inputs, generator commands where available, output paths, licenses, and manually maintained assets.
+- [x] **105 · P2 · Code: Document ownership and regeneration of generated target assets.** Boot fonts, disk-screen runs, game graphics, and court assets sit beside native target sources, while generation entry points live elsewhere. Add a small asset index identifying authoritative inputs, generator commands where available, output paths, licenses, and manually maintained assets.
 
   Location: [tools/studio/boot_menu_font.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/boot_menu_font.py), [tools/studio/disk_screen_asset.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/disk_screen_asset.py), [targets/photo4g-p98/boot_menu_font.h](C:/Users/user/Desktop/Projects/linnet/targets/photo4g-p98/boot_menu_font.h), [targets/photo4g-p98/disk_screen_runs.h](C:/Users/user/Desktop/Projects/linnet/targets/photo4g-p98/disk_screen_runs.h) — `generated asset ownership`.
 
   Completion check: Each listed asset has a reproducible command or an explicit manual-source designation; regeneration is deterministic and preserves license/provenance information without moving build output into Git.
+
+  Verification note: The two Photo generators reproduced their checked-in headers after line-ending normalization. The target guide now lists their inputs, commands, font license, and the direct-source/CC0 provenance of each game presentation header.
 
 - [ ] **106 · P2 · Profile: Clarify shared host-media boundaries.** Media helpers import private symbols such as _plain, _volume_guard, _save, and scan helpers across publication, library, planning, and settings modules. Define a small supported internal API for identities, guarded paths, scans, and receipts, then migrate callers incrementally.
 
