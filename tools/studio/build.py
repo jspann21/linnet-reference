@@ -4,6 +4,7 @@ import json
 import os
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 from pathlib import Path
 import re
 import shutil
@@ -49,6 +50,27 @@ def wsl_command(arguments, *, paths=None):
         forwarded.extend(("--" + option, value))
     return ["wsl", "-d", distribution, "--cd", translations[ROOT.as_posix()], "--", "python3", "linnet", *forwarded]
 
+def _tool_stamp(info):
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+@lru_cache(maxsize=16)
+def _tool_version(executable, resolved, stamp):
+    return run([executable, "--version"])
+
+
+@lru_cache(maxsize=16)
+def _tool_digest(resolved, stamp):
+    with Path(resolved).open('rb') as reader:
+        before = _tool_stamp(os.fstat(reader.fileno()))
+        if before != stamp:
+            raise RuntimeError(f"toolchain changed while fingerprinting: {resolved}")
+        checksum = hashlib.file_digest(reader, 'sha256').hexdigest()
+        if _tool_stamp(os.fstat(reader.fileno())) != before:
+            raise RuntimeError(f"toolchain changed while fingerprinting: {resolved}")
+    return checksum
+
+
 def toolchain():
     spec = tomllib.loads((ROOT / "config/toolchain.toml").read_text())["toolchain"]
     result = {}
@@ -56,11 +78,14 @@ def toolchain():
         executable = shutil.which(spec[name])
         if executable is None:
             raise RuntimeError(f"missing {spec[name]}; install LLVM {spec['version']} (Windows: WSL {spec['windows_wsl_distribution']})")
-        version = run([executable, "--version"])
+        resolved = Path(executable).resolve(strict=True)
+        stamp = _tool_stamp(resolved.stat())
+        version = _tool_version(executable, str(resolved), stamp)
         if not re.search(r"\b" + re.escape(spec["version"]) + r"\b", version):
             raise RuntimeError(f"toolchain pin mismatch: {version}; expected {spec['version']}")
-        with Path(executable).open('rb') as reader:
-            checksum = hashlib.file_digest(reader, 'sha256').hexdigest()
+        checksum = _tool_digest(str(resolved), stamp)
+        if Path(executable).resolve(strict=True) != resolved or _tool_stamp(resolved.stat()) != stamp:
+            raise RuntimeError(f"toolchain changed while fingerprinting: {executable}")
         result[name] = dict(path=executable, version=version, sha256=checksum)
     return result
 

@@ -405,11 +405,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Follow-up: The before/after file metadata check now also covers small files. The guarded hash still matches the original digest format; one local warm read took 0.119 s, so the earlier timing comparison does not describe the final version.
 
-- [ ] **57 · P3 · Profile: Reuse verified toolchain fingerprints during a target matrix build.** Each build probes and hashes compiler, linker, objcopy, and nm executables. Measure repeated work, including tools that share the same underlying LLVM binary.
+- [x] **57 · P3 · Profile: Reuse verified toolchain fingerprints during a target matrix build.** Each build probes and hashes compiler, linker, objcopy, and nm executables. Measure repeated work, including tools that share the same underlying LLVM binary.
 
   Location: [tools/studio/build.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/build.py) — `toolchain`.
 
   Completion check: A single build session can reuse verified fingerprints without masking executable replacement, version mismatch, configuration changes, or distinct tool roles.
+
+  Verification note: Five in-process WSL toolchain checks returned byte-identical records. Their warm median fell from 0.0405 s to 0.0021 s after the first verified lookup; the first check still measured about 0.04 s with warmed OS file cache. The bounded caches key versions by invocation path and file identity, and hashes by resolved file identity so shared binaries are hashed once while role-specific version output stays separate. A replaced executable, changed version pin, and file mutation during fingerprinting were all rejected or recomputed in local checks.
 
 - [ ] **58 · P2 · Profile: Measure MP4 sample-table I/O on the device.** Packet processing requests small sample-size, chunk-offset, and sync-table reads. Measure how effectively the existing lower-level caches satisfy them before adding any new table cache.
 
