@@ -35,6 +35,8 @@ def parser():
     cli = argparse.ArgumentParser(prog="linnet", description="Native open firmware for classic iPods")
     commands = cli.add_subparsers(dest="command", required=True)
     commands.add_parser("doctor")
+    target_report = commands.add_parser("target-report", help="Inspect resolved target inputs without building")
+    target_report.add_argument("--target", required=True, type=target_id)
     commands.add_parser("media", help="Open the desktop iPod media manager")
     installer = commands.add_parser("installer", help="Inspect, install, or restore Linnet without erasing media")
     installer_actions = installer.add_subparsers(dest="installer_action", required=True)
@@ -283,6 +285,9 @@ def main():
             emit(dict(toolchain=toolchain(), python=sys.version.split()[0],
                       supported_targets=sorted(target for target, spec in TARGETS.items() if spec.get('build_enabled', True)),
                       bringup_targets={target: spec['bringup_blocker'] for target, spec in TARGETS.items() if not spec.get('build_enabled', True)}))
+        elif args.command == "target-report":
+            from tools.studio.target_report import describe
+            emit(describe(args.target))
         elif args.command == "media":
             from tools.studio.media_app import launch
             launch()

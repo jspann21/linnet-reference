@@ -437,11 +437,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: A scaffold is discoverable as an incomplete port, copies no specimen identity or qualified writer, and reports the remaining required fields and native files before builds can be enabled.
 
-- [ ] **67 · P2 · Profile: Expose a read-only resolved target report.** doctor lists supported and bring-up targets, but source overrides, theme resolution, decoder choices, and memory reservations require reading several files. Add a target inspection view that explains these resolved choices and where each came from.
+- [x] **67 · P2 · Profile: Expose a read-only resolved target report.** doctor lists supported and bring-up targets, but source overrides, theme resolution, decoder choices, and memory reservations require reading several files. Add a target inspection view that explains these resolved choices and where each came from.
 
   Location: [tools/cli/main.py](C:/Users/user/Desktop/Projects/linnet/tools/cli/main.py), [tools/studio/targets.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/targets.py), [tools/content/compiler.py](C:/Users/user/Desktop/Projects/linnet/tools/content/compiler.py) — `doctor / _target_sources / presentation resolution`.
 
   Completion check: A contributor can inspect a disabled or enabled port without compiling or connecting hardware and see missing prerequisites, selected sources, capabilities, and memory ranges.
+
+  Verification note: `python linnet target-report --target <id>` reads manifests and source/theme paths without invoking the compiler or probing a device. All four current targets report present prerequisites and their selected theme; an in-memory disabled-port check retained the bring-up blocker and showed its expected paths.
 
 - [x] **68 · P2 · Code: Validate the complete build source set before compilation.** _target_sources validates conventional files, while build.py later adds SOURCES entries, optional blitters, codec groups, and feature sources. Resolve the final ordered source set in one preflight step, detect duplicates, and retain each selection's origin.
 

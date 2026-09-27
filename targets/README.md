@@ -14,6 +14,10 @@ follow fixed paths, so adding a model does not require another build table.
 | `classic6g-n25` | iPod Classic A1238, S5L8702, 320 × 240 color | Native Boot, OS, Link, Disk Mode and H.264 VGA playback verified; MPEG-4 performance qualification in progress |
 
 All targets expose their installation status through the same Media Manager. `build_enabled = false` explicitly marks an incomplete port and requires a `bringup_blocker`; it cannot enable installation. A1238 uses the independent S5L8702 HAL and target-owned NOR maintenance path.
+Run `python linnet target-report --target <target-id>` for a read-only report of
+conventional source choices and `SOURCES` entries, theme origins, decoder choices,
+capabilities, memory reservations, and missing prerequisites. It also reports
+the blocker and expected source paths for a disabled port.
 
 ## Qualification record
 
