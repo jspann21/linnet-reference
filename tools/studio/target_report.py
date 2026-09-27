@@ -114,9 +114,22 @@ def describe(value: str) -> dict:
     target = target_id(value)
     spec = TARGETS[target]
     sources, missing = _sources(target, spec)
+    placeholders = []
+    if not spec.get('build_enabled', True):
+        placeholders.extend(name for name in ('board_id', 'model_alias', 'soc', 'hal_family',
+                                              'audio_codec') if spec.get(name) == 'unassigned')
+        placeholders.extend(f'retail.{name}' for name in ('usb_vid', 'usb_pid')
+                            if spec['retail'].get(name) == 0)
+        for role, entry in sources['conventional'].items():
+            path = ROOT / entry['path']
+            if entry['exists'] and path.is_relative_to(ROOT / 'targets' / target):
+                if path.read_text(encoding='utf-8').startswith('#error'):
+                    placeholders.append(f'source:{role}:{entry["path"]}')
     target_root = ROOT / 'targets' / target
     system = target_root / 'system.toml'
     if not system.is_file():
+        if not spec.get('build_enabled', True):
+            missing.append(_path(system))
         system = ROOT / 'config' / 'system.toml'
     profile = spec.get('presentation_profile')
     if profile and not (ROOT / 'ui' / 'profiles' / profile / 'profile.toml').is_file():
@@ -134,7 +147,8 @@ def describe(value: str) -> dict:
     return dict(target_id=target, build_enabled=spec.get('build_enabled', True),
                 bringup_blocker=spec.get('bringup_blocker'),
                 manifest=f'targets/{target}/target.toml', system_config=_path(system),
-                prerequisites_missing=sorted(set(missing)), sources=sources,
+                prerequisites_missing=sorted(set(missing)), placeholders=placeholders,
+                sources=sources,
                 presentation_profile=profile, themes=themes,
                 capabilities=spec['capabilities'], configured_features=configuration.get('features', {}),
                 resolved_features=resolve_features(configuration, spec),

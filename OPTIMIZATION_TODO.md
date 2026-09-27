@@ -431,11 +431,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Resolved values for all existing targets match current behavior, callers cannot accidentally change shared defaults, and a newly added field has one documented default.
 
-- [ ] **66 · P2 · Profile: Provide a disabled target scaffold.** The porting guide currently directs contributors to copy a complete existing target. Provide a small scaffold workflow that creates the manifest and conventional file skeletons with explicit placeholders, a bring-up blocker, build_enabled=false, and installer.enabled=false.
+- [x] **66 · P2 · Profile: Provide a disabled target scaffold.** The porting guide currently directs contributors to copy a complete existing target. Provide a small scaffold workflow that creates the manifest and conventional file skeletons with explicit placeholders, a bring-up blocker, build_enabled=false, and installer.enabled=false.
 
   Location: [targets/README.md](C:/Users/user/Desktop/Projects/linnet/targets/README.md), [tools/studio/targets.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/targets.py) — `Add a model / disabled target validation`.
 
   Completion check: A scaffold is discoverable as an incomplete port, copies no specimen identity or qualified writer, and reports the remaining required fields and native files before builds can be enabled.
+
+  Verification note: The scaffold creates an inert manifest, placeholder native files, and a bring-up README. Target validation accepts the disabled manifest, the target report lists missing HAL, codec, and target system configuration inputs, and build rejects the port while `build_enabled` is false.
 
 - [x] **67 · P2 · Profile: Expose a read-only resolved target report.** doctor lists supported and bring-up targets, but source overrides, theme resolution, decoder choices, and memory reservations require reading several files. Add a target inspection view that explains these resolved choices and where each came from.
 

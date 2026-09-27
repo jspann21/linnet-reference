@@ -105,11 +105,19 @@ files are outputs of the manifest and content compiler, not checked in assets.
 
 ## Add a model
 
-Create `targets/<target-id>/target.toml` and the conventional native files. Use
-[Photo P98](photo4g-p98/target.toml) or
+Run `python -m tools.studio.target_scaffold <target-id>` to create a disabled
+manifest and conventional native file skeletons. The generated values are
+placeholders, the source files deliberately fail compilation, and installation
+is disabled. Run `python linnet target-report --target <target-id>` to inspect
+the bring-up blocker and missing HAL, codec, and system configuration inputs.
+Replace each placeholder with measured values and implement the hardware before
+enabling a build.
+
+Use [Photo P98](photo4g-p98/target.toml) or
 [monochrome Q21](ipod4g-q21/target.toml) as a complete field reference. Use a
-lowercase, hyphenated ID matching the directory name and choose a unique
-`image_target` integer. `LINNET_TARGET_<ID>` is generated automatically.
+lowercase, hyphenated ID matching the directory name. The scaffold reserves an
+unused `image_target` integer; review it before qualification.
+`LINNET_TARGET_<ID>` is generated automatically.
 
 | Fields | Purpose |
 | --- | --- |
