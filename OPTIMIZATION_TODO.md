@@ -160,13 +160,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
 **Keep browsing responsive and memory bounded**
 
-- [ ] **23 · P2 · Profile: Give decoded artwork a byte budget.** The cache is limited to 600 entries rather than decoded bytes. At 320 by 320 and four bytes per pixel, 600 images alone approach 234 MiB before backend overhead. Track retained image cost and tune the budget from scrolling measurements.
+- [x] **23 · P2 · Profile: Give decoded artwork a byte budget.** The cache is limited to 600 entries rather than decoded bytes. At 320 by 320 and four bytes per pixel, 600 images alone approach 234 MiB before backend overhead. Track retained image cost and tune the budget from scrolling measurements.
 
   Location: [tools/studio/media_desktop.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/media_desktop.py) — `Covers.receive`.
 
   Completion check: Peak memory is bounded without excessive rereads or visible cover flicker; include mixed small and large covers and high-DPI rendering.
 
-  Progress: The LRU now tracks estimated pixmap bytes and evicts above 64 MiB while retaining the 600-entry ceiling for small and failed covers. Offscreen mixed-size and high-DPI cache checks passed. Real library scrolling and repaint behavior still need measurement before settling the budget.
+  Verification note: The LRU tracks estimated pixmap bytes, evicts above 64 MiB, and retains the 600-entry ceiling for small and failed covers. Offscreen mixed-size and high-DPI cache checks passed. A real A1099 library of 1,222 album cards was scrolled through 19 positions plus quick reversals: the cache peaked at 12,606,400 bytes across 95 entries, while process RSS rose from 101,171,200 to 114,200,576 bytes. It stayed below the budget without evictions; four additional reads on reversal were deferred or newly visible covers, not forced rereads. The 64 MiB cap remains appropriate for this observed workload.
 
 - [x] **24 · P2 · Profile: Coalesce artwork-completion repaints.** Every completed cover requests an update of every registered view. Measure redundant paints and schedule a shared update for visible views, retaining retries for deferred artwork requests.
 
