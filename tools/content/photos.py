@@ -276,7 +276,9 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
     size = path.stat().st_size
     if not HEADER <= size <= MAX_FILE:
         raise ValueError('invalid PIMG file size')
+    hashed = hashlib.sha256() if verify_payloads else None
     with path.open('rb') as stream:
+        before = os.fstat(stream.fileno())
         def read(offset, count):
             check()
             if offset < 0 or count < 0 or offset > size or count > size-offset:
@@ -287,6 +289,8 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
                 raise ValueError('truncated PIMG')
             return data
         header = read(0, HEADER)
+        if hashed is not None:
+            hashed.update(header)
         if (header[:4] != b'PIMG' or struct.unpack_from('<HH', header, 4) != (0, HEADER) or
             _crc(header[:508]) != struct.unpack_from('<I', header, 508)[0] or any(header[72:508])):
             raise ValueError('invalid PIMG header identity/CRC/reserved bytes')
@@ -300,7 +304,10 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
             raise ValueError('noncanonical PIMG section offsets')
         crc = 0
         for offset in range(HEADER, do, 1024*1024):
-            crc = zlib.crc32(read(offset, min(1024*1024, do-offset)), crc)
+            block = read(offset, min(1024*1024, do-offset))
+            crc = zlib.crc32(block, crc)
+            if hashed is not None:
+                hashed.update(block)
         if crc & 0xffffffff != mc or any(read(so+sb, do-so-sb)):
             raise ValueError('PIMG metadata CRC/alignment mismatch')
         pool = read(so, sb)
@@ -373,6 +380,7 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
         for first in range(0, len(thumb_crcs), 128):
             count = min(128, len(thumb_crcs)-first)
             payload = memoryview(read(do+first*8192, count*8192))
+            hashed.update(payload)
             for ordinal in range(count):
                 if _crc(payload[ordinal*8192:(ordinal+1)*8192]) != thumb_crcs[first+ordinal]:
                     raise ValueError('PIMG thumbnail CRC mismatch')
@@ -383,20 +391,29 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
             records = read(to+first*TILE, count*TILE)
             base = do+pc*8192+first*2048
             payload = memoryview(read(base, count*2048)) if verify_payloads else None
+            if hashed is not None:
+                hashed.update(payload)
             for ordinal, (offset, crc) in enumerate(struct.iter_unpack('<II', records)):
                 if offset != base+ordinal*2048:
                     raise ValueError('noncanonical PIMG tile payload offset')
                 if verify_payloads and _crc(payload[ordinal*2048:(ordinal+1)*2048]) != crc:
                     raise ValueError('PIMG tile CRC mismatch')
-    with path.open('rb') as stream:
-        if checkpoint is None:
-            digest = hashlib.file_digest(stream, 'sha256').hexdigest()
-        else:
-            hashed = hashlib.sha256()
-            while chunk := stream.read(1024*1024):
-                check()
-                hashed.update(chunk)
-            digest = hashed.hexdigest()
+        after = os.fstat(stream.fileno())
+        if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+            raise ValueError('PIMG changed during validation')
+    if hashed is not None:
+        digest = hashed.hexdigest()
+    else:
+        with path.open('rb') as stream:
+            if checkpoint is None:
+                digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+            else:
+                hashed = hashlib.sha256()
+                while chunk := stream.read(1024*1024):
+                    check()
+                    hashed.update(chunk)
+                digest = hashed.hexdigest()
     return dict(format='PIMG', passed=True, photos=pc, albums=ac,
                 levels=lc, tiles=tc, bytes=size, sha256=digest,
                 album_titles=album_titles, payloads_verified=bool(verify_payloads))

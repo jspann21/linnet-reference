@@ -283,11 +283,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: A retained optimization reduces measured preparation time and produces identical packed artwork; do not trade quantization quality for an unrequested recipe change.
 
-- [ ] **43 · P2 · Profile: Reduce repeated local reads during PIMG validation.** inspect checks metadata and payloads, then opens the file again for SHA-256; publication adds further hashing. Map the complete read sequence and evaluate hashing during an already-required ordered pass.
+- [x] **43 · P2 · Profile: Reduce repeated local reads during PIMG validation.** inspect checks metadata and payloads, then opens the file again for SHA-256; publication adds further hashing. Map the complete read sequence and evaluate hashing during an already-required ordered pass.
 
   Location: [tools/content/photos.py](C:/Users/user/Desktop/Projects/linnet/tools/content/photos.py) — `inspect`.
 
   Completion check: Fewer full-file reads with every record, bounds, CRC, digest, and changed-file check preserved. Measure the complete compile-and-publish preparation path.
+
+  Verification note: Full payload validation now hashes the header, metadata, thumbnails, and tile payloads in their existing ordered reads; metadata-only inspection retains its complete digest pass. On a 54,878,208-byte, 26,432-tile PIMG, measured process reads fell from 110,215,168 to 55,336,960 bytes and 323 to 111 read calls with identical SHA-256. Five runs of the local publication preflight (two separate change-detection hashes, inspection, and fallback extraction) had medians of 0.1618 s before and 0.1557 s after; the 64-photo compilation took about 14.8 s. A concurrent header change and a corrupted tile were rejected. The publisher's two independent hashes remain in place.
 
 - [ ] **44 · P2 · Profile: Measure a verified-copy fast path for compatible native videos.** Compatible input is inspected, copied, and inspected again through ffprobe. Determine whether a validated source plus verified byte-for-byte copying can avoid repeated probing without weakening source/output checks.
 
