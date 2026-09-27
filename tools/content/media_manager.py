@@ -22,6 +22,11 @@ from .publish import _plain, _hash, _same_target, _volume_guard, inspect_target
 
 KINDS = ("Music", "Notes", "Photos", "Videos")
 VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".mkv", ".avi", ".webm", ".mpg", ".mpeg", ".wmv", ".ipvf"}
+_RETAIL_ADOPTION = None
+
+
+def _receipt_stamp(info):
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
 def extensions(kind):
@@ -131,6 +136,7 @@ def _identify(identity):
 
 def _retail_cache_serial(identity):
     """Reuse a verified cache from this volume's former Apple Disk Mode identity."""
+    global _RETAIL_ADOPTION
     from tools.inspect.retail_device import _sysinfo
     root = Path(identity["root"])
     try:
@@ -141,11 +147,24 @@ def _retail_cache_serial(identity):
         candidate = _cache_directory(serial, identity["volume_serial"])
         if not candidate.is_dir():
             return None
+        key = (serial, str(candidate), *(identity.get(field) for field in (
+            'root', 'volume_serial', 'volume_unique_id', 'target_id', 'disk_number',
+            'disk_unique_id', 'disk_bytes', 'partition_number', 'partition_offset',
+            'partition_bytes', 'sector_bytes')))
+        cached = _RETAIL_ADOPTION
+        if cached is not None and cached[0] == key:
+            receipt, stamp = cached[1:]
+            try:
+                if not receipt.is_symlink() and _receipt_stamp(receipt.stat()) == stamp:
+                    return serial
+            except OSError:
+                pass
         for receipt in candidate.glob("session-*.json"):
             if receipt.is_symlink():
                 continue
             try:
-                if receipt.stat().st_size > 1048576:
+                info = receipt.stat()
+                if info.st_size > 1048576:
                     continue
                 record = json.loads(receipt.read_text(encoding="utf-8"))
             except (OSError, ValueError, UnicodeError):
@@ -153,8 +172,9 @@ def _retail_cache_serial(identity):
             saved = record.get("identity", {}) if isinstance(record, dict) else {}
             if not isinstance(saved, dict):
                 continue
-            if all(saved.get(key) == identity[key] for key in
+            if all(saved.get(field) == identity[field] for field in
                    ("volume_serial", "target_id", "disk_bytes", "partition_offset", "partition_bytes")) and saved.get("disk_serial") == serial:
+                _RETAIL_ADOPTION = (key, receipt, _receipt_stamp(info))
                 return serial
     except (OSError, ValueError, UnicodeError, KeyError, TypeError):
         pass

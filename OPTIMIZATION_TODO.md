@@ -87,11 +87,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
 **Reduce repeated scans and metadata work**
 
-- [ ] **13 · P2 · Profile: Avoid rescanning adoption receipts on every device refresh.** A refresh may scan and parse session receipts to find an Apple Disk Mode cache. Measure this on a cache with many receipts, then reuse a validated adoption result with explicit invalidation.
+- [x] **13 · P2 · Profile: Avoid rescanning adoption receipts on every device refresh.** A refresh may scan and parse session receipts to find an Apple Disk Mode cache. Measure this on a cache with many receipts, then reuse a validated adoption result with explicit invalidation.
 
   Location: [tools/content/media_manager.py](C:/Users/user/Desktop/Projects/linnet/tools/content/media_manager.py) — `_retail_cache_serial`.
 
   Completion check: Repeated refreshes read fewer receipts without carrying an adoption across a changed volume, partition, target, disk geometry, or relevant cache state.
+
+  Verification note: A1099's native Disk Mode cache had 28 candidate session receipts, 21 matching the Apple identity. A successful refresh read one receipt in about 1 ms; later lookups read none in about 0.5 ms after checking that receipt's file identity, size, and timestamps. Whole identity refreshes still took about 3.4 s each, so this is a bounded I/O reduction rather than a visible speed claim. The cache key includes the current volume, partition, target, and disk geometry; changed geometry forced a full scan and rejected adoption. Local receipt replacement, deletion, volume change, and target change also invalidated the result. Apple and native volume GUIDs differ on this physical device, so the original receipt matching rule remains authoritative.
 
 - [ ] **14 · P2 · Profile: Consolidate redundant full identity refreshes within one operation.** run refreshes identity before taking the mutex and _run refreshes again; skip handling can add further full refreshes. Trace these calls and distinguish required boundary checks from redundant discovery.
 
