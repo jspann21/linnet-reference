@@ -14,7 +14,7 @@ import subprocess
 import tomllib
 import uuid
 from tools.inspect.image import pack, inspect, verify_release
-from tools.studio.targets import LCD_FORMATS, ROOT, TARGETS, RUNTIME_POLICIES, presentation_defines, target_id
+from tools.studio.targets import LCD_FORMATS, ROOT, RUNTIME_POLICIES, presentation_defines, resolved_target_spec, target_id
 
 def run(args):
     result = subprocess.run([str(a) for a in args], cwd=ROOT, text=True, capture_output=True)
@@ -169,8 +169,8 @@ def memory_budget(sections, spec, resident_limit):
 def build(profile, target, verify=False, kind="os", probe="frame", device_serial="", system_config=None,
           boot_selector="none", jobs=2):
     target = target_id(target)
-    spec = TARGETS[target]
-    if not spec.get("build_enabled", True):
+    spec = resolved_target_spec(target)
+    if not spec["build_enabled"]:
         raise ValueError(f"{target}: {spec['bringup_blocker']}")
     if system_config is None and (ROOT / "targets" / target / "system.toml").is_file():
         system_config = f"targets/{target}/system.toml"
@@ -230,8 +230,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         f'#define LINNET_LCD_FORMAT {LCD_FORMATS[spec["lcd_format"]]}u',
         f'#define LINNET_LCD_WIDTH_ASM {spec["lcd_width"]}',
         f'#define LINNET_LCD_HEIGHT_ASM {spec["lcd_height"]}',
-        f'#define LINNET_ACTIVE_CLOCK_HZ {spec.get("active_clock_hz",80000000)}u',
-        f'#define LINNET_IDLE_CLOCK_HZ {spec.get("idle_clock_hz",0)}u',
+        f'#define LINNET_ACTIVE_CLOCK_HZ {spec["active_clock_hz"]}u',
+        f'#define LINNET_IDLE_CLOCK_HZ {spec["idle_clock_hz"]}u',
         f'#define LINNET_MUSIC_TITLES_ADDRESS {spec["resources"]["music_titles_address"]}',
         f'#define LINNET_MUSIC_TITLES_BYTES {spec["resources"]["music_titles_bytes"]}',
         f'#define LINNET_COVERFLOW_CATALOG_SLOTS {spec["resources"]["coverflow_catalog_slots"]}u',
@@ -245,7 +245,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         f'#define LINNET_ART_MAX_SIDE {spec["media_art_side"]}u',
         f'#define LINNET_VIDEO_CATALOG_PAGED {int(spec.get("video_catalog_cache") == "paged")}u',
         f'#define LINNET_VIDEO_PACKET_BYTES {spec.get("native_video", {}).get("sample_bytes", 65536)}u',
-        f'#define LINNET_VIDEO_START_AUDIO_FRAMES {spec.get("video_start_audio_frames", 16384)}u',
+        f'#define LINNET_VIDEO_START_AUDIO_FRAMES {spec["video_start_audio_frames"]}u',
         f'#define LINNET_VIDEO_COLOR_GRAY4 {int(spec["media_video_color"] == "gray4")}u',
         f'#define LINNET_STORAGE_MAX_READ_SECTORS {spec["storage_max_read_sectors"]}u',
         f'#define LINNET_COP_DISPLAY {int(spec["cop_display"])}u',
@@ -285,9 +285,9 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         header.write('#define LINNET_USB_SERIAL "' + device_serial + '"\n')
     prefix = f"linnet-{kind}-0.1.0-{target}-{profile}-{build_id[:12]}"
     target_sources = spec["sources"]
-    hal = ROOT / "hal" / spec.get("hal_family", spec["soc"])
+    hal = ROOT / "hal" / spec["hal_family"]
     # A target may trade Boot speed for size when it shares a fixed NOR slot.
-    optimization = "-Oz" if spec.get("boot_size_optimization", False) and kind == "boot" else "-Os"
+    optimization = "-Oz" if spec["boot_size_optimization"] and kind == "boot" else "-Os"
     # Each backend keeps its include paths, optimization, and warning exceptions
     # beside its selected sources below. ARM4 codec tuning also applies to the
     # ARM926 build; native video decoding has its own target-independent rule.
@@ -346,7 +346,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         add_sources([ROOT / "kernel/development.c"], "development kernel")
         if kind == "os":
             add_sources([ROOT / "kernel/platform_link.c"], "development OS")
-    if spec.get("hal_family") == "pp502x" and (profile != "release" or kind == "os"):
+    if spec["hal_family"] == "pp502x" and (profile != "release" or kind == "os"):
         add_sources([hal / "disk_mode.c"], "PP502x disk mode")
         if profile == "release":
             add_sources([hal / "usb.c"], "PP502x release USB")
@@ -423,18 +423,18 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
             if spec['cpu'] == 'arm926ej-s':
                 flags += ['-DLINNET_ARM926_YUV=1']
                 add_sources([ROOT/'hal/arm926/yuv.S'], "ARM926 YUV")
-            if spec.get('mpeg4_decoder') in ('pvmp4','s5l8702-vpu'):
+            if spec['mpeg4_decoder'] in ('pvmp4','s5l8702-vpu'):
                 flags += ['-DLINNET_MPEG4=1']
                 add_sources([ROOT/'services/video/native/mpeg4_memory.c'],
                             "MPEG-4 memory", backend_flags['native_video'])
-                add_sources([ROOT/('hal/s5l8702/mpeg4.cpp' if spec.get('mpeg4_decoder') == 's5l8702-vpu' else 'services/video/native/mpeg4.cpp')],
+                add_sources([ROOT/('hal/s5l8702/mpeg4.cpp' if spec['mpeg4_decoder'] == 's5l8702-vpu' else 'services/video/native/mpeg4.cpp')],
                             "MPEG-4 decoder", backend_flags['pvmp4'])
-                if spec.get('mpeg4_decoder') == 's5l8702-vpu':
+                if spec['mpeg4_decoder'] == 's5l8702-vpu':
                     flags += ['-DLINNET_MPEG4_VPU=1']
                     add_sources([ROOT/'hal/s5l8702/mpeg4_vpu.c'], "S5L8702 MPEG-4 VPU")
                 add_sources([ROOT/'third_party/pvmp4'/name for name in (ROOT/'third_party/pvmp4/SOURCES').read_text().splitlines() if name],
                             "third_party/pvmp4/SOURCES", backend_flags['pvmp4'])
-            decoder = spec.get('h264_decoder', 'software')
+            decoder = spec['h264_decoder']
             if decoder == 's5l8702-vpu' and spec['soc'] == 's5l8702':
                 flags += ['-DLINNET_H264_VPU=1']
                 add_sources([ROOT/'hal/s5l8702/h264.c'], "S5L8702 H.264 decoder", backend_flags['native_video'])
@@ -531,13 +531,13 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     model_code = install["wrapper_model"].encode("ascii")
     ipod.write_bytes(struct.pack(">I4s", (install["wrapper_checksum_seed"] + sum(payload)) & 0xffffffff, model_code) + payload)
     verification = verify_release(envelope, symbols + mapfile.read_text()) if profile == "release" else None
-    watchdog_limitation = None if spec.get("hal_family") == "s5l8702" else (
+    watchdog_limitation = None if spec["hal_family"] == "s5l8702" else (
         "FIQ watchdog depends on FIQ delivery; COP reset escalation requires a live COP monitor."
         if "coprocessor" in target_sources else "Watchdog recovery requires FIQ delivery.")
     resident_limit = 1048576
     if kind == 'os':
         resident_limit = spec['resident_limit_bytes']
-        if spec.get('hal_family', spec['soc']) == 'pp502x' and not ui_report['features'].get('cover_flow', False):
+        if spec['hal_family'] == 'pp502x' and not ui_report['features'].get('cover_flow', False):
             resident_limit = 5505024
     report = dict(**configuration, build_id=build_id, toolchain=chain, image=inspect(envelope),
                   source_files=[selection['path'] for selection in source_selections],

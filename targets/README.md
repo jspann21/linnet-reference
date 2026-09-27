@@ -85,6 +85,14 @@ storage limits, memory bounds and capabilities into native code. The manifest's
 CPU, architecture and endianness select the compiler target and flags; the
 linker script consumes its SDRAM and mailbox contract.
 
+`resolve_target` in `tools/studio/targets.py` returns an immutable view of a
+manifest with optional defaults applied. Build, media, and UI code use that
+view for effective values while the source manifest remains unchanged. Defaults
+include `hal_family = soc`, `audio_codec = "wm8975"`, active and idle clocks of
+80 MHz and 0 Hz, software H.264, no MPEG-4 decoder, 16,384 video startup audio
+frames, and enabled builds. Capabilities default to enabled except Cover Flow
+and games. Add a new optional default there before consuming it elsewhere.
+
 ## Native presentation assets
 
 Run generator commands from the repository root. Generated headers are checked

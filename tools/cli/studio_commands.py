@@ -5,7 +5,8 @@ import sys
 
 from tools.cli.arguments import _record_arguments
 from tools.inspect.image import inspect, verify_release
-from tools.studio.build import ROOT, TARGETS, build, target_id, toolchain
+from tools.studio.build import build, toolchain
+from tools.studio.targets import ROOT, TARGETS, target_id
 
 
 def register_primary(commands):

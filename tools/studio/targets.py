@@ -1,5 +1,6 @@
 """Target manifest discovery shared by build, image, and device tooling."""
 from pathlib import Path, PurePosixPath
+from types import MappingProxyType
 import re
 import tomllib
 
@@ -25,6 +26,45 @@ CAPABILITIES = {"photos", "video", "files", "demo", "themes", "cover_flow", "gam
 GAME_PRESENTATIONS = {"photo220": (220, 176), "color320": (320, 240)}
 LCD_FORMATS = {"rgb565-swapped": 1, "gray2-horizontal": 2, "rgb565": 3}
 
+# Source manifests may omit these fields. Keep their effective values in one
+# place for firmware builds, content compilation, and host media preparation.
+CAPABILITY_DEFAULTS = MappingProxyType({
+    'photos': True,
+    'video': True,
+    'files': True,
+    'demo': True,
+    'themes': True,
+    'cover_flow': False,
+    'games': False,
+})
+TARGET_DEFAULTS = MappingProxyType({
+    'audio_codec': 'wm8975',
+    'idle_clock_hz': 0,
+    'active_clock_hz': 80000000,
+    'h264_decoder': 'software',
+    'mpeg4_decoder': 'none',
+    'video_start_audio_frames': 16384,
+    'build_enabled': True,
+    'boot_size_optimization': False,
+})
+
+
+def _frozen(value):
+    if isinstance(value, dict):
+        return MappingProxyType({key: _frozen(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_frozen(item) for item in value)
+    return value
+
+
+def resolve_target(source):
+    """Return an immutable view with documented optional defaults applied."""
+    resolved = dict(TARGET_DEFAULTS)
+    resolved['hal_family'] = source['soc']
+    resolved.update(source)
+    resolved['capabilities'] = dict(CAPABILITY_DEFAULTS, **source['capabilities'])
+    return _frozen(resolved)
+
 
 def _valid_ascii_list(value):
     return (isinstance(value, list) and
@@ -33,11 +73,12 @@ def _valid_ascii_list(value):
 
 def _target_sources(path, spec):
     """Resolve the conventional source layout for one target."""
-    soc_root = ROOT / "hal" / spec.get("hal_family", spec["soc"])
+    resolved = resolve_target(spec)
+    soc_root = ROOT / "hal" / resolved["hal_family"]
     target_root = path.parent
-    if not re.fullmatch(r"[a-z][a-z0-9-]*", spec.get("hal_family", spec["soc"])):
+    if not re.fullmatch(r"[a-z][a-z0-9-]*", resolved["hal_family"]):
         raise RuntimeError(f"invalid HAL family: {path}")
-    codec = spec.get("audio_codec", "wm8975")
+    codec = resolved["audio_codec"]
     if not re.fullmatch(r"[a-z][a-z0-9-]*", codec):
         raise RuntimeError(f"invalid audio codec: {path}")
     display = target_root / "display.c"
@@ -439,14 +480,19 @@ def target_spec(value):
     return TARGETS[target_id(value)]
 
 
+def resolved_target_spec(value):
+    return resolve_target(target_spec(value))
+
+
 def presentation_defines(spec):
     """C definitions shared by firmware and native UI simulation."""
+    spec = resolve_target(spec)
     policy = spec.get('presentation_policy', {})
     return {
         spec['target_define']: 1,
         'LINNET_UI_WIDTH': f'{spec["lcd_width"]}u',
         'LINNET_UI_HEIGHT': f'{spec["lcd_height"]}u',
-        'LINNET_HAS_GAMES': int(spec['capabilities'].get('games', False)),
+        'LINNET_HAS_GAMES': int(spec['capabilities']['games']),
         'LINNET_GAME_PRESENTATION_PHOTO220': int(spec.get('game_presentation') == 'photo220'),
         'LINNET_GAME_PRESENTATION_COLOR320': int(spec.get('game_presentation') == 'color320'),
         'LINNET_MUSIC_HINT_MENU_BACK': int(policy.get('music_hint_menu_back', False)),
@@ -456,11 +502,11 @@ def presentation_defines(spec):
 
 def media_profile(value):
     """Resolve Media Manager capabilities from the same manifest as firmware."""
-    spec = target_spec(value)
-    return dict(photo_enabled=spec["capabilities"].get("photos", True),
-                video_enabled=spec["capabilities"].get("video", True),
+    spec = resolved_target_spec(value)
+    return dict(photo_enabled=spec["capabilities"]["photos"],
+                video_enabled=spec["capabilities"]["video"],
                 video_backend=spec["media_video_backend"],
-                video_codecs=(["h264", "mpeg4"] if spec["media_video_backend"] == "bcm-mp4" or spec.get("mpeg4_decoder") in ("pvmp4", "s5l8702-vpu") else ["h264"] if spec["media_video_backend"] == "native-mp4" else []),
+                video_codecs=(["h264", "mpeg4"] if spec["media_video_backend"] == "bcm-mp4" or spec["mpeg4_decoder"] in ("pvmp4", "s5l8702-vpu") else ["h264"] if spec["media_video_backend"] == "native-mp4" else []),
                 video_extensions=list(spec["media_video_extensions"]),
                 video_fps=spec["media_video_fps"], video_color=spec["media_video_color"],
                 photo_width=spec["media_photo_width"], photo_height=spec["media_photo_height"],

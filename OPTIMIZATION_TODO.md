@@ -467,11 +467,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: An invalid dimension, decoder combination, duplicate alias, or memory region produces an actionable message while preserving all existing rejection rules.
 
-- [ ] **65 · P2 · Profile: Normalize target defaults once into a resolved specification.** Consumers repeatedly supply defaults for hal_family, capability booleans, clocks, and decoder selection. Define a resolved target representation alongside the source manifest so build, host media, and content code consume the same defaults without mutating shared target data.
+- [x] **65 · P2 · Profile: Normalize target defaults once into a resolved specification.** Consumers repeatedly supply defaults for hal_family, capability booleans, clocks, and decoder selection. Define a resolved target representation alongside the source manifest so build, host media, and content code consume the same defaults without mutating shared target data.
 
   Location: [tools/studio/targets.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/targets.py), [tools/studio/build.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/build.py), [tools/content/compiler.py](C:/Users/user/Desktop/Projects/linnet/tools/content/compiler.py) — `target_spec / media_profile / manifest defaults`.
 
   Completion check: Resolved values for all existing targets match current behavior, callers cannot accidentally change shared defaults, and a newly added field has one documented default.
+
+  Verification note: `resolve_target` supplies immutable effective values, with optional and capability defaults centralized in targets.py. Existing target values and media profiles were compared to the former defaults; mutation of resolved capabilities raises TypeError. UI outputs for all four targets matched byte for byte against the previous compiler. Verified OS builds passed for Q21, Photo, Video, and Classic. The new Photo and Video development images RAM booted on A1099 and A1136 respectively, and both reported healthy Link with the new build IDs.
 
 - [x] **66 · P2 · Profile: Provide a disabled target scaffold.** The porting guide currently directs contributors to copy a complete existing target. Provide a small scaffold workflow that creates the manifest and conventional file skeletons with explicit placeholders, a bring-up blocker, build_enabled=false, and installer.enabled=false.
 

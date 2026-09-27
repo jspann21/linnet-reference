@@ -118,6 +118,7 @@ def ppm(data):
     return dict(width=width,height=height,pixels=[rgb565(*pixels[i:i+3]) for i in range(0,len(pixels),3)])
 
 def resolve_features(config, target_manifest=None):
+    from tools.studio.targets import CAPABILITY_DEFAULTS
     features=config.get('features',{})
     names=('photos','video','files','demo','themes','cover_flow','games')
     if not isinstance(features,dict) or any(key not in names or type(value) is not bool for key,value in features.items()):
@@ -128,7 +129,8 @@ def resolve_features(config, target_manifest=None):
     capabilities=target_manifest.get('capabilities',{})
     if not isinstance(capabilities,dict) or any(key not in names or type(value) is not bool for key,value in capabilities.items()):
         raise ContentError('invalid target capability flags')
-    features['cover_flow']=feature_enabled(features,'cover_flow') and capabilities.get('cover_flow',False)
+    capabilities=dict(CAPABILITY_DEFAULTS, **capabilities)
+    features['cover_flow']=feature_enabled(features,'cover_flow') and capabilities['cover_flow']
     for name,available in capabilities.items():
         if not available:features[name]=False
     return features
@@ -194,7 +196,8 @@ def compile_system(root, output, configpath=None, target_override=None):
         raise ContentError('ui.apps must select 1..32 distinct app IDs')
     game_apps={'linnet.system.games', 'linnet.system.game-play'}
     chosen_games=game_apps.intersection(selected)
-    if chosen_games and not target_manifest['capabilities'].get('games', False):
+    from tools.studio.targets import resolve_target
+    if chosen_games and not resolve_target(target_manifest)['capabilities']['games']:
         raise ContentError(f'{target}: game apps require capabilities.games=true')
     if chosen_games and chosen_games != game_apps:
         raise ContentError('game menu and game play must be selected together')
