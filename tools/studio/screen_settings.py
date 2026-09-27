@@ -53,10 +53,10 @@ def available_items(name, identity=None):
     return item_availability(name, identity)[0]
 
 
-def locked_items(name, identity=None):
+def locked_items(name, identity=None, selected=()):
     """Items firmware restores automatically in addition to navigation anchors."""
     locked = set(REQUIRED.get(name, ()))
-    if name == 'Settings' and 10 in available_items(name, identity):
+    if name == 'Settings' and 0 in selected and 10 in available_items(name, identity):
         locked.add(10)
     return locked
 

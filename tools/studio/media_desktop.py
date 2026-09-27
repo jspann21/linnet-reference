@@ -822,7 +822,7 @@ class MediaWindow(QMainWindow):
         labels = screen_settings.SCREENS[name]
         selected = self.screen_state[name]
         available, unavailable = screen_settings.item_availability(name, self.identity)
-        locked = screen_settings.locked_items(name, self.identity)
+        locked = screen_settings.locked_items(name, self.identity, selected)
         self.screen_unavailable.setText('Not available on this device: ' + ', '.join(labels[i] for i in unavailable))
         self.screen_unavailable.setVisible(bool(unavailable))
         order = [i for i in selected if i in available] + [i for i in available if i not in selected]
@@ -846,6 +846,22 @@ class MediaWindow(QMainWindow):
         name = self.screen_picker.currentText()
         selected = [self.screen_items.item(i).data(Qt.UserRole) for i in range(self.screen_items.count())
                     if self.screen_items.item(i).checkState() == Qt.Checked]
+        if name == 'Settings':
+            video_settings = next((self.screen_items.item(i) for i in range(self.screen_items.count())
+                                   if self.screen_items.item(i).data(Qt.UserRole) == 10), None)
+            if video_settings is not None:
+                forced = 0 in selected
+                with QSignalBlocker(self.screen_items):
+                    if forced and 10 not in selected:
+                        video_settings.setCheckState(Qt.Checked)
+                        position = sum(self.screen_items.item(i).checkState() == Qt.Checked
+                                       for i in range(self.screen_items.row(video_settings)))
+                        selected.insert(position, 10)
+                    flags = video_settings.flags()
+                    video_settings.setFlags(flags & ~Qt.ItemIsUserCheckable if forced else
+                                            flags | Qt.ItemIsUserCheckable)
+                    video_settings.setText('Video Settings (always included)' if forced else 'Video Settings')
+                    video_settings.setToolTip('This item is always included with Display.' if forced else '')
         self.screen_state[name] = selected
         self.screen_status.setText('Unsaved changes. Save to iPod, then eject safely to apply on startup.'
                                    if all(self.screen_state.values()) else 'Select at least one item on each screen before saving.')
