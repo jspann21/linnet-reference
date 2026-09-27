@@ -433,11 +433,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Any change lowers physical reads or seek latency on real media without increasing underruns, exceeding memory budgets, or breaking table bounds and seek behavior.
 
-- [ ] **59 · P2 · Profile: Measure photo panning and zooming at tile boundaries.** The viewer already has a viewport-sized tile cache, grouped reads, hints, and timing counters. Use those counters to identify remaining misses or repeated rendering during direction changes and zoom.
+- [x] **59 · P2 · Profile: Measure photo panning and zooming at tile boundaries.** The viewer already has a viewport-sized tile cache, grouped reads, hints, and timing counters. Use those counters to identify remaining misses or repeated rendering during direction changes and zoom.
 
   Location: [services/photos/photos.c](C:/Users/user/Desktop/Projects/linnet/services/photos/photos.c) — `tile cache, tile_records, render phases`.
 
   Completion check: A targeted change improves frame-ready latency with identical visible output, bounded memory, correct cancellation, and no interference with audio playback.
+
+  Verification note: On A1099, a matched photo 159 zoom and pan reversal fell from 79.8 ms and 21 physical sectors to 65.6 ms and one sector. The viewer screenshot CRC stayed `56381ec1`; returning to the grid reloaded its thumbnails. Repeated pans during music playback produced zero audio underruns and zero silence frames. Both A1099 and A1136 booted the development images, and Photo 4G, Video 5G, and Classic release builds passed their memory budgets.
 
 - [ ] **60 · P2 · Profile: Tune Cover Flow scheduling from cache and I/O measurements.** Cover Flow already has packed-art caches, decoded slots, preview fallback, and hit/miss counters. Measure rapid reversal, long traversal, and playback before tuning read scheduling or eviction.
 

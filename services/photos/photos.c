@@ -14,14 +14,18 @@
 /* Panning can straddle one extra tile on each axis. Keep a power-of-two
  * cache for the hint hash, large enough to retain the entire native viewport. */
 #define VISIBLE_TILES (((WIDTH+62u)/32u)*((HEIGHT+62u)/32u))
-#define TILES (VISIBLE_TILES<=64u?64u:VISIBLE_TILES<=128u?128u:256u)
+#define GRID_TILES (VISIBLE_TILES<=64u?64u:VISIBLE_TILES<=128u?128u:256u)
+/* In the viewer, thumbnail pixels are unused. Reuse their storage to retain
+ * both sides of a tile-boundary reversal without growing the photo arena. */
+#define TILES (GRID_TILES==64u?128u:GRID_TILES)
 _Static_assert(VISIBLE_TILES<=TILES,"photo viewport exceeds tile cache capacity");
 #define EMPTY_ALBUM_RESUME 65535u
 enum phase {OPEN,HEADER,VERIFY,IDLE,RECORD,TITLE,THUMB,LEVEL,TILE_RECORD,TILE_DATA,SOURCE,JPEG_OPEN,JPEG_LOAD,JPEG_DECODE,TILE_COMMIT};
 struct row {uint32_t index;bool valid,album,thumb;char title[192];union {struct ln_pimg_album a;struct ln_pimg_photo p;} data;struct ln_ui_asset asset;};
 struct tile {uint32_t index,age;bool valid;};
 static struct {
-    union {struct {uint16_t tiles[TILES][1024],thumbs[ROWS][THUMB_SIZE*THUMB_SIZE];} pimg;uint8_t jpeg[262144];uint32_t photo_info[65535];} pixels;
+    union {uint16_t viewer_tiles[TILES][1024],thumbs[ROWS][THUMB_SIZE*THUMB_SIZE];
+        uint8_t jpeg[262144];uint32_t photo_info[65535];} pixels;
     union {uint16_t frame[2][WIDTH*HEIGHT];struct {uint32_t album_counts[4096];uint8_t metadata[65536];} verify;} surface;
     struct ln_photo_jpeg jpeg;
     struct ln_pimg_header header;struct ln_fat32_file file,jpeg_file;
@@ -252,7 +256,7 @@ static void render_step(void){
                 if(count>WIDTH-x)count=WIDTH-x;if(count>l->width-(uint32_t)sx)count=l->width-(uint32_t)sx;
                 uint32_t tile=l->first+(uint32_t)sy/32u*l->columns+(uint32_t)sx/32u;
                 int slot=tile_find(tile);
-                if(slot>=0)copy(row+x,p.pixels.pimg.tiles[slot]+((uint32_t)sy&31u)*32u+((uint32_t)sx&31u),count*sizeof *row);
+                if(slot>=0)copy(row+x,p.pixels.viewer_tiles[slot]+((uint32_t)sy&31u)*32u+((uint32_t)sx&31u),count*sizeof *row);
                 x+=count;
             }
             continue;
@@ -265,12 +269,12 @@ static void render_step(void){
         step_x-=origin_x;step_y-=origin_y;
         for(uint32_t x=0;x<WIDTH;x++){int32_t sx=origin_x+p.map_x[x]*step_x,sy=origin_y+p.map_x[x]*step_y;uint16_t color=0;
             if(p.map_x[x]>=0&&p.map_y[y]>=0&&sx>=0&&sy>=0&&sx<(int32_t)l->width&&sy<(int32_t)l->height){uint32_t tile=l->first+(uint32_t)sy/32u*l->columns+(uint32_t)sx/32u;
-                if(tile!=last){last=tile;slot=tile_find(tile);}if(slot>=0)color=p.pixels.pimg.tiles[slot][((uint32_t)sy&31u)*32u+((uint32_t)sx&31u)];}
+                if(tile!=last){last=tile;slot=tile_find(tile);}if(slot>=0)color=p.pixels.viewer_tiles[slot][((uint32_t)sy&31u)*32u+((uint32_t)sx&31u)];}
             out[y*WIDTH+x]=color;}}
     p.render_y=end;if(end==HEIGHT){p.front^=1u;p.asset.pixels=p.surface.frame[p.front];p.frame_valid=true;p.rendering=false;PHOTO_DIAG(timing.frame_ready=ln_time_us());slide_ready();++p.revision;}
     PHOTO_DIAG(timing.render_us+=ln_time_us()-started);
 }
-static void begin_view(uint32_t index){PHOTO_DIAG(timing.view_started=ln_time_us();timing.frame_ready=timing.render_us=timing.jpeg_us=0);p.slide_armed=false;p.photo_index=index;p.view=LN_PHOTOS_VIEWER;p.view_loaded=p.frame_valid=p.frame_complete=p.jpeg_mode=p.rendering=false;p.error=0;p.zoom=p.rotation=0;p.pan_x=p.pan_y=0;p.level_count=0;change();++p.navigation;}
+static void begin_view(uint32_t index){PHOTO_DIAG(timing.view_started=ln_time_us();timing.frame_ready=timing.render_us=timing.jpeg_us=0);p.slide_armed=false;p.photo_index=index;p.view=LN_PHOTOS_VIEWER;p.view_loaded=p.frame_valid=p.frame_complete=p.jpeg_mode=p.rendering=false;p.error=0;p.zoom=p.rotation=0;p.pan_x=p.pan_y=0;p.level_count=0;for(uint32_t i=0;i<ROWS;i++)p.rows[i].thumb=false;change();++p.navigation;}
 void ln_photos_init(void){
     /* The runtime calls this once after startup has cleared BSS. Clearing
      * the full photo arena again would write over a megabyte before Home. */
@@ -442,12 +446,12 @@ static void photo_step(void){
         if(!valid){fail(6);return;}row->index=p.job_index;row->album=p.job_album;p.phase=TITLE;return;
     }
     if(p.phase==TITLE){struct row*row=&p.rows[p.job_slot];r=string_read(row->album?row->data.a.title:row->data.p.title,row->album?row->data.a.bytes:row->data.p.bytes,false);
-        if(!r)return;if(r<0){fail(7);return;}text(row->title,(char*)p.scratch);row->valid=true;row->asset=(struct ln_ui_asset){THUMB_SIZE,THUMB_SIZE,p.pixels.pimg.thumbs[p.job_slot]};p.phase=IDLE;++p.revision;return;}
+        if(!r)return;if(r<0){fail(7);return;}text(row->title,(char*)p.scratch);row->valid=true;row->asset=(struct ln_ui_asset){THUMB_SIZE,THUMB_SIZE,p.pixels.thumbs[p.job_slot]};p.phase=IDLE;++p.revision;return;}
     if(p.phase==THUMB){struct row*row=&p.rows[p.job_slot];r=read_at(&p.file,row->data.p.thumb,p.scratch,8192);
         if(!r)return;if(r<0||ln_crc32(p.scratch,8192)!=row->data.p.thumb_crc){fail(8);return;}
         /* Cache at the largest displayed thumbnail size; keep all 25 resident. */
         for(uint32_t y=0;y<THUMB_SIZE;++y)for(uint32_t x=0;x<THUMB_SIZE;++x)
-            p.pixels.pimg.thumbs[p.job_slot][y*THUMB_SIZE+x]=ln_read_le16(p.scratch+2u*((y*64u/THUMB_SIZE)*64u+x*64u/THUMB_SIZE));
+            p.pixels.thumbs[p.job_slot][y*THUMB_SIZE+x]=ln_read_le16(p.scratch+2u*((y*64u/THUMB_SIZE)*64u+x*64u/THUMB_SIZE));
         row->thumb=true;p.phase=IDLE;++p.revision;return;}
     if(p.phase==LEVEL){
         /* Descriptors are contiguous; retain the same request until it drains. */
@@ -488,14 +492,14 @@ static void photo_step(void){
         const uint8_t*bytes=p.scratch+p.tile_group_cursor*2048u;
         if(!ln_pimg_tile(&p.header,p.tile_records+(index-p.tile_records_first)*8u,index,&at,&crc)||ln_crc32(bytes,2048)!=crc){image_fail(11);return;}
         p.tile_slot=victim();if(p.tile_slot==UINT32_MAX){fail(19);return;}
-        p.tiles[p.tile_slot].valid=false;copy(p.pixels.pimg.tiles[p.tile_slot],bytes,2048);
+        p.tiles[p.tile_slot].valid=false;copy(p.pixels.viewer_tiles[p.tile_slot],bytes,2048);
         const struct ln_pimg_level*l=&p.levels[p.level];uint32_t local=index-l->first,tx=local%l->columns*32u,ty=local/l->columns*32u;
         /* Interior tiles have no padding; edge tiles inspect only padding.
          * The full payload CRC above still covers every pixel. */
         if(tx+32u>l->width||ty+32u>l->height){
             uint32_t used_x=l->width-tx,used_y=l->height-ty;if(used_x>32u)used_x=32u;
             for(uint32_t y=0;y<32u;y++)for(uint32_t x=y<used_y?used_x:0u;x<32u;x++)
-                if(p.pixels.pimg.tiles[p.tile_slot][y*32u+x]){image_fail(21);return;}
+                if(p.pixels.viewer_tiles[p.tile_slot][y*32u+x]){image_fail(21);return;}
         }
         p.tiles[p.tile_slot]=(struct tile){index,++p.age,true};++p.ready_tiles;
         if(++p.tile_group_cursor==p.tile_group_count)p.phase=IDLE;return;}
