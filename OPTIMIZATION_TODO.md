@@ -537,11 +537,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Verification note: `targets/README.md` now has a per-target qualification matrix with local checks, exact physical scope, recovery path, open checks, and evidence links. It distinguishes the manifest's accepted storage variants from qualified specimens and points private receipts to local artifacts.
 
-- [ ] **75 · P3 · Profile: Separate qualified Apple OS specimens from general model support.** apple_os.py embeds exact serial, volume, sector size, and model tuples directly in APPLE_DEVICES. Design a dedicated qualification-record boundary so adding an audited specimen does not require editing the media workflow itself.
+- [x] **75 · P3 · Profile: Separate qualified Apple OS specimens from general model support.** apple_os.py embeds exact serial, volume, sector size, and model tuples directly in APPLE_DEVICES. Design a dedicated qualification-record boundary so adding an audited specimen does not require editing the media workflow itself.
 
-  Location: [tools/content/apple_os.py](C:/Users/user/Desktop/Projects/linnet/tools/content/apple_os.py), [docs/apple-stock-music.md](C:/Users/user/Desktop/Projects/linnet/docs/apple-stock-music.md) — `APPLE_DEVICES / supported`.
+  Location: [tools/content/apple_os.py](C:/Users/user/Desktop/Projects/linnet/tools/content/apple_os.py), [config/apple-os-qualified.toml](C:/Users/user/Desktop/Projects/linnet/config/apple-os-qualified.toml), [docs/apple-stock-music.md](C:/Users/user/Desktop/Projects/linnet/docs/apple-stock-music.md) — `qualified specimens / supported`.
 
   Completion check: Current exact-device gates remain equally strict, model capability never grants specimen authorization, and unsupported or missing qualification records stay disabled.
+
+  Verification note: Exact A1238 and A1136 Apple OS tuples now live in `config/apple-os-qualified.toml`; the media workflow loads only complete records and fails closed on absent or invalid configuration. Synthetic checks passed for both exact matches, serial/volume/sector/filesystem/target mismatches, and missing or incomplete records. Compileall and Ruff F passed. Native A1136 Disk Mode is not the Apple volume and does not meet the gate.
 
 **Build speed, branch switching, and host tooling structure**
 

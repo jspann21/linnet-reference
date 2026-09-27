@@ -1,5 +1,13 @@
 # Apple Music database on the A1238
 
+Apple OS media updates use exact specimen records in
+[`config/apple-os-qualified.toml`](../config/apple-os-qualified.toml). Each record
+binds a target ID, disk serial, volume serial, FAT sector size, and Apple model.
+The media workflow reads these records and requires FAT32 plus a complete match;
+target model support alone does not authorize an Apple database update. An
+absent or invalid qualification file disables Apple OS updates. Add a record
+only after verifying that specimen's Apple media workflow.
+
 The A1238 can display tracks entered into `iPod_Control/iTunes/iTunesDB` by
 libgpod. Playback depends on the path encoding, not just a valid database.
 These observations were verified on device `000A2700155D9C10` on 2026-09-24.

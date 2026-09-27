@@ -19,30 +19,60 @@ import tempfile
 import tomllib
 import uuid
 from fractions import Fraction
+from functools import lru_cache
 
 from . import media_manager as media
 from .music import _device_media_path
 from .publish import _exclusive, _hash, _plain, _volume_guard
 
 
-APPLE_DEVICES = {
-    'classic6g-n25': dict(serial='000A2700155D9C10', volume='5FC88A5C',
-                         sector=4096, model='MB147'),
-    'video5g-m25': dict(serial='000A27001596FB5F', volume='5FC88A5C',
-                       sector=512, model='MA146'),
-}
+QUALIFICATIONS = Path(__file__).resolve().parents[2] / 'config/apple-os-qualified.toml'
 ROOTS = ('Music', 'Photos', 'Videos', 'Notes')
 SELECTABLE_ROOTS = ROOTS[:3]
 APPLE_MUSIC_PREFIX = ':iPod_Control:Music:..:..:Music:'
 
 
+@lru_cache(maxsize=1)
+def _qualified_specimens():
+    """Load exact Apple OS specimens; a missing or invalid record enables none."""
+    try:
+        rows = tomllib.loads(QUALIFICATIONS.read_text(encoding='utf-8'))['specimen']
+        if not isinstance(rows, list):
+            return ()
+        required = {'target_id', 'disk_serial', 'volume_serial', 'sector_bytes', 'model'}
+        seen = set()
+        for row in rows:
+            if not isinstance(row, dict) or set(row) != required:
+                return ()
+            if (not all(isinstance(row[key], str) and row[key] for key in
+                        ('target_id', 'disk_serial', 'volume_serial', 'model')) or
+                    len(row['disk_serial']) != 16 or len(row['volume_serial']) != 8 or
+                    any(char not in '0123456789ABCDEF' for char in
+                        row['disk_serial'] + row['volume_serial']) or
+                    type(row['sector_bytes']) is not int or row['sector_bytes'] not in (512, 4096)):
+                return ()
+            identity = (row['target_id'], row['disk_serial'], row['volume_serial'],
+                        row['sector_bytes'])
+            if identity in seen:
+                return ()
+            seen.add(identity)
+        return tuple(rows)
+    except (OSError, ValueError, KeyError, TypeError):
+        return ()
+
+
+def _qualified_device(identity):
+    if identity.get('filesystem') != 'FAT32':
+        return None
+    return next((row for row in _qualified_specimens()
+                 if (identity.get('target_id') == row['target_id'] and
+                     identity.get('disk_serial') == row['disk_serial'] and
+                     identity.get('volume_serial') == row['volume_serial'] and
+                     identity.get('sector_bytes') == row['sector_bytes'])), None)
+
+
 def supported(identity):
-    device = APPLE_DEVICES.get(identity.get('target_id'))
-    return (device is not None and
-            identity.get('disk_serial') == device['serial'] and
-            identity.get('volume_serial') == device['volume'] and
-            identity.get('sector_bytes') == device['sector'] and
-            identity.get('filesystem') == 'FAT32')
+    return _qualified_device(identity) is not None
 
 
 def _state_path(identity):
@@ -428,6 +458,9 @@ def _writer(distribution, cache, kind='music'):
 
 
 def _update_photos(identity, state, selected, distribution, cache, progress):
+    device = _qualified_device(identity)
+    if device is None:
+        raise ValueError('Apple OS folder updates are not validated for this iPod.')
     root = Path(identity['root']).resolve(strict=True)
     photos = _files(root, selected, 'Photos', media.extensions('Photos'))
     published = state.get('published') or {}
@@ -468,8 +501,7 @@ def _update_photos(identity, state, selected, distribution, cache, progress):
         manifest.write_text('\n'.join(lines) + '\n', encoding='utf-8')
         _run_wsl(distribution, [_wsl_path(writer, distribution), _wsl_path(stage, distribution),
                                 _wsl_path(manifest, distribution),
-                                APPLE_DEVICES[identity['target_id']]['model'],
-                                '0x' + APPLE_DEVICES[identity['target_id']]['serial']],
+                                device['model'], '0x' + device['disk_serial']],
                  timeout=max(300, len(photos) * 2))
         prepared = stage / 'Photos/Photo Database'
         if not prepared.is_file() or prepared.stat().st_size < 128:
@@ -601,7 +633,8 @@ def _video_rows(identity, files, ffprobe):
 def update(identity, *, ffprobe=None, progress=lambda text: None):
     """Update selected Apple media while preserving unrelated Apple entries."""
     identity = media.refresh(identity)
-    if not supported(identity):
+    device = _qualified_device(identity)
+    if device is None:
         raise ValueError('Apple OS folder updates are not validated for this iPod.')
     root = Path(identity['root']).resolve(strict=True)
     state = _load(identity)
@@ -671,8 +704,7 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
                 output.write('\t'.join(map(str, row)) + '\n')
         _run_wsl(distribution, [_wsl_path(writer, distribution), _wsl_path(stage, distribution),
                                 _wsl_path(manifest_path, distribution),
-                                APPLE_DEVICES[identity['target_id']]['model'],
-                                '0x' + APPLE_DEVICES[identity['target_id']]['serial']], timeout=300)
+                                device['model'], '0x' + device['disk_serial']], timeout=300)
         if not stage_db.is_file() or stage_db.stat().st_size < 128:
             raise ValueError('Apple database writer produced no valid database.')
         from .retail_media import tracks
