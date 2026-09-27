@@ -366,7 +366,7 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: The last item is reported, fast batches do not flood Qt signals, and every required checkpoint still executes even when its message is throttled.
 
-- [ ] **50 · P2 · Profile: Resume source-error retries without restarting unrelated work.** After automatically excluding a problem file, run invokes the entire workflow again. Measure repeated scans, planning, and completed-kind checks, then isolate the affected preparation stage.
+- [x] **50 · P2 · Profile: Resume source-error retries without restarting unrelated work.** After automatically excluding a problem file, run invokes the entire workflow again. Measure repeated scans, planning, and completed-kind checks, then isolate the affected preparation stage.
 
   Location: [tools/content/media_manager.py](C:/Users/user/Desktop/Projects/linnet/tools/content/media_manager.py) — `run / _run`.
 

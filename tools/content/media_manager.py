@@ -937,6 +937,41 @@ def _pending_outcomes(pending, selected, plan, videos, steps, errors, planned):
     return outcomes
 
 
+def _finish_retries(attempts, skipped, unresolved):
+    report = attempts[-1]
+    report['started'] = attempts[0]['started']
+    report['steps'] = [step for attempt in attempts for step in attempt['steps']]
+    report['cleanup'] = {
+        key: [entry for attempt in attempts for entry in attempt['cleanup'][key]]
+        for key in ('removed', 'retained')
+    }
+    outcomes = {}
+    for attempt in attempts:
+        for row in attempt.get('source_outcomes', []):
+            outcomes[(row['kind'], row['source'])] = row
+    report['source_outcomes'] = list(outcomes.values())
+    report['errors'] = skipped + unresolved
+    report['auto_skipped'] = skipped
+    report['complete'] = not unresolved and not report.get('stopped')
+    if len(attempts) > 1:
+        report['retry_receipts'] = [attempt['receipt'] for attempt in attempts[:-1]]
+    for outcome in report['source_outcomes']:
+        matching = _source_error(outcome['kind'], outcome['source'], skipped)
+        if matching:
+            outcome.update(status='skipped', reason=matching['message'])
+    if skipped:
+        count = len(skipped)
+        outcome = 'stopped' if report.get('stopped') else 'finished'
+        report['summary'] = (
+            f"Update {outcome} with {count} problem file{'s' if count != 1 else ''} skipped. "
+            'Select a skipped file in Media Manager if you want to retry it.'
+        )
+        if unresolved:
+            report['summary'] += ' Some non-file errors still need attention.'
+    _save(Path(report['receipt']), report)
+    return report
+
+
 def run(identity, selected, pending=(), **options):
     from .publish import _exclusive
     # The same Windows mutex is recursive for nested publishers on this thread.
@@ -945,13 +980,17 @@ def run(identity, selected, pending=(), **options):
         automatically_skipped = []
         skipped_keys = set()
         excluded_sources = set()
+        attempts = []
+        unresolved = []
+        retry_selected = selected
         while True:
             # Verify the device after taking the mutex, including on a source-error retry.
             identity = refresh(identity)
             root = Path(identity["root"]).resolve(strict=True)
             allowed = video_source_extensions(identity)
             current_options = dict(options, excluded_sources=excluded_sources)
-            report = _run(identity, selected, pending, **current_options)
+            report = _run(identity, retry_selected, pending, **current_options)
+            attempts.append(report)
             remaining = []
             newly_skipped = []
             for error in report["errors"]:
@@ -959,7 +998,11 @@ def run(identity, selected, pending=(), **options):
                 if not kind or not source_value or report.get("stopped"):
                     remaining.append(error)
                     continue
-                source = Path(source_value).resolve()
+                try:
+                    source = Path(source_value).resolve()
+                except (OSError, ValueError):
+                    remaining.append(error)
+                    continue
                 key = (kind, str(source).casefold())
                 if key in skipped_keys:
                     remaining.append(error)
@@ -984,25 +1027,12 @@ def run(identity, selected, pending=(), **options):
                 options.get("progress", lambda message: None)(
                     f"Skipped problem file and continuing: {source}"
                 )
-            if not newly_skipped:
-                report["errors"] = automatically_skipped + remaining
-                report["auto_skipped"] = automatically_skipped
-                for outcome in report.get('source_outcomes', []):
-                    matching = _source_error(outcome['kind'], outcome['source'], automatically_skipped)
-                    if matching:
-                        outcome.update(status='skipped', reason=matching['message'])
-                report["complete"] = not remaining and not report.get("stopped")
-                if automatically_skipped:
-                    count = len(automatically_skipped)
-                    outcome = 'stopped' if report.get('stopped') else 'finished'
-                    report["summary"] = (
-                        f"Update {outcome} with {count} problem file{'s' if count != 1 else ''} skipped. "
-                        "Select a skipped file in Media Manager if you want to retry it."
-                    )
-                    if remaining:
-                        report["summary"] += " Some non-file errors still need attention."
-                _save(Path(report["receipt"]), report)
-                return report
+            unresolved.extend(remaining)
+            unsafe = {error.get('kind') for error in remaining}
+            retry_kinds = {error['kind'] for error in newly_skipped} - unsafe
+            if not retry_kinds or None in unsafe:
+                return _finish_retries(attempts, automatically_skipped, unresolved)
+            retry_selected = tuple(kind for kind in KINDS if kind in retry_kinds)
 
 
 def _run(identity, selected, pending=(), *, progress=lambda message: None, cancelled=lambda: False,
@@ -1139,6 +1169,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 report["steps"].append(dict(kind=kind, status="unchanged"))
                 continue
             progress(f"Preparing {kind.lower()} ({item['count']:,} files)…")
+            publication_started = False
             try:
                 folder = root / kind
                 published = []
@@ -1159,6 +1190,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     checkpoint()
                     progress("Publishing the music index and artwork…")
                     emit_stage('Publishing Music', unit + 1, can_stop=False)
+                    publication_started = True
                     published.append(publish_music(stage, progress=progress, **target_args(identity)))
                     output_paths = [".LINNET/LIBRARY.PDB"] + [entry["path"].lstrip("/") for entry in preparation["entries"] if entry["storage"] == "staged"] + [
                         ".LINNET/ART/" + path.name for path in sorted((stage / "ART").glob("*.RGB"))]
@@ -1182,6 +1214,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     checkpoint()
                     progress("Publishing prepared photos…")
                     emit_stage('Publishing Photos', unit + 1, can_stop=False)
+                    publication_started = True
                     published.append(publish_photos(package, **target_args(identity)))
                     output_paths = [".LINNET/PHOTOS/LIBRARY.PIM"]
                 elif kind == "Notes":
@@ -1201,6 +1234,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     checkpoint()
                     progress("Publishing prepared notes…")
                     emit_stage('Publishing Notes', unit + 1, can_stop=False)
+                    publication_started = True
                     published.append(publish_notes(package, **target_args(identity)))
                     output_paths = [".LINNET/NOTES/LIBRARY.NNT"]
                 else:
@@ -1221,6 +1255,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                         checkpoint()
                         source = Path(job["source"])
                         relative = job["relative"]
+                        file_publication_started = False
                         try:
                             key = hashlib.sha256(relative.encode()).hexdigest()[:8].upper()
                             source_info = source.stat()
@@ -1255,6 +1290,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                                             snapshot=catalog_snapshot):
                                             emit_stage('Publishing Videos', unit,
                                                        (index + 0.5) / len(videos), can_stop=False)
+                                            publication_started = file_publication_started = True
                                             result = index_video(published_path, title=label,
                                                                  library_key=relative, ffprobe=ffprobe,
                                                                  **target_args(identity))
@@ -1275,6 +1311,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                 if compatible and source.is_relative_to(root):
                                     emit_stage('Publishing Videos', unit,
                                                (index + 0.5) / len(videos), can_stop=False)
+                                    publication_started = file_publication_started = True
                                     result = index_video(source, title=label, library_key=relative, ffprobe=ffprobe, **target_args(identity))
                                     outputs = [(source.relative_to(root).as_posix(), _hash(source))]
                                     output_paths.append(source.relative_to(root).as_posix())
@@ -1295,6 +1332,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                         raise ValueError("Video changed during preparation; scan again")
                                     emit_stage('Publishing Videos', unit,
                                                (index + 0.5) / len(videos), can_stop=False)
+                                    publication_started = file_publication_started = True
                                     result = publish_video(package, title=label, library_key=relative,
                                                            ffprobe=ffprobe, source_to_preserve=source,
                                                            **target_args(identity))
@@ -1339,6 +1377,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                 from .publish_video import index_ipvf
                                 emit_stage('Publishing Videos', unit,
                                            (index + 0.5) / len(videos), can_stop=False)
+                                publication_started = file_publication_started = True
                                 result = index_ipvf(source, title=label, library_key=relative, **target_args(identity))
                                 published.append(result)
                                 catalog_snapshot.clear()
@@ -1392,6 +1431,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             progress(f"Publishing video {index+1}/{item['count']}: {relative}")
                             emit_stage('Publishing Videos', unit,
                                        (index + 0.5) / len(videos), can_stop=False)
+                            publication_started = file_publication_started = True
                             result = publish_video(package, title=label, library_key=relative,
                                                    source_to_preserve=source, **target_args(identity))
                             catalog_snapshot.clear()
@@ -1415,8 +1455,12 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             video_state.pop(relative, None)
                             state.pop(kind, None)
                             _save(state_path, state)
-                            report["errors"].append(dict(kind=kind, file=relative,
-                                                         source=str(source), message=str(error)))
+                            failure = dict(kind=kind, file=relative, message=str(error))
+                            if file_publication_started:
+                                failure["status"] = "publication-uncertain"
+                            else:
+                                failure["source"] = str(source)
+                            report["errors"].append(failure)
                             progress(f"Video could not finish, continuing with the next file: {relative}: {error}")
                             record()
                     if failed:
@@ -1440,7 +1484,11 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             except Cancelled:
                 raise
             except Exception as error:
-                report["errors"].append(_error_record(kind, error, item, root))
+                if publication_started:
+                    report["errors"].append(dict(kind=kind, message=str(error),
+                                                 status="publication-uncertain"))
+                else:
+                    report["errors"].append(_error_record(kind, error, item, root))
                 progress(f"{kind} could not finish: {error}")
                 record()
         emit_stage('Finishing checks', total_stages - 2)
