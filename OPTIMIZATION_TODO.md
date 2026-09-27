@@ -517,11 +517,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Existing scene captures are reviewed for the intended target policy, and simulator/firmware presentation defines agree without pulling hardware-only code into the simulator.
 
-- [ ] **72 · P2 · Profile: Make Notes wrapping aware of the selected target and themes.** Notes currently wraps at 140 pixels and gathers fonts only from root themes. Profile and design target-aware wrapping using the resolved screen width and allowed fonts, including shared presentation and target-local themes.
+- [x] **72 · P2 · Profile: Make Notes wrapping aware of the selected target and themes.** Notes currently wraps at 140 pixels and gathers fonts only from root themes. Profile and design target-aware wrapping using the resolved screen width and allowed fonts, including shared presentation and target-local themes.
 
   Location: [tools/content/notes.py](C:/Users/user/Desktop/Projects/linnet/tools/content/notes.py), [tools/content/compiler.py](C:/Users/user/Desktop/Projects/linnet/tools/content/compiler.py) — `_display_widths / _display_lines / compile_notes`.
 
   Completion check: Notes fit monochrome, Photo, and 320-pixel layouts; format limits and truncation stay explicit, and any new wrapping recipe participates in preparation identity.
+
+  Verification note: The recipe resolves target and profile screens, allowed root/profile/target themes, font advances, list geometry, and target presentation width adjustments. It keeps the 31-character and 256-line limits, and its digest participates in preparation identity. Packages for Q21, Photo, Video, and Classic passed host width checks. Temporary packages rendered legibly on A1099 and A1136 screens; each exact package was removed after a hash check, and both devices returned to healthy Link.
 
 - [x] **73 · P1 · Code: Bring the porting guide into agreement with source resolution.** The guide omits the HAL/target SOURCES convention and board.c/power.c fallbacks, and describes M25 screens as local although color320 is shared. Document the actual override rules and current validation entry points.
 

@@ -1,7 +1,9 @@
 """Prepare read-only Notes for the device's bounded ASCII display."""
 from pathlib import Path
 from itertools import islice
+from functools import lru_cache
 import hashlib
+import importlib.util
 import struct
 import json
 import tomllib
@@ -19,25 +21,95 @@ MAX_FILE = 16 + MAX_NOTES * (TITLE + RECORD)
 EXTENSIONS = {'.txt', '.md', '.text'}
 
 
-def _display_widths():
-    # Fit the narrowest built-in list (Aurora), accounting for proportional
-    # glyph widths in every bundled theme so switching themes loses no text.
-    widths = [8] * 95
+@lru_cache(maxsize=8)
+def _display_recipe(target):
+    """Use the narrowest Notes list and widest glyphs allowed by this target."""
+    from .compiler import load_font, scale_layout
+    from .layouts import apply_layout
+    from .tsx import compile_tsx
     root = Path(__file__).resolve().parents[2]
-    paths = set()
-    for manifest in (root/'themes').glob('*/theme.toml'):
-        theme = tomllib.loads(manifest.read_text(encoding='utf-8'))['theme']
-        paths.add((manifest.parent/theme.get('font', '../../sdk/assets/font.json')).resolve())
-    for path in paths:
-        font = json.loads(path.read_text(encoding='utf-8'))
+    manifest = tomllib.loads((root / 'targets' / target / 'target.toml').read_text(encoding='utf-8'))
+    width, height = manifest['lcd_width'], manifest['lcd_height']
+    profile = manifest.get('presentation_profile')
+    profile_root = root / 'ui/profiles' / profile if profile else None
+    screen_root = root / 'targets' / target / 'screens'
+    if not screen_root.is_dir() and profile_root is not None:
+        screen_root = profile_root / 'screens'
+    native = screen_root.is_dir()
+    screen = (screen_root / 'linnet.system.notes/screen.tsx' if native else
+              root / 'ui/system/notes/screen.tsx')
+    colors = {name: '#000000' for name in ('foreground', 'background', 'accent',
+                                           'muted', 'panel', 'selection_fg', 'selection_bg')}
+    nodes, focus = compile_tsx(screen.read_text(encoding='utf-8'), colors,
+                               width if native else 220, height if native else 176)
+    scene = dict(id='linnet.system.notes', title='Notes', nodes=nodes,
+                 count=len(nodes), focus_node=focus)
+    layouts = None
+    if profile_root is not None and native:
+        layout_path = profile_root / 'layouts.py'
+        module_spec = importlib.util.spec_from_file_location('linnet_notes_' + profile, layout_path)
+        layouts = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(layouts)
+    paths = {}
+    scopes = [root / 'themes']
+    if profile_root is not None:
+        scopes.append(profile_root / 'themes')
+    scopes.append(root / 'targets' / target / 'themes')
+    for scope in scopes:
+        for path in sorted(scope.glob('*/theme.toml')):
+            spec = tomllib.loads(path.read_text(encoding='utf-8'))
+            metadata = spec['theme']
+            if target in metadata.get('targets', [target]):
+                paths[metadata['id']] = (path, spec)
+    allowed = manifest.get('ui', {}).get('allowed_themes', list(paths))
+    if not allowed or any(name not in paths for name in allowed):
+        raise ValueError(f'{target}: Notes themes are unavailable')
+    presentation_path = root / 'targets' / target / 'presentation.toml'
+    presentation = (tomllib.loads(presentation_path.read_text(encoding='utf-8'))
+                    if presentation_path.is_file() else {})
+    widths = [0] * 95
+    pixel_limit = width
+    for name in allowed:
+        path, spec = paths[name]
+        metadata = spec['theme']
+        font_path = path.parent / metadata.get('font', '../../sdk/assets/font.json')
+        font = load_font(font_path.read_bytes())
         advances = font.get('advances', [font['advance']] * 95)
         widths = [max(a, b) for a, b in zip(widths, advances)]
-    return widths
+        layout = ('default' if manifest['lcd_format'].startswith('gray') else
+                  metadata.get('layout', 'default'))
+        theme = dict(layout=layout, font=font,
+                     metrics=spec['metrics'])
+        if native:
+            if layouts is not None:
+                variant = layouts.apply_layout([scene], theme)
+            else:
+                from copy import deepcopy
+                variant = deepcopy([scene])
+        else:
+            variant = scale_layout(apply_layout([scene], theme,
+                                                compact=manifest['lcd_format'].startswith('gray')),
+                                   width, height)
+        for rule in presentation.get('adjustments', []):
+            if rule.get('scene', scene['id']) != scene['id']:
+                continue
+            for node in variant[0]['nodes']:
+                if all(node.get(key) == rule[key] for key in ('kind', 'text') if key in rule):
+                    for key in ('x', 'y', 'w', 'h'):
+                        if key in rule:
+                            node[key] = rule[key]
+        listing = next(node for node in variant[0]['nodes'] if node['kind'] == 6)
+        padding = spec['metrics']['padding']
+        if not native and width != 220:
+            padding = (padding * width + 110) // 220
+        pixel_limit = min(pixel_limit, listing['w'] - padding - 18)
+    if pixel_limit < max(widths):
+        raise ValueError(f'{target}: Notes list is too narrow for its selected fonts')
+    recipe = hashlib.sha256(json.dumps([target, pixel_limit, widths], separators=(',', ':')).encode()).hexdigest()[:16]
+    return tuple(widths), pixel_limit, recipe
 
 
-def _display_lines(text, widths=None):
-    if widths is None:
-        widths = _display_widths()
+def _display_lines(text, widths, pixel_limit):
     for paragraph in text.split('\n'):
         if not paragraph:
             yield ''
@@ -47,7 +119,7 @@ def _display_lines(text, widths=None):
             length, pixels = 0, 0
             for char in paragraph[start:start+31]:
                 advance = widths[ord(char)-32]
-                if pixels + advance > 140:
+                if pixels + advance > pixel_limit:
                     break
                 pixels += advance
                 length += 1
@@ -70,7 +142,7 @@ def _ascii(text):
     return normalized.encode('ascii', 'replace').decode('ascii')
 
 
-def compile_notes(source, output, *, excluded=None, progress=None, checkpoint=lambda: None):
+def compile_notes(source, output, *, target, excluded=None, progress=None, checkpoint=lambda: None):
     from .publish import _plain
     original_source = Path(os.path.abspath(source))
     _plain(original_source, Path(original_source.anchor))
@@ -89,7 +161,7 @@ def compile_notes(source, output, *, excluded=None, progress=None, checkpoint=la
                 raise ValueError(f'Notes supports at most {MAX_NOTES} documents; found more than {MAX_NOTES}')
     files.sort(key=lambda p: p.as_posix().casefold())
     titles, records, changed = bytearray(), bytearray(), []
-    widths = _display_widths()
+    widths, pixel_limit, recipe = _display_recipe(target)
     for index, path in enumerate(files):
         checkpoint()
         if progress:
@@ -113,7 +185,7 @@ def compile_notes(source, output, *, excluded=None, progress=None, checkpoint=la
         title = ''.join(c if 32 <= ord(c) <= 126 else '?' for c in title)
         if len(title) > 63:
             raise SourceError(f'Note title exceeds 63 display characters: {path}', path)
-        lines = list(islice(_display_lines(text, widths), LINES + 1))
+        lines = list(islice(_display_lines(text, widths, pixel_limit), LINES + 1))
         if len(lines) > LINES:
             raise SourceError(f'Note exceeds {LINES} display lines; split it into smaller documents: {path}', path)
         if not original.isascii() or not path.relative_to(source).as_posix().isascii():
@@ -137,7 +209,9 @@ def compile_notes(source, output, *, excluded=None, progress=None, checkpoint=la
     finally:
         temporary.unlink(missing_ok=True)
     report['package'] = str(output)
-    report.update(source=str(source), ascii_converted=changed, note='Prepared ASCII display copies; original documents are unchanged.')
+    report.update(source=str(source), ascii_converted=changed, target=target,
+                  wrapping_pixels=pixel_limit, wrapping_recipe=recipe,
+                  note='Prepared ASCII display copies; original documents are unchanged.')
     return report
 
 

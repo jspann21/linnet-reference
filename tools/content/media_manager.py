@@ -294,7 +294,8 @@ def preparation_option(kind, identity, photo_dimension=640, music_verification='
                        'art8' if target['lcd_format'] == 'gray2-horizontal' else 'art7')
         return f"{music_verification}-duration-search-names-album-owner2-title-order1-retail2-recent-album-gain-{art_version}-{identity['target_id']}"
     if kind == 'Notes':
-        return 'theme-fonts1'
+        from .notes import _display_recipe
+        return f"target-wrap2-{_display_recipe(identity['target_id'])[2]}"
     if kind == 'Photos':
         profile = identity['media_profile']
         return f"retail-photos3-{photo_dimension}-{profile['photo_width']}x{profile['photo_height']}"
@@ -1179,6 +1180,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     note_progress = _throttled_progress(checkpoint, progress,
                         lambda event: f'Preparing notes {event["current"]+1}/{event["total"]}: {Path(event["file"]).name}')
                     preparation = compile_notes(folder, package,
+                        target=identity['target_id'],
                         progress=note_progress, checkpoint=checkpoint,
                         excluded={Path(value).relative_to("Notes").as_posix()
                                   for value in skipped["Notes"]})
