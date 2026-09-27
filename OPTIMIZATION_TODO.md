@@ -218,11 +218,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: The prior blocked state is restored even on failure; each bulk operation performs its intended final control update and does not emit intermediate user actions.
 
-- [ ] **34 · P3 · Profile: Reduce startup artwork conversion overhead.** Startup loads the same asset for three crops and uses per-pixel QColor access to derive transparency. Measure the actual startup-sized crops before choosing shared loading or a faster exact transformation.
+- [x] **34 · P3 · Profile: Reduce startup artwork conversion overhead.** Startup loads the same asset for three crops and uses per-pixel QColor access to derive transparency. Measure the actual startup-sized crops before choosing shared loading or a faster exact transformation.
 
   Location: [tools/studio/media_desktop.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/media_desktop.py) — `boot_artwork`.
 
   Completion check: Startup improves measurably with identical pixels, alpha, and device-pixel ratio; avoid adding a new dependency for a negligible gain.
+
+  Verification note: The source pixmap is loaded once per process and the existing transparency calculation writes the ARGB32 buffer directly. All three startup crops matched the previous implementation byte for byte, including alpha, dimensions, and device-pixel ratio. Across five fresh offscreen GUI processes per version, median `MediaWindow` construction fell from 120.7 to 84.4 ms; the three-crop median fell from 40.4 to 9.3 ms. No dependency was added.
 
 
 **Improve preparation and validation**

@@ -50,23 +50,33 @@ ICONS = {
 }
 
 
+@lru_cache(maxsize=1)
+def _boot_artwork_source():
+    return QPixmap(str(Path(__file__).resolve().parents[2] / 'assets' / 'boot-screen.png'))
+
+
 def boot_artwork(rect, width, height):
-    artwork = QPixmap(str(Path(__file__).resolve().parents[2] / 'assets' / 'boot-screen.png'))
+    artwork = _boot_artwork_source()
     image = artwork.copy(*rect).scaled(width * 2, height * 2, Qt.KeepAspectRatio,
                                       Qt.SmoothTransformation).toImage().convertToFormat(QImage.Format_ARGB32)
     # The boot artwork has a near-black matte. Render it as transparency while
     # preserving the silver and cyan lettering and antialiased edges.
+    pixels = image.bits()
+    stride = image.bytesPerLine()
+    red, green, blue, alpha_byte = ((2, 1, 0, 3) if sys.byteorder == 'little' else
+                                    (1, 2, 3, 0))
     for y in range(image.height()):
         for x in range(image.width()):
-            color = image.pixelColor(x, y)
-            peak = max(color.red(), color.green(), color.blue())
+            offset = y * stride + x * 4
+            peak = max(pixels[offset + red], pixels[offset + green], pixels[offset + blue])
             alpha = max(0, (peak - 24) * 255 // 231)
             if alpha:
-                color = QColor(*(min(255, channel * 255 // peak)
-                                 for channel in (color.red(), color.green(), color.blue())), alpha)
+                for channel in (red, green, blue):
+                    index = offset + channel
+                    pixels[index] = min(255, pixels[index] * 255 // peak)
+                pixels[offset + alpha_byte] = alpha
             else:
-                color = QColor(0, 0, 0, 0)
-            image.setPixelColor(x, y, color)
+                pixels[offset:offset + 4] = b'\0\0\0\0'
     pixmap = QPixmap.fromImage(image)
     pixmap.setDevicePixelRatio(2)
     return pixmap
