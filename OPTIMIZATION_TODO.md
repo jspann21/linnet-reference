@@ -615,11 +615,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: After refresh, users can still inspect the last operation's completed, skipped, and failed work and its saved receipt; local source paths and device data are not published externally.
 
-- [ ] **95 · P2 · Code: Centralize device-session reset behavior.** The no-device, changed-device, and ejected branches independently reset artwork, menus, games, rows, setup state, selections, and readiness. Extract one device-session transition routine with explicit handling for user drafts and display state.
+- [x] **95 · P2 · Code: Centralize device-session reset behavior.** The no-device, changed-device, and ejected branches independently reset artwork, menus, games, rows, setup state, selections, and readiness. Extract one device-session transition routine with explicit handling for user drafts and display state.
 
   Location: [tools/studio/media_desktop.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/media_desktop.py) — `completed devices / completed eject / update_device`.
 
   Completion check: Disconnect, reconnect, selection of another iPod, and safe eject consistently clear device-derived state while retaining only explicitly device-bound drafts and applicable user preferences.
+
+  Verification note: The shared transition resets device rows, artwork, setup, game/screen state, video selection, filters, and capacity. Queued computer sources and the last receipt remain bound to their iPod across disconnect/eject, then clear on a different iPod; view settings remain user preferences. Offscreen checks covered disconnect, same-device reconnect, device switch, discovery with no devices, and eject.
 
 - [x] **96 · P2 · Code: Unify the Media Manager launch path and import errors.** media_app.launch catches every ImportError as a missing PySide6 dependency, while the CLI has a separate narrower ModuleNotFoundError path. Route both launchers through one helper that identifies missing Qt packages without disguising unrelated import failures.
 

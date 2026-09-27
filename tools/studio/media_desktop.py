@@ -460,6 +460,7 @@ class MediaWindow(QMainWindow):
         self.last_preparation = None
         self.rows, self.readiness, self.pending, self.trash_rows = [], {}, [], []
         self.pending_keys = set()
+        self.pending_for = None
         self.queue_context = None
         self.discovery_errors = []
         self.apple_info = None
@@ -1208,6 +1209,10 @@ class MediaWindow(QMainWindow):
             self.queue_context = None
             if context is None or not context['dialog'].isVisible():
                 return
+            if not self.same_device(self.identity, context['identity']):
+                context['error'].setText('The selected iPod changed while checking these sources. Choose them again.')
+                context['error'].show()
+                return
             if error:
                 context['error'].setText(error)
                 context['error'].show()
@@ -1215,6 +1220,8 @@ class MediaWindow(QMainWindow):
             additions = result
             self.pending.extend(additions)
             self.pending_keys.update((kind, os.path.normcase(path)) for kind, path in additions)
+            if self.pending:
+                self.pending_for = dict(context['identity'])
             kind, source = context['kind'], Path(context['paths'][0])
             self.settings.setValue(f'import_folder/{kind}', str(source if context['folder'] else source.parent))
             self.prep_checks[kind].setChecked(True)
@@ -1276,15 +1283,8 @@ class MediaWindow(QMainWindow):
             devices, errors = result['devices'], result['errors']
             self.discovery_errors = errors
             if not devices:
-                self.covers.invalidate()
-                self.screen_loaded_for = None; self.games_loaded_for = None
-                self.identity = None; self.rows = []; self.inventory = None; self.review = None
-                self.apple_info = None
-                self.trash_rows = []; self.readiness = {}; self.group = None
-                self.video_selection.clear(); self.video_mode = 'all'
-                self.update_preparation()
-                self.device_name.setText('No iPod connected'); self.device_info.setText('Connect in Disk Mode'); self.render_library()
-                self.update_controls()
+                self.transition_device(None)
+                self.device_name.setText('No iPod connected'); self.device_info.setText('Connect in Disk Mode')
                 if errors:
                     self.show_error('Could not read a connected iPod: ' + '; '.join(errors))
                 else:
@@ -1304,11 +1304,7 @@ class MediaWindow(QMainWindow):
             if errors:
                 self.notice.setText('Other connected iPods could not be read: ' + '; '.join(errors))
                 self.notice.show()
-            if self.identity and any(self.identity.get(key) != identity.get(key)
-                                     for key in ('disk_serial', 'volume_serial', 'root')):
-                self.covers.invalidate(); self.video_selection.clear(); self.video_mode = 'all'; self.group = None
-                self.screen_loaded_for = None; self.games_loaded_for = None
-            self.identity = identity
+            self.transition_device(identity)
             self.refresh()
         elif tag == 'scan':
             cached_photos = {row['path']: (row['bytes'], row['mtime_ns'], row.get('artwork')) for row in self.rows
@@ -1358,6 +1354,8 @@ class MediaWindow(QMainWindow):
             if result['complete']:
                 self.pending = [p for p in self.pending if p not in self.submitted]
                 self.pending_keys = {(kind, os.path.normcase(path)) for kind, path in self.pending}
+                if not self.pending:
+                    self.pending_for = None
                 self.video_selection.difference_update(self.submitted_videos)
             self.update_preparation(); self.refresh()
         elif tag in ('remove', 'restore', 'erase', 'sync', 'install', 'skipped'):
@@ -1366,14 +1364,9 @@ class MediaWindow(QMainWindow):
                 self.prep_results.setPlainText(result['summary']); self.prep_results.show(); self.navigate('Preparation')
             self.refresh()
         elif tag == 'eject':
-            self.covers.invalidate()
-            self.screen_loaded_for = None; self.games_loaded_for = None
-            self.identity = self.inventory = self.review = None; self.rows = []; self.trash_rows = []
-            self.apple_info = None
-            self.readiness = {}; self.group = None; self.video_selection.clear(); self.video_mode = 'all'
-            self.update_preparation()
+            self.transition_device(None)
             self.device_name.setText('Safely ejected'); self.device_info.setText('You can disconnect your iPod.'); self.capacity.setValue(0)
-            self.render_library(); self.show_progress('Your iPod is safe to disconnect.')
+            self.show_progress('Your iPod is safe to disconnect.')
         self.update_controls()
 
     def discover(self):
@@ -1403,6 +1396,50 @@ class MediaWindow(QMainWindow):
         verification = 'full' if self.verify_audio.isChecked() else 'metadata'
         self.work('scan', lambda: media_status.inspect(identity, dimension, verification),
                   'Reading your collection and checking prepared media…')
+
+    @staticmethod
+    def same_device(first, second):
+        return bool(first and second) and all(first.get(key) == second.get(key)
+            for key in ('root', 'disk_serial', 'volume_serial', 'target_id'))
+
+    def transition_device(self, identity):
+        """Clear device-derived state while retaining a draft for its own iPod."""
+        if self.same_device(self.identity, identity):
+            self.identity = identity
+            return
+        if identity and self.pending_for and not self.same_device(self.pending_for, identity):
+            self.pending = []
+            self.pending_keys.clear()
+            self.pending_for = None
+        if identity and self.last_preparation and not self.same_device(self.last_preparation[0], identity):
+            self.last_preparation = None
+            self.prep_results.clear()
+            self.prep_results.hide()
+        self.covers.invalidate()
+        self.identity = identity
+        self.inventory = self.review = self.apple_info = None
+        self.rows = []
+        self.trash_rows = []
+        self.readiness = {}
+        self.group = None
+        self.video_selection.clear()
+        self.video_mode = 'all'
+        self.screen_loaded_for = self.games_loaded_for = None
+        self.screen_state = screen_settings.defaults(identity)
+        self.render_screen_items()
+        self.screen_status.setText('Loading screen settings…' if identity else
+                                   'Connect an iPod in Disk Mode to save screen settings.')
+        for check in self.game_checks:
+            with QSignalBlocker(check):
+                check.setChecked(False)
+        self.games_status.setText('Loading games…' if identity else 'Connect an iPod in Disk Mode.')
+        self.playlist_draft = None
+        self._library_source, self._library_cache, self._library_stats = None, {}, {}
+        self.capacity.setValue(0)
+        self.update_filters()
+        self.update_preparation()
+        self.render_library()
+        self.update_controls()
 
     def update_device(self):
         identity = self.identity
@@ -1628,7 +1665,8 @@ class MediaWindow(QMainWindow):
                     additions.append((kind, str(source)))
                     known.add(key)
             return additions
-        self.queue_context = dict(kind=kind, paths=paths, dialog=dialog, error=error_label, folder=folder)
+        self.queue_context = dict(kind=kind, paths=paths, dialog=dialog, error=error_label,
+                                  folder=folder, identity=identity)
         self.work('queue', validate, 'Checking selected sources…')
 
     def remove_queued(self):
@@ -1637,6 +1675,8 @@ class MediaWindow(QMainWindow):
         chosen = {index.row() for index in self.queue_table.selectionModel().selectedRows()}
         self.pending = [item for index, item in enumerate(self.pending) if index not in chosen]
         self.pending_keys = {(kind, os.path.normcase(path)) for kind, path in self.pending}
+        if not self.pending:
+            self.pending_for = None
         self.update_preparation()
 
     def choose_videos(self):
