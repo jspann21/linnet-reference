@@ -6,6 +6,14 @@ Each build writes its generated inputs, objects, images, and report to a unique
 `out/<profile>/<target>/<kind>/runs/<invocation>/` directory. The paths in a
 build report refer to artifacts from that invocation, including when builds
 overlap or the source branch changes between builds.
+Run `python -m tools.studio.artifact_inventory > out/artifact-inventory.json`
+for a read-only inventory. Each recognized build lists its target, profile,
+kind, build ID, available content ID, artifact paths and sizes, and known plan
+or receipt references. Recovery records list the existing files they reference.
+The summary counts referenced files and unclassified files separately. Older
+reports may lack a content ID; retain their build ID and report path to identify
+them. The inventory does not delete, relocate, or classify unrecognized files
+as safe to remove. Inspect any scan errors before relying on its counts.
 Compilation uses two workers by default. Set `--jobs` to an integer from 1 to 4
 to adjust its CPU and memory use; linking remains serial.
 

@@ -713,11 +713,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Verification note: `third_party/README.md` now indexes all eight vendor directories with provenance, license, adaptations, and build selection/flags. The repository README links it; local links resolve. Unknown exact upstream revisions for h264bsd and PacketVideo are explicit.
 
-- [ ] **108 · P2 · Profile: Provide an artifact inventory before any cleanup of local output.** out contains builds and scratch results, but local-artifacts.md warns that plans can depend on exact paths, backups, predecessor files, and receipts. Design a read-only inventory showing artifact type, source identity, target, size, and known receipt/plan references before proposing retention rules.
+- [x] **108 · P2 · Profile: Provide an artifact inventory before any cleanup of local output.** out contains builds and scratch results, but local-artifacts.md warns that plans can depend on exact paths, backups, predecessor files, and receipts. Design a read-only inventory showing artifact type, source identity, target, size, and known receipt/plan references before proposing retention rules.
 
   Location: [docs/local-artifacts.md](C:/Users/user/Desktop/Projects/linnet/docs/local-artifacts.md), [tools/studio/build.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/build.py), [tools/studio/native_bootstrap.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/native_bootstrap.py), [tools/studio/installer.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/installer.py) — `build reports / installation plans / recovery artifacts`.
 
   Completion check: Builds from earlier branch states are identifiable, durable recovery dependencies are protected, and unknown or in-use artifacts remain retained. Any later cleanup must be explicit and separate from inventory.
+
+  Verification note: The read-only inventory recognized 882 reports across existing invocation layouts, including 662 with content IDs; it found 8 recovery records, 43 referenced files, and retained 37,665 unclassified files. The scan reported no errors. No cleanup occurs.
 
 - [ ] **109 · P3 · Code: Expand dense control flow in the modules being changed.** Several core modules compress multiple state updates and conditional actions onto single lines. Apply focused readability cleanup around future changes, especially manifest validation, build rules, job completion, and executive state transitions; avoid a repository-wide formatting pass.
 
