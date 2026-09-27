@@ -677,11 +677,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Any optimization lowers measured copy or transfer work with identical screenshots, valid alternating buffers, correct theme-frame acknowledgement, and no tearing on hardware.
 
-- [ ] **104 · P2 · Profile: Report useful memory headroom for each target and profile.** Build reports include allocated sections and limits, and linker scripts already protect reserved regions. Add a readable breakdown of resident memory, stacks, staging, artwork, and retained areas, with measured high-water data kept distinct from static reservations.
+- [x] **104 · P2 · Profile: Report useful memory headroom for each target and profile.** Build reports include allocated sections and limits, and linker scripts already protect reserved regions. Add a readable breakdown of resident memory, stacks, staging, artwork, and retained areas, with measured high-water data kept distinct from static reservations.
 
   Location: [tools/studio/build.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/build.py), [hal/pp502x/memory.ld](C:/Users/user/Desktop/Projects/linnet/hal/pp502x/memory.ld), [hal/s5l8702/memory.ld](C:/Users/user/Desktop/Projects/linnet/hal/s5l8702/memory.ld), [kernel/executive.c](C:/Users/user/Desktop/Projects/linnet/kernel/executive.c) — `report.memory / linker assertions / arena high-water marks`.
 
   Completion check: A port or feature change can be compared against its prior memory budget without double-counting overlapping lifetimes; existing overlap assertions and hardware qualification requirements remain authoritative.
+
+  Verification note: Build reports now separate linked resident extent and headroom from the stack subset, artwork sections, staging, recovery, and retained regions. Runtime high-water is explicitly unmeasured. Existing Photo, Video, Classic, Q21, Boot, and dev section reports produced plausible nonnegative headroom; a fresh Photo release report contains the breakdown and still passes the linker and release checks.
 
 **File organization, ownership, and reviewable cleanup**
 

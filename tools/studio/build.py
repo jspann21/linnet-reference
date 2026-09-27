@@ -113,6 +113,34 @@ def source_identity(configuration, chain):
     digest.update(json.dumps({k: {field: v[field] for field in ('version', 'sha256')} for k, v in chain.items()}, sort_keys=True).encode())
     return digest.hexdigest()
 
+def memory_budget(sections, spec, resident_limit):
+    """Report linked placement and separate manifest reservations, not a sum of lifetimes."""
+    base = spec['load_address']
+    capacity = spec['os_capacity_bytes']
+    resident = [item for item in sections if base <= item['address'] < base + capacity]
+    extent = max((item['address'] + item['bytes'] - base for item in resident), default=0)
+    artwork = [item for item in sections if item['name'] in
+               ('.cover_low', '.cover_high', '.cover_catalog')]
+    stage = [item for item in sections if item['name'] in ('.update_staging', '.dev_staging')]
+    snapshot = [item for item in sections if item['name'] == '.dev_snapshot']
+    retained = [item for item in sections if spec['mailbox_address'] <= item['address'] <
+                spec['mailbox_address'] + spec['mailbox_bytes']]
+    return dict(
+        basis='linked sections and manifest reservations; runtime high-water is not measured',
+        resident=dict(address=base, capacity_bytes=capacity, limit_bytes=resident_limit,
+                      linked_extent_bytes=extent, headroom_bytes=resident_limit - extent,
+                      linked_section_bytes=sum(item['bytes'] for item in resident),
+                      stack_bytes=sum(item['bytes'] for item in resident if item['name'] == '.stacks')),
+        artwork=dict(linked_section_bytes=sum(item['bytes'] for item in artwork),
+                     sections={item['name']: item['bytes'] for item in artwork}),
+        staging=dict(address=spec['stage_address'], capacity_bytes=spec['stage_bytes'],
+                     linked_section_bytes=sum(item['bytes'] for item in stage)),
+        recovery=dict(address=spec['recovery_snapshot_address'],
+                      capacity_bytes=spec['recovery_snapshot_bytes'],
+                      linked_section_bytes=sum(item['bytes'] for item in snapshot)),
+        retained=dict(address=spec['mailbox_address'], capacity_bytes=spec['mailbox_bytes'],
+                      linked_section_bytes=sum(item['bytes'] for item in retained)))
+
 def build(profile, target, verify=False, kind="os", probe="frame", device_serial="", system_config=None,
           boot_selector="none", jobs=2):
     target = target_id(target)
@@ -481,7 +509,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
                   source_files=[selection['path'] for selection in source_selections],
                   source_selections=source_selections,
                   artifacts={key: str(path.relative_to(ROOT)) for key, path in dict(elf=elf, los=los, ipod=ipod, map=mapfile).items()},
-                  memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=resident_limit, retained_limit_bytes=spec['mailbox_bytes']),
+                  memory=dict(regions=sections, total_allocated_bytes=sum(s['bytes'] for s in sections), resident_limit_bytes=resident_limit, retained_limit_bytes=spec['mailbox_bytes'],
+                              static_budget=memory_budget(sections, spec, resident_limit)),
                   release_exclusion=verification, limitation=watchdog_limitation)
     if ui_report is not None:report["ui"]=ui_report
     (dest / (prefix + ".json")).write_text(json.dumps(report, indent=2) + "\n")
