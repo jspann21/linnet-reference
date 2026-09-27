@@ -822,6 +822,7 @@ class MediaWindow(QMainWindow):
         labels = screen_settings.SCREENS[name]
         selected = self.screen_state[name]
         available, unavailable = screen_settings.item_availability(name, self.identity)
+        locked = screen_settings.locked_items(name, self.identity)
         self.screen_unavailable.setText('Not available on this device: ' + ', '.join(labels[i] for i in unavailable))
         self.screen_unavailable.setVisible(bool(unavailable))
         order = [i for i in selected if i in available] + [i for i in available if i not in selected]
@@ -832,10 +833,10 @@ class MediaWindow(QMainWindow):
                 item = QListWidgetItem(shown); item.setData(Qt.UserRole, i)
                 item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled)
                 item.setCheckState(Qt.Checked if i in selected else Qt.Unchecked)
-                if i in screen_settings.REQUIRED.get(name, set()):
+                if i in locked:
                     item.setFlags(item.flags() & ~Qt.ItemIsUserCheckable)
                     item.setText(labels[i] + ' (always included)')
-                    item.setToolTip('Always available so you can reach settings and USB access.')
+                    item.setToolTip('This item is always included by the device.')
                 elif labels[i] in screen_settings.HINTS:
                     item.setToolTip(screen_settings.HINTS[labels[i]])
                 self.screen_items.addItem(item)

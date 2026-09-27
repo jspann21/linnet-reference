@@ -26,7 +26,8 @@ def item_availability(name, identity=None):
     configured = resolve_features(settings)
     spec = target_spec(target)
     features = resolve_features(settings, spec)
-    game_app = spec['capabilities'].get('games', False) and 'linnet.system.games' in settings.get('ui', {}).get('apps', [])
+    apps = set(settings.get('ui', {}).get('apps', []))
+    game_app = spec['capabilities'].get('games', False) and 'linnet.system.games' in apps
     available, unavailable = [], []
     for i, item in enumerate(ITEMS[name]):
         feature = item.feature
@@ -34,6 +35,8 @@ def item_availability(name, identity=None):
             continue
         if feature == 'demo_or_games' and game_app:
             available.append(i)
+            continue
+        if item.target and item.target != '@sync' and item.target not in apps:
             continue
         if feature == 'demo_or_games':
             feature = 'demo'
@@ -48,6 +51,14 @@ def item_availability(name, identity=None):
 
 def available_items(name, identity=None):
     return item_availability(name, identity)[0]
+
+
+def locked_items(name, identity=None):
+    """Items firmware restores automatically in addition to navigation anchors."""
+    locked = set(REQUIRED.get(name, ()))
+    if name == 'Settings' and 10 in available_items(name, identity):
+        locked.add(10)
+    return locked
 
 
 def defaults(identity=None):
@@ -72,7 +83,7 @@ def encode(state):
     return bytes(data) + struct.pack('<I', zlib.crc32(data))
 
 
-def decode(data):
+def decode(data, identity=None):
     if len(data) != 80 or data[:8] != b'MENU' + struct.pack('<I', 1) or zlib.crc32(data[:76]) != struct.unpack_from('<I', data, 76)[0]:
         raise ValueError('Screen settings are damaged or from an unsupported version. Reset defaults to replace them.')
     state = {name: list(data[9 + g * 17:9 + g * 17 + data[8 + g * 17]]) for g, name in enumerate(SCREENS)}
@@ -83,6 +94,8 @@ def decode(data):
     settings = state['Settings']
     if 0 in settings and 10 not in settings:
         settings.insert(settings.index(0) + 1, 10)
+    if identity is not None and 10 not in available_items('Settings', identity):
+        settings[:] = [item for item in settings if item != 10]
     return state
 
 
@@ -94,7 +107,7 @@ def read(identity):
     if not path.exists():
         return defaults(identity)
     with path.open('rb') as reader:
-        return decode(reader.read(81))
+        return decode(reader.read(81), identity)
 
 
 def save(identity, state):

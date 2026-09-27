@@ -467,7 +467,7 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Labels, availability, defaults, and required navigation agree on every target, and previously saved menu files retain their meaning.
 
-  Verification note: Host and firmware now consume one stable-ID definition. All four target defaults and availability sets were checked; an older MENUS.BIN fixture retained its Home Extras and Settings migration. Photo and Video development images booted in RAM on A1099 and A1136, reached healthy Link, and rendered Home and Settings through synthetic input.
+  Verification note: Host and firmware now consume one stable-ID definition. All four target defaults and availability sets were checked against compiled scenes; Video Settings is shown only where that scene exists and locked in the editor because firmware restores it automatically. An older MENUS.BIN fixture retained its Home Extras and Settings migration. Photo and Video development images booted in RAM on A1099 and A1136, reached healthy Link, and rendered Home and Settings through synthetic input.
 
 - [x] **64 · P1 · Code: Report the precise failing target field.** Several manifest checks combine many unrelated fields into errors such as invalid target identity or invalid native video profile. Break these into named field and cross-field diagnostics that show the target, rejected value, and applicable bound.
 
