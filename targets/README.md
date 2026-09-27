@@ -15,6 +15,23 @@ follow fixed paths, so adding a model does not require another build table.
 
 All targets expose their installation status through the same Media Manager. `build_enabled = false` explicitly marks an incomplete port and requires a `bringup_blocker`; it cannot enable installation. A1238 uses the independent S5L8702 HAL and target-owned NOR maintenance path.
 
+## Qualification record
+
+This table records the supported build and installation scope. A successful
+build or simulator run establishes only host-side behavior. Physical checks
+require the stated hardware and the matching private receipts described in
+[local artifacts](../docs/local-artifacts.md).
+
+| Target | Local build and simulator scope | Physical scope and recovery | Open qualification and evidence |
+| --- | --- | --- | --- |
+| [Photo P98](photo4g-p98/README.md) | Release OS and Boot, dev OS, 220 × 176 UI | A1099/P98, 32 MiB RAM; directory Boot and guarded A/B OS updates are enabled for matching device identities | Primary development target. Keep device observations and recovery receipts with the exact specimen; the [device procedure](../docs/device-link.md) describes Link and Disk Mode. |
+| [Video M25](video5g-m25/README.md) | Release OS and Boot, dev OS, 320 × 240 UI | Verified 30 GB MA146/M25, 32 MiB RAM; persistent Boot/OS and rollback exercised | [Qualification results](video5g-m25/QUALIFICATION.md) distinguish Link observations from physical controls and sound. USB reliability, charging/dock measurements, release-image operation, and larger workloads remain open; other A1136 variants are unqualified. |
+| [monochrome Q21](ipod4g-q21/target.toml) | Release OS/Boot and 160 × 128 UI with a compatible local content selection | MP102/Q21 identity, 32 MiB RAM; directory Boot and guarded A/B updates are enabled by the manifest | No source-controlled physical qualification record. Confirm display, controls, storage variant, recovery, and audio on the exact device before claiming physical support. |
+| [Classic N25](classic6g-n25/target.toml) | Release OS/Boot and 320 × 240 UI | A1238/N25, 64 MiB RAM; Native Boot, OS, Link, Disk Mode and H.264 VGA playback have been exercised on the qualified specimen. NOR bootstrap and recovery require its device-specific workflow; automatic installer is disabled. | MPEG-4 performance qualification remains open. [Apple stock-music scope](../docs/apple-stock-music.md) is specimen-bound; detailed device receipts belong in local artifacts. |
+
+The manifests list accepted USB and sector-size variants for discovery; that
+list does not extend physical qualification to every storage configuration.
+
 `presentation_profile = "color320"` shares native screens, themes and layout generation from `ui/profiles/color320/` between A1136 and A1238. A target `screens/` directory replaces the profile's complete screen set; target-local themes are added after profile themes and replace matching theme IDs. Display dimensions must match. The Classic owns its Cobalt and Ember themes under its target directory. `sdram_address` supports nonzero physical RAM bases; it defaults to zero for PortalPlayer targets.
 
 ## Repository contract

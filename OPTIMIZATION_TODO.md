@@ -483,11 +483,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Every named path and command resolves in the current checkout, and a contributor can distinguish shared defaults, target overrides, extra sources, and available hardware validation procedures.
 
-- [ ] **74 · P2 · Code: Use a consistent per-target qualification record.** Video has BRINGUP and QUALIFICATION documents, while the Classic target directory lacks the same entry-point README. Define a compact common format for support state, hardware/storage variants, recovery requirements, known blockers, and evidence locations.
+- [x] **74 · P2 · Code: Use a consistent per-target qualification record.** Video has BRINGUP and QUALIFICATION documents, while the Classic target directory lacks the same entry-point README. Define a compact common format for support state, hardware/storage variants, recovery requirements, known blockers, and evidence locations.
 
   Location: [targets/README.md](C:/Users/user/Desktop/Projects/linnet/targets/README.md), [targets/video5g-m25/QUALIFICATION.md](C:/Users/user/Desktop/Projects/linnet/targets/video5g-m25/QUALIFICATION.md), [docs/roadmap.md](C:/Users/user/Desktop/Projects/linnet/docs/roadmap.md), [docs/local-artifacts.md](C:/Users/user/Desktop/Projects/linnet/docs/local-artifacts.md) — `target status and qualification documentation`.
 
   Completion check: Each target has a discoverable status record; simulator results and physical-device evidence remain distinct, with private device identifiers and receipts kept in local artifacts.
+
+  Verification note: `targets/README.md` now has a per-target qualification matrix with local checks, exact physical scope, recovery path, open checks, and evidence links. It distinguishes the manifest's accepted storage variants from qualified specimens and points private receipts to local artifacts.
 
 - [ ] **75 · P3 · Profile: Separate qualified Apple OS specimens from general model support.** apple_os.py embeds exact serial, volume, sector size, and model tuples directly in APPLE_DEVICES. Design a dedicated qualification-record boundary so adding an audited specimen does not require editing the media workflow itself.
 

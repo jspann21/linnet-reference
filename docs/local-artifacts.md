@@ -13,6 +13,9 @@ Firmware backups, installation plans, predecessor files and recovery receipts
 belong to the physical device and installation that produced them. Preserve them
 together in a separate local backup before cleaning `out/`. Keep device serials,
 hardware GUIDs, disk identities and personal media out of GitHub contributions.
+The [target qualification record](../targets/README.md#qualification-record)
+points to source-controlled evidence and open checks; retain exact physical
+observations with their matching private device receipts.
 
 Plans can reference absolute paths and pinned hashes. If an artifact archive is
 relocated, restore the required files and dependencies to the paths expected by
