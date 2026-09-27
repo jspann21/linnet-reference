@@ -184,11 +184,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Verification note: Forty-one A1099 songs in one album previously required 82 cover-name file checks; shared positive lookup used 42, including a file-existence recheck for each song. The cache holds at most 256 folders and clears on artwork invalidation. Concurrent lookups, a removed or newly added sidecar, stale generation, and embedded-artwork fallback passed offscreen checks.
 
-- [ ] **26 · P2 · Profile: Reuse unfiltered album, artist, and genre cards.** Switching group views rebuilds memberships, subtitles, artwork choices, and byte totals. Profile a cache tied to the current row snapshot and grouping mode.
+- [x] **26 · P2 · Profile: Reuse unfiltered album, artist, and genre cards.** Switching group views rebuilds memberships, subtitles, artwork choices, and byte totals. Profile a cache tied to the current row snapshot and grouping mode.
 
   Location: [tools/studio/media_desktop.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/media_desktop.py) — `MediaWindow.render_library`.
 
   Completion check: Switching views gets faster; filtered groups are still derived from matching rows and refreshes cannot retain stale members or cover choices.
+
+  Verification note: With A1099's 2,895 visible Music rows, five repeat renders of Albums, Artists, and Genres had median times of 4.23, 4.32, and 1.57 ms before caching, and 0.53, 0.58, and 0.13 ms afterward. All 1,222 album, 1,036 artist, and 292 genre cards matched the previous content and membership exactly. Search-filtered cards matched as well, and replacing the row snapshot dropped cached members from removed rows.
 
 - [ ] **27 · P2 · Profile: Preserve useful selection across equivalent model refreshes.** A full model reset clears selections even when most rows are unchanged. Investigate restoring stable row identities or using smaller model updates where measured worthwhile.
 

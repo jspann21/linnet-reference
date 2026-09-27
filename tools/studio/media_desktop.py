@@ -980,6 +980,7 @@ class MediaWindow(QMainWindow):
         # and view changes, returning a new list so model sorting stays local.
         if self._library_source is not self.rows:
             self._library_source, self._library_cache, self._library_stats = self.rows, {}, {}
+            self._group_cards_cache = {}
         if self.page in self._library_cache:
             return list(self._library_cache[self.page])
         unique = {}
@@ -1035,19 +1036,23 @@ class MediaWindow(QMainWindow):
         filtered = bool(words or (music and (artist or genre)))
         grouped = music and self.view != 'Songs' and self.group is None
         if grouped:
-            groups = {}
-            field = {'Albums': 'album', 'Artists': 'artist', 'Genres': 'genre'}[self.view]
-            for row in rows:
-                key = music_group_key(row, field)
-                groups.setdefault(key, []).append(row)
-            cards = []
-            for key, members in groups.items():
-                artists = {r.get('artist') for r in members if r.get('artist')}
-                subtitle = (members[0].get('album_artist') or (next(iter(artists)) if len(artists) == 1 else 'Various artists')) if self.view == 'Albums' else f'{len(members):,} songs'
-                art_row = next((r for r in members if r.get('artwork')), members[0])
-                cards.append(dict(title=members[0].get(field) or f'Unknown {field}', subtitle=subtitle,
-                    kind='Music', group_kind=self.view, group_key=key, members=members, artwork=art_row.get('artwork', '') if self.view != 'Genres' else '', cover_source=art_row['path'], bytes=sum(r['bytes'] for r in members)))
-            rows = cards
+            cards = self._group_cards_cache.get(self.view) if not filtered else None
+            if cards is None:
+                groups = {}
+                field = {'Albums': 'album', 'Artists': 'artist', 'Genres': 'genre'}[self.view]
+                for row in rows:
+                    key = music_group_key(row, field)
+                    groups.setdefault(key, []).append(row)
+                cards = []
+                for key, members in groups.items():
+                    artists = {r.get('artist') for r in members if r.get('artist')}
+                    subtitle = (members[0].get('album_artist') or (next(iter(artists)) if len(artists) == 1 else 'Various artists')) if self.view == 'Albums' else f'{len(members):,} songs'
+                    art_row = next((r for r in members if r.get('artwork')), members[0])
+                    cards.append(dict(title=members[0].get(field) or f'Unknown {field}', subtitle=subtitle,
+                        kind='Music', group_kind=self.view, group_key=key, members=members, artwork=art_row.get('artwork', '') if self.view != 'Genres' else '', cover_source=art_row['path'], bytes=sum(r['bytes'] for r in members)))
+                if not filtered:
+                    self._group_cards_cache[self.view] = cards
+            rows = list(cards)
         # The table applies its own title sort after reset. Keep this first
         # sort for grids and as a stable title tie-break for other columns.
         if grouped or self.group is not None or self.table.horizontalHeader().sortIndicatorSection() > 0:
@@ -1486,6 +1491,8 @@ class MediaWindow(QMainWindow):
         self.games_status.setText('Loading games…' if identity else 'Connect an iPod in Disk Mode.')
         self.playlist_draft = None
         self._library_source, self._library_cache, self._library_stats = None, {}, {}
+        self._group_cards_cache = {}
+        self._group_cards_cache = {}
         self.capacity.setValue(0)
         self.update_filters()
         self.update_preparation()
