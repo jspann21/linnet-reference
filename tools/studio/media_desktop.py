@@ -482,6 +482,7 @@ class MediaWindow(QMainWindow):
         if self.view not in ('Songs', 'Albums', 'Artists', 'Genres'):
             self.view = 'Albums'
         self.busy = False
+        self.closed = False
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='linnet-media')
         self.tool_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='linnet-tools')
         self.tool_check_id = 0
@@ -1178,7 +1179,7 @@ class MediaWindow(QMainWindow):
         self.queue_open.setEnabled(not self.busy and count == 1)
 
     def work(self, tag, operation, message):
-        if self.busy:
+        if self.busy or self.closed:
             return
         self.busy = True; self.stop_event.clear(); self.progress.setRange(0, 0); self.progress.show()
         self.cancel_button.setEnabled(True)
@@ -1929,7 +1930,7 @@ class MediaWindow(QMainWindow):
 
     @Slot(int, object)
     def tools_checked(self, request, result):
-        if request != self.tool_check_id:
+        if self.closed or request != self.tool_check_id:
             return
         if result['errors']:
             self.tools_label.setText(' '.join(result['errors']) + ' Choose a folder containing both tools.')
@@ -2018,6 +2019,7 @@ class MediaWindow(QMainWindow):
     def closeEvent(self, event):
         if self.busy:
             self.show_progress('Wait for the current operation to finish before closing.'); event.ignore(); return
+        self.closed = True
         self.covers.closed = True
         self.covers.pool.shutdown(wait=False, cancel_futures=True)
         self.pool.shutdown(wait=False, cancel_futures=True)
