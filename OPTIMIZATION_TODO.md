@@ -336,11 +336,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
 **Simplify operations and make failures easier to handle**
 
-- [ ] **45 · P2 · Code: Split media preparation into focused per-kind helpers.** The main operation contains long music, photo, note, and video branches plus shared receipt and cleanup handling. Extract bounded helpers with explicit inputs and results.
+- [x] **45 · P2 · Code: Split media preparation into focused per-kind helpers.** The main operation contains long music, photo, note, and video branches plus shared receipt and cleanup handling. Extract bounded helpers with explicit inputs and results.
 
   Location: [tools/content/media_manager.py](C:/Users/user/Desktop/Projects/linnet/tools/content/media_manager.py) — `_run`.
 
   Completion check: Publication order, checkpoints, outputs, receipts, source-error reporting, and partial completion remain unchanged; callers become easier to review.
+
+  Verification note: Music, Photos, Notes, and Videos now enter separate preparation helpers while `_run` retains receipt, error, and cleanup handling. The moved video branch has the same Python AST apart from its explicit publication marker. Per-kind helper smoke checks, Python compilation, and Ruff F checks passed.
 
 - [x] **46 · P3 · Code: Consolidate repeated host-state JSON loading.** Several modules repeat read/parse/type-check/default logic with slightly different exception handling. Identify the genuinely shared cases and give them a small helper with explicit defaults.
 

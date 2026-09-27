@@ -1038,6 +1038,309 @@ def run(identity, selected, pending=(), **options):
             retry_selected = tuple(kind for kind in KINDS if kind in retry_kinds)
 
 
+def _prepare_music(root, cache, identity, skipped, *, ffprobe, verification, force,
+                   cancelled, checkpoint, progress, report, begin_publication):
+    from .music import compile_music
+    from .publish import publish_music
+    stage = cache / "music"
+    music_progress = _throttled_progress(checkpoint, progress,
+        lambda event: f'{"Using saved metadata" if event.get("cached") else "Reading metadata"} '
+                      f'{event["current"]+1}/{event["total"]}: {Path(event["file"]).name}')
+    preparation = compile_music(root, stage, ffprobe=ffprobe or shutil.which("ffprobe"), device_root=root,
+                  verification=verification, cache_path=cache / "music-metadata.sqlite3",
+                  bypass_cache=force, progress=music_progress, include_roots=source_folders(root, "Music"),
+                  excluded=skipped, target=identity["target_id"], cancelled=cancelled)
+    report["steps"].append(dict(kind="Music", metadata=preparation.get("cache"), integrity=verification))
+    checkpoint()
+    progress("Publishing the music index and artwork…")
+    begin_publication("Music")
+    published = [publish_music(stage, progress=progress, **target_args(identity))]
+    output_paths = [".LINNET/LIBRARY.PDB"] + [entry["path"].lstrip("/") for entry in preparation["entries"]
+                    if entry["storage"] == "staged"] + [
+        ".LINNET/ART/" + path.name for path in sorted((stage / "ART").glob("*.RGB"))]
+    if (stage / "COVERS.CFL").exists(): output_paths.append(".LINNET/COVERS.CFL")
+    if (stage / "BROWSE.BIN").exists(): output_paths.append(".LINNET/BROWSE.BIN")
+    return output_paths, published
+
+
+def _prepare_photos(root, cache, identity, media_profile, skipped, retail_photos, *,
+                    dimension, checkpoint, progress, begin_publication):
+    from .photos import compile_photos
+    from .publish_photos import publish_photos
+    package = cache / "photos.pimg"
+    photo_progress = _throttled_progress(checkpoint, progress,
+        lambda event: f'Preparing photos {event["current"]+1}/{event["total"]}: {Path(event["file"]).name}')
+    compile_photos(root / "Photos", package, max_dimension=dimension,
+                   viewport_width=media_profile["photo_width"],
+                   viewport_height=media_profile["photo_height"],
+                   cache_dir=cache / "photo-cache", progress=photo_progress, checkpoint=checkpoint,
+                   excluded={Path(value).relative_to("Photos").as_posix() for value in skipped},
+                   additional_sources={Path(item['relative']).relative_to('Photos').as_posix():
+                                       (item['preview'], item['title']) for item in retail_photos})
+    checkpoint()
+    progress("Publishing prepared photos…")
+    begin_publication("Photos")
+    return [".LINNET/PHOTOS/LIBRARY.PIM"], [publish_photos(package, **target_args(identity))]
+
+
+def _prepare_notes(root, cache, identity, skipped, *, checkpoint, progress,
+                   report, begin_publication):
+    from .notes import compile_notes
+    from .publish_notes import publish_notes
+    package = cache / "notes.pnot"
+    note_progress = _throttled_progress(checkpoint, progress,
+        lambda event: f'Preparing notes {event["current"]+1}/{event["total"]}: {Path(event["file"]).name}')
+    preparation = compile_notes(root / "Notes", package, target=identity['target_id'],
+        progress=note_progress, checkpoint=checkpoint,
+        excluded={Path(value).relative_to("Notes").as_posix() for value in skipped})
+    report["steps"].append(dict(kind="Notes", preparation=preparation))
+    if preparation.get("ascii_converted"):
+        progress("Notes: non-ASCII text was adapted for the iPod font; originals are unchanged. See the report.")
+    checkpoint()
+    progress("Publishing prepared notes…")
+    begin_publication("Notes")
+    return [".LINNET/NOTES/LIBRARY.NNT"], [publish_notes(package, **target_args(identity))]
+
+
+def _prepare_videos(root, cache, identity, media_profile, state, state_path, videos, item, *,
+                    ffmpeg, ffprobe, force, cancelled, checkpoint, progress, emit_stage, unit,
+                    record, report, verified_outputs, owned_temporaries, progress_detail,
+                    mark_publication):
+    kind = "Videos"
+    published = []
+    from .ipvf_encode import encode_ipvf
+    from .ipvf_validate import inspect_file
+    from .publish_video import publish_video
+    from .video_sources import video_title, catalog_contains
+    output_paths = [".LINNET/VIDEOS/INDEX.VID"]
+    video_state = state.get("video_files", {})
+    if not isinstance(video_state, dict):
+        video_state = {}
+    state["video_files"] = video_state
+    failed = 0
+    retail_titles = None
+    catalog_snapshot = {}
+    for index, job in enumerate(videos):
+        emit_stage('Preparing Videos', unit, index / len(videos))
+        checkpoint()
+        source = Path(job["source"])
+        relative = job["relative"]
+        file_publication_started = False
+        try:
+            key = hashlib.sha256(relative.encode()).hexdigest()[:8].upper()
+            source_info = source.stat()
+            source_stamp = (source_info.st_size, source_info.st_mtime_ns)
+            label = job.get('catalog_title')
+            if not label and source.is_relative_to(root):
+                if retail_titles is None:
+                    from .retail_media import available_tracks
+                    retail_titles = available_tracks(root)
+                label = retail_titles.get(str(source).casefold(), {}).get('title')
+            label = video_title(label or relative)
+            if media_profile["video_backend"] in ("bcm-mp4", "native-mp4"):
+                from .native_video import inspect_file as inspect_native, prepare as prepare_native
+                from .publish_video import device_video_path, index_video
+                native_version = 4 if media_profile["video_backend"] == "native-mp4" else 2
+                fingerprint = hashlib.sha256(f"native-mp4-v{native_version}:{json.dumps(media_profile, sort_keys=True)}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
+                cached = video_state.get(relative, {})
+                if not isinstance(cached, dict):
+                    cached = {}
+                outputs = cached.get('outputs', [])
+                if (not force and cached.get("signature") == fingerprint and
+                        _outputs_match(root, outputs, verified=verified_outputs)):
+                    if catalog_contains(root, relative, label, path=False,
+                                        snapshot=catalog_snapshot):
+                        output_paths.extend(name for name, digest in outputs)
+                        report["steps"].append(dict(kind=kind, file=relative, status="unchanged"))
+                        continue
+                    if len(outputs) == 1:
+                        published_path = root / outputs[0][0]
+                        if catalog_contains(root, relative, None,
+                                            path=device_video_path(published_path, root),
+                                            snapshot=catalog_snapshot):
+                            emit_stage('Publishing Videos', unit,
+                                       (index + 0.5) / len(videos), can_stop=False)
+                            mark_publication()
+                            file_publication_started = True
+                            result = index_video(published_path, title=label,
+                                                 library_key=relative, ffprobe=ffprobe,
+                                                 **target_args(identity))
+                            catalog_snapshot.clear()
+                            output_paths.append(outputs[0][0])
+                            report["steps"].append(dict(kind=kind, file=relative,
+                                                        status="catalog-updated", publication=result))
+                            record()
+                            continue
+                compatible = False
+                if source.suffix.lower() in native_video_extensions(identity):
+                    try:
+                        inspect_native(source, ffprobe=ffprobe, profile=media_profile, cancelled=cancelled)
+                        compatible = True
+                    except ValueError:
+                        pass
+                progress(f"Preparing native video {index+1}/{item['count']}: {relative}")
+                if compatible and source.is_relative_to(root):
+                    emit_stage('Publishing Videos', unit,
+                               (index + 0.5) / len(videos), can_stop=False)
+                    mark_publication()
+                    file_publication_started = True
+                    result = index_video(source, title=label, library_key=relative, ffprobe=ffprobe, **target_args(identity))
+                    outputs = [(source.relative_to(root).as_posix(), _hash(source))]
+                    output_paths.append(source.relative_to(root).as_posix())
+                else:
+                    package = cache / "videos" / (key + "-" + fingerprint[:16] + ".mp4")
+                    reusable = package.exists() and not force
+                    if reusable:
+                        try:
+                            inspect_native(package, ffprobe=ffprobe, profile=media_profile,
+                                           cancelled=cancelled)
+                        except (OSError, ValueError):
+                            reusable = False
+                    if not reusable:
+                        prepare_native(source, package, profile=media_profile, ffmpeg=ffmpeg, ffprobe=ffprobe, progress=progress, cancelled=cancelled)
+                    checkpoint()
+                    after = source.stat()
+                    if (after.st_size, after.st_mtime_ns) != source_stamp:
+                        raise ValueError("Video changed during preparation; scan again")
+                    emit_stage('Publishing Videos', unit,
+                               (index + 0.5) / len(videos), can_stop=False)
+                    mark_publication()
+                    file_publication_started = True
+                    result = publish_video(package, title=label, library_key=relative,
+                                           ffprobe=ffprobe, source_to_preserve=source,
+                                           **target_args(identity))
+                    output_name = Path(result['package']).relative_to(root).as_posix()
+                    outputs = [(output_name, result["candidate_sha256"])]
+                    output_paths.append(output_name)
+                after = source.stat()
+                if (after.st_size, after.st_mtime_ns) != source_stamp:
+                    raise ValueError("Video changed during publication; scan again")
+                published.append(result)
+                catalog_snapshot.clear()
+                video_state[relative] = dict(signature=fingerprint, outputs=outputs, source_stamp=source_stamp)
+                _save(state_path, state)
+                report["steps"].append(dict(kind=kind, file=relative, status="published", publication=result))
+                record()
+                continue
+            profile_key = (f"{media_profile['video_width']}x{media_profile['video_height']}-"
+                           f"{media_profile['video_fps']}-{media_profile['video_color']}-realtime")
+            fingerprint = hashlib.sha256(f"ipvf-{profile_key}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
+            cached = video_state.get(relative, {})
+            if not isinstance(cached, dict):
+                cached = {}
+            cached_outputs = cached.get('outputs')
+            first_output = cached_outputs[0] if isinstance(cached_outputs, list) and cached_outputs else None
+            output_name = (first_output[0] if isinstance(first_output, (list, tuple))
+                           and len(first_output) == 2 and isinstance(first_output[0], str) else "")
+            native_ipvf = source.suffix.lower() in native_video_extensions(identity)
+            index_in_place = native_ipvf and source.is_relative_to(root)
+            if (not force and cached.get("signature") == fingerprint
+                    and catalog_contains(root, relative, label, path=False,
+                                         snapshot=catalog_snapshot)
+                    and (index_in_place or (output_name.casefold().startswith("videos/ipvf/")
+                         and _outputs_match(root, cached.get("outputs", []), verified=verified_outputs)))):
+                if not index_in_place:
+                    output_paths.append(output_name)
+                progress(f"Video {index+1}/{item['count']} already ready: {relative}")
+                report["steps"].append(dict(kind=kind, file=relative, status="unchanged"))
+                continue
+            package = cache / "videos" / (key + "-" + fingerprint[:16] + ".ipvf")
+            progress(f"Preparing video {index+1}/{item['count']}: {relative}")
+            if index_in_place:
+                from .publish_video import index_ipvf
+                emit_stage('Publishing Videos', unit,
+                           (index + 0.5) / len(videos), can_stop=False)
+                mark_publication()
+                file_publication_started = True
+                result = index_ipvf(source, title=label, library_key=relative, **target_args(identity))
+                published.append(result)
+                catalog_snapshot.clear()
+                video_state[relative] = dict(signature=fingerprint, outputs=[], source_stamp=source_stamp)
+                _save(state_path, state)
+                report["steps"].append(dict(kind=kind, file=relative, status="published", publication=result))
+                record()
+                continue
+            reusable = package.exists() and not force
+            if reusable:
+                try:
+                    inspect_file(package,expected_width=media_profile["video_width"],
+                                 expected_height=media_profile["video_height"],
+                                 max_record_sectors=media_profile["max_read_sectors"])
+                except (OSError, ValueError):
+                    reusable = False
+            if not reusable:
+                if native_ipvf:
+                    inspect_file(source,expected_width=media_profile["video_width"],
+                                 expected_height=media_profile["video_height"],
+                                 max_record_sectors=media_profile["max_read_sectors"])
+                    package.parent.mkdir(parents=True, exist_ok=True)
+                    temporary = package.with_name(package.name + "." + uuid.uuid4().hex + ".tmp")
+                    with source.open("rb") as reader, temporary.open("xb") as writer:
+                        owned_temporaries.append((temporary, cache))
+                        while chunk := reader.read(1024 * 1024):
+                            checkpoint()
+                            writer.write(chunk)
+                        writer.flush()
+                        os.fsync(writer.fileno())
+                    inspect_file(temporary,expected_width=media_profile["video_width"],
+                                 expected_height=media_profile["video_height"],
+                                 max_record_sectors=media_profile["max_read_sectors"])
+                    os.replace(temporary, package)
+                else:
+                    encode_ipvf(source, package, title=label,
+                                ffmpeg=ffmpeg or shutil.which("ffmpeg"),
+                                ffprobe=ffprobe or shutil.which("ffprobe"),
+                                fps=media_profile["video_fps"],
+                                color_depth=media_profile["video_color"],
+                                width=media_profile["video_width"],
+                                height=media_profile["video_height"],
+                                max_record_sectors=media_profile["max_read_sectors"],
+                                progress=progress, cancelled=cancelled,
+                                progress_detail=(lambda event: progress_detail(dict(event,
+                                    video_index=index+1, video_total=item['count']))) if progress_detail else None)
+            checkpoint()
+            after = source.stat()
+            if (after.st_size, after.st_mtime_ns) != source_stamp:
+                raise ValueError("Video changed during preparation; scan again before updating")
+            progress(f"Publishing video {index+1}/{item['count']}: {relative}")
+            emit_stage('Publishing Videos', unit,
+                       (index + 0.5) / len(videos), can_stop=False)
+            mark_publication()
+            file_publication_started = True
+            result = publish_video(package, title=label, library_key=relative,
+                                   source_to_preserve=source, **target_args(identity))
+            catalog_snapshot.clear()
+            output_name = Path(result['package']).relative_to(root).as_posix()
+            published.append(result)
+            output_paths.append(output_name)
+            after = source.stat()
+            if (after.st_size, after.st_mtime_ns) != source_stamp:
+                raise ValueError("Video changed during publication; scan again before updating")
+            video_state[relative] = dict(signature=fingerprint, source_stamp=source_stamp,
+                outputs=[(output_name, result["candidate_sha256"])])
+            _save(state_path, state)
+            report["steps"].append(dict(kind=kind, file=relative, status="published", publication=result))
+            record()
+        except Cancelled:
+            raise
+        except Exception as error:
+            catalog_snapshot.clear()
+            checkpoint()
+            failed += 1
+            video_state.pop(relative, None)
+            state.pop(kind, None)
+            _save(state_path, state)
+            failure = dict(kind=kind, file=relative, message=str(error))
+            if file_publication_started:
+                failure["status"] = "publication-uncertain"
+            else:
+                failure["source"] = str(source)
+            report["errors"].append(failure)
+            progress(f"Video could not finish, continuing with the next file: {relative}: {error}")
+            record()
+    return output_paths, published, failed
+
+
 def _run(identity, selected, pending=(), *, progress=lambda message: None, cancelled=lambda: False,
         photo_dimension=640, ffmpeg=None, ffprobe=None, force=False, music_verification="metadata",
         video_selection=None, progress_detail=None, progress_stage=lambda event: None,
@@ -1174,298 +1477,34 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             progress(f"Preparing {kind.lower()} ({item['count']:,} files)…")
             publication_started = False
             try:
-                folder = root / kind
-                published = []
+                def begin_publication(published_kind):
+                    nonlocal publication_started
+                    emit_stage(f'Publishing {published_kind}', unit + 1, can_stop=False)
+                    publication_started = True
+                def mark_publication():
+                    nonlocal publication_started
+                    publication_started = True
                 if kind == "Music":
-                    from .music import compile_music
-                    from .publish import publish_music
-                    stage = cache / "music"
-                    music_progress = _throttled_progress(checkpoint, progress,
-                        lambda event: f'{"Using saved metadata" if event.get("cached") else "Reading metadata"} '
-                                      f'{event["current"]+1}/{event["total"]}: {Path(event["file"]).name}')
-                    roots = source_folders(root, "Music")
-                    preparation = compile_music(root, stage, ffprobe=ffprobe or shutil.which("ffprobe"), device_root=root,
-                                  verification=music_verification, cache_path=cache / "music-metadata.sqlite3",
-                                  bypass_cache=force, progress=music_progress, include_roots=roots,
-                                  excluded=skipped["Music"], target=identity["target_id"],
-                                  cancelled=cancelled)
-                    report["steps"].append(dict(kind=kind, metadata=preparation.get("cache"), integrity=music_verification))
-                    checkpoint()
-                    progress("Publishing the music index and artwork…")
-                    emit_stage('Publishing Music', unit + 1, can_stop=False)
-                    publication_started = True
-                    published.append(publish_music(stage, progress=progress, **target_args(identity)))
-                    output_paths = [".LINNET/LIBRARY.PDB"] + [entry["path"].lstrip("/") for entry in preparation["entries"] if entry["storage"] == "staged"] + [
-                        ".LINNET/ART/" + path.name for path in sorted((stage / "ART").glob("*.RGB"))]
-                    if (stage / "COVERS.CFL").exists():output_paths.append(".LINNET/COVERS.CFL")
-                    if (stage / "BROWSE.BIN").exists():output_paths.append(".LINNET/BROWSE.BIN")
+                    output_paths, published = _prepare_music(root, cache, identity, skipped["Music"],
+                        ffprobe=ffprobe, verification=music_verification, force=force,
+                        cancelled=cancelled, checkpoint=checkpoint, progress=progress,
+                        report=report, begin_publication=begin_publication)
                 elif kind == "Photos":
-                    from .photos import compile_photos
-                    from .publish_photos import publish_photos
-                    package = cache / "photos.pimg"
-                    photo_progress = _throttled_progress(checkpoint, progress,
-                        lambda event: f'Preparing photos {event["current"]+1}/{event["total"]}: {Path(event["file"]).name}')
-                    compile_photos(folder, package, max_dimension=photo_dimension,
-                                   viewport_width=media_profile["photo_width"],
-                                   viewport_height=media_profile["photo_height"],
-                                   cache_dir=cache / "photo-cache",
-                                   progress=photo_progress, checkpoint=checkpoint,
-                                   excluded={Path(value).relative_to("Photos").as_posix()
-                                             for value in skipped["Photos"]},
-                                   additional_sources={Path(p['relative']).relative_to('Photos').as_posix():
-                                                       (p['preview'], p['title']) for p in retail_photos})
-                    checkpoint()
-                    progress("Publishing prepared photos…")
-                    emit_stage('Publishing Photos', unit + 1, can_stop=False)
-                    publication_started = True
-                    published.append(publish_photos(package, **target_args(identity)))
-                    output_paths = [".LINNET/PHOTOS/LIBRARY.PIM"]
+                    output_paths, published = _prepare_photos(root, cache, identity, media_profile,
+                        skipped["Photos"], retail_photos, dimension=photo_dimension,
+                        checkpoint=checkpoint, progress=progress, begin_publication=begin_publication)
                 elif kind == "Notes":
-                    from .notes import compile_notes
-                    from .publish_notes import publish_notes
-                    package = cache / "notes.pnot"
-                    note_progress = _throttled_progress(checkpoint, progress,
-                        lambda event: f'Preparing notes {event["current"]+1}/{event["total"]}: {Path(event["file"]).name}')
-                    preparation = compile_notes(folder, package,
-                        target=identity['target_id'],
-                        progress=note_progress, checkpoint=checkpoint,
-                        excluded={Path(value).relative_to("Notes").as_posix()
-                                  for value in skipped["Notes"]})
-                    report["steps"].append(dict(kind=kind, preparation=preparation))
-                    if preparation.get("ascii_converted"):
-                        progress("Notes: non-ASCII text was adapted for the iPod font; originals are unchanged. See the report.")
-                    checkpoint()
-                    progress("Publishing prepared notes…")
-                    emit_stage('Publishing Notes', unit + 1, can_stop=False)
-                    publication_started = True
-                    published.append(publish_notes(package, **target_args(identity)))
-                    output_paths = [".LINNET/NOTES/LIBRARY.NNT"]
+                    output_paths, published = _prepare_notes(root, cache, identity, skipped["Notes"],
+                        checkpoint=checkpoint, progress=progress, report=report,
+                        begin_publication=begin_publication)
                 else:
-                    from .ipvf_encode import encode_ipvf
-                    from .ipvf_validate import inspect_file
-                    from .publish_video import publish_video
-                    from .video_sources import video_title, catalog_contains
-                    output_paths = [".LINNET/VIDEOS/INDEX.VID"]
-                    video_state = state.get("video_files", {})
-                    if not isinstance(video_state, dict):
-                        video_state = {}
-                    state["video_files"] = video_state
-                    failed = 0
-                    retail_titles = None
-                    catalog_snapshot = {}
-                    for index, job in enumerate(videos):
-                        emit_stage('Preparing Videos', unit, index / len(videos))
-                        checkpoint()
-                        source = Path(job["source"])
-                        relative = job["relative"]
-                        file_publication_started = False
-                        try:
-                            key = hashlib.sha256(relative.encode()).hexdigest()[:8].upper()
-                            source_info = source.stat()
-                            source_stamp = (source_info.st_size, source_info.st_mtime_ns)
-                            label = job.get('catalog_title')
-                            if not label and source.is_relative_to(root):
-                                if retail_titles is None:
-                                    from .retail_media import available_tracks
-                                    retail_titles = available_tracks(root)
-                                label = retail_titles.get(str(source).casefold(), {}).get('title')
-                            label = video_title(label or relative)
-                            if media_profile["video_backend"] in ("bcm-mp4", "native-mp4"):
-                                from .native_video import inspect_file as inspect_native, prepare as prepare_native
-                                from .publish_video import device_video_path, index_video
-                                native_version = 4 if media_profile["video_backend"] == "native-mp4" else 2
-                                fingerprint = hashlib.sha256(f"native-mp4-v{native_version}:{json.dumps(media_profile, sort_keys=True)}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
-                                cached = video_state.get(relative, {})
-                                if not isinstance(cached, dict):
-                                    cached = {}
-                                outputs = cached.get('outputs', [])
-                                if (not force and cached.get("signature") == fingerprint and
-                                        _outputs_match(root, outputs, verified=verified_outputs)):
-                                    if catalog_contains(root, relative, label, path=False,
-                                                        snapshot=catalog_snapshot):
-                                        output_paths.extend(name for name, digest in outputs)
-                                        report["steps"].append(dict(kind=kind, file=relative, status="unchanged"))
-                                        continue
-                                    if len(outputs) == 1:
-                                        published_path = root / outputs[0][0]
-                                        if catalog_contains(root, relative, None,
-                                                            path=device_video_path(published_path, root),
-                                                            snapshot=catalog_snapshot):
-                                            emit_stage('Publishing Videos', unit,
-                                                       (index + 0.5) / len(videos), can_stop=False)
-                                            publication_started = file_publication_started = True
-                                            result = index_video(published_path, title=label,
-                                                                 library_key=relative, ffprobe=ffprobe,
-                                                                 **target_args(identity))
-                                            catalog_snapshot.clear()
-                                            output_paths.append(outputs[0][0])
-                                            report["steps"].append(dict(kind=kind, file=relative,
-                                                                        status="catalog-updated", publication=result))
-                                            record()
-                                            continue
-                                compatible = False
-                                if source.suffix.lower() in native_video_extensions(identity):
-                                    try:
-                                        inspect_native(source, ffprobe=ffprobe, profile=media_profile, cancelled=cancelled)
-                                        compatible = True
-                                    except ValueError:
-                                        pass
-                                progress(f"Preparing native video {index+1}/{item['count']}: {relative}")
-                                if compatible and source.is_relative_to(root):
-                                    emit_stage('Publishing Videos', unit,
-                                               (index + 0.5) / len(videos), can_stop=False)
-                                    publication_started = file_publication_started = True
-                                    result = index_video(source, title=label, library_key=relative, ffprobe=ffprobe, **target_args(identity))
-                                    outputs = [(source.relative_to(root).as_posix(), _hash(source))]
-                                    output_paths.append(source.relative_to(root).as_posix())
-                                else:
-                                    package = cache / "videos" / (key + "-" + fingerprint[:16] + ".mp4")
-                                    reusable = package.exists() and not force
-                                    if reusable:
-                                        try:
-                                            inspect_native(package, ffprobe=ffprobe, profile=media_profile,
-                                                           cancelled=cancelled)
-                                        except (OSError, ValueError):
-                                            reusable = False
-                                    if not reusable:
-                                        prepare_native(source, package, profile=media_profile, ffmpeg=ffmpeg, ffprobe=ffprobe, progress=progress, cancelled=cancelled)
-                                    checkpoint()
-                                    after = source.stat()
-                                    if (after.st_size, after.st_mtime_ns) != source_stamp:
-                                        raise ValueError("Video changed during preparation; scan again")
-                                    emit_stage('Publishing Videos', unit,
-                                               (index + 0.5) / len(videos), can_stop=False)
-                                    publication_started = file_publication_started = True
-                                    result = publish_video(package, title=label, library_key=relative,
-                                                           ffprobe=ffprobe, source_to_preserve=source,
-                                                           **target_args(identity))
-                                    output_name = Path(result['package']).relative_to(root).as_posix()
-                                    outputs = [(output_name, result["candidate_sha256"])]
-                                    output_paths.append(output_name)
-                                after = source.stat()
-                                if (after.st_size, after.st_mtime_ns) != source_stamp:
-                                    raise ValueError("Video changed during publication; scan again")
-                                published.append(result)
-                                catalog_snapshot.clear()
-                                video_state[relative] = dict(signature=fingerprint, outputs=outputs, source_stamp=source_stamp)
-                                _save(state_path, state)
-                                report["steps"].append(dict(kind=kind, file=relative, status="published", publication=result))
-                                record()
-                                continue
-                            profile_key = (f"{media_profile['video_width']}x{media_profile['video_height']}-"
-                                           f"{media_profile['video_fps']}-{media_profile['video_color']}-realtime")
-                            fingerprint = hashlib.sha256(f"ipvf-{profile_key}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
-                            cached = video_state.get(relative, {})
-                            if not isinstance(cached, dict):
-                                cached = {}
-                            cached_outputs = cached.get('outputs')
-                            first_output = cached_outputs[0] if isinstance(cached_outputs, list) and cached_outputs else None
-                            output_name = (first_output[0] if isinstance(first_output, (list, tuple))
-                                           and len(first_output) == 2 and isinstance(first_output[0], str) else "")
-                            native_ipvf = source.suffix.lower() in native_video_extensions(identity)
-                            index_in_place = native_ipvf and source.is_relative_to(root)
-                            if (not force and cached.get("signature") == fingerprint
-                                    and catalog_contains(root, relative, label, path=False,
-                                                         snapshot=catalog_snapshot)
-                                    and (index_in_place or (output_name.casefold().startswith("videos/ipvf/")
-                                         and _outputs_match(root, cached.get("outputs", []), verified=verified_outputs)))):
-                                if not index_in_place:
-                                    output_paths.append(output_name)
-                                progress(f"Video {index+1}/{item['count']} already ready: {relative}")
-                                report["steps"].append(dict(kind=kind, file=relative, status="unchanged"))
-                                continue
-                            package = cache / "videos" / (key + "-" + fingerprint[:16] + ".ipvf")
-                            progress(f"Preparing video {index+1}/{item['count']}: {relative}")
-                            if index_in_place:
-                                from .publish_video import index_ipvf
-                                emit_stage('Publishing Videos', unit,
-                                           (index + 0.5) / len(videos), can_stop=False)
-                                publication_started = file_publication_started = True
-                                result = index_ipvf(source, title=label, library_key=relative, **target_args(identity))
-                                published.append(result)
-                                catalog_snapshot.clear()
-                                video_state[relative] = dict(signature=fingerprint, outputs=[], source_stamp=source_stamp)
-                                _save(state_path, state)
-                                report["steps"].append(dict(kind=kind, file=relative, status="published", publication=result))
-                                record()
-                                continue
-                            reusable = package.exists() and not force
-                            if reusable:
-                                try:
-                                    inspect_file(package,expected_width=media_profile["video_width"],
-                                                 expected_height=media_profile["video_height"],
-                                                 max_record_sectors=media_profile["max_read_sectors"])
-                                except (OSError, ValueError):
-                                    reusable = False
-                            if not reusable:
-                                if native_ipvf:
-                                    inspect_file(source,expected_width=media_profile["video_width"],
-                                                 expected_height=media_profile["video_height"],
-                                                 max_record_sectors=media_profile["max_read_sectors"])
-                                    package.parent.mkdir(parents=True, exist_ok=True)
-                                    temporary = package.with_name(package.name + "." + uuid.uuid4().hex + ".tmp")
-                                    with source.open("rb") as reader, temporary.open("xb") as writer:
-                                        owned_temporaries.append((temporary, cache))
-                                        while chunk := reader.read(1024 * 1024):
-                                            checkpoint()
-                                            writer.write(chunk)
-                                        writer.flush()
-                                        os.fsync(writer.fileno())
-                                    inspect_file(temporary,expected_width=media_profile["video_width"],
-                                                 expected_height=media_profile["video_height"],
-                                                 max_record_sectors=media_profile["max_read_sectors"])
-                                    os.replace(temporary, package)
-                                else:
-                                    encode_ipvf(source, package, title=label,
-                                                ffmpeg=ffmpeg or shutil.which("ffmpeg"),
-                                                ffprobe=ffprobe or shutil.which("ffprobe"),
-                                                fps=media_profile["video_fps"],
-                                                color_depth=media_profile["video_color"],
-                                                width=media_profile["video_width"],
-                                                height=media_profile["video_height"],
-                                                max_record_sectors=media_profile["max_read_sectors"],
-                                                progress=progress, cancelled=cancelled,
-                                                progress_detail=(lambda event: progress_detail(dict(event,
-                                                    video_index=index+1, video_total=item['count']))) if progress_detail else None)
-                            checkpoint()
-                            after = source.stat()
-                            if (after.st_size, after.st_mtime_ns) != source_stamp:
-                                raise ValueError("Video changed during preparation; scan again before updating")
-                            progress(f"Publishing video {index+1}/{item['count']}: {relative}")
-                            emit_stage('Publishing Videos', unit,
-                                       (index + 0.5) / len(videos), can_stop=False)
-                            publication_started = file_publication_started = True
-                            result = publish_video(package, title=label, library_key=relative,
-                                                   source_to_preserve=source, **target_args(identity))
-                            catalog_snapshot.clear()
-                            output_name = Path(result['package']).relative_to(root).as_posix()
-                            published.append(result)
-                            output_paths.append(output_name)
-                            after = source.stat()
-                            if (after.st_size, after.st_mtime_ns) != source_stamp:
-                                raise ValueError("Video changed during publication; scan again before updating")
-                            video_state[relative] = dict(signature=fingerprint, source_stamp=source_stamp,
-                                outputs=[(output_name, result["candidate_sha256"])])
-                            _save(state_path, state)
-                            report["steps"].append(dict(kind=kind, file=relative, status="published", publication=result))
-                            record()
-                        except Cancelled:
-                            raise
-                        except Exception as error:
-                            catalog_snapshot.clear()
-                            checkpoint()
-                            failed += 1
-                            video_state.pop(relative, None)
-                            state.pop(kind, None)
-                            _save(state_path, state)
-                            failure = dict(kind=kind, file=relative, message=str(error))
-                            if file_publication_started:
-                                failure["status"] = "publication-uncertain"
-                            else:
-                                failure["source"] = str(source)
-                            report["errors"].append(failure)
-                            progress(f"Video could not finish, continuing with the next file: {relative}: {error}")
-                            record()
+                    output_paths, published, failed = _prepare_videos(
+                        root, cache, identity, media_profile, state, state_path, videos, item,
+                        ffmpeg=ffmpeg, ffprobe=ffprobe, force=force, cancelled=cancelled,
+                        checkpoint=checkpoint, progress=progress, emit_stage=emit_stage, unit=unit,
+                        record=record, report=report, verified_outputs=verified_outputs,
+                        owned_temporaries=owned_temporaries, progress_detail=progress_detail,
+                        mark_publication=mark_publication)
                     if failed:
                         progress(f"Videos: {failed} file(s) need attention; completed videos are saved.")
                         continue
