@@ -989,7 +989,10 @@ def run(identity, selected, pending=(), **options):
             root = Path(identity["root"]).resolve(strict=True)
             allowed = video_source_extensions(identity)
             current_options = dict(options, excluded_sources=excluded_sources)
-            report = _run(identity, retry_selected, pending, **current_options)
+            if attempts:
+                current_options['force'] = False
+            retry_pending = tuple(item for item in pending if item[0] in retry_selected)
+            report = _run(identity, retry_selected, retry_pending, **current_options)
             attempts.append(report)
             remaining = []
             newly_skipped = []
