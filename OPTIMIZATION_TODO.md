@@ -301,9 +301,11 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Verification note: A trace of 300 Cover Flow writes previously recorded no commit until close. The shared counter now commits every 128 mixed metadata, embedded-cover, or Cover Flow writes and commits a final partial batch on close. A 385-write mixed trace recorded three batch commits and one final commit; all rows reopened correctly. A 300-entry run with a 64-entry limit retained the newest 64. Embedded-cover maintenance resets the counter after its own commit.
 
-- [ ] **42 · P3 · Profile: Optimize Cover Flow cache misses only with unchanged rendering.** The recent isolated profile spent most tile time in Pillow quantization, with reflection work secondary. Profile representative art and cache-hit rates before changing the cold path.
+- [x] **42 · P3 · Profile: Optimize Cover Flow cache misses only with unchanged rendering.** The recent isolated profile spent most tile time in Pillow quantization, with reflection work secondary. Profile representative art and cache-hit rates before changing the cold path.
 
   Location: [tools/content/coverflow.py](C:/Users/user/Desktop/Projects/linnet/tools/content/coverflow.py) — `_prepare_tile / _indexed_tile`.
+
+  Verification note: Rebuilding A1099's published 798-art Cover Flow without supplied originals first exposed a fallback path that dropped `.LINNET`; that path is corrected and both complete passes validated. The first pass had one cache hit and 797 misses in 107.0 s: 58.4 s was thumbnail-file I/O, 45.1 s tile preparation, including 32.3 s in indexed quantization. The next pass had 798 hits, no misses, and finished in 1.69 s with byte-identical 11,876,352-byte output (SHA-256 `756539ef8076c311a6a0bd5a3dc99729049f4c28f97eb1c5192f1dbebd86870d`). A reflection-only rewrite would leave the dominant quantization and device-I/O costs, so no cold rendering change was added.
 
   Completion check: A retained optimization reduces measured preparation time and produces identical packed artwork; do not trade quantization quality for an unrequested recipe change.
 
