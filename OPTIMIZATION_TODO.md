@@ -443,11 +443,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Verification note: On A1099, a matched photo 159 zoom and pan reversal fell from 79.8 ms and 21 physical sectors to 65.6 ms and one sector. The viewer screenshot CRC stayed `56381ec1`; returning to the grid reloaded its thumbnails. A settled viewer → grid → same viewer round trip also kept CRC `e602f4eb` after thumbnail writes invalidated overlapping tile metadata. Repeated pans during music playback produced zero audio underruns and zero silence frames. Both A1099 and A1136 booted development images, and Photo 4G, Video 5G, and Classic release builds passed their memory budgets.
 
-- [ ] **60 · P2 · Profile: Tune Cover Flow scheduling from cache and I/O measurements.** Cover Flow already has packed-art caches, decoded slots, preview fallback, and hit/miss counters. Measure rapid reversal, long traversal, and playback before tuning read scheduling or eviction.
+- [x] **60 · P2 · Profile: Tune Cover Flow scheduling from cache and I/O measurements.** Cover Flow already has packed-art caches, decoded slots, preview fallback, and hit/miss counters. Measure rapid reversal, long traversal, and playback before tuning read scheduling or eviction.
 
   Location: [services/music/coverflow.c](C:/Users/user/Desktop/Projects/linnet/services/music/coverflow.c) — `cache / io_due / directional loading`.
 
   Completion check: Visible covers become ready sooner without extra idle disk activity, audio underruns, stale artwork, or regressions in existing device and simulator checks.
+
+  Hardware check: On A1099 flash, eight 64-album moves and a reversal produced ten cache hits, no misses or full-art reads, and no additional physical sectors. On A1136 rotating storage, traversal to album 1024 and reversal produced four then two hits and 14 catalog misses; the selected full cover was ready while background catalog loading continued, with 109 full-art reads unchanged. Three 64-album reversals during playback kept player phase 4 and zero underruns. No scheduling or eviction change was justified by these runs.
 
 **Device additions, target policy, and porting**
 
