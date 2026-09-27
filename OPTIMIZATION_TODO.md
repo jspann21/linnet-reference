@@ -143,11 +143,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: The same folder choices and ordering are returned for deep trees, with less repeated parent construction on large albums.
 
-- [ ] **21 · P2 · Profile: Measure metadata cache work for rows already covered by Apple or Linnet metadata.** The function prefetches and validates host metadata before using Apple or published fallbacks. Profile warm and cold paths to identify rows whose cache work can safely be avoided.
+- [x] **21 · P2 · Profile: Measure metadata cache work for rows already covered by Apple or Linnet metadata.** The function prefetches and validates host metadata before using Apple or published fallbacks. Profile warm and cold paths to identify rows whose cache work can safely be avoided.
 
   Location: [tools/content/media_library.py](C:/Users/user/Desktop/Projects/linnet/tools/content/media_library.py) — `_source_music_metadata`.
 
   Completion check: Reduce work only where metadata precedence is preserved: cached edits, album artists, duration, track/disc numbers, and artwork remain correct.
+
+  Verification note: On A1099, 3,917 Music inventory files included 2,894 tracks covered by both Apple and published metadata. The warm source-metadata pass took 0.312 s; 2,894 cache validations accounted for 0.100 s and 23 prefetches for 0.022 s. All 2,894 rows had usable host metadata, which can override Apple fields and supply frames, rate, and album-artist values. A fresh empty cache returned the 2,894 fallback rows in 0.110 s without parsing the audio. Skipping warm cache reads would change precedence, so no bypass was added.
 
 - [x] **22 · P2 · Code: Reuse a validated video catalog during unchanged-video checks.** The same small catalog is opened and decoded for each video cache hit. Load an indexed snapshot once for an unchanged batch and invalidate or update it whenever publication changes the catalog.
 
