@@ -7,6 +7,7 @@ from datetime import datetime
 
 from . import media_manager as media, media_library as library
 from .host_state import cache_root, save_json
+from .inventory import file_records
 from .guard import guarded_path as _plain, guard_volume as _volume_guard
 from .publish import _exclusive, _write_verified
 from .video_catalog import encode as _encode_catalog, read_file as _read_catalog_file
@@ -28,7 +29,7 @@ def _removal(identity, root, token):
         _plain(trash, root)
         if not trash.is_dir():
             return None
-        files = media._file_records(trash)
+        files = file_records(trash)
         return (dict(id=token, receipt=str(receipt), path=str(trash), bytes=sum(i.st_size for _, i in files),
                      title=', '.join(r['title'] for r in report.get('selected', [])[:3]),
                      started=started), report)
@@ -58,7 +59,7 @@ def recover(identity, token, *, erase=False):
         receipt = Path(removal['receipt'])
         if erase:
             # Enumerate guarded ordinary files before deleting any of them.
-            files = media._file_records(trash)
+            files = file_records(trash)
             for path, info in files:
                 _volume_guard(identity)
                 _plain(path, trash)
@@ -78,7 +79,7 @@ def recover(identity, token, *, erase=False):
             return dict(receipt=str(receipt), summary='Trash removal permanently deleted. Its storage is now available.')
         moves = []
         # Derive destinations from the guarded removal tree; never trust absolute receipt paths.
-        for source, info in media._file_records(trash):
+        for source, info in file_records(trash):
             relative = source.relative_to(trash)
             if relative.as_posix() in ('INDEX.VID.before', 'LIBRARY.PDB.before', 'COVERS.CFL.before'):
                 continue
