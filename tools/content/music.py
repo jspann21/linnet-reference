@@ -152,12 +152,13 @@ def _cover_rgb(image):
 
 
 def _cover_pixels(cover, target: str | None = None) -> bytes:
+    from contextlib import nullcontext
     from PIL import Image, ImageOps
     try:
-        image = Image.open(cover)
+        source = nullcontext(cover) if isinstance(cover, Image.Image) else Image.open(cover)
     except Image.DecompressionBombError as error:
         raise ValueError("cover dimensions exceed bound") from error
-    with image:
+    with source as image:
         if image.width * image.height > 16_000_000:
             raise ValueError("cover dimensions exceed bound")
         if image.getexif().get(274, 1) != 1:
@@ -168,6 +169,27 @@ def _cover_pixels(cover, target: str | None = None) -> bytes:
             image = _mp102_cover(image)
         from .photos import _rgb565
         return _rgb565(image)
+
+
+def _cover_renders(source, target, coverflow_enabled, known_art=()):
+    """Decode once, then apply the distinct playback and Cover Flow recipes."""
+    from PIL import Image
+    try:
+        image = Image.open(source)
+    except Image.DecompressionBombError as error:
+        raise ValueError("cover dimensions exceed bound") from error
+    with image:
+        if image.width * image.height > 16_000_000:
+            raise ValueError("cover dimensions exceed bound")
+        image.load()
+        pixels = _cover_pixels(image, target)
+        digest = hashlib.sha256(pixels).digest()
+        if coverflow_enabled and digest not in known_art:
+            from .coverflow import original_cover
+            flow = original_cover(image)
+        else:
+            flow = None
+    return pixels, digest, flow
 
 
 def _album_artist(tags: dict, artist: str) -> str:
@@ -1115,14 +1137,14 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                     art_cache[folder] = saved[1]
                 return saved[1]
         try:
-            pixels = _cover_pixels(cover if cover is not None else io.BytesIO(embedded), target)
+            pixels, digest, flow = _cover_renders(cover if cover is not None else io.BytesIO(embedded),
+                                                   target, coverflow_enabled, art_indices)
         except ImportError as exc:
             raise ValueError("cover conversion requires Pillow, or artwork=False") from exc
         except (OSError, ValueError):
             if cover is not None:
                 raise
             return NO_INDEX
-        digest = hashlib.sha256(pixels).digest()
         def remember_cover(index):
             nonlocal embedded_cache_bytes
             if cover is not None:
@@ -1147,8 +1169,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         destination.write_bytes(pixels)
         index = len(artwork_records)
         if coverflow_enabled:
-            from .coverflow import original_cover
-            coverflow_originals[index] = original_cover(cover if cover is not None else embedded)
+            coverflow_originals[index] = flow
         side = TARGETS[target]["media_art_side"] if target else 64
         artwork_records.append(struct.pack("<QIHHIIII", int.from_bytes(digest[:8], "little"),
             string("/.LINNET/ART/" + name), side, side, 1, len(pixels), zlib.crc32(pixels), 0))

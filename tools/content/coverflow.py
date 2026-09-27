@@ -1,5 +1,6 @@
 import hashlib
 import io
+from contextlib import nullcontext
 import struct
 import zlib
 from pathlib import Path
@@ -40,9 +41,11 @@ ART_RECORD = 13312
 def original_cover(source) -> Image.Image:
     from PIL import ImageCms
     from .music import _cover_rgb
-    if isinstance(source, bytes):
-        source = io.BytesIO(source)
-    with Image.open(source) as image:
+    if isinstance(source, Image.Image):
+        opened = nullcontext(source)
+    else:
+        opened = Image.open(io.BytesIO(source) if isinstance(source, bytes) else source)
+    with opened as image:
         if image.width * image.height > 16_000_000:
             raise ValueError('cover dimensions exceed bound')
         profile = image.info.get('icc_profile')

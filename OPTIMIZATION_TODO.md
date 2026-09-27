@@ -273,11 +273,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Oversized folders fail early; exclusions, supported-file rules, link handling, and valid-folder ordering remain correct.
 
-- [ ] **38 · P2 · Profile: Decode new cover images once for playback and Cover Flow.** A new cover can be decoded by _cover_pixels and then decoded again by coverflow.original_cover. Evaluate sharing a decoded source while keeping each rendering recipe distinct.
+- [x] **38 · P2 · Profile: Decode new cover images once for playback and Cover Flow.** A new cover can be decoded by _cover_pixels and then decoded again by coverflow.original_cover. Evaluate sharing a decoded source while keeping each rendering recipe distinct.
 
   Location: [tools/content/music.py](C:/Users/user/Desktop/Projects/linnet/tools/content/music.py) — `art_for / _cover_pixels`.
 
   Completion check: Playback RGB files and Cover Flow output remain byte-identical across alpha, EXIF, ICC profiles, and all artwork targets; image lifetime stays bounded.
+
+  Verification note: New covers now open and decode once, then pass the loaded image through the separate playback and Cover Flow recipes; already-seen playback digests still skip Cover Flow rendering. A1099's real sidecar and A1136's real embedded cover produced byte-identical playback RGB565 and Cover Flow pixels for all four targets. Local alpha, EXIF-rotated, and ICC-tagged examples also matched. On A1099's sidecar, a warm ten-run median fell from 1.59 to 1.22 ms per paired render; file opens fell from two to one. The full-resolution image is closed after each cover, and only the bounded 96 × 96 Cover Flow image is retained.
 
 - [ ] **39 · P2 · Profile: Bound cancellation latency while waiting for music metadata.** Cancellation is checked around progress callbacks, but future.result and executor shutdown can wait for an active metadata parser or decoder. Measure the longest waits and thread cancellation through the underlying work.
 
