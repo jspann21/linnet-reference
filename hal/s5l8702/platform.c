@@ -1,4 +1,5 @@
 #include "hal/api/platform.h"
+#include "hal/s5l8702/aes.h"
 #include "hal/api/core.h"
 #include "hal/api/audio.h"
 #include "hal/api/ata.h"
@@ -24,6 +25,15 @@ _Noreturn void ln_platform_hardware_reset(void) {
     LN_REG(0x3c800000u)=0x100000u;for(;;)__asm__ volatile("nop");
 }
 bool ln_platform_set_disk_mode(bool enabled){ln_s5l_boot_request(enabled?LN_S5L_BOOT_DISK:LN_S5L_BOOT_NORMAL);return true;}
+bool ln_platform_enter_disk_mode(uint32_t sector_bytes){
+    (void)sector_bytes;
+    if(!ln_platform_set_disk_mode(true))return false;
+    ln_platform_hardware_reset();
+}
+bool ln_platform_decode_retail_payload(uint8_t *payload,uint32_t size){
+    /* N25's original NOR body uses the device key and one complete CBC stream. */
+    return ln_s5l_aes_crypt(payload,size,2u,false);
+}
 void ln_platform_boot_candidate(bool candidate){
     /* An unconfirmed OS gets one reset through Boot to roll back its slot.
      * A fault in the confirmed fallback still stops in the SRAM monitor. */

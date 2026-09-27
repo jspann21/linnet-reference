@@ -1,9 +1,12 @@
 #include "hal/pp502x/target.h"
 #include "linnet_target.h"
+#include "linnet_build.h"
 #if defined(LINNET_SOC_PP5022)
 #include "hal/pp5022/usb_phy.h"
 #endif
 #include "hal/api/platform.h"
+#include "hal/api/core.h"
+#include "hal/pp502x/disk_mode.h"
 #include "hal/codecs/codec.h"
 
 /* Register addresses and bus protocol provenance: docs/architecture.md. */
@@ -21,6 +24,14 @@ bool ln_platform_set_disk_mode(bool enabled) {
     static const uint8_t marker[21]="diskmode\0\0hotstuff\0\0\1";
     volatile uint8_t *destination=(volatile uint8_t *)(uintptr_t)LINNET_DISK_MODE_MARKER;
     for(unsigned i=0;i<21;i++)destination[i]=enabled?marker[i]:0;
+    return true;
+}
+bool ln_platform_enter_disk_mode(uint32_t sector_bytes){
+    if(!ln_core_cache_disable())return false;
+    ln_pp_disk_mode(LINNET_USB_SERIAL,sector_bytes?sector_bytes:512u,true);
+}
+bool ln_platform_decode_retail_payload(uint8_t *payload,uint32_t size){
+    (void)payload;(void)size;
     return true;
 }
 int ln_platform_enter(const uint8_t *payload,uint32_t size,uint32_t load,uint32_t entry) {

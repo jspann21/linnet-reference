@@ -8,6 +8,10 @@ uint32_t ln_time_us(void);
 uintptr_t ln_platform_uncached_address(uintptr_t address);
 _Noreturn void ln_platform_hardware_reset(void);
 bool ln_platform_set_disk_mode(bool enabled);
+/* Called after storage, audio, display, and DMA have quiesced. */
+bool ln_platform_enter_disk_mode(uint32_t sector_bytes);
+/* Authenticate the archived bytes before applying any family-specific decode. */
+bool ln_platform_decode_retail_payload(uint8_t *payload,uint32_t size);
 void ln_platform_boot_candidate(bool candidate);
 int ln_platform_enter(const uint8_t *payload,uint32_t size,uint32_t load,uint32_t entry);
 int ln_platform_enter_retail(const uint8_t *payload,uint32_t size);
