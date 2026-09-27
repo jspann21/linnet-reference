@@ -532,6 +532,385 @@ class CardDelegate(QStyledItemDelegate):
         painter.restore()
 
 
+class LibraryPage:
+    def __init__(self, window):
+        self.window = window
+
+    def build(self):
+        window = self.window
+        page = QWidget(); outer = box(page, margins=(30, 28, 26, 20), spacing=16)
+        top = box(horizontal=True)
+        titles = box(spacing=5); window.heading_label = label('Music', 'title', True); window.subtitle = label('', 'subtitle', True)
+        titles.addWidget(window.heading_label); titles.addWidget(window.subtitle); top.addLayout(titles, 1)
+        window.playlists_button = button('Playlists', window.open_playlists, None, 'music'); top.addWidget(window.playlists_button)
+        window.add_button = button('Add media', window.add_media, 'primary', 'plus'); top.addWidget(window.add_button)
+        outer.addLayout(top)
+        toolbar = box(horizontal=True)
+        window.segments = QFrame(); window.segments.setObjectName('segments'); segments = box(window.segments, horizontal=True, margins=(4, 4, 4, 4), spacing=2)
+        window.view_buttons = {}
+        for name in ('Songs', 'Albums', 'Artists', 'Genres'):
+            item = button(name, lambda _=False, n=name: window.change_view(n), 'segment'); item.setCheckable(True)
+            window.view_buttons[name] = item; segments.addWidget(item)
+        toolbar.addWidget(window.segments)
+        window.back_button = button('Back', window.back_to_groups, 'quiet', 'back'); toolbar.addWidget(window.back_button)
+        outer.addLayout(toolbar)
+        toolbar = box(horizontal=True)
+        window.search = QLineEdit(); window.search.setPlaceholderText('Search your collection'); window.search.setClearButtonEnabled(True); window.search.setMinimumWidth(220)
+        window.search.addAction(icon('search'), QLineEdit.LeadingPosition)
+        window.search.setAccessibleName('Search collection')
+        window.search.setToolTip('Search this collection (Ctrl+F). All search words must match.')
+        window.search_timer = QTimer(window); window.search_timer.setSingleShot(True); window.search_timer.setInterval(160); window.search_timer.timeout.connect(window.render_library)
+        window.search.textChanged.connect(lambda: window.search_timer.start()); toolbar.addWidget(window.search)
+        outer.addLayout(toolbar)
+        filters = box(horizontal=True)
+        window.genre_filter = ComboBox(); window.genre_filter.addItem('All genres', ''); window.genre_filter.currentIndexChanged.connect(window.render_library)
+        window.artist_filter = ComboBox(); window.artist_filter.addItem('All artists', ''); window.artist_filter.currentIndexChanged.connect(window.render_library)
+        window.genre_filter.setAccessibleName('Filter by genre')
+        window.artist_filter.setAccessibleName('Filter by artist')
+        filters.addWidget(window.genre_filter); filters.addWidget(window.artist_filter)
+        window.clear_button = button('Clear filters', window.clear_filters, 'quiet'); filters.addWidget(window.clear_button)
+        filters.addStretch(); window.result_count = label('', 'muted'); filters.addWidget(window.result_count)
+        window.sync_button = button('Sync video folder', window.sync_videos, None, 'refresh'); filters.addWidget(window.sync_button)
+        window.folder_button = button('Open iPod folder', window.open_media_folder, None, 'folder'); filters.addWidget(window.folder_button)
+        outer.addLayout(filters)
+        window.notice = label('', 'notice', True); window.notice.hide(); outer.addWidget(window.notice)
+        window.model = MediaModel(window)
+        window.table = QTableView(); window.table.setModel(window.model); window.table.setShowGrid(False); window.table.setAlternatingRowColors(False)
+        window.table.setSelectionBehavior(QAbstractItemView.SelectRows); window.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        window.table.setEditTriggers(QAbstractItemView.NoEditTriggers); window.table.setSortingEnabled(True)
+        window.table.sortByColumn(0, Qt.AscendingOrder)
+        window.table.setWordWrap(False)
+        window.table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel); window.table.verticalHeader().hide(); window.table.verticalHeader().setDefaultSectionSize(57)
+        window.table.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        window.table.setItemDelegate(TrackDelegate(window.covers, window.table)); window.table.setMouseTracking(True)
+        window.grid = QListView(); window.grid.setModel(window.model); window.grid.setViewMode(QListView.IconMode)
+        window.grid.setResizeMode(QListView.Adjust); window.grid.setMovement(QListView.Static); window.grid.setUniformItemSizes(True)
+        window.grid.setLayoutMode(QListView.Batched); window.grid.setBatchSize(50); window.grid.setSpacing(4)
+        window.grid.setSelectionMode(QAbstractItemView.ExtendedSelection); window.grid.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        window.grid.setItemDelegate(CardDelegate(window.covers, window.grid)); window.grid.setMouseTracking(True)
+        window.covers.views = [window.table, window.grid]
+        window.views = QStackedWidget(); window.views.addWidget(window.table); window.views.addWidget(window.grid)
+        window.empty = QWidget(); empty = box(window.empty, margins=(30, 60, 30, 60)); empty.addStretch()
+        window.empty_title = label('Your collection starts here', 'section'); window.empty_title.setAlignment(Qt.AlignCenter)
+        window.empty_detail = label('Connect an iPod in Disk Mode to browse its media.', 'muted', True); window.empty_detail.setAlignment(Qt.AlignCenter)
+        empty.addWidget(window.empty_title); empty.addWidget(window.empty_detail)
+        window.empty_action = button('Find iPod', window.activate_empty, 'primary')
+        empty.addWidget(window.empty_action, 0, Qt.AlignHCenter)
+        empty.addStretch(); window.views.addWidget(window.empty)
+        outer.addWidget(window.views, 1)
+        window.table.selectionModel().selectionChanged.connect(window.selection_changed)
+        window.grid.selectionModel().selectionChanged.connect(window.selection_changed)
+        window.grid.activated.connect(window.open_group)
+        window.table.activated.connect(window.inspect_selection)
+        window.selection_bar = QFrame(); window.selection_bar.setObjectName('selectionBar'); selection = box(window.selection_bar, horizontal=True, margins=(16, 9, 12, 9))
+        window.selection_text = label(); selection.addWidget(window.selection_text, 1)
+        selection.addWidget(button('Clear', window.clear_selection, 'quiet'))
+        window.info_button = button('Details', window.inspect_selection); selection.addWidget(window.info_button)
+        window.restore_button = button('Restore', window.restore_selected, None, 'back'); selection.addWidget(window.restore_button)
+        window.remove_button = button('Move to Trash', window.remove_selected, 'danger', 'trash'); selection.addWidget(window.remove_button)
+        outer.addWidget(window.selection_bar); window.selection_bar.hide()
+        window.hint = label('Double-click an item for details. Ctrl+click or Shift+click to select multiple files.', 'muted', True); outer.addWidget(window.hint)
+        return page
+
+class PreparationPage:
+    def __init__(self, window):
+        self.window = window
+
+    def build(self):
+        window = self.window
+        page = QWidget(); page.setObjectName('workspace')
+        outer = box(page, spacing=0)
+        scroll, layout = window.scroll_page()
+        scroll.setObjectName('preparationScroll')
+        window.preparation_scroll = scroll
+        outer.addWidget(scroll, 1)
+        window.heading(layout, 'Prepare your media', 'Turn your files into an iPod-ready collection. Your originals stay on the device.')
+        window.prep_checks, window.prep_labels = {}, {}
+        descriptions = {'Music': 'Build the song library and album artwork', 'Photos': 'Create thumbnails and zoomable photos', 'Videos': 'Validate existing videos and prepare them for this iPod', 'Notes': 'Prepare text and Markdown for the reader'}
+        for kind in ('Music', 'Photos', 'Videos', 'Notes'):
+            card = QFrame(); card.setObjectName('card'); row = box(card, horizontal=True, margins=(20, 18, 20, 18), spacing=15)
+            check = CheckBox(kind); check.setChecked(True); check.setMinimumWidth(110); window.prep_checks[kind] = check; row.addWidget(check)
+            text = box(spacing=5); text.addWidget(label(descriptions[kind], 'cardTitle'))
+            state = label('Connect an iPod to check this library.', 'muted'); window.prep_labels[kind] = state; text.addWidget(state); row.addLayout(text, 1)
+            if kind == 'Videos':
+                window.choose_videos_button = button('Choose videos', window.choose_videos); row.addWidget(window.choose_videos_button)
+            layout.addWidget(card)
+        window.online_artwork = CheckBox('Find missing iTunes album covers online (MusicBrainz / Cover Art Archive)')
+        window.online_artwork.setChecked(window.settings.value('onlineArtwork', True, type=bool))
+        window.online_artwork.toggled.connect(lambda enabled: window.settings.setValue('onlineArtwork', enabled))
+        layout.addWidget(window.online_artwork)
+        layout.addSpacing(10); layout.addWidget(label('Up next', 'section'))
+        window.queue_model = MediaModel(window)
+        window.queue_table = QTableView(); window.queue_table.setModel(window.queue_model); window.queue_table.verticalHeader().hide(); window.queue_table.setShowGrid(False)
+        window.queue_table.setSelectionBehavior(QAbstractItemView.SelectRows); window.queue_table.setSelectionMode(QAbstractItemView.ExtendedSelection); window.queue_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        window.queue_table.setMinimumHeight(125); window.queue_table.setMaximumHeight(200)
+        layout.addWidget(window.queue_table)
+        queue_actions = box(horizontal=True)
+        window.queue_add = button('Add files or folder', window.add_media, None, 'plus'); queue_actions.addWidget(window.queue_add)
+        window.queue_open = button('Show source', window.open_queued, None, 'folder'); queue_actions.addWidget(window.queue_open)
+        window.queue_remove = button('Remove from queue', window.remove_queued, 'quiet'); queue_actions.addWidget(window.queue_remove); queue_actions.addStretch()
+        window.queue_remove.setToolTip('Remove selected entries from this queue. Source files stay on your computer.')
+        window.queue_table.selectionModel().selectionChanged.connect(window.update_queue_controls)
+        window.queue_table.activated.connect(window.open_queued)
+        shortcut = QShortcut(QKeySequence('Delete'), window.queue_table, activated=window.remove_queued)
+        shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+        layout.addLayout(queue_actions)
+        window.prep_results = QTextEdit(); window.prep_results.setReadOnly(True); window.prep_results.setMinimumHeight(130); window.prep_results.hide(); layout.addWidget(window.prep_results)
+        window.prep_details = button('View preparation details', window.show_preparation_details, 'quiet')
+        window.prep_details.hide(); layout.addWidget(window.prep_details, 0, Qt.AlignLeft)
+        window.retry_button = button('Review skipped files', window.review_skipped, 'quiet'); layout.addWidget(window.retry_button, 0, Qt.AlignLeft)
+        layout.addSpacing(12)
+        apple_card = QFrame(); apple_card.setObjectName('card')
+        apple_layout = box(apple_card, margins=(20, 18, 20, 18), spacing=9)
+        apple_layout.addWidget(label('Available in Apple OS', 'cardTitle'))
+        apple_layout.addWidget(label('Choose folders already on your iPod. Update Apple OS after their files change.', 'muted', True))
+        window.apple_status = label('Connect an iPod to check Apple OS availability.', 'muted', True)
+        apple_layout.addWidget(window.apple_status)
+        apple_actions = box(horizontal=True)
+        window.apple_choose = button('Choose folders…', window.choose_apple_folders, None, 'folder')
+        window.apple_update = button('Update Apple OS', window.update_apple_os, None, 'refresh')
+        apple_actions.addWidget(window.apple_choose); apple_actions.addWidget(window.apple_update); apple_actions.addStretch()
+        apple_layout.addLayout(apple_actions); layout.addWidget(apple_card)
+        layout.addStretch()
+        footer = QFrame(); footer.setObjectName('preparationFooter')
+        actions = box(footer, horizontal=True, margins=(34, 16, 34, 16), spacing=18)
+        window.prep_summary = label('Unchanged media is reused. Choose which videos to convert.', 'muted', True)
+        actions.addWidget(window.prep_summary, 1)
+        window.prepare_button = button('Prepare selected media', window.prepare, 'primary', 'prepare')
+        actions.addWidget(window.prepare_button)
+        outer.addWidget(footer)
+        return page
+
+class ScreensPage:
+    def __init__(self, window):
+        self.window = window
+
+    def build(self):
+        window = self.window
+        page, layout = window.scroll_page()
+        window.heading(layout, 'Screens', 'Choose what appears on your iPod and arrange it in your preferred order.')
+        window.screen_state = screen_settings.defaults()
+        window.screen_loaded_for = None
+        window.screen_picker = ComboBox(); window.screen_picker.addItems(['Home', 'Music', 'Settings'])
+        window.screen_picker.currentTextChanged.connect(window.screens_controller.render_screen_items)
+        layout.addWidget(window.screen_picker)
+        layout.addWidget(label('Check items to include them. Drag to reorder, or use the move buttons.', 'muted', True))
+        window.screen_items = QListWidget(); window.screen_items.setObjectName('screenItems'); window.screen_items.setMinimumHeight(350)
+        window.screen_items.setDragDropMode(QAbstractItemView.InternalMove)
+        window.screen_items.setDefaultDropAction(Qt.MoveAction)
+        window.screen_items.itemChanged.connect(window.screens_controller.screen_items_changed)
+        window.screen_items.model().rowsMoved.connect(window.screens_controller.screen_items_changed)
+        layout.addWidget(window.screen_items)
+        window.screen_unavailable = label('', 'muted', True); layout.addWidget(window.screen_unavailable)
+        window.screen_hint = label('', 'muted', True); layout.addWidget(window.screen_hint)
+        window.screen_items.currentItemChanged.connect(window.screens_controller.screen_item_hint)
+        controls = box(horizontal=True)
+        controls.addWidget(button('Move up', lambda: window.screens_controller.move_screen_item(-1)))
+        controls.addWidget(button('Move down', lambda: window.screens_controller.move_screen_item(1)))
+        controls.addStretch()
+        controls.addWidget(button('Reset this screen', window.screens_controller.reset_screen))
+        layout.addLayout(controls)
+        window.screen_status = label('Connect an iPod in Disk Mode to save screen settings.', 'muted', True)
+        layout.addWidget(window.screen_status)
+        window.screen_save = button('Save to iPod', window.screens_controller.save_screens, 'primary')
+        layout.addWidget(window.screen_save)
+        window.screens_controller.render_screen_items()
+        return page
+
+class GamesPage:
+    def __init__(self, window):
+        self.window = window
+
+    def build(self):
+        window = self.window
+        page, layout = window.scroll_page()
+        window.heading(layout, 'Games', 'Choose the games that appear on your iPod.')
+        window.games_loaded_for = None
+        window.game_checks = []
+        for index, (title, description) in enumerate(games.GAMES):
+            card = QFrame(); card.setObjectName('card')
+            row = box(card, horizontal=True, margins=(20, 18, 20, 18), spacing=15)
+            check = CheckBox(title); check.setChecked(True); check.setMinimumWidth(145)
+            check.toggled.connect(window.games_controller.games_changed)
+            window.game_checks.append(check); row.addWidget(check)
+            row.addWidget(label(description, 'muted', True), 1)
+            layout.addWidget(card)
+        window.games_status = label('Connect an iPod with games to check installed games.', 'muted', True)
+        layout.addWidget(window.games_status)
+        window.games_save = button('Update games on iPod', window.games_controller.save_games, 'primary')
+        layout.addWidget(window.games_save, 0, Qt.AlignLeft)
+        layout.addStretch()
+        return page
+
+class SetupPage:
+    def __init__(self, window):
+        self.window = window
+
+    def build(self):
+        window = self.window
+        page, layout = window.scroll_page()
+        window.heading(layout, 'iPod setup', 'Choose your startup software and how your iPod starts.')
+        card = QFrame(); card.setObjectName('card'); details = box(card, margins=(24, 24, 24, 24), spacing=12)
+        details.addWidget(label('Connected device', 'section'))
+        window.setup_device = label('Connect an iPod in Disk Mode.', 'muted', True); details.addWidget(window.setup_device)
+        window.setup_software = label('', 'muted', True); details.addWidget(window.setup_software)
+        window.install_detail = label('', 'notice', True); window.install_detail.hide(); details.addWidget(window.install_detail)
+        window.setup_progress = QProgressBar(); window.setup_progress.setRange(0, 0)
+        window.setup_progress.setTextVisible(False); window.setup_progress.hide(); details.addWidget(window.setup_progress)
+        layout.addWidget(card)
+        layout.addSpacing(12); layout.addWidget(label('Startup software', 'section'))
+        layout.addWidget(label('Choose a default or see options available by holding Menu at startup.', 'muted'))
+        window.boot_choice = ComboBox(); window.boot_choice.currentIndexChanged.connect(window.update_install_action); layout.addWidget(window.boot_choice)
+        window.boot_detail = label('', 'muted', True); layout.addWidget(window.boot_detail)
+        window.method_title = label('Startup behavior', 'section'); layout.addWidget(window.method_title)
+        window.method_choice = ComboBox(); window.method_choice.currentIndexChanged.connect(window.update_install_action); layout.addWidget(window.method_choice)
+        window.method_detail = label('', 'muted', True); layout.addWidget(window.method_detail)
+        window.selector_note = label('A startup selector can offer a choice at boot when compatible software is installed.', 'muted', True); layout.addWidget(window.selector_note)
+        layout.addSpacing(10)
+        window.install_button = button('Install Linnet', window.install_selected, 'primary'); layout.addWidget(window.install_button, 0, Qt.AlignLeft)
+        layout.addWidget(label('Your media is kept. Previous startup files are saved for recovery.', 'muted', True))
+        layout.addStretch()
+        return page
+
+class SettingsPage:
+    def __init__(self, window):
+        self.window = window
+
+    def build(self):
+        window = self.window
+        page, layout = window.scroll_page()
+        window.heading(layout, 'Settings', 'Preparation quality and tools, in one place.')
+        layout.addWidget(label('Photo detail', 'section'))
+        window.photo_detail = ComboBox(); window.photo_detail.addItems(['Standard · 640 px', 'High detail · 2048 px']); window.photo_detail.setCurrentIndex(int(window.settings.value('photo_detail', 0)))
+        window.photo_detail.currentIndexChanged.connect(lambda value: window.settings.setValue('photo_detail', value)); layout.addWidget(window.photo_detail)
+        layout.addWidget(label('High detail uses more storage and takes longer to prepare.', 'muted'))
+        layout.addSpacing(20); layout.addWidget(label('Conversion tools', 'section'))
+        window.tools_label = label('', 'muted', True); layout.addWidget(window.tools_label)
+        layout.addWidget(button('Choose FFmpeg folder', window.locate_tools, None, 'folder'), 0, Qt.AlignLeft)
+        layout.addSpacing(20); layout.addWidget(label('Advanced preparation', 'section'))
+        window.verify_audio = CheckBox('Read entire audio files when verifying (slower)'); layout.addWidget(window.verify_audio)
+        window.rebuild = CheckBox('Rebuild content that is already prepared'); layout.addWidget(window.rebuild)
+        layout.addStretch(); window.update_tools()
+        return page
+
+
+class GamesController:
+    def __init__(self, window):
+        self.window = window
+
+    def games_changed(self, *_):
+        window = self.window
+        if window.games_loaded_for:
+            window.games_status.setText('Selection changed. Update games on iPod, then eject safely.')
+
+    def load_games(self):
+        window = self.window
+        if (window.identity and games.available(window.identity) and not window.busy
+                and window.games_loaded_for != window.identity['root']):
+            identity = window.identity
+            window.work('games', lambda: games.read(identity), 'Reading installed games…')
+
+    def save_games(self):
+        window = self.window
+        if not window.identity or window.busy or not games.available(window.identity):
+            return
+        selected = {index for index, check in enumerate(window.game_checks) if check.isChecked()}
+        identity = window.identity
+        window.work('save_games', lambda: games.save(identity, selected), 'Updating games on iPod…')
+
+class ScreensController:
+    def __init__(self, window):
+        self.window = window
+
+    def render_screen_items(self, *_):
+        window = self.window
+        name = window.screen_picker.currentText()
+        labels = screen_settings.SCREENS[name]
+        selected = window.screen_state[name]
+        available, unavailable = screen_settings.item_availability(name, window.identity)
+        locked = screen_settings.locked_items(name, window.identity, selected)
+        window.screen_unavailable.setText('Not available on this device: ' + ', '.join(labels[i] for i in unavailable))
+        window.screen_unavailable.setVisible(bool(unavailable))
+        order = [i for i in selected if i in available] + [i for i in available if i not in selected]
+        with QSignalBlocker(window.screen_items):
+            window.screen_items.clear()
+            for i in order:
+                shown = 'Games' if name == 'Home' and i == 7 and window.identity and games.available(window.identity) else labels[i]
+                item = QListWidgetItem(shown); item.setData(Qt.UserRole, i)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled)
+                item.setCheckState(Qt.Checked if i in selected else Qt.Unchecked)
+                if i in locked:
+                    item.setFlags(item.flags() & ~Qt.ItemIsUserCheckable)
+                    item.setText(labels[i] + ' (always included)')
+                    item.setToolTip('This item is always included by the device.')
+                elif labels[i] in screen_settings.HINTS:
+                    item.setToolTip(screen_settings.HINTS[labels[i]])
+                window.screen_items.addItem(item)
+        window.screen_items.setCurrentRow(0)
+
+    def screen_items_changed(self, *_):
+        window = self.window
+        name = window.screen_picker.currentText()
+        selected = [window.screen_items.item(i).data(Qt.UserRole) for i in range(window.screen_items.count())
+                    if window.screen_items.item(i).checkState() == Qt.Checked]
+        if name == 'Settings':
+            video_settings = next((window.screen_items.item(i) for i in range(window.screen_items.count())
+                                   if window.screen_items.item(i).data(Qt.UserRole) == 10), None)
+            if video_settings is not None:
+                forced = 0 in selected
+                with QSignalBlocker(window.screen_items):
+                    if forced and 10 not in selected:
+                        video_settings.setCheckState(Qt.Checked)
+                        position = sum(window.screen_items.item(i).checkState() == Qt.Checked
+                                       for i in range(window.screen_items.row(video_settings)))
+                        selected.insert(position, 10)
+                    flags = video_settings.flags()
+                    video_settings.setFlags(flags & ~Qt.ItemIsUserCheckable if forced else
+                                            flags | Qt.ItemIsUserCheckable)
+                    video_settings.setText('Video Settings (always included)' if forced else 'Video Settings')
+                    video_settings.setToolTip('This item is always included with Display.' if forced else '')
+        window.screen_state[name] = selected
+        window.screen_status.setText('Unsaved changes. Save to iPod, then eject safely to apply on startup.'
+                                   if all(window.screen_state.values()) else 'Select at least one item on each screen before saving.')
+        window.update_controls()
+
+    def screen_item_hint(self, item, *_):
+        window = self.window
+        window.screen_hint.setText(item.toolTip() if item else '')
+
+    def move_screen_item(self, direction):
+        window = self.window
+        row = window.screen_items.currentRow(); target = row + direction
+        if row < 0 or not 0 <= target < window.screen_items.count():
+            return
+        item = window.screen_items.takeItem(row); window.screen_items.insertItem(target, item)
+        window.screen_items.setCurrentRow(target); self.screen_items_changed()
+
+    def reset_screen(self):
+        window = self.window
+        name = window.screen_picker.currentText()
+        window.screen_state[name] = screen_settings.defaults(window.identity)[name]
+        self.render_screen_items(); self.screen_items_changed()
+
+    def load_screens(self):
+        window = self.window
+        if window.identity and not window.busy and window.screen_loaded_for != window.identity['root']:
+            identity = window.identity
+            window.work('screens', lambda: screen_settings.read(identity), 'Reading screen settings…')
+
+    def save_screens(self):
+        window = self.window
+        if not window.identity or window.busy:
+            return
+        state = {name: list(rows) for name, rows in window.screen_state.items()}
+        try:
+            screen_settings.encode(state)
+        except ValueError as error:
+            window.show_error(str(error)); return
+        identity = window.identity
+        window.work('save_screens', lambda: screen_settings.save(identity, state), 'Saving screen settings…')
+
+
 class MediaWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -573,6 +952,8 @@ class MediaWindow(QMainWindow):
         self.covers = Covers(self)
         self.ffmpeg = self.settings.value('ffmpeg', shutil.which('ffmpeg') or '')
         self.ffprobe = self.settings.value('ffprobe', shutil.which('ffprobe') or '')
+        self.screens_controller = ScreensController(self)
+        self.games_controller = GamesController(self)
         self.build()
         self.setStyleSheet(Path(__file__).with_suffix('.qss').read_text(encoding='utf-8'))
         self.update_preparation()
@@ -612,12 +993,12 @@ class MediaWindow(QMainWindow):
         main.addWidget(sidebar)
         right = QWidget(); right.setObjectName('workspace'); body = box(right, spacing=0)
         self.stack = QStackedWidget(); body.addWidget(self.stack, 1)
-        self.library = self.build_library(); self.stack.addWidget(self.library)
-        self.preparation = self.build_preparation(); self.stack.addWidget(self.preparation)
-        self.setup = self.build_setup(); self.stack.addWidget(self.setup)
-        self.screens = self.build_screens(); self.stack.addWidget(self.screens)
-        self.games_page = self.build_games(); self.stack.addWidget(self.games_page)
-        self.preferences = self.build_settings(); self.stack.addWidget(self.preferences)
+        self.library = LibraryPage(self).build(); self.stack.addWidget(self.library)
+        self.preparation = PreparationPage(self).build(); self.stack.addWidget(self.preparation)
+        self.setup = SetupPage(self).build(); self.stack.addWidget(self.setup)
+        self.screens = ScreensPage(self).build(); self.stack.addWidget(self.screens)
+        self.games_page = GamesPage(self).build(); self.stack.addWidget(self.games_page)
+        self.preferences = SettingsPage(self).build(); self.stack.addWidget(self.preferences)
         activity = QFrame(); activity.setObjectName('activity'); foot = box(activity, margins=(28, 10, 28, 12), spacing=7)
         self.progress = QProgressBar(); self.progress.setTextVisible(False); self.progress.hide(); foot.addWidget(self.progress)
         status_row = box(horizontal=True, spacing=12)
@@ -637,341 +1018,12 @@ class MediaWindow(QMainWindow):
         layout.addWidget(label(subtitle, 'subtitle', True))
         layout.addSpacing(16)
 
-    def build_library(self):
-        page = QWidget(); outer = box(page, margins=(30, 28, 26, 20), spacing=16)
-        top = box(horizontal=True)
-        titles = box(spacing=5); self.heading_label = label('Music', 'title', True); self.subtitle = label('', 'subtitle', True)
-        titles.addWidget(self.heading_label); titles.addWidget(self.subtitle); top.addLayout(titles, 1)
-        self.playlists_button = button('Playlists', self.open_playlists, None, 'music'); top.addWidget(self.playlists_button)
-        self.add_button = button('Add media', self.add_media, 'primary', 'plus'); top.addWidget(self.add_button)
-        outer.addLayout(top)
-        toolbar = box(horizontal=True)
-        self.segments = QFrame(); self.segments.setObjectName('segments'); segments = box(self.segments, horizontal=True, margins=(4, 4, 4, 4), spacing=2)
-        self.view_buttons = {}
-        for name in ('Songs', 'Albums', 'Artists', 'Genres'):
-            item = button(name, lambda _=False, n=name: self.change_view(n), 'segment'); item.setCheckable(True)
-            self.view_buttons[name] = item; segments.addWidget(item)
-        toolbar.addWidget(self.segments)
-        self.back_button = button('Back', self.back_to_groups, 'quiet', 'back'); toolbar.addWidget(self.back_button)
-        outer.addLayout(toolbar)
-        toolbar = box(horizontal=True)
-        self.search = QLineEdit(); self.search.setPlaceholderText('Search your collection'); self.search.setClearButtonEnabled(True); self.search.setMinimumWidth(220)
-        self.search.addAction(icon('search'), QLineEdit.LeadingPosition)
-        self.search.setAccessibleName('Search collection')
-        self.search.setToolTip('Search this collection (Ctrl+F). All search words must match.')
-        self.search_timer = QTimer(self); self.search_timer.setSingleShot(True); self.search_timer.setInterval(160); self.search_timer.timeout.connect(self.render_library)
-        self.search.textChanged.connect(lambda: self.search_timer.start()); toolbar.addWidget(self.search)
-        outer.addLayout(toolbar)
-        filters = box(horizontal=True)
-        self.genre_filter = ComboBox(); self.genre_filter.addItem('All genres', ''); self.genre_filter.currentIndexChanged.connect(self.render_library)
-        self.artist_filter = ComboBox(); self.artist_filter.addItem('All artists', ''); self.artist_filter.currentIndexChanged.connect(self.render_library)
-        self.genre_filter.setAccessibleName('Filter by genre')
-        self.artist_filter.setAccessibleName('Filter by artist')
-        filters.addWidget(self.genre_filter); filters.addWidget(self.artist_filter)
-        self.clear_button = button('Clear filters', self.clear_filters, 'quiet'); filters.addWidget(self.clear_button)
-        filters.addStretch(); self.result_count = label('', 'muted'); filters.addWidget(self.result_count)
-        self.sync_button = button('Sync video folder', self.sync_videos, None, 'refresh'); filters.addWidget(self.sync_button)
-        self.folder_button = button('Open iPod folder', self.open_media_folder, None, 'folder'); filters.addWidget(self.folder_button)
-        outer.addLayout(filters)
-        self.notice = label('', 'notice', True); self.notice.hide(); outer.addWidget(self.notice)
-        self.model = MediaModel(self)
-        self.table = QTableView(); self.table.setModel(self.model); self.table.setShowGrid(False); self.table.setAlternatingRowColors(False)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows); self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers); self.table.setSortingEnabled(True)
-        self.table.sortByColumn(0, Qt.AscendingOrder)
-        self.table.setWordWrap(False)
-        self.table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel); self.table.verticalHeader().hide(); self.table.verticalHeader().setDefaultSectionSize(57)
-        self.table.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.table.setItemDelegate(TrackDelegate(self.covers, self.table)); self.table.setMouseTracking(True)
-        self.grid = QListView(); self.grid.setModel(self.model); self.grid.setViewMode(QListView.IconMode)
-        self.grid.setResizeMode(QListView.Adjust); self.grid.setMovement(QListView.Static); self.grid.setUniformItemSizes(True)
-        self.grid.setLayoutMode(QListView.Batched); self.grid.setBatchSize(50); self.grid.setSpacing(4)
-        self.grid.setSelectionMode(QAbstractItemView.ExtendedSelection); self.grid.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-        self.grid.setItemDelegate(CardDelegate(self.covers, self.grid)); self.grid.setMouseTracking(True)
-        self.covers.views = [self.table, self.grid]
-        self.views = QStackedWidget(); self.views.addWidget(self.table); self.views.addWidget(self.grid)
-        self.empty = QWidget(); empty = box(self.empty, margins=(30, 60, 30, 60)); empty.addStretch()
-        self.empty_title = label('Your collection starts here', 'section'); self.empty_title.setAlignment(Qt.AlignCenter)
-        self.empty_detail = label('Connect an iPod in Disk Mode to browse its media.', 'muted', True); self.empty_detail.setAlignment(Qt.AlignCenter)
-        empty.addWidget(self.empty_title); empty.addWidget(self.empty_detail)
-        self.empty_action = button('Find iPod', self.activate_empty, 'primary')
-        empty.addWidget(self.empty_action, 0, Qt.AlignHCenter)
-        empty.addStretch(); self.views.addWidget(self.empty)
-        outer.addWidget(self.views, 1)
-        self.table.selectionModel().selectionChanged.connect(self.selection_changed)
-        self.grid.selectionModel().selectionChanged.connect(self.selection_changed)
-        self.grid.activated.connect(self.open_group)
-        self.table.activated.connect(self.inspect_selection)
-        self.selection_bar = QFrame(); self.selection_bar.setObjectName('selectionBar'); selection = box(self.selection_bar, horizontal=True, margins=(16, 9, 12, 9))
-        self.selection_text = label(); selection.addWidget(self.selection_text, 1)
-        selection.addWidget(button('Clear', self.clear_selection, 'quiet'))
-        self.info_button = button('Details', self.inspect_selection); selection.addWidget(self.info_button)
-        self.restore_button = button('Restore', self.restore_selected, None, 'back'); selection.addWidget(self.restore_button)
-        self.remove_button = button('Move to Trash', self.remove_selected, 'danger', 'trash'); selection.addWidget(self.remove_button)
-        outer.addWidget(self.selection_bar); self.selection_bar.hide()
-        self.hint = label('Double-click an item for details. Ctrl+click or Shift+click to select multiple files.', 'muted', True); outer.addWidget(self.hint)
-        return page
-
     def scroll_page(self):
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
         content = QWidget(); content.setObjectName('pageContent')
         layout = box(content, margins=(34, 32, 34, 28), spacing=14)
         scroll.setWidget(content)
         return scroll, layout
-
-    def build_preparation(self):
-        page = QWidget(); page.setObjectName('workspace')
-        outer = box(page, spacing=0)
-        scroll, layout = self.scroll_page()
-        scroll.setObjectName('preparationScroll')
-        self.preparation_scroll = scroll
-        outer.addWidget(scroll, 1)
-        self.heading(layout, 'Prepare your media', 'Turn your files into an iPod-ready collection. Your originals stay on the device.')
-        self.prep_checks, self.prep_labels = {}, {}
-        descriptions = {'Music': 'Build the song library and album artwork', 'Photos': 'Create thumbnails and zoomable photos', 'Videos': 'Validate existing videos and prepare them for this iPod', 'Notes': 'Prepare text and Markdown for the reader'}
-        for kind in ('Music', 'Photos', 'Videos', 'Notes'):
-            card = QFrame(); card.setObjectName('card'); row = box(card, horizontal=True, margins=(20, 18, 20, 18), spacing=15)
-            check = CheckBox(kind); check.setChecked(True); check.setMinimumWidth(110); self.prep_checks[kind] = check; row.addWidget(check)
-            text = box(spacing=5); text.addWidget(label(descriptions[kind], 'cardTitle'))
-            state = label('Connect an iPod to check this library.', 'muted'); self.prep_labels[kind] = state; text.addWidget(state); row.addLayout(text, 1)
-            if kind == 'Videos':
-                self.choose_videos_button = button('Choose videos', self.choose_videos); row.addWidget(self.choose_videos_button)
-            layout.addWidget(card)
-        self.online_artwork = CheckBox('Find missing iTunes album covers online (MusicBrainz / Cover Art Archive)')
-        self.online_artwork.setChecked(self.settings.value('onlineArtwork', True, type=bool))
-        self.online_artwork.toggled.connect(lambda enabled: self.settings.setValue('onlineArtwork', enabled))
-        layout.addWidget(self.online_artwork)
-        layout.addSpacing(10); layout.addWidget(label('Up next', 'section'))
-        self.queue_model = MediaModel(self)
-        self.queue_table = QTableView(); self.queue_table.setModel(self.queue_model); self.queue_table.verticalHeader().hide(); self.queue_table.setShowGrid(False)
-        self.queue_table.setSelectionBehavior(QAbstractItemView.SelectRows); self.queue_table.setSelectionMode(QAbstractItemView.ExtendedSelection); self.queue_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.queue_table.setMinimumHeight(125); self.queue_table.setMaximumHeight(200)
-        layout.addWidget(self.queue_table)
-        queue_actions = box(horizontal=True)
-        self.queue_add = button('Add files or folder', self.add_media, None, 'plus'); queue_actions.addWidget(self.queue_add)
-        self.queue_open = button('Show source', self.open_queued, None, 'folder'); queue_actions.addWidget(self.queue_open)
-        self.queue_remove = button('Remove from queue', self.remove_queued, 'quiet'); queue_actions.addWidget(self.queue_remove); queue_actions.addStretch()
-        self.queue_remove.setToolTip('Remove selected entries from this queue. Source files stay on your computer.')
-        self.queue_table.selectionModel().selectionChanged.connect(self.update_queue_controls)
-        self.queue_table.activated.connect(self.open_queued)
-        shortcut = QShortcut(QKeySequence('Delete'), self.queue_table, activated=self.remove_queued)
-        shortcut.setContext(Qt.WidgetWithChildrenShortcut)
-        layout.addLayout(queue_actions)
-        self.prep_results = QTextEdit(); self.prep_results.setReadOnly(True); self.prep_results.setMinimumHeight(130); self.prep_results.hide(); layout.addWidget(self.prep_results)
-        self.prep_details = button('View preparation details', self.show_preparation_details, 'quiet')
-        self.prep_details.hide(); layout.addWidget(self.prep_details, 0, Qt.AlignLeft)
-        self.retry_button = button('Review skipped files', self.review_skipped, 'quiet'); layout.addWidget(self.retry_button, 0, Qt.AlignLeft)
-        layout.addSpacing(12)
-        apple_card = QFrame(); apple_card.setObjectName('card')
-        apple_layout = box(apple_card, margins=(20, 18, 20, 18), spacing=9)
-        apple_layout.addWidget(label('Available in Apple OS', 'cardTitle'))
-        apple_layout.addWidget(label('Choose folders already on your iPod. Update Apple OS after their files change.', 'muted', True))
-        self.apple_status = label('Connect an iPod to check Apple OS availability.', 'muted', True)
-        apple_layout.addWidget(self.apple_status)
-        apple_actions = box(horizontal=True)
-        self.apple_choose = button('Choose folders…', self.choose_apple_folders, None, 'folder')
-        self.apple_update = button('Update Apple OS', self.update_apple_os, None, 'refresh')
-        apple_actions.addWidget(self.apple_choose); apple_actions.addWidget(self.apple_update); apple_actions.addStretch()
-        apple_layout.addLayout(apple_actions); layout.addWidget(apple_card)
-        layout.addStretch()
-        footer = QFrame(); footer.setObjectName('preparationFooter')
-        actions = box(footer, horizontal=True, margins=(34, 16, 34, 16), spacing=18)
-        self.prep_summary = label('Unchanged media is reused. Choose which videos to convert.', 'muted', True)
-        actions.addWidget(self.prep_summary, 1)
-        self.prepare_button = button('Prepare selected media', self.prepare, 'primary', 'prepare')
-        actions.addWidget(self.prepare_button)
-        outer.addWidget(footer)
-        return page
-
-    def build_screens(self):
-        page, layout = self.scroll_page()
-        self.heading(layout, 'Screens', 'Choose what appears on your iPod and arrange it in your preferred order.')
-        self.screen_state = screen_settings.defaults()
-        self.screen_loaded_for = None
-        self.screen_picker = ComboBox(); self.screen_picker.addItems(['Home', 'Music', 'Settings'])
-        self.screen_picker.currentTextChanged.connect(self.render_screen_items)
-        layout.addWidget(self.screen_picker)
-        layout.addWidget(label('Check items to include them. Drag to reorder, or use the move buttons.', 'muted', True))
-        self.screen_items = QListWidget(); self.screen_items.setObjectName('screenItems'); self.screen_items.setMinimumHeight(350)
-        self.screen_items.setDragDropMode(QAbstractItemView.InternalMove)
-        self.screen_items.setDefaultDropAction(Qt.MoveAction)
-        self.screen_items.itemChanged.connect(self.screen_items_changed)
-        self.screen_items.model().rowsMoved.connect(self.screen_items_changed)
-        layout.addWidget(self.screen_items)
-        self.screen_unavailable = label('', 'muted', True); layout.addWidget(self.screen_unavailable)
-        self.screen_hint = label('', 'muted', True); layout.addWidget(self.screen_hint)
-        self.screen_items.currentItemChanged.connect(self.screen_item_hint)
-        controls = box(horizontal=True)
-        controls.addWidget(button('Move up', lambda: self.move_screen_item(-1)))
-        controls.addWidget(button('Move down', lambda: self.move_screen_item(1)))
-        controls.addStretch()
-        controls.addWidget(button('Reset this screen', self.reset_screen))
-        layout.addLayout(controls)
-        self.screen_status = label('Connect an iPod in Disk Mode to save screen settings.', 'muted', True)
-        layout.addWidget(self.screen_status)
-        self.screen_save = button('Save to iPod', self.save_screens, 'primary')
-        layout.addWidget(self.screen_save)
-        self.render_screen_items()
-        return page
-
-    def build_games(self):
-        page, layout = self.scroll_page()
-        self.heading(layout, 'Games', 'Choose the games that appear on your iPod.')
-        self.games_loaded_for = None
-        self.game_checks = []
-        for index, (title, description) in enumerate(games.GAMES):
-            card = QFrame(); card.setObjectName('card')
-            row = box(card, horizontal=True, margins=(20, 18, 20, 18), spacing=15)
-            check = CheckBox(title); check.setChecked(True); check.setMinimumWidth(145)
-            check.toggled.connect(self.games_changed)
-            self.game_checks.append(check); row.addWidget(check)
-            row.addWidget(label(description, 'muted', True), 1)
-            layout.addWidget(card)
-        self.games_status = label('Connect an iPod with games to check installed games.', 'muted', True)
-        layout.addWidget(self.games_status)
-        self.games_save = button('Update games on iPod', self.save_games, 'primary')
-        layout.addWidget(self.games_save, 0, Qt.AlignLeft)
-        layout.addStretch()
-        return page
-
-    def games_changed(self, *_):
-        if self.games_loaded_for:
-            self.games_status.setText('Selection changed. Update games on iPod, then eject safely.')
-
-    def load_games(self):
-        if (self.identity and games.available(self.identity) and not self.busy
-                and self.games_loaded_for != self.identity['root']):
-            identity = self.identity
-            self.work('games', lambda: games.read(identity), 'Reading installed games…')
-
-    def save_games(self):
-        if not self.identity or self.busy or not games.available(self.identity):
-            return
-        selected = {index for index, check in enumerate(self.game_checks) if check.isChecked()}
-        identity = self.identity
-        self.work('save_games', lambda: games.save(identity, selected), 'Updating games on iPod…')
-
-    def render_screen_items(self, *_):
-        name = self.screen_picker.currentText()
-        labels = screen_settings.SCREENS[name]
-        selected = self.screen_state[name]
-        available, unavailable = screen_settings.item_availability(name, self.identity)
-        locked = screen_settings.locked_items(name, self.identity, selected)
-        self.screen_unavailable.setText('Not available on this device: ' + ', '.join(labels[i] for i in unavailable))
-        self.screen_unavailable.setVisible(bool(unavailable))
-        order = [i for i in selected if i in available] + [i for i in available if i not in selected]
-        with QSignalBlocker(self.screen_items):
-            self.screen_items.clear()
-            for i in order:
-                shown = 'Games' if name == 'Home' and i == 7 and self.identity and games.available(self.identity) else labels[i]
-                item = QListWidgetItem(shown); item.setData(Qt.UserRole, i)
-                item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled)
-                item.setCheckState(Qt.Checked if i in selected else Qt.Unchecked)
-                if i in locked:
-                    item.setFlags(item.flags() & ~Qt.ItemIsUserCheckable)
-                    item.setText(labels[i] + ' (always included)')
-                    item.setToolTip('This item is always included by the device.')
-                elif labels[i] in screen_settings.HINTS:
-                    item.setToolTip(screen_settings.HINTS[labels[i]])
-                self.screen_items.addItem(item)
-        self.screen_items.setCurrentRow(0)
-
-    def screen_items_changed(self, *_):
-        name = self.screen_picker.currentText()
-        selected = [self.screen_items.item(i).data(Qt.UserRole) for i in range(self.screen_items.count())
-                    if self.screen_items.item(i).checkState() == Qt.Checked]
-        if name == 'Settings':
-            video_settings = next((self.screen_items.item(i) for i in range(self.screen_items.count())
-                                   if self.screen_items.item(i).data(Qt.UserRole) == 10), None)
-            if video_settings is not None:
-                forced = 0 in selected
-                with QSignalBlocker(self.screen_items):
-                    if forced and 10 not in selected:
-                        video_settings.setCheckState(Qt.Checked)
-                        position = sum(self.screen_items.item(i).checkState() == Qt.Checked
-                                       for i in range(self.screen_items.row(video_settings)))
-                        selected.insert(position, 10)
-                    flags = video_settings.flags()
-                    video_settings.setFlags(flags & ~Qt.ItemIsUserCheckable if forced else
-                                            flags | Qt.ItemIsUserCheckable)
-                    video_settings.setText('Video Settings (always included)' if forced else 'Video Settings')
-                    video_settings.setToolTip('This item is always included with Display.' if forced else '')
-        self.screen_state[name] = selected
-        self.screen_status.setText('Unsaved changes. Save to iPod, then eject safely to apply on startup.'
-                                   if all(self.screen_state.values()) else 'Select at least one item on each screen before saving.')
-        self.update_controls()
-
-    def screen_item_hint(self, item, *_):
-        self.screen_hint.setText(item.toolTip() if item else '')
-
-    def move_screen_item(self, direction):
-        row = self.screen_items.currentRow(); target = row + direction
-        if row < 0 or not 0 <= target < self.screen_items.count():
-            return
-        item = self.screen_items.takeItem(row); self.screen_items.insertItem(target, item)
-        self.screen_items.setCurrentRow(target); self.screen_items_changed()
-
-    def reset_screen(self):
-        name = self.screen_picker.currentText()
-        self.screen_state[name] = screen_settings.defaults(self.identity)[name]
-        self.render_screen_items(); self.screen_items_changed()
-
-    def load_screens(self):
-        if self.identity and not self.busy and self.screen_loaded_for != self.identity['root']:
-            identity = self.identity
-            self.work('screens', lambda: screen_settings.read(identity), 'Reading screen settings…')
-
-    def save_screens(self):
-        if not self.identity or self.busy:
-            return
-        state = {name: list(rows) for name, rows in self.screen_state.items()}
-        try:
-            screen_settings.encode(state)
-        except ValueError as error:
-            self.show_error(str(error)); return
-        identity = self.identity
-        self.work('save_screens', lambda: screen_settings.save(identity, state), 'Saving screen settings…')
-
-    def build_setup(self):
-        page, layout = self.scroll_page()
-        self.heading(layout, 'iPod setup', 'Choose your startup software and how your iPod starts.')
-        card = QFrame(); card.setObjectName('card'); details = box(card, margins=(24, 24, 24, 24), spacing=12)
-        details.addWidget(label('Connected device', 'section'))
-        self.setup_device = label('Connect an iPod in Disk Mode.', 'muted', True); details.addWidget(self.setup_device)
-        self.setup_software = label('', 'muted', True); details.addWidget(self.setup_software)
-        self.install_detail = label('', 'notice', True); self.install_detail.hide(); details.addWidget(self.install_detail)
-        self.setup_progress = QProgressBar(); self.setup_progress.setRange(0, 0)
-        self.setup_progress.setTextVisible(False); self.setup_progress.hide(); details.addWidget(self.setup_progress)
-        layout.addWidget(card)
-        layout.addSpacing(12); layout.addWidget(label('Startup software', 'section'))
-        layout.addWidget(label('Choose a default or see options available by holding Menu at startup.', 'muted'))
-        self.boot_choice = ComboBox(); self.boot_choice.currentIndexChanged.connect(self.update_install_action); layout.addWidget(self.boot_choice)
-        self.boot_detail = label('', 'muted', True); layout.addWidget(self.boot_detail)
-        self.method_title = label('Startup behavior', 'section'); layout.addWidget(self.method_title)
-        self.method_choice = ComboBox(); self.method_choice.currentIndexChanged.connect(self.update_install_action); layout.addWidget(self.method_choice)
-        self.method_detail = label('', 'muted', True); layout.addWidget(self.method_detail)
-        self.selector_note = label('A startup selector can offer a choice at boot when compatible software is installed.', 'muted', True); layout.addWidget(self.selector_note)
-        layout.addSpacing(10)
-        self.install_button = button('Install Linnet', self.install_selected, 'primary'); layout.addWidget(self.install_button, 0, Qt.AlignLeft)
-        layout.addWidget(label('Your media is kept. Previous startup files are saved for recovery.', 'muted', True))
-        layout.addStretch()
-        return page
-
-    def build_settings(self):
-        page, layout = self.scroll_page()
-        self.heading(layout, 'Settings', 'Preparation quality and tools, in one place.')
-        layout.addWidget(label('Photo detail', 'section'))
-        self.photo_detail = ComboBox(); self.photo_detail.addItems(['Standard · 640 px', 'High detail · 2048 px']); self.photo_detail.setCurrentIndex(int(self.settings.value('photo_detail', 0)))
-        self.photo_detail.currentIndexChanged.connect(lambda value: self.settings.setValue('photo_detail', value)); layout.addWidget(self.photo_detail)
-        layout.addWidget(label('High detail uses more storage and takes longer to prepare.', 'muted'))
-        layout.addSpacing(20); layout.addWidget(label('Conversion tools', 'section'))
-        self.tools_label = label('', 'muted', True); layout.addWidget(self.tools_label)
-        layout.addWidget(button('Choose FFmpeg folder', self.locate_tools, None, 'folder'), 0, Qt.AlignLeft)
-        layout.addSpacing(20); layout.addWidget(label('Advanced preparation', 'section'))
-        self.verify_audio = CheckBox('Read entire audio files when verifying (slower)'); layout.addWidget(self.verify_audio)
-        self.rebuild = CheckBox('Rebuild content that is already prepared'); layout.addWidget(self.rebuild)
-        layout.addStretch(); self.update_tools()
-        return page
 
     def navigate(self, page):
         changed = self.page != page
@@ -989,9 +1041,9 @@ class MediaWindow(QMainWindow):
         elif page == 'Preparation':
             self.stack.setCurrentWidget(self.preparation)
         elif page == 'Screens':
-            self.stack.setCurrentWidget(self.screens); self.load_screens()
+            self.stack.setCurrentWidget(self.screens); self.screens_controller.load_screens()
         elif page == 'Games':
-            self.stack.setCurrentWidget(self.games_page); self.load_games()
+            self.stack.setCurrentWidget(self.games_page); self.games_controller.load_games()
         elif page == 'iPod setup':
             self.stack.setCurrentWidget(self.setup)
             if self.identity and self.review is not None:
@@ -1464,7 +1516,7 @@ class MediaWindow(QMainWindow):
             self.plan_context = None
         if tag == 'screens':
             self.screen_state = screen_settings.defaults(self.identity)
-            self.render_screen_items()
+            self.screens_controller.render_screen_items()
             self.screen_status.setText('Could not read settings. Showing defaults for this iPod; saving will replace its screen settings.')
         if tag in ('setup', 'devices', 'scan'):
             self.setup_progress.hide()
@@ -1475,7 +1527,7 @@ class MediaWindow(QMainWindow):
         return
 
     def _complete_screens(self, result):
-        self.screen_state = result; self.screen_loaded_for = self.identity['root']; self.render_screen_items()
+        self.screen_state = result; self.screen_loaded_for = self.identity['root']; self.screens_controller.render_screen_items()
         self.screen_status.setText('Loaded from iPod. Changes apply after saving and restarting Linnet.'); self.update_controls(); return
 
     def _complete_plan(self, result):
@@ -1607,9 +1659,9 @@ class MediaWindow(QMainWindow):
         self.update_device(); self.update_filters(); self.update_preparation(); self.render_library()
         self.show_progress('Ready. Eject safely when you’re finished.')
         if self.page == 'Screens':
-            self.load_screens()
+            self.screens_controller.load_screens()
         if self.page == 'Games':
-            self.load_games()
+            self.games_controller.load_games()
         if self.page == 'iPod setup':
             self.render_setup()
         elif self.page == 'Trash':
@@ -1813,7 +1865,7 @@ class MediaWindow(QMainWindow):
             self.draft_issues, self.stale_videos, self.queue_outcomes = {}, 0, {}
         self.screen_loaded_for = self.games_loaded_for = None
         self.screen_state = screen_settings.defaults(identity)
-        self.render_screen_items()
+        self.screens_controller.render_screen_items()
         self.screen_status.setText('Loading screen settings…' if identity else
                                    'Connect an iPod in Disk Mode to save screen settings.')
         for check in self.game_checks:

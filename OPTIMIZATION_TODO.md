@@ -619,11 +619,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
 **Media Manager workflow and maintainability**
 
-- [ ] **83 · P2 · Code: Separate Media Manager pages from the main window controller.** MediaWindow owns page construction, selection, queue management, device state, installation controls, and a large completion dispatcher. Extract cohesive page components and small controllers with explicit state dependencies.
+- [x] **83 · P2 · Code: Separate Media Manager pages from the main window controller.** MediaWindow owns page construction, selection, queue management, device state, installation controls, and a large completion dispatcher. Extract cohesive page components and small controllers with explicit state dependencies.
 
   Location: [tools/studio/media_desktop.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/media_desktop.py) — `MediaWindow / build_* / completed`.
 
   Completion check: Page behavior and settings remain compatible, widget work stays on the GUI thread, and changes to one workflow do not require editing unrelated page logic. This complements the preparation split in item 45.
+
+  Verified: Six page builders and the Games and Screens controllers now have explicit window dependencies. An offscreen Qt run constructed all six pages, navigated their controls, moved and reset a screen item, and closed cleanly; compilation and focused Ruff checks passed.
 
 - [x] **84 · P2 · Profile: Give background jobs explicit context and results.** work and completed route operations through string tags, mutable window state, and an error string. Define an operation context containing the captured device identity, operation ID, cancellation contract, and structured outcome; use explicit completion handlers.
 
