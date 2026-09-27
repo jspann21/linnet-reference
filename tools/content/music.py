@@ -44,6 +44,7 @@ CODECS = {"pcm_le": 1, "pcm_be": 2, "float_le": 3, "float_be": 4,
 EXTENSIONS = {".wav", ".aif", ".aiff", ".aifc", ".mp3", ".m4a", ".m4b",
               ".aac", ".flac", ".flc", ".ogg", ".opus", ".ops", ".wv"}
 COVER_NAMES = ("cover.png", "cover.jpg", "folder.jpg", "Folder.jpg")
+COVERFLOW_CACHE_MAX_ENTRIES = 4096  # 14,080 bytes each: at most 55 MiB of tile payloads.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
@@ -521,6 +522,7 @@ class _MetadataCache:
     def __init__(self, path: Path):
         self.connection = None
         self.pending_writes = 0
+        self.coverflow_writes = 0
         self.artwork_bytes = None
         self.status = "enabled"
         try:
@@ -531,6 +533,7 @@ class _MetadataCache:
                 "value TEXT, PRIMARY KEY(source, relative, parser))")
             self.connection.execute("CREATE TABLE IF NOT EXISTS coverflow "
                 "(key BLOB PRIMARY KEY, value BLOB, digest BLOB)")
+            self._trim_coverflow()
             self.connection.commit()
         except (OSError, sqlite3.Error):
             self._disable()
@@ -709,18 +712,31 @@ class _MetadataCache:
             self._disable()
         return None
 
+    def _trim_coverflow(self):
+        count = self.connection.execute("SELECT COUNT(*) FROM coverflow").fetchone()[0]
+        if count > COVERFLOW_CACHE_MAX_ENTRIES:
+            self.connection.execute("DELETE FROM coverflow WHERE rowid IN "
+                "(SELECT rowid FROM coverflow ORDER BY rowid LIMIT ?)",
+                (count - COVERFLOW_CACHE_MAX_ENTRIES,))
+
     def coverflow_put(self, key, value):
         if self.connection is None:
             return
         try:
             self.connection.execute("INSERT OR REPLACE INTO coverflow VALUES (?,?,?)",
                 (key, value, hashlib.sha256(value).digest()))
+            self.coverflow_writes += 1
+            if self.coverflow_writes >= 128:
+                self._trim_coverflow()
+                self.coverflow_writes = 0
         except sqlite3.Error:
             self._disable()
 
     def close(self):
         if self.connection is not None:
             try:
+                if self.status == "enabled" and self.coverflow_writes:
+                    self._trim_coverflow()
                 self.connection.commit()
             except sqlite3.Error:
                 pass

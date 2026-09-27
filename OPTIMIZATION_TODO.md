@@ -257,11 +257,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Stop latency improves for slow inputs; subprocesses and worker tasks finish cleanly and no incomplete stage replaces the previous library.
 
-- [ ] **40 · P2 · Code: Bound the persistent Cover Flow cache.** The embedded-image cache has a byte cap, but the coverflow table has no visible eviction policy. Add a measured size or age policy for disposable generated artwork.
+- [x] **40 · P2 · Code: Bound the persistent Cover Flow cache.** The embedded-image cache has a byte cap, but the coverflow table has no visible eviction policy. Add a measured size or age policy for disposable generated artwork.
 
   Location: [tools/content/music.py](C:/Users/user/Desktop/Projects/linnet/tools/content/music.py) — `_MetadataCache.coverflow_get / coverflow_put`.
 
   Completion check: Repeated imports cannot grow this table indefinitely; eviction merely causes recomputation, and cache hits still verify stored digests.
+
+  Verification note: Cover Flow rows hold 14,080-byte tiles; 4096 retained entries cap tile payloads at 55 MiB before SQLite overhead. Oldest inserted rows are pruned on opening an older cache, every 128 writes, and at close. An in-memory cache check covered opening an oversized table, pruning at close, retained hits, and damaged digest rejection.
 
 - [ ] **41 · P3 · Profile: Make metadata-cache commit accounting consistent.** Metadata and embedded-image writes use pending_writes, while Cover Flow writes rely on later commits. Initialization can also commit pending work. Trace actual transaction sizes before unifying the accounting.
 
