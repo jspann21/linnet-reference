@@ -121,11 +121,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Apple track rows and key normalization remain identical, including the supported Music traversal form; unsafe paths remain rejected.
 
-- [ ] **18 · P2 · Profile: Reuse thumbnail-file metadata within one Apple image scan.** Many image records can reference the same .ithmb file, but candidate handling repeats path validation and stat calls. Measure the duplication and use a call-local file snapshot where appropriate.
+- [x] **18 · P2 · Profile: Reuse thumbnail-file metadata within one Apple image scan.** Many image records can reference the same .ithmb file, but candidate handling repeats path validation and stat calls. Measure the duplication and use a call-local file snapshot where appropriate.
 
   Location: [tools/content/retail_media.py](C:/Users/user/Desktop/Projects/linnet/tools/content/retail_media.py) — `images`.
 
   Completion check: Fewer repeated filesystem queries with the same chosen thumbnail, bounds validation, cache invalidation, and behavior when a source file changes.
+
+  Verification note: A1099's 145 Apple photos reference two thumbnail files. A warm profile recorded 290 path validations and 1,458 filesystem stat calls before this change; call-local snapshots reduced those to two path validations and 166 stat calls. Each used thumbnail file is revalidated at the end of the scan, so a source change rejects the scan rather than returning mixed stamps.
 
 - [ ] **19 · P2 · Profile: Reuse bounded readers for shared Apple thumbnail files.** Uncached previews open and seek a thumbnail file separately for each image. Investigate a small set of readers, or contiguous read batches, scoped to one extraction.
 

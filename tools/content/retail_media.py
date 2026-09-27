@@ -145,6 +145,8 @@ def images(root, *, artwork=False, dbids=None):
     base = Path(os.environ.get('LOCALAPPDATA', Path.home() / '.cache')) / 'Linnet/Media/retail'
     cache = base / hashlib.sha256(str(root).encode() + data).hexdigest()
     result = []
+    paths = {}
+    file_info = {}
     for _ in range(count):
         child, following = _record(data, at, end, b'mhii')
         if child - at < 28:
@@ -165,7 +167,9 @@ def images(root, *, artwork=False, dbids=None):
                 if format_id in formats:
                     _, name_end = _record(data, name_at, thumb_end, b'mhod')
                     name = _image_string(data, name_at, name_end)
-                    path = _path(folder, name)
+                    if name not in paths:
+                        paths[name] = _path(folder, name)
+                    path = paths[name]
                     width, height = formats[format_id]
                     vertical, horizontal, image_h, image_w = struct.unpack_from('<4H', data, body + 28)
                     candidates.append((width * height, path, offset, length, width, height,
@@ -173,10 +177,13 @@ def images(root, *, artwork=False, dbids=None):
             child = next_child
         if candidates and (dbids is None or dbid in dbids):
             for _, path, offset, length, width, height, x, y, iw, ih in sorted(candidates, key=lambda c: c[0], reverse=True):
-                try:
-                    info = path.stat()
-                except FileNotFoundError:
-                    continue
+                info = file_info.get(path)
+                if info is None:
+                    try:
+                        info = path.stat()
+                    except FileNotFoundError:
+                        continue
+                    file_info[path] = info
                 if length < width * height * 2 or offset + length > info.st_size:
                     raise ValueError('iTunes thumbnail extends beyond its file')
                 stamp = f'{key}-{info.st_size}-{info.st_mtime_ns}'
@@ -204,6 +211,12 @@ def images(root, *, artwork=False, dbids=None):
                                    relative=f'Photos/@iTunes/{key}.png'))
                 break
         at = following
+    for path, before in file_info.items():
+        _plain(path, folder)
+        after = path.stat()
+        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+            raise ValueError('iTunes thumbnail changed during scan')
     return result
 
 
