@@ -19,5 +19,3 @@ def _record_arguments(entry):
     entry.add_argument('--disk-serial', required=True)
     entry.add_argument('--disk-bytes', type=int, required=True)
     entry.add_argument('--confirmed-build', required=True)
-
-
