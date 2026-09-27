@@ -888,14 +888,15 @@ def run(identity, selected, pending=(), **options):
     from .publish import _exclusive
     # The same Windows mutex is recursive for nested publishers on this thread.
     # A second manager must not overwrite the first manager's cache or catalog.
-    identity = refresh(identity)
     with _exclusive(identity):
-        root = Path(identity["root"]).resolve(strict=True)
-        allowed = video_source_extensions(identity)
         automatically_skipped = []
         skipped_keys = set()
         excluded_sources = set()
         while True:
+            # Verify the device after taking the mutex, including on a source-error retry.
+            identity = refresh(identity)
+            root = Path(identity["root"]).resolve(strict=True)
+            allowed = video_source_extensions(identity)
             current_options = dict(options, excluded_sources=excluded_sources)
             report = _run(identity, selected, pending, **current_options)
             remaining = []
@@ -962,7 +963,6 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
     selected = requested
     if not selected:
         raise ValueError("Select at least one media folder to prepare.")
-    identity = refresh(identity)
     if music_verification not in ("metadata", "full"):
         raise ValueError("Music verification must be metadata or full")
     root = Path(identity["root"])

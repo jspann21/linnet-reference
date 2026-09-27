@@ -95,11 +95,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Verification note: A1099's native Disk Mode cache had 28 candidate session receipts, 21 matching the Apple identity. A successful refresh read one receipt in about 1 ms; later lookups read none in about 0.5 ms after checking that receipt's file identity, size, and timestamps. Whole identity refreshes still took about 3.4 s each, so this is a bounded I/O reduction rather than a visible speed claim. The cache key includes the current volume, partition, target, and disk geometry; changed geometry forced a full scan and rejected adoption. Local receipt replacement, deletion, volume change, and target change also invalidated the result. Apple and native volume GUIDs differ on this physical device, so the original receipt matching rule remains authoritative.
 
-- [ ] **14 · P2 · Profile: Consolidate redundant full identity refreshes within one operation.** run refreshes identity before taking the mutex and _run refreshes again; skip handling can add further full refreshes. Trace these calls and distinguish required boundary checks from redundant discovery.
+- [x] **14 · P2 · Profile: Consolidate redundant full identity refreshes within one operation.** run refreshes identity before taking the mutex and _run refreshes again; skip handling can add further full refreshes. Trace these calls and distinguish required boundary checks from redundant discovery.
 
   Location: [tools/content/media_manager.py](C:/Users/user/Desktop/Projects/linnet/tools/content/media_manager.py) — `run / _run / refresh`.
 
   Completion check: Fewer expensive discovery calls with the same rejection of device changes; keep the per-write volume guards and required checks after locking.
+
+  Verification note: A cancelled Notes operation on A1099 in native Disk Mode made two full refresh calls in 7.03 s before this change and one after locking in 3.44 s afterward. A changed partition offset was still rejected before any device work. Retry attempts each refresh after locking, and the existing per-write volume guards remain in place.
 
 - [x] **15 · P2 · Code: Resolve video catalog paths once per library refresh.** Catalog paths are validated in _catalog, resolved again to build published_paths, and resolved again when published rows are created. Return or retain the validated mapping for that read-only refresh.
 
