@@ -267,11 +267,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Verification note: Cover Flow rows hold 14,080-byte tiles; 4096 retained entries cap tile payloads at 55 MiB before SQLite overhead. Oldest inserted rows are pruned on opening an older cache, every 128 writes, and at close. An in-memory cache check covered opening an oversized table, pruning at close, retained hits, and damaged digest rejection.
 
-- [ ] **41 · P3 · Profile: Make metadata-cache commit accounting consistent.** Metadata and embedded-image writes use pending_writes, while Cover Flow writes rely on later commits. Initialization can also commit pending work. Trace actual transaction sizes before unifying the accounting.
+- [x] **41 · P3 · Profile: Make metadata-cache commit accounting consistent.** Metadata and embedded-image writes use pending_writes, while Cover Flow writes rely on later commits. Initialization can also commit pending work. Trace actual transaction sizes before unifying the accounting.
 
   Location: [tools/content/music.py](C:/Users/user/Desktop/Projects/linnet/tools/content/music.py) — `_MetadataCache.put / embedded_cover / coverflow_put / close`.
 
   Completion check: Commit frequency is predictable without excessive fsyncs; cancellation, partial batches, cache errors, and close preserve the disposable-cache fallback behavior.
+
+  Verification note: A trace of 300 Cover Flow writes previously recorded no commit until close. The shared counter now commits every 128 mixed metadata, embedded-cover, or Cover Flow writes and commits a final partial batch on close. A 385-write mixed trace recorded three batch commits and one final commit; all rows reopened correctly. A 300-entry run with a 64-entry limit retained the newest 64. Embedded-cover maintenance resets the counter after its own commit.
 
 - [ ] **42 · P3 · Profile: Optimize Cover Flow cache misses only with unchanged rendering.** The recent isolated profile spent most tile time in Pillow quantization, with reflection work secondary. Profile representative art and cache-hit rates before changing the cold path.
 

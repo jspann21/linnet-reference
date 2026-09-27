@@ -547,6 +547,20 @@ class _MetadataCache:
                 pass
         self.close()
 
+    def _commit(self):
+        if self.coverflow_writes:
+            self._trim_coverflow()
+        self.connection.commit()
+        self.pending_writes = 0
+        self.coverflow_writes = 0
+
+    def _written(self, *, coverflow=False):
+        self.pending_writes += 1
+        if coverflow:
+            self.coverflow_writes += 1
+        if self.pending_writes >= 128:
+            self._commit()
+
     @staticmethod
     def _valid(value, relative, stat):
         if not isinstance(value, dict):
@@ -627,12 +641,9 @@ class _MetadataCache:
             self.connection.execute("INSERT OR REPLACE INTO metadata VALUES (?,?,?,?,?,?)",
                 (str(source), relative, stat.st_size, stat.st_mtime_ns, "existing",
                  json.dumps(metadata)))
-            self.pending_writes += 1
             # The cache is disposable; amortize durable writes across tracks.
             # close() also commits the final partial group on cancellation.
-            if self.pending_writes >= 128:
-                self.connection.commit()
-                self.pending_writes = 0
+            self._written()
         except OverflowError:
             # NTFS timestamps can exceed SQLite's signed 64-bit nanoseconds.
             return
@@ -658,7 +669,7 @@ class _MetadataCache:
                                         "(SELECT digest FROM embedded_sources)")
                 self.artwork_bytes = self.connection.execute(
                     "SELECT COALESCE(SUM(length(value)),0) FROM embedded_images").fetchone()[0]
-                self.connection.commit()
+                self._commit()
             except sqlite3.Error:
                 self._disable()
         if self.connection is not None and not bypass:
@@ -691,10 +702,7 @@ class _MetadataCache:
                         self.artwork_bytes += len(value)
                     self.connection.execute("INSERT OR REPLACE INTO embedded_sources VALUES (?,?,?,?,?)",
                         (str(path), before.st_size, before.st_mtime_ns, now, digest))
-                    self.pending_writes += 1
-                    if self.pending_writes >= 128:
-                        self.connection.commit()
-                        self.pending_writes = 0
+                    self._written()
             except OverflowError:
                 pass
             except sqlite3.Error:
@@ -725,19 +733,15 @@ class _MetadataCache:
         try:
             self.connection.execute("INSERT OR REPLACE INTO coverflow VALUES (?,?,?)",
                 (key, value, hashlib.sha256(value).digest()))
-            self.coverflow_writes += 1
-            if self.coverflow_writes >= 128:
-                self._trim_coverflow()
-                self.coverflow_writes = 0
+            self._written(coverflow=True)
         except sqlite3.Error:
             self._disable()
 
     def close(self):
         if self.connection is not None:
             try:
-                if self.status == "enabled" and self.coverflow_writes:
-                    self._trim_coverflow()
-                self.connection.commit()
+                if self.status == "enabled":
+                    self._commit()
             except sqlite3.Error:
                 pass
             finally:
