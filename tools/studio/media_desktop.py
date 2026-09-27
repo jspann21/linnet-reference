@@ -513,6 +513,7 @@ class MediaWindow(QMainWindow):
         self.rows, self.readiness, self.pending, self.trash_rows = [], {}, [], []
         self.pending_keys = set()
         self.pending_for = None
+        self.queue_outcomes = {}
         self.draft_issues = {}
         self.stale_videos = 0
         self.queue_context = None
@@ -1327,6 +1328,8 @@ class MediaWindow(QMainWindow):
             additions = result
             self.pending.extend(additions)
             self.pending_keys.update((kind, os.path.normcase(path)) for kind, path in additions)
+            for kind, path in additions:
+                self.queue_outcomes.pop((kind, os.path.normcase(path)), None)
             if self.pending:
                 self.pending_for = dict(context['identity'])
             self.validate_draft()
@@ -1494,14 +1497,22 @@ class MediaWindow(QMainWindow):
             lines = [result.get('summary') or ('Preparation complete.' if result['complete'] else 'Preparation needs attention.')]
             lines.extend(e['message'] for e in result.get('errors', []))
             self.prep_results.setPlainText('\n'.join(lines)); self.prep_results.show()
+            outcomes = {(row['kind'], os.path.normcase(row['source'])): row
+                        for row in result.get('source_outcomes', [])}
+            submitted_keys = {(kind, os.path.normcase(path)) for kind, path in self.submitted}
+            finished = {key for key, row in outcomes.items() if row['status'] == 'completed'}
+            self.pending = [item for item in self.pending
+                            if (item[0], os.path.normcase(item[1])) not in submitted_keys or
+                            (item[0], os.path.normcase(item[1])) not in finished]
+            self.pending_keys = {(kind, os.path.normcase(path)) for kind, path in self.pending}
+            self.queue_outcomes = {key: row for key, row in outcomes.items()
+                                   if key in self.pending_keys and row['status'] != 'completed'}
+            if not self.pending:
+                self.pending_for = None
             if result['complete']:
-                self.pending = [p for p in self.pending if p not in self.submitted]
-                self.pending_keys = {(kind, os.path.normcase(path)) for kind, path in self.pending}
-                if not self.pending:
-                    self.pending_for = None
                 self.video_selection.difference_update(self.submitted_videos)
-                self.validate_draft()
-                self.save_draft()
+            self.validate_draft()
+            self.save_draft()
             self.update_preparation(); self.refresh()
         elif tag in ('remove', 'restore', 'erase', 'sync', 'install', 'skipped'):
             self.show_progress(result.get('summary', 'Changes saved.'))
@@ -1567,7 +1578,9 @@ class MediaWindow(QMainWindow):
                      disk_serial=self.identity['disk_serial'],
                      volume_serial=self.identity['volume_serial'],
                      pending=[list(item) for item in self.pending],
-                     video_mode=self.video_mode, videos=videos)
+                     video_mode=self.video_mode, videos=videos,
+                     outcomes=[dict(row) for key, row in self.queue_outcomes.items()
+                               if key in self.pending_keys])
         self.settings.setValue(self.draft_key(self.identity), json.dumps(draft))
         self.settings.sync()
 
@@ -1595,7 +1608,7 @@ class MediaWindow(QMainWindow):
     def load_draft(self, identity):
         self.pending, self.pending_keys, self.pending_for = [], set(), None
         self.video_selection, self.video_mode = set(), 'all'
-        self.draft_issues, self.stale_videos = {}, 0
+        self.draft_issues, self.stale_videos, self.queue_outcomes = {}, 0, {}
         raw = self.settings.value(self.draft_key(identity), '')
         try:
             draft = json.loads(raw)
@@ -1604,6 +1617,7 @@ class MediaWindow(QMainWindow):
                         ('target_id', 'disk_serial', 'volume_serial')) or
                     not isinstance(draft.get('pending'), list) or
                     not isinstance(draft.get('videos'), list) or
+                    not isinstance(draft.get('outcomes', []), list) or
                     draft.get('video_mode') not in ('all', 'selected', 'none')):
                 return
             for item in draft['pending']:
@@ -1623,6 +1637,15 @@ class MediaWindow(QMainWindow):
                         not relative.parts or relative.parts[0].casefold() != 'videos'):
                     continue
                 self.video_selection.add(str(Path(identity['root']) / relative))
+            for row in draft.get('outcomes', []):
+                if (not isinstance(row, dict) or
+                        not all(isinstance(row.get(key), str) for key in
+                                ('kind', 'source', 'status', 'reason')) or
+                        row['status'] not in ('skipped', 'unfinished')):
+                    continue
+                key = (row['kind'], os.path.normcase(row['source']))
+                if key in self.pending_keys:
+                    self.queue_outcomes[key] = row
             self.video_mode = draft['video_mode']
             if self.pending:
                 self.pending_for = dict(identity)
@@ -1654,7 +1677,7 @@ class MediaWindow(QMainWindow):
             self.load_draft(identity)
         else:
             self.pending, self.pending_keys, self.pending_for = [], set(), None
-            self.draft_issues, self.stale_videos = {}, 0
+            self.draft_issues, self.stale_videos, self.queue_outcomes = {}, 0, {}
         self.screen_loaded_for = self.games_loaded_for = None
         self.screen_state = screen_settings.defaults(identity)
         self.render_screen_items()
@@ -1738,6 +1761,17 @@ class MediaWindow(QMainWindow):
             self.setup_device.setText('Looking for your iPod…' if loading else 'Connect an iPod in Disk Mode.')
             self.setup_software.setText('Device detection is in progress.' if loading else '')
 
+    def queue_status(self, kind, path):
+        key = (kind, os.path.normcase(path))
+        if key in self.draft_issues:
+            return self.draft_issues[key]
+        outcome = self.queue_outcomes.get(key)
+        if outcome:
+            action = ('Use Review skipped files to retry.' if outcome['status'] == 'skipped' and kind != 'Videos'
+                      else 'Retry with Prepare.')
+            return f"{outcome['status'].title()}: {outcome['reason']} {action}"
+        return 'Ready'
+
     def update_preparation(self):
         supported = media.supported_kinds(self.identity) if self.identity else ()
         for kind, text in self.prep_labels.items():
@@ -1755,7 +1789,7 @@ class MediaWindow(QMainWindow):
             else:
                 text.setText(f"{info['count']:,} files · {self.readiness.get(kind, 'Not checked')}")
         self.queue_model.reset([dict(title=Path(path).name, kind=kind, path=path,
-                                     status=self.draft_issues.get((kind, os.path.normcase(path)), 'Ready'))
+                                     status=self.queue_status(kind, path))
                                 for kind, path in self.pending],
                                [('title', 'FILE'), ('kind', 'TYPE'), ('status', 'STATUS'),
                                 ('path', 'FROM YOUR COMPUTER')])
@@ -1918,6 +1952,7 @@ class MediaWindow(QMainWindow):
         chosen = {index.row() for index in self.queue_table.selectionModel().selectedRows()}
         self.pending = [item for index, item in enumerate(self.pending) if index not in chosen]
         self.pending_keys = {(kind, os.path.normcase(path)) for kind, path in self.pending}
+        self.queue_outcomes = {key: row for key, row in self.queue_outcomes.items() if key in self.pending_keys}
         if not self.pending:
             self.pending_for = None
         self.validate_draft()

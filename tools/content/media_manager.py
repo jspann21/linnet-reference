@@ -888,6 +888,45 @@ def _error_record(kind, error, inventory, root):
     return record
 
 
+def _source_error(kind, name, errors):
+    source = Path(name)
+    for error in errors:
+        if error.get('kind') != kind:
+            continue
+        value = error.get('source')
+        if value and (Path(value) == source or Path(value).is_relative_to(source)):
+            return error
+        relative = str(error.get('file') or '').replace('\\', '/')
+        for prefix in (source.name, f'{kind}/{source.name}'):
+            if relative == prefix or relative.startswith(prefix + '/'):
+                return error
+    return None
+
+
+def _pending_outcomes(pending, selected, plan, videos, steps, errors, planned):
+    added = {step['added'] for step in steps if 'added' in step}
+    ready_videos = {step['file'] for step in steps
+                    if step.get('kind') == 'Videos' and
+                    step.get('status') in ('published', 'unchanged', 'catalog-updated') and
+                    'file' in step}
+    outcomes = []
+    for kind, name in pending:
+        source = Path(name)
+        if kind == 'Videos':
+            rows = [job for job in videos if job['relative'] == source.name or
+                    job['relative'].startswith(source.name + '/')]
+            finished = kind in selected and planned and all(job['relative'] in ready_videos for job in rows)
+        else:
+            rows = [item for item in plan if item['kind'] == kind and
+                    (Path(item['source']) == source or Path(item['source']).is_relative_to(source))]
+            finished = kind in selected and planned and all(item['destination'] in added for item in rows)
+        matching_error = _source_error(kind, name, errors)
+        outcomes.append(dict(kind=kind, source=name,
+                             status='completed' if finished else 'unfinished',
+                             reason='' if finished else (matching_error or {}).get('message', 'Source did not finish.')))
+    return outcomes
+
+
 def run(identity, selected, pending=(), **options):
     from .publish import _exclusive
     # The same Windows mutex is recursive for nested publishers on this thread.
@@ -938,6 +977,10 @@ def run(identity, selected, pending=(), **options):
             if not newly_skipped:
                 report["errors"] = automatically_skipped + remaining
                 report["auto_skipped"] = automatically_skipped
+                for outcome in report.get('source_outcomes', []):
+                    matching = _source_error(outcome['kind'], outcome['source'], automatically_skipped)
+                    if matching:
+                        outcome.update(status='skipped', reason=matching['message'])
                 report["complete"] = not remaining and not report.get("stopped")
                 if automatically_skipped:
                     count = len(automatically_skipped)
@@ -987,6 +1030,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
     skipped = {kind: _skipped_paths(state, kind) for kind in KINDS}
     report = dict(started=time.time(), identity=identity, steps=[], errors=[], complete=False,
                   stopped=False, cache_directory=str(cache), cleanup=dict(removed=[], retained=[]))
+    plan, videos, planned = [], [], False
     owned_temporaries = []
     verified_outputs = {}
     receipt = cache / ("session-" + uuid.uuid4().hex + ".json")
@@ -1010,6 +1054,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         excluded_sources = {str(Path(value).resolve()).casefold() for value in (excluded_sources or ())}
         videos = [job for job in videos if str(Path(job["source"]).resolve()).casefold() not in excluded_sources]
         plan = additions(root, [item for item in pending if item[0] in selected and item[0] != "Videos"])
+        planned = True
         for kind, maximum in (("Notes", 256),):
             if kind in selected:
                 existing = scan(root, (kind,), skipped=skipped)[kind]["count"]
@@ -1438,6 +1483,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             progress(f"Retained for review: {item['path']} — {item['reason']}")
         if not report["cleanup"]["retained"]:
             progress("Cleanup: no preparation scratch files remain.")
+        report['source_outcomes'] = _pending_outcomes(pending, selected, plan, videos,
+                                                      report['steps'], report['errors'], planned)
         ready = [kind for kind in KINDS if any(step.get("kind") == kind and
                  step.get("status") in ("published", "unchanged") for step in report["steps"])]
         failed = list(dict.fromkeys(error["kind"] for error in report["errors"] if error.get("kind")))

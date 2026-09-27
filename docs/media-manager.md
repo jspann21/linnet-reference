@@ -184,6 +184,8 @@ the installed Linnet build is shown separately as inactive files on the device.
    restarts. Missing computer sources appear in the queue with a reason and must
    be restored or removed before preparing. Video choices that no longer exist
    on the iPod are dropped and reported after refresh.
+   After a partial run, completed queue sources are cleared individually.
+   Skipped or unfinished sources remain with their reason and a retry hint.
    provides operation details. If a specific file fails, Media Manager skips it
    automatically and finishes the rest of the update. Select it in **Files that
    need attention** to open its folder or retry it after fixing it. Settings

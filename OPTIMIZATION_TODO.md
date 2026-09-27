@@ -629,11 +629,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Moved or missing tools are caught before a conversion starts, readiness reflects the validated executables, and replacing either executable invalidates its cached readiness result.
 
-- [ ] **88 · P2 · Profile: Keep queue completion state per submitted source.** The prepare completion handler removes every submitted queue entry only when the whole operation is complete. Carry per-source outcomes through the existing receipt so successful, skipped, and unfinished sources can be presented and retried separately.
+- [x] **88 · P2 · Profile: Keep queue completion state per submitted source.** The prepare completion handler removes every submitted queue entry only when the whole operation is complete. Carry per-source outcomes through the existing receipt so successful, skipped, and unfinished sources can be presented and retried separately.
 
   Location: [tools/studio/media_desktop.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/media_desktop.py), [tools/content/media_manager.py](C:/Users/user/Desktop/Projects/linnet/tools/content/media_manager.py) — `completed prepare / submitted / operation receipt`.
 
   Completion check: A partial failure leaves only actionable work queued, successful publication is not repeated needlessly, and skipped sources remain visible with their reason and retry action.
+
+  Verification note: Receipts now carry per-submitted-source outcomes. Completed original copies or video publications leave the queue even when another source fails; skipped and unfinished entries retain their reason and retry guidance in the queue and saved device draft. Copy, published-video, incomplete-copy, missing-plan, and skipped-source matching were checked with synthetic records. Compileall and Ruff F passed. The A1136 read-only Notes operation from item 92 exercised the revised receipt path without changing its media.
 
 - [x] **89 · P2 · Profile: Preserve a device-bound preparation draft across restarts.** Queued sources and selected videos currently live in memory, while a few presentation preferences use QSettings. Persist a small versioned preparation draft keyed to stable device identity, then revalidate source paths and capabilities when reopening it.
 
