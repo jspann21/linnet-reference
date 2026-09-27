@@ -39,10 +39,10 @@ static uint8_t art_high[ART_HIGH][ART_RECORD] __attribute__((section(".cover_hig
 static uint32_t art_tags[ART_SLOTS],art_warm,art_loaded;
 static uint8_t *art_record(uint32_t id){uint32_t slot=id%ART_SLOTS;return slot<ART_LOW?art_low[slot]:art_high[slot-ART_LOW];}
 static bool art_ready(uint32_t id){return art_tags[id%ART_SLOTS]==id+1u;}
-static uint32_t count,arts,selected,phase,loading,length,revision,drawn,next,io_due,warm,moved_at,visible_at;
+static uint32_t count,arts,selected,phase,loading,length,revision,drawn,next,io_due,warm,moved_at;
 static uint32_t catalog_loaded,full_reads,read_bytes,hits,preview_hits,misses,last_full_us,max_full_us,last_preview_us;
 static int32_t position,direction=1;
-static bool visible,pending,failed,canceling;
+static bool visible,pending,failed,canceling,moved_in_visit;
 static const uint32_t generation=0x79000001u;
 static const uint32_t crc_table[16]={0,0x1db71064,0x3b6e20c8,0x26d930ac,0x76dc4190,0x6b6b51f4,0x4db26158,0x5005713c,0xedb88320,0xf00f9344,0xd6d6a3e8,0xcb61b38c,0x9b64c2b0,0x86d3d2d4,0xa00ae278,0xbdbdf21c};
 struct ln_coverflow_column {uint32_t step;uint8_t source,top,height,length;};
@@ -70,7 +70,8 @@ static void invalidate(void){
     art_warm=art_loaded=0;count=arts=selected=warm=catalog_loaded=0;position=0;phase=CLOSED;++revision;
 }
 void ln_coverflow_visible(bool value){
-    if(value&&!visible){visible_at=ln_time_us();io_due=visible_at;}
+    if(value&&!visible){moved_in_visit=false;io_due=ln_time_us();}
+    if(!value)moved_in_visit=false;
     visible=value;
 }
 uint32_t ln_coverflow_count(void){return count;}
@@ -94,6 +95,7 @@ void ln_coverflow_move(int32_t delta){
     if(distance>512)position=(int32_t)(selected*256u)-512;
     else if(distance< -512)position=(int32_t)(selected*256u)+512;
     moved_at=ln_time_us();io_due=moved_at;
+    moved_in_visit=visible;
     if(selected_full()){++hits;last_full_us=0;}else if(row(selected))++preview_hits;else ++misses;
     last_preview_us=row(selected)?0u:NONE;
     ++revision;next=0;
@@ -159,8 +161,7 @@ static void accept_art(void){
         art_tags[id%ART_SLOTS]=id+1u;++art_loaded;
         if(close_to_selection(id))++revision;
         uint8_t *r=row(selected);
-        if(r&&ln_read_le32(r+248)==id&&visible&&moved_at&&
-           (int32_t)(moved_at-visible_at)>=0){
+        if(r&&ln_read_le32(r+248)==id&&moved_in_visit){
             last_full_us=ln_time_us()-moved_at;
             if(last_full_us>max_full_us)max_full_us=last_full_us;
         }
@@ -205,7 +206,7 @@ void ln_coverflow_step(bool allow_read){
                 tags[index%CATALOG_SLOTS]=index+1u;++catalog_loaded;
             }
             if(selected>=loading&&selected<loading+length/CATALOG_RECORD){
-                if(visible&&moved_at&&(int32_t)(moved_at-visible_at)>=0)
+                if(moved_in_visit)
                     last_preview_us=ln_time_us()-moved_at;
                 ++revision;
             }
