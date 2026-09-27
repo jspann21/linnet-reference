@@ -727,11 +727,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: A reviewer can follow ownership, early returns, and failure paths without reconstructing semicolon chains; behavior and outputs remain equivalent, with formatting kept local to the substantive work.
 
-- [ ] **110 · P3 · Profile: Make bootstrap tooling roles easier to find.** tools/studio holds desktop UI alongside image builders and guarded native maintenance, while tools/link contains the corresponding device transports. Clarify the naming and module layout for build, plan, package, transfer, and execute responsibilities before moving files.
+- [x] **110 · P3 · Profile: Make bootstrap tooling roles easier to find.** tools/studio holds desktop UI alongside image builders and guarded native maintenance, while tools/link contains the corresponding device transports. Clarify the naming and module layout for build, plan, package, transfer, and execute responsibilities before moving files.
 
   Location: [tools/studio/s5l_bootstrap.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/s5l_bootstrap.py), [tools/link/s5l_bootstrap.py](C:/Users/user/Desktop/Projects/linnet/tools/link/s5l_bootstrap.py), [tools/studio/native_bootstrap.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/native_bootstrap.py), [tools/studio/native_package.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/native_package.py) — `bootstrap module responsibilities`.
 
   Completion check: A contributor can locate each stage from one workflow map; any later reorganization preserves CLI/import compatibility, keeps hardware-family code explicit, and retains exact-device checks and hash-pinned plans.
+
+  Verification note: `docs/bootstrap-tooling.md` maps each stage to its current module and public command, distinguishes PortalPlayer directory installation from Classic SRAM/NOR work, and links exact-device and recovery requirements. The architecture guide links the map.
 
 **Starting sequence**
 

@@ -58,6 +58,8 @@ Native Boot installation uses a device-specific plan and firmware backup,
 stages a replacement, checks readback, and publishes the directory last.
 Restore uses the original directory sector. Preserve plans, predecessor files
 and backups together; see [local artifacts](local-artifacts.md).
+The [bootstrap tooling map](bootstrap-tooling.md) identifies the build, plan,
+package, transfer, and execution owners for PortalPlayer and Classic devices.
 
 Every native Linnet installation preserves a bootable copy of the device's
 original Apple firmware. Normal power-on starts Linnet. Holding `MENU`
