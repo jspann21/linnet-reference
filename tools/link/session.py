@@ -385,6 +385,17 @@ class Session:
                 'cache_hits', 'read_ahead_sectors', 'failed', 'canceled')
         return dict(zip(keys, words))
 
+    def mp4_table_workload(self) -> dict:
+        raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 16))
+        if len(raw) != 48:
+            raise ProtocolError('invalid MP4 table workload length')
+        words = struct.unpack('<12I', raw)
+        if words[0] != int.from_bytes(b'MPTB', 'little') or words[11]:
+            raise ProtocolError('invalid MP4 table workload header')
+        keys = ('magic', 'attempts', 'completed', 'pending', 'failed', 'bytes',
+                'map_reads', 'chunk_reads', 'size_reads', 'sync_reads', 'seeks', 'reserved')
+        return dict(zip(keys, words))
+
     def executive_workload(self) -> dict:
         raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 14))
         if len(raw) != 96:

@@ -29,4 +29,7 @@ int ln_mp4_open_step(struct ln_mp4 *);
 bool ln_mp4_seek(struct ln_mp4 *,uint64_t time,int direction);
 int ln_mp4_seek_step(struct ln_mp4 *);
 int ln_mp4_next(struct ln_mp4 *,struct ln_mp4_packet *);
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_mp4_table_diagnostics(uint32_t output[12]);
+#endif
 #endif

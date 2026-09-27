@@ -16,6 +16,9 @@
 #endif
 #if defined(LINNET_VIDEO)
 #include "services/video/video.h"
+#if defined(LINNET_VIDEO_MP4)
+#include "services/video/mp4.h"
+#endif
 #endif
 static uint8_t ln_storage_reply[1024];
 static uint8_t ln_storage_restart_pending;
@@ -63,6 +66,9 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r){
         else if(q->length==4u&&ln_read_le32(q->payload)==4u){ln_runtime_render_timing(words);count=16u;}
         else if(q->length==4u&&ln_read_le32(q->payload)==14u){ln_runtime_exec_diagnostics(words);count=24u;}
         else if(q->length==4u&&ln_read_le32(q->payload)==15u){ln_display_settings_diagnostics(words);count=8u;}
+#if defined(LINNET_VIDEO_MP4)
+        else if(q->length==4u&&ln_read_le32(q->payload)==16u){ln_mp4_table_diagnostics(words);count=12u;}
+#endif
         else if(q->length==4u&&ln_read_le32(q->payload)==7u){ln_display_sync_diagnostics(words);count=16u;}
 #if defined(LINNET_COVERFLOW)
         else if(q->length==4u&&ln_read_le32(q->payload)==11u){ln_coverflow_diagnostics(words);count=16u;}

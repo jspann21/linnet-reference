@@ -420,6 +420,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         if video_backend == 'ipvf':
             add_sources(sorted((ROOT/'services/video/ipvf').glob('*.S')), "IPVF assembly")
         if video_backend in ('native-mp4', 'bcm-mp4'):
+            flags += ['-DLINNET_VIDEO_MP4=1']
             add_sources([ROOT/'services/video/mp4.c'], "MP4 service")
         if video_backend == 'native-mp4':
             flags += [f"-DLINNET_H264_MAX_WIDTH={spec['native_video']['h264_width']}",

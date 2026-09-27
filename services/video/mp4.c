@@ -10,6 +10,30 @@ static int read_at(struct ln_mp4 *m,uint64_t at,uint32_t bytes){
     int result=m->read(m->context,at,m->buffer,bytes);
     return result<0?bad(m,LN_MP4_IO):result;
 }
+#if !defined(LINNET_PROFILE_RELEASE)
+static uint32_t table_attempts,table_completed,table_pending,table_failed,table_bytes,table_kinds[4],table_seeks;
+static void table_add(uint32_t *value,uint32_t amount){
+    *value=UINT32_MAX-*value<amount?UINT32_MAX:*value+amount;
+}
+void ln_mp4_table_diagnostics(uint32_t output[12]){
+    output[0]=0x4254504du;output[1]=table_attempts;output[2]=table_completed;
+    output[3]=table_pending;output[4]=table_failed;output[5]=table_bytes;
+    for(uint32_t i=0;i<4u;++i)output[6+i]=table_kinds[i];
+    output[10]=table_seeks;output[11]=0;
+}
+#endif
+static int read_table(struct ln_mp4 *m,uint64_t at,uint32_t bytes,uint32_t kind){
+    int result=read_at(m,at,bytes);
+#if !defined(LINNET_PROFILE_RELEASE)
+    table_add(&table_attempts,1u);
+    if(result>0){table_add(&table_completed,1u);table_add(&table_bytes,bytes);table_add(&table_kinds[kind],1u);}
+    else if(!result)table_add(&table_pending,1u);
+    else table_add(&table_failed,1u);
+#else
+    (void)kind;
+#endif
+    return result;
+}
 void ln_mp4_init(struct ln_mp4 *m,ln_mp4_read_fn read,void *context,uint64_t bytes){
     *m=(struct ln_mp4){0};m->read=read;m->context=context;m->bytes=bytes;m->ends[0]=bytes;
 }
@@ -139,7 +163,7 @@ static int body(struct ln_mp4 *m){
 }
 static int map_run(struct ln_mp4 *m,uint32_t index){
     if(index>=m->map_count)return bad(m,LN_MP4_FORMAT);
-    int r=read_at(m,m->maps+(uint64_t)index*12u,index+1u<m->map_count?24u:12u);if(r<=0)return r;
+    int r=read_table(m,m->maps+(uint64_t)index*12u,index+1u<m->map_count?24u:12u,0u);if(r<=0)return r;
     uint32_t first=be32(m->buffer),count=be32(m->buffer+4),end=index+1u<m->map_count?be32(m->buffer+12):m->chunk_count+1u;
     if(!first||(!index&&first!=1u)||first>=end||end>m->chunk_count+1u||!count||count>65536u||be32(m->buffer+8)!=1u)return bad(m,LN_MP4_FORMAT);
     m->map_index=index;m->map_first=first;m->map_end=end;m->map_samples=count;return 1;
@@ -206,17 +230,17 @@ int ln_mp4_next(struct ln_mp4 *m,struct ln_mp4_packet *out){
         if(m->chunk+1u>=m->map_end){result=map_run(m,m->map_index+1u);if(result<=0)return result;}
         if(m->chunk+1u<m->map_first)return bad(m,LN_MP4_FORMAT);
         m->chunk_samples=m->map_samples;
-        if(m->packet==m->chunk_first){result=read_at(m,m->chunks+(uint64_t)m->chunk*m->chunk_width,m->chunk_width);if(result<=0)return result;m->packet_offset=m->chunk_width==8u?be64(m->buffer):be32(m->buffer);}
+        if(m->packet==m->chunk_first){result=read_table(m,m->chunks+(uint64_t)m->chunk*m->chunk_width,m->chunk_width,1u);if(result<=0)return result;m->packet_offset=m->chunk_width==8u?be64(m->buffer):be32(m->buffer);}
         m->packet_phase=1;
     }
     if(m->packet_phase==1u){
         m->packet_bytes=m->default_bytes;
-        if(!m->packet_bytes){result=read_at(m,m->sizes+(uint64_t)m->packet*4u,4u);if(result<=0)return result;m->packet_bytes=be32(m->buffer);}
+        if(!m->packet_bytes){result=read_table(m,m->sizes+(uint64_t)m->packet*4u,4u,2u);if(result<=0)return result;m->packet_bytes=be32(m->buffer);}
         if(!m->packet_bytes||m->packet_bytes>LINNET_VIDEO_PACKET_BYTES||m->packet_offset>m->bytes||m->packet_bytes>m->bytes-m->packet_offset)return bad(m,LN_MP4_UNSUPPORTED);
         m->packet_phase=2;
     }
     if(m->sync_count&&m->sync_index<m->sync_count&&m->next_sync<=m->packet){
-        result=read_at(m,m->sync+(uint64_t)m->sync_index*4u,4u);if(result<=0)return result;
+        result=read_table(m,m->sync+(uint64_t)m->sync_index*4u,4u,3u);if(result<=0)return result;
         uint32_t next=be32(m->buffer);
         if(!next||next>m->samples||next<=m->next_sync)return bad(m,LN_MP4_FORMAT);
         m->next_sync=next;++m->sync_index;if(next<=m->packet)return 0;
@@ -230,6 +254,9 @@ int ln_mp4_next(struct ln_mp4 *m,struct ln_mp4_packet *out){
 
 bool ln_mp4_seek(struct ln_mp4 *m,uint64_t time,int direction){
     if(!m||!m->opened||m->error||m->packet_phase||m->seek_phase)return false;
+#if !defined(LINNET_PROFILE_RELEASE)
+    table_add(&table_seeks,1u);
+#endif
     if(time>=m->duration)time=m->duration-1u;
     uint32_t packet=0;
     for(uint32_t i=0;i<m->time_count;++i){
@@ -252,12 +279,12 @@ int ln_mp4_seek_step(struct ln_mp4 *m){
     if(m->seek_phase==1u){
         if(m->seek_lo==m->seek_hi){if(m->seek_forward&&m->seek_lo<m->sync_count)++m->seek_lo;if(!m->seek_lo)return bad(m,LN_MP4_FORMAT);m->seek_phase=2u;return 0;}
         uint32_t mid=m->seek_lo+(m->seek_hi-m->seek_lo)/2u;
-        int r=read_at(m,m->sync+(uint64_t)mid*4u,4u);if(r<=0)return r;
+        int r=read_table(m,m->sync+(uint64_t)mid*4u,4u,3u);if(r<=0)return r;
         uint32_t sample=be32(m->buffer);if(!sample||sample>m->samples)return bad(m,LN_MP4_FORMAT);
         if(sample<m->seek_packet+1u||(!m->seek_forward&&sample==m->seek_packet+1u))m->seek_lo=mid+1u;else m->seek_hi=mid;return 0;
     }
     if(m->seek_phase==2u){
-        int r=read_at(m,m->sync+(uint64_t)(m->seek_lo-1u)*4u,4u);if(r<=0)return r;
+        int r=read_table(m,m->sync+(uint64_t)(m->seek_lo-1u)*4u,4u,3u);if(r<=0)return r;
         m->seek_packet=be32(m->buffer)-1u;m->sync_index=m->seek_lo;m->next_sync=m->seek_packet+1u;m->seek_phase=3u;
     }
     if(m->seek_phase==3u){
