@@ -537,13 +537,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
 **Build speed, branch switching, and host tooling structure**
 
-- [ ] **76 · P1 · Profile: Compile independent translation units with bounded concurrency.** build.py launches and waits for each compiler process sequentially. Measure a modest worker limit on the native and WSL toolchains, keeping source selection, header generation, and final linking ordered.
+- [x] **76 · P1 · Profile: Compile independent translation units with bounded concurrency.** build.py launches and waits for each compiler process sequentially. Measure a modest worker limit on the native and WSL toolchains, keeping source selection, header generation, and final linking ordered.
 
   Location: [tools/studio/build.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/build.py) — `per-source compile loop`.
 
   Completion check: Clean builds become faster within a bounded memory budget, diagnostics identify the failing source, failed workers cannot publish a successful report, and output is equivalent to the serial build.
 
-  Progress: Two compiler jobs are the default, with `--jobs 1..4` available. On this WSL toolchain, Photo release took 24.4 s serial and 13.4 s with two jobs; Video release took 24.2 s serial and 14.4 s with two jobs. Both pairs had identical build IDs and byte-identical ELF, LOS, and iPod images. A separate native Linux host is unavailable for the remaining measurement.
+  Verification note: Two compiler jobs are the default, with `--jobs 1..4` available. Earlier WSL runs took 24.4/13.4 s for Photo and 24.2/14.4 s for Video at one/two jobs. A current Photo release run took 23.33, 14.06, and 10.35 s at one, two, and four jobs. All three had identical build IDs and byte-identical ELF, LOS, and iPod images. An injected worker failure named the source and caused the build to raise before publication. The worker cap bounds concurrent compiler processes; header generation and linking stay ordered. This machine has no separate native Linux host for a second platform measurement.
 
 - [ ] **77 · P2 · Profile: Reuse unchanged object files with complete dependency keys.** Every build recompiles every selected source. Investigate an object cache keyed by compiler fingerprint, effective flags, source and included-header contents, target/profile, and generated inputs; keep whole-image provenance separate from object reuse.
 
