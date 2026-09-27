@@ -189,9 +189,12 @@ class Events(QObject):
 
 class Covers(QObject):
     """Load only visible artwork; keep device IO off the GUI thread."""
+    MAX_CACHE_BYTES = 64 * 1024 * 1024
+
     def __init__(self, parent):
         super().__init__(parent)
         self.cache, self.pending = OrderedDict(), {}
+        self.cache_costs, self.cache_bytes = {}, 0
         self.generation = 0
         self.closed = False
         self.pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix='linnet-art')
@@ -218,9 +221,12 @@ class Covers(QObject):
         self.pending.clear()
         if paths is None:
             self.cache.clear()
+            self.cache_costs.clear()
+            self.cache_bytes = 0
         else:
             for path in paths:
                 self.cache.pop(path, None)
+                self.cache_bytes -= self.cache_costs.pop(path, 0)
 
     def read(self, path, source_path, generation):
         if self.closed or generation != self.generation:
@@ -271,10 +277,16 @@ class Covers(QObject):
         if generation != self.generation:
             return
         self.pending.pop(path, None)
-        self.cache[path] = QPixmap.fromImage(image) if not image.isNull() else None
+        self.cache_bytes -= self.cache_costs.pop(path, 0)
+        picture = QPixmap.fromImage(image) if not image.isNull() else None
+        cost = picture.width() * picture.height() * 4 if picture else 0
+        self.cache[path] = picture
+        self.cache_costs[path] = cost
+        self.cache_bytes += cost
         self.cache.move_to_end(path)
-        if len(self.cache) > 600:
-            self.cache.popitem(last=False)
+        while len(self.cache) > 600 or self.cache_bytes > self.MAX_CACHE_BYTES:
+            oldest, _ = self.cache.popitem(last=False)
+            self.cache_bytes -= self.cache_costs.pop(oldest)
         for view in self.views:
             view.viewport().update()
 

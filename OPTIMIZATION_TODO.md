@@ -156,6 +156,8 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Peak memory is bounded without excessive rereads or visible cover flicker; include mixed small and large covers and high-DPI rendering.
 
+  Progress: The LRU now tracks estimated pixmap bytes and evicts above 64 MiB while retaining the 600-entry ceiling for small and failed covers. Offscreen mixed-size and high-DPI cache checks passed. Real library scrolling and repaint behavior still need measurement before settling the budget.
+
 - [ ] **24 · P2 · Profile: Coalesce artwork-completion repaints.** Every completed cover requests an update of every registered view. Measure redundant paints and schedule a shared update for visible views, retaining retries for deferred artwork requests.
 
   Location: [tools/studio/media_desktop.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/media_desktop.py) — `Covers.receive`.
