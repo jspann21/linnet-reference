@@ -22,8 +22,11 @@ from fractions import Fraction
 from functools import lru_cache
 
 from . import media_manager as media
+from .host_state import cache_root, save_json
+from .inventory import file_records
 from .music import _device_media_path
-from .publish import _exclusive, _hash, _plain, _volume_guard
+from .guard import guarded_path as _plain, guard_volume as _volume_guard, hash_file as _hash
+from .publish import _exclusive
 
 
 QUALIFICATIONS = Path(__file__).resolve().parents[2] / 'config/apple-os-qualified.toml'
@@ -76,7 +79,7 @@ def supported(identity):
 
 
 def _state_path(identity):
-    return media.cache_root(identity) / 'apple-os.json'
+    return cache_root(identity) / 'apple-os.json'
 
 
 def _load(identity):
@@ -176,7 +179,7 @@ def _files(root, folders, kind, extensions, records_by_kind=None):
                 found[path.relative_to(root).as_posix().casefold()] = (path, info)
         return [found[key] for key in sorted(found)]
     for folder in selected:
-        for path, info in media._file_records(folder, allowed=extensions):
+        for path, info in file_records(folder, allowed=extensions):
             found[path.relative_to(root).as_posix().casefold()] = (path, info)
     return [found[key] for key in sorted(found)]
 
@@ -311,7 +314,7 @@ def inspect(identity, *, records_by_kind=None):
             published.update(music_signature=source_stamp, music_source_signature=source_stamp,
                              database_sha256=digest, music_count=len(music), music_issues=[])
             state.update(folders=selected, configured=True, published=published)
-            media._save(_state_path(identity), state)
+            save_json(_state_path(identity), state)
     same_published = (published.get('music_source_signature') == source_stamp and
                       published.get('database_sha256') == digest and
                       isinstance(published.get('music_count'), int))
@@ -371,7 +374,7 @@ def inspect(identity, *, records_by_kind=None):
     note_issues = 0
     if (root / 'Notes').is_dir():
         notes = (records_by_kind['Notes'] if records_by_kind is not None else
-                 media._file_records(root / 'Notes'))
+                 file_records(root / 'Notes'))
         notes = [(path, info) for path, info in notes
                  if path.is_relative_to(root / 'Notes') and path.name.casefold() != 'instructions']
         native = [(path, info) for path, info in notes
@@ -424,7 +427,7 @@ def save_selection(identity, folders):
     state = _load(identity)
     state['folders'] = selected
     state['configured'] = True
-    media._save(_state_path(identity), state)
+    save_json(_state_path(identity), state)
     return selected
 
 
@@ -564,12 +567,12 @@ def _update_photos(identity, state, selected, distribution, cache, progress):
                          photo_database_sha256=_hash(prepared),
                          photo_count=len(photos))
         state['published'] = published
-        media._save(_state_path(identity), state)
+        save_json(_state_path(identity), state)
 
 
 def _metadata(identity, files):
     root = Path(identity['root']).resolve(strict=True)
-    database = media.cache_root(identity) / 'music-metadata.sqlite3'
+    database = cache_root(identity) / 'music-metadata.sqlite3'
     if not database.is_file():
         raise ValueError('Prepare Music for Linnet first, then update Apple OS.')
     rows = {}
@@ -641,7 +644,7 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
     selected = _normalize(root, state.get('folders', []))
     files = _files(root, selected, 'Music', media.extensions('Music'))
     videos = _files(root, selected, 'Videos', media.extensions('Videos'))
-    cache = media.cache_root(identity)
+    cache = cache_root(identity)
     cache.mkdir(parents=True, exist_ok=True)
     config = Path(__file__).resolve().parents[2] / 'config/toolchain.toml'
     distribution = tomllib.loads(config.read_text(encoding='utf-8'))['toolchain']['windows_wsl_distribution']
@@ -748,7 +751,7 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
                          video_issues=video_issues, music_issues=music_issues,
                          database_sha256=digest, music_count=len(playable_music))
         state['published'] = published
-        media._save(_state_path(identity), state)
+        save_json(_state_path(identity), state)
     _update_photos(identity, state, selected, distribution, cache, progress)
     summary = (f'{len(playable_music):,} songs, {len(video_rows):,} videos and '
                f'{state["published"].get("photo_count", 0):,} photos are ready in Apple OS.')

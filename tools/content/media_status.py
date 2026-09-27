@@ -8,6 +8,8 @@ import time
 
 from . import media_manager as media
 from . import media_library
+from .host_state import cache_directory, cache_root, save_json
+from .inventory import collect_records_by_kind as records_by_kind, skipped_paths, scan as scan_sources
 
 
 @lru_cache(maxsize=4)
@@ -16,7 +18,7 @@ def _verification_cache(disk_serial, volume_serial, partition_offset, cache_disk
     # only for this exact disk, volume and partition; changed stamps are read.
     # Native Disk Mode can reuse a verified Apple cache directory. Keep the
     # live disk identity in the memory key while reading the same file we save.
-    path = media._cache_directory(cache_disk_serial or disk_serial, volume_serial) / 'verified-outputs.json'
+    path = cache_directory(cache_disk_serial or disk_serial, volume_serial) / 'verified-outputs.json'
     cache = dict(verified_at=time.time(), files={})
     try:
         if path.stat().st_size > 4 * 1024 * 1024:
@@ -54,7 +56,7 @@ def _verified_outputs(disk_serial, volume_serial, partition_offset, *, cache_dis
 def _remember_verified(identity, verified, before):
     if verified == before:
         return
-    path = media.cache_root(identity) / 'verified-outputs.json'
+    path = cache_root(identity) / 'verified-outputs.json'
     try:
         # Keep the newest verified stamps when a large library exceeds the
         # cache bound. Older outputs will simply be hashed on the next launch.
@@ -71,7 +73,7 @@ def _remember_verified(identity, verified, before):
                 verified_at = old_time
         except (OSError, ValueError, TypeError, AttributeError):
             pass
-        media._save(path, {'partition_offset': identity['partition_offset'],
+        save_json(path, {'partition_offset': identity['partition_offset'],
                            'verified_at': verified_at,
                            'files': [[name, digest, *stamp]
                                      for (name, digest), stamp in verified.items()]})
@@ -146,18 +148,18 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     identity['linnet'] = boot_review['linnet']
     identity['default_boot'] = installer.default_boot(boot_review)
     try:
-        state = json.loads((media.cache_root(identity) / 'state.json').read_text())
+        state = json.loads((cache_root(identity) / 'state.json').read_text())
         if not isinstance(state, dict):
             state = {}
     except (OSError, ValueError):
         state = {}
-    skipped = {kind: media._skipped_paths(state, kind) for kind in media.KINDS}
+    skipped = {kind: skipped_paths(state, kind) for kind in media.KINDS}
     # Inventory and visible rows describe the same refresh. Traverse the iPod
     # once, retaining excluded files for the library's removal controls.
-    records = media._records_by_kind(root)
+    records = records_by_kind(root)
     from .retail_media import images
     retail_photos = images(root)
-    inventory = media.scan(root, skipped=skipped, records_by_kind=records, retail_photos=retail_photos,
+    inventory = scan_sources(root, skipped=skipped, records_by_kind=records, retail_photos=retail_photos,
                            fingerprint_kinds=('Music', 'Notes', 'Photos'))
     rows = media_library.list_items(identity, records_by_kind=records, retail_photos=retail_photos,
                                     _validated_identity=True)
@@ -203,12 +205,12 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
         raise ValueError(f"{', '.join(unsupported)} playback is unavailable on this iPod model.")
     root = Path(identity['root'])
     try:
-        state = json.loads((media.cache_root(identity) / 'state.json').read_text())
+        state = json.loads((cache_root(identity) / 'state.json').read_text())
         if not isinstance(state, dict):
             state = {}
     except (OSError, ValueError):
         state = {}
-    skipped = {kind: media._skipped_paths(state, kind) for kind in media.KINDS}
+    skipped = {kind: skipped_paths(state, kind) for kind in media.KINDS}
     if videos is not None:
         videos = [value for value in videos
                   if Path(value).resolve().relative_to(root).as_posix().casefold()
@@ -232,10 +234,10 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
     if needed + 1048576 > identity['free_bytes']:
         raise ValueError('Not enough iPod space for these originals. Remove additions from the queue.')
     if 'Notes' in selected:
-        total = media.scan(root, ('Notes',), skipped=skipped)['Notes']['count'] + sum(p['kind'] == 'Notes' and Path(p['source']).suffix.lower() in media.extensions('Notes') for p in copies)
+        total = scan_sources(root, ('Notes',), skipped=skipped)['Notes']['count'] + sum(p['kind'] == 'Notes' and Path(p['source']).suffix.lower() in media.extensions('Notes') for p in copies)
         if total > 256:
             raise ValueError(f'Notes supports 256 files; this update includes {total}.')
-    cache = media.cache_root(identity)
+    cache = cache_root(identity)
     parent = cache
     while not parent.exists():
         parent = parent.parent

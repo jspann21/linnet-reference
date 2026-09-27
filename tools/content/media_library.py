@@ -11,7 +11,10 @@ import time
 import uuid
 
 from . import media_manager as manager
-from .publish import _bounded, _plain, _volume_guard, _exclusive, _write_verified, _finish_backups
+from .host_state import cache_root, save_json
+from .inventory import collect_records_by_kind, skipped_paths, scan as scan_sources
+from .guard import guarded_path as _plain, guard_volume as _volume_guard, hash_file
+from .publish import _bounded, _exclusive, _write_verified, _finish_backups
 from .video_catalog import encode as _encode_catalog, read_file as _read_catalog_file
 
 
@@ -60,7 +63,7 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, _validated
         identity = manager.refresh(identity)
     root = Path(identity['root']).resolve(strict=True)
     if records_by_kind is None:
-        records_by_kind = manager._records_by_kind(root)
+        records_by_kind = collect_records_by_kind(root)
     _, _, entries, resolved_videos = _catalog(root, with_paths=True)
     published_paths = {str(path).casefold() for path in resolved_videos}
     result = []
@@ -69,7 +72,7 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, _validated
                                music_inodes=getattr(records_by_kind, 'inodes', None))
     from .retail_media import metadata as retail_metadata, images as retail_images
     retail = retail_metadata(root)
-    source_metadata = _source_music_metadata(root, music_records, manager.cache_root(identity), retail, metadata)
+    source_metadata = _source_music_metadata(root, music_records, cache_root(identity), retail, metadata)
     for kind in manager.KINDS:
         allowed = manager.extensions(kind)
         records = records_by_kind[kind]
@@ -112,7 +115,7 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, _validated
             artist=tags.get('artist', ''), album=tags.get('album', ''), genre=tags.get('genre', ''),
             artwork=tags.get('artwork', ''), duration=tags.get('duration', 0),
             description='Remove this video from the playback catalog and move its file to Trash.'))
-    cache = manager.cache_root(identity)
+    cache = cache_root(identity)
     names = {}
     try:
         state = json.loads((cache / 'state.json').read_text(encoding='utf-8'))
@@ -340,14 +343,14 @@ def organize_videos(identity):
                 temporary.unlink()
         cleanup = {}
         _finish_backups(cleanup, [recovery], root, lambda: _volume_guard(identity))
-        state_path = manager.cache_root(identity) / 'state.json'
+        state_path = cache_root(identity) / 'state.json'
         try:
             state = json.loads(state_path.read_text(encoding='utf-8'))
             renamed = {source.relative_to(root).as_posix().casefold(): destination.relative_to(root).as_posix() for source, destination in moves}
             for saved in [state.get('Videos', {}), *state.get('video_files', {}).values()]:
                 if isinstance(saved, dict) and isinstance(saved.get('outputs'), list):
-                    saved['outputs'] = [(renamed.get(name.casefold(), name), manager._hash(catalog) if name.casefold() == '.linnet/videos/index.vid' else digest) for name, digest in saved['outputs']]
-            manager._save(state_path, state)
+                    saved['outputs'] = [(renamed.get(name.casefold(), name), hash_file(catalog) if name.casefold() == '.linnet/videos/index.vid' else digest) for name, digest in saved['outputs']]
+            save_json(state_path, state)
         except (OSError, ValueError, AttributeError, TypeError):
             pass  # A missing preparation cache is rebuilt on the next update.
         return dict(summary=f'{len(moves)} videos renamed · {len(entries) - len(updated)} missing entries cleared.', receipt='', **cleanup)
@@ -356,7 +359,7 @@ def organize_videos(identity):
 def _removal_items(root):
     """Validate mutation IDs and file stamps without loading display metadata."""
     from .retail_media import images as retail_images
-    records_by_kind = manager._records_by_kind(root)
+    records_by_kind = collect_records_by_kind(root)
     _, _, entries, resolved_videos = _catalog(root, with_paths=True)
     published_paths = {str(path).casefold() for path in resolved_videos}
     result = {}
@@ -452,11 +455,11 @@ def _remove(identity, items):
         # Carry forward readiness only if the saved source snapshot and index
         # matched before deletion. This scan reads file stats, never audio tags.
         try:
-            cache_path = manager.cache_root(identity) / 'state.json'
+            cache_path = cache_root(identity) / 'state.json'
             saved_state = json.loads(cache_path.read_text(encoding='utf-8'))
             saved_music = saved_state.get('Music', {})
-            skipped = {'Music': manager._skipped_paths(saved_state, 'Music')}
-            fingerprint = manager.scan(root, ('Music',), skipped=skipped)['Music']['fingerprint']
+            skipped = {'Music': skipped_paths(saved_state, 'Music')}
+            fingerprint = scan_sources(root, ('Music',), skipped=skipped)['Music']['fingerprint']
             signature = saved_music.get('signature', '')
             outputs = saved_music.get('outputs', [])
             if signature.endswith(':' + fingerprint) and any(
@@ -471,12 +474,12 @@ def _remove(identity, items):
     token = uuid.uuid4().hex
     trash = root / '.LINNET' / 'TRASH' / token
     _plain(trash, root)
-    receipt = manager.cache_root(identity) / ('remove-' + token + '.json')
+    receipt = cache_root(identity) / ('remove-' + token + '.json')
     report = dict(operation='remove-media', started=time.time(), complete=False, receipt=str(receipt),
                   trash=str(trash), removed=[], requires_update=sorted({r['kind'] for r in selected if r['category'] == 'original'}),
                   catalog_paths={key.hex(): _device_path(root, path).relative_to(root).as_posix() for key, path, _ in entries},
                   selected=selected, moves=[dict(source=str(p), trash=str(trash / p.relative_to(root))) for p in paths.values()])
-    manager._save(receipt, report)
+    save_json(receipt, report)
     temporary = None
     temporary_owned = False
     try:
@@ -486,7 +489,7 @@ def _remove(identity, items):
             backup = trash / 'LIBRARY.PDB.before'
             _write_verified(backup, music_before, 'Music index backup verification failed')
             report['music_backup'] = str(backup)
-            manager._save(receipt, report)
+            save_json(receipt, report)
         if music_needs_update:
             from . import coverflow
             from .publish import _hash, _copy_verified
@@ -504,13 +507,13 @@ def _remove(identity, items):
                 backup = trash / 'COVERS.CFL.before'
                 _copy_verified(cover_index, backup, cover_before, root, lambda: _volume_guard(identity))
                 report['coverflow_backup'] = str(backup)
-                manager._save(receipt, report)
+                save_json(receipt, report)
         if remaining != entries:
             backup = trash / 'INDEX.VID.before'
             _plain(backup, root)
             _write_verified(backup, before, 'Video catalog backup verification failed')
             report['catalog_backup'] = str(backup)
-            manager._save(receipt, report)
+            save_json(receipt, report)
             temporary = catalog.with_name('I' + token[:7].upper() + '.TMP')
             data = _encode_catalog(remaining)
             _plain(temporary, root)
@@ -525,7 +528,7 @@ def _remove(identity, items):
             if catalog.read_bytes() != data:
                 raise OSError('Video catalog removal verification failed')
             report['catalog_updated'] = True
-            manager._save(receipt, report)
+            save_json(receipt, report)
         for move in report['moves']:
             source, destination = Path(move['source']), Path(move['trash'])
             _volume_guard(identity)
@@ -537,7 +540,7 @@ def _remove(identity, items):
             destination.parent.mkdir(parents=True, exist_ok=True)
             source.rename(destination)
             report['removed'].append(move)
-            manager._save(receipt, report)
+            save_json(receipt, report)
         if music_after is not None:
             temporary = music_index.with_name('M' + token[:7].upper() + '.TMP')
             temporary_owned = False
@@ -575,17 +578,17 @@ def _remove(identity, items):
                 music_needs_update = False
             if not music_needs_update:
                 report['requires_update'].remove('Music')
-            manager._save(receipt, report)
+            save_json(receipt, report)
             if music_cache and not music_needs_update:
                 try:
                     cache_path, saved_state, skipped = music_cache
                     saved_music = saved_state['Music']
-                    fingerprint = manager.scan(root, ('Music',), skipped=skipped)['Music']['fingerprint']
+                    fingerprint = scan_sources(root, ('Music',), skipped=skipped)['Music']['fingerprint']
                     saved_music['signature'] = saved_music['signature'].rsplit(':', 1)[0] + ':' + fingerprint
                     saved_music['outputs'] = [(name, hashlib.sha256(music_after).hexdigest()
                         if name.casefold() == '.linnet/library.pdb' else cover_digest
                         if name.casefold() == '.linnet/covers.cfl' and cover_digest else digest) for name, digest in saved_music['outputs']]
-                    manager._save(cache_path, saved_state)
+                    save_json(cache_path, saved_state)
                 except (OSError, ValueError, TypeError, AttributeError):
                     pass  # Cache failure must not undo a verified device update.
         remaining_kinds = set()
@@ -621,4 +624,4 @@ def _remove(identity, items):
                 report['coverflow_temporary'] = str(cover_temporary)
                 report['cleanup_error'] = str(error)
         report['finished'] = time.time()
-        manager._save(receipt, report)
+        save_json(receipt, report)

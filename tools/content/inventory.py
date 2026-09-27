@@ -1,0 +1,176 @@
+"""Read-only media source traversal, exclusions, and fingerprints."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import stat
+
+from .guard import guarded_path as _plain
+
+KINDS = ("Music", "Notes", "Photos", "Videos")
+VIDEO_EXTENSIONS = {".mp4", ".m4v", ".mov", ".mkv", ".avi", ".webm", ".mpg", ".mpeg", ".wmv", ".ipvf"}
+
+
+def extensions(kind):
+    if kind == "Music":
+        from .music import EXTENSIONS
+        return EXTENSIONS
+    if kind == "Photos":
+        from .photos import EXTENSIONS
+        return EXTENSIONS
+    if kind == "Notes":
+        from .notes import EXTENSIONS
+        return EXTENSIONS
+    if kind == "Videos":
+        return VIDEO_EXTENSIONS
+    raise ValueError("Unknown media folder")
+
+
+def source_folders(root, kind):
+    root = Path(root)
+    folders = [root / kind]
+    if kind in ("Music", "Videos"):
+        folders.append(root / "iPod_Control" / "Music")
+    return [folder for folder in folders if folder.is_dir()]
+
+
+def file_records(folder, *, allowed=None, inodes=None):
+    if not folder.exists():
+        return []
+    _plain(folder, Path(folder.anchor))
+    if not folder.is_dir():
+        raise ValueError(f"Expected a folder: {folder}")
+    found = []
+    directories = [folder]
+    while directories:
+        with os.scandir(directories.pop()) as entries:
+            for entry in entries:
+                info = entry.stat(follow_symlinks=False)
+                path = Path(entry.path)
+                if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
+                    raise ValueError(f"Linked files or folders are unsupported: {path}")
+                if stat.S_ISDIR(info.st_mode):
+                    directories.append(path)
+                elif stat.S_ISREG(info.st_mode) and (allowed is None or path.suffix.lower() in allowed):
+                    found.append((path, info))
+                    if inodes is not None:
+                        inodes[path] = entry.inode()
+    return sorted(found, key=lambda item: (str(item[0]).casefold(), str(item[0])))
+
+
+def collect_records_by_kind(root, kinds=KINDS):
+    folders, result = {}, _RecordInventory()
+    for kind in kinds:
+        if kind not in KINDS:
+            raise ValueError("Unknown media folder")
+        result[kind] = []
+        for folder in source_folders(root, kind):
+            if folder not in folders:
+                folders[folder] = file_records(folder, inodes=result.inodes)
+            result[kind].extend(folders[folder])
+    return result
+
+
+class _RecordInventory(dict):
+    """Directory records plus file IDs already returned by traversal."""
+    def __init__(self):
+        super().__init__()
+        self.inodes = {}
+
+
+def skipped_paths(state, kind):
+    skipped = state.get("skipped_files", {}) if isinstance(state, dict) else {}
+    values = skipped.get(kind, []) if isinstance(skipped, dict) else []
+    if not isinstance(values, list):
+        return set()
+    result = set()
+    prefixes = {(kind.casefold(),)}
+    if kind in ("Music", "Videos"):
+        prefixes.add(("ipod_control", "music"))
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        path = Path(value)
+        parts = tuple(part.casefold() for part in path.parts)
+        if (path.is_absolute() or path.drive or ".." in path.parts or
+                not any(parts[:len(prefix)] == prefix for prefix in prefixes)):
+            continue
+        result.add(path.as_posix().casefold())
+    return result
+
+
+def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos=None,
+         fingerprint_kinds=None):
+    root = Path(root).resolve(strict=True)
+    kinds = tuple(kinds)
+    if records_by_kind is None:
+        records_by_kind = collect_records_by_kind(root, kinds)
+    skipped = skipped or {}
+    fingerprint_kinds = set(KINDS if fingerprint_kinds is None else fingerprint_kinds)
+    result = {}
+    for kind in kinds:
+        if kind not in KINDS:
+            raise ValueError("Unknown media folder")
+        excluded = {Path(value).as_posix().casefold() for value in skipped.get(kind, ())}
+        fingerprint = kind in fingerprint_kinds
+        rows, supported = [], []
+        supported_bytes = skipped_count = ignored = 0
+        allowed = extensions(kind)
+        cover_names = None
+        if kind == 'Music' and fingerprint:
+            from .music import COVER_NAMES
+            cover_names = {name.casefold() for name in COVER_NAMES}
+        records = records_by_kind[kind]
+        music_folders, cover_rows = set(), []
+        for path, info in records:
+            relative = path.relative_to(root).as_posix() if fingerprint or excluded else None
+            if excluded and relative.casefold() in excluded:
+                skipped_count += 1
+                continue
+            supported_file = path.suffix.lower() in allowed
+            # Music and Videos share iPod_Control/Music. A cover matters only
+            # when its folder also contains a playable audio source.
+            if fingerprint and supported_file:
+                rows.append((relative, info.st_size, info.st_mtime_ns))
+                if cover_names is not None:
+                    music_folders.add(path.parent)
+            elif fingerprint and cover_names is not None and path.name.casefold() in cover_names:
+                cover_rows.append((path.parent, (relative, info.st_size, info.st_mtime_ns)))
+            if supported_file:
+                supported.append(str(path))
+                supported_bytes += info.st_size
+            else:
+                ignored += 1
+        if fingerprint and cover_rows:
+            rows.extend(row for folder, row in cover_rows if folder in music_folders)
+        if fingerprint and kind in ('Music', 'Videos'):
+            database = root / 'iPod_Control/iTunes/iTunesDB'
+            _plain(database, root)
+            if database.is_file():
+                info = database.stat()
+                rows.append(('iTunesDB', info.st_size, info.st_mtime_ns))
+            if kind == 'Music' and supported:
+                # Artwork affects Music only when playable audio exists. Video
+                # readiness uses source/output stamps without artwork scans.
+                artwork_folder = root / 'iPod_Control' / 'Artwork'
+                for path, info in file_records(artwork_folder):
+                    rows.append((path.relative_to(root).as_posix(), info.st_size, info.st_mtime_ns))
+                from .album_art import signature as artwork_signature
+                from .retail_media import available_tracks
+                rows.append(('album-art', artwork_signature(available_tracks(root).values())))
+        if kind == 'Photos':
+            from .retail_media import images
+            photos = retail_photos if retail_photos is not None else images(root)
+            for photo in photos:
+                if photo['relative'].casefold() in excluded:
+                    skipped_count += 1
+                    continue
+                supported.append(str(root / photo['relative']))
+                supported_bytes += photo['bytes']
+                if fingerprint:
+                    rows.append((photo['relative'], photo['bytes'], photo['mtime_ns'], photo['preview']))
+        result[kind] = dict(count=len(supported), bytes=supported_bytes,
+                            ignored=ignored, files=supported,
+                            skipped=skipped_count,
+                            fingerprint=hashlib.sha256(json.dumps(rows).encode()).hexdigest() if fingerprint else None)
+    return result

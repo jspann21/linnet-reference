@@ -775,11 +775,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Verification note: The two Photo generators reproduced their checked-in headers after line-ending normalization. The target guide now lists their inputs, commands, font license, and the direct-source/CC0 provenance of each game presentation header.
 
-- [ ] **106 · P2 · Profile: Clarify shared host-media boundaries.** Media helpers import private symbols such as _plain, _volume_guard, _save, and scan helpers across publication, library, planning, and settings modules. Define a small supported internal API for identities, guarded paths, scans, and receipts, then migrate callers incrementally.
+- [x] **106 · P2 · Profile: Clarify shared host-media boundaries.** Media helpers import private symbols such as _plain, _volume_guard, _save, and scan helpers across publication, library, planning, and settings modules. Define a small supported internal API for identities, guarded paths, scans, and receipts, then migrate callers incrementally.
 
   Location: [tools/content/media_manager.py](C:/Users/user/Desktop/Projects/linnet/tools/content/media_manager.py), [tools/content/publish.py](C:/Users/user/Desktop/Projects/linnet/tools/content/publish.py), [tools/content/media_status.py](C:/Users/user/Desktop/Projects/linnet/tools/content/media_status.py), [tools/studio/screen_settings.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/screen_settings.py) — `cross-module private imports`.
 
   Completion check: Shared invariants have one owner, circular workflow dependencies are reduced, and moving a helper does not bypass publication checks or silently change error handling. Coordinate persistence changes with items 46–47.
+
+  Verification note: Guarded paths and device identity checks now have supported imports through `tools.content.guard`, read-only inventory traversal and fingerprints live in `tools.content.inventory`, and host cache paths and atomic JSON receipts live in `tools.content.host_state`. Status, library, trash, Apple OS, Media Manager, and screen settings callers use those boundaries. The moved scan and receipt bodies match the prior Python AST after naming changes; module imports, a read-only scan, compilation, and Ruff F checks passed.
 
 - [x] **107 · P3 · Code: Index vendor provenance and local build adaptations.** Dependency metadata is spread among PROVENANCE.md, README.linnet.md, LICENSE, NOTICE, and SOURCES files, while compiler exceptions live in build.py. Add a central index linking each dependency's origin, license, local changes, and integration rules.
 

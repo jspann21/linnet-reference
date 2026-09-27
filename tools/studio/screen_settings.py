@@ -9,7 +9,7 @@ from tools.content import media_manager as media
 from tools.studio.targets import target_spec
 from tools.content.compiler import resolve_features
 from tools.content.layouts import feature_enabled
-from tools.content.publish import _plain, _volume_guard
+from tools.content.guard import guarded_path as _plain, guard_volume as _volume_guard
 from tools.studio.menu_definition import SCREENS, DEFAULTS, REQUIRED, ITEMS
 
 HINTS = {'Artists': 'Performers credited on individual tracks.', 'Album Artists': 'Main artist credited for each album; useful for compilations.', 'Composers': 'Writers of the music; useful for classical collections.'}

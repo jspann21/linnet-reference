@@ -6,14 +6,16 @@ import uuid
 from datetime import datetime
 
 from . import media_manager as media, media_library as library
-from .publish import _plain, _volume_guard, _exclusive, _write_verified
+from .host_state import cache_root, save_json
+from .guard import guarded_path as _plain, guard_volume as _volume_guard
+from .publish import _exclusive, _write_verified
 from .video_catalog import encode as _encode_catalog, read_file as _read_catalog_file
 
 
 def _removal(identity, root, token):
     if len(token) != 32 or any(c not in '0123456789abcdef' for c in token):
         return None
-    receipt = media.cache_root(identity) / f'remove-{token}.json'
+    receipt = cache_root(identity) / f'remove-{token}.json'
     try:
         report = json.loads(receipt.read_text(encoding='utf-8'))
         if not isinstance(report, dict):
@@ -37,7 +39,7 @@ def _removal(identity, root, token):
 def removals(identity):
     root = Path(identity['root']).resolve(strict=True)
     found = []
-    for receipt in media.cache_root(identity).glob('remove-*.json'):
+    for receipt in cache_root(identity).glob('remove-*.json'):
         removal = _removal(identity, root, receipt.stem.removeprefix('remove-'))
         if removal is not None:
             found.append(removal[0])
@@ -72,7 +74,7 @@ def recover(identity, token, *, erase=False):
             _volume_guard(identity)
             trash.rmdir()
             report['trash_emptied'] = True
-            media._save(receipt, report)
+            save_json(receipt, report)
             return dict(receipt=str(receipt), summary='Trash removal permanently deleted. Its storage is now available.')
         moves = []
         # Derive destinations from the guarded removal tree; never trust absolute receipt paths.
@@ -144,7 +146,7 @@ def recover(identity, token, *, erase=False):
                     _plain(temporary, root)
                     temporary.unlink()
         report['restored'] = True
-        media._save(receipt, report)
+        save_json(receipt, report)
         # Backup is no longer needed only after file and catalog restoration succeeded.
         for backup in (backup, trash / 'LIBRARY.PDB.before', trash / 'COVERS.CFL.before'):
             if backup.exists():
