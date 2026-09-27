@@ -213,6 +213,15 @@ class OperationOutcome:
     cancel_requested: bool = False
 
 
+def operation_status(value):
+    if isinstance(value, dict):
+        if value.get('stopped'):
+            return 'cancelled'
+        if value.get('complete') is False or value.get('needs_preparation'):
+            return 'partial'
+    return 'succeeded'
+
+
 class Events(QObject):
     done = Signal(object)
     progress = Signal(str)
@@ -1321,10 +1330,7 @@ class MediaWindow(QMainWindow):
         def run():
             try:
                 value = operation()
-                status = ('cancelled' if isinstance(value, dict) and value.get('stopped') else
-                          'partial' if isinstance(value, dict) and value.get('complete') is False else
-                          'succeeded')
-                outcome = OperationOutcome(context, value, status=status,
+                outcome = OperationOutcome(context, value, status=operation_status(value),
                     cancel_requested=bool(context.cancel_event and context.cancel_event.is_set()))
             except Exception as error:
                 outcome = OperationOutcome(context,
@@ -2209,6 +2215,8 @@ class MediaWindow(QMainWindow):
             if needed:
                 prepared = media.run(identity, needed, photo_dimension=dimension, ffmpeg=ffmpeg, ffprobe=ffprobe,
                     progress=self.events.progress.emit, cancelled=self.stop_event.is_set)
+                result['complete'] = prepared['complete']
+                result['stopped'] = prepared['stopped']
                 result['needs_preparation'] = not prepared['complete']
                 result['summary'] = 'Files moved to Trash. Playback libraries updated.' if prepared['complete'] else 'Files moved to Trash. Playback needs preparation: ' + '; '.join(e['message'] for e in prepared['errors'])
             return result
@@ -2231,8 +2239,9 @@ class MediaWindow(QMainWindow):
                 prepared = media.run(identity, needed, photo_dimension=dimension, ffmpeg=ffmpeg, ffprobe=ffprobe,
                     progress=self.events.progress.emit, cancelled=self.stop_event.is_set)
                 if not prepared['complete']:
-                    return dict(needs_preparation=True, summary='Files restored. Playback needs preparation: ' + '; '.join(e['message'] for e in prepared['errors']))
-            return dict(summary='Files and playback libraries restored.')
+                    return dict(complete=False, stopped=prepared['stopped'], needs_preparation=True,
+                        summary='Files restored. Playback needs preparation: ' + '; '.join(e['message'] for e in prepared['errors']))
+            return dict(complete=True, summary='Files and playback libraries restored.')
         self.work('restore', restore, 'Restoring your files…')
 
     def sync_videos(self):
