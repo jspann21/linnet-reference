@@ -360,11 +360,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Several bad sources do not repeatedly redo unrelated work; completed publications are retained and uncertain publication failures are never replayed automatically.
 
-- [ ] **51 · P2 · Profile: Validate removal selections without rebuilding unrelated display metadata.** Removing selected items rebuilds the full library row set, including display metadata and artwork lookup. Investigate a lighter validated inventory for mutation decisions.
+- [x] **51 · P2 · Profile: Validate removal selections without rebuilding unrelated display metadata.** Removing selected items rebuilds the full library row set, including display metadata and artwork lookup. Investigate a lighter validated inventory for mutation decisions.
 
   Location: [tools/content/media_library.py](C:/Users/user/Desktop/Projects/linnet/tools/content/media_library.py) — `_remove / list_items`.
 
   Completion check: Removal remains tied to fresh paths, sizes, timestamps, removability, catalog state, and last-source retirement rules while avoiding unrelated artwork work.
+
+  Verification note: On A1099, the lightweight post-lock removal inventory matched all 3,246 removable or retail-photo IDs from the full library, including category, kind, path, size, timestamp, and removability. With the required identity refresh included, inventory time fell from 5.34 to 3.61 s; Apple thumbnail records are validated without rendering previews, and music display metadata is omitted. A temporary Notes file was removed to the device Trash, restored byte for byte, then deleted; a stale Music size was rejected without creating a Trash entry. The selected UI title is carried into the receipt after its file identity is validated.
 
 - [x] **52 · P2 · Code: Batch native MP4 chunk-map parsing.** stsz samples are read in bounded batches, but stsc still reads and unpacks 12 bytes per entry. Apply similarly bounded batching while preserving validation across batch boundaries.
 

@@ -319,9 +319,40 @@ def organize_videos(identity):
         return dict(summary=f'{len(moves)} videos renamed · {len(entries) - len(updated)} missing entries cleared.', receipt='', **cleanup)
 
 
+def _removal_items(root):
+    """Validate mutation IDs and file stamps without loading display metadata."""
+    from .retail_media import images as retail_images
+    records_by_kind = manager._records_by_kind(root)
+    _, _, entries, resolved_videos = _catalog(root, with_paths=True)
+    published_paths = {str(path).casefold() for path in resolved_videos}
+    result = {}
+    for kind in manager.KINDS:
+        allowed = manager.extensions(kind)
+        for path, info in records_by_kind[kind]:
+            if path.suffix.lower() not in allowed or (kind == 'Videos' and str(path).casefold() in published_paths):
+                continue
+            row = _row('original', kind, path.name, path, 'Source on iPod', info=info)
+            result[row['id']] = row
+    for photo in retail_images(root, render=False):
+        key = 'retail-photo:' + str(photo['key'])
+        result[key] = dict(id=key, category='original', kind='Photos', removable=False)
+    for kind, name in (('Music', '.LINNET/LIBRARY.PDB'), ('Photos', '.LINNET/PHOTOS/LIBRARY.PIM'), ('Notes', '.LINNET/NOTES/LIBRARY.NNT')):
+        path = root / name
+        _plain(path, root)
+        if path.is_file():
+            row = _row('library', kind, 'Entire published ' + kind.lower() + ' library', path,
+                       'Published library on iPod')
+            result[row['id']] = row
+    for (key, _, title), path in zip(entries, resolved_videos):
+        row = _row('published', 'Videos', title, path, 'Ready on iPod', key=key.hex())
+        result[row['id']] = row
+    return result
+
+
 def _remove(identity, items):
     root = Path(identity['root']).resolve(strict=True)
-    fresh = {row['id']: row for row in list_items(identity)}
+    identity = manager.refresh(identity)
+    fresh = _removal_items(root)
     selected = []
     selected_ids = set()
     for item in items:
@@ -331,6 +362,8 @@ def _remove(identity, items):
         if any(row.get(field) != item.get(field) for field in ('path', 'bytes', 'mtime_ns')):
             raise ValueError('Selected file changed; refresh before removing: ' + row['title'])
         if row['id'] not in selected_ids:
+            if isinstance(item.get('title'), str):
+                row['title'] = item['title']
             selected.append(row)
             selected_ids.add(row['id'])
     if not selected:
@@ -521,7 +554,11 @@ def _remove(identity, items):
                     manager._save(cache_path, saved_state)
                 except (OSError, ValueError, TypeError, AttributeError):
                     pass  # Cache failure must not undo a verified device update.
-        remaining_kinds = {row['kind'] for row in list_items(identity) if row['category'] == 'original'} if report['requires_update'] else set()
+        remaining_kinds = set()
+        if report['requires_update']:
+            manager.refresh(identity)
+            remaining_kinds = {row['kind'] for row in _removal_items(root).values()
+                               if row['category'] == 'original'}
         empty = [kind for kind in report['requires_update'] if kind not in remaining_kinds]
         report['empty_folders'] = empty
         report['complete'] = True

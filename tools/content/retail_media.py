@@ -161,7 +161,7 @@ class _ThumbnailReaders:
         return pixels
 
 
-def images(root, *, artwork=False, dbids=None):
+def images(root, *, artwork=False, dbids=None, render=True):
     root = Path(root).resolve()
     folder = root / ('iPod_Control/Artwork' if artwork else 'Photos')
     database = folder / ('ArtworkDB' if artwork else 'Photo Database')
@@ -219,7 +219,7 @@ def images(root, *, artwork=False, dbids=None):
                         raise ValueError('iTunes thumbnail extends beyond its file')
                     stamp = f'{key}-{info.st_size}-{info.st_mtime_ns}'
                     preview = cache / (stamp + '.png')
-                    if not preview.is_file():
+                    if render and not preview.is_file():
                         from PIL import Image
                         try:
                             pixels = readers.read(path, offset, width * height * 2)
