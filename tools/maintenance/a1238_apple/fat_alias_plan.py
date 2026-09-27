@@ -1,5 +1,4 @@
 """Read-only VFAT directory inventory for the A1238 alias experiment."""
-import collections
 import hashlib
 import json
 from pathlib import Path
