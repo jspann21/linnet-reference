@@ -233,13 +233,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: A one-photo update reuses unchanged work; full PIMG bytes match a clean build across orientation, titles, viewport, detail level, and additional iTunes sources.
 
-- [ ] **36 · P2 · Profile: Store photo tile CRCs more compactly.** tile_crcs retains a Python integer per tile while payloads are spooled. Measure peak memory on large valid packages and compare a packed integer array or equivalent bounded representation.
+- [x] **36 · P2 · Profile: Store photo tile CRCs more compactly.** tile_crcs retains a Python integer per tile while payloads are spooled. Measure peak memory on large valid packages and compare a packed integer array or equivalent bounded representation.
 
   Location: [tools/content/photos.py](C:/Users/user/Desktop/Projects/linnet/tools/content/photos.py) — `compile_photos`.
 
   Completion check: Peak memory falls, package limits still apply before oversized work, and serialized metadata and payload bytes remain identical.
 
-  Progress: Tile CRCs now use an unsigned integer array. A two-photo package matched the prior compiler byte for byte; peak memory on a large valid package still needs measurement.
+  Verification note: The packed unsigned-integer array compiled 64 prepared 512 × 512 JPEGs into 26,432 tiles and the same 54,878,208-byte PIMG with identical SHA-256 (`5a23f2a7...b1b97`) as the prior list implementation. In separate processes, traced Python peak fell from 6,656,327 to 5,920,839 bytes and sampled RSS peak from 38,440,960 to 33,603,584 bytes. Both paths completed in about 14.8 seconds; the existing tile and package bounds are checked before each level is tiled.
 
 - [x] **37 · P2 · Code: Enforce the Notes count bound during traversal.** All matching documents are collected and sorted before the 256-note limit is checked. Stop collecting once the supported count is exceeded instead of retaining an arbitrarily large list.
 
