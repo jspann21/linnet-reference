@@ -225,7 +225,7 @@ def source_folders(root, kind):
     return [folder for folder in folders if folder.is_dir()]
 
 
-def _file_records(folder, *, allowed=None):
+def _file_records(folder, *, allowed=None, inodes=None):
     if not folder.exists():
         return []
     _plain(folder, Path(folder.anchor))
@@ -244,6 +244,8 @@ def _file_records(folder, *, allowed=None):
                     directories.append(path)
                 elif stat.S_ISREG(info.st_mode) and (allowed is None or path.suffix.lower() in allowed):
                     found.append((path, info))
+                    if inodes is not None:
+                        inodes[path] = entry.inode()
     return sorted(found, key=lambda item: (str(item[0]).casefold(), str(item[0])))
 
 
@@ -252,16 +254,23 @@ def _files(folder, *, allowed=None):
 
 
 def _records_by_kind(root, kinds=KINDS):
-    folders, result = {}, {}
+    folders, result = {}, _RecordInventory()
     for kind in kinds:
         if kind not in KINDS:
             raise ValueError("Unknown media folder")
         result[kind] = []
         for folder in source_folders(root, kind):
             if folder not in folders:
-                folders[folder] = _file_records(folder)
+                folders[folder] = _file_records(folder, inodes=result.inodes)
             result[kind].extend(folders[folder])
     return result
+
+
+class _RecordInventory(dict):
+    """Directory records plus file IDs already returned by traversal."""
+    def __init__(self):
+        super().__init__()
+        self.inodes = {}
 
 
 def _skipped_paths(state, kind):

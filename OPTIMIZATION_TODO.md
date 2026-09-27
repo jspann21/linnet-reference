@@ -109,11 +109,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: The catalog produces identical rows and errors with fewer path queries; missing files and changed paths are handled at the appropriate operation boundary.
 
-- [ ] **16 · P2 · Profile: Reuse scan evidence when building published music rows.** The directory inventory already supplies paths, but reading the prepared music database performs per-track _plain and resolve calls again. Measure their share of refresh time before designing scoped reuse.
+- [x] **16 · P2 · Profile: Reuse scan evidence when building published music rows.** The directory inventory already supplies paths, but reading the prepared music database performs per-track _plain and resolve calls again. Measure their share of refresh time before designing scoped reuse.
 
   Location: [tools/content/media_library.py](C:/Users/user/Desktop/Projects/linnet/tools/content/media_library.py) — `_music_metadata / list_items`.
 
   Completion check: Read-only refresh gets faster on the actual device while escaped paths, reparses, missing sources, and database references outside the scan remain correctly handled.
+
+  Verification note: On A1099, warm music metadata reading took about 0.63 seconds before the change, about 0.33 seconds of it in repeated path guards. The database uses FAT short aliases while traversal returns long names, so an initial path-string reuse attempt was discarded. Traversal now retains each entry's file ID, and database rows reuse only matching ID, size, and timestamp; other references keep the guarded resolution path. Warm whole refresh improved from 4.50 to 4.13 seconds in alternating old/new runs, with the same 3,252 row digest. A copied one-track database also handled an out-of-scan source, a missing source, a linked source, and a validator-rejected escaped reference as expected. A1099 returned to healthy Link after safe eject.
 
 - [x] **17 · P2 · Profile: Remove duplicate path resolution while parsing Apple tracks.** _path resolves a track to check containment, and _tracks resolves it again for the dictionary key. Consider returning both the original path and its validated resolved identity.
 

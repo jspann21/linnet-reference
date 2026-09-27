@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import struct
 from pathlib import Path, PurePosixPath
 import time
@@ -63,10 +64,11 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, _validated
     _, _, entries, resolved_videos = _catalog(root, with_paths=True)
     published_paths = {str(path).casefold() for path in resolved_videos}
     result = []
-    metadata = _music_metadata(root)
+    music_records = records_by_kind['Music']
+    metadata = _music_metadata(root, music_records=music_records,
+                               music_inodes=getattr(records_by_kind, 'inodes', None))
     from .retail_media import metadata as retail_metadata, images as retail_images
     retail = retail_metadata(root)
-    music_records = records_by_kind['Music']
     source_metadata = _source_music_metadata(root, music_records, manager.cache_root(identity), retail, metadata)
     for kind in manager.KINDS:
         allowed = manager.extensions(kind)
@@ -187,7 +189,7 @@ def _source_music_metadata(root, records, cache_root, retail=None, published=Non
     return result
 
 
-def _music_metadata(root):
+def _music_metadata(root, *, music_records=None, music_inodes=None):
     """Read the prepared metadata once, without opening individual audio files."""
     from .music import validate_database, MAX_DATABASE, TRACK
     database = root / '.LINNET' / 'LIBRARY.PDB'
@@ -195,6 +197,39 @@ def _music_metadata(root):
     if not database.is_file():
         return {}
     try:
+        scanned = {}
+        if music_records is not None and music_inodes is not None:
+            for path, info in music_records:
+                inode = music_inodes.get(path)
+                if not inode or not path.is_relative_to(root):
+                    continue
+                if inode in scanned:
+                    scanned[inode] = None  # Ambiguous file identity needs the guarded path.
+                else:
+                    scanned[inode] = (path, info.st_size, info.st_mtime_ns)
+
+        def source_path(location):
+            candidate = root / location.lstrip('/')
+            parts = location.split('/')
+            if (scanned and len(parts) >= 3 and parts[0] == '' and
+                    all(part and part not in ('.', '..') and '\\' not in part and ':' not in part
+                        for part in parts[1:])):
+                try:
+                    info = candidate.lstat()
+                except OSError:
+                    pass
+                else:
+                    if (stat.S_ISREG(info.st_mode) and not
+                            getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                        known = scanned.get(info.st_ino)
+                        if known is not None and (info.st_size, info.st_mtime_ns) == known[1:]:
+                            return known[0]
+            _plain(candidate, root)
+            resolved = candidate.resolve()
+            if not resolved.is_relative_to(root):
+                raise ValueError('Music database path escaped the iPod')
+            return resolved
+
         if database.stat().st_size > MAX_DATABASE:
             return {}
         data = _bounded(database, MAX_DATABASE)
@@ -219,8 +254,7 @@ def _music_metadata(root):
         result, artwork_paths = {}, {}
         for index in range(count):
             title, artist, album, location, genre = map(string, struct.unpack_from('<5I', data, offset + index * width + 52))
-            path = root / location.lstrip('/')
-            _plain(path, root)
+            path = source_path(location)
             art = struct.unpack_from('<I', data, offset + index * width + 88)[0]
             if art < fields[12] and art not in artwork_paths:
                 location = string(struct.unpack_from('<I', data, fields[13] + art * 32 + 8)[0])
@@ -231,7 +265,7 @@ def _music_metadata(root):
             frames, rate = struct.unpack_from('<QI', data, offset + index * width + 32)
             track = struct.unpack_from('<I', data, offset + index * width + 80)[0]
             disc = struct.unpack_from('<I', data, offset + index * width + 84)[0]
-            result[str(path.resolve()).casefold()] = dict(title=title, artist=artist, album=album, genre=genre,
+            result[str(path).casefold()] = dict(title=title, artist=artist, album=album, genre=genre,
                 artwork=artwork, duration=frames / rate if rate else 0, track=track, disc=disc, album_artist=owners.get(index, artist))
         return result
     except (OSError, ValueError, UnicodeError, struct.error):
