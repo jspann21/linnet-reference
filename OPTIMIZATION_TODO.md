@@ -198,11 +198,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Selection follows the same media IDs through filtering, sorting, and refresh; removed items disappear and group selections cannot target stale files.
 
-- [ ] **28 · P2 · Profile: Filter an open group from its current membership.** An open group constructs an ID set and scans all page rows to recover its members. Evaluate using the group's already-refreshed member snapshot directly.
+- [x] **28 · P2 · Profile: Filter an open group from its current membership.** An open group constructs an ID set and scans all page rows to recover its members. Evaluate using the group's already-refreshed member snapshot directly.
 
   Location: [tools/studio/media_desktop.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/media_desktop.py) — `MediaWindow.render_library`.
 
   Completion check: Opening and searching small groups avoids a whole-library pass while totals, album ordering, exclusions, and refresh replacement remain correct.
+
+  Verification note: On A1099's 2,895-row Music library, repeated rendering of a 20-song open album fell from a 0.114 ms median to 0.041 ms over 20 renders. Member IDs and order matched the previous implementation with and without search, and after replacing the row snapshot and refreshing the group's members.
 
 - [x] **29 · P2 · Code: Debounce and precompute video-picker searches.** Every keystroke rebuilds rows, repeatedly constructs Path objects, and folds the search text inside the list comprehension. Prepare immutable display/search fields once and debounce rendering.
 

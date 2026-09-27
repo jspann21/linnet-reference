@@ -1015,8 +1015,7 @@ class MediaWindow(QMainWindow):
         words = self.search.text().casefold().split()
         artist, genre = self.artist_filter.currentData(), self.genre_filter.currentData()
         if self.group:
-            ids = {r['id'] for r in self.group['members']}
-            rows = [r for r in rows if r['id'] in ids]
+            rows = list(self.group['members'])
         scope_count = len(rows)
         if music and (artist or genre):
             rows = [r for r in rows if (not artist or (r.get('artist') or 'Unknown artist') == artist)
