@@ -79,9 +79,11 @@ class PlaylistEditor(QDialog):
         self.songs = self.track_list()
         self.song_stack, self.empty_songs = self.list_area(right, self.songs, '')
         self.add_tracks_button = self.button(right, '← Add to playlist', self.add)
+        self.song_search = []
         for identity, title in sorted(state['tracks'].items(), key=lambda item: item[1].casefold()):
             item = QListWidgetItem(title); item.setData(Qt.UserRole, str(identity))
             item.setToolTip(title); self.songs.addItem(item)
+            self.song_search.append((item, title.casefold()))
         footer = QHBoxLayout(); footer.setSpacing(10); layout.addLayout(footer)
         self.message = self.label(footer, '', 'muted'); self.message.setWordWrap(True)
         footer.setStretch(0, 1)
@@ -229,9 +231,8 @@ class PlaylistEditor(QDialog):
 
     def filter(self, text):
         query, count = text.casefold(), 0
-        for row in range(self.songs.count()):
-            item = self.songs.item(row)
-            visible = query in item.text().casefold()
+        for item, folded in self.song_search:
+            visible = query in folded
             item.setHidden(not visible)
             count += visible
         self.library_count.setText(f'{count:,} songs' + (' matching your search' if text else ' available'))

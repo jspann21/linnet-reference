@@ -220,11 +220,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Many selected videos no longer generate one selection operation per row; noncontiguous selection and filtering preserve the chosen paths.
 
-- [ ] **31 · P3 · Profile: Cache playlist search text only if larger libraries justify it.** Filtering repeatedly reads and case-folds each item label. The recent 2,685-track check was already only a few milliseconds, so measure larger supported libraries before adding state.
+- [x] **31 · P3 · Profile: Cache playlist search text only if larger libraries justify it.** Filtering repeatedly reads and case-folds each item label. The recent 2,685-track check was already only a few milliseconds, so measure larger supported libraries before adding state.
 
   Location: [tools/studio/playlist_editor.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/playlist_editor.py) — `PlaylistEditor.filter`.
 
   Completion check: Keep a change only if it improves interaction measurably; Unicode matching, hidden selections, and Add-button behavior stay correct.
+
+  Verification note: The actual A1099 library has 2,894 tracks. Across five offscreen Qt queries, median filtering time fell from 3.98 to 0.76 ms there, and from 19.44 to 3.58 ms for a 10,000-row library built from its labels. Every visible/hidden row matched the previous implementation. A Unicode `Straße`/`STRASSE` query preserved hidden selection, Add-button state, and the single visible track added to a playlist.
 
 - [ ] **32 · P2 · Profile: Update playlist rows incrementally after additions and removals.** Single-row moves now reuse their item, but add and remove still rebuild all members. Measure whether targeted insertions/removals improve large playlists enough to justify the extra bookkeeping.
 
