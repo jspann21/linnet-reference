@@ -236,6 +236,10 @@ separate.
 | Photos | JPEG, PNG, BMP, TIFF and WebP via Pillow; orientation, thumbnails and tiled RGB565 copies. Up to 65,535 images; zoom dimension 640 pixels by default or 2048 for higher detail. |
 | Videos | Indexes native IPVF in place; converts FFmpeg-readable video to IPVF. Up to 256 named videos; each under 2 GiB. |
 
+Photo preparation reuses unchanged thumbnails and tiles from a disposable,
+bounded host cache. A changed image is rendered again; the complete photo
+library is assembled and verified before publication.
+
 Notes display plain text, including Markdown source. Preparation wraps each
 note for the selected iPod's narrowest allowed theme and font, and a change to
 that wrapping recipe invalidates the prepared library. Unsupported characters

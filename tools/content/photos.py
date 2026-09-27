@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from array import array
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -23,6 +24,8 @@ _BLUE_LOW = [v >> 3 for v in range(256)]
 _RED_HIGH = [v & 248 for v in range(256)]
 _GREEN_HIGH = [v >> 5 for v in range(256)]
 FAT_PATH = re.compile(r'(?:/[A-Z0-9_]{1,8}(?:\.[A-Z0-9_]{1,3})?)+')
+PHOTO_CACHE_BYTES = 512 * 1024 * 1024
+PHOTO_CACHE_ENTRY_BYTES = 32 * 1024 * 1024
 
 
 def _crc(data):
@@ -74,16 +77,218 @@ def _sizes(width, height, max_dimension, viewport_width, viewport_height):
     return result
 
 
+class _PhotoCache:
+    """Bounded, disposable cache of one image's immutable RGB565 payload."""
+    def __init__(self, directory, recipe):
+        self.directory = Path(directory).resolve()
+        self.recipe = recipe
+        self.entries = {}
+        self.bytes = 0
+        self.directory.mkdir(parents=True, exist_ok=True)
+        for path in self.directory.glob('*.bin'):
+            if not re.fullmatch(r'[0-9a-f]{64}', path.stem):
+                continue
+            try:
+                info = path.stat()
+            except OSError:
+                continue
+            self.entries[path] = (info.st_size, info.st_mtime_ns)
+            self.bytes += info.st_size
+
+    def key(self, path, name, title, fallback, checkpoint):
+        digest = hashlib.sha256()
+        with path.open('rb') as stream:
+            while chunk := stream.read(1024 * 1024):
+                checkpoint()
+                digest.update(chunk)
+        identity = [str(path.resolve()), name, title, fallback,
+                    digest.hexdigest(), self.recipe]
+        return hashlib.sha256(json.dumps(identity, separators=(',', ':')).encode()).hexdigest()
+
+    def get(self, key, checkpoint):
+        path = self.directory / (key + '.bin')
+        try:
+            if not path.is_file() or path.stat().st_size > PHOTO_CACHE_ENTRY_BYTES:
+                return None
+            with path.open('rb') as stream:
+                length = int.from_bytes(stream.read(4), 'little')
+                if not 0 < length <= 1024 * 1024:
+                    return None
+                metadata = json.loads(stream.read(length))
+                payload = stream.read(PHOTO_CACHE_ENTRY_BYTES + 1)
+            if (not isinstance(metadata, dict) or metadata.get('key') != key or
+                    len(payload) > PHOTO_CACHE_ENTRY_BYTES or
+                    len(payload) != metadata.get('bytes') or
+                    hashlib.sha256(payload).hexdigest() != metadata.get('sha256')):
+                return None
+            if not _cached_photo_valid(metadata, payload, checkpoint):
+                return None
+            try:
+                os.utime(path, None)
+                self.entries[path] = (path.stat().st_size, path.stat().st_mtime_ns)
+            except OSError:
+                pass
+            return metadata, payload[:THUMB*THUMB*2], payload[THUMB*THUMB*2:]
+        except (OSError, ValueError, TypeError, KeyError, UnicodeError):
+            return None
+
+    def put(self, key, metadata, thumb, tile_bytes):
+        payload = thumb + tile_bytes
+        metadata = dict(metadata, key=key, bytes=len(payload),
+                        sha256=hashlib.sha256(payload).hexdigest())
+        header = json.dumps(metadata, separators=(',', ':')).encode()
+        if len(header) + len(payload) + 4 > PHOTO_CACHE_ENTRY_BYTES:
+            return
+        path = self.directory / (key + '.bin')
+        temporary = None
+        try:
+            fd, name = tempfile.mkstemp(prefix=key + '.', suffix='.tmp', dir=self.directory)
+            temporary = Path(name)
+            with os.fdopen(fd, 'wb') as stream:
+                stream.write(len(header).to_bytes(4, 'little'))
+                stream.write(header)
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+            info = path.stat()
+            previous = self.entries.get(path, (0, 0))[0]
+            self.entries[path] = (info.st_size, info.st_mtime_ns)
+            self.bytes += info.st_size - previous
+            self._trim()
+        except OSError:
+            pass  # A host cache failure must not fail an otherwise valid PIMG.
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    def _trim(self):
+        if self.bytes <= PHOTO_CACHE_BYTES:
+            return
+        for path, (size, _) in sorted(self.entries.items(), key=lambda item: item[1][1]):
+            try:
+                path.unlink()
+            except OSError:
+                continue
+            self.bytes -= size
+            del self.entries[path]
+            if self.bytes <= PHOTO_CACHE_BYTES:
+                break
+
+
+def _cached_photo_valid(meta, payload, checkpoint):
+    if (type(meta.get('width')) is not int or type(meta.get('height')) is not int or
+            not 1 <= meta['width'] <= 16384 or not 1 <= meta['height'] <= 16384 or
+            type(meta.get('fallback_bytes')) is not int or type(meta.get('fallback_crc')) is not int or
+            type(meta.get('orientation')) is not int or
+            not isinstance(meta.get('levels'), list) or not 1 <= len(meta['levels']) <= MAX_LEVELS or
+            not isinstance(meta.get('tile_crcs'), list)):
+        return False
+    counts = 0
+    for level in meta['levels']:
+        if (not isinstance(level, list) or len(level) != 5 or
+                any(type(value) is not int or value < 1 for value in level)):
+            return False
+        width, height, tx, ty, count = level
+        if tx != (width + EDGE - 1)//EDGE or ty != (height + EDGE - 1)//EDGE or count != tx*ty:
+            return False
+        counts += count
+    if (counts != len(meta['tile_crcs']) or len(payload) != THUMB*THUMB*2 + counts*EDGE*EDGE*2 or
+            _crc(payload[:THUMB*THUMB*2]) != meta.get('thumb_crc')):
+        return False
+    for index, expected in enumerate(meta['tile_crcs']):
+        if index % 256 == 0:
+            checkpoint()
+        if type(expected) is not int or _crc(payload[THUMB*THUMB*2 + index*2048:
+                                                   THUMB*THUMB*2 + (index+1)*2048]) != expected:
+            return False
+    return True
+
+
+def _render_photo(path, fallback, max_dimension, viewport_width, viewport_height,
+                  checkpoint):
+    from PIL import Image, ImageOps
+
+    fallback_bytes = fallback_crc = orientation = 0
+    try:
+        with Image.open(path) as original:
+            width, height = original.size
+            source_orientation = original.getexif().get(274, 1)
+            if source_orientation not in range(1, 9):
+                raise ValueError(f'invalid EXIF orientation: {path.name}')
+            if not width or not height or max(width, height) > 16384 or width * height > 32_000_000:
+                raise ValueError(f'image dimensions exceed the host decode bound: {path.name}')
+            if getattr(original, 'n_frames', 1) != 1:
+                raise ValueError(f'animated/multiframe image is unsupported: {path.name}')
+            if fallback:
+                fallback_bytes = path.stat().st_size
+                if (original.format != 'JPEG' or original.mode not in ('RGB', 'L') or
+                    original.info.get('progressive') or original.info.get('progression') or
+                    fallback_bytes > 262144 or max(width, height) > 2048 or width * height > 4_000_000):
+                    raise ValueError('fallback JPEG exceeds baseline format/size bounds')
+                orientation = source_orientation
+                fallback_crc = _crc(path.read_bytes())
+            oriented = ImageOps.exif_transpose(original) if source_orientation != 1 else original
+            if 'A' not in oriented.getbands() and 'transparency' not in oriented.info:
+                if oriented.mode == 'RGB':
+                    oriented.load()
+                    image = oriented
+                else:
+                    image = oriented.convert('RGB')
+            else:
+                rgba = oriented.convert('RGBA')
+                image = Image.new('RGB', rgba.size, (0, 0, 0))
+                image.paste(rgba, mask=rgba.getchannel('A'))
+    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as error:
+        raise SourceError(f'Could not prepare photo {path}: {error}', path) from error
+
+    width, height = image.size
+    thumb = Image.new('RGB', (THUMB, THUMB), (0, 0, 0))
+    tw, th = _fit(width, height, THUMB, THUMB)
+    thumb.paste(image.resize((tw, th), Image.Resampling.LANCZOS, reducing_gap=3.0),
+                ((THUMB-tw)//2, (THUMB-th)//2))
+    raw_thumb = _rgb565(thumb)
+    local_levels, local_crcs, tile_bytes = [], [], bytearray()
+    for lw, lh in _sizes(width, height, max_dimension, viewport_width, viewport_height):
+        checkpoint()
+        tx, ty = (lw+EDGE-1)//EDGE, (lh+EDGE-1)//EDGE
+        resized = image if image.size == (lw, lh) else image.resize(
+            (lw, lh), Image.Resampling.LANCZOS, reducing_gap=3.0)
+        if (lw, lh) == (tx*EDGE, ty*EDGE):
+            padded = resized
+        else:
+            padded = Image.new('RGB', (tx*EDGE, ty*EDGE), (0, 0, 0))
+            padded.paste(resized)
+        raw = _rgb565(padded)
+        stride = tx * EDGE * 2
+        tile_rows = struct.Struct(f'<{EDGE*2}s' + f'{stride-EDGE*2}x{EDGE*2}s' * (EDGE-1))
+        for y in range(ty):
+            for x in range(tx):
+                start = y * EDGE * stride + x * EDGE * 2
+                tile = b''.join(tile_rows.unpack_from(raw, start))
+                tile_bytes.extend(tile)
+                local_crcs.append(_crc(tile))
+        local_levels.append([lw, lh, tx, ty, tx*ty])
+    metadata = dict(width=width, height=height, fallback_bytes=fallback_bytes,
+                    fallback_crc=fallback_crc, orientation=orientation,
+                    thumb_crc=_crc(raw_thumb), levels=local_levels,
+                    tile_crcs=local_crcs)
+    return metadata, raw_thumb, bytes(tile_bytes)
+
+
 def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                    viewport_height=156, fallback_paths=None, excluded=None, additional_sources=None,
-                   progress=None, checkpoint=None):
+                   progress=None, checkpoint=None, cache_dir=None):
     """Prepare a folder into one .pimg; optional mapping names existing JPEG copies.
 
     The default keeps zoom detail without a desktop-sized tile pyramid.
     fallback_paths maps source-relative filenames to their already-provisioned
     absolute FAT8.3 device paths. The compiler never copies or modifies originals.
     """
-    from PIL import Image, ImageOps
+    from PIL import __version__ as pillow_version
     check = checkpoint or (lambda: None)
     source, output = Path(source).resolve(), Path(output).resolve()
     if (not source.is_dir() or type(viewport_width) is not int or
@@ -93,6 +298,19 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
         raise ValueError('invalid photo source, viewport, or maximum dimension')
     if output.suffix.lower() not in ('.pimg', '.pim'):
         raise ValueError('photo output must have .pimg or .pim extension')
+    cache = None
+    if cache_dir is not None:
+        cache_root = Path(cache_dir).resolve()
+        if cache_root == source or source in cache_root.parents:
+            raise ValueError('photo cache must be outside the source folder')
+        recipe = hashlib.sha256(json.dumps([
+            hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), pillow_version,
+            max_dimension, viewport_width, viewport_height, THUMB, EDGE],
+            separators=(',', ':')).encode()).hexdigest()
+        try:
+            cache = _PhotoCache(cache_root, recipe)
+        except OSError:
+            pass
     excluded = {Path(value).as_posix().casefold() for value in (excluded or ())}
     paths = []
     for path in source.rglob('*'):
@@ -131,6 +349,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
         return string_index[value]
 
     photos, levels, tile_crcs = [], [], array('I')
+    cache_reused = cache_rendered = 0
     with tempfile.TemporaryFile() as thumbs, tempfile.TemporaryFile() as tiles:
         for index, path in enumerate(paths):
             check()
@@ -140,79 +359,51 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                 title = _title(titles.get(path, path.stem))
             except ValueError as error:
                 raise SourceError(f'Could not prepare photo {path}: {error}', path) from error
-            title = string(title)
+            title_text = title
+            title = string(title_text)
             fallback = fallback_paths.get(names[path], '')
-            fallback_bytes = fallback_crc = orientation = 0
             if fallback and (not FAT_PATH.fullmatch(fallback) or len(fallback) > 127 or
                              not fallback.endswith(('.JPG', '.JPEG'))):
                 raise ValueError('fallback path must be an absolute uppercase FAT8.3 JPEG path')
-            try:
-                with Image.open(path) as original:
-                    width, height = original.size
-                    source_orientation = original.getexif().get(274, 1)
-                    if source_orientation not in range(1, 9):
-                        raise ValueError(f'invalid EXIF orientation: {path.name}')
-                    if not width or not height or max(width, height) > 16384 or width * height > 32_000_000:
-                        raise ValueError(f'image dimensions exceed the host decode bound: {path.name}')
-                    if getattr(original, 'n_frames', 1) != 1:
-                        raise ValueError(f'animated/multiframe image is unsupported: {path.name}')
-                    if fallback:
-                        fallback_bytes = path.stat().st_size
-                        if (original.format != 'JPEG' or original.mode not in ('RGB', 'L') or
-                            original.info.get('progressive') or original.info.get('progression') or
-                            fallback_bytes > 262144 or max(width, height) > 2048 or width * height > 4_000_000):
-                            raise ValueError('fallback JPEG exceeds baseline format/size bounds')
-                        orientation = source_orientation
-                        fallback_crc = _crc(path.read_bytes())
-                    oriented = ImageOps.exif_transpose(original) if source_orientation != 1 else original
-                    if 'A' not in oriented.getbands() and 'transparency' not in oriented.info:
-                        if oriented.mode == 'RGB':
-                            oriented.load()
-                            image = oriented
-                        else:
-                            image = oriented.convert('RGB')
-                    else:
-                        rgba = oriented.convert('RGBA')
-                        image = Image.new('RGB', rgba.size, (0, 0, 0))
-                        image.paste(rgba, mask=rgba.getchannel('A'))
-                        del rgba
-            except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as error:
-                raise SourceError(f'Could not prepare photo {path}: {error}', path) from error
-            del original, oriented
-            width, height = image.size
-            thumb = Image.new('RGB', (THUMB, THUMB), (0, 0, 0))
-            tw, th = _fit(width, height, THUMB, THUMB)
-            thumb.paste(image.resize((tw, th), Image.Resampling.LANCZOS, reducing_gap=3.0), ((THUMB-tw)//2, (THUMB-th)//2))
-            raw_thumb = _rgb565(thumb)
+            rendered = None
+            key = None
+            if cache is not None:
+                before = path.stat()
+                key = cache.key(path, names[path], title_text, fallback, check)
+                after_hash = path.stat()
+                if (before.st_size, before.st_mtime_ns) != (after_hash.st_size, after_hash.st_mtime_ns):
+                    raise SourceError(f'Photo changed while preparing: {path}', path)
+                rendered = cache.get(key, check)
+            if rendered is None:
+                rendered = _render_photo(path, fallback, max_dimension,
+                                         viewport_width, viewport_height, check)
+                cache_rendered += 1
+                if cache is not None:
+                    after_render = path.stat()
+                    if (before.st_size, before.st_mtime_ns) != (after_render.st_size, after_render.st_mtime_ns):
+                        raise SourceError(f'Photo changed while preparing: {path}', path)
+                    cache.put(key, *rendered)
+            else:
+                cache_reused += 1
+                after_render = path.stat()
+                if (before.st_size, before.st_mtime_ns) != (after_render.st_size, after_render.st_mtime_ns):
+                    raise SourceError(f'Photo changed while preparing: {path}', path)
+            image_meta, raw_thumb, tile_bytes = rendered
             thumbs.write(raw_thumb)
             first_level = len(levels)
-            for lw, lh in _sizes(width, height, max_dimension, viewport_width, viewport_height):
-                tx, ty = (lw+EDGE-1)//EDGE, (lh+EDGE-1)//EDGE
-                first_tile, count = len(tile_crcs), tx * ty
+            local_offset = 0
+            for lw, lh, tx, ty, count in image_meta['levels']:
+                first_tile = len(tile_crcs)
                 if first_tile + count > MAX_TILES or ((len(paths)*8192)+(first_tile+count)*2048) > MAX_FILE:
                     raise ValueError('photo tile payload exceeds package limits')
-                resized = image if image.size == (lw, lh) else image.resize((lw, lh), Image.Resampling.LANCZOS, reducing_gap=3.0)
-                if (lw, lh) == (tx*EDGE, ty*EDGE):
-                    padded = resized
-                else:
-                    padded = Image.new('RGB', (tx*EDGE, ty*EDGE), (0, 0, 0))
-                    padded.paste(resized)
-                del resized
-                raw = _rgb565(padded)
-                stride = tx * EDGE * 2
-                # Gather the 32 strided rows in C, retaining exact RGB565 bytes.
-                tile_rows = struct.Struct(f'<{EDGE*2}s' + f'{stride-EDGE*2}x{EDGE*2}s' * (EDGE-1))
-                for y in range(ty):
-                    for x in range(tx):
-                        start = y * EDGE * stride + x * EDGE * 2
-                        tile = b''.join(tile_rows.unpack_from(raw, start))
-                        tiles.write(tile)
-                        tile_crcs.append(_crc(tile))
                 levels.append((index, lw, lh, tx, ty, first_tile, count))
-            photos.append((0, *title, *string(fallback), width, height, first_level,
-                           len(levels)-first_level, 0, _crc(raw_thumb), fallback_bytes,
-                           fallback_crc, orientation, 0))
-            del image, padded, raw
+                tile_crcs.extend(image_meta['tile_crcs'][local_offset:local_offset+count])
+                local_offset += count
+            tiles.write(tile_bytes)
+            photos.append((0, *title, *string(fallback), image_meta['width'], image_meta['height'],
+                           first_level, len(levels)-first_level, 0, image_meta['thumb_crc'],
+                           image_meta['fallback_bytes'], image_meta['fallback_crc'],
+                           image_meta['orientation'], 0))
         album_records = [_record(struct.pack('<7I', *string(_title(source.name)),
                                              0, len(photos), NO_INDEX, 0, 0))]
         album_offset = HEADER
@@ -265,7 +456,8 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
         finally:
             temporary.unlink(missing_ok=True)
     report.update(output=str(output), source=str(source), device_path=DEVICE_PATH,
-                  orientation_applied=True, originals_modified=False)
+                  orientation_applied=True, originals_modified=False,
+                  cache_reused=cache_reused, cache_rendered=cache_rendered)
     return report
 
 

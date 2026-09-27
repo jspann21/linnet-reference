@@ -1173,6 +1173,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     compile_photos(folder, package, max_dimension=photo_dimension,
                                    viewport_width=media_profile["photo_width"],
                                    viewport_height=media_profile["photo_height"],
+                                   cache_dir=cache / "photo-cache",
                                    progress=photo_progress, checkpoint=checkpoint,
                                    excluded={Path(value).relative_to("Photos").as_posix()
                                              for value in skipped["Photos"]},

@@ -255,11 +255,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
 **Improve preparation and validation**
 
-- [ ] **35 · P2 · Profile: Reuse unchanged per-photo preparation between builds.** One changed photo currently causes the complete selected collection to be decoded and tiled again. Design a bounded cache for immutable per-image outputs, keyed by source identity and the complete rendering recipe.
+- [x] **35 · P2 · Profile: Reuse unchanged per-photo preparation between builds.** One changed photo currently causes the complete selected collection to be decoded and tiled again. Design a bounded cache for immutable per-image outputs, keyed by source identity and the complete rendering recipe.
 
   Location: [tools/content/photos.py](C:/Users/user/Desktop/Projects/linnet/tools/content/photos.py) — `compile_photos`.
 
   Completion check: A one-photo update reuses unchanged work; full PIMG bytes match a clean build across orientation, titles, viewport, detail level, and additional iTunes sources.
+
+  Verification note: A disposable 512 MiB host cache keys each bounded rendered image by source bytes, path, title, fallback reference, Pillow version, and rendering recipe. A one-photo edit reused three of four images and regenerated one; the complete PIMG matched a clean build byte for byte. Clean, warm, retitled, viewport/detail, EXIF orientation, JPEG fallback, and additional iTunes preview builds also matched the prior compiler byte for byte. A corrupt cache entry regenerated safely. A1099 remained healthy after a guarded Disk Mode identity check; its existing 205 MB photo library was left intact.
 
 - [x] **36 · P2 · Profile: Store photo tile CRCs more compactly.** tile_crcs retains a Python integer per tile while payloads are spooled. Measure peak memory on large valid packages and compare a packed integer array or equivalent bounded representation.
 
