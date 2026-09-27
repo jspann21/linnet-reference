@@ -176,11 +176,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Verification note: In an offscreen Qt burst of 100 completions, two visible list views now receive one viewport update each instead of 100, while a hidden view receives none. A later completion schedules another update. A details artwork widget whose request was deferred by the six-request limit queued its own cover after another completion freed a slot; its direct completion signal remains in place.
 
-- [ ] **25 · P2 · Profile: Share sidecar discovery across artwork requests in one folder.** Separate requests for songs in one folder repeat the COVER_NAMES search. Consider a bounded, generation-scoped folder lookup shared safely by the artwork workers.
+- [x] **25 · P2 · Profile: Share sidecar discovery across artwork requests in one folder.** Separate requests for songs in one folder repeat the COVER_NAMES search. Consider a bounded, generation-scoped folder lookup shared safely by the artwork workers.
 
   Location: [tools/studio/media_desktop.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/media_desktop.py) — `Covers.read`.
 
   Completion check: Repeated folder probes fall while refresh invalidation, disappearing sidecars, embedded fallback, and concurrent requests remain correct.
+
+  Verification note: Forty-one A1099 songs in one album previously required 82 cover-name file checks; shared positive lookup used 42, including a file-existence recheck for each song. The cache holds at most 256 folders and clears on artwork invalidation. Concurrent lookups, a removed or newly added sidecar, stale generation, and embedded-artwork fallback passed offscreen checks.
 
 - [ ] **26 · P2 · Profile: Reuse unfiltered album, artist, and genre cards.** Switching group views rebuilds memberships, subtitles, artwork choices, and byte totals. Profile a cache tied to the current row snapshot and grouping mode.
 

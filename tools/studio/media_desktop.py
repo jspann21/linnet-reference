@@ -205,6 +205,8 @@ class Covers(QObject):
         super().__init__(parent)
         self.cache, self.pending = OrderedDict(), {}
         self.cache_costs, self.cache_bytes = {}, 0
+        self.sidecars = OrderedDict()
+        self.sidecar_lock = threading.Lock()
         self.generation = 0
         self.closed = False
         self.pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix='linnet-art')
@@ -226,7 +228,9 @@ class Covers(QObject):
         return None
 
     def invalidate(self, paths=None):
-        self.generation += 1
+        with self.sidecar_lock:
+            self.generation += 1
+            self.sidecars.clear()
         for future in self.pending.values():
             future.cancel()
         self.pending.clear()
@@ -249,7 +253,7 @@ class Covers(QObject):
                 source_path = source_path or (path if source.suffix.lower() in MUSIC_EXTENSIONS else None)
                 if source_path:
                     folder = Path(source_path).parent
-                    original = next((folder / name for name in COVER_NAMES if (folder / name).is_file()), None)
+                    original = self.sidecar(folder, generation)
                     if original and original.stat().st_size <= 32 * 1024 * 1024:
                         image = self.read_image(str(original))
                     if image.isNull():
@@ -272,6 +276,22 @@ class Covers(QObject):
             pass
         if not self.closed:
             self.events.artwork.emit(generation, path, image)
+
+    def sidecar(self, folder, generation):
+        """Share positive folder lookups within one artwork generation."""
+        with self.sidecar_lock:
+            if self.closed or generation != self.generation:
+                return None
+            original = self.sidecars.pop(folder, None)
+            if original is not None and original.is_file():
+                self.sidecars[folder] = original
+                return original
+            original = next((folder / name for name in COVER_NAMES if (folder / name).is_file()), None)
+            if original is not None:
+                self.sidecars[folder] = original
+                if len(self.sidecars) > 256:
+                    self.sidecars.popitem(last=False)
+            return original
 
     @staticmethod
     def read_image(source):
