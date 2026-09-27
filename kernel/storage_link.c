@@ -13,6 +13,7 @@
 #endif
 #if defined(LINNET_AUDIO)
 #include "services/music/player.h"
+#include "services/music/controller.h"
 #endif
 #if defined(LINNET_VIDEO)
 #include "services/video/video.h"
@@ -66,6 +67,9 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r){
         else if(q->length==4u&&ln_read_le32(q->payload)==4u){ln_runtime_render_timing(words);count=16u;}
         else if(q->length==4u&&ln_read_le32(q->payload)==14u){ln_runtime_exec_diagnostics(words);count=24u;}
         else if(q->length==4u&&ln_read_le32(q->payload)==15u){ln_display_settings_diagnostics(words);count=8u;}
+#if defined(LINNET_AUDIO)
+        else if(q->length==4u&&ln_read_le32(q->payload)==17u){ln_music_budget_diagnostics(words);count=12u;}
+#endif
 #if defined(LINNET_VIDEO_MP4)
         else if(q->length==4u&&ln_read_le32(q->payload)==16u){ln_mp4_table_diagnostics(words);count=12u;}
 #endif

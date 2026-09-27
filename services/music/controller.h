@@ -3,6 +3,9 @@
 #include "services/music/library.h"
 void ln_music_init(void);
 void ln_music_step(void);
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_music_budget_diagnostics(uint32_t output[12]);
+#endif
 /* One-shot sleep timer; input never resets it. Timer state is boot-local. */
 bool ln_music_sleep_adjust(uint32_t row,int32_t direction);
 const char *ln_music_sleep_label(uint32_t row);

@@ -45,6 +45,19 @@ static struct ln_queue expanded_queue;
 #define LN_MUSIC_VOLUME_RETRY_US 100000u
 static uint32_t volume_retry_at;
 static bool volume_retry_pending;
+#if !defined(LINNET_PROFILE_RELEASE)
+static uint32_t budget_steps,budget_max_step_us,budget_photo_windows,budget_urgent_windows;
+static uint32_t budget_metadata_hits,budget_metadata_iterations,budget_next_arms,budget_transitions;
+static uint32_t budget_low_pcm_windows,budget_min_queued;
+static void budget_count(uint32_t *value){if(*value!=UINT32_MAX)++*value;}
+void ln_music_budget_diagnostics(uint32_t output[12]){
+    output[0]=0x4744424du;output[1]=budget_steps;output[2]=budget_max_step_us;
+    output[3]=budget_photo_windows;output[4]=budget_urgent_windows;
+    output[5]=budget_metadata_hits;output[6]=budget_metadata_iterations;
+    output[7]=budget_next_arms;output[8]=budget_transitions;
+    output[9]=budget_low_pcm_windows;output[10]=budget_min_queued;output[11]=0;
+}
+#endif
 static const uint32_t sleep_minutes[]={1,5,10,15,30,45,60,90,120};
 static const char *const sleep_modes[]={"After: 1 minute","After: 5 minutes","After: 10 minutes","After: 15 minutes","After: 30 minutes","After: 45 minutes","After: 1 hour","After: 90 minutes","After: 2 hours","End of track","End of album"};
 static const uint32_t sleep_fades[]={0,5,10,30};
@@ -225,7 +238,13 @@ bool ln_music_queue_edit(uint32_t action){
     if(accepted){notice=0;++revision;}else {notice="Queue edit unavailable";++revision;}
     return accepted;
 }
-void ln_music_init(void){restore_attempts=restore_retry_at=0;restore_revision=revision;volume_retry_pending=false;volume_retry_at=0;ln_queue_init(&queue,ln_time_us());ln_music_profile_default(&profile);(void)ln_audio_lineout(false);ln_music_library_init();ln_music_browser_init();ln_music_history_init();}
+void ln_music_init(void){restore_attempts=restore_retry_at=0;restore_revision=revision;volume_retry_pending=false;volume_retry_at=0;
+#if !defined(LINNET_PROFILE_RELEASE)
+    budget_steps=budget_max_step_us=budget_photo_windows=budget_urgent_windows=0;
+    budget_metadata_hits=budget_metadata_iterations=budget_next_arms=budget_transitions=budget_low_pcm_windows=0;
+    budget_min_queued=UINT32_MAX;
+#endif
+    ln_queue_init(&queue,ln_time_us());ln_music_profile_default(&profile);(void)ln_audio_lineout(false);ln_music_library_init();ln_music_browser_init();ln_music_history_init();}
 bool ln_music_take_now_playing(void){bool show=show_now_playing;show_now_playing=false;return show;}
 const struct ln_music_library_row *ln_music_current(void){return have_current?&current:0;}
 bool ln_music_queue_position(uint32_t *position,uint32_t *count){
@@ -657,6 +676,9 @@ static void music_step(void){
 #endif
     struct ln_player_transition transition;
     if(ln_player_take_transition(&transition)&&next_armed){
+#if !defined(LINNET_PROFILE_RELEASE)
+        budget_count(&budget_transitions);
+#endif
         uint32_t index;
         if(transition.token!=next_token||(!transition.manual&&!ln_queue_next(&queue,false))||
            !ln_queue_current(&queue,&index)||index!=next_ordinal){ln_music_stop();return;}
@@ -678,6 +700,11 @@ static void music_step(void){
     }
     bool urgent=ln_player_prefetch_urgent();
     uint32_t read_runway=ln_player_background_frames(audio.rate);
+#if !defined(LINNET_PROFILE_RELEASE)
+    if(urgent)budget_count(&budget_urgent_windows);
+    if(audio.playing&&audio.queued<read_runway)budget_count(&budget_low_pcm_windows);
+    if(audio.playing&&audio.queued<budget_min_queued)budget_min_queued=audio.queued;
+#endif
     bool photo_priority=false;
 #if defined(LINNET_PHOTOS)
     /* Release speculative-read priority before the audible tail, not only
@@ -689,6 +716,9 @@ static void music_step(void){
         track_frames-position<=(uint64_t)audio.rate*3u);
     photo_priority=active&&have_current&&!selecting&&!have_waiting&&!manual_next_pending&&
         p.phase==LN_PLAYER_PLAY&&!urgent&&!transition_soon&&ln_photos_busy();
+#endif
+#if !defined(LINNET_PROFILE_RELEASE)
+    if(photo_priority)budget_count(&budget_photo_windows);
 #endif
     /* Visible artwork gets the first background window after audio decoding.
      * Keep startup and urgent gapless reads ahead of new cover I/O. */
@@ -728,8 +758,16 @@ static void music_step(void){
      * Hardware waits and PCM pressure always return control to the executive. */
     uint32_t metadata_started=ln_time_us();
     for(uint32_t n=0;n<48u&&ln_music_library_can_continue();n++){
-        if((uint32_t)(ln_time_us()-metadata_started)>=1000u)break;
+        if((uint32_t)(ln_time_us()-metadata_started)>=1000u){
+#if !defined(LINNET_PROFILE_RELEASE)
+            budget_count(&budget_metadata_hits);
+#endif
+            break;
+        }
         if(!ln_music_browser_busy()&&!ln_music_search_busy()&&!ln_music_queue_view_busy())break;
+#if !defined(LINNET_PROFILE_RELEASE)
+        budget_count(&budget_metadata_iterations);
+#endif
         ln_music_library_step();
         ln_music_browser_step();
         ln_music_search_step();
@@ -891,7 +929,11 @@ static void music_step(void){
             }else if(!ln_music_profile_configure(&profile,upcoming.track.rate,profile_gain(&profile,&upcoming.track),&dsp)){
                 next_ready=false;next_failed=true;
             }else if(ln_player_prepare_next_configured(upcoming.path,upcoming.track.file_bytes,candidate,&dsp,upcoming.track.rate)){
-                next_token=candidate;next_armed=true;}
+                next_token=candidate;next_armed=true;
+#if !defined(LINNET_PROFILE_RELEASE)
+                budget_count(&budget_next_arms);
+#endif
+            }
         }
     }
     if(p.phase!=LN_PLAYER_PAUSE)pause_captured=false;
@@ -927,5 +969,14 @@ static void music_step(void){
 
 void ln_music_step(void){
     if(shutting_down||stepping)return;
-    stepping=true;music_step();stepping=false;
+    stepping=true;
+#if !defined(LINNET_PROFILE_RELEASE)
+    uint32_t started=ln_time_us();
+#endif
+    music_step();
+#if !defined(LINNET_PROFILE_RELEASE)
+    budget_count(&budget_steps);uint32_t elapsed=ln_time_us()-started;
+    if(elapsed>budget_max_step_us)budget_max_step_us=elapsed;
+#endif
+    stepping=false;
 }

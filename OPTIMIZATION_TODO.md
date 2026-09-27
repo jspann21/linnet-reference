@@ -400,6 +400,8 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Each accepted speed claim states its workload and scope, includes comparable repeated timings, and is not inferred solely from a microbenchmark. No new test infrastructure is needed.
 
+  Partial hardware baseline: On A1099 native flash, read-only device discovery took 4.823/4.456/4.329 s and complete media inspection took 75.131/4.039/4.096 s (mount-cold then two warm passes). The first inspection spent 30.891 s in Boot assessment, 27.653 s in inventory traversal, 12.709 s in source scanning, and 3.334 s in library rows. On A1136 native rotating storage, discovery took 4.912/4.455/4.384 s and inspection took 445.868/4.108/4.108 s; the first pass included 231.411 s of video-readiness hashing, 40.312 s of traversal, 28.930 s of assessment, and 12.145 s of source scanning. The rotating first pass briefly overlapped a compiler build and is not a clean speed comparison. Both devices were ejected and returned healthy. An 11-track, 61.5 MiB retained local album prepared for Photo in 1.585/1.426 s and Video in 1.584/1.424 s; validation within those operations took 0.133/0.099 s and 0.140/0.102 s, respectively. Historical publication receipts show 100.179 s for a 2,894-track A1099 music refresh that reused 3,705 files and 4.749 s for a six-track A1136 first publication; these are different workloads and cannot support a comparative speed claim. Full existing-device preparation over native USB hit the 30 s per-track duration-probe limit on two MP3s, so comparable whole-operation conversion and publication timing remains outstanding.
+
 
 **Build tooling and device-side investigations**
 
@@ -520,6 +522,8 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
   Location: [services/storage/storage.c](C:/Users/user/Desktop/Projects/linnet/services/storage/storage.c), [hal/api/platform.h](C:/Users/user/Desktop/Projects/linnet/hal/api/platform.h), [targets/README.md](C:/Users/user/Desktop/Projects/linnet/targets/README.md) — `disk-mode include / selector_apple`.
 
   Completion check: Portable storage code no longer includes these family-private headers; retail handoff, decryption, quiescence, watchdog behavior, and target checks remain equivalent on qualified hardware.
+
+  Status: Storage now uses the portable platform entry points, and all four release targets build. A1099 and A1136 completed native Disk Mode handoff and return through Link. The Classic retail handoff and AES path still require A1238 hardware qualification; only A1099 and A1136 were connected for this run.
 
 - [x] **70 · P2 · Code: Replace remaining board-name UI and playback policies with named settings.** The music hint names Q21, the battery renderer names Photo, and native video priming names Classic. Record the actual reason for each exception and represent it as an explicit presentation or runtime policy where appropriate.
 
@@ -729,13 +733,15 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Any scheduling change reduces demonstrated starvation or tail latency while preserving deliberate priorities, watchdog progress, button handling, and audio continuity.
 
-  Hardware check: Development diagnostics now count accepted, processed, dropped, and maximum queued latency per service. On A1099, photo browsing during music playback reached 18.956 ms maximum input latency with zero drops and audio underruns; photo browsing alone reached 4.365 ms. A further A1099 mixed run processed all six grid input events while serving six Link diagnostic polls, kept zero drops and underruns, and left the input maximum at 18.530 ms after the latest boot. On A1136, Cover Flow reversal during playback reached 19.593 ms with zero drops and underruns. A scheduled power wake was accepted and processed in 597 us. Source tracing confirmed display, media, and Link work is serviced outside these executive queues; the measured queues did not show starvation requiring a priority change. Some separate Link sessions timed out before the run and were reconnected without replaying input; this measurement does not qualify Link connection reliability.
+  Hardware check: Development diagnostics now count accepted, processed, dropped, and maximum queued latency per service. On A1099, photo browsing during music playback reached 18.956 ms maximum input latency with zero drops and audio underruns; photo browsing alone reached 4.365 ms. A sustained A1099 mixed run processed all 100 grid input events over 27.45 s while serving Link diagnostic polls, with zero drops, zero underruns, and a 19.301 ms maximum input latency; the workload requested 2,330 sectors and physically read 2,165 with 851 cache hits. On A1136, Cover Flow reversal during playback reached 19.593 ms with zero drops and underruns. A scheduled power wake was accepted and processed in 597 us. Source tracing confirmed display, media, and Link work is serviced outside these executive queues; the measured queues did not show starvation requiring a priority change. Some separate Link sessions timed out before a run and were reconnected without replaying input; this measurement does not qualify Link connection reliability.
 
 - [ ] **98 · P2 · Profile: Measure idle wake sources and clock-switch break-even.** ln_runtime_idle already computes service deadlines, caps its fallback wait, and lowers the clock only for waits of at least 20 ms under strict conditions. Attribute wakeups and measure the actual energy and latency tradeoff before adjusting thresholds.
 
   Location: [kernel/runtime.c](C:/Users/user/Desktop/Projects/linnet/kernel/runtime.c) — `ln_runtime_idle / idle_clock_cycles / idle_clock_us`.
 
   Completion check: Representative battery and external-power sessions show fewer unnecessary wakes or lower energy use without changing active audio/storage clocks, increasing missed deadlines, or compromising wake reliability.
+
+  Status: The idle clock-switch branch is enabled only for ipod4g-q21 in the current target manifests. Neither connected A1099 nor A1136 exercises that branch, so its battery and external-power break-even remains unmeasured on MP102/Q21 hardware.
 
 - [x] **99 · P2 · Profile: Tune block read-ahead against physical I/O amplification.** The block layer has two cache ways, sequential-read detection, bounded read-ahead, request merging, and power management. Compare physical sectors read versus requested sectors during mixed browsing and playback on rotating and flash storage.
 
@@ -751,6 +757,8 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: A targeted adjustment improves a measured interaction while preserving gapless transitions, PCM reserve, bounded service time, and existing storage-priority behavior.
 
+  Partial hardware check: Development counters now distinguish music-step maximum, photo-priority windows, urgent prefetch, PCM reserve shortfalls, metadata time-budget hits, next-track arms, and transitions. On A1099 during 100 photo-grid reversals over 27.38 s with music playing, 2,748 controller steps included 193 photo-priority windows, zero urgent windows, zero metadata-budget hits, and zero low-PCM windows; the next track was already armed. A natural boundary 110.19 s later recorded one transition, zero missed joins, zero underruns, and no urgent, metadata-budget, or PCM shortfall windows. The maximum step since boot was 54.696 ms, without a per-stage attribution. No limiting budget or measured interaction improvement was established, so no reserve or loop bound was changed. The stated adjustment check remains open.
+
 - [x] **101 · P2 · Profile: Measure avoidable settings publications during rapid interactions.** Settings already track dirty state and revision snapshots, yet resume, menu, and theme interactions can repeatedly make state publishable. Count completed writes and disk wakeups during scrolling, zooming, and repeated preference changes before introducing bounded coalescing.
 
   Location: [services/display/settings.c](C:/Users/user/Desktop/Projects/linnet/services/display/settings.c), [services/state/store.c](C:/Users/user/Desktop/Projects/linnet/services/state/store.c), [kernel/runtime.c](C:/Users/user/Desktop/Projects/linnet/kernel/runtime.c) — `settings_work / settings_step / ln_state_publish`.
@@ -765,11 +773,15 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: A proposed buffer or startup adjustment improves measured first-frame latency or memory usage without worse steady playback, seek behavior, audio synchronization, or decoder bounds. Keep MP4 table I/O work in item 58 separate.
 
+  Status: This native decoder and its frame buffers are compiled only for Classic's native-mp4 backend. A1136 uses the BCM2722 backend; native first-frame and buffer qualification needs A1238 hardware.
+
 - [ ] **103 · P2 · Profile: Measure framebuffer preservation and transfer costs for small updates.** Classic's framebuffer accessor copies the last presented frame when the draw buffer is invalid, and presentation sends the frame through the panel driver. Measure status-only updates and list movement before considering damage tracking or a narrower transfer path.
 
   Location: [targets/classic6g-n25/display.c](C:/Users/user/Desktop/Projects/linnet/targets/classic6g-n25/display.c), [targets/classic6g-n25/panel.c](C:/Users/user/Desktop/Projects/linnet/targets/classic6g-n25/panel.c), [kernel/runtime.c](C:/Users/user/Desktop/Projects/linnet/kernel/runtime.c) — `ln_display_framebuffer / ln_display_present / render timing`.
 
   Completion check: Any optimization lowers measured copy or transfer work with identical screenshots, valid alternating buffers, correct theme-frame acknowledgement, and no tearing on hardware.
+
+  Status: The framebuffer copy and panel transfer path is Classic-only. A1238 was not among the connected devices, so small-update cost and tearing cannot be qualified on hardware yet.
 
 - [x] **104 · P2 · Profile: Report useful memory headroom for each target and profile.** Build reports include allocated sections and limits, and linker scripts already protect reserved regions. Add a readable breakdown of resident memory, stacks, staging, artwork, and retained areas, with measured high-water data kept distinct from static reservations.
 

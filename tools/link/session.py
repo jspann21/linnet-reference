@@ -396,6 +396,18 @@ class Session:
                 'map_reads', 'chunk_reads', 'size_reads', 'sync_reads', 'seeks', 'reserved')
         return dict(zip(keys, words))
 
+    def music_budget_workload(self) -> dict:
+        raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 17))
+        if len(raw) != 48:
+            raise ProtocolError('invalid music budget workload length')
+        words = struct.unpack('<12I', raw)
+        if words[0] != int.from_bytes(b'MBDG', 'little') or words[11]:
+            raise ProtocolError('invalid music budget workload header')
+        keys = ('magic', 'steps', 'max_step_us', 'photo_priority_windows', 'urgent_windows',
+                'metadata_budget_hits', 'metadata_iterations', 'next_arms', 'transitions',
+                'low_pcm_windows', 'min_queued', 'reserved')
+        return dict(zip(keys, words))
+
     def executive_workload(self) -> dict:
         raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 14))
         if len(raw) != 96:
