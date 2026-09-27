@@ -587,11 +587,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Verification note: Backend flags now travel with selected sources and are recorded in `source_selections`. Before/after builds using the same source tree and build identity produced byte-identical ELF and LOS files for Video OS, Photo OS, Classic OS (native H.264/MPEG-4), and size-tuned Classic Boot. Link order, existing release exclusions, and the block-source `-Os` exception remained intact.
 
-- [ ] **81 · P2 · Code: Split CLI command registration and execution by domain.** parser and main contain the full build, media, simulator, device, and installation command surface. Move cohesive command groups into modules while retaining one public linnet entry point and shared argument helpers.
+- [x] **81 · P2 · Code: Split CLI command registration and execution by domain.** parser and main contain the full build, media, simulator, device, and installation command surface. Move cohesive command groups into modules while retaining one public linnet entry point and shared argument helpers.
 
   Location: [tools/cli/main.py](C:/Users/user/Desktop/Projects/linnet/tools/cli/main.py) — `parser / main`.
 
   Completion check: Existing command names, aliases, defaults, exit codes, JSON output, and WSL forwarding remain compatible; adding a domain command no longer expands both central functions.
+
+  Verification note: Command registration and execution now live in studio, media, and device modules with shared argument groups; the public entry and Windows WSL forwarding stay in main. A recursive parser comparison against the previous CLI found identical actions, choices, defaults, help, and ordering. Target report, missing media inputs, invalid report ID, and live A1136 device info produced matching output and exit codes before and after the split. Compileall and Ruff F passed.
 
 - [x] **82 · P2 · Code: Reject invalid build requests before hashing the toolchain.** build resolves and fingerprints the toolchain before checking the requested probe, development serial, and Boot selector combination. Perform cheap request validation first, followed by source/configuration preflight and expensive tool discovery.
 
