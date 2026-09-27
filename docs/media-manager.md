@@ -180,6 +180,10 @@ the installed Linnet build is shown separately as inactive files on the device.
    The progress bar covers copying, scanning, preparation, publication checks,
    and cleanup. Stop is available between guarded writes; the button shows when
    the current write or cleanup must finish first.
+   The queue and video choices are saved for this iPod across Media Manager
+   restarts. Missing computer sources appear in the queue with a reason and must
+   be restored or removed before preparing. Video choices that no longer exist
+   on the iPod are dropped and reported after refresh.
    provides operation details. If a specific file fails, Media Manager skips it
    automatically and finishes the rest of the update. Select it in **Files that
    need attention** to open its folder or retry it after fixing it. Settings

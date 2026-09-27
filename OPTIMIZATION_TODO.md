@@ -635,11 +635,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: A partial failure leaves only actionable work queued, successful publication is not repeated needlessly, and skipped sources remain visible with their reason and retry action.
 
-- [ ] **89 · P2 · Profile: Preserve a device-bound preparation draft across restarts.** Queued sources and selected videos currently live in memory, while a few presentation preferences use QSettings. Persist a small versioned preparation draft keyed to stable device identity, then revalidate source paths and capabilities when reopening it.
+- [x] **89 · P2 · Profile: Preserve a device-bound preparation draft across restarts.** Queued sources and selected videos currently live in memory, while a few presentation preferences use QSettings. Persist a small versioned preparation draft keyed to stable device identity, then revalidate source paths and capabilities when reopening it.
 
   Location: [tools/studio/media_desktop.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/media_desktop.py), [tools/content/media_manager.py](C:/Users/user/Desktop/Projects/linnet/tools/content/media_manager.py) — `pending / video_selection / QSettings / refresh`.
 
   Completion check: Restarting restores an understandable draft for the same device, stale sources are flagged, and switching devices cannot silently apply another device's queue or video selection.
+
+  Verification note: Version 2 QSettings drafts bind target, disk serial, and volume serial. Selected video paths are stored relative to the device so drive-letter changes can be remapped. Queue sources are rechecked on load and refresh; missing or unavailable entries remain visible with a reason and block their selected preparation. Removed device videos are reported. A temporary-settings check verified restart restoration, drive remapping, a missing source warning, and isolation between two device identities. Compileall and Ruff F passed.
 
 - [x] **90 · P1 · Profile: Make all, selected, and no video conversions explicit.** An empty video_selection currently means all existing videos, including after the picker selection is cleared or intersected with a refreshed inventory. Represent selection mode separately from its member set and describe the resulting conversion scope clearly.
 

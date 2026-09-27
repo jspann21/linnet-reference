@@ -4,6 +4,7 @@ from collections import OrderedDict
 from datetime import datetime
 from functools import lru_cache
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -512,6 +513,8 @@ class MediaWindow(QMainWindow):
         self.rows, self.readiness, self.pending, self.trash_rows = [], {}, [], []
         self.pending_keys = set()
         self.pending_for = None
+        self.draft_issues = {}
+        self.stale_videos = 0
         self.queue_context = None
         self.discovery_errors = []
         self.apple_info = None
@@ -1326,6 +1329,8 @@ class MediaWindow(QMainWindow):
             self.pending_keys.update((kind, os.path.normcase(path)) for kind, path in additions)
             if self.pending:
                 self.pending_for = dict(context['identity'])
+            self.validate_draft()
+            self.save_draft()
             kind, source = context['kind'], Path(context['paths'][0])
             self.settings.setValue(f'import_folder/{kind}', str(source if context['folder'] else source.parent))
             self.prep_checks[kind].setChecked(True)
@@ -1459,7 +1464,11 @@ class MediaWindow(QMainWindow):
                     self.group['members'] = members
                 else:
                     self.group = None
+            previous_videos = len(self.video_selection)
             self.video_selection.intersection_update(self.inventory['Videos']['files'])
+            self.stale_videos = previous_videos - len(self.video_selection)
+            self.validate_draft()
+            self.save_draft()
             if self.discovery_errors:
                 self.notice.setText('Other connected iPods could not be read: ' + '; '.join(self.discovery_errors))
                 self.notice.show()
@@ -1491,6 +1500,8 @@ class MediaWindow(QMainWindow):
                 if not self.pending:
                     self.pending_for = None
                 self.video_selection.difference_update(self.submitted_videos)
+                self.validate_draft()
+                self.save_draft()
             self.update_preparation(); self.refresh()
         elif tag in ('remove', 'restore', 'erase', 'sync', 'install', 'skipped'):
             self.show_progress(result.get('summary', 'Changes saved.'))
@@ -1536,15 +1547,95 @@ class MediaWindow(QMainWindow):
         return bool(first and second) and all(first.get(key) == second.get(key)
             for key in ('root', 'disk_serial', 'volume_serial', 'target_id'))
 
+    @staticmethod
+    def draft_key(identity):
+        fields = (identity['target_id'], identity['disk_serial'], identity['volume_serial'])
+        digest = hashlib.sha256('\0'.join(fields).encode('utf-8')).hexdigest()
+        return f'preparation_draft/v2/{digest}'
+
+    def save_draft(self):
+        if not self.identity:
+            return
+        root = Path(self.identity['root'])
+        videos = []
+        for path in sorted(self.video_selection):
+            try:
+                videos.append(Path(path).relative_to(root).as_posix())
+            except ValueError:
+                continue
+        draft = dict(version=2, target_id=self.identity['target_id'],
+                     disk_serial=self.identity['disk_serial'],
+                     volume_serial=self.identity['volume_serial'],
+                     pending=[list(item) for item in self.pending],
+                     video_mode=self.video_mode, videos=videos)
+        self.settings.setValue(self.draft_key(self.identity), json.dumps(draft))
+        self.settings.sync()
+
+    def validate_draft(self):
+        self.draft_issues = {}
+        if not self.identity:
+            return
+        allowed = media.supported_kinds(self.identity)
+        for kind, name in self.pending:
+            reason = None
+            if kind not in allowed:
+                reason = f'{kind} is unavailable on this iPod'
+            else:
+                try:
+                    path = Path(name)
+                    if not path.exists():
+                        reason = 'Source is missing from this computer'
+                    elif path.is_symlink():
+                        reason = 'Linked sources must be selected again'
+                except (OSError, ValueError):
+                    reason = 'Saved source path is invalid'
+            if reason:
+                self.draft_issues[(kind, os.path.normcase(name))] = reason
+
+    def load_draft(self, identity):
+        self.pending, self.pending_keys, self.pending_for = [], set(), None
+        self.video_selection, self.video_mode = set(), 'all'
+        self.draft_issues, self.stale_videos = {}, 0
+        raw = self.settings.value(self.draft_key(identity), '')
+        try:
+            draft = json.loads(raw)
+            if (not isinstance(draft, dict) or draft.get('version') != 2 or
+                    any(draft.get(key) != identity[key] for key in
+                        ('target_id', 'disk_serial', 'volume_serial')) or
+                    not isinstance(draft.get('pending'), list) or
+                    not isinstance(draft.get('videos'), list) or
+                    draft.get('video_mode') not in ('all', 'selected', 'none')):
+                return
+            for item in draft['pending']:
+                if (not isinstance(item, list) or len(item) != 2 or
+                        not all(isinstance(value, str) for value in item) or
+                        item[0] not in media.KINDS or not item[1]):
+                    continue
+                key = (item[0], os.path.normcase(item[1]))
+                if key not in self.pending_keys:
+                    self.pending.append(tuple(item))
+                    self.pending_keys.add(key)
+            for value in draft['videos']:
+                if not isinstance(value, str) or '\\' in value:
+                    continue
+                relative = Path(value)
+                if (relative.is_absolute() or relative.drive or '..' in relative.parts or
+                        not relative.parts or relative.parts[0].casefold() != 'videos'):
+                    continue
+                self.video_selection.add(str(Path(identity['root']) / relative))
+            self.video_mode = draft['video_mode']
+            if self.pending:
+                self.pending_for = dict(identity)
+            self.validate_draft()
+        except (TypeError, ValueError):
+            return
+
     def transition_device(self, identity):
         """Clear device-derived state while retaining a draft for its own iPod."""
         if self.same_device(self.identity, identity):
             self.identity = identity
             return
-        if identity and self.pending_for and not self.same_device(self.pending_for, identity):
-            self.pending = []
-            self.pending_keys.clear()
-            self.pending_for = None
+        self.save_draft()
         if identity and self.last_preparation and not self.same_device(self.last_preparation[0], identity):
             self.last_preparation = None
             self.prep_results.clear()
@@ -1559,6 +1650,11 @@ class MediaWindow(QMainWindow):
         self.group = None
         self.video_selection.clear()
         self.video_mode = 'all'
+        if identity:
+            self.load_draft(identity)
+        else:
+            self.pending, self.pending_keys, self.pending_for = [], set(), None
+            self.draft_issues, self.stale_videos = {}, 0
         self.screen_loaded_for = self.games_loaded_for = None
         self.screen_state = screen_settings.defaults(identity)
         self.render_screen_items()
@@ -1658,13 +1754,23 @@ class MediaWindow(QMainWindow):
                              scope)
             else:
                 text.setText(f"{info['count']:,} files · {self.readiness.get(kind, 'Not checked')}")
-        self.queue_model.reset([dict(title=Path(path).name, kind=kind, path=path) for kind, path in self.pending], [('title', 'FILE'), ('kind', 'TYPE'), ('path', 'FROM YOUR COMPUTER')])
+        self.queue_model.reset([dict(title=Path(path).name, kind=kind, path=path,
+                                     status=self.draft_issues.get((kind, os.path.normcase(path)), 'Ready'))
+                                for kind, path in self.pending],
+                               [('title', 'FILE'), ('kind', 'TYPE'), ('status', 'STATUS'),
+                                ('path', 'FROM YOUR COMPUTER')])
         self.queue_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.queue_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.queue_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self.queue_table.setVisible(bool(self.pending)); self.queue_remove.setVisible(bool(self.pending))
         self.queue_open.setVisible(bool(self.pending)); self.update_queue_controls()
         self.queue_table.setFixedHeight(min(200, max(75, self.queue_table.horizontalHeader().height() + len(self.pending) * self.queue_table.verticalHeader().defaultSectionSize() + 4)))
-        self.prep_summary.setText(f'{len(self.pending):,} files or folders queued. Unchanged media is reused.' if self.pending else 'Nothing queued. You can prepare existing iPod files or add media from your computer.')
+        summary = (f'{len(self.pending):,} files or folders queued. Unchanged media is reused.' if self.pending else
+                   'Nothing queued. You can prepare existing iPod files or add media from your computer.')
+        if self.draft_issues:
+            summary += f' {len(self.draft_issues):,} saved source(s) need attention.'
+        if self.stale_videos:
+            summary += f' {self.stale_videos:,} saved video choice(s) are no longer on this iPod.'
+        self.prep_summary.setText(summary)
         if self.apple_info:
             lines = [self.apple_info['status']]
             lines.extend(f"{entry['kind']}: {entry['count']:,} files · {entry['status']}"
@@ -1814,6 +1920,8 @@ class MediaWindow(QMainWindow):
         self.pending_keys = {(kind, os.path.normcase(path)) for kind, path in self.pending}
         if not self.pending:
             self.pending_for = None
+        self.validate_draft()
+        self.save_draft()
         self.update_preparation()
 
     def choose_videos(self):
@@ -1865,6 +1973,8 @@ class MediaWindow(QMainWindow):
         def accept():
             search_timer.stop()
             render(); self.video_selection = selected; self.video_mode = mode.currentData()
+            self.stale_videos = 0
+            self.save_draft()
             self.update_preparation(); dialog.accept()
         layout.addWidget(button('Apply video choices', accept, 'primary'), 0, Qt.AlignRight); dialog.exec()
 
@@ -1874,6 +1984,13 @@ class MediaWindow(QMainWindow):
         selected = [kind for kind, check in self.prep_checks.items() if check.isChecked() and check.isEnabled()]
         if not selected:
             self.show_error('Choose at least one media type to prepare.'); return
+        self.validate_draft()
+        stale = [reason for kind, name in self.pending if kind in selected
+                 if (reason := self.draft_issues.get((kind, os.path.normcase(name))))]
+        if stale:
+            self.show_error(f'{len(stale)} queued source(s) need attention: {stale[0]}. Remove or restore them before preparing.')
+            self.update_preparation()
+            return
         identity = self.identity; pending = [item for item in self.pending if item[0] in selected]
         all_pending = list(self.pending)
         videos = (None if self.video_mode == 'all' else
@@ -2150,6 +2267,7 @@ class MediaWindow(QMainWindow):
     def closeEvent(self, event):
         if self.busy:
             self.show_progress('Wait for the current operation to finish before closing.'); event.ignore(); return
+        self.save_draft()
         self.closed = True
         self.covers.closed = True
         self.covers.pool.shutdown(wait=False, cancel_futures=True)
