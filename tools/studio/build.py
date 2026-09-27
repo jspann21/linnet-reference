@@ -323,11 +323,13 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     add_sources([hal / name for name in ("core.c", "input.c")], "HAL core")
     add_sources([ROOT / target_sources["power"]], "target power")
     for directory in (hal, ROOT / "targets" / target):
-        source_list=directory / "SOURCES"
+        source_list = directory / "SOURCES"
         if source_list.is_file():
             for line_number, name in enumerate(source_list.read_text().splitlines(), 1):
-                source=(ROOT / name).resolve()
-                if not name or not source.is_relative_to(ROOT) or not source.is_file():
+                source = (ROOT / name).resolve()
+                if not name:
+                    raise ValueError(f"Invalid platform source in {source_list}: {name}")
+                if not source.is_relative_to(ROOT) or not source.is_file():
                     raise ValueError(f"Invalid platform source in {source_list}: {name}")
                 add_sources([source], f"{source_list.relative_to(ROOT).as_posix()}:{line_number}")
     add_sources([ROOT / target_sources["display"], ROOT / target_sources["device"],

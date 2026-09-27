@@ -136,10 +136,13 @@ def _validate_ui(path, spec):
         raise RuntimeError(f"invalid UI profile: {path}")
     allowed = ui["allowed_themes"]
     default = ui["default_theme"]
-    if (not isinstance(allowed, list) or not allowed or
-            len(allowed) != len(set(allowed)) or
-            any(not isinstance(theme, str) or not theme for theme in allowed) or
-            not isinstance(default, str) or default not in allowed):
+    if not isinstance(allowed, list) or not allowed:
+        raise RuntimeError(f"invalid UI profile: {path}")
+    if any(not isinstance(theme, str) or not theme for theme in allowed):
+        raise RuntimeError(f"invalid UI profile: {path}")
+    if len(allowed) != len(set(allowed)):
+        raise RuntimeError(f"invalid UI profile: {path}")
+    if not isinstance(default, str) or default not in allowed:
         raise RuntimeError(f"invalid UI profile: {path}")
 
 

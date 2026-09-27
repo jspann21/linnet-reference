@@ -1276,11 +1276,16 @@ class MediaWindow(QMainWindow):
     def work(self, tag, operation, message):
         if self.busy or self.closed:
             return
-        self.busy = True; self.stop_event.clear(); self.progress.setRange(0, 0); self.progress.show()
+        self.busy = True
+        self.stop_event.clear()
+        self.progress.setRange(0, 0)
+        self.progress.show()
         self.cancel_button.setEnabled(True)
         self.cancel_button.setText('Stop')
         self.cancel_button.setToolTip('Stop after the current step finishes')
-        self.cancel_button.setVisible(tag in ('prepare', 'remove', 'restore')); self.show_progress(message); self.update_controls()
+        self.cancel_button.setVisible(tag in ('prepare', 'remove', 'restore'))
+        self.show_progress(message)
+        self.update_controls()
         def run():
             try:
                 self.events.done.emit(tag, operation(), '')
@@ -1328,7 +1333,10 @@ class MediaWindow(QMainWindow):
 
     @Slot(str, object, str)
     def completed(self, tag, result, error):
-        self.busy = False; self.progress.hide(); self.cancel_button.hide(); self.update_controls()
+        self.busy = False
+        self.progress.hide()
+        self.cancel_button.hide()
+        self.update_controls()
         if tag == 'queue':
             context = self.queue_context
             self.queue_context = None

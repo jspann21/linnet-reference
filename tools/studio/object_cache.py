@@ -128,13 +128,14 @@ def _restore(directory, output, root, generated, source_name):
             data = json.loads(manifest.read_text(encoding='utf-8'))
             if not isinstance(data, dict):
                 continue
-            if (hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
-                    != manifest.stem):
+            manifest_digest = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+            if manifest_digest != manifest.stem:
                 continue
             dependencies = data.get('dependencies')
-            if (not isinstance(dependencies, dict) or source_name not in dependencies or
-                    any(_hash_file(_path(name, root, generated)) != checksum
-                        for name, checksum in dependencies.items())):
+            if not isinstance(dependencies, dict) or source_name not in dependencies:
+                continue
+            if any(_hash_file(_path(name, root, generated)) != checksum
+                   for name, checksum in dependencies.items()):
                 continue
             path = manifest.with_suffix('.bin')
             if not path.is_file() or not 1 <= path.stat().st_size <= MAX_OBJECT_BYTES:

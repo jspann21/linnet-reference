@@ -793,7 +793,7 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Verification note: The read-only inventory recognized 882 reports across existing invocation layouts, including 662 with content IDs; it found 8 recovery records, 43 referenced files, and retained 37,665 unclassified files. The scan reported no errors. No cleanup occurs.
 
-- [ ] **109 · P3 · Code: Expand dense control flow in the modules being changed.** Several core modules compress multiple state updates and conditional actions onto single lines. Apply focused readability cleanup around future changes, especially manifest validation, build rules, job completion, and executive state transitions; avoid a repository-wide formatting pass.
+- [x] **109 · P3 · Code: Expand dense control flow in the modules being changed.** Several core modules compress multiple state updates and conditional actions onto single lines. Apply focused readability cleanup around future changes, especially manifest validation, build rules, job completion, and executive state transitions; avoid a repository-wide formatting pass.
 
   Location: [tools/studio/targets.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/targets.py), [tools/studio/build.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/build.py), [tools/studio/media_desktop.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/media_desktop.py), [kernel/executive.c](C:/Users/user/Desktop/Projects/linnet/kernel/executive.c) — `dense conditionals and state transitions`.
 
