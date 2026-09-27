@@ -209,6 +209,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     dest.mkdir(parents=True, exist_ok=False)
     generated = dest / "generated"
     generated.mkdir(exist_ok=True)
+    from .menu_definition import write_firmware_header
+    write_firmware_header(generated)
     presentation = {}
     if spec.get("presentation_profile"):
         presentation = tomllib.loads((ROOT / "ui/profiles" / spec["presentation_profile"] / "profile.toml").read_text())

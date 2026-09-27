@@ -1,4 +1,5 @@
 #include "ui/runtime/ui.h"
+#include "linnet_menu_definition.h"
 #define UI_X(value) ((int32_t)((value)*LINNET_UI_WIDTH/220u))
 #define UI_Y(value) ((int32_t)((value)*LINNET_UI_HEIGHT/176u))
 static uint32_t session_theme=UINT32_MAX,active_theme;
@@ -47,8 +48,8 @@ static uint32_t layout(void){return ln_ui_themes[active_theme].layout;}
 static uint16_t color(uint32_t role){return ln_ui_color(LN_UI_COLOR_TOKEN+role);}
 static bool same(const char*a,const char*b){if(!a||!b)return false;while(*a&&*a==*b){++a;++b;}return *a==*b;}
 /* Stable menu IDs are independent of theme labels and disabled features. */
-static uint8_t menu_order[LN_MENU_GROUPS][16]={{0,1,2,3,9,5,6},{0,1,2,7,9,11,8},{0,10,1,2,3,4,5,6,7,8,9},{0,1,2,3}};
-static uint8_t menu_counts[LN_MENU_GROUPS]={7,7,11,4};
+static uint8_t menu_order[LN_MENU_GROUPS][16]=LN_MENU_DEFAULT_ORDER;
+static uint8_t menu_counts[LN_MENU_GROUPS]=LN_MENU_DEFAULT_COUNTS;
 uint32_t ln_ui_menu_count(uint32_t group){return group<LN_MENU_GROUPS?menu_counts[group]:0;}
 uint32_t ln_ui_menu_item(uint32_t group,uint32_t row){return group<LN_MENU_GROUPS&&row<menu_counts[group]?menu_order[group][row]:UINT32_MAX;}
 bool ln_ui_menu_load(const uint8_t *data,uint32_t length){
@@ -56,11 +57,10 @@ bool ln_ui_menu_load(const uint8_t *data,uint32_t length){
     uint32_t crc=~0u;for(uint32_t i=0;i<76;++i){crc^=data[i];for(uint32_t bit=0;bit<8;++bit)crc=(crc>>1)^((0u-(crc&1u))&0xedb88320u);}
     uint32_t saved=(uint32_t)data[76]|((uint32_t)data[77]<<8)|((uint32_t)data[78]<<16)|((uint32_t)data[79]<<24);
     if(~crc!=saved)return false;
-    static const uint8_t limits[]={10,15,11,5};
     for(uint32_t g=0;g<LN_MENU_GROUPS;++g){const uint8_t *row=data+8+g*17;uint32_t seen=0;
-        if(!row[0]||row[0]>limits[g])return false;
-        for(uint32_t i=0;i<row[0];++i){uint32_t id=row[i+1];if(id>=limits[g]||(seen&(1u<<id)))return false;seen|=1u<<id;}
-        if((g==LN_MENU_HOME&&!(seen&(1u<<6)))||(g==LN_MENU_SETTINGS&&(seen&((1u<<6)|(1u<<9)))!=((1u<<6)|(1u<<9))))return false;
+        if(!row[0]||row[0]>ln_menu_limits[g])return false;
+        for(uint32_t i=0;i<row[0];++i){uint32_t id=row[i+1];if(id>=ln_menu_limits[g]||(seen&(1u<<id)))return false;seen|=1u<<id;}
+        if((seen&ln_menu_required[g])!=ln_menu_required[g])return false;
     }
     for(uint32_t g=0;g<LN_MENU_GROUPS;++g){menu_counts[g]=data[8+g*17];for(uint32_t i=0;i<menu_counts[g];++i)menu_order[g][i]=data[9+g*17+i];}
     /* Expand the former Extras entry while preserving existing choices. */
@@ -76,11 +76,6 @@ bool ln_ui_menu_load(const uint8_t *data,uint32_t length){
     return true;
 }
 static const char *const menu_scenes[]={"linnet.system.home","linnet.system.music","linnet.system.settings","linnet.system.extras"};
-static const char *const menu_targets[LN_MENU_GROUPS][16]={
-    {"linnet.system.music","linnet.system.cover-flow","linnet.system.photos","linnet.system.videos","linnet.system.files","linnet.system.now-playing","linnet.system.settings","local.example.notes","linnet.system.extras","linnet.system.notes"},
-    {0},
-    {"linnet.system.display","linnet.system.themes","linnet.system.clock","linnet.system.battery","linnet.system.shutdown","linnet.system.sleep-timer","@sync","linnet.system.update","linnet.system.about","linnet.system.home","linnet.system.video-settings"},
-    {"linnet.system.clock","linnet.system.notes","linnet.system.videos","linnet.system.files","local.example.notes"}};
 static uint32_t menu_group(const struct ln_ui_node *n){
     if(!n||n->kind!=LN_UI_MENU||!n->targets)return UINT32_MAX;
     for(uint32_t scene=0;scene<ln_ui_scene_count;++scene){const struct ln_ui_scene *s=&ln_ui_scenes[scene];
@@ -88,10 +83,8 @@ static uint32_t menu_group(const struct ln_ui_node *n){
     return UINT32_MAX;
 }
 static bool classic_stock_order(uint32_t group){
-    static const uint8_t home[]={0,1,2,3,9,5,6};
-    static const uint8_t settings[]={0,10,1,2,3,4,5,6,7,8,9};
-    const uint8_t *expected=group==LN_MENU_HOME?home:settings;
-    uint32_t length=group==LN_MENU_HOME?sizeof home:sizeof settings;
+    const uint8_t *expected=group==LN_MENU_HOME?ln_menu_default_home:ln_menu_default_settings;
+    uint32_t length=group==LN_MENU_HOME?sizeof ln_menu_default_home:sizeof ln_menu_default_settings;
     if(menu_counts[group]!=length)return false;
     for(uint32_t i=0;i<length;++i)if(menu_order[group][i]!=expected[i])return false;
     return true;
@@ -126,7 +119,7 @@ static uint32_t menu_source(const struct ln_ui_node *n,uint32_t row){
         for(uint32_t action=LINNET_UI_ACTION_SHUFFLE;action>=LINNET_UI_ACTION_REPEAT;--action)
             for(uint32_t j=0;j<n->item_count;++j)if(n->targets[j]==action){if(!row)return j;--row;break;}
     }
-    for(uint32_t i=0;i<menu_counts[group];++i){const char *id=menu_targets[group][menu_order[group][i]];
+    for(uint32_t i=0;i<menu_counts[group];++i){const char *id=ln_menu_targets[group][menu_order[group][i]];
         if(group==LN_MENU_HOME&&menu_order[group][i]==7u&&ln_games_count())id="linnet.system.games";
         for(uint32_t j=0;j<n->item_count;++j){uint32_t target=n->targets[j];const char *actual=target==LINNET_UI_ACTION_SYNC?"@sync":target<ln_ui_scene_count?ln_ui_scenes[target].id:"";
             if(same(id,actual)){if(!row)return j;--row;break;}}}

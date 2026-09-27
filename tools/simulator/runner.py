@@ -9,6 +9,7 @@ import zlib
 from tools.content.compiler import compile_system
 from tools.studio.build import toolchain
 from tools.studio.targets import presentation_defines, target_spec
+from tools.studio.menu_definition import write_firmware_header
 
 def png(raw,width,height):
     rows=[]
@@ -35,6 +36,7 @@ def simulate(root,output,tape=None,system=None,target=None,all_scenes=False):
         raise ValueError('simulator scene dimensions differ from the target manifest')
     (output/'generated/linnet_target.h').write_text(
         ''.join(f'#define {name} {value}\n' for name, value in presentation_defines(spec).items()))
+    write_firmware_header(output/'generated')
     executable=output/'linnet-simulator'
     chain=toolchain()
     command=[chain['compiler']['path'],'-std=c11','-O2','-Wall','-Wextra','-Werror','-I'+str(output/'generated'),'-I'+str(root),
@@ -77,6 +79,6 @@ def simulate(root,output,tape=None,system=None,target=None,all_scenes=False):
     (output/'index.html').write_text(page)
     report=dict(target_id=content['report']['target'],content=content,events=total,frames=frames,preview=str(output/'index.html'),
                 native_oracle=True,
-                native_source_hashes={name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in ('tools/simulator/native.c','ui/runtime/ui.c','ui/runtime/ui.h','tools/simulator/runner.py','services/display/clock.c','services/display/clock.h')})
+                native_source_hashes={name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in ('tools/simulator/native.c','ui/runtime/ui.c','ui/runtime/ui.h','tools/simulator/runner.py','tools/studio/menu_definition.py','services/display/clock.c','services/display/clock.h')})
     (output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
     return report

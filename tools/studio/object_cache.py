@@ -128,6 +128,9 @@ def _restore(directory, output, root, generated, source_name):
             data = json.loads(manifest.read_text(encoding='utf-8'))
             if not isinstance(data, dict):
                 continue
+            if (hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+                    != manifest.stem):
+                continue
             dependencies = data.get('dependencies')
             if (not isinstance(dependencies, dict) or source_name not in dependencies or
                     any(_hash_file(_path(name, root, generated)) != checksum
@@ -170,12 +173,12 @@ def _save(directory, dependencies, output):
         payload = output.read_bytes()
         if len(payload) > MAX_OBJECT_BYTES:
             return
-        checksum = hashlib.sha256(json.dumps(dependencies, sort_keys=True).encode()).hexdigest()
+        manifest = dict(dependencies=dependencies,
+                        object_sha256=hashlib.sha256(payload).hexdigest())
+        checksum = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
         path = directory / checksum
         directory.mkdir(parents=True, exist_ok=True)
         _atomic_bytes(path.with_suffix('.bin'), payload)
-        manifest = dict(dependencies=dependencies,
-                        object_sha256=hashlib.sha256(payload).hexdigest())
         _atomic_bytes(path.with_suffix('.json'), json.dumps(manifest, sort_keys=True).encode())
     except OSError:
         pass  # A host cache failure does not invalidate the compiled object.

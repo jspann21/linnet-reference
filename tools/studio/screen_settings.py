@@ -10,15 +10,8 @@ from tools.studio.targets import target_spec
 from tools.content.compiler import resolve_features
 from tools.content.layouts import feature_enabled
 from tools.content.publish import _plain, _volume_guard
+from tools.studio.menu_definition import SCREENS, DEFAULTS, REQUIRED, ITEMS
 
-SCREENS = {
-    'Home': ('Music', 'Cover Flow', 'Photos', 'Videos', 'Files', 'Now Playing', 'Settings', 'UI Demo', 'Extras', 'Notes'),
-    'Music': ('All Tracks', 'Artists', 'Albums', 'Genres', 'Composers', 'Years', 'Folders', 'Playlists', 'Search', 'Favorites', 'Bookmarks', 'Recently Played', 'Most Played', 'Recently Added', 'Album Artists'),
-    'Settings': ('Display', 'Themes', 'Clock', 'Battery', 'Auto Shutdown', 'Sleep Timer', 'Sync / USB Disk Mode', 'Update / Recovery', 'About Linnet', 'Back to Home'),
-    'Extras': ('Clock', 'Notes', 'Videos', 'Files', 'UI Demo'),
-}
-DEFAULTS = {'Home': [0, 1, 2, 3, 9, 5, 6], 'Music': [0, 1, 2, 7, 9, 11, 8], 'Settings': list(range(10)), 'Extras': [0, 1, 2, 3]}
-REQUIRED = {'Home': {6}, 'Settings': {6, 9}}
 HINTS = {'Artists': 'Performers credited on individual tracks.', 'Album Artists': 'Main artist credited for each album; useful for compilations.', 'Composers': 'Writers of the music; useful for classical collections.'}
 
 
@@ -34,16 +27,16 @@ def item_availability(name, identity=None):
     spec = target_spec(target)
     features = resolve_features(settings, spec)
     game_app = spec['capabilities'].get('games', False) and 'linnet.system.games' in settings.get('ui', {}).get('apps', [])
-    feature_names = {'Files': 'files', 'UI Demo': 'demo', 'Photos': 'photos',
-                     'Videos': 'video', 'Cover Flow': 'cover_flow', 'Themes': 'themes'}
     available, unavailable = [], []
-    for i, label in enumerate(SCREENS[name]):
-        if label == 'Extras':
+    for i, item in enumerate(ITEMS[name]):
+        feature = item.feature
+        if feature == 'legacy_extras':
             continue
-        feature = feature_names.get(label)
-        if name == 'Home' and i == 7 and game_app:
+        if feature == 'demo_or_games' and game_app:
             available.append(i)
             continue
+        if feature == 'demo_or_games':
+            feature = 'demo'
         if feature and not feature_enabled(configured, feature):
             continue
         if feature and not feature_enabled(features, feature):
@@ -60,8 +53,9 @@ def available_items(name, identity=None):
 def defaults(identity=None):
     result = {}
     for name, rows in DEFAULTS.items():
+        rows = list(rows)
         if name == 'Home' and identity and target_spec(identity['target_id'])['capabilities'].get('games', False):
-            rows = rows + [7]
+            rows.append(7)
         available = available_items(name, identity) if identity is not None else rows
         result[name] = [i for i in rows if i in available]
     return result
@@ -86,6 +80,9 @@ def decode(data):
     home = state['Home']
     state['Home'] = [item for i in home for item in
                      ([j for j in (3, 9) if j not in home] if i == 8 else [i])]
+    settings = state['Settings']
+    if 0 in settings and 10 not in settings:
+        settings.insert(settings.index(0) + 1, 10)
     return state
 
 

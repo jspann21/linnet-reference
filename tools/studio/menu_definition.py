@@ -1,0 +1,105 @@
+"""Stable editable-menu IDs shared by host settings and generated firmware data.
+
+The numeric IDs and group order are the MENUS.BIN version-one wire format.
+Changing a label or target never renumbers an existing saved choice.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class Item:
+    key: str
+    label: str
+    target: str | None = None
+    feature: str | None = None
+
+
+GROUPS = (
+    ('Home', (
+        Item('music', 'Music', 'linnet.system.music'),
+        Item('cover_flow', 'Cover Flow', 'linnet.system.cover-flow', 'cover_flow'),
+        Item('photos', 'Photos', 'linnet.system.photos', 'photos'),
+        Item('videos', 'Videos', 'linnet.system.videos', 'video'),
+        Item('files', 'Files', 'linnet.system.files', 'files'),
+        Item('now_playing', 'Now Playing', 'linnet.system.now-playing'),
+        Item('settings', 'Settings', 'linnet.system.settings'),
+        Item('showcase', 'UI Demo', 'local.example.notes', 'demo_or_games'),
+        Item('legacy_extras', 'Extras', 'linnet.system.extras', 'legacy_extras'),
+        Item('notes', 'Notes', 'linnet.system.notes'),
+    ), (0, 1, 2, 3, 9, 5, 6), (6,)),
+    ('Music', (
+        Item('all_tracks', 'All Tracks'), Item('artists', 'Artists'),
+        Item('albums', 'Albums'), Item('genres', 'Genres'),
+        Item('composers', 'Composers'), Item('years', 'Years'),
+        Item('folders', 'Folders'), Item('playlists', 'Playlists'),
+        Item('search', 'Search'), Item('favorites', 'Favorites'),
+        Item('bookmarks', 'Bookmarks'), Item('recently_played', 'Recently Played'),
+        Item('most_played', 'Most Played'), Item('recently_added', 'Recently Added'),
+        Item('album_artists', 'Album Artists'),
+    ), (0, 1, 2, 7, 9, 11, 8), ()),
+    ('Settings', (
+        Item('display', 'Display', 'linnet.system.display'),
+        Item('themes', 'Themes', 'linnet.system.themes', 'themes'),
+        Item('clock', 'Clock', 'linnet.system.clock'),
+        Item('battery', 'Battery', 'linnet.system.battery'),
+        Item('auto_shutdown', 'Auto Shutdown', 'linnet.system.shutdown'),
+        Item('sleep_timer', 'Sleep Timer', 'linnet.system.sleep-timer'),
+        Item('sync', 'Sync / USB Disk Mode', '@sync'),
+        Item('update', 'Update / Recovery', 'linnet.system.update'),
+        Item('about', 'About Linnet', 'linnet.system.about'),
+        Item('home', 'Back to Home', 'linnet.system.home'),
+        Item('video_settings', 'Video Settings', 'linnet.system.video-settings', 'video'),
+    ), (0, 10, 1, 2, 3, 4, 5, 6, 7, 8, 9), (6, 9)),
+    ('Extras', (
+        Item('clock', 'Clock', 'linnet.system.clock'),
+        Item('notes', 'Notes', 'linnet.system.notes'),
+        Item('videos', 'Videos', 'linnet.system.videos', 'video'),
+        Item('files', 'Files', 'linnet.system.files', 'files'),
+        Item('demo', 'UI Demo', 'local.example.notes', 'demo'),
+    ), (0, 1, 2, 3), ()),
+)
+
+SCREENS = {name: tuple(item.label for item in items) for name, items, _, _ in GROUPS}
+DEFAULTS = {name: tuple(defaults) for name, _, defaults, _ in GROUPS}
+REQUIRED = {name: frozenset(required) for name, _, _, required in GROUPS if required}
+ITEMS = {name: items for name, items, _, _ in GROUPS}
+
+
+def _numbers(values):
+    return '{' + ','.join(f'{value}u' for value in values) + '}'
+
+
+def render_firmware_header() -> str:
+    """Emit only the menu data consumed by ui.c; no hand-edited C mirror."""
+    if len(GROUPS) != 4 or tuple(SCREENS) != ('Home', 'Music', 'Settings', 'Extras'):
+        raise ValueError('MENUS.BIN group order changed')
+    for name, items, defaults, required in GROUPS:
+        if (not items or len(items) > 16 or len({item.key for item in items}) != len(items) or
+                len(set(defaults)) != len(defaults) or any(i not in range(len(items)) for i in defaults) or
+                any(i not in range(len(items)) for i in required)):
+            raise ValueError(f'invalid stable menu definition: {name}')
+    orders = ','.join(_numbers(defaults) for _, _, defaults, _ in GROUPS)
+    counts = _numbers(len(defaults) for _, _, defaults, _ in GROUPS)
+    limits = _numbers(len(items) for _, items, _, _ in GROUPS)
+    required = _numbers(sum(1 << index for index in indices) for _, _, _, indices in GROUPS)
+    targets = ',\n    '.join('{' + ','.join('0' if item.target is None else '"' + item.target + '"'
+                                       for item in items) + '}' for _, items, _, _ in GROUPS)
+    return ('/* Generated from tools/studio/menu_definition.py. */\n'
+            '#ifndef LINNET_MENU_DEFINITION_H\n#define LINNET_MENU_DEFINITION_H\n'
+            f'#define LN_MENU_DEFAULT_ORDER {{{orders}}}\n'
+            f'#define LN_MENU_DEFAULT_COUNTS {counts}\n'
+            f'static const uint8_t ln_menu_limits[LN_MENU_GROUPS]={limits};\n'
+            f'static const uint32_t ln_menu_required[LN_MENU_GROUPS]={required};\n'
+            f'static const uint8_t ln_menu_default_home[]={_numbers(DEFAULTS["Home"])};\n'
+            f'static const uint8_t ln_menu_default_settings[]={_numbers(DEFAULTS["Settings"])};\n'
+            f'static const char *const ln_menu_targets[LN_MENU_GROUPS][16]={{\n    {targets}\n}};\n'
+            '#endif\n')
+
+
+def write_firmware_header(directory: Path) -> Path:
+    path = Path(directory) / 'linnet_menu_definition.h'
+    path.write_text(render_firmware_header(), encoding='utf-8')
+    return path
