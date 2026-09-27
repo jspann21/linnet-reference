@@ -103,6 +103,7 @@ and what to include in a contribution. Hardware ports start with the
 - [Binary contracts](docs/formats.md), [device protocol](docs/device-link.md),
   [music database](docs/music-format.md), [photos](docs/photo-format.md), [video](docs/video-format.md)
 - [Local outputs and recovery artifacts](docs/local-artifacts.md)
+- [Vendor source provenance and build integration](third_party/README.md)
 
 Keep documentation about current behavior, useful instructions and unresolved
 work. Update existing sections; remove resolved TODOs. Keep session transcripts,

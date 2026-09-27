@@ -705,11 +705,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Completion check: Shared invariants have one owner, circular workflow dependencies are reduced, and moving a helper does not bypass publication checks or silently change error handling. Coordinate persistence changes with items 46–47.
 
-- [ ] **107 · P3 · Code: Index vendor provenance and local build adaptations.** Dependency metadata is spread among PROVENANCE.md, README.linnet.md, LICENSE, NOTICE, and SOURCES files, while compiler exceptions live in build.py. Add a central index linking each dependency's origin, license, local changes, and integration rules.
+- [x] **107 · P3 · Code: Index vendor provenance and local build adaptations.** Dependency metadata is spread among PROVENANCE.md, README.linnet.md, LICENSE, NOTICE, and SOURCES files, while compiler exceptions live in build.py. Add a central index linking each dependency's origin, license, local changes, and integration rules.
 
   Location: [third_party/aac/PROVENANCE.md](C:/Users/user/Desktop/Projects/linnet/third_party/aac/PROVENANCE.md), [third_party/vorbis/README.linnet.md](C:/Users/user/Desktop/Projects/linnet/third_party/vorbis/README.linnet.md), [third_party/flac/README.linnet.md](C:/Users/user/Desktop/Projects/linnet/third_party/flac/README.linnet.md), [tools/studio/build.py](C:/Users/user/Desktop/Projects/linnet/tools/studio/build.py) — `vendor documentation and build integration`.
 
   Completion check: A reviewer can trace every included codec to its existing provenance and local adaptations; unknown version or patch information is marked for investigation rather than invented.
+
+  Verification note: `third_party/README.md` now indexes all eight vendor directories with provenance, license, adaptations, and build selection/flags. The repository README links it; local links resolve. Unknown exact upstream revisions for h264bsd and PacketVideo are explicit.
 
 - [ ] **108 · P2 · Profile: Provide an artifact inventory before any cleanup of local output.** out contains builds and scratch results, but local-artifacts.md warns that plans can depend on exact paths, backups, predecessor files, and receipts. Design a read-only inventory showing artifact type, source identity, target, size, and known receipt/plan references before proposing retention rules.
 

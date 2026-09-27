@@ -1,0 +1,23 @@
+# Vendor source index
+
+These directories contain imported decoder code. Their own notices and
+provenance files remain authoritative for license terms and exact changes.
+Native integration flags and source selection live in
+[`tools/studio/build.py`](../tools/studio/build.py); the build report records
+each selected source and its extra compiler flags. The common OS build uses
+`-fwrapv` and freestanding `-fno-builtin` flags.
+
+| Dependency | Origin and license | Local adaptation and integration |
+| --- | --- | --- |
+| [AAC](aac/PROVENANCE.md) | Rockbox Photo snapshot at the revision and per-file hashes in [provenance](aac/PROVENANCE.md); GPL, LGPL, and Xiph BSD components have their respective notices under `aac/`. | Fixed-point AAC-LC and bounded decoder state; [`SOURCES`](aac/SOURCES) selects vendor files. ARM4 codec flags, include paths, and `-O3` are grouped in the build rule. |
+| [libmad MP3](libmad/PROVENANCE.md) | Rockbox Photo snapshot with hashes in [provenance](libmad/PROVENANCE.md); [GPL-2.0-or-later](libmad/COPYING). | Freestanding memory shim and ARM fixed-point path. The build keeps the ordered libmad source set and its `-O3`, ARM, and include flags. |
+| [Tremor Vorbis](vorbis/README.linnet.md) | Rockbox Photo Tremor snapshot; [Xiph BSD](vorbis/COPYING), with an LGPL notice for `ffmpeg_stuff.h`. | Caller-owned pool and bounded Ogg handling. The build selects service and vendor sources with Tremor and shared AAC FFT include paths; it does not enable the AAC ARM define for Tremor. |
+| [FLAC](flac/README.linnet.md) | Rockbox Photo FFmpeg FLAC snapshot; [LGPL-2.0-or-later](flac/COPYING). | Bounded fixed-point decoder and Linnet asynchronous wrapper; `decoder.c` is selected with the service wrapper under the common freestanding and wrapping flags. |
+| [ALAC](alac/PROVENANCE.md) | Rockbox Photo libalac snapshot with hashes in [provenance](alac/PROVENANCE.md); [MIT](alac/LICENSE). | Exact-length bit reader and bounded mono/stereo decoding. The build links the vendor decoder with Linnet's ALAC wrapper and M4A demux. |
+| [h264bsd](h264bsd/LICENSE.md) | Android Open Source Project H.264 decoder, as stated in its [Apache-2.0 notice](h264bsd/LICENSE.md); no exact upstream revision is recorded here. | Linnet's native decoder wrapper and compatibility header constrain the feature set. The build selects H.264 C sources with `-O3`, compatibility include, and narrow warning exceptions on native MP4 targets. |
+| [PacketVideo MPEG-4](pvmp4/NOTICE) | PacketVideo decoder; [Apache-2.0 license](pvmp4/LICENSE) and [notice](pvmp4/NOTICE). An exact upstream revision is not recorded here. | [`SOURCES`](pvmp4/SOURCES) is the ordered vendor source list. The build applies the C++ compatibility includes, no-exception flags, `-O3`, and specific warning exceptions only when the target selects a supported MPEG-4 decoder. |
+| [JPEG IDCT](jpeg/PROVENANCE.md) | Rockbox Photo JPEG decoder fragment with source hash in [provenance](jpeg/PROVENANCE.md); [GPL-2.0-or-later](jpeg/COPYING). | Bounded inverse DCT and a new incremental Linnet marker/entropy driver. The build includes the JPEG sources only when Photos is enabled. |
+
+The source lists and per-backend flags are part of build identity. Keep notices
+with imported files, update the corresponding provenance record when changing
+vendor code, and verify the affected target's build and media behavior.
