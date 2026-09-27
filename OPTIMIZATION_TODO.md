@@ -319,11 +319,13 @@ Completed improvements are deliberately excluded: bounded artwork loading, direc
 
   Verification note: Full payload validation now hashes the header, metadata, thumbnails, and tile payloads in their existing ordered reads; metadata-only inspection retains its complete digest pass. On a 54,878,208-byte, 26,432-tile PIMG, measured process reads fell from 110,215,168 to 55,336,960 bytes and 323 to 111 read calls with identical SHA-256. Five runs of the local publication preflight (two separate change-detection hashes, inspection, and fallback extraction) had medians of 0.1618 s before and 0.1557 s after; the 64-photo compilation took about 14.8 s. A concurrent header change and a corrupted tile were rejected. The publisher's two independent hashes remain in place.
 
-- [ ] **44 · P2 · Profile: Measure a verified-copy fast path for compatible native videos.** Compatible input is inspected, copied, and inspected again through ffprobe. Determine whether a validated source plus verified byte-for-byte copying can avoid repeated probing without weakening source/output checks.
+- [x] **44 · P2 · Profile: Measure a verified-copy fast path for compatible native videos.** Compatible input is inspected, copied, and inspected again through ffprobe. Determine whether a validated source plus verified byte-for-byte copying can avoid repeated probing without weakening source/output checks.
 
   Location: [tools/content/native_video.py](C:/Users/user/Desktop/Projects/linnet/tools/content/native_video.py) — `prepare`.
 
   Completion check: Use the fast path only with demonstrated equivalent guarantees for changed sources, truncated copies, container details, and target limits; otherwise retain reinspection.
+
+  Verification note: A1136's compatible 22,234,203-byte H.264 MP4 produced byte-identical output (SHA-256 `3794fac87abc4bcfb5735725ff15dbab154d22fd9c37d1477405302a2a4decf5`) in three preparations. The first, cold-device run took 58.86 s; warmed runs took 0.265 and 0.297 s. Five warm probes had 0.125 s medians for both source and copy, while hashing either file took 0.016 s. A verified-copy path could save roughly 0.1 s warm but would need source identity checks before/after inspection and copying plus a complete output hash; it would barely affect the cold-device run. The existing second container probe remains in place until that extra complexity has a representative workload benefit.
 
 
 **Simplify operations and make failures easier to handle**
