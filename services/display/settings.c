@@ -4,6 +4,7 @@
 #include "hal/api/platform.h"
 #include "boot/include/linnet_boot.h"
 #include "ui/runtime/ui.h"
+#include "services/games/games.h"
 static const uint32_t seconds[]={0,5,10,15,30,60,120};
 static const char *const labels[]={"Timeout: Never","Timeout: 5 seconds","Timeout: 10 seconds","Timeout: 15 seconds","Timeout: 30 seconds","Timeout: 1 minute","Timeout: 2 minutes"};
 static const uint32_t shutdown_seconds[]={0,60,120,300,600,900,1800,3600,7200};
@@ -17,7 +18,7 @@ static bool click_fallback_ready,click_changed;
 static const char *const click_labels[]={"Click: Classic","Click: Off","Click: Low","Click: High"};
 static uint32_t theme_index=UINT32_MAX,theme_revision;
 static bool theme_loaded,theme_dirty,theme_available;
-static uint16_t game_best[3];
+static uint16_t game_best[LN_GAME_COUNT];
 extern void ln_games_best_set(uint32_t index,uint16_t value);
 static bool menus_loaded;
 static uint32_t menus_phase;
@@ -27,7 +28,7 @@ static bool games_loaded;
 static uint32_t games_phase;
 static uint8_t games_data[12];
 static struct ln_fat32_file games_file;
-extern void ln_games_configure(uint8_t mask);
+extern void ln_games_configure(uint16_t mask);
 bool ln_display_settings_boot_ready(void){return theme_loaded&&menus_loaded&&games_loaded;}
 static bool step_busy;
 static char battery_label[25];
@@ -58,7 +59,7 @@ void ln_display_settings_diagnostics(uint32_t words[8]){
     words[7]=(loaded?1u:0u)|(theme_loaded?2u:0u);
 }
 #endif
-void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loaded=false;games_phase=0;game_best[0]=game_best[1]=game_best[2]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;click_tone=0;click_fallback_ready=click_changed=false;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;record_first_dirty_at=record_last_dirty_at=0;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;
+void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loaded=false;games_phase=0;for(uint32_t i=0;i<LN_GAME_COUNT;++i)game_best[i]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;click_tone=0;click_fallback_ready=click_changed=false;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;record_first_dirty_at=record_last_dirty_at=0;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;
 #if !defined(LINNET_PROFILE_RELEASE)
     record_publishes=theme_publishes=0;
 #endif
@@ -204,7 +205,7 @@ void ln_display_settings_video_set(const uint32_t in[2]){
     video_resume[0]=in[0];video_resume[1]=in[1];mark_record_dirty();
 }
 void ln_display_game_best_set(uint32_t index,uint16_t score){
-    if(index>=3u||score<=game_best[index])return;
+    if(index>=LN_GAME_COUNT||score<=game_best[index])return;
     game_best[index]=score;theme_dirty=true;++theme_revision;++revision;
 }
 bool ln_display_settings_video_options_get(uint8_t *out){if(!loaded||!out)return false;*out=video_options;return true;}
@@ -243,7 +244,7 @@ static bool theme_id_valid(const uint8_t *id,uint32_t length){
     return dot&&!start;
 }
 static void theme_step(bool presented,uint32_t presented_revision,bool flush){
-    uint8_t payload[96];uint32_t length=sizeof(payload);
+    uint8_t payload[128];uint32_t length=sizeof(payload);
     if(!theme_loaded){
         int result=ln_storage_theme(false,payload,&length);
         if(!result)return;
@@ -251,7 +252,7 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
         uint32_t saved=UINT32_MAX;
         if(theme_available&&length){
             uint32_t version=length>=8u?ln_read_le32(payload+4):UINT32_MAX;
-            uint32_t suffix=version==0u?1u:version==1u?5u:version==2u?7u:0u;
+            uint32_t suffix=version==0u?1u:version==1u?5u:version==2u?7u:version==3u?25u:0u;
             uint32_t id_length=length>=8u+suffix?length-8u-suffix:0u;
             if(length<9u||length>sizeof payload||(version==0u&&length>89u)||!suffix||length<8u+suffix||
                ln_read_le32(payload)!=0x534d4854u||payload[8u+id_length]||
@@ -263,13 +264,10 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
                     if(at==id_length&&!id[at]){saved=i;break;}
                 }
             }
-            if(theme_available&&(version==1u||version==2u)){
-                uint32_t scores=version==2u?length-6u:length-4u;
-                game_best[0]=ln_read_le16(payload+scores);
-                game_best[1]=ln_read_le16(payload+scores+2u);
-                if(version==2u)game_best[2]=ln_read_le16(payload+scores+4u);
-                ln_games_best_set(0u,game_best[0]);ln_games_best_set(1u,game_best[1]);
-                ln_games_best_set(2u,game_best[2]);
+            if(theme_available&&(version==1u||version==2u||version==3u)){
+                uint32_t stored=version==1u?2u:version==2u?3u:LN_GAME_COUNT;
+                uint32_t scores=length-stored*2u;
+                for(uint32_t i=0;i<stored;++i){game_best[i]=ln_read_le16(payload+scores+i*2u);ln_games_best_set(i,game_best[i]);}
             }
         }
         if(!theme_dirty)theme_index=saved;
@@ -293,15 +291,14 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
     if(id[count]){theme_available=false;theme_dirty=false;++revision;return;}
     ln_write_le32(payload,0x534d4854u);
 #if LINNET_HAS_GAMES
-    ln_write_le32(payload+4,2u);
+    ln_write_le32(payload+4,3u);
 #else
     ln_write_le32(payload+4,0u);
 #endif
     for(uint32_t i=0;i<count;++i)payload[8+i]=(uint8_t)id[i];payload[8+count]=0;
 #if LINNET_HAS_GAMES
-    ln_write_le16(payload+9u+count,game_best[0]);ln_write_le16(payload+11u+count,game_best[1]);
-    ln_write_le16(payload+13u+count,game_best[2]);
-    length=15u+count;
+    for(uint32_t i=0;i<LN_GAME_COUNT;++i)ln_write_le16(payload+9u+count+i*2u,game_best[i]);
+    length=9u+count+LN_GAME_COUNT*2u;
 #else
     length=9u+count;
 #endif
@@ -331,10 +328,13 @@ static void games_step(void){
     if(games_phase==2){result=ln_storage_media_read(&games_file,0,games_data,sizeof games_data,generation);if(!result)return;if(result<0){games_loaded=true;return;}games_phase=3;return;}
     result=ln_storage_media_poll_deferred(generation,0,&transferred);if(!result)return;
     if(result>0&&transferred==sizeof games_data&&ln_read_le32(games_data)==0x454d4147u&&
-       (games_data[4]==1u||games_data[4]==2u)&&
-       !(games_data[5]&~(games_data[4]==1u?7u:15u))&&!games_data[6]&&!games_data[7]&&
+       (games_data[4]==1u||games_data[4]==2u||games_data[4]==3u)&&
+       !(games_data[5]&~(games_data[4]==1u?7u:255u))&&
+       (games_data[4]==3u?!(games_data[6]&~(LN_GAME_MASK>>8)):!games_data[6])&&!games_data[7]&&
        ln_read_le32(games_data+8)==ln_crc32(games_data,8u))
-        ln_games_configure((uint8_t)(games_data[5]|(games_data[4]==2u?0x80u:0u)));
+        {uint16_t mask=games_data[5];if(games_data[4]==3u)mask|=(uint16_t)games_data[6]<<8;
+         else if((games_data[4]==1u&&mask==7u)||(games_data[4]==2u&&mask==15u))mask=LN_GAME_MASK;
+         ln_games_configure(mask);}
     games_loaded=true;++revision;
 }
 static void settings_work(bool may_write,bool presented,uint32_t presented_revision,bool flush){

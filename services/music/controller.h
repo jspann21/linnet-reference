@@ -15,6 +15,11 @@ bool ln_music_sleep_step(uint32_t now);
 /* Consumes an executive-issued UI intent after browser track admission. */
 bool ln_music_take_now_playing(void);
 bool ln_music_select(uint32_t index);
+/* Music Quiz temporarily owns playback without replacing the user's queue.
+ * End restores the original occurrence, position, and pause state. */
+bool ln_music_quiz_begin(uint32_t index);
+bool ln_music_quiz_select(uint32_t index);
+void ln_music_quiz_end(void);
 bool ln_music_next(bool previous);
 void ln_music_toggle(void);
 void ln_music_stop(void);

@@ -652,7 +652,7 @@ static void theme_open(void){
     theme_available=false;
     if(ln_storage_capacity(LN_STORAGE_THEME0)!=512u||ln_storage_capacity(LN_STORAGE_THEME1)!=512u)return;
     struct ln_state_io io={(void *)(uintptr_t)LN_STORAGE_THEME0,state_read,state_write,flush_callback};
-    if(ln_state_open(&theme_store,&io)<0||theme_store.length>96u)return;
+    if(ln_state_open(&theme_store,&io)<0||theme_store.length>128u)return;
     theme_available=true;
 }
 #if defined(LINNET_IMAGE_BOOT)
@@ -982,7 +982,7 @@ int ln_storage_theme(bool write,uint8_t *data,uint32_t *length){
     if(!theme_opened){theme_open();theme_opened=true;}
     if(!theme_available||!theme_store.ready||theme_store.poisoned)return -1;
     if(write){
-        if(*length>96u)return -1;
+        if(*length>128u)return -1;
         if(!ln_state_publish(&theme_store,data,*length)){theme_available=false;return -1;}
         return 1;
     }

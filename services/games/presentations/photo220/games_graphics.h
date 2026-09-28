@@ -166,6 +166,7 @@ static void photo_solitaire(const struct ln_ui_canvas_context *c){
     }
 }
 #include "services/games/presentations/photo220/games_sudoku.h"
+#include "services/games/presentations/games_extra_draw.h"
 void ln_games_draw(const struct ln_ui_canvas_context *c){
-    if(game==SUDOKU)photo_sudoku(c);else if(game==SOLITAIRE)photo_solitaire(c);else photo_arcade(c);
+    if(game>=BRICK)extra_draw(c);else if(game==SUDOKU)photo_sudoku(c);else if(game==SOLITAIRE)photo_solitaire(c);else photo_arcade(c);
 }
