@@ -13,6 +13,7 @@ static char shutdown_label[2][32];
 static uint32_t choice=4,revision,record_revision,battery_capacity=1200;
 /* SETT bits 6..7: 0 Classic (also the legacy default), 1 Off, 2 Low, 3 High. */
 static uint8_t click_tone;
+static bool click_fallback_ready;
 static const char *const click_labels[]={"Click: Classic","Click: Off","Click: Low","Click: High"};
 static uint32_t theme_index=UINT32_MAX,theme_revision;
 static bool theme_loaded,theme_dirty,theme_available;
@@ -57,7 +58,7 @@ void ln_display_settings_diagnostics(uint32_t words[8]){
     words[7]=(loaded?1u:0u)|(theme_loaded?2u:0u);
 }
 #endif
-void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loaded=false;games_phase=0;game_best[0]=game_best[1]=game_best[2]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;click_tone=0;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;record_first_dirty_at=record_last_dirty_at=0;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;
+void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loaded=false;games_phase=0;game_best[0]=game_best[1]=game_best[2]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;click_tone=0;click_fallback_ready=false;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;record_first_dirty_at=record_last_dirty_at=0;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;
 #if !defined(LINNET_PROFILE_RELEASE)
     record_publishes=theme_publishes=0;
 #endif
@@ -85,7 +86,7 @@ bool ln_display_settings_adjust(int32_t direction){
     mark_record_dirty();++revision;return true;
 }
 /* Wait for the saved choice before allowing feedback, including saved Off. */
-uint8_t ln_display_click_tone(void){return loaded?click_tone:1u;}
+uint8_t ln_display_click_tone(void){return loaded||click_fallback_ready?click_tone:1u;}
 bool ln_display_click_adjust(int32_t direction){
     if(!direction)return false;
     click_tone=(uint8_t)((click_tone+(direction<0?3u:1u))&3u);
@@ -124,24 +125,25 @@ static bool valid_photo(const uint8_t *resume){
     uint32_t flags=ln_read_le32(resume+8);
     return ln_read_le32(resume+4)<=65535u&&(flags&255u)<=5u&&((flags>>8)&255u)<=3u&&(flags>>16)<=2u;
 }
+static int malformed_record(void){click_fallback_ready=true;return -1;}
 static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
     uint32_t bytes=480;
     if(ln_storage_busy()||!ln_storage_mounted()||!ln_storage_settings(false,raw,&bytes))return 0;
-    if(bytes>480)return -1;
+    if(bytes>480)return malformed_record();
     if(!bytes){*offset=*length=0;loaded=true;return 1;}
     uint32_t out_offset=0,out_length=0,saved_choice=choice,saved_capacity=1200;bool saved_clock_12=false;uint8_t saved_video_options=8u;
     uint8_t saved_photo[16]={0};uint32_t saved_video[2]={0};
-    if(bytes<36||ln_read_le32(raw)!=0x54544553u||ln_read_le32(raw+bytes-4)!=ln_crc32(raw,bytes-4))return -1;
+    if(bytes<36||ln_read_le32(raw)!=0x54544553u||ln_read_le32(raw+bytes-4)!=ln_crc32(raw,bytes-4))return malformed_record();
     uint32_t n=(uint32_t)raw[4]|((uint32_t)raw[5]<<8),f=raw[14];
-    if(n!=bytes-36||((raw[7]>>1)&3u)>2u||raw[6]>6||(raw[15]&15u)>8u||(raw[15]>>4)>8u||(f&7u)>5||((f>>5)&3u)>2||(f&128u))return -1;
+    if(n!=bytes-36||((raw[7]>>1)&3u)>2u||raw[6]>6||(raw[15]&15u)>8u||(raw[15]>>4)>8u||(f&7u)>5||((f>>5)&3u)>2||(f&128u))return malformed_record();
     saved_choice=raw[6];saved_clock_12=(raw[7]&1u)!=0;
     saved_video_options=(uint8_t)(((raw[7]>>1)&3u)|(((raw[7]>>3)&1u)<<2)|(((raw[7]>>4)&1u?0u:1u)<<3)|(((raw[7]>>5)&1u)<<4));
     ln_write_le32(saved_photo,ln_read_le32(raw+8));ln_write_le32(saved_photo+4,(uint32_t)raw[12]|((uint32_t)raw[13]<<8));
     ln_write_le32(saved_photo+8,(f&7u)|(((f>>3)&3u)<<8)|(((f>>5)&3u)<<16));ln_write_le32(saved_photo+12,ln_read_le32(raw+16));
     saved_video[0]=ln_read_le32(raw+20);saved_video[1]=ln_read_le32(raw+24);
-    if(!valid_photo(saved_photo))return -1;
+    if(!valid_photo(saved_photo))return malformed_record();
     saved_capacity=ln_read_le32(raw+28);
-    if(saved_capacity<50u||saved_capacity>10000u||saved_capacity%50u)return -1;
+    if(saved_capacity<50u||saved_capacity>10000u||saved_capacity%50u)return malformed_record();
     out_offset=32;out_length=bytes-36;
     /* Commit only after the complete envelope has passed validation. */
     if(!loaded){
