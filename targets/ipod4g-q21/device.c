@@ -25,6 +25,9 @@ void ln_target_ata_classify(const char *model,uint32_t *media_kind,uint32_t *rot
 
 void ln_target_input_prepare(void)
 {
+#if defined(LINNET_IMAGE_OS)
+    ln_platform_click_stop();
+#endif
     /* A cold handoff from the Apple ROM can leave the Q21 optical ASIC
      * waiting for its serial configuration command. The ordinary Rockbox
      * runtime init assumes its bootloader already performed this exchange. */

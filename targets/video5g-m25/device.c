@@ -5,40 +5,6 @@
 #include "hal/api/core.h"
 #include "hal/api/platform.h"
 #define REG(a) (*(volatile uint32_t *)(uintptr_t)(a))
-#if defined(LINNET_IMAGE_OS)
-static volatile bool click_active;
-static volatile uint32_t click_started,click_count,click_max_us;
-void ln_platform_click_stop(void){
-    uint32_t flags=ln_core_irq_save();
-    REG(0x7000a000u)=0;
-    if(click_active){uint32_t elapsed=ln_time_us()-click_started;if(elapsed>click_max_us)click_max_us=elapsed;}
-    click_active=false;
-    ln_core_irq_restore(flags);
-}
-void ln_platform_click(void){
-    /* PP5022 PWM0 drives the internal piezo independently of WM8758/I2S.
-     * Drop overlapping feedback rather than extending a pulse indefinitely. */
-    uint32_t flags=ln_core_irq_save();
-    if(click_active){ln_core_irq_restore(flags);return;}
-    REG(0x70000010u)&=~0xcu;REG(0x6000600cu)|=0x20000u;
-    click_started=ln_time_us();click_active=true;++click_count;
-    REG(0x7000a000u)=0x8080005bu;
-    ln_core_wake_at(click_started+4000u);
-    ln_core_irq_restore(flags);
-}
-void ln_platform_click_poll(uint32_t now){
-    if(click_active&&now-click_started>=4000u)ln_platform_click_stop();
-}
-bool ln_platform_click_deadline(uint32_t *deadline){
-    if(!click_active)return false;
-    if(deadline)*deadline=click_started+4000u;return true;
-}
-void ln_platform_click_diagnostics(uint32_t out[4]){
-    uint32_t flags=ln_core_irq_save();
-    out[0]=REG(0x7000a000u);out[1]=click_count;out[2]=click_max_us;out[3]=click_active;
-    ln_core_irq_restore(flags);
-}
-#endif
 bool ln_target_battery_charging(void){return !(REG(0x6000d034u)&1u);}
 uint8_t ln_target_power_sources(void){
     uint32_t pins=REG(0x6000d13cu);

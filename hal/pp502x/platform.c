@@ -13,6 +13,46 @@
 #define LINNET_REG(a) (*(volatile uint32_t *)(uintptr_t)(a))
 static uint32_t ln_last_progress;
 
+#if defined(LINNET_HARDWARE_CLICKER) && defined(LINNET_IMAGE_OS)
+static volatile bool click_active;
+static volatile uint32_t click_started,click_count,click_max_us;
+void ln_platform_click_stop(void){
+    uint32_t flags=ln_core_irq_save();
+    LINNET_REG(0x7000a000u)=0;
+    if(click_active){uint32_t elapsed=ln_time_us()-click_started;if(elapsed>click_max_us)click_max_us=elapsed;}
+    click_active=false;
+    ln_core_irq_restore(flags);
+}
+void ln_platform_click(uint8_t tone){
+    /* PWM0 drives the piezo on PP5020/PP5022; PWM1 remains the 4G backlight.
+     * Keep the pulse independent of codec, I2S, and audio DMA. */
+    static const uint8_t periods[4]={91u,0u,120u,60u};
+    if(tone>3u||tone==1u)return;
+    uint32_t flags=ln_core_irq_save();
+    if(click_active){ln_core_irq_restore(flags);return;}
+    LINNET_REG(0x70000010u)&=~0xcu;
+    LINNET_REG(0x6000600cu)|=0x20000u;
+    click_started=ln_time_us();click_active=true;++click_count;
+    LINNET_REG(0x7000a000u)=0x80800000u|periods[tone];
+    ln_core_wake_at(click_started+4000u);
+    ln_core_irq_restore(flags);
+}
+void ln_platform_click_poll(uint32_t now){
+    if(click_active&&now-click_started>=4000u)ln_platform_click_stop();
+}
+bool ln_platform_click_deadline(uint32_t *deadline){
+    if(!click_active)return false;
+    if(deadline)*deadline=click_started+4000u;
+    return true;
+}
+void ln_platform_click_diagnostics(uint32_t out[4]){
+    uint32_t flags=ln_core_irq_save();
+    out[0]=LINNET_REG(0x7000a000u);out[1]=click_count;
+    out[2]=click_max_us;out[3]=click_active;
+    ln_core_irq_restore(flags);
+}
+#endif
+
 uint32_t ln_time_us(void) { return LINNET_REG(0x60005010u); }
 uintptr_t ln_platform_uncached_address(uintptr_t address) { return address | 0x10000000u; }
 _Noreturn void ln_platform_hardware_reset(void) {

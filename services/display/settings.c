@@ -11,6 +11,9 @@ static const char *const shutdown_labels[]={"Off","1 min","2 min","5 min","10 mi
 static uint8_t shutdown_choice[2];
 static char shutdown_label[2][32];
 static uint32_t choice=4,revision,record_revision,battery_capacity=1200;
+/* SETT bits 6..7: 0 Classic (also the legacy default), 1 Off, 2 Low, 3 High. */
+static uint8_t click_tone;
+static const char *const click_labels[]={"Click: Classic","Click: Off","Click: Low","Click: High"};
 static uint32_t theme_index=UINT32_MAX,theme_revision;
 static bool theme_loaded,theme_dirty,theme_available;
 static uint16_t game_best[3];
@@ -54,7 +57,7 @@ void ln_display_settings_diagnostics(uint32_t words[8]){
     words[7]=(loaded?1u:0u)|(theme_loaded?2u:0u);
 }
 #endif
-void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loaded=false;games_phase=0;game_best[0]=game_best[1]=game_best[2]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;record_first_dirty_at=record_last_dirty_at=0;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;
+void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loaded=false;games_phase=0;game_best[0]=game_best[1]=game_best[2]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;click_tone=0;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;record_first_dirty_at=record_last_dirty_at=0;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;
 #if !defined(LINNET_PROFILE_RELEASE)
     record_publishes=theme_publishes=0;
 #endif
@@ -79,6 +82,12 @@ const char *ln_display_settings_label(void){return labels[choice];}
 bool ln_display_settings_adjust(int32_t direction){
     if(!direction)return false;
     choice=direction<0?(choice?choice-1u:6u):(choice==6u?0u:choice+1u);
+    mark_record_dirty();++revision;return true;
+}
+uint8_t ln_display_click_tone(void){return click_tone;}
+bool ln_display_click_adjust(int32_t direction){
+    if(!direction)return false;
+    click_tone=(uint8_t)((click_tone+(direction<0?3u:1u))&3u);
     mark_record_dirty();++revision;return true;
 }
 uint32_t ln_auto_shutdown_seconds(bool headphones){return shutdown_seconds[shutdown_choice[headphones?1:0]];}
@@ -123,7 +132,7 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
     uint8_t saved_photo[16]={0};uint32_t saved_video[2]={0};
     if(bytes<36||ln_read_le32(raw)!=0x54544553u||ln_read_le32(raw+bytes-4)!=ln_crc32(raw,bytes-4))return -1;
     uint32_t n=(uint32_t)raw[4]|((uint32_t)raw[5]<<8),f=raw[14];
-    if(n!=bytes-36||(raw[7]&0xc0u)||((raw[7]>>1)&3u)>2u||raw[6]>6||(raw[15]&15u)>8u||(raw[15]>>4)>8u||(f&7u)>5||((f>>5)&3u)>2||(f&128u))return -1;
+    if(n!=bytes-36||((raw[7]>>1)&3u)>2u||raw[6]>6||(raw[15]&15u)>8u||(raw[15]>>4)>8u||(f&7u)>5||((f>>5)&3u)>2||(f&128u))return -1;
     saved_choice=raw[6];saved_clock_12=(raw[7]&1u)!=0;
     saved_video_options=(uint8_t)(((raw[7]>>1)&3u)|(((raw[7]>>3)&1u)<<2)|(((raw[7]>>4)&1u?0u:1u)<<3)|(((raw[7]>>5)&1u)<<4));
     ln_write_le32(saved_photo,ln_read_le32(raw+8));ln_write_le32(saved_photo+4,(uint32_t)raw[12]|((uint32_t)raw[13]<<8));
@@ -135,8 +144,8 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
     out_offset=32;out_length=bytes-36;
     /* Commit only after the complete envelope has passed validation. */
     if(!loaded){
-        if(!dirty&&(choice!=saved_choice||battery_capacity!=saved_capacity||clock_12!=saved_clock_12||shutdown_choice[0]!=(raw[15]&15u)||shutdown_choice[1]!=(raw[15]>>4))){
-            shutdown_choice[0]=raw[15]&15u;shutdown_choice[1]=raw[15]>>4;choice=saved_choice;battery_capacity=saved_capacity;clock_12=saved_clock_12;++revision;
+        if(!dirty&&(choice!=saved_choice||battery_capacity!=saved_capacity||clock_12!=saved_clock_12||click_tone!=(raw[7]>>6)||shutdown_choice[0]!=(raw[15]&15u)||shutdown_choice[1]!=(raw[15]>>4))){
+            shutdown_choice[0]=raw[15]&15u;shutdown_choice[1]=raw[15]>>4;choice=saved_choice;battery_capacity=saved_capacity;clock_12=saved_clock_12;click_tone=raw[7]>>6;++revision;
         }
         for(uint32_t i=0;i<16;++i)photo_resume[i]=saved_photo[i];
         video_resume[0]=saved_video[0];video_resume[1]=saved_video[1];video_options=saved_video_options;
@@ -147,7 +156,7 @@ static int write_record(uint8_t raw[480],const uint8_t *data,uint32_t length,boo
     if(length>444||!valid_photo(photo_resume)||battery_capacity<50u||battery_capacity>10000u||battery_capacity%50u)return 0;
     uint32_t index=ln_read_le32(photo_resume+4),flags=ln_read_le32(photo_resume+8);
     if(index>65535u||(flags&255u)>5u||((flags>>8)&255u)>3u||(flags>>16)>2u)return 0;
-    uint8_t packed7=(uint8_t)((clock_12?1u:0u)|((video_options&3u)<<1)|(((video_options>>2)&1u)<<3)|(((video_options&8u)?0u:1u)<<4)|(((video_options>>4)&1u)<<5));
+    uint8_t packed7=(uint8_t)((clock_12?1u:0u)|((video_options&3u)<<1)|(((video_options>>2)&1u)<<3)|(((video_options&8u)?0u:1u)<<4)|(((video_options>>4)&1u)<<5)|(click_tone<<6));
     uint8_t packed14=(uint8_t)((flags&7u)|(((flags>>8)&3u)<<3)|(((flags>>16)&3u)<<5));
     uint8_t packed15=(uint8_t)(shutdown_choice[0]|(shutdown_choice[1]<<4));
     uint32_t snapshot_revision=record_revision;
@@ -386,6 +395,7 @@ const char *ln_display_settings_text(const struct ln_ui_node*n,uint32_t item,con
         for(uint32_t i=0;i<5;++i)if(text_equal(n->text,keys[i]))return update_labels[i];
     }
     if(n->kind==LN_UI_VIRTUAL_LIST&&item<2u&&text_equal(n->text,"Automatic shutdown"))return auto_shutdown_label(item);
+    if(n->kind==LN_UI_VIRTUAL_LIST&&item==1u&&text_equal(n->text,"Display timeout"))return click_labels[click_tone];
     if(n->kind==LN_UI_VIRTUAL_LIST&&item==0&&n->text){
         const char *a=n->text,*b="Display timeout";while(*a&&*a==*b){++a;++b;}
         if(!*a&&!*b)return ln_display_settings_label();

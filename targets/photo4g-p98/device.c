@@ -24,6 +24,10 @@ void ln_target_ata_classify(const char *model,uint32_t *media_kind,uint32_t *rot
     *rotation_rpm=4200u;
 }
 
-void ln_target_input_prepare(void) {}
+void ln_target_input_prepare(void) {
+#if defined(LINNET_IMAGE_OS)
+    ln_platform_click_stop();
+#endif
+}
 
 #include "targets/ipod4g-common/wiring.inc"

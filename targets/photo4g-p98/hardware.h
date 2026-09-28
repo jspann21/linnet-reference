@@ -11,6 +11,7 @@
 #define LINNET_DISK_MODE_MARKER 0x40017f00u
 
 #define LINNET_AUDIO_IRAM_BYTES 8192
+#define LINNET_HARDWARE_CLICKER 1
 
 /* Nominal 0..100% voltage estimate; not a battery capacity measurement. */
 #define LINNET_BATTERY_CURVE_MV {3450,3660,3700,3730,3770,3820,3870,3920,4040,4100,4170}

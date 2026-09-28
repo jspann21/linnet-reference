@@ -30,6 +30,8 @@ void ln_display_game_best_set(uint32_t index,uint16_t score);
 const char *ln_display_theme_status(void);
 bool ln_display_settings_pending(void);
 bool ln_display_settings_adjust(int32_t direction);
+uint8_t ln_display_click_tone(void);
+bool ln_display_click_adjust(int32_t direction);
 /* User supplied nominal capacity; does not alter charge limits or gauge voltage. */
 uint32_t ln_auto_shutdown_seconds(bool headphones);
 bool ln_auto_shutdown_adjust(bool headphones,int32_t direction);

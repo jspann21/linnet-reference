@@ -320,6 +320,12 @@ static void clock_save_step(void){
 }
 #endif
 static void apply(uint32_t kind,int32_t value){
+#if defined(LINNET_HARDWARE_CLICKER)
+    if(kind==LN_INPUT_HOLD&&value)ln_platform_click_stop();
+    else if(!shell->hold&&((kind==LN_INPUT_WHEEL&&value)||
+            (kind==LN_INPUT_BUTTON&&((uint32_t)value&~shell->buttons))))
+        ln_platform_click(ln_display_click_tone());
+#endif
     if((kind==LN_INPUT_WHEEL&&value&&!shell->hold)||
        (kind==LN_INPUT_BUTTON&&!shell->hold&&(uint32_t)value!=shell->buttons)||
        (kind==LN_INPUT_HOLD&&!value&&shell->hold))backlight_activity();
@@ -411,7 +417,11 @@ static void apply(uint32_t kind,int32_t value){
         if(pressed&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV)){
             if(scene_is("linnet.system.battery"))(void)ln_battery_capacity_adjust((pressed&LN_BUTTON_PREV)?-1:1);
             else if(scene_is("linnet.system.shutdown"))(void)ln_auto_shutdown_adjust(shell->selected==1u,(pressed&LN_BUTTON_PREV)?-1:1);
-            else (void)ln_display_settings_adjust((pressed&LN_BUTTON_PREV)?-1:1);
+            else if(shell->selected==1u){
+#if defined(LINNET_HARDWARE_CLICKER)
+                (void)ln_display_click_adjust((pressed&LN_BUTTON_PREV)?-1:1);
+#endif
+            }else (void)ln_display_settings_adjust((pressed&LN_BUTTON_PREV)?-1:1);
             shell->buttons=(uint32_t)value;ln_ui_refresh(shell);dirty=true;handled=true;
         }else if(pressed&LN_BUTTON_MENU){
             (void)ln_ui_show(shell,"linnet.system.settings");
@@ -906,7 +916,7 @@ void ln_runtime_step(void){
         if(revision!=photo_revision){photo_revision=revision;ln_ui_refresh(shell);dirty=true;photo_save();}
     }
 #endif
-#if (defined(LINNET_STORAGE) && !defined(LINNET_NATIVE_UI)) || defined(LINNET_HARDWARE_CLICKER)
+#if defined(LINNET_STORAGE) && !defined(LINNET_NATIVE_UI)
     uint32_t previous_buttons=input.buttons;
 #endif
     bool previous_touch=input.touched;
@@ -945,10 +955,6 @@ void ln_runtime_step(void){
 #endif
             ln_time_us());
         if(steps)apply(LN_INPUT_WHEEL,steps);
-#if defined(LINNET_HARDWARE_CLICKER)
-        if(input.hold)ln_platform_click_stop();
-        else if(steps||(input.buttons&~previous_buttons))ln_platform_click();
-#endif
     }
     if(!input.hold&&input.buttons==LINNET_BUTTON_PLAY){
         if(!shutdown_tracking){shutdown_tracking=true;shutdown_deadline=ln_time_us()+LINNET_SHUTDOWN_HOLD_US;}
