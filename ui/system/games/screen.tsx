@@ -3,7 +3,7 @@ export default function Scene() {
   return (<Screen>
     <StatusBar w={220} h={20} text="Games" bg="theme.panel" />
     <Menu x={8} y={27} w={204} h={105} focus={true} text="Game choices"
-      items={['Comet Run', 'Pulse Path', 'Solitaire']} targets={['linnet.system.game-play', 'linnet.system.game-play', 'linnet.system.game-play']} />
-    <Text x={8} y={132} w={204} h={40} text="Game description" fg="theme.muted" />
+      items={['Comet Run', 'Pulse Path', 'Solitaire', 'Sudoku']} targets={['linnet.system.game-play', 'linnet.system.game-play', 'linnet.system.game-play', 'linnet.system.game-play']} />
+    <Text x={8} y={132} w={204} h={40} text="Game description" fg="theme.muted" deps={2} />
   </Screen>);
 }

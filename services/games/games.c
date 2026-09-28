@@ -1,6 +1,7 @@
 #include "services/games/games.h"
 #if defined(LINNET_AUDIO)
 #include "hal/api/audio.h"
+#include "services/music/controller.h"
 #include "services/music/player.h"
 #endif
 #if defined(LINNET_STORAGE)
@@ -14,10 +15,14 @@
 #error Games require a supported presentation profile
 #endif
 
-enum { COMET, PULSE, SOLITAIRE, GAME_COUNT };
-enum { PLAY=1u, PAUSED, LOST, WATCH, MISTAKE, WON, ARCADE_READY, SOL_CONFIRM };
-static uint8_t installed=7u,game,games_phase,paused_phase,hearts,focus,sequence[24],entered,level,flash;
-static uint16_t ship=160,energy,score,best[GAME_COUNT];
+enum { COMET, PULSE, SOLITAIRE, SUDOKU, BRICK, MUSIC_QUIZ, VORTEX, MINESWEEPER,
+       FALLING, REVERSI, SNAKE, WORD_SEARCH, GAME_COUNT };
+typedef char ln_game_count_matches[(GAME_COUNT==LN_GAME_COUNT)?1:-1];
+enum { PLAY=1u, PAUSED, LOST, WATCH, MISTAKE, WON, ARCADE_READY, SOL_CONFIRM,
+       SUDOKU_LEVEL, SUDOKU_PICK, SUDOKU_MENU, SUDOKU_CONFIRM };
+static uint16_t installed=LN_GAME_MASK;
+static uint8_t game,games_phase,paused_phase,hearts,focus,sequence[24],entered,level,flash;
+static uint16_t ship=160,energy,score,best[LN_GAME_COUNT];
 static uint32_t random_state=0x9e3779b9u,last_tick,spawn_at,flash_until,invulnerable_until,hud_revision,energy_carry;
 static uint32_t buttons;
 static uint8_t sound_pending;
@@ -29,7 +34,13 @@ static uint32_t burst_until;
 static int16_t burst_x,burst_y;
 static bool burst_shield;
 static struct {int16_t x,y;uint8_t size,live;uint32_t fraction;} rock[12];
-static const char *const names[]={"Comet Run","Pulse Path","Solitaire"};
+static const char *const names[LN_GAME_COUNT]={"Comet Run","Pulse Path","Solitaire","Sudoku","Brick","Music Quiz",
+    "Vortex","Minesweeper","Falling Blocks","Reversi","Snake","Word Search"};
+static const char *const descriptions[LN_GAME_COUNT]={"Thread through the meteor field.","Remember the lights. Find the path.",
+    "Build four suits from Ace to King.","Classic 9 by 9 number puzzle.",
+    "Break six handcrafted walls.","Name songs from your music library.","Orbit the core and clear each wave.",
+    "Clear safe tiles at three difficulties.","Build lines with seven classic pieces.",
+    "Outflank a thoughtful opponent.","Turn, boost, and grow.","Find every hidden word."};
 static uint32_t random_next(void);
 
 /* Draw-one Klondike. Piles use their last element as the top card. A tableau
@@ -147,24 +158,28 @@ static bool sol_move(void){
     if(sol_moves<UINT16_MAX)++sol_moves;sol_source=255u;sol_focus(dest);sol_message="Card placed.";sol_win();return true;
 }
 
+#include "services/games/sudoku.h"
+
 static uint32_t random_next(void){random_state^=random_state<<13;random_state^=random_state>>17;random_state^=random_state<<5;return random_state;}
 static void number(char **out,uint32_t value){char reverse[10];uint32_t n=0;do{reverse[n++]=(char)('0'+value%10u);value/=10u;}while(value);while(n)*(*out)++=reverse[--n];}
 static void append(char **out,const char *text){while(*text)*(*out)++=*text++;}
-uint32_t ln_games_count(void){return (installed&1u?1u:0u)+(installed&2u?1u:0u)+(installed&4u?1u:0u);}
-const char *ln_games_label(uint32_t row){for(uint32_t i=0;i<GAME_COUNT;++i)if(installed&(1u<<i)){if(!row)return names[i];--row;}return 0;}
+#include "services/games/games_extra.h"
+uint32_t ln_games_count(void){uint32_t count=0;for(uint32_t i=0;i<LN_GAME_COUNT;++i)if(installed&(1u<<i))++count;return count;}
+const char *ln_games_label(uint32_t row){for(uint32_t i=0;i<LN_GAME_COUNT;++i)if(installed&(1u<<i)){if(!row)return names[i];--row;}return 0;}
 const char *ln_games_description(uint32_t row){
-    for(uint32_t i=0;i<GAME_COUNT;++i)if(installed&(1u<<i)){
-        if(!row)return i==COMET?"Thread through the meteor field.":
-            i==PULSE?"Remember the lights. Find the path.":"Build four suits from Ace to King.";
+    for(uint32_t i=0;i<LN_GAME_COUNT;++i)if(installed&(1u<<i)){
+        if(!row)return descriptions[i];
         --row;
     }
     return "Choose games in Linnet Media.";
 }
-void ln_games_configure(uint8_t mask){installed=mask&7u;}
-void ln_games_best_set(uint32_t index,uint16_t value){if(index<GAME_COUNT)best[index]=value;}
-bool ln_games_playing(void){return game!=SOLITAIRE&&(games_phase==PLAY||games_phase==WATCH||games_phase==MISTAKE);}
+void ln_games_configure(uint16_t mask){installed=mask&LN_GAME_MASK;}
+void ln_games_best_set(uint32_t index,uint16_t value){if(index<LN_GAME_COUNT)best[index]=value;}
+bool ln_games_playing(void){if(game>=BRICK)return ex_phase==EX_PLAY;return game!=SOLITAIRE&&(games_phase==PLAY||games_phase==WATCH||games_phase==MISTAKE);}
 uint32_t ln_games_hud_revision(void){return hud_revision;}
 uint32_t ln_games_deadline(uint32_t now){
+    if(game>=BRICK)return extra_deadline(now);
+    if(game==SUDOKU&&(games_phase==PLAY||games_phase==SUDOKU_PICK))return now+(1000000u-sud_clock_remainder);
     if(!ln_games_playing())return UINT32_MAX;
     if(!last_tick)return now;
     if(game==COMET)return (int32_t)(last_tick+33333u-now)>0?last_tick+33333u:now;
@@ -179,14 +194,16 @@ static void new_pulse(void){
     flash=0;entered=255u;flash_until=last_tick+700000u;games_phase=WATCH;
 }
 void ln_games_start(uint32_t row){
-    for(uint32_t i=0;i<GAME_COUNT;++i)if(installed&(1u<<i)){if(!row){game=(uint8_t)i;break;}--row;}
+    for(uint32_t i=0;i<LN_GAME_COUNT;++i)if(installed&(1u<<i)){if(!row){game=(uint8_t)i;break;}--row;}
     random_state^=last_tick+0x6d2b79f5u;games_phase=paused_phase=PLAY;score=0;hearts=3u;focus=0u;sound_pending=1u;
     resume_pending=false;
     hit_until=shield_notice_until=burst_until=0;shield_failed=false;previous_best=best[game];
+    if(game>=BRICK){extra_start();last_tick=0;return;}
     if(game==COMET){ship=160u;energy=100u;energy_carry=0;spawn_at=last_tick+600000u;invulnerable_until=last_tick+1200000u;for(uint32_t i=0;i<12u;++i)rock[i].live=0;}
     else if(game==PULSE){level=0u;new_pulse();}
-    else sol_new();
-    if(game!=SOLITAIRE)games_phase=ARCADE_READY;
+    else if(game==SOLITAIRE)sol_new();
+    else{games_phase=SUDOKU_LEVEL;sud_choice=1u;sud_message=0;sud_clock_at=0;}
+    if(game==COMET||game==PULSE)games_phase=ARCADE_READY;
     last_tick=0;++hud_revision;
 }
 static void finish(bool won){games_phase=won?WON:LOST;sound_pending=4u;if(score>best[game]){
@@ -196,7 +213,15 @@ static void finish(bool won){games_phase=won?WON:LOST;sound_pending=4u;if(score>
 #endif
     }}
 int ln_games_input(uint32_t kind,int32_t value){
+    if(game>=BRICK){if(kind==1u)return extra_wheel(value);if(kind!=2u)return 0;uint32_t pressed=(uint32_t)value&~buttons;buttons=(uint32_t)value;return extra_button(pressed);}
     if(kind==1u){if(!value)return 1;
+        if(game==SUDOKU){
+            if(games_phase==SUDOKU_LEVEL){sud_choice=(uint8_t)((sud_choice+value%4+4)%4);sud_message=0;}
+            else if(games_phase==SUDOKU_PICK){sud_picker=(uint8_t)((sud_picker+value%10+10)%10);sud_message=0;}
+            else if(games_phase==SUDOKU_MENU){sud_menu=(uint8_t)((sud_menu+value%6+6)%6);}
+            else if(games_phase==PLAY){int32_t next=(int32_t)sud_cursor+value%81;while(next<0)next+=81;while(next>=81)next-=81;sud_cursor=(uint8_t)next;sud_message=0;}
+            ++hud_revision;return 1;
+        }
         if(game==SOLITAIRE&&games_phase==PAUSED){sol_menu=(uint8_t)((sol_menu+value%3+3)%3);sol_message=0;return 1;}
         if(games_phase==PLAY&&game==SOLITAIRE){
             int32_t next=(int32_t)sol_cursor+value%13;
@@ -208,6 +233,48 @@ int ln_games_input(uint32_t kind,int32_t value){
         else if(games_phase==PLAY&&game==PULSE)focus=(uint8_t)((focus+value%4+4)&3u);return 1;}
     if(kind!=2u)return 0;
     uint32_t pressed=(uint32_t)value&~buttons;buttons=(uint32_t)value;
+    if(game==SUDOKU){
+        if(games_phase==SUDOKU_LEVEL){
+            if(pressed&1u)return 2;
+            if(pressed&4u)sud_choice=(sud_choice+1u)&3u;if(pressed&8u)sud_choice=(sud_choice+3u)&3u;
+            if(pressed&16u)sud_begin(sud_choice);if(pressed)++hud_revision;return 1;
+        }
+        if(games_phase==SUDOKU_PICK){
+            if(pressed&1u){games_phase=PLAY;sud_message=0;}
+            if(pressed&4u){sud_picker=(sud_picker+1u)%10u;sud_message=0;}if(pressed&8u){sud_picker=(sud_picker+9u)%10u;sud_message=0;}
+            if(pressed&2u){sud_pencil=!sud_pencil;sud_message=sud_pencil?"Pencil marks on.":"Pencil marks off.";}
+            if(pressed&16u)sud_place();if(pressed)++hud_revision;return 1;
+        }
+        if(games_phase==SUDOKU_MENU){
+            if(pressed&(1u|2u)){games_phase=PLAY;sud_message=0;sud_clock_at=0;}
+            if(pressed&4u)sud_menu=(sud_menu+1u)%6u;if(pressed&8u)sud_menu=(sud_menu+5u)%6u;
+            if(pressed&16u){
+                if(!sud_menu){games_phase=PLAY;sud_message=0;sud_clock_at=0;}
+                else if(sud_menu==1u){games_phase=PLAY;sud_clock_at=0;sud_hint();}
+                else if(sud_menu==2u){games_phase=PLAY;sud_clock_at=0;sud_message="Everything entered is correct.";sound_pending=2u;}
+                else{sud_confirm=(uint8_t)(sud_menu-2u);games_phase=SUDOKU_CONFIRM;}
+            }
+            if(pressed)++hud_revision;return 1;
+        }
+        if(games_phase==SUDOKU_CONFIRM){
+            if(pressed&(1u|2u)){games_phase=SUDOKU_MENU;sud_confirm=0;}
+            if(pressed&16u){uint8_t action=sud_confirm;sud_confirm=0;
+                if(action==1u)sud_restart();else if(action==2u){games_phase=SUDOKU_LEVEL;sud_choice=sud_level;}
+                else return 2;}
+            if(pressed)++hud_revision;return 1;
+        }
+        if(games_phase==WON){if(pressed&1u)return 2;if(pressed&16u)sud_begin(sud_level);return 1;}
+        if(games_phase==PLAY){
+            if(pressed&1u){games_phase=SUDOKU_MENU;sud_menu=0;sud_message=0;sud_clock_at=0;}
+            else if(pressed&2u){sud_pencil=!sud_pencil;sud_message=sud_pencil?"Pencil marks on.":"Pencil marks off.";}
+            else if(pressed&4u){sud_cursor=(uint8_t)((sud_cursor+1u)%81u);sud_message=0;}
+            else if(pressed&8u){sud_cursor=(uint8_t)((sud_cursor+80u)%81u);sud_message=0;}
+            else if(pressed&16u){if(sud_given[sud_cursor]){sud_message="This clue is fixed.";sound_pending=3u;}
+                else{sud_picker=sud_board[sud_cursor];if(!sud_picker)sud_picker=1u;games_phase=SUDOKU_PICK;sud_message=0;}}
+            if(pressed)++hud_revision;return 1;
+        }
+        return 1;
+    }
     if(game==SOLITAIRE&&games_phase==SOL_CONFIRM){
         if(pressed&(1u|2u)){games_phase=PAUSED;return 1;}
         if(pressed&16u){sol_new();games_phase=PLAY;++hud_revision;}return 1;}
@@ -264,6 +331,8 @@ int ln_games_input(uint32_t kind,int32_t value){
 }
 bool ln_games_tick(uint32_t now){
     if(!games_phase){last_tick=now;return false;}
+    if(game>=BRICK)return extra_tick(now);
+    if(game==SUDOKU)return sud_tick(now);
     if(game==SOLITAIRE)return false;
     uint16_t old_score=score;uint8_t old_hearts=hearts,old_phase=games_phase;
     if(games_phase==PAUSED||games_phase==ARCADE_READY)return false;
@@ -412,7 +481,11 @@ static void sol_card(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,ui
     }
 }
 #include "services/games/presentations/color320/games_solitaire.h"
+#include "services/games/presentations/color320/games_sudoku.h"
+#include "services/games/presentations/games_extra_draw.h"
 void ln_games_draw(const struct ln_ui_canvas_context *c){
+    if(game>=BRICK){extra_draw(c);return;}
+    if(game==SUDOKU){sud_draw_320(c);return;}
     if(game==SOLITAIRE){sol_draw_scene(c);return;}
     arcade_draw(c);
 }
@@ -423,9 +496,15 @@ void ln_games_draw(const struct ln_ui_canvas_context *c){
 static bool games_audio_owned;
 void ln_games_audio_stop(void){if(games_audio_owned){(void)ln_audio_stop();games_audio_owned=false;}sound_pending=0;}
 void ln_games_audio_step(void){
+    /* A busy player owns audio even if it is still priming. A selection in
+     * progress reserves it across the otherwise-idle gap between tracks. */
+    if(ln_player_busy()){games_audio_owned=false;sound_pending=0;return;}
+    if(ln_music_loading()){ln_games_audio_stop();return;}
     struct ln_audio_status state;ln_audio_snapshot(&state);
     if(games_audio_owned&&!state.playing&&!sound_pending){ln_games_audio_stop();return;}
-    if(!sound_pending||ln_player_busy())return;
+    /* Music retains the audio device during games, matching stock iPod
+     * playback. Drop the short cue instead of interrupting the current track. */
+    if(!sound_pending)return;
     if(games_audio_owned&&state.playing)return;
     uint8_t cue=sound_pending;sound_pending=0;
     if(!ln_audio_init(22050u))return;

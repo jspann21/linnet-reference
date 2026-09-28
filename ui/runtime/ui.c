@@ -25,7 +25,7 @@ __attribute__((weak)) bool ln_games_tick(uint32_t now){(void)now;return false;}
 __attribute__((weak)) uint32_t ln_games_deadline(uint32_t now){(void)now;return UINT32_MAX;}
 __attribute__((weak)) uint32_t ln_games_hud_revision(void){return 0;}
 __attribute__((weak)) const char *ln_games_text(const char *key){return key;}
-__attribute__((weak)) void ln_games_configure(uint8_t mask){(void)mask;}
+__attribute__((weak)) void ln_games_configure(uint16_t mask){(void)mask;}
 __attribute__((weak)) void ln_games_best_set(uint32_t index,uint16_t value){(void)index;(void)value;}
 __attribute__((weak)) bool ln_games_playing(void){return false;}
 __attribute__((weak)) void ln_games_audio_step(void){}
@@ -120,7 +120,7 @@ static uint32_t menu_source(const struct ln_ui_node *n,uint32_t row){
             for(uint32_t j=0;j<n->item_count;++j)if(n->targets[j]==action){if(!row)return j;--row;break;}
     }
     for(uint32_t i=0;i<menu_counts[group];++i){const char *id=ln_menu_targets[group][menu_order[group][i]];
-        if(group==LN_MENU_HOME&&menu_order[group][i]==7u&&ln_games_count())id="linnet.system.games";
+        if(group==LN_MENU_HOME&&menu_order[group][i]==7u){if(!ln_games_count())continue;id="linnet.system.games";}
         for(uint32_t j=0;j<n->item_count;++j){uint32_t target=n->targets[j];const char *actual=target==LINNET_UI_ACTION_SYNC?"@sync":target<ln_ui_scene_count?ln_ui_scenes[target].id:"";
             if(same(id,actual)){if(!row)return j;--row;break;}}}
     return UINT32_MAX;

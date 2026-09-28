@@ -542,9 +542,6 @@ static void apply(uint32_t kind,int32_t value){
     if(before!=shell->scene){
         if(before<ln_ui_scene_count&&ln_ui_scenes[before].id&&
            scene_is("linnet.system.game-play")==false){ln_games_audio_stop();}
-#if defined(LINNET_AUDIO)
-        if(scene_is("linnet.system.game-play"))ln_music_stop();
-#endif
 #if defined(LINNET_COVERFLOW)
         if(scene_is("linnet.system.home"))music_from_coverflow=false;
 #endif
