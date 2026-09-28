@@ -1,6 +1,7 @@
 #include "services/games/games.h"
 #if defined(LINNET_AUDIO)
 #include "hal/api/audio.h"
+#include "services/music/controller.h"
 #include "services/music/player.h"
 #endif
 #if defined(LINNET_STORAGE)
@@ -486,9 +487,15 @@ void ln_games_draw(const struct ln_ui_canvas_context *c){
 static bool games_audio_owned;
 void ln_games_audio_stop(void){if(games_audio_owned){(void)ln_audio_stop();games_audio_owned=false;}sound_pending=0;}
 void ln_games_audio_step(void){
+    /* A busy player owns audio even if it is still priming. A selection in
+     * progress reserves it across the otherwise-idle gap between tracks. */
+    if(ln_player_busy()){games_audio_owned=false;sound_pending=0;return;}
+    if(ln_music_loading()){ln_games_audio_stop();return;}
     struct ln_audio_status state;ln_audio_snapshot(&state);
     if(games_audio_owned&&!state.playing&&!sound_pending){ln_games_audio_stop();return;}
-    if(!sound_pending||ln_player_busy())return;
+    /* Music retains the audio device during games, matching stock iPod
+     * playback. Drop the short cue instead of interrupting the current track. */
+    if(!sound_pending)return;
     if(games_audio_owned&&state.playing)return;
     uint8_t cue=sound_pending;sound_pending=0;
     if(!ln_audio_init(22050u))return;
