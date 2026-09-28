@@ -165,4 +165,7 @@ static void photo_solitaire(const struct ln_ui_canvas_context *c){
             arcade_panel(c,28,121,164,21,photo_gold);photo_center(c,126,"Select / New deal",0x0926);photo_footer(c,"All four suits are home.","Menu: return to Games");}
     }
 }
-void ln_games_draw(const struct ln_ui_canvas_context *c){if(game==SOLITAIRE)photo_solitaire(c);else photo_arcade(c);}
+#include "services/games/presentations/photo220/games_sudoku.h"
+void ln_games_draw(const struct ln_ui_canvas_context *c){
+    if(game==SUDOKU)photo_sudoku(c);else if(game==SOLITAIRE)photo_solitaire(c);else photo_arcade(c);
+}

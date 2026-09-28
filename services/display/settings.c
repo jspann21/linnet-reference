@@ -331,8 +331,10 @@ static void games_step(void){
     if(games_phase==2){result=ln_storage_media_read(&games_file,0,games_data,sizeof games_data,generation);if(!result)return;if(result<0){games_loaded=true;return;}games_phase=3;return;}
     result=ln_storage_media_poll_deferred(generation,0,&transferred);if(!result)return;
     if(result>0&&transferred==sizeof games_data&&ln_read_le32(games_data)==0x454d4147u&&
-       games_data[4]==1u&&!(games_data[5]&~7u)&&!games_data[6]&&!games_data[7]&&
-       ln_read_le32(games_data+8)==ln_crc32(games_data,8u))ln_games_configure(games_data[5]);
+       (games_data[4]==1u||games_data[4]==2u)&&
+       !(games_data[5]&~(games_data[4]==1u?7u:15u))&&!games_data[6]&&!games_data[7]&&
+       ln_read_le32(games_data+8)==ln_crc32(games_data,8u))
+        ln_games_configure((uint8_t)(games_data[5]|(games_data[4]==2u?0x80u:0u)));
     games_loaded=true;++revision;
 }
 static void settings_work(bool may_write,bool presented,uint32_t presented_revision,bool flush){

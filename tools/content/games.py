@@ -11,22 +11,27 @@ from tools.studio.targets import target_spec
 
 GAMES = (("Comet Run", "Steer through a rising meteor storm."),
          ("Pulse Path", "Remember and repeat an expanding light pattern."),
-         ("Solitaire", "Play draw-one Klondike and build four foundations."))
+         ("Solitaire", "Play draw-one Klondike and build four foundations."),
+         ("Sudoku", "Solve 9 by 9 puzzles at four difficulty levels."))
 
 
 def encode(selected):
-    if not isinstance(selected, (set, list, tuple)) or any(type(i) is not int or i not in (0, 1, 2) for i in selected):
+    if not isinstance(selected, (set, list, tuple)) or any(type(i) is not int or i not in (0, 1, 2, 3) for i in selected):
         raise ValueError("Select known games only.")
     mask = sum(1 << i for i in set(selected))
-    header = b'GAME' + bytes((1, mask, 0, 0))
+    header = b'GAME' + bytes((2, mask, 0, 0))
     return header + struct.pack('<I', zlib.crc32(header))
 
 
 def decode(data):
-    if (len(data) != 12 or data[:5] != b'GAME\x01' or data[5] & ~7 or data[6:8] != b'\0\0'
+    if (len(data) != 12 or data[:4] != b'GAME' or data[4] not in (1, 2)
+            or data[5] & ~(7 if data[4] == 1 else 15) or data[6:8] != b'\0\0'
             or struct.unpack_from('<I', data, 8)[0] != zlib.crc32(data[:8])):
         raise ValueError("Game selection is damaged. Save a new selection to replace it.")
-    return {i for i in range(3) if data[5] & (1 << i)}
+    selected = {i for i in range(4) if data[5] & (1 << i)}
+    if data[4] == 1 and selected == {0, 1, 2}:
+        selected.add(3)
+    return selected
 
 
 def available(identity):
@@ -47,7 +52,7 @@ def _path(identity):
 def read(identity):
     identity = media.refresh(identity)
     _, path = _path(identity)
-    return decode(path.read_bytes()) if path.exists() else {0, 1, 2}
+    return decode(path.read_bytes()) if path.exists() else {0, 1, 2, 3}
 
 
 def save(identity, selected):
