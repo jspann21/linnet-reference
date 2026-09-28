@@ -10,9 +10,13 @@
 /* USB MSC Bulk-Only Transport, one transparent SCSI direct-access LUN.
  * The filesystem owner must have quiesced before entering this exclusive loop. */
 enum { CBW, SEND, READ_WAIT, RECEIVE, WRITE_WAIT, FLUSH_WAIT, DISCARD, STATUS, STATUS_WAIT, INVALID };
-static uint8_t buffer[LINNET_ATA_MAX_SECTORS*512u] __attribute__((aligned(32)));
-static uint8_t wrapper[31],status_bytes[13];
-static uint32_t state,tag,residue,length,position,lba,blocks,block_bytes,scale,capacity;
+enum { BUFFER_BYTES=LINNET_ATA_MAX_SECTORS*512u };
+static uint8_t dma_buffer[BUFFER_BYTES] __attribute__((aligned(32)));
+static uint8_t dma_status[32] __attribute__((aligned(32)));
+#define buffer ((uint8_t *)ln_platform_uncached_address((uintptr_t)dma_buffer))
+#define status_bytes ((uint8_t *)ln_platform_uncached_address((uintptr_t)dma_status))
+static uint8_t wrapper[31];
+static uint32_t state,tag,residue,length,position,lba,blocks,block_bytes,block_shift,scale,capacity;
 static uint32_t batch_blocks;
 static uint8_t status,sense_key,sense_code;
 static bool direction_in,reading,eject,write_enabled,dirty;
@@ -29,7 +33,7 @@ static void failure(uint8_t key,uint8_t code) {
 }
 static bool disk_request(enum ln_ata_op operation) {
     bool transfer=operation==LN_ATA_READ || operation==LN_ATA_WRITE;
-    if(transfer){batch_blocks=sizeof(buffer)>>(block_bytes==4096?12:9);if(batch_blocks>blocks)batch_blocks=blocks;}
+    if(transfer){batch_blocks=BUFFER_BYTES>>block_shift;if(batch_blocks>blocks)batch_blocks=blocks;}
     return ln_ata_start(operation,operation==LN_ATA_READ || operation==LN_ATA_WRITE?(uint64_t)lba*scale:0,
         transfer?batch_blocks*scale:0,
         operation==LN_ATA_READ || operation==LN_ATA_WRITE?buffer:0,ln_time_us()+15000000u);
@@ -116,7 +120,7 @@ static void command(void) {
         if(c[0]==0x2a && !write_enabled){failure(7,0x27);break;}
         reading=c[0]==0x28;
         if(reading){if(!disk_request(LN_ATA_READ))failure(3,0x11);else state=READ_WAIT;}
-        else {state=RECEIVE;batch_blocks=sizeof(buffer)>>(block_bytes==4096?12:9);if(batch_blocks>blocks)batch_blocks=blocks;length=batch_blocks*block_bytes;}
+        else {state=RECEIVE;batch_blocks=BUFFER_BYTES>>block_shift;if(batch_blocks>blocks)batch_blocks=blocks;length=batch_blocks*block_bytes;}
         break;
     case 0x35: /* SYNCHRONIZE CACHE */
     case 0x1b: /* START STOP UNIT */
@@ -138,7 +142,7 @@ static void step(void) {
         if(state==READ_WAIT){length=batch_blocks*block_bytes;position=0;state=SEND;return;}
         if(state==FLUSH_WAIT){dirty=false;state=STATUS;return;}
         lba+=batch_blocks;blocks-=batch_blocks;position=0;
-        if(blocks){batch_blocks=sizeof(buffer)>>(block_bytes==4096?12:9);if(batch_blocks>blocks)batch_blocks=blocks;length=batch_blocks*block_bytes;state=RECEIVE;}
+        if(blocks){batch_blocks=BUFFER_BYTES>>block_shift;if(batch_blocks>blocks)batch_blocks=blocks;length=batch_blocks*block_bytes;state=RECEIVE;}
         else if(disk_request(LN_ATA_FLUSH))state=FLUSH_WAIT;else failure(4,0x44);
         return;
     }
@@ -147,7 +151,7 @@ static void step(void) {
         if(position==sizeof(wrapper))command();
     } else if(state==SEND) {
         if(position==length) {
-            if(residue && !(length%64u)) {
+            if(residue && !(length&(ln_pp_usb_storage_packet_size()-1u))) {
                 if(!ln_pp_usb_storage_zlp())return;
             }
             state=STATUS;
@@ -161,7 +165,7 @@ static void step(void) {
             if(reading){blocks-=batch_blocks;lba+=batch_blocks;}
             if(reading && blocks) {
                 if(disk_request(LN_ATA_READ))state=READ_WAIT;else failure(3,0x11);
-            } else if(residue && !(length%64u))state=SEND;
+            } else if(residue && !(length&(ln_pp_usb_storage_packet_size()-1u)))state=SEND;
             else state=STATUS;
         }
     } else if(state==RECEIVE) {
@@ -171,12 +175,12 @@ static void step(void) {
             if(disk_request(LN_ATA_WRITE)){dirty=true;state=WRITE_WAIT;}else failure(3,0x0c);
         }
     } else if(state==DISCARD) {
-        uint32_t bytes=length>sizeof(buffer)?sizeof(buffer):length;
+        uint32_t bytes=length>BUFFER_BYTES?BUFFER_BYTES:length;
         length-=(uint32_t)ln_pp_usb_storage_read(buffer,bytes);if(!length)state=STATUS;
     } else if(state==STATUS) {
         if(dirty){if(disk_request(LN_ATA_FLUSH))state=FLUSH_WAIT;else ln_platform_hardware_reset();return;}
         ln_write_le32(status_bytes,0x53425355u);ln_write_le32(status_bytes+4,tag);ln_write_le32(status_bytes+8,residue);status_bytes[12]=status;
-        if(ln_pp_usb_storage_write(status_bytes,sizeof(status_bytes)))state=STATUS_WAIT;
+        if(ln_pp_usb_storage_write(status_bytes,13u))state=STATUS_WAIT;
     } else if(state==STATUS_WAIT) {
         if(!ln_usb_flush(ln_time_us()+2000000u))ln_platform_hardware_reset();
         if(eject && !status){(void)ln_platform_set_disk_mode(false);ln_platform_hardware_reset();}
@@ -228,9 +232,10 @@ static void prepare_serial(const char *serial, uint64_t sectors) {
     storage_serial[16]=0;
 }
 _Noreturn void ln_pp_disk_mode(const char *serial,uint32_t sector_bytes,bool writable) {
-    if(sector_bytes!=512 && sector_bytes!=4096)ln_platform_hardware_reset();
-    /* The USB controller and ATA PIO run without the OS cache or IRQ owner. */
+    if(sector_bytes!=512 && sector_bytes!=2048 && sector_bytes!=4096)ln_platform_hardware_reset();
+    /* Begin with OS cache and IRQ ownership quiesced. */
     (void)ln_platform_set_disk_mode(false);
+    block_shift=sector_bytes==4096?12u:sector_bytes==2048?11u:9u;
     block_bytes=sector_bytes;scale=sector_bytes>>9;write_enabled=writable;state=CBW;position=0;
     activity=ln_time_us();dirty=false;
     ln_core_watchdog_arm();
@@ -241,10 +246,15 @@ _Noreturn void ln_pp_disk_mode(const char *serial,uint32_t sector_bytes,bool wri
     ln_ata_init(ln_time_us());
     struct ln_ata_state drive;
     do {ln_ata_step(ln_time_us());ln_ata_state_snapshot(&drive);ln_core_watchdog_feed();}while(drive.initializing);
-    uint64_t logical_sectors=drive.sectors>>(sector_bytes==4096?3:0);
+    uint64_t logical_sectors=drive.sectors>>(block_shift-9u);
     if(!drive.initialized || drive.failed || !drive.can_flush || logical_sectors>UINT32_MAX)
         ln_platform_hardware_reset();
     capacity=(uint32_t)logical_sectors;
+#if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
+    /* USB owns uncached aliases of both DMA source buffers. The CPU may cache
+     * its code and private state without hiding ATA data from the controller. */
+    if(!ln_core_cache_enable())ln_platform_hardware_reset();
+#endif
     prepare_serial(serial,drive.sectors);
     device_serial=storage_serial;
     if(!ln_pp_usb_storage_init(storage_serial))ln_platform_hardware_reset();

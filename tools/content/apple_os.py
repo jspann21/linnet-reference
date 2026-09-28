@@ -52,7 +52,7 @@ def _qualified_specimens():
                     len(row['disk_serial']) != 16 or len(row['volume_serial']) != 8 or
                     any(char not in '0123456789ABCDEF' for char in
                         row['disk_serial'] + row['volume_serial']) or
-                    type(row['sector_bytes']) is not int or row['sector_bytes'] not in (512, 4096)):
+                    type(row['sector_bytes']) is not int or row['sector_bytes'] not in (512, 2048, 4096)):
                 return ()
             identity = (row['target_id'], row['disk_serial'], row['volume_serial'],
                         row['sector_bytes'])

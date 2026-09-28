@@ -2,12 +2,14 @@
 #include "hal/api/platform.h"
 #include "hal/api/core.h"
 #include "hal/api/audio.h"
+#include "hal/api/power.h"
 #include "hal/pp502x/display_internal.h"
 #include "targets/video5g-m25/lcd.h"
 #include "boot/include/linnet_boot.h"
 #if defined(LINNET_IMAGE_OS)
 #include "targets/video5g-m25/coprocessor.h"
 #include "services/music/player.h"
+#include "services/storage/block.h"
 #include "services/video/video.h"
 #include "services/photos/photos.h"
 #include "services/music/coverflow.h"
@@ -154,6 +156,7 @@ bool ln_display_reset(void){
 bool ln_display_diagnostic(uint32_t pattern){
 #if defined(LINNET_IMAGE_OS)
 #if !defined(LINNET_PROFILE_RELEASE)
+    if(pattern==0x4d250028u){ln_platform_click();return true;}
     if(pattern>=0x4d250015u&&pattern<=0x4d250016u)return ln_m25_coprocessor_fault(pattern-0x4d250014u);
 #endif
     if(pattern>=0x4d250010u&&pattern<=0x4d250014u)return ln_m25_coprocessor_control(pattern-0x4d25000fu);
@@ -205,7 +208,22 @@ int ln_recovery_presentation_stop(void){return ln_display_quiesce();}
 #endif
 
 uint32_t ln_display_target_diagnostics(uint32_t selector,uint32_t out[32]){
+    if(!out)return 0;
 #if defined(LINNET_IMAGE_OS)
+    if(selector==0x4d250028u){out[0]=selector;ln_platform_click_diagnostics(out+1);return 5u;}
+    if(selector==0x4d250029u){
+        struct ln_power_state p;ln_power_snapshot(&p);
+        out[0]=selector;out[1]=p.samples;out[2]=p.failures;out[3]=p.bus_resets;
+        out[4]=p.battery_mv;out[5]=p.battery_raw;out[6]=p.charge_limit_ma;out[7]=p.flags;
+        out[8]=p.battery_percent;out[9]=p.sleeping;out[10]=p.backlight_on;out[11]=p.brightness;
+        return 12u;
+    }
+    if(selector==0x4d250027u){
+        extern void ln_music_library_memory_diagnostics(uint32_t output[4]);
+        uint32_t bytes;void *extra=ln_platform_extended_memory(&bytes);
+        out[0]=selector;out[1]=32u*1024u*1024u+bytes;out[2]=(uint32_t)(uintptr_t)extra;out[3]=bytes;
+        ln_music_library_memory_diagnostics(out+4);ln_block_extended_diagnostics(out+8);return 12u;
+    }
     if(selector==0x4d250002u)return ln_m25_coprocessor_snapshot(out);
     if(selector>=0x4d250010u&&selector<0x4d250018u)return ln_m25_coprocessor_channel(selector-0x4d250010u,out);
     if(selector>=0x4d250030u&&selector<0x4d250038u)return ln_m25_coprocessor_channel(16u+selector-0x4d250030u,out);

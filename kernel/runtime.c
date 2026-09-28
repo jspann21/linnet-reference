@@ -745,6 +745,9 @@ void ln_runtime_step(void){
     }
 #endif
     uint32_t now=ln_time_us();uint32_t wakes=ln_core_take_wakes();
+#if defined(LINNET_HARDWARE_CLICKER)
+    ln_platform_click_poll(now);
+#endif
 #if defined(LINNET_NATIVE_UI)
     if(scene_is("linnet.system.game-play")){
         static uint32_t drawn_game_hud;
@@ -903,7 +906,7 @@ void ln_runtime_step(void){
         if(revision!=photo_revision){photo_revision=revision;ln_ui_refresh(shell);dirty=true;photo_save();}
     }
 #endif
-#if defined(LINNET_STORAGE) && !defined(LINNET_NATIVE_UI)
+#if (defined(LINNET_STORAGE) && !defined(LINNET_NATIVE_UI)) || defined(LINNET_HARDWARE_CLICKER)
     uint32_t previous_buttons=input.buttons;
 #endif
     bool previous_touch=input.touched;
@@ -942,6 +945,10 @@ void ln_runtime_step(void){
 #endif
             ln_time_us());
         if(steps)apply(LN_INPUT_WHEEL,steps);
+#if defined(LINNET_HARDWARE_CLICKER)
+        if(input.hold)ln_platform_click_stop();
+        else if(steps||(input.buttons&~previous_buttons))ln_platform_click();
+#endif
     }
     if(!input.hold&&input.buttons==LINNET_BUTTON_PLAY){
         if(!shutdown_tracking){shutdown_tracking=true;shutdown_deadline=ln_time_us()+LINNET_SHUTDOWN_HOLD_US;}
@@ -1123,6 +1130,10 @@ void ln_runtime_idle(void){
     /* CPU fallback must service its bounded worker; a live COP owns the LCD. */
     if(ln_display_busy()&&!display.cop_active&&!display_wait)return;
     uint32_t next=now+200000u;
+#if defined(LINNET_HARDWARE_CLICKER)
+    uint32_t click_due;
+    if(ln_platform_click_deadline(&click_due)&&(int32_t)(click_due-next)<0)next=click_due;
+#endif
 #if defined(LINNET_NATIVE_UI)
     if(scene_is("linnet.system.game-play")&&ln_games_playing()){
         uint32_t game_due=ln_games_deadline(now);

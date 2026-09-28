@@ -12,6 +12,9 @@ struct ln_block_info {
     uint32_t idle_failures,power_transition;
 };
 void ln_block_init(uint32_t now);
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+void ln_block_extended_diagnostics(uint32_t output[4]);
+#endif
 /* Absolute deadlines must be future and within30 seconds. Zero sectors and
  * null buffer required for non-data operations. Caller retains buffer until
  * completion is taken, even after cancel. Writes are snapshotted at submit.
@@ -29,7 +32,8 @@ bool ln_block_submit_read(uint64_t lba,uint32_t sectors,void *buffer,
     uint32_t generation,uint32_t deadline_us,uint32_t read_ahead,uint32_t *request_id);
 /* Direct reads transfer up to 192 contiguous sectors into the caller buffer.
  * Resident clean windows may satisfy them; successful reads up to8 sectors
- * populate a window. Larger misses bypass the cache. Never speculative. */
+ * populate a window. Qualified extended RAM also retains larger reads in its
+ * independent clean cache. Never speculative. */
 bool ln_block_submit_direct_read(uint64_t lba,uint32_t sectors,void *buffer,
     uint32_t generation,uint32_t deadline_us,uint32_t *request_id);
 void ln_block_step(uint32_t now);

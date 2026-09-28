@@ -22,6 +22,12 @@ static uint16_t identify[256] __attribute__((aligned(32)));
 static uint32_t deadline,not_before,done,count;
 static uint8_t *buffer;
 static enum ln_ata_op operation;
+static uint64_t request_lba;
+static uint32_t physical_sectors=1,transfer_done,transfer_count,edge_offset,edge_count;
+static uint8_t *transfer_buffer;
+static enum ln_ata_op transfer_operation;
+static bool transfer_edge;
+static uint8_t edge_buffer[4096] __attribute__((aligned(32)));
 static uint64_t previous_capacity;
 static uint8_t flush_command;
 static uint8_t pio_mode;
@@ -177,6 +183,9 @@ static bool identify_valid(void) {
     info.quirks=(lba_probe_required?1u:0u)|(compact_flash?4u:0u);
     info.logical_sector_bytes=512u;info.physical_sector_bytes=512u;
     if((identify[106]&0xe000u)==0x6000u)info.physical_sector_bytes=512u<<(identify[106]&15u);
+    if(info.physical_sector_bytes>sizeof(edge_buffer)||
+       ((identify[209]&0xc000u)==0x4000u&&(identify[209]&0x3fffu)))return false;
+    physical_sectors=info.physical_sector_bytes>>9;
     ATA_RECORD(21, 3);
     if((identify[106]&0xd000u)==0x5000u&&
         (identify[117]!=256u||identify[118]))return false;
@@ -193,7 +202,7 @@ static bool identify_valid(void) {
         ATA_RECORD(21, 6);if(!extended)return false;
         sectors=extended;
     }else {ATA_RECORD(21, 7);if(sectors>0x10000000u)return false;}
-    ATA_RECORD(21, 8);if(!sectors)return false;
+    ATA_RECORD(21, 8);if(!sectors||(sectors&(physical_sectors-1u)))return false;
     ATA_RECORD(21, 9);if(previous_capacity&&sectors!=previous_capacity)return false;
     ata_string(info.model,27u,40u);ata_string(info.serial,10u,20u);ata_string(info.firmware,23u,8u);
     ATA_RECORD(21, 10);
@@ -277,6 +286,35 @@ bool ln_ata_power_on(uint32_t now) {
     if(info.powered||info.busy||info.initializing||result_ready||!info.sectors)return false;
     hdd_wake(now);++info.spinups;ln_ata_recover(now);return true;
 }
+static void transfer_begin(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *bytes){
+    transfer_operation=op;transfer_count=sectors;transfer_done=0;transfer_buffer=bytes;
+    bool extended=lba+sectors>0x10000000u||sectors>256u;
+    SELECT=0xe0u;settle();
+    if(extended){
+        COUNT=(uint8_t)(sectors>>8);LOW=(uint8_t)(lba>>24);MID=(uint8_t)(lba>>32);HIGH=(uint8_t)(lba>>40);
+    }else SELECT=(uint8_t)(0xe0u|((lba>>24)&15u));
+    COUNT=(uint8_t)sectors;LOW=(uint8_t)lba;MID=(uint8_t)(lba>>8);HIGH=(uint8_t)(lba>>16);
+#if LINNET_ATA_TRACK_FLUSH
+    if(op==LN_ATA_WRITE)write_dirty=true;
+#endif
+    command(op==LN_ATA_READ?(extended?0x24u:0x20u):(extended?0x34u:0x30u));phase=TRANSFER;
+}
+static void transfer_next(void){
+    uint64_t lba=request_lba+done;
+    uint32_t remaining=count-done;
+    edge_offset=(uint32_t)lba&(physical_sectors-1u);
+    transfer_edge=edge_offset||remaining<physical_sectors;
+    if(transfer_edge){
+        edge_count=physical_sectors-edge_offset;if(edge_count>remaining)edge_count=remaining;
+        /* Read the complete physical sector before returning a partial read
+         * or changing just the requested bytes of a partial write. */
+        transfer_begin(LN_ATA_READ,lba-edge_offset,physical_sectors,edge_buffer);
+    }else{
+        uint32_t sectors=remaining&~(physical_sectors-1u);
+        if(!info.lba48&&sectors>256u)sectors=256u;
+        transfer_begin(operation,lba,sectors,buffer+done*512u);
+    }
+}
 bool ln_ata_start(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *bytes,uint32_t limit) {
     if(!info.initialized||info.busy||result_ready||phase!=IDLE||op<LN_ATA_READ||op>LN_ATA_WAKE)return false;
     uint32_t now=ln_time_us();if((int32_t)(limit-now)<=0||(uint32_t)(limit-now)>30000000u)return false;
@@ -288,29 +326,20 @@ bool ln_ata_start(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *bytes
     if(op==LN_ATA_WRITE&&!info.can_flush)return false;
     if(op==LN_ATA_WAKE||data)info.power_safe=0;
     if(info.sleeping&&(op==LN_ATA_WAKE||data)){hdd_wake(now);++info.spinups;}
-    operation=op;buffer=bytes;count=sectors;done=0;deadline=limit;info.busy=1;
+    operation=op;buffer=bytes;count=sectors;done=0;request_lba=lba;deadline=limit;info.busy=1;
     CONTROL=2u;SELECT=0xe0u;settle();
     if(!data){
         if(op==LN_ATA_FLUSH&&!needs_flush()){finish();return true;}
         if(op==LN_ATA_STANDBY&&!info.standby_supported&&!info.can_flush){finish();return true;}
         if(op==LN_ATA_STANDBY&&needs_flush()){command(flush_command);phase=STANDBY_FLUSH;return true;}
-        if(op==LN_ATA_WAKE){COUNT=1u;LOW=MID=HIGH=0;command(0x40u);}
+        if(op==LN_ATA_WAKE){COUNT=(uint8_t)physical_sectors;LOW=MID=HIGH=0;command(0x40u);}
         else command(op==LN_ATA_FLUSH?flush_command:0xe0u);
         phase=FINISH;return true;
     }
-    bool extended=lba+sectors>0x10000000u;
-    if(extended){
-        if(!info.lba48){info.busy=0;return false;}
-        COUNT=0;LOW=(uint8_t)(lba>>24);MID=(uint8_t)(lba>>32);HIGH=(uint8_t)(lba>>40);
-    }else SELECT=(uint8_t)(0xe0u|((lba>>24)&15u));
-    COUNT=(uint8_t)sectors;LOW=(uint8_t)lba;MID=(uint8_t)(lba>>8);HIGH=(uint8_t)(lba>>16);
 #if !defined(LINNET_PROFILE_RELEASE)
     if(op==LN_ATA_READ){perf.started=now;perf.active=true;perf_add(&perf.reads,1u);}
 #endif
-#if LINNET_ATA_TRACK_FLUSH
-    if(op==LN_ATA_WRITE)write_dirty=true;
-#endif
-    command(op==LN_ATA_READ?(extended?0x24u:0x20u):(extended?0x34u:0x30u));phase=TRANSFER;return true;
+    transfer_next();return true;
 }
 void ln_ata_step(uint32_t now) {
     hdd_idle_expire(now);
@@ -374,8 +403,8 @@ void ln_ata_step(uint32_t now) {
         uint32_t service_started=ln_time_us(),serviced=0;
         if(!(status&8u))return;
         for(;;){
-        uint8_t *sector=buffer+done*512u;
-        if(operation==LN_ATA_READ){
+        uint8_t *sector=transfer_buffer+transfer_done*512u;
+        if(transfer_operation==LN_ATA_READ){
 #if !defined(LINNET_PROFILE_RELEASE)
             uint32_t started=ln_time_us();
 #endif
@@ -386,8 +415,8 @@ void ln_ata_step(uint32_t now) {
 #endif
         }
         else write_sector(sector);
-        ++done;if(operation==LN_ATA_READ)++info.sectors_read;else ++info.sectors_written;
-        settle();if(done==count){phase=FINISH;return;}
+        ++transfer_done;if(transfer_operation==LN_ATA_READ)++info.sectors_read;else ++info.sectors_written;
+        settle();if(transfer_done==transfer_count){phase=FINISH;return;}
         if(++serviced==LINNET_ATA_MAX_SECTORS||ln_time_us()-service_started>=500u)return;
         /* A multi-sector command may already be presenting its next sector.
          * Drain only an immediately ready clean DRQ; otherwise yield and let
@@ -404,6 +433,20 @@ void ln_ata_step(uint32_t now) {
         write_dirty=false;
 #endif
         if(!info.standby_supported){finish();return;}command(0xe0u);phase=FINISH;return;
+    }
+    if(operation==LN_ATA_READ||operation==LN_ATA_WRITE){
+        if(transfer_edge){
+            uint8_t *edge=edge_buffer+edge_offset*512u,*caller=buffer+done*512u;
+            if(transfer_operation==LN_ATA_READ){
+                if(operation==LN_ATA_WRITE){
+                    for(uint32_t i=0;i<edge_count*512u;++i)edge[i]=caller[i];
+                    transfer_begin(LN_ATA_WRITE,request_lba+done-edge_offset,physical_sectors,edge_buffer);return;
+                }
+                for(uint32_t i=0;i<edge_count*512u;++i)caller[i]=edge[i];
+            }
+            done+=edge_count;
+        }else done+=transfer_count;
+        if(done<count){transfer_next();return;}
     }
     finish();
 }

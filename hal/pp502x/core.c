@@ -16,6 +16,40 @@ static volatile uint32_t ln_wakes;
 static uint32_t ln_armed_deadline;
 static uint32_t ln_clock_failure;
 static volatile uint32_t ln_memory_probe[32] __attribute__((aligned(16)));
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+static uint32_t extended_bytes;
+void *ln_platform_extended_memory(uint32_t *bytes){
+    if(bytes)*bytes=extended_bytes;
+    return extended_bytes?(void *)(uintptr_t)0x12000000u:0;
+}
+static void probe_extended_memory(uintptr_t address){
+    /* PP5022's 32 MiB boards mirror the second bank. Probe an owned low-bank
+     * word and its native upper-bank alias while cache and interrupts are off.
+     * Restore both values even when they refer to the same physical word. */
+    uint32_t info=LINNET_MMIO(0x4001ff1cu);
+    if(LINNET_MMIO(0x4001ff18u)!=0x53797349u||(info&3u)||
+       info<0x40000000u||info>0x4001fe78u)return;
+    uint32_t revision=LINNET_MMIO(info+0x84u);
+    if(revision!=0x000b0010u&&revision!=0x000b0011u)return;
+    volatile uint32_t *low=(volatile uint32_t *)(address|0x10000000u);
+    volatile uint32_t *high=(volatile uint32_t *)(address|0x12000000u);
+    uint32_t saved_low=*low,saved_high=*high;
+    *low=0x55aa33ccu;*high=0xaa55cc33u;
+    bool distinct=*low==0x55aa33ccu&&*high==0xaa55cc33u;
+    *high=saved_high;*low=saved_low;
+    if(!distinct)return;
+    /* Check independence across the complete second bank, preserving bytes. */
+    uint32_t saved[32];
+    for(uint32_t i=0;i<32u;i++)saved[i]=LINNET_MMIO(0x12000000u+(i<<20));
+    bool valid=true;
+    for(uint32_t pass=0;pass<2u;pass++){
+        for(uint32_t i=0;i<32u;i++)LINNET_MMIO(0x12000000u+(i<<20))=(pass?0xaaaaaaaau:0x55555555u)^(1u<<i);
+        for(uint32_t i=0;i<32u;i++)if(LINNET_MMIO(0x12000000u+(i<<20))!=((pass?0xaaaaaaaau:0x55555555u)^(1u<<i)))valid=false;
+    }
+    for(uint32_t i=0;i<32u;i++)LINNET_MMIO(0x12000000u+(i<<20))=saved[i];
+    if(valid)extended_bytes=32u*1024u*1024u;
+}
+#endif
 
 uint32_t ln_core_irq_save(void)
 {
@@ -68,6 +102,9 @@ bool ln_core_init(void)
             if (native[i] != ((pass ? 0xaaaaaaaau : 0x55555555u) ^ (1u << i))) valid = false;
     }
     for (uint32_t i = 0; i < 32u; ++i) ln_memory_probe[i] = 0;
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+    if(valid)probe_extended_memory(address);
+#endif
     ln_status.sdram_valid = valid;
     ln_status.timer_valid = ln_core_delay_us(10u);
     LINNET_MMIO(0x60005000u) = 0;
@@ -105,6 +142,11 @@ void ln_core_irq_dispatch(void)
         int32_t late = (int32_t)(ln_time_us() - ln_armed_deadline);
         if (late > 0 && (uint32_t)late > ln_status.deadline_late_us)
             ln_status.deadline_late_us = (uint32_t)late;
+#if defined(LINNET_HARDWARE_CLICKER) && defined(LINNET_IMAGE_OS)
+        ln_platform_click_poll(ln_time_us());
+        uint32_t click_due;
+        if(ln_platform_click_deadline(&click_due))ln_core_wake_at(click_due);
+#endif
     }
     if (pending & (1u << 20)) {
         LINNET_MMIO(0x60004028u) = 1u << 20;
@@ -147,6 +189,22 @@ uint32_t ln_core_take_wakes(void)
     ln_core_irq_restore(flags);
     return wakes;
 }
+void ln_core_wake_at(uint32_t deadline_us)
+{
+    uint32_t flags=ln_core_irq_save(),now=ln_time_us();
+    /* An earlier armed (or pending) timer retains ownership of its wake. */
+    if((LINNET_MMIO(0x60005000u)&0x80000000u)&&
+       (int32_t)(ln_armed_deadline-deadline_us)<=0){ln_core_irq_restore(flags);return;}
+    int32_t delta=(int32_t)(deadline_us-now);
+    if(delta<1)delta=1;
+    if(delta>200000)delta=200000;
+    ln_armed_deadline=now+(uint32_t)delta;
+    LINNET_MMIO(0x60005000u)=0;
+    (void)LINNET_MMIO(0x60005004u);
+    LINNET_MMIO(0x60005000u)=0xc0000000u|((uint32_t)delta-1u);
+    LINNET_MMIO(0x60004024u)=1u;
+    ln_core_irq_restore(flags);
+}
 void ln_core_idle_until(uint32_t deadline_us)
 {
     uint32_t flags = ln_core_irq_save(), now = ln_time_us();
@@ -156,11 +214,7 @@ void ln_core_idle_until(uint32_t deadline_us)
     }
     /* Keep watchdog progress available; this is a maximum sleep, not a poll. */
     if (delta > 200000) delta = 200000;
-    ln_armed_deadline = now + (uint32_t)delta;
-    LINNET_MMIO(0x60005000u) = 0;
-    (void)LINNET_MMIO(0x60005004u);
-    LINNET_MMIO(0x60005000u) = 0xc0000000u | ((uint32_t)delta - 1u);
-    LINNET_MMIO(0x60004024u) = 1u;
+    ln_core_wake_at(now+(uint32_t)delta);
     uint32_t control = LINNET_MMIO(0x60007000u);
     LINNET_MMIO(0x60007000u) = 0x80000000u;
     __asm__ volatile("nop\n\tnop\n\tnop" ::: "memory");

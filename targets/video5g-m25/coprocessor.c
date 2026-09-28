@@ -547,7 +547,7 @@ bool ln_m25_coprocessor_begin(uint32_t operation){
     /* Retail display selection uses the SysCfg model/revision at +0x84;
      * the older boardHwRev field at +0x48 is zero on production M25. */
     vc.board_revision=REG(info+0x84u);
-    if(vc.board_revision!=0x000b0010u){vc.error=51u;phase(FAILED,0);return false;}
+    if(vc.board_revision!=0x000b0010u&&vc.board_revision!=0x000b0011u){vc.error=51u;phase(FAILED,0);return false;}
     if(!rom_image()){vc.error=18u;phase(FAILED,0);return false;}
     vc.error=vc.restore_error=vc.restore=vc.at=vc.hash_at=vc.requested=0;vc.io=false;
     vc.normal=vc.paused=vc.want_paused=vc.seek_pending=vc.clock_valid=vc.syncing_seek=false;vc.seek_ms=vc.position_base=0;++vc.revision;
@@ -584,7 +584,13 @@ void ln_m25_coprocessor_stop(void){if(ln_m25_coprocessor_active()&&!vc.restore)r
 void ln_m25_coprocessor_pause(bool paused){vc.want_paused=paused;++vc.revision;}
 bool ln_m25_coprocessor_paused(void){return vc.want_paused;}
 uint32_t ln_m25_coprocessor_position(void){
-    if(vc.audio_ready&&vc.audio_started){struct ln_audio_status a;ln_audio_snapshot(&a);return vc.position_base+duration_ms(a.consumed,a.rate);}
+    if(vc.audio_ready&&vc.audio_started){
+        struct ln_audio_status a;ln_audio_snapshot(&a);
+        /* Audio can end before the last video frame. Once PCM is drained,
+         * use the coprocessor clock so the shorter soundtrack cannot stall EOF. */
+        if(!vc.audio_eof||a.queued||a.playing)
+            return vc.position_base+duration_ms(a.consumed,a.rate);
+    }
     return vc.clock_valid?vc.clock_ms+(!vc.paused?(ln_time_us()-vc.clock_us)/1000u:0u):vc.position_base;
 }
 bool ln_m25_coprocessor_seek(uint32_t ms){
@@ -785,8 +791,8 @@ bool ln_m25_coprocessor_step(void){
         if(!ln_m25_bcm_write(vc.at,(const uint32_t *)(source+vc.at),n/4u)){recover(8);break;}
         vc.at+=n;if(vc.at==bytes)phase(VALIDATE_BEGIN,1000000u);break;}
     case VALIDATE_BEGIN:
-        /* Retail startup selects LCD model before validating VMCS. This probe
-         * is qualified against the M25 board revision 0x000b0010 (model 2). */
+        /* RetailOS 1.3 at 0x265518 selects model 2 for family 0xb, revision
+         * >=0x10. Both admitted boards (0xb0010 and 0xb0011) use this path. */
         if(!vc.restore&&!put(0x1f4u,2u)){recover(9);break;}
         if(!put(0x1f8u,0)||!put(0x10000c00u,0xc0000000u)){recover(9);break;}
         phase(VALIDATE_WAIT,2000000u);break;

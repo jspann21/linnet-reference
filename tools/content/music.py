@@ -329,11 +329,14 @@ def _decoded_frames(path: Path, executable: str, *, recover: bool = False,
                     codec: int | None = None, cancelled=lambda: False) -> int:
     """Count decoded samples, never estimate duration from bitrate/container time.
 
-    No PCM is emitted. Bound decoding to 30 seconds and probe output to 1 MiB;
+    No PCM is emitted. Decoding has a deadline; probe output is capped at 1 MiB.
     Decode errors reject staged imports. Existing tracks may recover damaged
     packets, matching playback; count only samples actually decoded. Missing
     sample counts, fatal failures and exceeded budgets always reject the import.
     """
+    # Existing device files can arrive over slow USB while other metadata reads
+    # share the disk. Keep a bounded I/O allowance as well as the decode budget.
+    budget = max(30, min(600, 30 + path.stat().st_size // 65536)) if recover else 30
     command = [executable, "-v", "fatal" if recover else "error"]
     # Tags can fool FFprobe's format sniffing (including MP3 misdetected as
     # WAV). Use the MP3 identity already established by the metadata reader.
@@ -342,15 +345,18 @@ def _decoded_frames(path: Path, executable: str, *, recover: bool = False,
     command += ["-select_streams", "a:0",
                "-show_entries", "frame=nb_samples:frame_side_data=",
                "-of", "csv=p=0", str(path)]
+    # Recovery counts decoded audio only; unrelated embedded-art diagnostics
+    # must not become sample-count rows. Fatal exits are still rejected below.
     with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT, creationflags=NO_WINDOW) as process:
+                          stderr=subprocess.DEVNULL if recover else subprocess.STDOUT,
+                          creationflags=NO_WINDOW) as process:
         stop_watch, was_cancelled, watcher = _watch_cancellation(process, cancelled)
         timed_out = threading.Event()
         def expire():
             if process.poll() is None:
                 timed_out.set()
                 process.kill()
-        timer = threading.Timer(30, expire)
+        timer = threading.Timer(budget, expire)
         timer.daemon = True
         timer.start()
         output = bytearray()
@@ -362,7 +368,9 @@ def _decoded_frames(path: Path, executable: str, *, recover: bool = False,
             returncode = process.wait()
             _check_cancel(cancelled, was_cancelled)
             if timed_out.is_set():
-                raise ValueError(f"{path}: decoded sample-count probe exceeded 30 seconds")
+                # A deadline says nothing about file validity. Stop preparation
+                # without permanently adding this track to the source skip list.
+                raise TimeoutError(f"{path}: decoded sample-count probe exceeded {budget} seconds")
             if returncode:
                 raise ValueError(f"{path}: decoded sample-count probe failed (exit {returncode})")
         finally:
@@ -429,11 +437,11 @@ def _probe(path: Path, executable: str, *, exact_frames: bool = True,
         try:
             try:
                 stdout, stderr = process.communicate(timeout=30)
-            except subprocess.TimeoutExpired:
+            except subprocess.TimeoutExpired as error:
                 process.kill()
                 process.communicate()
                 _check_cancel(cancelled, was_cancelled)
-                raise
+                raise TimeoutError(f"{path}: metadata probe exceeded 30 seconds") from error
             _check_cancel(cancelled, was_cancelled)
             if process.returncode:
                 raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
@@ -1116,6 +1124,9 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
                             metadata = future.result(timeout=0.1)
                             break
                         except FutureTimeout:
+                            if future.done():
+                                metadata = future.result()
+                                break
                             continue
             except (ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
                 from . import SourceError

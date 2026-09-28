@@ -421,6 +421,9 @@ void ln_power_backlight(bool on, uint8_t brightness)
 }
 bool ln_power_sleep(void)
 {
+#if defined(LINNET_HARDWARE_CLICKER) && defined(LINNET_IMAGE_OS)
+    ln_platform_click_stop();
+#endif
     ln_power_backlight(false, ln_power.brightness);
     ln_power.sleeping = 1;
     return true; /* Retained idle; executive sleeps the CPU until wake events. */

@@ -151,6 +151,9 @@ uint32_t ln_platform_boot_clock_ready(void)
 
 void ln_platform_quiesce(void)
 {
+#if defined(LINNET_HARDWARE_CLICKER) && defined(LINNET_IMAGE_OS)
+    ln_platform_click_stop();
+#endif
     LINNET_REG(0x60004028u) = UINT32_MAX;
     LINNET_REG(0x60004128u) = UINT32_MAX;
     LINNET_REG(0x60004038u) = UINT32_MAX;

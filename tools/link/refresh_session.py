@@ -410,8 +410,9 @@ def serve(snapshot):
         original, artifacts['mbr.bin'], artifacts['boot.los'], device)
     if (candidate, old_directory, new_directory) != (artifacts['candidate.bin'], artifacts['directory-original.bin'], artifacts['directory-candidate.bin']):
         raise ValueError('snapshot candidate derivation mismatch')
-    if (len(new_directory) != 512 or manifest['directory_disk_offset'] !=
-            manifest['partition_lba'] * 512 + manifest['directory_partition_offset']):
+    sector = manifest.get('sector_bytes', 512)
+    if (sector not in (512, 2048, 4096) or len(new_directory) != sector or manifest['directory_disk_offset'] !=
+            manifest['partition_lba'] * sector + manifest['directory_partition_offset']):
         raise ValueError('snapshot directory bounds mismatch')
     pipe = r'\\.\pipe\LinnetRefresh-' + config['session_id']
     attributes, descriptor = win.security(config['owner_sid'])
@@ -484,13 +485,13 @@ def serve(snapshot):
                                 response['before'] = native.guard_device(device, manifest, artifacts, original)
                                 if command=='install':
                                     if response['before']['staging']!='candidate':
-                                        native.write_verified(device,manifest['candidate_disk_offset'],artifacts['candidate.bin'],response,receipt_path,'install-reviewed-payload')
+                                        native.write_verified(device,manifest['candidate_disk_offset'],artifacts['candidate.bin'],response,receipt_path,'install-reviewed-payload',sector)
                                     response['phase'] = 'verify-staged-payload'
                                     native.guard_device(device,manifest,artifacts,original)
                                 elif response['before']['directory'] != 'candidate':
                                     raise RuntimeError('refresh requires exact installed candidate')
                                 if command != 'verify':
-                                    native.write_verified(device, manifest['directory_disk_offset'], new_directory, response, receipt_path, 'refresh-identical-directory')
+                                    native.write_verified(device, manifest['directory_disk_offset'], new_directory, response, receipt_path, 'refresh-identical-directory',sector)
                                     response['phase'] = 'verify-after-write'
                                     response['after'] = native.guard_device(device, manifest, artifacts, original)
                                 else:

@@ -25,8 +25,8 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def align(size):
-    return (size + SECTOR - 1) // SECTOR * SECTOR
+def align(size, sector=SECTOR):
+    return (size + sector - 1) // sector * sector
 
 
 def save_json(path, value):
@@ -43,20 +43,21 @@ def _device(data):
     storage = data.get("storage", {})
     required = ("disk_number", "disk_serial", "disk_bytes", "sector_bytes",
                 "partition_offset", "partition_bytes", "model", "bus_type")
-    if any(key not in storage for key in required) or storage["sector_bytes"] != SECTOR:
+    if any(key not in storage for key in required) or storage["sector_bytes"] not in (512, 2048, 4096):
         raise ValueError("device configuration lacks supported storage geometry")
     return data
 
 
 def parse_backup(firmware, mbr, device):
     storage = device["storage"]
+    sector = storage["sector_bytes"]
     target = device.get("target_id")
     if target not in TARGETS:
         raise ValueError("device target has no manifest")
     install = TARGETS[target]["installer"]
     if not install["enabled"] or install["boot_layout"] != "ipod-directory":
         raise ValueError("device target does not enable the iPod directory installer")
-    if len(mbr) != SECTOR or mbr[510:512] != b"\x55\xaa":
+    if len(mbr) != sector or mbr[510:512] != b"\x55\xaa":
         raise ValueError("invalid MBR backup")
     partitions = []
     for index in range(4):
@@ -70,9 +71,9 @@ def parse_backup(firmware, mbr, device):
     if len(firmware_parts) != 1 or len(media_parts) != 1:
         raise ValueError("expected one firmware and one media partition")
     _index, _kind, partition_lba, partition_sectors = firmware_parts[0]
-    if (len(firmware) != partition_sectors * SECTOR or
-            media_parts[0][2] * SECTOR != storage["partition_offset"] or
-            media_parts[0][3] * SECTOR != storage["partition_bytes"]):
+    if (len(firmware) != partition_sectors * sector or
+            media_parts[0][2] * sector != storage["partition_offset"] or
+            media_parts[0][3] * sector != storage["partition_bytes"]):
         raise ValueError("backup and mounted media geometry disagree")
     if (len(firmware) > install["max_firmware_bytes"] or
             firmware[0x100:0x104] != bytes.fromhex(install["firmware_header_magic"]) or
@@ -81,9 +82,15 @@ def parse_backup(firmware, mbr, device):
     directory_offset = struct.unpack_from("<I", firmware, 0x104)[0] + SECTOR
     if directory_offset % SECTOR or directory_offset + SECTOR > len(firmware):
         raise ValueError("invalid firmware directory offset")
-    directory = firmware[directory_offset:directory_offset + SECTOR]
+    # Firmware directory pointers use a fixed 512-byte bias; image pointers
+    # use the USB sector size. Preserve the entire containing disk sector.
+    directory_start = directory_offset % sector
+    directory_offset -= directory_start
+    if directory_start + SECTOR > sector or directory_offset + sector > len(firmware):
+        raise ValueError("firmware directory crosses its disk sector")
+    directory = firmware[directory_offset:directory_offset + sector]
     entries = []
-    for offset in range(0, SECTOR - 39, 40):
+    for offset in range(directory_start, directory_start + SECTOR - 39, 40):
         entry = directory[offset:offset + 40]
         if entry[:4] == bytes(4):
             break
@@ -91,8 +98,8 @@ def parse_backup(firmware, mbr, device):
             raise ValueError("unknown firmware directory entry")
         kind = entry[4:8]
         ident, dev_offset, size, address, start, checksum, header_field, load = struct.unpack_from("<8I", entry, 8)
-        payload_offset = dev_offset + SECTOR
-        if not size or payload_offset < directory_offset + SECTOR or payload_offset + size > len(firmware):
+        payload_offset = dev_offset + sector
+        if not size or payload_offset < directory_offset + sector or payload_offset + size > len(firmware):
             raise ValueError("firmware image extent is outside its partition")
         payload = firmware[payload_offset:payload_offset + size]
         entries.append(dict(directory_entry_offset=offset, type=kind.decode("ascii"), id=ident,
@@ -113,6 +120,7 @@ def parse_backup(firmware, mbr, device):
 
 def derive(firmware, mbr, image, device):
     parsed = parse_backup(firmware, mbr, device)
+    sector = device["storage"]["sector_bytes"]
     identity = inspect(image)
     if identity["target_id"] != device["target_id"]:
         raise ValueError("Boot image target differs from detected device target")
@@ -121,16 +129,16 @@ def derive(firmware, mbr, image, device):
     payload = image[128:]
     if not 32 <= len(payload) <= 0x100000:
         raise ValueError("Boot payload exceeds the one MiB bootstrap bound")
-    span = max(65536, align(len(payload)))
-    first = align(max(entry["payload_offset"] + entry["payload_bytes"] for entry in parsed["entries"]))
-    stage = next((offset for offset in range(first, len(firmware) - span + 1, SECTOR)
+    span = max(65536, align(len(payload), sector))
+    first = align(max(entry["payload_offset"] + entry["payload_bytes"] for entry in parsed["entries"]), sector)
+    stage = next((offset for offset in range(first, len(firmware) - span + 1, sector)
                   if not any(firmware[offset:offset + span])), None)
     if stage is None:
         raise ValueError("firmware partition has no bounded all-zero staging extent")
     candidate = payload + bytes(span - len(payload))
     patched = bytearray(parsed["directory"])
     entry_offset = parsed["original"]["directory_entry_offset"]
-    for field, value in ((12, stage - SECTOR), (16, len(payload)),
+    for field, value in ((12, stage - sector), (16, len(payload)),
                          (24, 0), (28, sum(payload) & 0xffffffff)):
         struct.pack_into("<I", patched, entry_offset + field, value)
     lba = parsed["partition_lba"]
@@ -138,11 +146,13 @@ def derive(firmware, mbr, image, device):
                    installer_profile=parsed["installer_profile"],
                    partition_lba=lba, partition_sectors=parsed["partition_sectors"],
                    directory_partition_offset=parsed["directory_offset"],
-                   directory_disk_offset=lba * SECTOR + parsed["directory_offset"],
-                   candidate_partition_offset=stage, candidate_disk_offset=lba * SECTOR + stage,
+                   directory_disk_offset=lba * sector + parsed["directory_offset"],
+                   candidate_partition_offset=stage, candidate_disk_offset=lba * sector + stage,
                    candidate_write_bytes=span, candidate_payload_bytes=len(payload),
-                   candidate_dev_offset=stage - SECTOR, candidate_checksum=sum(payload) & 0xffffffff,
+                   candidate_dev_offset=stage - sector, candidate_checksum=sum(payload) & 0xffffffff,
                    directory_changed_field_offsets=[entry_offset + value for value in (12, 16, 24, 28)])
+    if sector != SECTOR:
+        details["sector_bytes"] = sector
     return details, candidate, parsed["directory"], bytes(patched)
 
 
@@ -226,7 +236,7 @@ def identify_disk(number, manifest):
     disk = json.loads(result.stdout)
     observed = (disk.get("Number"), str(disk.get("SerialNumber", "")).strip(),
                 int(disk.get("Size", 0)), int(disk.get("LogicalSectorSize", 0)))
-    expected = (number, manifest["expected_storage_serial"], manifest["expected_device_bytes"], SECTOR)
+    expected = (number, manifest["expected_storage_serial"], manifest["expected_device_bytes"], manifest.get("sector_bytes", SECTOR))
     if observed != expected or "ipod" not in str(disk.get("FriendlyName", "")).casefold() or disk.get("BusType") not in (7, "USB"):
         raise RuntimeError("selected disk differs from the reviewed iPod")
     return disk
@@ -270,6 +280,8 @@ def _directory_records(directory):
 
 def _rockbox_uninstalled_residue(observed, manifest, artifacts, original, directory):
     """Validate ipodpatcher's install-then-delete transformation over native Linnet."""
+    if manifest.get("sector_bytes", SECTOR) != SECTOR:
+        return None
     old = _directory_records(artifacts["directory-original.bin"])
     candidate = _directory_records(artifacts["directory-candidate.bin"])
     current = _directory_records(directory)
@@ -341,12 +353,13 @@ def _validate_residue(observed, original, residue):
 
 def guard_device(device, manifest, artifacts, original, *, allow_rockbox_uninstalled=False,
                  compatible_residue=None):
-    if read_at(device, 0, SECTOR) != artifacts["mbr.bin"]:
+    sector = manifest.get("sector_bytes", SECTOR)
+    if read_at(device, 0, sector) != artifacts["mbr.bin"]:
         raise RuntimeError("device MBR changed")
-    partition_start = manifest["partition_lba"] * SECTOR
+    partition_start = manifest["partition_lba"] * sector
     observed = read_at(device, partition_start, len(original))
     directory_offset = manifest["directory_partition_offset"]
-    directory = observed[directory_offset:directory_offset + SECTOR]
+    directory = observed[directory_offset:directory_offset + sector]
     allowed_directories = [artifacts["directory-original.bin"], artifacts["directory-candidate.bin"]]
     residue = compatible_residue
     if directory not in allowed_directories:
@@ -362,10 +375,10 @@ def guard_device(device, manifest, artifacts, original, *, allow_rockbox_uninsta
         raise RuntimeError("published directory references absent candidate bytes")
     normalized = bytearray(observed)
     normalized[stage:stage + span] = bytes(span)
-    normalized[directory_offset:directory_offset + SECTOR] = artifacts["directory-original.bin"]
+    normalized[directory_offset:directory_offset + sector] = artifacts["directory-original.bin"]
     if residue is not None:
         normalized = _validate_residue(observed, original, residue)
-        normalized[directory_offset:directory_offset + SECTOR] = artifacts["directory-original.bin"]
+        normalized[directory_offset:directory_offset + sector] = artifacts["directory-original.bin"]
     if normalized != original:
         raise RuntimeError("firmware changed outside the reviewed regions")
     old = manifest["original_osos"]
@@ -382,8 +395,8 @@ def guard_device(device, manifest, artifacts, original, *, allow_rockbox_uninsta
     return result
 
 
-def write_verified(device, offset, payload, receipt, receipt_path, phase):
-    if offset % SECTOR or len(payload) % SECTOR:
+def write_verified(device, offset, payload, receipt, receipt_path, phase, sector=SECTOR):
+    if sector not in (512, 2048, 4096) or offset % sector or len(payload) % sector:
         raise ValueError("raw writes must be complete aligned sectors")
     receipt.update(phase=phase, device_write_attempted=True)
     receipt["writes"].append(dict(offset=offset, bytes=len(payload), sha256=sha(payload), complete=False))
@@ -411,6 +424,7 @@ def execute(mode, plan_path, expected_sha, disk_number):
         if mode not in ("apply", "restore"):
             raise ValueError("unsupported operation")
         manifest, artifacts, original = load_plan(plan_path, expected_sha)
+        sector = manifest.get("sector_bytes", SECTOR)
         receipt["device"] = identify_disk(disk_number, manifest)
         with open(r"\\.\PhysicalDrive" + str(disk_number), "r+b", buffering=0) as device:
             receipt["before"] = guard_device(
@@ -419,14 +433,14 @@ def execute(mode, plan_path, expected_sha, disk_number):
             if mode == "apply":
                 if receipt["before"]["staging"] != "candidate":
                     write_verified(device, manifest["candidate_disk_offset"], artifacts["candidate.bin"],
-                                   receipt, receipt_path, "write-candidate")
+                                   receipt, receipt_path, "write-candidate", sector)
                 staged = guard_device(device, manifest, artifacts, original)
                 if staged["directory"] != "candidate":
                     write_verified(device, manifest["directory_disk_offset"], artifacts["directory-candidate.bin"],
-                                   receipt, receipt_path, "publish-directory")
+                                   receipt, receipt_path, "publish-directory", sector)
             elif receipt["before"]["directory"] != "original":
                 write_verified(device, manifest["directory_disk_offset"], artifacts["directory-original.bin"],
-                               receipt, receipt_path, "restore-directory")
+                               receipt, receipt_path, "restore-directory", sector)
             receipt["after"] = guard_device(
                 device, manifest, artifacts, original,
                 compatible_residue=receipt["before"].get("compatible_residue"))

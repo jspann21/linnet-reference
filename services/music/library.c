@@ -19,8 +19,16 @@ static bool title_reading;
 static uint8_t title_previous;
 static char title_pending[256];
 #if defined(LINNET_MUSIC_METADATA_BYTES)
-static uint8_t metadata[LINNET_MUSIC_METADATA_BYTES] __attribute__((section(".music_metadata"),aligned(32)));
+static uint8_t metadata_local[LINNET_MUSIC_METADATA_BYTES] __attribute__((section(".music_metadata"),aligned(32)));
+static uint8_t *metadata=metadata_local;
+static uint32_t metadata_capacity=sizeof metadata_local;
 static uint32_t metadata_offset,metadata_bytes;
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+void ln_music_library_memory_diagnostics(uint32_t out[4]){
+    out[0]=(uint32_t)(uintptr_t)metadata;out[1]=metadata_capacity;
+    out[2]=metadata_offset;out[3]=metadata_bytes;
+}
+#endif
 #endif
 
 enum job { JOB_NONE=0,JOB_WINDOW,JOB_SELECTION,JOB_SEARCH,JOB_GROUP,JOB_MEMBER,JOB_PREFETCH,JOB_QUEUE,JOB_VIEW,JOB_VIEW_GROUP,JOB_GROUP_RECORD,JOB_TRACK_RECORD,JOB_TRACK_IDS,JOB_MEMBERS };
@@ -254,6 +262,11 @@ static void start(void)
 #endif
 #if defined(LINNET_MUSIC_METADATA_BYTES)
     metadata_offset=metadata_bytes=0;
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+    uint32_t extra_bytes;uint8_t *extra=ln_platform_extended_memory(&extra_bytes);
+    metadata=extra?extra+65536u:metadata_local;
+    metadata_capacity=extra?16u*1024u*1024u-65536u:sizeof metadata_local;
+#endif
 #endif
     uint32_t revision=library.revision+1u;
     title_count=title_used=title_length=0;title_reading=false;
@@ -289,11 +302,11 @@ static int read_database_raw(void *context,uint64_t offset,uint8_t *buffer,uint3
              * passes. Large libraries retain the browse tables first, while
              * the independent title and LRU caches cover the remaining data. */
             if(library.status==LN_LIBRARY_VERIFYING){
-                if(library.file.size<=sizeof metadata){metadata_offset=0;metadata_bytes=library.file.size;}
+                if(library.file.size<=metadata_capacity){metadata_offset=0;metadata_bytes=library.file.size;}
                 else if(library.db.phase==1){
                     metadata_offset=library.db.group_offset;
                     metadata_bytes=library.file.size-metadata_offset;
-                    if(metadata_bytes>sizeof metadata)metadata_bytes=sizeof metadata;
+                    if(metadata_bytes>metadata_capacity)metadata_bytes=metadata_capacity;
                 }
                 uint32_t first=(uint32_t)offset,end=first+bytes;
                 if(first<metadata_offset)first=metadata_offset;

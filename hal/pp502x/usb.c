@@ -72,6 +72,8 @@ static struct {
     uint8_t enumeration_timing, enumeration_retried, ever_configured;
     uint32_t enumeration_started;
 } ln_usb;
+static const uint8_t *storage_tx_pointer;
+static uint16_t storage_tx_bytes;
 
 enum { LINNET_USB_IDLE, LINNET_USB_DATA_IN, LINNET_USB_LINE_OUT,
        LINNET_USB_STATUS_IN, LINNET_USB_STATUS_OUT };
@@ -103,6 +105,18 @@ static const uint8_t ln_usb_storage_product[] = {
     34,3,'L',0,'i',0,'n',0,'n',0,'e',0,'t',0,' ',0,
     'D',0,'i',0,'s',0,'k',0,' ',0,'M',0,'o',0,'d',0,'e',0
 };
+
+static bool storage_high_speed_capable(void) {
+#if defined(LINNET_SOC_PP5022)
+    return ln_usb.storage_mode != 0;
+#else
+    return false;
+#endif
+}
+static uint32_t bulk_packet(void) {
+    return storage_high_speed_capable() && (LINNET_USB_PORT & 0x0c000000u) == 0x08000000u
+        ? LINNET_USB_PACKET : LINNET_USB_FULL_SPEED_PACKET;
+}
 
 #if defined(LINNET_USB_NEGOTIATED_CHARGE)
 static uint16_t charge_budget = UINT16_MAX;
@@ -180,6 +194,7 @@ static bool flush_pipes(uint32_t mask) {
     }
     LINNET_USB_DONE = mask;
     for (unsigned i = 0; i < 6; ++i) if (mask & pipe_bit(i)) {
+        if(i==5u){storage_tx_pointer=0;storage_tx_bytes=0;}
         ln_usb.active[i] = 0;
         LINNET_USB_QH[i].transfer.next = 1;
         LINNET_USB_QH[i].transfer.token = 0;
@@ -220,6 +235,7 @@ static void endpoints(void) {
     LINNET_USB_QH[0].capability |= 0x8000u; /* setup interrupt on OUT control */
     /* Control-IN ZLP policy is selected per request against its wLength. */
     LINNET_USB_QH[3].capability = (8u << 16) | 0x20000000u;
+    LINNET_USB_QH[4].capability = LINNET_USB_QH[5].capability = (bulk_packet() << 16) | 0x20000000u;
     if (!ln_usb.storage_mode) LINNET_USB_QH[5].capability &= ~0x20000000u;
     LINNET_USB_EP(0) = 0x00800080u;
     LINNET_USB_EP(1) = ln_usb.storage_mode ? 0u : 0x00cc0000u;
@@ -231,6 +247,8 @@ static bool configure(uint8_t value) {
     if (!value) charge_limit(100);
 #endif
     if (!flush_pipes(0x00060006u)) return false;
+    if (ln_usb.storage_mode)
+        LINNET_USB_QH[4].capability = LINNET_USB_QH[5].capability = (bulk_packet() << 16) | 0x20000000u;
     ln_usb.configured = value;
     if (value) ln_usb.ever_configured = 1;
     ln_usb.rx_size = ln_usb.rx_offset = 0;
@@ -278,12 +296,26 @@ static bool setup_request(const uint8_t setup[8]) {
             if (ln_usb.storage_mode) {
                 uint8_t copy[18];
                 for (unsigned i = 0; i < sizeof(copy); ++i) copy[i] = ln_usb_device[i];
+                if(storage_high_speed_capable()){copy[2]=0;copy[3]=2;}
                 copy[4] = 0;
                 copy[10] = (uint8_t)LINNET_NATIVE_STORAGE_USB_PID;
                 copy[11] = (uint8_t)(LINNET_NATIVE_STORAGE_USB_PID >> 8);
                 return control_reply(copy, sizeof(copy), length);
             }
             descriptor = ln_usb_device; size = sizeof(ln_usb_device);
+        }
+        if (storage_high_speed_capable() && value == 0x600 && index == 0) {
+            const uint8_t qualifier[] = {10,6,0,2,0,0,0,64,1,0};
+            return control_reply(qualifier,sizeof(qualifier),length);
+        }
+        if (ln_usb.storage_mode && index == 0 &&
+            (value == 0x200 || (value == 0x700 && storage_high_speed_capable()))) {
+            uint8_t copy[sizeof(ln_usb_storage_configuration)];
+            for(unsigned i=0;i<sizeof(copy);++i)copy[i]=ln_usb_storage_configuration[i];
+            bool high=bulk_packet()==512u;
+            if(value==0x700){high=!high;copy[1]=7;}
+            copy[22]=copy[29]=high?0:64;copy[23]=copy[30]=high?2:0;
+            return control_reply(copy,sizeof(copy),length);
         }
         if (value == 0x200 && index == 0) {
             descriptor = ln_usb.storage_mode ? ln_usb_storage_configuration : ln_usb_configuration;
@@ -458,10 +490,12 @@ static bool controller_start(void) {
     if(!ln_pp5022_usb_phy_reset())goto failed;
 #endif
     LINNET_USB_MODE = 0x12u; /* device, streaming off, setup lockout enabled */
-    LINNET_USB_PORT |= 0x01000000u; /* full speed */
+    if(storage_high_speed_capable())LINNET_USB_PORT &= ~0x01000000u;
+    else LINNET_USB_PORT |= 0x01000000u; /* Link retains full speed. */
     volatile uint32_t *workspace = (volatile uint32_t *)(uintptr_t)LINNET_USB_IRAM;
     for (unsigned i = 0; i < LINNET_USB_WORKSPACE / 4u; ++i) workspace[i] = 0;
     for (unsigned i = 0; i < 6; ++i) ln_usb.active[i] = 0;
+    storage_tx_pointer=0;storage_tx_bytes=0;
     endpoints();
     ln_usb.control_stage = LINNET_USB_IDLE;
     ln_usb.pending_address = ln_usb.pending_configuration = 0xffu;
@@ -587,11 +621,12 @@ bool ln_usb_poll(void) {
         }
     }
     if (ln_usb_connected() && !ln_usb.storage_reset) {
-        /* Receive one full-speed packet per dTD. A host write of exactly 64
-         * bytes (notably UPLOAD_BEGIN) need not append a ZLP; a 512-byte dTD
-         * would wait for more data while the host waits for its command ACK. */
+        /* Receive one negotiated bulk packet per dTD. Link's exact 64-byte
+         * writes (notably UPLOAD_BEGIN) need not append a ZLP; a 512-byte dTD
+         * would wait for more data while the host waits for its command ACK.
+         * High-speed Disk Mode instead receives complete 512-byte packets. */
         if (!ln_usb.active[4] && !ln_usb.rx_size &&
-            !prime(4, LINNET_USB_RX, LINNET_USB_FULL_SPEED_PACKET)) goto failed;
+            !prime(4, LINNET_USB_RX, (uint16_t)bulk_packet())) goto failed;
         if (!ln_usb.storage_mode && ln_usb.notify_pending && !ln_usb.active[3]) {
             const uint8_t note[10] = {0xa1,0x20,0,0,0,0,2,0,3,0};
             for (unsigned i = 0; i < 10; ++i) LINNET_USB_NOTIFY[i] = note[i];
@@ -707,6 +742,7 @@ bool ln_usb_stop(void) {
      * PHY power readbacks are not DMA admission criteria. */
     ln_usb.rx_size = ln_usb.rx_offset = 0;
     for (unsigned i = 0; i < 6; ++i) ln_usb.active[i] = 0;
+    storage_tx_pointer=0;storage_tx_bytes=0;
     ln_usb.stopped = settled && reset && phy_ready && idle;
     return ln_usb.stopped != 0;
 }
@@ -732,6 +768,19 @@ size_t ln_pp_usb_storage_read(uint8_t *output, size_t capacity) {
 
 size_t ln_pp_usb_storage_write(const uint8_t *input, size_t length) {
     if (!ln_usb.storage_mode || ln_usb.storage_reset) return 0;
+    if(bulk_packet()==512u){
+        /* Disk Mode supplies uncached buffers. Retain the caller's buffer until
+         * DMA completes, so the next ATA read cannot overwrite an active send. */
+        if(storage_tx_bytes){
+            if(ln_usb.active[5]||input!=storage_tx_pointer||length<storage_tx_bytes)return 0;
+            size_t sent=storage_tx_bytes;storage_tx_pointer=0;storage_tx_bytes=0;return sent;
+        }
+        if(!input||!length||!ln_usb_connected()||ln_usb.active[5])return 0;
+        if(length>4096u)length=4096u;
+        volatile uint8_t *physical=(volatile uint8_t *)ln_platform_uncached_address((uintptr_t)input);
+        if(prime(5,physical,(uint16_t)length)){storage_tx_pointer=input;storage_tx_bytes=(uint16_t)length;}
+        return 0;
+    }
     return ln_usb_write(input, length);
 }
 
@@ -739,6 +788,8 @@ bool ln_pp_usb_storage_zlp(void) {
     return ln_usb.storage_mode && !ln_usb.storage_reset && ln_usb_connected() &&
         !ln_usb.active[5] && prime(5, LINNET_USB_TX, 0);
 }
+
+size_t ln_pp_usb_storage_packet_size(void) { return bulk_packet(); }
 
 void ln_pp_usb_storage_stall(bool input) {
     if (ln_usb.storage_mode) LINNET_USB_EP(2) |= input ? 0x10000u : 1u;

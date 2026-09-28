@@ -16,6 +16,8 @@ struct ln_core_status {
 bool ln_core_init(void);
 uint32_t ln_core_take_wakes(void);
 void ln_core_idle_until(uint32_t deadline_us);
+/* Request an executive timer wake without sleeping or delaying an earlier wake. */
+void ln_core_wake_at(uint32_t deadline_us);
 void ln_core_usb_rearm(void);
 void ln_core_input_rearm(void);
 void ln_core_irq_dispatch(void);

@@ -1,6 +1,6 @@
 """Refresh an exact installed native boot directory before Apple Disk Mode eject.
 
-The operation writes the same verified 512 bytes. It does not install an image.
+The operation writes the same verified directory sector. It does not install an image.
 Automatic restart is a hardware observation, never implied by successful refresh.
 """
 import argparse
@@ -26,7 +26,7 @@ def refresh(plan_path, plan_sha256, disk_number, receipt_path):
             if receipt["before"]["directory"] != "candidate":
                 raise RuntimeError("refresh requires the exact candidate already installed")
             write_verified(device, manifest["directory_disk_offset"], artifacts["directory-candidate.bin"],
-                           receipt, receipt_path, "refresh-identical-directory")
+                           receipt, receipt_path, "refresh-identical-directory", manifest.get("sector_bytes", 512))
             receipt["phase"] = "verify-after-write"
             receipt["after"] = guard_device(device, manifest, artifacts, original)
             if receipt["after"] != receipt["before"]:

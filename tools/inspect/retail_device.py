@@ -53,7 +53,7 @@ volume_label=$v.FileSystemLabel;filesystem=$v.FileSystem;volume_id=$v.UniqueId}}
     models={"Apple iPod USB Device"} | {spec["native_storage"]["model"] for spec in TARGETS.values() if "native_storage" in spec}
     if (storage.get("model") not in models or
             storage.get("bus_type") != "USB" or storage.get("filesystem") != "FAT32" or
-            storage.get("sector_bytes") not in (512, 4096)):
+            storage.get("sector_bytes") not in (512, 2048, 4096)):
         raise ValueError("mounted volume is not a supported RetailOS iPod disk")
     return storage
 

@@ -15,8 +15,35 @@ static uint8_t cache[2][LN_BLOCK_READ_AHEAD_DEFAULT*512u] __attribute__((aligned
 static uint64_t cache_lba[2];
 static uint64_t window_first,window_count;
 static uint32_t cache_sectors[2],cache_next,next_id,active_count,active_sectors,active_required,active_deadline;
-static void invalidate_cache(void){cache_sectors[0]=cache_sectors[1]=cache_next=0;}
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+/* Optional second-bank cache. Sector validity permits partial FAT reads;
+ * tags are published only after successful I/O, never for canceled reads. */
+struct extra_tag {uint64_t page;uint32_t valid,reserved;};
+_Static_assert(sizeof(struct extra_tag)*4096u==65536u,"Extended cache tag reservation");
+static struct extra_tag *extra_tags;
+static uint8_t *extra_data;
+static uint32_t extra_hits,extra_misses,extra_stores;
+static uint32_t extra_slot(uint64_t page){return ((uint32_t)page^(uint32_t)(page>>32))&4095u;}
+static void extra_invalidate(void){if(extra_tags)for(uint32_t i=0;i<4096u;i++)extra_tags[i].valid=0;}
+static void extra_written(uint64_t lba,uint32_t sectors){
+    if(!extra_tags)return;
+    uint64_t last=(lba+sectors-1u)>>3;
+    for(uint64_t page=lba>>3;page<=last;page++){
+        struct extra_tag *tag=&extra_tags[extra_slot(page)];
+        if(tag->page==page)tag->valid=0;
+    }
+}
+#endif
+static void invalidate_cache(void){
+    cache_sectors[0]=cache_sectors[1]=cache_next=0;
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+    extra_invalidate();
+#endif
+}
 static void invalidate_written(uint64_t lba,uint32_t sectors){
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+    extra_written(lba,sectors);
+#endif
     /* Requests and resident windows have already passed overflow/range checks.
      * Keep unrelated FAT and data windows across a write; never serve written
      * sectors from the old image, even before the write's flush completes. */
@@ -61,6 +88,37 @@ static void copy(uint8_t *to,const uint8_t *from,uint32_t bytes) {
     for(uint32_t i=0;i<bytes;++i)to[i]=from[i];
 #endif
 }
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+static bool extra_read(uint64_t lba,uint32_t sectors,uint8_t *to){
+    if(!extra_tags)return false;
+    /* Prove the entire request before modifying the caller's buffer. */
+    for(uint32_t at=0;at<sectors;at++){
+        uint64_t sector=lba+at,page=sector>>3;struct extra_tag *tag=&extra_tags[extra_slot(page)];
+        if(tag->page!=page||!(tag->valid&(1u<<(sector&7u)))){++extra_misses;return false;}
+    }
+    for(uint32_t at=0;at<sectors;){
+        uint64_t sector=lba+at;uint32_t within=(uint32_t)sector&7u,n=8u-within;
+        if(n>sectors-at)n=sectors-at;
+        copy(to+at*512u,extra_data+extra_slot(sector>>3)*4096u+within*512u,n*512u);at+=n;
+    }
+    ++extra_hits;return true;
+}
+static void extra_store(uint64_t lba,uint32_t sectors,const uint8_t *from){
+    if(!extra_tags)return;
+    for(uint32_t at=0;at<sectors;){
+        uint64_t sector=lba+at,page=sector>>3;uint32_t slot=extra_slot(page),within=(uint32_t)sector&7u,n=8u-within;
+        if(n>sectors-at)n=sectors-at;
+        struct extra_tag *tag=&extra_tags[slot];
+        if(tag->page!=page){tag->valid=0;tag->page=page;}
+        copy(extra_data+slot*4096u+within*512u,from+at*512u,n*512u);
+        tag->valid|=((1u<<n)-1u)<<within;at+=n;
+    }
+    extra_stores+=sectors;
+}
+void ln_block_extended_diagnostics(uint32_t out[4]){
+    out[0]=extra_data?16u*1024u*1024u:0;out[1]=extra_hits;out[2]=extra_misses;out[3]=extra_stores;
+}
+#endif
 static void complete(struct slot *s,uint32_t status,uint32_t sectors) {
     bool issued=s->state==ACTIVE;
     s->status=s->canceled?LN_ATA_CANCELED:status;s->transferred=sectors;s->state=DONE;
@@ -78,6 +136,11 @@ static int oldest(enum slot_state state) {
     return found;
 }
 void ln_block_init(uint32_t now) {
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+    uint32_t bytes;uint8_t *extra=ln_platform_extended_memory(&bytes);
+    extra_tags=extra?(struct extra_tag *)extra:0;extra_data=extra?extra+16u*1024u*1024u:0;
+    extra_hits=extra_misses=extra_stores=0;
+#endif
     for(uint32_t i=0;i<8u;++i)slots[i].state=FREE;
     metrics=(struct ln_block_info){0};invalidate_cache();next_id=active_count=streak=quiesce_state=0;
     frozen=recovering=active_retry=false;
@@ -135,6 +198,10 @@ bool ln_block_submit_direct_read(uint64_t lba,uint32_t sectors,void *bytes,
 static void active_complete(uint32_t status,uint32_t transferred) {
     last_activity=ln_time_us();standby_at=0;
     struct slot *first=&slots[active_slots[0]];
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+    if(status==LN_ATA_OK&&first->op==LN_BLOCK_READ&&!first->canceled&&transferred==active_sectors)
+        extra_store(first->lba,active_sectors,first->direct?first->caller:transfer);
+#endif
     if(status==LN_ATA_OK&&first->op==LN_BLOCK_READ&&
        (!first->direct||(!first->canceled&&active_sectors<=8u))){
         /* Cache small aligned reads, but keep large streaming transfers from
@@ -282,6 +349,11 @@ static void step_inner(uint32_t now) {
             cache_next=way^1u;++metrics.cache_hits;complete(s,LN_ATA_OK,s->sectors);return;
         }
     }
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+    if(s->op==LN_BLOCK_READ&&extra_read(s->lba,s->sectors,s->caller)){
+        ++metrics.cache_hits;complete(s,LN_ATA_OK,s->sectors);return;
+    }
+#endif
     if(!device.powered){
         invalidate_cache();
         if(ln_ata_power_on(now))power_task=2u;

@@ -181,14 +181,15 @@ $logical=Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='"+$drive+"'")
                            else f"{sum(item.get('complete') is True for item in writes)}/{len(writes)} writes completed readback; overall verification failed")
             raise RuntimeError(f"refresh stopped in {receipt.get('phase')}: {receipt['failure']}; {write_state}")
         device = receipt.get("device", {})
-        expected_write = dict(bytes=512, complete=True, offset=manifest["directory_disk_offset"],
-                              returned_bytes=512, sha256=hashlib.sha256(artifacts["directory-candidate.bin"]).hexdigest())
+        sector_bytes = manifest.get("sector_bytes", 512)
+        expected_write = dict(bytes=sector_bytes, complete=True, offset=manifest["directory_disk_offset"],
+                              returned_bytes=sector_bytes, sha256=hashlib.sha256(artifacts["directory-candidate.bin"]).hexdigest())
         if (receipt.get("operation") != "refresh-installed-directory" or receipt.get("passed") is not True or
             receipt.get("phase") != "complete" or receipt.get("bytes_changed") != 0 or
             receipt.get("device_write_attempted") is not True or receipt.get("writes") != [expected_write] or
             receipt.get("plan") != str(plan_path) or receipt.get("plan_sha256") != plan_sha256 or
             device.get("Number") != disk_number or device.get("SerialNumber", "").strip() != manifest["expected_storage_serial"] or
-            device.get("Size") != manifest["expected_device_bytes"] or device.get("LogicalSectorSize") != 512 or
+            device.get("Size") != manifest["expected_device_bytes"] or device.get("LogicalSectorSize") != sector_bytes or
             device.get("BusType") != "USB" or device.get("FriendlyName") != "Apple iPod" or
             not receipt.get("before") or receipt.get("before") != receipt.get("after") or
             receipt["before"].get("directory") != "candidate" or

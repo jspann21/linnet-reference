@@ -262,7 +262,7 @@ def _validate_profiles(path, spec):
             any(type(native.get(key)) is not int or not 1<=native[key]<=0xffff for key in ("usb_vid","usb_pid")) or
             any(not isinstance(native.get(key),str) or not re.fullmatch(r"[A-Za-z0-9 _-]{1,64}",native[key]) for key in ("model","friendly_name")) or
             not isinstance(native.get("sector_bytes"),list) or not native["sector_bytes"] or
-            any(type(n) is not int or n not in (512,4096) for n in native["sector_bytes"])):
+            any(type(n) is not int or n not in (512,2048,4096) for n in native["sector_bytes"])):
         raise RuntimeError(f"invalid native storage profile: {path}")
     retail = spec["retail"]
     if (not isinstance(retail, dict) or
@@ -275,7 +275,7 @@ def _validate_profiles(path, spec):
             not (retail["board_names"] or retail["model_numbers"] or retail.get("usb_identity_only")) or
             not isinstance(retail.get("sector_bytes", [512]), list) or
             not retail.get("sector_bytes", [512]) or
-            any(type(n) is not int or n not in (512, 4096) for n in retail.get("sector_bytes", [512]))):
+            any(type(n) is not int or n not in (512, 2048, 4096) for n in retail.get("sector_bytes", [512]))):
         raise RuntimeError(f"invalid retail detection profile: {path}")
     signature = retail.get("firmware_signature")
     if signature is not None and (

@@ -345,7 +345,7 @@ if ($native.Count -eq 1) {
 }
 if ($disk.SerialNumber.Trim() -cne $cfg.serial -or [string]$disk.BusType -ne 'USB' -or
     (-not $apple -and -not $target) -or $disk.IsBoot -or $disk.IsSystem -or
-    $disk.IsOffline -or $disk.IsReadOnly -or $disk.LogicalSectorSize -notin @(512,4096) -or
+    $disk.IsOffline -or $disk.IsReadOnly -or $disk.LogicalSectorSize -notin @(512,2048,4096) -or
     $physical.SerialNumber.Trim() -cne $cfg.serial) {
     throw 'Require expected serial, supported USB iPod, writable online non-system disk and supported sectors'
 }

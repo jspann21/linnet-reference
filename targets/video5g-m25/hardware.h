@@ -12,6 +12,8 @@
 
 #define LINNET_AUDIO_IRAM_BYTES 8192
 #define LINNET_MUSIC_METADATA_BYTES (512u * 1024u)
+#define LINNET_EXTENDED_RAM 1
+#define LINNET_HARDWARE_CLICKER 1
 
 /* Nominal 0..100% voltage estimate; not a battery capacity measurement. */
 #define LINNET_BATTERY_CURVE_MV {3600,3720,3750,3780,3810,3840,3880,3950,4020,4100,4180}

@@ -57,7 +57,7 @@ def publish(identity, image_path):
         raise ValueError('native update build report exceeds size limit')
     report = json.loads(report_bytes.decode('utf-8'))
     if (identity.get('native_target_id') != identity['target_id'] or
-            spec['installer']['boot_layout'] != 's5l-nor' or
+            spec['installer']['boot_layout'] not in ('s5l-nor', 'ipod-directory') or
             info['target_id'] != identity['target_id'] or report.get('kind') != 'os' or
             report.get('image') != info or
             report.get('device_serial') != ('' if info['profile'] == 'release' else identity['linnet_usb_serial']) or
@@ -70,6 +70,8 @@ def publish(identity, image_path):
         _plain(directory, root)
         state = installed_state(root, identity['target_id'])
         if state['state'] in ('absent','incomplete'):
+            if spec['installer']['boot_layout'] != 's5l-nor':
+                raise ValueError('disk-backed native updates require an existing confirmed installation')
             _provision(root,image,spec['os_capacity_bytes'],lambda:_volume_guard(current))
             refresh(current)
             verified=installed_state(root,identity['target_id'])

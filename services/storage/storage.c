@@ -854,8 +854,10 @@ void ln_storage_boot(void){
      * the choice pending until selector files can be opened safely. */
     if(!ln_storage_startup_complete()||ln_storage_busy())return;
     if(!ln_storage_mounted()){
-        boot_choice=1u;error=408u;
-        (void)ln_storage_recover();return;
+        /* Keep the original failure inspectable and leave Link able to launch
+         * a corrected RAM image. Repeated automatic remounts never reach idle
+         * on an incompatible drive; explicit storage recovery remains available. */
+        boot_choice=1u;return;
     }
 #if LINNET_BOOT_SELECTOR_ROCKBOX
     if(boot_choice==2u){

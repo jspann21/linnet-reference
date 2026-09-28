@@ -16,7 +16,7 @@ try {
     if ($taskDevice.DeviceID -notmatch 'PHYSICALDRIVE(\d+)$') { throw 'Unexpected disk device path.' }
     $taskStorageDisk = Get-Disk -Number ([int]$Matches[1])
     $taskSectorBytes = [int]$taskStorageDisk.LogicalSectorSize
-    if ($taskSectorBytes -notin @(512,4096)) { throw 'Unsupported logical sector size.' }
+    if ($taskSectorBytes -notin @(512,2048,4096)) { throw 'Unsupported logical sector size.' }
     # The physical disk is opened READ ONLY. This utility has no disk write path.
     $taskStream = [IO.FileStream]::new($taskDevice.DeviceID, [IO.FileMode]::Open,
         [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)

@@ -453,7 +453,9 @@ def assess(identity):
             others.append(name)
     if rockbox["present"]:
         others.insert(0, "Rockbox")
-    native = identity.get("native_target_id") == target_id and install_spec["boot_layout"] == "s5l-nor"
+    native = identity.get("native_target_id") == target_id and (
+        install_spec["boot_layout"] == "s5l-nor" or
+        install_spec["boot_layout"] == "ipod-directory" and linnet["state"] == "installed")
     if native and linnet["state"] == "installed":
         action, strategy = "replace", "native-volume"
         summary = "Linnet is installed. Update the OS through native Disk Mode, preserving the confirmed OS for rollback."
@@ -1132,7 +1134,9 @@ def install(identity, progress=lambda _message: None, build="user", installation
 
 
 def _read_raw_backup(identity, transaction):
-    from tools.studio.native_bootstrap import SECTOR
+    sector = identity["sector_bytes"]
+    if sector not in (512, 2048, 4096):
+        raise ValueError("unsupported native installer sector size")
     install_spec = TARGETS[identity["target_id"]]["installer"]
     if not install_spec["enabled"] or install_spec["boot_layout"] != "ipod-directory":
         raise ValueError("the detected target does not enable native directory installation")
@@ -1141,8 +1145,8 @@ def _read_raw_backup(identity, transaction):
     disk_number = identity["disk_number"]
     path = r"\\.\PhysicalDrive" + str(disk_number)
     with open(path, "rb", buffering=0) as device:
-        mbr = device.read(SECTOR)
-        if len(mbr) != SECTOR or mbr[510:512] != b"\x55\xaa":
+        mbr = device.read(sector)
+        if len(mbr) != sector or mbr[510:512] != b"\x55\xaa":
             raise ValueError("the iPod MBR is invalid")
         partitions = []
         for index in range(4):
@@ -1156,12 +1160,12 @@ def _read_raw_backup(identity, transaction):
         if len(firmware) != 1 or len(media) != 1:
             raise ValueError("expected one firmware partition and one media partition")
         _kind, firmware_lba, firmware_sectors = firmware[0]
-        if (media[0][1] * SECTOR, media[0][2] * SECTOR) != (identity["partition_offset"], identity["partition_bytes"]):
+        if (media[0][1] * sector, media[0][2] * sector) != (identity["partition_offset"], identity["partition_bytes"]):
             raise ValueError("raw and mounted partition geometry disagree")
-        firmware_bytes = firmware_sectors * SECTOR
-        if not SECTOR <= firmware_bytes <= min(install_spec["max_firmware_bytes"], identity["disk_bytes"]):
+        firmware_bytes = firmware_sectors * sector
+        if not sector <= firmware_bytes <= min(install_spec["max_firmware_bytes"], identity["disk_bytes"]):
             raise ValueError("firmware partition exceeds the installer bound")
-        device.seek(firmware_lba * SECTOR)
+        device.seek(firmware_lba * sector)
         firmware_data = device.read(firmware_bytes)
         if len(firmware_data) != firmware_bytes:
             raise OSError("short firmware backup read")
@@ -1248,6 +1252,13 @@ def _native_worker(job):
         hash_path.write_text(plan_sha + "\n", encoding="ascii")
     storage_receipt = _package_storage(expected, job["artifacts"], transaction, job.get("archive"))
     apple_firmware = _install_apple_firmware(expected, plan_path, plan_sha, job.get("archive"))
+    if expected['target_id'] == 'video5g-m25':
+        from tools.studio.apple_firmware import publish_video_resources
+        firmware_data = firmware.read_bytes()
+        parsed = native.parse_backup(firmware_data, mbr.read_bytes(), detected)
+        apple_firmware['video_resources'] = publish_video_resources(
+            expected, firmware_data, parsed['entries'])
+        del firmware_data
     selector = (_install_selector_config(expected)
                 if job.get("installation_method") == "native-selector" else None)
     applied = native.execute("apply", plan_path, plan_sha, expected["disk_number"])

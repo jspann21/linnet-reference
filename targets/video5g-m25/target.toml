@@ -45,6 +45,8 @@ mailbox_bytes = 4096
 [retail]
 usb_vid = 1452
 usb_pid = 4617
+usb_identity_only = true
+sector_bytes = [512, 2048]
 board_names = ["iPod M25"]
 model_numbers = ["MA146"]
 regulatory_models = ["A1136"]
@@ -54,7 +56,7 @@ usb_vid = 4617
 usb_pid = 20558
 model = "LINNET IPOD VIDEO USB Device"
 friendly_name = "LINNET IPOD VIDEO"
-sector_bytes = [512, 4096]
+sector_bytes = [512, 2048, 4096]
 
 [installer]
 enabled = true

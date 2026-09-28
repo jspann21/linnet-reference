@@ -688,6 +688,8 @@ def _error_record(kind, error, inventory, root):
     """Attach a concrete source when a compiler identifies one in its error."""
     from . import SourceError
     message = str(error)
+    if isinstance(error, TimeoutError):
+        return dict(kind=kind, message=message)
     if isinstance(error, SourceError):
         folded = str(error.source).casefold()
         matches = [Path(value) for value in inventory.get("files", []) if str(value).casefold() == folded]

@@ -6,6 +6,20 @@
 uint32_t ln_time_us(void);
 /* Return a CPU address that bypasses cache for target SDRAM, when required. */
 uintptr_t ln_platform_uncached_address(uintptr_t address);
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+/* Qualified optional RAM, separate from image/staging/recovery reservations.
+ * First 64 KiB: disk cache tags; remainder of first 16 MiB: music metadata;
+ * second 16 MiB: clean disk cache. Native alias avoids changing CPU/COP maps. */
+void *ln_platform_extended_memory(uint32_t *bytes);
+#endif
+#if defined(LINNET_HARDWARE_CLICKER) && defined(LINNET_IMAGE_OS)
+/* Executive-owned PWM pulse; no waits or audio DMA ownership. */
+void ln_platform_click(void);
+void ln_platform_click_stop(void);
+void ln_platform_click_poll(uint32_t now);
+bool ln_platform_click_deadline(uint32_t *deadline);
+void ln_platform_click_diagnostics(uint32_t out[4]);
+#endif
 _Noreturn void ln_platform_hardware_reset(void);
 bool ln_platform_set_disk_mode(bool enabled);
 /* Called after storage, audio, display, and DMA have quiesced. */
