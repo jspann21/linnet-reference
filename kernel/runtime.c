@@ -321,8 +321,11 @@ static void clock_save_step(void){
 #endif
 static void apply(uint32_t kind,int32_t value){
 #if defined(LINNET_HARDWARE_CLICKER)
+    bool changing_click=kind==LN_INPUT_BUTTON&&!shell->hold&&
+        scene_is("linnet.system.display")&&shell->selected==1u&&
+        ((uint32_t)value&~shell->buttons&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV));
     if(kind==LN_INPUT_HOLD&&value)ln_platform_click_stop();
-    else if(!shell->hold&&((kind==LN_INPUT_WHEEL&&value)||
+    else if(!changing_click&&!shell->hold&&((kind==LN_INPUT_WHEEL&&value)||
             (kind==LN_INPUT_BUTTON&&((uint32_t)value&~shell->buttons))))
         ln_platform_click(ln_display_click_tone());
 #endif
@@ -420,6 +423,8 @@ static void apply(uint32_t kind,int32_t value){
             else if(shell->selected==1u){
 #if defined(LINNET_HARDWARE_CLICKER)
                 (void)ln_display_click_adjust((pressed&LN_BUTTON_PREV)?-1:1);
+                ln_platform_click_stop();
+                ln_platform_click(ln_display_click_tone());
 #endif
             }else (void)ln_display_settings_adjust((pressed&LN_BUTTON_PREV)?-1:1);
             shell->buttons=(uint32_t)value;ln_ui_refresh(shell);dirty=true;handled=true;

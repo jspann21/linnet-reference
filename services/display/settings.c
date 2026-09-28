@@ -84,7 +84,8 @@ bool ln_display_settings_adjust(int32_t direction){
     choice=direction<0?(choice?choice-1u:6u):(choice==6u?0u:choice+1u);
     mark_record_dirty();++revision;return true;
 }
-uint8_t ln_display_click_tone(void){return click_tone;}
+/* Wait for the saved choice before allowing feedback, including saved Off. */
+uint8_t ln_display_click_tone(void){return loaded?click_tone:1u;}
 bool ln_display_click_adjust(int32_t direction){
     if(!direction)return false;
     click_tone=(uint8_t)((click_tone+(direction<0?3u:1u))&3u);
