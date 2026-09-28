@@ -90,10 +90,12 @@ def _video_readiness(inventory, published, identity=None, state=None, verified=N
     video_files = state.get('video_files', {})
     if not isinstance(video_files, dict):
         video_files = {}
+    source_extensions = media.video_source_extensions(identity)
+    native_extensions = media.native_video_extensions(identity)
     compatible_files = [value for value in inventory['files']
-                        if Path(value).suffix.lower() in media.video_source_extensions(identity)]
+                        if Path(value).suffix.lower() in source_extensions]
     published = [row for row in published
-                 if Path(row['path']).suffix.lower() in media.native_video_extensions(identity)]
+                 if Path(row['path']).suffix.lower() in native_extensions]
     root = Path(identity['root']).resolve() if identity else None
     if ((compatible_files or published) and identity and
             identity['media_profile'].get('video_backend') == 'bcm-mp4' and

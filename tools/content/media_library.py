@@ -66,6 +66,8 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, _validated
         records_by_kind = collect_records_by_kind(root)
     _, _, entries, resolved_videos = _catalog(root, with_paths=True)
     published_paths = {str(path).casefold() for path in resolved_videos}
+    source_video_extensions = manager.video_source_extensions(identity)
+    native_video_extensions = manager.native_video_extensions(identity)
     result = []
     music_records = records_by_kind['Music']
     metadata = _music_metadata(root, music_records=music_records,
@@ -88,7 +90,7 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, _validated
                 if indexed.get('artwork') and tags.get('artwork') == str(path):
                     tags['artwork'] = indexed['artwork']
                 result.append(_row('original', kind, tags.get('title') or path.name, path,
-                    ('Not supported on this iPod' if kind == 'Videos' and path.suffix.lower() not in manager.video_source_extensions(identity)
+                    ('Not supported on this iPod' if kind == 'Videos' and path.suffix.lower() not in source_video_extensions
                      else 'Indexed on iPod' if indexed else 'Source on iPod'), info=info,
                     artist=tags.get('artist', ''), album=tags.get('album', ''), genre=tags.get('genre', ''),
                     artwork=tags.get('artwork', ''), duration=tags.get('duration', 0), track=tags.get('track', 0),
@@ -110,7 +112,7 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, _validated
     for (key, _, title), path in zip(entries, resolved_videos):
         tags = retail.get(str(path).casefold(), {})
         result.append(_row('published', 'Videos', title, path,
-            ('Not supported on this iPod' if path.suffix.lower() not in manager.native_video_extensions(identity)
+            ('Not supported on this iPod' if path.suffix.lower() not in native_video_extensions
              else 'Ready on iPod' if path.is_file() else 'Missing published file'), key=key.hex(),
             artist=tags.get('artist', ''), album=tags.get('album', ''), genre=tags.get('genre', ''),
             artwork=tags.get('artwork', ''), duration=tags.get('duration', 0),
