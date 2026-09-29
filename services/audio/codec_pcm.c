@@ -160,15 +160,19 @@ int ln_pcm_decode(struct ln_pcm *p,int16_t *output,uint32_t capacity,uint32_t *f
     if(count>capacity)return LN_PCM_ARGUMENT;
     int r=read_at(p,p->data_offset+p->frame*p->block_align,p->pending_bytes);
     if(r!=1)return r;
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
     if(p->bits==16u&&p->channels==2u&&!p->big_endian){
         copy_bytes(output,p->buffer,count*4u);
     }else{
+#endif
         uint32_t bytes=p->bits/8u;
         for(uint32_t i=0;i<count;i++){
             const uint8_t *b=p->buffer+i*p->block_align;
             output[i*2]=sample(p,b);output[i*2+1]=p->channels==1?output[i*2]:sample(p,b+bytes);
         }
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
     }
+#endif
     p->frame+=count;*frames=count;return LN_PCM_READY;
 }
 bool ln_pcm_seek(struct ln_pcm *p,uint64_t frame)
