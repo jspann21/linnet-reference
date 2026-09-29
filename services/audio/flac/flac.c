@@ -43,12 +43,19 @@ int ln_flac_open_step(struct ln_flac*s)
         s->cursor+=34;return finish_metadata(s);}
     if(s->phase==3){
         if(!s->metadata_left||s->seek_count==LINNET_FLAC_SEEK_POINTS){s->cursor+=s->metadata_left;s->metadata_left=0;return finish_metadata(s);}
-        result=read_bytes(s,s->cursor,s->header,18);if(result!=1)return result;
-        uint64_t sample=be64(s->header),offset=be64(s->header+8);
-        if(sample!=UINT64_MAX){if((s->total_frames&&sample>=s->total_frames)||
-            (s->seek_count&&(sample<=s->seek[s->seek_count-1u].sample||offset<s->seek[s->seek_count-1u].offset)))return fail(s,LN_PCM_FORMAT);
-            s->seek[s->seek_count++]=(struct ln_flac_point){sample,offset};}
-        s->cursor+=18;s->metadata_left-=18;return 0;
+        uint32_t points=s->metadata_left/18u;
+        if(points>LINNET_FLAC_SEEK_POINTS-s->seek_count)points=LINNET_FLAC_SEEK_POINTS-s->seek_count;
+        uint32_t bytes=points*18u;
+        result=read_bytes(s,s->cursor,s->buffer,bytes);if(result!=1)return result;
+        for(uint32_t i=0;i<points;i++){
+            const uint8_t *p=s->buffer+i*18u;
+            uint64_t sample=be64(p),offset=be64(p+8);
+            if(sample==UINT64_MAX)continue;
+            if((s->total_frames&&sample>=s->total_frames)||
+               (s->seek_count&&(sample<=s->seek[s->seek_count-1u].sample||offset<s->seek[s->seek_count-1u].offset)))return fail(s,LN_PCM_FORMAT);
+            s->seek[s->seek_count++]=(struct ln_flac_point){sample,offset};
+        }
+        s->cursor+=bytes;s->metadata_left-=bytes;return 0;
     }return fail(s,LN_PCM_FORMAT);
 }
 static void yield_decoder(void){}
