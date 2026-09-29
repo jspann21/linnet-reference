@@ -1,5 +1,6 @@
 #include "ui/runtime/ui.h"
 #include "linnet_menu_definition.h"
+#include "linnet_scene_ids.h"
 #define UI_X(value) ((int32_t)((value)*LINNET_UI_WIDTH/220u))
 #define UI_Y(value) ((int32_t)((value)*LINNET_UI_HEIGHT/176u))
 static uint32_t session_theme=UINT32_MAX,active_theme;
@@ -721,7 +722,7 @@ static void classic_album(struct painter*p,int32_t x,int32_t y,int32_t size){
     image_asset(p,&node,art);
 }
 static void classic_preview(struct painter*p,struct ln_ui_state*s){
-    if(layout()!=LN_UI_LAYOUT_IPOD_CLASSIC||!same(ln_ui_scenes[s->scene].id,"linnet.system.home"))return;
+    if(layout()!=LN_UI_LAYOUT_IPOD_CLASSIC||s->scene!=LN_UI_SCENE_HOME)return;
     const struct ln_ui_scene*c=&ln_ui_scenes[s->scene];
     if(c->focus_node>=c->count)return;const struct ln_ui_node*n=&c->nodes[c->focus_node];
     uint32_t source=menu_source(n,s->selected);const char*label=n->items&&source<n->item_count?n->items[source]:"";
@@ -790,15 +791,15 @@ static uint32_t status_signature(void){
 bool ln_ui_status_refresh(struct ln_ui_state*s){
     if(!s)return false;theme_sync();uint32_t status=status_signature();if(s->drawn_status==status)return false;
     /* Restoring preferences can finish while Settings is already visible. */
-    if(((s->drawn_status^status)&(7u<<23))&&same(ln_ui_scenes[s->scene].id,"linnet.system.settings"))s->dirty|=1u;
+    if(((s->drawn_status^status)&(7u<<23))&&s->scene==LN_UI_SCENE_SETTINGS)s->dirty|=1u;
     else s->dirty|=4u;return true;
 }
 static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_state*s,bool focused){
     if(n->flags&2u)return;
     struct rect previous=p->clip;p->clip=intersect(previous,bounds(n));if(!p->clip.w||!p->clip.h){p->clip=previous;return;}
     uint16_t fg=ln_ui_color(n->fg),bg=ln_ui_color(n->bg);int32_t row_h=(int32_t)row_height(n);
-    const char *node_text=same(ln_ui_scenes[s->scene].id,"linnet.system.games")&&same(n->text,"Game description")?
-        ln_games_description(s->selected):same(ln_ui_scenes[s->scene].id,"linnet.system.game-play")&&n->text&&
+    const char *node_text=s->scene==LN_UI_SCENE_GAMES&&same(n->text,"Game description")?
+        ln_games_description(s->selected):s->scene==LN_UI_SCENE_GAME_PLAY&&n->text&&
         (same(n->text,"Game title")||same(n->text,"Game score")||same(n->text,"Game hint")||
          same(n->text,"Game overlay")||same(n->text,"Game detail"))?
         ln_games_text(n->text):ln_ui_clock_text(n,UINT32_MAX,ln_display_settings_text(n,UINT32_MAX,ln_ui_dynamic_text(n,UINT32_MAX,n->text)));
@@ -960,7 +961,7 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
         if(layout()==LN_UI_LAYOUT_MINIMAL){uint32_t play=ln_ui_playback_status();if(play){symbol(p,left,icon_y,play,fg);left+=14;}if(s->hold){symbol(p,left,icon_y,4,fg);left+=14;}}
         const char *title=node_text?node_text:ln_ui_scenes[s->scene].title;
         int32_t x=left;
-        if(layout()==LN_UI_LAYOUT_IPOD_CLASSIC&&same(ln_ui_scenes[s->scene].id,"linnet.system.home")){
+        if(layout()==LN_UI_LAYOUT_IPOD_CLASSIC&&s->scene==LN_UI_SCENE_HOME){
             x=n->x+7;
         }else if(layout()==LN_UI_LAYOUT_IPOD_PHOTO||layout()==LN_UI_LAYOUT_IPOD_CLASSIC){
             x=max(left,min(n->x+(n->w-text_width(title)+1)/2,right-text_width(title)));
@@ -1019,7 +1020,7 @@ uint32_t ln_ui_first_visible(struct ln_ui_state*s){
 uint32_t ln_ui_focused_count(const struct ln_ui_state*s){
     theme_sync();const struct ln_ui_node*n=focus(s);return n&&(n->kind==LN_UI_MENU||n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_GRID)?total(n):0;
 }
-static bool change_scene_to(struct ln_ui_state*s,uint32_t target,bool remember){if(target>=ln_ui_scene_count||target>=LINNET_UI_MAX_SCENES||!(ln_ui_enabled_scenes&(UINT64_C(1)<<target))||target==s->scene)return false;bool editor=same(ln_ui_scenes[target].id,"linnet.system.clock-edit");if(editor&&!ln_ui_clock_begin()){s->dirty|=1u;return false;}
+static bool change_scene_to(struct ln_ui_state*s,uint32_t target,bool remember){if(target>=ln_ui_scene_count||target>=LINNET_UI_MAX_SCENES||!(ln_ui_enabled_scenes&(UINT64_C(1)<<target))||target==s->scene)return false;bool editor=target==LN_UI_SCENE_CLOCK_EDIT;if(editor&&!ln_ui_clock_begin()){s->dirty|=1u;return false;}
     if(!target)s->history_count=0;
     else if(remember){
         /* Explicit Menu handlers return to the parent with ln_ui_show().
@@ -1043,13 +1044,13 @@ void ln_ui_init(struct ln_ui_state*s){if(!s)return;theme_sync();*s=(struct ln_ui
 }
 bool ln_ui_input(struct ln_ui_state*s,uint32_t kind,int32_t value){if(!s)return false;theme_sync();
     if(kind==3u||kind==4u){bool v=value!=0;bool *old=kind==3u?&s->hold:&s->headphones;if(*old==v)return false;*old=v;s->dirty|=4u;return true;}
-    bool clock_edit=same(ln_ui_scenes[s->scene].id,"linnet.system.clock-edit");
-    if(!s->hold&&same(ln_ui_scenes[s->scene].id,"linnet.system.game-play")&&(kind==1u||kind==2u)){
+    bool clock_edit=s->scene==LN_UI_SCENE_CLOCK_EDIT;
+    if(!s->hold&&s->scene==LN_UI_SCENE_GAME_PLAY&&(kind==1u||kind==2u)){
         int result=ln_games_input(kind,value);if(kind==2u)s->buttons=(uint32_t)value;
         if(result==2){(void)ln_ui_show(s,"linnet.system.games");return true;}
         if(result){s->dirty|=8u;if(kind==2u)ln_ui_refresh(s);return true;}
     }
-    if(!s->hold&&kind==2u&&same(ln_ui_scenes[s->scene].id,"linnet.system.games")&&((uint32_t)value&~s->buttons&16u)&&ln_games_count()){
+    if(!s->hold&&kind==2u&&s->scene==LN_UI_SCENE_GAMES&&((uint32_t)value&~s->buttons&16u)&&ln_games_count()){
         ln_games_start(s->selected);s->buttons=(uint32_t)value;return ln_ui_show(s,"linnet.system.game-play");
     }
     if(clock_edit&&(kind==1u||kind==2u)){
@@ -1058,7 +1059,7 @@ bool ln_ui_input(struct ln_ui_state*s,uint32_t kind,int32_t value){if(!s)return 
         if(!s->hold&&(pressed&1u)){ln_ui_clock_cancel();s->buttons=(uint32_t)value;return previous_scene(s);}
         if(kind==2u){s->buttons=(uint32_t)value;return false;}
     }
-    if(kind==2u&&!s->hold&&same(ln_ui_scenes[s->scene].id,"linnet.system.clock")&&((uint32_t)value&~s->buttons&16u)){
+    if(kind==2u&&!s->hold&&s->scene==LN_UI_SCENE_CLOCK&&((uint32_t)value&~s->buttons&16u)){
         s->buttons=(uint32_t)value;if(s->selected==1u)ln_ui_clock_toggle();else (void)ln_ui_show(s,"linnet.system.clock-edit");s->dirty|=1u;return true;
     }
     if(kind==2u){uint32_t pressed=(uint32_t)value&~s->buttons;s->buttons=(uint32_t)value;if(s->hold)return false;if(pressed&1u){if(clock_edit)ln_ui_clock_cancel();return previous_scene(s);}if(pressed&16u){const struct ln_ui_node*n=focus(s);if(theme_choices(n)&&s->selected<ln_ui_theme_count){ln_ui_theme_changed(s->selected);theme_sync();s->dirty|=1u;return true;}uint32_t source=n?menu_source(n,s->selected):UINT32_MAX;if(n&&n->targets&&source<n->item_count){uint32_t target=n->targets[source];if(target==LINNET_UI_ACTION_SYNC||target==LINNET_UI_ACTION_SHUFFLE||target==LINNET_UI_ACTION_REPEAT||target==LINNET_UI_ACTION_SHUFFLE_ALL){s->action=target;return false;}return change_scene(s,target);}}return false;}
@@ -1434,11 +1435,11 @@ void ln_ui_render(struct ln_ui_state*s,uint16_t*pixels,ln_ui_damage_fn damage){i
     if(s->rendered&&!(s->dirty&1u)){if(s->selected==s->drawn_selected)s->dirty&=~2u;if(((s->hold?1u:0u)|(s->headphones?2u:0u))==s->drawn_flags&&status_signature()==s->drawn_status)s->dirty&=~4u;if(!s->dirty)return;}
     uint32_t painted_before=s->painted_pixels,render_dirty=s->dirty,visible_before=s->visible_items;bool cached_selection=false;const struct ln_ui_scene*c=scene(s);s->visible_items=0;
     if(!s->rendered||(s->dirty&1u))paint(s,pixels,screen,damage);
-    else if(s->dirty==2u&&layout()==LN_UI_LAYOUT_IPOD_CLASSIC&&same(ln_ui_scenes[s->scene].id,"linnet.system.home")){
+    else if(s->dirty==2u&&layout()==LN_UI_LAYOUT_IPOD_CLASSIC&&s->scene==LN_UI_SCENE_HOME){
         const struct ln_ui_node*n=focus(s);if(!n||!selection_damage(s,pixels,n,damage))paint(s,pixels,bounds(n),damage);
         paint(s,pixels,(struct rect){160,24,160,216},damage);
     }
-    else if(s->dirty==4u&&!same(ln_ui_scenes[s->scene].id,"linnet.system.clock")&&
+    else if(s->dirty==4u&&s->scene!=LN_UI_SCENE_CLOCK&&
             (layout()==LN_UI_LAYOUT_AURORA||layout()==LN_UI_LAYOUT_GRAPHITE||layout()==LN_UI_LAYOUT_SUNSET)){
         paint(s,pixels,layout()==LN_UI_LAYOUT_AURORA?(struct rect){0,0,UI_X(26),LINNET_UI_HEIGHT}:(struct rect){0,UI_Y(154),LINNET_UI_WIDTH,LINNET_UI_HEIGHT-UI_Y(154)},damage);
         for(uint32_t i=0;c&&i<c->count&&i<1024u;++i){const struct ln_ui_node*n=&c->nodes[i];
@@ -1446,7 +1447,7 @@ void ln_ui_render(struct ln_ui_state*s,uint16_t*pixels,ln_ui_damage_fn damage){i
         }
         s->visible_items=visible_cells(s,c);
     }
-    else if((s->dirty&4u)&&(layout()==LN_UI_LAYOUT_AURORA||layout()==LN_UI_LAYOUT_GRAPHITE||layout()==LN_UI_LAYOUT_SUNSET||same(ln_ui_scenes[s->scene].id,"linnet.system.clock")))paint(s,pixels,screen,damage);
+    else if((s->dirty&4u)&&(layout()==LN_UI_LAYOUT_AURORA||layout()==LN_UI_LAYOUT_GRAPHITE||layout()==LN_UI_LAYOUT_SUNSET||s->scene==LN_UI_SCENE_CLOCK))paint(s,pixels,screen,damage);
     else {
         if((s->dirty&16u)&&!content_damage(s,pixels,damage))paint(s,pixels,screen,damage);
         if(c)for(uint32_t i=0;i<c->count&&i<1024u;++i){const struct ln_ui_node*n=&c->nodes[i];
