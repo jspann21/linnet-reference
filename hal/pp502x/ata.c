@@ -13,7 +13,7 @@
 #define SELECT R8(0xc30001f8u)
 #define COMMAND R8(0xc30001fcu)
 #define CONTROL R8(0xc30003f8u)
-enum phase { OFF,POWER,RESET_ASSERT,RESET_SETTLE,INIT_READY,IDENT_DATA,IDENT_DONE,MODE_DONE,IDLE,TRANSFER,FINISH,STANDBY_FLUSH,LBA_PROBE_DONE,APM_DONE };
+enum phase { OFF,POWER,RESET_ASSERT,RESET_SETTLE,INIT_READY,IDENT_DATA,IDENT_DONE,MODE_DONE,IDLE,TRANSFER,FINISH,STANDBY_FLUSH,LBA_PROBE_DONE,APM_DONE,DMA_MODE_DONE,DMA_TRANSFER };
 static enum phase phase;
 static struct ln_ata_info info;
 static struct ln_ata_result result;
@@ -31,6 +31,30 @@ static uint8_t edge_buffer[4096] __attribute__((aligned(32)));
 static uint64_t previous_capacity;
 static uint8_t flush_command;
 static uint8_t pio_mode;
+#if (defined(LINNET_SOC_PP5022) || LINNET_TARGET_NUMBER == 98) && defined(LINNET_IMAGE_OS)
+#define ATA_READ_DMA 1
+#if LINNET_TARGET_NUMBER == 98
+#define ATA_DMA_MODE 1u
+#define ATA_DMA_TIMING 0x80003491u
+#else
+#define ATA_DMA_MODE 2u
+#define ATA_DMA_TIMING 0x80003371u
+#endif
+#define IDE_CFG R32(0xc3000028u)
+#define IDE_DMA_CONTROL R32(0xc3000400u)
+static uint8_t dma_buffer[32768] __attribute__((aligned(32)));
+static bool dma_enabled,dma_failed;
+static uint8_t *dma_bytes(void){
+    return (uint8_t *)ln_platform_uncached_address((uintptr_t)dma_buffer);
+}
+static void dma_stop(void){
+    IDE_CFG&=~0x8000u;
+    IDE_DMA_CONTROL&=~0x80000001u;
+    CONTROL=2u;
+}
+#else
+#define ATA_READ_DMA 0
+#endif
 #if LINNET_ATA_TRACK_FLUSH
 /* Unknown after reset/error; only a completed flush proves the cache clean. */
 static bool write_dirty=true;
@@ -133,6 +157,9 @@ static void write_sector(const uint8_t *sector){
         DATA=(uint16_t)((uint16_t)sector[i*2u]|((uint16_t)sector[i*2u+1u]<<8));
 }
 static void fail(uint32_t status) {
+#if ATA_READ_DMA
+    if(phase==DMA_TRANSFER){dma_stop();dma_enabled=false;dma_failed=true;}
+#endif
 #if LINNET_ATA_TRACK_FLUSH
     write_dirty=true;
 #endif
@@ -243,6 +270,10 @@ static void reset_begin(uint32_t now) {
     perf.active=false;perf_add(&perf.epoch,1u);
     init_started=now;for(uint32_t i=0;i<24u;++i)info.diagnostic[i]=0;
 #endif
+#if ATA_READ_DMA
+    if(phase==DMA_TRANSFER)dma_stop();
+    dma_enabled=false;
+#endif
     for(uint32_t i=0;i<256u;++i)identify[i]=0;
     info.power_safe=0;
     info.initializing=1;info.initialized=info.failed=info.busy=info.sleeping=0;
@@ -267,6 +298,9 @@ static void controller_setup(void) {
     R32(0xc3000000u)=0xc293u;R32(0xc3000004u)=0x80002150u;
 }
 void ln_ata_init(uint32_t now) {
+#if ATA_READ_DMA
+    dma_failed=false;
+#endif
     info=(struct ln_ata_info){0};previous_capacity=0;
     hdd_idle_us=10000000u;recent_standby=false;reset_begin(now);
 }
@@ -287,6 +321,10 @@ bool ln_ata_power_on(uint32_t now) {
     hdd_wake(now);++info.spinups;ln_ata_recover(now);return true;
 }
 static void transfer_begin(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *bytes){
+#if ATA_READ_DMA
+    if(dma_enabled&&op==LN_ATA_READ&&sectors>sizeof(dma_buffer)/512u)
+        sectors=sizeof(dma_buffer)/512u;
+#endif
     transfer_operation=op;transfer_count=sectors;transfer_done=0;transfer_buffer=bytes;
     bool extended=lba+sectors>0x10000000u||sectors>256u;
     SELECT=0xe0u;settle();
@@ -296,6 +334,23 @@ static void transfer_begin(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8
     COUNT=(uint8_t)sectors;LOW=(uint8_t)lba;MID=(uint8_t)(lba>>8);HIGH=(uint8_t)(lba>>16);
 #if LINNET_ATA_TRACK_FLUSH
     if(op==LN_ATA_WRITE)write_dirty=true;
+#endif
+#if ATA_READ_DMA
+    if(dma_enabled&&op==LN_ATA_READ){
+        /* Only the uncached alias touches this dedicated buffer. Caller cache
+         * lines are updated by CPU copy after the engine has stopped. */
+        /* PIO uses alternate status, leaving the previous device INTRQ
+         * asserted. Acknowledge it before unmasking and clearing the latch. */
+        (void)COMMAND;CONTROL=0u;settle();IDE_CFG|=8u;
+        IDE_DMA_CONTROL|=2u;
+        R32(0xc3000408u)=sectors*512u-4u;
+        R32(0xc300040cu)=(uint32_t)(uintptr_t)dma_bytes();
+        IDE_DMA_CONTROL|=8u;IDE_CFG|=0x8000u;
+        uint8_t cmd=extended?0x25u:0xc8u;
+        ATA_RECORD(3,cmd);COMMAND=cmd;++info.commands;
+        IDE_DMA_CONTROL|=1u;not_before=ln_time_us()+1u;
+        phase=DMA_TRANSFER;return;
+    }
 #endif
     command(op==LN_ATA_READ?(extended?0x24u:0x20u):(extended?0x34u:0x30u));phase=TRANSFER;
 }
@@ -349,6 +404,21 @@ void ln_ata_step(uint32_t now) {
     if(phase==POWER){controller_setup();CONTROL=6u;not_before=now+5u;phase=RESET_ASSERT;return;}
     if(phase==RESET_ASSERT){CONTROL=2u;not_before=now+2000u;phase=RESET_SETTLE;return;}
     if(phase==RESET_SETTLE){SELECT=0xa0u;settle();phase=INIT_READY;return;}
+#if ATA_READ_DMA
+    if(phase==DMA_TRANSFER){
+        /* Reading ATA status before INTRQ can hang this controller. */
+        if(!(IDE_CFG&8u))return;
+        dma_stop();
+        uint8_t status=COMMAND;info.last_status=status;
+        if(!status||status==0xffu||(status&0xa9u)){
+            dma_enabled=false;dma_failed=true;fail(LN_ATA_IO);return;
+        }
+        extern void ln_memory_copy(void *,const void *,uint32_t);
+        ln_memory_copy(transfer_buffer,dma_bytes(),transfer_count*512u);
+        transfer_done=transfer_count;info.sectors_read+=transfer_count;
+        phase=FINISH;
+    }
+#endif
     uint8_t status=CONTROL;info.last_status=status;
 #if !defined(LINNET_PROFILE_RELEASE)
     if(perf.active&&(phase==TRANSFER||phase==FINISH)){
@@ -368,6 +438,11 @@ void ln_ata_step(uint32_t now) {
     if(!status||status==0xffu){if(phase!=INIT_READY)fail(LN_ATA_OFFLINE);return;}
     if(phase==INIT_READY){if(!(status&0x40u))return;command(0xecu);phase=IDENT_DATA;return;}
     if(status&0x21u){
+#if ATA_READ_DMA
+        if(phase==DMA_MODE_DONE&&!(status&0x20u)&&(ERROR&4u)){
+            dma_failed=true;status&=(uint8_t)~1u;
+        }else
+#endif
         if(phase==APM_DONE&&!(status&0x20u)&&(ERROR&4u)){info.quirks|=2u;status&=(uint8_t)~1u;}
         else {fail(LN_ATA_IO);return;}
     }
@@ -385,11 +460,36 @@ void ln_ata_step(uint32_t now) {
         R32(0xc3000000u)=timings[pio_mode];ATA_RECORD(22, pio_mode);
         ERROR=3u;COUNT=(uint8_t)(8u+pio_mode);command(0xefu);phase=MODE_DONE;return;
     }
-    if(phase==MODE_DONE&&info.apm_supported){
+#if ATA_READ_DMA
+    if(phase==MODE_DONE&&!dma_failed&&(identify[53]&4u)&&
+       (identify[88]&(1u<<ATA_DMA_MODE))&&
+#if LINNET_TARGET_NUMBER == 98
+       /* This exact CFA firmware has malformed word49, including DMA/LBA
+        * flags. Its mode table, SET FEATURES and LBA probe remain required. */
+       info.compact_flash&&(info.quirks&8u)&&same_string(info.firmware,"iFlash85",9u)&&
+#else
+       (identify[49]&0x100u)&&
+       (same_string(info.model,"TOSHIBA MK8010GAH",17u)||
+        same_string(info.model,"TOSHIBA MK3008GAL",17u))&&
+#endif
+       (R32(0x60006020u)&65535u)==0x7777u&&R32(0x60006034u)==LN_PLL_80&&
+       R32(0x600060c4u)==0xc0000000u){
+        if(status&8u){fail(LN_ATA_IO);return;}
+        ERROR=3u;COUNT=0x40u+ATA_DMA_MODE;command(0xefu);phase=DMA_MODE_DONE;return;
+    }
+    if(phase==DMA_MODE_DONE){
+        if(status&8u){fail(LN_ATA_IO);return;}
+        if(!dma_failed){
+            IDE_CFG=(IDE_CFG&~0x10000000u)|0x20000000u;
+            R32(0xc3000004u)=ATA_DMA_TIMING;dma_enabled=true;
+        }
+    }
+#endif
+    if((phase==MODE_DONE||phase==DMA_MODE_DONE)&&info.apm_supported){
         if(status&8u){fail(LN_ATA_IO);return;}
         ERROR=5u;COUNT=0x80u;command(0xefu);phase=APM_DONE;return;
     }
-    if(phase==MODE_DONE||phase==APM_DONE){if(status&8u){fail(LN_ATA_IO);return;}
+    if(phase==MODE_DONE||phase==DMA_MODE_DONE||phase==APM_DONE){if(status&8u){fail(LN_ATA_IO);return;}
         if(lba_probe_required){
             SELECT=0xe0u;settle();COUNT=1u;LOW=MID=HIGH=0;
             command(0x40u);phase=LBA_PROBE_DONE;return;
@@ -481,6 +581,12 @@ void ln_ata_diagnostics(uint32_t d[24]) {
     d[11]=identify[118]|(uint32_t)identify[255]<<16;
     d[12]=R32(0xc3000028u);d[13]=R32(0xc3000000u);d[14]=R32(0xc3000004u);
     d[15]=R32(0x6000600cu);d[16]=R32(0x60006004u);d[17]=R32(0x6000d124u);
+#if ATA_READ_DMA
+    if(phase==DMA_TRANSFER){
+        d[18]=R32(0x6000d100u);d[19]=R32(0x6000d108u);
+        d[20]=info.last_status;d[22]=d[23]=0;return;
+    }
+#endif
     d[18]=R32(0x6000d100u);d[19]=R32(0x6000d108u);d[20]=CONTROL;
     d[22]=SELECT|(uint32_t)COUNT<<8|(uint32_t)LOW<<16|(uint32_t)MID<<24;
     d[23]=HIGH|(uint32_t)ERROR<<8;

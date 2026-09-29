@@ -16,7 +16,8 @@
 #define FIFO REG(0x7000280cu)
 #define CHUNK 1024u
 #define MASK (LINNET_AUDIO_RING_FRAMES-1u)
-static uint32_t ring[LINNET_AUDIO_RING_FRAMES] __attribute__((aligned(32)));
+/* Cleared cursors publish only submitted PCM; DMA never reads unused slots. */
+static uint32_t ring[LINNET_AUDIO_RING_FRAMES] __attribute__((section(".media_workspace"),aligned(32)));
 static uint32_t silence[CHUNK] __attribute__((aligned(32)));
 static volatile struct ln_audio_status state;
 static volatile uint32_t head,tail,inflight;

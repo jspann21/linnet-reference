@@ -14,6 +14,9 @@ void ln_music_search_resume(void);
 void ln_music_search_step(void);
 bool ln_music_search_busy(void);
 bool ln_music_search_query_pending(void);
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_music_search_diagnostics(uint32_t out[16]);
+#endif
 bool ln_music_search_active(void);
 uint32_t ln_music_search_count(void);
 const char *ln_music_search_label(uint32_t row);

@@ -1,6 +1,10 @@
 #include "search.h"
 #include "library.h"
 #include "browser.h"
+#if !defined(LINNET_PROFILE_RELEASE)
+#include "hal/api/platform.h"
+static uint32_t query_started_us,first_ready_us,window_ready_us;
+#endif
 static const char alphabet[]="abcdefghijklmnopqrstuvwxyz0123456789 -'.";
 struct cached_row { struct ln_music_library_search_row value; uint32_t ordinal; bool valid; };
 static struct cached_row rows[LN_MUSIC_SEARCH_ROWS*2u];
@@ -13,6 +17,10 @@ static struct cached_row *row_slot(uint32_t ordinal){return &rows[ordinal%(LN_MU
 static bool row_ready(uint32_t ordinal){struct cached_row *r=row_slot(ordinal);return r->valid&&r->ordinal==ordinal;}
 static void reset_results(uint32_t start){
     first=start;known=total=0;complete=window_ready=false;restore_selection=false;
+#if !defined(LINNET_PROFILE_RELEASE)
+    query_started_us=results&&length?ln_time_us():0;
+    first_ready_us=window_ready_us=0;
+#endif
     for(uint32_t i=0;i<LN_MUSIC_SEARCH_ROWS*2u;++i)rows[i].valid=false;
     ++epoch;++revision;
 }
@@ -45,7 +53,9 @@ void ln_music_search_step(void){
                 cached->value=row;cached->ordinal=pending_ordinal;cached->valid=true;
                 if(pending_ordinal>=known)known=pending_ordinal+1u;
             }
-            ++revision;
+#if !defined(LINNET_PROFILE_RELEASE)
+            if(!first_ready_us)first_ready_us=ln_time_us();
+#endif
         }
     }
     if(closing){ln_music_browser_suspend(false);closing=false;return;}
@@ -53,7 +63,14 @@ void ln_music_search_step(void){
     uint32_t limit=first+LN_MUSIC_SEARCH_ROWS,ordinal=first;
     if(complete&&limit>total)limit=total;
     while(ordinal<limit&&row_ready(ordinal))++ordinal;
-    window_ready=ordinal>=limit;
+    bool ready=ordinal>=limit;
+    /* Publish a complete visible window once; partial row redraws otherwise
+     * steal time from the remaining disk reads and audio work. */
+    if(ready&&!window_ready)++revision;
+    window_ready=ready;
+#if !defined(LINNET_PROFILE_RELEASE)
+    if(window_ready&&!window_ready_us)window_ready_us=ln_time_us();
+#endif
     if(window_ready)return;
     if(in_group?ln_music_library_view_row(2,group_index,ordinal):ln_music_library_search_at(prefix,ordinal)){
         pending_ordinal=ordinal;
@@ -62,6 +79,13 @@ void ln_music_search_step(void){
 }
 bool ln_music_search_busy(void){return closing||pending||(opened&&results&&length&&!window_ready);}
 bool ln_music_search_query_pending(void){return pending;}
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_music_search_diagnostics(uint32_t out[16]){
+    uint32_t words[16]={0x48435253u,0,opened,results,ln_music_search_busy(),first,known,total,
+        revision,query_started_us,first_ready_us,window_ready_us,ln_time_us(),in_group,complete,window_ready};
+    for(uint32_t i=0;i<16u;i++)out[i]=words[i];
+}
+#endif
 bool ln_music_search_active(void){return opened||closing;}
 uint32_t ln_music_search_count(void){
     if(!results)return sizeof alphabet;

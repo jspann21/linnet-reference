@@ -2,6 +2,7 @@
 import hashlib
 import html
 import json
+import os
 from pathlib import Path
 import struct
 import subprocess
@@ -37,7 +38,7 @@ def simulate(root,output,tape=None,system=None,target=None,all_scenes=False):
     (output/'generated/linnet_target.h').write_text(
         ''.join(f'#define {name} {value}\n' for name, value in presentation_defines(spec).items()))
     write_firmware_header(output/'generated')
-    executable=output/'linnet-simulator'
+    executable=output/('linnet-simulator.exe' if os.name == 'nt' else 'linnet-simulator')
     chain=toolchain()
     command=[chain['compiler']['path'],'-std=c11','-O2','-Wall','-Wextra','-Werror','-I'+str(output/'generated'),'-I'+str(root),
              str(root/'tools/simulator/native.c'),str(root/'ui/runtime/ui.c'),str(root/'services/display/clock.c'),str(output/'generated/linnet_ui.c'),'-o',str(executable)]

@@ -29,7 +29,8 @@ GROUPS = (
         Item('showcase', 'UI Demo', 'local.example.notes', 'demo_or_games'),
         Item('legacy_extras', 'Extras', 'linnet.system.extras', 'legacy_extras'),
         Item('notes', 'Notes', 'linnet.system.notes'),
-    ), (0, 3, 2, 1, 9, 7, 6, 5), (6,)),
+        Item('shuffle_all', 'Shuffle All Songs', '@shuffle-all'),
+    ), (0, 10, 3, 2, 1, 9, 7, 6, 5), (6,)),
     ('Music', (
         Item('all_tracks', 'Songs'), Item('artists', 'Artists'),
         Item('albums', 'Albums'), Item('genres', 'Genres'),
@@ -39,7 +40,8 @@ GROUPS = (
         Item('bookmarks', 'Bookmarks'), Item('recently_played', 'Recently Played'),
         Item('most_played', 'Most Played'), Item('recently_added', 'Recently Added'),
         Item('album_artists', 'Album Artists'),
-    ), (7, 1, 2, 0, 3, 4, 14, 5, 6, 9, 10, 11, 12, 13, 8), ()),
+        Item('shuffle_all', 'Shuffle All Songs'),
+    ), (15, 7, 1, 2, 0, 3, 4, 14, 5, 6, 9, 10, 11, 12, 13, 8), ()),
     ('Settings', (
         Item('display', 'Display', 'linnet.system.display'),
         Item('themes', 'Themes', 'linnet.system.themes', 'themes'),

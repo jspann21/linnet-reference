@@ -11,13 +11,13 @@ import json
 import math
 import os
 from pathlib import Path
-import shlex
 import shutil
 import sqlite3
 import subprocess
 import tempfile
 import tomllib
 import uuid
+from contextlib import closing
 from fractions import Fraction
 from functools import lru_cache
 
@@ -431,36 +431,22 @@ def save_selection(identity, folders):
     return selected
 
 
-def _wsl_path(path, distribution):
-    result = subprocess.run(['wsl.exe', '-d', distribution, '--', 'wslpath', '-a', Path(path).as_posix()],
-                            capture_output=True, text=True, timeout=30, check=True)
-    return result.stdout.strip()
-
-
-def _run_wsl(distribution, arguments, *, timeout=120):
-    result = subprocess.run(['wsl.exe', '-d', distribution, '--', *arguments],
-                            capture_output=True, text=True, timeout=timeout)
+def _run_writer(arguments, *, timeout=120):
+    result = subprocess.run([str(argument) for argument in arguments],
+                            capture_output=True, text=True, encoding='utf-8', errors='replace',
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
+                            timeout=timeout)
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip() or 'Apple database tool failed')
     return result
 
 
-def _writer(distribution, cache, kind='music'):
-    if kind not in ('music', 'photos'):
-        raise ValueError('Unknown Apple database writer')
-    source = Path(__file__).resolve().parent.parent / f'maintenance/a1238_apple/managed_{kind}.c'
-    output = cache / f'managed-apple-{kind}'
-    if output.is_file() and output.stat().st_mtime_ns >= source.stat().st_mtime_ns:
-        return output
-    flags = _run_wsl(distribution, ['pkg-config', '--cflags', '--libs', 'libgpod-1.0']).stdout
-    temporary = output.with_name(output.name + '.tmp')
-    _run_wsl(distribution, ['gcc', _wsl_path(source, distribution), *shlex.split(flags),
-                            '-o', _wsl_path(temporary, distribution)], timeout=180)
-    temporary.replace(output)
-    return output
+def _writer(cache, kind='music'):
+    from tools.studio.apple_tools import writer
+    return writer(kind, cache)
 
 
-def _update_photos(identity, state, selected, distribution, cache, progress):
+def _update_photos(identity, state, selected, cache, progress):
     device = _qualified_device(identity)
     if device is None:
         raise ValueError('Apple OS folder updates are not validated for this iPod.')
@@ -482,7 +468,7 @@ def _update_photos(identity, state, selected, distribution, cache, progress):
     if source_bytes + work_bytes > shutil.disk_usage(cache).free:
         raise ValueError('Not enough computer space to prepare these Apple photos.')
     progress(f'Preparing {len(photos):,} photos for Apple OS…')
-    writer = _writer(distribution, cache, 'photos')
+    writer = _writer(cache, 'photos')
     with tempfile.TemporaryDirectory(prefix='linnet-apple-photos-', dir=cache) as directory:
         stage = Path(directory)
         sysinfo = stage / 'iPod_Control/Device/SysInfo'
@@ -490,21 +476,33 @@ def _update_photos(identity, state, selected, distribution, cache, progress):
         shutil.copy2(root / 'iPod_Control/Device/SysInfo', sysinfo)
         source = stage / 'source'
         source.mkdir()
-        linux_source = _wsl_path(source, distribution).rstrip('/')
+        from PIL import Image, ImageOps
         lines = []
         for index, (path, info) in enumerate(photos, 1):
             if info.st_size > 128 * 1024 * 1024:
                 raise ValueError(f'Photo is too large for Apple OS preparation: {path.relative_to(root)}')
-            destination = source / f'{index:06}{path.suffix.lower()}'
-            shutil.copy2(path, destination)
-            if (destination.stat().st_size, destination.stat().st_mtime_ns) != (info.st_size, info.st_mtime_ns):
+            original = source / ('original' + path.suffix.lower())
+            shutil.copy2(path, original)
+            if (original.stat().st_size, original.stat().st_mtime_ns) != (info.st_size, info.st_mtime_ns):
                 raise ValueError(f'Photo changed during preparation: {path.relative_to(root)}')
-            lines.append(linux_source + '/' + destination.name)
+            destination = source / f'{index:06}.png'
+            with Image.open(original) as image:
+                if (not image.width or not image.height or max(image.size) > 16384 or
+                        image.width * image.height > 32_000_000):
+                    raise ValueError(f'Photo dimensions exceed the decode limit: {path.relative_to(root)}')
+                if image.width * image.height * 4 + work_bytes > shutil.disk_usage(cache).free:
+                    raise ValueError('Not enough computer space to prepare this Apple photo.')
+                with ImageOps.exif_transpose(image) as oriented:
+                    with oriented.convert('RGBA' if 'A' in oriented.getbands() or
+                                           'transparency' in oriented.info else 'RGB') as pixels:
+                        pixels.save(destination, format='PNG')
+            shutil.copystat(original, destination)
+            original.chmod(0o600)  # A copied read-only photo must remain removable on Windows.
+            original.unlink()
+            lines.append(str(destination))
         manifest = stage / 'photos.txt'
         manifest.write_text('\n'.join(lines) + '\n', encoding='utf-8')
-        _run_wsl(distribution, [_wsl_path(writer, distribution), _wsl_path(stage, distribution),
-                                _wsl_path(manifest, distribution),
-                                device['model'], '0x' + device['disk_serial']],
+        _run_writer([writer, stage, manifest, device['model'], '0x' + device['disk_serial']],
                  timeout=max(300, len(photos) * 2))
         prepared = stage / 'Photos/Photo Database'
         if not prepared.is_file() or prepared.stat().st_size < 128:
@@ -576,7 +574,7 @@ def _metadata(identity, files):
     if not database.is_file():
         raise ValueError('Prepare Music for Linnet first, then update Apple OS.')
     rows = {}
-    with sqlite3.connect(f'file:{database.as_posix()}?mode=ro', uri=True) as connection:
+    with closing(sqlite3.connect(f'file:{database.as_posix()}?mode=ro', uri=True)) as connection:
         for relative, size, mtime, value in connection.execute(
                 'SELECT relative,size,mtime,value FROM metadata WHERE source=? AND parser=?',
                 (str(root), 'existing')):
@@ -646,8 +644,6 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
     videos = _files(root, selected, 'Videos', media.extensions('Videos'))
     cache = cache_root(identity)
     cache.mkdir(parents=True, exist_ok=True)
-    config = Path(__file__).resolve().parents[2] / 'config/toolchain.toml'
-    distribution = tomllib.loads(config.read_text(encoding='utf-8'))['toolchain']['windows_wsl_distribution']
     source_db = root / 'iPod_Control/iTunes/iTunesDB'
     sysinfo = root / 'iPod_Control/Device/SysInfo'
     _plain(source_db, root)
@@ -666,7 +662,7 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
             published.get('video_source_signature') == _signature(videos) and
             not published.get('music_issues') and not published.get('video_issues') and
             source_db.is_file() and published.get('database_sha256') == _hash(source_db)):
-        _update_photos(identity, state, selected, distribution, cache, progress)
+        _update_photos(identity, state, selected, cache, progress)
         counts = state['published']
         attention = len(counts.get('music_issues', [])) + len(counts.get('video_issues', []))
         summary = (f'{counts.get("music_count", 0):,} songs, '
@@ -690,7 +686,7 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
         raise ValueError('Choose FFprobe in Settings to check videos for Apple OS.')
     video_rows, video_issues = _video_rows(identity, videos, video_tool)
     manifest.extend(video_rows)
-    writer = _writer(distribution, cache)
+    writer = _writer(cache)
     progress(f'Preparing Apple OS library for {len(playable_music):,} songs and {len(video_rows):,} videos…')
     with tempfile.TemporaryDirectory(prefix='linnet-apple-', dir=cache) as directory:
         stage = Path(directory)
@@ -705,18 +701,18 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
         with manifest_path.open('w', encoding='ascii', newline='\n') as output:
             for row in manifest:
                 output.write('\t'.join(map(str, row)) + '\n')
-        _run_wsl(distribution, [_wsl_path(writer, distribution), _wsl_path(stage, distribution),
-                                _wsl_path(manifest_path, distribution),
-                                device['model'], '0x' + device['disk_serial']], timeout=300)
+        _run_writer([writer, stage, manifest_path, device['model'],
+                     '0x' + device['disk_serial']], timeout=300)
         if not stage_db.is_file() or stage_db.stat().st_size < 128:
             raise ValueError('Apple database writer produced no valid database.')
-        from .retail_media import tracks
+        from .retail_media import tracks, _path as apple_path
         parsed = tracks(stage)
-        managed = [row for row in parsed.values()
-                   if Path(row['path']).is_relative_to(stage / 'Music')]
-        movies = [row for row in parsed.values()
-                  if Path(row['path']).is_relative_to(stage / 'Videos') and row['media_type'] == 2]
-        if len(managed) != len(playable_music) or len(movies) != len(video_rows):
+        expected = {str(apple_path(stage, row[0]).resolve()).casefold():
+                    2 if len(row) == 13 else 1 for row in manifest}
+        # Existing Apple entries may also point into Music or Videos. Verify
+        # the selected entries without counting those unrelated tracks.
+        if len(expected) != len(manifest) or any(
+                parsed.get(path, {}).get('media_type') != kind for path, kind in expected.items()):
             raise ValueError('Apple database did not retain the selected songs and videos.')
         digest = _hash(stage_db)
         backup = cache / ('apple-itunesdb-' + _hash(source_db)[:16] + '.bak') if source_db.is_file() else None
@@ -752,7 +748,7 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
                          database_sha256=digest, music_count=len(playable_music))
         state['published'] = published
         save_json(_state_path(identity), state)
-    _update_photos(identity, state, selected, distribution, cache, progress)
+    _update_photos(identity, state, selected, cache, progress)
     summary = (f'{len(playable_music):,} songs, {len(video_rows):,} videos and '
                f'{state["published"].get("photo_count", 0):,} photos are ready in Apple OS.')
     if music_issues or video_issues:

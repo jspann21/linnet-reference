@@ -30,7 +30,7 @@ struct ln_ata_info {
 };
 struct ln_ata_result { uint32_t status,sectors_done; };
 /* Single executive owner. Init/recover and start only issue bounded register
- * writes; step moves at most512 bytes. No DMA, hidden waits or heap. */
+ * writes; step services bounded PIO batches or completed DMA. No hidden waits or heap. */
 void ln_ata_init(uint32_t now);
 void ln_ata_recover(uint32_t now);
 /* Rail removal only with power_safe from a completed standby operation.

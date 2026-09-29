@@ -39,6 +39,10 @@ MEMORY {
 #ifdef LINNET_AUDIO
   MUSIC_TITLES (rw) : ORIGIN = LINNET_MUSIC_TITLES_ADDRESS, LENGTH = LINNET_MUSIC_TITLES_BYTES
 #endif
+#if defined(LINNET_IMAGE_OS) && LINNET_TARGET_NUMBER == 98
+  VIDEO_OVERLAY (rw) : ORIGIN = LINNET_LOADER_SNAPSHOT + LINNET_LOADER_CAPACITY + LINNET_LCD_WIDTH_ASM * LINNET_LCD_HEIGHT_ASM * 2,
+    LENGTH = LINNET_MUSIC_TITLES_ADDRESS - (LINNET_LOADER_SNAPSHOT + LINNET_LOADER_CAPACITY + LINNET_LCD_WIDTH_ASM * LINNET_LCD_HEIGHT_ASM * 2)
+#endif
   MAILBOX (rw) : ORIGIN = LINNET_MAILBOX_ADDRESS, LENGTH = LINNET_MAILBOX_BYTES
 }
 SECTIONS {
@@ -59,7 +63,7 @@ SECTIONS {
   ASSERT(((ABSOLUTE(__boot_hash_begin) | ABSOLUTE(__boot_hash_end) | ABSOLUTE(__boot_hash_load)) & 3) == 0, "Boot hash copy alignment")
   ASSERT(ORIGIN(BOOT_HASH_IRAM) >= ORIGIN(COP_IRAM) + LENGTH(COP_IRAM), "Boot hash overlaps COP stack")
   ASSERT(ORIGIN(BOOT_HASH_IRAM) + LENGTH(BOOT_HASH_IRAM) <= 0x4000c000, "Boot hash overlaps USB DMA")
-  .bss ALIGN(__image_end, 32) (NOLOAD)
+  .bss ALIGN(__image_end, 128) (NOLOAD)
 #elif defined(LINNET_AUDIO)
   /* Keep the stored copy contiguous with the SDRAM image. The VMA is beyond
    * the COP's downward-growing stack, and below development USB DMA. */
@@ -75,7 +79,7 @@ SECTIONS {
   ASSERT(SIZEOF(.audio_icode) <= LENGTH(AUDIO_IRAM), "Audio IRAM code and veneers exceed target budget")
   ASSERT(((ABSOLUTE(__audio_icode_begin) | ABSOLUTE(__audio_icode_end) | ABSOLUTE(__audio_icode_load)) & 3) == 0, "Audio IRAM copy must be word aligned")
   /* BSS must not overlap the stored copy used by startup and recovery. */
-  .bss ALIGN(__image_end, 32) (NOLOAD)
+  .bss ALIGN(__image_end, 128) (NOLOAD)
 #else
   __image_end = .;
   .bss (NOLOAD)
@@ -83,6 +87,7 @@ SECTIONS {
   : { . = ALIGN(8); __bss_start = .; *(.bss*) *(COMMON) . = ALIGN(8); __bss_end = .; } > SDRAM
   /* Verification fills this cache before publication; no startup clear needed. */
   .music_metadata (NOLOAD) : { *(.music_metadata) } > SDRAM
+  .media_workspace (NOLOAD) : { *(.media_workspace) } > SDRAM
   .stacks (NOLOAD) : {
     . = ALIGN(8); . += 1024; __abort_stack = .;
     . += 1024; __undef_stack = .;
@@ -107,6 +112,11 @@ SECTIONS {
   .music_titles (NOLOAD) : { *(.music_titles) } > MUSIC_TITLES
   ASSERT(ORIGIN(MUSIC_TITLES) >= LINNET_LOADER_SNAPSHOT + LINNET_LOADER_CAPACITY + LINNET_LCD_WIDTH_ASM * LINNET_LCD_HEIGHT_ASM * 2, "Titles overlap capture")
   ASSERT(ORIGIN(MUSIC_TITLES) + LENGTH(MUSIC_TITLES) <= LINNET_MAILBOX_ADDRESS - 0x2000, "Titles overlap control")
+#endif
+#if defined(LINNET_IMAGE_OS) && LINNET_TARGET_NUMBER == 98
+  /* Pixel contents are published before use; validity remains in zeroed BSS. */
+  .video_overlay (NOLOAD) : { *(.video_overlay) } > VIDEO_OVERLAY
+  ASSERT(SIZEOF(.video_overlay) <= LENGTH(VIDEO_OVERLAY), "Video overlay overlaps music titles")
 #endif
   .noinit (NOLOAD) : { KEEP(*(.noinit*)) } > MAILBOX
 #ifdef LINNET_STORAGE

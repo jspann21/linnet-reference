@@ -209,7 +209,7 @@ def preparation_option(kind, identity, photo_dimension=640, music_verification='
         target = TARGETS[identity['target_id']]
         art_version = ('art9' if target['media_art_side'] == 128 else
                        'art8' if target['lcd_format'] == 'gray2-horizontal' else 'art7')
-        return f"{music_verification}-duration-search-names-album-owner2-title-order1-retail2-recent-album-gain-{art_version}-{identity['target_id']}"
+        return f"{music_verification}-aac-seek1-duration-search-prefix2-names-album-owner2-title-order1-retail2-recent-album-gain-{art_version}-{identity['target_id']}"
     if kind == 'Notes':
         from .notes import _display_recipe
         return f"target-wrap2-{_display_recipe(identity['target_id'])[2]}"
@@ -425,7 +425,9 @@ def additions(root, pending, *, snapshots=None):
                 raise ValueError(f"Two selected files have the same destination: {destination}")
             if destination.exists():
                 if not destination.is_file() or destination.stat().st_size != info.st_size or _hash(destination) != _hash(path):
-                    raise ValueError(f"A different file already exists: {destination}. Rename the new file or folder first.")
+                    from .aac_index import same_original
+                    if kind != 'Music' or path.suffix.lower() not in ('.m4a', '.m4b') or not same_original(path, destination):
+                        raise ValueError(f"A different file already exists: {destination}. Rename the new file or folder first.")
                 continue
             planned[key] = dict(kind=kind, source=str(path), destination=str(destination),
                                 bytes=info.st_size, mtime_ns=info.st_mtime_ns)
@@ -844,6 +846,22 @@ def run(identity, selected, pending=(), **options):
             retry_selected = tuple(kind for kind in KINDS if kind in retry_kinds)
 
 
+def _prepare_aac(root, cache, skipped, checkpoint, progress, report, recovery, record):
+    from .aac_index import prepare_file
+    for folder in source_folders(root, 'Music'):
+        for path in folder.rglob('*'):
+            checkpoint()
+            if path.suffix.lower() not in ('.m4a', '.m4b') or not path.is_file():
+                continue
+            if path.relative_to(root).as_posix().casefold() in skipped:
+                continue
+            _plain(path, root)
+            progress(f'Preparing AAC seeks: {path.name}')
+            if prepare_file(path, cache / 'aac-seek', checkpoint=checkpoint, recovery=recovery):
+                report['steps'].append(dict(prepared_aac=str(path.relative_to(root))))
+                record()
+
+
 def _prepare_music(root, cache, identity, skipped, *, ffprobe, verification, force,
                    cancelled, checkpoint, progress, report, begin_publication):
     from .music import compile_music
@@ -946,7 +964,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
             if media_profile["video_backend"] in ("bcm-mp4", "native-mp4"):
                 from .native_video import inspect_file as inspect_native, prepare as prepare_native
                 from .publish_video import device_video_path, index_video
-                native_version = 4 if media_profile["video_backend"] == "native-mp4" else 2
+                native_version = 5 if media_profile["video_backend"] == "native-mp4" else 3
                 fingerprint = hashlib.sha256(f"native-mp4-v{native_version}:{json.dumps(media_profile, sort_keys=True)}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
                 cached = video_state.get(relative, {})
                 if not isinstance(cached, dict):
@@ -980,8 +998,8 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                 compatible = False
                 if source.suffix.lower() in native_video_extensions(identity):
                     try:
-                        inspect_native(source, ffprobe=ffprobe, profile=media_profile, cancelled=cancelled)
-                        compatible = True
+                        native_info = inspect_native(source, ffprobe=ffprobe, profile=media_profile, cancelled=cancelled)
+                        compatible = native_info['fast_start'] or not (ffmpeg or shutil.which('ffmpeg'))
                     except ValueError:
                         pass
                 progress(f"Preparing native video {index+1}/{item['count']}: {relative}")
@@ -1187,6 +1205,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
     verified_outputs = {}
     receipt = cache / ("session-" + uuid.uuid4().hex + ".json")
     report["receipt"] = str(receipt)
+    aac_recovery = report['aac_preparations'] = []
+    aac_committed = aac_publication_started = False
 
     def checkpoint():
         if cancelled():
@@ -1244,6 +1264,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         if "Photos" in selected:
             from .retail_media import images
             retail_photos = images(root)
+        if 'Music' in selected:
+            _prepare_aac(root, cache, skipped['Music'], checkpoint, progress, report, aac_recovery, record)
         inventory = scan(root, selected, skipped=skipped, retail_photos=retail_photos,
                          fingerprint_kinds=(kind for kind in selected if kind != "Videos"))
         if "Videos" in selected:
@@ -1269,7 +1291,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 progress(f"{kind}: no supported files; existing prepared library retained.")
                 continue
             option = preparation_option(kind, identity, photo_dimension, music_verification)
-            video_version = 5 if media_profile.get("video_backend") == "native-mp4" else 3
+            video_version = 6 if media_profile.get("video_backend") == "native-mp4" else 4
             signature = (f"videos-v{video_version}-{json.dumps(media_profile, sort_keys=True)}:{item['fingerprint']}" if kind == "Videos"
                          else f"{option}:{item['fingerprint']}")
             saved = state.get(kind, {})
@@ -1284,9 +1306,10 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             publication_started = False
             try:
                 def begin_publication(published_kind):
-                    nonlocal publication_started
+                    nonlocal publication_started, aac_publication_started
                     emit_stage(f'Publishing {published_kind}', unit + 1, can_stop=False)
                     publication_started = True
+                    if published_kind == 'Music':aac_publication_started = True
                 def mark_publication():
                     nonlocal publication_started
                     publication_started = True
@@ -1295,6 +1318,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                         ffprobe=ffprobe, verification=music_verification, force=force,
                         cancelled=cancelled, checkpoint=checkpoint, progress=progress,
                         report=report, begin_publication=begin_publication)
+                    aac_committed = True
                 elif kind == "Photos":
                     output_paths, published = _prepare_photos(root, cache, identity, media_profile,
                         skipped["Photos"], retail_photos, dimension=photo_dimension,
@@ -1347,6 +1371,20 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         progress(str(error))
     finally:
         emit_stage('Cleaning up', total_stages - 1, can_stop=False)
+        from .aac_index import finish_preparation
+        for change in aac_recovery:
+            try:
+                _volume_guard(identity)
+                _plain(Path(change['path']), root)
+                _plain(Path(change['backup']), cache)
+                if aac_publication_started and not aac_committed:
+                    raise OSError('Music publication is uncertain; AAC original retained for recovery')
+                finish_preparation(change, committed=aac_committed)
+                change['outcome'] = 'published' if aac_committed else 'restored'
+            except Exception as error:
+                report['complete'] = False
+                report['errors'].append(dict(kind='Music', message=str(error)))
+                report['cleanup']['retained'].append(dict(path=change['backup'], reason=str(error)))
         for temporary, boundary in owned_temporaries:
             try:
                 if boundary == root:

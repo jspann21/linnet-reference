@@ -9,7 +9,7 @@
 #include "linnet_target.h"
 /* USB MSC Bulk-Only Transport, one transparent SCSI direct-access LUN.
  * The filesystem owner must have quiesced before entering this exclusive loop. */
-enum { CBW, SEND, READ_WAIT, RECEIVE, WRITE_WAIT, FLUSH_WAIT, DISCARD, STATUS, STATUS_WAIT, INVALID };
+enum { CBW, SEND, READ_WAIT, RECEIVE, WRITE_WAIT, FLUSH_WAIT, DISCARD, STATUS, STATUS_WAIT, INVALID, READ_RECOVER };
 enum { BUFFER_BYTES=LINNET_ATA_MAX_SECTORS*512u };
 static uint8_t dma_buffer[BUFFER_BYTES] __attribute__((aligned(32)));
 static uint8_t dma_status[32] __attribute__((aligned(32)));
@@ -19,7 +19,7 @@ static uint8_t wrapper[31];
 static uint32_t state,tag,residue,length,position,lba,blocks,block_bytes,block_shift,scale,capacity;
 static uint32_t batch_blocks;
 static uint8_t status,sense_key,sense_code;
-static bool direction_in,reading,eject,write_enabled,dirty;
+static bool direction_in,reading,eject,write_enabled,dirty,read_retried;
 static const char *device_serial;
 static char storage_serial[17];
 static uint32_t activity;
@@ -70,7 +70,7 @@ static void command(void) {
         ln_pp_usb_storage_stall(true);ln_pp_usb_storage_stall(false);state=INVALID;return;
     }
     tag=ln_read_le32(wrapper+4);residue=ln_read_le32(wrapper+8);direction_in=(wrapper[12]&0x80)!=0;
-    status=0;reading=eject=false;position=length=0;state=STATUS;
+    status=0;reading=eject=read_retried=false;position=length=0;state=STATUS;
     const uint8_t *c=wrapper+15;
     if(c[0]!=0)activity=ln_time_us();
     unsigned group=c[0]>>5,required=group==0?6:group==4?16:group==5?12:10;
@@ -95,7 +95,7 @@ static void command(void) {
             break;
         }
         buffer[1]=0x80;buffer[2]=4;buffer[3]=2;buffer[4]=31;
-        {static const char text[28]=LINNET_NATIVE_STORAGE_INQUIRY;for(unsigned i=0;i<28;i++)buffer[8+i]=(uint8_t)text[i];}
+        {static const char text[]=LINNET_NATIVE_STORAGE_INQUIRY;for(unsigned i=0;i<28;i++)buffer[8+i]=(uint8_t)text[i];}
         reply(36,c[4]);break;
     case 0x1a: /* MODE SENSE(6), no block descriptor */
         mode_sense(c,false);break;
@@ -134,9 +134,22 @@ static void command(void) {
 }
 static void step(void) {
     struct ln_ata_result result;
+    if(state==READ_RECOVER){
+        struct ln_ata_state drive;ln_ata_state_snapshot(&drive);
+        if(drive.initializing)return;
+        if(!drive.initialized||drive.failed||!disk_request(LN_ATA_READ)){
+            failure(3,0x11);return;
+        }
+        state=READ_WAIT;return;
+    }
     if(state==READ_WAIT || state==WRITE_WAIT || state==FLUSH_WAIT) {
         if(!ln_ata_take(&result))return;
         if(result.status || ((state==READ_WAIT || state==WRITE_WAIT) && result.sectors_done!=batch_blocks*scale)) {
+            /* Retry one read after resetting the controller. ATA disables a
+             * failed DMA path during recovery; no writes are replayed. */
+            if(state==READ_WAIT&&!dirty&&!read_retried){
+                read_retried=true;ln_ata_recover(ln_time_us());state=READ_RECOVER;return;
+            }
             failure(3,state==READ_WAIT?0x11:0x0c);return;
         }
         if(state==READ_WAIT){length=batch_blocks*block_bytes;position=0;state=SEND;return;}
@@ -187,7 +200,7 @@ static void step(void) {
         state=CBW;position=0;
     }
 }
-/* Finish the current bounded PIO operation and flush any submitted writes.
+/* Finish the current bounded ATA operation and flush any submitted writes.
  * A reset never reports success while ATA still owns the shared buffer. */
 static bool drain(void) {
     struct ln_ata_state drive;struct ln_ata_result result;
@@ -198,7 +211,7 @@ static bool drain(void) {
             if(result.status)return false;
             if(flush_started || state==FLUSH_WAIT)dirty=false;
         }
-        if(!drive.busy) {
+        if(!drive.busy&&!drive.initializing) {
             if(!dirty)return true;
             if(!disk_request(LN_ATA_FLUSH))return false;
             flush_started=true;

@@ -15,6 +15,8 @@
  * and limitations under the License.
  * -------------------------------------------------------------------
  */
+
+
 /*
 ------------------------------------------------------------------------------
  INPUT AND OUTPUT DEFINITIONS
@@ -236,6 +238,9 @@ void  MBMotionComp(
 
     /* Pointer to previous luminance frame */
     c_prev  = prev->yChan;
+    if (!c_prev) {
+        return;
+    }
 
     pred_block = video->mblock->pred_block;
 
@@ -574,7 +579,12 @@ void  SkippedMBMotionComp(
 
     /* zero motion compensation for previous frame */
     /*mby*width + mbx;*/
-    c_prev  = prev->yChan + offset;
+    c_prev  = prev->yChan;
+    if (!c_prev) {
+        return;
+    }
+    c_prev += offset;
+
     /*by*width_uv + bx;*/
     cu_prev = prev->uChan + (offset >> 2) + (xpos >> 2);
     /*by*width_uv + bx;*/

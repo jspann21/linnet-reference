@@ -760,6 +760,18 @@ class SetupPage:
         window.setup_progress = QProgressBar(); window.setup_progress.setRange(0, 0)
         window.setup_progress.setTextVisible(False); window.setup_progress.hide(); details.addWidget(window.setup_progress)
         layout.addWidget(card)
+        layout.addSpacing(12); layout.addWidget(label('Firmware', 'section'))
+        window.firmware_path = str(window.settings.value('firmware_bundle', ''))
+        window.firmware_label = label(window.firmware_path or 'Choose a downloaded Linnet firmware ZIP.', 'muted', True)
+        layout.addWidget(window.firmware_label)
+        window.firmware_button = button('Choose firmware ZIP', window.choose_firmware, None, 'folder')
+        layout.addWidget(window.firmware_button, 0, Qt.AlignLeft)
+        window.build_from_source = CheckBox('Build from source (development)')
+        window.build_from_source.setChecked(not getattr(sys, 'frozen', False) and
+            window.settings.value('build_from_source', False, type=bool))
+        window.build_from_source.setVisible(not getattr(sys, 'frozen', False))
+        window.build_from_source.toggled.connect(window.firmware_source_changed)
+        layout.addWidget(window.build_from_source)
         layout.addSpacing(12); layout.addWidget(label('Startup software', 'section'))
         layout.addWidget(label('Choose a default or see options available by holding Menu at startup.', 'muted'))
         window.boot_choice = ComboBox(); window.boot_choice.currentIndexChanged.connect(window.update_install_action); layout.addWidget(window.boot_choice)
@@ -2338,12 +2350,23 @@ class MediaWindow(QMainWindow):
         option = self.boot_choice.currentData(); method = self.method_choice.currentData()
         enabled = not self.busy and self.identity is not None and bool(option and option.get('selectable'))
         linnet = option and option['kind'] == 'linnet'
+        from_source = self.build_from_source.isChecked()
+        resume = bool(self.review and self.review.get('action') == 'resume')
+        self.build_from_source.setEnabled(not self.busy and not resume)
+        self.firmware_button.setEnabled(not self.busy and not from_source and not resume)
+        self.firmware_label.setVisible(not from_source)
+        self.firmware_button.setVisible(not from_source)
         self.boot_detail.setText(option.get('detail', '') if option else '')
         show_methods = bool(linnet and option.get('selectable') and method)
         for widget in (self.method_title, self.method_choice, self.method_detail, self.selector_note):
             widget.setVisible(show_methods)
         self.method_detail.setText(method.get('detail', '') if method and linnet else '')
         enabled = enabled and bool(method and method.get('enabled')) if linnet else enabled and not bool(option and option.get('active'))
+        if linnet and not resume and not from_source:
+            enabled = enabled and bool(self.firmware_path) and option['build'] == 'user'
+            if option['build'] == 'dev':
+                self.boot_detail.setText('Developer builds are available from a source checkout.' if getattr(sys, 'frozen', False) else
+                    'Enable Build from source to compile diagnostics and Linnet Link for this iPod.')
         self.method_choice.setEnabled(bool(linnet and method) and not self.busy)
         self.boot_choice.setEnabled(not self.busy and self.review is not None and self.boot_choice.count() > 0)
         self.install_button.setEnabled(enabled)
@@ -2366,8 +2389,27 @@ class MediaWindow(QMainWindow):
                             'Superseded Linnet system files will be archived.'))
         if not self.dialog('Update iPod setup', description + '\n\nKeep the iPod connected until the update finishes.', 'Apply to iPod'):
             return
-        operation = (lambda: installer.install(identity, progress=self.events.progress.emit, build=option['build'], installation_method=method['id'])) if option['kind'] == 'linnet' else lambda: installer.restore(identity, expected=option['id'])
+        from_source = self.build_from_source.isChecked()
+        firmware = None if from_source or not self.firmware_path else Path(self.firmware_path)
+        if option['kind'] == 'linnet' and self.review.get('action') == 'resume':
+            from_source, firmware = option['build'] == 'dev', None
+        operation = (lambda: installer.install(identity, progress=self.events.progress.emit,
+            build=option['build'], installation_method=method['id'], firmware=firmware,
+            from_source=from_source)) if option['kind'] == 'linnet' else lambda: installer.restore(identity, expected=option['id'])
         self.work('install', operation, 'Updating your iPod setup…')
+
+    def choose_firmware(self):
+        path, _ = QFileDialog.getOpenFileName(self, 'Choose Linnet firmware', self.firmware_path,
+                                            'Linnet firmware (*.zip)')
+        if path:
+            self.firmware_path = path
+            self.settings.setValue('firmware_bundle', path)
+            self.firmware_label.setText(path)
+            self.update_install_action()
+
+    def firmware_source_changed(self, enabled):
+        self.settings.setValue('build_from_source', enabled)
+        self.update_install_action()
 
     def locate_tools(self):
         folder = QFileDialog.getExistingDirectory(self, 'Choose the folder containing FFmpeg and FFprobe')

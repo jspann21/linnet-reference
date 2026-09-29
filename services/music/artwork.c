@@ -3,7 +3,8 @@
 #include "services/music/database.h"
 #include "boot/include/linnet_boot.h"
 #include "hal/api/platform.h"
-static uint16_t pixels[2][LINNET_ART_MAX_SIDE*LINNET_ART_MAX_SIDE];
+/* Visibility and cache validity remain in BSS; reads fill pixels before use. */
+static uint16_t pixels[2][LINNET_ART_MAX_SIDE*LINNET_ART_MAX_SIDE] __attribute__((section(".media_workspace"),aligned(32)));
 static uint16_t cached_side[2];
 static struct ln_fat32_file file;
 static char requested[256],path[256];

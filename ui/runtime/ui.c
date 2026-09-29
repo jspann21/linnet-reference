@@ -53,7 +53,7 @@ static uint8_t menu_counts[LN_MENU_GROUPS]=LN_MENU_DEFAULT_COUNTS;
 uint32_t ln_ui_menu_count(uint32_t group){return group<LN_MENU_GROUPS?menu_counts[group]:0;}
 uint32_t ln_ui_menu_item(uint32_t group,uint32_t row){return group<LN_MENU_GROUPS&&row<menu_counts[group]?menu_order[group][row]:UINT32_MAX;}
 bool ln_ui_menu_load(const uint8_t *data,uint32_t length){
-    if(length!=80||data[0]!='M'||data[1]!='E'||data[2]!='N'||data[3]!='U'||data[4]!=1||data[5]||data[6]||data[7])return false;
+    if(length!=80||data[0]!='M'||data[1]!='E'||data[2]!='N'||data[3]!='U'||(data[4]!=1&&data[4]!=2)||data[5]||data[6]||data[7])return false;
     uint32_t crc=~0u;for(uint32_t i=0;i<76;++i){crc^=data[i];for(uint32_t bit=0;bit<8;++bit)crc=(crc>>1)^((0u-(crc&1u))&0xedb88320u);}
     uint32_t saved=(uint32_t)data[76]|((uint32_t)data[77]<<8)|((uint32_t)data[78]<<16)|((uint32_t)data[79]<<24);
     if(~crc!=saved)return false;
@@ -63,7 +63,7 @@ bool ln_ui_menu_load(const uint8_t *data,uint32_t length){
         if((seen&ln_menu_required[g])!=ln_menu_required[g])return false;
     }
     for(uint32_t g=0;g<LN_MENU_GROUPS;++g){menu_counts[g]=data[8+g*17];for(uint32_t i=0;i<menu_counts[g];++i)menu_order[g][i]=data[9+g*17+i];}
-    for(uint32_t g=0;g<3u;++g){
+    if(data[4]==1)for(uint32_t g=0;g<3u;++g){
         uint32_t length=ln_menu_legacy_counts[g];
         bool stock=menu_counts[g]==length||(g==LN_MENU_HOME&&menu_counts[g]==length+1u&&menu_order[g][length]==7u);
         for(uint32_t i=0;stock&&i<length;++i)if(menu_order[g][i]!=ln_menu_legacy[g][i])stock=false;
@@ -71,6 +71,13 @@ bool ln_ui_menu_load(const uint8_t *data,uint32_t length){
             menu_counts[g]=ln_menu_default_counts[g];
             for(uint32_t i=0;i<menu_counts[g];++i)menu_order[g][i]=ln_menu_defaults[g][i];
         }
+    }
+    if(data[4]==1)for(uint32_t g=LN_MENU_HOME;g<=LN_MENU_MUSIC;++g){
+        uint8_t id=g==LN_MENU_HOME?10u:15u;bool present=false;
+        for(uint32_t i=0;i<menu_counts[g];++i)if(menu_order[g][i]==id)present=true;
+        if(!present){uint32_t at=g==LN_MENU_HOME&&menu_order[g][0]==0?1u:0u;
+            for(uint32_t i=menu_counts[g];i>at;--i)menu_order[g][i]=menu_order[g][i-1];
+            menu_order[g][at]=id;++menu_counts[g];}
     }
     /* Expand the former Extras entry while preserving existing choices. */
     uint8_t home[16];uint32_t count=0,seen=0;
@@ -101,7 +108,7 @@ static uint32_t menu_source(const struct ln_ui_node *n,uint32_t row){
     }
     for(uint32_t i=0;i<menu_counts[group];++i){const char *id=ln_menu_targets[group][menu_order[group][i]];
         if(group==LN_MENU_HOME&&menu_order[group][i]==7u){if(!ln_games_count())continue;id="linnet.system.games";}
-        for(uint32_t j=0;j<n->item_count;++j){uint32_t target=n->targets[j];const char *actual=target==LINNET_UI_ACTION_SYNC?"@sync":target<ln_ui_scene_count?ln_ui_scenes[target].id:"";
+        for(uint32_t j=0;j<n->item_count;++j){uint32_t target=n->targets[j];const char *actual=target==LINNET_UI_ACTION_SYNC?"@sync":target==LINNET_UI_ACTION_SHUFFLE_ALL?"@shuffle-all":target<ln_ui_scene_count?ln_ui_scenes[target].id:"";
             if(same(id,actual)){if(!row)return j;--row;break;}}}
     return UINT32_MAX;
 }
@@ -719,9 +726,32 @@ static void chrome(struct painter*p,struct ln_ui_state*s){
         symbol(p,UI_X(155),UI_Y(159),5,ink);fitted_text(p,UI_X(170),UI_Y(154)+max(0,(UI_Y(22)-(int32_t)ln_ui_font.height)/2),clock,ink,UI_X(48));
     }
 }
+static uint32_t battery_signature(void){
+    uint32_t status=ln_ui_battery_status(),level=status&255u,style=layout();
+    /* Track visible pixels rather than percentage noise within one icon
+     * column. The full-width Minimal bar still needs every percentage. */
+    if(style==LN_UI_LAYOUT_MINIMAL)return status&1023u;
+    if(style==LN_UI_LAYOUT_IPOD_PHOTO){
+        if(status==UINT32_MAX)return 0;
+        level=min(level,100u);
+        if(status&256u)return 256u;
+        if((status&512u)&&level==100u)return 512u;
+        uint32_t width=level*21u/100u;
+        if(level&&level<20u)width=max(6,(int32_t)width);
+        return width|((level&&level<20u)?64u:0u);
+    }
+    if(status==UINT32_MAX||level>100u)return 0;
+    bool external=(status&(256u|512u))!=0;
+    bool monochrome=LINNET_BATTERY_THEME_MONOCHROME&&
+        (ln_ui_themes[active_theme].flags&LN_UI_THEME_MONOCHROME)!=0;
+    uint32_t width=monochrome&&external&&style!=LN_UI_LAYOUT_AURORA?19u:level*19u/100u;
+    return 32u|width|(external?128u:0u)|
+        ((style==LN_UI_LAYOUT_IPOD_CLASSIC&&level<20u)?64u:0u)|
+        ((style==LN_UI_LAYOUT_IPOD_CLASSIC&&(status&512u)&&level==100u)?256u:0u);
+}
 static uint32_t status_signature(void){
     uint32_t seconds=ln_ui_clock_seconds(),minutes=seconds<86400u?seconds/60u:2047u;
-    return (ln_ui_battery_status()&1023u)|(minutes<<10)|((ln_ui_playback_status()&3u)<<21)|((ln_ui_playback_modes()&7u)<<23);
+    return battery_signature()|(minutes<<10)|((ln_ui_playback_status()&3u)<<21)|((ln_ui_playback_modes()&7u)<<23);
 }
 bool ln_ui_status_refresh(struct ln_ui_state*s){
     if(!s)return false;theme_sync();uint32_t status=status_signature();if(s->drawn_status==status)return false;
@@ -997,7 +1027,7 @@ bool ln_ui_input(struct ln_ui_state*s,uint32_t kind,int32_t value){if(!s)return 
     if(kind==2u&&!s->hold&&same(ln_ui_scenes[s->scene].id,"linnet.system.clock")&&((uint32_t)value&~s->buttons&16u)){
         s->buttons=(uint32_t)value;if(s->selected==1u)ln_ui_clock_toggle();else (void)ln_ui_show(s,"linnet.system.clock-edit");s->dirty|=1u;return true;
     }
-    if(kind==2u){uint32_t pressed=(uint32_t)value&~s->buttons;s->buttons=(uint32_t)value;if(s->hold)return false;if(pressed&1u){if(clock_edit)ln_ui_clock_cancel();return previous_scene(s);}if(pressed&16u){const struct ln_ui_node*n=focus(s);if(theme_choices(n)&&s->selected<ln_ui_theme_count){ln_ui_theme_changed(s->selected);theme_sync();s->dirty|=1u;return true;}uint32_t source=n?menu_source(n,s->selected):UINT32_MAX;if(n&&n->targets&&source<n->item_count){uint32_t target=n->targets[source];if(target==LINNET_UI_ACTION_SYNC||target==LINNET_UI_ACTION_SHUFFLE||target==LINNET_UI_ACTION_REPEAT){s->action=target;return false;}return change_scene(s,target);}}return false;}
+    if(kind==2u){uint32_t pressed=(uint32_t)value&~s->buttons;s->buttons=(uint32_t)value;if(s->hold)return false;if(pressed&1u){if(clock_edit)ln_ui_clock_cancel();return previous_scene(s);}if(pressed&16u){const struct ln_ui_node*n=focus(s);if(theme_choices(n)&&s->selected<ln_ui_theme_count){ln_ui_theme_changed(s->selected);theme_sync();s->dirty|=1u;return true;}uint32_t source=n?menu_source(n,s->selected):UINT32_MAX;if(n&&n->targets&&source<n->item_count){uint32_t target=n->targets[source];if(target==LINNET_UI_ACTION_SYNC||target==LINNET_UI_ACTION_SHUFFLE||target==LINNET_UI_ACTION_REPEAT||target==LINNET_UI_ACTION_SHUFFLE_ALL){s->action=target;return false;}return change_scene(s,target);}}return false;}
     if(kind!=1u||s->hold||!value)return false;const struct ln_ui_node*n=focus(s);uint32_t count=n?total(n):0;if(!count)return false;
     (void)ln_ui_first_visible(s);int64_t next=(int64_t)s->selected+value;if(next<0)next=0;if((uint64_t)next>=count)next=count-1u;if((uint32_t)next==s->selected)return false;s->selected=(uint32_t)next;s->selections[s->scene]=s->selected;(void)ln_ui_first_visible(s);s->dirty|=2u;return true;
 }
@@ -1012,8 +1042,22 @@ static void pixel_copy(uint16_t *to,const uint16_t *from,uint32_t pixels){
 #if defined(LINNET_VIDEO)
 /* Retain opaque video controls between data changes. Each band is bounded;
  * unfamiliar layouts use normal painting. Never cache the moving video pixels. */
+#if LINNET_TARGET_NUMBER == 98
+/* The accepted layout bounds below need only the header and footer bands. */
+#define VIDEO_OVERLAY_TOP (LINNET_UI_HEIGHT*48u/176u)
+#define VIDEO_OVERLAY_ROWS (VIDEO_OVERLAY_TOP+LINNET_UI_HEIGHT-LINNET_UI_HEIGHT*112u/176u+7u)
+static uint16_t video_overlay_pixels[LINNET_UI_WIDTH*VIDEO_OVERLAY_ROWS]
+    __attribute__((section(".video_overlay"),aligned(32)));
+#define VIDEO_OVERLAY_FOOTER (VIDEO_OVERLAY_TOP*LINNET_UI_WIDTH)
+#else
+#define video_overlay_pixels video_overlay.pixels
+#define VIDEO_OVERLAY_FOOTER (bottom*LINNET_UI_WIDTH)
+#endif
 static struct {
-    uint16_t pixels[LINNET_UI_WIDTH*LINNET_UI_HEIGHT],colors[LN_UI_COLOR_COUNT];
+#if LINNET_TARGET_NUMBER != 98
+    uint16_t pixels[LINNET_UI_WIDTH*LINNET_UI_HEIGHT];
+#endif
+    uint16_t colors[LN_UI_COLOR_COUNT];
     uint32_t scene,epoch,theme,battery,playback,minute,progress,top,bottom;
     bool valid,hold,headphones,clock12;
     char status[128];
@@ -1091,8 +1135,8 @@ static bool paint_video_overlay(struct painter*p,struct ln_ui_state*s,const stru
             fitted_text(p,x+max(0,(column-text_width(labels[i]))/2),y,labels[i],footer_hint,column);
         }
         ln_ui_font=main_font;
-        pixel_copy(video_overlay.pixels,p->pixels,top*LINNET_UI_WIDTH);
-        pixel_copy(video_overlay.pixels+bottom*LINNET_UI_WIDTH,p->pixels+bottom*LINNET_UI_WIDTH,(LINNET_UI_HEIGHT-bottom)*LINNET_UI_WIDTH);
+        pixel_copy(video_overlay_pixels,p->pixels,top*LINNET_UI_WIDTH);
+        pixel_copy(video_overlay_pixels+VIDEO_OVERLAY_FOOTER,p->pixels+bottom*LINNET_UI_WIDTH,(LINNET_UI_HEIGHT-bottom)*LINNET_UI_WIDTH);
         video_overlay.scene=s->scene;video_overlay.epoch=s->scene_epoch;video_overlay.theme=active_theme;
         video_overlay.battery=battery;video_overlay.playback=playback;video_overlay.minute=minute;video_overlay.progress=progress;
         video_overlay.top=top;video_overlay.bottom=bottom;video_overlay.hold=s->hold;video_overlay.headphones=s->headphones;
@@ -1100,8 +1144,8 @@ static bool paint_video_overlay(struct painter*p,struct ln_ui_state*s,const stru
         for(uint32_t i=0;i<LN_UI_COLOR_COUNT;++i)video_overlay.colors[i]=color(i);
         video_overlay.valid=true;
     }else{
-        pixel_copy(p->pixels,video_overlay.pixels,top*LINNET_UI_WIDTH);
-        pixel_copy(p->pixels+bottom*LINNET_UI_WIDTH,video_overlay.pixels+bottom*LINNET_UI_WIDTH,(LINNET_UI_HEIGHT-bottom)*LINNET_UI_WIDTH);
+        pixel_copy(p->pixels,video_overlay_pixels,top*LINNET_UI_WIDTH);
+        pixel_copy(p->pixels+bottom*LINNET_UI_WIDTH,video_overlay_pixels+VIDEO_OVERLAY_FOOTER,(LINNET_UI_HEIGHT-bottom)*LINNET_UI_WIDTH);
     }
     return true;
 }

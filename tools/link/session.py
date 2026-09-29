@@ -623,7 +623,10 @@ class Session:
         if publication_stage is not None:
             self.publication_fault(generation,publication_stage)
         try:
-            self._storage_ack(Command.UPDATE_FINISH,generation,timeout=600)
+            # A publication cut deliberately resets before acknowledging. Keep
+            # its observation bounded; ordinary image validation retains 10 min.
+            self._storage_ack(Command.UPDATE_FINISH,generation,
+                              timeout=60 if publication_stage is not None else 600)
         except AmbiguousCommand as exc:
             raise AmbiguousUpdateFinish(str(exc)) from exc
         return dict(candidate_published=True,image=identity,sha256=digest.hex(),bytes=len(image))

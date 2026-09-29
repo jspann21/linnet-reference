@@ -327,3 +327,9 @@ bool ln_alac_seek(struct ln_alac *a,uint64_t frame)
     a->packet=packet;a->skip=(uint32_t)remaining;a->frame=frame;a->pcm_count=a->pcm_cursor=0;a->decode_phase=0;a->read_total=0;return true;
 }
 bool ln_m4a_seek(struct ln_alac *a,uint64_t frame){return ln_alac_seek(a,frame);}
+bool ln_m4a_seek_indexed(struct ln_alac *a,uint32_t packet,uint64_t offset){
+    if(!a||a->codec!=17||packet>=a->packets||offset<a->mdat_start||offset>=a->mdat_end||
+       !ln_alac_seek(a,(uint64_t)packet*1024u)||a->packet!=packet||!locate(a))return false;
+    a->next_valid=true;a->next_packet=packet;a->next_chunk=a->chunk_index;a->next_offset=offset;
+    return true;
+}

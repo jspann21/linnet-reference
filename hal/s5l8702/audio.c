@@ -9,7 +9,8 @@ extern uint32_t ln_time_us(void);
 #ifdef LINNET_SRAM_MONITOR
 #define AUDIO_MEMORY __attribute__((section(".dram.audio"),aligned(32)))
 #else
-#define AUDIO_MEMORY __attribute__((aligned(32)))
+/* DMA sees only submitted, cache-cleaned PCM; ring contents need no reset. */
+#define AUDIO_MEMORY __attribute__((section(".media_workspace"),aligned(32)))
 #endif
 #define BLOCK 1024u
 #define MASK (LINNET_AUDIO_RING_FRAMES-1u)
@@ -186,7 +187,7 @@ void ln_audio_irq(void) {
         expected=(BLOCK*frame_q12+4095u)>>12;
         ln_s5l_pcm_interrupt(true);ln_s5l_irq_enable(16,true);
     } else if(draining || (finishing && head==tail)) {
-        drain_until=started+10000u;
+        draining=true;drain_until=started+10000u;
         ln_s5l_pcm_interrupt(false);
     } else if(status.playing)(void)arm(true);
     elapsed=ln_time_us()-started;if(elapsed>status.max_irq_us)status.max_irq_us=elapsed;
@@ -195,7 +196,8 @@ void ln_audio_service(uint32_t now) {
     uint32_t flags=ln_s5l_irq_save();
     /* Completion may arm a new block after the executive sampled now. */
     if(active && (int32_t)(now-armed)>250000)fault(6);
-    if(draining && drain_until && (int32_t)(now-drain_until)>=0) {
+    /* The final IRQ leaves DMA inactive. A wrapped deadline may be zero. */
+    if(draining && !active && (int32_t)(now-drain_until)>=0) {
         draining=false;status.playing=0;status.paused=1;
         if(!ln_s5l_pcm_stop())fault(3);
     }

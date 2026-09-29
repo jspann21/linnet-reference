@@ -24,12 +24,16 @@
 #define NONE UINT32_MAX
 #define COVER_WIDTH (96u*LINNET_UI_HEIGHT/176u)
 enum {CLOSED,OPEN,HEADER,READY,CATALOG,ART};
-static struct {uint16_t pixels[12288];uint32_t id,age;} cache[SLOTS];
+/* Valid IDs publish only after a complete decode; pixel storage needs no reset. */
+static uint16_t cache_pixels[SLOTS][12288] __attribute__((section(".media_workspace"),aligned(32)));
+static struct {uint32_t id,age;} cache[SLOTS];
 static uint32_t age;
 #if LINNET_COVERFLOW_EXPANDED
 static uint8_t catalog[CATALOG_SLOTS][CATALOG_RECORD] __attribute__((section(".cover_catalog"),aligned(32)));
 #else
-static uint8_t catalog[CATALOG_SLOTS][CATALOG_RECORD] __attribute__((aligned(32)));
+/* Tags stay in cleared BSS and publish only validated, complete records.
+ * The unread payload needs no boot-time clear, like the artwork banks. */
+static uint8_t catalog[CATALOG_SLOTS][CATALOG_RECORD] __attribute__((section(".media_workspace"),aligned(32)));
 #endif
 static uint32_t tags[CATALOG_SLOTS];
 static struct ln_fat32_file file;
@@ -134,14 +138,14 @@ static int32_t decode_art(uint32_t id){
 #if LINNET_COVERFLOW_SCANLINE
     for(uint32_t by=0;by<128u;by+=8u)for(uint32_t bx=0;bx<96u;bx+=8u)
         for(uint32_t y=by;y<by+8u;y++)for(uint32_t x=bx;x<bx+8u;x++)
-            cache[victim].pixels[y*96u+x]=palette.colors[packed[512u+x*128u+y]];
+            cache_pixels[victim][y*96u+x]=palette.colors[packed[512u+x*128u+y]];
 #else
     for(uint32_t i=0;i<12288u;i+=4){
         uint32_t indices=*words++;
-        cache[victim].pixels[i]=palette.colors[indices&255u];
-        cache[victim].pixels[i+1]=palette.colors[(indices>>8)&255u];
-        cache[victim].pixels[i+2]=palette.colors[(indices>>16)&255u];
-        cache[victim].pixels[i+3]=palette.colors[indices>>24];
+        cache_pixels[victim][i]=palette.colors[indices&255u];
+        cache_pixels[victim][i+1]=palette.colors[(indices>>8)&255u];
+        cache_pixels[victim][i+2]=palette.colors[(indices>>16)&255u];
+        cache_pixels[victim][i+3]=palette.colors[indices>>24];
     }
 #endif
     cache[victim].id=id+1u;cache[victim].age=++age;
@@ -320,7 +324,7 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
         uint32_t art=r?ln_read_le32(r+248):NONE;
         int32_t cached=r?find_art(art):-1;
         if(cached<0&&r&&layer<2)cached=decode_art(art);
-        const uint16_t *pixels=cached>=0?cache[cached].pixels:0;
+        const uint16_t *pixels=cached>=0?cache_pixels[cached]:0;
         const uint8_t *indexed=!pixels&&r&&art_ready(art)?art_record(art):0;
         const uint16_t *palette=(const uint16_t*)indexed;
         if(cached>=0)cache[cached].age=++age;

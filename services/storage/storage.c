@@ -45,8 +45,9 @@ static uint32_t media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
 static bool media_canceled,media_opening;
 static bool background_running;
 /* Nonzero only while a bounded deferred-runtime poll is on the stack. This is a
- * scoped scheduling hint, not a storage-owner or cancellation state. */
-static uint32_t deferred_runtime_poll_depth;
+ * scoped scheduling hint, not a storage-owner or cancellation state. Boot
+ * shares the polling code but has no runtime scheduler to read this hint. */
+static uint32_t deferred_runtime_poll_depth __attribute__((unused));
 static struct ln_state_store boot_store,settings_store,theme_store;
 #if !defined(LINNET_PROFILE_RELEASE)
 static struct ln_state_store history_store;
@@ -461,8 +462,10 @@ cancel:
     }
     if(have_completion){
         bool matching=completion.request_id==request&&completion.generation==request_generation;
+        /* A completed direct read can span multiple sectors. Apply the same
+         * full-length check as normal read completion before retiring it. */
         bool clean=completion.status==LN_ATA_CANCELED||
-            (completion.status==LN_ATA_OK&&completion.sectors_done==1u);
+            (completion.status==LN_ATA_OK&&completion.sectors_done==request_sectors);
         result=ln_fat32_retire_read(&volume,matching&&clean?LN_FAT32_STALE:LN_FAT32_IO);
     }else result=ln_fat32_retire_read(&volume,LN_FAT32_STALE);
     media_owner=0;locked=false;media_canceled=false;media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
@@ -674,7 +677,10 @@ static void history_save(uint32_t reason,uint32_t failed,uint32_t fallback,
 }
 #endif
 static int open_stores(void){
-    if(stores_ready)return 1;if(!ln_storage_prepared())return 0;
+    if(stores_ready)return 1;
+    /* Status queries may arrive while media owns FAT. A refused read then
+     * means busy, not corrupt state; leave unopened stores intact and defer. */
+    if(ln_storage_busy()||!ln_storage_prepared())return 0;
     struct ln_state_io bio={(void *)(uintptr_t)LN_STORAGE_BOOT0,state_read,state_write,flush_callback};
     struct ln_state_io sio={(void *)(uintptr_t)LN_STORAGE_STATE0,state_read,state_write,flush_callback};
     if(ln_state_open(&boot_store,&bio)!=1||ln_state_open(&settings_store,&sio)!=1){error=400;return 0;}

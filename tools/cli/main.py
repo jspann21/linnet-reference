@@ -1,7 +1,6 @@
 """Linnet command surface. Command parsing and dispatch."""
 import argparse
 import json
-import os
 import subprocess
 import sys
 
@@ -26,18 +25,6 @@ def parser():
 def main():
     args = parser().parse_args()
     try:
-        if os.name == "nt" and (args.command in ("build", "doctor", "simulator") or
-                                (args.command == "device" and args.action == "sram-bootstrap" and args.sram_action == "build")):
-            paths = {name: getattr(args, name, None) for name in ("system", "output", "tape")}
-            from tools.studio.build import wsl_command
-            completed = subprocess.run(
-                wsl_command(sys.argv[1:], paths=paths), capture_output=True,
-                text=True, encoding="utf-8", creationflags=subprocess.CREATE_NO_WINDOW)
-            if completed.stdout and sys.stdout is not None:
-                sys.stdout.write(completed.stdout)
-            if completed.stderr and sys.stderr is not None:
-                sys.stderr.write(completed.stderr)
-            return completed.returncode
         if args.command in ('music', 'video', 'photos'):
             from tools.cli.media_commands import run_media
             return run_media(args, emit)

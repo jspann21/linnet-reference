@@ -96,8 +96,9 @@ static bool shutdown_tracking;
 #define LINNET_SHUTDOWN_HOLD_US 2000000u
 static bool sleeping, dirty, ready;
 #if LINNET_IDLE_CLOCK_HZ
-static uint32_t idle_clock_cycles,idle_clock_us,idle_clock_failures;
+static uint32_t idle_clock_failures;
 #if !defined(LINNET_PROFILE_RELEASE)
+static uint32_t idle_clock_cycles,idle_clock_us;
 void ln_runtime_idle_clock_diagnostics(uint32_t output[4]){
     output[0]=LINNET_IDLE_CLOCK_HZ;output[1]=idle_clock_cycles;
     output[2]=idle_clock_us;output[3]=idle_clock_failures;
@@ -605,6 +606,14 @@ static _Noreturn void restart(bool disk_mode){
     ln_panic(34,1,0);
 }
 #endif
+void ln_runtime_restart_step(void){
+#if defined(LINNET_STORAGE)
+    if(ready&&restart_requested){
+        if(!ln_storage_busy())restart(false);
+        if(ln_time_us()-restart_started>=30000000u)ln_panic(34,6,0);
+    }
+#endif
+}
 static _Noreturn void shutdown(bool save_settings){
     (void)save_settings;
     ready=false;shutdown_tracking=false;animation_left=0;
@@ -748,12 +757,6 @@ void ln_runtime_step(void){
     /* Storage drain callbacks may reenter here during shutdown or Sync.
      * Once terminal cleanup starts, UI work must not reopen media. */
     if(!ready)return;
-#if defined(LINNET_STORAGE)
-    if(restart_requested){
-        if(!ln_storage_busy())restart(false);
-        if(ln_time_us()-restart_started>=30000000u)ln_panic(34,6,0);
-    }
-#endif
     uint32_t now=ln_time_us();uint32_t wakes=ln_core_take_wakes();
 #if defined(LINNET_HARDWARE_CLICKER)
     ln_platform_click_poll(now);
@@ -834,8 +837,8 @@ void ln_runtime_step(void){
 #if defined(LINNET_NATIVE_UI)
     if(scene_is("linnet.system.game-play"))ln_games_audio_step();else ln_games_audio_stop();
 #endif
-    if(ln_music_take_now_playing()&&(scene_is("linnet.system.music")||scene_is("linnet.system.music-search")||scene_is("linnet.system.music-queue")||scene_is("linnet.system.music-queue-actions"))){
-        if(scene_is("linnet.system.music")||scene_is("linnet.system.music-search"))
+    if(ln_music_take_now_playing()&&(scene_is("linnet.system.home")||scene_is("linnet.system.music")||scene_is("linnet.system.music-search")||scene_is("linnet.system.music-queue")||scene_is("linnet.system.music-queue-actions"))){
+        if(scene_is("linnet.system.home")||scene_is("linnet.system.music")||scene_is("linnet.system.music-search"))
             playback_from_search=scene_is("linnet.system.music-search");
         ln_music_queue_close();
         if(ln_ui_show(shell,"linnet.system.now-playing")){retain_scene();dirty=true;}
@@ -1017,6 +1020,11 @@ void ln_runtime_step(void){
     palette_at=(!sleeping&&!backlight_idle)?ln_ui_palette_tick(shell,now):UINT32_MAX;
     if(shell->dirty)dirty=true;
 #if defined(LINNET_AUDIO)
+    if(shell->action==LINNET_UI_ACTION_SHUFFLE_ALL){
+        (void)ln_shell_take_action(shell);
+        if(!ln_music_browser_shuffle_all())(void)ln_ui_show(shell,"linnet.system.music");
+        ln_ui_refresh(shell);dirty=true;
+    }
     if(shell->action==LINNET_UI_ACTION_SHUFFLE||shell->action==LINNET_UI_ACTION_REPEAT){
         uint32_t action=ln_shell_take_action(shell);
         (void)ln_music_option_select(action==LINNET_UI_ACTION_SHUFFLE?0u:1u);
@@ -1195,8 +1203,14 @@ void ln_runtime_idle(void){
 #endif
     if(clock_idle&&!idle_clock_failures){
         bool lowered=ln_core_clock_set(LINNET_IDLE_CLOCK_HZ);
+#if !defined(LINNET_PROFILE_RELEASE)
         uint32_t began=ln_time_us();
-        if(lowered){ln_core_idle_until(next);++idle_clock_cycles;idle_clock_us+=ln_time_us()-began;}
+#endif
+        if(lowered){ln_core_idle_until(next);
+#if !defined(LINNET_PROFILE_RELEASE)
+            ++idle_clock_cycles;idle_clock_us+=ln_time_us()-began;
+#endif
+        }
         else ++idle_clock_failures;
         /* A partial transition must also restore the known working clock. */
         if(!ln_core_clock_set(LINNET_ACTIVE_CLOCK_HZ))ln_panic(30,14,ln_core_clock_failure());

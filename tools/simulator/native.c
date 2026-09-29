@@ -27,7 +27,7 @@ static bool music_category_node(const struct ln_ui_node *node){
 }
 bool ln_ui_dynamic_navigation(const struct ln_ui_node*n,uint32_t item){
     if(n->kind!=LN_UI_VIRTUAL_LIST)return false;
-    if(music_category_node(n))return true;
+    if(music_category_node(n))return ln_ui_menu_item(LN_MENU_MUSIC,item)!=15u;
     return n->text&&!strcmp(n->text,"Option ")&&(item==2u||item==3u||item==4u||item==11u);
 }
 uint32_t ln_ui_dynamic_count(const struct ln_ui_node *node,uint32_t fallback){
@@ -39,9 +39,9 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
     if(item==UINT32_MAX&&strcmp(n->text,"Right: Actions  Menu: Back")==0&&music_category_node(n))
         return "Select: Choose  Menu: Back";
     if(item!=UINT32_MAX&&strcmp(n->text,"Track ")==0&&music_category_node(n)){
-        static const char *const categories[]={"Songs","Artists","Albums","Genres","Composers","Years","Folders","Playlists","Search","Favorites","Bookmarks","Recently Played","Most Played","Recently Added","Album Artists"};
+        static const char *const categories[]={"Songs","Artists","Albums","Genres","Composers","Years","Folders","Playlists","Search","Favorites","Bookmarks","Recently Played","Most Played","Recently Added","Album Artists","Shuffle All Songs"};
         uint32_t category=ln_ui_menu_item(LN_MENU_MUSIC,item);
-        if(category<15u)return categories[category];
+        if(category<16u)return categories[category];
     }
     if(item!=UINT32_MAX&&strcmp(n->text,"Option ")==0){
         static const char *const labels[]={"Shuffle: Off","Repeat: Off","Play Queue","Sound","Sleep timer","Favorite: No","Save bookmark","No bookmark saved","Restart track","Back 10 seconds","Forward 10 seconds","Save queue as playlist...","Stop"};
@@ -73,7 +73,7 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
     return fallback;
 }
 static struct ln_calendar sample_calendar={2026,9,7,9,41,0,1};
-static uint32_t sample_read=LN_CALENDAR_READ_VALID,sample_result=LN_CALENDAR_SAVED,sample_busy,save_calls;
+static uint32_t sample_read=LN_CALENDAR_READ_VALID,sample_result=LN_CALENDAR_SAVED,save_calls;
 static bool save_presented;
 bool ln_ui_clock_begin(void){
     ln_clock_editor_cancel();save_presented=false;
@@ -130,7 +130,7 @@ int main(int argc,char **argv){
             else if(kind==7u){if(value<0||value>2)return 4;sample_playback=(uint32_t)value;}
             else if(kind==8u){if(value<0||value>4)return 4;sample_result=(uint32_t)value;}
             else if(kind==9u){if(value<0||value>2)return 4;sample_read=(uint32_t)value;}
-            else if(kind==10u){if(value<0||value>2)return 4;sample_busy=(uint32_t)value;}
+            else if(kind==10u){if(value<0||value>2)return 4;}
             else if(kind==11u){if(value<0||value>5)return 4;sample_modes=(uint32_t)value;}
             else if(kind==12u){if(value<0||value>1)return 4;if(sample_art!=(value!=0)){sample_art=value!=0;ln_ui_refresh(&state);}}
             if(state.action==LINNET_UI_ACTION_SHUFFLE||state.action==LINNET_UI_ACTION_REPEAT){

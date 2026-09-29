@@ -11,6 +11,7 @@ from tools.studio.targets import ROOT, TARGETS, target_id
 
 def register_primary(commands):
     commands.add_parser("doctor")
+    commands.add_parser("setup", help="Install the Windows compiler and build the Apple database tools")
     target_report = commands.add_parser("target-report", help="Inspect resolved target inputs without building")
     target_report.add_argument("--target", required=True, type=target_id)
     commands.add_parser("media", help="Open the desktop iPod media manager")
@@ -24,6 +25,9 @@ def register_primary(commands):
                                help="OS build to install (default: user)")
             entry.add_argument("--method", choices=("rockbox-loader", "native-preserve", "native-selector"),
                                help="boot installation method (default: recommended detected method)")
+            source = entry.add_mutually_exclusive_group()
+            source.add_argument("--firmware", type=Path, help="prebuilt firmware ZIP")
+            source.add_argument("--from-source", action="store_true", help="compile fresh firmware locally")
     compile_ = commands.add_parser("build")
     compile_.add_argument("--target", default="photo4g-p98", type=target_id)
     compile_.add_argument("--profile", choices=("release", "dev", "trace"), required=True)
@@ -51,9 +55,16 @@ def register_primary(commands):
 def register_support(commands):
     read = commands.add_parser("inspect")
     read.add_argument("image", type=Path)
-    release = commands.add_parser("release").add_subparsers(dest="action", required=True).add_parser("verify")
+    releases = commands.add_parser("release").add_subparsers(dest="action", required=True)
+    release = releases.add_parser("verify")
     release.add_argument("image", type=Path)
     release.add_argument("--symbols", type=Path, required=True)
+    bundle = releases.add_parser("bundle", help="Build a portable prebuilt firmware ZIP")
+    bundle.add_argument("--target", required=True, type=target_id)
+    bundle.add_argument("--output", required=True, type=Path)
+    bundle.add_argument("--jobs", type=int, choices=range(1, 5), default=2)
+    media = releases.add_parser("media", help="Package the standalone Windows Media Manager")
+    media.add_argument("--output", required=True, type=Path)
     storage=commands.add_parser("storage").add_subparsers(dest="action",required=True)
     package=storage.add_parser("package")
     package.add_argument("--image",type=Path,required=True)
@@ -72,7 +83,10 @@ def register_report(commands):
 
 
 def run_studio(args, emit):
-    if args.command == "doctor":
+    if args.command == "setup":
+        from tools.studio.toolchain_setup import setup
+        emit(setup())
+    elif args.command == "doctor":
         emit(dict(toolchain=toolchain(), python=sys.version.split()[0],
                   supported_targets=sorted(target for target, spec in TARGETS.items() if spec.get('build_enabled', True)),
                   bringup_targets={target: spec['bringup_blocker'] for target, spec in TARGETS.items() if not spec.get('build_enabled', True)}))
@@ -87,7 +101,7 @@ def run_studio(args, emit):
         identity = identity_for_mount(args.mount)
         emit(assess(identity) if args.installer_action == "inspect" else
              install(identity, progress=lambda message: print(message, file=sys.stderr), build=args.build,
-                     installation_method=args.method)
+                     installation_method=args.method, firmware=args.firmware, from_source=args.from_source)
              if args.installer_action == "install" else restore(identity))
     elif args.command == "build":
         emit(build(args.profile, args.target, args.verify, args.kind, args.probe,
@@ -108,7 +122,14 @@ def run_studio(args, emit):
     elif args.command == "inspect":
         emit(inspect(args.image.read_bytes()))
     elif args.command == "release":
-        emit(verify_release(args.image.read_bytes(), args.symbols.read_text()))
+        if args.action == "bundle":
+            from tools.studio.firmware_bundle import create
+            emit(create(args.target, args.output, args.jobs))
+        elif args.action == "media":
+            from tools.studio.media_distribution import create
+            emit(create(args.output))
+        else:
+            emit(verify_release(args.image.read_bytes(), args.symbols.read_text()))
     elif args.command == "storage" and args.action in ("package", "provision"):
         from tools.studio.storage import prepare,provision
         emit(prepare(args.image,args.output) if args.action=="package" else provision(args.package,args.mount,args.serial))

@@ -98,7 +98,7 @@ static void command(void) {
             break;
         }
         buffer[1]=0x80;buffer[2]=4;buffer[3]=2;buffer[4]=31;
-        {static const char text[28]="LINNET  IPOD CLASSIC    0001";for(unsigned i=0;i<28;i++)buffer[8+i]=(uint8_t)text[i];}
+        {static const char text[]="LINNET  IPOD CLASSIC    0001";for(unsigned i=0;i<28;i++)buffer[8+i]=(uint8_t)text[i];}
         reply(36,c[4]);break;
     case 0x1a: /* MODE SENSE(6), no block descriptor */
         mode_sense(c,false);break;

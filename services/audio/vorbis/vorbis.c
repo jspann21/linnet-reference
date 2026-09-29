@@ -20,7 +20,22 @@ static int guarded(struct ln_vorbis*s,int(*fn)(struct ln_vorbis*))
 static uint32_t le(const uint8_t*p){return p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);}
 static int fail(struct ln_vorbis*s,int e){return s->error=e;}
 static uint32_t checksum(const uint8_t*p,uint32_t n)
-{uint32_t v=0;for(uint32_t i=0;i<n;++i){v^=(uint32_t)((i>=22u&&i<26u)?0:p[i])<<24;for(uint32_t j=0;j<8;++j)v=(v<<1)^((v&0x80000000u)?0x04c11db7u:0);}return v;}
+{
+    /* Two nibbles per byte bound page verification without a 1 KiB table.
+     * The four stored checksum bytes remain zero in the CRC calculation. */
+    static const uint32_t table[16]={
+        0x00000000u,0x04c11db7u,0x09823b6eu,0x0d4326d9u,
+        0x130476dcu,0x17c56b6bu,0x1a864db2u,0x1e475005u,
+        0x2608edb8u,0x22c9f00fu,0x2f8ad6d6u,0x2b4bcb61u,
+        0x350c9b64u,0x31cd86d3u,0x3c8ea00au,0x384fbdbdu};
+    uint32_t v=0;
+    for(uint32_t i=0;i<n;++i){
+        uint32_t b=i>=22u&&i<26u?0u:p[i];
+        v=(v<<4)^table[(v>>28)^(b>>4)];
+        v=(v<<4)^table[(v>>28)^(b&15u)];
+    }
+    return v;
+}
 static int packet_step(struct ln_vorbis*s)
 {
     if(s->page_ready){

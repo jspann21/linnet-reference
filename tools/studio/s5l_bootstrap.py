@@ -31,22 +31,22 @@ def build(serial):
     objects=[]
     for index,source in enumerate(sources):
         obj=out/f'{index}.o';run([chain['compiler']['path'],*flags,'-c',source,'-o',obj]);objects.append(obj)
-    run([chain['linker']['path'],'-T',board/'memory.ld','--gc-sections','-o',out/'monitor.elf',*objects])
+    run([chain['linker']['path'], '-m', 'armelf','-T',board/'memory.ld','--gc-sections','-o',out/'monitor.elf',*objects])
     symbols=run([chain['nm']['path'],'-n',out/'monitor.elf'])
     bss_end=re.search(r'^([0-9a-fA-F]+) B __bss_end$',symbols,re.M)
     if not bss_end or int(bss_end[1],16)>0x22016000:
         raise ValueError('Monitor leaves insufficient bounded SRAM upload staging')
     run([chain['objcopy']['path'],'-O','binary',out/'monitor.elf',out/'monitor.bin'])
     run([chain['compiler']['path'],*flags,'-c',board/'sram_bridge.S','-o',out/'sram_bridge.o'])
-    run([chain['linker']['path'],'-Ttext=0x08000000','-e','ln_sram_bridge','-o',out/'sram_bridge.elf',out/'sram_bridge.o'])
+    run([chain['linker']['path'], '-m', 'armelf','-Ttext=0x08000000','-e','ln_sram_bridge','-o',out/'sram_bridge.elf',out/'sram_bridge.o'])
     run([chain['objcopy']['path'],'-O','binary',out/'sram_bridge.elf',out/'sram_bridge.bin'])
     run([chain['compiler']['path'],*flags,'-c',board/'rom_transfer.S','-o',out/'rom_transfer.o'])
-    run([chain['linker']['path'],'-Ttext=0x220284a8','-e','ln_rom_transfer','-o',out/'rom_transfer.elf',out/'rom_transfer.o'])
+    run([chain['linker']['path'], '-m', 'armelf','-Ttext=0x220284a8','-e','ln_rom_transfer','-o',out/'rom_transfer.elf',out/'rom_transfer.o'])
     run([chain['objcopy']['path'],'-O','binary',out/'rom_transfer.elf',out/'rom_transfer.bin'])
     probe_objects=[]
     for index,source in enumerate(probe_sources):
         obj=out/f'probe-{index}.o';run([chain['compiler']['path'],*flags,'-c',source,'-o',obj]);probe_objects.append(obj)
-    run([chain['linker']['path'],'-T',board/'memory.ld','--gc-sections','-o',out/'probe.elf',*probe_objects])
+    run([chain['linker']['path'], '-m', 'armelf','-T',board/'memory.ld','--gc-sections','-o',out/'probe.elf',*probe_objects])
     run([chain['objcopy']['path'],'-O','binary',out/'probe.elf',out/'probe.bin'])
     probe=(out/'probe.bin').read_bytes()
     payload=(out/'monitor.bin').read_bytes();bridge=(out/'sram_bridge.bin').read_bytes();transfer=(out/'rom_transfer.bin').read_bytes()

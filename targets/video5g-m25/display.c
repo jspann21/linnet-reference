@@ -25,7 +25,8 @@ static uint16_t draw[LINNET_DISPLAY_PIXELS] __attribute__((aligned(32)));
 static const uint16_t *presented=draw;
 static bool initialized,dirty,direct,queued;
 static uint32_t queued_started,queue_high_water=1u;
-static uint32_t phase,cursor,started,wait_started,poll_at,error,submitted,completed,failures,resets,generation,pairs;
+static uint32_t phase,cursor,wait_started,poll_at,error,submitted,completed,failures,resets,generation,pairs;
+static uint32_t started __attribute__((unused)); /* Timing is read only by diagnostics. */
 #if !defined(LINNET_PROFILE_RELEASE)
 static uint32_t max_present_us;
 static uint32_t transfer_us,transfer_calls,transfer_max_us,last_present_us;

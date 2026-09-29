@@ -1,6 +1,6 @@
 """Non-wiping Linnet installer orchestration for mounted Windows iPods.
 
-The ordinary process identifies the target and builds exact artifacts. Native
+The ordinary process identifies the target and validates selected artifacts. Native
 firmware access is isolated in an elevated worker whose inputs and receipts are
 persisted under LocalAppData. Existing media is never enumerated for deletion,
 formatted, repartitioned, or overwritten by this module.
@@ -538,11 +538,9 @@ def assess(identity):
 
 def _run_build(arguments):
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-    if os.name == "nt":
-        from tools.studio.build import wsl_command
-        command = wsl_command(["build", *arguments])
-    else:
-        command = [sys.executable, "-X", "utf8", str(ROOT / "linnet"), "build", *arguments]
+    if getattr(sys, "frozen", False):
+        raise ValueError("Build from source using the Media Manager in your Linnet source checkout.")
+    command = [sys.executable, "-X", "utf8", str(ROOT / "linnet"), "build", *arguments]
     result = subprocess.run(command, cwd=ROOT, text=True, encoding="utf-8", capture_output=True,
                             creationflags=creationflags)
     if result.returncode:
@@ -859,10 +857,11 @@ def _run_elevated(job_path):
     if os.name != "nt":
         raise RuntimeError("native installation currently requires Windows")
     python, job, working = map(_encode, (sys.executable, job_path, ROOT))
+    worker_arguments = "" if getattr(sys, "frozen", False) else "'-m','tools.studio.installer',"
     ps = f"""
 $ErrorActionPreference='Stop'
 function D([string]$s) {{ [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($s)) }}
-$p=Start-Process -FilePath (D '{python}') -ArgumentList @('-m','tools.studio.installer','--worker-token','{job}') -WorkingDirectory (D '{working}') -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+$p=Start-Process -FilePath (D '{python}') -ArgumentList @({worker_arguments}'--worker-token','{job}') -WorkingDirectory (D '{working}') -Verb RunAs -WindowStyle Hidden -Wait -PassThru
 exit $p.ExitCode
 """
     encoded = base64.b64encode(ps.encode("utf-16le")).decode("ascii")
@@ -994,9 +993,14 @@ def _restore_reinstall_data(root, archive):
                 retained_system=sorted(item.name for item in archive.iterdir()))
 
 
-def install(identity, progress=lambda _message: None, build="user", installation_method=None):
+def install(identity, progress=lambda _message: None, build="user", installation_method=None,
+            firmware=None, from_source=False):
     if build not in ("user", "dev"):
         raise ValueError("installer build must be user or dev")
+    if from_source and firmware is not None:
+        raise ValueError("choose a firmware bundle or build from source")
+    if build == "dev" and not from_source:
+        raise ValueError("developer firmware requires Build from source")
     reviewed = assess(identity)
     if reviewed["action"] not in ("install", "resume", "replace", "adopt"):
         raise ValueError(reviewed["summary"])
@@ -1008,14 +1012,22 @@ def install(identity, progress=lambda _message: None, build="user", installation
     strategy = method["strategy"]
     if strategy == "native-volume":
         from tools.studio.native_update import publish
-        profile = "release" if build == "user" else "dev"
-        arguments = ["--target", reviewed["identity"]["target_id"], "--profile", profile, "--kind", "os", "--verify"]
-        if profile == "dev":
-            arguments += ["--device-serial", reviewed["identity"]["linnet_usb_serial"]]
-        progress("Building Linnet for this iPod…")
-        report = _run_build(arguments)
+        if from_source:
+            profile = "release" if build == "user" else "dev"
+            arguments = ["--target", reviewed["identity"]["target_id"], "--profile", profile, "--kind", "os", "--verify"]
+            if profile == "dev":
+                arguments += ["--device-serial", reviewed["identity"]["linnet_usb_serial"]]
+            progress("Building Linnet for this iPod…")
+            report = _run_build(arguments)
+            image = ROOT / report["artifacts"]["los"]
+        else:
+            if firmware is None:
+                raise ValueError("Choose a prebuilt Linnet firmware ZIP before installing.")
+            from tools.studio.firmware_bundle import load
+            progress("Verifying the selected firmware bundle…")
+            image = Path(load(firmware, reviewed["identity"], method_id)["os_image"])
         progress("Writing and verifying Linnet…")
-        return publish(reviewed["identity"], ROOT / report["artifacts"]["los"])
+        return publish(reviewed["identity"], image)
     previous_boot = _previous_boot(reviewed)
     identity = reviewed["identity"]
     archive = (_archive_destination(identity["root"])
@@ -1032,8 +1044,15 @@ def install(identity, progress=lambda _message: None, build="user", installation
         transaction = Path(reviewed["resume"]["transaction"])
         _validate_artifacts(identity, artifacts)
     else:
-        artifacts = build_artifacts(identity, progress=progress, build=build,
-                                    installation_method=method_id)
+        if from_source:
+            artifacts = build_artifacts(identity, progress=progress, build=build,
+                                        installation_method=method_id)
+        else:
+            if firmware is None:
+                raise ValueError("Choose a prebuilt Linnet firmware ZIP before installing.")
+            from tools.studio.firmware_bundle import load
+            progress("Verifying the selected firmware bundle…")
+            artifacts = load(firmware, identity, method_id)
         transaction = _transaction(identity, artifacts)
     transaction.mkdir(parents=True, exist_ok=True)
     if reviewed["action"] != "resume":
@@ -1342,6 +1361,9 @@ def main():
         if name == "install":
             command.add_argument("--build", choices=("user", "dev"), default="user")
             command.add_argument("--method", choices=tuple(INSTALLATION_METHODS))
+            source = command.add_mutually_exclusive_group()
+            source.add_argument("--firmware", type=Path, help="prebuilt firmware ZIP")
+            source.add_argument("--from-source", action="store_true", help="compile fresh firmware locally")
     args = cli.parse_args()
     if args.worker or args.worker_token:
         worker_path = args.worker or Path(base64.b64decode(args.worker_token).decode("utf-8"))
@@ -1352,7 +1374,7 @@ def main():
         identity = identity_for_mount(args.mount)
         result = (assess(identity) if args.command == "inspect" else
                   install(identity, progress=print, build=args.build,
-                          installation_method=args.method)
+                          installation_method=args.method, firmware=args.firmware, from_source=args.from_source)
                   if args.command == "install" else restore(identity))
     print(json.dumps(result, indent=2))
     return 0 if result.get("passed", True) else 2

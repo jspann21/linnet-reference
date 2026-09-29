@@ -40,4 +40,7 @@ int ln_aac_raw_discard(struct ln_aac *,const uint8_t *access_unit,uint32_t bytes
  * leaves overlap invalid. A normal discarded predecessor must repair it
  * before raw_decode; streaming retargets restart while invalid. */
 int ln_aac_raw_skip_synthesis(struct ln_aac *,const uint8_t *access_unit,uint32_t bytes);
+/* Portable LC recurrence checkpoint before an AU; overlap is rebuilt by
+ * discarding a predecessor before exposing PCM. No pointers leave the core. */
+bool ln_aac_checkpoint(struct ln_aac *,uint32_t state[3],bool restore);
 #endif

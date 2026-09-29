@@ -6,7 +6,6 @@
 #include "hal/arm926/cache.h"
 static uint8_t dma_buffer[16384] __attribute__((aligned(32)));
 static bool dma_enabled,dma_active,dma_request;
-static uint32_t dma_reads;
 #endif
 #define ATA(offset) LN_REG(0x38700000u+(offset))
 extern uint32_t ln_time_us(void);
@@ -80,7 +79,7 @@ static bool decode(void) {
 static void reset(uint32_t now) {
 #if !defined(LINNET_SRAM_MONITOR)
     if(dma_active){ATA(8)=2;ATA(0x18)&=~0x100cu;ATA(0x14)=0;}
-    dma_enabled=dma_active=dma_request=false;dma_reads=0;
+    dma_enabled=dma_active=dma_request=false;
 #endif
     info.initialized=info.initializing=info.busy=info.failed=info.sleeping=info.power_safe=0;
     result_ready=false;identifying=true;word=total=done=0;phase=OFF;
@@ -159,7 +158,7 @@ void ln_ata_step(uint32_t now) {
             if(!ln_arm926_data_invalidate_range(dma_buffer,bytes)){finish(LN_ATA_IO);return;}
             extern void ln_memory_copy(void *,const void *,uint32_t);
             ln_memory_copy(data+done*512u,dma_buffer,bytes);
-            info.sectors_read+=command_left-1u;++dma_reads;
+            info.sectors_read+=command_left-1u;
         }else info.sectors_written+=command_left-1u;
         done+=command_left-1u;sector+=command_left-1u;
         phase=FINISH;return;

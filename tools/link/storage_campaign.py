@@ -3,10 +3,12 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import random
+import struct
 import time
 from tools.inspect.image import inspect
 from .campaign import connect, _run_directory, _save
 from .identity import decode
+from .protocol import Command
 from .session import AmbiguousCommand, AmbiguousUpdateFinish, DeviceError
 
 FIELDS=('magic','phase','error','files','prepared','sectors_low','sectors_high','ready',
@@ -209,11 +211,27 @@ def update_cycle(root, image_path, crash_path, port, progress=None):
         if progress:progress(dict(run_id=run_id,**event))
     def ready():
         deadline=time.monotonic()+120
+        settled=None
         while time.monotonic()<deadline:
             state=session.storage_state()
-            if state[4] and state[7] and not state[8]:
+            if state[4] and state[7] and not state[8] and not state[9]:
+                # Healthy startup can precede the asynchronous music scan.
+                # Wait before admitting a mutation; never replay a rejection.
+                if observed['image_kind']=='os':
+                    library=session.request(Command.LIBRARY_STATE)
+                    if struct.unpack_from('<I',library,8)[0] in (1,2,5):
+                        settled=None;time.sleep(.05);continue
+                    if (not session.storage_performance()['idle_endpoint'] or
+                            session.storage_schedule_diagnostics()['last_state']):
+                        settled=None;time.sleep(.05);continue
                 update=session.update_status()
-                if update[1] and update[2] and not update[11] and not update[14] and not update[15]:return update
+                if update[1] and update[2] and not update[7] and not update[11] and not update[14] and not update[15]:
+                    # Health flags precede persistent confirmation and the
+                    # remaining startup readers. Require settled storage too.
+                    if settled is None:settled=time.monotonic()
+                    if time.monotonic()-settled>=1:return update
+                    time.sleep(.05);continue
+            settled=None
             time.sleep(.05)
         raise TimeoutError('persistent metadata unavailable')
     def attempt_baseline(update):

@@ -10,6 +10,8 @@ bool ln_runtime_first_frame_ready(void);
 void ln_runtime_step(void);
 /* Called after the reboot ACK drains; cleanup runs in the outer executive. */
 void ln_runtime_restart(void);
+/* Main loop only: media/storage callbacks must unwind before shutdown. */
+void ln_runtime_restart_step(void);
 #if !defined(LINNET_PROFILE_RELEASE)
 /* Dirty-render and publication inclusive timing; development OS only. */
 void ln_runtime_render_timing(uint32_t words[16]);

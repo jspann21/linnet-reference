@@ -3,6 +3,7 @@ from pathlib import Path
 import hashlib
 import html
 import json
+import os
 import subprocess
 
 from tools.simulator.runner import png
@@ -19,7 +20,7 @@ def simulate_boot(output, target):
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=True)
     compiler = toolchain()["compiler"]["path"]
-    executable = output / "boot-menu-simulator"
+    executable = output / ("boot-menu-simulator.exe" if os.name == "nt" else "boot-menu-simulator")
     result = subprocess.run([compiler, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
         "-I" + str(ROOT), str(ROOT / "tools/simulator/boot_menu.c"), "-o", str(executable)],
         capture_output=True, text=True)

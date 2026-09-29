@@ -14,45 +14,15 @@ import subprocess
 import tomllib
 import uuid
 from tools.inspect.image import pack, inspect, verify_release
+from tools.studio.object_cache import file_stamp as _tool_stamp
 from tools.studio.targets import LCD_FORMATS, ROOT, RUNTIME_POLICIES, presentation_defines, resolved_target_spec, target_id
 
 def run(args):
-    result = subprocess.run([str(a) for a in args], cwd=ROOT, text=True, capture_output=True)
+    result = subprocess.run([str(a) for a in args], cwd=ROOT, text=True, encoding="utf-8",
+                            capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
     if result.returncode:
         raise RuntimeError(f"command failed: {' '.join(map(str, args))}\n{result.stdout}{result.stderr}")
     return result.stdout.strip()
-
-def wsl_command(arguments, *, paths=None):
-    distribution = tomllib.loads((ROOT / "config/toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["windows_wsl_distribution"]
-    windows_paths = [ROOT.as_posix()]
-    for path in (paths or {}).values():
-        if path is not None and path.drive:
-            value = path.resolve().as_posix()
-            if value not in windows_paths:
-                windows_paths.append(value)
-    convert_script = (
-        "import json, subprocess, sys\n"
-        "paths = json.loads(sys.argv[1])\n"
-        "print(json.dumps([subprocess.run(['wslpath', '-a', path], "
-        "capture_output=True, text=True, check=True).stdout.strip() for path in paths]))\n"
-    )
-    converted = json.loads(subprocess.run(
-        ["wsl", "-d", distribution, "--", "python3", "-c", convert_script, json.dumps(windows_paths)],
-        capture_output=True, text=True, encoding="utf-8", check=True,
-        creationflags=subprocess.CREATE_NO_WINDOW).stdout)
-    translations = dict(zip(windows_paths, converted))
-    forwarded = list(arguments)
-    for option, path in (paths or {}).items():
-        if path is None:
-            continue
-        value = translations[path.resolve().as_posix()] if path.drive else path.as_posix()
-        # Last occurrence wins for both --option=value and abbreviated flags.
-        forwarded.extend(("--" + option, value))
-    return ["wsl", "-d", distribution, "--cd", translations[ROOT.as_posix()], "--", "python3", "linnet", *forwarded]
-
-def _tool_stamp(info):
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
-
 
 @lru_cache(maxsize=16)
 def _tool_version(executable, resolved, stamp):
@@ -74,10 +44,12 @@ def _tool_digest(resolved, stamp):
 def toolchain():
     spec = tomllib.loads((ROOT / "config/toolchain.toml").read_text())["toolchain"]
     result = {}
+    from tools.studio.toolchain_setup import tool_directory
+    directory = tool_directory(spec)
     for name in ("compiler", "linker", "objcopy", "nm"):
-        executable = shutil.which(spec[name])
+        executable = shutil.which(spec[name], path=str(directory)) if directory else shutil.which(spec[name])
         if executable is None:
-            raise RuntimeError(f"missing {spec[name]}; install LLVM {spec['version']} (Windows: WSL {spec['windows_wsl_distribution']})")
+            raise RuntimeError(f"missing {spec[name]}; install LLVM {spec['version']} (Windows: python linnet setup)")
         resolved = Path(executable).resolve(strict=True)
         stamp = _tool_stamp(resolved.stat())
         version = _tool_version(executable, str(resolved), stamp)
@@ -486,7 +458,9 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         obj = (dest / flat_name if object_names[flat_name] == 1 else
                dest / 'objects' / source_path.with_suffix(source_path.suffix + '.o'))
         obj.parent.mkdir(parents=True, exist_ok=True)
-        compile_commands.append([chain['compiler']['path'], *flags, *codec_flags,
+        language = (["-std=gnu17"] if source.suffix == ".c" else
+                    ["-std=gnu++17", "-nostdinc++"] if source.suffix == ".cpp" else [])
+        compile_commands.append([chain['compiler']['path'], *flags, *codec_flags, *language,
                                  "-c", source, "-o", obj])
         objects.append(obj)
     # Header generation and source selection have finished. Compile only the
@@ -527,7 +501,9 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         memory_flags += ['-DLINNET_AUDIO=1']
         if ui_report['features'].get('cover_flow',False):memory_flags += ['-DLINNET_COVERFLOW=1']
     run([chain['compiler']['path'], "-E", "-P", "-x", "c", "-I" + str(ROOT), "-I" + str(generated), f"-DLINNET_PROFILE_{profile.upper()}=1", f"-DLINNET_IMAGE_{kind.upper()}=1", *memory_flags, ROOT / target_sources["linker"], "-o", script])
-    run([chain['linker']['path'], "-T", script, "--gc-sections", "-Map=" + str(mapfile), "-o", elf, *objects])
+    response = generated / "objects.rsp"
+    response.write_text("\n".join('"' + path.as_posix() + '"' for path in objects) + "\n", encoding="utf-8")
+    run([chain['linker']['path'], '-m', 'armelf', "-T", script, "--gc-sections", "-Map=" + str(mapfile), "-o", elf, "@" + str(response)])
     raw = dest / (prefix + ".bin")
     run([chain['objcopy']['path'], "-O", "binary", elf, raw])
     symbols = run([chain['nm']['path'], "-S", "--size-sort", elf])

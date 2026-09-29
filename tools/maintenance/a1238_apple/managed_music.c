@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "managed_io.h"
 
 static const char *managed_prefix = ":iPod_Control:Music:..:..:Music:";
 static const char *managed_video_prefix = ":iPod_Control:Music:..:..:Videos:";
@@ -32,6 +33,7 @@ static unsigned long long number(const char *value) {
 }
 
 int main(int argc, char **argv) {
+    managed_arguments(&argc, &argv);
     if (argc != 5) {
         fprintf(stderr, "usage: managed_music staging-mount manifest.tsv model guid\n");
         return 2;
@@ -48,7 +50,7 @@ int main(int argc, char **argv) {
     itdb_set_mountpoint(db, argv[1]);
     itdb_device_set_sysinfo(db->device, "ModelNumStr", argv[3]);
     itdb_device_set_sysinfo(db->device, "FirewireGuid", argv[4]);
-    Itdb_Playlist *master = itdb_playlist_mpl(db);
+    Itdb_Playlist *master = db->playlists ? itdb_playlist_mpl(db) : NULL;
     if (!master) {
         master = itdb_playlist_new("iPod", FALSE);
         itdb_playlist_set_mpl(master);
@@ -62,16 +64,16 @@ int main(int argc, char **argv) {
                                  g_str_has_prefix(track->ipod_path, managed_video_prefix)))
             g_hash_table_insert(existing, g_strdup(track->ipod_path), track);
     }
-    FILE *input = fopen(argv[2], "rb");
+    FILE *input = g_fopen(argv[2], "rb");
     if (!input) {
         perror(argv[2]);
         itdb_free(db);
         return 2;
     }
-    char *line = NULL;
-    size_t capacity = 0;
+    GString *buffer = g_string_new(NULL);
     unsigned count = 0;
-    while (getline(&line, &capacity, input) >= 0) {
+    while (managed_read_line(input, buffer)) {
+        char *line = buffer->str;
         line[strcspn(line, "\r\n")] = 0;
         gchar **fields = g_strsplit(line, "\t", 0);
         unsigned columns = g_strv_length(fields);
@@ -139,7 +141,7 @@ int main(int argc, char **argv) {
         g_strfreev(fields);
         count++;
     }
-    free(line);
+    g_string_free(buffer, TRUE);
     fclose(input);
     /* Unselected entries leave Apple OS, while all other tracks, ratings and
        playlist memberships remain attached to their original track objects. */

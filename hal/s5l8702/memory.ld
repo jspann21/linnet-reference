@@ -16,6 +16,7 @@ SECTIONS {
  __image_end = .;
  .bss (NOLOAD) : { . = ALIGN(16384); __bss_start = .; *(.bss*) *(COMMON) . = ALIGN(32); __bss_end = .; } > RAM
  .music_metadata (NOLOAD) : { *(.music_metadata) } > RAM
+ .media_workspace (NOLOAD) : { *(.media_workspace) } > RAM
  .stacks (NOLOAD) : {
   . = ALIGN(8); . += 1024; __abort_stack = .;
   . += 1024; __undef_stack = .; . += 2048; __irq_stack = .;

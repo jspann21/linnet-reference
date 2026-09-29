@@ -34,8 +34,26 @@ def prepare(database: bytes) -> bytes:
             raise ValueError('Browse groups are not contiguous by kind')
         ranges.extend((indices[0] if indices else 0, len(indices)))
     payload = struct.pack('<16I', *ranges) + b''.join(records) + struct.pack(f'<{len(links)}I', *links) + struct.pack(f'<{len(owners)}I', *sorted(owners))
+    searches, search_at, pool_at = (struct.unpack_from('<I', database, offset)[0] for offset in (28, 44, 48))
+    prefixes, fences = [], []
+    previous = -1
+    for ordinal in range(searches):
+        text = pool_at + struct.unpack_from('<I', database, search_at + ordinal * 8 + 4)[0]
+        key = database[text] << 8
+        if database[text]:
+            key |= database[text + 1]
+        if key != previous:
+            prefixes.append((key, ordinal))
+            previous = key
+        if not ordinal % 64:
+            end = database.index(0, text)
+            fences.append(struct.pack('<I32s', ordinal, database[text:min(end, text + 32)]))
+    prefixes.append((65536, searches))
+    payload += struct.pack('<I', len(prefixes))
+    payload += b''.join(struct.pack('<II', *entry) for entry in prefixes)
+    payload += struct.pack('<I', len(fences)) + b''.join(fences)
     header = bytearray(64)
-    struct.pack_into('<4s5I', header, 0, b'LBR1', 64 + len(payload), len(records), len(links), len(owners), groups)
+    struct.pack_into('<4s5I', header, 0, b'LBR2', 64 + len(payload), len(records), len(links), len(owners), groups)
     header[24:56] = database[64:96]
     struct.pack_into('<I', header, 56, zlib.crc32(payload))
     struct.pack_into('<I', header, 60, zlib.crc32(header[:60]))

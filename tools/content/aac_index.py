@@ -1,0 +1,198 @@
+"""Prepare exact AAC-LC seek checkpoints with the device's fixed-point decoder."""
+from functools import lru_cache
+import hashlib
+import os
+from pathlib import Path
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+import zlib
+
+ROOT = Path(__file__).resolve().parents[2]
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+
+
+@lru_cache(maxsize=1)
+def executable():
+    bundled = Path(getattr(sys, '_MEIPASS', ROOT)) / 'aac-index.exe'
+    if getattr(sys, 'frozen', False):
+        if not bundled.is_file():
+            raise RuntimeError('AAC preparation tool is missing from this Media Manager')
+        return bundled
+    from tools.studio.build import toolchain
+    compiler = toolchain()['compiler']
+    sources = ['tools/content/aac_index.c', 'services/audio/aac/aac.c',
+               'services/audio/aac/m4a.c', 'services/audio/alac/alac.c', 'third_party/alac/alac.c']
+    sources += ['third_party/aac/' + name for name in (ROOT / 'third_party/aac/SOURCES').read_text().splitlines() if name]
+    digest = hashlib.sha256(compiler['sha256'].encode())
+    inputs = set(sources)
+    for folder in ('services/audio/aac', 'services/audio/alac', 'third_party/aac', 'third_party/alac', 'boot/include'):
+        inputs.update(p.relative_to(ROOT).as_posix() for p in (ROOT / folder).rglob('*.h'))
+    for name in sorted(inputs):
+        digest.update(name.encode()); digest.update((ROOT / name).read_bytes())
+    directory = ROOT / 'out/aac-index' / digest.hexdigest()[:24]
+    destination = directory / ('aac-index.exe' if os.name == 'nt' else 'aac-index')
+    if destination.is_file():
+        return destination
+    directory.mkdir(parents=True, exist_ok=True)
+    temporary = directory / (uuid.uuid4().hex + destination.suffix)
+    command = [compiler['path'], '-O3', '-fwrapv', '-fno-strict-aliasing', '-I.',
+               '-Ithird_party/aac', '-Ithird_party/aac/faad', '-Ithird_party/aac/lib']
+    if os.name == 'nt':
+        command.append('-municode')
+    try:
+        result = subprocess.run([*command, *sources, '-o', str(temporary)], cwd=ROOT,
+                                capture_output=True, text=True, timeout=120, creationflags=NO_WINDOW)
+        if result.returncode:
+            raise RuntimeError('AAC preparation build failed: ' + result.stderr[-4000:])
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return destination
+
+
+def original_size(path):
+    """Return the original prefix length only for a valid trailing seek atom."""
+    size = path.stat().st_size
+    with path.open('rb') as reader:
+        at = 0
+        for _ in range(4096):
+            if size - at < 8:
+                return None
+            reader.seek(at)
+            head = reader.read(8)
+            length, kind = struct.unpack('>I4s', head)
+            header = 8
+            if length == 1:
+                extended = reader.read(8)
+                if len(extended) != 8:
+                    return None
+                length = struct.unpack('>Q', extended)[0]; header = 16
+            if length < header or length > size - at:
+                return None
+            if kind == b'lnsk' and header == 8 and at + length == size:
+                h = reader.read(64)
+                if (len(h) != 64 or h[:4] != b'LNS1' or struct.unpack_from('<I', h, 4)[0] != 16
+                        or struct.unpack_from('<Q', h, 16)[0] != at or any(h[36:60])
+                        or zlib.crc32(h[:60]) != struct.unpack_from('<I', h, 60)[0]):
+                    return None
+                packets, count = struct.unpack_from('<II', h, 8)
+                return at if 0 < packets <= 1_000_000 and count == (packets + 15) // 16 and length == 72 + count * 32 else None
+            at += length
+    return None
+
+
+def same_original(source, destination):
+    if not destination.is_file():
+        return False
+    size = original_size(destination)
+    if size is None or source.stat().st_size != size:
+        return False
+    with source.open('rb') as left, destination.open('rb') as right:
+        while size:
+            count = min(size, 1024 * 1024)
+            if left.read(count) != right.read(count):
+                return False
+            size -= count
+    return True
+
+
+def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None):
+    """Atomically augment an iPod copy; retain its compressed audio and tags."""
+    from .guard import hash_file
+    path, cache = Path(path), Path(cache)
+    checkpoint()
+    if original_size(path) is not None:
+        return False
+    before = path.stat()
+    key = hashlib.sha256(f'{path}:{before.st_size}:{before.st_mtime_ns}'.encode()).hexdigest()
+    cache.mkdir(parents=True, exist_ok=True)
+    unsupported = cache / (key + '.unsupported')
+    if unsupported.exists():
+        return False
+    tool = executable()
+    with tempfile.TemporaryDirectory(prefix='aac-', dir=cache) as scratch:
+        local, index = Path(scratch) / 'source.m4a', Path(scratch) / 'index.bin'
+        source_hash = hashlib.sha256()
+        with path.open('rb') as reader, local.open('wb') as writer:
+            while chunk := reader.read(1024 * 1024):
+                checkpoint(); writer.write(chunk); source_hash.update(chunk)
+        child = subprocess.Popen([str(tool), str(local), str(index)], stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
+        started = time.monotonic()
+        try:
+            while child.poll() is None:
+                checkpoint()
+                if time.monotonic() - started > 600:
+                    raise TimeoutError('AAC preparation exceeded ten minutes')
+                time.sleep(.05)
+        finally:
+            if child.poll() is None:
+                child.terminate(); child.wait(timeout=10)
+        if child.returncode in (4, 6, 7, 8):
+            unsupported.touch(); return False
+        if child.returncode:
+            raise RuntimeError(f'AAC preparation failed ({child.returncode})')
+        suffix = index.read_bytes()
+        if before.st_size + len(suffix) > 0xffffffff:
+            return False
+        temporary = path.with_name('L' + uuid.uuid4().hex[:7] + '.TMP')
+        owned = False
+        try:
+            digest = source_hash.copy(); digest.update(suffix)
+            with temporary.open('xb') as writer, local.open('rb') as reader:
+                owned = True
+                while chunk := reader.read(1024 * 1024):
+                    checkpoint(); writer.write(chunk)
+                writer.write(suffix); writer.flush(); os.fsync(writer.fileno())
+            checkpoint()
+            if hash_file(temporary, before.st_size + len(suffix)) != digest.hexdigest():
+                raise OSError('AAC prepared copy did not verify')
+            after = path.stat()
+            if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                raise OSError('AAC source changed during preparation')
+            if original_size(temporary) != before.st_size:
+                raise ValueError('AAC seek index has invalid geometry')
+            if recovery is not None:
+                backup = cache / (uuid.uuid4().hex + '.aac-original')
+                local.replace(backup)
+                recovery.append(dict(path=str(path), backup=str(backup),
+                    original_bytes=before.st_size, original_sha256=source_hash.hexdigest(),
+                    atime_ns=before.st_atime_ns, mtime_ns=before.st_mtime_ns,
+                    prepared_bytes=before.st_size + len(suffix), prepared_sha256=digest.hexdigest()))
+            temporary.replace(path)
+        finally:
+            if owned:
+                temporary.unlink(missing_ok=True)
+    return True
+
+
+def finish_preparation(change, *, committed):
+    """Restore an unpublished original, or retire its owned host backup."""
+    from .guard import hash_file
+    path, backup = Path(change['path']), Path(change['backup'])
+    if not committed:
+        current = path.stat().st_size
+        if current == change['original_bytes'] and hash_file(path, current) == change['original_sha256']:
+            backup.unlink(); return
+        if current != change['prepared_bytes'] or hash_file(path, current) != change['prepared_sha256']:
+            raise OSError('AAC copy changed after preparation; original backup retained')
+        if hash_file(backup, change['original_bytes']) != change['original_sha256']:
+            raise OSError('AAC original backup did not verify')
+        temporary = path.with_name('L' + uuid.uuid4().hex[:7] + '.TMP')
+        owned = False
+        try:
+            with temporary.open('xb') as writer, backup.open('rb') as reader:
+                owned = True
+                while chunk := reader.read(1024 * 1024):writer.write(chunk)
+                writer.flush(); os.fsync(writer.fileno())
+            if hash_file(temporary, change['original_bytes']) != change['original_sha256']:
+                raise OSError('AAC original restoration did not verify')
+            temporary.replace(path)
+            os.utime(path, ns=(change['atime_ns'], change['mtime_ns']))
+        finally:
+            if owned:temporary.unlink(missing_ok=True)
+    backup.unlink()

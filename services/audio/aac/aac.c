@@ -77,6 +77,22 @@ int ln_aac_raw_discard(struct ln_aac *d,const uint8_t *au,uint32_t bytes)
 {return raw_decode(d,au,bytes,false,false);}
 int ln_aac_raw_skip_synthesis(struct ln_aac *d,const uint8_t *au,uint32_t bytes)
 {return raw_decode(d,au,bytes,false,true);}
+bool ln_aac_checkpoint(struct ln_aac *d,uint32_t state[3],bool restore)
+{
+    if(!d||!state||!d->configured||d->pending||d->error||active)return false;
+    struct ln_faad_workspace *w=(struct ln_faad_workspace *)(void *)d->workspace;
+    if(restore){
+        if((state[2]&~0x101u)||!state[0]||!state[1])return false;
+        w->random1=state[0];w->random2=state[1];
+        w->decoder.window_shape_prev[0]=state[2]&1u;
+        w->decoder.window_shape_prev[1]=(state[2]>>8)&1u;
+        d->overlap_invalid=true;
+    }else {
+        state[0]=w->random1;state[1]=w->random2;
+        state[2]=w->decoder.window_shape_prev[0]|((uint32_t)w->decoder.window_shape_prev[1]<<8);
+    }
+    return true;
+}
 static int read_step(struct ln_aac *d,uint64_t offset,uint8_t *buffer,uint32_t bytes)
 {
     if(offset>d->file_size||bytes>d->file_size-offset)return fail(d,LN_AAC_FORMAT);

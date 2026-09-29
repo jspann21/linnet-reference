@@ -12,7 +12,8 @@
 #endif
 #define REG(a) (*(volatile uint32_t *)(uintptr_t)(a))
 #define HALF(a) (*(volatile uint16_t *)(uintptr_t)(a))
-static uint32_t writes,commands,failures,last_error;
+/* Diagnostic readers are omitted from release builds. */
+static uint32_t __attribute__((unused)) writes,commands,failures,last_error;
 static bool wait(uint32_t address,uint32_t mask){
     uint32_t started=ln_time_us();
     for(uint32_t i=0;i<10000u;++i){

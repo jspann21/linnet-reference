@@ -32,11 +32,12 @@ void ln_music_library_memory_diagnostics(uint32_t out[4]){
 #endif
 
 enum job { JOB_NONE=0,JOB_WINDOW,JOB_SELECTION,JOB_SEARCH,JOB_GROUP,JOB_MEMBER,JOB_PREFETCH,JOB_QUEUE,JOB_VIEW,JOB_VIEW_GROUP,JOB_GROUP_RECORD,JOB_TRACK_RECORD,JOB_TRACK_IDS,JOB_MEMBERS };
+/* Page validity lives in the reset state; payload is filled before publication. */
+static uint8_t pages[LIBRARY_PAGES][4096] __attribute__((section(".media_workspace"),aligned(32)));
 struct library {
     struct ln_music_db db;
     /* Bounded shared page cache: titles, group/member tables and search indexes.
-     * Tags publish only after a complete read; reload clears the entire cache. */
-    uint8_t pages[LIBRARY_PAGES][4096];
+     * Tags publish only after a complete read; reload invalidates every page. */
     uint32_t page_tags[LIBRARY_PAGES],page_used[LIBRARY_PAGES],page_clock;
     bool page_valid[LIBRARY_PAGES];
     struct ln_fat32_file file;
@@ -66,16 +67,51 @@ static uint32_t next_generation(void);
 static uint8_t *browse_buffer;
 static uint8_t *browse_data(void){return browse_buffer;}
 static struct ln_fat32_file browse_file;
-static uint32_t browse_phase,browse_at,browse_size;
+static uint32_t browse_phase,browse_at,browse_size,browse_prefix_at,browse_prefix_count;
+static uint32_t browse_fence_at,browse_fence_count;
 static bool browse_valid;
 static bool browse_check(void){
     const uint8_t *data=browse_data();
-    if(browse_size<128u||ln_read_le32(data)!=0x3152424cu||ln_read_le32(data+4)!=browse_size||
+    uint32_t magic=ln_read_le32(data);
+    if(browse_size<128u||(magic!=0x3152424cu&&magic!=0x3252424cu)||ln_read_le32(data+4)!=browse_size||
        ln_read_le32(data+20)!=library.db.groups||ln_crc32(data,60)!=ln_read_le32(data+60)||
        ln_crc32(data+64,browse_size-64)!=ln_read_le32(data+56))return false;
     for(uint32_t i=0;i<32;i++)if(data[24+i]!=library.db.expected_hash[i])return false;
     uint32_t artists=ln_read_le32(data+8),links=ln_read_le32(data+12),owners=ln_read_le32(data+16);
-    if(128ull+12ull*artists+4ull*links+4ull*owners!=browse_size)return false;
+    uint64_t end=128ull+12ull*artists+4ull*links+4ull*owners;
+    if(end>browse_size)return false;
+    browse_prefix_count=browse_fence_count=0;
+    if(magic==0x3152424cu){if(end!=browse_size)return false;}
+    else {
+        if(browse_size-end<12u)return false;
+        uint32_t count=ln_read_le32(data+(uint32_t)end);
+        if(!count||count>65537u||end+4ull+8ull*count>browse_size)return false;
+        uint32_t prior_key=0,prior_ordinal=0;
+        for(uint32_t i=0;i<count;i++){
+            const uint8_t *r=data+(uint32_t)end+4u+i*8u;
+            uint32_t key=ln_read_le32(r),ordinal=ln_read_le32(r+4);
+            if(key>65536u||ordinal>library.db.searches||(!i&&ordinal)||
+               (i&&(key<=prior_key||ordinal<=prior_ordinal)))return false;
+            prior_key=key;prior_ordinal=ordinal;
+        }
+        if(prior_key!=65536u||prior_ordinal!=library.db.searches)return false;
+        browse_prefix_at=(uint32_t)end+4u;browse_prefix_count=count;
+        end+=4ull+8ull*count;
+        if(end<browse_size){
+            if(browse_size-end<4u)return false;
+            count=ln_read_le32(data+(uint32_t)end);
+            if(count!=(library.db.searches+63u)/64u||end+4ull+36ull*count!=browse_size)return false;
+            for(uint32_t i=0;i<count;i++){
+                const uint8_t *r=data+(uint32_t)end+4u+i*36u;
+                if(ln_read_le32(r)!=i*64u)return false;
+                if(i){for(uint32_t j=4;j<36;j++){
+                    if(r[j]<(r-36)[j])return false;
+                    if(r[j]>(r-36)[j])break;
+                }}
+            }
+            browse_fence_at=(uint32_t)end+4u;browse_fence_count=count;
+        }
+    }
     for(uint32_t i=0;i<8;i++){
         uint32_t first=ln_read_le32(data+64+i*8),count=ln_read_le32(data+68+i*8);
         if(first>library.db.groups||count>library.db.groups-first)return false;
@@ -89,6 +125,42 @@ static bool browse_check(void){
     if(next!=links)return false;
     for(uint32_t i=0;i<links+owners;i++)if(ln_read_le32(data+128+artists*12+i*4)>=library.db.groups)return false;
     return true;
+}
+static uint32_t browse_prefix_lower(uint32_t key){
+    const uint8_t *data=browse_data()+browse_prefix_at;
+    uint32_t lo=0,hi=browse_prefix_count-1u;
+    while(lo<hi){uint32_t mid=lo+(hi-lo)/2u;
+        if(ln_read_le32(data+mid*8u)<key)lo=mid+1u;else hi=mid;}
+    return ln_read_le32(data+lo*8u+4u);
+}
+static int browse_fence_compare(uint32_t ordinal){
+    const uint8_t *key=browse_data()+browse_fence_at+ordinal*36u+4u;
+    for(uint32_t i=0;i<32u&&library.db.prefix[i];i++){
+        if(key[i]<(uint8_t)library.db.prefix[i])return -1;
+        if(key[i]>(uint8_t)library.db.prefix[i])return 1;
+    }
+    return 0;
+}
+static void browse_search_bounds(void){
+    if(!browse_valid||!browse_prefix_count||!library.db.prefix[0])return;
+    uint32_t key=(uint32_t)(uint8_t)library.db.prefix[0]<<8;
+    uint32_t end=key+256u;
+    if(library.db.prefix[1]){key|=(uint8_t)library.db.prefix[1];end=key+1u;}
+    uint32_t lo=browse_prefix_lower(key),hi=browse_prefix_lower(end);
+    if(browse_fence_count){
+        uint32_t first=0,last=browse_fence_count;
+        while(first<last){uint32_t mid=first+(last-first)/2u;
+            if(browse_fence_compare(mid)<0)first=mid+1u;else last=mid;}
+        uint32_t lower=first?(first-1u)*64u:0u;
+        if(lo<lower)lo=lower;
+        last=browse_fence_count;
+        while(first<last){uint32_t mid=first+(last-first)/2u;
+            if(browse_fence_compare(mid)<=0)first=mid+1u;else last=mid;}
+        uint32_t upper=first<browse_fence_count?first*64u:library.db.searches;
+        if(hi>upper)hi=upper;
+    }
+    if(library.db.low<lo)library.db.low=lo;
+    if(library.db.high>hi)library.db.high=hi;
 }
 static bool browse_load(void){
     if(browse_phase==3)return true;
@@ -345,7 +417,7 @@ static int read_database(void *context,uint64_t offset,uint8_t *buffer,uint32_t 
             if(library.page_valid[i]&&library.page_tags[i]==page){slot=i;break;}
         if(slot==LIBRARY_PAGES){
             if(library.io_active){
-                for(uint32_t i=0;i<LIBRARY_PAGES;i++)if(library.io_buffer==library.pages[i]){slot=i;break;}
+                for(uint32_t i=0;i<LIBRARY_PAGES;i++)if(library.io_buffer==pages[i]){slot=i;break;}
                 if(slot==LIBRARY_PAGES)return LN_DB_ARGUMENT;
             }else{
                 slot=0;
@@ -360,14 +432,14 @@ static int read_database(void *context,uint64_t offset,uint8_t *buffer,uint32_t 
         if(size>4096u)size=4096u;
         if(!library.page_valid[slot]||library.page_tags[slot]!=page){
             library.page_valid[slot]=false;
-            int result=read_database_raw(context,base,library.pages[slot],size);
+            int result=read_database_raw(context,base,pages[slot],size);
             if(result!=1)return result;
             library.page_tags[slot]=page;library.page_valid[slot]=true;
         }
         library.page_used[slot]=++library.page_clock;
         uint32_t within=address-base,count=size-within;
         if(count>bytes-copied)count=bytes-copied;
-        for(uint32_t i=0;i<count;i++)buffer[copied+i]=library.pages[slot][within+i];
+        for(uint32_t i=0;i<count;i++)buffer[copied+i]=pages[slot][within+i];
         copied+=count;
     }
     return 1;
@@ -663,7 +735,12 @@ static void query_step(void)
             if(request(LN_DB_TRACK,library.query_index))library.stage=2;
             return;
         }
-        if(library.job==JOB_SEARCH){if(!ln_music_db_search_at(&library.db,library.prefix,library.query_ordinal)){fail(LN_DB_ARGUMENT);return;}}
+        if(library.job==JOB_SEARCH){
+            if(!ln_music_db_search_at(&library.db,library.prefix,library.query_ordinal)){fail(LN_DB_ARGUMENT);return;}
+#if LINNET_MUSIC_BROWSE_INDEX
+            browse_search_bounds();
+#endif
+        }
         else if(!request(LN_DB_GROUP,library.query_index))return;
         library.stage=1;return;
     }

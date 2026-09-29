@@ -89,23 +89,26 @@ def _base_key(command, source, root, generated, compiler_sha256, name_inventory)
         separators=(',', ':')).encode()).hexdigest()
 
 
+def file_stamp(info):
+    # Windows stat/fstat disagree about ctime on newer Python versions. Use
+    # the explicit creation time there, alongside file identity and mtime.
+    change_time = getattr(info, 'st_birthtime_ns', info.st_ctime_ns) if os.name == 'nt' else info.st_ctime_ns
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, change_time)
+
+
 def _hash_file(path):
-    info = path.stat()
-    stamp = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
-    return _hash_stamp(str(path), stamp)
+    return _hash_stamp(str(path), file_stamp(path.stat()))
 
 
 @lru_cache(maxsize=8192)
 def _hash_stamp(path, stamp):
     with Path(path).open('rb') as stream:
         before = os.fstat(stream.fileno())
-        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns,
-                before.st_ctime_ns) != stamp:
+        if file_stamp(before) != stamp:
             raise RuntimeError(f'build dependency changed while hashing: {path}')
         checksum = hashlib.file_digest(stream, 'sha256').hexdigest()
         after = os.fstat(stream.fileno())
-    if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns,
-            after.st_ctime_ns) != stamp:
+    if file_stamp(after) != stamp:
         raise RuntimeError(f'build dependency changed while hashing: {path}')
     return checksum
 

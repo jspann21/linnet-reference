@@ -1,4 +1,6 @@
 #include "m4a.h"
+#include "boot/include/linnet_bytes.h"
+#include "boot/include/linnet_boot.h"
 static int fail(struct ln_aac_m4a *d,int error){d->error=error;return error;}
 static int demux_result(int result)
 {if(result==LN_ALAC_UNSUPPORTED)return LN_AAC_UNSUPPORTED;if(result==LN_ALAC_ARGUMENT)return LN_AAC_ARGUMENT;return result;}
@@ -75,6 +77,18 @@ static int metadata_step(struct ln_aac_m4a *d){
         d->meta_parents[d->meta_depth]=type;d->meta_ends[d->meta_depth++]=d->meta_end;
     }else{
         uint64_t bytes=d->meta_end-d->meta_cursor;
+        if(!d->index_rejected&&!parent&&type==TAG('l','n','s','k')&&bytes>=64u&&d->meta_end==d->container.file_size){
+            int r=meta_read(d,d->meta_cursor,64);if(r!=1)return r;
+            const uint8_t *b=d->meta_buffer;uint32_t count=(d->container.packets+15u)/16u;
+            bool valid=ln_read_le32(b)==0x31534e4cu&&ln_read_le32(b+4)==16u&&
+                ln_read_le32(b+8)==d->container.packets&&ln_read_le32(b+12)==count&&
+                ln_read_le64(b+16)==d->meta_cursor-8u&&ln_read_le32(b+24)==d->container.rate&&
+                ln_read_le32(b+28)==d->container.channels&&
+                ln_read_le32(b+32)==ln_crc32(d->container.asc,d->container.asc_bytes)&&
+                ln_read_le32(b+60)==ln_crc32(b,60)&&bytes==64ull+count*32ull;
+            for(uint32_t i=36;i<60;i++)if(b[i])valid=false;
+            if(valid)d->index_offset=d->meta_cursor+64u;
+        }
         if(parent==TAG('-','-','-','-')&&(type==TAG('m','e','a','n')||type==TAG('n','a','m','e')||type==TAG('d','a','t','a'))){
             if(bytes<=sizeof d->meta_buffer&&bytes>=4){
                 int r=meta_read(d,d->meta_cursor,(uint32_t)bytes);if(r!=1)return r;
@@ -160,11 +174,34 @@ int ln_aac_m4a_open_step(struct ln_aac_m4a *d)
     }
     d->opened=true;return 1;
 }
+static int reject_index(struct ln_aac_m4a *d){
+    /* A host checkpoint is optional. Reconstruct recurrence from the media
+     * before emitting PCM, and retain the rejection across later seeks. All
+     * index/packet reads have completed before this releases their buffers. */
+    uint64_t target=d->seek_target,size=d->container.file_size;
+    ln_aac_read_fn read=d->source_read;void *context=d->source_context;
+    ln_aac_m4a_init(d,read,context,size);
+    d->index_rejected=true;d->seek_target=target;d->seeking=target!=0;return 0;
+}
 int ln_aac_m4a_decode(struct ln_aac_m4a *d,int16_t *out,uint32_t capacity,uint32_t *frames)
 {
     if(frames)*frames=0;if(!d||!out||!capacity||!frames)return LN_AAC_ARGUMENT;
     if(d->error)return d->error;
     if(!d->opened){int r=ln_aac_m4a_open_step(d);return r==1?0:r;}
+    if(d->index_pending){
+        int r=meta_read(d,d->index_offset+(uint64_t)d->index_record*32u,32);if(r!=1)return r;
+        const uint8_t *b=d->meta_buffer;uint32_t packet=d->index_record*16u;
+        uint32_t recurrence[3]={ln_read_le32(b+4),ln_read_le32(b+8),ln_read_le32(b+12)};
+        if(ln_read_le32(b)!=packet||ln_read_le32(b+28)!=ln_crc32(b,28)||
+           !ln_m4a_seek_indexed(&d->container,packet,ln_read_le64(b+16))||
+           ln_aac_raw_init(&d->core,d->container.asc,d->container.asc_bytes)!=1||
+           !ln_aac_checkpoint(&d->core,recurrence,true))return reject_index(d);
+        uint32_t lead=d->tag_seen?d->tag_lead:d->container.lead_trim;
+        uint64_t raw=(uint64_t)packet*1024u;
+        d->frame=raw>lead?raw-lead:0;d->lead_remaining=raw<lead?lead-(uint32_t)raw:0;
+        d->packet_ready=false;d->index_pending=false;d->index_check=true;d->index_crc=ln_read_le32(b+24);
+        return 0;
+    }
 /* A ready packet may decode and publish in this call. Returning through this
  * block still bounds work to one AU, including trimmed and seeking output. */
 emit_pcm:
@@ -185,6 +222,10 @@ emit_pcm:
         int r=ln_m4a_read_packet(&d->container);d->pending=d->container.pending;
         if(r==2)return d->frame==d->total_frames&&!d->seeking?2:fail(d,LN_AAC_FORMAT);
         if(r!=1)return r<0?fail(d,demux_result(r)):r;
+        if(d->index_check){
+            d->index_check=false;
+            if(ln_crc32(d->container.buffer,d->container.packet_size)!=d->index_crc)return reject_index(d);
+        }
         d->packet_ready=true;
     }
     uint32_t count=d->container.current_packet_frames;
@@ -207,11 +248,19 @@ emit_pcm:
 bool ln_aac_m4a_seek(struct ln_aac_m4a *d,uint64_t frame)
 {
     if(!d||!d->opened||d->pending||d->container.pending||d->core.pending||frame>d->total_frames)return false;
+    uint64_t raw=frame+(d->tag_seen?d->tag_lead:d->container.lead_trim);
+    if(d->index_offset&&!d->error&&!d->container.error&&raw>=1024u&&
+       (frame<d->frame||frame-d->frame>16384u||d->core.overlap_invalid)){
+        d->index_record=(uint32_t)((raw/1024u-1u)/16u);
+        d->seek_target=frame;d->seeking=true;d->index_pending=true;d->index_check=false;return true;
+    }
     /* Preserve forward recurrence only while overlap is valid. A retarget
      * after skipped synthesis reconstructs state from the beginning. */
-    if(!d->error&&!d->container.error&&!d->core.error&&!d->core.overlap_invalid&&frame>=d->frame){
+    if(!d->index_pending&&!d->error&&!d->container.error&&!d->core.error&&!d->core.overlap_invalid&&frame>=d->frame){
         d->seek_target=frame;d->seeking=frame!=d->frame;return true;
     }
     ln_aac_read_fn read=d->source_read;void *context=d->source_context;uint64_t size=d->container.file_size;
-    ln_aac_m4a_init(d,read,context,size);d->seek_target=frame;d->seeking=frame!=0;return true;
+    bool rejected=d->index_rejected;
+    ln_aac_m4a_init(d,read,context,size);d->index_rejected=rejected;
+    d->seek_target=frame;d->seeking=frame!=0;return true;
 }

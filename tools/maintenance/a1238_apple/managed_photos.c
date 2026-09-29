@@ -5,8 +5,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "managed_io.h"
 
 int main(int argc, char **argv) {
+    managed_arguments(&argc, &argv);
     if (argc != 5) {
         fprintf(stderr, "usage: managed_photos staging-mount image-list model guid\n");
         return 2;
@@ -18,15 +20,15 @@ int main(int argc, char **argv) {
     }
     itdb_device_set_sysinfo(db->device, "ModelNumStr", argv[3]);
     itdb_device_set_sysinfo(db->device, "FirewireGuid", argv[4]);
-    FILE *input = fopen(argv[2], "rb");
+    FILE *input = g_fopen(argv[2], "rb");
     if (!input) {
         perror(argv[2]);
         return 2;
     }
-    char *line = NULL;
-    size_t capacity = 0;
+    GString *buffer = g_string_new(NULL);
     unsigned count = 0;
-    while (getline(&line, &capacity, input) >= 0) {
+    while (managed_read_line(input, buffer)) {
+        char *line = buffer->str;
         line[strcspn(line, "\r\n")] = 0;
         if (!line[0]) continue;
         GError *error = NULL;
@@ -39,7 +41,7 @@ int main(int argc, char **argv) {
         }
         count++;
     }
-    free(line);
+    g_string_free(buffer, TRUE);
     fclose(input);
     GError *error = NULL;
     gboolean ok = itdb_photodb_write(db, &error);

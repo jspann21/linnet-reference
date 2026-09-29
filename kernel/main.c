@@ -361,6 +361,9 @@ _Noreturn void ln_main(void)
             }
         }
 #endif
+#if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_OS)
+        ln_runtime_restart_step();
+#endif
 #if defined(LINNET_AUDIO)
         LN_CACHE_FIRST_MARK(0xca12u);
         LN_TIMING_BEGIN(music_started);

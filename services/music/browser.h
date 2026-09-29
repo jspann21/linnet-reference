@@ -36,6 +36,7 @@ const char *ln_music_browser_label(uint32_t row);
 void ln_music_browser_window(uint32_t first);
 void ln_music_browser_visible_rows(uint32_t rows);
 bool ln_music_browser_select(uint32_t row);
+bool ln_music_browser_shuffle_all(void);
 bool ln_music_browser_row_navigates(uint32_t row);
 bool ln_music_browser_open_album(uint32_t group,uint32_t count,const char *title);
 struct ln_music_browser_queue {
@@ -43,6 +44,7 @@ struct ln_music_browser_queue {
     uint32_t count,cursor,tracks[LINNET_QUEUE_CAPACITY];
     uint32_t source,source_group,action;
     uint64_t frame;
+    bool shuffle_all;
 };
 enum ln_music_browser_queue_status { LN_BROWSER_QUEUE_IDLE=0,LN_BROWSER_QUEUE_LOADING=1,
     LN_BROWSER_QUEUE_READY=2,LN_BROWSER_QUEUE_CAPACITY=-1,LN_BROWSER_QUEUE_INVALID=-2 };

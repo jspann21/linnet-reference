@@ -61,7 +61,7 @@ _Noreturn void ln_platform_hardware_reset(void) {
 }
 void ln_platform_boot_candidate(bool candidate){(void)candidate;}
 bool ln_platform_set_disk_mode(bool enabled) {
-    static const uint8_t marker[21]="diskmode\0\0hotstuff\0\0\1";
+    static const uint8_t marker[]="diskmode\0\0hotstuff\0\0\1";
     volatile uint8_t *destination=(volatile uint8_t *)(uintptr_t)LINNET_DISK_MODE_MARKER;
     for(unsigned i=0;i<21;i++)destination[i]=enabled?marker[i]:0;
     return true;
@@ -205,6 +205,11 @@ void ln_platform_quiesce(void)
 
 bool ln_platform_dma_idle(void)
 {
+#if (defined(LINNET_SOC_PP5022) || LINNET_TARGET_NUMBER == 98) && defined(LINNET_IMAGE_OS)
+    if((LINNET_REG(0x6000600cu)&0x02000000u)&&
+       !(LINNET_REG(0x60006004u)&0x02000000u)&&
+       (LINNET_REG(0xc3000400u)&1u))return false;
+#endif
     uint32_t started = ln_time_us(), budget = 100000u;
     for (uint32_t channel = 0; channel < 4u; ++channel) {
         if (!ln_wait(&LINNET_REG(0x6000b004u + channel * 32u), 0x80000000u,

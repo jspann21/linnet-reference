@@ -161,9 +161,10 @@ def _check_mpeg4_config(data, width, height):
 
 def _check_tables(path, size, sample_bytes=65536):
     count = 0
+    metadata_at = media_at = None
     with path.open("rb") as source:
         def atoms(start, end, depth=0):
-            nonlocal count
+            nonlocal count, metadata_at, media_at
             if depth > 7:
                 raise ValueError("MP4 nesting exceeds device limits")
             while start < end:
@@ -180,6 +181,9 @@ def _check_tables(path, size, sample_bytes=65536):
                     raise ValueError("MP4 atom bounds exceed device limits")
                 if kind == b"moof": raise ValueError("Fragmented MP4 is unsupported")
                 body, limit = start + head, start + length
+                if depth == 0:
+                    if kind == b"moov": metadata_at = start
+                    elif kind == b"mdat" and media_at is None: media_at = start
                 if kind in (b"moov", b"trak", b"mdia", b"minf", b"stbl", b"edts"):
                     atoms(body, limit, depth + 1)
                 elif kind in (b"stts", b"stsc", b"ctts", b"elst", b"stsz"):
@@ -223,6 +227,7 @@ def _check_tables(path, size, sample_bytes=65536):
                                 if len(pair)!=8 or int.from_bytes(pair[4:], "big"): raise ValueError("Reordered timestamps are unsupported")
                 start = limit
         atoms(0, size)
+    return metadata_at is not None and media_at is not None and metadata_at < media_at
 
 def inspect_file(path, *, profile, ffprobe=None, cancelled=None):
     def checkpoint():
@@ -238,7 +243,7 @@ def inspect_file(path, *, profile, ffprobe=None, cancelled=None):
     if not 8 <= size <= 0x7fffffff:
         raise ValueError("Native video must fit the supported 2 GiB file range")
     checkpoint()
-    _check_tables(path, size, limits.get("sample_bytes", 65536))
+    fast_start = _check_tables(path, size, limits.get("sample_bytes", 65536))
     checkpoint()
     probe = ffprobe or shutil.which("ffprobe")
     if not probe:
@@ -310,7 +315,7 @@ def inspect_file(path, *, profile, ffprobe=None, cancelled=None):
     extension = ".mov" if brand == "qt" else ".mp4"
     if extension not in profile["video_extensions"]:
         raise ValueError("This video container is unsupported by the selected iPod target")
-    return dict(format="MP4", extension=extension, width=width, height=height, frames=frames, codec=v["codec_name"], file_bytes=size, bytes=size)
+    return dict(format="MP4", extension=extension, width=width, height=height, frames=frames, codec=v["codec_name"], file_bytes=size, bytes=size, fast_start=fast_start)
 
 def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lambda message: None, cancelled=None):
     source, output = Path(source), Path(output)
@@ -325,26 +330,30 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lamb
     temporary = output.with_name(output.stem + "." + uuid.uuid4().hex + ".mp4")
     try:
         try:
-            inspect_file(source, profile=profile, ffprobe=ffprobe, cancelled=cancelled)
+            source_info = inspect_file(source, profile=profile, ffprobe=ffprobe, cancelled=cancelled)
             compatible = True
         except ValueError:
             compatible = False
-        if compatible:
+        encoder = ffmpeg or shutil.which("ffmpeg")
+        relocate = compatible and not source_info['fast_start'] and encoder
+        if compatible and not relocate:
             progress("Copying compatible native video…")
             with source.open("rb") as reader, temporary.open("xb") as writer:
                 while chunk := reader.read(1024 * 1024):
                     checkpoint(); writer.write(chunk)
                 writer.flush(); os.fsync(writer.fileno())
         else:
-            encoder = ffmpeg or shutil.which("ffmpeg")
             if not encoder:
                 raise ValueError("ffmpeg is required to prepare native video")
-            progress("Preparing H.264 video and AAC audio…")
+            progress("Preparing video for faster loading…" if relocate else "Preparing H.264 video and AAC audio…")
             limits = profile["native_video"]
             width, height, fps = profile["video_width"], profile["video_height"], profile["video_fps"]
             if profile["video_backend"] == "native-mp4":
                 width,height=limits["h264_width"],limits["h264_height"]
             command = [str(encoder), "-nostdin", "-v", "error", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2", "-r", str(fps), "-c:v", "libx264", "-profile:v", "baseline", "-level:v", str(limits["h264_level"] / 10), "-pix_fmt", "yuv420p", "-b:v", f"{limits['video_kbps']}k", "-maxrate", f"{limits['max_video_kbps']}k", "-bufsize", f"{limits['buffer_kbits']}k", "-g", str(fps * 2), "-bf", "0", "-c:a", "aac", "-profile:a", "aac_low", "-ar", "44100", "-ac", "2", "-b:a", f"{limits['audio_kbps']}k", "-movflags", "+faststart", str(temporary)]
+            if relocate:
+                command = [str(encoder), "-nostdin", "-v", "error", "-i", str(source),
+                           "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart", str(temporary)]
             with tempfile.TemporaryFile() as errors:
                 process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors, creationflags=NO_WINDOW)
                 try:

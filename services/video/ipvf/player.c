@@ -6,7 +6,6 @@
 #endif
 #include "services/video/video.h"
 #include "services/video/catalog.h"
-#include <stddef.h>
 #include "services/storage/storage.h"
 #include "hal/api/audio.h"
 #include "hal/api/platform.h"
@@ -34,11 +33,14 @@ _Static_assert((FRAME_SLOTS-3u)*FRAME_BYTES<=VIDEO_STAGING_BYTES,"decoded video 
 _Static_assert(VIDEO_PREROLL<FRAME_SLOTS,"decoded video preroll bounds");
 _Static_assert(FRAME_SLOTS<=96u,"decoded slot ownership bitmap bounds");
 enum phase {IDLE,OPEN,HEADER,VERIFY,INDEX,READ,CRC,DECODE,FRAME_READY,PCM,WAIT,SEEK};
+/* Only validated reads and complete decoded frames publish these buffers. */
 static struct {
     uint16_t frame[2][PIXELS];
     union {uint16_t pixels[PIXELS];uint8_t bytes[IPVF_PAYLOAD];} third;
     union {uint32_t align;uint8_t bytes[RECORD];} record;
     uint8_t index_page[512];
+} buffers __attribute__((section(".media_workspace"),aligned(32)));
+static struct {
     struct ln_fat32_file file;struct ln_ui_asset asset;
     char path[256],title[128];
     uint32_t phase,error,epoch,working,generation,requested,revision;
@@ -74,7 +76,7 @@ static struct {
 #endif
     bool active,pending,stepping,stopping,ready,started,paused,finish,seeking,offered,completed,temporal,prefetching,startup_preview;
 } v;
-static uint8_t video_options=8u,video_output_once;
+static uint8_t video_options=8u;
 static bool video_headphone_known,video_headphones;
 static uint32_t saved_resume[2];
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -100,7 +102,7 @@ bool ln_video_measurement_arm(uint32_t mode){
     armed_measurement=mode;return true;
 }
 #endif
-static const uint8_t *record_source(void){return v.raw_write?v.raw_write:v.raw_view?v.raw_view:v.record.bytes;}
+static const uint8_t *record_source(void){return v.raw_write?v.raw_write:v.raw_view?v.raw_view:buffers.record.bytes;}
 static void clear(void*p,uint32_t n){
 #if defined(__arm__)
     extern void ln_memory_clear(void *,uint32_t);ln_memory_clear(p,n);
@@ -117,7 +119,7 @@ static void copy(void*d,const void*s,uint32_t n){
     while(n--)*a++=*b++;
 #endif
 }
-static uint16_t *frame_slot(uint32_t slot){return slot<2u?v.frame[slot]:slot==2u?v.third.pixels:slot<FRAME_SLOTS?VIDEO_BASE+(slot-3u)*PIXELS:0;}
+static uint16_t *frame_slot(uint32_t slot){return slot<2u?buffers.frame[slot]:slot==2u?buffers.third.pixels:slot<FRAME_SLOTS?VIDEO_BASE+(slot-3u)*PIXELS:0;}
 static bool zero(const uint8_t*p,uint32_t n){while(n--)if(*p++)return false;return true;}
 /* IPVF uses Rockbox's MSB-first CRC-32 state without a final XOR. */
 #include "rockbox_crc_table.h"
@@ -216,8 +218,8 @@ static uint32_t submit_ipvf_pcm(void){
 }
 static int read_ipvf_index(uint32_t index){
     uint32_t offset=v.index_at+index*16u,page=offset&~511u;
-    if(v.index_page_at!=page){v.index_page_at=NONE;uint32_t n=v.file.size-page;if(n>512u)n=512u;int r=io(page,v.index_page,n,false);if(r!=1)return r;v.index_page_at=page;}
-    copy(v.record.bytes,v.index_page+(offset&511u),16);return 1;
+    if(v.index_page_at!=page){v.index_page_at=NONE;uint32_t n=v.file.size-page;if(n>512u)n=512u;int r=io(page,buffers.index_page,n,false);if(r!=1)return r;v.index_page_at=page;}
+    copy(buffers.record.bytes,buffers.index_page+(offset&511u),16);return 1;
 }
 static bool ipvf_index_record(const uint8_t*b){
     uint64_t offset=ln_read_le64(b+4);uint32_t frame=ln_read_le32(b),sectors=ln_read_le16(b+12),flags=ln_read_le16(b+14);
@@ -225,7 +227,7 @@ static bool ipvf_index_record(const uint8_t*b){
         sectors&&sectors<=LINNET_STORAGE_MAX_READ_SECTORS&&offset+(uint64_t)sectors*512u<=v.media_end&&!(flags&~1u);
 }
 static bool ipvf_header(void){
-    const uint8_t*b=v.record.bytes;uint32_t flags=ln_read_le32(b+20),metadata=ln_read_le16(b+66),metadata_at=ln_read_le32(b+68);
+    const uint8_t*b=buffers.record.bytes;uint32_t flags=ln_read_le32(b+20),metadata=ln_read_le16(b+66),metadata_at=ln_read_le32(b+68);
     uint64_t media_end=ln_read_le64(b+44),index_at=ln_read_le64(b+52),index_bytes=(uint64_t)ln_read_le32(b+60)*16u;
     if(ln_read_le32(b)!=0x46565049u||ln_read_le16(b+4)!=80u||ln_read_le16(b+6)!=LINNET_VIDEO_WIDTH||ln_read_le16(b+8)!=LINNET_VIDEO_HEIGHT||
        !ln_read_le16(b+10)||!ln_read_le16(b+12)||ln_read_le16(b+10)<4u*ln_read_le16(b+12)||ln_read_le16(b+10)>240u*ln_read_le16(b+12)||
@@ -401,14 +403,14 @@ static VIDEO_LZ_CODE int ln_video_lz_decode_block(const uint8_t *in,uint32_t inp
 #endif
 static int decode_lz4(void){
     uint8_t *out=v.lz_output_slot==NONE?IPVF_LZ_SCRATCH:
-        v.lz_output_slot==2u?v.third.bytes:(uint8_t*)frame_slot(v.lz_output_slot);
+        v.lz_output_slot==2u?buffers.third.bytes:(uint8_t*)frame_slot(v.lz_output_slot);
     return ln_video_lz_decode_block(record_source()+v.lz_input_offset,v.lz_input_bytes,out,v.lz_output_bytes);
 }
 static bool raw_room(uint32_t bytes){return bytes<=RAW_CAPACITY-v.raw_used&&v.raw_count<RAW_ENTRIES;}
 static void raw_store(void){
     uint32_t n=RAW_CAPACITY-v.raw_tail;if(n>v.bytes)n=v.bytes;
-    if(!v.raw_write){copy(RAW_BASE+v.raw_tail,v.record.bytes,n);
-        copy(RAW_BASE,v.record.bytes+n,v.bytes-n);}
+    if(!v.raw_write){copy(RAW_BASE+v.raw_tail,buffers.record.bytes,n);
+        copy(RAW_BASE,buffers.record.bytes+n,v.bytes-n);}
     uint32_t slot=(v.raw_first+v.raw_count)%RAW_ENTRIES;
     v.raw[slot].frame=v.next;v.raw[slot].offset=v.offset;v.raw[slot].bytes=v.bytes;
     v.raw_tail=(v.raw_tail+v.bytes)%RAW_CAPACITY;v.raw_used+=v.bytes;++v.raw_count;
@@ -420,9 +422,9 @@ static bool raw_load(void){
     uint32_t n=RAW_CAPACITY-v.raw_head;if(n>v.bytes)n=v.bytes;
     if(n==v.bytes)v.raw_view=RAW_BASE+v.raw_head;
     else{
-        copy(v.record.bytes,RAW_BASE+v.raw_head,n);
-        copy(v.record.bytes+n,RAW_BASE,v.bytes-n);
-        v.raw_view=v.record.bytes;
+        copy(buffers.record.bytes,RAW_BASE+v.raw_head,n);
+        copy(buffers.record.bytes+n,RAW_BASE,v.bytes-n);
+        v.raw_view=buffers.record.bytes;
     }
     /* Retain the descriptor and ring bytes until all video phases finish. */
     return true;
@@ -588,7 +590,7 @@ static int decode_ipvf(void){
 }
 /* Frame/record buffers are overwritten before use; reset only ownership and
  * stream state when switching videos. Index-page ownership is invalidated below. */
-void ln_video_init(void){clear(&v.file,sizeof v - offsetof(__typeof__(v),file));v.generation=0x71000000u;v.front=v.previous=v.building=v.index_page_at=NONE;LN_VIDEO_RECORD(v.min_audio=NONE);v.preroll=2u;}
+void ln_video_init(void){clear(&v,sizeof v);v.generation=0x71000000u;v.front=v.previous=v.building=v.index_page_at=NONE;LN_VIDEO_RECORD(v.min_audio=NONE);v.preroll=2u;}
 bool ln_video_open(const char*path){
     if(v.active||v.pending||ln_video_catalog_pending()||!path||path[0]!='/')return false;uint32_t n=0;while(path[n]&&n<255)n++;if(!n||n==255)return false;
     uint32_t gen=v.generation,revision=v.revision;ln_video_init();v.generation=gen;v.revision=revision+1;copy(v.path,path,n+1);
@@ -634,7 +636,7 @@ bool ln_video_option_adjust(uint32_t row,int32_t direction){
     return true;
 }
 bool ln_video_output_prompt(void){return (video_options&3u)==1u;}
-void ln_video_output_once(bool television){video_output_once=television?2u:1u;}
+void ln_video_output_once(bool television){(void)television;}
 void ln_video_headphones(bool connected){
     if(v.active&&video_headphone_known&&video_headphones&&!connected)ln_video_pause(true);
     video_headphones=connected;video_headphone_known=true;
@@ -672,7 +674,7 @@ static void step(void){
         v.min_ready=v.qcount;v.last_present_us=0;
 #endif
     }
-    int r;uint8_t*b=v.record.bytes;
+    int r;uint8_t*b=buffers.record.bytes;
     switch(v.phase){
     case OPEN:r=io(0,0,0,true);if(r<0)fail(1);else if(r==1)v.phase=HEADER;return;
     case HEADER:r=io(0,b,512,false);if(r<0){fail(2);return;}if(!r)return;

@@ -165,3 +165,44 @@ __aeabi_memclr:
     bne .Lclear_bytes
     bx lr
 .size ln_memory_clear, .-ln_memory_clear
+
+/* ARM7 has no CLZ instruction; LLVM emits this runtime helper for it. */
+.section .text.__clzsi2,"ax",%progbits
+.global __clzsi2
+.type __clzsi2,%function
+__clzsi2:
+    cmp r0, #0
+    moveq r0, #32
+    bxeq lr
+    mov r1, #0
+    movs r2, r0, lsr #16
+    addeq r1, r1, #16
+    moveq r0, r0, lsl #16
+    movs r2, r0, lsr #24
+    addeq r1, r1, #8
+    moveq r0, r0, lsl #8
+    movs r2, r0, lsr #28
+    addeq r1, r1, #4
+    moveq r0, r0, lsl #4
+    movs r2, r0, lsr #30
+    addeq r1, r1, #2
+    moveq r0, r0, lsl #2
+    mov r0, r0, lsr #31
+    add r1, r1, #1
+    sub r0, r1, r0
+    bx lr
+.size __clzsi2, .-__clzsi2
+
+.section .text.__aeabi_uwrite4,"ax",%progbits
+.global __aeabi_uwrite4
+.type __aeabi_uwrite4,%function
+__aeabi_uwrite4:
+    strb r0, [r1]
+    mov r2, r0, lsr #8
+    strb r2, [r1, #1]
+    mov r2, r0, lsr #16
+    strb r2, [r1, #2]
+    mov r2, r0, lsr #24
+    strb r2, [r1, #3]
+    bx lr
+.size __aeabi_uwrite4, .-__aeabi_uwrite4

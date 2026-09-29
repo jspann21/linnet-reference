@@ -8,6 +8,7 @@
 #include "services/storage/storage.h"
 #include "services/music/player.h"
 #include "services/music/library.h"
+#include "services/music/search.h"
 #include "services/music/controller.h"
 #include "services/audio/mp3/mp3.h"
 #if defined(LINNET_PHOTOS)
@@ -75,6 +76,13 @@ int ln_audio_link_dispatch(const ln_link_frame *q,ln_link_frame *r){
             m.pcm_calls,m.pcm_frames,m.pcm_us,m.pcm_max_us};
         for(uint32_t n=0;n<31;n++)ln_write_le32(reply+n*4,words[n]);r->length=124;
     }else if(q->command==119){
+#if !defined(LINNET_PROFILE_RELEASE)
+        if(q->length==4u&&ln_read_le32(q->payload)==1u){
+            uint32_t words[16];ln_music_search_diagnostics(words);
+            for(uint32_t i=0;i<16u;i++)ln_write_le32(reply+i*4u,words[i]);
+            r->length=64;r->flags=LINNET_LINK_ACK;return 1;
+        }
+#endif
         if(q->length)return 1;
         uint32_t words[8]={0x5342494cu,0,ln_music_library_status(),(uint32_t)ln_music_library_error(),
             ln_music_library_count(),ln_music_library_group_count(),ln_music_library_verified_bytes(),ln_music_library_revision()};

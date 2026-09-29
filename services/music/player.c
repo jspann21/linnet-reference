@@ -22,6 +22,10 @@ struct player_slot {
     uint32_t phase,generation,token,buffered,rate,config_rate;bool seek_initial;
 };
 static struct player_slot slots[2];
+/* Each codec initializes its own arena when selected. Keep only ownership and
+ * validity in zeroed BSS, avoiding a second multi-megabyte clear during boot. */
+static union ln_decoder_workspace decoder_workspaces[2]
+    __attribute__((section(".media_workspace"),aligned(8)));
 static struct ln_player_status state;
 #if !defined(LINNET_PROFILE_RELEASE)
 static struct ln_player_timing timing;
@@ -125,7 +129,7 @@ static int slot_step(struct player_slot *s){
         int r=poll_media(s,&s->media,0);if(!r)return 0;io_owner=0;
         if(interrupted())return 0;
         if(r<0||(s->expected&&s->expected!=s->media.size))return -1;
-        ln_decoder_init(&s->decoder,read_media,s,s->media.size);s->phase=SLOT_DECODE;return 0;
+        ln_decoder_init(&s->decoder,&decoder_workspaces[s-slots],read_media,s,s->media.size);s->phase=SLOT_DECODE;return 0;
     }
     if(s->phase==SLOT_EOF)return 2;if(s->phase!=SLOT_DECODE||s->buffered)return 0;
     uint32_t frames=0;
@@ -434,7 +438,14 @@ void ln_player_step(void){
 }
 bool ln_player_busy(void){return state.phase!=LN_PLAYER_IDLE&&state.phase!=LN_PLAYER_ERROR;}
 uint32_t ln_player_deadline(uint32_t now){
-    if(effect_pending||state.phase==LN_PLAYER_OPEN||state.phase==LN_PLAYER_HEADER||state.phase==LN_PLAYER_PRIME||io_owner)return now;
+    if(effect_pending)return now;
+    /* An admitted read for the feeding decoder owns its input buffer until
+     * storage completes. Another player turn cannot produce PCM from it.
+     * Storage keeps runnable FAT/completion work awake and owns the bounded
+     * disk wait. A next-track read still permits the current decoder to use
+     * its cached input, so do not defer that independent work. */
+    if(io_owner&&(io_owner==&slots[feed]||interrupted()))return now+200000u;
+    if(state.phase==LN_PLAYER_OPEN||state.phase==LN_PLAYER_HEADER||state.phase==LN_PLAYER_PRIME||io_owner)return now;
     /* Decode and drain are separate bounded steps. Sleeping between them
      * caps MP3 production below44.1kHz even before accounting for compute. */
     if(stop_requested||seek_requested||cancel_next||pause_requested||skip_requested||

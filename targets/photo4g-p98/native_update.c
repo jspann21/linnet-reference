@@ -67,7 +67,7 @@ static int directory_valid(uint64_t candidate,uint32_t length){
 }
 static int validate(void){
     static const uint8_t original_sha[32]={0x0e,0x21,0xc2,0xbc,0x8c,0xba,0xbd,0xee,0xd6,0xe3,0xd6,0xa0,0x34,0xea,0xcc,0x8e,0x3c,0xa7,0xd6,0xfb,0x04,0xcd,0x2d,0x5d,0x1b,0x4c,0xfc,0x5f,0xd8,0x5d,0x96,0x11};
-    static const uint8_t serial[16]="JQ5081G3SAY",usb[16]=LINNET_USB_SERIAL;
+    static const uint8_t serial[16]="JQ5081G3SAY",usb[33]=LINNET_USB_SERIAL;
     const uint8_t *p=package;uint64_t candidate=ln_read_le64(p+32);uint32_t n=ln_read_le32(p+44),span=ln_read_le32(p+40);
     if(ln_read_le32(p)!=0x4b504e4cu||ln_read_le32(p+4)||ln_read_le32(p+8)!=package_size||ln_read_le32(p+12)!=98||ln_read_le32(p+16)||
        ln_read_le32(p+20)!=41094144u||ln_read_le64(p+24)!=32256u||span!=package_size-2560u||n<32||n>span||

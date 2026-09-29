@@ -9,7 +9,6 @@
 #include "hal/api/core.h"
 #include "hal/api/platform.h"
 #include "boot/include/linnet_bytes.h"
-#include <stddef.h>
 #define AAC (*(struct ln_aac *)(uintptr_t)LINNET_STAGE_ADDRESS)
 #define PACKET ((uint8_t *)(uintptr_t)(LINNET_STAGE_ADDRESS+0x40000u))
 #define CACHE_SLOTS 64u
@@ -41,9 +40,11 @@ static struct {
     struct ln_mp4 movie,sound;
     struct ln_mp4_packet video_packet,audio_packet;
     struct {uint64_t offset[CACHE_SLOTS];uint32_t bytes[CACHE_SLOTS],age[CACHE_SLOTS],clock,filling,owner;bool pending;} cache;
-    uint16_t pixels[3][LINNET_VIDEO_WIDTH*LINNET_VIDEO_HEIGHT] __attribute__((aligned(32)));
     struct ln_ui_asset asset;
 } v;
+/* The renderer sees a slot only after its decoded pixels are complete. */
+static uint16_t pixels[3][LINNET_VIDEO_WIDTH*LINNET_VIDEO_HEIGHT]
+    __attribute__((section(".media_workspace"),aligned(32)));
 static uint32_t milliseconds(uint64_t ticks,uint32_t rate){
     uint64_t quotient=0,remainder=0;if(!rate)return 0;
     for(unsigned bit=64;bit;bit--){remainder=(remainder<<1)|((ticks>>(bit-1))&1u);if(remainder>=rate){remainder-=rate;quotient|=1ull<<(bit-1);}}
@@ -241,7 +242,7 @@ static void step(void){
         if(v.started&&now>=v.frame_due&&!v.offered&&runnable){
             ln_video_decoder_render();
             uint32_t width,height;ln_video_decoder_output_size(&width,&height);
-            v.front=v.ready;v.asset=(struct ln_ui_asset){width,height,v.pixels[v.front]};
+            v.front=v.ready;v.asset=(struct ln_ui_asset){width,height,pixels[v.front]};
             v.offered=true;v.frame_ready=false;++v.revision;
             if(now>v.frame_due+5){++v.late;if(now-v.frame_due>v.max_late)v.max_late=now-v.frame_due;}
         }
@@ -259,7 +260,7 @@ static void step(void){
         bool discard=v.started&&v.movie.packet<v.movie.samples&&clock>due+span&&clock-v.last_picture<100u;
         /* Always decode reference pictures. Late pictures can omit RGB
          * conversion and presentation without corrupting later frames. */
-        uint32_t began=ln_time_us();r=ln_video_decoder_decode(PACKET,v.video_packet.bytes,discard?0:v.pixels[v.back]);uint32_t elapsed=ln_time_us()-began;
+        uint32_t began=ln_time_us();r=ln_video_decoder_decode(PACKET,v.video_packet.bytes,discard?0:pixels[v.back]);uint32_t elapsed=ln_time_us()-began;
         if(elapsed>v.max_decode)v.max_decode=elapsed;if(r<0){fail(12);return;}
         if(r==2){v.video_phase=3;return;}
         if(r>0){
@@ -278,10 +279,8 @@ bool ln_video_open(const char *path){
     uint32_t n=0,id=2166136261;while(path[n]&&n<255){id=(id^(uint8_t)path[n])*16777619u;++n;}if(!n||n==255)return false;
     uint32_t generation=v.generation+1,revision=v.revision+1,resume[2]={v.resume[0],v.resume[1]};uint8_t options=v.options;
     bool headphone_known=v.headphone_known,headphones=v.headphones;
-    /* Every displayed frame is fully written by the decoder. Clearing the
-     * three 320x240 RGB buffers here only delays the first frame. */
-    __builtin_memset(&v,0,offsetof(__typeof__(v),pixels));
-    v.asset=(struct ln_ui_asset){0};
+    /* Reset ownership before the decoder publishes another complete frame. */
+    __builtin_memset(&v,0,sizeof v);
 #if !defined(LINNET_PROFILE_RELEASE)
     v.opened_us=ln_time_us();
 #endif
