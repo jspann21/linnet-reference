@@ -299,8 +299,8 @@ void ln_music_browser_step(void){
         else if(job==FAVORITE_RECORD){b.favorite_id=track.id;b.favorite_waiting=true;}
         else if(job==ACTIVITY_RECORD){b.activity_id=track.id;b.activity_waiting=true;}
         else if(job==RECORD){b.draft.ids[b.draft.count++]=track.id;b.export_at++;b.action_kind=0;if(b.export_at==b.export_queue.count){b.exporting=false;changed();}}
-        else if(job==RESOLVE){for(uint32_t i=0;i<b.draft.count;i++)if(b.draft.ids[i]==track.id)b.mapped[i]=b.scan;b.scan++;
-            if(b.scan==ln_music_library_count()){uint32_t count=0;for(uint32_t i=0;i<b.draft.count;i++)if(b.mapped[i]!=UINT32_MAX){b.positions[count]=i;b.mapped[count++]=b.mapped[i];}b.here.count=count;b.resolving=false;if(count!=b.draft.count)ln_music_browser_notice("Missing tracks omitted");changed();}}
+        else if(job==RESOLVE){for(uint32_t i=0;i<b.draft.count;i++)if(b.draft.ids[i]==track.id&&b.mapped[i]==UINT32_MAX){b.mapped[i]=b.scan;b.resolve_count++;}b.scan++;
+            if(b.resolve_count==b.draft.count||b.scan==ln_music_library_count()){uint32_t count=0;for(uint32_t i=0;i<b.draft.count;i++)if(b.mapped[i]!=UINT32_MAX){b.positions[count]=i;b.mapped[count++]=b.mapped[i];}b.here.count=count;b.resolving=false;if(count!=b.draft.count)ln_music_browser_notice("Missing tracks omitted");changed();}}
         else {struct row *r=&b.rows[b.job_row%(LN_MUSIC_BROWSER_ROWS*2)];*r=(struct row){.ordinal=b.job_row,.valid=true};
             if(job==TITLE){r->index=title.index;copy(r->label,title.title);}else{r->index=b.here.view==ARTIST_ALBUMS?activity_data.tracks[ordinal(b.job_row)-1]:b.here.view==ALBUM_ARTISTS?activity_data.tracks[ordinal(b.job_row)]:b.here.lower+ordinal(b.job_row);r->count=g.count;copy(r->label,name);}changed();}
     }
