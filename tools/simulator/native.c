@@ -52,7 +52,7 @@ uint32_t ln_ui_dynamic_count(const struct ln_ui_node *node,uint32_t fallback){
     if(node_scene(node,"linnet.system.files")&&(node->kind==LN_UI_VIRTUAL_LIST||node->kind==LN_UI_SCROLLBAR))return 6u;
     if(music_category_node(node)&&(node->kind==LN_UI_VIRTUAL_LIST||node->kind==LN_UI_SCROLLBAR))return ln_music_menu_count(sample_more);
     if(node_scene(node,"linnet.system.music-sound")&&(node->kind==LN_UI_VIRTUAL_LIST||node->kind==LN_UI_SCROLLBAR))return ln_sound_menu_count(sample_sound_view,LINNET_EXTENDED_SOUND,SAMPLE_CLICKER);
-    if(node_scene(node,"linnet.system.display")&&node->kind==LN_UI_VIRTUAL_LIST)return ln_music_menu_scene_enabled("linnet.system.themes")?2u:1u;
+    if(node_scene(node,"linnet.system.display")&&node->kind==LN_UI_VIRTUAL_LIST)return ln_music_menu_scene_enabled(LN_UI_SCENE_THEMES)?2u:1u;
     return fallback;
 }
 const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){
