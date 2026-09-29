@@ -27,8 +27,12 @@ static char *number_text(char *out,uint32_t value){
 /* Text providers only inspect retained player/library memory. */
 static uint64_t clock_divide(uint64_t numerator,uint32_t denominator,uint32_t *rest){
     uint64_t quotient=0,remainder=0;
-    /* ARM7 freestanding images do not provide __aeabi_uldivmod. */
-    for(uint32_t bit=64u;bit;--bit){
+    /* ARM7 freestanding images do not provide __aeabi_uldivmod.
+     * Leading zero bits cannot contribute to the quotient or remainder. */
+    uint32_t high=(uint32_t)(numerator>>32);
+    uint32_t bits=high?64u-(uint32_t)__builtin_clz(high):
+        numerator?32u-(uint32_t)__builtin_clz((uint32_t)numerator):0u;
+    for(uint32_t bit=bits;bit;--bit){
         remainder=(remainder<<1)|((numerator>>(bit-1u))&1u);
         if(remainder>=denominator){remainder-=denominator;quotient|=(uint64_t)1u<<(bit-1u);}
     }

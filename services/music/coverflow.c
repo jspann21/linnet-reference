@@ -48,7 +48,6 @@ static uint32_t catalog_loaded,full_reads,read_bytes,hits,preview_hits,misses,la
 static int32_t position,direction=1;
 static bool visible,pending,failed,canceling,moved_in_visit;
 static const uint32_t generation=0x79000001u;
-static const uint32_t crc_table[16]={0,0x1db71064,0x3b6e20c8,0x26d930ac,0x76dc4190,0x6b6b51f4,0x4db26158,0x5005713c,0xedb88320,0xf00f9344,0xd6d6a3e8,0xcb61b38c,0x9b64c2b0,0x86d3d2d4,0xa00ae278,0xbdbdf21c};
 struct ln_coverflow_column {uint32_t step;uint8_t source,top,height,length;};
 extern const struct ln_coverflow_column ln_coverflow_columns[33][COVER_WIDTH];
 extern const uint8_t ln_coverflow_widths[33];
@@ -58,9 +57,6 @@ extern const uint8_t ln_coverflow_glow_colors[2][192][2];
 #else
 extern const uint8_t ln_coverflow_glow[LINNET_UI_WIDTH][LINNET_UI_HEIGHT*140u/176u];
 #endif
-static uint32_t crc_span(uint32_t crc,const uint8_t *data,uint32_t size){
-    while(size--){crc^=*data++;crc=(crc>>4)^crc_table[crc&15u];crc=(crc>>4)^crc_table[crc&15u];}return crc;
-}
 static bool identity(void){uint8_t hash[32];if(!ln_music_library_identity(hash))return false;
     for(uint32_t i=0;i<32;i++)if(hash[i]!=header[16+i])return false;return true;}
 static uint8_t *row(uint32_t index){return index<count&&tags[index%CATALOG_SLOTS]==index+1u?catalog[index%CATALOG_SLOTS]:0;}
@@ -203,7 +199,7 @@ void ln_coverflow_step(bool allow_read){
             if(transferred!=length){fail();return;}
             for(uint32_t i=0;i<length/CATALOG_RECORD;i++){
                 uint32_t index=loading+i;uint8_t *r=catalog[index%CATALOG_SLOTS];
-                uint32_t crc=crc_span(crc_span(0xffffffffu,r,252),r+256,768);
+                uint32_t crc=ln_crc32_update(ln_crc32_update(0xffffffffu,r,252),r+256,768);
                 if((~crc)!=ln_read_le32(r+252)||r[127]||r[247]||ln_read_le32(r+248)>=arts||
                    ln_read_le32(r)>=ln_music_library_group_count()||!ln_read_le32(r+4)||ln_read_le32(r+4)>ln_music_library_count()){
                     fail();return;}

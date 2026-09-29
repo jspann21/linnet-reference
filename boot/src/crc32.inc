@@ -1,5 +1,5 @@
 /* Shared CRC implementation for SDRAM and verified Boot IRAM copies. */
-static LN_CRC_ATTR uint32_t LN_CRC_NAME(const uint8_t *bytes, size_t length,
+static LN_CRC_ATTR uint32_t LN_CRC_NAME(uint32_t crc, const uint8_t *bytes, size_t length,
     void (*progress)(void *context), void *context)
 {
     /* Host-generated reflected ISO-HDLC byte table. One lookup per byte;
@@ -38,7 +38,6 @@ static LN_CRC_ATTR uint32_t LN_CRC_NAME(const uint8_t *bytes, size_t length,
         0xbdbdf21cu, 0xcabac28au, 0x53b39330u, 0x24b4a3a6u, 0xbad03605u, 0xcdd70693u, 0x54de5729u, 0x23d967bfu,
         0xb3667a2eu, 0xc4614ab8u, 0x5d681b02u, 0x2a6f2b94u, 0xb40bbe37u, 0xc30c8ea1u, 0x5a05df1bu, 0x2d02ef8du
     };
-    uint32_t crc = UINT32_MAX;
     size_t i=0;
     for (; length-i >= 8u; i+=8u) {
         crc = (crc >> 8) ^ byte_table[(crc ^ bytes[i]) & 255u];
@@ -53,5 +52,5 @@ static LN_CRC_ATTR uint32_t LN_CRC_NAME(const uint8_t *bytes, size_t length,
     }
     for (; i<length; ++i)
         crc = (crc >> 8) ^ byte_table[(crc ^ bytes[i]) & 255u];
-    return crc ^ UINT32_MAX;
+    return crc;
 }
