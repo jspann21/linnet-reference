@@ -859,7 +859,8 @@ def _prepare_aac(root, cache, skipped, checkpoint, progress, report, recovery, r
                 continue
             _plain(path, root)
             progress(f'Preparing AAC seeks: {path.name}')
-            if prepare_file(path, cache / 'aac-seek', checkpoint=checkpoint, recovery=recovery):
+            if prepare_file(path, cache / 'aac-seek', checkpoint=checkpoint,
+                            recovery=recovery, journal=record):
                 report['steps'].append(dict(prepared_aac=str(path.relative_to(root))))
                 record()
 
@@ -878,7 +879,7 @@ def _prepare_flac(root, cache, skipped, ffprobe, checkpoint, progress, report, r
             _plain(path, root)
             progress(f'Preparing FLAC seeks: {path.name}')
             if prepare_file(path, cache / 'flac-seek', ffprobe=ffprobe,
-                            checkpoint=checkpoint, recovery=recovery):
+                            checkpoint=checkpoint, recovery=recovery, journal=record):
                 report['steps'].append(dict(prepared_flac=str(path.relative_to(root))))
                 record()
 
@@ -1446,7 +1447,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             if publication_name(path.name):
                 publications.append(path)
             if (name.startswith(('ipvf-encode-', 'music-prepare-')) or
-                    '.music-prepare-' in name or name.endswith(('.tmp', '.music-previous'))):
+                    '.music-prepare-' in name or name.endswith((
+                        '.tmp', '.music-previous', '.aac-original', '.flac-original'))):
                 report["cleanup"]["retained"].append(dict(path=str(path),
                     reason="Preparation scratch remains; review before removing if another update is running."))
         for path in publications:

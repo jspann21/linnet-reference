@@ -100,7 +100,7 @@ def same_original(source, destination):
     return True
 
 
-def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None):
+def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal=None):
     """Atomically augment an iPod copy; retain its compressed audio and tags."""
     from .guard import hash_file
     path, cache = Path(path), Path(cache)
@@ -120,6 +120,8 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None):
         with path.open('rb') as reader, local.open('wb') as writer:
             while chunk := reader.read(1024 * 1024):
                 checkpoint(); writer.write(chunk); source_hash.update(chunk)
+            if recovery is not None:
+                writer.flush(); os.fsync(writer.fileno())
         child = subprocess.Popen([str(tool), str(local), str(index)], stdout=subprocess.DEVNULL,
                                  stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
         started = time.monotonic()
@@ -158,11 +160,14 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None):
                 raise ValueError('AAC seek index has invalid geometry')
             if recovery is not None:
                 backup = cache / (uuid.uuid4().hex + '.aac-original')
-                local.replace(backup)
-                recovery.append(dict(path=str(path), backup=str(backup),
+                recovery.append(dict(path=str(path), backup=str(backup), source_copy=str(local),
+                    temporary=str(temporary),
                     original_bytes=before.st_size, original_sha256=source_hash.hexdigest(),
                     atime_ns=before.st_atime_ns, mtime_ns=before.st_mtime_ns,
                     prepared_bytes=before.st_size + len(suffix), prepared_sha256=digest.hexdigest()))
+                if journal is not None:
+                    journal()
+                local.replace(backup)
             temporary.replace(path)
         finally:
             if owned:
@@ -177,7 +182,7 @@ def finish_preparation(change, *, committed, kind='AAC'):
     if not committed:
         current = path.stat().st_size
         if current == change['original_bytes'] and hash_file(path, current) == change['original_sha256']:
-            backup.unlink(); return
+            backup.unlink(missing_ok=True); return
         if current != change['prepared_bytes'] or hash_file(path, current) != change['prepared_sha256']:
             raise OSError(f'{kind} copy changed after preparation; original backup retained')
         if hash_file(backup, change['original_bytes']) != change['original_sha256']:

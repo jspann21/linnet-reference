@@ -80,23 +80,27 @@ def same_original(source, destination):
 
 
 def _points(path, probe, audio_at, rate, total, checkpoint):
-    with path.with_name('packets.json').open('wb') as output:
+    packet_path = path.with_name('packets.json')
+    with packet_path.open('wb') as output:
         child = subprocess.Popen([str(probe), '-v', 'error', '-select_streams', 'a:0',
             '-show_entries', 'stream=sample_rate,time_base,duration_ts',
             '-show_entries', 'packet=pts,duration,pos,size', '-of', 'json', str(path)],
             stdout=output, stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
         started = time.monotonic()
+        oversized = False
         try:
             while child.poll() is None:
                 checkpoint()
+                if packet_path.stat().st_size > MAX_PACKET_INDEX:
+                    oversized = True
+                    break
                 if time.monotonic() - started > 600:
                     raise TimeoutError('FLAC seek preparation exceeded ten minutes')
                 time.sleep(.05)
         finally:
             if child.poll() is None:
                 child.terminate(); child.wait(timeout=10)
-    packet_path = path.with_name('packets.json')
-    if child.returncode or packet_path.stat().st_size > MAX_PACKET_INDEX:
+    if oversized or child.returncode or packet_path.stat().st_size > MAX_PACKET_INDEX:
         return None
     try:
         with packet_path.open('rb') as reader:
@@ -128,7 +132,7 @@ def _points(path, probe, audio_at, rate, total, checkpoint):
                     for i in indices)
 
 
-def prepare_file(path, cache, *, ffprobe, checkpoint=lambda: None, recovery=None):
+def prepare_file(path, cache, *, ffprobe, checkpoint=lambda: None, recovery=None, journal=None):
     """Atomically index an iPod FLAC copy; retain tags and compressed audio."""
     from .guard import hash_file
     path, cache = Path(path), Path(cache)
@@ -149,6 +153,8 @@ def prepare_file(path, cache, *, ffprobe, checkpoint=lambda: None, recovery=None
         with path.open('rb') as reader, local.open('wb') as writer:
             while chunk := reader.read(1024 * 1024):
                 checkpoint(); writer.write(chunk); source_hash.update(chunk)
+            if recovery is not None:
+                writer.flush(); os.fsync(writer.fileno())
         if path.stat().st_size != before.st_size or path.stat().st_mtime_ns != before.st_mtime_ns:
             raise OSError('FLAC source changed during preparation')
         points = _points(local, ffprobe, audio_at, rate, total, checkpoint)
@@ -184,11 +190,14 @@ def prepare_file(path, cache, *, ffprobe, checkpoint=lambda: None, recovery=None
                 raise OSError('FLAC source changed during preparation')
             if recovery is not None:
                 backup = cache / (uuid.uuid4().hex + '.flac-original')
-                local.replace(backup)
                 recovery.append(dict(kind='FLAC', path=str(path), backup=str(backup),
+                    source_copy=str(local), temporary=str(temporary),
                     original_bytes=before.st_size, original_sha256=source_hash.hexdigest(),
                     atime_ns=before.st_atime_ns, mtime_ns=before.st_mtime_ns,
                     prepared_bytes=before.st_size + len(block), prepared_sha256=digest.hexdigest()))
+                if journal is not None:
+                    journal()
+                local.replace(backup)
             temporary.replace(path)
         finally:
             if owned:
