@@ -27,7 +27,7 @@ static struct {
     struct ln_fat32_file catalog,chosen,original;
     uint8_t io[512];uint16_t long_name[260];char chosen_name[128],extension[6],leaf[14],label[96];
     uint32_t phase,view,depth,count,records,validate,offset,bytes,selected,lfn_sequence,lfn_checksum;
-    uint32_t revision,drawn,target_page,request_bytes;
+    uint32_t revision,drawn,target_page,request_bytes,preview_base,preview_size;
     uint32_t checkpoint_cluster[16],checkpoint_page[16],restore_row,prepared_kind;
     bool active,pending,discard,done,sector_loaded,more,replaying;
     bool restoring,back_pending,prepared_text,info_only,returning;
@@ -79,6 +79,7 @@ static void live_folder(void){
 static bool record_valid(const uint8_t*r){
     if(ln_read_le32(r+252)!=ln_crc32(r,252)||r[159]||r[173]||!r[32]||!r[160]||r[251])return false;
     if(ln_read_le32(r+16)>3u||ln_read_le32(r+24)>2u||ln_read_le32(r+28)>3u)return false;
+    if((!ln_read_le32(r+16)||ln_read_le32(r+16)==3u)&&ln_read_le16(r+174))return false;
     if(ln_read_le32(r+16)&&r[176]!='/')return false;
     uint32_t first=ln_read_le32(r+8),count=ln_read_le32(r+12),attributes=ln_read_le32(r);
     if(attributes&~63u)return false;
@@ -148,7 +149,7 @@ static void open_chosen(struct ln_ui_state*s){
         if(next.indexed){next.first=ln_read_le32(record(f.selected)+8);next.count=ln_read_le32(record(f.selected)+12);if(ln_read_le32(record(f.selected)+24)==2u)next.indexed=false;}
         f.folder=next;if(next.indexed)load_page();else live_folder();reset_selection(s,0);return;
     }
-    f.original=f.chosen;f.prepared_text=false;f.prepared_kind=0;
+    f.original=f.chosen;f.prepared_text=false;f.prepared_kind=0;f.preview_base=0;f.preview_size=f.chosen.size;
     f.view=DETAILS;f.message=0;f.offset=0;f.phase=READY;reset_selection(s,0);changed();
     if(f.info_only){f.info_only=false;return;}
     if(f.folder.indexed&&(f.prepared_kind=ln_read_le32(record(f.selected)+16))!=0){f.phase=PREPARED_OPEN;return;}
@@ -233,7 +234,8 @@ void ln_files_step(struct ln_ui_state*s){
         else if(f.phase==CATALOG_OPEN){f.catalog=opened;f.phase=CATALOG_HEADER;}
         else if(f.phase==CATALOG_HEADER){
             f.records=ln_read_le32(f.io+8);
-            if(bytes!=512u||ln_read_le32(f.io)!=0x534c4946u||ln_read_le32(f.io+4)!=1u||!f.records||f.records>1000000u||
+            uint32_t version=ln_read_le32(f.io+4);
+            if(bytes!=512u||ln_read_le32(f.io)!=0x534c4946u||(version!=1u&&version!=2u)||!f.records||f.records>1000000u||
                ln_read_le32(f.io+12)!=RECORD||f.catalog.size!=512u+f.records*RECORD||ln_crc32(f.io,508)!=ln_read_le32(f.io+508))live_folder();
             else {f.phase=CATALOG_ROOT;}
         }else if(f.phase==CATALOG_ROOT){
@@ -244,17 +246,18 @@ void ln_files_step(struct ln_ui_state*s){
             if(((opened.attributes^ln_read_le32(record(f.selected)))&16u)||(!(opened.attributes&16u)&&opened.size!=ln_read_le32(record(f.selected)+4))){live_folder();reset_selection(s,0);}
             else{f.chosen=opened;open_chosen(s);}
         }else if(f.phase==PREPARED_OPEN){
-            if(opened.size!=ln_read_le32(record(f.selected)+20))fail("Preview changed - prepare Files");
+            uint32_t base=(uint32_t)ln_read_le16(record(f.selected)+174)*512u,size=ln_read_le32(record(f.selected)+20);
+            if(base>opened.size||size>opened.size-base||(f.prepared_kind==3u&&size!=opened.size))fail("Preview changed - prepare Files");
             else {
 #if defined(LINNET_VIDEO)
                 if(f.prepared_kind==3u&&ln_runtime_video_open_file(&opened,f.chosen_name)){f.view=DIRECTORY;f.phase=READY;f.returning=true;}
                 else
 #endif
 #if defined(LINNET_PHOTOS)
-                if(f.prepared_kind==1u&&ln_photos_open_prepared(&opened,f.chosen_name)){f.view=DIRECTORY;f.phase=READY;f.returning=true;(void)ln_ui_show(s,"linnet.system.photos-viewer");}
+                if(f.prepared_kind==1u&&ln_photos_open_prepared(&opened,base,size,f.chosen_name)){f.view=DIRECTORY;f.phase=READY;f.returning=true;(void)ln_ui_show(s,"linnet.system.photos-viewer");}
                 else
 #endif
-                if(f.prepared_kind==2u){f.chosen=opened;f.prepared_text=true;f.view=TEXT;preview();}
+                if(f.prepared_kind==2u){f.chosen=opened;f.preview_base=base;f.preview_size=size;f.prepared_text=true;f.view=TEXT;preview();}
                 else fail("Preview unavailable");
             }
         }else if(f.phase==LIVE){
@@ -277,8 +280,8 @@ void ln_files_step(struct ln_ui_state*s){
         else if(f.phase==ENTRY_OPEN)r=ln_storage_media_open_at(&f.folder.file,f.leaf,GENERATION);
         else if(f.phase==PREPARED_OPEN)r=ln_storage_media_open((const char*)record(f.selected)+176,GENERATION);
         else if(f.phase==LIVE&&!f.sector_loaded){f.sector_start=f.cursor;r=ln_storage_media_list(&f.cursor.cursor,f.io,GENERATION);}
-        else if(f.phase==PREVIEW){uint32_t n=f.chosen.size-f.offset;if(n>480u)n=480u;
-            if(n)r=ln_storage_media_read(&f.chosen,f.offset,f.io,n,GENERATION);else{f.phase=READY;changed();}}
+        else if(f.phase==PREVIEW){uint32_t n=f.preview_size-f.offset;if(n>480u)n=480u;
+            if(n)r=ln_storage_media_read(&f.chosen,f.preview_base+f.offset,f.io,n,GENERATION);else{f.phase=READY;changed();}}
         if(r>0){f.pending=true;FILES_DIAG(++timing.reads);}else if(r<0){if(f.phase<=CATALOG_PAGE)live_folder();else fail("File unavailable");}
     }
     if(f.replaying&&f.done){
@@ -295,10 +298,10 @@ bool ln_files_input(struct ln_ui_state*s,uint32_t kind,int32_t value){
     /* Cancel and drain before reusing either the directory or preview buffer. */
     if(f.pending){if(pressed&1u){f.discard=f.back_pending=true;ln_storage_media_cancel(GENERATION);}return true;}
     if(pressed&1u){go_back(s);return true;}
-    if(f.view==DETAILS){if(pressed&16u){if(s->selected==1||s->selected==2){f.view=s->selected==1?TEXT:HEX;f.chosen=f.original;f.prepared_text=false;f.offset=0;preview();reset_selection(s,0);}}return true;}
+    if(f.view==DETAILS){if(pressed&16u){if(s->selected==1||s->selected==2){f.view=s->selected==1?TEXT:HEX;f.chosen=f.original;f.prepared_text=false;f.preview_base=0;f.preview_size=f.chosen.size;f.offset=0;preview();reset_selection(s,0);}}return true;}
     if(f.view==TEXT||f.view==HEX){
         if(pressed&16u){f.view=DETAILS;changed();reset_selection(s,0);}
-        else if((pressed&4u)&&f.chosen.size-f.offset>480u){f.offset+=480u;preview();reset_selection(s,0);}
+        else if((pressed&4u)&&f.preview_size-f.offset>480u){f.offset+=480u;preview();reset_selection(s,0);}
         else if((pressed&8u)&&f.offset){f.offset-=480u;preview();reset_selection(s,0);}return true;
     }
     if(pressed&4u){live_folder();reset_selection(s,0);return true;}

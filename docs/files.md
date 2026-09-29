@@ -37,6 +37,11 @@ FAT short aliases, classifies files, converts images, and wraps text. Image/text
 conversion results are cached by source size, modification time, target geometry,
 and text layout recipe. Original files are unchanged.
 
+The host groups previews into immutable packs of at most 4 MiB, reducing file
+creation and flushes during sync. It reuses existing packs and puts new or changed
+previews in new packs, so a small update does not rewrite unchanged previews.
+The device reads only the selected preview's range; it does not unpack the bundle.
+
 The iPod performs no recursive indexing or sorting. It loads up to 4 KiB of
 directory records, checks at most four record checksums per service step, and
 reuses parent handles. Prepared image reads fill an existing frame buffer in
@@ -68,13 +73,17 @@ index, with the previous index retained by the existing publication mechanism.
 
 ## On-disk formats
 
-`/.LINNET/FILES/INDEX.FIL` has a 512-byte header: `FILS`, version 1, record count,
+`/.LINNET/FILES/INDEX.FIL` has a 512-byte header: `FILS`, version 2, record count,
 256-byte record stride, and CRC32 at byte 508. Record zero describes the root;
 each directory points to its contiguous child records. Each record stores
 attributes, source byte size, child range, prepared kind/size, fallback flags,
 native media kind, a 128-byte label, a 14-byte short alias, a 76-byte prepared
 path, and CRC32 at byte 252. Prepared kinds are image (1), text (2), and an existing
 video conversion (3). Records and headers use little-endian integers.
+Version 2 uses the formerly reserved 16-bit field at byte 174 for the preview's
+offset in 512-byte sectors within its pack. Prepared size bounds that slice.
+Version 1 remains readable with offset zero; older firmware falls back to live
+browsing when presented with version 2. Videos remain separate files at offset zero.
 
 Image previews use a 512-byte `FIMG` version-one header containing width, height,
 payload CRC32, and header CRC32, followed by RGB565 little-endian pixels. Text

@@ -40,7 +40,7 @@ static struct {
     uint32_t phase,view,album,first,count,photo_index,window_first,window_count,epoch,working,generation,revision,navigation;
     uint32_t io_bytes,verify_at,verify_crc,job_index,job_slot,level_count,level,zoom,rotation,tile_index,tile_slot,tile_crc,age;
     uint32_t tile_records_first,tile_records_count,tile_group_count,tile_group_cursor;
-    uint32_t visible[TILES],visible_count,front,render_y,slide_at,jpeg_at,ready_tiles,resume_stage;
+    uint32_t visible[TILES],visible_count,front,render_y,slide_at,jpeg_at,ready_tiles,resume_stage,file_offset;
     uint8_t verify_record[64];uint32_t v_photos,v_levels,v_tiles,v_album,v_photo,v_level,v_width,v_height,v_text_bytes,v_more,v_code,v_min,jpeg_crc;
     int16_t map_x[WIDTH],map_y[HEIGHT];int32_t pan_x,pan_y;
     bool active,ready,pending,io_open,job_album,view_loaded,frame_valid,frame_complete,rendering,redraw,slide,slide_armed,resume_pending,jpeg_mode,stepping,album_known,direct;
@@ -297,19 +297,20 @@ void ln_photos_init(void){
 }
 void ln_photos_open(void){if(!p.active){if(file_mode){file_mode=false;p.ready=p.jpeg_mode=p.frame_valid=p.view_loaded=p.redraw=false;
     p.view=LN_PHOTOS_LIST;p.window_first=p.photo_index=0;}p.active=true;p.error=0;change();++p.navigation;}}
-bool ln_photos_open_file(const struct ln_fat32_file*file,const char*title){
-    if(p.pending||!file||!file->size||file->size>sizeof photo_buffers.pixels.jpeg||(file->attributes&24u))return false;
+static bool begin_file(const struct ln_fat32_file*file,uint32_t offset,uint32_t bytes,const char*title){
+    if(p.pending||!file||!bytes||bytes>sizeof photo_buffers.pixels.jpeg||(file->attributes&24u)||offset>file->size||bytes>file->size-offset)return false;
     p.ready=p.metadata_valid=false;p.active=p.jpeg_mode=file_mode=true;
     p.view=LN_PHOTOS_VIEWER;p.frame_valid=p.view_loaded=p.rendering=p.redraw=p.slide=p.slide_armed=p.resume_pending=false;
-    p.error=0;p.count=0;p.jpeg_file=*file;p.photo.jpeg_bytes=file->size;p.photo.orientation=1;
+    p.error=0;p.count=0;p.jpeg_file=*file;p.file_offset=offset;p.photo.jpeg_bytes=bytes;p.photo.orientation=1;
     text(p.title,title);p.jpeg_at=0;p.jpeg_crc=UINT32_MAX;change();p.working=p.epoch;p.phase=JPEG_LOAD;
     for(uint32_t i=0;i<ROWS;++i)p.rows[i].valid=p.rows[i].thumb=false;
     for(uint32_t i=0;i<TILES;++i)p.tiles[i].valid=false;
     return true;
 }
+bool ln_photos_open_file(const struct ln_fat32_file*file,const char*title){return file&&begin_file(file,0,file->size,title);}
 void ln_photos_close(void){p.active=false;p.slide=false;change();}
-bool ln_photos_open_prepared(const struct ln_fat32_file*file,const char*title){
-    if(!file||file->size!=512u+WIDTH*HEIGHT*2u||!ln_photos_open_file(file,title))return false;
+bool ln_photos_open_prepared(const struct ln_fat32_file*file,uint32_t offset,uint32_t bytes,const char*title){
+    if(bytes!=512u+WIDTH*HEIGHT*2u||!begin_file(file,offset,bytes,title))return false;
     p.phase=FILE_HEADER;return true;
 }
 bool ln_photos_active(void){return p.active;}
@@ -443,14 +444,14 @@ static void photo_step(void){
     if(idle_plan(true))return;
     if(!p.pending&&!memory_work()&&!allowed())return;
     int r;
-    if(p.phase==FILE_HEADER){r=read_at(&p.jpeg_file,0,photo_scratch,512u);if(!r)return;
+    if(p.phase==FILE_HEADER){r=read_at(&p.jpeg_file,p.file_offset,photo_scratch,512u);if(!r)return;
         if(r<0||ln_read_le32(photo_scratch)!=0x474d4946u||ln_read_le32(photo_scratch+4)!=1u||
            ln_read_le32(photo_scratch+8)!=WIDTH||ln_read_le32(photo_scratch+12)!=HEIGHT||
            ln_crc32(photo_scratch,508u)!=ln_read_le32(photo_scratch+508u)){fail(22);return;}
         p.photo.jpeg_crc=ln_read_le32(photo_scratch+16);p.jpeg_at=0;p.jpeg_crc=UINT32_MAX;p.phase=FILE_PIXELS;return;}
     if(p.phase==FILE_PIXELS){uint32_t n=WIDTH*HEIGHT*2u-p.jpeg_at;if(n>8192u)n=8192u;
         if(n){uint8_t*destination=(uint8_t*)photo_buffers.surface.frame[p.front^1u]+p.jpeg_at;
-            r=read_at(&p.jpeg_file,512u+p.jpeg_at,destination,n);if(!r)return;if(r<0){fail(23);return;}
+            r=read_at(&p.jpeg_file,p.file_offset+512u+p.jpeg_at,destination,n);if(!r)return;if(r<0){fail(23);return;}
             p.jpeg_crc=ln_pimg_crc_update(p.jpeg_crc,destination,n);p.jpeg_at+=n;return;}
         if((p.jpeg_crc^UINT32_MAX)!=p.photo.jpeg_crc){fail(24);return;}
         p.front^=1u;p.asset.pixels=photo_buffers.surface.frame[p.front];p.frame_valid=p.view_loaded=p.ready=true;p.phase=IDLE;++p.revision;return;}

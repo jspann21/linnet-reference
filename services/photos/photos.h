@@ -10,7 +10,7 @@ uint32_t ln_photos_deadline(uint32_t now);
 void ln_photos_open(void);
 struct ln_fat32_file;
 bool ln_photos_open_file(const struct ln_fat32_file *,const char *title);
-bool ln_photos_open_prepared(const struct ln_fat32_file *,const char *title);
+bool ln_photos_open_prepared(const struct ln_fat32_file *,uint32_t offset,uint32_t bytes,const char *title);
 bool ln_photos_file_mode(void);
 void ln_photos_close(void);
 bool ln_photos_active(void);
