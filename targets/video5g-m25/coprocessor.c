@@ -552,8 +552,10 @@ static void recover(uint32_t error){
     }
     vc.restore=1u;vc.at=0;REG(0x70000080u)&=~0x4000u;phase(POWER_OFF,50000u);
 }
+static bool direct_file;
 bool ln_m25_coprocessor_begin(uint32_t operation){
     if(vc.owned||vc.fs_canceling||(vc.phase!=IDLE&&vc.phase!=FAILED&&vc.phase!=RESTORED))return false;
+    direct_file=false;
     struct ln_calendar calendar;
     vc.epoch_valid=ln_power_calendar_read(&calendar);vc.epoch_at=ln_time_us();vc.epoch=0;
     if(vc.epoch_valid){
@@ -600,6 +602,7 @@ bool ln_m25_coprocessor_open(const char *path,uint8_t options){
     if(!ln_m25_coprocessor_begin(2u))return false;
     for(uint32_t i=0;i<=n;++i)vc.path[i]=path[i];vc.normal=true;vc.options=options;return true;
 }
+void ln_m25_coprocessor_file(const struct ln_fat32_file*file){vc.video_file=*file;direct_file=true;}
 void ln_m25_coprocessor_stop(void){if(ln_m25_coprocessor_active()&&!vc.restore)recover(0);}
 void ln_m25_coprocessor_pause(bool paused){vc.want_paused=paused;++vc.revision;}
 bool ln_m25_coprocessor_paused(void){return vc.want_paused;}
@@ -707,6 +710,7 @@ bool ln_m25_coprocessor_step(void){
         vc.owned=true;vc.at=0;REG(0x70000080u)&=~0x4000u;phase(POWER_OFF,50000u);return false;
     }
     if(vc.phase==MEDIA_OPEN){
+        if(direct_file){direct_file=false;ln_mp4_init(&vc.movie,video_read,0,vc.video_file.size);phase(MEDIA_SCAN,60000000u);return false;}
         if(expired()){recover(41);return false;}
         if(vc.io){
             result=ln_storage_media_poll_deferred(vc.generation,&vc.video_file,&n);

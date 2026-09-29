@@ -1363,6 +1363,24 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     report["errors"].append(_error_record(kind, error, item, root))
                 progress(f"{kind} could not finish: {error}")
                 record()
+        # File ordering, names, text wrapping and image conversion belong on
+        # the host. Publish this snapshot after the media libraries and files.
+        checkpoint()
+        emit_stage('Preparing Files', total_stages - 2)
+        from .files import compile_files, publish_files
+        files_package = cache / 'files.fil'
+        files_report = compile_files(root, files_package, cache / 'file-previews',
+            target=identity['target_id'],
+            width=media_profile['photo_width'] if 'Photos' in supported_kinds(identity) else 0,
+            height=media_profile['photo_height'] if 'Photos' in supported_kinds(identity) else 0,
+            text_columns=20 if media_profile['photo_width'] < 220 else 24,
+            checkpoint=checkpoint, progress=progress)
+        checkpoint()
+        emit_stage('Publishing Files', total_stages - 2, can_stop=False)
+        files_publication = publish_files(files_package, files_report, **target_args(identity))
+        report['steps'].append(dict(kind='Files', status='published', publication=files_publication,
+                                   warnings=files_report['warnings']))
+        record()
         emit_stage('Finishing checks', total_stages - 2)
         report["complete"] = not report["errors"]
     except Exception as error:

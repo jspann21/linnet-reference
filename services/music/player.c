@@ -22,6 +22,7 @@ struct player_slot {
     uint32_t phase,generation,token,buffered,rate,config_rate;bool seek_initial;
 };
 static struct player_slot slots[2];
+static bool (*file_configure)(uint32_t,struct ln_dsp_config *);
 /* Each codec initializes its own arena when selected. Keep only ownership and
  * validity in zeroed BSS, avoiding a second multi-megabyte clear during boot. */
 static union ln_decoder_workspace decoder_workspaces[2]
@@ -144,6 +145,9 @@ static int slot_step(struct player_slot *s){
     if(interrupted())return 0;if(r<0)return r;
     if(s->decoder.opened&&s->decoder.rate){
         s->rate=s->decoder.rate;if(!supported_rate(s->rate))return -4;
+        if(file_configure&&!s->config_rate){struct ln_dsp_config config;
+            if(!file_configure(s->rate,&config)||!ln_dsp_configure(&s->dsp,&config))return -4;
+            s->config_rate=s->rate;}
         if(s->config_rate&&s->config_rate!=s->rate)return -4;
         if(s->seek_initial){
             if(io_owner)return 0;
@@ -226,6 +230,7 @@ bool ln_player_open_configured(const char *name,uint64_t bytes,uint64_t position
     if(ln_development_stage_busy())return false;
 #endif
     struct ln_dsp dsp;if(!prepare_dsp(&dsp,config,config_rate))return false;
+    file_configure=0;
     if(!start_slot(&slots[0],name,bytes,position,0,&dsp,config?config_rate:0))return false;
 #if !defined(LINNET_PROFILE_RELEASE)
     timing=(struct ln_player_timing){0};
@@ -234,6 +239,12 @@ bool ln_player_open_configured(const char *name,uint64_t bytes,uint64_t position
     io_owner=0;stop_requested=seek_requested=pause_requested=have_next=cancel_next=false;
     skip_requested=seek_paused=false;
     effect_pending=audio_ready=join_pending=event_pending=finish_sent=next_expected=eof_waiting=false;consumed=submitted=audible_origin=0;last_consumed=0;return true;
+}
+bool ln_player_open_file(const struct ln_fat32_file *file,bool (*configure)(uint32_t,struct ln_dsp_config *)){
+    if(!file||(file->attributes&24u)||!file->size||!ln_player_open("/FILE"))return false;
+    struct player_slot*s=&slots[0];s->media=*file;file_configure=configure;
+    ln_decoder_init(&s->decoder,&decoder_workspaces[0],read_media,s,file->size);s->phase=SLOT_DECODE;
+    return true;
 }
 bool ln_player_prepare_next(const char *name,uint64_t bytes,uint32_t token){
     return ln_player_prepare_next_configured(name,bytes,token,0,0);

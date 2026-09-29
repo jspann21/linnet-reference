@@ -12,6 +12,9 @@
  * transfer work before another sector, drains the admitted block request, and
  * returns STALE without relabeling an error that FAT already observed. */
 int ln_storage_media_open(const char *path,uint32_t generation);
+int ln_storage_media_list(struct ln_fat32_directory *cursor,void *sector,uint32_t generation);
+bool ln_storage_media_root(struct ln_fat32_file *directory);
+int ln_storage_media_open_at(const struct ln_fat32_file *directory,const char *leaf,uint32_t generation);
 /* Reads below512 bytes suppress speculative block read-ahead for this owner;
  * bulk requests retain streaming read-ahead. The media bound fits the largest
  * native video record and avoids restarting FAT positioning within a record. */

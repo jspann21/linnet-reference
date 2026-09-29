@@ -30,6 +30,12 @@ Home
 │       └── Most Played
 ├── Videos → Video → Playback
 ├── Photos → Album → Grid → Photo
+├── Files → Folder → File
+│   ├── Audio → Now Playing
+│   ├── Video → Playback
+│   ├── Image → Preview
+│   ├── Text → Reader
+│   └── Other files → Byte viewer
 ├── Extras
 │   ├── Games
 │   ├── Notes
@@ -101,6 +107,18 @@ tracks, Select opens Playback Options, and Menu returns to music browsing. In a
 video, Left/Right seek ten seconds, Select toggles the controls, and Menu exits.
 The TV output choice appears when TV Out is Ask.
 
+Files browses the mounted disk, including hidden and system folders. Select opens
+a folder or file; Menu returns to its parent and restores the selected row. Left
+opens a file's size and text/byte viewing choices; Right reloads the current folder
+directly from disk. Large folders have Previous page and Next page rows. In a text
+or byte preview, the wheel scrolls and Left/Right change pages. Media opened from
+Files returns there with Menu. Its audio Playback Options contain Sound, Sleep
+Timer, Restart, Back/Forward 10 seconds, and Stop.
+
+Media Manager prepares sorted folder pages, image pixels, and font-aware text
+wrapping on the computer. Files uses those results when available and can browse
+the live disk without an index. See [Files behavior and limits](files.md).
+
 For photos, Left/Right change the image, Play toggles a slideshow, and Select
 opens zoom, pan, rotation, fit, and slideshow controls. Menu moves back through
 the photo hierarchy. Notes and games keep their own reading and game controls.
@@ -119,9 +137,10 @@ defaults filtered for target capabilities. Custom orders and selected shortcuts
 are retained. Settings and USB Disk Mode remain required navigation anchors;
 Sound, Shuffle, and Repeat remain reachable in Settings.
 
-The stock Photo and Video configurations use the previously disabled Files scene
-slot for Extras, within the 32-scene limit. Custom firmware can still select Files;
-optional links to unselected, disabled utilities are omitted during compilation.
+Files and Extras are both enabled in stock firmware. The native scene table allows
+64 scenes; stock Photo and Video use 33. Optional links to disabled utilities are
+omitted during compilation. Recognized default Home menus gain Files automatically;
+customized Home menus retain their saved shortcuts and can add Files in Screens.
 
 The structure draws on Apple's [iPod classic User Guide](https://cdsassets.apple.com/live/6GJYWVAV/user/ma1195_ipod_classic_160gb_user_guide.pdf),
 especially its Home ordering, Extras grouping, and Menu-to-parent navigation.

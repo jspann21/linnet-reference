@@ -10,7 +10,7 @@ static inline bool ln_music_menu_more(uint32_t id){
 static inline bool ln_music_menu_scene_enabled(const char *id){
     for(uint32_t i=0;i<ln_ui_scene_count;++i){const char *a=id,*b=ln_ui_scenes[i].id;
         while(*a&&*a==*b){++a;++b;}
-        if(!*a&&!*b)return (ln_ui_enabled_scenes&(1u<<i))!=0;
+        if(!*a&&!*b)return (ln_ui_enabled_scenes&(UINT64_C(1)<<i))!=0;
     }
     return false;
 }

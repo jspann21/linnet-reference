@@ -602,6 +602,10 @@ bool ln_video_open(const char*path){
     uint32_t i=0;while(name[i]&&i<127){v.title[i]=name[i];i++;}v.title[i]=0;
     v.active=true;v.phase=OPEN;v.epoch=v.working=1;return true;
 }
+bool ln_video_open_file(const struct ln_fat32_file*file,const char*title){
+    if(!file||!title||!ln_video_open(title))return false;
+    v.file=*file;v.phase=HEADER;return true;
+}
 void ln_video_stop(void){if(v.active&&!v.stopping){v.stopping=true;++v.epoch;}}
 bool ln_video_active(void){return v.active;}
 bool ln_video_pending(void){return v.pending||ln_video_catalog_pending();}

@@ -80,7 +80,7 @@ bool ln_ui_menu_load(const uint8_t *data,uint32_t length){
                     if(filtered&&target&&target[0]!='@'){
                         bool enabled=false;
                         for(uint32_t j=0;j<ln_ui_scene_count;++j)
-                            if(same(target,ln_ui_scenes[j].id)&&(ln_ui_enabled_scenes&(1u<<j)))enabled=true;
+                            if(same(target,ln_ui_scenes[j].id)&&(ln_ui_enabled_scenes&(UINT64_C(1)<<j)))enabled=true;
                         if(!enabled)continue;
                     }
                     if(at>=menu_counts[g]||menu_order[g][at]!=id)match=false;
@@ -92,6 +92,14 @@ bool ln_ui_menu_load(const uint8_t *data,uint32_t length){
         if(stock){menu_counts[g]=ln_menu_default_counts[g];
             for(uint32_t i=0;i<menu_counts[g];++i)menu_order[g][i]=ln_menu_defaults[g][i];}
     }
+    static const uint8_t before_files[]={0,3,2,8,6,10,5};
+    bool stock=menu_counts[LN_MENU_HOME]==sizeof before_files;
+    for(uint32_t i=0;i<sizeof before_files&&stock;++i)if(menu_order[LN_MENU_HOME][i]!=before_files[i])stock=false;
+    uint32_t at=0;bool filtered=true;
+    for(uint32_t i=0;i<sizeof before_files;++i){uint32_t id=before_files[i];const char*target=ln_menu_targets[LN_MENU_HOME][id];
+        bool enabled=target[0]=='@';for(uint32_t j=0;j<ln_ui_scene_count;++j)if(same(target,ln_ui_scenes[j].id)&&(ln_ui_enabled_scenes&(UINT64_C(1)<<j)))enabled=true;
+        if(!enabled)continue;if(at>=menu_counts[LN_MENU_HOME]||menu_order[LN_MENU_HOME][at]!=id)filtered=false;++at;}
+    if(stock||(filtered&&at==menu_counts[LN_MENU_HOME])){menu_counts[LN_MENU_HOME]=ln_menu_default_counts[LN_MENU_HOME];for(uint32_t i=0;i<menu_counts[LN_MENU_HOME];++i)menu_order[LN_MENU_HOME][i]=ln_menu_defaults[LN_MENU_HOME][i];}
     bool sound=false;
     for(uint32_t i=0;i<menu_counts[LN_MENU_SETTINGS];++i)if(menu_order[LN_MENU_SETTINGS][i]==11u)sound=true;
     if(!sound)menu_order[LN_MENU_SETTINGS][menu_counts[LN_MENU_SETTINGS]++]=11u;
@@ -980,7 +988,7 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
     default:break;
     }if(n->flags&4u)border(p,bounds(n),fg);p->clip=previous;
 }
-static const struct ln_ui_scene*scene(const struct ln_ui_state*s){return s->scene<ln_ui_scene_count&&s->scene<32u?&ln_ui_scenes[s->scene]:0;}
+static const struct ln_ui_scene*scene(const struct ln_ui_state*s){return s->scene<ln_ui_scene_count&&s->scene<LINNET_UI_MAX_SCENES?&ln_ui_scenes[s->scene]:0;}
 static const struct ln_ui_node*focus(const struct ln_ui_state*s){const struct ln_ui_scene*c=scene(s);return c&&c->focus_node<c->count?&c->nodes[c->focus_node]:0;}
 uint32_t ln_ui_visible_capacity(const struct ln_ui_state*s){
     theme_sync();const struct ln_ui_node*n=focus(s);if(!n||(n->kind!=LN_UI_MENU&&n->kind!=LN_UI_VIRTUAL_LIST&&n->kind!=LN_UI_GRID))return 0;
@@ -995,7 +1003,7 @@ uint32_t ln_ui_first_visible(struct ln_ui_state*s){
 uint32_t ln_ui_focused_count(const struct ln_ui_state*s){
     theme_sync();const struct ln_ui_node*n=focus(s);return n&&(n->kind==LN_UI_MENU||n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_GRID)?total(n):0;
 }
-static bool change_scene_to(struct ln_ui_state*s,uint32_t target,bool remember){if(target>=ln_ui_scene_count||target>=32u||!(ln_ui_enabled_scenes&(1u<<target))||target==s->scene)return false;bool editor=same(ln_ui_scenes[target].id,"linnet.system.clock-edit");if(editor&&!ln_ui_clock_begin()){s->dirty|=1u;return false;}
+static bool change_scene_to(struct ln_ui_state*s,uint32_t target,bool remember){if(target>=ln_ui_scene_count||target>=LINNET_UI_MAX_SCENES||!(ln_ui_enabled_scenes&(UINT64_C(1)<<target))||target==s->scene)return false;bool editor=same(ln_ui_scenes[target].id,"linnet.system.clock-edit");if(editor&&!ln_ui_clock_begin()){s->dirty|=1u;return false;}
     if(!target)s->history_count=0;
     else if(remember){
         /* Explicit Menu handlers return to the parent with ln_ui_show().
@@ -1005,17 +1013,17 @@ static bool change_scene_to(struct ln_ui_state*s,uint32_t target,bool remember){
     }
     s->selections[s->scene]=s->selected;s->scene=target;s->selected=editor?0u:s->selections[target];const struct ln_ui_node*n=focus(s);uint32_t count=n?total(n):0;if(theme_choices(n))s->selected=ln_ui_theme_index();if(!count)s->selected=0;else if(s->selected>=count)s->selected=count-1u;s->dirty|=1u;++s->transitions;++s->scene_epoch;return true;}
 static bool change_scene(struct ln_ui_state*s,uint32_t target){return change_scene_to(s,target,true);}
-static bool previous_scene(struct ln_ui_state*s){while(s->history_count){uint32_t target=s->history[--s->history_count];if(target<ln_ui_scene_count&&(ln_ui_enabled_scenes&(1u<<target)))return change_scene_to(s,target,false);}return change_scene_to(s,0,false);}
+static bool previous_scene(struct ln_ui_state*s){while(s->history_count){uint32_t target=s->history[--s->history_count];if(target<ln_ui_scene_count&&(ln_ui_enabled_scenes&(UINT64_C(1)<<target)))return change_scene_to(s,target,false);}return change_scene_to(s,0,false);}
 bool ln_ui_back(struct ln_ui_state*s){return s&&previous_scene(s);}
-void ln_ui_refresh(struct ln_ui_state*s){if(!s)return;theme_sync();const struct ln_ui_node*n=focus(s);uint32_t count=n?total(n):0;if(!count)s->selected=0;else if(s->selected>=count)s->selected=count-1u;if(s->scene<32u)s->selections[s->scene]=s->selected;s->dirty|=1u;}
+void ln_ui_refresh(struct ln_ui_state*s){if(!s)return;theme_sync();const struct ln_ui_node*n=focus(s);uint32_t count=n?total(n):0;if(!count)s->selected=0;else if(s->selected>=count)s->selected=count-1u;if(s->scene<LINNET_UI_MAX_SCENES)s->selections[s->scene]=s->selected;s->dirty|=1u;}
 void ln_ui_refresh_content(struct ln_ui_state*s){
     if(!s)return;const struct ln_ui_node*n=focus(s);uint32_t count=n?total(n):0;
     if(!count)s->selected=0;else if(s->selected>=count)s->selected=count-1u;
-    if(s->scene<32u)s->selections[s->scene]=s->selected;s->dirty|=16u;
+    if(s->scene<LINNET_UI_MAX_SCENES)s->selections[s->scene]=s->selected;s->dirty|=16u;
 }
-bool ln_ui_show(struct ln_ui_state*s,const char*id){if(!s||!id)return false;for(uint32_t i=0;i<ln_ui_scene_count&&i<32u;++i){const char*other=ln_ui_scenes[i].id;uint32_t j=0;if(!other)continue;while(j<128u&&id[j]&&id[j]==other[j])++j;if(j<128u&&!id[j]&&!other[j])return change_scene(s,i);}return false;}
+bool ln_ui_show(struct ln_ui_state*s,const char*id){if(!s||!id)return false;for(uint32_t i=0;i<ln_ui_scene_count&&i<LINNET_UI_MAX_SCENES;++i){const char*other=ln_ui_scenes[i].id;uint32_t j=0;if(!other)continue;while(j<128u&&id[j]&&id[j]==other[j])++j;if(j<128u&&!id[j]&&!other[j])return change_scene(s,i);}return false;}
 void ln_ui_init(struct ln_ui_state*s){if(!s)return;theme_sync();*s=(struct ln_ui_state){.dirty=1u,.action=UINT32_MAX,.scene_epoch=1u};
-    for(uint32_t i=0;i<ln_ui_scene_count&&i<32u;++i){const struct ln_ui_scene*c=&ln_ui_scenes[i];if(c->focus_node<c->count){const struct ln_ui_node*n=&c->nodes[c->focus_node];uint32_t count=total(n);s->selections[i]=count?(n->index<count?n->index:count-1u):0;}}s->selected=s->selections[0];
+    for(uint32_t i=0;i<ln_ui_scene_count&&i<LINNET_UI_MAX_SCENES;++i){const struct ln_ui_scene*c=&ln_ui_scenes[i];if(c->focus_node<c->count){const struct ln_ui_node*n=&c->nodes[c->focus_node];uint32_t count=total(n);s->selections[i]=count?(n->index<count?n->index:count-1u):0;}}s->selected=s->selections[0];
 }
 bool ln_ui_input(struct ln_ui_state*s,uint32_t kind,int32_t value){if(!s)return false;theme_sync();
     if(kind==3u||kind==4u){bool v=value!=0;bool *old=kind==3u?&s->hold:&s->headphones;if(*old==v)return false;*old=v;s->dirty|=4u;return true;}

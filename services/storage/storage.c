@@ -394,9 +394,25 @@ static int finish(void){
 int ln_storage_media_open(const char *path,uint32_t generation){
     if(!generation||!path)return -1;
     if(!ln_storage_mounted()||locked||media_owner)return 0;
-    if(!ln_fat32_open(&volume,path,next_generation()))return -1;
+    if(!ln_fat32_open_readonly(&volume,0,path,next_generation()))return -1;
     media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
     media_owner=generation;media_canceled=false;media_opening=true;locked=true;return 1;
+}
+int ln_storage_media_list(struct ln_fat32_directory *cursor,void *sector,uint32_t generation){
+    if(!generation||!cursor||!sector)return -1;
+    if(!ln_storage_mounted()||locked||media_owner)return 0;
+    if(!ln_fat32_list(&volume,cursor,sector,next_generation()))return -1;
+    media_read_ahead=1u;media_owner=generation;media_canceled=false;media_opening=false;locked=true;return 1;
+}
+bool ln_storage_media_root(struct ln_fat32_file *directory){
+    if(!directory||!ln_storage_mounted())return false;
+    *directory=(struct ln_fat32_file){.cluster=volume.root,.epoch=volume.epoch,.attributes=16};return true;
+}
+int ln_storage_media_open_at(const struct ln_fat32_file *directory,const char *leaf,uint32_t generation){
+    if(!directory||!leaf||!generation)return -1;
+    if(!ln_storage_mounted()||locked||media_owner)return 0;
+    if(!ln_fat32_open_readonly(&volume,directory,leaf,next_generation()))return -1;
+    media_read_ahead=1u;media_owner=generation;media_canceled=false;media_opening=true;locked=true;return 1;
 }
 int ln_storage_media_read(const struct ln_fat32_file *file,uint32_t offset,
                           void *buffer,uint32_t length,uint32_t generation){

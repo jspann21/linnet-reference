@@ -74,6 +74,15 @@ The CLI equivalent is `installer install --mount X:/ --from-source`; add
 | Videos | Validates existing compatible video or converts for the selected target. Photo uses IPVF; Video and Classic use native MP4 backends. See [formats and limits](video-format.md). |
 | Notes | Prepares plain text from UTF-8 or BOM-marked UTF-16 text/Markdown files. Up to 256 notes, 63-character titles, and 256 wrapped lines per note. |
 
+Each preparation also updates **Files**, the device's browser for the mounted
+disk. Media Manager sorts directories, resolves FAT names, prepares native-size
+image previews, and wraps text for the target's fonts on the computer. It connects
+source videos to their existing prepared copies. Unchanged image/text conversions
+reuse the host cache; previews are copied before the directory index is published.
+The device reads bounded pages as you browse. Right in Files shows the live folder
+when files have changed since preparation. See [Files](files.md) for controls,
+supported opening behavior, and limits.
+
 Music uses actual FAT short aliases; verified compatibility copies handle
 unsupported paths without changing originals. Notes wrap for the target's fonts;
 Markdown is displayed as text. Photo and video features are unavailable on Q21.

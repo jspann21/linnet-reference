@@ -41,6 +41,7 @@ static bool music_category_node(const struct ln_ui_node *node){
 }
 bool ln_ui_dynamic_navigation(const struct ln_ui_node*n,uint32_t item){
     if(n->kind!=LN_UI_VIRTUAL_LIST)return false;
+    if(node_scene(n,"linnet.system.files"))return item<5u;
     if(music_category_node(n))return ln_music_menu_category(sample_more,item)!=15u;
     if(n->text&&!strcmp(n->text,"Sound "))return sound_action(item)>=LN_SOUND_CUSTOM_EQ;
     if(node_scene(n,"linnet.system.display"))return item==1u;
@@ -48,12 +49,18 @@ bool ln_ui_dynamic_navigation(const struct ln_ui_node*n,uint32_t item){
     return n->text&&!strcmp(n->text,"Option ")&&(item>=2u&&item<=5u);
 }
 uint32_t ln_ui_dynamic_count(const struct ln_ui_node *node,uint32_t fallback){
+    if(node_scene(node,"linnet.system.files")&&(node->kind==LN_UI_VIRTUAL_LIST||node->kind==LN_UI_SCROLLBAR))return 6u;
     if(music_category_node(node)&&(node->kind==LN_UI_VIRTUAL_LIST||node->kind==LN_UI_SCROLLBAR))return ln_music_menu_count(sample_more);
     if(node_scene(node,"linnet.system.music-sound")&&(node->kind==LN_UI_VIRTUAL_LIST||node->kind==LN_UI_SCROLLBAR))return ln_sound_menu_count(sample_sound_view,LINNET_EXTENDED_SOUND,SAMPLE_CLICKER);
     if(node_scene(node,"linnet.system.display")&&node->kind==LN_UI_VIRTUAL_LIST)return ln_music_menu_scene_enabled("linnet.system.themes")?2u:1u;
     return fallback;
 }
 const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){
+    if(node_scene(n,"linnet.system.files")){
+        static const char*const names[]={"Music","Notes","Photos","Videos",".LINNET","README.txt"};
+        if(n->kind==LN_UI_VIRTUAL_LIST&&item<6u)return names[item];
+        if(n->kind==LN_UI_TEXT)return "Left: Info  Right: Live";
+    }
     if(n->kind==LN_UI_STATUS_BAR&&music_category_node(n))return sample_more?"More Music":"Music";
     if(n->kind==LN_UI_STATUS_BAR&&node_scene(n,"linnet.system.music-sound"))return sample_sound_view==LN_SOUND_EQ?"Custom EQ":sample_sound_view==LN_SOUND_ADVANCED?"Advanced Sound":"Sound";
     if(!n->text)return fallback;
@@ -196,8 +203,8 @@ int main(int argc,char **argv){
     if(argc==3){
         for(uint32_t theme=0;theme<ln_ui_theme_count;++theme){
             ln_ui_theme_changed(theme);ln_ui_init(&state);
-            for(uint32_t scene=0;scene<ln_ui_scene_count&&scene<32u;++scene){
-                if(!(ln_ui_enabled_scenes&(1u<<scene)))continue;
+            for(uint32_t scene=0;scene<ln_ui_scene_count&&scene<LINNET_UI_MAX_SCENES;++scene){
+                if(!(ln_ui_enabled_scenes&(UINT64_C(1)<<scene)))continue;
                 (void)ln_ui_show(&state,ln_ui_scenes[scene].id);
                 memset(pixels,0,sizeof pixels);
                 if(!strcmp(ln_ui_scenes[scene].id,"linnet.system.game-play"))ln_games_start(0);

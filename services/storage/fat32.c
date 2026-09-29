@@ -7,8 +7,8 @@ enum { MOUNT=1, HEADER, HEADER_MIRROR, OPEN_NAME, DIRECTORY, DIRECTORY_NEXT,
        MUT_BEGIN, MUT_DIR, MUT_DIRTY, MUT_DIRTY_FLUSH, MUT_FSINFO, MUT_FSINFO_WRITE,
        MUT_SCAN, MUT_RESERVE, MUT_LINK, MUT_DATA, MUT_DATA_WRITE, MUT_OLD_NEXT,
        MUT_READY, MUT_PUBLISH_READ, MUT_PUBLISH_WRITE, MUT_PUBLISH_FLUSH,
-       MUT_FREE_READ, MUT_FREE_WRITE, MUT_RECLAIM_FLUSH, MUT_CLEAN, MUT_CLEAN_FLUSH, IDLE=0 };
-enum { OP_MOUNT=1, OP_OPEN, OP_READ, OP_WRITE, OP_SYNC, OP_SET, OP_CREATE, OP_GROW };
+       MUT_FREE_READ, MUT_FREE_WRITE, MUT_RECLAIM_FLUSH, MUT_CLEAN, MUT_CLEAN_FLUSH, LIST_SECTOR, LIST_NEXT, IDLE=0 };
+enum { OP_MOUNT=1, OP_OPEN, OP_READ, OP_WRITE, OP_SYNC, OP_SET, OP_CREATE, OP_GROW, OP_LIST };
 #define EOC 0x0ffffff8u
 #define MAX_CHAIN 65536u
 static bool equal(const uint8_t*a,const uint8_t*b,uint32_t n){
@@ -119,7 +119,7 @@ void ln_fat32_abandon(struct ln_fat32*f){
 static bool admit(struct ln_fat32*f,uint8_t op,uint16_t state,uint32_t generation){
     if(!f||f->state||!f->config.io||!generation)return false;
     f->operation=op;f->state=state;f->generation=generation;f->result=0;
-    f->transferred=0;f->fat_phase=0;f->chain_steps=0;f->mutation_started=false;
+    f->transferred=0;f->fat_phase=0;f->chain_steps=0;f->mutation_started=false;f->readonly_open=false;
     f->verified_fat_sector=0;
     return true;
 }
@@ -149,6 +149,24 @@ bool ln_fat32_open(struct ln_fat32*f,const char*path,uint32_t generation){
     for(uint32_t i=0;i<=length;++i)f->path[i]=path[i];
     f->path_cursor=1;f->component=0;f->cluster=f->root;
     return true;
+}
+bool ln_fat32_list(struct ln_fat32*f,struct ln_fat32_directory*d,void*buffer,uint32_t generation){
+    if(!f||!f->mounted||!d||!buffer||(d->epoch&&d->epoch!=f->epoch)||
+       (d->cluster&&!cluster_valid(f,d->cluster))||d->sector>f->sectors_per_cluster)return false;
+    if(!admit(f,OP_LIST,d->sector==f->sectors_per_cluster?LIST_NEXT:LIST_SECTOR,generation))return false;
+    if(!d->cluster)d->cluster=f->root;
+    if(!d->power){d->anchor=d->cluster;d->power=1;}
+    d->epoch=f->epoch;f->listing=d;f->buffer=buffer;f->cluster=d->cluster;f->chain_steps=d->steps;
+    return true;
+}
+bool ln_fat32_open_readonly(struct ln_fat32*f,const struct ln_fat32_file*parent,const char*path,uint32_t generation){
+    if(parent){
+        if(!f||!parent->epoch||parent->epoch!=f->epoch||!(parent->attributes&16u)||
+           (parent->attributes&8u)||!cluster_valid(f,parent->cluster)||!path||path[0]!='/')return false;
+        for(uint32_t i=1;path[i];++i)if(i>12u||path[i]=='/')return false;
+    }
+    if(!ln_fat32_open(f,path,generation))return false;
+    f->readonly_open=true;if(parent)f->cluster=parent->cluster;return true;
 }
 /* The parent must be a directory already reached by open() in this mount.
  * Only one leaf component is accepted, so no unregistered parent is skipped. */
@@ -432,6 +450,21 @@ int ln_fat32_poll(struct ln_fat32*f){
     if(!f->state)return f->result;
     int result;uint32_t bytes,index,proof_edges=0;uint8_t*p;
     switch(f->state){
+    case LIST_NEXT:{
+        struct ln_fat32_directory*d=f->listing;
+        result=next_cluster(f);if(result!=1)break;
+        d->steps=f->chain_steps;
+        if(f->fat_value>=EOC){d->end=true;return finish(f,1);}
+        if(f->fat_value==d->anchor){result=LN_FAT32_CORRUPT;break;}
+        if(++d->distance==d->power){d->anchor=f->fat_value;d->power*=2u;d->distance=0;}
+        d->cluster=f->cluster=f->fat_value;d->sector=0;f->state=LIST_SECTOR;return 0;
+    }
+    case LIST_SECTOR:{
+        struct ln_fat32_directory*d=f->listing;if(d->end)return finish(f,1);
+        uint64_t lba=cluster_sector(f,d->cluster)+d->sector;
+        result=io(f,LN_FAT32_READ,lba,f->buffer);if(result!=1)break;
+        d->lba=lba;++d->sector;f->transferred=512u;return finish(f,1);
+    }
     case MOUNT:
         result=io(f,LN_FAT32_READ,f->partition,f->sector);if(result!=1)break;
         result=bpb(f);if(result!=1)break;
@@ -498,11 +531,11 @@ int ln_fat32_poll(struct ln_fat32*f){
             if((size||(p[11]&16u))&&!cluster_valid(f,cluster))return finish(f,LN_FAT32_CORRUPT);
             if(f->path[f->path_cursor]=='/'){
                 if(!(p[11]&16u))return finish(f,LN_FAT32_NOT_FOUND);
-                if(!directory_register(f,cluster))return finish(f,LN_FAT32_BOUNDS);
+                if(!f->readonly_open&&!directory_register(f,cluster))return finish(f,LN_FAT32_BOUNDS);
                 ++f->path_cursor;f->cluster=cluster;f->state=OPEN_NAME;return 0;
             }
             if(f->operation==OP_CREATE)return finish(f,LN_FAT32_EXISTS);
-            if((p[11]&16u)&&!directory_register(f,cluster))return finish(f,LN_FAT32_BOUNDS);
+            if((p[11]&16u)&&!f->readonly_open&&!directory_register(f,cluster))return finish(f,LN_FAT32_BOUNDS);
             f->file=(struct ln_fat32_file){cluster,size,f->epoch,f->io_lba,(uint16_t)(index*32u),p[11]};
             return finish(f,1);
         }
@@ -795,7 +828,7 @@ set_chain_cached:
     return result<0?finish(f,result):LN_FAT32_BUSY;
 }
 int ln_fat32_retire_read(struct ln_fat32*f,int result){
-    if(!f||(f->operation!=OP_OPEN&&f->operation!=OP_READ)||
+    if(!f||(f->operation!=OP_OPEN&&f->operation!=OP_READ&&f->operation!=OP_LIST)||
        (result!=LN_FAT32_STALE&&result!=LN_FAT32_IO))return LN_FAT32_ARGUMENT;
     /* Do not relabel evidence that FAT or the adapter had already rejected
      * before cancellation won the race. */

@@ -7,7 +7,7 @@ profile = "release"
 [features]
 photos = true
 video = true
-files = false
+files = true
 demo = false
 
 [ui]

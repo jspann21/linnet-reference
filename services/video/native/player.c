@@ -292,6 +292,12 @@ bool ln_video_open(const char *path){
     for(uint32_t i=0;i<=n;i++)v.path[i]=path[i];const char *title=path;for(uint32_t i=0;i<n;i++)if(path[i]=='/')title=path+i+1;
     for(uint32_t i=0;title[i]&&i<127;i++)v.title[i]=title[i];v.front=0xffffffffu;v.active=true;v.phase=OPEN;return true;
 }
+bool ln_video_open_file(const struct ln_fat32_file*file,const char*title){
+    if(!file||!title||!ln_video_open(title))return false;
+    v.file=*file;
+    if(LINNET_VIDEO_CLOCK_HZ!=LINNET_ACTIVE_CLOCK_HZ){if(!ln_core_clock_set(LINNET_VIDEO_CLOCK_HZ)){fail(18);return true;}v.boosted=true;}
+    ln_mp4_init(&v.movie,cached_read,0,v.file.size);v.phase=VIDEO_HEADER;return true;
+}
 void ln_video_step(void){ln_video_catalog_step(v.active||v.io);if(!v.active||v.stepping)return;v.stepping=true;
     uint32_t began=ln_time_us();for(unsigned i=0;i<32;i++){
         step();

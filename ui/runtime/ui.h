@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "linnet_target.h"
-#define LINNET_UI_MAX_SCENES 32u
+#define LINNET_UI_MAX_SCENES 64u
 #define LINNET_UI_ACTION_SYNC 0xfffffffeu
 #define LINNET_UI_ACTION_SHUFFLE 0xfffffffdu
 #define LINNET_UI_ACTION_REPEAT 0xfffffffcu
@@ -84,7 +84,8 @@ const struct ln_ui_asset *ln_ui_dynamic_item_asset(const struct ln_ui_node *,uin
 struct ln_ui_glyph {uint32_t offset;uint8_t x,y,w,h;};
 struct ln_ui_font {const uint8_t *alpha;uint32_t width,height,advance,first,count;const uint8_t *advances;const struct ln_ui_glyph *glyphs;};
 extern const struct ln_ui_scene *ln_ui_scenes;
-extern const uint32_t ln_ui_scene_count,ln_ui_enabled_scenes;
+extern const uint32_t ln_ui_scene_count;
+extern const uint64_t ln_ui_enabled_scenes;
 extern const struct ln_ui_asset ln_ui_assets[];
 extern const uint32_t ln_ui_asset_count;
 extern struct ln_ui_font ln_ui_font;

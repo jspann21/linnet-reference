@@ -96,6 +96,10 @@ def decode(data, identity=None):
             if any(rows == candidate or (available is not None and
                    rows == tuple(i for i in candidate if i in available)) for candidate in candidates):
                 state[name] = defaults(identity)[name]
+    before_files = (0, 3, 2, 8, 6, 10, 5)
+    available = available_items('Home', identity) if identity is not None else None
+    if tuple(state['Home']) == before_files or (available is not None and tuple(state['Home']) == tuple(i for i in before_files if i in available)):
+        state['Home'] = defaults(identity)['Home']
     settings = state['Settings']
     if 11 not in settings:
         settings.append(11)

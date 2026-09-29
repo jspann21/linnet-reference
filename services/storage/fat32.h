@@ -37,6 +37,15 @@ struct ln_fat32_file {
     uint16_t directory_offset;
     uint8_t attributes;
 };
+/* Read-only directory stream. A zeroed cursor starts at root; cluster may be
+ * set to a directory handle's cluster with its epoch. No write-proof slots are
+ * consumed. Keep the cursor/buffer alive until poll completes; cancellation
+ * invalidates that in-progress cursor, so resume from a saved copy. */
+struct ln_fat32_directory {
+    uint32_t cluster, sector, epoch, steps, anchor, power, distance;
+    uint64_t lba;
+    bool end;
+};
 struct ln_fat32_cache { uint32_t cluster, next; };
 struct ln_fat32_verified { uint32_t cluster, size; };
 struct ln_fat32_seek { uint32_t first, index, cluster; };
@@ -81,10 +90,12 @@ struct ln_fat32 {
     uint16_t state,sectors_per_cluster;
     uint8_t cluster_shift, fats, active_fat, mirrored, mounted, operation;
     uint8_t *buffer;
+    struct ln_fat32_directory *listing;
     int result;
     char path[LN_FAT32_PATH_MAX+1];
     uint8_t name[11];
     bool system_long_name,system_long_match;
+    bool readonly_open;
     uint8_t system_long_checksum;
     uint8_t sector[512] __attribute__((aligned(32)));
     uint8_t mirror[512] __attribute__((aligned(32)));
@@ -101,8 +112,16 @@ bool ln_fat32_open(struct ln_fat32 *,const char *path,uint32_t generation);
  * Rejects stale/unregistered parents; all directory-set proof remains required. */
 bool ln_fat32_open_at(struct ln_fat32 *,const struct ln_fat32_file *parent,
                        const char *leaf,uint32_t generation);
+/* Media-only lookup: absolute path with NULL parent, or one leaf under a live
+ * parent. Does not register directories in the bounded mutable-file proof set;
+ * handles still carry the mount epoch and reads retain chain validation. */
+bool ln_fat32_open_readonly(struct ln_fat32 *,const struct ln_fat32_file *parent,
+                          const char *path,uint32_t generation);
 bool ln_fat32_read(struct ln_fat32 *,const struct ln_fat32_file *,uint32_t offset,
                    void *buffer,uint32_t length,uint32_t generation);
+/* Produces one raw 512-byte directory sector, or zero bytes at chain end.
+ * The cursor carries cycle detection across calls; consumers stop at entry0. */
+bool ln_fat32_list(struct ln_fat32 *,struct ln_fat32_directory *,void *sector,uint32_t generation);
 /* In-place writes only within a preallocated file's published size. Every
  * successful operation flushes before DONE. Atomicity across sectors is the
  * caller's dual-slot publication policy, not a FAT32 guarantee. */

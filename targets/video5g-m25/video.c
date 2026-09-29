@@ -16,6 +16,10 @@ bool ln_video_open(const char *path){
     uint32_t i=0;while(name[i]&&i<127u){v.title[i]=name[i];++i;}v.title[i]=0;
     v.identity=identity;v.position=0;v.resume_pending=v.resume[0]==identity&&v.resume[1]>0u;v.active=opened;++v.revision;return true;
 }
+bool ln_video_open_file(const struct ln_fat32_file*file,const char*title){
+    if(!file||!title||!ln_video_open(title))return false;
+    if(v.active)ln_m25_coprocessor_file(file);return true;
+}
 void ln_video_step(void){
     ln_video_catalog_step(ln_m25_coprocessor_active());
     if(v.active&&ln_m25_coprocessor_active())v.position=ln_m25_coprocessor_position();

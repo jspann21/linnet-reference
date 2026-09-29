@@ -189,11 +189,11 @@ def compile_system(root, output, configpath=None, target_override=None):
     if not isinstance(ui,dict): raise ContentError('ui must be a table')
     if set(ui)-{'theme','apps'}: raise ContentError('unknown UI system setting')
     selected=ui.get('apps',[])
-    if not isinstance(selected,list) or not 1<=len(selected)<=32:
-        raise ContentError('ui.apps must select 1..32 distinct app IDs')
+    if not isinstance(selected,list) or not 1<=len(selected)<=64:
+        raise ContentError('ui.apps must select 1..64 distinct app IDs')
     for app_id in selected: identifier(app_id)
     if len(selected)!=len(set(selected)):
-        raise ContentError('ui.apps must select 1..32 distinct app IDs')
+        raise ContentError('ui.apps must select 1..64 distinct app IDs')
     game_apps={'linnet.system.games', 'linnet.system.game-play'}
     chosen_games=game_apps.intersection(selected)
     from tools.studio.targets import resolve_target
@@ -676,7 +676,7 @@ def generate_c(doc, packed_fonts=None):
                 f'const uint32_t ln_ui_default_theme = {default}u;',
                 f'const struct ln_ui_scene *ln_ui_scenes = ln_scenes_{default};',
                 f'const uint32_t ln_ui_scene_count = {len(doc["scenes"])}u;',
-                f'const uint32_t ln_ui_enabled_scenes = {doc["enabled_scenes"]}u;',''])
+                f'const uint64_t ln_ui_enabled_scenes = UINT64_C({doc["enabled_scenes"]});',''])
     return '\n'.join(out)
 
 def main():

@@ -430,6 +430,9 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     if kind == 'os':
         flags += ['-DLINNET_NOTES=1']
         add_sources(sorted((ROOT/'services/notes').glob('*.c')), "Notes service")
+    if kind == 'os' and ui_report['features'].get('files', False):
+        flags += ['-DLINNET_FILES=1']
+        add_sources(sorted((ROOT/'services/files').glob('*.c')), 'Files service')
     if kind == 'os' and ui_report['features'].get('photos', True):
         flags += ['-DLINNET_PHOTOS=1']
         add_sources(sorted((ROOT/'services/photos').glob('*.c')), "Photos service")

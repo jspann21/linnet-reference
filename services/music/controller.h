@@ -2,6 +2,10 @@
 #define LINNET_MUSIC_CONTROLLER_H
 #include "services/music/library.h"
 void ln_music_init(void);
+struct ln_fat32_file;
+bool ln_music_open_file(const struct ln_fat32_file *,const char *title);
+bool ln_music_file_mode(void);
+uint32_t ln_music_option_count(void);
 void ln_music_step(void);
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_music_budget_diagnostics(uint32_t output[12]);

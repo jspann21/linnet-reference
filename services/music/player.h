@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 struct ln_dsp_config;
+struct ln_fat32_file;
+bool ln_player_open_file(const struct ln_fat32_file *,bool (*configure)(uint32_t,struct ln_dsp_config *));
 enum ln_player_phase {LN_PLAYER_IDLE,LN_PLAYER_OPEN,LN_PLAYER_HEADER,LN_PLAYER_PRIME,
     LN_PLAYER_PLAY,LN_PLAYER_PAUSE,LN_PLAYER_DRAIN,LN_PLAYER_STOPPING,LN_PLAYER_ERROR};
 enum ln_player_next_phase {LN_PLAYER_NEXT_NONE=0,LN_PLAYER_NEXT_OPENING,LN_PLAYER_NEXT_READY,

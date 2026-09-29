@@ -9,6 +9,9 @@
 #include "services/music/menu.h"
 #include "services/music/search.h"
 #include "services/music/queue_view.h"
+#if defined(LINNET_FILES)
+#include "services/files/files.h"
+#endif
 #if defined(LINNET_NOTES)
 #include "services/notes/notes.h"
 #endif
@@ -95,6 +98,9 @@ const struct ln_ui_asset *ln_ui_dynamic_item_asset(const struct ln_ui_node*n,uin
 }
 bool ln_ui_dynamic_navigation(const struct ln_ui_node*n,uint32_t item){
     if(n->kind!=LN_UI_VIRTUAL_LIST)return false;
+#if defined(LINNET_FILES)
+    if(in_scene(n,"linnet.system.files"))return ln_files_navigates(item);
+#endif
     if(in_scene(n,"linnet.system.music"))return ln_music_browser_row_navigates(item);
     if(in_scene(n,"linnet.system.music-sound"))return ln_music_sound_action(item)>=LN_SOUND_CUSTOM_EQ;
     if(in_scene(n,"linnet.system.display"))return item==1u;
@@ -106,6 +112,9 @@ bool ln_ui_dynamic_navigation(const struct ln_ui_node*n,uint32_t item){
     return false;
 }
 uint32_t ln_ui_dynamic_count(const struct ln_ui_node*n,uint32_t fallback){
+#if defined(LINNET_FILES)
+    if(in_scene(n,"linnet.system.files")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_files_count();
+#endif
     if(in_scene(n,"linnet.system.display")&&n->kind==LN_UI_VIRTUAL_LIST)return ln_music_menu_scene_enabled("linnet.system.themes")?2u:1u;
 #if defined(LINNET_NOTES)
     if(in_scene(n,"linnet.system.notes")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_notes_count();
@@ -119,7 +128,7 @@ uint32_t ln_ui_dynamic_count(const struct ln_ui_node*n,uint32_t fallback){
     if((in_scene(n,"linnet.system.photos")||in_scene(n,"linnet.system.photos-grid"))&&
        (n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_GRID||n->kind==LN_UI_SCROLLBAR))return ln_photos_count();
 #endif
-    if(in_scene(n,"linnet.system.music-options")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return 13;
+    if(in_scene(n,"linnet.system.music-options")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_music_option_count();
     if(in_scene(n,"linnet.system.music-sound")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_music_sound_count();
     if(in_scene(n,"linnet.system.music-search")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_music_search_count();
     if(in_scene(n,"linnet.system.music-queue")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_music_queue_view_count();
@@ -138,6 +147,13 @@ uint32_t ln_ui_dynamic_value(const struct ln_ui_node*n,uint32_t fallback){
     return fallback;
 }
 const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){
+#if defined(LINNET_FILES)
+    if(in_scene(n,"linnet.system.files")){
+        if(n->kind==LN_UI_STATUS_BAR)return ln_files_title();
+        if(n->kind==LN_UI_TEXT)return ln_files_hint();
+        if(n->kind==LN_UI_VIRTUAL_LIST&&item!=UINT32_MAX)return ln_files_label(item);
+    }
+#endif
     if(n->text&&equal(n->text,"Sleep timer"))return item<4u?ln_music_sleep_label(item):fallback;
     if(n->text&&equal(n->text,"Sleep timer status"))return ln_music_sleep_status();
 #if defined(LINNET_NOTES)

@@ -30,7 +30,7 @@ GROUPS = (
         Item('legacy_extras', 'Extras', 'linnet.system.extras'),
         Item('notes', 'Notes', 'linnet.system.notes'),
         Item('shuffle_all', 'Shuffle Songs', '@shuffle-all'),
-    ), (0, 3, 2, 8, 6, 10, 5), (6,)),
+    ), (0, 3, 2, 4, 8, 6, 10, 5), (6,)),
     ('Music', (
         Item('all_tracks', 'Songs'), Item('artists', 'Artists'),
         Item('albums', 'Albums'), Item('genres', 'Genres'),

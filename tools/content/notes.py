@@ -22,8 +22,8 @@ EXTENSIONS = {'.txt', '.md', '.text'}
 
 
 @lru_cache(maxsize=8)
-def _display_recipe(target):
-    """Use the narrowest Notes list and widest glyphs allowed by this target."""
+def _display_recipe(target, scene_id='linnet.system.notes'):
+    """Use the narrowest reading list and widest glyphs allowed by this target."""
     from .compiler import load_font, scale_layout
     from .layouts import apply_layout
     from .tsx import compile_tsx
@@ -36,13 +36,13 @@ def _display_recipe(target):
     if not screen_root.is_dir() and profile_root is not None:
         screen_root = profile_root / 'screens'
     native = screen_root.is_dir()
-    screen = (screen_root / 'linnet.system.notes/screen.tsx' if native else
-              root / 'ui/system/notes/screen.tsx')
+    screen = (screen_root / scene_id / 'screen.tsx' if native else
+              root / 'ui/system' / scene_id.rsplit('.', 1)[-1] / 'screen.tsx')
     colors = {name: '#000000' for name in ('foreground', 'background', 'accent',
                                            'muted', 'panel', 'selection_fg', 'selection_bg')}
     nodes, focus = compile_tsx(screen.read_text(encoding='utf-8'), colors,
                                width if native else 220, height if native else 176)
-    scene = dict(id='linnet.system.notes', title='Notes', nodes=nodes,
+    scene = dict(id=scene_id, title='Reading', nodes=nodes,
                  count=len(nodes), focus_node=focus)
     layouts = None
     if profile_root is not None and native:
@@ -109,7 +109,7 @@ def _display_recipe(target):
     return tuple(widths), pixel_limit, recipe
 
 
-def _display_lines(text, widths, pixel_limit):
+def _display_lines(text, widths, pixel_limit, columns=31):
     for paragraph in text.split('\n'):
         if not paragraph:
             yield ''
@@ -117,7 +117,7 @@ def _display_lines(text, widths, pixel_limit):
         start, stop = 0, len(paragraph)
         while start < stop:
             length, pixels = 0, 0
-            for char in paragraph[start:start+31]:
+            for char in paragraph[start:start+columns]:
                 advance = widths[ord(char)-32]
                 if pixels + advance > pixel_limit:
                     break

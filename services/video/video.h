@@ -12,6 +12,8 @@ uint32_t ln_video_library_revision(void);
 const char *ln_video_library_label(uint32_t row);
 const char *ln_video_library_path(uint32_t row);
 bool ln_video_open(const char *path);
+struct ln_fat32_file;
+bool ln_video_open_file(const struct ln_fat32_file *,const char *title);
 void ln_video_step(void);
 void ln_video_stop(void);
 bool ln_video_active(void);
