@@ -1,4 +1,14 @@
 #include "codec_pcm.h"
+static void copy_bytes(void *destination,const void *source,uint32_t bytes)
+{
+#if defined(__arm__)
+    extern void ln_memory_copy(void *,const void *,uint32_t);
+    ln_memory_copy(destination,source,bytes);
+#else
+    uint8_t *to=destination;const uint8_t *from=source;
+    for(uint32_t i=0;i<bytes;i++)to[i]=from[i];
+#endif
+}
 static uint16_t u16(const uint8_t *p,bool be)
 { return be?(uint16_t)((p[0]<<8)|p[1]):(uint16_t)(p[0]|(p[1]<<8)); }
 static uint32_t u32(const uint8_t *p,bool be)
@@ -33,7 +43,7 @@ static int read_at(struct ln_pcm *p,uint64_t offset,uint32_t length)
         if(offset>=p->cache_offset&&offset-p->cache_offset<=p->cache_bytes&&
            length<=p->cache_bytes-(uint32_t)(offset-p->cache_offset)){
             uint32_t at=(uint32_t)(offset-p->cache_offset);
-            for(uint32_t i=0;i<length;i++)p->buffer[i]=p->read_cache[at+i];
+            copy_bytes(p->buffer,p->read_cache+at,length);
             return 1;
         }
         p->cache_offset=offset;p->cache_bytes=0;
@@ -45,7 +55,7 @@ static int read_at(struct ln_pcm *p,uint64_t offset,uint32_t length)
     p->pending=r==0;
     if(r!=1)return r<0?fail(p,LN_PCM_IO):r;
     p->cache_bytes=fill;
-    for(uint32_t i=0;i<length;i++)p->buffer[i]=p->read_cache[i];
+    copy_bytes(p->buffer,p->read_cache,length);
     return 1;
 }
 void ln_pcm_init(struct ln_pcm *p,ln_pcm_read_fn read,void *context,uint64_t size)
@@ -150,10 +160,14 @@ int ln_pcm_decode(struct ln_pcm *p,int16_t *output,uint32_t capacity,uint32_t *f
     if(count>capacity)return LN_PCM_ARGUMENT;
     int r=read_at(p,p->data_offset+p->frame*p->block_align,p->pending_bytes);
     if(r!=1)return r;
-    uint32_t bytes=p->bits/8u;
-    for(uint32_t i=0;i<count;i++){
-        const uint8_t *b=p->buffer+i*p->block_align;
-        output[i*2]=sample(p,b);output[i*2+1]=p->channels==1?output[i*2]:sample(p,b+bytes);
+    if(p->bits==16u&&p->channels==2u&&!p->big_endian){
+        copy_bytes(output,p->buffer,count*4u);
+    }else{
+        uint32_t bytes=p->bits/8u;
+        for(uint32_t i=0;i<count;i++){
+            const uint8_t *b=p->buffer+i*p->block_align;
+            output[i*2]=sample(p,b);output[i*2+1]=p->channels==1?output[i*2]:sample(p,b+bytes);
+        }
     }
     p->frame+=count;*frames=count;return LN_PCM_READY;
 }
