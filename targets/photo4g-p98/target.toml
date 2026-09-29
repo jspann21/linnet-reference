@@ -36,7 +36,7 @@ media_art_side = 64
 video_catalog_cache = "paged"
 media_video_extensions = [".ipvf"]
 cop_display = true
-runtime_policy = { resident_monitor = true }
+runtime_policy = { resident_monitor = true, music_browse_index = true }
 entry_address = 0
 load_address = 0
 mailbox_address = 33550336
