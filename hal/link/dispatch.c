@@ -1,14 +1,6 @@
 #include "boot/include/linnet_bytes.h"
+#include "boot/include/linnet_boot.h"
 #include "dispatch.h"
-
-static uint32_t crc_update(uint32_t crc, const uint8_t *data, uint32_t size) {
-    for (uint32_t i = 0; i < size; ++i) {
-        crc ^= data[i];
-        for (unsigned bit = 0; bit < 8; ++bit)
-            crc = (crc >> 1) ^ ((0u - (crc & 1u)) & 0xedb88320u);
-    }
-    return crc;
-}
 
 void ln_link_dispatch_init(ln_link_dispatcher *state, const ln_link_backend *backend) {
     state->backend = *backend;
@@ -71,7 +63,7 @@ int ln_link_dispatch(ln_link_dispatcher *state, const ln_link_frame *request,
             state->staging = 0; /* A failed write may be partial: never resume it. */
             return 1;
         }
-        state->crc = crc_update(state->crc, request->payload + 4, size);
+        state->crc = ln_crc32_update(state->crc, request->payload + 4, size);
         state->offset += size;
         ln_write_le32(state->reply, state->offset);
         response->length = 4;
