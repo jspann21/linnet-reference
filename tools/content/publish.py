@@ -620,7 +620,7 @@ def _finish_backups(receipt, paths, root, guard):
 
 def _publish_library(package, candidate, identity, root, number, serial, volume, drive,
                      *, kind, label, filename, max_file, summary,
-                     verify_references=None, receipt_fields=None):
+                     verify_references=None, receipt_fields=None, previous_hint=None):
     def guard():
         _volume_guard(identity)
     linnet, directory = root/'.LINNET', root/'.LINNET'/kind.upper()
@@ -634,10 +634,15 @@ def _publish_library(package, candidate, identity, root, number, serial, volume,
     if active.exists():
         # Preserve exact previous bytes even if its content is corrupt; replacing
         # a damaged package must not require deleting recovery evidence first.
-        size = active.stat().st_size
+        info = active.stat()
+        size = info.st_size
         if not 0 <= size <= max_file:
             raise ValueError(f'existing {label} package exceeds the supported backup size')
-        previous = dict(bytes=size, sha256=_hash(active, size))
+        stamp = (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino)
+        digest = (previous_hint['sha256'] if previous_hint is not None and
+                  previous_hint['bytes'] == size and previous_hint['stamp'] == stamp
+                  else _hash(active, size))
+        previous = dict(bytes=size, sha256=digest)
     needed = candidate['bytes'] + (previous['bytes'] if previous else 0) + 3*65536 + 1024*1024
     if identity['free_bytes'] < needed:
         raise ValueError(f'insufficient free space for new {label} package and retained backup')

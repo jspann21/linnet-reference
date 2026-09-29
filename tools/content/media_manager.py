@@ -1374,7 +1374,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         checkpoint()
         emit_stage('Publishing Files', total_stages - 2, can_stop=False)
         files_publication = publish_files(files_package, files_report, **target_args(identity))
-        report['steps'].append(dict(kind='Files', status='published', publication=files_publication,
+        files_status = 'unchanged' if files_publication.get('reused_index') and not files_publication['previews_added'] else 'published'
+        report['steps'].append(dict(kind='Files', status=files_status, publication=files_publication,
                                    warnings=files_report['warnings']))
         record()
         emit_stage('Finishing checks', total_stages - 2)

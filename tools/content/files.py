@@ -13,7 +13,9 @@ import os
 import stat
 import struct
 import sys
+import time
 import unicodedata
+import uuid
 import zlib
 from types import SimpleNamespace
 
@@ -387,7 +389,8 @@ def compile_files(root, package, cache, *, width=0, height=0, text_columns=24, t
 
 def publish_files(package, candidate, *, disk_number, expected_disk_serial,
                   expected_volume_serial, expected_drive=None):
-    from .publish import (inspect_target, _exclusive, _volume_guard, _copy_verified, _publish_library)
+    from .publish import (inspect_target, _exclusive, _volume_guard, _copy_verified,
+                          _publish_library, _same_target, _write_receipt)
     package = Path(package).resolve(strict=True)
     if package.stat().st_size != candidate['bytes'] or _hash(package) != candidate['sha256']:
         raise ValueError('Files package changed before publication')
@@ -396,13 +399,32 @@ def publish_files(package, candidate, *, disk_number, expected_disk_serial,
     if package.drive.casefold() == root.drive.casefold():
         raise ValueError('Files package must be staged on a different volume from the iPod')
     with _exclusive(identity):
+        started_at = time.time()
         guard = lambda: _volume_guard(identity)
-        needed = candidate['bytes'] * 2 + 1024 * 1024
+        active = root / '.LINNET' / 'FILES' / 'INDEX.FIL'
+        guard()
+        _plain(active, root)
+        previous_hint = None
+        if active.is_file():
+            info = active.stat()
+            if info.st_size == candidate['bytes'] and candidate['bytes'] <= MAX_FILE:
+                digest = _hash(active, info.st_size)
+                info = active.stat()
+                previous_hint = dict(bytes=info.st_size, sha256=digest,
+                                     stamp=(info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino))
+        unchanged = previous_hint is not None and previous_hint['sha256'] == candidate['sha256']
+        guard()
+        needed = 0 if unchanged else candidate['bytes'] * 2 + 1024 * 1024
+        missing_preview = False
+        added = 0
         for item in candidate['previews']:
             destination = root / item['path']
             _plain(destination, root)
             if not destination.exists():
+                missing_preview = True
                 needed += item['bytes'] + 65536
+        if unchanged and missing_preview:
+            needed += 1024 * 1024
         if needed > identity['free_bytes']:
             raise ValueError('Not enough space for Files previews and index; previous index retained')
         for item in candidate['previews']:
@@ -411,9 +433,34 @@ def publish_files(package, candidate, *, disk_number, expected_disk_serial,
             _plain(destination, root)
             destination.parent.mkdir(parents=True, exist_ok=True)
             _plain(destination, root)
-            _copy_verified(Path(item['source']), destination, item, root, guard)
+            added += _copy_verified(Path(item['source']), destination, item, root, guard)
+        if unchanged:
+            guard()
+            _plain(package, Path(package.anchor))
+            if _hash(package, candidate['bytes']) != candidate['sha256']:
+                raise ValueError('Files package changed before reuse')
+            _same_target(identity, inspect_target(disk_number, expected_disk_serial,
+                                                   expected_volume_serial, expected_drive))
+            guard()
+            _plain(active, root)
+            if _hash(active, candidate['bytes']) != candidate['sha256']:
+                raise RuntimeError('Active Files index changed during publication')
+            guard()
+            receipt_path = package.parent / ('publish-files-' + uuid.uuid4().hex + '.json')
+            receipt = dict(operation='publish-files', passed=True, phase='reused',
+                           identity=identity, candidate_sha256=candidate['sha256'],
+                           candidate_bytes=candidate['bytes'], package=str(active),
+                           receipt=str(receipt_path), reused_index=True,
+                           previews_added=added, entries=candidate['entries'],
+                           previews=candidate.get('preview_count', len(candidate['previews'])),
+                           preview_files=len(candidate['previews']), started_at=started_at,
+                           finished_at=time.time(), elevation=False,
+                           durability='Existing index and preview objects verified by complete hashes; index not rewritten')
+            _write_receipt(receipt_path, receipt)
+            return receipt
         return _publish_library(package, candidate, identity, root, disk_number,
             expected_disk_serial, expected_volume_serial, expected_drive,
             kind='files', label='Files index', filename='INDEX.FIL', max_file=MAX_FILE,
+            previous_hint=previous_hint,
             summary=dict(entries=candidate['entries'], previews=candidate.get('preview_count', len(candidate['previews'])),
                          preview_files=len(candidate['previews'])))
