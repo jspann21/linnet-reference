@@ -836,8 +836,8 @@ void ln_runtime_step(void){
 #if defined(LINNET_NATIVE_UI)
     if(scene_is("linnet.system.game-play"))ln_games_audio_step();else ln_games_audio_stop();
 #endif
-    if(ln_music_take_now_playing()&&(scene_is("linnet.system.music")||scene_is("linnet.system.music-search")||scene_is("linnet.system.music-queue")||scene_is("linnet.system.music-queue-actions"))){
-        if(scene_is("linnet.system.music")||scene_is("linnet.system.music-search"))
+    if(ln_music_take_now_playing()&&(scene_is("linnet.system.home")||scene_is("linnet.system.music")||scene_is("linnet.system.music-search")||scene_is("linnet.system.music-queue")||scene_is("linnet.system.music-queue-actions"))){
+        if(scene_is("linnet.system.home")||scene_is("linnet.system.music")||scene_is("linnet.system.music-search"))
             playback_from_search=scene_is("linnet.system.music-search");
         ln_music_queue_close();
         if(ln_ui_show(shell,"linnet.system.now-playing")){retain_scene();dirty=true;}
@@ -1019,6 +1019,11 @@ void ln_runtime_step(void){
     palette_at=(!sleeping&&!backlight_idle)?ln_ui_palette_tick(shell,now):UINT32_MAX;
     if(shell->dirty)dirty=true;
 #if defined(LINNET_AUDIO)
+    if(shell->action==LINNET_UI_ACTION_SHUFFLE_ALL){
+        (void)ln_shell_take_action(shell);
+        if(!ln_music_browser_shuffle_all())(void)ln_ui_show(shell,"linnet.system.music");
+        ln_ui_refresh(shell);dirty=true;
+    }
     if(shell->action==LINNET_UI_ACTION_SHUFFLE||shell->action==LINNET_UI_ACTION_REPEAT){
         uint32_t action=ln_shell_take_action(shell);
         (void)ln_music_option_select(action==LINNET_UI_ACTION_SHUFFLE?0u:1u);

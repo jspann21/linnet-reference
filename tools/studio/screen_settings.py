@@ -36,7 +36,7 @@ def item_availability(name, identity=None):
         if feature == 'demo_or_games' and game_app:
             available.append(i)
             continue
-        if item.target and item.target != '@sync' and item.target not in apps:
+        if item.target and not item.target.startswith('@') and item.target not in apps:
             continue
         if feature == 'demo_or_games':
             feature = 'demo'
@@ -73,7 +73,7 @@ def defaults(identity=None):
 
 
 def encode(state):
-    data = bytearray(b'MENU' + struct.pack('<I', 1))
+    data = bytearray(b'MENU' + struct.pack('<I', 2))
     for name, labels in SCREENS.items():
         rows = state[name]
         if (not isinstance(rows, (list, tuple)) or not rows or any(type(i) is not int or i not in range(len(labels)) for i in rows) or len(set(rows)) != len(rows)
@@ -84,10 +84,14 @@ def encode(state):
 
 
 def decode(data, identity=None):
-    if len(data) != 80 or data[:8] != b'MENU' + struct.pack('<I', 1) or zlib.crc32(data[:76]) != struct.unpack_from('<I', data, 76)[0]:
+    if len(data) != 80 or data[:4] != b'MENU' or struct.unpack_from('<I', data, 4)[0] not in (1, 2) or zlib.crc32(data[:76]) != struct.unpack_from('<I', data, 76)[0]:
         raise ValueError('Screen settings are damaged or from an unsupported version. Reset defaults to replace them.')
     state = {name: list(data[9 + g * 17:9 + g * 17 + data[8 + g * 17]]) for g, name in enumerate(SCREENS)}
     encode(state)
+    if data[4] == 1:
+        for name, item in (('Home', 10), ('Music', 15)):
+            if item not in state[name]:
+                state[name].insert(1 if name == 'Home' and state[name][0] == 0 else 0, item)
     home = state['Home']
     state['Home'] = [item for i in home for item in
                      ([j for j in (3, 9) if j not in home] if i == 8 else [i])]

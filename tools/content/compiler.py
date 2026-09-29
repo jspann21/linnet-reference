@@ -353,7 +353,7 @@ def compile_system(root, output, configpath=None, target_override=None):
                         node['items'][i]='Games'
             targets=[]
             for navigation_target in node['targets']:
-                actions={'@sync':0xfffffffe,'@shuffle':0xfffffffd,'@repeat':0xfffffffc}
+                actions={'@sync':0xfffffffe,'@shuffle':0xfffffffd,'@repeat':0xfffffffc,'@shuffle-all':0xfffffffb}
                 if navigation_target not in actions and navigation_target not in selected: raise ContentError(f'unknown/unselected target {navigation_target}')
                 targets.append(actions[navigation_target] if navigation_target in actions else selected.index(navigation_target))
             node['targets']=targets; node['item_count']=len(node['items'])

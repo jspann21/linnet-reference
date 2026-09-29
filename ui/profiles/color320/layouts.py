@@ -214,11 +214,10 @@ def apply_ipod_classic(scenes, theme):
         if sid == 'home' and listing:
             # The Classic keeps its familiar top-level destinations. Linnet's
             # own entries follow them and remain reachable when enabled.
-            listing['items'].extend(['Extras', 'Shuffle Songs'])
+            listing['items'].append('Extras')
             listing['targets'].extend([
                 next(i for i, candidate in enumerate(result)
                      if candidate['id'] == 'linnet.system.extras'),
-                0xfffffffd,
             ])
             listing['item_count'] = listing['count'] = len(listing['items'])
             place(listing, 0, 24, 160, 216)

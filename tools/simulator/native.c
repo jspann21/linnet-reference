@@ -25,7 +25,7 @@ static bool music_category_node(const struct ln_ui_node *node){
     return false;
 }
 uint32_t ln_ui_dynamic_count(const struct ln_ui_node *node,uint32_t fallback){
-    if(music_category_node(node)&&(node->kind==LN_UI_VIRTUAL_LIST||node->kind==LN_UI_SCROLLBAR))return 4u;
+    if(music_category_node(node)&&(node->kind==LN_UI_VIRTUAL_LIST||node->kind==LN_UI_SCROLLBAR))return ln_ui_menu_count(LN_MENU_MUSIC);
     return fallback;
 }
 const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){
@@ -33,8 +33,8 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
     if(item==UINT32_MAX&&strcmp(n->text,"Right: Actions  Menu: Back")==0&&music_category_node(n))
         return "Select: Choose  Menu: Back";
     if(item!=UINT32_MAX&&strcmp(n->text,"Track ")==0&&music_category_node(n)){
-        static const char *const categories[]={"All Tracks","Artists","Albums","Playlists"};
-        if(item<4u)return categories[item];
+        static const char *const categories[]={"All Tracks","Artists","Albums","Genres","Composers","Years","Folders","Playlists","Search","Favorites","Bookmarks","Recently Played","Most Played","Recently Added","Album Artists","Shuffle All Songs"};
+        uint32_t id=ln_ui_menu_item(LN_MENU_MUSIC,item);if(id<16u)return categories[id];
     }
     if(item!=UINT32_MAX&&strcmp(n->text,"Option ")==0){
         static const char *const labels[]={"Shuffle: Off","Repeat: Off","Play queue","Sound settings","Sleep timer","Favorite: No","Save bookmark","No bookmark saved","Restart track","Back 10 seconds","Forward 10 seconds","Save queue as playlist...","Stop"};

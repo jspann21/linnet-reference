@@ -475,7 +475,13 @@ static bool select_queue(const struct ln_music_browser_queue *selection){
             if(selection->tracks[i]>=count||!ln_queue_add(&replacement,selection->tracks[i]))return false;
         if(!ln_queue_select_occurrence(&replacement,selection->cursor))return false;
     }
-    ln_queue_shuffle(&replacement,queue.shuffled);
+    if(selection->shuffle_all){
+        uint32_t random=replacement.seed;random^=random<<13;random^=random>>17;random^=random<<5;
+        replacement.seed=random;
+        (void)ln_queue_select_at(&replacement,(uint32_t)(((uint64_t)random*replacement.count)>>32));
+        if(replacement.repeat==LINNET_QUEUE_REPEAT_ONE)replacement.repeat=LINNET_QUEUE_REPEAT_NONE;
+    }
+    ln_queue_shuffle(&replacement,selection->shuffle_all||queue.shuffled);
     sleep_cancel_boundary();remember_position();queue=replacement;++revision;skipped=0;active=true;requested_position=selection->frame;
     return select_current();
 }
