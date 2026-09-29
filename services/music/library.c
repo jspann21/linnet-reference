@@ -384,7 +384,7 @@ static int read_database_raw(void *context,uint64_t offset,uint8_t *buffer,uint3
                 uint32_t first=(uint32_t)offset,end=first+bytes;
                 if(first<metadata_offset)first=metadata_offset;
                 if(end>metadata_offset+metadata_bytes)end=metadata_offset+metadata_bytes;
-                if(first<end)ln_memory_copy(metadata+first-metadata_offset,buffer+first-(uint32_t)offset,end-first);
+                if(first<end)ln_memory_copy(metadata+(first-metadata_offset),buffer+(first-(uint32_t)offset),end-first);
             }
 #endif
             if(library.status==LN_LIBRARY_VERIFYING)title_capture((uint32_t)offset,buffer,bytes);
@@ -405,7 +405,7 @@ static int read_database(void *context,uint64_t offset,uint8_t *buffer,uint32_t 
 #if defined(LINNET_MUSIC_METADATA_BYTES)
     if(offset>=metadata_offset&&offset-metadata_offset<=metadata_bytes&&
        bytes<=metadata_bytes-(uint32_t)(offset-metadata_offset)){
-        ln_memory_copy(buffer,metadata+(uint32_t)offset-metadata_offset,bytes);
+        ln_memory_copy(buffer,metadata+((uint32_t)offset-metadata_offset),bytes);
         return 1;
     }
 #endif
