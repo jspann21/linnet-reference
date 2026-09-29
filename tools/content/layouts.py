@@ -136,7 +136,7 @@ def align_scrollbars(scene,theme):
             continue
         bar['y']=listing['y']
         bottom={'graphite':150,'aurora':170,'sunset':150,'blueprint':146}.get(theme['layout'],172)
-        bar['h']=max(1,bottom-bar['y'])
+        bar['h']=listing['h'] if scene['id']=='linnet.system.games' else max(1,bottom-bar['y'])
         for node in scene['nodes']:
             if node['kind']==3:node['w']=min(node['w'],bar['x']-node['x']-4)
         listing['w']=min(listing['w'],bar['x']-listing['x']-2)
@@ -149,7 +149,7 @@ def refine_footers(scene,theme):
           'clock-edit':{'Clock edit hint'},'sleep-timer':{'Sleep timer status'},'music-search':{'Search controls'}}
     texts=[n for n in scene['nodes'] if n['kind']==3]
     if sid in keys:foot=[n for n in texts if n['text'] in keys[sid]]
-    elif sid in ('display','battery','shutdown'):foot=texts[1:]
+    elif sid in ('display','battery','shutdown'):foot=texts[0 if sid=='display' else 1:]
     elif sid in ('music','music-queue','music-sound','video-settings','video-output'):foot=texts
     else:return
     if not foot:return
@@ -199,6 +199,9 @@ def refine_scene(scene,theme,body):
     elif sid=='update' and style=='sunset':
         for i,n in enumerate(texts):place(n,12,40+i*17,196,17);n['flags']=0
         place(listing,12,126,196,26)
+    elif sid=='games':
+        place(listing,x,y,w-10,max(rh,h-2*fh-8))
+        for n in texts:place(n,x,bottom-2*fh,w,2*fh);n['flags']=WRAP
     elif sid=='clock':
         clock_h=2*fh+4
         row_h=max(20,fh+6)
@@ -216,11 +219,11 @@ def refine_scene(scene,theme,body):
         place(listing,listing['x'],y,listing['w'],max(rh,((h-32)//rh)*rh))
         for n in texts:place(n,x+4,bottom-26,w-8,26);n['flags']=WRAP
     elif sid in ('display','battery','shutdown'):
-        list_h=max(50,2*rh) if sid=='shutdown' else rh
+        list_h=max(50,2*rh) if sid in ('display','shutdown') else rh
         place(listing,x,y,w,list_h)
         note_gap=max(50,2*rh)-2*rh+8
         for i,n in enumerate(texts):
-            top=y+(2*rh if sid=='shutdown' else rh)+note_gap if i==0 else bottom-(len(texts)-i)*(fh+5)
+            top=y+(2*rh if sid in ('display','shutdown') else rh)+note_gap if i==0 and sid!='display' else bottom-(len(texts)-i)*(fh+5)
             place(n,x+4,top,w-8,fh);n['flags']=0
     elif sid in ('music','music-sound','music-queue'):
         footer_h=fh if sid=='music-sound' else 2*fh
@@ -314,8 +317,8 @@ def refine_ipod_photo(scene,theme):
     header=next((n for n in nodes if n['kind']==11),None)
     if header:
         place(header,0,0,220,21)
-        names={'home':'iPod','about':'About','display':'Backlight Timer',
-               'photos-options':'Slideshow Settings','music-sound':'EQ',
+        names={'home':'iPod','about':'About','display':'Display',
+               'photos-options':'Photo Options','music-sound':'Sound',
                'clock-edit':'Date & Time','music-options':'Playback Options'}
         if sid in names:header['text']=names[sid]
     if listing:
@@ -325,7 +328,7 @@ def refine_ipod_photo(scene,theme):
         place(listing,0,top,220,max(rh,((bottom-top)//rh)*rh))
         if listing['kind']==8:place(listing,0,21,210,155)
     if sid=='settings' and listing:
-        labels={'About Linnet':'About','Display':'Backlight Timer','Clock':'Date & Time'}
+        labels={'About Linnet':'About','Display':'Display','Clock':'Date & Time'}
         listing['items']=[labels.get(label,label) for label in listing['items']]
     elif sid=='now-playing':
         title=next(n for n in texts if n['text']=='Sample track')
@@ -357,8 +360,8 @@ def refine_ipod_photo(scene,theme):
             place(n,4,141 if n['text']=='Cover Flow album' else 158,212,fh)
             n['flags']=0
     if sid in ('music','music-queue','music-sound') and listing:
-        place(listing,0,21,220,154)
-        for n in texts:n['flags']|=2
+        place(listing,0,21,220,132)
+        for n in texts:place(n,6,155,208,17);n['flags']=64
     if scroll and listing:
         place(scroll,210,listing['y'],10,listing['h'])
     scene['count']=len(nodes)
@@ -375,7 +378,7 @@ def gate_features(scenes,features):
         'files':{'linnet.system.files'},
         'demo':{'local.example.notes'},
         'photos':{'linnet.system.photos','linnet.system.photos-grid','linnet.system.photos-viewer','linnet.system.photos-options'},
-        'video':{'linnet.system.videos','linnet.system.video-player','linnet.system.video-controls'},
+        'video':{'linnet.system.videos','linnet.system.video-player','linnet.system.video-controls','linnet.system.video-settings','linnet.system.video-output'},
         'themes':{'linnet.system.themes'},
     }
     disabled={sid for feature,ids in groups.items() if not feature_enabled(features,feature) for sid in ids}

@@ -695,6 +695,8 @@ class ScreensPage:
         window.screen_picker.currentTextChanged.connect(window.screens_controller.render_screen_items)
         layout.addWidget(window.screen_picker)
         layout.addWidget(label('Check items to include them. Drag to reorder, or use the move buttons.', 'muted', True))
+        window.screen_fixed = label('Shuffle and Repeat always appear first in Settings. Adjust them on your iPod.', 'muted', True)
+        layout.addWidget(window.screen_fixed)
         window.screen_items = QListWidget(); window.screen_items.setObjectName('screenItems'); window.screen_items.setMinimumHeight(350)
         window.screen_items.setDragDropMode(QAbstractItemView.InternalMove)
         window.screen_items.setDefaultDropAction(Qt.MoveAction)
@@ -825,6 +827,7 @@ class ScreensController:
     def render_screen_items(self, *_):
         window = self.window
         name = window.screen_picker.currentText()
+        window.screen_fixed.setVisible(name == 'Settings')
         labels = screen_settings.SCREENS[name]
         selected = window.screen_state[name]
         available, unavailable = screen_settings.item_availability(name, window.identity)

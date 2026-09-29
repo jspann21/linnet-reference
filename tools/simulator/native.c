@@ -1,6 +1,7 @@
 /* Desktop oracle executes the same generated scenes and native renderer. */
 #include "ui/runtime/ui.h"
 #include "services/display/clock.h"
+#include "services/games/games.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -24,8 +25,13 @@ static bool music_category_node(const struct ln_ui_node *node){
     }
     return false;
 }
+bool ln_ui_dynamic_navigation(const struct ln_ui_node*n,uint32_t item){
+    if(n->kind!=LN_UI_VIRTUAL_LIST)return false;
+    if(music_category_node(n))return true;
+    return n->text&&!strcmp(n->text,"Option ")&&(item==2u||item==3u||item==4u||item==11u);
+}
 uint32_t ln_ui_dynamic_count(const struct ln_ui_node *node,uint32_t fallback){
-    if(music_category_node(node)&&(node->kind==LN_UI_VIRTUAL_LIST||node->kind==LN_UI_SCROLLBAR))return 4u;
+    if(music_category_node(node)&&(node->kind==LN_UI_VIRTUAL_LIST||node->kind==LN_UI_SCROLLBAR))return ln_ui_menu_count(LN_MENU_MUSIC);
     return fallback;
 }
 const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){
@@ -33,16 +39,32 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
     if(item==UINT32_MAX&&strcmp(n->text,"Right: Actions  Menu: Back")==0&&music_category_node(n))
         return "Select: Choose  Menu: Back";
     if(item!=UINT32_MAX&&strcmp(n->text,"Track ")==0&&music_category_node(n)){
-        static const char *const categories[]={"All Tracks","Artists","Albums","Playlists"};
-        if(item<4u)return categories[item];
+        static const char *const categories[]={"Songs","Artists","Albums","Genres","Composers","Years","Folders","Playlists","Search","Favorites","Bookmarks","Recently Played","Most Played","Recently Added","Album Artists"};
+        uint32_t category=ln_ui_menu_item(LN_MENU_MUSIC,item);
+        if(category<15u)return categories[category];
     }
     if(item!=UINT32_MAX&&strcmp(n->text,"Option ")==0){
-        static const char *const labels[]={"Shuffle: Off","Repeat: Off","Play queue","Sound settings","Sleep timer","Favorite: No","Save bookmark","No bookmark saved","Restart track","Back 10 seconds","Forward 10 seconds","Save queue as playlist...","Stop"};
+        static const char *const labels[]={"Shuffle: Off","Repeat: Off","Play Queue","Sound","Sleep timer","Favorite: No","Save bookmark","No bookmark saved","Restart track","Back 10 seconds","Forward 10 seconds","Save queue as playlist...","Stop"};
         if(item==0)return sample_modes&1u?"Shuffle: Songs":"Shuffle: Off";
         if(item==1)return (sample_modes>>1)==2u?"Repeat: One":(sample_modes>>1)==1u?"Repeat: All":"Repeat: Off";
         return item<13u?labels[item]:fallback;
     }
-    if(item!=UINT32_MAX)return fallback;
+    if(item!=UINT32_MAX){
+        static const char *const sound[]={"EQ: Off","ReplayGain: Off","Crossfeed: Off","Balance: Center","Channels: Stereo","Preamp: 0 dB","Max volume: 0 dB","Bass 100 Hz: 0 dB","Treble 8 kHz: 0 dB"};
+        static const char *const extended_sound[]={"EQ: Off","Sound Check: Off","Crossfeed: Off","Balance: Center","Channels: Stereo","Preamp: 0 dB","Max volume: 0 dB","Dock line out: Off","Bass 100 Hz: 0 dB","Low 250 Hz: 0 dB","Mid 1 kHz: 0 dB","High 4 kHz: 0 dB","Treble 8 kHz: 0 dB"};
+        static const char *const photos[]={"Wheel: zoom","Wheel: pan left/right","Wheel: pan up/down","Rotate clockwise","Start slideshow","Fit image","Back to photo"};
+        static const char *const actions[]={"Play","Move up","Move down","Remove","Clear queue"};
+        static const char *const video[]={"TV Out: Off","TV Signal: NTSC","Widescreen: Off","TV Connection: Composite"};
+        if(!strcmp(n->text,"Sound ")){
+            if(n->count==13u&&item<13u)return extended_sound[item];
+            if(item<9u)return sound[item];
+        }
+        if(!strcmp(n->text,"Photo controls")&&item<7u)return photos[item];
+        if(!strcmp(n->text,"Action ")&&item<5u)return actions[item];
+        if(!strcmp(n->text,"Video setting")&&item<4u)return video[item];
+        if(!strcmp(n->text,"Video output")&&item<2u)return item?"TV":"iPod";
+        return fallback;
+    }
     if(!strcmp(n->text,"Native playback shell"))return sample_playback?"":"Stopped";
     if(!strcmp(n->text,"Track position"))return "1 of 12";
     if(!strcmp(n->text,"Track album"))return "Sample album";
@@ -123,11 +145,21 @@ int main(int argc,char **argv){
     }
     if(!feof(stdin))return 6;
     if(argc==3){
-        for(uint32_t scene=1;scene<ln_ui_scene_count&&scene<32u;++scene){
-            if(!(ln_ui_enabled_scenes&(1u<<scene)))continue;
-            (void)ln_ui_show(&state,ln_ui_scenes[scene].id);
-            ln_ui_refresh(&state);ln_ui_render(&state,pixels,damage);
-            if(++index>512u||!snapshot(&state,argv[1],index))return 7;
+        for(uint32_t theme=0;theme<ln_ui_theme_count;++theme){
+            ln_ui_theme_changed(theme);ln_ui_init(&state);
+            for(uint32_t scene=0;scene<ln_ui_scene_count&&scene<32u;++scene){
+                if(!(ln_ui_enabled_scenes&(1u<<scene)))continue;
+                (void)ln_ui_show(&state,ln_ui_scenes[scene].id);
+                memset(pixels,0,sizeof pixels);
+                if(!strcmp(ln_ui_scenes[scene].id,"linnet.system.game-play"))ln_games_start(0);
+                state.selected=0;ln_ui_refresh(&state);ln_ui_render(&state,pixels,damage);
+                if(++index>2048u||!snapshot(&state,argv[1],index))return 7;
+                uint32_t count=ln_ui_focused_count(&state);
+                if(count>ln_ui_visible_capacity(&state)){
+                    state.selected=count-1u;ln_ui_refresh(&state);ln_ui_render(&state,pixels,damage);
+                    if(++index>2048u||!snapshot(&state,argv[1],index))return 7;
+                }
+            }
         }
         return 0;
     }

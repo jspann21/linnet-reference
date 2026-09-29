@@ -413,8 +413,8 @@ const char *ln_music_option_label(uint32_t index){
     case 6:return "Stop";
     case 12:return "Sleep timer";
     case 11:return "Save queue as playlist...";
-    case 7:return "Play queue";
-    case 8:return "Sound settings";
+    case 7:return "Play Queue";
+    case 8:return "Sound";
     case 9:return "Back 10 seconds";
     case 10:return "Forward 10 seconds";
     default:return "";

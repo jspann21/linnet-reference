@@ -10,7 +10,7 @@ from tools.studio.targets import target_spec
 from tools.content.compiler import resolve_features
 from tools.content.layouts import feature_enabled
 from tools.content.guard import guarded_path as _plain, guard_volume as _volume_guard
-from tools.studio.menu_definition import SCREENS, DEFAULTS, REQUIRED, ITEMS
+from tools.studio.menu_definition import SCREENS, DEFAULTS, REQUIRED, ITEMS, LEGACY_DEFAULTS
 
 HINTS = {'Artists': 'Performers credited on individual tracks.', 'Album Artists': 'Main artist credited for each album; useful for compilations.', 'Composers': 'Writers of the music; useful for classical collections.'}
 
@@ -56,6 +56,8 @@ def available_items(name, identity=None):
 def locked_items(name, identity=None, selected=()):
     """Items firmware restores automatically in addition to navigation anchors."""
     locked = set(REQUIRED.get(name, ()))
+    if name == 'Settings':
+        locked.add(11)
     if name == 'Settings' and 0 in selected and 10 in available_items(name, identity):
         locked.add(10)
     return locked
@@ -65,8 +67,6 @@ def defaults(identity=None):
     result = {}
     for name, rows in DEFAULTS.items():
         rows = list(rows)
-        if name == 'Home' and identity and target_spec(identity['target_id'])['capabilities'].get('games', False):
-            rows.append(7)
         available = available_items(name, identity) if identity is not None else rows
         result[name] = [i for i in rows if i in available]
     return result
@@ -88,12 +88,18 @@ def decode(data, identity=None):
         raise ValueError('Screen settings are damaged or from an unsupported version. Reset defaults to replace them.')
     state = {name: list(data[9 + g * 17:9 + g * 17 + data[8 + g * 17]]) for g, name in enumerate(SCREENS)}
     encode(state)
+    for name, legacy in LEGACY_DEFAULTS.items():
+        rows = tuple(state[name])
+        if rows == legacy or (name == 'Home' and rows == legacy + (7,)):
+            state[name] = defaults(identity)[name]
     home = state['Home']
     state['Home'] = [item for i in home for item in
                      ([j for j in (3, 9) if j not in home] if i == 8 else [i])]
     settings = state['Settings']
     if 0 in settings and 10 not in settings:
         settings.insert(settings.index(0) + 1, 10)
+    if 11 not in settings:
+        settings.append(11)
     if identity is not None and 10 not in available_items('Settings', identity):
         settings[:] = [item for item in settings if item != 10]
     return state
