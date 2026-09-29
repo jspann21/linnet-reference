@@ -36,6 +36,8 @@ def simulate(root,output,tape=None,system=None,target=None,all_scenes=False):
     if (width, height) != (spec['lcd_width'], spec['lcd_height']):
         raise ValueError('simulator scene dimensions differ from the target manifest')
     (output/'generated/linnet_target.h').write_text(
+        f'#include "targets/{scenes["target"]}/hardware.h"\n' +
+        f'#define LINNET_EXTENDED_SOUND {int(spec.get("runtime_policy", {}).get("extended_sound", False))}\n' +
         ''.join(f'#define {name} {value}\n' for name, value in presentation_defines(spec).items()))
     write_firmware_header(output/'generated')
     executable=output/('linnet-simulator.exe' if os.name == 'nt' else 'linnet-simulator')
@@ -80,6 +82,6 @@ def simulate(root,output,tape=None,system=None,target=None,all_scenes=False):
     (output/'index.html').write_text(page)
     report=dict(target_id=content['report']['target'],content=content,events=total,frames=frames,preview=str(output/'index.html'),
                 native_oracle=True,
-                native_source_hashes={name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in ('tools/simulator/native.c','ui/runtime/ui.c','ui/runtime/ui.h','tools/simulator/runner.py','tools/studio/menu_definition.py','services/display/clock.c','services/display/clock.h')})
+                native_source_hashes={name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in ('tools/simulator/native.c','ui/runtime/ui.c','ui/runtime/ui.h','tools/simulator/runner.py','tools/studio/menu_definition.py','services/music/menu.h','services/display/clock.c','services/display/clock.h')})
     (output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
     return report

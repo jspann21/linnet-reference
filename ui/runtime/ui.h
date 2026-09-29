@@ -131,6 +131,7 @@ uint32_t ln_ui_focused_count(const struct ln_ui_state *state);
 /* Compare bounded visible list/text content with the last painted frame.
  * Scene changes and unsupported layouts retain full refresh semantics. */
 void ln_ui_refresh_content(struct ln_ui_state *state);
+bool ln_ui_back(struct ln_ui_state *state);
 bool ln_ui_show(struct ln_ui_state *state,const char *scene_id);
 /* Input kinds match the native input interface: wheel1,buttons2,hold3,headphones4. */
 bool ln_ui_input(struct ln_ui_state *state,uint32_t kind,int32_t value);

@@ -90,7 +90,8 @@ and failed work.
 ## Games and screens
 
 On Photo and Video, **Games** selects Comet Run, Pulse Path, and Solitaire.
-**Screens** configures supported menus. Save changes, eject, and restart to apply
+**Screens** configures supported menus. See the [device menu hierarchy](navigation.md)
+for the default organization and controls. Save changes, eject, and restart to apply
 them. Game availability follows the target manifest; it is not enabled on every
 color iPod.
 

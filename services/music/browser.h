@@ -28,6 +28,7 @@ void ln_music_browser_set_visible(bool visible);
 bool ln_music_browser_window_needed(void);
 bool ln_music_browser_query_idle(void);
 bool ln_music_browser_take_search(void);
+bool ln_music_browser_take_coverflow(void);
 void ln_music_browser_step(void);
 /* Publish a bounded batch after the controller finishes metadata work. */
 void ln_music_browser_publish(void);

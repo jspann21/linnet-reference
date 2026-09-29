@@ -868,22 +868,6 @@ class ScreensController:
         name = window.screen_picker.currentText()
         selected = [window.screen_items.item(i).data(Qt.UserRole) for i in range(window.screen_items.count())
                     if window.screen_items.item(i).checkState() == Qt.Checked]
-        if name == 'Settings':
-            video_settings = next((window.screen_items.item(i) for i in range(window.screen_items.count())
-                                   if window.screen_items.item(i).data(Qt.UserRole) == 10), None)
-            if video_settings is not None:
-                forced = 0 in selected
-                with QSignalBlocker(window.screen_items):
-                    if forced and 10 not in selected:
-                        video_settings.setCheckState(Qt.Checked)
-                        position = sum(window.screen_items.item(i).checkState() == Qt.Checked
-                                       for i in range(window.screen_items.row(video_settings)))
-                        selected.insert(position, 10)
-                    flags = video_settings.flags()
-                    video_settings.setFlags(flags & ~Qt.ItemIsUserCheckable if forced else
-                                            flags | Qt.ItemIsUserCheckable)
-                    video_settings.setText('Video Settings (always included)' if forced else 'Video Settings')
-                    video_settings.setToolTip('This item is always included with Display.' if forced else '')
         window.screen_state[name] = selected
         window.screen_status.setText('Unsaved changes. Save to iPod, then eject safely to apply on startup.'
                                    if all(window.screen_state.values()) else 'Select at least one item on each screen before saving.')

@@ -6,7 +6,7 @@
 #include "ui/runtime/ui.h"
 #include "services/games/games.h"
 static const uint32_t seconds[]={0,5,10,15,30,60,120};
-static const char *const labels[]={"Timeout: Never","Timeout: 5 seconds","Timeout: 10 seconds","Timeout: 15 seconds","Timeout: 30 seconds","Timeout: 1 minute","Timeout: 2 minutes"};
+static const char *const labels[]={"Backlight: Never","Backlight: 5 sec","Backlight: 10 sec","Backlight: 15 sec","Backlight: 30 sec","Backlight: 1 minute","Backlight: 2 minutes"};
 static const uint32_t shutdown_seconds[]={0,60,120,300,600,900,1800,3600,7200};
 static const char *const shutdown_labels[]={"Off","1 min","2 min","5 min","10 min","15 min","30 min","1 hour","2 hours"};
 static uint8_t shutdown_choice[2];
@@ -15,7 +15,7 @@ static uint32_t choice=4,revision,record_revision,battery_capacity=1200;
 /* SETT bits 6..7: 0 Classic (also the legacy default), 1 Off, 2 Low, 3 High. */
 static uint8_t click_tone;
 static bool click_fallback_ready,click_changed;
-static const char *const click_labels[]={"Click: Classic","Click: Off","Click: Low","Click: High"};
+static const char *const click_labels[]={"Clicker: Classic","Clicker: Off","Clicker: Low","Clicker: High"};
 static uint32_t theme_index=UINT32_MAX,theme_revision;
 static bool theme_loaded,theme_dirty,theme_available;
 static uint16_t game_best[LN_GAME_COUNT];
@@ -87,6 +87,7 @@ bool ln_display_settings_adjust(int32_t direction){
     mark_record_dirty();++revision;return true;
 }
 /* Wait for the saved choice before allowing feedback, including saved Off. */
+const char *ln_display_click_label(void){return click_labels[click_tone];}
 uint8_t ln_display_click_tone(void){return loaded||click_fallback_ready||click_changed?click_tone:1u;}
 bool ln_display_click_adjust(int32_t direction){
     if(!direction)return false;
@@ -402,7 +403,6 @@ const char *ln_display_settings_text(const struct ln_ui_node*n,uint32_t item,con
         for(uint32_t i=0;i<5;++i)if(text_equal(n->text,keys[i]))return update_labels[i];
     }
     if(n->kind==LN_UI_VIRTUAL_LIST&&item<2u&&text_equal(n->text,"Automatic shutdown"))return auto_shutdown_label(item);
-    if(n->kind==LN_UI_VIRTUAL_LIST&&item==1u&&text_equal(n->text,"Display timeout"))return click_labels[click_tone];
     if(n->kind==LN_UI_VIRTUAL_LIST&&item==0&&n->text){
         const char *a=n->text,*b="Display timeout";while(*a&&*a==*b){++a;++b;}
         if(!*a&&!*b)return ln_display_settings_label();

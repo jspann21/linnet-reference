@@ -1,5 +1,7 @@
 /* Desktop oracle executes the same generated scenes and native renderer. */
 #include "ui/runtime/ui.h"
+#include "linnet_target.h"
+#include "services/music/menu.h"
 #include "services/display/clock.h"
 #include "services/games/games.h"
 #include <stdio.h>
@@ -7,7 +9,19 @@
 #include <stdint.h>
 #include <string.h>
 static uint32_t sample_battery=80u,sample_clock=9u*3600u+41u*60u,sample_playback,sample_modes;
-static bool sample_art;
+static bool sample_art,sample_more;
+static uint32_t sample_sound_view,sample_sound_parent,sample_music_parent;
+#if defined(LINNET_HARDWARE_CLICKER)
+#define SAMPLE_CLICKER true
+#else
+#define SAMPLE_CLICKER false
+#endif
+static uint32_t sound_action(uint32_t row){return ln_sound_menu_action(sample_sound_view,row,LINNET_EXTENDED_SOUND,SAMPLE_CLICKER);}
+static bool node_scene(const struct ln_ui_node *n,const char *id){
+    for(uint32_t i=0;i<ln_ui_scene_count;++i)if(!strcmp(ln_ui_scenes[i].id,id))
+        for(uint32_t j=0;j<ln_ui_scenes[i].count;++j)if(n==&ln_ui_scenes[i].nodes[j])return true;
+    return false;
+}
 uint32_t ln_ui_battery_status(void){return sample_battery;}
 uint32_t ln_ui_clock_seconds(void){return sample_clock;}
 uint32_t ln_ui_playback_status(void){return sample_playback;}
@@ -27,37 +41,50 @@ static bool music_category_node(const struct ln_ui_node *node){
 }
 bool ln_ui_dynamic_navigation(const struct ln_ui_node*n,uint32_t item){
     if(n->kind!=LN_UI_VIRTUAL_LIST)return false;
-    if(music_category_node(n))return ln_ui_menu_item(LN_MENU_MUSIC,item)!=15u;
-    return n->text&&!strcmp(n->text,"Option ")&&(item==2u||item==3u||item==4u||item==11u);
+    if(music_category_node(n))return ln_music_menu_category(sample_more,item)!=15u;
+    if(n->text&&!strcmp(n->text,"Sound "))return sound_action(item)>=LN_SOUND_CUSTOM_EQ;
+    if(node_scene(n,"linnet.system.display"))return item==1u;
+    if(node_scene(n,"linnet.system.shutdown"))return item==2u;
+    return n->text&&!strcmp(n->text,"Option ")&&(item>=2u&&item<=5u);
 }
 uint32_t ln_ui_dynamic_count(const struct ln_ui_node *node,uint32_t fallback){
-    if(music_category_node(node)&&(node->kind==LN_UI_VIRTUAL_LIST||node->kind==LN_UI_SCROLLBAR))return ln_ui_menu_count(LN_MENU_MUSIC);
+    if(music_category_node(node)&&(node->kind==LN_UI_VIRTUAL_LIST||node->kind==LN_UI_SCROLLBAR))return ln_music_menu_count(sample_more);
+    if(node_scene(node,"linnet.system.music-sound")&&(node->kind==LN_UI_VIRTUAL_LIST||node->kind==LN_UI_SCROLLBAR))return ln_sound_menu_count(sample_sound_view,LINNET_EXTENDED_SOUND,SAMPLE_CLICKER);
+    if(node_scene(node,"linnet.system.display")&&node->kind==LN_UI_VIRTUAL_LIST)return ln_music_menu_scene_enabled("linnet.system.themes")?2u:1u;
     return fallback;
 }
 const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){
+    if(n->kind==LN_UI_STATUS_BAR&&music_category_node(n))return sample_more?"More Music":"Music";
+    if(n->kind==LN_UI_STATUS_BAR&&node_scene(n,"linnet.system.music-sound"))return sample_sound_view==LN_SOUND_EQ?"Custom EQ":sample_sound_view==LN_SOUND_ADVANCED?"Advanced Sound":"Sound";
     if(!n->text)return fallback;
     if(item==UINT32_MAX&&strcmp(n->text,"Right: Actions  Menu: Back")==0&&music_category_node(n))
         return "Select: Choose  Menu: Back";
     if(item!=UINT32_MAX&&strcmp(n->text,"Track ")==0&&music_category_node(n)){
-        static const char *const categories[]={"Songs","Artists","Albums","Genres","Composers","Years","Folders","Playlists","Search","Favorites","Bookmarks","Recently Played","Most Played","Recently Added","Album Artists","Shuffle All Songs"};
-        uint32_t category=ln_ui_menu_item(LN_MENU_MUSIC,item);
+        static const char *const categories[]={"Songs","Artists","Albums","Genres","Composers","Years","Folders","Playlists","Search","Favorites","Bookmarks","Recently Played","Most Played","Recently Added","Album Artists","Shuffle Songs"};
+        uint32_t category=ln_music_menu_category(sample_more,item);
+        if(category==LN_MUSIC_COVER_FLOW)return "Cover Flow";
+        if(category==LN_MUSIC_MORE)return "More";
         if(category<16u)return categories[category];
     }
     if(item!=UINT32_MAX&&strcmp(n->text,"Option ")==0){
-        static const char *const labels[]={"Shuffle: Off","Repeat: Off","Play Queue","Sound","Sleep timer","Favorite: No","Save bookmark","No bookmark saved","Restart track","Back 10 seconds","Forward 10 seconds","Save queue as playlist...","Stop"};
+        static const char *const labels[]={"Shuffle: Off","Repeat: Off","Play Queue","Save queue as playlist...","Sound","Sleep Timer","Favorite: No","Save bookmark","No bookmark saved","Restart track","Back 10 seconds","Forward 10 seconds","Stop"};
         if(item==0)return sample_modes&1u?"Shuffle: Songs":"Shuffle: Off";
         if(item==1)return (sample_modes>>1)==2u?"Repeat: One":(sample_modes>>1)==1u?"Repeat: All":"Repeat: Off";
         return item<13u?labels[item]:fallback;
     }
     if(item!=UINT32_MAX){
-        static const char *const sound[]={"EQ: Off","ReplayGain: Off","Crossfeed: Off","Balance: Center","Channels: Stereo","Preamp: 0 dB","Max volume: 0 dB","Bass 100 Hz: 0 dB","Treble 8 kHz: 0 dB"};
-        static const char *const extended_sound[]={"EQ: Off","Sound Check: Off","Crossfeed: Off","Balance: Center","Channels: Stereo","Preamp: 0 dB","Max volume: 0 dB","Dock line out: Off","Bass 100 Hz: 0 dB","Low 250 Hz: 0 dB","Mid 1 kHz: 0 dB","High 4 kHz: 0 dB","Treble 8 kHz: 0 dB"};
+        static const char *const sound[]={"EQ: Off","ReplayGain: Off","Crossfeed: Off","Balance: Center","Channels: Stereo","Preamp: 0 dB","Volume limit: 0 dB","Bass 100 Hz: 0 dB","Treble 8 kHz: 0 dB"};
+        static const char *const extended_sound[]={"EQ: Off","Sound Check: Off","Crossfeed: Off","Balance: Center","Channels: Stereo","Preamp: 0 dB","Volume limit: 0 dB","Dock line out: Off","Bass 100 Hz: 0 dB","Low 250 Hz: 0 dB","Mid 1 kHz: 0 dB","High 4 kHz: 0 dB","Treble 8 kHz: 0 dB"};
         static const char *const photos[]={"Wheel: zoom","Wheel: pan left/right","Wheel: pan up/down","Rotate clockwise","Start slideshow","Fit image","Back to photo"};
         static const char *const actions[]={"Play","Move up","Move down","Remove","Clear queue"};
         static const char *const video[]={"TV Out: Off","TV Signal: NTSC","Widescreen: Off","TV Connection: Composite"};
         if(!strcmp(n->text,"Sound ")){
-            if(n->count==13u&&item<13u)return extended_sound[item];
-            if(item<9u)return sound[item];
+            uint32_t action=sound_action(item);
+            if(action==LN_SOUND_CLICKER)return "Clicker: Classic";
+            if(action==LN_SOUND_CUSTOM_EQ)return "Custom EQ";
+            if(action==LN_SOUND_MORE)return "Advanced";
+            if(LINNET_EXTENDED_SOUND&&action<13u)return extended_sound[action];
+            if(action<9u)return sound[action];
         }
         if(!strcmp(n->text,"Photo controls")&&item<7u)return photos[item];
         if(!strcmp(n->text,"Action ")&&item<5u)return actions[item];
@@ -116,6 +143,28 @@ static int snapshot(const struct ln_ui_state *state,const char *directory,uint32
         index,ln_ui_theme_index(),sample_battery,sample_clock,sample_playback,state->scene,state->selected,crc(),state->paint_count,state->painted_pixels,state->visible_items,state->scene_epoch,state->transitions,damage_count,state->action,save_calls);
     return 1;
 }
+static void menu_input(struct ln_ui_state *s,uint32_t kind,int32_t value){
+    uint32_t pressed=kind==2u?(uint32_t)value&~s->buttons:0;bool handled=false;
+    const char *id=ln_ui_scenes[s->scene].id;
+    if(!s->hold&&pressed){
+        if(!strcmp(id,"linnet.system.music")){
+            uint32_t category=ln_music_menu_category(sample_more,s->selected);
+            if((pressed&1u)&&sample_more){sample_more=false;s->selected=sample_music_parent;s->first_visible[s->scene]=0;handled=true;}
+            else if(pressed&16u){
+                if(category==LN_MUSIC_MORE){sample_music_parent=s->selected;sample_more=true;s->selected=0;s->first_visible[s->scene]=0;handled=true;}
+                else if(category==LN_MUSIC_COVER_FLOW){(void)ln_ui_show(s,"linnet.system.cover-flow");handled=true;}
+            }
+        }else if(!strcmp(id,"linnet.system.music-sound")){
+            uint32_t action=sound_action(s->selected);
+            if((pressed&1u)&&sample_sound_view){sample_sound_view=LN_SOUND_ROOT;s->selected=sample_sound_parent;s->first_visible[s->scene]=0;handled=true;}
+            else if((pressed&16u)&&(action==LN_SOUND_CUSTOM_EQ||action==LN_SOUND_MORE)){
+                sample_sound_parent=s->selected;sample_sound_view=action==LN_SOUND_CUSTOM_EQ?LN_SOUND_EQ:LN_SOUND_ADVANCED;s->selected=0;s->first_visible[s->scene]=0;handled=true;
+            }
+        }else if((pressed&16u)&&!strcmp(id,"linnet.system.display")&&s->selected==1u){(void)ln_ui_show(s,"linnet.system.themes");handled=true;}
+        else if((pressed&16u)&&!strcmp(id,"linnet.system.shutdown")&&s->selected==2u){(void)ln_ui_show(s,"linnet.system.battery");handled=true;}
+    }
+    if(handled){s->buttons=(uint32_t)value;ln_ui_refresh(s);}else ln_ui_input(s,kind,value);
+}
 int main(int argc,char **argv){
     if(argc!=2&&(argc!=3||strcmp(argv[2],"--all-scenes")))return 2;
     struct ln_ui_state state;ln_ui_init(&state);ln_ui_render(&state,pixels,damage);
@@ -123,7 +172,7 @@ int main(int argc,char **argv){
     uint32_t kind,repeat,capture,index=0,total=0,simulated_us=0;int32_t value;
     while(scanf("%u %d %u %u",&kind,&value,&repeat,&capture)==4){
         if(kind>12u||!repeat||repeat>100000u||total>100000u-repeat||capture>1u)return 4;
-        for(uint32_t i=0;i<repeat;++i){if(kind<=4u&&kind)ln_ui_input(&state,kind,value);
+        for(uint32_t i=0;i<repeat;++i){if(kind<=4u&&kind)menu_input(&state,kind,value);
             else if(kind==0u&&value==1)ln_ui_refresh(&state);
             else if(kind==5u){if(value!=-1&&((value&255)>100||value<0||value>1023))return 4;sample_battery=(uint32_t)value;}
             else if(kind==6u){if(value< -1||value>=86400)return 4;sample_clock=(uint32_t)value;}

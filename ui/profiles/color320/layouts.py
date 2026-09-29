@@ -110,7 +110,7 @@ def apply_layout(scenes, theme):
             place(texts[1], x, bottom - 24, w, 24)
             texts[1]['flags'] = WRAP
         elif sid in ('display', 'battery', 'shutdown'):
-            place(listing, x, y, w, row * (2 if sid in ('display', 'shutdown') else 1))
+            place(listing, x, y, w, row * (3 if sid == 'shutdown' else 2 if sid == 'display' else 1))
             positions = ([bottom - 46, bottom - 22] if sid == 'display' else
                          [y + listing['h'] + 12, bottom - 46, bottom - 22])
             for node, top in zip(texts, positions):
@@ -276,7 +276,7 @@ def apply_ipod_classic(scenes, theme):
             for n in texts:
                 place(n, 8, 200, 304, 2 * fh); n['flags'] = WRAP
         elif sid in ('display', 'battery', 'shutdown') and listing:
-            list_rows = 2 if sid in ('display', 'shutdown') else 1
+            list_rows = 3 if sid == 'shutdown' else 2 if sid == 'display' else 1
             place(listing, 0, 24, 320, list_rows * row)
             for i, n in enumerate(texts):
                 place(n, 8, 24 + list_rows * row + 18 + i * 28, 304, fh)

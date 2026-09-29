@@ -6,6 +6,7 @@
 #include "services/music/artwork.h"
 #include "services/music/coverflow.h"
 #include "services/music/browser.h"
+#include "services/music/menu.h"
 #include "services/music/search.h"
 #include "services/music/queue_view.h"
 #if defined(LINNET_NOTES)
@@ -95,6 +96,9 @@ const struct ln_ui_asset *ln_ui_dynamic_item_asset(const struct ln_ui_node*n,uin
 bool ln_ui_dynamic_navigation(const struct ln_ui_node*n,uint32_t item){
     if(n->kind!=LN_UI_VIRTUAL_LIST)return false;
     if(in_scene(n,"linnet.system.music"))return ln_music_browser_row_navigates(item);
+    if(in_scene(n,"linnet.system.music-sound"))return ln_music_sound_action(item)>=LN_SOUND_CUSTOM_EQ;
+    if(in_scene(n,"linnet.system.display"))return item==1u;
+    if(in_scene(n,"linnet.system.shutdown"))return item==2u;
     if(in_scene(n,"linnet.system.music-options")){
         uint32_t action=ln_music_option_action(item);
         return action==7u||action==8u||action==11u||action==12u;
@@ -102,9 +106,7 @@ bool ln_ui_dynamic_navigation(const struct ln_ui_node*n,uint32_t item){
     return false;
 }
 uint32_t ln_ui_dynamic_count(const struct ln_ui_node*n,uint32_t fallback){
-#if !defined(LINNET_HARDWARE_CLICKER)
-    if(in_scene(n,"linnet.system.display")&&n->kind==LN_UI_VIRTUAL_LIST)return 1u;
-#endif
+    if(in_scene(n,"linnet.system.display")&&n->kind==LN_UI_VIRTUAL_LIST)return ln_music_menu_scene_enabled("linnet.system.themes")?2u:1u;
 #if defined(LINNET_NOTES)
     if(in_scene(n,"linnet.system.notes")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_notes_count();
 #endif
@@ -175,10 +177,13 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
         return ln_coverflow_text(equal(fallback,"Cover Flow artist"));
 #endif
     if(in_scene(n,"linnet.system.music-options")){
-        if(n->kind==LN_UI_STATUS_BAR)return "Playback options";
+        if(n->kind==LN_UI_STATUS_BAR)return "Playback Options";
         if(n->kind==LN_UI_VIRTUAL_LIST&&item<13)return ln_music_option_label(ln_music_option_action(item));
     }
-    if(in_scene(n,"linnet.system.music-sound")&&n->kind==LN_UI_VIRTUAL_LIST&&item<ln_music_sound_count())return ln_music_sound_label(item);
+    if(in_scene(n,"linnet.system.music-sound")){
+        if(n->kind==LN_UI_STATUS_BAR)return ln_music_sound_title();
+        if(n->kind==LN_UI_VIRTUAL_LIST&&item<ln_music_sound_count())return ln_music_sound_label(item);
+    }
     if(in_scene(n,"linnet.system.music-queue")){
         if(n->kind==LN_UI_STATUS_BAR&&ln_music_notice())return ln_music_notice();
         if(n->kind==LN_UI_VIRTUAL_LIST&&item!=UINT32_MAX)return ln_music_queue_view_label(item);

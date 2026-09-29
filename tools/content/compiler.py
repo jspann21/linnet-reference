@@ -351,6 +351,14 @@ def compile_system(root, output, configpath=None, target_override=None):
                     if target_id=='local.example.notes':
                         node['targets'][i]='linnet.system.games'
                         node['items'][i]='Games'
+            # Optional utilities may be omitted to stay within the scene budget.
+            if node['targets']:
+                optional={'linnet.system.games':'games', 'linnet.system.files':'files', 'local.example.notes':'demo'}
+                pairs=[(label, target_id) for label, target_id in zip(node['items'], node['targets'])
+                       if target_id in selected or target_id not in optional or
+                       (feature_enabled(features, optional[target_id]) and target_id != 'linnet.system.games')]
+                node['items']=[label for label, _ in pairs]
+                node['targets']=[target_id for _, target_id in pairs]
             targets=[]
             for navigation_target in node['targets']:
                 actions={'@sync':0xfffffffe,'@shuffle':0xfffffffd,'@repeat':0xfffffffc,'@shuffle-all':0xfffffffb}

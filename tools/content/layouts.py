@@ -219,11 +219,13 @@ def refine_scene(scene,theme,body):
         place(listing,listing['x'],y,listing['w'],max(rh,((h-32)//rh)*rh))
         for n in texts:place(n,x+4,bottom-26,w-8,26);n['flags']=WRAP
     elif sid in ('display','battery','shutdown'):
-        list_h=max(50,2*rh) if sid in ('display','shutdown') else rh
+        if sid=='shutdown' and style=='sunset':y=42
+        list_h=max(50,(3 if sid=='shutdown' else 2)*rh) if sid in ('display','shutdown') else rh
+        if sid=='shutdown' and theme['flags']&1:list_h=max(list_h,80)
         place(listing,x,y,w,list_h)
-        note_gap=max(50,2*rh)-2*rh+8
+        note_gap=4 if sid=='shutdown' else max(50,2*rh)-2*rh+8
         for i,n in enumerate(texts):
-            top=y+(2*rh if sid in ('display','shutdown') else rh)+note_gap if i==0 and sid!='display' else bottom-(len(texts)-i)*(fh+5)
+            top=y+list_h+note_gap if i==0 and sid!='display' else bottom-(len(texts)-i)*(fh+5)
             place(n,x+4,top,w-8,fh);n['flags']=0
     elif sid in ('music','music-sound','music-queue'):
         footer_h=fh if sid=='music-sound' else 2*fh

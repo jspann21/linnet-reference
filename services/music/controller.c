@@ -1,4 +1,5 @@
 #include "services/music/controller.h"
+#include "services/music/menu.h"
 #include "services/music/player.h"
 #include "services/music/artwork.h"
 #include "services/music/coverflow.h"
@@ -257,14 +258,29 @@ bool ln_music_queue_position(uint32_t *position,uint32_t *count){
     *position=queue.cursor+1u;*count=queue.count;return true;
 }
 uint32_t ln_music_revision(void){return revision+ln_music_history_revision()+ln_collections_revision();}
-uint32_t ln_music_sound_count(void){
-#if LINNET_EXTENDED_SOUND
-    return 13u;
+static uint32_t sound_view,sound_parent;
+#if defined(LINNET_HARDWARE_CLICKER)
+#define SOUND_CLICKER true
 #else
-    return 9u;
+#define SOUND_CLICKER false
 #endif
+uint32_t ln_music_sound_count(void){return ln_sound_menu_count(sound_view,LINNET_EXTENDED_SOUND,SOUND_CLICKER);}
+uint32_t ln_music_sound_action(uint32_t row){return ln_sound_menu_action(sound_view,row,LINNET_EXTENDED_SOUND,SOUND_CLICKER);}
+const char *ln_music_sound_title(void){return sound_view==LN_SOUND_EQ?"Custom EQ":sound_view==LN_SOUND_ADVANCED?"Advanced Sound":"Sound";}
+bool ln_music_sound_enter(uint32_t row){
+    uint32_t action=ln_music_sound_action(row);
+    if(action!=LN_SOUND_CUSTOM_EQ&&action!=LN_SOUND_MORE)return false;
+    sound_parent=row;sound_view=action==LN_SOUND_CUSTOM_EQ?LN_SOUND_EQ:LN_SOUND_ADVANCED;++revision;return true;
 }
-const char *ln_music_sound_label(uint32_t index){
+bool ln_music_sound_back(uint32_t *row){
+    if(sound_view==LN_SOUND_ROOT)return false;
+    sound_view=LN_SOUND_ROOT;*row=sound_parent;++revision;return true;
+}
+const char *ln_music_sound_label(uint32_t row){
+    uint32_t index=ln_music_sound_action(row);
+    if(index==LN_SOUND_CUSTOM_EQ)return "Custom EQ";
+    if(index==LN_SOUND_MORE)return "Advanced";
+    if(index==LN_SOUND_CLICKER)return ln_display_click_label();
     static char balance[24],preamp[24],levels[7][24];
     static const char *const modes[]={"Channels: Stereo","Channels: Mono","Channels: Left","Channels: Right","Channels: Karaoke"};
     if(index==0&&profile.preset==LN_MUSIC_EQ_CUSTOM)return "EQ: Custom";
@@ -273,7 +289,7 @@ const char *ln_music_sound_label(uint32_t index){
         return presets[profile.preset];
     }
 #if LINNET_EXTENDED_SOUND
-    if(index==1)return profile.replaygain==2?"Sound Check: Album":profile.replaygain?"Sound Check: On":"Sound Check: Off";
+    if(index==1)return profile.replaygain==2?"Sound Check: Album":profile.replaygain?"Sound Check: Track":"Sound Check: Off";
 #else
     if(index==1)return profile.replaygain==2?"ReplayGain: Album":profile.replaygain?"ReplayGain: Track":"ReplayGain: Off";
 #endif
@@ -291,11 +307,11 @@ const char *ln_music_sound_label(uint32_t index){
         preamp[n++]=(char)('0'+value%10u);preamp[n++]=' ';preamp[n++]='d';preamp[n++]='B';preamp[n]=0;return preamp;}
 #if LINNET_EXTENDED_SOUND
     if(index==6||index>=8){
-        static const char *const names[]={"Max volume: ","Bass 100 Hz: ","Low 250 Hz: ","Mid 1 kHz: ","High 4 kHz: ","Treble 8 kHz: "};
+        static const char *const names[]={"Volume limit: ","Bass 100 Hz: ","Low 250 Hz: ","Mid 1 kHz: ","High 4 kHz: ","Treble 8 kHz: "};
         uint32_t slot=index==6?0u:index-7u,band=index>=8?index-8u:0u;
 #else
     if(index>=6){
-        static const char *const names[]={"Max volume: ","Bass 100 Hz: ","Treble 8 kHz: "};
+        static const char *const names[]={"Volume limit: ","Bass 100 Hz: ","Treble 8 kHz: "};
         uint32_t slot=index-6u,band=index==8u?4u:0u;
 #endif
         uint32_t n=0;char *out=levels[slot];const char *name=names[slot];
@@ -313,8 +329,10 @@ const char *ln_music_sound_label(uint32_t index){
 static int32_t profile_gain(const struct ln_music_profile *p,const struct ln_music_track *t){
     return p->replaygain==2&&t->album_replaygain!=INT32_MIN?t->album_replaygain:t->replaygain;
 }
-bool ln_music_sound_adjust(uint32_t index,int32_t direction){
-    if(shutting_down||manual_next_pending||index>=ln_music_sound_count()||!direction)return false;
+bool ln_music_sound_adjust(uint32_t row,int32_t direction){
+    uint32_t index=ln_music_sound_action(row);
+    if(shutting_down||manual_next_pending||index>=LN_SOUND_CUSTOM_EQ||!direction)return false;
+    if(index==LN_SOUND_CLICKER)return ln_display_click_adjust(direction);
     struct ln_music_profile next=profile;bool up=direction>0;
     if(index==0){
 #if LINNET_EXTENDED_SOUND
@@ -385,7 +403,7 @@ uint32_t ln_music_deadline(uint32_t now){
 /* Menu rows map to stable service actions, shared by labels and selection. */
 uint32_t ln_music_option_action(uint32_t row){
     /* Queue, playback settings, favorites/bookmarks, transport, stop. */
-    static const uint8_t actions[]={0,1,7,8,12,2,3,4,5,9,10,11,6};
+    static const uint8_t actions[]={0,1,7,11,8,12,2,3,4,5,9,10,6};
     return row<sizeof(actions)?actions[row]:UINT32_MAX;
 }
 uint32_t ln_music_queue_action(uint32_t row){
@@ -411,7 +429,7 @@ const char *ln_music_option_label(uint32_t index){
     case 4:return record&&(record->flags&LN_MUSIC_JOURNAL_BOOKMARK)?"Resume bookmark":"No bookmark saved";
     case 5:return "Restart track";
     case 6:return "Stop";
-    case 12:return "Sleep timer";
+    case 12:return "Sleep Timer";
     case 11:return "Save queue as playlist...";
     case 7:return "Play Queue";
     case 8:return "Sound";

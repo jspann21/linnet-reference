@@ -53,7 +53,7 @@ static uint8_t menu_counts[LN_MENU_GROUPS]=LN_MENU_DEFAULT_COUNTS;
 uint32_t ln_ui_menu_count(uint32_t group){return group<LN_MENU_GROUPS?menu_counts[group]:0;}
 uint32_t ln_ui_menu_item(uint32_t group,uint32_t row){return group<LN_MENU_GROUPS&&row<menu_counts[group]?menu_order[group][row]:UINT32_MAX;}
 bool ln_ui_menu_load(const uint8_t *data,uint32_t length){
-    if(length!=80||data[0]!='M'||data[1]!='E'||data[2]!='N'||data[3]!='U'||(data[4]!=1&&data[4]!=2)||data[5]||data[6]||data[7])return false;
+    if(length!=80||data[0]!='M'||data[1]!='E'||data[2]!='N'||data[3]!='U'||(data[4]!=1&&data[4]!=2&&data[4]!=3)||data[5]||data[6]||data[7])return false;
     uint32_t crc=~0u;for(uint32_t i=0;i<76;++i){crc^=data[i];for(uint32_t bit=0;bit<8;++bit)crc=(crc>>1)^((0u-(crc&1u))&0xedb88320u);}
     uint32_t saved=(uint32_t)data[76]|((uint32_t)data[77]<<8)|((uint32_t)data[78]<<16)|((uint32_t)data[79]<<24);
     if(~crc!=saved)return false;
@@ -63,33 +63,38 @@ bool ln_ui_menu_load(const uint8_t *data,uint32_t length){
         if((seen&ln_menu_required[g])!=ln_menu_required[g])return false;
     }
     for(uint32_t g=0;g<LN_MENU_GROUPS;++g){menu_counts[g]=data[8+g*17];for(uint32_t i=0;i<menu_counts[g];++i)menu_order[g][i]=data[9+g*17+i];}
-    if(data[4]==1)for(uint32_t g=0;g<3u;++g){
-        uint32_t length=ln_menu_legacy_counts[g];
-        bool stock=menu_counts[g]==length||(g==LN_MENU_HOME&&menu_counts[g]==length+1u&&menu_order[g][length]==7u);
-        for(uint32_t i=0;stock&&i<length;++i)if(menu_order[g][i]!=ln_menu_legacy[g][i])stock=false;
-        if(stock){
-            menu_counts[g]=ln_menu_default_counts[g];
-            for(uint32_t i=0;i<menu_counts[g];++i)menu_order[g][i]=ln_menu_defaults[g][i];
+    /* Upgrade only recognizable stock menus. Keep custom ordering and shortcuts. */
+    if(data[4]<3)for(uint32_t g=0;g<LN_MENU_GROUPS;++g){
+        bool stock=false;
+        for(uint32_t variant=0;variant<3u&&!stock;++variant){
+            if(variant&&!(data[4]==1&&g<3u))continue;
+            const uint8_t *order=variant?ln_menu_legacy[g]:ln_menu_previous[g];
+            uint32_t length=variant?ln_menu_legacy_counts[g]:ln_menu_previous_counts[g];
+            if(variant==2u&&g!=LN_MENU_HOME)continue;
+            for(uint32_t filtered=0;filtered<2u&&!stock;++filtered){
+                uint32_t at=0;bool match=true;
+                for(uint32_t i=0;i<length+(variant==2u);++i){
+                    uint32_t id=i<length?order[i]:7u;
+                    const char *target=ln_menu_targets[g][id];
+                    if(g==LN_MENU_HOME&&id==7u)target="linnet.system.games";
+                    if(filtered&&target&&target[0]!='@'){
+                        bool enabled=false;
+                        for(uint32_t j=0;j<ln_ui_scene_count;++j)
+                            if(same(target,ln_ui_scenes[j].id)&&(ln_ui_enabled_scenes&(1u<<j)))enabled=true;
+                        if(!enabled)continue;
+                    }
+                    if(at>=menu_counts[g]||menu_order[g][at]!=id)match=false;
+                    ++at;
+                }
+                stock=match&&at==menu_counts[g];
+            }
         }
+        if(stock){menu_counts[g]=ln_menu_default_counts[g];
+            for(uint32_t i=0;i<menu_counts[g];++i)menu_order[g][i]=ln_menu_defaults[g][i];}
     }
-    if(data[4]==1)for(uint32_t g=LN_MENU_HOME;g<=LN_MENU_MUSIC;++g){
-        uint8_t id=g==LN_MENU_HOME?10u:15u;bool present=false;
-        for(uint32_t i=0;i<menu_counts[g];++i)if(menu_order[g][i]==id)present=true;
-        if(!present){uint32_t at=g==LN_MENU_HOME&&menu_order[g][0]==0?1u:0u;
-            for(uint32_t i=menu_counts[g];i>at;--i)menu_order[g][i]=menu_order[g][i-1];
-            menu_order[g][at]=id;++menu_counts[g];}
-    }
-    /* Expand the former Extras entry while preserving existing choices. */
-    uint8_t home[16];uint32_t count=0,seen=0;
-    for(uint32_t i=0;i<menu_counts[LN_MENU_HOME];++i)seen|=1u<<menu_order[LN_MENU_HOME][i];
-    for(uint32_t i=0;i<menu_counts[LN_MENU_HOME];++i){uint8_t id=menu_order[LN_MENU_HOME][i];
-        if(id==8){if(!(seen&(1u<<3)))home[count++]=3;if(!(seen&(1u<<9)))home[count++]=9;}else home[count++]=id;}
-    menu_counts[LN_MENU_HOME]=(uint8_t)count;for(uint32_t i=0;i<count;++i)menu_order[LN_MENU_HOME][i]=home[i];
-    uint8_t settings[16];count=0;seen=0;
-    for(uint32_t i=0;i<menu_counts[LN_MENU_SETTINGS];++i)seen|=1u<<menu_order[LN_MENU_SETTINGS][i];
-    for(uint32_t i=0;i<menu_counts[LN_MENU_SETTINGS];++i){uint8_t id=menu_order[LN_MENU_SETTINGS][i];settings[count++]=id;if(id==0&&!(seen&(1u<<10)))settings[count++]=10;}
-    if(!(seen&(1u<<11)))settings[count++]=11;
-    menu_counts[LN_MENU_SETTINGS]=(uint8_t)count;for(uint32_t i=0;i<count;++i)menu_order[LN_MENU_SETTINGS][i]=settings[i];
+    bool sound=false;
+    for(uint32_t i=0;i<menu_counts[LN_MENU_SETTINGS];++i)if(menu_order[LN_MENU_SETTINGS][i]==11u)sound=true;
+    if(!sound)menu_order[LN_MENU_SETTINGS][menu_counts[LN_MENU_SETTINGS]++]=11u;
     return true;
 }
 static const char *const menu_scenes[]={"linnet.system.home","linnet.system.music","linnet.system.settings","linnet.system.extras"};
@@ -109,6 +114,7 @@ static uint32_t menu_lookup(const struct ln_ui_node *n,uint32_t row,uint32_t *co
     }
     for(uint32_t i=0;i<menu_counts[group];++i){const char *id=ln_menu_targets[group][menu_order[group][i]];
         if(group==LN_MENU_HOME&&menu_order[group][i]==7u){if(!ln_games_count())continue;id="linnet.system.games";}
+        if(group==LN_MENU_EXTRAS&&same(id,"linnet.system.games")&&!ln_games_count())continue;
         for(uint32_t j=0;j<n->item_count;++j){uint32_t target=n->targets[j];const char *actual=target==LINNET_UI_ACTION_SYNC?"@sync":target==LINNET_UI_ACTION_SHUFFLE_ALL?"@shuffle-all":target<ln_ui_scene_count?ln_ui_scenes[target].id:"";
             if(same(id,actual)){if(row==found)return j;++found;break;}}}
     if(count)*count=found;
@@ -825,7 +831,6 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
             int32_t used=(int32_t)min(capacity,count>first?count-first:0)*row_h;
             fill(p,(struct rect){n->x,n->y+used,n->w,max(0,n->h-used)},bg);
         }
-        bool navigation=photo_list&&n->kind==LN_UI_VIRTUAL_LIST&&ln_ui_dynamic_navigation(n,UINT32_MAX);
         uint32_t column=0,row=0;
         for(uint32_t i=first;i<count&&i-first<capacity*cols;++i){
             struct rect r={n->x+(int32_t)column*w,n->y+(int32_t)row*row_h,w,row_h};
@@ -860,7 +865,7 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
             }else {
                 bool mark=theme_choices(n)&&i==active_theme;
                 bool arrow=apple_style()&&((n->targets&&source<n->item_count&&n->targets[source]<ln_ui_scene_count)||
-                    navigation);
+                    (n->kind==LN_UI_VIRTUAL_LIST&&ln_ui_dynamic_navigation(n,i)));
                 int32_t padding=(int32_t)ln_ui_themes[active_theme].padding;
                 if(layout()==LN_UI_LAYOUT_SUNSET&&n->kind!=LN_UI_VIRTUAL_LIST){char ordinal[11];number(ordinal,i+1u);text(p,r.x+2,r.y+max(0,(row_h-(int32_t)ln_ui_font.height)/2),ordinal,ink);padding=max(28,text_width(ordinal)+10);}
                 if(cols==2u){struct ln_ui_node tile=*n;tile.x=r.x+7;tile.y=r.y+7;tile.w=r.w-14;tile.h=r.h-12;tile.flags=32u;text_block(p,&tile,label,ink);}
@@ -1001,6 +1006,7 @@ static bool change_scene_to(struct ln_ui_state*s,uint32_t target,bool remember){
     s->selections[s->scene]=s->selected;s->scene=target;s->selected=editor?0u:s->selections[target];const struct ln_ui_node*n=focus(s);uint32_t count=n?total(n):0;if(theme_choices(n))s->selected=ln_ui_theme_index();if(!count)s->selected=0;else if(s->selected>=count)s->selected=count-1u;s->dirty|=1u;++s->transitions;++s->scene_epoch;return true;}
 static bool change_scene(struct ln_ui_state*s,uint32_t target){return change_scene_to(s,target,true);}
 static bool previous_scene(struct ln_ui_state*s){while(s->history_count){uint32_t target=s->history[--s->history_count];if(target<ln_ui_scene_count&&(ln_ui_enabled_scenes&(1u<<target)))return change_scene_to(s,target,false);}return change_scene_to(s,0,false);}
+bool ln_ui_back(struct ln_ui_state*s){return s&&previous_scene(s);}
 void ln_ui_refresh(struct ln_ui_state*s){if(!s)return;theme_sync();const struct ln_ui_node*n=focus(s);uint32_t count=n?total(n):0;if(!count)s->selected=0;else if(s->selected>=count)s->selected=count-1u;if(s->scene<32u)s->selections[s->scene]=s->selected;s->dirty|=1u;}
 void ln_ui_refresh_content(struct ln_ui_state*s){
     if(!s)return;const struct ln_ui_node*n=focus(s);uint32_t count=n?total(n):0;
