@@ -1,6 +1,6 @@
 id = "ipod4g-q21"
-name = "Linnet for iPod 4G MP102"
-aliases = ["ipod4g", "ipod-4g", "ipod4g-gray", "mp102", "q21", "pe435a"]
+name = "Linnet for iPod 4G Monochrome"
+aliases = ["ipod4g", "ipod-4g", "ipod4g-gray", "mp102", "q21", "pe435a", "a1059"]
 image_target = 8
 board_id = "q21"
 model_alias = "mp102"
@@ -47,8 +47,9 @@ default_theme = "linnet.theme.ipod4g-mono"
 usb_vid = 1452
 usb_pid = 4611
 board_names = ["iPod Q21"]
-model_numbers = ["PE435A"]
-regulatory_models = ["MP102"]
+model_numbers = ["PE435A", "M9282"]
+regulatory_models = ["MP102", "A1059"]
+regulatory_model_by_model = { PE435A = "MP102", M9282 = "A1059" }
 firmware_signature = { offset = 32, ascii = "portalplayer" }
 
 [native_storage]

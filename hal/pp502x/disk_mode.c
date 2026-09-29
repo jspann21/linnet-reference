@@ -263,7 +263,7 @@ _Noreturn void ln_pp_disk_mode(const char *serial,uint32_t sector_bytes,bool wri
     if(!drive.initialized || drive.failed || !drive.can_flush || logical_sectors>UINT32_MAX)
         ln_platform_hardware_reset();
     capacity=(uint32_t)logical_sectors;
-#if (defined(LINNET_SOC_PP5022) || LINNET_TARGET_NUMBER == 98) && defined(LINNET_IMAGE_OS)
+#if (defined(LINNET_SOC_PP5022) || defined(LINNET_TARGET_IPOD4G_Q21) || LINNET_TARGET_NUMBER == 98) && defined(LINNET_IMAGE_OS)
     /* USB owns uncached aliases of both DMA source buffers. The CPU may cache
      * its code and private state without hiding ATA data from the controller. */
     if(!ln_core_cache_enable())ln_platform_hardware_reset();

@@ -143,7 +143,7 @@ bool ln_q21_lcd_reinitialize(void)
 
 bool ln_q21_lcd_diagnostic(void)
 {
-    static const char lines[7][24]={"LINNET DISPLAY TEST","MP102 160 X 128","0123456789","ABCDEFGHIJKLMNO","PQRSTUVWXYZ","EDGE TO EDGE"};
+    static const char lines[7][24]={"LINNET DISPLAY TEST","4G MONO 160 X 128","0123456789","ABCDEFGHIJKLMNO","PQRSTUVWXYZ","EDGE TO EDGE"};
     return draw(0xffffu,lines,false);
 }
 

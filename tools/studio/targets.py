@@ -277,6 +277,11 @@ def _validate_profiles(path, spec):
             not retail.get("sector_bytes", [512]) or
             any(type(n) is not int or n not in (512, 2048, 4096) for n in retail.get("sector_bytes", [512]))):
         raise RuntimeError(f"invalid retail detection profile: {path}")
+    regulatory_map = retail.get("regulatory_model_by_model", {})
+    if (not isinstance(regulatory_map, dict) or any(
+            model not in retail["model_numbers"] or regulatory not in retail["regulatory_models"]
+            for model, regulatory in regulatory_map.items())):
+        raise RuntimeError(f"invalid retail model mapping: {path}")
     signature = retail.get("firmware_signature")
     if signature is not None and (
             not isinstance(signature, dict) or set(signature) != {"offset", "ascii"} or

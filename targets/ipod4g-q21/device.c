@@ -14,13 +14,16 @@ bool ln_target_battery_charging(void)
 
 void ln_target_ata_classify(const char *model,uint32_t *media_kind,uint32_t *rotation_rpm)
 {
-    static const char original[]="TOSHIBA MK2006GAL";
-    uint32_t i=0;
+    static const char *const originals[]={"TOSHIBA MK2006GAL","TOSHIBA MK2004GAL","TOSHIBA MK4004GAH"};
     if(!model||!media_kind||!rotation_rpm)return;
-    while(original[i]&&model[i]==original[i])++i;
-    if(original[i]||model[i])return;
-    *media_kind=LN_ATA_MEDIA_ROTATING;
-    *rotation_rpm=4200u;
+    for(uint32_t n=0;n<sizeof(originals)/sizeof(originals[0]);++n){
+        uint32_t i=0;
+        while(originals[n][i]&&model[i]==originals[n][i])++i;
+        if(originals[n][i]||model[i])continue;
+        *media_kind=LN_ATA_MEDIA_ROTATING;
+        *rotation_rpm=4200u;
+        return;
+    }
 }
 
 void ln_target_input_prepare(void)

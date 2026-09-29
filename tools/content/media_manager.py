@@ -109,10 +109,15 @@ def _identify(identity):
             storage["partition_offset"] != identity["partition_offset"]):
         raise RuntimeError("USB and mounted storage identities disagree")
     spec = TARGETS[detected["target_id"]]
+    model_number = detected["retail_os"].get("model_number")
+    regulatory_models = spec["retail"]["regulatory_models"]
+    regulatory_model = spec["retail"].get("regulatory_model_by_model", {}).get(model_number)
+    if regulatory_model is None and len(regulatory_models) == 1:
+        regulatory_model = regulatory_models[0]
     result = dict(identity, target_id=detected["target_id"], target_name=spec["name"],
                 linnet_usb_serial=detected["linnet_usb_serial"],
-                model_number=detected["retail_os"].get("model_number"),
-                regulatory_model=(spec["retail"]["regulatory_models"] or [None])[0],
+                model_number=model_number,
+                regulatory_model=regulatory_model,
                 media_profile=media_profile(detected["target_id"]))
     if identity.get("native_target_id"):
         result["media_cache_disk_serial"] = _retail_cache_serial(result)

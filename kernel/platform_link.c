@@ -3,6 +3,7 @@
 #include "kernel/runtime.h"
 #include "hal/api/recovery.h"
 #include "hal/api/input.h"
+#include "hal/api/power.h"
 #include "boot/include/linnet_boot.h"
 #include "linnet_target.h"
 
@@ -52,7 +53,7 @@ static const uint32_t ln_platform_crc_table[256] = {
 };
 
 int ln_platform_link_dispatch(const ln_link_frame *request, ln_link_frame *response) {
-    if (request->command < 64 || request->command > 70) return 0;
+    if (request->command < 64 || request->command > 71) return 0;
     if (request->flags || !request->sequence || request->length > LINNET_LINK_MAX_PAYLOAD ||
         (request->length && !request->payload)) return 0;
     uint32_t generation=ln_recovery_generation();
@@ -60,7 +61,14 @@ int ln_platform_link_dispatch(const ln_link_frame *request, ln_link_frame *respo
     response->flags=LINNET_LINK_ACK|LINNET_LINK_ERROR;
     response->payload=ln_platform_reply; response->length=8;
     ln_write_le32(ln_platform_reply, generation); ln_write_le32(ln_platform_reply+4, 0);
-    if (request->command == 70) {
+    if (request->command == 71) {
+        if(request->length)return 1;
+        struct ln_power_state power;ln_power_snapshot(&power);
+        uint32_t words[12]={0x52574f50u,generation,power.sampled_us,power.samples,
+            power.failures,power.bus_resets,power.battery_mv,power.battery_raw,
+            power.charge_limit_ma,power.flags,power.battery_percent,power.sleeping};
+        for(uint32_t i=0;i<12u;++i)ln_write_le32(ln_platform_reply+i*4,words[i]);response->length=48;
+    } else if (request->command == 70) {
         if(request->length)return 1;uint32_t words[16];ln_input_diagnostics(words);
         for(uint32_t i=0;i<16u;++i)ln_write_le32(ln_platform_reply+i*4,words[i]);response->length=64;
     } else if (request->command == 69) {
