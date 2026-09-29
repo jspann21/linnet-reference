@@ -170,7 +170,7 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None):
     return True
 
 
-def finish_preparation(change, *, committed):
+def finish_preparation(change, *, committed, kind='AAC'):
     """Restore an unpublished original, or retire its owned host backup."""
     from .guard import hash_file
     path, backup = Path(change['path']), Path(change['backup'])
@@ -179,9 +179,9 @@ def finish_preparation(change, *, committed):
         if current == change['original_bytes'] and hash_file(path, current) == change['original_sha256']:
             backup.unlink(); return
         if current != change['prepared_bytes'] or hash_file(path, current) != change['prepared_sha256']:
-            raise OSError('AAC copy changed after preparation; original backup retained')
+            raise OSError(f'{kind} copy changed after preparation; original backup retained')
         if hash_file(backup, change['original_bytes']) != change['original_sha256']:
-            raise OSError('AAC original backup did not verify')
+            raise OSError(f'{kind} original backup did not verify')
         temporary = path.with_name('L' + uuid.uuid4().hex[:7] + '.TMP')
         owned = False
         try:
@@ -190,7 +190,7 @@ def finish_preparation(change, *, committed):
                 while chunk := reader.read(1024 * 1024):writer.write(chunk)
                 writer.flush(); os.fsync(writer.fileno())
             if hash_file(temporary, change['original_bytes']) != change['original_sha256']:
-                raise OSError('AAC original restoration did not verify')
+                raise OSError(f'{kind} original restoration did not verify')
             temporary.replace(path)
             os.utime(path, ns=(change['atime_ns'], change['mtime_ns']))
         finally:

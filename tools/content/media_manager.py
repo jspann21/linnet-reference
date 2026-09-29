@@ -430,8 +430,14 @@ def additions(root, pending, *, snapshots=None):
                 raise ValueError(f"Two selected files have the same destination: {destination}")
             if destination.exists():
                 if not destination.is_file() or destination.stat().st_size != info.st_size or _hash(destination) != _hash(path):
-                    from .aac_index import same_original
-                    if kind != 'Music' or path.suffix.lower() not in ('.m4a', '.m4b') or not same_original(path, destination):
+                    equivalent = False
+                    if kind == 'Music' and path.suffix.lower() in ('.m4a', '.m4b'):
+                        from .aac_index import same_original
+                        equivalent = same_original(path, destination)
+                    elif kind == 'Music' and path.suffix.lower() in ('.flac', '.flc'):
+                        from .flac_index import same_original
+                        equivalent = same_original(path, destination)
+                    if not equivalent:
                         raise ValueError(f"A different file already exists: {destination}. Rename the new file or folder first.")
                 continue
             planned[key] = dict(kind=kind, source=str(path), destination=str(destination),
@@ -858,6 +864,25 @@ def _prepare_aac(root, cache, skipped, checkpoint, progress, report, recovery, r
                 record()
 
 
+def _prepare_flac(root, cache, skipped, ffprobe, checkpoint, progress, report, recovery, record):
+    if not ffprobe:
+        return
+    from .flac_index import prepare_file
+    for folder in source_folders(root, 'Music'):
+        for path in folder.rglob('*'):
+            checkpoint()
+            if path.suffix.lower() not in ('.flac', '.flc') or not path.is_file():
+                continue
+            if path.relative_to(root).as_posix().casefold() in skipped:
+                continue
+            _plain(path, root)
+            progress(f'Preparing FLAC seeks: {path.name}')
+            if prepare_file(path, cache / 'flac-seek', ffprobe=ffprobe,
+                            checkpoint=checkpoint, recovery=recovery):
+                report['steps'].append(dict(prepared_flac=str(path.relative_to(root))))
+                record()
+
+
 def _prepare_music(root, cache, identity, skipped, *, ffprobe, verification, force,
                    cancelled, checkpoint, progress, report, begin_publication):
     from .music import compile_music
@@ -1202,6 +1227,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
     receipt = cache / ("session-" + uuid.uuid4().hex + ".json")
     report["receipt"] = str(receipt)
     aac_recovery = report['aac_preparations'] = []
+    flac_recovery = report['flac_preparations'] = []
     aac_committed = aac_publication_started = False
 
     def checkpoint():
@@ -1262,6 +1288,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             retail_photos = images(root)
         if 'Music' in selected:
             _prepare_aac(root, cache, skipped['Music'], checkpoint, progress, report, aac_recovery, record)
+            _prepare_flac(root, cache, skipped['Music'], ffprobe or shutil.which('ffprobe'),
+                          checkpoint, progress, report, flac_recovery, record)
         inventory = scan(root, selected, skipped=skipped, retail_photos=retail_photos,
                          fingerprint_kinds=(kind for kind in selected if kind != "Videos"))
         if "Videos" in selected:
@@ -1387,14 +1415,14 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
     finally:
         emit_stage('Cleaning up', total_stages - 1, can_stop=False)
         from .aac_index import finish_preparation
-        for change in aac_recovery:
+        for change in aac_recovery + flac_recovery:
             try:
                 _volume_guard(identity)
                 _plain(Path(change['path']), root)
                 _plain(Path(change['backup']), cache)
                 if aac_publication_started and not aac_committed:
-                    raise OSError('Music publication is uncertain; AAC original retained for recovery')
-                finish_preparation(change, committed=aac_committed)
+                    raise OSError('Music publication is uncertain; audio original retained for recovery')
+                finish_preparation(change, committed=aac_committed, kind=change.get('kind', 'AAC'))
                 change['outcome'] = 'published' if aac_committed else 'restored'
             except Exception as error:
                 report['complete'] = False
