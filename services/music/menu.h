@@ -13,7 +13,7 @@ static inline bool ln_music_menu_scene_enabled(uint32_t scene){
 }
 static inline uint32_t ln_music_menu_category(bool more,uint32_t row){
     bool covers=!more&&ln_music_menu_scene_enabled(LN_UI_SCENE_COVER_FLOW),has_more=false;
-    for(uint32_t i=0;i<ln_ui_menu_count(LN_MENU_MUSIC);++i){
+    for(uint32_t i=0,n=ln_ui_menu_count(LN_MENU_MUSIC);i<n;++i){
         uint32_t id=ln_ui_menu_item(LN_MENU_MUSIC,i);bool secondary=ln_music_menu_more(id);
         if(secondary)has_more=true;
         if(secondary!=more)continue;
@@ -25,7 +25,17 @@ static inline uint32_t ln_music_menu_category(bool more,uint32_t row){
     return !more&&has_more&&!row?LN_MUSIC_MORE:UINT32_MAX;
 }
 static inline uint32_t ln_music_menu_count(bool more){
-    uint32_t count=0;while(ln_music_menu_category(more,count)!=UINT32_MAX)++count;return count;
+    uint32_t count=0;bool has_more=false;
+    for(uint32_t i=0,n=ln_ui_menu_count(LN_MENU_MUSIC);i<n;++i){
+        bool secondary=ln_music_menu_more(ln_ui_menu_item(LN_MENU_MUSIC,i));
+        if(secondary)has_more=true;
+        if(secondary==more)++count;
+    }
+    if(!more){
+        if(ln_music_menu_scene_enabled(LN_UI_SCENE_COVER_FLOW))++count;
+        if(has_more)++count;
+    }
+    return count;
 }
 enum { LN_SOUND_ROOT, LN_SOUND_EQ, LN_SOUND_ADVANCED };
 enum { LN_SOUND_CLICKER=13, LN_SOUND_CUSTOM_EQ, LN_SOUND_MORE };
