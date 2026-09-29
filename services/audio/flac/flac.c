@@ -52,6 +52,12 @@ int ln_flac_open_step(struct ln_flac*s)
     }return fail(s,LN_PCM_FORMAT);
 }
 static void yield_decoder(void){}
+static int16_t pcm16(int32_t raw)
+{
+    int32_t sample=raw>=0?raw/8192:-(int32_t)(((uint32_t)(-(int64_t)raw)+8191u)/8192u);
+    if(sample>32767)sample=32767;if(sample<-32768)sample=-32768;
+    return (int16_t)sample;
+}
 static uint16_t crc16(const uint8_t*p,uint32_t n)
 {
     static const uint16_t table[256]={
@@ -100,10 +106,13 @@ int ln_flac_decode(struct ln_flac*s,int16_t*out,uint32_t capacity,uint32_t*frame
     if(s->error)return s->error;if(s->phase!=4)return LN_PCM_PENDING;
     if(s->decoded_cursor<s->decoded_frames){
         uint32_t n=s->decoded_frames-s->decoded_cursor;if(n>capacity)n=capacity;
-        for(uint32_t i=0;i<n;++i){uint32_t index=s->decoded_cursor+i;
-            for(uint32_t ch=0;ch<2;++ch){int32_t raw=s->samples[s->channels==1?0:ch][index];
-                int32_t sample=raw>=0?raw/8192:-(int32_t)(((uint32_t)(-(int64_t)raw)+8191u)/8192u);
-                if(sample>32767)sample=32767;if(sample<-32768)sample=-32768;out[2u*i+ch]=(int16_t)sample;}}
+        if(s->channels==1){
+            for(uint32_t i=0;i<n;++i){int16_t sample=pcm16(s->samples[0][s->decoded_cursor+i]);
+                out[2u*i]=sample;out[2u*i+1u]=sample;}
+        }else{
+            for(uint32_t i=0;i<n;++i){uint32_t index=s->decoded_cursor+i;
+                out[2u*i]=pcm16(s->samples[0][index]);out[2u*i+1u]=pcm16(s->samples[1][index]);}
+        }
         s->decoded_cursor+=n;s->frame+=n;*frames=n;return LN_PCM_READY;
     }
     if(s->total_frames&&s->frame>=s->total_frames)return LN_PCM_EOF;
