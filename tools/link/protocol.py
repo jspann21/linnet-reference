@@ -38,6 +38,7 @@ class Command(IntEnum):
     PLATFORM_CONTROL = 68
     UI_STATE = 69
     INPUT_STATE = 70
+    POWER_STATE = 71
     AUDIO_STATE = 112
     AUDIO_CONFIG = 113
     AUDIO_PCM = 114

@@ -122,6 +122,7 @@ size_t ln_display_capture(uint8_t *out,size_t capacity) {
 void ln_display_sync_diagnostics(uint32_t out[16]) {
     if(!out)return;for(unsigned i=0;i<16;i++)out[i]=0;
     out[0]=0x36325344;out[1]=busy;out[2]=error;out[3]=submitted;out[4]=completed;out[5]=max_us;
+    out[6]=ln_n25_panel_type();
 }
 void ln_display_blit_diagnostics(uint32_t out[16]){ln_display_sync_diagnostics(out);}
 uint32_t ln_display_column_mismatches(void){return 0;}

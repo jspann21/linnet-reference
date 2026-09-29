@@ -295,6 +295,15 @@ class Session:
             raise ProtocolError('invalid platform state size')
         return struct.unpack('<32I', payload)
 
+    def power_state(self) -> dict:
+        payload = self.request(Command.POWER_STATE)
+        if len(payload) != 48 or payload[:4] != b'POWR':
+            raise ProtocolError('invalid power state')
+        names = ('magic', 'generation', 'sampled_us', 'samples', 'failures',
+                 'bus_resets', 'battery_mv', 'battery_raw', 'charge_limit_ma',
+                 'flags', 'battery_percent', 'sleeping')
+        return dict(zip(names, struct.unpack('<12I', payload)))
+
     def platform_input(self, generation: int, events: list[tuple[int, int, int]]) -> None:
         if not 1 <= len(events) <= 32:
             raise ValueError('synthetic input request requires 1..32 events')
