@@ -22,6 +22,7 @@ uint32_t ln_display_theme_revision(void);
  * Local completion tracking may change. Weak default is false. */
 bool ln_display_theme_presented(uint32_t revision);
 uint32_t ln_display_backlight_timeout_us(void);
+bool ln_display_backlight_off(void);
 uint32_t ln_display_settings_revision(void);
 /* UINT32_MAX keeps the compiled default; persistence stores the stable theme ID. */
 uint32_t ln_display_theme_index(void);

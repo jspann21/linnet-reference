@@ -79,7 +79,7 @@ static uint32_t text_scroll_at=UINT32_MAX,palette_at=UINT32_MAX;
 #endif
 static uint32_t brightness=100;
 static uint32_t backlight_deadline,backlight_timeout=30000000u;
-static bool backlight_idle;
+static bool backlight_idle,backlight_off;
 static bool first_frame_ready;
 #if defined(LINNET_STORAGE)
 static bool restart_requested;
@@ -112,13 +112,16 @@ void ln_runtime_idle_clock_diagnostics(uint32_t output[4]){
 #endif
 #endif
 static bool wake(void);
+static void backlight_restore(void){
+    backlight_idle=backlight_off;
+    backlight_deadline=ln_time_us()+backlight_timeout;
+    ln_power_backlight(!sleeping&&!backlight_off&&brightness!=0,
+        backlight_off?0u:(uint8_t)((brightness*255u+50u)/100u));
+}
 static void backlight_activity(void){
     if(sleeping&&!wake())return;
     backlight_deadline=ln_time_us()+backlight_timeout;
-    if(backlight_idle){
-        backlight_idle=false;
-        ln_power_backlight(brightness!=0,(uint8_t)((brightness*255u+50u)/100u));
-    }
+    if(backlight_idle!=backlight_off)backlight_restore();
 }
 #if defined(LINNET_AUDIO)
 static uint32_t sleep_timer_revision;
@@ -705,8 +708,7 @@ static bool wake(void){
 #endif
     if(!ln_power_wake())return false;
     sleeping=false;++wake_count;wake_at=0;
-    backlight_idle=false;backlight_deadline=ln_time_us()+backlight_timeout;
-    ln_power_backlight(brightness!=0,(uint8_t)((brightness*255u+50u)/100u));
+    backlight_restore();
     return true;
 }
 bool ln_runtime_init(void){
@@ -721,6 +723,7 @@ bool ln_runtime_init(void){
     shutdown_activity();auto_shutdown_timeout=0;auto_shutdown_headphones=false;
     update_status_at=0;
     backlight_timeout=ln_display_backlight_timeout_us();
+    backlight_off=ln_display_backlight_off();
 #endif
     ln_exec_init(&executive);ln_arena_init(&scene_arena,scene_memory,sizeof scene_memory);
     if(!ln_core_init())ln_panic(30,1,0);
@@ -754,8 +757,7 @@ bool ln_runtime_init(void){
 #endif
     ln_input_snapshot(&input);ln_power_snapshot(&power);
     if(!reset_shell())ln_panic(30,6,0);
-    ln_power_backlight(true,255);
-    backlight_idle=false;backlight_deadline=ln_time_us()+backlight_timeout;
+    backlight_restore();
 #if defined(LINNET_NATIVE_UI) && defined(LINNET_STORAGE)
     /* Preserve the Boot panel until the saved theme has been resolved by the
      * normal asynchronous storage/settings path. No extra disk read or delay. */
@@ -873,6 +875,7 @@ void ln_runtime_step(void){
     if(display_settings_revision!=settings_revision){
         display_settings_revision=settings_revision;
         backlight_timeout=ln_display_backlight_timeout_us();
+        backlight_off=ln_display_backlight_off();
         if(!sleeping)backlight_activity();
         if(scene_is(LN_UI_SCENE_DISPLAY)||scene_is(LN_UI_SCENE_BATTERY)||scene_is(LN_UI_SCENE_SHUTDOWN)||scene_is(LN_UI_SCENE_THEMES)||scene_is(LN_UI_SCENE_HOME)||scene_is(LN_UI_SCENE_GAMES)||shell->drawn_theme!=ln_ui_theme_index()){ln_ui_refresh(shell);dirty=true;}
     }
@@ -1315,8 +1318,7 @@ int ln_runtime_control(uint32_t command,uint32_t argument){
     case LN_CONTROL_WAKE:ln_exec_cancel(&executive,LN_SERVICE_POWER,1);return wake();
     case LN_CONTROL_BACKLIGHT:
         if(argument>100u)return 0;brightness=argument;
-        backlight_idle=false;backlight_deadline=ln_time_us()+backlight_timeout;
-        ln_power_backlight(!sleeping&&argument!=0,(uint8_t)((argument*255u+50u)/100u));return 1;
+        backlight_restore();return 1;
     case LN_CONTROL_COP_RESET:
         if(!ln_display_reset())return 0;dirty=true;return 1;
     case LN_CONTROL_ANIMATION:

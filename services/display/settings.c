@@ -5,8 +5,10 @@
 #include "boot/include/linnet_boot.h"
 #include "ui/runtime/ui.h"
 #include "services/games/games.h"
-static const uint32_t seconds[]={0,5,10,15,30,60,120};
-static const char *const labels[]={"Backlight: Never","Backlight: 5 sec","Backlight: 10 sec","Backlight: 15 sec","Backlight: 30 sec","Backlight: 1 minute","Backlight: 2 minutes"};
+/* Append Off so existing saved timeout choices retain their meaning. */
+enum { BACKLIGHT_OFF=7 };
+static const uint32_t seconds[]={0,5,10,15,30,60,120,0};
+static const char *const labels[]={"Backlight: Always on","Backlight: 5 sec","Backlight: 10 sec","Backlight: 15 sec","Backlight: 30 sec","Backlight: 1 minute","Backlight: 2 minutes","Backlight: Off"};
 static const uint32_t shutdown_seconds[]={0,60,120,300,600,900,1800,3600,7200};
 static const char *const shutdown_labels[]={"Off","1 min","2 min","5 min","10 min","15 min","30 min","1 hour","2 hours"};
 static uint8_t shutdown_choice[2];
@@ -67,6 +69,7 @@ void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loade
 bool ln_display_clock_12(void){return clock_12;}
 void ln_display_clock_toggle(void){clock_12=!clock_12;mark_record_dirty();++revision;}
 uint32_t ln_display_backlight_timeout_us(void){return seconds[choice]*1000000u;}
+bool ln_display_backlight_off(void){return choice==BACKLIGHT_OFF;}
 uint32_t ln_display_settings_revision(void){return revision;}
 uint32_t ln_display_theme_index(void){return theme_index;}
 uint32_t ln_display_theme_revision(void){return theme_revision;}
@@ -83,7 +86,7 @@ bool ln_display_settings_pending(void){return dirty||(theme_dirty&&(!theme_loade
 const char *ln_display_settings_label(void){return labels[choice];}
 bool ln_display_settings_adjust(int32_t direction){
     if(!direction)return false;
-    choice=direction<0?(choice?choice-1u:6u):(choice==6u?0u:choice+1u);
+    choice=direction<0?(choice?choice-1u:BACKLIGHT_OFF):(choice==BACKLIGHT_OFF?0u:choice+1u);
     mark_record_dirty();++revision;return true;
 }
 /* Wait for the saved choice before allowing feedback, including saved Off. */
@@ -137,7 +140,7 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
     uint8_t saved_photo[16]={0};uint32_t saved_video[2]={0};
     if(bytes<36||ln_read_le32(raw)!=0x54544553u||ln_read_le32(raw+bytes-4)!=ln_crc32(raw,bytes-4))return malformed_record();
     uint32_t n=(uint32_t)raw[4]|((uint32_t)raw[5]<<8),f=raw[14];
-    if(n!=bytes-36||((raw[7]>>1)&3u)>2u||raw[6]>6||(raw[15]&15u)>8u||(raw[15]>>4)>8u||(f&7u)>5||((f>>5)&3u)>2||(f&128u))return malformed_record();
+    if(n!=bytes-36||((raw[7]>>1)&3u)>2u||raw[6]>BACKLIGHT_OFF||(raw[15]&15u)>8u||(raw[15]>>4)>8u||(f&7u)>5||((f>>5)&3u)>2||(f&128u))return malformed_record();
     saved_choice=raw[6];saved_clock_12=(raw[7]&1u)!=0;
     saved_video_options=(uint8_t)(((raw[7]>>1)&3u)|(((raw[7]>>3)&1u)<<2)|(((raw[7]>>4)&1u?0u:1u)<<3)|(((raw[7]>>5)&1u)<<4));
     ln_write_le32(saved_photo,ln_read_le32(raw+8));ln_write_le32(saved_photo+4,(uint32_t)raw[12]|((uint32_t)raw[13]<<8));
