@@ -8,21 +8,19 @@ dy = 3
 [[adjustments]]
 scene = "linnet.system.music"
 text = "Right: Actions  Menu: Back"
-y = 112
-h = 14
-replace_text = "Menu: Back"
+y = 100
+h = 26
 
 [[adjustments]]
 scene = "linnet.system.music-queue"
 text = "Select: Actions  Menu: Back"
-y = 112
-h = 14
-replace_text = "Menu: Back"
+y = 100
+h = 26
 
 [[adjustments]]
 scene = "linnet.system.music"
 kind = 6
-h = 96
+h = 75
 row_height = 15
 
 [[adjustments]]
@@ -43,7 +41,7 @@ row_height = 15
 [[adjustments]]
 scene = "linnet.system.music-queue"
 kind = 6
-h = 96
+h = 75
 row_height = 15
 
 [[adjustments]]
@@ -54,7 +52,7 @@ row_height = 15
 [[adjustments]]
 scene = "linnet.system.music"
 kind = 9
-h = 96
+h = 75
 
 [[adjustments]]
 scene = "linnet.system.music-search"
@@ -69,7 +67,7 @@ h = 91
 [[adjustments]]
 scene = "linnet.system.music-queue"
 kind = 9
-h = 96
+h = 75
 
 [[adjustments]]
 scene = "linnet.system.sleep-timer"
@@ -79,7 +77,15 @@ h = 80
 [[adjustments]]
 scene = "linnet.system.clock"
 kind = 9
-h = 30
+y = 51
+h = 32
+
+[[adjustments]]
+scene = "linnet.system.clock"
+kind = 6
+y = 51
+h = 32
+row_height = 16
 
 [[adjustments]]
 scene = "linnet.system.clock-edit"

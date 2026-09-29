@@ -2,7 +2,7 @@ import { Screen, StatusBar, Scrollbar, Menu } from "@linnet/ui";
 export default function Scene() { return (
 <Screen>
   <StatusBar w={220} h={20} text="Extras" bg="theme.panel" deps={16} />
-  <Menu x={4} y={24} w={202} h={148} items={['Clock','Notes','Videos','Files','UI Demo']} targets={['linnet.system.clock','linnet.system.notes','linnet.system.videos','linnet.system.files','local.example.notes']} focus={true} />
+  <Menu x={4} y={24} w={202} h={148} items={['Date & Time','Notes','Videos','Files','UI Demo']} targets={['linnet.system.clock','linnet.system.notes','linnet.system.videos','linnet.system.files','local.example.notes']} focus={true} />
   <Scrollbar x={210} y={24} w={6} h={148} fg="theme.accent" />
 </Screen>
 ); }

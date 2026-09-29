@@ -4,7 +4,6 @@ export default function Scene() {
 <Screen>
   <StatusBar w={220} h={20} text="Display" bg="theme.panel" deps={16} />
   <VirtualList x={4} y={24} w={212} h={48} count={2} text="Display timeout" items={['Timeout: 30 seconds','Click: Classic']} focus={true} />
-  <Text x={4} y={80} w={212} h={20} text="Battery, USB and AC" fg="theme.muted" />
   <Text x={4} y={108} w={212} h={20} text="SELECT/RIGHT Next" fg="theme.muted" />
   <Text x={4} y={132} w={212} h={20} text="LEFT Previous" fg="theme.muted" />
 </Screen>

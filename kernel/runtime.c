@@ -490,8 +490,6 @@ static void apply(uint32_t kind,int32_t value){
             ln_ui_refresh(shell);dirty=true;handled=true;
         }else if(scene_is("linnet.system.music-sound")&&(pressed&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV))){
             (void)ln_music_sound_adjust(shell->selected,(pressed&LN_BUTTON_PREV)?-1:1);ln_ui_refresh(shell);dirty=true;handled=true;
-        }else if(scene_is("linnet.system.music-sound")&&(pressed&LN_BUTTON_MENU)){
-            (void)ln_ui_show(shell,"linnet.system.music-options");dirty=true;handled=true;
         }else if(scene_is("linnet.system.music-search")&&(pressed&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV|LN_BUTTON_MENU))){
             if(pressed&LN_BUTTON_MENU){if(!ln_music_search_back())(void)ln_ui_show(shell,"linnet.system.music");}
             else if(pressed&LN_BUTTON_NEXT){if(ln_music_search_actions(shell->selected)){(void)ln_ui_show(shell,"linnet.system.music");browser_navigation();}else ln_music_search_right();}

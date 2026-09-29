@@ -29,9 +29,9 @@ GROUPS = (
         Item('showcase', 'UI Demo', 'local.example.notes', 'demo_or_games'),
         Item('legacy_extras', 'Extras', 'linnet.system.extras', 'legacy_extras'),
         Item('notes', 'Notes', 'linnet.system.notes'),
-    ), (0, 1, 2, 3, 9, 5, 6), (6,)),
+    ), (0, 3, 2, 1, 9, 7, 6, 5), (6,)),
     ('Music', (
-        Item('all_tracks', 'All Tracks'), Item('artists', 'Artists'),
+        Item('all_tracks', 'Songs'), Item('artists', 'Artists'),
         Item('albums', 'Albums'), Item('genres', 'Genres'),
         Item('composers', 'Composers'), Item('years', 'Years'),
         Item('folders', 'Folders'), Item('playlists', 'Playlists'),
@@ -39,28 +39,35 @@ GROUPS = (
         Item('bookmarks', 'Bookmarks'), Item('recently_played', 'Recently Played'),
         Item('most_played', 'Most Played'), Item('recently_added', 'Recently Added'),
         Item('album_artists', 'Album Artists'),
-    ), (0, 1, 2, 7, 9, 11, 8), ()),
+    ), (7, 1, 2, 0, 3, 4, 14, 5, 6, 9, 10, 11, 12, 13, 8), ()),
     ('Settings', (
         Item('display', 'Display', 'linnet.system.display'),
         Item('themes', 'Themes', 'linnet.system.themes', 'themes'),
-        Item('clock', 'Clock', 'linnet.system.clock'),
+        Item('clock', 'Date & Time', 'linnet.system.clock'),
         Item('battery', 'Battery', 'linnet.system.battery'),
         Item('auto_shutdown', 'Auto Shutdown', 'linnet.system.shutdown'),
         Item('sleep_timer', 'Sleep Timer', 'linnet.system.sleep-timer'),
-        Item('sync', 'Sync / USB Disk Mode', '@sync'),
-        Item('update', 'Update / Recovery', 'linnet.system.update'),
+        Item('sync', 'USB Disk Mode', '@sync'),
+        Item('update', 'Firmware Info', 'linnet.system.update'),
         Item('about', 'About Linnet', 'linnet.system.about'),
         Item('home', 'Back to Home', 'linnet.system.home'),
         Item('video_settings', 'Video Settings', 'linnet.system.video-settings', 'video'),
-    ), (0, 10, 1, 2, 3, 4, 5, 6, 7, 8, 9), (6, 9)),
+        Item('sound', 'Sound', 'linnet.system.music-sound'),
+    ), (11, 0, 1, 10, 2, 5, 4, 3, 6, 7, 8), (6,)),
     ('Extras', (
-        Item('clock', 'Clock', 'linnet.system.clock'),
+        Item('clock', 'Date & Time', 'linnet.system.clock'),
         Item('notes', 'Notes', 'linnet.system.notes'),
         Item('videos', 'Videos', 'linnet.system.videos', 'video'),
         Item('files', 'Files', 'linnet.system.files', 'files'),
         Item('demo', 'UI Demo', 'local.example.notes', 'demo'),
     ), (0, 1, 2, 3), ()),
 )
+
+LEGACY_DEFAULTS = {
+    'Home': (0, 1, 2, 3, 9, 5, 6),
+    'Music': (0, 1, 2, 7, 9, 11, 8),
+    'Settings': (0, 10, 1, 2, 3, 4, 5, 6, 7, 8, 9),
+}
 
 SCREENS = {name: tuple(item.label for item in items) for name, items, _, _ in GROUPS}
 DEFAULTS = {name: tuple(defaults) for name, _, defaults, _ in GROUPS}
@@ -91,10 +98,12 @@ def render_firmware_header() -> str:
             '#ifndef LINNET_MENU_DEFINITION_H\n#define LINNET_MENU_DEFINITION_H\n'
             f'#define LN_MENU_DEFAULT_ORDER {{{orders}}}\n'
             f'#define LN_MENU_DEFAULT_COUNTS {counts}\n'
+            f'static const uint8_t ln_menu_legacy[3][16]={{{",".join(_numbers(v) for v in LEGACY_DEFAULTS.values())}}};\n'
+            f'static const uint8_t ln_menu_legacy_counts[3]={_numbers(len(v) for v in LEGACY_DEFAULTS.values())};\n'
+            'static const uint8_t ln_menu_defaults[LN_MENU_GROUPS][16]=LN_MENU_DEFAULT_ORDER;\n'
+            'static const uint8_t ln_menu_default_counts[LN_MENU_GROUPS]=LN_MENU_DEFAULT_COUNTS;\n'
             f'static const uint8_t ln_menu_limits[LN_MENU_GROUPS]={limits};\n'
             f'static const uint32_t ln_menu_required[LN_MENU_GROUPS]={required};\n'
-            f'static const uint8_t ln_menu_default_home[]={_numbers(DEFAULTS["Home"])};\n'
-            f'static const uint8_t ln_menu_default_settings[]={_numbers(DEFAULTS["Settings"])};\n'
             f'static const char *const ln_menu_targets[LN_MENU_GROUPS][16]={{\n    {targets}\n}};\n'
             '#endif\n')
 

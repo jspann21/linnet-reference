@@ -93,7 +93,13 @@ const struct ln_ui_asset *ln_ui_dynamic_item_asset(const struct ln_ui_node*n,uin
     return fallback;
 }
 bool ln_ui_dynamic_navigation(const struct ln_ui_node*n,uint32_t item){
-    return n->kind==LN_UI_VIRTUAL_LIST&&in_scene(n,"linnet.system.music")&&ln_music_browser_row_navigates(item);
+    if(n->kind!=LN_UI_VIRTUAL_LIST)return false;
+    if(in_scene(n,"linnet.system.music"))return ln_music_browser_row_navigates(item);
+    if(in_scene(n,"linnet.system.music-options")){
+        uint32_t action=ln_music_option_action(item);
+        return action==7u||action==8u||action==11u||action==12u;
+    }
+    return false;
 }
 uint32_t ln_ui_dynamic_count(const struct ln_ui_node*n,uint32_t fallback){
 #if !defined(LINNET_HARDWARE_CLICKER)
@@ -190,11 +196,7 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
     if(n->kind==LN_UI_ALBUM_ART&&in_scene(n,"linnet.system.now-playing")&&ln_music_art_pixels())return "";
     if(in_scene(n,"linnet.system.music")){
         if(n->kind==LN_UI_TEXT){
-#if LINNET_MUSIC_HINT_MENU_BACK
-            return "Menu: Back";
-#else
             return ln_music_browser_hint();
-#endif
         }
         if(n->kind==LN_UI_STATUS_BAR){uint32_t status=ln_music_library_status();return status==LN_LIBRARY_READY?ln_music_browser_title():status==LN_LIBRARY_ERROR?"Music - no library":"Music - loading";}
         if(n->kind==LN_UI_VIRTUAL_LIST&&item!=UINT32_MAX)return ln_music_browser_label(item);

@@ -11,7 +11,7 @@ from tools.content.tsx import ContentError
 def mark_control_footer(scene, footer=None):
     sid = scene['id'].rsplit('.', 1)[-1]
     if sid in ('display', 'battery', 'shutdown'):
-        hints = [node for node in scene['nodes'] if node['kind'] == 3][1:]
+        hints = [node for node in scene['nodes'] if node['kind'] == 3][0 if sid == 'display' else 1:]
         if len(hints) != 2:
             return
         hints[0]['text'] += '  ' + hints[1]['text']
@@ -97,14 +97,22 @@ def apply_layout(scenes, theme):
             for node in texts:
                 place(node, x, bottom - footer, w, footer)
                 node['flags'] = WRAP
+        elif sid == 'games':
+            listing['h'] = ((h - 74) // row) * row
+            for node in texts:
+                if node['text'] == 'Game description':
+                    place(node, x, bottom - 64, w, 38); node['flags'] = WRAP
+                else:
+                    place(node, x, bottom - 22, w, 22); node['flags'] = 64
         elif sid == 'music-search':
             place(texts[0], x, y, w, 22)
             place(listing, x, y + 30, w - 12, ((h - 60) // row) * row)
             place(texts[1], x, bottom - 24, w, 24)
             texts[1]['flags'] = WRAP
         elif sid in ('display', 'battery', 'shutdown'):
-            place(listing, x, y, w, row * (2 if sid == 'shutdown' else 1))
-            positions = [y + listing['h'] + 12, bottom - 46, bottom - 22]
+            place(listing, x, y, w, row * (2 if sid in ('display', 'shutdown') else 1))
+            positions = ([bottom - 46, bottom - 22] if sid == 'display' else
+                         [y + listing['h'] + 12, bottom - 46, bottom - 22])
             for node, top in zip(texts, positions):
                 place(node, x, top, w, 22)
         elif sid == 'clock':
@@ -191,9 +199,9 @@ def apply_ipod_classic(scenes, theme):
         header = next((n for n in nodes if n['kind'] == 11), None)
         if header:
             place(header, 0, 0, 320, 24)
-            names = {'home': 'iPod', 'about': 'About', 'display': 'Backlight Timer',
-                     'music-sound': 'EQ', 'music-options': 'Playback Options',
-                     'clock-edit': 'Date & Time', 'photos-options': 'Slideshow Settings'}
+            names = {'home': 'iPod', 'about': 'About', 'display': 'Display',
+                     'music-sound': 'Sound', 'music-options': 'Playback Options',
+                     'clock-edit': 'Date & Time', 'photos-options': 'Photo Options'}
             if sid in names:
                 header['text'] = names[sid]
         if sid in ('cover-flow', 'video-player'):
@@ -212,22 +220,14 @@ def apply_ipod_classic(scenes, theme):
             if scroll:
                 place(scroll, 312, 24, 8, 216)
         if sid == 'home' and listing:
-            # The Classic keeps its familiar top-level destinations. Linnet's
-            # own entries follow them and remain reachable when enabled.
-            listing['items'].extend(['Extras', 'Shuffle Songs'])
-            listing['targets'].extend([
-                next(i for i, candidate in enumerate(result)
-                     if candidate['id'] == 'linnet.system.extras'),
-                0xfffffffd,
-            ])
-            listing['item_count'] = listing['count'] = len(listing['items'])
             place(listing, 0, 24, 160, 216)
             if scroll:
                 scroll['flags'] |= 2
         elif sid in ('music', 'music-queue', 'music-sound') and listing:
-            place(listing, 0, 24, 312 if scroll else 320, 216)
+            place(listing, 0, 24, 312 if scroll else 320, 189)
+            if scroll:place(scroll, 312, 24, 8, 189)
             for n in texts:
-                n['flags'] |= 2
+                place(n, 8, 216, 304, 22); n['flags'] = 64
         elif sid == 'music-search' and listing:
             prefix = next(n for n in texts if n['text'] == 'Search prefix')
             footer = next(n for n in texts if n['text'] == 'Search controls')
@@ -254,7 +254,7 @@ def apply_ipod_classic(scenes, theme):
                 text_node(title, 'Track remaining', 170, 211, 132, fh, RIGHT),
             ])
         elif sid == 'settings' and listing:
-            labels = {'About Linnet': 'About', 'Display': 'Backlight',
+            labels = {'About Linnet': 'About', 'Display': 'Display',
                       'Clock': 'Date & Time', 'Video': 'Video Settings',
                       'Update / Recovery': 'Update'}
             listing['items'] = [labels.get(label, label) for label in listing['items']]
@@ -276,7 +276,7 @@ def apply_ipod_classic(scenes, theme):
             for n in texts:
                 place(n, 8, 200, 304, 2 * fh); n['flags'] = WRAP
         elif sid in ('display', 'battery', 'shutdown') and listing:
-            list_rows = 2 if sid == 'shutdown' else 1
+            list_rows = 2 if sid in ('display', 'shutdown') else 1
             place(listing, 0, 24, 320, list_rows * row)
             for i, n in enumerate(texts):
                 place(n, 8, 24 + list_rows * row + 18 + i * 28, 304, fh)
