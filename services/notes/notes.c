@@ -1,19 +1,19 @@
 #include "boot/include/linnet_bytes.h"
+#include "linnet_scene_ids.h"
 #include "services/notes/notes.h"
 #include "services/storage/storage.h"
 #define NOTES_MAX 256u
 #define NOTES_RECORD 8196u
 #define CACHE_ROWS 16u
 static struct ln_fat32_file file;
-/* One visible window, reused for titles and body lines. Never retain the
+/* One bounded read-ahead window, reused for titles and body lines. Never retain the
  * complete catalog or document in the firmware's fixed image arena. */
 static uint8_t header[16],cache[CACHE_ROWS*64u],selected_title[64];
 static uint32_t phase,generation=0x4e000001u,count,lines,selected,revision,drawn;
 static uint32_t cache_first,cache_count,request_first,request_count;
 static bool active,pending,reading,discard;
 static const char *status="Prepare Notes on your computer";
-static bool equal(const char*a,const char*b){while(*a&&*a==*b){++a;++b;}return *a==*b;}
-static bool scene(const struct ln_ui_state*s){return s&&s->scene<ln_ui_scene_count&&equal(ln_ui_scenes[s->scene].id,"linnet.system.notes");}
+static bool scene(const struct ln_ui_state*s){return s&&s->scene<ln_ui_scene_count&&s->scene==LN_UI_SCENE_NOTES;}
 static bool text_valid(const uint8_t*p,uint32_t n){bool zero=false;for(uint32_t i=0;i<n;++i){if(!p[i])zero=true;else if(p[i]<32u||p[i]>126u)return false;}return zero;}
 static void fail(void){phase=0;count=lines=cache_count=0;reading=false;status="Notes unavailable - prepare again";++revision;}
 void ln_notes_close(void){active=false;if(pending)ln_storage_media_cancel(generation);else phase=0;}
@@ -55,7 +55,13 @@ void ln_notes_step(struct ln_ui_state*s){
         uint32_t total=reading?lines:count,first=ln_ui_first_visible(s);
         if(first>=total)first=0;
         uint32_t wanted=total-first;if(wanted>capacity)wanted=capacity;
-        if(cache_first!=first||cache_count!=wanted){request_first=first;request_count=wanted;cache_count=0;phase=reading?5u:3u;}
+        if(first<cache_first||cache_count<wanted||first-cache_first>cache_count-wanted){
+            request_count=total<CACHE_ROWS?total:CACHE_ROWS;
+            uint32_t margin=(CACHE_ROWS-capacity)/2u;
+            request_first=first>margin?first-margin:0;
+            if(request_first>total-request_count)request_first=total-request_count;
+            cache_count=0;phase=reading?5u:3u;
+        }
     }
     if(active&&phase&&!pending){
         uint32_t body_offset=16u+count*64u+selected*NOTES_RECORD;
