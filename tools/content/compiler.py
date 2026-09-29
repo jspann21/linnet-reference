@@ -22,6 +22,19 @@ def canonical(value):
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
+def generate_scene_ids(selected, available):
+    """Resolve built-in scene names once; omitted scenes cannot match at runtime."""
+    indices = {name: index for index, name in enumerate(selected)}
+    lines = ['#ifndef LINNET_SCENE_IDS_H', '#define LINNET_SCENE_IDS_H', '#include <stdint.h>']
+    prefix = 'linnet.system.'
+    for name in sorted(available):
+        if not name.startswith(prefix) or '.' in name[len(prefix):]:
+            continue
+        symbol = 'LN_UI_SCENE_' + name[len(prefix):].replace('-', '_').upper()
+        value = f'{indices[name]}u' if name in indices else 'UINT32_MAX'
+        lines.append(f'#define {symbol} {value}')
+    return '\n'.join([*lines, '#endif', ''])
+
 def bounded_path(root, path):
     candidate=(root/path).resolve()
     if not candidate.is_relative_to(root.resolve()) or not candidate.is_file():
@@ -476,6 +489,7 @@ def compile_system(root, output, configpath=None, target_override=None):
     for index,data in licenses.items(): files[f'font-license-{index}.txt']=data
     packed_fonts=[crop_font(font) for font in fonts]
     files['linnet_ui.c']=generate_c(document,packed_fonts).encode('ascii')
+    files['linnet_scene_ids.h']=generate_scene_ids(selected,manifests).encode('ascii')
     files[theme_id+'.ltheme']=canonical(dict(format='THME',theme=theme,assets=assets,font=font,font_license=license_data.decode('utf-8')))
     for scene in scenes:
         files[scene['id']+'.lapp']=canonical(dict(format='APPL',scene=scene))

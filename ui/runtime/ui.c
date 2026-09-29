@@ -50,6 +50,13 @@ static bool same(const char*a,const char*b){if(!a||!b)return false;while(*a&&*a=
 /* Stable menu IDs are independent of theme labels and disabled features. */
 static uint8_t menu_order[LN_MENU_GROUPS][16]=LN_MENU_DEFAULT_ORDER;
 static uint8_t menu_counts[LN_MENU_GROUPS]=LN_MENU_DEFAULT_COUNTS;
+/* Reuse the resolved rows while drawing and navigating the same menu. */
+static struct {
+    const struct ln_ui_node *node;
+    const struct ln_ui_scene *scenes;
+    uint32_t rows[sizeof menu_order[0]+2u],count,group;
+    bool games;
+} menu_cache;
 uint32_t ln_ui_menu_count(uint32_t group){return group<LN_MENU_GROUPS?menu_counts[group]:0;}
 uint32_t ln_ui_menu_item(uint32_t group,uint32_t row){return group<LN_MENU_GROUPS&&row<menu_counts[group]?menu_order[group][row]:UINT32_MAX;}
 bool ln_ui_menu_load(const uint8_t *data,uint32_t length){
@@ -62,6 +69,7 @@ bool ln_ui_menu_load(const uint8_t *data,uint32_t length){
         for(uint32_t i=0;i<row[0];++i){uint32_t id=row[i+1];if(id>=ln_menu_limits[g]||(seen&(1u<<id)))return false;seen|=1u<<id;}
         if((seen&ln_menu_required[g])!=ln_menu_required[g])return false;
     }
+    menu_cache.node=0;
     for(uint32_t g=0;g<LN_MENU_GROUPS;++g){menu_counts[g]=data[8+g*17];for(uint32_t i=0;i<menu_counts[g];++i)menu_order[g][i]=data[9+g*17+i];}
     /* Upgrade only recognizable stock menus. Keep custom ordering and shortcuts. */
     if(data[4]<3)for(uint32_t g=0;g<LN_MENU_GROUPS;++g){
@@ -113,20 +121,28 @@ static uint32_t menu_group(const struct ln_ui_node *n){
     return UINT32_MAX;
 }
 static uint32_t menu_lookup(const struct ln_ui_node *n,uint32_t row,uint32_t *count){
-    uint32_t group=menu_group(n);if(group==UINT32_MAX)return row;
-    uint32_t found=0;
-    /* Playback preferences are always reachable, including with older saved menus. */
-    if(group==LN_MENU_SETTINGS){
-        for(uint32_t action=LINNET_UI_ACTION_SHUFFLE;action>=LINNET_UI_ACTION_REPEAT;--action)
-            for(uint32_t j=0;j<n->item_count;++j)if(n->targets[j]==action){if(row==found)return j;++found;break;}
+    if(!n||n->kind!=LN_UI_MENU||!n->targets)return row;
+    bool games=ln_games_count()!=0;
+    if(menu_cache.node!=n||menu_cache.scenes!=ln_ui_scenes||menu_cache.games!=games){
+        uint32_t group=menu_group(n),found=0;
+        if(group!=UINT32_MAX){
+            /* Two fixed playback rows plus at most sixteen saved choices. */
+            if(group==LN_MENU_SETTINGS){
+                for(uint32_t action=LINNET_UI_ACTION_SHUFFLE;action>=LINNET_UI_ACTION_REPEAT;--action)
+                    for(uint32_t j=0;j<n->item_count;++j)if(n->targets[j]==action){menu_cache.rows[found++]=j;break;}
+            }
+            for(uint32_t i=0;i<menu_counts[group];++i){const char *id=ln_menu_targets[group][menu_order[group][i]];
+                if(group==LN_MENU_HOME&&menu_order[group][i]==7u){if(!games)continue;id="linnet.system.games";}
+                if(group==LN_MENU_EXTRAS&&same(id,"linnet.system.games")&&!games)continue;
+                for(uint32_t j=0;j<n->item_count;++j){uint32_t target=n->targets[j];const char *actual=target==LINNET_UI_ACTION_SYNC?"@sync":target==LINNET_UI_ACTION_SHUFFLE_ALL?"@shuffle-all":target<ln_ui_scene_count?ln_ui_scenes[target].id:"";
+                    if(same(id,actual)){menu_cache.rows[found++]=j;break;}}}
+        }
+        menu_cache.node=n;menu_cache.scenes=ln_ui_scenes;menu_cache.games=games;
+        menu_cache.group=group;menu_cache.count=found;
     }
-    for(uint32_t i=0;i<menu_counts[group];++i){const char *id=ln_menu_targets[group][menu_order[group][i]];
-        if(group==LN_MENU_HOME&&menu_order[group][i]==7u){if(!ln_games_count())continue;id="linnet.system.games";}
-        if(group==LN_MENU_EXTRAS&&same(id,"linnet.system.games")&&!ln_games_count())continue;
-        for(uint32_t j=0;j<n->item_count;++j){uint32_t target=n->targets[j];const char *actual=target==LINNET_UI_ACTION_SYNC?"@sync":target==LINNET_UI_ACTION_SHUFFLE_ALL?"@shuffle-all":target<ln_ui_scene_count?ln_ui_scenes[target].id:"";
-            if(same(id,actual)){if(row==found)return j;++found;break;}}}
-    if(count)*count=found;
-    return UINT32_MAX;
+    if(menu_cache.group==UINT32_MAX)return row;
+    if(count)*count=menu_cache.count;
+    return row<menu_cache.count?menu_cache.rows[row]:UINT32_MAX;
 }
 static uint32_t menu_source(const struct ln_ui_node *n,uint32_t row){return menu_lookup(n,row,0);}
 static uint32_t menu_total(const struct ln_ui_node *n,uint32_t fallback){

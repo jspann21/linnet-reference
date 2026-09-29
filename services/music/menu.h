@@ -1,21 +1,18 @@
 #ifndef LINNET_MUSIC_MENU_H
 #define LINNET_MUSIC_MENU_H
 #include "ui/runtime/ui.h"
+#include "linnet_scene_ids.h"
 
 /* Presentation IDs do not change MENUS.BIN or the underlying service actions. */
 enum { LN_MUSIC_COVER_FLOW=16, LN_MUSIC_MORE=17 };
 static inline bool ln_music_menu_more(uint32_t id){
     return id==5u||id==6u||id==10u||id==11u||id==12u||id==13u||id==14u;
 }
-static inline bool ln_music_menu_scene_enabled(const char *id){
-    for(uint32_t i=0;i<ln_ui_scene_count;++i){const char *a=id,*b=ln_ui_scenes[i].id;
-        while(*a&&*a==*b){++a;++b;}
-        if(!*a&&!*b)return (ln_ui_enabled_scenes&(UINT64_C(1)<<i))!=0;
-    }
-    return false;
+static inline bool ln_music_menu_scene_enabled(uint32_t scene){
+    return scene<LINNET_UI_MAX_SCENES&&(ln_ui_enabled_scenes&(UINT64_C(1)<<scene))!=0;
 }
 static inline uint32_t ln_music_menu_category(bool more,uint32_t row){
-    bool covers=!more&&ln_music_menu_scene_enabled("linnet.system.cover-flow"),has_more=false;
+    bool covers=!more&&ln_music_menu_scene_enabled(LN_UI_SCENE_COVER_FLOW),has_more=false;
     for(uint32_t i=0;i<ln_ui_menu_count(LN_MENU_MUSIC);++i){
         uint32_t id=ln_ui_menu_item(LN_MENU_MUSIC,i);bool secondary=ln_music_menu_more(id);
         if(secondary)has_more=true;

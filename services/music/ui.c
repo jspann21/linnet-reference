@@ -119,7 +119,7 @@ uint32_t ln_ui_dynamic_count(const struct ln_ui_node*n,uint32_t fallback){
 #if defined(LINNET_FILES)
     if(in_scene(n,"linnet.system.files")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_files_count();
 #endif
-    if(in_scene(n,"linnet.system.display")&&n->kind==LN_UI_VIRTUAL_LIST)return ln_music_menu_scene_enabled("linnet.system.themes")?2u:1u;
+    if(in_scene(n,"linnet.system.display")&&n->kind==LN_UI_VIRTUAL_LIST)return ln_music_menu_scene_enabled(LN_UI_SCENE_THEMES)?2u:1u;
 #if defined(LINNET_NOTES)
     if(in_scene(n,"linnet.system.notes")&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_notes_count();
 #endif
