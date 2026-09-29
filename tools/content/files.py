@@ -14,6 +14,7 @@ import struct
 import sys
 import unicodedata
 import zlib
+from types import SimpleNamespace
 
 from .publish import _plain, _hash
 
@@ -28,8 +29,56 @@ TEXT = {'.txt', '.text', '.md', '.rst', '.log', '.ini', '.cfg', '.toml', '.yaml'
 def _short_name(path):
     if os.name == 'nt':
         from .music import _actual_short_component
-        return _actual_short_component(path).upper()
+        return _actual_short_component(_windows_path(path)).upper()
     return path.name.upper()
+
+
+def _windows_path(path):
+    name = os.path.abspath(path)
+    if name.startswith('\\\\?\\'):
+        return name
+    return '\\\\?\\UNC\\' + name[2:] if name.startswith('\\\\') else '\\\\?\\' + name
+
+
+def _directory_entries(folder):
+    """Keep the short alias and metadata Windows already returns per entry."""
+    if os.name != 'nt':
+        with os.scandir(folder) as iterator:
+            for entry in iterator:
+                if entry.is_symlink():
+                    continue
+                info = entry.stat(follow_symlinks=False)
+                if stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode):
+                    yield entry.name, stat.S_ISDIR(info.st_mode), info, None
+        return
+    import ctypes
+    from ctypes import wintypes
+    from .music import _FindData, _find_kernel
+    next_file = _find_kernel.FindNextFileW
+    next_file.argtypes = (wintypes.HANDLE, ctypes.POINTER(_FindData))
+    next_file.restype = wintypes.BOOL
+    data = _FindData()
+    handle = _find_kernel.FindFirstFileW(_windows_path(folder / '*'), ctypes.byref(data))
+    if handle == ctypes.c_void_p(-1).value:
+        error = ctypes.get_last_error()
+        if error == 2:  # Empty directory.
+            return
+        raise ctypes.WinError(error)
+    try:
+        while True:
+            if data.name not in ('.', '..') and not data.attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                stamp = (data.write.dwHighDateTime << 32) | data.write.dwLowDateTime
+                info = SimpleNamespace(st_size=(data.size_high << 32) | data.size_low,
+                                       st_mtime_ns=(stamp - 116444736000000000) * 100)
+                yield data.name, bool(data.attributes & 16), info, data.alternate or data.name
+            if not next_file(handle, ctypes.byref(data)):
+                error = ctypes.get_last_error()
+                if error != 18:  # ERROR_NO_MORE_FILES
+                    raise ctypes.WinError(error)
+                break
+    finally:
+        if not _find_kernel.FindClose(handle):
+            raise ctypes.WinError(ctypes.get_last_error())
 
 
 def _label(value, limit):
@@ -49,17 +98,19 @@ def _alias(value):
     return value.encode('ascii')
 
 
-def _preview(source, cache, width, height, columns, recipe, checkpoint):
+def _preview(source, cache, width, height, columns, recipe, checkpoint, info, root):
     suffix = source.suffix.lower()
     if suffix not in IMAGES | TEXT or (suffix in IMAGES and not width):
         return None
-    info = source.stat()
     # Cache-key work uses file metadata; unchanged images/text are not decoded
     # again during each preparation. Output hashes still guard publication.
     key = hashlib.sha256(f'files-v2:{source}:{info.st_size}:{info.st_mtime_ns}:{width}:{height}:{columns}:{recipe[2]}'.encode()).hexdigest()
     output = cache / (key + ('.FIM' if suffix in IMAGES else '.TXT'))
     if not output.exists():
         checkpoint()
+        # Enumeration rejects links; recheck the complete path immediately
+        # before reading source bytes. Cache hits only read the local cache.
+        _plain(source, root)
         if suffix in IMAGES:
             from PIL import Image, ImageOps
             with Image.open(source) as original:
@@ -97,7 +148,8 @@ def _preview(source, cache, width, height, columns, recipe, checkpoint):
                     if len(data) + columns > 4 * 1024 * 1024:
                         return None
                     data.extend(wrapped.encode('ascii').ljust(columns, b' '))
-        if source.stat().st_size != info.st_size or source.stat().st_mtime_ns != info.st_mtime_ns:
+        after = source.stat()
+        if after.st_size != info.st_size or after.st_mtime_ns != info.st_mtime_ns:
             raise ValueError(f'File changed while preparing its preview: {source}')
         temporary = output.with_suffix(output.suffix + '.tmp')
         with temporary.open('wb') as writer:
@@ -162,14 +214,9 @@ def compile_files(root, package, cache, *, width=0, height=0, text_columns=24, t
         _plain(folder, root)
         entries = []
         try:
-            with os.scandir(folder) as iterator:
-                for entry in iterator:
-                    checkpoint()
-                    if entry.is_symlink():
-                        continue
-                    info = entry.stat(follow_symlinks=False)
-                    if stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode):
-                        entries.append((entry.name, stat.S_ISDIR(info.st_mode), info))
+            for entry in _directory_entries(folder):
+                checkpoint()
+                entries.append(entry)
         except PermissionError as error:
             warnings.append(dict(path=folder.relative_to(root).as_posix(), message=str(error)))
             struct.pack_into('<I', records[parent], 24, 2)
@@ -178,10 +225,9 @@ def compile_files(root, package, cache, *, width=0, height=0, text_columns=24, t
         if len(records) + len(entries) > MAX_RECORDS:
             raise ValueError('Files index exceeds one million entries; use Live folder')
         struct.pack_into('<II', records[parent], 8, len(records), len(entries))
-        for name, directory, info in entries:
+        for name, directory, info, alternate in entries:
             checkpoint()
             source = folder / name
-            _plain(source, root)
             row = bytearray(RECORD)
             struct.pack_into('<II', row, 0, 16 if directory else 0, 0 if directory else info.st_size)
             native = 1 if source.suffix.lower() in EXTENSIONS else 2 if source.suffix.lower() in {'.mp4', '.m4v', '.mov', '.ipvf'} else 3 if source.suffix.lower() in {'.jpg', '.jpeg'} else 0
@@ -189,7 +235,7 @@ def compile_files(root, package, cache, *, width=0, height=0, text_columns=24, t
             label = _label(name, 127)
             row[32:32+len(label)] = label
             try:
-                alias = _alias(short_name(source))
+                alias = _alias(alternate if alternate is not None and short_name is _short_name else short_name(source))
             except PermissionError:
                 alias = b''
             # An unrepresentable short alias is shown, then resolved through
@@ -205,7 +251,7 @@ def compile_files(root, package, cache, *, width=0, height=0, text_columns=24, t
                 preview = videos.get(key)
                 if not preview and source.suffix.lower() in IMAGES | TEXT and not source.is_relative_to(root / '.LINNET'):
                     try:
-                        preview = _preview(source, cache, width, height, text_columns, recipe, checkpoint)
+                        preview = _preview(source, cache, width, height, text_columns, recipe, checkpoint, info, root)
                     except (OSError, ValueError) as error:
                         warnings.append(dict(path=source.relative_to(root).as_posix(), message=str(error)))
                 if preview:

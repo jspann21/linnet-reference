@@ -5,6 +5,7 @@ from .protocol import Command
 from tools.studio.targets import TARGETS
 
 STATE_FORMATS = {
+    'files-state':(Command.ATA_DIAGNOSTICS,b'FILE',('magic','phase','view','depth','entries','page','indexed','pending','validating','done','load_us','requests','read_bytes','loads','now_us','loading')),
     'audio-state':(Command.AUDIO_STATE,b'AUDS',('magic','reserved','rate','queued','free_frames','consumed','submitted','interrupts','underruns','silence_frames','fault','playing','paused','initialized','last_irq_us','max_irq_us','volume_db_tenths','fifo_empty_irqs','max_completion_interval_us','max_completion_late_us')),
     'player-state':(Command.PLAYER_STATE,b'PLYR',('magic','phase','error','generation','rate','decoded','rendered','underruns','frames_low','frames_high','next_phase','next_error','gapless_joins','missed_joins','position_low','position_high')),
     'player-timing-state':(Command.PLAYER_TIMING_STATE,b'TIME',('magic','reserved','decode_calls','decode_us','decode_max_us','dsp_calls','dsp_frames','dsp_us','dsp_max_us','runtime_calls','runtime_us','runtime_max_us','music_us','storage_us','link_us','clock_hz','cache_control','cache_priority','idle_us','clock_source','decoder_kind','mp3_frame_calls','mp3_frame_us','mp3_frame_max_us','mp3_synth_calls','mp3_synth_us','mp3_synth_max_us','mp3_pcm_calls','mp3_pcm_frames','mp3_pcm_us','mp3_pcm_max_us')),
@@ -18,7 +19,7 @@ ACTIONS = (*STATE_FORMATS, "player-open", "video-open", *PLAYER_CONTROLS)
 def command(session,identity,action,*,path=None,sample=None):
     if action.endswith('-state'):
         operation,magic,names=STATE_FORMATS[action]
-        raw=session.request(operation)
+        raw=session.request(operation,struct.pack('<I',19)) if action=='files-state' else session.request(operation)
         if action=='video-state' and TARGETS[identity['target_id']]['media_video_backend']=='bcm-mp4':
             if len(raw)!=128 or struct.unpack_from('<I',raw)[0]!=0x4d250002:
                 raise RuntimeError('Malformed native video state reply')

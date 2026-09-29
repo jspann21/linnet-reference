@@ -2,6 +2,9 @@
 #include "kernel/storage_link.h"
 #include "services/storage/storage.h"
 #include "services/storage/block.h"
+#if defined(LINNET_FILES)
+#include "services/files/files.h"
+#endif
 #include "hal/api/recovery.h"
 #include "hal/api/platform.h"
 #if defined(LINNET_IMAGE_OS)
@@ -65,6 +68,9 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r){
         else if(q->length==4u&&ln_read_le32(q->payload)==13u){ln_block_workload_diagnostics(words);count=8u;}
 #if defined(LINNET_IMAGE_OS)
         else if(q->length==4u&&ln_read_le32(q->payload)==4u){ln_runtime_render_timing(words);count=16u;}
+#if defined(LINNET_FILES)
+        else if(q->length==4u&&ln_read_le32(q->payload)==19u){ln_files_diagnostics(words);count=16u;}
+#endif
         else if(q->length==4u&&ln_read_le32(q->payload)==14u){ln_runtime_exec_diagnostics(words);count=24u;}
         else if(q->length==4u&&ln_read_le32(q->payload)==15u){ln_display_settings_diagnostics(words);count=8u;}
 #if defined(LINNET_HARDWARE_CLICKER)

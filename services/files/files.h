@@ -12,4 +12,7 @@ const char *ln_files_title(void);
 const char *ln_files_label(uint32_t row);
 const char *ln_files_hint(void);
 bool ln_files_navigates(uint32_t row);
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_files_diagnostics(uint32_t words[16]);
+#endif
 #endif

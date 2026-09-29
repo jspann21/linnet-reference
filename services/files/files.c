@@ -5,6 +5,7 @@
 #include "services/music/controller.h"
 #include "services/music/player.h"
 #include "hal/api/audio.h"
+#include "hal/api/platform.h"
 #include "kernel/runtime.h"
 #if defined(LINNET_PHOTOS)
 #include "services/photos/photos.h"
@@ -39,6 +40,18 @@ static struct {
 #endif
 ;
 static bool initialized;
+#if !defined(LINNET_PROFILE_RELEASE)
+static struct {uint32_t started,last_us,reads,bytes,loads;bool measuring;} timing;
+static void begin_timing(void){if(!timing.measuring){timing.started=ln_time_us();timing.reads=timing.bytes=0;timing.measuring=true;}}
+void ln_files_diagnostics(uint32_t words[16]){
+    uint32_t values[16]={0x454c4946u,f.phase,f.view,f.depth,f.count,f.folder.page,f.folder.indexed,f.pending,
+        f.validate,f.done,timing.last_us,timing.reads,timing.bytes,timing.loads,ln_time_us(),timing.measuring};
+    for(uint32_t i=0;i<16u;++i)words[i]=values[i];
+}
+#define FILES_DIAG(code) do {code;} while(0)
+#else
+#define FILES_DIAG(code) do {} while(0)
+#endif
 void ln_files_init(void){uint8_t*p=(uint8_t*)&f;for(uint32_t i=0;i<sizeof f;++i)p[i]=0;initialized=true;}
 
 static bool equal(const char*a,const char*b){while(*a&&*a==*b){++a;++b;}return *a==*b;}
@@ -55,6 +68,7 @@ static const uint8_t *record(uint32_t row){return f.rows.catalog+row*RECORD;}
 static const char *name(uint32_t row){return f.folder.indexed?(const char*)record(row)+32:f.rows.live[row].name;}
 static bool directory(uint32_t row){return ((f.folder.indexed?ln_read_le32(record(row)):f.rows.live[row].file.attributes)&16u)!=0;}
 static void load_page(void){
+    FILES_DIAG(begin_timing());
     f.count=f.validate=0;f.done=f.sector_loaded=false;f.lfn_sequence=0;f.message=0;f.view=DIRECTORY;
     f.cursor=f.folder.position;f.more=false;f.phase=f.folder.indexed?CATALOG_PAGE:LIVE;changed();
 }
@@ -115,9 +129,9 @@ static void live_entry(void){
     }else for(;n<3u&&r[8u+n]!=' ';++n)e->extension[n]=(char)r[8u+n];
     e->extension[n]=0;f.lfn_sequence=0;
     e->file=(struct ln_fat32_file){.cluster=((uint32_t)ln_read_le16(r+20)<<16)|ln_read_le16(r+26),.size=ln_read_le32(r+28),
-        .epoch=f.cursor.cursor.epoch,.directory_sector=f.cursor.cursor.lba,.directory_offset=(uint16_t)(at*32u),.attributes=r[11]};changed();
+        .epoch=f.cursor.cursor.epoch,.directory_sector=f.cursor.cursor.lba,.directory_offset=(uint16_t)(at*32u),.attributes=r[11]};
 }
-static void preview(void){f.phase=PREVIEW;f.bytes=0;f.message=0;changed();}
+static void preview(void){FILES_DIAG(begin_timing());f.phase=PREVIEW;f.bytes=0;f.message=0;changed();}
 static bool suffix(const char*extension){const char*dot=f.extension;
     while(*dot&&*extension){char c=*dot++;if(c>='A'&&c<='Z')c+=32;if(c!=*extension++)return false;}return !*dot&&!*extension;}
 static uint32_t kind(void){
@@ -157,7 +171,7 @@ static void open_chosen(struct ln_ui_state*s){
      * retain a byte viewer rather than attempting to execute their contents. */
     f.view=TEXT;preview();
 }
-void ln_files_close(void){if(!initialized)return;f.active=false;f.back_pending=false;if(f.pending){f.discard=true;ln_storage_media_cancel(GENERATION);}else f.phase=READY;}
+void ln_files_close(void){if(!initialized)return;FILES_DIAG(timing.measuring=false);f.active=false;f.back_pending=false;if(f.pending){f.discard=true;ln_storage_media_cancel(GENERATION);}else f.phase=READY;}
 bool ln_files_pending(void){return initialized&&(f.pending||(f.active&&(f.phase!=READY||f.validate)));}
 uint32_t ln_files_deadline(uint32_t now){
     if(!initialized||!f.active||f.pending)return now+200000u;
@@ -190,7 +204,9 @@ const char *ln_files_label(uint32_t row){
 }
 static void go_back(struct ln_ui_state*s){
     f.validate=0;f.replaying=false;
-    if(f.view!=DIRECTORY){load_page();reset_selection(s,f.selected+(f.folder.page?1u:0u));}
+    if(f.view!=DIRECTORY){f.view=DIRECTORY;f.phase=READY;f.message=0;changed();
+        FILES_DIAG(timing.measuring=false;timing.last_us=timing.reads=timing.bytes=0;++timing.loads);
+        reset_selection(s,f.selected+(f.folder.page?1u:0u));}
     else if(f.depth){f.folder=f.parents[--f.depth];load_page();reset_selection(s,f.folder.selected+(f.folder.page?1u:0u));}
     else{ln_files_close();(void)ln_ui_back(s);}
 }
@@ -199,12 +215,19 @@ void ln_files_step(struct ln_ui_state*s){
     else if(!f.active&&!f.pending){
         struct ln_fat32_file root;
         if(ln_storage_media_root(&root)&&f.folder.file.epoch!=root.epoch){f.folder=(struct folder){0};f.depth=0;f.view=DIRECTORY;
+            f.count=f.validate=0;f.done=f.more=f.returning=false;f.message=0;
             for(uint32_t i=0;i<16u;++i)f.checkpoint_cluster[i]=0;}
         f.active=true;if(!f.folder.file.epoch){if(!ln_storage_media_root(&f.folder.file)){fail("Storage unavailable");return;}
-            text(f.folder.title,"Files",sizeof f.folder.title);f.phase=CATALOG_OPEN;}
-        else if(f.view==DIRECTORY){uint32_t row=f.returning?f.selected+(f.folder.page?1u:0u):s->selected;f.returning=false;load_page();reset_selection(s,row);}else if(f.view==TEXT||f.view==HEX)preview();
+            text(f.folder.title,"Files",sizeof f.folder.title);f.phase=CATALOG_OPEN;FILES_DIAG(begin_timing());}
+        else if(f.view==DIRECTORY){uint32_t row=f.returning?f.selected+(f.folder.page?1u:0u):s->selected;f.returning=false;
+            /* The mount epoch above invalidates retained handles. The current
+             * page is otherwise still valid; Right explicitly refreshes it. */
+            if(f.done&&!f.validate){changed();FILES_DIAG(timing.last_us=timing.reads=timing.bytes=0;++timing.loads);}
+            else load_page();reset_selection(s,row);
+        }else if(f.view==TEXT||f.view==HEX)preview();
     }
     if(f.pending){uint32_t bytes=0;struct ln_fat32_file opened;int r=ln_storage_media_poll_deferred(GENERATION,&opened,&bytes);if(!r)return;f.pending=false;
+        FILES_DIAG(timing.bytes+=bytes);
         if(f.discard||!f.active){f.discard=false;f.phase=READY;if(f.back_pending){f.back_pending=false;go_back(s);}return;}
         if(r<0){if(f.phase<=CATALOG_PAGE){live_folder();}else if(f.phase==ENTRY_OPEN){live_folder();reset_selection(s,0);}else fail("Read failed - reopen Files");}
         else if(f.phase==CATALOG_OPEN){f.catalog=opened;f.phase=CATALOG_HEADER;}
@@ -242,7 +265,7 @@ void ln_files_step(struct ln_ui_state*s){
     if(!f.active)return;
     if(f.validate){for(uint32_t step=0;step<4u&&f.validate;++step){uint32_t row=f.count;
         if(!record_valid(record(row))){f.validate=0;live_folder();break;}
-        ++f.count;--f.validate;if(!f.validate){f.done=true;f.more=f.folder.page*ROWS+f.count<f.folder.count;}changed();}}
+        ++f.count;--f.validate;if(!f.validate){f.done=true;f.more=f.folder.page*ROWS+f.count<f.folder.count;changed();}}}
     else if(f.phase==LIVE&&f.sector_loaded){for(uint32_t i=0;i<16u&&f.phase==LIVE&&f.sector_loaded;++i)live_entry();}
     if(!f.pending&&f.phase!=READY&&allowed()){
         int r=0;
@@ -256,7 +279,7 @@ void ln_files_step(struct ln_ui_state*s){
         else if(f.phase==LIVE&&!f.sector_loaded){f.sector_start=f.cursor;r=ln_storage_media_list(&f.cursor.cursor,f.io,GENERATION);}
         else if(f.phase==PREVIEW){uint32_t n=f.chosen.size-f.offset;if(n>480u)n=480u;
             if(n)r=ln_storage_media_read(&f.chosen,f.offset,f.io,n,GENERATION);else{f.phase=READY;changed();}}
-        if(r>0)f.pending=true;else if(r<0){if(f.phase<=CATALOG_PAGE)live_folder();else fail("File unavailable");}
+        if(r>0){f.pending=true;FILES_DIAG(++timing.reads);}else if(r<0){if(f.phase<=CATALOG_PAGE)live_folder();else fail("File unavailable");}
     }
     if(f.replaying&&f.done){
         if(f.folder.page<f.target_page&&f.more){++f.folder.page;f.folder.position=f.next_page;f.checkpoints[f.folder.page%16u]=f.next_page;f.checkpoint_cluster[f.folder.page%16u]=f.folder.file.cluster;f.checkpoint_page[f.folder.page%16u]=f.folder.page;load_page();}
@@ -264,6 +287,7 @@ void ln_files_step(struct ln_ui_state*s){
     }
     if(f.restoring&&f.phase==READY&&!f.validate&&scene(s)){f.restoring=false;s->selected=f.restore_row;ln_ui_refresh(s);}
     if(scene(s)&&f.drawn!=f.revision){f.drawn=f.revision;ln_ui_refresh(s);}
+    FILES_DIAG(if(timing.measuring&&f.phase==READY&&!f.pending&&!f.validate){timing.last_us=ln_time_us()-timing.started;++timing.loads;timing.measuring=false;});
 }
 bool ln_files_input(struct ln_ui_state*s,uint32_t kind,int32_t value){
     if(!initialized||!scene(s)||s->hold||kind!=2u)return false;
@@ -292,6 +316,6 @@ bool ln_files_input(struct ln_ui_state*s,uint32_t kind,int32_t value){
     if(row>=f.count)return true;
     f.info_only=(pressed&8u)&&!directory(row);
     f.selected=row;text(f.chosen_name,name(row),sizeof f.chosen_name);
-    if(f.folder.indexed){if(ln_read_le32(record(row)+24)==1u){live_folder();reset_selection(s,0);return true;}f.leaf[0]='/';text(f.leaf+1,(const char*)record(row)+160,sizeof f.leaf-1u);f.phase=ENTRY_OPEN;}
+    if(f.folder.indexed){if(ln_read_le32(record(row)+24)==1u){live_folder();reset_selection(s,0);return true;}f.leaf[0]='/';text(f.leaf+1,(const char*)record(row)+160,sizeof f.leaf-1u);f.phase=ENTRY_OPEN;FILES_DIAG(begin_timing());}
     else{f.chosen=f.rows.live[row].file;text(f.extension,f.rows.live[row].extension,sizeof f.extension);open_chosen(s);}return true;
 }
