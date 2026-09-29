@@ -541,19 +541,12 @@ static bool query_admit(enum job job,uint32_t index,uint32_t ordinal)
     library.query=job;library.query_index=index;library.query_ordinal=ordinal;
     library.query_pending=true;return true;
 }
-bool ln_music_library_search(const char *prefix)
-{ return ln_music_library_search_at(prefix,0); }
 bool ln_music_library_search_at(const char *prefix,uint32_t ordinal)
 {
     if(!prefix)return false;
     uint32_t n=0;while(n<256&&prefix[n])n++;
     if(n==256||!query_admit(JOB_SEARCH,0,ordinal))return false;
     text_copy(library.prefix,prefix);return true;
-}
-bool ln_music_library_take_search(uint32_t *index)
-{
-    if(!index||!ready()||library.query!=JOB_SEARCH||!library.query_ready)return false;
-    *index=library.query_result;library.query_ready=false;return true;
 }
 bool ln_music_library_take_search_row(struct ln_music_library_search_row *out)
 {

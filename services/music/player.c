@@ -246,9 +246,6 @@ bool ln_player_open_file(const struct ln_fat32_file *file,bool (*configure)(uint
     ln_decoder_init(&s->decoder,&decoder_workspaces[0],read_media,s,file->size);s->phase=SLOT_DECODE;
     return true;
 }
-bool ln_player_prepare_next(const char *name,uint64_t bytes,uint32_t token){
-    return ln_player_prepare_next_configured(name,bytes,token,0,0);
-}
 bool ln_player_prepare_next_configured(const char *name,uint64_t bytes,uint32_t token,
                                       const struct ln_dsp_config *config,uint32_t config_rate){
     if((state.phase!=LN_PLAYER_PRIME&&state.phase!=LN_PLAYER_PLAY&&state.phase!=LN_PLAYER_PAUSE&&state.phase!=LN_PLAYER_DRAIN)||join_pending||event_pending||cancel_next||skip_requested)return false;

@@ -303,7 +303,6 @@ size_t ln_usb_write(const uint8_t *data,size_t size){
     LN_DWC_IN(3,0x10)=(1u<<19)|(uint32_t)size;barrier();
     tx_active=true;tx_zlp=size==packet_size;tx_started=ln_time_us();LN_DWC_IN(3,0)|=ENABLE|CNAK;return size;
 }
-unsigned ln_s5l_usb_packet_size(void){return packet_size;}
 bool ln_s5l_usb_storage_reset_pending(void){return storage_reset;}
 bool ln_s5l_usb_storage_reset_complete(void) {
     if(!storage_reset)return false;

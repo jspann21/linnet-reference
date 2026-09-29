@@ -1,9 +1,7 @@
+#include "boot/include/linnet_bytes.h"
 #include "linnet_target.h"
 #include "services/video/mp4.h"
 #define TAG(a,b,c,d) (((uint32_t)(a)<<24)|((uint32_t)(b)<<16)|((uint32_t)(c)<<8)|(d))
-static uint32_t be32(const uint8_t *p){return ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3];}
-static uint64_t be64(const uint8_t *p){return ((uint64_t)be32(p)<<32)|be32(p+4);}
-static uint32_t be16(const uint8_t *p){return ((uint32_t)p[0]<<8)|p[1];}
 static int bad(struct ln_mp4 *m,int error){return m->error=error;}
 static int read_at(struct ln_mp4 *m,uint64_t at,uint32_t bytes){
     if(bytes>sizeof m->buffer||at>m->bytes||bytes>m->bytes-at)return bad(m,LN_MP4_FORMAT);
@@ -65,7 +63,7 @@ static bool descriptors(struct ln_mp4 *m,const uint8_t *p,uint32_t bytes,uint32_
 static bool audio_config(struct ln_mp4 *m,const uint8_t *p,uint32_t bytes,unsigned depth){
     if(depth>3)return false;
     while(bytes){
-        if(bytes<8)return false;uint32_t size=be32(p),type=be32(p+4);
+        if(bytes<8)return false;uint32_t size=ln_read_be32(p),type=ln_read_be32(p+4);
         if(size<8||size>bytes)return false;
         if(type==TAG('e','s','d','s')){if(size<12||!descriptors(m,p+12,size-12,0))return false;}
         else if(type==TAG('w','a','v','e')&&!audio_config(m,p+8,size-8,depth+1))return false;
@@ -79,39 +77,39 @@ static int body(struct ln_mp4 *m){
         /* QuickTime also places a data-reference handler inside minf. */
         if(m->parents[m->depth]!=TAG('m','d','i','a'))break;
         if(n<12u)return bad(m,LN_MP4_FORMAT);
-        if(be32(b+8)!=(m->audio?TAG('s','o','u','n'):TAG('v','i','d','e'))){
+        if(ln_read_be32(b+8)!=(m->audio?TAG('s','o','u','n'):TAG('v','i','d','e'))){
             for(uint32_t i=m->depth;i;i--)if(m->parents[i]==TAG('t','r','a','k')){m->cursor=m->ends[i];m->depth=i;m->phase=0;return 0;}
             return bad(m,LN_MP4_FORMAT);
         }
         break;
     case TAG('e','l','s','t'):
-        if(n<20u||b[0]||be32(b+4)!=1u||be32(b+16)!=0x10000u||(be32(b+12)&0x80000000u))return bad(m,LN_MP4_UNSUPPORTED);
-        m->lead=be32(b+12);break;
+        if(n<20u||b[0]||ln_read_be32(b+4)!=1u||ln_read_be32(b+16)!=0x10000u||(ln_read_be32(b+12)&0x80000000u))return bad(m,LN_MP4_UNSUPPORTED);
+        m->lead=ln_read_be32(b+12);break;
     case TAG('m','d','h','d'):
         if(n<24u||!once(m,1u))return bad(m,LN_MP4_FORMAT);
-        if(b[0]==0u){m->timescale=be32(b+12);m->duration=be32(b+16);}
-        else if(b[0]==1u&&n>=32u){m->timescale=be32(b+20);m->duration=be64(b+24);}
+        if(b[0]==0u){m->timescale=ln_read_be32(b+12);m->duration=ln_read_be32(b+16);}
+        else if(b[0]==1u&&n>=32u){m->timescale=ln_read_be32(b+20);m->duration=ln_read_be64(b+24);}
         else return bad(m,LN_MP4_UNSUPPORTED);
         break;
     case TAG('s','t','s','d'):{
-        if(n<16u||be32(b+4)!=1u)return bad(m,LN_MP4_UNSUPPORTED);
-        uint32_t codec=be32(b+12),entry=be32(b+8);
+        if(n<16u||ln_read_be32(b+4)!=1u)return bad(m,LN_MP4_UNSUPPORTED);
+        uint32_t codec=ln_read_be32(b+12),entry=ln_read_be32(b+8);
         if(m->audio){
             if(codec!=TAG('m','p','4','a'))return bad(m,LN_MP4_UNSUPPORTED);
             if(!once(m,2u)||entry<36u||entry>n-8u)return bad(m,LN_MP4_UNSUPPORTED);
-            uint32_t version=be16(b+24),children=version==0?44u:version==1?60u:0u;
+            uint32_t version=ln_read_be16(b+24),children=version==0?44u:version==1?60u:0u;
             if(!children||entry+8u<children)return bad(m,LN_MP4_UNSUPPORTED);
-            m->video=true;m->codec=codec;m->channels=be16(b+32);m->rate=be32(b+40)>>16;
+            m->video=true;m->codec=codec;m->channels=ln_read_be16(b+32);m->rate=ln_read_be32(b+40)>>16;
             if(m->channels<1u||m->channels>2u||!m->rate)return bad(m,LN_MP4_UNSUPPORTED);
             if(!audio_config(m,b+children,entry+8u-children,0))return bad(m,LN_MP4_FORMAT);
             break;
         }
         if(codec!=TAG('a','v','c','1')&&codec!=TAG('m','p','4','v'))break;
         if(!once(m,2u)||entry<86u||entry>n-8u)return bad(m,LN_MP4_FORMAT);
-        m->video=true;m->codec=codec;m->width=be16(b+40);m->height=be16(b+42);
+        m->video=true;m->codec=codec;m->width=ln_read_be16(b+40);m->height=ln_read_be16(b+42);
         for(uint32_t at=94u;at<entry+8u;){
             if(entry+8u-at<8u)return bad(m,LN_MP4_FORMAT);
-            uint32_t bytes=be32(b+at),type=be32(b+at+4);
+            uint32_t bytes=ln_read_be32(b+at),type=ln_read_be32(b+at+4);
             if(bytes<8u||bytes>entry+8u-at)return bad(m,LN_MP4_FORMAT);
             if(type==TAG('a','v','c','C')&&codec==TAG('a','v','c','1')){
                 if(bytes<15u||bytes-8u>sizeof m->config||m->config_bytes)return bad(m,LN_MP4_UNSUPPORTED);
@@ -127,35 +125,35 @@ static int body(struct ln_mp4 *m){
         break;}
     case TAG('s','t','s','z'):
         if(n<12u||!once(m,4u))return bad(m,LN_MP4_FORMAT);
-        m->default_bytes=be32(b+4);m->samples=be32(b+8);m->sizes=m->cursor+12u;
+        m->default_bytes=ln_read_be32(b+4);m->samples=ln_read_be32(b+8);m->sizes=m->cursor+12u;
         if(!m->samples||m->samples>1000000u||(!m->default_bytes&&(uint64_t)m->samples*4u>m->atom_end-m->sizes))return bad(m,LN_MP4_UNSUPPORTED);
         break;
     case TAG('s','t','c','o'):case TAG('c','o','6','4'):
         if(n<8u||!once(m,8u))return bad(m,LN_MP4_FORMAT);
-        m->chunk_count=be32(b+4);m->chunks=m->cursor+8u;m->chunk_width=m->type==TAG('c','o','6','4')?8u:4u;
+        m->chunk_count=ln_read_be32(b+4);m->chunks=m->cursor+8u;m->chunk_width=m->type==TAG('c','o','6','4')?8u:4u;
         if(!m->chunk_count||m->chunk_count>1000000u||(uint64_t)m->chunk_count*m->chunk_width>m->atom_end-m->chunks)return bad(m,LN_MP4_UNSUPPORTED);
         break;
     case TAG('s','t','s','c'):
         if(n<8u||!once(m,16u))return bad(m,LN_MP4_FORMAT);
-        m->map_count=be32(b+4);
+        m->map_count=ln_read_be32(b+4);
         m->maps=m->cursor+8u;
         if(!m->map_count||m->map_count>1000000u||(uint64_t)m->map_count*12u!=m->atom_end-m->maps)return bad(m,LN_MP4_UNSUPPORTED);
         break;
     case TAG('s','t','t','s'):
         if(n<8u||!once(m,32u))return bad(m,LN_MP4_FORMAT);
-        m->time_count=be32(b+4);
+        m->time_count=ln_read_be32(b+4);
         if(!m->time_count||m->time_count>128u||n!=8u+8u*m->time_count)return bad(m,LN_MP4_UNSUPPORTED);
-        for(uint32_t i=0;i<m->time_count;++i){m->times[i].count=be32(b+8u+i*8u);m->times[i].delta=be32(b+12u+i*8u);if(!m->times[i].count||!m->times[i].delta)return bad(m,LN_MP4_FORMAT);}
+        for(uint32_t i=0;i<m->time_count;++i){m->times[i].count=ln_read_be32(b+8u+i*8u);m->times[i].delta=ln_read_be32(b+12u+i*8u);if(!m->times[i].count||!m->times[i].delta)return bad(m,LN_MP4_FORMAT);}
         break;
     case TAG('s','t','s','s'):
         if(n<8u||!once(m,64u))return bad(m,LN_MP4_FORMAT);
-        m->sync_count=be32(b+4);m->sync=m->cursor+8u;
+        m->sync_count=ln_read_be32(b+4);m->sync=m->cursor+8u;
         if((uint64_t)m->sync_count*4u>m->atom_end-m->sync)return bad(m,LN_MP4_FORMAT);
         break;
     case TAG('c','t','t','s'):
         /* Baseline streams have no reordered presentation timestamps. */
-        if(n<8u||be32(b+4)>128u||n!=8u+be32(b+4)*8u)return bad(m,LN_MP4_UNSUPPORTED);
-        for(uint32_t at=8u;at<n;at+=8u)if(be32(b+at+4u))return bad(m,LN_MP4_UNSUPPORTED);
+        if(n<8u||ln_read_be32(b+4)>128u||n!=8u+ln_read_be32(b+4)*8u)return bad(m,LN_MP4_UNSUPPORTED);
+        for(uint32_t at=8u;at<n;at+=8u)if(ln_read_be32(b+at+4u))return bad(m,LN_MP4_UNSUPPORTED);
         break;
     default:break;
     }
@@ -164,8 +162,8 @@ static int body(struct ln_mp4 *m){
 static int map_run(struct ln_mp4 *m,uint32_t index){
     if(index>=m->map_count)return bad(m,LN_MP4_FORMAT);
     int r=read_table(m,m->maps+(uint64_t)index*12u,index+1u<m->map_count?24u:12u,0u);if(r<=0)return r;
-    uint32_t first=be32(m->buffer),count=be32(m->buffer+4),end=index+1u<m->map_count?be32(m->buffer+12):m->chunk_count+1u;
-    if(!first||(!index&&first!=1u)||first>=end||end>m->chunk_count+1u||!count||count>65536u||be32(m->buffer+8)!=1u)return bad(m,LN_MP4_FORMAT);
+    uint32_t first=ln_read_be32(m->buffer),count=ln_read_be32(m->buffer+4),end=index+1u<m->map_count?ln_read_be32(m->buffer+12):m->chunk_count+1u;
+    if(!first||(!index&&first!=1u)||first>=end||end>m->chunk_count+1u||!count||count>65536u||ln_read_be32(m->buffer+8)!=1u)return bad(m,LN_MP4_FORMAT);
     m->map_index=index;m->map_first=first;m->map_end=end;m->map_samples=count;return 1;
 }
 static int finish(struct ln_mp4 *m){
@@ -189,8 +187,8 @@ int ln_mp4_open_step(struct ln_mp4 *m){
     if(m->cursor>m->ends[m->depth]||m->ends[m->depth]-m->cursor<8u)return bad(m,LN_MP4_FORMAT);
     uint32_t header_read=m->ends[m->depth]-m->cursor>=16u?16u:8u;
     int result=read_at(m,m->cursor,header_read);if(result<=0)return result;
-    uint64_t size=be32(m->buffer);uint32_t header=8u,type=be32(m->buffer+4);
-    if(size==1u){if(header_read<16u)return bad(m,LN_MP4_FORMAT);size=be64(m->buffer+8);header=16u;}
+    uint64_t size=ln_read_be32(m->buffer);uint32_t header=8u,type=ln_read_be32(m->buffer+4);
+    if(size==1u){if(header_read<16u)return bad(m,LN_MP4_FORMAT);size=ln_read_be64(m->buffer+8);header=16u;}
     else if(!size)size=m->ends[m->depth]-m->cursor;
     if(size<header||size>m->ends[m->depth]-m->cursor||++m->atoms>16384u)return bad(m,LN_MP4_FORMAT);
     m->atom_end=m->cursor+size;m->type=type;m->cursor+=header;
@@ -230,18 +228,18 @@ int ln_mp4_next(struct ln_mp4 *m,struct ln_mp4_packet *out){
         if(m->chunk+1u>=m->map_end){result=map_run(m,m->map_index+1u);if(result<=0)return result;}
         if(m->chunk+1u<m->map_first)return bad(m,LN_MP4_FORMAT);
         m->chunk_samples=m->map_samples;
-        if(m->packet==m->chunk_first){result=read_table(m,m->chunks+(uint64_t)m->chunk*m->chunk_width,m->chunk_width,1u);if(result<=0)return result;m->packet_offset=m->chunk_width==8u?be64(m->buffer):be32(m->buffer);}
+        if(m->packet==m->chunk_first){result=read_table(m,m->chunks+(uint64_t)m->chunk*m->chunk_width,m->chunk_width,1u);if(result<=0)return result;m->packet_offset=m->chunk_width==8u?ln_read_be64(m->buffer):ln_read_be32(m->buffer);}
         m->packet_phase=1;
     }
     if(m->packet_phase==1u){
         m->packet_bytes=m->default_bytes;
-        if(!m->packet_bytes){result=read_table(m,m->sizes+(uint64_t)m->packet*4u,4u,2u);if(result<=0)return result;m->packet_bytes=be32(m->buffer);}
+        if(!m->packet_bytes){result=read_table(m,m->sizes+(uint64_t)m->packet*4u,4u,2u);if(result<=0)return result;m->packet_bytes=ln_read_be32(m->buffer);}
         if(!m->packet_bytes||m->packet_bytes>LINNET_VIDEO_PACKET_BYTES||m->packet_offset>m->bytes||m->packet_bytes>m->bytes-m->packet_offset)return bad(m,LN_MP4_UNSUPPORTED);
         m->packet_phase=2;
     }
     if(m->sync_count&&m->sync_index<m->sync_count&&m->next_sync<=m->packet){
         result=read_table(m,m->sync+(uint64_t)m->sync_index*4u,4u,3u);if(result<=0)return result;
-        uint32_t next=be32(m->buffer);
+        uint32_t next=ln_read_be32(m->buffer);
         if(!next||next>m->samples||next<=m->next_sync)return bad(m,LN_MP4_FORMAT);
         m->next_sync=next;++m->sync_index;if(next<=m->packet)return 0;
     }
@@ -280,12 +278,12 @@ int ln_mp4_seek_step(struct ln_mp4 *m){
         if(m->seek_lo==m->seek_hi){if(m->seek_forward&&m->seek_lo<m->sync_count)++m->seek_lo;if(!m->seek_lo)return bad(m,LN_MP4_FORMAT);m->seek_phase=2u;return 0;}
         uint32_t mid=m->seek_lo+(m->seek_hi-m->seek_lo)/2u;
         int r=read_table(m,m->sync+(uint64_t)mid*4u,4u,3u);if(r<=0)return r;
-        uint32_t sample=be32(m->buffer);if(!sample||sample>m->samples)return bad(m,LN_MP4_FORMAT);
+        uint32_t sample=ln_read_be32(m->buffer);if(!sample||sample>m->samples)return bad(m,LN_MP4_FORMAT);
         if(sample<m->seek_packet+1u||(!m->seek_forward&&sample==m->seek_packet+1u))m->seek_lo=mid+1u;else m->seek_hi=mid;return 0;
     }
     if(m->seek_phase==2u){
         int r=read_table(m,m->sync+(uint64_t)(m->seek_lo-1u)*4u,4u,3u);if(r<=0)return r;
-        m->seek_packet=be32(m->buffer)-1u;m->sync_index=m->seek_lo;m->next_sync=m->seek_packet+1u;m->seek_phase=3u;
+        m->seek_packet=ln_read_be32(m->buffer)-1u;m->sync_index=m->seek_lo;m->next_sync=m->seek_packet+1u;m->seek_phase=3u;
     }
     if(m->seek_phase==3u){
         int r=map_run(m,m->seek_map);if(r<=0)return r;

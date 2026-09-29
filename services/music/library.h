@@ -70,7 +70,6 @@ bool ln_music_library_take_queue_member(uint32_t *track,uint32_t *token);
  * Group lookup returns the record/name; member lookup maps group-relative ordinal
  * to a track. Results are consumed by the matching take function. Selection has
  * priority over an unstarted query; both have priority over cache filling. */
-bool ln_music_library_search(const char *prefix);
 /* kind=0 is a track; 1/2 is an artist/album with a tagged group index. */
 struct ln_music_library_search_row { uint32_t index,kind,count; char title[256]; };
 bool ln_music_library_search_at(const char *prefix,uint32_t ordinal);
@@ -81,7 +80,6 @@ bool ln_music_library_take_search_row(struct ln_music_library_search_row *out);
  * index UINT32_MAX. Matching take function alone consumes this result. */
 bool ln_music_library_view_row(uint32_t source,uint32_t group,uint32_t ordinal);
 bool ln_music_library_take_view_row(struct ln_music_library_search_row *out);
-bool ln_music_library_take_search(uint32_t *track_index);
 bool ln_music_library_track_record(uint32_t index);
 bool ln_music_library_take_track_record(struct ln_music_track *out);
 #define LN_MUSIC_ID_BATCH 30u

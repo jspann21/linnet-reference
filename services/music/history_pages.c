@@ -1,3 +1,4 @@
+#include "boot/include/linnet_bytes.h"
 #include "history_pages.h"
 #include "history.h"
 #include "services/storage/storage.h"
@@ -13,7 +14,6 @@ static struct {
     uint64_t id,full_id,pinned_id;bool full,pinned;
     struct {uint64_t id;uint32_t slot,index;bool valid;} proofs[4];uint32_t proof_cursor;
 } h;
-static bool same(const uint8_t *a,const uint8_t *b,uint32_t n){for(uint32_t i=0;i<n;i++)if(a[i]!=b[i])return false;return true;}
 static void fail(int error){h.error=error;h.phase=FAILED;}
 bool ln_paged_history_ready(void){return h.loaded;}
 int ln_paged_history_error(void){return h.error;}
@@ -149,7 +149,7 @@ void ln_paged_history_step(bool may_read,bool may_write){
     case SUPER_B:{
         if(!completed){start_io(LN_FAT32_READ,LN_STORAGE_MUSIC1,0,h.b,LN_HISTORY_READ_B);return;}
         uint8_t e[16];bool a=ln_history_superblock(h.a,h.epoch),b=ln_history_superblock(h.b,e);
-        if(!a&&!b){fail(LN_HISTORY_BOTH_CORRUPT);return;}if(a&&b&&!same(e,h.epoch,16)){fail(LN_HISTORY_CONFLICT);return;}
+        if(!a&&!b){fail(LN_HISTORY_BOTH_CORRUPT);return;}if(a&&b&&!ln_bytes_equal(e,h.epoch,16)){fail(LN_HISTORY_CONFLICT);return;}
         if(!a)for(uint32_t i=0;i<16;i++)h.epoch[i]=e[i];h.loaded=true;h.revision=1;h.phase=IDLE;return;
     }
     case IDLE:
@@ -192,7 +192,7 @@ void ln_paged_history_step(bool may_read,bool may_write){
     case CHECK:
         if(!completed){start_io(LN_FAT32_READ,LN_STORAGE_MUSIC0+h.cache[h.slot].staged_bank,(h.cache[h.slot].index+1)*4096,h.b,LN_HISTORY_READBACK);return;}h.phase=ACK;return;
     case ACK:
-        if(!same(h.a,h.b,4096)){fail(LN_HISTORY_MISMATCH);return;}
+        if(!ln_bytes_equal(h.a,h.b,4096)){fail(LN_HISTORY_MISMATCH);return;}
         if(!ln_history_page_ack(&h.cache[h.slot])){fail(LN_HISTORY_ACK);return;}h.phase=IDLE;return;
     default:return;
     }

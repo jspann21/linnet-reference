@@ -71,44 +71,57 @@ def _valid_ascii_list(value):
             all(isinstance(item, str) and item and item.isascii() for item in value))
 
 
+def conventional_sources(target_root: Path, spec: dict) -> dict[str, Path]:
+    """Resolve shared source candidates for builds and target reports."""
+    family = spec.get('hal_family', spec['soc'])
+    hal = ROOT / 'hal' / family
+    codec = spec.get('audio_codec', 'wm8975')
+    sources = {
+        'hardware': target_root / 'hardware.h',
+        'startup': hal / 'startup.S',
+        'entry': hal / 'entry.S',
+        'linker': hal / 'memory.ld',
+        'platform': hal / 'platform.c',
+        'core': hal / 'core.c',
+        'input': hal / 'input.c',
+        'ata': hal / 'ata.c',
+        'persistent_enter': hal / 'persistent_enter.S',
+        'lcd': target_root / 'lcd.c',
+        'display': target_root / 'display.c' if (target_root / 'display.c').is_file() else hal / 'display.c',
+        'device': target_root / 'device.c' if (target_root / 'device.c').is_file() else target_root / 'board.c',
+        'power': target_root / 'power.c' if (target_root / 'power.c').is_file() else hal / 'power.c',
+        'codec': ROOT / 'hal' / 'codecs' / (codec + '.c'),
+        'native_update': target_root / 'native_update.c' if (target_root / 'native_update.c').is_file()
+                         else ROOT / 'services' / 'update' / 'native.c',
+    }
+    backend = spec['media_video_backend']
+    if backend == 'ipvf':
+        sources['video'] = ROOT / 'services' / 'video' / 'ipvf' / 'player.c'
+    elif backend == 'native-mp4':
+        sources['video'] = ROOT / 'services' / 'video' / 'native' / 'player.c'
+    elif backend == 'bcm-mp4':
+        sources['video'] = target_root / 'video.c'
+    return sources
+
+
 def _target_sources(path, spec):
     """Resolve the conventional source layout for one target."""
     resolved = resolve_target(spec)
-    soc_root = ROOT / "hal" / resolved["hal_family"]
     target_root = path.parent
     if not re.fullmatch(r"[a-z][a-z0-9-]*", resolved["hal_family"]):
         raise RuntimeError(f"invalid HAL family: {path}")
     codec = resolved["audio_codec"]
     if not re.fullmatch(r"[a-z][a-z0-9-]*", codec):
         raise RuntimeError(f"invalid audio codec: {path}")
-    display = target_root / "display.c"
-    if not display.is_file():
-        display = soc_root / "display.c"
-    sources = {
-        "native_update": target_root / "native_update.c" if (target_root / "native_update.c").is_file() else ROOT / "services/update/native.c",
-        "hardware": target_root / "hardware.h",
-        "startup": soc_root / "startup.S",
-        "linker": soc_root / "memory.ld",
-        "platform": soc_root / "platform.c",
-        "lcd": target_root / "lcd.c",
-        "display": display,
-        "device": target_root / "device.c" if (target_root / "device.c").is_file() else target_root / "board.c",
-        "power": target_root / "power.c" if (target_root / "power.c").is_file() else soc_root / "power.c",
-        "codec": ROOT / "hal" / "codecs" / (codec + ".c"),
-    }
-    video_backend = spec["media_video_backend"]
-    if video_backend == "ipvf":
-        video = ROOT / "services/video/ipvf/player.c"
-    elif video_backend == "native-mp4":
-        video = ROOT / "services/video/native/player.c"
-    elif video_backend == "bcm-mp4":
-        video = target_root / "video.c"
-    elif video_backend == "none":
-        video = None
-    else:
-        raise RuntimeError(f"unsupported video backend: {video_backend}")
-    if video is not None:
-        sources["video"] = video
+    candidates = conventional_sources(target_root, resolved)
+    sources = {name: candidates[name] for name in (
+        "native_update", "hardware", "startup", "linker", "platform", "lcd",
+        "display", "device", "power", "codec",
+    )}
+    if spec["media_video_backend"] not in ("ipvf", "native-mp4", "bcm-mp4", "none"):
+        raise RuntimeError(f'unsupported video backend: {spec["media_video_backend"]}')
+    if "video" in candidates:
+        sources["video"] = candidates["video"]
     coprocessor = target_root / "coprocessor.c"
     if coprocessor.is_file():
         sources["coprocessor"] = coprocessor

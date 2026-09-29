@@ -1,7 +1,6 @@
 #include "boot/include/linnet_bytes.h"
 #include "pimg.h"
 #include "boot/include/linnet_boot.h"
-static bool zero(const uint8_t*p,uint32_t n){while(n--)if(*p++)return false;return true;}
 static bool section(uint32_t *at,uint32_t offset,uint32_t count,uint32_t width,uint32_t limit){
     if(offset!=*at||offset>limit||count>(limit-offset)/width)return false;*at+=count*width;return true;
 }
@@ -12,7 +11,7 @@ bool ln_pimg_header(const uint8_t*b,uint32_t size,struct ln_pimg_header*h){
     if(!b||!h||size<512||size>0x7fffffffu||b[0]!='P'||b[1]!='I'||b[2]!='M'||b[3]!='G'||
        ln_read_le16(b+4)!=0||ln_read_le16(b+6)!=512||ln_read_le32(b+8)||ln_read_le32(b+12)!=size||
        ln_read_le16(b+64)!=64||ln_read_le16(b+66)!=64||ln_read_le16(b+68)!=32||ln_read_le16(b+70)!=1||
-       !zero(b+72,436)||ln_crc32(b,508)!=ln_read_le32(b+508))return false;
+       !ln_bytes_zero(b+72,436)||ln_crc32(b,508)!=ln_read_le32(b+508))return false;
     *h=(struct ln_pimg_header){size,ln_read_le32(b+16),ln_read_le32(b+20),ln_read_le32(b+24),ln_read_le32(b+28),ln_read_le32(b+32),ln_read_le32(b+36),ln_read_le32(b+40),ln_read_le32(b+44),ln_read_le32(b+48),ln_read_le32(b+52),ln_read_le32(b+56),ln_read_le32(b+60),ln_read_le32(b+508)};
     if(!h->albums||h->albums>4096||h->photos>65535||h->levels<h->photos||h->levels>h->photos*6u||h->tiles>1000000u||!h->string_bytes||h->string_bytes>16777216u||h->data_at%512u)return false;
     uint32_t at=512;
@@ -24,7 +23,7 @@ bool ln_pimg_header(const uint8_t*b,uint32_t size,struct ln_pimg_header*h){
 }
 static bool string_range(const struct ln_pimg_header*h,uint32_t at,uint32_t bytes,uint32_t max){return bytes<=max&&at<h->string_bytes&&bytes<h->string_bytes-at;}
 bool ln_pimg_album(const struct ln_pimg_header*h,const uint8_t*b,uint32_t index,struct ln_pimg_album*a){
-    if(index>=h->albums||ln_crc32(b,28)!=ln_read_le32(b+28)||!zero(b+20,8))return false;
+    if(index>=h->albums||ln_crc32(b,28)!=ln_read_le32(b+28)||!ln_bytes_zero(b+20,8))return false;
     *a=(struct ln_pimg_album){ln_read_le32(b),ln_read_le32(b+4),ln_read_le32(b+8),ln_read_le32(b+12),ln_read_le32(b+16)};
     return a->bytes&&string_range(h,a->title,a->bytes,191)&&a->first<=h->photos&&a->count<=h->photos-a->first&&(index?a->parent<index:a->parent==UINT32_MAX);
 }

@@ -38,7 +38,6 @@ uint32_t ln_photos_revision(void);
 uint32_t ln_photos_navigation(void);
 uint32_t ln_photos_selection(void);
 const char *ln_photos_title(void);
-const char *ln_photos_hint(void);
 const char *ln_photos_status(void);
 /* 16-byte resume: catalog identity, photo index, zoom/rotation/view, packed pan.
  * Photo index65535 is outside every valid PIMG photo range and denotes an empty

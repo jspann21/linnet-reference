@@ -45,8 +45,6 @@ bool ln_music_history_busy(void);
 bool ln_music_history_finishing(void);
 bool ln_music_history_dirty(void);
 uint32_t ln_music_history_revision(void);
-/* Returns UINT32_MAX because counting would require scanning every page. */
-uint32_t ln_music_history_count(void);
 bool ln_music_history_prefetch(uint64_t id);
 /* Distinguishes a proven missing record from uncached data. One prefetch may
  * be active; callers retry admission/intent once ready. Cache pointers expire

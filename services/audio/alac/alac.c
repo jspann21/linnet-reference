@@ -1,8 +1,7 @@
+#include "boot/include/linnet_bytes.h"
 #include "alac.h"
 #define TAG(a,b,c,d) (((uint32_t)(a)<<24)|((uint32_t)(b)<<16)|((uint32_t)(c)<<8)|(d))
 static uint16_t be16(const uint8_t *p){return (uint16_t)((p[0]<<8)|p[1]);}
-static uint32_t be32(const uint8_t *p){return ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|(p[2]<<8)|p[3];}
-static uint64_t be64(const uint8_t *p){return ((uint64_t)be32(p)<<32)|be32(p+4);}
 static uint32_t divide_small(uint32_t value,uint32_t divisor,uint32_t *remainder)
 {
     /* Sequential packets commonly remain inside the first chunk. */
@@ -111,69 +110,69 @@ static int body(struct ln_alac *a)
 {
     uint8_t *b=a->buffer;uint32_t n=a->body_bytes,t=a->atom_type;
     if(t==TAG('s','t','s','d')){
-        if(n<52||be32(b)||be32(b+4)!=1||!once(a,1))return bad(a,LN_ALAC_FORMAT);
-        uint32_t entry=be32(b+8);
-        uint32_t type=be32(b+12);
+        if(n<52||ln_read_be32(b)||ln_read_be32(b+4)!=1||!once(a,1))return bad(a,LN_ALAC_FORMAT);
+        uint32_t entry=ln_read_be32(b+8);
+        uint32_t type=ln_read_be32(b+12);
         if(entry!=n-8||entry<44||be16(b+22)!=1||be16(b+24))return bad(a,LN_ALAC_UNSUPPORTED);
         if(type==TAG('a','l','a','c'))a->codec=18;
         else if(type==TAG('m','p','4','a')&&a->allow_aac)a->codec=17;
         else return bad(a,LN_ALAC_UNSUPPORTED);
         uint32_t at=44;
-        while(at+8<=n){uint32_t size=be32(b+at);if(size<8||size>n-at)return bad(a,LN_ALAC_FORMAT);
-            if(be32(b+at+4)==TAG('a','l','a','c')&&a->codec==18){
-                if(size!=36||be32(b+at+8)||a->rate)return bad(a,LN_ALAC_FORMAT);
+        while(at+8<=n){uint32_t size=ln_read_be32(b+at);if(size<8||size>n-at)return bad(a,LN_ALAC_FORMAT);
+            if(ln_read_be32(b+at+4)==TAG('a','l','a','c')&&a->codec==18){
+                if(size!=36||ln_read_be32(b+at+8)||a->rate)return bad(a,LN_ALAC_FORMAT);
                 uint8_t *c=b+at+12;
-                a->core.setinfo_max_samples_per_frame=be32(c);a->core.setinfo_7a=c[4];a->core.setinfo_sample_size=c[5];
+                a->core.setinfo_max_samples_per_frame=ln_read_be32(c);a->core.setinfo_7a=c[4];a->core.setinfo_sample_size=c[5];
                 a->core.setinfo_rice_historymult=c[6];a->core.setinfo_rice_initialhistory=c[7];a->core.setinfo_rice_kmodifier=c[8];a->core.setinfo_7f=c[9];
-                a->rate=be32(c+20);a->channels=c[9];
-                if(c[4]||c[5]!=16||!a->channels||a->channels>2||a->rate<8000||a->rate>96000||!be32(c)||be32(c)>4096||c[8]>14)return bad(a,LN_ALAC_UNSUPPORTED);
+                a->rate=ln_read_be32(c+20);a->channels=c[9];
+                if(c[4]||c[5]!=16||!a->channels||a->channels>2||a->rate<8000||a->rate>96000||!ln_read_be32(c)||ln_read_be32(c)>4096||c[8]>14)return bad(a,LN_ALAC_UNSUPPORTED);
                 if(be16(b+32)!=a->channels||be16(b+34)!=16)return bad(a,LN_ALAC_FORMAT);
-            }else if(be32(b+at+4)==TAG('e','s','d','s')&&a->codec==17){
-                if(size<12||be32(b+at+8)||!descriptors(a,b+at+12,size-12,0)||!asc_info(a))return bad(a,LN_ALAC_UNSUPPORTED);
+            }else if(ln_read_be32(b+at+4)==TAG('e','s','d','s')&&a->codec==17){
+                if(size<12||ln_read_be32(b+at+8)||!descriptors(a,b+at+12,size-12,0)||!asc_info(a))return bad(a,LN_ALAC_UNSUPPORTED);
                 a->core.setinfo_max_samples_per_frame=1024;
             }at+=size;
         }
         if(at!=n||!a->rate)return bad(a,LN_ALAC_FORMAT);
     }else if(t==TAG('s','t','s','z')){
-        if(n!=12||be32(b)||!once(a,2))return bad(a,LN_ALAC_FORMAT);
-        a->default_size=be32(b+4);a->packets=be32(b+8);a->sizes_offset=a->cursor+12;
+        if(n!=12||ln_read_be32(b)||!once(a,2))return bad(a,LN_ALAC_FORMAT);
+        a->default_size=ln_read_be32(b+4);a->packets=ln_read_be32(b+8);a->sizes_offset=a->cursor+12;
         if(!a->packets||a->packets>1000000||a->default_size>32768||a->atom_end-a->cursor!=12u+(a->default_size?0u:(uint64_t)a->packets*4u))return bad(a,LN_ALAC_UNSUPPORTED);
     }else if(t==TAG('s','t','c','o')||t==TAG('c','o','6','4')){
-        if(n!=8||be32(b)||!once(a,4))return bad(a,LN_ALAC_FORMAT);
-        a->chunks=be32(b+4);a->chunk_width=t==TAG('s','t','c','o')?4u:8u;a->chunks_offset=a->cursor+8;
+        if(n!=8||ln_read_be32(b)||!once(a,4))return bad(a,LN_ALAC_FORMAT);
+        a->chunks=ln_read_be32(b+4);a->chunk_width=t==TAG('s','t','c','o')?4u:8u;a->chunks_offset=a->cursor+8;
         if(!a->chunks||a->chunks>1000000||a->atom_end-a->cursor!=8u+(uint64_t)a->chunks*a->chunk_width)return bad(a,LN_ALAC_UNSUPPORTED);
     }else if(t==TAG('s','t','s','c')){
-        if(n<20||be32(b)||!once(a,8))return bad(a,LN_ALAC_FORMAT);
-        a->chunk_count=be32(b+4);
+        if(n<20||ln_read_be32(b)||!once(a,8))return bad(a,LN_ALAC_FORMAT);
+        a->chunk_count=ln_read_be32(b+4);
         if(!a->chunk_count||a->chunk_count>256||n!=8+12*a->chunk_count)return bad(a,LN_ALAC_UNSUPPORTED);
         for(uint32_t i=0;i<a->chunk_count;i++){
-            uint8_t *c=b+8+i*12;a->map[i].first=be32(c);a->map[i].count=be32(c+4);
-            if(!a->map[i].first||!a->map[i].count||a->map[i].count>1000000||be32(c+8)!=1||(!i&&a->map[i].first!=1)||(i&&a->map[i].first<=a->map[i-1].first))return bad(a,LN_ALAC_UNSUPPORTED);
+            uint8_t *c=b+8+i*12;a->map[i].first=ln_read_be32(c);a->map[i].count=ln_read_be32(c+4);
+            if(!a->map[i].first||!a->map[i].count||a->map[i].count>1000000||ln_read_be32(c+8)!=1||(!i&&a->map[i].first!=1)||(i&&a->map[i].first<=a->map[i-1].first))return bad(a,LN_ALAC_UNSUPPORTED);
         }
     }else if(t==TAG('s','t','t','s')){
-        if(n<16||be32(b)||!once(a,16))return bad(a,LN_ALAC_FORMAT);
-        a->time_count=be32(b+4);
+        if(n<16||ln_read_be32(b)||!once(a,16))return bad(a,LN_ALAC_FORMAT);
+        a->time_count=ln_read_be32(b+4);
         if(!a->time_count||a->time_count>128||n!=8+8*a->time_count)return bad(a,LN_ALAC_UNSUPPORTED);
         for(uint32_t i=0;i<a->time_count;i++){
-            a->times[i].count=be32(b+8+i*8);a->times[i].delta=be32(b+12+i*8);
+            a->times[i].count=ln_read_be32(b+8+i*8);a->times[i].delta=ln_read_be32(b+12+i*8);
             if(!a->times[i].count||!a->times[i].delta||a->times[i].delta>4096)return bad(a,LN_ALAC_UNSUPPORTED);
         }
     }else if(t==TAG('m','v','h','d')){
-        if(n<20||be32(b)||a->movie_scale)return bad(a,LN_ALAC_UNSUPPORTED);
-        a->movie_scale=be32(b+12);
+        if(n<20||ln_read_be32(b)||a->movie_scale)return bad(a,LN_ALAC_UNSUPPORTED);
+        a->movie_scale=ln_read_be32(b+12);
         if(!a->movie_scale||a->movie_scale>1000000)return bad(a,LN_ALAC_UNSUPPORTED);
     }else if(t==TAG('m','d','h','d')){
-        if(n<24||be32(b)||!once(a,32))return bad(a,LN_ALAC_UNSUPPORTED);
+        if(n<24||ln_read_be32(b)||!once(a,32))return bad(a,LN_ALAC_UNSUPPORTED);
         /* sample timescale is compared to the ALAC rate after all atoms. */
-        a->skip=be32(b+12);
+        a->skip=ln_read_be32(b+12);
     }else if(t==TAG('h','d','l','r')){
-        if(n<12||be32(b)||be32(b+8)!=TAG('s','o','u','n')||!once(a,64))return bad(a,LN_ALAC_UNSUPPORTED);
+        if(n<12||ln_read_be32(b)||ln_read_be32(b+8)!=TAG('s','o','u','n')||!once(a,64))return bad(a,LN_ALAC_UNSUPPORTED);
     }else if(t==TAG('e','l','s','t')){
-        if(n!=20||be32(b)||be32(b+4)!=1||(be32(b+12)&0x80000000u)||be32(b+16)!=0x10000||!once(a,256))return bad(a,LN_ALAC_UNSUPPORTED);
-        a->lead_trim=be32(b+12);
-        a->edit_duration=be32(b+8);
+        if(n!=20||ln_read_be32(b)||ln_read_be32(b+4)!=1||(ln_read_be32(b+12)&0x80000000u)||ln_read_be32(b+16)!=0x10000||!once(a,256))return bad(a,LN_ALAC_UNSUPPORTED);
+        a->lead_trim=ln_read_be32(b+12);
+        a->edit_duration=ln_read_be32(b+8);
     }else if(t==TAG('d','r','e','f')){
-        if(n!=20||be32(b)||be32(b+4)!=1||be32(b+8)!=12||be32(b+12)!=TAG('u','r','l',' ')||be32(b+16)!=1||!once(a,128))return bad(a,LN_ALAC_UNSUPPORTED);
+        if(n!=20||ln_read_be32(b)||ln_read_be32(b+4)!=1||ln_read_be32(b+8)!=12||ln_read_be32(b+12)!=TAG('u','r','l',' ')||ln_read_be32(b+16)!=1||!once(a,128))return bad(a,LN_ALAC_UNSUPPORTED);
     }
     a->cursor=a->atom_end;a->phase=0;return 0;
 }
@@ -210,8 +209,8 @@ int ln_alac_open_step(struct ln_alac *a)
     if(a->cursor>a->ends[a->depth]||remain<8)return bad(a,LN_ALAC_FORMAT);
     int result=read_bytes(a,a->cursor,remain>=16?16:8);if(result!=1)return result;
     if(++a->atoms>4096)return bad(a,LN_ALAC_UNSUPPORTED);
-    uint32_t head=8,t=be32(a->buffer+4);uint64_t size=be32(a->buffer);
-    if(size==1){if(remain<16)return bad(a,LN_ALAC_FORMAT);size=be64(a->buffer+8);head=16;}
+    uint32_t head=8,t=ln_read_be32(a->buffer+4);uint64_t size=ln_read_be32(a->buffer);
+    if(size==1){if(remain<16)return bad(a,LN_ALAC_FORMAT);size=ln_read_be64(a->buffer+8);head=16;}
     else if(!size)size=remain;
     if(size<head||size>remain)return bad(a,LN_ALAC_FORMAT);
     a->atom_start=a->cursor;a->atom_end=a->cursor+size;a->atom_type=t;
@@ -266,7 +265,7 @@ int ln_m4a_read_packet(struct ln_alac *a)
     }
     if(a->decode_phase==1){
         int result=read_bytes(a,a->chunks_offset+(uint64_t)a->chunk_index*a->chunk_width,a->chunk_width);if(result!=1)return result;
-        a->packet_offset=a->chunk_width==4?be32(a->buffer):be64(a->buffer);
+        a->packet_offset=a->chunk_width==4?ln_read_be32(a->buffer):ln_read_be64(a->buffer);
         if(a->packet_offset<a->mdat_start||a->packet_offset>=a->mdat_end)return bad(a,LN_ALAC_FORMAT);
         a->decode_phase=2;
     }
@@ -281,7 +280,7 @@ int ln_m4a_read_packet(struct ln_alac *a)
             uint32_t count=a->chunk_ordinal+1-a->size_scan;if(count>256)count=256;
             int result=read_bytes(a,a->sizes_offset+(uint64_t)(a->chunk_first+a->size_scan)*4,count*4);if(result!=1)return result;
             for(uint32_t i=0;i<count;i++){
-                uint32_t size=be32(a->buffer+i*4);if(!size||size>32768)return bad(a,LN_ALAC_UNSUPPORTED);
+                uint32_t size=ln_read_be32(a->buffer+i*4);if(!size||size>32768)return bad(a,LN_ALAC_UNSUPPORTED);
                 if(size>a->mdat_end-a->packet_offset)return bad(a,LN_ALAC_FORMAT);
                 if(a->size_scan+i==a->chunk_ordinal)a->packet_size=size;else a->packet_offset+=size;
             }
@@ -326,7 +325,6 @@ bool ln_alac_seek(struct ln_alac *a,uint64_t frame)
     }
     a->packet=packet;a->skip=(uint32_t)remaining;a->frame=frame;a->pcm_count=a->pcm_cursor=0;a->decode_phase=0;a->read_total=0;return true;
 }
-bool ln_m4a_seek(struct ln_alac *a,uint64_t frame){return ln_alac_seek(a,frame);}
 bool ln_m4a_seek_indexed(struct ln_alac *a,uint32_t packet,uint64_t offset){
     if(!a||a->codec!=17||packet>=a->packets||offset<a->mdat_start||offset>=a->mdat_end||
        !ln_alac_seek(a,(uint64_t)packet*1024u)||a->packet!=packet||!locate(a))return false;

@@ -19,8 +19,6 @@ static bool direction_in,reading,writing,eject,write_enabled,dirty;
 static const char *device_serial;
 static uint32_t activity;
 static volatile uint32_t *const diagnostic=(volatile uint32_t *)(uintptr_t)0x22017c00u;
-static uint32_t be32(const uint8_t *p){return (uint32_t)p[0]<<24|(uint32_t)p[1]<<16|(uint32_t)p[2]<<8|p[3];}
-static uint32_t be16(const uint8_t *p){return (uint32_t)p[0]<<8|p[1];}
 static void put32(uint8_t *p,uint32_t value){p[0]=(uint8_t)(value>>24);p[1]=(uint8_t)(value>>16);p[2]=(uint8_t)(value>>8);p[3]=(uint8_t)value;}
 static void failure(uint8_t key,uint8_t code) {
     sense_key=key;sense_code=code;status=1;reading=writing=false;position=length=0;
@@ -61,7 +59,7 @@ static void mode_sense(const uint8_t *c,bool ten) {
     if(page==8 || page==0x3f){buffer[bytes]=8;buffer[bytes+1]=18;bytes+=20;}
     /* Every completed WRITE is flushed: advertise no volatile write cache. */
     buffer[ten?1:0]=(uint8_t)(bytes-(ten?2:1));
-    reply(bytes,ten?be16(c+7):c[4]);
+    reply(bytes,ten?ln_read_be16(c+7):c[4]);
 }
 static void command(void) {
     if(ln_read_le32(wrapper)!=0x43425355u || wrapper[13] || !wrapper[14] || wrapper[14]>16 || (wrapper[12]&0x7f)) {
@@ -73,7 +71,7 @@ static void command(void) {
     uint32_t slot=12+((c[0]?diagnostic[1]++:diagnostic[1])%8)*6;
     if(c[0]) {
     diagnostic[slot]=ln_time_us();diagnostic[slot+1]=c[0];diagnostic[slot+2]=residue;
-    diagnostic[slot+3]=be32(c+2);diagnostic[slot+4]=ln_read_le32(c);diagnostic[slot+5]=ln_read_le32(c+4);
+    diagnostic[slot+3]=ln_read_be32(c+2);diagnostic[slot+4]=ln_read_le32(c);diagnostic[slot+5]=ln_read_le32(c+4);
     }
     if(c[0]!=0)activity=ln_time_us();
     unsigned group=c[0]>>5,required=group==0?6:group==4?16:group==5?12:10;
@@ -106,17 +104,17 @@ static void command(void) {
         mode_sense(c,true);break;
     case 0x9e: /* READ CAPACITY(16) */
         if((c[1]&31)!=0x10){failure(5,0x24);break;}
-        put32(buffer+4,capacity-1);put32(buffer+8,block_bytes);reply(32,be32(c+10));break;
+        put32(buffer+4,capacity-1);put32(buffer+8,block_bytes);reply(32,ln_read_be32(c+10));break;
     case 0xa0: /* REPORT LUNS */
-        buffer[3]=8;reply(16,be32(c+6));break;
+        buffer[3]=8;reply(16,ln_read_be32(c+6));break;
     case 0x23: /* READ FORMAT CAPACITIES */
         buffer[3]=8;put32(buffer+4,capacity);buffer[8]=2;
         buffer[10]=(uint8_t)(block_bytes>>8);buffer[11]=(uint8_t)block_bytes;
-        reply(12,be16(c+7));break;
+        reply(12,ln_read_be16(c+7));break;
     case 0x25: /* READ CAPACITY(10) */
         put32(buffer,capacity-1);put32(buffer+4,block_bytes);reply(8,8);break;
     case 0x28:case 0x2a: /* READ/WRITE(10) */
-        lba=be32(c+2);blocks=be16(c+7);
+        lba=ln_read_be32(c+2);blocks=ln_read_be16(c+7);
         if(lba>capacity || blocks>capacity-lba){failure(5,0x21);break;}
         if(residue!=blocks*block_bytes || direction_in!=(c[0]==0x28)){status=2;failure(5,0x24);status=2;break;}
         if(!blocks)break;

@@ -1,3 +1,4 @@
+#include "boot/include/linnet_bytes.h"
 #include "mp3.h"
 #include "third_party/libmad/codeclib.h"
 #include "hal/api/platform.h"
@@ -106,8 +107,6 @@ static int16_t pcm16(mad_fixed_t value)
     if(value<=-MAD_F_ONE)return -32768;
     return (int16_t)(value>>(MAD_F_FRACBITS-15));
 }
-static uint32_t be32(const uint8_t *b)
-{return ((uint32_t)b[0]<<24)|((uint32_t)b[1]<<16)|(b[2]<<8)|b[3];}
 static bool tag(const uint8_t *b,const char *s)
 {return b[0]==(uint8_t)s[0]&&b[1]==(uint8_t)s[1]&&b[2]==(uint8_t)s[2]&&b[3]==(uint8_t)s[3];}
 /* The Xing frame is metadata and must not enter the synthesis filter. LAME
@@ -122,10 +121,10 @@ static int first_frame(struct ln_mp3 *d)
     bool low=(d->frame.header.flags&MAD_FLAG_LSF_EXT)!=0;
     uint32_t offset=4u+(low?(d->channels==1?9u:17u):(d->channels==1?17u:32u));
     if(bytes<offset+8u||(!tag(b+offset,"Xing")&&!tag(b+offset,"Info")))return 0;
-    uint32_t flags=be32(b+offset+4),cursor=offset+8,count=0;
+    uint32_t flags=ln_read_be32(b+offset+4),cursor=offset+8,count=0;
     if(flags&~15u)return -1;
-    if(flags&1u){if(bytes-cursor<4)return -1;count=be32(b+cursor);cursor+=4;}
-    if(flags&2u){if(bytes-cursor<4)return -1;uint32_t length=be32(b+cursor);if(length>d->file_size)return -1;cursor+=4;}
+    if(flags&1u){if(bytes-cursor<4)return -1;count=ln_read_be32(b+cursor);cursor+=4;}
+    if(flags&2u){if(bytes-cursor<4)return -1;uint32_t length=ln_read_be32(b+cursor);if(length>d->file_size)return -1;cursor+=4;}
     if(flags&4u){if(bytes-cursor<100)return -1;cursor+=100;}
     if(flags&8u){if(bytes-cursor<4)return -1;cursor+=4;}
     if(!count||count>(d->file_size>>2)||bytes-cursor<24)return 1;

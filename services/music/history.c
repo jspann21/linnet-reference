@@ -28,7 +28,6 @@ int ln_music_history_error(void){return history.error?history.error:ln_paged_his
 bool ln_music_history_busy(void){return history.stepping||ln_paged_history_busy();}
 bool ln_music_history_dirty(void){return ln_paged_history_dirty();}
 uint32_t ln_music_history_revision(void){return ln_paged_history_revision();}
-uint32_t ln_music_history_count(void){return UINT32_MAX;}
 const struct ln_music_journal_record *ln_music_history_get(uint64_t id){return ln_paged_history_get(id);}
 bool ln_music_history_prefetch(uint64_t id){return !history.frozen&&ln_paged_history_prefetch(id);}
 bool ln_music_history_record_ready(uint64_t id){return ln_paged_history_record_ready(id);}

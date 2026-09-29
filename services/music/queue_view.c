@@ -3,12 +3,11 @@
 static struct {
     struct ln_queue queue;
     char labels[LN_QUEUE_VIEW_ROWS][259];
-    bool valid[LN_QUEUE_VIEW_ROWS],opened,pending,action_ready,was_ready;
+    bool valid[LN_QUEUE_VIEW_ROWS],opened,pending,was_ready;
     uint32_t queue_revision,first,epoch,revision,job_epoch,job_row,visible_rows;
-    uint32_t selected,action,action_revision;
 } view;
 static void invalidate(void){
-    ++view.epoch;++view.revision;view.action_ready=false;
+    ++view.epoch;++view.revision;
     for(uint32_t i=0;i<LN_QUEUE_VIEW_ROWS;i++)view.valid[i]=false;
 }
 static bool same_labels(const struct ln_queue *a,const struct ln_queue *b){
@@ -26,8 +25,6 @@ void ln_music_queue_view_update(const struct ln_queue *queue,uint32_t queue_revi
     if(!queue||!view.opened||view.queue_revision==queue_revision)return;
     bool retained=same_labels(&view.queue,queue);
     view.queue=*queue;view.queue_revision=queue_revision;
-    /* Actions use the general revision even when cached titles remain valid. */
-    view.action_ready=false;
     if(view.first>=queue->count)view.first=queue->count?queue->count-1u:0;
     if(!retained){invalidate();return;}
     bool changed=false;
@@ -62,7 +59,7 @@ void ln_music_queue_view_window(uint32_t first){
                 view.valid[i]=view.valid[source];
             }else view.valid[i]=false;
         }
-        view.first=first;view.action_ready=false;++view.revision;
+        view.first=first;++view.revision;
     }
 }
 uint32_t ln_music_queue_view_count(void){return view.opened?view.queue.count:0;}
@@ -118,13 +115,4 @@ void ln_music_queue_view_step(bool allow_query){
         return;
     }
 }
-bool ln_music_queue_view_select(uint32_t row,uint32_t action){
-    if(!view.opened||row>=view.queue.count||action>LN_QUEUE_VIEW_MOVE_DOWN||view.action_ready)return false;
-    if((action==LN_QUEUE_VIEW_MOVE_UP&&!row)||(action==LN_QUEUE_VIEW_MOVE_DOWN&&row+1u==view.queue.count))return false;
-    view.selected=row;view.action=action;view.action_revision=view.queue_revision;view.action_ready=true;return true;
-}
 bool ln_music_queue_view_query_pending(void){return view.pending;}
-bool ln_music_queue_view_take_action(uint32_t *row,uint32_t *action,uint32_t *queue_revision){
-    if(!row||!action||!queue_revision||!view.action_ready)return false;
-    *row=view.selected;*action=view.action;*queue_revision=view.action_revision;view.action_ready=false;return true;
-}

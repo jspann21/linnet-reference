@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.util
-import json
 import os
 from operator import sub
 import struct
@@ -51,7 +50,6 @@ AUDIO_SAMPLE_RATE = 44_100
 AUDIO_FRAME_BYTES = AUDIO_CHANNELS * AUDIO_BITS_PER_SAMPLE // 8
 MIN_FPS = 4
 MAX_FPS = 240
-DEFAULT_KEY_SECONDS = Fraction(5)
 UINT32_MAX = (1 << 32) - 1
 UINT64_MAX = (1 << 64) - 1
 DEVICE_FILE_SIZE_MAX = 0x7FFFFFFF
@@ -60,27 +58,7 @@ INDEX_FLAG_KEY_LZ4 = 1
 METADATA_OFFSET = HEADER_SIZE
 METADATA_CAPACITY = DATA_OFFSET - METADATA_OFFSET
 METADATA_TAGS = {"title": 1, "artist": 2, "album": 3}
-METADATA_NAMES = {tag: name for name, tag in METADATA_TAGS.items()}
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-
-CREATOR_PROFILES = {
-    "native": {
-        "fps": None,
-        "color_depth": "rgb565",
-        "description": "source cadence up to 30 fps, native RGB565 precision",
-    },
-    "everyday": {
-        "fps": None,
-        "color_depth": "rgb565",
-        "description": "source cadence up to 30 fps, full RGB565 precision",
-    },
-    "compact": {
-        "fps": 20,
-        "color_depth": "rgb565",
-        "description": "20 fps with full RGB565 precision",
-    },
-}
-
 
 def configure_geometry(width: int, height: int, max_record_sectors: int = 192) -> None:
     """Select the target media geometry before encoding any records."""
@@ -256,35 +234,6 @@ def encode_metadata(metadata: dict[str, str] | None = None) -> bytes:
     return bytes(encoded)
 
 
-def parse_metadata(data: bytes) -> dict[str, str]:
-    """Parse a complete metadata TLV payload with strict bounds checks."""
-    metadata: dict[str, str] = {}
-    position = 0
-    while position < len(data):
-        if position + 2 > len(data):
-            raise ValueError("metadata has a truncated TLV header")
-        tag = data[position]
-        length = data[position + 1]
-        position += 2
-        name = METADATA_NAMES.get(tag)
-        if name is None:
-            raise ValueError(f"metadata has an unknown tag {tag}")
-        if length == 0:
-            raise ValueError(f"metadata tag {name} has an invalid zero length")
-        if position + length > len(data):
-            raise ValueError(f"metadata tag {name} exceeds metadata bounds")
-        if name in metadata:
-            raise ValueError(f"metadata tag {name} is duplicated")
-        try:
-            metadata[name] = data[position:position + length].decode(
-                "utf-8", "strict"
-            )
-        except UnicodeDecodeError as error:
-            raise ValueError(f"metadata tag {name} is not valid UTF-8") from error
-        position += length
-    return metadata
-
-
 def index_flags_for_kind(kind: int) -> int:
     """Return the index flags for a keyframe record kind."""
     if kind == TYPE_KEY:
@@ -292,78 +241,6 @@ def index_flags_for_kind(kind: int) -> int:
     if kind == TYPE_KEY_LZ4:
         return INDEX_FLAG_KEY_LZ4
     raise ValueError(f"record kind {kind} is not a keyframe")
-
-
-def _ima_step(predictor: int, index: int, code: int) -> tuple[int, int]:
-    """Decode one standard IMA ADPCM nibble."""
-    index = max(0, min(88, index))
-    step = IMA_STEP_TABLE[index]
-    delta = step >> 3
-    if code & 1:
-        delta += step >> 2
-    if code & 2:
-        delta += step >> 1
-    if code & 4:
-        delta += step
-    if code & 8:
-        predictor -= delta
-    else:
-        predictor += delta
-    predictor = max(-32768, min(32767, predictor))
-    index += IMA_INDEX_TABLE[code & 0x0F]
-    return predictor, max(0, min(88, index))
-
-
-def decode_ima_adpcm(data: bytes, frames: int) -> bytes:
-    """Decode one adaptive silence/mono/stereo IMA block to stereo PCM."""
-    if frames <= 0:
-        raise ValueError("invalid IMA ADPCM block length")
-    if not data:
-        return bytes(frames * AUDIO_FRAME_BYTES)
-    mono_bytes = 4 + ((frames - 1 + 1) // 2)
-    if len(data) == mono_bytes:
-        predictor, index, reserved = struct.unpack_from("<hBB", data)
-        if reserved or index > 88:
-            raise ValueError("invalid IMA ADPCM block header")
-        out = bytearray(struct.pack("<hh", predictor, predictor))
-        for sample in range(1, frames):
-            packed = data[4 + (sample - 1) // 2]
-            code = packed >> 4 if (sample - 1) & 1 else packed & 0x0F
-            predictor, index = _ima_step(predictor, index, code)
-            out.extend(struct.pack("<hh", predictor, predictor))
-        return bytes(out)
-    if len(data) != 8 + frames - 1:
-        raise ValueError("invalid IMA ADPCM block length")
-    left, li, reserved, right, ri, reserved_r = struct.unpack_from(
-        "<hBBhBB", data
-    )
-    if reserved or reserved_r or li > 88 or ri > 88:
-        raise ValueError("invalid IMA ADPCM block header")
-    out = bytearray(struct.pack("<hh", left, right))
-    for packed in data[8:]:
-        left, li = _ima_step(left, li, packed & 0x0F)
-        right, ri = _ima_step(right, ri, packed >> 4)
-        out.extend(struct.pack("<hh", left, right))
-    return bytes(out)
-
-
-def _ima_code(predictor: int, target: int, index: int) -> tuple[int, int]:
-    index = max(0, min(88, index))
-    step = IMA_STEP_TABLE[index]
-    diff = target - predictor
-    code = 0
-    if diff < 0:
-        code = 8
-        diff = -diff
-    if diff >= step:
-        code |= 4
-        diff -= step
-    if diff >= (step >> 1):
-        code |= 2
-        diff -= step >> 1
-    if diff >= (step >> 2):
-        code |= 1
-    return code, max(0, min(88, index + IMA_INDEX_TABLE[code]))
 
 
 def _ima_encode_step(predictor: int, target: int, index: int) -> tuple[int, int, int]:
@@ -473,11 +350,6 @@ def encode_adaptive_ima(
         pcm, frames, left_index, right_index
     )
     return payload, left_index, right_index, "stereo"
-
-
-def encode_ima_adpcm(pcm: bytes, frames: int) -> bytes:
-    """Encode one independently decodable block with initial indices zero."""
-    return encode_ima_adpcm_stateful(pcm, frames, 0, 0)[0]
 
 
 def lz4_compress(data: bytes) -> bytes:
@@ -1005,21 +877,6 @@ def frame_rate(fps: int | Fraction) -> Fraction:
     return rate
 
 
-def key_interval_frames(
-    fps: int | Fraction,
-    seconds: int | Fraction = DEFAULT_KEY_SECONDS,
-) -> int:
-    """Convert a maximum key/dependency duration to an exact frame count."""
-    rate = frame_rate(fps)
-    duration = Fraction(seconds)
-    if duration <= 0:
-        raise ValueError("keyframe interval must be positive")
-    interval = (rate.numerator * duration.numerator) // (
-        rate.denominator * duration.denominator
-    )
-    return max(1, interval)
-
-
 def audio_boundary(frame: int, fps: int | Fraction) -> int:
     """Nearest 44.1 kHz sample-frame boundary for an exact video frame."""
     rate = frame_rate(fps)
@@ -1127,78 +984,6 @@ def write_header(
     f.write(h)
 
 
-def probe_source_fps(source: Path, ffprobe: str) -> Fraction:
-    """Return the first video stream's exact average frame rate."""
-    result = subprocess.run(
-        [
-            ffprobe,
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=avg_frame_rate,r_frame_rate",
-            "-of",
-            "json",
-            str(source),
-        ],
-        check=False,
-        text=True, encoding="utf-8",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        creationflags=NO_WINDOW,
-    )
-    if result.returncode:
-        raise RuntimeError(
-            f"ffprobe could not inspect the first video stream: "
-            f"{result.stderr.strip()}"
-        )
-    try:
-        streams = json.loads(result.stdout)["streams"]
-        stream = streams[0]
-    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as error:
-        raise RuntimeError("ffprobe returned no usable video stream") from error
-    for field in ("avg_frame_rate", "r_frame_rate"):
-        try:
-            rate = Fraction(stream[field])
-        except (KeyError, ValueError, ZeroDivisionError):
-            continue
-        if rate > 0:
-            return rate
-    raise RuntimeError("ffprobe returned no usable video frame rate")
-
-
-def probe_source_metadata(source: Path, ffprobe: str) -> dict[str, str]:
-    """Return supported format/stream tags, preferring stream tags."""
-    result = subprocess.run(
-        [
-            ffprobe,
-            "-v",
-            "error",
-            "-show_entries",
-            "format_tags=title,artist,album:stream_tags=title,artist,album",
-            "-of",
-            "json",
-            str(source),
-        ],
-        check=False,
-        text=True, encoding="utf-8",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        creationflags=NO_WINDOW,
-    )
-    if result.returncode:
-        raise RuntimeError(
-            f"ffprobe could not inspect source metadata: "
-            f"{result.stderr.strip()}"
-        )
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as error:
-        raise RuntimeError("ffprobe returned invalid metadata JSON") from error
-    return metadata_from_probe(payload)
-
-
 def metadata_from_probe(payload: dict) -> dict[str, str]:
     """Select supported tags from an existing FFprobe result."""
     metadata: dict[str, str] = {}
@@ -1226,56 +1011,6 @@ def metadata_from_probe(payload: dict) -> dict[str, str]:
             if isinstance(value, str) and value:
                 metadata[name] = value
     return metadata
-
-
-def probe_source_has_audio(source: Path, ffprobe: str) -> bool:
-    """Return whether the source has a first audio stream."""
-    result = subprocess.run(
-        [
-            ffprobe,
-            "-v",
-            "error",
-            "-select_streams",
-            "a:0",
-            "-show_entries",
-            "stream=index",
-            "-of",
-            "csv=p=0",
-            str(source),
-        ],
-        check=False,
-        text=True, encoding="utf-8",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        creationflags=NO_WINDOW,
-    )
-    if result.returncode:
-        raise RuntimeError(
-            f"ffprobe could not inspect source audio: {result.stderr.strip()}"
-        )
-    return bool(result.stdout.strip())
-
-
-def profile_settings(
-    source: Path,
-    profile: str,
-    fps_override: Fraction | None,
-    color_override: str | None,
-    ffprobe: str,
-) -> tuple[Fraction, str, Fraction | None]:
-    """Resolve one friendly profile, retaining explicit expert overrides."""
-    if profile not in CREATOR_PROFILES:
-        raise ValueError(f"unknown creator profile: {profile}")
-    settings = CREATOR_PROFILES[profile]
-    source_fps = None
-    fps = fps_override if fps_override is not None else settings["fps"]
-    if fps is None:
-        source_fps = probe_source_fps(source, ffprobe)
-        fps = max(Fraction(MIN_FPS), min(Fraction(30), source_fps))
-    fps = frame_rate(fps)
-    color_depth = color_override or settings["color_depth"]
-    assert isinstance(color_depth, str)
-    return fps, color_depth, source_fps
 
 
 @lru_cache(maxsize=1)

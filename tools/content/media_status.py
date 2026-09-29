@@ -8,7 +8,7 @@ import time
 
 from . import media_manager as media
 from . import media_library
-from .host_state import cache_directory, cache_root, save_json
+from .host_state import cache_directory, cache_root, load_json_object, save_json
 from .inventory import collect_records_by_kind as records_by_kind, skipped_paths, scan as scan_sources
 
 
@@ -136,6 +136,13 @@ def _video_readiness(inventory, published, identity=None, state=None, verified=N
     return 'Not prepared' if compatible_files else 'No compatible videos' if inventory['count'] else 'No content yet'
 
 
+def _preparation_state(identity):
+    try:
+        return load_json_object(cache_root(identity) / 'state.json', encoding=None)
+    except (OSError, ValueError):
+        return {}
+
+
 def inspect(identity, photo_dimension=640, verification="metadata"):
     from tools.studio import installer
     boot_review = installer.assess(identity)
@@ -149,12 +156,7 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     verified_before = verified.copy()
     identity['linnet'] = boot_review['linnet']
     identity['default_boot'] = installer.default_boot(boot_review)
-    try:
-        state = json.loads((cache_root(identity) / 'state.json').read_text())
-        if not isinstance(state, dict):
-            state = {}
-    except (OSError, ValueError):
-        state = {}
+    state = _preparation_state(identity)
     skipped = {kind: skipped_paths(state, kind) for kind in media.KINDS}
     # Inventory and visible rows describe the same refresh. Traverse the iPod
     # once, retaining excluded files for the library's removal controls.
@@ -206,12 +208,7 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
     if unsupported:
         raise ValueError(f"{', '.join(unsupported)} playback is unavailable on this iPod model.")
     root = Path(identity['root'])
-    try:
-        state = json.loads((cache_root(identity) / 'state.json').read_text())
-        if not isinstance(state, dict):
-            state = {}
-    except (OSError, ValueError):
-        state = {}
+    state = _preparation_state(identity)
     skipped = {kind: skipped_paths(state, kind) for kind in media.KINDS}
     if videos is not None:
         videos = [value for value in videos

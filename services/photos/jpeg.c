@@ -1,10 +1,10 @@
+#include "boot/include/linnet_bytes.h"
 #include "jpeg.h"
 #include "linnet_target.h"
 extern void ln_jpeg_idct8(unsigned char *,int *,int *,int);
 static const uint8_t zigzag[64]={0,1,8,16,9,2,3,10,17,24,32,25,18,11,4,5,
  12,19,26,33,40,48,41,34,27,20,13,6,7,14,21,28,35,42,49,56,
  57,50,43,36,29,22,15,23,30,37,44,51,58,59,52,45,38,31,39,46,53,60,61,54,47,55,62,63};
-static uint32_t be16(const uint8_t*p){return ((uint32_t)p[0]<<8)|p[1];}
 static uint32_t divide(uint32_t value,uint32_t divisor){
     uint32_t q=0,r=0;for(uint32_t i=32;i;i--){r=(r<<1)|((value>>(i-1u))&1u);if(r>=divisor){r-=divisor;q|=1u<<(i-1u);}}return q;
 }
@@ -61,15 +61,15 @@ static int marker_step(struct ln_photo_jpeg*j){
     uint32_t marker=j->source[at++];
     if(marker==0xc2||(marker>=0xc0&&marker<=0xcf&&marker!=0xc0&&marker!=0xc4))return fail(j,LN_PHOTO_JPEG_UNSUPPORTED);
     if(j->bytes-at<2)return fail(j,LN_PHOTO_JPEG_CORRUPT);
-    uint32_t length=be16(j->source+at);if(length<2||length>j->bytes-at)return fail(j,LN_PHOTO_JPEG_CORRUPT);
+    uint32_t length=ln_read_be16(j->source+at);if(length<2||length>j->bytes-at)return fail(j,LN_PHOTO_JPEG_CORRUPT);
     const uint8_t*p=j->source+at+2;uint32_t n=length-2;j->cursor=at+length;
     if(marker==0xdb)return tables(j,p,n,false);
     if(marker==0xc4)return tables(j,p,n,true);
-    if(marker==0xdd){if(n!=2)return fail(j,LN_PHOTO_JPEG_CORRUPT);j->restart_interval=be16(p);return 0;}
+    if(marker==0xdd){if(n!=2)return fail(j,LN_PHOTO_JPEG_CORRUPT);j->restart_interval=ln_read_be16(p);return 0;}
     if(marker==0xc0){
         if(j->frame_seen||n<6)return fail(j,LN_PHOTO_JPEG_CORRUPT);
         if(p[0]!=8)return fail(j,LN_PHOTO_JPEG_UNSUPPORTED);
-        j->height=be16(p+1);j->width=be16(p+3);j->components=p[5];
+        j->height=ln_read_be16(p+1);j->width=ln_read_be16(p+3);j->components=p[5];
         if(!j->width||!j->height)return fail(j,LN_PHOTO_JPEG_CORRUPT);
         if(j->width>2048||j->height>2048||(j->components!=1&&j->components!=3))return fail(j,LN_PHOTO_JPEG_UNSUPPORTED);
         if(n!=6+j->components*3)return fail(j,LN_PHOTO_JPEG_CORRUPT);

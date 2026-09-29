@@ -13,14 +13,12 @@ static uint8_t sector[4096] __attribute__((aligned(32)));
 static uint8_t expected[32],observed[32];
 static uint32_t phase,error,offset,writes,request_generation=0x40000000u,bytes_read;
 static uint32_t apply_started,package_size;
-static int equal(const uint8_t *a,const uint8_t *b,uint32_t n){for(uint32_t i=0;i<n;++i)if(a[i]!=b[i])return 0;return 1;}
-static int zero(const uint8_t *a,uint32_t n){for(uint32_t i=0;i<n;++i)if(a[i])return 0;return 1;}
 static void hash(const uint8_t *data,uint32_t n,uint8_t out[32]){
     struct ln_sha256 s;ln_sha256_init(&s);
     while(n){uint32_t chunk=n>4096u?4096u:n;ln_sha256_update(&s,data,chunk);data+=chunk;n-=chunk;ln_storage_progress(0);}
     ln_sha256_finish(&s,out);
 }
-static int matches(const uint8_t *data,uint32_t n,const uint8_t sha[32]){uint8_t d[32];hash(data,n,d);return equal(d,sha,32);}
+static int matches(const uint8_t *data,uint32_t n,const uint8_t sha[32]){uint8_t d[32];hash(data,n,d);return ln_bytes_equal(d,sha,32);}
 int ln_native_begin(uint32_t length,const uint8_t sha[32]){
     if(length<68096u||length>sizeof package||((length-2560u)&511u)||!sha||(phase>=3&&phase<=9)||writes||ln_storage_busy())return 0;
     for(uint32_t i=0;i<32;++i)expected[i]=sha[i];package_size=length;offset=error=bytes_read=0;phase=1;return 1;
@@ -44,18 +42,18 @@ static int digest_disk(uint64_t address,uint32_t n,const uint8_t sha[32]){
         ln_sha256_update(&s,sector,chunk);ln_storage_progress(0);
         address+=chunk;n-=chunk;bytes_read+=chunk;
     }
-    ln_sha256_finish(&s,observed);return equal(observed,sha,32);
+    ln_sha256_finish(&s,observed);return ln_bytes_equal(observed,sha,32);
 }
 static int directory_valid(uint64_t candidate,uint32_t length){
     const uint8_t *old=package+1024,*next=package+1536;uint32_t os=UINT32_MAX;
     uint32_t sum=0;for(uint32_t i=0;i<length;++i)sum+=package[2560+i];
     for(uint32_t entry=0;entry+40<=512;entry+=40){
-        const uint8_t *p=old+entry;if(zero(p,4))break;
-        if(!equal(p,(const uint8_t *)"!ATA",4))return 0;
+        const uint8_t *p=old+entry;if(ln_bytes_zero(p,4))break;
+        if(!ln_bytes_equal(p,(const uint8_t *)"!ATA",4))return 0;
         uint64_t start=32256u+(uint64_t)ln_read_le32(p+12)+512u;uint32_t size=ln_read_le32(p+16);
         if(!size||start<49152u+512u||start+size>41126400u||
            (candidate<start+size&&start<candidate+ln_read_le32(package+40)))return 0;
-        if(equal(p+4,(const uint8_t *)"soso",4)){if(os!=UINT32_MAX)return 0;os=entry;}
+        if(ln_bytes_equal(p+4,(const uint8_t *)"soso",4)){if(os!=UINT32_MAX)return 0;os=entry;}
     }
     if(os==UINT32_MAX||ln_read_le32(next+os+12)!=candidate-32256u-512u||ln_read_le32(next+os+16)!=length||
        ln_read_le32(next+os+24)||ln_read_le32(next+os+28)!=sum)return 0;
@@ -73,18 +71,18 @@ static int validate(void){
        ln_read_le32(p+20)!=41094144u||ln_read_le64(p+24)!=32256u||span!=package_size-2560u||n<32||n>span||
        ln_read_le64(p+48)!=49152u||ln_read_le64(p+56)!=21003776u||ln_read_le32(p+64)!=1549256u||
        ln_read_le32(p+68)>2||ln_read_le64(p+72)!=64021856256ull||
-       !equal(p+80,serial,16)||!equal(p+96,usb,16)||!equal(p+208,original_sha,32)||
-       !zero(p+464,44)||ln_crc32(p,508)!=ln_read_le32(p+508)||
+       !ln_bytes_equal(p+80,serial,16)||!ln_bytes_equal(p+96,usb,16)||!ln_bytes_equal(p+208,original_sha,32)||
+       !ln_bytes_zero(p+464,44)||ln_crc32(p,508)!=ln_read_le32(p+508)||
        candidate%512||candidate<22553032u||candidate+ln_read_le32(package+40)>41126400u)return 0;
     if(!matches(p,package_size,expected)||!matches(p+512,package_size-512,p+432)||
        !matches(p+512,512,p+240)||!matches(p+1024,512,p+304)||!matches(p+1536,512,p+336)||
-       !matches(p+2560,span,p+272)||!zero(p+2176,384)||!zero(p+2560+n,span-n)||!directory_valid(candidate,n))return 0;
+       !matches(p+2560,span,p+272)||!ln_bytes_zero(p+2176,384)||!ln_bytes_zero(p+2560+n,span-n)||!directory_valid(candidate,n))return 0;
     const uint8_t *mbr=p+512;if(mbr[510]!=0x55||mbr[511]!=0xaa||mbr[450]||ln_read_le32(mbr+454)!=63||ln_read_le32(mbr+458)!=80262)return 0;
     uint8_t *image=(uint8_t *)(uintptr_t)LINNET_STAGE_ADDRESS;
     for(uint32_t i=0;i<128;++i)image[i]=p[2048+i];for(uint32_t i=0;i<n;++i)image[128+i]=p[2560+i];
     struct ln_image_policy policy={98,7,0,0x100000};struct ln_image_info info;
     return matches(image,n+128,p+368)&&ln_image_validate_progress(image,n+128,&policy,&info,ln_storage_progress,0)==LINNET_IMAGE_OK&&
-        info.load_address==0&&info.entry_address==0&&info.payload_size==n&&info.profile==ln_read_le32(p+68)&&equal(info.build_id,p+400,32);
+        info.load_address==0&&info.entry_address==0&&info.payload_size==n&&info.profile==ln_read_le32(p+68)&&ln_bytes_equal(info.build_id,p+400,32);
 }
 int ln_native_apply(void){
     if(phase!=2||offset!=package_size||writes)return 0;
@@ -96,7 +94,7 @@ int ln_native_apply(void){
     if(!digest_disk(0,512,package+240)||!digest_disk(32256,41094144,package+112)||
        !digest_disk(21003776,1549256,package+208)||!digest_disk(49152,512,package+304)){error=3;goto failed;}
     uint64_t candidate=ln_read_le64(package+32);uint32_t span=ln_read_le32(package+40);
-    for(uint32_t n=0;n<span;n+=4096){uint32_t chunk=span-n>4096u?4096u:span-n;if(!io(LN_BLOCK_READ,candidate+n,sector,chunk/512u)||!zero(sector,chunk)){error=4;goto failed;}}
+    for(uint32_t n=0;n<span;n+=4096){uint32_t chunk=span-n>4096u?4096u:span-n;if(!io(LN_BLOCK_READ,candidate+n,sector,chunk/512u)||!ln_bytes_zero(sector,chunk)){error=4;goto failed;}}
     phase=5;
     for(uint32_t n=0;n<span;n+=4096){uint32_t chunk=span-n>4096u?4096u:span-n;writes|=1u;if(!io(LN_BLOCK_WRITE,candidate+n,package+2560+n,chunk/512u)){error=5;goto failed;}}
     if(!io(LN_BLOCK_FLUSH,0,0,0)){error=6;goto failed;}

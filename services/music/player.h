@@ -27,7 +27,6 @@ bool ln_player_pause(bool pause);
 /* Toggle the latest accepted intent, including pending pause/seek and priming. */
 bool ln_player_toggle_pause(void);
 bool ln_player_seek(uint64_t frame);
-bool ln_player_prepare_next(const char *path,uint64_t expected_bytes,uint32_t token);
 bool ln_player_prepare_next_configured(const char *path,uint64_t expected_bytes,uint32_t token,
                                       const struct ln_dsp_config *config,uint32_t config_rate);
 /* Once PCM enters the ring cancellation returnsfalse; use stop/seek to flush.

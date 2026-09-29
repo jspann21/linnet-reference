@@ -1,12 +1,10 @@
 #include "boot/include/linnet_bytes.h"
 #include "journal_pages.h"
 #include "boot/include/linnet_boot.h"
-static bool same(const uint8_t *a,const uint8_t *b,uint32_t n){for(uint32_t i=0;i<n;i++)if(a[i]!=b[i])return false;return true;}
-static bool zero(const uint8_t *p,uint32_t n){for(uint32_t i=0;i<n;i++)if(p[i])return false;return true;}
 static uint32_t crc(const uint8_t *p){return ln_crc32(p,4092);}
 bool ln_history_superblock(const uint8_t *p,uint8_t epoch[16]){
     if(!p||!epoch||ln_read_le32(p)!=0x54534948u||ln_read_le32(p+4)!=0x00400000u||ln_read_le32(p+8)!=LN_HISTORY_PAGED_BANK_BYTES||
-       ln_read_le32(p+12)!=1024||ln_read_le32(p+16)!=125||ln_read_le32(p+20)!=32||!zero(p+40,4052)||ln_read_le32(p+4092)!=crc(p))return false;
+       ln_read_le32(p+12)!=1024||ln_read_le32(p+16)!=125||ln_read_le32(p+20)!=32||!ln_bytes_zero(p+40,4052)||ln_read_le32(p+4092)!=crc(p))return false;
     for(uint32_t i=0;i<16;i++)epoch[i]=p[24+i];return true;
 }
 uint32_t ln_history_page_hash(uint64_t id){uint32_t x=(uint32_t)id^(uint32_t)(id>>32);x^=x>>16;x*=0x7feb352du;x^=x>>15;x*=0x846ca68bu;x^=x>>16;return x&1023u;}
@@ -14,15 +12,15 @@ static bool valid_record(const struct ln_music_journal_record *r){return r&&!(r-
 static void record(const uint8_t *p,struct ln_music_journal_record *r){r->id=ln_read_le64(p);r->flags=ln_read_le32(p+8);r->play_count=ln_read_le32(p+12);r->bookmark_frame=ln_read_le64(p+16);r->resume_frame=ln_read_le64(p+24);}
 static bool valid(const uint8_t *p,uint32_t index,const uint8_t epoch[16]){
     if(!p||ln_read_le32(p)!=0x45475048u||ln_read_le32(p+4)!=0x00400000u||ln_read_le32(p+8)!=index||ln_read_le32(p+16)>125||
-       !same(p+40,epoch,16)||!zero(p+56,8)||ln_read_le32(p+4092)!=crc(p))return false;
+       !ln_bytes_equal(p+40,epoch,16)||!ln_bytes_zero(p+56,8)||ln_read_le32(p+4092)!=crc(p))return false;
     uint32_t n=ln_read_le32(p+16);
     for(uint32_t i=0;i<128;i++)if(((p[24+i/8]>>(i&7))&1u)!=(i<n))return false;
     for(uint32_t i=0;i<n;i++){struct ln_music_journal_record r;record(p+64+i*32,&r);if(!valid_record(&r))return false;
         for(uint32_t j=0;j<i;j++)if(ln_read_le64(p+64+j*32)==r.id)return false;}
-    return zero(p+64+n*32,4092-64-n*32);
+    return ln_bytes_zero(p+64+n*32,4092-64-n*32);
 }
 int ln_history_page_load(struct ln_history_page *s,const uint8_t *a,const uint8_t *b,uint32_t index,const uint8_t epoch[16]){
-    if(!s||!epoch||index>=1024)return -3;bool equal=a&&b&&same(a,b,4096),av=valid(a,index,epoch),bv=equal?av:valid(b,index,epoch);if(!av&&!bv)return -1;
+    if(!s||!epoch||index>=1024)return -3;bool equal=a&&b&&ln_bytes_equal(a,b,4096),av=valid(a,index,epoch),bv=equal?av:valid(b,index,epoch);if(!av&&!bv)return -1;
     uint32_t bank=av?0u:1u;if(av&&bv){uint32_t d=ln_read_le32(b+12)-ln_read_le32(a+12);if(d==0x80000000u||(!d&&!equal))return -2;if(d&&d<0x80000000u)bank=1;}
     const uint8_t *p=bank?b:a;s->index=index;s->count=ln_read_le32(p+16);s->sequence=ln_read_le32(p+12);s->revision=s->durable_revision=ln_read_le32(p+20);s->bank=bank;
     for(uint32_t i=0;i<16;i++)s->epoch[i]=epoch[i];for(uint32_t i=0;i<s->count;i++)record(p+64+i*32,&s->records[i]);s->ready=true;s->staged=false;return 1;
