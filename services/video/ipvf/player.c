@@ -120,7 +120,6 @@ static void copy(void*d,const void*s,uint32_t n){
 #endif
 }
 static uint16_t *frame_slot(uint32_t slot){return slot<2u?buffers.frame[slot]:slot==2u?buffers.third.pixels:slot<FRAME_SLOTS?VIDEO_BASE+(slot-3u)*PIXELS:0;}
-static bool zero(const uint8_t*p,uint32_t n){while(n--)if(*p++)return false;return true;}
 /* IPVF uses Rockbox's MSB-first CRC-32 state without a final XOR. */
 #include "rockbox_crc_table.h"
 static uint32_t rockbox_crc(uint32_t crc,const uint8_t*b,uint32_t n){return rockbox_crc_slice4(crc,b,n);}
@@ -241,7 +240,7 @@ static bool ipvf_header(void){
     uint32_t tags=0,at=80,end=80u+metadata;while(at<end){if(end-at<2u)return false;uint32_t tag=b[at],n=b[at+1];
         if(tag<1u||tag>3u||!n||(tags&(1u<<tag))||n>end-at-2u)return false;tags|=1u<<tag;
         if(tag==1u){uint32_t take=n<127u?n:127u;copy(v.title,b+at+2u,take);v.title[take]=0;}at+=2u+n;}
-    if(!zero(b+end,512u-end))return false;
+    if(!ln_bytes_zero(b+end,512u-end))return false;
     v.temporal=(flags&16u)!=0;v.width=LINNET_VIDEO_WIDTH;v.height=LINNET_VIDEO_HEIGHT;v.fps_num=ln_read_le16(b+10);v.fps_den=ln_read_le16(b+12);v.fps=v.fps_num/v.fps_den;
     /* Keep a 1.5-second video cushion for expensive scenes; the audio
      * producer continues targeting four seconds independently. */
@@ -454,7 +453,7 @@ static bool ipvf_record_header(void){
     if(!v.samples||v.video_bytes>RECORD||v.decoded_bytes>IPVF_PAYLOAD)return false;
     uint32_t mono=4u+v.samples/2u,stereo=8u+v.samples-1u;
     if(v.audio_bytes&&v.audio_bytes!=mono&&v.audio_bytes!=stereo)return false;
-    used=16u+(uint64_t)v.video_bytes+v.audio_bytes;if(used>v.bytes||((used+511u)&~511u)!=v.bytes||!zero(b+(uint32_t)used,v.bytes-(uint32_t)used))return false;
+    used=16u+(uint64_t)v.video_bytes+v.audio_bytes;if(used>v.bytes||((used+511u)&~511u)!=v.bytes||!ln_bytes_zero(b+(uint32_t)used,v.bytes-(uint32_t)used))return false;
     if((v.next+1u<v.count&&(!v.next_sectors||v.next_sectors>LINNET_STORAGE_MAX_READ_SECTORS))||(v.next+1u==v.count&&v.next_sectors))return false;
     if(v.offset>v.media_end||v.bytes>v.media_end-v.offset||(v.next+1u==v.count&&v.offset+v.bytes!=v.media_end))return false;
     bool compressed=v.source_type==3u||v.source_type==4u||v.source_type==5u||v.source_type==6u;

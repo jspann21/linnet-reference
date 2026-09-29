@@ -7,7 +7,6 @@ void ln_s5l_usb_trace(uint32_t output[64]);
 bool ln_s5l_usb_storage_init(const char *serial);
 size_t ln_s5l_usb_storage_read(uint8_t *data,size_t size);
 bool ln_s5l_usb_storage_write(const uint8_t *data,size_t size);
-unsigned ln_s5l_usb_packet_size(void);
 void ln_s5l_usb_stall(bool input);
 bool ln_s5l_usb_storage_reset_pending(void);
 bool ln_s5l_usb_storage_reset_complete(void);

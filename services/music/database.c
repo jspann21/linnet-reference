@@ -130,8 +130,6 @@ static int prefix_compare(const char *key,const char *prefix)
         if((uint8_t)key[i]>(uint8_t)prefix[i])return 1;
     }return 0;
 }
-bool ln_music_db_search(struct ln_music_db *d,const char *prefix)
-{ return ln_music_db_search_at(d,prefix,0); }
 bool ln_music_db_search_at(struct ln_music_db *d,const char *prefix,uint32_t ordinal)
 {
     if(!d||!prefix||!d->verified||d->busy||d->error)return false;

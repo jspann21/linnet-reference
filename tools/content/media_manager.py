@@ -19,7 +19,7 @@ import unicodedata
 import uuid
 
 from .guard import guarded_path as _plain, hash_file as _hash, require_same_target as _same_target, guard_volume as _volume_guard, inspect_target
-from .host_state import cache_directory as _cache_directory, cache_root, save_json as _save
+from .host_state import cache_directory as _cache_directory, cache_root, load_json_object as _optional_state, save_json as _save
 from .inventory import KINDS, VIDEO_EXTENSIONS, extensions, source_folders, file_records as _file_records, skipped_paths as _skipped_paths, scan
 
 _RETAIL_ADOPTION = None
@@ -529,15 +529,6 @@ def eject_device(identity):
     with _exclusive(identity):
         current = refresh(identity)
         return eject(current['disk_number'], current['disk_serial'], wait_link=False)
-
-
-def _optional_state(path):
-    """Missing or unreadable host preparation state is a disposable cache miss."""
-    try:
-        value = json.loads(path.read_text(encoding='utf-8'))
-    except (OSError, ValueError):
-        return {}
-    return value if isinstance(value, dict) else {}
 
 
 def _throttled_progress(checkpoint, progress, describe):

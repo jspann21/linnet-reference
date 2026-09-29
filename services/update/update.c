@@ -12,8 +12,6 @@
 #define LN_VALIDATE_TIME(index,name) ((void)0)
 #define LN_VALIDATE_COUNT(index,value) ((void)0)
 #endif
-static int equal(const uint8_t*a,const uint8_t*b,uint32_t n){for(uint32_t i=0;i<n;++i)if(a[i]!=b[i])return 0;return 1;}
-static int zero(const uint8_t*p,uint32_t n){for(uint32_t i=0;i<n;++i)if(p[i])return 0;return 1;}
 static void clear_image(struct ln_update_image*i){i->length=i->profile=0;for(unsigned k=0;k<32;++k)i->build_id[k]=i->sha256[k]=0;}
 static int usable(struct ln_update*u){return u&&u->ready&&u->store->ready&&!u->store->poisoned;}
 int ln_update_metadata_encode(const struct ln_update*u,uint8_t p[184]){
@@ -38,7 +36,7 @@ int ln_update_open(struct ln_update*u,struct ln_state_store*store,const struct l
     if(store->length!=184||ln_read_le32(p)!=0x54445055u||ln_read_le32(p+4)||!ln_boot_state_decode(&u->boot,p+8,32))return 0;
     for(unsigned s=0;s<2;++s){const uint8_t*r=p+40+s*72;struct ln_update_image*i=&u->image[s];
         i->length=ln_read_le32(r);i->profile=ln_read_le32(r+4);
-        if(!i->length){if(!zero(r,72))return 0;continue;}
+        if(!i->length){if(!ln_bytes_zero(r,72))return 0;continue;}
         if(i->length<132||i->length>LN_UPDATE_IMAGE_MAX||i->length>io->capacity(io->context,s)||
            i->profile>2)return 0;
         for(unsigned k=0;k<32;++k){i->build_id[k]=r[8+k];i->sha256[k]=r[40+k];}}
@@ -64,7 +62,7 @@ static int read_image(struct ln_update*u,uint32_t slot,uint32_t n,const uint8_t 
     LN_VALIDATE_START(finish_started);
     uint8_t actual[32];ln_sha256_finish(&hash,actual);
     LN_VALIDATE_TIME(1,finish_started);
-    if(!equal(actual,expected,32))return 0;
+    if(!ln_bytes_equal(actual,expected,32))return 0;
     LN_VALIDATE_START(crc_started);
     int valid=ln_image_validate_progress(scratch,n,&u->policy,info,u->io.progress,u->io.context)==LINNET_IMAGE_OK;
     LN_VALIDATE_TIME(2,crc_started);
@@ -108,7 +106,7 @@ int ln_update_validate(struct ln_update*u,uint32_t slot,uint8_t*scratch,uint32_t
     if(!usable(u)||slot>1||!u->image[slot].length)return 0;
     struct ln_update_image*i=&u->image[slot];
     return read_image(u,slot,i->length,i->sha256,scratch,capacity,info)&&
-        info->profile==i->profile&&equal(info->build_id,i->build_id,32);
+        info->profile==i->profile&&ln_bytes_equal(info->build_id,i->build_id,32);
 }
 int ln_update_after_reset(struct ln_update*u){
     if(!usable(u)||u->upload_active)return 0;
@@ -135,7 +133,7 @@ uint8_t ln_update_prepare_boot(struct ln_update*u,uint8_t*scratch,uint32_t capac
     return slot;
 }
 int ln_update_mark_healthy(struct ln_update*u,uint32_t slot,const uint8_t sha[32],uint32_t readiness){
-    if(!usable(u)||u->upload_active||slot>1||!sha||!equal(sha,u->image[slot].sha256,32)||
+    if(!usable(u)||u->upload_active||slot>1||!sha||!ln_bytes_equal(sha,u->image[slot].sha256,32)||
        (readiness&31)!=31||u->boot.generation==UINT32_MAX)return 0;
     struct ln_update proposed=*u;
     if(!ln_boot_mark_healthy(&proposed.boot,(uint8_t)slot,readiness))return 0;

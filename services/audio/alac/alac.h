@@ -57,6 +57,5 @@ bool ln_alac_seek(struct ln_alac *,uint64_t frame);
 void ln_m4a_init(struct ln_alac *,ln_alac_read_fn,void *,uint64_t file_size);
 int ln_m4a_open_step(struct ln_alac *);
 int ln_m4a_read_packet(struct ln_alac *);
-bool ln_m4a_seek(struct ln_alac *,uint64_t raw_frame);
 bool ln_m4a_seek_indexed(struct ln_alac *,uint32_t packet,uint64_t offset);
 #endif

@@ -235,9 +235,6 @@ bool ln_player_open_configured(const char *name,uint64_t bytes,uint64_t position
     skip_requested=seek_paused=false;
     effect_pending=audio_ready=join_pending=event_pending=finish_sent=next_expected=eof_waiting=false;consumed=submitted=audible_origin=0;last_consumed=0;return true;
 }
-bool ln_player_prepare_next(const char *name,uint64_t bytes,uint32_t token){
-    return ln_player_prepare_next_configured(name,bytes,token,0,0);
-}
 bool ln_player_prepare_next_configured(const char *name,uint64_t bytes,uint32_t token,
                                       const struct ln_dsp_config *config,uint32_t config_rate){
     if((state.phase!=LN_PLAYER_PRIME&&state.phase!=LN_PLAYER_PLAY&&state.phase!=LN_PLAYER_PAUSE&&state.phase!=LN_PLAYER_DRAIN)||join_pending||event_pending||cancel_next||skip_requested)return false;

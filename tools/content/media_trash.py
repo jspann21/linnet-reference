@@ -149,11 +149,11 @@ def recover(identity, token, *, erase=False):
         report['restored'] = True
         save_json(receipt, report)
         # Backup is no longer needed only after file and catalog restoration succeeded.
-        for backup in (backup, trash / 'LIBRARY.PDB.before', trash / 'COVERS.CFL.before'):
-            if backup.exists():
+        for backup_path in (backup, trash / 'LIBRARY.PDB.before', trash / 'COVERS.CFL.before'):
+            if backup_path.exists():
                 _volume_guard(identity)
-                _plain(backup, trash)
-                backup.unlink()
+                _plain(backup_path, trash)
+                backup_path.unlink()
         for path in sorted((p for p in trash.rglob('*') if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
             _volume_guard(identity)
             _plain(path, trash)

@@ -4,48 +4,15 @@ from __future__ import annotations
 from pathlib import Path
 import tomllib
 
-from tools.studio.targets import ROOT, TARGETS, target_id
+from tools.studio.targets import ROOT, TARGETS, target_id, conventional_sources as _conventional_sources
 
 
 def _path(value: Path) -> str:
     return value.relative_to(ROOT).as_posix()
 
 
-def _conventional_sources(target: str, spec: dict) -> dict[str, Path]:
-    target_root = ROOT / 'targets' / target
-    family = spec.get('hal_family', spec['soc'])
-    hal = ROOT / 'hal' / family
-    codec = spec.get('audio_codec', 'wm8975')
-    sources = {
-        'hardware': target_root / 'hardware.h',
-        'startup': hal / 'startup.S',
-        'entry': hal / 'entry.S',
-        'linker': hal / 'memory.ld',
-        'platform': hal / 'platform.c',
-        'core': hal / 'core.c',
-        'input': hal / 'input.c',
-        'ata': hal / 'ata.c',
-        'persistent_enter': hal / 'persistent_enter.S',
-        'lcd': target_root / 'lcd.c',
-        'display': target_root / 'display.c' if (target_root / 'display.c').is_file() else hal / 'display.c',
-        'device': target_root / 'device.c' if (target_root / 'device.c').is_file() else target_root / 'board.c',
-        'power': target_root / 'power.c' if (target_root / 'power.c').is_file() else hal / 'power.c',
-        'codec': ROOT / 'hal' / 'codecs' / (codec + '.c'),
-        'native_update': target_root / 'native_update.c' if (target_root / 'native_update.c').is_file()
-                         else ROOT / 'services' / 'update' / 'native.c',
-    }
-    backend = spec['media_video_backend']
-    if backend == 'ipvf':
-        sources['video'] = ROOT / 'services' / 'video' / 'ipvf' / 'player.c'
-    elif backend == 'native-mp4':
-        sources['video'] = ROOT / 'services' / 'video' / 'native' / 'player.c'
-    elif backend == 'bcm-mp4':
-        sources['video'] = target_root / 'video.c'
-    return sources
-
-
 def _sources(target: str, spec: dict) -> tuple[dict, list[str]]:
-    candidates = _conventional_sources(target, spec)
+    candidates = _conventional_sources(ROOT / 'targets' / target, spec)
     resolved = spec.get('sources') or {}
     entries = {}
     missing = []

@@ -31,7 +31,6 @@ from tools.content.music import COVER_NAMES, EXTENSIONS as MUSIC_EXTENSIONS
 from tools.studio import installer, screen_settings
 
 
-ACCENT = '#66d9ef'
 UI_FONT = 'Century Gothic'
 ICONS = {
     'music': '<path d="M9 18V5l12-2v13M9 9l12-2"/><ellipse cx="6" cy="18" rx="3" ry="3"/><ellipse cx="18" cy="16" rx="3" ry="3"/>',

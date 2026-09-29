@@ -1299,7 +1299,6 @@ uint32_t ln_runtime_state(uint32_t*out,uint32_t capacity){
     for(uint32_t i=0;i<32;++i)out[i]=words[i];return 32;
 }
 const uint16_t*ln_runtime_framebuffer(void){return ln_display_snapshot();}
-uint32_t ln_runtime_frame_crc(void){return ln_display_snapshot_crc32();}
 uint32_t ln_runtime_ui_state(uint32_t *out,uint32_t capacity){
 #if defined(LINNET_NATIVE_UI)
     if(!ready||!out||capacity<16u)return 0;

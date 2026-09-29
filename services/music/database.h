@@ -52,7 +52,6 @@ int ln_music_db_step(struct ln_music_db *);
 /* Prefix must already be Unicode casefolded UTF-8; ASCII A-Z folding is accepted.
  * Result is the first matching search index/reference, or UINT32_MAX.
  * Group references carry LN_MUSIC_SEARCH_GROUP. */
-bool ln_music_db_search(struct ln_music_db *,const char *prefix);
 /* Bounded lower-bound lookup plus ordinal; consecutive ordinals of the same
  * normalized prefix reuse its completed bound. Each result still validates
  * its index/string and prefix. No match returns UINT32_MAX. */

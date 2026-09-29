@@ -11,10 +11,6 @@ enum { MOUNT=1, HEADER, HEADER_MIRROR, OPEN_NAME, DIRECTORY, DIRECTORY_NEXT,
 enum { OP_MOUNT=1, OP_OPEN, OP_READ, OP_WRITE, OP_SYNC, OP_SET, OP_CREATE, OP_GROW };
 #define EOC 0x0ffffff8u
 #define MAX_CHAIN 65536u
-static bool equal(const uint8_t*a,const uint8_t*b,uint32_t n){
-    for(uint32_t i=0;i<n;++i)if(a[i]!=b[i])return false;
-    return true;
-}
 static bool cluster_valid(const struct ln_fat32*f,uint32_t c){return c>=2&&c<f->clusters+2u;}
 static uint64_t cluster_sector(const struct ln_fat32*f,uint32_t c){
     return f->data_start+(uint64_t)(c-2u)*f->sectors_per_cluster;
@@ -261,7 +257,7 @@ static int edit_fat(struct ln_fat32*f,uint32_t cluster,bool write,uint32_t value
     case 0:r=io(f,LN_FAT32_READ,lba,f->sector);if(r!=1)return r;
         f->edit_phase=f->mirrored&&f->fats==2?1:2;return 0;
     case 1:r=io(f,LN_FAT32_READ,lba+f->fat_sectors,f->mirror);if(r!=1)return r;
-        if(!equal(f->sector,f->mirror,512))return LN_FAT32_CORRUPT;
+        if(!ln_bytes_equal(f->sector,f->mirror,512))return LN_FAT32_CORRUPT;
         f->edit_phase=2;return 0;
     case 2:f->edit_value=ln_read_le32(f->sector+offset)&0x0fffffffu;
         if(!write){f->edit_phase=0;return 1;}
@@ -287,7 +283,7 @@ static int scan_free_fat(struct ln_fat32*f){
     }
     if(f->fat_phase==1){
         result=io(f,LN_FAT32_READ,lba+f->fat_sectors,f->mirror);if(result!=1)return result;
-        if(!equal(f->sector,f->mirror,512))return LN_FAT32_CORRUPT;
+        if(!ln_bytes_equal(f->sector,f->mirror,512))return LN_FAT32_CORRUPT;
         f->fat_phase=2;return 0;
     }
     uint32_t end=(f->candidate|127u)+1u,limit=f->clusters+2u;
@@ -333,7 +329,7 @@ static int next_cluster(struct ln_fat32*f){
     }
     if(f->fat_phase==2){
         result=io(f,LN_FAT32_READ,sector+f->fat_sectors,f->mirror);if(result!=1)return result;
-        if(!equal(f->sector,f->mirror,512))return LN_FAT32_CORRUPT;
+        if(!ln_bytes_equal(f->sector,f->mirror,512))return LN_FAT32_CORRUPT;
         f->fat_phase=3;return 0;
     }
     if(f->fat_value<EOC&&!cluster_valid(f,f->fat_value))return LN_FAT32_CORRUPT;
@@ -446,7 +442,7 @@ int ln_fat32_poll(struct ln_fat32*f){
         if(f->mirrored&&f->fats==2){
             result=io(f,LN_FAT32_READ,f->fat_start+f->fat_sectors,f->mirror);
             if(result!=1)break;
-            if(!equal(f->sector,f->mirror,512)){result=LN_FAT32_CORRUPT;break;}
+            if(!ln_bytes_equal(f->sector,f->mirror,512)){result=LN_FAT32_CORRUPT;break;}
         }
         /* Dirty/error-marked volumes are readable but cannot be mutated. */
         f->mounted=(ln_read_le32(f->sector+4)&0x0c000000u)==0x0c000000u?1:2;
@@ -492,7 +488,7 @@ int ln_fat32_poll(struct ln_fat32*f){
                 bool valid=f->system_long_match&&checksum==f->system_long_checksum&&
                            p[0]!=0xe5&&!(p[11]&8u)&&(p[11]&16u);
                 f->system_long_match=false;if(!valid)continue;
-            }else if(p[0]==0xe5||(p[11]&8u)||!equal(p,f->name,11))continue;
+            }else if(p[0]==0xe5||(p[11]&8u)||!ln_bytes_equal(p,f->name,11))continue;
             uint32_t cluster=((uint32_t)ln_read_le16(p+20)<<16)|ln_read_le16(p+26);
             uint32_t size=ln_read_le32(p+28);
             if((size||(p[11]&16u))&&!cluster_valid(f,cluster))return finish(f,LN_FAT32_CORRUPT);
@@ -747,7 +743,7 @@ set_chain_cached:
     case MUT_PUBLISH_READ:
         result=io(f,LN_FAT32_READ,f->slot_sector,f->sector);if(result!=1)break;
         p=f->sector+f->slot_offset;
-        if(!equal(p,f->entry,32)){result=LN_FAT32_STALE;break;}
+        if(!ln_bytes_equal(p,f->entry,32)){result=LN_FAT32_STALE;break;}
         if(f->operation==OP_CREATE){
             for(index=0;index<32;++index)p[index]=0;
             for(index=0;index<11;++index)p[index]=f->name[index];

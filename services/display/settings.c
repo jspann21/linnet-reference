@@ -109,7 +109,6 @@ static const char *auto_shutdown_label(uint32_t item){
     p=shutdown_labels[shutdown_choice[item]];while(*p)out[at++]=*p++;
     out[at]=0;return out;
 }
-uint32_t ln_battery_capacity_mah(void){return battery_capacity;}
 const char *ln_battery_capacity_label(void){
     const char *prefix="Battery: ";uint32_t at=0,n=battery_capacity,digits=0;char reverse[5];
     while(*prefix)battery_label[at++]=*prefix++;

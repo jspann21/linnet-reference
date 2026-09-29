@@ -22,6 +22,5 @@ int ln_runtime_inject(uint32_t kind,int32_t value,uint32_t sequence);
 uint32_t ln_runtime_state(uint32_t *output,uint32_t capacity_words);
 int ln_runtime_control(uint32_t command,uint32_t argument);
 const uint16_t *ln_runtime_framebuffer(void);
-uint32_t ln_runtime_frame_crc(void);
 uint32_t ln_runtime_ui_state(uint32_t *output,uint32_t capacity_words);
 #endif

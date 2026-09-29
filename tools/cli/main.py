@@ -10,15 +10,13 @@ def emit(value):
 def parser():
     cli = argparse.ArgumentParser(prog="linnet", description="Native open firmware for classic iPods")
     commands = cli.add_subparsers(dest="command", required=True)
-    from tools.cli.studio_commands import register_primary
+    from tools.cli.studio_commands import register_primary, register_support, register_report
     register_primary(commands)
     from tools.cli.media_commands import register_media
     register_media(commands)
-    from tools.cli.studio_commands import register_support
     register_support(commands)
     from tools.cli.device_commands import register_device
     register_device(commands)
-    from tools.cli.studio_commands import register_report
     register_report(commands)
     return cli
 

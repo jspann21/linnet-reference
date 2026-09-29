@@ -1,6 +1,7 @@
 /* Independent, bounded BCM2722 runtime startup qualification.
  * Hardware protocol references and evidence: NATIVE_VIDEO.md.
  * No vendor firmware or third-party implementation is embedded here. */
+#include "boot/include/linnet_bytes.h"
 #include "targets/video5g-m25/coprocessor.h"
 #include "targets/video5g-m25/lcd.h"
 #include "hal/api/platform.h"
@@ -60,7 +61,6 @@ static struct {
 static const uint8_t expected_sha[32]={
     0xcd,0xe4,0xb5,0xa9,0xc9,0xa0,0x20,0xb6,0xe2,0x3d,0xe1,0xbe,0x04,0x92,0xd9,0xa8,
     0x53,0xb7,0xd9,0x74,0xc4,0x06,0x04,0x62,0xd5,0xf5,0x7a,0x80,0xe4,0x7f,0x55,0xbe};
-static uint32_t le32(const uint8_t *p){return p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);}
 static void unmap_rom(void){
     if(!vc.mapped)return;
     REG(0xf000f00cu)=vc.map_physical;REG(0xf000f008u)=vc.map_logical;
@@ -85,12 +85,12 @@ static bool rom_image(void){
     for(uint32_t at=0xffe00u;at+40u<=0x100000u;at+=40u){
         const uint8_t *e=rom+at;
         vc.rom_diagnostic[2]=at;
-        for(uint32_t i=0;i<5u;++i)vc.rom_diagnostic[3+i]=le32(e+i*4u);
-        if(le32(e)!=0x666c7368u)break;
-        if(le32(e+4)!=0x766d6373u)continue;
-        uint32_t offset=le32(e+12),length=le32(e+16);
+        for(uint32_t i=0;i<5u;++i)vc.rom_diagnostic[3+i]=ln_read_le32(e+i*4u);
+        if(ln_read_le32(e)!=0x666c7368u)break;
+        if(ln_read_le32(e+4)!=0x766d6373u)continue;
+        uint32_t offset=ln_read_le32(e+12),length=ln_read_le32(e+16);
         if((offset&3u)||(length&3u)||!length||length>262144u||offset>0xffe00u||length>0xffe00u-offset)break;
-        vc.rom=rom+offset;vc.rom_bytes=length;vc.rom_expected=le32(e+28);
+        vc.rom=rom+offset;vc.rom_bytes=length;vc.rom_expected=ln_read_le32(e+28);
         vc.rom_sum=vc.rom_checked=0;return true;
     }
     unmap_rom();return false;

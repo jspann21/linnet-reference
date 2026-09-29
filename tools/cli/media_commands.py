@@ -1,7 +1,7 @@
 """Music, video, and photo CLI commands."""
 from pathlib import Path
 
-from tools.cli.arguments import _source_output_arguments, _publication_arguments
+from tools.cli.arguments import _source_output_arguments, _publication_arguments, _publication_options
 from tools.studio.targets import TARGETS, target_id
 
 
@@ -54,8 +54,7 @@ def run_media(args, emit):
         from tools.content.music import compile_music,validate_database
         if args.action=='publish':
             from tools.content.publish import publish_music
-            emit(publish_music(args.stage,disk_number=args.disk_number,expected_disk_serial=args.disk_serial,
-                               expected_volume_serial=args.volume_serial,expected_drive=args.drive))
+            emit(publish_music(args.stage, **_publication_options(args)))
         else:emit(compile_music(args.source,args.output,ffprobe=args.ffprobe,device_root=args.device_root,
                                verification=args.verification,bypass_cache=args.refresh_metadata,target=args.target,
                                include_roots=args.include_root,cache_path=args.cache_path) if args.action=='compile' else validate_database(args.database.read_bytes()))
@@ -97,15 +96,13 @@ def run_media(args, emit):
                 emit(inspect_file(args.package))
         else:
             from tools.content.publish_video import publish_video
-            emit(publish_video(args.package,disk_number=args.disk_number,expected_disk_serial=args.disk_serial,
-                 expected_volume_serial=args.volume_serial,expected_drive=args.drive,
+            emit(publish_video(args.package, **_publication_options(args),
                  library_key=args.library_key,title=args.title))
     elif args.command=='photos':
         from tools.content.photos import compile_photos,inspect as inspect_photos
         if args.action=='publish':
             from tools.content.publish_photos import publish_photos
-            emit(publish_photos(args.package,disk_number=args.disk_number,expected_disk_serial=args.disk_serial,
-                                expected_volume_serial=args.volume_serial,expected_drive=args.drive))
+            emit(publish_photos(args.package, **_publication_options(args)))
         else:
             if args.action=='compile':
                 spec=TARGETS[args.target]

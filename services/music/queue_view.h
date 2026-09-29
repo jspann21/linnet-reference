@@ -2,7 +2,6 @@
 #define LINNET_MUSIC_QUEUE_VIEW_H
 #include "queue.h"
 #define LN_QUEUE_VIEW_ROWS 48u
-enum ln_queue_view_action {LN_QUEUE_VIEW_PLAY=0,LN_QUEUE_VIEW_REMOVE,LN_QUEUE_VIEW_MOVE_UP,LN_QUEUE_VIEW_MOVE_DOWN};
 /* Copies a bounded immutable queue snapshot; queue_revision must change for
  * ordering/source/cursor changes. Providers and inputs perform no I/O. */
 void ln_music_queue_view_open(const struct ln_queue *,uint32_t queue_revision);
@@ -19,6 +18,4 @@ bool ln_music_queue_view_query_pending(void);
 uint32_t ln_music_queue_view_count(void);
 const char *ln_music_queue_view_label(uint32_t playback_ordinal);
 uint32_t ln_music_queue_view_revision(void);
-bool ln_music_queue_view_select(uint32_t playback_ordinal,uint32_t action);
-bool ln_music_queue_view_take_action(uint32_t *playback_ordinal,uint32_t *action,uint32_t *queue_revision);
 #endif

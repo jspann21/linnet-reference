@@ -4,7 +4,6 @@
 static int fail(struct ln_aac_m4a *d,int error){d->error=error;return error;}
 static int demux_result(int result)
 {if(result==LN_ALAC_UNSUPPORTED)return LN_AAC_UNSUPPORTED;if(result==LN_ALAC_ARGUMENT)return LN_AAC_ARGUMENT;return result;}
-static uint32_t be32(const uint8_t *b){return (uint32_t)b[0]<<24|(uint32_t)b[1]<<16|(uint32_t)b[2]<<8|b[3];}
 #define TAG(a,b,c,e) ((uint32_t)(a)<<24|(uint32_t)(b)<<16|(uint32_t)(c)<<8|(uint32_t)(e))
 static bool text_is(const uint8_t *p,uint32_t n,const char *s){
     uint32_t i=0;while(i<n&&s[i]&&p[i]==(uint8_t)s[i])++i;return i==n&&!s[i];
@@ -44,7 +43,7 @@ static int metadata_step(struct ln_aac_m4a *d){
         }
         if(d->meta_cursor>end||end-d->meta_cursor<8||d->meta_atoms>=4096)return fail(d,LN_AAC_FORMAT);
         int r=meta_read(d,d->meta_cursor,8);if(r!=1)return r;
-        ++d->meta_atoms;uint32_t size=be32(d->meta_buffer);d->meta_type=be32(d->meta_buffer+4);
+        ++d->meta_atoms;uint32_t size=ln_read_be32(d->meta_buffer);d->meta_type=ln_read_be32(d->meta_buffer+4);
         d->meta_cursor+=8;
         if(size==1){d->meta_phase=1;return 0;}
         if(size&&size<8)return fail(d,LN_AAC_FORMAT);
@@ -56,7 +55,7 @@ static int metadata_step(struct ln_aac_m4a *d){
     if(d->meta_phase==1){
         if(end-d->meta_cursor<8)return fail(d,LN_AAC_FORMAT);
         int r=meta_read(d,d->meta_cursor,8);if(r!=1)return r;
-        uint64_t size=(uint64_t)be32(d->meta_buffer)<<32|be32(d->meta_buffer+4);
+        uint64_t size=(uint64_t)ln_read_be32(d->meta_buffer)<<32|ln_read_be32(d->meta_buffer+4);
         if(size<16||size>end-(d->meta_cursor-8))return fail(d,LN_AAC_FORMAT);
         d->meta_end=d->meta_cursor-8+size;d->meta_cursor+=8;d->meta_phase=2;return 0;
     }
@@ -71,7 +70,7 @@ static int metadata_step(struct ln_aac_m4a *d){
         if(type==TAG('m','e','t','a')){
             if(d->meta_end-d->meta_cursor<4)return fail(d,LN_AAC_FORMAT);
             int r=meta_read(d,d->meta_cursor,4);if(r!=1)return r;
-            if(be32(d->meta_buffer))return fail(d,LN_AAC_UNSUPPORTED);d->meta_cursor+=4;
+            if(ln_read_be32(d->meta_buffer))return fail(d,LN_AAC_UNSUPPORTED);d->meta_cursor+=4;
         }
         if(type==TAG('-','-','-','-'))d->tag_mean=d->tag_name=d->tag_data=d->tag_valid=false;
         d->meta_parents[d->meta_depth]=type;d->meta_ends[d->meta_depth++]=d->meta_end;
@@ -92,9 +91,9 @@ static int metadata_step(struct ln_aac_m4a *d){
         if(parent==TAG('-','-','-','-')&&(type==TAG('m','e','a','n')||type==TAG('n','a','m','e')||type==TAG('d','a','t','a'))){
             if(bytes<=sizeof d->meta_buffer&&bytes>=4){
                 int r=meta_read(d,d->meta_cursor,(uint32_t)bytes);if(r!=1)return r;
-                if(type==TAG('m','e','a','n'))d->tag_mean=!be32(d->meta_buffer)&&text_is(d->meta_buffer+4,(uint32_t)bytes-4,"com.apple.iTunes");
-                else if(type==TAG('n','a','m','e'))d->tag_name=!be32(d->meta_buffer)&&text_is(d->meta_buffer+4,(uint32_t)bytes-4,"iTunSMPB");
-                else {d->tag_data=true;d->tag_valid=bytes>=8&&be32(d->meta_buffer)==1&&smpb(d,d->meta_buffer+8,(uint32_t)bytes-8);}
+                if(type==TAG('m','e','a','n'))d->tag_mean=!ln_read_be32(d->meta_buffer)&&text_is(d->meta_buffer+4,(uint32_t)bytes-4,"com.apple.iTunes");
+                else if(type==TAG('n','a','m','e'))d->tag_name=!ln_read_be32(d->meta_buffer)&&text_is(d->meta_buffer+4,(uint32_t)bytes-4,"iTunSMPB");
+                else {d->tag_data=true;d->tag_valid=bytes>=8&&ln_read_be32(d->meta_buffer)==1&&smpb(d,d->meta_buffer+8,(uint32_t)bytes-8);}
             }
         }
         d->meta_cursor=d->meta_end;

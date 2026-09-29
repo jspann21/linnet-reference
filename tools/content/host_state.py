@@ -1,4 +1,4 @@
-"""Atomic host-side JSON state and receipt writes."""
+"""Host-side JSON cache reads and atomic state and receipt writes."""
 import hashlib
 import json
 import os
@@ -15,6 +15,15 @@ def cache_directory(disk_serial, volume_serial):
 def cache_root(identity):
     return cache_directory(identity.get("media_cache_disk_serial") or identity["disk_serial"],
                            identity["volume_serial"])
+
+
+def load_json_object(path, *, encoding='utf-8'):
+    """Missing, unreadable, or non-object cache state is a cache miss."""
+    try:
+        value = json.loads(path.read_text(encoding=encoding))
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def save_json(path, value):
