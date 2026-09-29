@@ -74,7 +74,8 @@ def _embedded_cover(path: Path) -> bytes | None:
             # MP3 artwork lives in ID3. Opening the full audio parser also
             # scans MPEG frames on some files, which is costly on iPod disks.
             from mutagen.id3 import ID3
-            tags = ID3(path)
+            # ID3v1 has no artwork; skip its extra seek and read at the file tail.
+            tags = ID3(path, load_v1=False)
             pictures = tags.getall("APIC")
         else:
             audio = mutagen.File(path)
