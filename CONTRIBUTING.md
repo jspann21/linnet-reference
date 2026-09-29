@@ -36,6 +36,8 @@ Explain the problem, the resulting behavior and any remaining limitations.
 For device issues, include the target ID, hardware/storage configuration,
 build profile and ID, reproduction steps, expected result and observed result.
 Include a small relevant log excerpt with personal identifiers removed.
+Use placeholders for device serials and paths. Remove personal media titles,
+filenames, and library inventories from screenshots and examples as well.
 
 Keep contributions focused and update affected documentation. Keep generated
 builds, simulator output, media, firmware backups and device-bound installation

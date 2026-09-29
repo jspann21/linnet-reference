@@ -1,39 +1,38 @@
-# Local artifacts and recovery files
+# Local outputs and recovery artifacts
 
-`out/` is ignored scratch space for builds, simulator output and temporary reports.
-Keep durable documentation in the source tree and retain useful local outputs.
-Each build writes its generated inputs, objects, images, and report to a unique
-`out/<profile>/<target>/<kind>/runs/<invocation>/` directory. The paths in a
-build report refer to artifacts from that invocation, including when builds
-overlap or the source branch changes between builds.
-Run `python -m tools.studio.artifact_inventory > out/artifact-inventory.json`
-for a read-only inventory. Each recognized build lists its target, profile,
-kind, build ID, available content ID, artifact paths and sizes, and known plan
-or receipt references. Recovery records list the existing files they reference.
-The summary counts referenced files and unclassified files separately. Older
-reports may lack a content ID; retain their build ID and report path to identify
-them. The inventory does not delete, relocate, or classify unrecognized files
-as safe to remove. Inspect any scan errors before relying on its counts.
-Compilation uses two workers by default. Set `--jobs` to an integer from 1 to 4
-to adjust its CPU and memory use; linking remains serial.
-Unchanged objects are reused from the disposable, bounded `out/object-cache-v1/`
-cache after source, included-header, generated-input, flags, and compiler checks.
-Set `LINNET_OBJECT_CACHE=0` to compile every object for comparison. Whole-image
-build IDs and per-invocation artifacts remain independent of object reuse.
+`out/` is ignored scratch space for builds, simulator frames, and reports.
+Each build writes to
+`out/<profile>/<target>/<kind>/runs/<invocation>/`; use its report to find the
+matching images and generated inputs.
 
-Firmware backups, installation plans, predecessor files and recovery receipts
-belong to the physical device and installation that produced them. Preserve them
-together in a separate local backup before cleaning `out/`. Keep device serials,
-hardware GUIDs, disk identities and personal media out of GitHub contributions.
-The [target qualification record](../targets/README.md#qualification-record)
-points to source-controlled evidence and open checks; retain exact physical
-observations with their matching private device receipts.
+Compilation uses two workers by default; `--jobs 1` through `--jobs 4` changes
+the limit. Unchanged objects can be reused from `out/object-cache-v1/`.
+`LINNET_OBJECT_CACHE=0` disables that cache. Object reuse does not replace
+per-build identity and verification.
 
-Plans can reference absolute paths and pinned hashes. If an artifact archive is
-relocated, restore the required files and dependencies to the paths expected by
-the plan before using it. Do not edit hashes to accommodate relocation.
+## Before cleaning
 
-Inspect the connected device and its matching receipts before a firmware
-operation; an old build report does not establish the current installed state.
-See [Media Manager](media-manager.md) for installation and restoration, and
-[Linnet Link](device-link.md) for low-level device operations.
+```console
+python -m tools.studio.artifact_inventory > out/artifact-inventory.json
+```
+
+This read-only inventory lists recognized builds and recovery references.
+It neither deletes files nor proves that unclassified files are disposable.
+Review scan errors before relying on it.
+
+Keep firmware backups, installation plans, predecessor files, and recovery
+receipts together in a separate local backup. They belong to the installation
+that produced them and may depend on absolute paths and pinned hashes.
+Relocation may require restoring those dependencies; do not edit hashes to make
+a different artifact fit a plan.
+
+## Before sharing
+
+Remove device/disk/volume serials, hardware GUIDs, personal paths, media titles,
+filenames, and library inventories from contributions and screenshots. Use
+clearly labeled placeholders in examples. Share model-level checks and limitations,
+not raw private receipts or firmware backups.
+
+Inspect the connected device before a firmware operation; a saved report does
+not prove what is installed now. See [Media Manager](media-manager.md),
+[Link](device-link.md), and [target qualification](../targets/README.md#qualification-record).

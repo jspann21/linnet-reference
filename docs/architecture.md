@@ -1,123 +1,69 @@
 # Architecture
 
-Linnet is freestanding native firmware for classic iPods. The PP502x targets are
-Photo A1099 (`photo4g-p98`, 220 x 176 color), 4G MP102 (`ipod4g-q21`,
-160 x 128 monochrome), and Video A1136 30 GB (`video5g-m25`, 320 x 240 color).
-Classic A1238 (`classic6g-n25`, 320 x 240 color) uses the S5L8702 HAL. Host
-tools prepare media and compile static TSX layouts; the device uses fixed memory
-pools and cooperative service work.
-There is no runtime JavaScript VM or general-purpose allocator.
+Linnet is freestanding native firmware. Host tools prepare media and compile
+static TSX layouts to C. The device uses fixed memory budgets, bounded service
+work, and a native renderer; there is no JavaScript runtime.
 
 ## Source map
 
 | Path | Responsibility |
 | --- | --- |
-| `boot/` | Image validation, slot selection, recovery and loader |
-| `kernel/` | Executive, deadlines and service integration |
-| `hal/api/` | Portable hardware interfaces used by kernel, services and UI |
-| `hal/<family>/`, `hal/codecs/` | Shared SoC implementations, selected audio codecs, startup and linker contracts |
-| `targets/` | Target manifests, board wiring, display adapters, policies, native screens and themes |
-| `services/` | Storage, media, settings and other native services |
-| `apps/`, `ui/`, `themes/` | Applications, renderer and static layouts |
-| `config/`, `sdk/` | Build configuration and app/theme authoring |
-| `tools/` | CLI, compiler, media preparation, device link and simulator |
-| `scenarios/` | Existing device verification scenarios |
-| `third_party/` | Codec dependencies, licenses and provenance |
-| `docs/` | Architecture, formats, workflows and project notes |
+| `boot/` | Image validation, slot selection, recovery, and handoff |
+| `kernel/` | Executive, deadlines, and service integration |
+| `hal/api/` | Portable hardware interfaces |
+| `hal/<family>/`, `hal/codecs/` | SoC implementations and audio codec drivers |
+| `targets/` | Hardware manifests, board wiring, display adapters, and policies |
+| `services/` | Storage, playback, settings, games, and other native services |
+| `ui/`, `apps/`, `themes/` | Native renderer and authored presentation |
+| `tools/` | CLI, build system, media preparation, Link, and simulator |
+| `sdk/`, `scenarios/` | Authoring templates and existing verification scenarios |
+| `third_party/` | Imported codecs, notices, and provenance |
 
-Use a manifest target ID such as `photo4g-p98` or `ipod4g-q21`, `dev`, `trace`
-or `release` for build profiles, and `boot` or `os` for image kind. Application/theme identifiers and
-configuration keys are defined by their manifests and compiler validation.
-RetailOS detection and installation metadata are also target-owned. See
-[adding a target](../targets/README.md); compatible new models do not require
-installer code changes.
+Targets select their HAL, memory layout, capabilities, and presentation through
+manifests. Photo, Video, and monochrome 4G use PP502x; Classic uses S5L8702.
+See the [porting guide](../targets/README.md) for source resolution and validation.
 
 ## Boot and updates
 
-Boot validates target, memory bounds and image integrity before entry.
-Persistent updates write the inactive slot and publish transactional state;
-a candidate becomes confirmed only after memory, core services, storage
-resolution, first UI frame and audio-idle readiness. An unconfirmed candidate
-falls back to the earlier confirmed slot. Corrupt state enters recovery.
-CRC and SHA-256 provide integrity checks, not signature authentication.
+Boot validates the image's target, bounds, and integrity before entry. CRC and
+SHA-256 detect corruption; they do not provide signature authentication.
 
-P98 entry requires SDRAM initialized by the preceding loader. Cache ownership,
-CPU/COP handoff, IRAM reservations and DMA quiescence are part of the hardware
-contract: consult `boot/`, the platform linker scripts and `hal/` before changing
-startup. A `.los` validation envelope or `.ipod` checksum wrapper alone does
-not establish boot compatibility.
+Persistent OS updates write the inactive slot and publish redundant state.
+A candidate is confirmed after memory, services, storage, UI, and audio readiness.
+An unsuccessful candidate falls back to the confirmed image; corrupt state
+enters recovery. RAM boot is temporary and does not install an image.
 
-Development Boot retains a recovery snapshot and crash record. Timer2 and the
-owned COP monitor enforce progress deadlines. A parked inherited COP is not an
-active monitor; a COP reset reaches ROM and does not guarantee resident recovery.
-RAM replacement requires a verified staging image and stopped transport/DMA.
-Release builds exclude the developer transport, injection and screenshot paths;
-verify release exclusions with the build tooling.
+Native installation preserves the original Apple firmware for the MENU startup
+chooser. The loader checks its target, length, hash, and configuration before
+handoff. Boot installation is separate from an A/B OS update and uses its own
+backup-bound procedure. Classic's NOR bootstrap differs from the PortalPlayer
+directory installer; see the [bootstrap map](bootstrap-tooling.md).
 
-Native Boot installation uses a device-specific plan and firmware backup,
-stages a replacement, checks readback, and publishes the directory last.
-Restore uses the original directory sector. Preserve plans, predecessor files
-and backups together; see [local artifacts](local-artifacts.md).
-The [bootstrap tooling map](bootstrap-tooling.md) identifies the build, plan,
-package, transfer, and execution owners for PortalPlayer and Classic devices.
+Startup code depends on target-specific RAM initialization, CPU/COP ownership,
+reserved memory, and quiescent DMA. An image passing container checks does not
+prove those hardware conditions.
 
-Every native Linnet installation preserves a bootable copy of the device's
-original Apple firmware. Normal power-on starts Linnet. Holding `MENU`
-continuously during the early boot window opens the startup chooser; use the
-wheel and Center to select Apple software. Boot verifies
-the preserved payload's target, length, SHA-256, and configuration CRC before
-handoff; missing or invalid fallback data never replaces the normal Linnet path.
-
-MP102 additionally restores Apple's I2C timing after codec shutdown, returns
-Timer2 to IRQ routing and waits for the COP to acknowledge handoff before the
-CPU enters Apple. These choices live in the target's board policy; the shared
-PP502x HAL performs the register and cache operations. The Apple payload itself
-is not patched. The native chooser, Apple menu and controls, and return to
-Linnet have been verified on MP102 hardware.
+Development and trace images include Link and diagnostics. Release builds remove
+the developer transport, injection, screenshot, and crash services; the release
+verifier checks their exclusion.
 
 ## Runtime and media
 
-The Classic N25 panel resets the controller before configuration and programs
-Memory Access Control to `0x00` after the 60 ms Sleep Out delay. The OS retains
-a quiesced Boot panel when the persistent handoff CRC and destination build
-match and the display controller is ready. This avoids a reset/clear flash
-between identical startup frames. RAM entry or an invalid handoff performs full
-panel initialization. Normal initialization clears to the startup background;
-color bars are reserved for the explicit monitor display diagnostic. Boot and
-the OS both present the Linnet OS bird-and-iPod artwork. The OS keeps it visible
-while storage resolves the saved theme, before publishing the first home frame
-and its normal health readiness. N25 Boot uses size-focused compilation to keep
-the artwork and dual-boot code within the existing NOR archive boundary.
+The executive schedules bounded work around audio, input, and watchdog deadlines.
+Storage retains buffer ownership until completion or drained cancellation.
+Filesystem validation and write barriers remain active during media work.
 
-The executive schedules bounded work with audio, input and watchdog deadlines.
-Storage operations retain buffer ownership until completion or drained cancellation.
-FAT validation and write barriers remain active across media workloads. See
-[storage compatibility](storage.md) for supported layouts and power policy.
+| Service | Runtime approach |
+| --- | --- |
+| Music | Native decoders feed a PCM ring and DMA; metadata and next-track preparation share a bounded work budget. |
+| Photos | Host-prepared RGB565 tiles, paged metadata, and fixed caches; bounded JPEG fallback where available. |
+| Video | IPVF on Photo, BCM2722 video on M25, and the native MP4 backend on Classic. Preparation and limits follow the target. |
+| UI | Immutable compiled scenes, baked fonts, runtime state, and bounded rendering. Target/profile layouts use the appropriate display geometry. |
+| Settings | Validated records and redundant publication; rendering does not write storage. |
 
-Audio uses native decoders, a PCM ring and DMA. Effects and next-track preparation
-share the service budget with media reads. Photos use host-prepared RGB565 tiles,
-paged metadata and fixed caches; baseline JPEG fallback is bounded. New photo
-work is admitted according to available audio reserve.
+The simulator executes the same native renderer and compiled UI definitions.
+It checks layouts and pixels, not physical timing, audio, USB, or power.
 
-Video uses native IPVF, including LZ4/temporal reconstruction and
-IMA ADPCM audio. Presentation uses the audio clock. IPVF displays its validated
-first frame before scanning the seek index; audio waits for complete index
-verification and a 1.5-second decoded video cushion (bounded by the slot limit).
-Seeks retain the same cushion. The controls view keeps native video resolution
-and caches opaque control bands between data changes. Obsolete display frames
-are discarded; low audio reserve reduces display work while decoding every
-frame dependency and keeping presentation tied to the audio clock. Device timing
-and underrun counters measure playback across media; framebuffer captures
-cannot establish physical A/V quality.
-
-The UI compiler emits native C and simulator scenes from constrained TSX.
-Legacy layouts use a 220 x 176 reference space scaled to the target LCD.
-Targets can own a complete native screen and theme set; M25 uses 320 x 240
-coordinates and unscaled fonts. Runtime buffers and prepared media use
-target-native dimensions. The desktop
-simulator executes the native renderer; its output checks layout and pixels;
-use device measurements for hardware timing. See the [SDK](../sdk/README.md).
-
-Binary layouts live in [formats.md](formats.md), [photo-format.md](photo-format.md),
-[video-format.md](video-format.md) and [the music format](music-format.md).
-Commands and wire contracts live in [device-link.md](device-link.md).
+Next: [SDK](../sdk/README.md), [storage](storage.md),
+[binary contracts](formats.md), [media formats](music-format.md), and
+[Linnet Link](device-link.md).

@@ -1,53 +1,49 @@
 # Storage compatibility
 
-The P98 ATA driver discovers capacity from IDENTIFY data. It does not assume the
-installed card is 64 GB. Addresses and capacity use 64-bit values; LBA28 and
-LBA48 commands are selected with checked bounds. Invalid or changed geometry is
-rejected before data access. The filesystem currently requires an MBR FAT32
-volume with 512-byte logical sectors. 512e media is reported correctly; native
-4K logical sectors, GPT and exFAT are rejected rather than reinterpreted. These
-filesystem limits are separate from the ATA addressing limit.
+Linnet uses an MBR-partitioned FAT32 volume. GPT and exFAT are not supported.
+The block API addresses 512-byte units; the FAT32 reader accepts power-of-two
+BPB sector sizes from 512 through 4096 and normalizes their geometry. This does
+not mean every drive or adapter with those sector sizes is hardware-qualified.
 
-| Media | Identification and policy |
+See [confirmed hardware](../README.md#confirmed-hardware) for device scope.
+Installer plans are tied to the inspected disk and firmware backup; they cannot
+be reused on another disk or layout.
+
+## Capacity and power
+
+The PP502x ATA driver reads capacity from IDENTIFY data and checks LBA28/LBA48
+bounds. It does not infer capacity or power behavior from an SD card's size.
+
+| Storage class | Policy |
 | --- | --- |
-| iFlash ATA1 currently installed | Exact model `iFlash-Platform iPod Adapters`; firmware `iFlash85`; solid-state profile. Five seconds idle, successful flush, two-second delay, then rail off. ATA standby is not sent when unsupported. |
-| Mechanical ATA drive | Reported rotation rate selects rotating media. Ten seconds idle; flush then supported standby. Known rotating media with PM can power off after two seconds. |
-| Other identified SSD/CF media | Reported nonrotating media and separate PM capabilities determine policy. Supported standby is used; rail removal requires a proven safe completion. |
-| Unidentified adapters or older drives without a rotation-rate field | Preserve unknown classification. Use advertised PM standby; retain rail power when a safe rail policy is not established. |
+| Recognized iFlash adapter | Uses the exact adapter profile and guarded flush/rail-off behavior. |
+| Mechanical drive | Uses reported or explicitly recognized rotation and power capabilities; standby and rail-off remain guarded. |
+| Other SSD/CF | Uses identified capabilities; removes power only through an admitted safe policy. |
+| Unknown adapter | Retains conservative classification and does not inherit another model's power rules. |
 
-The exact iFlash profile is independent of card capacity and serial number. A
-CFA claim alone does not identify iFlash. The installed adapter's malformed LBA
-capability flag is accepted only after a successful LBA-0 READ VERIFY command.
-Unknown models are never assigned iFlash power behavior merely because their
-capacity resembles an SD card.
+Wake restores the board's storage supply, resets, and re-identifies the device.
+Unexpected identity or geometry changes reject access. Idle power work is
+serialized with the block queue and excluded from filesystem transactions.
+Failed write/flush barriers prevent further writes until recovery.
 
-Cold wake restores the P98 rail and pins, waits 250 ms before controller access,
-resets, and re-identifies the device. Capacity and model/serial/firmware identity
-must remain consistent. Requests allow up to 30 seconds for wake; host data
-commands allow 45 seconds. Idle operations are serialized with the block queue,
-disabled during filesystem transactions, and backed off after failures. Failed
-flush/write barriers prevent further writes until explicit recovery. APM is set
-to the lowest level without autonomous standby when advertised; an optional APM
-ABRT is recorded, while transfer-mode errors remain failures.
+ATA identity does not measure current draw or establish charging limits.
+Replacement storage needs its own power and reliability checks.
 
-ATA metadata does not establish a drive's actual current draw. Linnet uses the
-board's existing storage supply and a conservative settling delay; it does not
-raise USB charging current based on an adapter name or card capacity. PIO remains enabled for reads and writes;
-SSD identification does not select a DMA policy.
+## Diagnostics and implementation
 
-`python linnet device media-info --port COM6` reports identity, capacity, sector
-sizes, capabilities, profile quirks, rail/standby state, wake and power-off counts,
-and idle failures without waking storage. The block cache retains two read
-windows so corresponding mirrored FAT sectors remain resident. Writes, reset,
-rail-off and partition-window changes invalidate both windows; full chain and
-cross-link validation remains enabled.
+In a development build:
 
-Source basis: the user's local `rockbox-ipod-photo` fork at `a0e9e0c700`,
-especially `firmware/drivers/ata.c`, `firmware/export/ata.h`, and
-`firmware/target/arm/ipod/power-ipod.c`. Relevant fork commits include
-`1ea65d99ab`, `0fb032dd28`, `b3a55fffb2`, `a9beba8662`, `004c09eeec`,
-`6701604789`, `0aab6395f8`, and `cfe93e9b0c`. Linnet uses its own asynchronous
-implementation of these behaviors.
+```console
+python linnet device media-info --port PORT
+```
 
-Native Boot plans are pinned to the inspected disk and firmware backup; they
-are not reusable installers for another drive or partition layout.
+Replace `PORT` with the current Linnet Link port. This reports storage and power
+state without waking the drive. General file changes use Disk Mode; see
+[Linnet Link](device-link.md#disk-mode-and-refresh-sessions).
+
+- [PP502x ATA](../hal/pp502x/ata.c) and [Classic ATA](../hal/s5l8702/ata.c)
+- [Block queue](../services/storage/block.c), [FAT32 reader](../services/storage/fat32.c), and [storage owner](../services/storage/storage.c)
+- [Target manifests and hardware policies](../targets/README.md)
+
+FAT geometry, chain, allocation, and write checks remain active. Power loss,
+USB loss, and software fault injection are separate qualification cases.

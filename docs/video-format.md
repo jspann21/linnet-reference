@@ -1,39 +1,58 @@
-# IPVF video format
+# Video formats
 
-IPVF is Linnet’s sole video format. Host files use `.ipvf` or `.ipv`;
-published files use `/.LINNET/VIDEOS/<key>.IPV` and are listed in
-`/.LINNET/VIDEOS/INDEX.VID`.
+Video preparation depends on the target:
 
-The 512-byte header starts with `IPVF` and contains an 80-byte fixed header
-plus bounded title, artist and album metadata. It declares target-native
-RGB565 big-endian frame dimensions, a rational frame rate, 44.1 kHz stereo
-IMA ADPCM audio, the media region, and a seek index. Records are aligned to
-512-byte sectors and carry the next record’s sector count.
+| Target | Playback path |
+| --- | --- |
+| Photo P98 | Prepared IPVF with RGB565 frames and IMA ADPCM audio |
+| Video M25 | H.264 Baseline or MPEG-4 Simple Profile through BCM2722, with AAC audio |
+| Classic N25 | Native MP4 backend; H.264 hardware playback verified, MPEG-4 qualification ongoing |
+| Monochrome Q21 | Video disabled |
 
-Video records support raw and LZ4 keyframes, rectangle updates, repeated
-frames, temporal XOR, and motion prediction with LZ4 residuals. Audio records
-independently encode stereo, mono, or silence. The seek index identifies every
-keyframe. IPVF uses Rockbox’s MSB-first CRC32 without a final XOR for its
-media identity, index, and temporal compressed payloads.
+Use [Media Manager](media-manager.md) to select the appropriate preparation path.
+Native video must satisfy the target's codec, profile, dimensions, rate, and
+container limits; an MP4 extension alone is not sufficient.
 
-The streaming host validator checks bounds, reserved bytes, padding, the
-record chain, index identity, checksums, and reconstruction of every video
-and audio frame. Firmware validates the header and first frame before showing
-a preview; playback waits for index verification and buffered media.
+## IPVF
 
-## Host commands
+IPVF host files use `.ipvf` or `.ipv`. The device catalog is
+`/.LINNET/VIDEOS/INDEX.VID`; prepared entries use the `.IPV` extension.
+
+The sector-aligned stream contains a header, bounded metadata, audio/video
+records, and a keyframe seek index. Video supports raw/LZ4 keyframes and temporal
+updates; audio supports stereo, mono, and silence. RGB565 frame words are
+big-endian. IPVF uses an MSB-first CRC32 without a final XOR, unlike the usual
+Linnet record CRC.
 
 ```console
-python linnet video compile --source movie.mp4 --output out/movie.ipvf --target photo4g-p98
-python linnet video inspect out/movie.ipvf
+python linnet video compile --source path/to/input.mp4 --output out/video.ipvf --target photo4g-p98
+python linnet video inspect out/video.ipvf
 ```
 
-Compilation uses the target’s dimensions, frame rate, color profile and maximum
-record size. `--fps` overrides the frame rate within 4–30 fps. FFmpeg and FFprobe
-are required; `--ffmpeg` and `--ffprobe` select explicit executables.
+These are placeholder paths. FFmpeg/FFprobe are required; `--ffmpeg` and
+`--ffprobe` select explicit executables. `--fps` accepts 4–30 within the
+applicable target limits.
 
-`tools.content.ipvf_encode.encode_ipvf` converts, validates, and atomically
-publishes the local output. `tools.content.ipvf_validate.inspect_file` validates
-an existing file. The Media Manager uses these same paths and can index native
-IPVF already on an iPod without copying it. Device publication uses
-`tools.content.publish_video` and preserves the previous package.
+## Native MP4
+
+The M25 CLI preparation path produces compatible MP4/M4V output. Native
+inspection requires the target:
+
+```console
+python linnet video inspect path/to/prepared.mp4 --target video5g-m25
+```
+
+For Classic preparation, use Media Manager: the standalone `video compile`
+command currently routes only the BCM backend to native conversion.
+[M25 video notes](../targets/video5g-m25/NATIVE_VIDEO.md) describe its controls
+and hardware boundary.
+
+## Implementation
+
+- [IPVF encoder](../tools/content/ipvf_encode.py), [validator](../tools/content/ipvf_validate.py), and [firmware player](../services/video/ipvf/player.c)
+- [Native host preparation](../tools/content/native_video.py) and [MP4 reader](../services/video/mp4.c)
+- [Catalog](../tools/content/video_catalog.py) and [publisher](../tools/content/publish_video.py)
+
+The validators check bounds, indexes, record chains, checksums, and supported
+decoding before publication. Keep original media and recovery receipts when an
+update is interrupted.

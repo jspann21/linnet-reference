@@ -2,6 +2,9 @@
 
 Completed implementation and investigation history belong in Git, not this list.
 
+For measured performance investigations, see the [performance backlog](../OPTIMIZATION_TODO.md).
+Hardware acceptance remains in the [target qualification notes](../targets/README.md#qualification-record).
+
 ## Media
 
 - Improve AAC seek latency.
