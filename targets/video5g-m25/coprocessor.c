@@ -29,7 +29,7 @@ static struct {
     char path[256];bool normal,paused,want_paused,seek_pending,clock_valid;uint8_t options;
     uint32_t requested_seek,clock_ms,clock_us,position_base,revision,board_revision;
     uint32_t header[4],directory[4],legacy_header[4],restore_error;
-    bool io,owned,reply_stream,fs_canceling,syncing_seek,seek_forward;
+    bool io,owned,reply_stream,fs_canceling,syncing_seek,seek_forward,seek_seen;
     const uint8_t *rom;
     uint32_t rom_bytes;
     uint32_t rom_sum,rom_expected,rom_checked,map_logical,map_physical;
@@ -37,7 +37,7 @@ static struct {
     uint32_t channel[8][20],slot;
     uint32_t reply[256],reply_bytes,command_slot,command_index,reply_parsed;
     uint32_t host_channel[32],host_event[32],epoch,epoch_at;bool epoch_valid;
-    uint32_t operation,host_request[32],file_slot,control,return_deadline,sync_deadline,start_elapsed,pause_elapsed,seek_ms,seek_stage,seek_sequence;
+    uint32_t operation,host_request[32],file_slot,control,return_deadline,sync_deadline,start_elapsed,seek_ms,seek_stage,seek_sequence,seek_frames;
     struct {struct ln_fat32_file file;uint32_t position;bool open;} files[8];
     uint32_t fs_phase,fs_fd,fs_count,fs_opcode,fs_requested,fs_bytes,fs_tx_bytes,fs_tx_at,fs_wr,fs_element_size;
     uint32_t fs_packet[2064] __attribute__((aligned(32)));
@@ -45,7 +45,7 @@ static struct {
     uint8_t frame[65536] __attribute__((aligned(32)));
     struct ln_mp4 soundtrack;struct ln_mp4_packet audio_packet;
     struct ln_audio_status audio_status;
-    uint32_t audio_phase,audio_frames,read_kind,audio_skip;bool audio_ready,audio_started,audio_eof;
+    uint32_t audio_phase,audio_frames,read_kind;uint64_t audio_skip;bool audio_ready,audio_started,audio_eof;
     struct {uint64_t offset[3];uint32_t bytes[3],age[3],clock,filling;bool pending;} cache[2];
     uint64_t read_offset;void *read_buffer;uint32_t read_bytes,read_at,read_requested;
     bool read_active,read_io;
@@ -163,21 +163,40 @@ static int video_read(void *context,uint64_t at,void *buffer,uint32_t bytes){
     cache->offset[slot]=offset;cache->bytes[slot]=count;cache->filling=slot;cache->pending=true;
     return 0;
 }
-static uint32_t divide_ticks(uint64_t ticks,uint32_t rate){
+/* Track timestamps can exceed 32 bits even when playback time fits in ms. */
+static uint64_t divide_ticks(uint64_t ticks,uint32_t rate){
     uint64_t quotient=0,remainder=0;
-    if(!rate)return 0xffffffffu;
+    if(!rate)return UINT64_MAX;
     for(uint32_t bit=64u;bit;--bit){
         remainder=(remainder<<1)|((ticks>>(bit-1u))&1u);
         if(remainder>=rate){remainder-=rate;quotient|=(uint64_t)1u<<(bit-1u);}
     }
-    return quotient>0xffffffffu?0xffffffffu:(uint32_t)quotient;
+    return quotient;
 }
-static uint32_t duration_ms(uint64_t ticks,uint32_t rate){return ticks>0xffffffffffffffffull/1000u?0xffffffffu:divide_ticks(ticks*1000u,rate);}
+static uint32_t duration_ms(uint64_t ticks,uint32_t rate){
+    if(ticks>UINT64_MAX/1000u)return UINT32_MAX;
+    uint64_t ms=divide_ticks(ticks*1000u,rate);
+    return ms>UINT32_MAX?UINT32_MAX:(uint32_t)ms;
+}
 static uint32_t elapsed_value(const uint8_t *text,uint32_t bytes){
     for(uint32_t j=0;j+8u<bytes;++j)if(text[j]=='e'&&text[j+1]=='l'&&text[j+2]=='a'&&text[j+3]=='p'&&text[j+4]=='s'&&text[j+5]=='e'&&text[j+6]=='d'&&text[j+7]=='='){
         uint32_t value=0;for(j+=8u;j<bytes&&text[j]>='0'&&text[j]<='9';++j){if(value>429496728u)return 0;value=value*10u+text[j]-'0';}return value;
     }
     return 0;
+}
+static bool status_field(const uint8_t *text,uint32_t bytes,const char *field,bool prefix){
+    for(uint32_t at=0;at<bytes&&text[at];++at){
+        if(at&&text[at-1u]!=' ')continue;
+        uint32_t n=0;while(field[n]&&at+n<bytes&&text[at+n]==(uint8_t)field[n])++n;
+        if(!field[n]&&(prefix||at+n==bytes||!text[at+n]||text[at+n]==' '))return true;
+    }
+    return false;
+}
+static bool playback_running(const uint8_t *text,uint32_t bytes){
+    /* A valid first or repeated picture can retain elapsed=0. */
+    return status_field(text,bytes,"state=play",false)&&status_field(text,bytes,"substate=running",false)&&
+           status_field(text,bytes,"paused=no",false)&&(!status_field(text,bytes,"buffering=",true)||
+           status_field(text,bytes,"buffering=0",false));
 }
 static bool audio_service(void){
     if(!vc.audio_ready||vc.audio_eof||vc.fs_phase||(vc.seek_stage&&vc.seek_stage!=6u&&!(vc.seek_stage==1u&&vc.read_active)))return true;
@@ -195,8 +214,8 @@ static bool audio_service(void){
         if(result<0)return false;if(result>0)vc.audio_phase=3u;
     }else if(vc.audio_phase==3u){
         result=ln_aac_raw_decode(&audio_decoder,audio_decoder.input,vc.audio_packet.bytes);if(result!=1)return false;
-        uint32_t skip=vc.audio_packet.dts<vc.audio_skip?(uint32_t)(vc.audio_skip-vc.audio_packet.dts):0u;
-        if(skip>vc.audio_packet.duration)skip=vc.audio_packet.duration;
+        uint64_t remaining=vc.audio_packet.dts<vc.audio_skip?vc.audio_skip-vc.audio_packet.dts:0u;
+        uint32_t skip=remaining>vc.audio_packet.duration?vc.audio_packet.duration:(uint32_t)remaining;
         audio_decoder.pcm_cursor=skip;audio_decoder.pcm_frames=vc.audio_packet.duration;vc.audio_phase=4u;
     }else{
         uint32_t remaining=audio_decoder.pcm_frames-audio_decoder.pcm_cursor;
@@ -309,6 +328,7 @@ static bool stream_service(void){
     if(vc.host_channel[2]==67u){
         if((vc.host_channel[3]&0xffffu)!=8u||available<32u)return false;
         vc.seek_ms=vc.host_channel[5];vc.seek_sequence=vc.host_channel[1];vc.seek_stage=1u;
+        vc.seek_seen=true;vc.seek_frames=vc.stream_frames;
         rd=halfword(c,48)+32u;if(rd>=hi)rd=lo+rd-hi;c[12]=(c[12]&0xffff0000u)|rd;
         return ln_m25_bcm_write(record+48u,c+12,4u)&&notify_channel(slot);
     }
@@ -550,7 +570,7 @@ bool ln_m25_coprocessor_begin(uint32_t operation){
     if(vc.board_revision!=0x000b0010u&&vc.board_revision!=0x000b0011u){vc.error=51u;phase(FAILED,0);return false;}
     if(!rom_image()){vc.error=18u;phase(FAILED,0);return false;}
     vc.error=vc.restore_error=vc.restore=vc.at=vc.hash_at=vc.requested=0;vc.io=false;
-    vc.normal=vc.paused=vc.want_paused=vc.seek_pending=vc.clock_valid=vc.syncing_seek=false;vc.seek_ms=vc.position_base=0;++vc.revision;
+    vc.normal=vc.paused=vc.want_paused=vc.seek_pending=vc.clock_valid=vc.syncing_seek=vc.seek_seen=false;vc.seek_ms=vc.position_base=vc.seek_frames=0;++vc.revision;
     vc.audio_ready=vc.audio_started=vc.audio_eof=false;vc.audio_phase=vc.audio_frames=vc.start_elapsed=0;vc.audio_status=(struct ln_audio_status){0};
     for(uint32_t i=0;i<2u;++i)vc.cache[i]=(__typeof__(vc.cache[0])){0};
     for(uint32_t i=0;i<4u;++i)vc.header[i]=vc.directory[i]=vc.legacy_header[i]=0;
@@ -558,7 +578,7 @@ bool ln_m25_coprocessor_begin(uint32_t operation){
     vc.slot=0;
     vc.reply_bytes=0;vc.command_slot=8u;
     vc.command_index=vc.reply_parsed=0;
-    vc.operation=operation;vc.file_slot=8u;vc.control=vc.seek_stage=vc.pause_elapsed=0;
+    vc.operation=operation;vc.file_slot=8u;vc.control=vc.seek_stage=0;
     vc.fs_phase=vc.fs_count=vc.fs_opcode=vc.fs_bytes=0;
     vc.stream_phase=vc.stream_at=vc.stream_address=vc.stream_capacity=vc.stream_frames=0;vc.read_active=vc.read_io=false;
     for(uint32_t i=0;i<8u;++i)vc.files[i].open=false;
@@ -584,14 +604,15 @@ void ln_m25_coprocessor_stop(void){if(ln_m25_coprocessor_active()&&!vc.restore)r
 void ln_m25_coprocessor_pause(bool paused){vc.want_paused=paused;++vc.revision;}
 bool ln_m25_coprocessor_paused(void){return vc.want_paused;}
 uint32_t ln_m25_coprocessor_position(void){
+    uint32_t position=vc.clock_valid?vc.clock_ms+(!vc.paused?(ln_time_us()-vc.clock_us)/1000u:0u):vc.position_base;
     if(vc.audio_ready&&vc.audio_started){
         struct ln_audio_status a;ln_audio_snapshot(&a);
         /* Audio can end before the last video frame. Once PCM is drained,
          * use the coprocessor clock so the shorter soundtrack cannot stall EOF. */
-        if(!vc.audio_eof||a.queued||a.playing)
-            return vc.position_base+duration_ms(a.consumed,a.rate);
+        uint32_t audio_position=vc.position_base+duration_ms(a.consumed,a.rate);
+        if(!vc.audio_eof||a.queued||a.playing||audio_position>position)return audio_position;
     }
-    return vc.clock_valid?vc.clock_ms+(!vc.paused?(ln_time_us()-vc.clock_us)/1000u:0u):vc.position_base;
+    return position;
 }
 bool ln_m25_coprocessor_seek(uint32_t ms){
     if(!vc.normal||!vc.movie.opened||vc.restore||!ln_m25_coprocessor_active())return false;
@@ -837,7 +858,7 @@ bool ln_m25_coprocessor_step(void){
         static const char *const tv_shape[]={"display_control 2 svideo=0 wide=0","display_control 2 svideo=0 wide=1","display_control 2 svideo=1 wide=0","display_control 2 svideo=1 wide=1"};
         static const char *const lcd_region="mp_region display=0 dest=\"0 0 320 240\" mode=fill";
         char seek_command[32]="mp_seek ";
-        if(vc.control==4u){uint32_t n=vc.seek_ms,at=8u,divisor=1000000000u;while(divisor>1u&&n<divisor)divisor/=10u;do{seek_command[at++]=(char)('0'+n/divisor);n%=divisor;divisor/=10u;}while(divisor);seek_command[at]=0;}
+        if(vc.control==4u){vc.seek_seen=false;uint32_t n=vc.seek_ms,at=8u,divisor=1000000000u;while(divisor>1u&&n<divisor)divisor/=10u;do{seek_command[at++]=(char)('0'+n/divisor);n%=divisor;divisor/=10u;}while(divisor);seek_command[at]=0;}
         bool tv=(vc.options&32u)!=0,wide=(vc.options&8u)!=0,svideo=(vc.options&16u)!=0,pal=(vc.options&4u)!=0;
         const char *native=vc.command_index==1u&&tv?tv_encoding[pal?1u:0u]:vc.command_index==2u&&tv?tv_shape[(svideo?2u:0u)|(wide?1u:0u)]:vc.command_index==6u?lcd_region:native_commands[vc.command_index];
         const char *command=vc.control==4u?seek_command:vc.control?(vc.control==1u?"mp_pause":vc.control==2u?"mp_play":"mp_get_status"):vc.operation==2u?native:!vc.operation?"version":vc.command_index==0u?"load_application mplayer":vc.command_index==2u?"mp_selectplay passthru:linnet 0":"mp_get_status";
@@ -905,26 +926,32 @@ bool ln_m25_coprocessor_step(void){
             if(message[2]<=1u){
                 if(message[2]){recover(35);break;}
                 if(vc.control){
-                    if(vc.control==1u){vc.pause_elapsed=elapsed_value(response,bytes);vc.paused=true;if(vc.audio_ready)ln_audio_pause();}
+                    uint32_t position=ln_m25_coprocessor_position();
+                    if(vc.control==1u){vc.paused=true;if(vc.audio_ready)ln_audio_pause();}
                     if(vc.control==2u||vc.control==4u){
                         vc.syncing_seek=vc.control==4u;
-                        if(vc.syncing_seek)vc.pause_elapsed=vc.seek_ms;
                         vc.control=6u;vc.sync_deadline=ln_time_us()+15000000u;phase(SYNC_WAIT,10000u);break;
                     }
                     if(vc.control==6u){
                         uint32_t elapsed=elapsed_value(response,bytes);
-                        bool waiting=vc.syncing_seek?(!elapsed||elapsed==vc.pause_elapsed||vc.seek_stage):elapsed<=vc.pause_elapsed;
+                        bool waiting=!playback_running(response,bytes)||
+                            (vc.syncing_seek&&(!vc.seek_seen||vc.seek_stage||vc.stream_frames==vc.seek_frames));
                         if(waiting){if((int32_t)(ln_time_us()-vc.sync_deadline)>=0){recover(50);break;}phase(SYNC_WAIT,10000u);break;}
                         vc.start_elapsed=elapsed;vc.paused=false;
                         if(vc.audio_ready&&!ln_audio_start()){recover(49);break;}vc.audio_started=vc.audio_ready;
                     }
-                    vc.clock_ms=elapsed_value(response,bytes);vc.clock_us=ln_time_us();vc.clock_valid=true;
+                    uint32_t elapsed=elapsed_value(response,bytes);
+                    if(vc.control==6u&&vc.syncing_seek)elapsed=vc.seek_ms;
+                    else if(vc.clock_valid&&elapsed<position)elapsed=position;
+                    /* Status can retain the last changed picture's timestamp.
+                     * Only an explicit seek may move playback time backward. */
+                    vc.clock_ms=elapsed;vc.clock_us=ln_time_us();vc.clock_valid=true;
                     vc.control=0;vc.phase=PLAYER_SETTLE;vc.deadline=vc.normal?ln_time_us()+500000u:vc.return_deadline;++vc.revision;break;
                 }
                 if(vc.operation==2u&&vc.command_index==7u)vc.sync_deadline=ln_time_us()+5000000u;
                 if(vc.operation==2u&&vc.command_index==8u){
                     uint32_t elapsed=elapsed_value(response,bytes);
-                    if(!elapsed){if((int32_t)(ln_time_us()-vc.sync_deadline)>=0){recover(50);break;}phase(SYNC_WAIT,10000u);break;}
+                    if(!playback_running(response,bytes)){if((int32_t)(ln_time_us()-vc.sync_deadline)>=0){recover(50);break;}phase(SYNC_WAIT,10000u);break;}
                     vc.start_elapsed=elapsed;vc.clock_ms=elapsed;vc.clock_us=ln_time_us();vc.clock_valid=true;
                     if(vc.audio_ready&&!ln_audio_start()){recover(49);break;}vc.audio_started=vc.audio_ready;
                     ++vc.revision;phase(PLAYER_SETTLE,vc.normal?500000u:30000000u);

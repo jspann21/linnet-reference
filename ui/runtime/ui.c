@@ -99,21 +99,25 @@ static uint32_t menu_group(const struct ln_ui_node *n){
         for(uint32_t i=0;i<s->count;++i)if(n==&s->nodes[i]){for(uint32_t g=0;g<LN_MENU_GROUPS;++g)if(same(s->id,menu_scenes[g]))return g;return UINT32_MAX;}}
     return UINT32_MAX;
 }
-static uint32_t menu_source(const struct ln_ui_node *n,uint32_t row){
+static uint32_t menu_lookup(const struct ln_ui_node *n,uint32_t row,uint32_t *count){
     uint32_t group=menu_group(n);if(group==UINT32_MAX)return row;
+    uint32_t found=0;
     /* Playback preferences are always reachable, including with older saved menus. */
     if(group==LN_MENU_SETTINGS){
         for(uint32_t action=LINNET_UI_ACTION_SHUFFLE;action>=LINNET_UI_ACTION_REPEAT;--action)
-            for(uint32_t j=0;j<n->item_count;++j)if(n->targets[j]==action){if(!row)return j;--row;break;}
+            for(uint32_t j=0;j<n->item_count;++j)if(n->targets[j]==action){if(row==found)return j;++found;break;}
     }
     for(uint32_t i=0;i<menu_counts[group];++i){const char *id=ln_menu_targets[group][menu_order[group][i]];
         if(group==LN_MENU_HOME&&menu_order[group][i]==7u){if(!ln_games_count())continue;id="linnet.system.games";}
         for(uint32_t j=0;j<n->item_count;++j){uint32_t target=n->targets[j];const char *actual=target==LINNET_UI_ACTION_SYNC?"@sync":target==LINNET_UI_ACTION_SHUFFLE_ALL?"@shuffle-all":target<ln_ui_scene_count?ln_ui_scenes[target].id:"";
-            if(same(id,actual)){if(!row)return j;--row;break;}}}
+            if(same(id,actual)){if(row==found)return j;++found;break;}}}
+    if(count)*count=found;
     return UINT32_MAX;
 }
+static uint32_t menu_source(const struct ln_ui_node *n,uint32_t row){return menu_lookup(n,row,0);}
 static uint32_t menu_total(const struct ln_ui_node *n,uint32_t fallback){
-    if(menu_group(n)==UINT32_MAX)return fallback;uint32_t count=0;while(menu_source(n,count)!=UINT32_MAX)++count;return count;
+    /* Count matching entries once instead of rebuilding each preceding row. */
+    uint32_t count=fallback;(void)menu_lookup(n,UINT32_MAX,&count);return count;
 }
 static bool theme_choices(const struct ln_ui_node*n){return n&&same(n->text,"Theme choices");}
 static bool apple_style(void){return (ln_ui_themes[active_theme].flags&(LN_UI_THEME_MONOCHROME|LN_UI_THEME_APPLE_PHOTO|LN_UI_THEME_APPLE_CLASSIC))!=0;}

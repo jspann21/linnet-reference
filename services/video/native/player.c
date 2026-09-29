@@ -47,9 +47,11 @@ static uint16_t pixels[3][LINNET_VIDEO_WIDTH*LINNET_VIDEO_HEIGHT]
     __attribute__((section(".media_workspace"),aligned(32)));
 static uint32_t milliseconds(uint64_t ticks,uint32_t rate){
     uint64_t quotient=0,remainder=0;if(!rate)return 0;
+    /* Scale before division: the fractional product can exceed 32 bits. */
+    if(ticks>UINT64_MAX/1000u)return UINT32_MAX;
+    ticks*=1000u;
     for(unsigned bit=64;bit;bit--){remainder=(remainder<<1)|((ticks>>(bit-1))&1u);if(remainder>=rate){remainder-=rate;quotient|=1ull<<(bit-1);}}
-    if(quotient>4294967u)return 0xffffffffu;
-    return (uint32_t)quotient*1000u+(uint32_t)(remainder*1000u)/rate;
+    return quotient>UINT32_MAX?UINT32_MAX:(uint32_t)quotient;
 }
 static void wall_reset(uint32_t now){v.wall_at=now;v.wall_ms=v.wall_us=0;}
 static uint32_t wall_position(uint32_t now,uint32_t base){
