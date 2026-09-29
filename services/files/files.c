@@ -1,4 +1,5 @@
 #include "files.h"
+#include "linnet_scene_ids.h"
 #include "boot/include/linnet_bytes.h"
 #include "boot/include/linnet_boot.h"
 #include "services/storage/storage.h"
@@ -54,10 +55,9 @@ void ln_files_diagnostics(uint32_t words[16]){
 #endif
 void ln_files_init(void){uint8_t*p=(uint8_t*)&f;for(uint32_t i=0;i<sizeof f;++i)p[i]=0;initialized=true;}
 
-static bool equal(const char*a,const char*b){while(*a&&*a==*b){++a;++b;}return *a==*b;}
 static void text(char*out,const char*in,uint32_t capacity){uint32_t n=0;while(in[n]&&n+1u<capacity){out[n]=in[n];++n;}out[n]=0;}
 static char *number(char*out,uint32_t n){char digits[10];uint32_t count=0;do{digits[count++]=(char)('0'+n%10u);n/=10u;}while(n);while(count)*out++=digits[--count];*out=0;return out;}
-static bool scene(const struct ln_ui_state*s){return s&&s->scene<ln_ui_scene_count&&equal(ln_ui_scenes[s->scene].id,"linnet.system.files");}
+static bool scene(const struct ln_ui_state*s){return s&&s->scene<ln_ui_scene_count&&s->scene==LN_UI_SCENE_FILES;}
 static bool allowed(void){struct ln_player_status p;struct ln_audio_status a;ln_player_snapshot(&p);ln_audio_snapshot(&a);
     return p.phase==LN_PLAYER_IDLE||p.phase==LN_PLAYER_ERROR||p.phase==LN_PLAYER_PAUSE||
         (a.playing&&!a.paused&&a.queued>=ln_player_background_frames(a.rate)&&!ln_player_prefetch_urgent());}
