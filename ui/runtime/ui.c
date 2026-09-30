@@ -907,6 +907,7 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
         else text_block(p,n,node_text,fg);break;
     case LN_UI_ICON:case LN_UI_IMAGE:image(p,n);break;
     case LN_UI_VIRTUAL_LIST:case LN_UI_MENU:case LN_UI_GRID:{
+        bool photo_grid=n->kind==LN_UI_GRID&&s->scene==LN_UI_SCENE_PHOTOS_GRID;
         bool photo_list=layout()==LN_UI_LAYOUT_IPOD_PHOTO&&n->kind!=LN_UI_GRID;
         bool classic_list=layout()==LN_UI_LAYOUT_IPOD_CLASSIC&&n->kind!=LN_UI_GRID;
         if(!photo_list&&!classic_list)fill(p,bounds(n),bg);uint32_t count=total(n),cols=columns(n);
@@ -924,6 +925,17 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
             if(++column==cols){column=0;++row;}
             struct rect visible=intersect(p->clip,r);if(!visible.w||!visible.h)continue;
             bool chosen=focused&&i==s->selected;uint16_t ink=chosen?color(LN_UI_SELECTION_FG):fg;
+            if(photo_grid){
+                const struct ln_ui_asset*a=ln_ui_dynamic_item_asset(n,i,0);
+                struct ln_ui_node thumbnail=*n;
+                int32_t tw=a?a->width:LINNET_TARGET_NUMBER==1238u?56:LINNET_TARGET_NUMBER==25u?50:40;
+                int32_t th=a?a->height:LINNET_TARGET_NUMBER==1238u?56:LINNET_TARGET_NUMBER==25u?38:30;
+                thumbnail.x=r.x+(r.w-tw)/2;thumbnail.y=r.y+(r.h-th)/2;thumbnail.w=tw;thumbnail.h=th;
+                struct rect saved=p->clip;p->clip=intersect(saved,r);
+                if(a)image_asset(p,&thumbnail,a);
+                if(chosen)border(p,bounds(&thumbnail),0xffe0u);
+                p->clip=saved;continue;
+            }
             struct rect card=r;
             if(layout()==LN_UI_LAYOUT_GRAPHITE&&n->kind!=LN_UI_VIRTUAL_LIST){card.y+=2;card.h-=4;}
             if(layout()==LN_UI_LAYOUT_BLUEPRINT&&cols==2u){card.x+=2;card.y+=2;card.w-=4;card.h-=4;}

@@ -7,8 +7,10 @@
 #include "hal/api/audio.h"
 #include "hal/api/platform.h"
 #include "boot/include/linnet_boot.h"
-#define ROWS 25u
+#define ROWS (LINNET_TARGET_NUMBER==25u?30u:25u)
 #define THUMB_SIZE 56u
+#define THUMB_WIDTH (LINNET_TARGET_NUMBER==1238u?56u:LINNET_TARGET_NUMBER==25u?50u:40u)
+#define THUMB_HEIGHT (LINNET_TARGET_NUMBER==1238u?56u:LINNET_TARGET_NUMBER==25u?38u:30u)
 #define WIDTH LINNET_PHOTO_WIDTH
 #define HEIGHT LINNET_PHOTO_HEIGHT
 /* Panning can straddle one extra tile on each axis. Keep a power-of-two
@@ -21,7 +23,7 @@
 _Static_assert(VISIBLE_TILES<=TILES,"photo viewport exceeds tile cache capacity");
 #define EMPTY_ALBUM_RESUME 65535u
 enum phase {OPEN,HEADER,VERIFY,IDLE,RECORD,TITLE,THUMB,LEVEL,TILE_RECORD,TILE_DATA,SOURCE,JPEG_OPEN,JPEG_LOAD,JPEG_DECODE,TILE_COMMIT,FILE_HEADER,FILE_PIXELS};
-struct row {uint32_t index;bool valid,album,thumb;char title[192];union {struct ln_pimg_album a;struct ln_pimg_photo p;} data;struct ln_ui_asset asset;};
+struct row {uint32_t index;bool valid,album,thumb,title_ready;char title[192];union {struct ln_pimg_album a;struct ln_pimg_photo p;} data;struct ln_ui_asset asset;};
 struct tile {uint32_t index,age;bool valid;};
 static struct {
     union {uint16_t viewer_tiles[TILES][1024],thumbs[ROWS][THUMB_SIZE*THUMB_SIZE];
@@ -166,7 +168,7 @@ static int open_file(const char*path,struct ln_fat32_file*f){
     if(p.working!=p.epoch)return 0;return r;
 }
 static struct row *cached(uint32_t index,bool album){struct row*r=&p.rows[index%ROWS];return r->valid&&r->index==index&&r->album==album?r:0;}
-static void begin_row(uint32_t index,bool album){p.job_index=index;p.job_slot=index%ROWS;p.job_album=album;p.rows[p.job_slot].valid=p.rows[p.job_slot].thumb=false;p.phase=RECORD;}
+static void begin_row(uint32_t index,bool album){p.job_index=index;p.job_slot=index%ROWS;p.job_album=album;p.rows[p.job_slot].valid=p.rows[p.job_slot].thumb=p.rows[p.job_slot].title_ready=false;p.phase=RECORD;}
 static bool path_safe(const uint8_t*s,uint32_t n){
     if(!ln_pimg_text(s,n,true)||n<5||s[n-4]!='.'||s[n-3]!='J'||s[n-2]!='P'||s[n-1]!='G')return false;
     uint32_t component=0,dots=0,extension=0;
@@ -367,7 +369,7 @@ bool ln_photos_slideshow_active(void){return p.slide;}
 uint32_t ln_photos_revision(void){return p.revision;}
 uint32_t ln_photos_navigation(void){return p.navigation;}
 uint32_t ln_photos_selection(void){return p.view==LN_PHOTOS_ALBUMS?(p.album<p.header.albums?p.album:0):p.view==LN_PHOTOS_LIST&&p.photo_index>=p.first&&p.photo_index-p.first<p.count?p.photo_index-p.first:0;}
-const char *ln_photos_title(void){return p.view==LN_PHOTOS_ALBUMS?"Photo albums":p.view==LN_PHOTOS_LIST?"Photos":p.title;}
+const char *ln_photos_title(void){return p.view==LN_PHOTOS_ALBUMS?"Photo albums":p.view==LN_PHOTOS_LIST?"Photo Library":p.title;}
 const char *ln_photos_status(void){return p.error?"Image unavailable":file_mode&&!p.frame_valid?"Loading image":!p.ready?"Loading catalog":p.jpeg_mode&&!p.frame_valid?"Decoding JPEG":p.view==LN_PHOTOS_VIEWER&&!p.frame_valid?"Loading image":"";}
 void ln_photos_resume_get(uint8_t out[16]){
     if(p.resume_pending){copy(out,p.resume,16);return;}
@@ -404,6 +406,7 @@ static bool plan_content(bool apply){
         if(p.view_loaded)return false;
         struct row*row=cached(p.photo_index,false);if(!apply)return true;
         if(!row){begin_row(p.photo_index,false);return true;}
+        if(!row->title_ready){p.job_slot=p.photo_index%ROWS;p.phase=TITLE;return true;}
         if(p.photo_index<p.first||p.photo_index-p.first>=p.count){fail(18);return true;}
         p.photo=row->data.p;text(p.title,row->title);p.level_count=0;p.phase=LEVEL;return true;
     }
@@ -507,18 +510,26 @@ static void photo_step(void){
         uint32_t size=p.job_album?32u:64u,at=(p.job_album?p.header.album_at:p.header.photo_at)+p.job_index*size;
         r=read_at(&p.file,at,photo_scratch,size);if(!r)return;struct row*row=&p.rows[p.job_slot];
         bool valid=r>0&&(p.job_album?ln_pimg_album(&p.header,photo_scratch,p.job_index,&row->data.a):ln_pimg_photo(&p.header,photo_scratch,p.job_index,&row->data.p));
-        if(!valid){fail(6);return;}row->index=p.job_index;row->album=p.job_album;p.phase=TITLE;return;
+        if(!valid){fail(6);return;}row->index=p.job_index;row->album=p.job_album;
+        row->asset=(struct ln_ui_asset){THUMB_WIDTH,THUMB_HEIGHT,photo_buffers.pixels.thumbs[p.job_slot]};
+        if(!row->album&&p.view==LN_PHOTOS_LIST){row->title[0]=0;row->valid=true;p.phase=IDLE;++p.revision;}else p.phase=TITLE;return;
     }
     if(p.phase==TITLE){struct row*row=&p.rows[p.job_slot];r=string_read(row->album?row->data.a.title:row->data.p.title,row->album?row->data.a.bytes:row->data.p.bytes,false);
-        if(!r)return;if(r<0){fail(7);return;}text(row->title,(char*)photo_scratch);row->valid=true;row->asset=(struct ln_ui_asset){THUMB_SIZE,THUMB_SIZE,photo_buffers.pixels.thumbs[p.job_slot]};p.phase=IDLE;++p.revision;return;}
+        if(!r)return;if(r<0){fail(7);return;}text(row->title,(char*)photo_scratch);row->valid=row->title_ready=true;p.phase=IDLE;++p.revision;return;}
     if(p.phase==THUMB){struct row*row=&p.rows[p.job_slot];r=read_at(&p.file,row->data.p.thumb,photo_scratch,8192);
         if(!r)return;if(r<0||ln_crc32(photo_scratch,8192)!=row->data.p.thumb_crc){fail(8);return;}
-        /* Cache at the largest displayed thumbnail size; keep all 25 resident. */
+        /* Legacy packages keep square, letterboxed previews. Crop their fitted
+         * image before scaling into the native grid cell, preserving aspect. */
         /* Thumbnail pixels overlap viewer tiles, so their metadata can no
          * longer certify the cached tile contents after this write. */
         for(uint32_t i=0;i<TILES;i++)p.tiles[i].valid=false;
-        for(uint32_t y=0;y<THUMB_SIZE;++y)for(uint32_t x=0;x<THUMB_SIZE;++x)
-            photo_buffers.pixels.thumbs[p.job_slot][y*THUMB_SIZE+x]=ln_read_le16(photo_scratch+2u*((y*64u/THUMB_SIZE)*64u+x*64u/THUMB_SIZE));
+        uint32_t sw=row->data.p.width,sh=row->data.p.height;
+        if(sw>64u||sh>64u){if(sw>=sh){sh=sh*64u/sw;sw=64u;}else{sw=sw*64u/sh;sh=64u;}}
+        if(!sw)sw=1;if(!sh)sh=1;uint32_t sx=(64u-sw)/2u,sy=(64u-sh)/2u;
+        if(sw*THUMB_HEIGHT>sh*THUMB_WIDTH){uint32_t width=sh*THUMB_WIDTH/THUMB_HEIGHT;sx+=(sw-width)/2u;sw=width?width:1u;}
+        else{uint32_t height=sw*THUMB_HEIGHT/THUMB_WIDTH;sy+=(sh-height)/2u;sh=height?height:1u;}
+        for(uint32_t y=0;y<THUMB_HEIGHT;++y)for(uint32_t x=0;x<THUMB_WIDTH;++x)
+            photo_buffers.pixels.thumbs[p.job_slot][y*THUMB_WIDTH+x]=ln_read_le16(photo_scratch+2u*((sy+y*sh/THUMB_HEIGHT)*64u+sx+x*sw/THUMB_WIDTH));
         row->thumb=true;p.phase=IDLE;++p.revision;return;}
     if(p.phase==LEVEL){
         /* Descriptors are contiguous; retain the same request until it drains. */

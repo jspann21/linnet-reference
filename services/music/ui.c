@@ -186,7 +186,17 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
         if(n->kind==LN_UI_STATUS_BAR)return ln_photos_title();
         if((n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_GRID)&&item!=UINT32_MAX)return ln_photos_label(item);
         if(n->kind==LN_UI_PHOTO_SURFACE)return ln_photos_asset()?"":ln_photos_status();
-        if(n->kind==LN_UI_TEXT&&equal(fallback,"Photo empty folder"))return ln_photos_count()?"":"No photos in this folder";
+        if(n->kind==LN_UI_TEXT&&equal(fallback,"Photo empty folder")){
+            const char *status=ln_photos_status();
+            return status[0]?status:ln_photos_count()?"":"No photos in this folder";
+        }
+        if(n->kind==LN_UI_TEXT&&equal(fallback,"Photo count")){
+            if(ln_photos_status()[0])return "";
+            static char count[24];uint32_t value=ln_photos_count(),length=0;char digits[10];
+            do{digits[length++]=(char)('0'+value%10u);value/=10u;}while(value);
+            uint32_t at=0;while(length)count[at++]=digits[--length];
+            const char *suffix=" Photos";while(*suffix)count[at++]=*suffix++;count[at]=0;return count;
+        }
     }
     if(in_scene(n,LN_UI_SCENE_PHOTOS_OPTIONS)&&n->kind==LN_UI_VIRTUAL_LIST&&item<7u){
         static const char *const labels[]={"Wheel: zoom","Wheel: pan left/right","Wheel: pan up/down","Rotate clockwise","Start slideshow","Fit image","Back to photo"};

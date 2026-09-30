@@ -449,6 +449,24 @@ def compile_system(root, output, configpath=None, target_override=None):
             variant['metrics']=dict(
                 row_height=max(font['height'],(variant['metrics']['row_height']*height+REFERENCE_HEIGHT//2)//REFERENCE_HEIGHT),
                 padding=(variant['metrics']['padding']*width+REFERENCE_WIDTH//2)//REFERENCE_WIDTH)
+        if target in ('classic6g-n25', 'video5g-m25', 'photo4g-p98'):
+            for scene in variant['scenes']:
+                if scene['id'] != 'linnet.system.photos-grid': continue
+                top = 21 if target == 'photo4g-p98' else 24
+                columns, rows = (5, 3) if target == 'classic6g-n25' else (6, 5) if target == 'video5g-m25' else (5, 5)
+                grid_top = top + (24 if target == 'classic6g-n25' else 0)
+                row_height = (height - grid_top) // rows
+                for node in scene['nodes']:
+                    if node['kind'] == 11:
+                        node.update(x=0, y=0, w=width, h=top)
+                    elif node['kind'] == 8:
+                        node.update(x=0, y=grid_top, w=width-10, h=row_height*rows,
+                                    grid_columns=columns, row_height=row_height)
+                    elif node['kind'] == 9:
+                        node.update(x=width-10, y=grid_top, w=10, h=row_height*rows)
+                    elif node['text'] == 'Photo count':
+                        node.update(x=8, y=top, w=width-16, h=24)
+                        if target != 'classic6g-n25': node['flags'] |= 2
         enabled_scenes=gate_features(variant['scenes'],features)
         if not enabled_scenes&1:
             raise ContentError('the first UI scene must be enabled')
@@ -519,7 +537,7 @@ def geometry_flags(node, theme, font):
         return flags
     layout = theme['layout']
     if node['kind'] == 8:
-        columns = 5 if layout == 'ipod-photo' else 2 if layout == 'aurora' else 3
+        columns = node.get('grid_columns', 5 if layout == 'ipod-photo' else 2 if layout == 'aurora' else 3)
     else:
         columns = 2 if layout == 'blueprint' and node['kind'] == 7 and node['h'] >= 90 else 1
     if node['text'] == 'Clock fields':
@@ -527,7 +545,7 @@ def geometry_flags(node, theme, font):
     elif node['kind'] == 6:
         height = node.get('row_height', max(18, font['height'] + 5))
     elif node['kind'] == 8:
-        height = 31 if layout == 'ipod-photo' else max(1, node['h'] // 2)
+        height = node.get('row_height', 31 if layout == 'ipod-photo' else max(1, node['h'] // 2))
     else:
         height = 46 if columns == 2 else theme['metrics']['row_height']
     if height <= 0 or node['w'] <= 0:
