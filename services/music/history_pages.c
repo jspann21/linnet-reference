@@ -8,7 +8,7 @@ static struct {
     struct ln_history_page cache[4];uint32_t age[4],clock,revision;
     uint8_t a[16384],b[16384],epoch[16];
     uint32_t window_first,window_count,window_revision;bool window_valid;
-    uint32_t seen[32],bookmark_pages[32],seen_count,bookmarks;
+    uint32_t seen[32],bookmark_pages[32],favorite_pages[32],played_pages[32],seen_count,bookmarks;
     uint32_t phase,index,probe,slot;int error;bool loaded,wanted,scanning;
     uint32_t ticket,io_bytes;int io_error;
     uint64_t id,full_id,pinned_id;bool full,pinned;
@@ -24,6 +24,17 @@ bool ln_paged_history_finishing(void){return h.phase>=FLUSH&&h.phase<=ACK;}
 uint32_t ln_paged_history_revision(void){return h.revision;}
 int ln_paged_history_bookmark_count(void){return h.seen_count==LN_HISTORY_PAGE_COUNT?(int)h.bookmarks:-1;}
 bool ln_paged_history_bookmark_page(uint32_t index){return index<LN_HISTORY_PAGE_COUNT&&(!(h.seen[index/32]&(1u<<(index&31)))||(h.bookmark_pages[index/32]&(1u<<(index&31))));}
+bool ln_paged_history_favorite_page(uint32_t index){return index<LN_HISTORY_PAGE_COUNT&&(!(h.seen[index/32]&(1u<<(index&31)))||(h.favorite_pages[index/32]&(1u<<(index&31))));}
+bool ln_paged_history_played_page(uint32_t index){return index<LN_HISTORY_PAGE_COUNT&&(!(h.seen[index/32]&(1u<<(index&31)))||(h.played_pages[index/32]&(1u<<(index&31))));}
+static void summarize_page(const struct ln_history_page *p){
+    uint32_t mask=1u<<(p->index&31),word=p->index/32;
+    h.bookmark_pages[word]&=~mask;h.favorite_pages[word]&=~mask;h.played_pages[word]&=~mask;
+    for(uint32_t i=0;i<p->count;i++){
+        if(p->records[i].flags&LN_MUSIC_JOURNAL_BOOKMARK)h.bookmark_pages[word]|=mask;
+        if(p->records[i].flags&LN_MUSIC_JOURNAL_FAVORITE)h.favorite_pages[word]|=mask;
+        if(p->records[i].play_count)h.played_pages[word]|=mask;
+    }
+}
 static int location(uint64_t id){
     if(!h.loaded)return -1;
     for(uint32_t i=0;i<4;i++)if(ln_history_page_get(&h.cache[i],id))return (int)i;
@@ -51,13 +62,11 @@ bool ln_paged_history_put(const struct ln_music_journal_record *r){
     if(h.error||!r)return false;int slot=location(r->id);if(slot<0)return false;
     const struct ln_music_journal_record *old=ln_history_page_get(&h.cache[slot],r->id);
     bool had=old&&(old->flags&LN_MUSIC_JOURNAL_BOOKMARK);
+    bool had_favorite=old&&(old->flags&LN_MUSIC_JOURNAL_FAVORITE),had_played=old&&old->play_count;
     uint32_t before=h.cache[slot].revision;if(!ln_history_page_put(&h.cache[slot],r))return false;
     bool has=(r->flags&LN_MUSIC_JOURNAL_BOOKMARK)!=0;if(had!=has){if(has)h.bookmarks++;else h.bookmarks--;}
-    if(had!=has){
-        const struct ln_history_page *p=&h.cache[slot];uint32_t mask=1u<<(p->index&31);
-        h.bookmark_pages[p->index/32]&=~mask;
-        for(uint32_t i=0;i<p->count;i++)if(p->records[i].flags&LN_MUSIC_JOURNAL_BOOKMARK){h.bookmark_pages[p->index/32]|=mask;break;}
-    }
+    if(had!=has||had_favorite!=((r->flags&LN_MUSIC_JOURNAL_FAVORITE)!=0)||had_played!=(r->play_count!=0))
+        summarize_page(&h.cache[slot]);
     if(before!=h.cache[slot].revision){h.revision++;h.window_valid=false;}h.age[slot]=++h.clock;return true;
 }
 const struct ln_history_page *ln_paged_history_page(uint32_t index){
@@ -86,7 +95,8 @@ static void load_window(void){
         if(result<0){fail(result==-2?LN_HISTORY_CONFLICT:LN_HISTORY_BOTH_CORRUPT);return;}
         uint32_t mask=1u<<(h.index&31);if(!(h.seen[h.index/32]&mask)){
             const struct ln_history_page *p=&h.cache[h.slot];
-            for(uint32_t i=0;i<p->count;i++)if(p->records[i].flags&LN_MUSIC_JOURNAL_BOOKMARK){h.bookmarks++;h.bookmark_pages[h.index/32]|=mask;}
+            for(uint32_t i=0;i<p->count;i++)if(p->records[i].flags&LN_MUSIC_JOURNAL_BOOKMARK)h.bookmarks++;
+            summarize_page(p);
             h.seen[h.index/32]|=mask;h.seen_count++;
         }
         h.age[h.slot]=++h.clock;h.phase=IDLE;resolve();return;

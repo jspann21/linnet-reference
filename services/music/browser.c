@@ -348,7 +348,9 @@ void ln_music_browser_step(void){
             b.job_epoch=b.epoch;return;
         }
         if(b.activity_page<LN_HISTORY_PAGE_COUNT&&!ln_music_history_error()){
-            if(b.activity_kind==10&&!ln_paged_history_bookmark_page(b.activity_page)){b.activity_page++;return;}
+            if((b.activity_kind==9&&!ln_paged_history_favorite_page(b.activity_page))||
+               (b.activity_kind==10&&!ln_paged_history_bookmark_page(b.activity_page))||
+               (b.activity_kind==12&&!ln_paged_history_played_page(b.activity_page))){b.activity_page++;return;}
             const struct ln_history_page *page=ln_paged_history_page(b.activity_page);if(!page)return;
             for(uint32_t i=0;i<page->count;i++){const struct ln_music_journal_record *r=&page->records[i];
                 if((b.activity_kind==9&&(r->flags&LN_MUSIC_JOURNAL_FAVORITE))||(b.activity_kind==10&&(r->flags&LN_MUSIC_JOURNAL_BOOKMARK))||(b.activity_kind==12&&r->play_count))activity_filter(r->id,true);}
