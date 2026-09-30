@@ -24,7 +24,7 @@ static struct {
     uint32_t action_row,action_index,action_count,action_group,action_kind;
     bool action_track,action_local,action_bookmark,bookmark_remove,recent_open;
     const char *notice;
-    struct ln_collection draft;uint64_t activity_id;uint32_t mapped[LINNET_QUEUE_CAPACITY],scan,resolve_count;
+    struct ln_collection draft;uint64_t activity_id;uint32_t mapped[LINNET_QUEUE_CAPACITY],scan,resolve_count,sort_at,sort_end;
     /* Playlist resolution and activity ranking never run together. */
     union {uint32_t positions[LINNET_QUEUE_CAPACITY],activity_scores[LINNET_QUEUE_CAPACITY];};
     bool resolving,exporting,choosing,renaming,saved_message,empty_actions;uint32_t export_at,destination;
@@ -122,7 +122,27 @@ static bool store_draft(uint32_t slot){
 static void resolve_begin(uint32_t slot){
     const struct ln_collection *p=ln_collection_get(slot);if(!p)return;b.draft=*p;
     enter(LOCAL_TRACKS,b.draft.name);b.here.slot=slot;b.here.count=b.draft.count;b.scan=b.resolve_count=b.scan_id_count=b.scan_id_at=0;b.resolving=b.draft.count!=0;
-    for(uint32_t i=0;i<b.draft.count;i++)b.mapped[i]=UINT32_MAX;
+    bool sorted=true;for(uint32_t i=0;i<b.draft.count;i++){b.mapped[i]=UINT32_MAX;b.positions[i]=i;if(i&&b.draft.ids[i]<b.draft.ids[i-1u])sorted=false;}
+    b.sort_end=sorted||b.draft.count<=8u?0:b.draft.count;b.sort_at=b.sort_end/2u;
+}
+/* Sort positions under the browser's existing metadata budget, one heap sift
+ * per step. The draft and final playlist order remain unchanged. */
+static void resolve_sift(uint32_t root,uint32_t count){
+    uint32_t position=b.positions[root];uint64_t id=b.draft.ids[position];
+    while(root<count/2u){uint32_t child=root*2u+1u;
+        if(child+1u<count&&b.draft.ids[b.positions[child]]<b.draft.ids[b.positions[child+1u]])child++;
+        if(id>=b.draft.ids[b.positions[child]])break;
+        b.positions[root]=b.positions[child];root=child;
+    }
+    b.positions[root]=position;
+}
+static void resolve_id(uint64_t id){
+    if(b.draft.count<=8u){for(uint32_t i=0;i<b.draft.count;i++)if(b.draft.ids[i]==id&&b.mapped[i]==UINT32_MAX){b.mapped[i]=b.scan;b.resolve_count++;}return;}
+    uint32_t lo=0,hi=b.draft.count;
+    while(lo<hi){uint32_t mid=lo+(hi-lo)/2u;if(b.draft.ids[b.positions[mid]]<id)lo=mid+1u;else hi=mid;}
+    for(uint32_t i=lo;i<b.draft.count&&b.draft.ids[b.positions[i]]==id;i++){
+        uint32_t position=b.positions[i];if(b.mapped[position]==UINT32_MAX){b.mapped[position]=b.scan;b.resolve_count++;}
+    }
 }
 static void queue_begin(uint32_t count,uint32_t cursor,uint32_t source,uint32_t group,uint32_t action){
     b.queue=(struct ln_music_browser_queue){.count=count,.cursor=cursor,.source=source,.source_group=group,.action=action};
@@ -382,8 +402,10 @@ void ln_music_browser_step(void){
         if(b.export_queue.source==LN_QUEUE_GROUP&&!b.action_kind){if(ln_music_library_group_member(b.export_queue.source_group,ordinal))b.job=MEMBER;}
         else if(ln_music_library_track_record(b.export_queue.source==LN_QUEUE_GROUP?b.action_index:ordinal))b.job=RECORD;
     }else if(b.resolving){if(!ln_music_library_count()){b.resolving=false;b.here.count=0;}
+        else if(b.sort_at)resolve_sift(--b.sort_at,b.sort_end);
+        else if(b.sort_end>1u){uint32_t last=--b.sort_end,position=b.positions[last];b.positions[last]=b.positions[0];b.positions[0]=position;resolve_sift(0,last);}
         else if(b.scan_id_at<b.scan_id_count){uint64_t id=b.scan_ids[b.scan_id_at++];
-            for(uint32_t i=0;i<b.draft.count;i++)if(b.draft.ids[i]==id&&b.mapped[i]==UINT32_MAX){b.mapped[i]=b.scan;b.resolve_count++;}b.scan++;
+            resolve_id(id);b.scan++;
             if(b.resolve_count==b.draft.count||b.scan==ln_music_library_count()){uint32_t count=0;for(uint32_t i=0;i<b.draft.count;i++)if(b.mapped[i]!=UINT32_MAX){b.positions[count]=i;b.mapped[count++]=b.mapped[i];}b.here.count=count;b.resolving=false;if(count!=b.draft.count)ln_music_browser_notice("Missing tracks omitted");changed();}}
         else if(ln_music_library_track_ids(b.scan))b.job=RESOLVE_IDS;
     }else if(b.status==LN_BROWSER_QUEUE_LOADING){if(ln_music_library_group_member(b.queue.source_group,b.queue.source_group&LN_QUEUE_REVERSE?b.queue.count-1-b.next:b.next))b.job=MEMBER;
