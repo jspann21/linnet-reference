@@ -924,7 +924,7 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
         left = totals[kind] - completed[kind]
         recent = durations[kind]
         seconds = sum(recent) / len(recent) * left if len(recent) >= 2 else None
-        eta = (f' · about {round(seconds / 60)}m left' if seconds >= 90 else
+        eta = (f' · about {max(1, round(seconds / 60))}m left' if seconds >= 60 else
                ' · <1m left') if seconds is not None else ''
         stage_progress((completed['aac'] + completed['flac']) / len(pending))
         progress(f'{label} seeks {completed[kind]}/{totals[kind]} · {left} left{eta}: {path.name}')
@@ -1514,7 +1514,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 publications.append(path)
             if (name.startswith(('ipvf-encode-', 'music-prepare-')) or
                     '.music-prepare-' in name or name.endswith((
-                        '.tmp', '.music-previous', '.aac-original', '.flac-original'))):
+                        '.tmp', '.music-previous', '.aac-original', '.aac-append', '.flac-original'))):
                 report["cleanup"]["retained"].append(dict(path=str(path),
                     reason="Preparation scratch remains; review before removing if another update is running."))
         for path in publications:

@@ -248,8 +248,16 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
             raise OSError('AAC source changed during preparation')
         if recovery is not None and journal is not None:
             backup = cache / (uuid.uuid4().hex + '.aac-original')
-            local.replace(backup)
+            suffix_path = cache / (uuid.uuid4().hex + '.aac-append')
+            with suffix_path.open('xb') as writer:
+                writer.write(suffix); writer.flush(); os.fsync(writer.fileno())
+            try:
+                local.replace(backup)
+            except Exception:
+                suffix_path.unlink(missing_ok=True)
+                raise
             recovery.append(dict(path=str(path), backup=str(backup), mode='append',
+                suffix_path=str(suffix_path), suffix_sha256=hashlib.sha256(suffix).hexdigest(),
                 original_bytes=before.st_size, original_sha256=source_hash.hexdigest(),
                 atime_ns=before.st_atime_ns, mtime_ns=before.st_mtime_ns,
                 prepared_bytes=before.st_size + len(suffix), prepared_sha256=digest.hexdigest()))
@@ -301,20 +309,38 @@ def finish_preparation(change, *, committed, kind='AAC'):
     """Restore an unpublished original, or retire its owned host backup."""
     from .guard import hash_file
     path, backup = Path(change['path']), Path(change['backup'])
+    suffix_path = Path(change['suffix_path']) if change.get('mode') == 'append' else None
     if not committed:
         current = path.stat().st_size
         if current == change['original_bytes'] and hash_file(path, current) == change['original_sha256']:
             if change.get('mode') == 'append':
                 os.utime(path, ns=(change['atime_ns'], change['mtime_ns']))
+                suffix_path.unlink(missing_ok=True)
             backup.unlink(missing_ok=True); return
         if change.get('mode') == 'append' and kind == 'AAC':
-            if (current < change['original_bytes'] or current > change['prepared_bytes']
-                    or not _matches_prefix(path, change['original_bytes'], change['original_sha256'])):
+            if current < change['original_bytes'] or current > change['prepared_bytes']:
                 raise OSError('AAC copy changed after preparation; original backup retained')
+            if current == change['prepared_bytes']:
+                if hash_file(path, current) != change['prepared_sha256']:
+                    raise OSError('AAC copy changed after preparation; original backup retained')
+            else:
+                if not _matches_prefix(path, change['original_bytes'], change['original_sha256']):
+                    raise OSError('AAC copy changed after preparation; original backup retained')
+                suffix = suffix_path.read_bytes()
+                if (hashlib.sha256(suffix).hexdigest() != change['suffix_sha256']
+                        or len(suffix) != change['prepared_bytes'] - change['original_bytes']):
+                    raise OSError('AAC recovery suffix changed; original backup retained')
+                with path.open('rb') as reader:
+                    reader.seek(change['original_bytes'])
+                    if reader.read() != suffix[:current - change['original_bytes']]:
+                        raise OSError('AAC append changed; original backup retained')
             with path.open('r+b') as writer:
                 writer.truncate(change['original_bytes'])
                 writer.flush(); os.fsync(writer.fileno())
+            if hash_file(path, change['original_bytes']) != change['original_sha256']:
+                raise OSError('AAC restoration did not verify; original backup retained')
             os.utime(path, ns=(change['atime_ns'], change['mtime_ns']))
+            suffix_path.unlink(missing_ok=True)
             backup.unlink()
             return
         if current != change['prepared_bytes'] or hash_file(path, current) != change['prepared_sha256']:
@@ -334,4 +360,6 @@ def finish_preparation(change, *, committed, kind='AAC'):
             os.utime(path, ns=(change['atime_ns'], change['mtime_ns']))
         finally:
             if owned:temporary.unlink(missing_ok=True)
+    if suffix_path is not None:
+        suffix_path.unlink(missing_ok=True)
     backup.unlink()
