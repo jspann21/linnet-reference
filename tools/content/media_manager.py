@@ -6,6 +6,7 @@ No device is modified by discovery or scanning.
 from __future__ import annotations
 
 from contextlib import ExitStack
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -84,8 +85,9 @@ ConvertTo-Json -InputObject @{items=@($items);errors=@($errors)} -Compress
               for entry in discovered.get('errors', [])[:16] if isinstance(entry, dict)]
     for item in items:
         try:
-            devices.append(_identify(inspect_target(item["number"], item["serial"],
-                                                    item["volume"], item["drive"])))
+            args = dict(disk_number=item["number"], expected_disk_serial=item["serial"],
+                        expected_volume_serial=item["volume"], expected_drive=item["drive"])
+            devices.append(_inspect_identify(args, Path(item["drive"] + "\\")))
         except Exception as error:
             if len(errors) < 16:
                 drive = item.get('drive', '?') if isinstance(item, dict) else '?'
@@ -97,11 +99,25 @@ ConvertTo-Json -InputObject @{items=@($items);errors=@($errors)} -Compress
     return devices
 
 
-def _identify(identity):
+def _inspect_identify(args, root):
+    """Run independent storage probes together, then require matching identities."""
+    from tools.inspect.retail_device import detect
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        guarded = pool.submit(inspect_target, **args)
+        retail = pool.submit(detect, root)
+        identity, detected = guarded.result(), retail.result()
+    if Path(root).resolve(strict=True) != Path(identity["root"]).resolve(strict=True):
+        raise RuntimeError("USB and mounted storage roots disagree")
+    return _identify(identity, detected)
+
+
+def _identify(identity, detected=None):
     """Bind Disk Mode storage identity to one target manifest."""
     from tools.inspect.retail_device import detect
     from tools.studio.targets import TARGETS, media_profile
-    detected = detect(identity["root"])
+    if detected is None:
+        detected = detect(identity["root"])
     storage = detected["storage"]
     if (detected["device_id"] != identity["disk_serial"] or
             storage["disk_number"] != identity["disk_number"] or
@@ -200,7 +216,7 @@ def target_args(identity):
 
 
 def refresh(identity):
-    current = _identify(inspect_target(**target_args(identity)))
+    current = _inspect_identify(target_args(identity), Path(identity["root"]))
     _same_target(identity, current)
     if current["target_id"] != identity.get("target_id"):
         raise RuntimeError("iPod target identity changed during media operation")
