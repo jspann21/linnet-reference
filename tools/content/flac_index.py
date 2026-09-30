@@ -13,6 +13,8 @@ import uuid
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 MAX_METADATA = 16 * 1024 * 1024
 MAX_PACKET_INDEX = 64 * 1024 * 1024
+MAX_SEEK_TABLE = 1024 * 1024
+PLACEHOLDER = b'\xff' * 8 + b'\0' * 10
 
 
 def _layout(path):
@@ -46,30 +48,92 @@ def _layout(path):
     return None
 
 
+def _rebalance(path, layout):
+    """Spread an overlong native table across the stream without shifting audio."""
+    audio_at, _, rate, total, _ = layout
+    table = None
+    with path.open('rb') as reader:
+        at = 4
+        while at < audio_at:
+            reader.seek(at)
+            header = reader.read(4)
+            length = int.from_bytes(header[1:], 'big')
+            if header[0] & 127 == 3:
+                if table is not None or length > MAX_SEEK_TABLE or length % 18:
+                    return None
+                data = reader.read(length)
+                if len(data) != length:
+                    return None
+                table = (at + 4, data)
+            at += 4 + length
+    if table is None or len(table[1]) < 65 * 18:
+        return None
+    points = []
+    previous_sample, previous_offset = -1, 0
+    placeholders = False
+    audio_bytes = path.stat().st_size - audio_at
+    for at in range(0, len(table[1]), 18):
+        raw = table[1][at:at + 18]
+        sample, offset, frames = struct.unpack('>QQH', raw)
+        if sample == 0xffffffffffffffff:
+            placeholders = True
+            continue
+        if (placeholders or sample <= previous_sample or sample >= total or
+                offset < previous_offset or offset >= audio_bytes or not frames):
+            return None
+        points.append((sample, raw))
+        previous_sample, previous_offset = sample, offset
+    if len(points) <= 64 or total - points[63][0] < rate * 30:
+        return None
+    samples = [sample for sample, _ in points]
+    indices = sorted({max(0, bisect_right(samples, i * total // 64) - 1)
+                      for i in range(63)} | {len(points) - 1})
+    replacement = b''.join(points[i][1] for i in indices)
+    replacement += PLACEHOLDER * (len(table[1]) // 18 - len(indices))
+    return (table[0], table[1], replacement) if replacement != table[1] else None
+
+
 def same_original(source, destination):
     """Recognize this metadata-only augmentation during repeat imports."""
     source, destination = Path(source), Path(destination)
     original, prepared = _layout(source), _layout(destination)
-    if not original or not prepared or original[4] or not prepared[4]:
+    if not original or not prepared or not prepared[4]:
         return False
     audio_at, last_header, rate, total, _ = original
-    if prepared[1] != audio_at or prepared[2:4] != (rate, total):
+    if prepared[2:4] != (rate, total):
         return False
-    added = prepared[0] - audio_at
-    if (added < 22 or added > 4 + 64 * 18 or
-            source.stat().st_size + added != destination.stat().st_size):
-        return False
+    if original[4]:
+        change = _rebalance(source, original)
+        if (not change or prepared[0] != audio_at or
+                source.stat().st_size != destination.stat().st_size):
+            return False
+    else:
+        if prepared[1] != audio_at:
+            return False
+        added = prepared[0] - audio_at
+        if (added < 22 or added > 4 + 64 * 18 or
+                source.stat().st_size + added != destination.stat().st_size):
+            return False
     with source.open('rb') as left, destination.open('rb') as right:
         metadata = bytearray(left.read(audio_at))
-        if len(metadata) != audio_at or not metadata[last_header] & 128:
+        if len(metadata) != audio_at:
             return False
-        metadata[last_header] &= 127
+        if original[4]:
+            offset, before, after = change
+            if metadata[offset:offset + len(before)] != before:
+                return False
+            metadata[offset:offset + len(before)] = after
+        else:
+            if not metadata[last_header] & 128:
+                return False
+            metadata[last_header] &= 127
         if metadata != right.read(audio_at):
             return False
-        block = right.read(added)
-        if (len(block) != added or block[0] != 0x83 or
-                int.from_bytes(block[1:4], 'big') != added - 4 or (added - 4) % 18):
-            return False
+        if not original[4]:
+            block = right.read(added)
+            if (len(block) != added or block[0] != 0x83 or
+                    int.from_bytes(block[1:4], 'big') != added - 4 or (added - 4) % 18):
+                return False
         remaining = source.stat().st_size - audio_at
         while remaining:
             size = min(remaining, 1024 * 1024)
@@ -138,14 +202,17 @@ def prepare_file(path, cache, *, ffprobe, checkpoint=lambda: None, recovery=None
     path, cache = Path(path), Path(cache)
     checkpoint()
     layout = _layout(path)
-    if not layout or layout[4] or not ffprobe or layout[3] < layout[2] * 30:
+    if not layout or layout[3] < layout[2] * 30:
         return False
-    audio_at, last_header, rate, total, _ = layout
+    audio_at, last_header, rate, total, has_table = layout
+    change = _rebalance(path, layout) if has_table else None
+    if (has_table and change is None) or (not has_table and not ffprobe):
+        return False
     before = path.stat()
     key = hashlib.sha256(f'{path}:{before.st_size}:{before.st_mtime_ns}'.encode()).hexdigest()
     cache.mkdir(parents=True, exist_ok=True)
     unsupported = cache / (key + '.unsupported')
-    if unsupported.exists():
+    if not has_table and unsupported.exists():
         return False
     with tempfile.TemporaryDirectory(prefix='flac-', dir=cache) as scratch:
         local = Path(scratch) / 'source.flac'
@@ -157,10 +224,13 @@ def prepare_file(path, cache, *, ffprobe, checkpoint=lambda: None, recovery=None
                 writer.flush(); os.fsync(writer.fileno())
         if path.stat().st_size != before.st_size or path.stat().st_mtime_ns != before.st_mtime_ns:
             raise OSError('FLAC source changed during preparation')
-        points = _points(local, ffprobe, audio_at, rate, total, checkpoint)
-        if not points:
-            unsupported.touch(); return False
-        block = bytes((0x83,)) + len(points).to_bytes(3, 'big') + points
+        if has_table:
+            block = b''
+        else:
+            points = _points(local, ffprobe, audio_at, rate, total, checkpoint)
+            if not points:
+                unsupported.touch(); return False
+            block = bytes((0x83,)) + len(points).to_bytes(3, 'big') + points
         if before.st_size + len(block) > 0xffffffff:
             return False
         temporary = path.with_name('L' + uuid.uuid4().hex[:7] + '.TMP')
@@ -169,12 +239,20 @@ def prepare_file(path, cache, *, ffprobe, checkpoint=lambda: None, recovery=None
             digest = hashlib.sha256()
             with temporary.open('xb') as writer, local.open('rb') as reader:
                 owned = True
-                metadata = bytearray(reader.read(audio_at))
-                if len(metadata) != audio_at or not metadata[last_header] & 128:
-                    raise OSError('FLAC metadata changed during preparation')
-                metadata[last_header] &= 127
-                for chunk in (metadata, block):
-                    writer.write(chunk); digest.update(chunk)
+                if has_table:
+                    offset, prior, replacement = change
+                    prefix = reader.read(offset)
+                    if len(prefix) != offset or reader.read(len(prior)) != prior:
+                        raise OSError('FLAC seek table changed during preparation')
+                    for chunk in (prefix, replacement):
+                        writer.write(chunk); digest.update(chunk)
+                else:
+                    metadata = bytearray(reader.read(audio_at))
+                    if len(metadata) != audio_at or not metadata[last_header] & 128:
+                        raise OSError('FLAC metadata changed during preparation')
+                    metadata[last_header] &= 127
+                    for chunk in (metadata, block):
+                        writer.write(chunk); digest.update(chunk)
                 while chunk := reader.read(1024 * 1024):
                     checkpoint(); writer.write(chunk); digest.update(chunk)
                 writer.flush(); os.fsync(writer.fileno())

@@ -852,7 +852,7 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
                    aac_recovery, flac_recovery, record):
     from .aac_index import prepare_file as prepare_aac
     from .flac_index import prepare_file as prepare_flac
-    supported = ('.m4a', '.m4b', '.flac', '.flc') if ffprobe else ('.m4a', '.m4b')
+    supported = ('.m4a', '.m4b', '.flac', '.flc')
     for folder in source_folders(root, 'Music'):
         for path in folder.rglob('*'):
             checkpoint()
