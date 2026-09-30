@@ -216,8 +216,10 @@ def prepare_file(path, cache, *, ffprobe, checkpoint=lambda: None, recovery=None
         return False
     audio_at, last_header, rate, total, has_table = layout
     change = _rebalance(path, layout) if has_table else None
-    if (has_table and change is None) or (not has_table and not ffprobe):
+    if has_table and change is None:
         return False
+    if not has_table and not ffprobe:
+        return None  # Retry when the host gains FFprobe.
     before = path.stat()
     key = hashlib.sha256(f'{path}:{before.st_size}:{before.st_mtime_ns}'.encode()).hexdigest()
     cache.mkdir(parents=True, exist_ok=True)

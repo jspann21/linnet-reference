@@ -1006,6 +1006,7 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
               'flac': sum(suffix in ('.flac', '.flc') for _, suffix in pending)}
     completed = {'aac': 0, 'flac': 0}
     prepared = False
+    probe_deferred = False
     durations = {'aac': [], 'flac': []}
     for path, suffix in pending:
         checkpoint()
@@ -1027,8 +1028,11 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
                 report['steps'].append(dict(prepared_aac=str(path.relative_to(root))))
                 record()
         else:
-            if prepare_flac(path, cache / 'flac-seek', ffprobe=ffprobe,
-                            checkpoint=checkpoint, recovery=flac_recovery, journal=record):
+            outcome = prepare_flac(path, cache / 'flac-seek', ffprobe=ffprobe,
+                                   checkpoint=checkpoint, recovery=flac_recovery, journal=record)
+            if outcome is None:
+                probe_deferred = True
+            elif outcome:
                 prepared = True
                 report['steps'].append(dict(prepared_flac=str(path.relative_to(root))))
                 record()
@@ -1041,7 +1045,7 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
         if totals[kind]:
             progress(f'{label} seeks {completed[kind]}/{totals[kind]} complete')
     checkpoint()
-    return prepared
+    return prepared, probe_deferred
 
 
 def _prepare_music(root, cache, identity, skipped, *, ffprobe, verification, force,
@@ -1481,7 +1485,9 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             if not isinstance(saved, dict):
                 saved = {}
             outputs = saved.get("outputs", [])
-            if not force and not (kind == "Music" and music_verification == "full") and signature == saved.get("signature"):
+            probe = (ffprobe or shutil.which('ffprobe')) if kind == 'Music' else None
+            probe_retry = bool(kind == 'Music' and saved.get('seek_probe_deferred') and probe)
+            if not force and not probe_retry and not (kind == "Music" and music_verification == "full") and signature == saved.get("signature"):
                 emit_stage(f'Checking saved {kind}', unit)
                 checking = _checking_progress(kind, checkpoint, progress,
                     lambda fraction: emit_stage(f'Checking saved {kind}', unit, fraction))
@@ -1490,9 +1496,9 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     report["steps"].append(dict(kind=kind, status="unchanged"))
                     continue
             if kind == 'Music':
-                prepared = _prepare_audio(root, cache, skipped['Music'], ffprobe or shutil.which('ffprobe'),
-                                          checkpoint, progress, report, aac_recovery, flac_recovery, record,
-                                          stage_progress=lambda fraction: emit_stage('Preparing audio seeks', unit, fraction))
+                prepared, probe_deferred = _prepare_audio(root, cache, skipped['Music'], probe,
+                                                          checkpoint, progress, report, aac_recovery, flac_recovery, record,
+                                                          stage_progress=lambda fraction: emit_stage('Preparing audio seeks', unit, fraction))
                 if prepared:
                     # Seek atoms change source sizes and timestamps. Publish
                     # the fingerprint of the prepared files.
@@ -1548,6 +1554,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 else:
                     outputs = [(name, _hash(root / name)) for name in output_paths]
                 state[kind] = dict(signature=signature, outputs=outputs)
+                if kind == 'Music':
+                    state[kind]['seek_probe_deferred'] = probe_deferred
                 if kind == "Videos":
                     state[kind]["media_profile"] = media_profile
                 _save(state_path, state)
