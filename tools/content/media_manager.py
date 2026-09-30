@@ -1005,6 +1005,7 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
     totals = {'aac': sum(suffix in ('.m4a', '.m4b') for _, suffix in pending),
               'flac': sum(suffix in ('.flac', '.flc') for _, suffix in pending)}
     completed = {'aac': 0, 'flac': 0}
+    prepared = False
     durations = {'aac': [], 'flac': []}
     for path, suffix in pending:
         checkpoint()
@@ -1022,11 +1023,13 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
         if suffix in ('.m4a', '.m4b'):
             if prepare_aac(path, cache / 'aac-seek', checkpoint=checkpoint,
                            recovery=aac_recovery, journal=record):
+                prepared = True
                 report['steps'].append(dict(prepared_aac=str(path.relative_to(root))))
                 record()
         else:
             if prepare_flac(path, cache / 'flac-seek', ffprobe=ffprobe,
                             checkpoint=checkpoint, recovery=flac_recovery, journal=record):
+                prepared = True
                 report['steps'].append(dict(prepared_flac=str(path.relative_to(root))))
                 record()
         recent.append(time.monotonic() - started)
@@ -1038,6 +1041,7 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
         if totals[kind]:
             progress(f'{label} seeks {completed[kind]}/{totals[kind]} complete')
     checkpoint()
+    return prepared
 
 
 def _prepare_music(root, cache, identity, skipped, *, ffprobe, verification, force,
@@ -1445,10 +1449,6 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         if "Photos" in selected:
             from .retail_media import images
             retail_photos = images(root)
-        if 'Music' in selected:
-            _prepare_audio(root, cache, skipped['Music'], ffprobe or shutil.which('ffprobe'),
-                           checkpoint, progress, report, aac_recovery, flac_recovery, record,
-                           stage_progress=lambda fraction: emit_stage('Preparing audio seeks', 1, fraction))
         inventory = scan(root, selected, skipped=skipped, retail_photos=retail_photos,
                          fingerprint_kinds=(kind for kind in selected if kind != "Videos"))
         if "Videos" in selected:
@@ -1489,6 +1489,16 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     progress(f"{kind}: already up to date.")
                     report["steps"].append(dict(kind=kind, status="unchanged"))
                     continue
+            if kind == 'Music':
+                prepared = _prepare_audio(root, cache, skipped['Music'], ffprobe or shutil.which('ffprobe'),
+                                          checkpoint, progress, report, aac_recovery, flac_recovery, record,
+                                          stage_progress=lambda fraction: emit_stage('Preparing audio seeks', unit, fraction))
+                if prepared:
+                    # Seek atoms change source sizes and timestamps. Publish
+                    # the fingerprint of the prepared files.
+                    item = scan(root, ('Music',), skipped=skipped, fingerprint_kinds=('Music',))['Music']
+                    inventory[kind] = item
+                    signature = f"{option}:{item['fingerprint']}"
             progress(f"Preparing {kind.lower()} ({item['count']:,} files)…")
             publication_started = False
             try:
