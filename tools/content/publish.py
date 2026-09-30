@@ -456,7 +456,8 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
     linnet = root / ".LINNET"
     _plain(linnet, root)
     # Preflight existing media before any device mutation, including collisions.
-    needed = 0
+    # Playlist banks may be initialized even when the database is reused.
+    needed = 2 * 147456
     unchanged_assets = set()
     for item in inventory["files"]:
         destination = (root if item["kind"] == "music" else linnet) / item["path"]
@@ -507,7 +508,7 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
         database_unchanged = (previous["bytes"] == inventory["database"]["bytes"] and
                               previous["sha256"] == inventory["database"]["sha256"])
     if not database_unchanged:
-        needed += inventory["database"]["bytes"] + 2 * 147456
+        needed += inventory["database"]["bytes"]
         if previous:
             needed += previous["bytes"] + 65536
     if identity["free_bytes"] < needed + 1024 * 1024:
