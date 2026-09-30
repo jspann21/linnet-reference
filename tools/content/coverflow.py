@@ -38,8 +38,12 @@ CATALOG = 1024
 ART_RECORD = 13312
 
 
+def _original_from_rgb(image: Image.Image) -> Image.Image:
+    return ImageOps.fit(image, (96, 96), method=Image.Resampling.LANCZOS)
+
+
 def original_cover(source) -> Image.Image:
-    from .music import _cover_srgb
+    from .music import _cover_normalized
     if isinstance(source, Image.Image):
         opened = nullcontext(source)
     else:
@@ -47,10 +51,7 @@ def original_cover(source) -> Image.Image:
     with opened as image:
         if image.width * image.height > 16_000_000:
             raise ValueError('cover dimensions exceed bound')
-        profile = image.info.get('icc_profile')
-        if image.getexif().get(274, 1) != 1:
-            image = ImageOps.exif_transpose(image)
-        return ImageOps.fit(_cover_srgb(image, profile), (96, 96), method=Image.Resampling.LANCZOS)
+        return _original_from_rgb(_cover_normalized(image))
 
 
 def _indexed_tile(tile: Image.Image) -> tuple[Image.Image, list[int]]:

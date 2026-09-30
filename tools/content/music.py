@@ -166,9 +166,27 @@ def _cover_srgb(image, profile):
     return _cover_rgb(image)
 
 
+def _cover_normalized(image):
+    from PIL import ImageOps
+    profile = image.info.get('icc_profile')
+    if image.getexif().get(274, 1) != 1:
+        image = ImageOps.exif_transpose(image)
+    return _cover_srgb(image, profile)
+
+
+def _cover_pixels_rgb(image, target):
+    from PIL import Image, ImageOps
+    side = TARGETS[target]["media_art_side"] if target else 64
+    image = ImageOps.fit(image, (side, side), method=Image.Resampling.LANCZOS)
+    if target and TARGETS[target]["lcd_format"] == "gray2-horizontal":
+        image = _mp102_cover(image)
+    from .photos import _rgb565
+    return _rgb565(image)
+
+
 def _cover_pixels(cover, target: str | None = None) -> bytes:
     from contextlib import nullcontext
-    from PIL import Image, ImageOps
+    from PIL import Image
     try:
         source = nullcontext(cover) if isinstance(cover, Image.Image) else Image.open(cover)
     except Image.DecompressionBombError as error:
@@ -176,15 +194,7 @@ def _cover_pixels(cover, target: str | None = None) -> bytes:
     with source as image:
         if image.width * image.height > 16_000_000:
             raise ValueError("cover dimensions exceed bound")
-        profile = image.info.get('icc_profile')
-        if image.getexif().get(274, 1) != 1:
-            image = ImageOps.exif_transpose(image)
-        side = TARGETS[target]["media_art_side"] if target else 64
-        image = ImageOps.fit(_cover_srgb(image, profile), (side, side), method=Image.Resampling.LANCZOS)
-        if target and TARGETS[target]["lcd_format"] == "gray2-horizontal":
-            image = _mp102_cover(image)
-        from .photos import _rgb565
-        return _rgb565(image)
+        return _cover_pixels_rgb(_cover_normalized(image), target)
 
 
 def _cover_renders(source, target, coverflow_enabled, known_art=()):
@@ -198,11 +208,12 @@ def _cover_renders(source, target, coverflow_enabled, known_art=()):
         if image.width * image.height > 16_000_000:
             raise ValueError("cover dimensions exceed bound")
         image.load()
-        pixels = _cover_pixels(image, target)
+        normalized = _cover_normalized(image)
+        pixels = _cover_pixels_rgb(normalized, target)
         digest = hashlib.sha256(pixels).digest()
         if coverflow_enabled and digest not in known_art:
-            from .coverflow import original_cover
-            flow = original_cover(image)
+            from .coverflow import _original_from_rgb
+            flow = _original_from_rgb(normalized)
         else:
             flow = None
     return pixels, digest, flow
