@@ -152,7 +152,8 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
         if not 0 <= size <= MAX_FILE:
             raise ValueError('existing video package exceeds the supported backup size')
         previous = dict(bytes=size, sha256=_hash(active, size))
-    needed = candidate['bytes'] + (previous['bytes'] if previous else 0) + 3*65536 + 1024*1024
+    reuse_package = previous is not None and previous['bytes'] == candidate['bytes'] and previous['sha256'] == candidate['sha256']
+    needed = (0 if reuse_package else candidate['bytes'] + (previous['bytes'] if previous else 0)) + 3*65536 + 1024*1024
     if identity['free_bytes'] < needed:
         raise ValueError('insufficient free space for new video package and retained backup')
     _same_target(identity, inspect_target(number, serial, volume, drive))
@@ -174,7 +175,7 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
             _plain(path, root)
             path.mkdir(exist_ok=True)
             _plain(path, root)
-        if previous:
+        if previous and not reuse_package:
             receipt['phase'] = 'backing-up-previous'
             record()
             backups.mkdir(exist_ok=True)
@@ -182,11 +183,12 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
             _copy_verified(active, backup, previous, root, guard)
             receipt['backup'] = str(backup)
             recovery_paths.append(backup)
-        temporary = directory/('P'+uuid.uuid4().hex[:7].upper()+'.TMP')
-        receipt.update(phase='copying-candidate', temporary=str(temporary))
-        record()
-        _plain(package, Path(package.anchor))
-        _copy_verified(package, temporary, candidate, root, guard)
+        if not reuse_package:
+            temporary = directory/('P'+uuid.uuid4().hex[:7].upper()+'.TMP')
+            receipt.update(phase='copying-candidate', temporary=str(temporary))
+            record()
+            _plain(package, Path(package.anchor))
+            _copy_verified(package, temporary, candidate, root, guard)
         receipt['phase'] = 'candidate-verified'
         record()
         _plain(package, Path(package.anchor))
@@ -200,14 +202,15 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
                 raise RuntimeError('active video package changed during publication')
         elif active.exists():
             raise RuntimeError('another video package appeared during publication')
-        receipt['phase'] = 'replacing-package'
+        receipt['phase'] = 'reusing-package' if reuse_package else 'replacing-package'
         record()
-        os.replace(temporary, active)
-        guard()
-        with active.open('rb+') as writer:
-            writer.flush()
-            os.fsync(writer.fileno())
-        if _hash(active, candidate['bytes']) != candidate['sha256']:
+        if not reuse_package:
+            os.replace(temporary, active)
+            guard()
+            with active.open('rb+') as writer:
+                writer.flush()
+                os.fsync(writer.fileno())
+        if not reuse_package and _hash(active, candidate['bytes']) != candidate['sha256']:
             raise OSError('published video package readback mismatch')
         path = device_video_path(active, root)
         entries = [(k, path if k == key else p, t) for k, p, t in entries]
@@ -217,6 +220,14 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
         _plain(catalog, root)
         if (catalog.read_bytes() if catalog.exists() else None) != catalog_before:
             raise RuntimeError('video catalog changed during publication')
+        if catalog_bytes == catalog_before:
+            receipt['catalog_reused'] = True
+            receipt['package_reused'] = reuse_package
+            _finish_backups(receipt, recovery_paths, root, guard)
+            receipt.update(passed=True, phase='published', finished_at=time.time(), package=str(active),
+                           catalog=str(catalog), frames=candidate['frames'])
+            record()
+            return receipt
         if catalog_before is not None:
             backups.mkdir(exist_ok=True)
             saved = backups/(hashlib.sha256(catalog_before).hexdigest()[:8].upper()+'.VID')
@@ -239,7 +250,7 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
         receipt['catalog'] = str(catalog)
         _finish_backups(receipt, recovery_paths, root, guard)
         receipt.update(passed=True, phase='published', finished_at=time.time(), package=str(active),
-                       frames=candidate['frames'])
+                       frames=candidate['frames'], package_reused=reuse_package, catalog_reused=False)
         record()
         return receipt
     except Exception as exc:
