@@ -1620,7 +1620,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         from .coverflow import prepare
         prepare(database, output, output / 'COVERS.CFL', originals=coverflow_originals,
                 cache=cache, bypass_cache=bypass_cache,
-                row_major=TARGETS[target]['presentation_profile'] == 'color320')
+                row_major=TARGETS[target].get('presentation_profile') == 'color320')
     report = dict(format="PODB", integrity="sha256" if verification == "full" else "metadata", tracks=len(records), groups=len(groups),
                   artwork=len(artwork_records), bytes=len(database), sha256=hashlib.sha256(database).hexdigest(),
                   database=str(output / "LIBRARY.PDB"), entries=entries,

@@ -9,6 +9,11 @@
 #define CATALOG_SLOTS LINNET_COVERFLOW_CATALOG_SLOTS
 #define CATALOG_RECORD 1024u
 #define ART_RECORD 13312u
+#if LINNET_COVERFLOW_SCANLINE
+#define COVER_MAGIC 0x5246434cu
+#else
+#define COVER_MAGIC 0x3246434cu
+#endif
 #define SLOTS 16u
 #define ART_LOW 630u
 #if LINNET_COVERFLOW_EXPANDED
@@ -182,7 +187,7 @@ void ln_coverflow_step(bool allow_read){
         if(phase==OPEN){phase=HEADER;}
         else if(phase==HEADER){
             count=ln_read_le32(header+4);arts=ln_read_le32(header+52);
-            if(transferred!=1024||ln_read_le32(header)!=0x3246434cu||count>100000u||arts>count||
+            if(transferred!=1024||ln_read_le32(header)!=COVER_MAGIC||count>100000u||arts>count||
                ln_read_le32(header+8)!=ART_RECORD||ln_read_le32(header+12)!=96||ln_read_le32(header+48)!=CATALOG_RECORD||
                ln_read_le32(header+56)!=24||ln_read_le32(header+60)!=32||
                ln_crc32(header,508)!=ln_read_le32(header+508)||ln_crc32(header+512,512)!=ln_read_le32(header+64)||

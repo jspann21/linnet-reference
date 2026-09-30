@@ -83,7 +83,7 @@ def validate(path: Path, database: bytes) -> None:
         header = reader.read(1024)
         if header[:4] == b'LCF1':
             return _validate_legacy(path, database)
-        if (len(header) != 1024 or header[:4] != b'LCF2' or header[16:48] != database[64:96] or
+        if (len(header) != 1024 or header[:4] not in (b'LCF2', b'LCFR') or header[16:48] != database[64:96] or
                 struct.unpack_from('<II', header, 8) != (ART_RECORD, 96) or
                 struct.unpack_from('<I', header, 48)[0] != CATALOG or
                 struct.unpack_from('<II', header, 56) != (24, 32) or
@@ -261,7 +261,7 @@ def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, I
         struct.pack_into('<I', record, 252, zlib.crc32(record[256:], zlib.crc32(record[:252])))
         catalog.append(record)
     header = bytearray(1024)
-    struct.pack_into('<4sIII', header, 0, b'LCF2', len(catalog), ART_RECORD, 96)
+    struct.pack_into('<4sIII', header, 0, b'LCFR' if row_major else b'LCF2', len(catalog), ART_RECORD, 96)
     header[16:48] = database[64:96]
     struct.pack_into('<IIII', header, 48, CATALOG, len(artwork), 24, 32)
     struct.pack_into('<256H', header, 512, *[(r >> 3) << 11 | (g >> 2) << 5 | (b >> 3) for r, g, b in colors])
