@@ -204,23 +204,48 @@ def _music_metadata(root, *, music_records=None, music_inodes=None):
     if not database.is_file():
         return {}
     try:
-        scanned = {}
-        if music_records is not None and music_inodes is not None:
+        scanned, direct_paths, alias_roots = {}, {}, {}
+        if music_records is not None:
             for path, info in music_records:
-                inode = music_inodes.get(path)
-                if not inode or not path.is_relative_to(root):
+                if not path.is_relative_to(root):
                     continue
-                if inode in scanned:
-                    scanned[inode] = None  # Ambiguous file identity needs the guarded path.
+                key = str(path).casefold()
+                if key in direct_paths:
+                    direct_paths[key] = None
                 else:
-                    scanned[inode] = (path, info.st_size, info.st_mtime_ns)
+                    direct_paths[key] = path
+                if music_inodes is not None:
+                    inode = music_inodes.get(path)
+                    if inode:
+                        if inode in scanned:
+                            scanned[inode] = None  # Ambiguous file identity needs the guarded path.
+                        else:
+                            scanned[inode] = (path, info.st_size, info.st_mtime_ns)
 
         def source_path(location):
             candidate = root / location.lstrip('/')
             parts = location.split('/')
-            if (scanned and len(parts) >= 3 and parts[0] == '' and
+            if (direct_paths and len(parts) >= 3 and parts[0] == '' and
                     all(part and part not in ('.', '..') and '\\' not in part and ':' not in part
                         for part in parts[1:])):
+                # The traversal already rejected reparse points for these
+                # read-only rows. Retail databases often spell iPod_Control
+                # as its FAT short alias; verify that folder alias once.
+                known = direct_paths.get(str(candidate).casefold())
+                if known is None and len(parts) >= 4 and parts[2].casefold() == 'music':
+                    alias = parts[1].casefold()
+                    if alias not in alias_roots:
+                        prefix = root / parts[1]
+                        try:
+                            _plain(prefix, root)
+                            alias_roots[alias] = prefix.resolve(strict=True) == root / 'iPod_Control'
+                        except (OSError, ValueError):
+                            alias_roots[alias] = False
+                    if alias_roots[alias]:
+                        canonical = root / 'iPod_Control' / 'Music' / Path(*parts[3:])
+                        known = direct_paths.get(str(canonical).casefold())
+                if known is not None:
+                    return known
                 try:
                     info = candidate.lstat()
                 except OSError:
