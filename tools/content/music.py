@@ -153,6 +153,19 @@ def _cover_rgb(image):
     return image if image.mode == 'RGB' else image.convert('RGB')
 
 
+def _cover_srgb(image, profile):
+    from PIL import ImageCms
+    if 'A' in image.getbands() or 'transparency' in image.info:
+        image = _cover_rgb(image)
+    if profile:
+        try:
+            return ImageCms.profileToProfile(image, ImageCms.ImageCmsProfile(io.BytesIO(profile)),
+                                             ImageCms.createProfile('sRGB'), outputMode='RGB')
+        except (OSError, ValueError, ImageCms.PyCMSError):
+            pass
+    return _cover_rgb(image)
+
+
 def _cover_pixels(cover, target: str | None = None) -> bytes:
     from contextlib import nullcontext
     from PIL import Image, ImageOps
@@ -163,10 +176,11 @@ def _cover_pixels(cover, target: str | None = None) -> bytes:
     with source as image:
         if image.width * image.height > 16_000_000:
             raise ValueError("cover dimensions exceed bound")
+        profile = image.info.get('icc_profile')
         if image.getexif().get(274, 1) != 1:
             image = ImageOps.exif_transpose(image)
         side = TARGETS[target]["media_art_side"] if target else 64
-        image = ImageOps.fit(_cover_rgb(image), (side, side), method=Image.Resampling.LANCZOS)
+        image = ImageOps.fit(_cover_srgb(image, profile), (side, side), method=Image.Resampling.LANCZOS)
         if target and TARGETS[target]["lcd_format"] == "gray2-horizontal":
             image = _mp102_cover(image)
         from .photos import _rgb565
@@ -1330,7 +1344,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             except ImportError as exc:
                 raise ValueError("cover conversion requires Pillow, or artwork=False") from exc
             # Bump the recipe when playback or Cover Flow image processing changes.
-            recipe = ("embedded-render-v1" if cover_bytes is None else "file-render-v1",
+            recipe = ("embedded-render-v2" if cover_bytes is None else "file-render-v2",
                       target, TARGETS[target]["media_art_side"] if target else 64,
                       TARGETS[target]["lcd_format"] if target else None,
                       coverflow_enabled, pillow_version)
