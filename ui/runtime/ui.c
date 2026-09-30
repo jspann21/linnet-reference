@@ -744,6 +744,26 @@ static void classic_album(struct painter*p,int32_t x,int32_t y,int32_t size,cons
     struct ln_ui_node node={.x=x,.y=y,.w=size,.h=size,.bg=LN_UI_COLOR_TOKEN+LN_UI_ARTWORK_BG};
     image_asset(p,&node,art);
 }
+static void classic_reflection_row(struct painter*p,struct rect reflection,int32_t y){
+    int32_t x=reflection.x,end=x+reflection.w,sample=367-y;
+    if(x==end)return;
+    uint16_t*dest=p->pixels+(uint32_t)y*LINNET_UI_WIDTH;
+    const uint16_t*source=p->pixels+(uint32_t)sample*LINNET_UI_WIDTH;
+    uint32_t alpha=(uint32_t)(239-y)*2u;
+    if(x==160){dest[x]=mix(source[x],dest[x],alpha);++x;}
+    if(end-x<64){for(;x<end;++x)dest[x]=mix(source[x],dest[x],alpha);return;}
+    /* The gradient is constant across this row except at the left border. */
+    uint32_t z=255u-alpha,bg=dest[x];
+    uint32_t rn=(bg>>11)*z+127u,gn=((bg>>5)&63u)*z+127u,bn=(bg&31u)*z+127u;
+    uint16_t red[32],green[64],blue[32];
+    for(uint32_t i=0;i<32u;++i){
+        red[i]=(uint16_t)(blend_div255(rn)<<11);rn+=alpha;
+        blue[i]=(uint16_t)blend_div255(bn);bn+=alpha;
+    }
+    for(uint32_t i=0;i<64u;++i){green[i]=(uint16_t)(blend_div255(gn)<<5);gn+=alpha;}
+    for(;x<end;++x){uint16_t pixel=source[x];
+        dest[x]=red[pixel>>11]|green[(pixel>>5)&63u]|blue[pixel&31u];}
+}
 static void classic_preview(struct painter*p,struct ln_ui_state*s){
     if(layout()!=LN_UI_LAYOUT_IPOD_CLASSIC||s->scene!=LN_UI_SCENE_HOME)return;
     const struct ln_ui_scene*c=&ln_ui_scenes[s->scene];
@@ -762,14 +782,8 @@ static void classic_preview(struct painter*p,struct ln_ui_state*s){
     if(art){
         classic_album(p,160,24,160,art);
         struct rect reflection=intersect((struct rect){160,184,160,56},p->clip);
-        for(int32_t y=reflection.y;y<reflection.y+reflection.h;++y){
-            int32_t sample=367-y;
-            for(int32_t x=reflection.x;x<reflection.x+reflection.w;++x){
-                uint16_t reflected=p->pixels[(uint32_t)sample*LINNET_UI_WIDTH+(uint32_t)x];
-                uint16_t *pixel=&p->pixels[(uint32_t)y*LINNET_UI_WIDTH+(uint32_t)x];
-                *pixel=mix(reflected,*pixel,(uint32_t)(239-y)*2u);
-            }
-        }
+        for(int32_t y=reflection.y;y<reflection.y+reflection.h;++y)
+            classic_reflection_row(p,reflection,y);
     }
 }
 static void chrome(struct painter*p,struct ln_ui_state*s){
