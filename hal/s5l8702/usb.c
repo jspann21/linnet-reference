@@ -6,6 +6,7 @@
 #include "hal/arm926/cache.h"
 
 extern uint32_t ln_time_us(void);
+extern void ln_memory_copy(void *to,const void *from,uint32_t size);
 #define ENABLE (1u<<31)
 #define SNAK (1u<<27)
 #define CNAK (1u<<26)
@@ -50,7 +51,10 @@ static const uint8_t manufacturer[]={14,3,'L',0,'i',0,'n',0,'n',0,'e',0,'t',0};
 static const uint8_t product[]={24,3,'L',0,'i',0,'n',0,'n',0,'e',0,'t',0,' ',0,'L',0,'i',0,'n',0,'k',0};
 static const uint8_t qualifier[]={10,6,0,2,2,0,0,64,1,0};
 
-static void copy(uint8_t *to,const uint8_t *from,uint32_t size){while(size--)*to++=*from++;}
+static void copy(uint8_t *to,const uint8_t *from,uint32_t size){
+    if(size>=32u&&!(((uintptr_t)to|(uintptr_t)from)&3u))ln_memory_copy(to,from,size);
+    else while(size--)*to++=*from++;
+}
 static void barrier(void){uint32_t zero=0;__asm__ volatile("mcr p15,0,%0,c7,c10,4"::"r"(zero):"memory");}
 static void charge_limit(uint16_t budget){
     if(charge_budget!=budget&&ln_power_charge_limit(budget))charge_budget=budget;
