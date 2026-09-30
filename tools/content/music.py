@@ -1313,25 +1313,36 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                 if sidecar:
                     art_cache[folder] = saved[1]
                 return saved[1]
+        cover_bytes = None
+        if (cover is not None and cache is not None and cache.connection is not None and
+                not bypass_cache and cover_stamp[0] <= 4 * 1024 * 1024):
+            with cover.open('rb') as reader:
+                cover_bytes = reader.read(cover_stamp[0] + 1)
+            after = cover.stat()
+            if len(cover_bytes) != cover_stamp[0] or (
+                    (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino) != cover_stamp):
+                raise ValueError('cover source changed during conversion')
         render_key = None
         rendered = None
-        if embedded is not None and cache is not None and cache.connection is not None:
+        if (embedded is not None or cover_bytes is not None) and cache is not None and cache.connection is not None:
             try:
                 from PIL import __version__ as pillow_version
             except ImportError as exc:
                 raise ValueError("cover conversion requires Pillow, or artwork=False") from exc
             # Bump the recipe when playback or Cover Flow image processing changes.
-            recipe = ("embedded-render-v1", target, TARGETS[target]["media_art_side"] if target else 64,
+            recipe = ("embedded-render-v1" if cover_bytes is None else "file-render-v1",
+                      target, TARGETS[target]["media_art_side"] if target else 64,
                       TARGETS[target]["lcd_format"] if target else None,
                       coverflow_enabled, pillow_version)
             render_key = hashlib.sha256(repr(recipe).encode("utf-8") +
-                                        hashlib.sha256(embedded).digest()).digest()
+                                        hashlib.sha256(embedded if cover_bytes is None else cover_bytes).digest()).digest()
             if not bypass_cache:
                 side = TARGETS[target]["media_art_side"] if target else 64
                 rendered = cache.render_get(render_key, side * side * 2, coverflow_enabled)
         try:
             if rendered is None:
-                pixels, digest, flow = _cover_renders(cover if cover is not None else io.BytesIO(embedded),
+                pixels, digest, flow = _cover_renders(io.BytesIO(cover_bytes) if cover_bytes is not None else
+                                                       cover if cover is not None else io.BytesIO(embedded),
                                                        target, coverflow_enabled,
                                                        () if render_key is not None else art_indices)
                 if render_key is not None:
