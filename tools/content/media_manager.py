@@ -634,6 +634,30 @@ def _outputs_match(root, outputs, *, verified=None):
     return True
 
 
+def _published_photo_output(root, identity, output_paths, published):
+    from .photos import MAX_FILE
+    expected = '.LINNET/PHOTOS/LIBRARY.PIM'
+    if output_paths != [expected] or len(published) != 1 or not isinstance(published[0], dict):
+        raise RuntimeError('Photo publication did not return its expected output')
+    receipt = published[0]
+    if (receipt.get('passed') is not True or receipt.get('operation') != 'publish-photos' or
+            receipt.get('phase') not in ('published', 'reused')):
+        raise RuntimeError('Photo publication did not complete')
+    _same_target(identity, receipt['identity'])
+    active = root / expected
+    if Path(receipt['package']) != active:
+        raise RuntimeError('Photo publication output path changed')
+    digest, size = receipt['candidate_sha256'], receipt['candidate_bytes']
+    if (not isinstance(digest, str) or re.fullmatch('[0-9a-f]{64}', digest) is None or
+            type(size) is not int or not 512 <= size <= MAX_FILE):
+        raise RuntimeError('Photo publication returned invalid output metadata')
+    _plain(active, root)
+    info = active.stat()
+    if not stat.S_ISREG(info.st_mode) or info.st_size != size:
+        raise RuntimeError('Photo publication output changed after readback')
+    return expected, digest
+
+
 class Cancelled(RuntimeError):
     pass
 
@@ -1459,7 +1483,11 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                            scan(root, (kind,), skipped=skipped)[kind])
                 if current["fingerprint"] != item["fingerprint"]:
                     raise ValueError(f"{kind} changed during processing. Scan again before updating.")
-                outputs = [(name, _hash(root / name)) for name in output_paths]
+                if kind == 'Photos':
+                    checkpoint()
+                    outputs = [_published_photo_output(root, identity, output_paths, published)]
+                else:
+                    outputs = [(name, _hash(root / name)) for name in output_paths]
                 state[kind] = dict(signature=signature, outputs=outputs)
                 if kind == "Videos":
                     state[kind]["media_profile"] = media_profile
