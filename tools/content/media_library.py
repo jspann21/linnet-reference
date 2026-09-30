@@ -142,9 +142,11 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, _validated
 
 def _source_music_metadata(root, records, cache_root, retail=None, published=None):
     from .music import _MetadataCache, _quick_metadata, _pcm, _number, _album_artist, EXTENSIONS
+    records = [(path, info) for path, info in records if path.suffix.lower() in EXTENSIONS]
+    if not records:
+        return {}
     cache = _MetadataCache(cache_root / 'music-metadata.sqlite3')
     result = {}
-    records = [(path, info) for path, info in records if path.suffix.lower() in EXTENSIONS]
     prefetched = {}
     try:
         for index, (path, before) in enumerate(records):
