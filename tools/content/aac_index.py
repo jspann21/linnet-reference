@@ -27,7 +27,12 @@ def executable():
     sources = ['tools/content/aac_index.c', 'services/audio/aac/aac.c',
                'services/audio/aac/m4a.c', 'services/audio/alac/alac.c', 'third_party/alac/alac.c']
     sources += ['third_party/aac/' + name for name in (ROOT / 'third_party/aac/SOURCES').read_text().splitlines() if name]
+    flags = ['-O3', '-fwrapv', '-fno-strict-aliasing', '-I.',
+             '-Ithird_party/aac', '-Ithird_party/aac/faad', '-Ithird_party/aac/lib']
+    if os.name == 'nt':
+        flags.extend(('-flto', '-municode'))
     digest = hashlib.sha256(compiler['sha256'].encode())
+    digest.update('\0'.join(flags).encode())
     inputs = set(sources)
     for folder in ('services/audio/aac', 'services/audio/alac', 'third_party/aac', 'third_party/alac', 'boot/include'):
         inputs.update(p.relative_to(ROOT).as_posix() for p in (ROOT / folder).rglob('*.h'))
@@ -39,10 +44,7 @@ def executable():
         return destination
     directory.mkdir(parents=True, exist_ok=True)
     temporary = directory / (uuid.uuid4().hex + destination.suffix)
-    command = [compiler['path'], '-O3', '-fwrapv', '-fno-strict-aliasing', '-I.',
-               '-Ithird_party/aac', '-Ithird_party/aac/faad', '-Ithird_party/aac/lib']
-    if os.name == 'nt':
-        command.append('-municode')
+    command = [compiler['path'], *flags]
     try:
         result = subprocess.run([*command, *sources, '-o', str(temporary)], cwd=ROOT,
                                 capture_output=True, text=True, timeout=120, creationflags=NO_WINDOW)
