@@ -61,7 +61,11 @@ int ln_flac_open_step(struct ln_flac*s)
 static void yield_decoder(void){}
 static int16_t pcm16(int32_t raw)
 {
+#if (-8193 >> 13) == -2
+    int32_t sample=raw>>13;
+#else
     int32_t sample=raw>=0?raw/8192:-(int32_t)(((uint32_t)(-(int64_t)raw)+8191u)/8192u);
+#endif
     if(sample>32767)sample=32767;if(sample<-32768)sample=-32768;
     return (int16_t)sample;
 }
