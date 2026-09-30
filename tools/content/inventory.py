@@ -58,7 +58,7 @@ def file_records(folder, *, allowed=None, inodes=None):
     return sorted(found, key=lambda item: (str(item[0]).casefold(), str(item[0])))
 
 
-def collect_records_by_kind(root, kinds=KINDS):
+def collect_records_by_kind(root, kinds=KINDS, *, include_inodes=True):
     folders, result = {}, _RecordInventory()
     for kind in kinds:
         if kind not in KINDS:
@@ -66,7 +66,7 @@ def collect_records_by_kind(root, kinds=KINDS):
         result[kind] = []
         for folder in source_folders(root, kind):
             if folder not in folders:
-                folders[folder] = file_records(folder, inodes=result.inodes)
+                folders[folder] = file_records(folder, inodes=result.inodes if include_inodes else None)
             result[kind].extend(folders[folder])
     return result
 
@@ -104,7 +104,7 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
     root = Path(root).resolve(strict=True)
     kinds = tuple(kinds)
     if records_by_kind is None:
-        records_by_kind = collect_records_by_kind(root, kinds)
+        records_by_kind = collect_records_by_kind(root, kinds, include_inodes=False)
     skipped = skipped or {}
     fingerprint_kinds = set(KINDS if fingerprint_kinds is None else fingerprint_kinds)
     result = {}
