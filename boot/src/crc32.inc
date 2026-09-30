@@ -38,7 +38,29 @@ static LN_CRC_ATTR uint32_t LN_CRC_NAME(uint32_t crc, const uint8_t *bytes, size
         0xbdbdf21cu, 0xcabac28au, 0x53b39330u, 0x24b4a3a6u, 0xbad03605u, 0xcdd70693u, 0x54de5729u, 0x23d967bfu,
         0xb3667a2eu, 0xc4614ab8u, 0x5d681b02u, 0x2a6f2b94u, 0xb40bbe37u, 0xc30c8ea1u, 0x5a05df1bu, 0x2d02ef8du
     };
+#if defined(LINNET_IMAGE_OS) && defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && \
+    __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#include "crc32_slice4.inc"
+#endif
     size_t i=0;
+#if defined(LINNET_IMAGE_OS) && defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && \
+    __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    if(length>=32u&&((uintptr_t)bytes&3u)==0u){
+        const uint8_t*aligned=__builtin_assume_aligned(bytes,4);
+        for(;length-i>=8u;i+=8u){
+            uint32_t word;
+            __builtin_memcpy(&word,aligned+i,4u);
+            word^=crc;
+            crc=slice_table[2][word&255u]^slice_table[1][(word>>8)&255u]^
+                slice_table[0][(word>>16)&255u]^byte_table[word>>24];
+            __builtin_memcpy(&word,aligned+i+4u,4u);
+            word^=crc;
+            crc=slice_table[2][word&255u]^slice_table[1][(word>>8)&255u]^
+                slice_table[0][(word>>16)&255u]^byte_table[word>>24];
+            if(progress&&(i&4095u)==4088u)progress(context);
+        }
+    }
+#endif
     for (; length-i >= 8u; i+=8u) {
         crc = (crc >> 8) ^ byte_table[(crc ^ bytes[i]) & 255u];
         crc = (crc >> 8) ^ byte_table[(crc ^ bytes[i+1u]) & 255u];
