@@ -674,7 +674,8 @@ def _publish_library(package, candidate, identity, root, number, serial, volume,
                   previous_hint['bytes'] == size and previous_hint['stamp'] == stamp
                   else _hash(active, size))
         previous = dict(bytes=size, sha256=digest)
-    needed = candidate['bytes'] + (previous['bytes'] if previous else 0) + 3*65536 + 1024*1024
+    reuse = previous is not None and previous['bytes'] == candidate['bytes'] and previous['sha256'] == candidate['sha256']
+    needed = 0 if reuse else candidate['bytes'] + (previous['bytes'] if previous else 0) + 3*65536 + 1024*1024
     if identity['free_bytes'] < needed:
         raise ValueError(f'insufficient free space for new {label} package and retained backup')
     _same_target(identity, inspect_target(number, serial, volume, drive))
@@ -697,6 +698,25 @@ def _publish_library(package, candidate, identity, root, number, serial, volume,
             _plain(path, root)
             path.mkdir(exist_ok=True)
             _plain(path, root)
+        if reuse:
+            receipt['phase'] = 'verifying-existing-package'
+            record()
+            _plain(package, Path(package.anchor))
+            if _hash(package, candidate['bytes']) != candidate['sha256']:
+                raise RuntimeError(f'{label} source package changed during publication')
+            if verify_references:
+                verify_references(root, guard)
+            _same_target(identity, inspect_target(number, serial, volume, drive))
+            guard()
+            _plain(active, root)
+            if _hash(active, candidate['bytes']) != candidate['sha256']:
+                raise RuntimeError(f'active {label} package changed during publication')
+            receipt.update(passed=True, phase='reused', finished_at=time.time(), package=str(active),
+                           package_reused=True,
+                           durability='Existing package and references verified; package not rewritten',
+                           **summary)
+            record()
+            return receipt
         if previous:
             receipt['phase'] = 'backing-up-previous'
             record()
