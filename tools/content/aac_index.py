@@ -54,9 +54,10 @@ def executable():
     return destination
 
 
-def original_size(path):
+def original_size(path, size=None):
     """Return the original prefix length only for a valid trailing seek atom."""
-    size = path.stat().st_size
+    if size is None:
+        size = path.stat().st_size
     with path.open('rb') as reader:
         at = 0
         for _ in range(4096):
@@ -186,14 +187,14 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
     from .guard import hash_file
     path, cache = Path(path), Path(cache)
     checkpoint()
-    if original_size(path) is not None:
-        return False
     before = path.stat()
     key = hashlib.sha256(f'{path}:{before.st_size}:{before.st_mtime_ns}'.encode()).hexdigest()
-    cache.mkdir(parents=True, exist_ok=True)
     unsupported = cache / (key + '.unsupported')
     if unsupported.exists():
         return False
+    if original_size(path, before.st_size) is not None:
+        return False
+    cache.mkdir(parents=True, exist_ok=True)
     tool = executable()
     if _possibly_alac(path, checkpoint):
         checkpoint()
