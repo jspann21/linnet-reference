@@ -254,6 +254,7 @@ static void photo_navigation_update(void){
         photo_navigation=navigation;photo_wheel_mode=0;ln_ui_refresh(shell);dirty=true;
     }
     if(ln_photos_view()!=LN_PHOTOS_VIEWER){
+        if(ln_photos_focus(shell->selected))photo_save();
         uint32_t count=ln_ui_visible_capacity(shell);if(!count)count=1;
         ln_photos_window(ln_ui_first_visible(shell),count);
     }

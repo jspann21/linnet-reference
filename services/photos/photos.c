@@ -369,6 +369,10 @@ bool ln_photos_slideshow_active(void){return p.slide;}
 uint32_t ln_photos_revision(void){return p.revision;}
 uint32_t ln_photos_navigation(void){return p.navigation;}
 uint32_t ln_photos_selection(void){return p.view==LN_PHOTOS_ALBUMS?(p.album<p.header.albums?p.album:0):p.view==LN_PHOTOS_LIST&&p.photo_index>=p.first&&p.photo_index-p.first<p.count?p.photo_index-p.first:0;}
+bool ln_photos_focus(uint32_t row){
+    if(!p.ready||p.resume_pending||p.view!=LN_PHOTOS_LIST||row>=p.count||p.photo_index==p.first+row)return false;
+    p.photo_index=p.first+row;return true;
+}
 const char *ln_photos_title(void){return p.view==LN_PHOTOS_ALBUMS?"Photo albums":p.view==LN_PHOTOS_LIST?"Photo Library":p.title;}
 const char *ln_photos_status(void){return p.error?"Image unavailable":file_mode&&!p.frame_valid?"Loading image":!p.ready?"Loading catalog":p.jpeg_mode&&!p.frame_valid?"Decoding JPEG":p.view==LN_PHOTOS_VIEWER&&!p.frame_valid?"Loading image":"";}
 void ln_photos_resume_get(uint8_t out[16]){

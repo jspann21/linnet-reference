@@ -37,6 +37,7 @@ bool ln_photos_slideshow_active(void);
 uint32_t ln_photos_revision(void);
 uint32_t ln_photos_navigation(void);
 uint32_t ln_photos_selection(void);
+bool ln_photos_focus(uint32_t row);
 const char *ln_photos_title(void);
 const char *ln_photos_status(void);
 /* 16-byte resume: catalog identity, photo index, zoom/rotation/view, packed pan.
