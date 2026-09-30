@@ -797,7 +797,7 @@ class _MetadataCache:
         except sqlite3.Error:
             self._disable()
 
-    def embedded_cover(self, path, before, *, bypass=False):
+    def embedded_cover_lookup(self, path, before, *, bypass=False):
         # Keep original encoded bytes so all target artwork recipes remain exact.
         # Equal covers share one blob; source stamps expire after one hour even
         # when repeated imports keep using them. A refresh always rereads tags.
@@ -828,12 +828,15 @@ class _MetadataCache:
                     (str(path), before.st_size, before.st_mtime_ns, 32 * 1024 * 1024)).fetchone()
                 if (row and type(row[2]) in (int, float) and 0 <= now - row[2] <= 3600 and
                         isinstance(row[0], bytes) and hashlib.sha256(row[0]).digest() == row[1]):
-                    return row[0] or None
+                    return True, row[0] or None
             except OverflowError:
                 pass
             except sqlite3.Error:
                 self._disable()
-        cover = _embedded_cover(path)
+        return False, None
+
+    def embedded_cover_store(self, path, before, cover):
+        now = time.time()
         after = path.stat()
         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
             raise ValueError("audio source changed during artwork extraction")
@@ -856,6 +859,10 @@ class _MetadataCache:
             except sqlite3.Error:
                 self._disable()
         return cover
+
+    def embedded_cover(self, path, before, *, bypass=False):
+        hit, cover = self.embedded_cover_lookup(path, before, bypass=bypass)
+        return cover if hit else self.embedded_cover_store(path, before, _embedded_cover(path))
 
     def coverflow_get(self, key):
         if self.connection is None:
@@ -1164,7 +1171,7 @@ def _read_metadata(path: Path, ffprobe: str | None, existing: bool, cancelled=la
 
 
 def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, progress,
-                   cancelled):
+                   cancelled, prefetch_cover):
     # Keep SQLite and progress callbacks on the caller's thread. Bound both
     # concurrent device reads and queued results, including on cancellation.
     pending = deque()
@@ -1189,12 +1196,13 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
                     else path.relative_to(source).as_posix())
         metadata = cache.get(source, relative, before, prefetched=cache_rows) if cache and not bypass_cache else None
         future = pool.submit(_read_metadata, path, ffprobe, existing, cancelled) if metadata is None else None
-        pending.append((number, path, before, metadata, future))
+        cover = prefetch_cover(path, before, pool)
+        pending.append((number, path, before, metadata, future, cover))
     try:
         for _ in range(4):
             enqueue()
         while pending:
-            number, path, before, metadata, future = pending[0]
+            number, path, before, metadata, future, cover = pending[0]
             cached = metadata is not None
             if progress:
                 progress(dict(phase="music", current=number, total=len(paths), file=str(path), cached=cached))
@@ -1215,11 +1223,13 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
                 raise SourceError(f"{path}: {error}", path) from error
             pending.popleft()
             enqueue()
-            yield number, path, before, metadata, cached
+            yield number, path, before, metadata, cached, cover
     finally:
-        for _, _, _, _, future in pending:
+        for _, _, _, _, future, cover in pending:
             if future is not None:
                 future.cancel()
+            if cover is not None and not isinstance(cover, tuple):
+                cover.cancel()
 
 
 def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: str | None = None,
@@ -1294,7 +1304,22 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     stable_ids: set[int] = set()
     groups: dict[tuple[int, str, str], list[int]] = {}
 
-    def art_for(path: Path, before) -> int:
+    def prefetch_cover(path: Path, before, executor):
+        if not artwork or path.parent in art_cache:
+            return None
+        folder = path.parent
+        if folder not in folder_covers:
+            folder_covers[folder] = next((p for p in (folder / name for name in COVER_NAMES)
+                                          if p.is_file()), None)
+        if folder_covers[folder] is not None:
+            return None
+        if cache is not None:
+            hit, value = cache.embedded_cover_lookup(path, before, bypass=bypass_cache)
+            if hit:
+                return (True, value)
+        return executor.submit(_embedded_cover, path)
+
+    def art_for(path: Path, before, prefetched_cover) -> int:
         nonlocal embedded_cache_bytes, retail_artwork
         if not artwork:
             return NO_INDEX
@@ -1310,8 +1335,21 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         sidecar = cover is not None
         embedded = None
         if cover is None:
-            embedded = (cache.embedded_cover(path, before, bypass=bypass_cache)
-                        if cache else _embedded_cover(path))
+            if prefetched_cover is None:
+                embedded = (cache.embedded_cover(path, before, bypass=bypass_cache)
+                            if cache else _embedded_cover(path))
+            elif isinstance(prefetched_cover, tuple):
+                embedded = prefetched_cover[1]
+            else:
+                while True:
+                    _check_cancel(cancelled)
+                    try:
+                        embedded = prefetched_cover.result(timeout=0.1)
+                        break
+                    except FutureTimeout:
+                        continue
+                if cache is not None:
+                    embedded = cache.embedded_cover_store(path, before, embedded)
         if cover is None and embedded is None:
             key = str(path.resolve()).casefold()
             if key in retail and retail_artwork is None:
@@ -1421,9 +1459,9 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     alias_cache: dict[Path, str] = {}
     cache_hits = 0
     from .media_manager import _music_import_name
-    for number, path, before, metadata, cached in _metadata_rows(
+    for number, path, before, metadata, cached, prefetched_cover in _metadata_rows(
             paths, source, ffprobe, device_root is not None, cache, bypass_cache,
-            metadata_pool, progress, cancelled):
+            metadata_pool, progress, cancelled, prefetch_cover):
         location = None
         if device_root is not None:
             location = _device_media_path(path, device_root, alias_cache)
@@ -1501,7 +1539,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             metadata["rate"], metadata["channels"], metadata["bits"])
         struct.pack_into("<IIIIIIIIIIIi", record, 48, metadata["codec"], string(title), string(artist),
             string(album, album_artist), string(location), string(genre), string(composer),
-            year, track, disc, art_for(path, before), gain)
+            year, track, disc, art_for(path, before, prefetched_cover), gain)
         record[96:128] = hasher.digest() if hash_audio else bytes(32)
         struct.pack_into("<i", record, 128, replaygain("replaygain_album_gain"))
         index = len(records)
