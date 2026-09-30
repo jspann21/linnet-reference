@@ -456,7 +456,7 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
     linnet = root / ".LINNET"
     _plain(linnet, root)
     # Preflight existing media before any device mutation, including collisions.
-    needed = inventory["database"]["bytes"] + 2 * 147456
+    needed = 0
     unchanged_assets = set()
     for item in inventory["files"]:
         destination = (root if item["kind"] == "music" else linnet) / item["path"]
@@ -499,11 +499,17 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
         needed += 2 * HISTORY_BANK_BYTES
     _plain(active, root)
     previous = None
+    database_unchanged = False
     if active.exists():
         old_data = _bounded(active, MAX_DATABASE)
         validate_database(old_data)
         previous = dict(bytes=len(old_data), sha256=hashlib.sha256(old_data).hexdigest())
-        needed += len(old_data) + 65536
+        database_unchanged = (previous["bytes"] == inventory["database"]["bytes"] and
+                              previous["sha256"] == inventory["database"]["sha256"])
+    if not database_unchanged:
+        needed += inventory["database"]["bytes"] + 2 * 147456
+        if previous:
+            needed += previous["bytes"] + 65536
     if identity["free_bytes"] < needed + 1024 * 1024:
         raise ValueError("insufficient free space for media, new database, and retained backup")
     _same_target(identity, inspect_target(disk_number, expected_disk_serial, expected_volume_serial, expected_drive))
@@ -568,16 +574,18 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
                 if _hash(journal,HISTORY_BANK_BYTES)!=digest:raise OSError('Music history initialization readback mismatch')
             receipt['initialized_music_state']=True
         provision_collections(linnet, guard)
-        # Preserve previous published bytes before replacing the active entry.
-        if previous:
+        # Preserve previous published bytes before replacing a changed entry.
+        backup = None
+        if previous and not database_unchanged:
             backup = linnet / "LIBBAK" / (previous["sha256"][:8].upper() + ".PDB")
             _plain(backup.parent, root)
             backup.parent.mkdir(exist_ok=True)
             _copy_verified(active, backup, previous, root, guard)
             receipt["backup"] = str(backup)
-        temporary = linnet / ("L" + uuid.uuid4().hex[:7].upper() + ".TMP")
-        _copy_verified(stage / "LIBRARY.PDB", temporary, inventory["database"], root, guard)
-        receipt["temporary"] = str(temporary)
+        if not database_unchanged:
+            temporary = linnet / ("L" + uuid.uuid4().hex[:7].upper() + ".TMP")
+            _copy_verified(stage / "LIBRARY.PDB", temporary, inventory["database"], root, guard)
+            receipt["temporary"] = str(temporary)
         receipt["phase"] = "candidate-verified"
         record()
         # Database and manifest are immutable inputs to this logical operation.
@@ -599,18 +607,21 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
                 raise RuntimeError("active database changed during publication")
         elif active.exists():
             raise RuntimeError("another database appeared during publication")
-        receipt["phase"] = "replacing-database"
+        receipt["phase"] = "reusing-database" if database_unchanged else "replacing-database"
         record()
-        os.replace(temporary, active)
+        if not database_unchanged:
+            os.replace(temporary, active)
         guard()
         with active.open("rb+") as writer:
             writer.flush()
             os.fsync(writer.fileno())
         if _hash(active, inventory["database"]["bytes"]) != inventory["database"]["sha256"]:
             raise OSError("published database readback mismatch")
-        _finish_backups(receipt, [backup] if previous else [], root, guard)
+        if backup:
+            _finish_backups(receipt, [backup], root, guard)
         receipt.update(passed=True, phase="published", finished_at=time.time(), database=str(active),
-                       receipt=str(receipt_path), tracks=inventory["database"]["tracks"])
+                       receipt=str(receipt_path), tracks=inventory["database"]["tracks"],
+                       database_reused=database_unchanged)
         record()
         return receipt
     except Exception as exc:
