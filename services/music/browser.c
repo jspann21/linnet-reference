@@ -358,7 +358,10 @@ void ln_music_browser_step(void){
         if(b.here.view==GROUPS||b.here.view==ARTIST_ALBUMS||b.here.view==ALBUM_ARTISTS){uint32_t group=b.here.view==GROUPS?b.here.lower+at:activity_data.tracks[b.here.view==ARTIST_ALBUMS?at-1:at];if(ln_music_library_group(group))b.job=JUMP_GROUP;}
         else if(ln_music_library_view_row(b.here.view==TRACKS&&b.here.kind?2:0,b.here.group,b.here.view==ACTIVITY?activity_data.tracks[at]:b.here.view==LOCAL_TRACKS?b.mapped[at]:at))b.job=JUMP_TITLE;
     }else if(b.activity_scanning){
-        if(b.activity_kind==10&&!ln_music_history_error()&&ln_paged_history_bookmark_count()==0){
+        if(!ln_music_history_error()&&
+           ((b.activity_kind==10&&ln_paged_history_bookmark_count()==0)||
+            (b.activity_kind==9&&ln_paged_history_favorites_empty())||
+            (b.activity_kind==12&&ln_paged_history_played_empty()))){
             b.activity_scanning=false;b.here.count=b.activity_count=0;invalidate();return;
         }
         if(b.activity_kind==11){

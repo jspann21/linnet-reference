@@ -15,6 +15,8 @@ bool ln_paged_history_dirty(void);
 uint32_t ln_paged_history_revision(void);
 /* Negative until every page has been verified; includes accepted RAM changes. */
 int ln_paged_history_bookmark_count(void);
+bool ln_paged_history_favorites_empty(void);
+bool ln_paged_history_played_empty(void);
 bool ln_paged_history_bookmark_page(uint32_t index);
 bool ln_paged_history_favorite_page(uint32_t index);
 bool ln_paged_history_played_page(uint32_t index);

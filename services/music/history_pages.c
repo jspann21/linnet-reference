@@ -23,6 +23,13 @@ bool ln_paged_history_io_pending(void){return h.ticket!=0;}
 bool ln_paged_history_finishing(void){return h.phase>=FLUSH&&h.phase<=ACK;}
 uint32_t ln_paged_history_revision(void){return h.revision;}
 int ln_paged_history_bookmark_count(void){return h.seen_count==LN_HISTORY_PAGE_COUNT?(int)h.bookmarks:-1;}
+static bool pages_empty(const uint32_t pages[32]){
+    if(h.seen_count!=LN_HISTORY_PAGE_COUNT)return false;
+    for(uint32_t i=0;i<32u;++i)if(pages[i])return false;
+    return true;
+}
+bool ln_paged_history_favorites_empty(void){return pages_empty(h.favorite_pages);}
+bool ln_paged_history_played_empty(void){return pages_empty(h.played_pages);}
 bool ln_paged_history_bookmark_page(uint32_t index){return index<LN_HISTORY_PAGE_COUNT&&(!(h.seen[index/32]&(1u<<(index&31)))||(h.bookmark_pages[index/32]&(1u<<(index&31))));}
 bool ln_paged_history_favorite_page(uint32_t index){return index<LN_HISTORY_PAGE_COUNT&&(!(h.seen[index/32]&(1u<<(index&31)))||(h.favorite_pages[index/32]&(1u<<(index&31))));}
 bool ln_paged_history_played_page(uint32_t index){return index<LN_HISTORY_PAGE_COUNT&&(!(h.seen[index/32]&(1u<<(index&31)))||(h.played_pages[index/32]&(1u<<(index&31))));}
