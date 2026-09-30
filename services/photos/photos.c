@@ -234,9 +234,10 @@ static bool verify_bytes(uint32_t at,const uint8_t*b,uint32_t n){
     if(at>=h->tile_at&&at<=h->string_at&&n<=h->string_at-at&&
        (at-h->tile_at)%8u==0&&n%8u==0){
         uint32_t index=(at-h->tile_at)/8u;
-        for(uint32_t i=0;i<n;i+=8u){uint32_t offset,crc;
-            if(!ln_pimg_tile(h,b+i,index++,&offset,&crc))return false;
-        }
+        if(index>h->tiles||n/8u>h->tiles-index)return false;
+        uint32_t expected=h->data_at+h->photos*8192u+index*2048u;
+        for(uint32_t i=0;i<n;i+=8u,expected+=2048u)
+            if(ln_read_le32(b+i)!=expected)return false;
         return true;
     }
     for(uint32_t i=0;i<n;i++,at++){
