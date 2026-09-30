@@ -31,6 +31,9 @@ static struct {
     struct ln_queue export_queue,expanded;bool expanding,expanded_ready;uint32_t expand_at;
     char name[32];uint32_t name_length;
     uint32_t activity_page,activity_count,activity_scan,activity_kind,scan_id_count,scan_id_at;
+#if !defined(LINNET_TARGET_PHOTO4G_P98)
+    uint32_t activity_recent_revision;
+#endif
     uint64_t scan_ids[LN_MUSIC_ID_BATCH];
     uint32_t catalog,catalog_at,catalog_end,catalog_member,catalog_members,catalog_count,catalog_group;
     bool jumping,jump_binary;uint32_t jump_at,jump_lo,jump_hi,jump_found;char jump_letter;
@@ -380,6 +383,10 @@ void ln_music_browser_step(void){
 #if !defined(LINNET_TARGET_PHOTO4G_P98)
             uint32_t ignored;
             if(ln_music_library_track_id_lookup(0,&ignored)){
+                uint32_t revision=ln_collections_revision();
+                if(!b.activity_indexed||b.activity_recent_revision!=revision){
+                    b.activity_scan=b.activity_count=0;b.activity_recent_revision=revision;
+                }
                 b.activity_indexed=true;
                 uint32_t total=ln_collections_recent_count(),started=ln_time_us();
                 while(b.activity_scan<total){
