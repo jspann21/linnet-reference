@@ -5,6 +5,8 @@
 #include "ui/runtime/ui.h"
 enum ln_photos_view {LN_PHOTOS_ALBUMS,LN_PHOTOS_LIST,LN_PHOTOS_VIEWER};
 void ln_photos_init(void);
+/* Prepare host-sized grid pages during the initial idle, awake startup. */
+void ln_photos_prepare(bool eligible);
 void ln_photos_step(void);
 uint32_t ln_photos_deadline(uint32_t now);
 void ln_photos_open(void);

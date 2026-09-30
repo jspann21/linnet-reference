@@ -866,6 +866,8 @@ void ln_runtime_step(void){
     if(!photo_resume_loaded){uint8_t raw[16];if(ln_display_settings_photo_get(raw)){
         (void)ln_photos_resume_set(raw);photo_resume_loaded=true;
     }}
+    ln_photos_prepare(photo_resume_loaded&&!sleeping&&scene_is(LN_UI_SCENE_HOME)&&ln_storage_prepared()&&ln_display_settings_boot_ready());
+    if(!ln_photos_active()&&ln_photos_pending()&&!scene_is(LN_UI_SCENE_HOME))ln_photos_step();
 #endif
     if(scene_is(LN_UI_SCENE_UPDATE)&&(int32_t)(now-update_status_at)>=0){
         uint32_t state[16];ln_storage_update_snapshot(state);
