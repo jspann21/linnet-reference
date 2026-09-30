@@ -457,12 +457,17 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
     _plain(linnet, root)
     # Preflight existing media before any device mutation, including collisions.
     needed = inventory["database"]["bytes"] + 2 * 147456
+    unchanged_assets = set()
     for item in inventory["files"]:
         destination = (root if item["kind"] == "music" else linnet) / item["path"]
         _plain(destination, root)
         if item["path"] in ("COVERS.CFL", "BROWSE.BIN"):
             # Cover Flow is replaced atomically below, like the library index.
-            needed += item["bytes"] + 65536
+            if (destination.is_file() and destination.stat().st_size == item["bytes"] and
+                    _hash(destination, item["bytes"]) == item["sha256"]):
+                unchanged_assets.add(item["path"])
+            else:
+                needed += item["bytes"] + 65536
         elif destination.exists():
             if _hash(destination, item["bytes"]) != item["sha256"]:
                 raise ValueError(f"existing media differs; refusing overwrite: {item['path']}")
@@ -524,14 +529,22 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
             local = stage / item["path"]
             _plain(local, stage)
             if item['path'] in ('COVERS.CFL', 'BROWSE.BIN'):
-                temporary_cover = linnet / ('COVERS.NEW' if item['path'] == 'COVERS.CFL' else 'BROWSE.NEW')
-                _plain(temporary_cover, root)
-                if temporary_cover.exists():
-                    temporary_cover.unlink()
-                copied = _copy_verified(local, temporary_cover, item, root, guard)
-                _plain(linnet / item['path'], root)
-                guard()
-                temporary_cover.replace(linnet / item['path'])
+                destination = linnet / item['path']
+                if item['path'] in unchanged_assets:
+                    guard()
+                    if (_hash(local, item['bytes']) != item['sha256'] or
+                            _hash(destination, item['bytes']) != item['sha256']):
+                        raise RuntimeError(f"music asset changed during publication: {item['path']}")
+                    copied = False
+                else:
+                    temporary_cover = linnet / ('COVERS.NEW' if item['path'] == 'COVERS.CFL' else 'BROWSE.NEW')
+                    _plain(temporary_cover, root)
+                    if temporary_cover.exists():
+                        temporary_cover.unlink()
+                    copied = _copy_verified(local, temporary_cover, item, root, guard)
+                    _plain(destination, root)
+                    guard()
+                    temporary_cover.replace(destination)
             else:
                 destination = (root if item["kind"] == "music" else linnet) / item["path"]
                 copied = _copy_verified(local, destination, item, root, guard)
