@@ -7,6 +7,7 @@ from functools import lru_cache
 import hashlib
 import os
 from pathlib import Path
+import stat
 import struct
 import uuid
 
@@ -43,7 +44,7 @@ def _list(data, magic, list_tag):
     return 0, 0, 0
 
 
-def _path(root, value, *, with_identity=False):
+def _path(root, value, *, with_identity=False, parent_checks=None):
     parts = value.replace(':', '/').strip('/').split('/')
     # Apple's tested Classic database route to a shared /Music tree begins at
     # iPod_Control/Music, then steps back to the volume root. Accept that one
@@ -54,7 +55,31 @@ def _path(root, value, *, with_identity=False):
     if not parts or any(not p or p in ('.', '..') or '\\' in p for p in parts):
         raise ValueError('Unsafe iTunes media path')
     path = root.joinpath(*parts)
-    _plain(path, root)
+    if parent_checks is None:
+        _plain(path, root)
+    else:
+        # Tracks in one iTunesDB share a small set of directories. Check each
+        # directory once for this read-only parse, but still check every leaf
+        # and resolve every full path below.
+        cursor = root
+        for component in (None, *parts[:-1]):
+            if component is not None:
+                cursor /= component
+            if cursor not in parent_checks:
+                _plain(cursor, root)
+                try:
+                    info = cursor.lstat()
+                except FileNotFoundError:
+                    continue
+                if stat.S_ISDIR(info.st_mode):
+                    parent_checks[cursor] = (info.st_dev, info.st_ino, info.st_ctime_ns)
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                raise ValueError(f'reparse/symlink path rejected: {path}')
     resolved = path.resolve()
     if not resolved.is_relative_to(root):
         raise ValueError('iTunes media path escaped the iPod')
@@ -85,6 +110,7 @@ def _tracks(root_name, size, mtime, ctime):
     data = _bounded(root / 'iPod_Control/iTunes/iTunesDB', 128 * 1024 * 1024)
     at, end, count = _list(data, b'mhbd', b'mhlt')
     result = {}
+    parent_checks = {}
     fields = {1: 'title', 2: 'path', 3: 'album', 4: 'artist', 5: 'genre',
               12: 'composer', 22: 'album_artist'}
     for _ in range(count):
@@ -107,10 +133,18 @@ def _tracks(root_name, size, mtime, ctime):
                 row[fields[kind]] = data[body + 16:body + 16 + length].decode('utf-16-le').rstrip('\0')
             child = next_child
         if row.get('path'):
-            path, resolved = _path(root, row.pop('path'), with_identity=True)
+            path, resolved = _path(root, row.pop('path'), with_identity=True,
+                                   parent_checks=parent_checks)
             row['path'] = str(path)
             result[str(resolved).casefold()] = row
         at = following
+    # A directory replaced during the parse must not leave a cached proof in
+    # the returned metadata. This cache never survives the current parse.
+    for path, before in parent_checks.items():
+        _plain(path, root)
+        info = path.lstat()
+        if not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino, info.st_ctime_ns) != before:
+            raise ValueError('iTunes media directory changed during scan')
     return result
 
 
