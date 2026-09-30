@@ -45,6 +45,7 @@ EXTENSIONS = {".wav", ".aif", ".aiff", ".aifc", ".mp3", ".m4a", ".m4b",
               ".aac", ".flac", ".flc", ".ogg", ".opus", ".ops", ".wv"}
 COVER_NAMES = ("cover.png", "cover.jpg", "folder.jpg", "Folder.jpg")
 COVERFLOW_CACHE_MAX_ENTRIES = 4096  # 14,080 bytes each: at most 55 MiB of tile payloads.
+RENDER_CACHE_MAX_ENTRIES = 2048  # At most 118 MiB of complete 128px + Cover Flow renders.
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
@@ -637,7 +638,9 @@ class _MetadataCache:
         self.connection = None
         self.pending_writes = 0
         self.coverflow_writes = 0
+        self.render_writes = 0
         self.artwork_bytes = None
+        self.render_ready = False
         self.status = "enabled"
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -664,14 +667,19 @@ class _MetadataCache:
     def _commit(self):
         if self.coverflow_writes:
             self._trim_coverflow()
+        if self.render_writes:
+            self._trim_renders()
         self.connection.commit()
         self.pending_writes = 0
         self.coverflow_writes = 0
+        self.render_writes = 0
 
-    def _written(self, *, coverflow=False):
+    def _written(self, *, coverflow=False, render=False):
         self.pending_writes += 1
         if coverflow:
             self.coverflow_writes += 1
+        if render:
+            self.render_writes += 1
         if self.pending_writes >= 128:
             self._commit()
 
@@ -849,6 +857,49 @@ class _MetadataCache:
             self.connection.execute("INSERT OR REPLACE INTO coverflow VALUES (?,?,?)",
                 (key, value, hashlib.sha256(value).digest()))
             self._written(coverflow=True)
+        except sqlite3.Error:
+            self._disable()
+
+    def _render_table(self):
+        if self.connection is None:
+            return False
+        if not self.render_ready:
+            try:
+                self.connection.execute("CREATE TABLE IF NOT EXISTS artwork_renders "
+                    "(key BLOB PRIMARY KEY, pixels BLOB, flow BLOB, digest BLOB)")
+                self.render_ready = True
+            except sqlite3.Error:
+                self._disable()
+        return self.render_ready
+
+    def render_get(self, key, pixel_bytes, with_flow):
+        if not self._render_table():
+            return None
+        try:
+            row = self.connection.execute(
+                "SELECT pixels,flow,digest FROM artwork_renders WHERE key=?", (key,)).fetchone()
+            if (row and isinstance(row[0], bytes) and len(row[0]) == pixel_bytes and
+                    isinstance(row[1], bytes) and len(row[1]) == (27648 if with_flow else 0) and
+                    hashlib.sha256(row[0] + row[1]).digest() == row[2]):
+                return row[0], row[1]
+        except sqlite3.Error:
+            self._disable()
+        return None
+
+    def _trim_renders(self):
+        count = self.connection.execute("SELECT COUNT(*) FROM artwork_renders").fetchone()[0]
+        if count > RENDER_CACHE_MAX_ENTRIES:
+            self.connection.execute("DELETE FROM artwork_renders WHERE rowid IN "
+                "(SELECT rowid FROM artwork_renders ORDER BY rowid LIMIT ?)",
+                (count - RENDER_CACHE_MAX_ENTRIES,))
+
+    def render_put(self, key, pixels, flow):
+        if not self._render_table():
+            return
+        try:
+            self.connection.execute("INSERT OR REPLACE INTO artwork_renders VALUES (?,?,?,?)",
+                (key, pixels, flow, hashlib.sha256(pixels + flow).digest()))
+            self._written(render=True)
         except sqlite3.Error:
             self._disable()
 
@@ -1258,9 +1309,37 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                 if sidecar:
                     art_cache[folder] = saved[1]
                 return saved[1]
+        render_key = None
+        rendered = None
+        if embedded is not None and cache is not None and cache.connection is not None:
+            try:
+                from PIL import __version__ as pillow_version
+            except ImportError as exc:
+                raise ValueError("cover conversion requires Pillow, or artwork=False") from exc
+            # Bump the recipe when playback or Cover Flow image processing changes.
+            recipe = ("embedded-render-v1", target, TARGETS[target]["media_art_side"] if target else 64,
+                      TARGETS[target]["lcd_format"] if target else None,
+                      coverflow_enabled, pillow_version)
+            render_key = hashlib.sha256(repr(recipe).encode("utf-8") +
+                                        hashlib.sha256(embedded).digest()).digest()
+            if not bypass_cache:
+                side = TARGETS[target]["media_art_side"] if target else 64
+                rendered = cache.render_get(render_key, side * side * 2, coverflow_enabled)
         try:
-            pixels, digest, flow = _cover_renders(cover if cover is not None else io.BytesIO(embedded),
-                                                   target, coverflow_enabled, art_indices)
+            if rendered is None:
+                pixels, digest, flow = _cover_renders(cover if cover is not None else io.BytesIO(embedded),
+                                                       target, coverflow_enabled,
+                                                       () if render_key is not None else art_indices)
+                if render_key is not None:
+                    cache.render_put(render_key, pixels, flow.tobytes() if flow is not None else b"")
+            else:
+                pixels, flow_bytes = rendered
+                digest = hashlib.sha256(pixels).digest()
+                if coverflow_enabled:
+                    from PIL import Image
+                    flow = Image.frombytes("RGB", (96, 96), flow_bytes)
+                else:
+                    flow = None
         except ImportError as exc:
             raise ValueError("cover conversion requires Pillow, or artwork=False") from exc
         except (OSError, ValueError):
