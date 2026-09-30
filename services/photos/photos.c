@@ -94,9 +94,17 @@ static bool allowed(void){
     }
     return audio.playing&&!audio.paused&&audio.queued>=reserve&&!ln_player_prefetch_urgent();
 }
+static uint32_t metadata_end(void){
+    uint32_t strings=p.header.data_at-p.header.string_at;
+    if(p.header.tile_at-512u+strings<=sizeof p.metadata)return p.header.tile_at;
+    /* Large catalogs retain grid records and titles; viewer levels are read
+     * separately rather than disabling the entire metadata cache. */
+    return p.header.level_at-512u+strings<=sizeof p.metadata?p.header.level_at:0;
+}
 static bool cached_metadata_work(void){
     return (p.phase==VERIFY&&p.verify_cached)||
-        (p.metadata_valid&&(p.phase==RECORD||p.phase==TITLE||p.phase==LEVEL||p.phase==SOURCE));
+        (p.metadata_valid&&(p.phase==RECORD||p.phase==TITLE||p.phase==SOURCE||
+         (p.phase==LEVEL&&metadata_end()==p.header.tile_at)));
 }
 /* Storage admission belongs to read_at/open_file. These bounded steps only
  * consume validated memory; waiting for disk runway here stalls each render
@@ -127,11 +135,12 @@ static int poll_file(struct ln_fat32_file *file,uint32_t *bytes){
 static int read_at(const struct ln_fat32_file*f,uint32_t at,void*buffer,uint32_t n){
     /* Retain verified catalog bytes across viewer and grid transitions. */
     if(!p.pending&&p.metadata_valid&&f==&p.file){
-        if(at>=512u&&at<=p.header.tile_at&&n<=p.header.tile_at-at){
+        uint32_t end=metadata_end();
+        if(at>=512u&&at<=end&&n<=end-at){
             copy(buffer,p.metadata+at-512u,n);return 1;
         }
         if(at>=p.header.string_at&&at<=p.header.data_at&&n<=p.header.data_at-at){
-            copy(buffer,p.metadata+p.header.tile_at-512u+at-p.header.string_at,n);return 1;
+            copy(buffer,p.metadata+end-512u+at-p.header.string_at,n);return 1;
         }
     }
     if(!p.pending){if(!allowed())return 0;int r=ln_storage_media_read(f,at,buffer,n,next_generation());if(r<=0)return r;PHOTO_DIAG(timing.io_started=ln_time_us());p.pending=true;p.io_open=false;p.io_bytes=n;return 0;}
@@ -480,17 +489,18 @@ static void photo_step(void){
             uint32_t n=p.verify_cached;if(n>4096)n=4096;
             const uint8_t *bytes=photo_buffers.surface.verify.metadata+p.verify_cursor;
             if(!verify_bytes(p.verify_at,bytes,n)){fail(4);return;}
-            if(p.header.tile_at-512u+p.header.data_at-p.header.string_at<=sizeof p.metadata){
+            uint32_t cached_end=metadata_end();
+            if(cached_end){
                 uint32_t end=p.verify_at+n;
-                if(p.verify_at<p.header.tile_at){uint32_t count=end<p.header.tile_at?n:p.header.tile_at-p.verify_at;
+                if(p.verify_at<cached_end){uint32_t count=end<cached_end?n:cached_end-p.verify_at;
                     copy(p.metadata+p.verify_at-512u,bytes,count);}
                 if(end>p.header.string_at){uint32_t start=p.verify_at>p.header.string_at?p.verify_at:p.header.string_at;
-                    copy(p.metadata+p.header.tile_at-512u+start-p.header.string_at,bytes+start-p.verify_at,end-start);}
+                    copy(p.metadata+cached_end-512u+start-p.header.string_at,bytes+start-p.verify_at,end-start);}
             }
             p.verify_crc=ln_pimg_crc_update(p.verify_crc,bytes,n);
             p.verify_at+=n;p.verify_cursor+=n;p.verify_cached-=n;return;
         }
-        if((p.verify_crc^UINT32_MAX)!=p.header.metadata_crc||p.v_photos!=p.header.photos||p.v_levels!=p.header.levels||p.v_tiles!=p.header.tiles||p.v_photo!=p.header.photos||p.v_text_bytes||p.v_more){fail(5);return;}p.metadata_valid=p.header.tile_at-512u+p.header.data_at-p.header.string_at<=sizeof p.metadata;p.ready=true;p.first=0;p.count=p.header.photos;p.phase=IDLE;++p.revision;
+        if((p.verify_crc^UINT32_MAX)!=p.header.metadata_crc||p.v_photos!=p.header.photos||p.v_levels!=p.header.levels||p.v_tiles!=p.header.tiles||p.v_photo!=p.header.photos||p.v_text_bytes||p.v_more){fail(5);return;}p.metadata_valid=metadata_end()!=0;p.ready=true;p.first=0;p.count=p.header.photos;p.phase=IDLE;++p.revision;
         if(p.resume_pending&&!resume_matches())p.resume_pending=false;return;
     }
     if(p.phase==RECORD){
