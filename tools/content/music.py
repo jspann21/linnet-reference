@@ -877,7 +877,11 @@ class _MetadataCache:
             return None
         try:
             row = self.connection.execute(
-                "SELECT pixels,flow,digest FROM artwork_renders WHERE key=?", (key,)).fetchone()
+                "SELECT pixels,flow,digest FROM artwork_renders WHERE key=? "
+                "AND typeof(pixels)='blob' AND length(pixels)=? "
+                "AND typeof(flow)='blob' AND length(flow)=? "
+                "AND typeof(digest)='blob' AND length(digest)=32",
+                (key, pixel_bytes, 27648 if with_flow else 0)).fetchone()
             if (row and isinstance(row[0], bytes) and len(row[0]) == pixel_bytes and
                     isinstance(row[1], bytes) and len(row[1]) == (27648 if with_flow else 0) and
                     hashlib.sha256(row[0] + row[1]).digest() == row[2]):
