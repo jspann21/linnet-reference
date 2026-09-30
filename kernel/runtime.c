@@ -852,6 +852,12 @@ void ln_runtime_step(void){
 #if defined(LINNET_BATTERY_GUARD)
     settings_io=settings_io&&!battery_emergency;
 #endif
+#if defined(LINNET_PHOTOS)
+    /* Photo focus updates the resume envelope in RAM. Publish it on leaving
+     * Photos, avoiding disk spin-up and settings writes during cached scrolling.
+     * Shutdown still drains Photos and explicitly saves the settings record. */
+    settings_io=settings_io&&!ln_photos_active();
+#endif
     bool theme_presented=settings_io&&!sleeping&&theme_frame_ready();
     ln_display_settings_step_ready(settings_io&&!sleeping,theme_presented,theme_frame.revision);
 #if defined(LINNET_STORAGE)
