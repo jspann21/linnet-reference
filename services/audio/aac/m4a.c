@@ -214,7 +214,12 @@ emit_pcm:
         if(count>capacity)count=capacity;
         if(count>d->total_frames-d->frame)count=(uint32_t)(d->total_frames-d->frame);
         if(!count){d->core.pcm_cursor=d->core.pcm_frames;return 0;}
+#if defined(__arm__)
+        extern void ln_memory_copy(void *,const void *,uint32_t);
+        ln_memory_copy(out,d->core.pcm+d->core.pcm_cursor*2u,count*4u);
+#else
         for(uint32_t i=0;i<count*2u;i++)out[i]=d->core.pcm[d->core.pcm_cursor*2u+i];
+#endif
         d->core.pcm_cursor+=count;d->frame+=count;*frames=count;return 1;
     }
     if(!d->packet_ready){
