@@ -105,3 +105,7 @@ uint32_t ln_collections_recent_rank(uint64_t id){
     for(uint32_t i=0;i<count;i++)if(ln_read_le64(saved+RECENT+8+8*i)==id)return RECENT_MAX-i;return 0;
 }
 uint32_t ln_collections_recent_count(void){return ready?ln_read_le32(saved+RECENT):0;}
+bool ln_collections_recent_id(uint32_t position,uint64_t *id){
+    if(!ready||!id||position>=ln_read_le32(saved+RECENT))return false;
+    *id=ln_read_le64(saved+RECENT+8u+position*8u);return true;
+}

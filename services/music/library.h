@@ -85,6 +85,8 @@ bool ln_music_library_take_track_record(struct ln_music_track *out);
 #define LN_MUSIC_ID_BATCH 30u
 bool ln_music_library_track_ids(uint32_t first);
 bool ln_music_library_take_track_ids(uint64_t ids[LN_MUSIC_ID_BATCH],uint32_t *count);
+/* Returns true when the host-built ID index is resident; missing IDs yield UINT32_MAX. */
+bool ln_music_library_track_id_lookup(uint64_t id,uint32_t *ordinal);
 bool ln_music_library_group(uint32_t group_index);
 bool ln_music_library_group_range(uint32_t kind,uint32_t *first,uint32_t *count);
 bool ln_music_library_albums(uint32_t artist,uint32_t *out,uint32_t capacity,uint32_t *count);

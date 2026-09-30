@@ -27,14 +27,14 @@ static struct {
     struct ln_collection draft;uint64_t activity_id;uint32_t mapped[LINNET_QUEUE_CAPACITY],scan,resolve_count,sort_at,sort_end;
     /* Playlist resolution and activity ranking never run together. */
     union {uint32_t positions[LINNET_QUEUE_CAPACITY],activity_scores[LINNET_QUEUE_CAPACITY];};
-    bool resolving,exporting,choosing,renaming,saved_message,empty_actions;uint32_t export_at,destination;
+    bool resolving,indexed,exporting,choosing,renaming,saved_message,empty_actions;uint32_t export_at,destination;
     struct ln_queue export_queue,expanded;bool expanding,expanded_ready;uint32_t expand_at;
     char name[32];uint32_t name_length;
     uint32_t activity_page,activity_count,activity_scan,activity_kind,scan_id_count,scan_id_at;
     uint64_t scan_ids[LN_MUSIC_ID_BATCH];
     uint32_t catalog,catalog_at,catalog_end,catalog_member,catalog_members,catalog_count,catalog_group;
     bool jumping,jump_binary;uint32_t jump_at,jump_lo,jump_hi,jump_found;char jump_letter;
-    bool activity_scanning,activity_waiting,activity_overflow,favorite_waiting,bookmark_waiting,activity_dirty;uint64_t favorite_id;
+    bool activity_scanning,activity_indexed,activity_waiting,activity_overflow,favorite_waiting,bookmark_waiting,activity_dirty;uint64_t favorite_id;
 } b;
 static const char *const categories[]={"Songs","Artists","Albums","Genres","Composers","Years","Folders","Playlists","Search","Favorites","Bookmarks","Recently Played","Most Played","Recently Added","Album Artists","Shuffle Songs"};
 static void activity_insert(uint32_t track,uint32_t score){
@@ -119,11 +119,22 @@ static bool store_draft(uint32_t slot){
     if(!ln_collection_put(slot,&b.draft)){ln_music_browser_notice(ln_collections_status());return false;}
     b.choosing=false;b.external=false;b.exporting=false;b.depth=0;enter(CATEGORIES,"Music");b.here.selected=0;for(uint32_t i=0;i<ln_music_menu_count(false);++i)if(ln_music_menu_category(false,i)==7)b.here.selected=i;push();enter(PLAYLISTS,"Playlists");b.saved_message=true;return true;
 }
+static void resolve_prepare(bool indexed){
+    b.indexed=indexed;b.scan=b.resolve_count=b.scan_id_count=b.scan_id_at=0;
+    bool sorted=true;for(uint32_t i=0;i<b.draft.count;i++){b.mapped[i]=UINT32_MAX;b.positions[i]=i;if(i&&b.draft.ids[i]<b.draft.ids[i-1u])sorted=false;}
+    b.sort_end=b.indexed||sorted||b.draft.count<=8u?0:b.draft.count;b.sort_at=b.sort_end/2u;
+}
 static void resolve_begin(uint32_t slot){
     const struct ln_collection *p=ln_collection_get(slot);if(!p)return;b.draft=*p;
-    enter(LOCAL_TRACKS,b.draft.name);b.here.slot=slot;b.here.count=b.draft.count;b.scan=b.resolve_count=b.scan_id_count=b.scan_id_at=0;b.resolving=b.draft.count!=0;
-    bool sorted=true;for(uint32_t i=0;i<b.draft.count;i++){b.mapped[i]=UINT32_MAX;b.positions[i]=i;if(i&&b.draft.ids[i]<b.draft.ids[i-1u])sorted=false;}
-    b.sort_end=sorted||b.draft.count<=8u?0:b.draft.count;b.sort_at=b.sort_end/2u;
+    enter(LOCAL_TRACKS,b.draft.name);b.here.slot=slot;b.here.count=b.draft.count;b.resolving=b.draft.count!=0;
+    uint32_t ignored;resolve_prepare(ln_music_library_track_id_lookup(0,&ignored));
+}
+static void resolve_complete(void){
+    uint32_t count=0;
+    for(uint32_t i=0;i<b.draft.count;i++)if(b.mapped[i]!=UINT32_MAX){b.positions[count]=i;b.mapped[count++]=b.mapped[i];}
+    b.here.count=count;b.resolving=false;
+    if(count!=b.draft.count)ln_music_browser_notice("Missing tracks omitted");
+    changed();
 }
 /* Sort positions under the browser's existing metadata budget, one heap sift
  * per step. The draft and final playlist order remain unchanged. */
@@ -201,7 +212,7 @@ bool ln_music_browser_select(uint32_t n){
     if(b.here.view==BROWSE_OPTIONS){if(n<2){struct location *parent=&b.parents[b.depth-1];if(parent->reverse!=(n!=0)&&parent->count)parent->selected=parent->view==ARTIST_ALBUMS?(parent->selected?parent->count-parent->selected:0):parent->count-1-parent->selected;parent->reverse=n!=0;return ln_music_browser_back();}if(n==2){enter(LETTERS,"Jump to letter");return true;}return false;}
     if(b.here.view==LETTERS){if(n>26)return false;char letter=n?(char)('A'+n-1):'#';ln_music_browser_back();b.jump_letter=letter;b.jumping=true;b.jump_lo=0;b.jump_hi=b.here.count;b.jump_at=0;b.jump_found=UINT32_MAX;
         b.jump_binary=n&&(b.here.view==GROUPS||b.here.view==ALBUM_ARTISTS||(b.here.view==TRACKS&&!b.here.kind)||(b.here.view==ACTIVITY&&(b.activity_kind==9||b.activity_kind==10)));changed();return true;}
-    if(b.here.view==CATEGORIES||b.here.view==MORE){n=ln_music_menu_category(b.here.view==MORE,n);if(n==LN_MUSIC_COVER_FLOW){b.coverflow=true;return true;}if(n==LN_MUSIC_MORE){if(!push())return false;enter(MORE,"More Music");return true;}if(n>=15)return false;if(n==14){if(!push())return false;enter(ALBUM_ARTISTS,"Album Artists");catalog_begin(true);return true;}if(n>=9&&n<=12){if(!push())return false;enter(ACTIVITY,categories[n]);b.activity_kind=n;b.activity_count=b.activity_scan=b.activity_page=b.scan_id_count=b.scan_id_at=0;for(uint32_t i=0;i<sizeof activity_data.filter;i++)activity_data.filter[i]=0;b.activity_scanning=true;b.activity_waiting=b.activity_overflow=false;return true;}if(n==13){if(!push())return false;groups(8);copy(b.here.title,"Recently Added");return true;}if(n==8){b.search=true;return true;}if(!push())return false;
+    if(b.here.view==CATEGORIES||b.here.view==MORE){n=ln_music_menu_category(b.here.view==MORE,n);if(n==LN_MUSIC_COVER_FLOW){b.coverflow=true;return true;}if(n==LN_MUSIC_MORE){if(!push())return false;enter(MORE,"More Music");return true;}if(n>=15)return false;if(n==14){if(!push())return false;enter(ALBUM_ARTISTS,"Album Artists");catalog_begin(true);return true;}if(n>=9&&n<=12){if(!push())return false;enter(ACTIVITY,categories[n]);b.activity_kind=n;b.activity_count=b.activity_scan=b.activity_page=b.scan_id_count=b.scan_id_at=0;for(uint32_t i=0;i<sizeof activity_data.filter;i++)activity_data.filter[i]=0;b.activity_scanning=true;b.activity_indexed=b.activity_waiting=b.activity_overflow=false;return true;}if(n==13){if(!push())return false;groups(8);copy(b.here.title,"Recently Added");return true;}if(n==8){b.search=true;return true;}if(!push())return false;
         if(n==7)enter(PLAYLISTS,"Playlists");else if(n)groups(n);else{enter(TRACKS,"Songs");b.here.count=ln_music_library_count();}return true;}
     if(b.here.view==PLAYLISTS||b.here.view==DESTINATION){
         uint32_t count=slots(),slot=slot_at(n);bool destination=b.here.view==DESTINATION;
@@ -249,7 +260,7 @@ bool ln_music_browser_back(void){
     if(b.external&&b.here.view==ACTIONS){b.external=false;b.search_return=true;}
     if(!b.depth)return false;if(b.here.from_coverflow)b.coverflow=true;b.here=b.parents[--b.depth];navigate();
     if(b.here.view==ALBUM_ARTISTS&&rebuild_owners)catalog_begin(true);
-    if(b.here.view==ACTIVITY){b.here.count=b.activity_count;if(b.activity_dirty){b.activity_dirty=false;b.activity_count=b.activity_scan=b.activity_page=b.scan_id_count=b.scan_id_at=0;for(uint32_t i=0;i<sizeof activity_data.filter;i++)activity_data.filter[i]=0;b.activity_scanning=true;b.activity_waiting=false;}}
+    if(b.here.view==ACTIVITY){b.here.count=b.activity_count;if(b.activity_dirty){b.activity_dirty=false;b.activity_count=b.activity_scan=b.activity_page=b.scan_id_count=b.scan_id_at=0;for(uint32_t i=0;i<sizeof activity_data.filter;i++)activity_data.filter[i]=0;b.activity_scanning=true;b.activity_indexed=b.activity_waiting=false;}}
     if(b.here.view==LOCAL_TRACKS){uint32_t selected=b.here.selected,slot=b.here.slot,first=b.here.first;bool reverse=b.here.reverse;resolve_begin(slot);b.here.reverse=reverse;b.here.selected=selected;b.here.first=b.first=first;b.restored_selection=selected;}
     return true;
 }
@@ -366,6 +377,25 @@ void ln_music_browser_step(void){
         }
         if(b.activity_kind==11){
             if(!ln_collections_ready())return;
+#if !defined(LINNET_TARGET_PHOTO4G_P98)
+            uint32_t ignored;
+            if(ln_music_library_track_id_lookup(0,&ignored)){
+                b.activity_indexed=true;
+                uint32_t total=ln_collections_recent_count(),started=ln_time_us();
+                while(b.activity_scan<total){
+                    uint64_t id;uint32_t ordinal;
+                    if(!ln_collections_recent_id(b.activity_scan,&id)||
+                       !ln_music_library_track_id_lookup(id,&ordinal)){b.activity_scan=0;b.activity_count=0;break;}
+                    if(ordinal!=UINT32_MAX)activity_insert(ordinal,total-b.activity_scan);
+                    b.activity_scan++;
+                    if((uint32_t)(ln_time_us()-started)>=250u)break;
+                }
+                if(b.activity_scan==total){b.activity_scanning=false;b.here.count=b.activity_count;invalidate();}
+                else changed();
+                return;
+            }
+            if(b.activity_indexed){b.activity_indexed=false;b.activity_scan=b.activity_count=0;}
+#endif
             if(b.activity_scan>=ln_music_library_count()||b.activity_count>=ln_collections_recent_count()){
                 b.activity_scanning=false;b.here.count=b.activity_count;invalidate();return;
             }
@@ -406,12 +436,20 @@ void ln_music_browser_step(void){
         if(b.export_queue.source==LN_QUEUE_GROUP&&!b.action_kind){if(ln_music_library_group_member(b.export_queue.source_group,ordinal))b.job=MEMBER;}
         else if(ln_music_library_track_record(b.export_queue.source==LN_QUEUE_GROUP?b.action_index:ordinal))b.job=RECORD;
     }else if(b.resolving){if(!ln_music_library_count()){b.resolving=false;b.here.count=0;}
+#if !defined(LINNET_TARGET_PHOTO4G_P98)
+        else if(b.indexed){uint32_t started=ln_time_us();
+            do{uint32_t ordinal;
+                if(!ln_music_library_track_id_lookup(b.draft.ids[b.scan],&ordinal)){resolve_prepare(false);break;}
+                b.mapped[b.scan++]=ordinal;
+            }while(b.scan<b.draft.count&&(uint32_t)(ln_time_us()-started)<250u);
+            if(b.indexed&&b.scan==b.draft.count)resolve_complete();}
+#endif
         else if(b.sort_at)resolve_sift(--b.sort_at,b.sort_end);
         else if(b.sort_end>1u){uint32_t last=--b.sort_end,position=b.positions[last];b.positions[last]=b.positions[0];b.positions[0]=position;resolve_sift(0,last);}
         else if(b.scan_id_at<b.scan_id_count){uint32_t started=ln_time_us();
             /* Consume only the ready batch within a bounded metadata slice. */
             do{resolve_id(b.scan_ids[b.scan_id_at++]);b.scan++;
-                if(b.resolve_count==b.draft.count||b.scan==ln_music_library_count()){uint32_t count=0;for(uint32_t i=0;i<b.draft.count;i++)if(b.mapped[i]!=UINT32_MAX){b.positions[count]=i;b.mapped[count++]=b.mapped[i];}b.here.count=count;b.resolving=false;if(count!=b.draft.count)ln_music_browser_notice("Missing tracks omitted");changed();break;}
+                if(b.resolve_count==b.draft.count||b.scan==ln_music_library_count()){resolve_complete();break;}
             }while(b.scan_id_at<b.scan_id_count&&(uint32_t)(ln_time_us()-started)<250u);}
         else if(ln_music_library_track_ids(b.scan))b.job=RESOLVE_IDS;
     }else if(b.status==LN_BROWSER_QUEUE_LOADING){if(ln_music_library_group_member(b.queue.source_group,b.queue.source_group&LN_QUEUE_REVERSE?b.queue.count-1-b.next:b.next))b.job=MEMBER;

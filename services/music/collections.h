@@ -22,6 +22,7 @@ int ln_collection_free(void);
 void ln_collections_played(uint64_t id);
 uint32_t ln_collections_recent_rank(uint64_t id);
 uint32_t ln_collections_recent_count(void);
+bool ln_collections_recent_id(uint32_t position,uint64_t *id);
 bool ln_collections_resume_set(const uint8_t *data,uint32_t length);
 uint32_t ln_collections_resume_get(uint8_t *out,uint32_t capacity);
 #endif

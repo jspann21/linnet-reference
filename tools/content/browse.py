@@ -52,9 +52,14 @@ def prepare(database: bytes) -> bytes:
     payload += struct.pack('<I', len(prefixes))
     payload += b''.join(struct.pack('<II', *entry) for entry in prefixes)
     payload += struct.pack('<I', len(fences)) + b''.join(fences)
+    tracks, track_at = (struct.unpack_from('<I', database, offset)[0] for offset in (16, 32))
+    identities = sorted((struct.unpack_from('<Q', database, track_at + i * 132)[0], i)
+                        for i in range(tracks))
+    id_index = b''.join(struct.pack('<QI', identity, ordinal) for identity, ordinal in identities)
     header = bytearray(64)
-    struct.pack_into('<4s5I', header, 0, b'LBR2', 64 + len(payload), len(records), len(links), len(owners), groups)
+    struct.pack_into('<4s5I', header, 0, b'LBRI', 64 + len(payload) + 4 + len(id_index),
+                     len(records), len(links), len(owners), groups)
     header[24:56] = database[64:96]
     struct.pack_into('<I', header, 56, zlib.crc32(payload))
     struct.pack_into('<I', header, 60, zlib.crc32(header[:60]))
-    return bytes(header) + payload
+    return bytes(header) + payload + struct.pack('<I', zlib.crc32(id_index)) + id_index
