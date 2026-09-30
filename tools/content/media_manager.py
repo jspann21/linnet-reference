@@ -236,7 +236,7 @@ def preparation_option(kind, identity, photo_dimension=640, music_verification='
         return f"target-wrap2-{_display_recipe(identity['target_id'])[2]}"
     if kind == 'Photos':
         profile = identity['media_profile']
-        return f"retail-photos3-{photo_dimension}-{profile['photo_width']}x{profile['photo_height']}"
+        return f"retail-photos3-native-grid1-{identity['target_id']}-{photo_dimension}-{profile['photo_width']}x{profile['photo_height']}"
     return 'default'
 
 
@@ -670,9 +670,18 @@ def _checking_progress(kind, checkpoint, progress, stage):
 def _published_photo_output(root, identity, output_paths, published):
     from .photos import MAX_FILE
     expected = '.LINNET/PHOTOS/LIBRARY.PIM'
-    if output_paths != [expected] or len(published) != 1 or not isinstance(published[0], dict):
+    if output_paths not in ([expected], [expected, '.LINNET/PHOTOS/GRID.PGR']) or len(published) != 1 or not isinstance(published[0], dict):
         raise RuntimeError('Photo publication did not return its expected output')
     receipt = published[0]
+    outputs = []
+    for name, item in [(expected, receipt)] + ([('.LINNET/PHOTOS/GRID.PGR', receipt.get('grid'))] if len(output_paths)==2 else []):
+        outputs.append(_photo_output(root, identity, name, item, MAX_FILE))
+    return outputs
+
+
+def _photo_output(root, identity, expected, receipt, max_file):
+    if not isinstance(receipt,dict):
+        raise RuntimeError('Photo publication did not return its expected receipt')
     if (receipt.get('passed') is not True or receipt.get('operation') != 'publish-photos' or
             receipt.get('phase') not in ('published', 'reused')):
         raise RuntimeError('Photo publication did not complete')
@@ -682,7 +691,7 @@ def _published_photo_output(root, identity, output_paths, published):
         raise RuntimeError('Photo publication output path changed')
     digest, size = receipt['candidate_sha256'], receipt['candidate_bytes']
     if (not isinstance(digest, str) or re.fullmatch('[0-9a-f]{64}', digest) is None or
-            type(size) is not int or not 512 <= size <= MAX_FILE):
+            type(size) is not int or not 512 <= size <= max_file):
         raise RuntimeError('Photo publication returned invalid output metadata')
     _plain(active, root)
     info = active.stat()
@@ -1063,6 +1072,7 @@ def _prepare_photos(root, cache, identity, media_profile, skipped, retail_photos
     photo_progress = _throttled_progress(checkpoint, progress,
         lambda event: f'Preparing photos {event["current"]+1}/{event["total"]}: {Path(event["file"]).name}')
     compile_photos(root / "Photos", package, max_dimension=dimension,
+                   target=identity['target_id'],
                    viewport_width=media_profile["photo_width"],
                    viewport_height=media_profile["photo_height"],
                    cache_dir=cache / "photo-cache", progress=photo_progress, checkpoint=checkpoint,
@@ -1072,7 +1082,8 @@ def _prepare_photos(root, cache, identity, media_profile, skipped, retail_photos
     checkpoint()
     progress("Publishing prepared photos…")
     begin_publication("Photos")
-    return [".LINNET/PHOTOS/LIBRARY.PIM"], [publish_photos(package, **target_args(identity))]
+    return [".LINNET/PHOTOS/LIBRARY.PIM", ".LINNET/PHOTOS/GRID.PGR"], [
+        publish_photos(package, grid=package.with_suffix('.pgr'), **target_args(identity))]
 
 
 def _prepare_notes(root, cache, identity, skipped, *, checkpoint, progress,
@@ -1522,7 +1533,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     raise ValueError(f"{kind} changed during processing. Scan again before updating.")
                 if kind == 'Photos':
                     checkpoint()
-                    outputs = [_published_photo_output(root, identity, output_paths, published)]
+                    outputs = _published_photo_output(root, identity, output_paths, published)
                 else:
                     outputs = [(name, _hash(root / name)) for name in output_paths]
                 state[kind] = dict(signature=signature, outputs=outputs)

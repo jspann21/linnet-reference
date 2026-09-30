@@ -135,12 +135,14 @@ class _PhotoCache:
                 self.entries[path] = (path.stat().st_size, path.stat().st_mtime_ns)
             except OSError:
                 pass
-            return metadata, payload[:THUMB*THUMB*2], payload[THUMB*THUMB*2:]
+            grid_bytes = metadata.get('grid_width', 0)*metadata.get('grid_height', 0)*2
+            tile_end = len(payload)-grid_bytes
+            return metadata, payload[:THUMB*THUMB*2], payload[THUMB*THUMB*2:tile_end], payload[tile_end:]
         except (OSError, ValueError, TypeError, KeyError, UnicodeError):
             return None
 
-    def put(self, key, metadata, thumb, tile_bytes):
-        payload = thumb + tile_bytes
+    def put(self, key, metadata, thumb, tile_bytes, grid_pixels=b''):
+        payload = thumb + tile_bytes + grid_pixels
         metadata = dict(metadata, key=key, bytes=len(payload),
                         sha256=hashlib.sha256(payload).hexdigest())
         metadata['entry_sha256'] = _cache_digest(metadata, payload)
@@ -207,7 +209,13 @@ def _cached_photo_valid(meta, payload, checkpoint):
                 ty != (height + EDGE - 1)//EDGE or count != tx*ty):
             return False
         counts += count
-    if (counts != len(meta['tile_crcs']) or len(payload) != THUMB*THUMB*2 + counts*EDGE*EDGE*2 or
+    gw, gh = meta.get('grid_width', 0), meta.get('grid_height', 0)
+    if type(gw) is not int or type(gh) is not int or (gw, gh) not in ((0,0),(56,56),(50,38),(40,30)):
+        return False
+    grid_bytes = gw*gh*2
+    if grid_bytes and (type(meta.get('grid_crc')) is not int or _crc(payload[-grid_bytes:]) != meta['grid_crc']):
+        return False
+    if (counts != len(meta['tile_crcs']) or len(payload) != THUMB*THUMB*2 + counts*EDGE*EDGE*2 + grid_bytes or
             _crc(payload[:THUMB*THUMB*2]) != meta.get('thumb_crc')):
         return False
     for index, expected in enumerate(meta['tile_crcs']):
@@ -227,7 +235,7 @@ def _cache_digest(metadata, payload):
 
 
 def _render_photo(path, fallback, max_dimension, viewport_width, viewport_height,
-                  checkpoint):
+                  checkpoint, grid_shape=None):
     from PIL import Image, ImageOps
 
     fallback_bytes = fallback_crc = orientation = 0
@@ -294,12 +302,17 @@ def _render_photo(path, fallback, max_dimension, viewport_width, viewport_height
                     fallback_crc=fallback_crc, orientation=orientation,
                     thumb_crc=_crc(raw_thumb), levels=local_levels,
                     tile_crcs=local_crcs)
-    return metadata, raw_thumb, bytes(tile_bytes)
+    grid_pixels = b''
+    if grid_shape is not None:
+        gw, gh = grid_shape
+        grid_pixels = _rgb565(ImageOps.fit(image, (gw, gh), method=Image.Resampling.LANCZOS))
+        metadata.update(grid_width=gw, grid_height=gh, grid_crc=_crc(grid_pixels))
+    return metadata, raw_thumb, bytes(tile_bytes), grid_pixels
 
 
 def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                    viewport_height=156, fallback_paths=None, excluded=None, additional_sources=None,
-                   progress=None, checkpoint=None, cache_dir=None):
+                   progress=None, checkpoint=None, cache_dir=None, target=None, grid_output=None):
     """Prepare a folder into one .pimg; optional mapping names existing JPEG copies.
 
     The default keeps zoom detail without a desktop-sized tile pyramid.
@@ -309,6 +322,17 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
     from PIL import __version__ as pillow_version
     check = checkpoint or (lambda: None)
     source, output = Path(source).resolve(), Path(output).resolve()
+    grid_shape = None
+    if target is not None:
+        from .photo_grid import GRID_SHAPES
+        if target not in GRID_SHAPES:
+            raise ValueError('unsupported native photo grid target')
+        grid_shape = GRID_SHAPES[target][1:]
+        grid_output = Path(grid_output).resolve() if grid_output is not None else output.with_suffix('.pgr')
+        if grid_output == output or grid_output == source or source in grid_output.parents:
+            raise ValueError('native grid output must be separate from PIMG and source photos')
+    elif grid_output is not None:
+        raise ValueError('native grid output requires an explicit target')
     if (not source.is_dir() or type(viewport_width) is not int or
             type(viewport_height) is not int or type(max_dimension) is not int or not 1 <= viewport_width <= 1024 or
             not 1 <= viewport_height <= 1024 or viewport_width*viewport_height > 131072 or
@@ -323,7 +347,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
             raise ValueError('photo cache must be outside the source folder')
         recipe = hashlib.sha256(json.dumps([
             hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), pillow_version,
-            max_dimension, viewport_width, viewport_height, THUMB, EDGE],
+            max_dimension, viewport_width, viewport_height, THUMB, EDGE, target, grid_shape, 'LPGR1'],
             separators=(',', ':')).encode()).hexdigest()
         try:
             cache = _PhotoCache(cache_root, recipe)
@@ -368,7 +392,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
 
     photos, levels, tile_crcs = [], [], array('I')
     cache_reused = cache_rendered = 0
-    with tempfile.TemporaryFile() as thumbs, tempfile.TemporaryFile() as tiles:
+    with tempfile.TemporaryFile() as thumbs, tempfile.TemporaryFile() as tiles, tempfile.TemporaryFile() as grid_pixels:
         for index, path in enumerate(paths):
             check()
             if progress:
@@ -394,7 +418,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                 rendered = cache.get(key, check)
             if rendered is None:
                 rendered = _render_photo(path, fallback, max_dimension,
-                                         viewport_width, viewport_height, check)
+                                         viewport_width, viewport_height, check, grid_shape)
                 cache_rendered += 1
                 if cache is not None:
                     after_render = path.stat()
@@ -406,7 +430,12 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                 after_render = path.stat()
                 if (before.st_size, before.st_mtime_ns) != (after_render.st_size, after_render.st_mtime_ns):
                     raise SourceError(f'Photo changed while preparing: {path}', path)
-            image_meta, raw_thumb, tile_bytes = rendered
+            image_meta, raw_thumb, tile_bytes, raw_grid = rendered
+            if grid_shape is not None:
+                if len(raw_grid) != grid_shape[0]*grid_shape[1]*2:
+                    raise ValueError('native photo grid cache contract mismatch')
+                grid_pixels.write(raw_grid)
+                grid_pixels.write(struct.pack('<I', _crc(raw_grid)))
             thumbs.write(raw_thumb)
             first_level = len(levels)
             local_offset = 0
@@ -473,6 +502,9 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
             temporary.replace(output)
         finally:
             temporary.unlink(missing_ok=True)
+        if grid_shape is not None:
+            from .photo_grid import write_grid
+            report['grid'] = write_grid(output, grid_output, target, grid_pixels, check)
     report.update(output=str(output), source=str(source), device_path=DEVICE_PATH,
                   orientation_applied=True, originals_modified=False,
                   cache_reused=cache_reused, cache_rendered=cache_rendered)

@@ -666,7 +666,8 @@ def _finish_backups(receipt, paths, root, guard):
 
 def _publish_library(package, candidate, identity, root, number, serial, volume, drive,
                      *, kind, label, filename, max_file, summary,
-                     verify_references=None, receipt_fields=None, previous_hint=None):
+                     verify_references=None, receipt_fields=None, previous_hint=None,
+                     retain_backup=False):
     def guard():
         _volume_guard(identity)
     linnet, directory = root/'.LINNET', root/'.LINNET'/kind.upper()
@@ -769,7 +770,10 @@ def _publish_library(package, candidate, identity, root, number, serial, volume,
             os.fsync(writer.fileno())
         if _hash(active, candidate['bytes']) != candidate['sha256']:
             raise OSError(f'published {label} package readback mismatch')
-        _finish_backups(receipt, [backup] if previous else [], root, guard)
+        if retain_backup:
+            receipt['backups_retained'] = [str(backup)] if previous else []
+        else:
+            _finish_backups(receipt, [backup] if previous else [], root, guard)
         receipt.update(passed=True, phase='published', finished_at=time.time(), package=str(active),
                        **summary)
         record()

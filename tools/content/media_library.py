@@ -415,6 +415,11 @@ def _remove(identity, items):
         originals = [row for row in fresh.values() if row['kind'] == kind and row['category'] == 'original']
         if kind != 'Videos' and originals and all(row['id'] in selected_ids for row in originals):
             selected.extend(row for row in fresh.values() if row['kind'] == kind and row['category'] == 'library' and row['id'] not in selected_ids)
+    if any(row['kind']=='Photos' and row['category']=='library' for row in selected):
+        grid = root/'.LINNET'/'PHOTOS'/'GRID.PGR'
+        _plain(grid, root)
+        if grid.exists():
+            selected.append(_row('library','Photos','Prepared photo grid',grid,'Native thumbnails',info=grid.stat()))
     catalog, before, entries = _catalog(root)
     selected_keys = {row['key'] for row in selected if row['category'] == 'published'}
     paths = {}

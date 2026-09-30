@@ -46,6 +46,7 @@ def register_media(commands):
     photo_inspect.add_argument('package',type=Path)
     photo_publish=photos.add_parser('publish')
     photo_publish.add_argument('--package',type=Path,required=True)
+    photo_publish.add_argument('--grid',type=Path,help='Prepared native thumbnail grid paired with this package')
     _publication_arguments(photo_publish)
 
 
@@ -102,11 +103,11 @@ def run_media(args, emit):
         from tools.content.photos import compile_photos,inspect as inspect_photos
         if args.action=='publish':
             from tools.content.publish_photos import publish_photos
-            emit(publish_photos(args.package, **_publication_options(args)))
+            emit(publish_photos(args.package, grid=args.grid, **_publication_options(args)))
         else:
             if args.action=='compile':
                 spec=TARGETS[args.target]
                 emit(compile_photos(args.source,args.output,max_dimension=args.max_dimension,
-                    viewport_width=spec['media_photo_width'],viewport_height=spec['media_photo_height']))
+                    viewport_width=spec['media_photo_width'],viewport_height=spec['media_photo_height'],target=args.target))
             else:emit(inspect_photos(args.package))
     return 0
