@@ -782,6 +782,11 @@ def _pending_outcomes(pending, selected, plan, videos, steps, errors, planned):
         if kind not in pending_kinds or item['destination'] in added:
             continue
         source = Path(item['source'])
+        if source.drive:
+            drive_source = Path(source.drive)
+            key = kind, drive_source
+            if key in pending_sources and source.is_relative_to(drive_source):
+                unfinished.add(key)
         while True:
             key = kind, source
             if key in pending_sources:
