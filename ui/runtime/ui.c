@@ -715,9 +715,7 @@ static void vertical_battery(struct painter*p,int32_t x,int32_t y,uint16_t ink){
         if(status&(256u|512u))symbol_mask(p,x,y+8,11,11,symbol_bolt,ink);
     }else fill(p,(struct rect){x+3,y+13,5,1},ink);
 }
-static void classic_album(struct painter*p,int32_t x,int32_t y,int32_t size){
-    uint32_t revision;const struct ln_ui_asset*art=ln_ui_now_playing_art(&revision);
-    if(!art||!art->pixels)return;
+static void classic_album(struct painter*p,int32_t x,int32_t y,int32_t size,const struct ln_ui_asset*art){
     struct ln_ui_node node={.x=x,.y=y,.w=size,.h=size,.bg=LN_UI_COLOR_TOKEN+LN_UI_ARTWORK_BG};
     image_asset(p,&node,art);
 }
@@ -726,20 +724,25 @@ static void classic_preview(struct painter*p,struct ln_ui_state*s){
     const struct ln_ui_scene*c=&ln_ui_scenes[s->scene];
     if(c->focus_node>=c->count)return;const struct ln_ui_node*n=&c->nodes[c->focus_node];
     uint32_t source=menu_source(n,s->selected);const char*label=n->items&&source<n->item_count?n->items[source]:"";
-    struct rect pane={160,24,160,216};
-    gradient(p,pane,0xf7deu,0xc618u);fill(p,(struct rect){160,24,1,216},color(LN_UI_BORDER));
+    const struct ln_ui_asset*art=0;
     if(same(label,"Music")||same(label,"Now Playing")){
-        uint32_t revision;const struct ln_ui_asset*art=ln_ui_now_playing_art(&revision);
-        if(art&&art->pixels){
-            classic_album(p,160,24,160);
-            struct rect reflection=intersect((struct rect){160,184,160,56},p->clip);
-            for(int32_t y=reflection.y;y<reflection.y+reflection.h;++y){
-                int32_t sample=367-y;
-                for(int32_t x=reflection.x;x<reflection.x+reflection.w;++x){
-                    uint16_t reflected=p->pixels[(uint32_t)sample*LINNET_UI_WIDTH+(uint32_t)x];
-                    uint16_t *pixel=&p->pixels[(uint32_t)y*LINNET_UI_WIDTH+(uint32_t)x];
-                    *pixel=mix(reflected,*pixel,(uint32_t)(239-y)*2u);
-                }
+        uint32_t revision;art=ln_ui_now_playing_art(&revision);
+        if(art&&(!art->pixels||!art->width||!art->height))art=0;
+    }
+    struct rect pane={160,24,160,216};
+    struct rect clip=p->clip;
+    if(art)p->clip=intersect(clip,(struct rect){160,184,160,56});
+    gradient(p,pane,0xf7deu,0xc618u);p->clip=clip;
+    fill(p,(struct rect){160,24,1,216},color(LN_UI_BORDER));
+    if(art){
+        classic_album(p,160,24,160,art);
+        struct rect reflection=intersect((struct rect){160,184,160,56},p->clip);
+        for(int32_t y=reflection.y;y<reflection.y+reflection.h;++y){
+            int32_t sample=367-y;
+            for(int32_t x=reflection.x;x<reflection.x+reflection.w;++x){
+                uint16_t reflected=p->pixels[(uint32_t)sample*LINNET_UI_WIDTH+(uint32_t)x];
+                uint16_t *pixel=&p->pixels[(uint32_t)y*LINNET_UI_WIDTH+(uint32_t)x];
+                *pixel=mix(reflected,*pixel,(uint32_t)(239-y)*2u);
             }
         }
     }
