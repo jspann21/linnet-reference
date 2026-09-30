@@ -21,7 +21,10 @@ static void seek_maps_clear(struct ln_fat32*f){
 }
 static void seek_map_select(struct ln_fat32*f,const struct ln_fat32_file*file,bool reset){
     f->seek_slot=LN_FAT32_SEEK_MAPS;
-    if(f->mounted!=1||!file->size||!cluster_valid(f,file->cluster))return;
+    /* Short files need at most 63 edges to reach any byte. Do not let state
+     * records and small indexes evict complete maps for large media files. */
+    if(f->mounted!=1||!file->size||((file->size-1u)>>(9u+f->cluster_shift))<64u||
+       !cluster_valid(f,file->cluster))return;
     uint32_t slot=0;
     for(uint32_t i=0;i<LN_FAT32_SEEK_MAPS;i++){
         if(f->seek_maps[i].first==file->cluster&&f->seek_maps[i].size==file->size){slot=i;goto selected;}
