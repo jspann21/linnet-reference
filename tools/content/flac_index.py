@@ -86,8 +86,14 @@ def _rebalance(path, layout):
     if len(points) <= 64 or total - points[63][0] < rate * 30:
         return None
     samples = [sample for sample, _ in points]
-    indices = sorted({max(0, bisect_right(samples, i * total // 64) - 1)
-                      for i in range(63)} | {len(points) - 1})
+    selected = {max(0, bisect_right(samples, i * total // 64) - 1)
+                for i in range(63)} | {len(points) - 1}
+    if len(selected) < 64:
+        remaining = [i for i in range(len(points)) if i not in selected]
+        needed = 64 - len(selected)
+        selected.update(remaining[(i + 1) * len(remaining) // (needed + 1)]
+                        for i in range(needed))
+    indices = sorted(selected)
     replacement = b''.join(points[i][1] for i in indices)
     replacement += PLACEHOLDER * (len(table[1]) // 18 - len(indices))
     return (table[0], table[1], replacement) if replacement != table[1] else None
