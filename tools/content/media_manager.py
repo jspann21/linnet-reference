@@ -896,14 +896,20 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
     from .aac_index import prepare_file as prepare_aac
     from .flac_index import prepare_file as prepare_flac
     supported = ('.m4a', '.m4b', '.flac', '.flc')
+    checkpoint()
+    next_check = time.monotonic() + 0.05
     for folder in source_folders(root, 'Music'):
         for path in folder.rglob('*'):
+            if time.monotonic() >= next_check:
+                checkpoint()
+                next_check = time.monotonic() + 0.05
             suffix = path.suffix.lower()
             if suffix not in supported or not path.is_file():
                 continue
             if path.relative_to(root).as_posix().casefold() in skipped:
                 continue
             checkpoint()
+            next_check = time.monotonic() + 0.05
             _plain(path, root)
             if suffix in ('.m4a', '.m4b'):
                 progress(f'Preparing AAC seeks: {path.name}')
@@ -917,6 +923,7 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
                                 checkpoint=checkpoint, recovery=flac_recovery, journal=record):
                     report['steps'].append(dict(prepared_flac=str(path.relative_to(root))))
                     record()
+    checkpoint()
 
 
 def _prepare_music(root, cache, identity, skipped, *, ffprobe, verification, force,
