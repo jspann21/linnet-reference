@@ -162,7 +162,7 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
                    identity=identity, candidate_sha256=candidate['sha256'], candidate_bytes=candidate['bytes'],
                    previous=previous, started_at=time.time(),
                    elevation=False, receipt=str(receipt_path),
-                   durability='file fsync and complete readback; FAT rename is not a power-loss journal')
+                   durability='Publication pending; FAT rename is not a power-loss journal')
 
     def record():
         _write_receipt(receipt_path, receipt)
@@ -223,6 +223,12 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
         if catalog_bytes == catalog_before:
             receipt['catalog_reused'] = True
             receipt['package_reused'] = reuse_package
+            receipt['durability'] = (
+                'Existing package and catalog verified; neither rewritten'
+                if reuse_package else
+                'Published package fsynced and read back; existing catalog verified; '
+                'FAT rename is not a power-loss journal'
+            )
             _finish_backups(receipt, recovery_paths, root, guard)
             receipt.update(passed=True, phase='published', finished_at=time.time(), package=str(active),
                            catalog=str(catalog), frames=candidate['frames'])
@@ -249,6 +255,16 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
             raise OSError('published video catalog readback mismatch')
         receipt['catalog'] = str(catalog)
         _finish_backups(receipt, recovery_paths, root, guard)
+        if reuse_package:
+            receipt['durability'] = (
+                'Existing package verified; catalog fsynced and read back; '
+                'FAT rename is not a power-loss journal'
+            )
+        else:
+            receipt['durability'] = (
+                'Package and catalog fsynced and read back; '
+                'FAT rename is not a power-loss journal'
+            )
         receipt.update(passed=True, phase='published', finished_at=time.time(), package=str(active),
                        frames=candidate['frames'], package_reused=reuse_package, catalog_reused=False)
         record()
