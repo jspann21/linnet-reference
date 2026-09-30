@@ -424,8 +424,9 @@ def _copy_verified(source: Path, destination: Path, item: dict, root: Path, guar
         return False
     hasher = hashlib.sha256()
     count = 0
+    chunk_size = min(CHUNK, max(16 * 1024, item["bytes"]))
     with source.open("rb") as reader, destination.open("xb") as writer:
-        while chunk := reader.read(CHUNK):
+        while chunk := reader.read(chunk_size):
             guard()
             writer.write(chunk)
             count += len(chunk)
