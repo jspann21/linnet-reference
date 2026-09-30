@@ -493,7 +493,9 @@ static void photo_step(void){
         p.front^=1u;p.asset.pixels=photo_buffers.surface.frame[p.front];p.frame_valid=p.view_loaded=p.ready=true;p.phase=IDLE;++p.revision;return;}
     if(p.phase==OPEN){r=open_file(package,&p.file);if(!r)return;if(r<0){fail(1);return;}p.phase=HEADER;return;}
     if(p.phase==HEADER){r=read_at(&p.file,0,photo_scratch,512);if(!r)return;if(r<0||!ln_pimg_header(photo_scratch,p.file.size,&p.header)){fail(2);return;}
-        copy(p.pim_header,photo_scratch,512u);p.grid_available=p.pim_verified=false;verify_begin(false);p.phase=GRID_OPEN;return;}
+        copy(p.pim_header,photo_scratch,512u);p.grid_available=p.pim_verified=false;verify_begin(false);
+        /* A tiny catalog is cheaper to verify than opening a second file. */
+        if(p.header.data_at>4096u)p.phase=GRID_OPEN;return;}
     if(p.phase==GRID_OPEN){r=open_file(grid_package,&p.grid_file);if(!r)return;
         if(r<0){verify_begin(false);return;}p.phase=GRID_HEADER;return;}
     if(p.phase==GRID_HEADER){r=read_at(&p.grid_file,0,photo_scratch,1024u);if(!r)return;
