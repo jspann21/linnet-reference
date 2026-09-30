@@ -262,7 +262,11 @@ static void render_step(void){
     for(uint32_t y=p.render_y;y<end;y++){
         if(p.direct){
             uint16_t*row=out+y*WIDTH;int32_t sy=p.map_y[y];
-            clear(row,WIDTH*sizeof *row);
+            /* A complete source row overwrites every destination pixel. The
+             * frame is rendered only after all visible tiles are cached. */
+            bool covered=p.frame_complete&&sy>=0&&sy<(int32_t)l->height&&
+                p.map_x[0]>=0&&p.map_x[WIDTH-1]<(int32_t)l->width;
+            if(!covered)clear(row,WIDTH*sizeof *row);
             if(sy<0||sy>=(int32_t)l->height)continue;
             uint32_t x=0;while(x<WIDTH&&p.map_x[x]<0)++x;
             while(x<WIDTH){int32_t sx=p.map_x[x];if(sx<0||sx>=(int32_t)l->width)break;
