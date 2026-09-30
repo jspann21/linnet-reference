@@ -848,40 +848,32 @@ def run(identity, selected, pending=(), **options):
             retry_selected = tuple(kind for kind in KINDS if kind in retry_kinds)
 
 
-def _prepare_aac(root, cache, skipped, checkpoint, progress, report, recovery, record):
-    from .aac_index import prepare_file
+def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
+                   aac_recovery, flac_recovery, record):
+    from .aac_index import prepare_file as prepare_aac
+    from .flac_index import prepare_file as prepare_flac
+    supported = ('.m4a', '.m4b', '.flac', '.flc') if ffprobe else ('.m4a', '.m4b')
     for folder in source_folders(root, 'Music'):
         for path in folder.rglob('*'):
             checkpoint()
-            if path.suffix.lower() not in ('.m4a', '.m4b') or not path.is_file():
+            suffix = path.suffix.lower()
+            if suffix not in supported or not path.is_file():
                 continue
             if path.relative_to(root).as_posix().casefold() in skipped:
                 continue
             _plain(path, root)
-            progress(f'Preparing AAC seeks: {path.name}')
-            if prepare_file(path, cache / 'aac-seek', checkpoint=checkpoint,
-                            recovery=recovery, journal=record):
-                report['steps'].append(dict(prepared_aac=str(path.relative_to(root))))
-                record()
-
-
-def _prepare_flac(root, cache, skipped, ffprobe, checkpoint, progress, report, recovery, record):
-    if not ffprobe:
-        return
-    from .flac_index import prepare_file
-    for folder in source_folders(root, 'Music'):
-        for path in folder.rglob('*'):
-            checkpoint()
-            if path.suffix.lower() not in ('.flac', '.flc') or not path.is_file():
-                continue
-            if path.relative_to(root).as_posix().casefold() in skipped:
-                continue
-            _plain(path, root)
-            progress(f'Preparing FLAC seeks: {path.name}')
-            if prepare_file(path, cache / 'flac-seek', ffprobe=ffprobe,
-                            checkpoint=checkpoint, recovery=recovery, journal=record):
-                report['steps'].append(dict(prepared_flac=str(path.relative_to(root))))
-                record()
+            if suffix in ('.m4a', '.m4b'):
+                progress(f'Preparing AAC seeks: {path.name}')
+                if prepare_aac(path, cache / 'aac-seek', checkpoint=checkpoint,
+                               recovery=aac_recovery, journal=record):
+                    report['steps'].append(dict(prepared_aac=str(path.relative_to(root))))
+                    record()
+            else:
+                progress(f'Preparing FLAC seeks: {path.name}')
+                if prepare_flac(path, cache / 'flac-seek', ffprobe=ffprobe,
+                                checkpoint=checkpoint, recovery=flac_recovery, journal=record):
+                    report['steps'].append(dict(prepared_flac=str(path.relative_to(root))))
+                    record()
 
 
 def _prepare_music(root, cache, identity, skipped, *, ffprobe, verification, force,
@@ -1288,9 +1280,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             from .retail_media import images
             retail_photos = images(root)
         if 'Music' in selected:
-            _prepare_aac(root, cache, skipped['Music'], checkpoint, progress, report, aac_recovery, record)
-            _prepare_flac(root, cache, skipped['Music'], ffprobe or shutil.which('ffprobe'),
-                          checkpoint, progress, report, flac_recovery, record)
+            _prepare_audio(root, cache, skipped['Music'], ffprobe or shutil.which('ffprobe'),
+                           checkpoint, progress, report, aac_recovery, flac_recovery, record)
         inventory = scan(root, selected, skipped=skipped, retail_photos=retail_photos,
                          fingerprint_kinds=(kind for kind in selected if kind != "Videos"))
         if "Videos" in selected:
