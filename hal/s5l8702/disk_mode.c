@@ -29,7 +29,7 @@ static void failure(uint8_t key,uint8_t code) {
 }
 static bool disk_request(enum ln_ata_op operation) {
     bool transfer=operation==LN_ATA_READ || operation==LN_ATA_WRITE;
-    if(transfer){batch_blocks=sizeof(buffer)>>(block_bytes==4096?12:9);if(batch_blocks>blocks)batch_blocks=blocks;}
+    if(transfer){batch_blocks=sizeof(buffer)/block_bytes;if(batch_blocks>blocks)batch_blocks=blocks;}
     return ln_ata_start(operation,operation==LN_ATA_READ || operation==LN_ATA_WRITE?(uint64_t)lba*scale:0,
         transfer?batch_blocks*scale:0,
         operation==LN_ATA_READ || operation==LN_ATA_WRITE?buffer:0,ln_time_us()+15000000u);
@@ -121,7 +121,7 @@ static void command(void) {
         if(c[0]==0x2a && !write_enabled){failure(7,0x27);break;}
         reading=c[0]==0x28;writing=!reading;
         if(reading){if(!disk_request(LN_ATA_READ))failure(3,0x11);else state=READ_WAIT;}
-        else {state=RECEIVE;batch_blocks=sizeof(buffer)>>(block_bytes==4096?12:9);if(batch_blocks>blocks)batch_blocks=blocks;length=batch_blocks*block_bytes;}
+        else {state=RECEIVE;batch_blocks=sizeof(buffer)/block_bytes;if(batch_blocks>blocks)batch_blocks=blocks;length=batch_blocks*block_bytes;}
         break;
     case 0x35: /* SYNCHRONIZE CACHE */
     case 0x1b: /* START STOP UNIT */
@@ -144,7 +144,7 @@ static void step(void) {
         if(state==READ_WAIT){length=batch_blocks*block_bytes;position=0;state=SEND;return;}
         if(state==FLUSH_WAIT){dirty=false;state=STATUS;return;}
         lba+=batch_blocks;blocks-=batch_blocks;position=0;
-        if(blocks){batch_blocks=sizeof(buffer)>>(block_bytes==4096?12:9);if(batch_blocks>blocks)batch_blocks=blocks;length=batch_blocks*block_bytes;state=RECEIVE;}
+        if(blocks){batch_blocks=sizeof(buffer)/block_bytes;if(batch_blocks>blocks)batch_blocks=blocks;length=batch_blocks*block_bytes;state=RECEIVE;}
         else if(disk_request(LN_ATA_FLUSH))state=FLUSH_WAIT;else failure(4,0x44);
         return;
     }
@@ -200,7 +200,7 @@ static bool drain(void) {
     }
 }
 _Noreturn void ln_s5l_disk_mode(const char *serial,uint32_t sector_bytes,bool writable) {
-    if(sector_bytes!=512 && sector_bytes!=4096)ln_platform_hardware_reset();
+    if(sector_bytes!=512 && sector_bytes!=2048 && sector_bytes!=4096)ln_platform_hardware_reset();
     (void)ln_s5l_board_disk_screen();
     /* Exclusive Disk Mode needs the faster bus; exit resets the normal clock. */
     (void)ln_core_clock_set(216000000u);
@@ -211,7 +211,7 @@ _Noreturn void ln_s5l_disk_mode(const char *serial,uint32_t sector_bytes,bool wr
     ln_core_watchdog_arm();ln_ata_init(ln_time_us());
     struct ln_ata_state drive;
     do {ln_ata_step(ln_time_us());ln_ata_state_snapshot(&drive);ln_core_watchdog_feed();}while(drive.initializing);
-    uint64_t logical_sectors=drive.sectors>>(sector_bytes==4096?3:0);
+    uint64_t logical_sectors=drive.sectors>>(sector_bytes==4096?3:sector_bytes==2048?2:0);
     if(!drive.initialized || drive.failed || !drive.can_flush || logical_sectors>UINT32_MAX)ln_platform_hardware_reset();
     capacity=(uint32_t)logical_sectors;
     if(!ln_s5l_usb_storage_init(serial))ln_platform_hardware_reset();
