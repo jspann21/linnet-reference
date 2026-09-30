@@ -29,6 +29,11 @@ void ln_mp3_init(struct ln_mp3 *d,ln_mp3_read_fn read,void *context,uint64_t siz
 bool ln_mp3_seek(struct ln_mp3 *d,uint64_t frame)
 {
     if(!d||!d->read||d->pending||(d->gapless&&frame>d->total_frames))return false;
+    if(d->initialized&&!d->error&&!d->seeking&&frame>=d->decoded_frames){
+        /* Keep the valid bit reservoir and synthesis history for a forward
+         * seek. Buffered PCM is discarded against the same trimmed timeline. */
+        d->seek_target=frame;d->seeking=frame!=d->decoded_frames;return true;
+    }
     ln_mp3_read_fn read=d->read;void *context=d->context;uint64_t size=d->file_size;
     ln_mp3_init(d,read,context,size);d->seek_target=frame;d->seeking=frame!=0;return true;
 }
