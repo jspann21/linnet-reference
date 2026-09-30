@@ -898,12 +898,12 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
     supported = ('.m4a', '.m4b', '.flac', '.flc')
     for folder in source_folders(root, 'Music'):
         for path in folder.rglob('*'):
-            checkpoint()
             suffix = path.suffix.lower()
             if suffix not in supported or not path.is_file():
                 continue
             if path.relative_to(root).as_posix().casefold() in skipped:
                 continue
+            checkpoint()
             _plain(path, root)
             if suffix in ('.m4a', '.m4b'):
                 progress(f'Preparing AAC seeks: {path.name}')
