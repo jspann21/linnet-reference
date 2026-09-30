@@ -6,13 +6,11 @@ indexes the disk. Original files are not renamed or rewritten.
 """
 from collections import deque
 from pathlib import Path
-import array
 import hashlib
 import json
 import os
 import stat
 import struct
-import sys
 import time
 import unicodedata
 import uuid
@@ -117,15 +115,13 @@ def _preview(source, cache, width, height, columns, recipe, checkpoint, info, ro
         _plain(source, root)
         if suffix in IMAGES:
             from PIL import Image, ImageOps
+            from .photos import _rgb565
             with Image.open(source) as original:
                 image = ImageOps.exif_transpose(original).convert('RGB')
                 image.thumbnail((width, height), Image.Resampling.LANCZOS)
                 canvas = Image.new('RGB', (width, height))
                 canvas.paste(image, ((width - image.width) // 2, (height - image.height) // 2))
-                pixels = array.array('H', ((r >> 3) << 11 | (g >> 2) << 5 | b >> 3 for r, g, b in canvas.getdata()))
-                if sys.byteorder != 'little':
-                    pixels.byteswap()
-                payload = pixels.tobytes()
+                payload = _rgb565(canvas)
             header = bytearray(512)
             struct.pack_into('<4s4I', header, 0, b'FIMG', 1, width, height, zlib.crc32(payload))
             struct.pack_into('<I', header, 508, zlib.crc32(header[:508]))
