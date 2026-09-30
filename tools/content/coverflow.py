@@ -1,5 +1,6 @@
 import hashlib
 import io
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 import struct
 import zlib
@@ -176,52 +177,72 @@ def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, I
     palette.putpalette([v for color in colors for v in color])
     reflection_shape = [(1 - ((x - 47.5) / 48) ** 2) ** 2 for x in range(96)]
     source_ids, image_ids, artwork, previews, catalog = {}, {}, [], [], []
-    for group in range(groups):
-        kind, name, parent, first, count = struct.unpack_from('<5I', database, groups_at + group * 32)
-        if kind != 2:
-            continue
-        artist = text(struct.unpack_from('<I', database, groups_at + parent * 32 + 4)[0])
-        # Prefer a member with a cover when the first track has no artwork.
-        art = 0xffffffff
-        for member in range(first, first + count):
-            track = struct.unpack_from('<I', database, members_at + member * 4)[0]
-            art = struct.unpack_from('<I', database, tracks_at + track * width + 88)[0]
-            if art != 0xffffffff:
-                break
-        if art not in source_ids:
-            cover = Image.new('RGB', (96, 96), '#23374f')
-            if originals is not None and art in originals:
-                cover = originals[art]
-            elif art != 0xffffffff:
-                path_offset, side, _, _, art_bytes = struct.unpack_from('<IHHII', database, art_at + art * 32 + 8)
-                path = text(path_offset)
-                raw = _bounded(root / path.lstrip('/'), art_bytes)
-                pixels = struct.unpack(f'<{side * side}H', raw)
-                cover = Image.new('RGB', (side, side))
-                cover.putdata([((p >> 11) * 255 // 31, ((p >> 5) & 63) * 255 // 63, (p & 31) * 255 // 31) for p in pixels])
-                cover = cover.resize((96, 96), Image.Resampling.LANCZOS)
-            else:
-                draw = ImageDraw.Draw(cover)
-                draw.ellipse((24, 24, 72, 72), outline='#819fbc', width=2)
-                draw.ellipse((44, 44, 52, 52), fill='#819fbc')
-            # Include the recipe and Pillow version; never reuse art by timestamp.
-            key = hashlib.sha256(b'LCF2-tile-1\0' + pillow_version.encode() + b'\0' +
-                                 cover.mode.encode() + struct.pack('<II', *cover.size) + cover.tobytes()).digest()
-            saved = cache.coverflow_get(key) if cache is not None and not bypass_cache else None
-            if key in image_ids:
-                source_ids[art] = image_ids[key]
-            elif saved is not None:
-                source_ids[art] = image_ids[key] = len(artwork)
-                artwork.append(saved[:ART_RECORD])
-                previews.append(saved[ART_RECORD:])
-            else:
-                source_ids[art] = image_ids[key] = len(artwork)
-                packed, preview = _prepare_tile(cover, palette, reflection_shape)
-                artwork.append(packed)
-                previews.append(preview)
-                if cache is not None:
-                    cache.coverflow_put(key, bytes(packed) + preview)
-        art_id = source_ids[art]
+    catalog_rows, pending, workers = [], [], None
+
+    def finish_tile():
+        art_id, key, future = pending.pop(0)
+        packed, preview = future.result()
+        artwork[art_id], previews[art_id] = packed, preview
+        if cache is not None:
+            cache.coverflow_put(key, bytes(packed) + preview)
+
+    try:
+        for group in range(groups):
+            kind, name, parent, first, count = struct.unpack_from('<5I', database, groups_at + group * 32)
+            if kind != 2:
+                continue
+            artist = text(struct.unpack_from('<I', database, groups_at + parent * 32 + 4)[0])
+            # Prefer a member with a cover when the first track has no artwork.
+            art = 0xffffffff
+            for member in range(first, first + count):
+                track = struct.unpack_from('<I', database, members_at + member * 4)[0]
+                art = struct.unpack_from('<I', database, tracks_at + track * width + 88)[0]
+                if art != 0xffffffff:
+                    break
+            if art not in source_ids:
+                cover = Image.new('RGB', (96, 96), '#23374f')
+                if originals is not None and art in originals:
+                    cover = originals[art]
+                elif art != 0xffffffff:
+                    path_offset, side, _, _, art_bytes = struct.unpack_from('<IHHII', database, art_at + art * 32 + 8)
+                    path = text(path_offset)
+                    raw = _bounded(root / path.lstrip('/'), art_bytes)
+                    pixels = struct.unpack(f'<{side * side}H', raw)
+                    cover = Image.new('RGB', (side, side))
+                    cover.putdata([((p >> 11) * 255 // 31, ((p >> 5) & 63) * 255 // 63, (p & 31) * 255 // 31) for p in pixels])
+                    cover = cover.resize((96, 96), Image.Resampling.LANCZOS)
+                else:
+                    draw = ImageDraw.Draw(cover)
+                    draw.ellipse((24, 24, 72, 72), outline='#819fbc', width=2)
+                    draw.ellipse((44, 44, 52, 52), fill='#819fbc')
+                # Include the recipe and Pillow version; never reuse art by timestamp.
+                key = hashlib.sha256(b'LCF2-tile-1\0' + pillow_version.encode() + b'\0' +
+                                     cover.mode.encode() + struct.pack('<II', *cover.size) + cover.tobytes()).digest()
+                saved = cache.coverflow_get(key) if cache is not None and not bypass_cache else None
+                if key in image_ids:
+                    source_ids[art] = image_ids[key]
+                elif saved is not None:
+                    source_ids[art] = image_ids[key] = len(artwork)
+                    artwork.append(saved[:ART_RECORD])
+                    previews.append(saved[ART_RECORD:])
+                else:
+                    source_ids[art] = image_ids[key] = len(artwork)
+                    artwork.append(None)
+                    previews.append(None)
+                    if workers is None:
+                        workers = ThreadPoolExecutor(max_workers=4)
+                    pending.append((source_ids[art], key,
+                                    workers.submit(_prepare_tile, cover, palette.copy(), reflection_shape)))
+                    if len(pending) >= 4:
+                        finish_tile()
+            art_id = source_ids[art]
+            catalog_rows.append((group, count, name, artist, art_id))
+        while pending:
+            finish_tile()
+    finally:
+        if workers is not None:
+            workers.shutdown(wait=True, cancel_futures=True)
+    for group, count, name, artist, art_id in catalog_rows:
         record = bytearray(CATALOG)
         struct.pack_into('<II', record, 0, group, count)
         for offset, value in ((8, text(name)), (128, artist)):
