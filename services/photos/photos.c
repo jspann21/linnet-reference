@@ -27,6 +27,7 @@ _Static_assert(VISIBLE_TILES<=TILES,"photo viewport exceeds tile cache capacity"
 enum phase {OPEN,HEADER,VERIFY,IDLE,RECORD,TITLE,THUMB,LEVEL,TILE_RECORD,TILE_DATA,SOURCE,JPEG_OPEN,JPEG_LOAD,JPEG_DECODE,TILE_COMMIT,FILE_HEADER,FILE_PIXELS,GRID_OPEN,GRID_HEADER,GRID_VERIFY,GRID_THUMB_COMMIT};
 struct row {uint32_t index;bool valid,album,thumb,title_ready;char title[192];union {struct ln_pimg_album a;struct ln_pimg_photo p;} data;struct ln_ui_asset asset;};
 struct tile {uint32_t index,age;bool valid;};
+struct level_cache {uint32_t index,count;bool valid;};
 static struct {
     union {uint16_t viewer_tiles[TILES][1024],thumbs[ROWS][THUMB_WIDTH*THUMB_HEIGHT];
         uint8_t jpeg[262144];uint32_t photo_info[65535];} pixels;
@@ -38,6 +39,8 @@ static struct {
     struct ln_photo_jpeg jpeg;
     struct ln_pimg_header header;struct ln_pgrid_header grid;struct ln_fat32_file file,jpeg_file,grid_file;
     struct row rows[ROWS];struct tile tiles[TILES];struct ln_pimg_photo photo;struct ln_pimg_level levels[6];
+    struct level_cache level_cache[2];
+    struct {uint32_t index;bool valid;} frame_cache[2];
     struct ln_ui_asset asset;
     uint32_t verify_cached,verify_cursor,grid_at;bool metadata_valid,pim_verified,grid_cache;
     uint8_t metadata[131072],pim_header[512],resume[16],tile_records[512],tile_hints[TILES];char title[192],album_title[192],source[128];
@@ -46,13 +49,20 @@ static struct {
     uint32_t tile_records_first,tile_records_count,tile_group_count,tile_group_cursor,thumb_group_count,thumb_group_cursor;
     uint32_t visible[TILES],visible_count,front,render_y,slide_at,jpeg_at,ready_tiles,resume_stage,file_offset;
     uint8_t verify_record[64];uint32_t v_photos,v_levels,v_tiles,v_album,v_photo,v_level,v_width,v_height,v_text_bytes,v_more,v_code,v_min,jpeg_crc;
-    int16_t map_x[WIDTH],map_y[HEIGHT];int32_t pan_x,pan_y;
+    int32_t pan_x,pan_y;
     bool active,ready,pending,io_open,job_album,view_loaded,frame_valid,frame_complete,rendering,redraw,slide,slide_armed,resume_pending,jpeg_mode,stepping,album_known,direct,grid_available,prepared,prefetching;
     int error;
 } p;
 /* Transient reads are fully filled before use; retain cache capacity while
  * using the spare tail of the artwork bank on targets that reserve it. */
 static uint8_t photo_scratch[32768]
+#if defined(LINNET_COVERFLOW)
+    __attribute__((section(".cover_high"),aligned(32)))
+#endif
+;
+/* Maps and cached descriptions are completely filled before their cleared
+ * control tags permit reads. Use the artwork bank's spare tail on color iPods. */
+static struct {int16_t x[WIDTH],y[HEIGHT];struct ln_pimg_level levels[2][6];} photo_maps
 #if defined(LINNET_COVERFLOW)
     __attribute__((section(".cover_high"),aligned(32)))
 #endif
@@ -118,6 +128,8 @@ static uint32_t metadata_end(void){
 }
 static bool cached_metadata_work(void){
     return ((p.phase==VERIFY||p.phase==GRID_VERIFY)&&p.verify_cached)||
+        (p.phase==LEVEL&&p.level_cache[p.photo_index&1u].valid&&
+         p.level_cache[p.photo_index&1u].index==p.photo_index&&p.level_cache[p.photo_index&1u].count==p.photo.levels)||
         (p.metadata_valid&&(p.phase==RECORD||p.phase==TITLE||p.phase==SOURCE||
          (p.phase==LEVEL&&metadata_end()==p.header.tile_at)));
 }
@@ -203,6 +215,8 @@ static void verify_begin(bool grid){
      * Canceled verification must regenerate pixels and the compact cache. */
     for(uint32_t i=0;i<ROWS;++i)p.rows[i].valid=p.rows[i].thumb=p.rows[i].title_ready=false;
     for(uint32_t i=0;i<TILES;++i)p.tiles[i].valid=false;
+    for(uint32_t i=0;i<2u;++i)p.level_cache[i].valid=false;
+    for(uint32_t i=0;i<2u;++i)p.frame_cache[i].valid=false;
     p.phase=grid?GRID_VERIFY:VERIFY;
 }
 static void grid_fallback(void){
@@ -275,19 +289,19 @@ static void layout(void){
     p.direct=!p.rotation&&(p.zoom||(dw==w&&dh==h));
     if(p.pan_x>(int32_t)w/2)p.pan_x=(int32_t)w/2;if(p.pan_x<-(int32_t)w/2)p.pan_x=-(int32_t)w/2;
     if(p.pan_y>(int32_t)h/2)p.pan_y=(int32_t)h/2;if(p.pan_y<-(int32_t)h/2)p.pan_y=-(int32_t)h/2;
-    for(uint32_t x=0;x<WIDTH;x++){int32_t v=(int32_t)x-((int32_t)WIDTH-(int32_t)dw)/2;p.map_x[x]=v<0||v>=(int32_t)dw?-1:(int16_t)((uint32_t)v*w/dw);if(p.zoom)p.map_x[x]=(int16_t)((int32_t)x-(int32_t)WIDTH/2+(int32_t)w/2+p.pan_x);}
-    for(uint32_t y=0;y<HEIGHT;y++){int32_t v=(int32_t)y-((int32_t)HEIGHT-(int32_t)dh)/2;p.map_y[y]=v<0||v>=(int32_t)dh?-1:(int16_t)((uint32_t)v*h/dh);if(p.zoom)p.map_y[y]=(int16_t)((int32_t)y-(int32_t)HEIGHT/2+(int32_t)h/2+p.pan_y);}
+    for(uint32_t x=0;x<WIDTH;x++){int32_t v=(int32_t)x-((int32_t)WIDTH-(int32_t)dw)/2;photo_maps.x[x]=v<0||v>=(int32_t)dw?-1:(int16_t)((uint32_t)v*w/dw);if(p.zoom)photo_maps.x[x]=(int16_t)((int32_t)x-(int32_t)WIDTH/2+(int32_t)w/2+p.pan_x);}
+    for(uint32_t y=0;y<HEIGHT;y++){int32_t v=(int32_t)y-((int32_t)HEIGHT-(int32_t)dh)/2;photo_maps.y[y]=v<0||v>=(int32_t)dh?-1:(int16_t)((uint32_t)v*h/dh);if(p.zoom)photo_maps.y[y]=(int16_t)((int32_t)y-(int32_t)HEIGHT/2+(int32_t)h/2+p.pan_y);}
     p.visible_count=0;
     /* Source ranges are separable under quarter-turns; inspect boundaries at
      * tile crossings through the small display grid, never the whole image. */
     int32_t minx=2048,miny=2048,maxx=-1,maxy=-1;
-    for(uint32_t x=0;x<WIDTH;x++)for(uint32_t y=0;y<HEIGHT;y+=HEIGHT-1u){int32_t sx,sy;source_xy(p.map_x[x],p.map_y[y],&sx,&sy);if(sx>=0&&sx<(int32_t)l->width){if(sx<minx)minx=sx;if(sx>maxx)maxx=sx;}}
-    for(uint32_t y=0;y<HEIGHT;y++)for(uint32_t x=0;x<WIDTH;x+=WIDTH-1u){int32_t sx,sy;source_xy(p.map_x[x],p.map_y[y],&sx,&sy);if(sy>=0&&sy<(int32_t)l->height){if(sy<miny)miny=sy;if(sy>maxy)maxy=sy;}}
+    for(uint32_t x=0;x<WIDTH;x++)for(uint32_t y=0;y<HEIGHT;y+=HEIGHT-1u){int32_t sx,sy;source_xy(photo_maps.x[x],photo_maps.y[y],&sx,&sy);if(sx>=0&&sx<(int32_t)l->width){if(sx<minx)minx=sx;if(sx>maxx)maxx=sx;}}
+    for(uint32_t y=0;y<HEIGHT;y++)for(uint32_t x=0;x<WIDTH;x+=WIDTH-1u){int32_t sx,sy;source_xy(photo_maps.x[x],photo_maps.y[y],&sx,&sy);if(sy>=0&&sy<(int32_t)l->height){if(sy<miny)miny=sy;if(sy>maxy)maxy=sy;}}
     /* Rotated axes may have margins at both sampled edges. Compute extrema
      * using each independent coordinate as well. */
     if(p.rotation&1u){minx=miny=2048;maxx=maxy=-1;
-        for(uint32_t y=0;y<HEIGHT;y++){int32_t sx,sy;source_xy(0,p.map_y[y],&sx,&sy);if(sx>=0&&sx<(int32_t)l->width){if(sx<minx)minx=sx;if(sx>maxx)maxx=sx;}}
-        for(uint32_t x=0;x<WIDTH;x++){int32_t sx,sy;source_xy(p.map_x[x],0,&sx,&sy);if(sy>=0&&sy<(int32_t)l->height){if(sy<miny)miny=sy;if(sy>maxy)maxy=sy;}}}
+        for(uint32_t y=0;y<HEIGHT;y++){int32_t sx,sy;source_xy(0,photo_maps.y[y],&sx,&sy);if(sx>=0&&sx<(int32_t)l->width){if(sx<minx)minx=sx;if(sx>maxx)maxx=sx;}}
+        for(uint32_t x=0;x<WIDTH;x++){int32_t sx,sy;source_xy(photo_maps.x[x],0,&sx,&sy);if(sy>=0&&sy<(int32_t)l->height){if(sy<miny)miny=sy;if(sy>maxy)maxy=sy;}}}
     if(maxx>=minx&&maxy>=miny)for(uint32_t y=(uint32_t)miny/32u;y<=(uint32_t)maxy/32u;y++)for(uint32_t x=(uint32_t)minx/32u;x<=(uint32_t)maxx/32u;x++){
         if(p.visible_count==TILES){fail(20);return;}p.visible[p.visible_count++]=l->first+y*l->columns+x;}
     p.redraw=false;p.rendering=false;p.frame_complete=false;p.ready_tiles=0;
@@ -297,20 +311,20 @@ static void slide_ready(void){
 }
 static void render_step(void){
     PHOTO_START();
-    if(!p.rendering){p.rendering=true;p.render_y=0;p.redraw=false;}
+    if(!p.rendering){p.frame_cache[p.front^1u].valid=false;p.rendering=true;p.render_y=0;p.redraw=false;}
     const struct ln_pimg_level*l=&p.levels[p.level];uint16_t*out=photo_buffers.surface.frame[p.front^1u];
     uint32_t end=p.render_y+8u;if(end>HEIGHT)end=HEIGHT;
     for(uint32_t y=p.render_y;y<end;y++){
         if(p.direct){
-            uint16_t*row=out+y*WIDTH;int32_t sy=p.map_y[y];
+            uint16_t*row=out+y*WIDTH;int32_t sy=photo_maps.y[y];
             /* A complete source row overwrites every destination pixel. The
              * frame is rendered only after all visible tiles are cached. */
             bool covered=p.frame_complete&&sy>=0&&sy<(int32_t)l->height&&
-                p.map_x[0]>=0&&p.map_x[WIDTH-1]<(int32_t)l->width;
+                photo_maps.x[0]>=0&&photo_maps.x[WIDTH-1]<(int32_t)l->width;
             if(!covered)clear(row,WIDTH*sizeof *row);
             if(sy<0||sy>=(int32_t)l->height)continue;
-            uint32_t x=0;while(x<WIDTH&&p.map_x[x]<0)++x;
-            while(x<WIDTH){int32_t sx=p.map_x[x];if(sx<0||sx>=(int32_t)l->width)break;
+            uint32_t x=0;while(x<WIDTH&&photo_maps.x[x]<0)++x;
+            while(x<WIDTH){int32_t sx=photo_maps.x[x];if(sx<0||sx>=(int32_t)l->width)break;
                 uint32_t count=32u-((uint32_t)sx&31u);
                 if(count>WIDTH-x)count=WIDTH-x;if(count>l->width-(uint32_t)sx)count=l->width-(uint32_t)sx;
                 uint32_t tile=l->first+(uint32_t)sy/32u*l->columns+(uint32_t)sx/32u;
@@ -324,13 +338,15 @@ static void render_step(void){
         /* Quarter-turn transforms are affine in x. Hoist the transform and
          * level geometry out of the pixel loop without changing scaled maps. */
         int32_t origin_x,origin_y,step_x,step_y;
-        source_xy(0,p.map_y[y],&origin_x,&origin_y);source_xy(1,p.map_y[y],&step_x,&step_y);
+        source_xy(0,photo_maps.y[y],&origin_x,&origin_y);source_xy(1,photo_maps.y[y],&step_x,&step_y);
         step_x-=origin_x;step_y-=origin_y;
-        for(uint32_t x=0;x<WIDTH;x++){int32_t sx=origin_x+p.map_x[x]*step_x,sy=origin_y+p.map_x[x]*step_y;uint16_t color=0;
-            if(p.map_x[x]>=0&&p.map_y[y]>=0&&sx>=0&&sy>=0&&sx<(int32_t)l->width&&sy<(int32_t)l->height){uint32_t tile=l->first+(uint32_t)sy/32u*l->columns+(uint32_t)sx/32u;
+        for(uint32_t x=0;x<WIDTH;x++){int32_t sx=origin_x+photo_maps.x[x]*step_x,sy=origin_y+photo_maps.x[x]*step_y;uint16_t color=0;
+            if(photo_maps.x[x]>=0&&photo_maps.y[y]>=0&&sx>=0&&sy>=0&&sx<(int32_t)l->width&&sy<(int32_t)l->height){uint32_t tile=l->first+(uint32_t)sy/32u*l->columns+(uint32_t)sx/32u;
                 if(tile!=last){last=tile;slot=tile_find(tile);}if(slot>=0)color=photo_buffers.pixels.viewer_tiles[slot][((uint32_t)sy&31u)*32u+((uint32_t)sx&31u)];}
             out[y*WIDTH+x]=color;}}
-    p.render_y=end;if(end==HEIGHT){p.front^=1u;p.asset.pixels=photo_buffers.surface.frame[p.front];p.frame_valid=true;p.rendering=false;PHOTO_DIAG(timing.frame_ready=ln_time_us());slide_ready();++p.revision;}
+    p.render_y=end;if(end==HEIGHT){p.front^=1u;p.asset.pixels=photo_buffers.surface.frame[p.front];p.frame_valid=true;p.rendering=false;
+        p.frame_cache[p.front].index=p.photo_index;p.frame_cache[p.front].valid=p.frame_complete&&!p.zoom&&!p.rotation&&!p.pan_x&&!p.pan_y;
+        PHOTO_DIAG(timing.frame_ready=ln_time_us());slide_ready();++p.revision;}
     PHOTO_DIAG(timing.render_us+=ln_time_us()-started);
 }
 static void begin_view(uint32_t index){PHOTO_DIAG(timing.view_started=ln_time_us();timing.frame_ready=timing.render_us=timing.jpeg_us=0);p.slide_armed=false;p.photo_index=index;p.view=LN_PHOTOS_VIEWER;p.view_loaded=p.frame_valid=p.frame_complete=p.jpeg_mode=p.rendering=false;p.error=0;p.zoom=p.rotation=0;p.pan_x=p.pan_y=0;p.level_count=0;for(uint32_t i=0;i<ROWS;i++)p.rows[i].thumb=false;change();++p.navigation;}
@@ -350,6 +366,7 @@ void ln_photos_open(void){if(!p.active){bool joining=p.prefetching;p.prefetching
 static bool begin_file(const struct ln_fat32_file*file,uint32_t offset,uint32_t bytes,const char*title){
     if(p.pending||!file||!bytes||bytes>sizeof photo_buffers.pixels.jpeg||(file->attributes&24u)||offset>file->size||bytes>file->size-offset)return false;
     p.prefetching=false;p.ready=p.metadata_valid=false;p.active=p.jpeg_mode=file_mode=true;
+    for(uint32_t i=0;i<2u;++i)p.frame_cache[i].valid=false;
     p.view=LN_PHOTOS_VIEWER;p.frame_valid=p.view_loaded=p.rendering=p.redraw=p.slide=p.slide_armed=p.resume_pending=false;
     p.error=0;p.count=0;p.jpeg_file=*file;p.file_offset=offset;p.photo.jpeg_bytes=bytes;p.photo.orientation=1;
     text(p.title,title);p.jpeg_at=0;p.jpeg_crc=UINT32_MAX;change();p.working=p.epoch;p.phase=JPEG_LOAD;
@@ -660,6 +677,10 @@ static void photo_step(void){
     if(p.phase==LEVEL){
         /* Descriptors are contiguous; retain the same request until it drains. */
         if(!p.photo.levels||p.photo.levels>6u||p.photo.first>p.header.levels||p.photo.levels>p.header.levels-p.photo.first){image_fail(9);return;}
+        struct level_cache*entry=&p.level_cache[p.photo_index&1u];
+        if(!p.pending&&entry->valid&&entry->index==p.photo_index&&entry->count==p.photo.levels){
+            copy(p.levels,photo_maps.levels[p.photo_index&1u],p.photo.levels*sizeof p.levels[0]);p.level_count=p.photo.levels;
+        }else{
         r=read_at(&p.file,p.header.level_at+p.photo.first*24u,photo_scratch,p.photo.levels*24u);if(!r)return;
         if(r<0){image_fail(9);return;}
         for(p.level_count=0;p.level_count<p.photo.levels;++p.level_count){
@@ -668,9 +689,22 @@ static void photo_step(void){
            l->width>p.photo.width||l->height>p.photo.height||(!p.level_count&&(l->width>WIDTH||l->height>HEIGHT))||
            (p.level_count&&(l->width<p.levels[p.level_count-1].width||l->height<p.levels[p.level_count-1].height||(l->width==p.levels[p.level_count-1].width&&l->height==p.levels[p.level_count-1].height)||l->first!=p.levels[p.level_count-1].first+p.levels[p.level_count-1].count))){image_fail(9);return;}
         }
+        /* Keep the two adjacent viewer descriptions alongside their tile cache.
+         * Reversing Next/Previous then needs no repeated FAT/record request. */
+        entry->valid=false;entry->index=p.photo_index;entry->count=p.photo.levels;
+        copy(photo_maps.levels[p.photo_index&1u],p.levels,p.photo.levels*sizeof p.levels[0]);entry->valid=true;
+        }
         p.view_loaded=true;p.phase=IDLE;
         if(p.resume_pending&&p.photo_index==ln_read_le32(p.resume+4)){uint32_t flags=ln_read_le32(p.resume+8),pan=ln_read_le32(p.resume+12);p.zoom=flags&255u;p.rotation=(flags>>8)&3u;p.pan_x=(int16_t)pan;p.pan_y=(int16_t)(pan>>16);p.resume_pending=false;}
-        if(p.zoom>=p.photo.levels)p.zoom=p.photo.levels-1u;layout();return;
+        if(p.zoom>=p.photo.levels)p.zoom=p.photo.levels-1u;layout();
+        /* The existing two frame buffers can retain an adjacent image pair.
+         * Reversals reuse the composed native view, including scaled photos. */
+        if(!p.zoom&&!p.rotation&&!p.pan_x&&!p.pan_y){for(uint32_t i=0;i<2u;++i){
+            if(p.frame_cache[i].valid&&p.frame_cache[i].index==p.photo_index){
+                p.front=i;p.asset.pixels=photo_buffers.surface.frame[i];p.frame_valid=p.frame_complete=true;
+                PHOTO_DIAG(timing.frame_ready=ln_time_us());slide_ready();++p.revision;break;
+            }
+        }}return;
     }
     if(p.phase==TILE_RECORD){r=tile_record();if(!r)return;
         if(r<0){image_fail(10);return;}
@@ -712,6 +746,7 @@ static void photo_step(void){
     if(p.phase==JPEG_OPEN){r=open_file(p.source,&p.jpeg_file);if(!r)return;if(r<0||p.jpeg_file.size!=p.photo.jpeg_bytes){fail(13);return;}p.jpeg_at=0;p.jpeg_crc=UINT32_MAX;p.phase=JPEG_LOAD;return;}
     if(p.phase==JPEG_LOAD){uint32_t n=p.photo.jpeg_bytes-p.jpeg_at;if(n>4096)n=4096;
         if(n){r=read_at(&p.jpeg_file,p.jpeg_at,photo_buffers.pixels.jpeg+p.jpeg_at,n);if(!r)return;if(r<0){fail(14);return;}p.jpeg_crc=ln_pimg_crc_update(p.jpeg_crc,photo_buffers.pixels.jpeg+p.jpeg_at,n);p.jpeg_at+=n;return;}
+        p.frame_cache[p.front^1u].valid=false;
         if((!file_mode&&(p.jpeg_crc^UINT32_MAX)!=p.photo.jpeg_crc)||ln_photo_jpeg_init(&p.jpeg,photo_buffers.pixels.jpeg,p.photo.jpeg_bytes,photo_buffers.surface.frame[p.front^1u],WIDTH,HEIGHT,WIDTH,p.photo.orientation)<0){fail(15);return;}
         p.phase=JPEG_DECODE;return;}
     if(p.phase==JPEG_DECODE){PHOTO_START();r=ln_photo_jpeg_step(&p.jpeg);PHOTO_DIAG(timing.jpeg_us+=ln_time_us()-started);if(!r)return;uint32_t w=p.photo.orientation>=5?p.jpeg.height:p.jpeg.width,h=p.photo.orientation>=5?p.jpeg.width:p.jpeg.height;
