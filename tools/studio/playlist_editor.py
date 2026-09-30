@@ -231,7 +231,7 @@ class PlaylistEditor(QDialog):
             with QSignalBlocker(self.members):
                 for row in sorted((self.members.row(item) for item in self.members.selectedItems()), reverse=True):
                     ids.pop(row)
-                self.members.takeItem(row)
+                    self.members.takeItem(row)
                 self.members.clearSelection()
                 self.members.setCurrentRow(-1)
             self.members_changed()
