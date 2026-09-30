@@ -416,6 +416,33 @@ def _planning_records(source, snapshots):
     return records
 
 
+def _same_file_bytes(left, right, size):
+    paths = (left, right)
+    before = [path.stat() for path in paths]
+    if any(not stat.S_ISREG(info.st_mode) or info.st_size != size for info in before):
+        raise ValueError('file changed while comparing existing media')
+    equal = True
+    with left.open('rb') as source, right.open('rb') as destination:
+        remaining, chunk_size = size, 16 * 1024
+        while remaining:
+            count = min(remaining, chunk_size)
+            a, b = source.read(count), destination.read(count)
+            if len(a) != count or len(b) != count:
+                raise ValueError('file changed while comparing existing media')
+            if a != b:
+                equal = False
+                break
+            remaining -= count
+            chunk_size = 1024 * 1024
+        if equal and (source.read(1) or destination.read(1)):
+            raise ValueError('file changed while comparing existing media')
+    after = [path.stat() for path in paths]
+    if any((a.st_size, a.st_mtime_ns, a.st_ino) != (b.st_size, b.st_mtime_ns, b.st_ino)
+           for a, b in zip(before, after)):
+        raise ValueError('file changed while comparing existing media')
+    return equal
+
+
 def additions(root, pending, *, snapshots=None):
     """Resolve selected files/folders to concrete destinations without writing."""
     root = Path(root).resolve(strict=True)
@@ -445,7 +472,7 @@ def additions(root, pending, *, snapshots=None):
             if key in planned and planned[key]["source"] != str(path):
                 raise ValueError(f"Two selected files have the same destination: {destination}")
             if destination.exists():
-                if not destination.is_file() or destination.stat().st_size != info.st_size or _hash(destination) != _hash(path):
+                if not destination.is_file() or destination.stat().st_size != info.st_size or not _same_file_bytes(path, destination, info.st_size):
                     equivalent = False
                     if kind == 'Music' and path.suffix.lower() in ('.m4a', '.m4b'):
                         from .aac_index import same_original
