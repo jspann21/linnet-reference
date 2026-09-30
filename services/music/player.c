@@ -184,10 +184,12 @@ static void process_pcm(struct player_slot *s,int16_t *pcm,uint32_t frames){
 }
 static bool submit_slot(struct player_slot *s){
     if(!s->buffered)return true;if(ln_audio_capacity()<s->buffered)return false;
-    for(uint32_t i=0;i<s->buffered;i++){
-        uint32_t at=(raw_head+i)&(LINNET_AUDIO_RING_FRAMES-1u);
-        __builtin_memcpy(RAW_PCM+2*at,s->pcm+2*i,4);
-    }
+    uint32_t at=raw_head&(LINNET_AUDIO_RING_FRAMES-1u);
+    uint32_t first=LINNET_AUDIO_RING_FRAMES-at;
+    if(first>s->buffered)first=s->buffered;
+    __builtin_memcpy(RAW_PCM+2*at,s->pcm,first*4u);
+    if(first<s->buffered)
+        __builtin_memcpy(RAW_PCM,s->pcm+2*first,(s->buffered-first)*4u);
     raw_head+=s->buffered;process_pcm(s,s->pcm,s->buffered);
     if(ln_audio_submit(s->pcm,s->buffered)!=s->buffered){fail(14);return false;}
     s->submitted+=s->buffered;submitted+=s->buffered;s->buffered=0;return true;
