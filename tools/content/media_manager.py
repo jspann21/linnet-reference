@@ -369,7 +369,9 @@ def _music_import_name(name):
 
 
 def _normalize_music_paths(root, checkpoint, renamed):
-    from .music import device_media_path, UnsupportedMediaPath
+    from .music import _device_media_path, UnsupportedMediaPath
+    resolved_root = Path(root).resolve(strict=True)
+    alias_cache = {}
     directories = source_folders(root, "Music")
     while directories:
         folder = directories.pop()
@@ -381,7 +383,7 @@ def _normalize_music_paths(root, checkpoint, renamed):
             if not directory and path.suffix.lower() not in extensions("Music"):
                 continue
             try:
-                device_media_path(path, root)
+                _device_media_path(path, resolved_root, alias_cache)
             except UnsupportedMediaPath:
                 name = _music_import_name(path.name)
                 if name == path.name:
@@ -402,7 +404,7 @@ def _normalize_music_paths(root, checkpoint, renamed):
                 path.rename(destination)
                 renamed(path, destination)
                 path = destination
-                device_media_path(path, root)
+                _device_media_path(path, resolved_root, alias_cache)
             if directory:
                 directories.append(path)
 
