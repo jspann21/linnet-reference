@@ -594,11 +594,11 @@ def _throttled_progress(checkpoint, progress, describe):
     return report
 
 
-def _outputs_match(root, outputs, *, verified=None):
+def _outputs_match(root, outputs, *, verified=None, progress=None):
     """Treat malformed/stale host cache entries as misses, with bounded paths."""
     if not isinstance(outputs, list) or not outputs:
         return False
-    for item in outputs:
+    for index, item in enumerate(outputs):
         if not isinstance(item, (list, tuple)) or len(item) != 2:
             return False
         name, digest = item
@@ -620,9 +620,14 @@ def _outputs_match(root, outputs, *, verified=None):
             # equal size. Hash recent files on every check until that window
             # has passed, then reuse the verified stamp on later refreshes.
             recent = os.name == "nt" and info.st_mtime_ns > time.time_ns() - 5_000_000_000
+            def notify(current, total):
+                if progress:
+                    progress(dict(current=index, total=len(outputs), file=name,
+                                  bytes=current, file_bytes=total))
             if verified is not None and not recent and verified.get(key) == stamp:
+                notify(info.st_size, info.st_size)
                 continue
-            if _hash(path) != digest:
+            if _hash(path, progress=notify if progress else None) != digest:
                 return False
             after = path.stat()
             if stamp != (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino):
@@ -632,6 +637,34 @@ def _outputs_match(root, outputs, *, verified=None):
         except (OSError, ValueError):
             return False
     return True
+
+
+def _checking_progress(kind, checkpoint, progress, stage):
+    last, current_file, started = 0.0, -1, 0.0
+    def report(event):
+        nonlocal last, current_file, started
+        now = time.monotonic()
+        if event['current'] != current_file:
+            current_file, started = event['current'], now
+        finished = (event['current'] + 1 == event['total'] and
+                    event['bytes'] == event['file_bytes'])
+        if now - last < 0.2 and not finished:
+            return
+        checkpoint()
+        fraction = (1.0 if event['bytes'] == event['file_bytes'] else
+                    min(1.0, event['bytes'] / max(1, event['file_bytes'])))
+        stage((event['current'] + fraction) / event['total'])
+        detail = ''
+        if event['file_bytes'] >= 1024 * 1024:
+            detail = f" · {fraction:.0%} ({format_size(event['bytes'])} / {format_size(event['file_bytes'])})"
+            elapsed = now - started
+            if elapsed >= 1 and event['bytes'] and fraction < 1:
+                seconds = elapsed * (event['file_bytes'] - event['bytes']) / event['bytes']
+                detail += (f' · about {max(1, round(seconds / 60))}m left' if seconds >= 60 else
+                           f' · about {max(1, round(seconds))}s left')
+        progress(f"Checking {kind} {event['current']+1}/{event['total']}: {Path(event['file']).name}{detail}")
+        last = now
+    return report
 
 
 def _published_photo_output(root, identity, output_paths, published):
@@ -1436,10 +1469,14 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             if not isinstance(saved, dict):
                 saved = {}
             outputs = saved.get("outputs", [])
-            if not force and not (kind == "Music" and music_verification == "full") and signature == saved.get("signature") and _outputs_match(root, outputs, verified=verified_outputs):
-                progress(f"{kind}: already up to date.")
-                report["steps"].append(dict(kind=kind, status="unchanged"))
-                continue
+            if not force and not (kind == "Music" and music_verification == "full") and signature == saved.get("signature"):
+                emit_stage(f'Checking saved {kind}', unit)
+                checking = _checking_progress(kind, checkpoint, progress,
+                    lambda fraction: emit_stage(f'Checking saved {kind}', unit, fraction))
+                if _outputs_match(root, outputs, verified=verified_outputs, progress=checking):
+                    progress(f"{kind}: already up to date.")
+                    report["steps"].append(dict(kind=kind, status="unchanged"))
+                    continue
             progress(f"Preparing {kind.lower()} ({item['count']:,} files)…")
             publication_started = False
             try:

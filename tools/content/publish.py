@@ -146,17 +146,22 @@ def _bounded(path: Path, maximum: int) -> bytes:
     return data
 
 
-def _hash(path: Path, expected_size: int | None = None) -> str:
+def _hash(path: Path, expected_size: int | None = None, *,
+          progress: Callable[[int, int], None] | None = None) -> str:
     before = path.stat()
     if not stat.S_ISREG(before.st_mode) or (expected_size is not None and before.st_size != expected_size):
         raise ValueError(f"unexpected file type/size: {path}")
     digest = hashlib.sha256()
     count = 0
+    if progress:
+        progress(0, before.st_size)
     with path.open("rb") as reader:
         chunk_size = min(CHUNK, max(16 * 1024, before.st_size))
         while chunk := reader.read(chunk_size):
             count += len(chunk)
             digest.update(chunk)
+            if progress:
+                progress(count, before.st_size)
     after = path.stat()
     if count != before.st_size or (before.st_size, before.st_mtime_ns, before.st_ino) != (after.st_size, after.st_mtime_ns, after.st_ino):
         raise ValueError(f"file changed while hashing: {path}")
