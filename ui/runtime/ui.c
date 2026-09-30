@@ -744,6 +744,14 @@ static void classic_album(struct painter*p,int32_t x,int32_t y,int32_t size,cons
     struct ln_ui_node node={.x=x,.y=y,.w=size,.h=size,.bg=LN_UI_COLOR_TOKEN+LN_UI_ARTWORK_BG};
     image_asset(p,&node,art);
 }
+static const struct ln_ui_asset*classic_preview_art(const struct ln_ui_scene*c,const struct ln_ui_state*s){
+    const struct ln_ui_node*n=&c->nodes[c->focus_node];
+    uint32_t source=menu_source(n,s->selected);
+    const char*label=n->items&&source<n->item_count?n->items[source]:"";
+    if(!same(label,"Music")&&!same(label,"Now Playing"))return 0;
+    uint32_t revision;const struct ln_ui_asset*art=ln_ui_now_playing_art(&revision);
+    return art&&art->pixels&&art->width&&art->height?art:0;
+}
 static void classic_reflection_row(struct painter*p,struct rect reflection,int32_t y){
     int32_t x=reflection.x,end=x+reflection.w,sample=367-y;
     if(x==end)return;
@@ -767,13 +775,8 @@ static void classic_reflection_row(struct painter*p,struct rect reflection,int32
 static void classic_preview(struct painter*p,struct ln_ui_state*s){
     if(layout()!=LN_UI_LAYOUT_IPOD_CLASSIC||s->scene!=LN_UI_SCENE_HOME)return;
     const struct ln_ui_scene*c=&ln_ui_scenes[s->scene];
-    if(c->focus_node>=c->count)return;const struct ln_ui_node*n=&c->nodes[c->focus_node];
-    uint32_t source=menu_source(n,s->selected);const char*label=n->items&&source<n->item_count?n->items[source]:"";
-    const struct ln_ui_asset*art=0;
-    if(same(label,"Music")||same(label,"Now Playing")){
-        uint32_t revision;art=ln_ui_now_playing_art(&revision);
-        if(art&&(!art->pixels||!art->width||!art->height))art=0;
-    }
+    if(c->focus_node>=c->count)return;
+    const struct ln_ui_asset*art=classic_preview_art(c,s);
     struct rect pane={160,24,160,216};
     struct rect clip=p->clip;
     if(art)p->clip=intersect(clip,(struct rect){160,184,160,56});
@@ -854,7 +857,24 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
         n=&metadata;
     }
     switch(n->kind){
-    case LN_UI_SCREEN:fill(p,bounds(n),bg);chrome(p,s);break;
+    case LN_UI_SCREEN:{
+        bool preview=false;
+        if(layout()==LN_UI_LAYOUT_IPOD_CLASSIC&&s->scene==LN_UI_SCENE_HOME){
+            const struct ln_ui_scene*c=&ln_ui_scenes[s->scene];
+            if(c->nodes&&c->focus_node<c->count){
+                const struct ln_ui_asset*art=classic_preview_art(c,s);
+                struct ln_ui_node album={.x=160,.y=24,.w=160,.h=160};
+                preview=!art||image_independent(p,&album,art);
+            }
+        }
+        struct rect area=p->clip,pane=intersect(area,(struct rect){160,24,160,216});
+        if(preview&&pane.w&&pane.h){
+            fill(p,(struct rect){area.x,area.y,area.w,pane.y-area.y},bg);
+            fill(p,(struct rect){area.x,pane.y+pane.h,area.w,area.y+area.h-pane.y-pane.h},bg);
+            fill(p,(struct rect){area.x,pane.y,pane.x-area.x,pane.h},bg);
+            fill(p,(struct rect){pane.x+pane.w,pane.y,area.x+area.w-pane.x-pane.w,pane.h},bg);
+        }else fill(p,bounds(n),bg);
+        chrome(p,s);break;}
     case LN_UI_VIEW:fill(p,bounds(n),bg);break;
     case LN_UI_TEXT:
         if((n->flags&LN_UI_FOOTER)&&!same(n->text,"Theme status")){
