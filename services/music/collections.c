@@ -26,6 +26,9 @@ bool ln_collections_busy(void){return pending||phase!=0;}
 bool ln_collections_dirty(void){return revision!=durable;}
 uint32_t ln_collections_revision(void){return revision+durable+(ready?1u:0u)+(failed?1u:0u);}
 const char *ln_collections_status(void){return failed?"Save failed; reconnect USB":!ready?"Loading playlists...":!available?"Sync to enable saving":revision!=durable?"Saving...":"Saved";}
+const char *ln_collection_name(uint32_t slot){
+    return ready&&slot<LN_COLLECTION_SLOTS?(const char *)(saved+LISTS+slot*ENTRY):0;
+}
 const struct ln_collection *ln_collection_get(uint32_t slot){
     if(!ready||slot>=LN_COLLECTION_SLOTS)return 0;const uint8_t *p=saved+LISTS+slot*ENTRY;
     for(uint32_t i=0;i<32;i++)entry.name[i]=(char)p[i];entry.count=ln_read_le32(p+32);

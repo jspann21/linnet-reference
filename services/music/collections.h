@@ -14,6 +14,8 @@ bool ln_collections_busy(void);
 bool ln_collections_dirty(void);
 const char *ln_collections_status(void);
 uint32_t ln_collections_revision(void);
+/* Name points into the current saved bank; consume before a playlist edit. */
+const char *ln_collection_name(uint32_t slot);
 const struct ln_collection *ln_collection_get(uint32_t slot);
 bool ln_collection_put(uint32_t slot,const struct ln_collection *value);
 int ln_collection_free(void);

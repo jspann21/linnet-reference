@@ -63,8 +63,8 @@ static uint32_t ordinal(uint32_t n){return b.here.reverse?(b.here.view==ARTIST_A
 static bool list_view(void){return b.here.view==GROUPS||b.here.view==TRACKS||b.here.view==ACTIVITY||b.here.view==LOCAL_TRACKS||b.here.view==ARTIST_ALBUMS||b.here.view==ALBUM_ARTISTS;}
 static bool push(void){if(b.depth==8)return false;b.parents[b.depth++]=b.here;return true;}
 static void enter(enum view view,const char *title){b.here=(struct location){.view=view};copy(b.here.title,title);navigate();}
-static uint32_t slots(void){uint32_t n=0;for(uint32_t i=0;i<LN_COLLECTION_SLOTS;i++){const struct ln_collection *p=ln_collection_get(i);if(p&&p->name[0])n++;}return n;}
-static uint32_t slot_at(uint32_t n){for(uint32_t i=0;i<LN_COLLECTION_SLOTS;i++){const struct ln_collection *p=ln_collection_get(i);if(p&&p->name[0]){if(!n)return i;n--;}}return UINT32_MAX;}
+static uint32_t slots(void){uint32_t n=0;for(uint32_t i=0;i<LN_COLLECTION_SLOTS;i++){const char *name=ln_collection_name(i);if(name&&name[0])n++;}return n;}
+static uint32_t slot_at(uint32_t n){for(uint32_t i=0;i<LN_COLLECTION_SLOTS;i++){const char *name=ln_collection_name(i);if(name&&name[0]){if(!n)return i;n--;}}return UINT32_MAX;}
 void ln_music_browser_init(void){b.visible=6;b.visible_now=true;enter(CATEGORIES,"Music");}
 void ln_music_browser_suspend(bool value){b.suspended=value;}
 void ln_music_browser_set_visible(bool value){b.visible_now=value;}
@@ -98,7 +98,7 @@ const char *ln_music_browser_label(uint32_t n){
     case BROWSE_OPTIONS:{struct location *p=&b.parents[b.depth-1];bool alpha=p->view==GROUPS||p->view==ARTIST_ALBUMS||p->view==ALBUM_ARTISTS||(p->view==TRACKS&&!p->kind)||(p->view==ACTIVITY&&(b.activity_kind==9||b.activity_kind==10));return n==2?"Jump to letter...":alpha?(n?"Sort: Z to A":"Sort: A to Z"):(n?"Reverse track order":"Original track order");}
     case LETTERS:{static char letter[2];letter[0]=n?(char)('A'+n-1):'#';letter[1]=0;return letter;}
     case ARTIST_ALBUMS:if(!ordinal(n))return "All Songs";break;
-    case PLAYLISTS:case DESTINATION:{uint32_t count=slots();if(n<count){const struct ln_collection *p=ln_collection_get(slot_at(n));return p?p->name:"";}
+    case PLAYLISTS:case DESTINATION:{uint32_t count=slots();if(n<count){const char *name=ln_collection_name(slot_at(n));return name?name:"";}
         if(!ln_collections_ready())return "Loading playlists...";return n==count?"New playlist...":"Synced playlists";}
     case NAME:{static char letter[2];if(!n)return "Save name";if(n==1)return "Erase last character";if(n-2>=sizeof alphabet-1)return "";letter[0]=alphabet[n-2];letter[1]=0;return letter[0]==' '?"[space]":letter;}
     case CONFIRM:return n?"Delete playlist":"Cancel";
@@ -191,7 +191,7 @@ bool ln_music_browser_select(uint32_t n){
         if(!destination&&n==count+1){if(!push())return false;groups(7);return true;}return false;
     }
     if(b.here.view==NAME){if(!n){if(!b.name_length){ln_music_browser_notice("Enter a playlist name");return false;}
-            for(uint32_t i=0;i<LN_COLLECTION_SLOTS;i++){const struct ln_collection *p=ln_collection_get(i);if(i==b.destination||!p)continue;uint32_t j=0;while(b.name[j]&&b.name[j]==p->name[j])j++;if(!b.name[j]&&!p->name[j]){ln_music_browser_notice("Name already in use");return false;}}
+            for(uint32_t i=0;i<LN_COLLECTION_SLOTS;i++){const char *name=ln_collection_name(i);if(i==b.destination||!name)continue;uint32_t j=0;while(b.name[j]&&b.name[j]==name[j])j++;if(!b.name[j]&&!name[j]){ln_music_browser_notice("Name already in use");return false;}}
             for(uint32_t i=0;i<32;i++)b.draft.name[i]=i<=b.name_length?b.name[i]:0;return store_draft(b.destination);}
         if(n==1){if(b.name_length)b.name[--b.name_length]=0;}else if(n-2<sizeof alphabet-1&&b.name_length<31){b.name[b.name_length++]=alphabet[n-2];b.name[b.name_length]=0;}changed();return true;}
     if(b.here.view==CONFIRM){if(!n)return ln_music_browser_back();b.draft=(struct ln_collection){0};return store_draft(b.destination);}
