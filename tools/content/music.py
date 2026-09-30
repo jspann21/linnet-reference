@@ -809,11 +809,12 @@ class _MetadataCache:
                 value = cover or b""
                 digest = hashlib.sha256(value).digest()
                 exists = self.connection.execute(
-                    "SELECT 1 FROM embedded_images WHERE digest=?", (digest,)).fetchone()
+                    "SELECT length(value) FROM embedded_images WHERE digest=?", (digest,)).fetchone()
                 if exists or self.artwork_bytes + len(value) <= 128 * 1024 * 1024:
-                    self.connection.execute("INSERT OR REPLACE INTO embedded_images VALUES (?,?)", (digest, value))
-                    if not exists:
-                        self.artwork_bytes += len(value)
+                    self.connection.execute("INSERT INTO embedded_images VALUES (?,?) "
+                        "ON CONFLICT(digest) DO UPDATE SET value=excluded.value "
+                        "WHERE embedded_images.value IS NOT excluded.value", (digest, value))
+                    self.artwork_bytes += len(value) - (exists[0] or 0) if exists else len(value)
                     self.connection.execute("INSERT OR REPLACE INTO embedded_sources VALUES (?,?,?,?,?)",
                         (str(path), before.st_size, before.st_mtime_ns, now, digest))
                     self._written()
