@@ -83,6 +83,9 @@ static inline void unreadbits(alac_file *alac,int bits)
     position-=(uint32_t)bits;alac->input_buffer=alac->input_start+position/8u;alac->input_buffer_bitaccumulator=(int)(position%8u);
 }
 static inline int ln_alac_clz(uint32_t value){
+#if defined(__arm__) && defined(__ARM_ARCH) && __ARM_ARCH >= 5
+    return value ? __builtin_clz(value) : 32;
+#else
     if(!value)return 32;
     int count=0;
     if(!(value&0xffff0000u)){count+=16;value<<=16;}
@@ -91,6 +94,7 @@ static inline int ln_alac_clz(uint32_t value){
     if(!(value&0xc0000000u)){count+=2;value<<=2;}
     if(!(value&0x80000000u))++count;
     return count;
+#endif
 }
 #define count_leading_zeros(x) ln_alac_clz((uint32_t)(x))
 
