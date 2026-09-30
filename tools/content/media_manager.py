@@ -774,6 +774,13 @@ def _pending_outcomes(pending, selected, plan, videos, steps, errors, planned):
                     if step.get('kind') == 'Videos' and
                     step.get('status') in ('published', 'unchanged', 'catalog-updated') and
                     'file' in step}
+    pending_video_names = {Path(name).name for kind, name in pending if kind == 'Videos'}
+    unfinished_videos = set()
+    for job in (videos if pending_video_names else ()):
+        if job['relative'] not in ready_videos:
+            first = job['relative'].split('/', 1)[0]
+            if first in pending_video_names:
+                unfinished_videos.add(first)
     pending_sources = {(kind, Path(name)) for kind, name in pending if kind != 'Videos'}
     pending_kinds = {kind for kind, _ in pending_sources}
     unfinished = set()
@@ -798,9 +805,7 @@ def _pending_outcomes(pending, selected, plan, videos, steps, errors, planned):
     for kind, name in pending:
         source = Path(name)
         if kind == 'Videos':
-            rows = [job for job in videos if job['relative'] == source.name or
-                    job['relative'].startswith(source.name + '/')]
-            finished = kind in selected and planned and all(job['relative'] in ready_videos for job in rows)
+            finished = kind in selected and planned and source.name not in unfinished_videos
         else:
             finished = kind in selected and planned and (kind, source) not in unfinished
         matching_error = _source_error(kind, name, errors)
