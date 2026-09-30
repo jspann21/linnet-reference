@@ -151,6 +151,14 @@ bool ln_flac_seek(struct ln_flac*s,uint64_t frame)
     if(!s||s->phase!=4||s->pending||s->error||(s->total_frames&&frame>s->total_frames))return false;
     uint64_t sample=0,offset=0;
     for(uint32_t i=0;i<s->seek_count&&s->seek[i].sample<=frame;++i){sample=s->seek[i].sample;offset=s->seek[i].offset;}
+    if(s->frame>=sample&&s->frame<=frame){
+        uint64_t skip=frame-s->frame;
+        uint32_t buffered=s->decoded_frames-s->decoded_cursor;
+        if(skip>buffered)skip=buffered;
+        s->decoded_cursor+=(uint32_t)skip;s->frame+=skip;
+        s->discard_to=frame;
+        return true;
+    }
     if(offset>s->file_size-s->audio_offset)return false;
     s->cursor=s->audio_offset+offset;s->frame=sample;s->discard_to=frame;s->have=0;s->decoded_frames=s->decoded_cursor=0;return true;
 }
