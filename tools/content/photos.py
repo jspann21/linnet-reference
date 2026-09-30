@@ -98,7 +98,8 @@ class _PhotoCache:
     def key(self, path, name, title, fallback, checkpoint):
         digest = hashlib.sha256()
         with path.open('rb') as stream:
-            while chunk := stream.read(1024 * 1024):
+            chunk_size = min(1024 * 1024, max(16 * 1024, os.fstat(stream.fileno()).st_size))
+            while chunk := stream.read(chunk_size):
                 checkpoint()
                 digest.update(chunk)
         identity = [str(path.resolve()), name, title, fallback,
