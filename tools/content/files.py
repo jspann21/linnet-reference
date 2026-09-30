@@ -141,13 +141,22 @@ def _preview(source, cache, width, height, columns, recipe, checkpoint, info, ro
             text = _ascii(text)
             # One record per visual line; whole pages start on line boundaries.
             data = bytearray()
+            next_checkpoint = time.monotonic() + .05
             for line in text.replace('\r\n', '\n').replace('\r', '\n').split('\n'):
-                checkpoint()
+                now = time.monotonic()
+                if now >= next_checkpoint:
+                    checkpoint()
+                    next_checkpoint = now + .05
                 clean = ''.join(c if 32 <= ord(c) < 127 else ' ' for c in line.expandtabs(4))
                 for wrapped in _display_lines(clean, recipe[0], recipe[1], columns):
+                    now = time.monotonic()
+                    if now >= next_checkpoint:
+                        checkpoint()
+                        next_checkpoint = now + .05
                     if len(data) + columns > 4 * 1024 * 1024:
                         return None
                     data.extend(wrapped.encode('ascii').ljust(columns, b' '))
+        checkpoint()
         after = source.stat()
         if after.st_size != info.st_size or after.st_mtime_ns != info.st_mtime_ns:
             raise ValueError(f'File changed while preparing its preview: {source}')
