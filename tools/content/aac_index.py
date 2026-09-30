@@ -119,13 +119,58 @@ def _run_tool(tool, arguments, checkpoint, timeout, *, allow_timeout=False):
     return child.returncode
 
 
-def _possibly_alac(path):
+class _ProbeCheckpoint(Exception):
+    pass
+
+
+class _ProbeReader:
+    def __init__(self, stream, checkpoint):
+        self.stream = stream
+        self.checkpoint = checkpoint
+        self.operations = 0
+        self.bytes = 0
+
+    def _step(self):
+        self.operations += 1
+        if self.operations > 4096:
+            raise ValueError('MP4 codec hint exceeded its operation budget')
+        try:
+            self.checkpoint()
+        except Exception as error:
+            raise _ProbeCheckpoint() from error
+
+    def read(self, size=-1):
+        self._step()
+        if not 0 <= size <= 16384 or self.bytes + size > 65536:
+            raise ValueError('MP4 codec hint exceeded its read budget')
+        result = self.stream.read(size)
+        self.bytes += len(result)
+        return result
+
+    def readinto(self, buffer):
+        result = self.read(len(buffer))
+        buffer[:len(result)] = result
+        return len(result)
+
+    def seek(self, offset, whence=0):
+        self._step()
+        return self.stream.seek(offset, whence)
+
+    def tell(self):
+        self._step()
+        return self.stream.tell()
+
+
+def _possibly_alac(path, checkpoint):
     try:
         from mutagen.mp4 import Atoms, MP4Info
-        with path.open('rb') as reader:
+        with path.open('rb') as stream:
+            reader = _ProbeReader(stream, checkpoint)
             info = MP4Info()
             info.load(Atoms(reader), reader)
         return info.codec == 'alac'
+    except _ProbeCheckpoint as error:
+        raise error.__cause__
     except Exception:
         # This hint only avoids a host copy. The full indexer decides support.
         return False
@@ -145,7 +190,7 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
     if unsupported.exists():
         return False
     tool = executable()
-    if _possibly_alac(path):
+    if _possibly_alac(path, checkpoint):
         checkpoint()
         probe = _run_tool(tool, (path,), checkpoint, 30, allow_timeout=True)
         if (before.st_size, before.st_mtime_ns) != (path.stat().st_size, path.stat().st_mtime_ns):
