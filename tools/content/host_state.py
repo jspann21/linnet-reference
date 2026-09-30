@@ -34,7 +34,7 @@ def save_json(path, value):
     try:
         with temporary.open('x', encoding='utf-8') as writer:
             owned = True
-            json.dump(value, writer, indent=2)
+            writer.write(json.dumps(value, separators=(',', ':')))
             writer.flush()
             os.fsync(writer.fileno())
         # Indexers and antivirus can briefly open the existing receipt without
