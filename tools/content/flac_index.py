@@ -164,9 +164,13 @@ def _points(path, probe, audio_at, rate, total, checkpoint):
                 if packet_path.stat().st_size > MAX_PACKET_INDEX:
                     oversized = True
                     break
-                if time.monotonic() - started > 600:
+                remaining = 600 - (time.monotonic() - started)
+                if remaining <= 0:
                     raise TimeoutError('FLAC seek preparation exceeded ten minutes')
-                time.sleep(.05)
+                try:
+                    child.wait(timeout=min(.05, remaining))
+                except subprocess.TimeoutExpired:
+                    pass
         finally:
             if child.poll() is None:
                 child.terminate(); child.wait(timeout=10)
