@@ -129,15 +129,19 @@ class _ProbeReader:
         self.checkpoint = checkpoint
         self.operations = 0
         self.bytes = 0
+        self.next_checkpoint = 0
 
-    def _step(self):
+    def _step(self, *, finish=False):
         self.operations += 1
         if self.operations > 4096:
             raise ValueError('MP4 codec hint exceeded its operation budget')
-        try:
-            self.checkpoint()
-        except Exception as error:
-            raise _ProbeCheckpoint() from error
+        now = time.monotonic()
+        if finish or now >= self.next_checkpoint:
+            try:
+                self.checkpoint()
+            except Exception as error:
+                raise _ProbeCheckpoint() from error
+            self.next_checkpoint = now + .05
 
     def read(self, size=-1):
         self._step()
@@ -168,6 +172,7 @@ def _possibly_alac(path, checkpoint):
             reader = _ProbeReader(stream, checkpoint)
             info = MP4Info()
             info.load(Atoms(reader), reader)
+            reader._step(finish=True)
         return info.codec == 'alac'
     except _ProbeCheckpoint as error:
         raise error.__cause__
