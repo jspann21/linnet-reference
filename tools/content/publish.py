@@ -463,8 +463,14 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
         _plain(destination, root)
         if item["path"] in ("COVERS.CFL", "BROWSE.BIN"):
             # Cover Flow is replaced atomically below, like the library index.
-            if (destination.is_file() and destination.stat().st_size == item["bytes"] and
-                    _hash(destination, item["bytes"]) == item["sha256"]):
+            same_header = False
+            if destination.is_file() and destination.stat().st_size == item["bytes"]:
+                local = stage / item["path"]
+                _plain(local, stage)
+                with local.open("rb") as source, destination.open("rb") as current:
+                    # Both formats carry the database identity within 56 bytes.
+                    same_header = source.read(56) == current.read(56)
+            if same_header and _hash(destination, item["bytes"]) == item["sha256"]:
                 unchanged_assets.add(item["path"])
             else:
                 needed += item["bytes"] + 65536
