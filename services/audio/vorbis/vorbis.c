@@ -115,4 +115,10 @@ int ln_vorbis_decode(struct ln_vorbis*s,int16_t*out,uint32_t capacity,uint32_t*f
 }
 void ln_vorbis_close(struct ln_vorbis*s){if(!s)return;ln_vorbis_pool_reset(s);s->opened=false;s->ended=true;}
 bool ln_vorbis_seek(struct ln_vorbis*s,uint64_t frame)
-{if(!s||s->pending||(s->total_frames&&frame>s->total_frames))return false;ln_pcm_read_fn read=s->read;void*context=s->context;uint64_t bytes=s->file_size;ln_vorbis_init(s,read,context,bytes);s->discard_to=frame;return true;}
+{if(!s||s->pending||(s->total_frames&&frame>s->total_frames))return false;
+    if(s->opened&&!s->error&&s->frame>=s->discard_to&&frame>=s->frame){
+        /* Retain page position, setup headers and overlap on forward seeks. */
+        s->discard_to=frame;return true;
+    }
+    ln_pcm_read_fn read=s->read;void*context=s->context;uint64_t bytes=s->file_size;
+    ln_vorbis_init(s,read,context,bytes);s->discard_to=frame;return true;}
