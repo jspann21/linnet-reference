@@ -362,7 +362,11 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lamb
                 process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors, creationflags=NO_WINDOW)
                 try:
                     while process.poll() is None:
-                        checkpoint(); time.sleep(.2)
+                        checkpoint()
+                        try:
+                            process.wait(timeout=.2)
+                        except subprocess.TimeoutExpired:
+                            pass
                     if process.returncode:
                         errors.seek(0, os.SEEK_END)
                         errors.seek(max(0, errors.tell() - 4000))
