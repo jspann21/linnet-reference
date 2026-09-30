@@ -1,6 +1,9 @@
 #include "m4a.h"
 #include "boot/include/linnet_bytes.h"
 #include "boot/include/linnet_boot.h"
+#if defined(__arm__)
+extern void ln_memory_clear(void *,uint32_t);
+#endif
 static int fail(struct ln_aac_m4a *d,int error){d->error=error;return error;}
 static int demux_result(int result)
 {if(result==LN_ALAC_UNSUPPORTED)return LN_AAC_UNSUPPORTED;if(result==LN_ALAC_ARGUMENT)return LN_AAC_ARGUMENT;return result;}
@@ -145,7 +148,11 @@ static int cached_read(void *context,uint64_t offset,uint8_t *buffer,uint32_t by
 }
 void ln_aac_m4a_init(struct ln_aac_m4a *d,ln_aac_read_fn read,void *context,uint64_t size)
 {
+#if defined(__arm__)
+    ln_memory_clear(d,sizeof(*d));
+#else
     uint8_t *b=(uint8_t *)d;for(uint32_t i=0;i<sizeof(*d);i++)b[i]=0;
+#endif
     d->source_read=read;d->source_context=context;
     ln_m4a_init(&d->container,cached_read,d,size);
 }

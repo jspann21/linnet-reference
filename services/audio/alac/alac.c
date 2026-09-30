@@ -1,5 +1,8 @@
 #include "boot/include/linnet_bytes.h"
 #include "alac.h"
+#if defined(__arm__)
+extern void ln_memory_clear(void *,uint32_t);
+#endif
 #define TAG(a,b,c,d) (((uint32_t)(a)<<24)|((uint32_t)(b)<<16)|((uint32_t)(c)<<8)|(d))
 static uint16_t be16(const uint8_t *p){return (uint16_t)((p[0]<<8)|p[1]);}
 static uint32_t divide_small(uint32_t value,uint32_t divisor,uint32_t *remainder)
@@ -64,7 +67,11 @@ static int cached_read(void *context,uint64_t offset,uint8_t *buffer,uint32_t by
 }
 void ln_alac_init(struct ln_alac *a,ln_alac_read_fn read,void *context,uint64_t size)
 {
+#if defined(__arm__)
+    ln_memory_clear(a,sizeof(*a));
+#else
     uint8_t *p=(uint8_t *)a;for(uint32_t i=0;i<sizeof(*a);i++)p[i]=0;
+#endif
     a->source_read=read;a->source_context=context;
     a->read=cached_read;a->context=a;a->file_size=size;a->ends[0]=size;
 }
