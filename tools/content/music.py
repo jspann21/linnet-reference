@@ -1201,8 +1201,9 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     coverflow_originals = {}
     coverflow_enabled = bool(target and TARGETS[target].get('capabilities', {}).get('cover_flow', False))
     art_cache: dict[Path, int] = {}
-    from .retail_media import metadata as retail_metadata
-    retail = retail_metadata(device_root) if device_root is not None else {}
+    from .retail_media import available_tracks, metadata as retail_metadata
+    retail = available_tracks(device_root) if device_root is not None else {}
+    retail_artwork = None
     folder_covers: dict[Path, Path | None] = {}
     file_covers: dict[Path, tuple[tuple[int, int, int, int], int]] = {}
     art_indices: dict[bytes, int] = {}
@@ -1214,7 +1215,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     groups: dict[tuple[int, str, str], list[int]] = {}
 
     def art_for(path: Path, before) -> int:
-        nonlocal embedded_cache_bytes
+        nonlocal embedded_cache_bytes, retail_artwork
         if not artwork:
             return NO_INDEX
         folder = path.parent
@@ -1232,7 +1233,10 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             embedded = (cache.embedded_cover(path, before, bypass=bypass_cache)
                         if cache else _embedded_cover(path))
         if cover is None and embedded is None:
-            saved_cover = retail.get(str(path.resolve()).casefold(), {}).get('artwork')
+            key = str(path.resolve()).casefold()
+            if key in retail and retail_artwork is None:
+                retail_artwork = retail_metadata(device_root)
+            saved_cover = (retail_artwork or {}).get(key, {}).get('artwork')
             if saved_cover:
                 cover = Path(saved_cover)
         if cover is None and embedded is None:
