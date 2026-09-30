@@ -923,7 +923,9 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
         label = 'AAC' if kind == 'aac' else 'FLAC'
         left = totals[kind] - completed[kind]
         recent = durations[kind]
-        eta = f' · about {max(1, round(sum(recent) / len(recent) * left / 60))}m left' if len(recent) >= 2 else ''
+        seconds = sum(recent) / len(recent) * left if len(recent) >= 2 else None
+        eta = (f' · about {round(seconds / 60)}m left' if seconds >= 90 else
+               ' · <1m left') if seconds is not None else ''
         stage_progress((completed['aac'] + completed['flac']) / len(pending))
         progress(f'{label} seeks {completed[kind]}/{totals[kind]} · {left} left{eta}: {path.name}')
         started = time.monotonic()

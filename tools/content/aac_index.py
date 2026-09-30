@@ -101,6 +101,25 @@ def same_original(source, destination):
     return True
 
 
+def _matches_prefix(path, size, expected_hash):
+    before = path.stat()
+    if before.st_size < size:
+        return False
+    digest = hashlib.sha256()
+    with path.open('rb') as reader:
+        remaining = size
+        while remaining:
+            chunk = reader.read(min(remaining, 1024 * 1024))
+            if not chunk:
+                return False
+            digest.update(chunk)
+            remaining -= len(chunk)
+    after = path.stat()
+    return ((before.st_size, before.st_mtime_ns, before.st_ino) ==
+            (after.st_size, after.st_mtime_ns, after.st_ino)
+            and digest.hexdigest() == expected_hash)
+
+
 def _run_tool(tool, arguments, checkpoint, timeout, *, allow_timeout=False):
     child = subprocess.Popen([str(tool), *(str(arg) for arg in arguments)],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -223,10 +242,31 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
         suffix = index.read_bytes()
         if before.st_size + len(suffix) > 0xffffffff:
             return False
+        digest = source_hash.copy(); digest.update(suffix)
+        after = path.stat()
+        if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+            raise OSError('AAC source changed during preparation')
+        if recovery is not None and journal is not None:
+            backup = cache / (uuid.uuid4().hex + '.aac-original')
+            local.replace(backup)
+            recovery.append(dict(path=str(path), backup=str(backup), mode='append',
+                original_bytes=before.st_size, original_sha256=source_hash.hexdigest(),
+                atime_ns=before.st_atime_ns, mtime_ns=before.st_mtime_ns,
+                prepared_bytes=before.st_size + len(suffix), prepared_sha256=digest.hexdigest()))
+            journal()
+            with path.open('r+b') as writer:
+                writer.seek(0, os.SEEK_END)
+                if writer.tell() != before.st_size:
+                    raise OSError('AAC source changed during preparation')
+                writer.write(suffix); writer.flush(); os.fsync(writer.fileno())
+            checkpoint()
+            if (hash_file(path, before.st_size + len(suffix)) != digest.hexdigest()
+                    or original_size(path) != before.st_size):
+                raise OSError('AAC prepared copy did not verify')
+            return True
         temporary = path.with_name('L' + uuid.uuid4().hex[:7] + '.TMP')
         owned = False
         try:
-            digest = source_hash.copy(); digest.update(suffix)
             with temporary.open('xb') as writer, local.open('rb') as reader:
                 owned = True
                 while chunk := reader.read(1024 * 1024):
@@ -264,7 +304,19 @@ def finish_preparation(change, *, committed, kind='AAC'):
     if not committed:
         current = path.stat().st_size
         if current == change['original_bytes'] and hash_file(path, current) == change['original_sha256']:
+            if change.get('mode') == 'append':
+                os.utime(path, ns=(change['atime_ns'], change['mtime_ns']))
             backup.unlink(missing_ok=True); return
+        if change.get('mode') == 'append' and kind == 'AAC':
+            if (current < change['original_bytes'] or current > change['prepared_bytes']
+                    or not _matches_prefix(path, change['original_bytes'], change['original_sha256'])):
+                raise OSError('AAC copy changed after preparation; original backup retained')
+            with path.open('r+b') as writer:
+                writer.truncate(change['original_bytes'])
+                writer.flush(); os.fsync(writer.fileno())
+            os.utime(path, ns=(change['atime_ns'], change['mtime_ns']))
+            backup.unlink()
+            return
         if current != change['prepared_bytes'] or hash_file(path, current) != change['prepared_sha256']:
             raise OSError(f'{kind} copy changed after preparation; original backup retained')
         if hash_file(backup, change['original_bytes']) != change['original_sha256']:
