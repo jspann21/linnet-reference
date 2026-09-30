@@ -12,6 +12,7 @@ Mode throughout publication and handle reboot only after a successful receipt.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from functools import lru_cache
 import base64
 import ctypes
 import hashlib
@@ -384,8 +385,8 @@ def _same_target(before: dict, after: dict) -> None:
             raise RuntimeError(f"iPod identity changed during publication: {key}")
 
 
-def _volume_guard(identity: dict) -> None:
-    """Cheap per-file mounted-volume identity guard; does not open raw storage."""
+@lru_cache(maxsize=1)
+def _volume_api():
     from ctypes import wintypes as w
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.GetVolumeInformationW.argtypes = [w.LPCWSTR, w.LPWSTR, w.DWORD, ctypes.POINTER(w.DWORD),
@@ -393,12 +394,19 @@ def _volume_guard(identity: dict) -> None:
     kernel.GetVolumeInformationW.restype = w.BOOL
     kernel.GetVolumeNameForVolumeMountPointW.argtypes = [w.LPCWSTR, w.LPWSTR, w.DWORD]
     kernel.GetVolumeNameForVolumeMountPointW.restype = w.BOOL
+    return kernel.GetVolumeInformationW, kernel.GetVolumeNameForVolumeMountPointW
+
+
+def _volume_guard(identity: dict) -> None:
+    """Cheap per-file mounted-volume identity guard; does not open raw storage."""
+    from ctypes import wintypes as w
+    volume_info, volume_name = _volume_api()
     serial, maximum, flags = w.DWORD(), w.DWORD(), w.DWORD()
     filesystem, volume = ctypes.create_unicode_buffer(32), ctypes.create_unicode_buffer(1024)
-    if not kernel.GetVolumeInformationW(identity["root"], None, 0, ctypes.byref(serial), ctypes.byref(maximum),
-                                        ctypes.byref(flags), filesystem, len(filesystem)):
+    if not volume_info(identity["root"], None, 0, ctypes.byref(serial), ctypes.byref(maximum),
+                       ctypes.byref(flags), filesystem, len(filesystem)):
         raise OSError(ctypes.get_last_error(), "iPod volume is unavailable")
-    if not kernel.GetVolumeNameForVolumeMountPointW(identity["root"], volume, len(volume)):
+    if not volume_name(identity["root"], volume, len(volume)):
         raise OSError(ctypes.get_last_error(), "iPod volume GUID is unavailable")
     if (f"{serial.value:08X}" != identity["volume_serial"] or filesystem.value != "FAT32" or
         volume.value.casefold() != identity["volume_unique_id"].casefold()):
