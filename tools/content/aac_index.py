@@ -100,6 +100,25 @@ def same_original(source, destination):
     return True
 
 
+def _run_tool(tool, arguments, checkpoint, timeout, *, allow_timeout=False):
+    child = subprocess.Popen([str(tool), *(str(arg) for arg in arguments)],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             creationflags=NO_WINDOW)
+    started = time.monotonic()
+    try:
+        while child.poll() is None:
+            checkpoint()
+            if time.monotonic() - started > timeout:
+                if allow_timeout:
+                    return None
+                raise TimeoutError('AAC preparation timed out')
+            time.sleep(.05)
+    finally:
+        if child.poll() is None:
+            child.terminate(); child.wait(timeout=10)
+    return child.returncode
+
+
 def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal=None):
     """Atomically augment an iPod copy; retain its compressed audio and tags."""
     from .guard import hash_file
@@ -114,6 +133,11 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
     if unsupported.exists():
         return False
     tool = executable()
+    probe = _run_tool(tool, (path,), checkpoint, 30, allow_timeout=True)
+    if (before.st_size, before.st_mtime_ns) != (path.stat().st_size, path.stat().st_mtime_ns):
+        raise OSError('AAC source changed during preparation')
+    if probe == 4:
+        unsupported.touch(); return False
     with tempfile.TemporaryDirectory(prefix='aac-', dir=cache) as scratch:
         local, index = Path(scratch) / 'source.m4a', Path(scratch) / 'index.bin'
         source_hash = hashlib.sha256()
@@ -122,22 +146,11 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
                 checkpoint(); writer.write(chunk); source_hash.update(chunk)
             if recovery is not None:
                 writer.flush(); os.fsync(writer.fileno())
-        child = subprocess.Popen([str(tool), str(local), str(index)], stdout=subprocess.DEVNULL,
-                                 stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
-        started = time.monotonic()
-        try:
-            while child.poll() is None:
-                checkpoint()
-                if time.monotonic() - started > 600:
-                    raise TimeoutError('AAC preparation exceeded ten minutes')
-                time.sleep(.05)
-        finally:
-            if child.poll() is None:
-                child.terminate(); child.wait(timeout=10)
-        if child.returncode in (4, 6, 7, 8):
+        result = _run_tool(tool, (local, index), checkpoint, 600)
+        if result in (4, 6, 7, 8):
             unsupported.touch(); return False
-        if child.returncode:
-            raise RuntimeError(f'AAC preparation failed ({child.returncode})')
+        if result:
+            raise RuntimeError(f'AAC preparation failed ({result})')
         suffix = index.read_bytes()
         if before.st_size + len(suffix) > 0xffffffff:
             return False

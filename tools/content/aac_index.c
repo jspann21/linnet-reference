@@ -26,13 +26,15 @@ static int read_at(void *context,uint64_t offset,uint8_t *buffer,uint32_t bytes)
 }
 static struct ln_aac_m4a decoder;
 int ENTRY {
-    if(argc!=3)return 2;
+    if(argc!=2&&argc!=3)return 2;
     FILE *source=open_read(argv[1]);if(!source)return 3;
     if(seek(source,0,SEEK_END))return 3;
     int64_t size=tell(source);if(size<8||size>UINT32_MAX)return 3;
     ln_aac_m4a_init(&decoder,read_at,source,(uint64_t)size);
     int r;do{r=ln_aac_m4a_open_step(&decoder);}while(!r);
+    if(argc==2&&r==LN_AAC_IO)return 3;
     if(r!=1||decoder.index_offset)return 4;
+    if(argc==2){fclose(source);return 0;}
     struct ln_alac *a=&decoder.container;
     uint32_t count=(a->packets+15u)/16u,bytes=72u+count*32u;
     uint8_t *output=calloc(1,bytes);if(!output)return 5;
