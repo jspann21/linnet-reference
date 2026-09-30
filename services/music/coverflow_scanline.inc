@@ -112,7 +112,7 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
                         sy>>=2;
                         for(;x<limit;x++)*dest++=card->palette[card->indices[(card->sources[x]>>3)*32u+sy]];
                     }else{
-                        for(;x<limit;x++)*dest++=card->palette[card->indices[card->sources[x]*64u+sy]];
+                        for(;x<limit;x++)*dest++=card->palette[card->indices[sy*96u+(card->sources[x]>>1)]];
                     }
                     if(card->mirror){u-=length;--run;}else{u+=length;++run;}
                 }

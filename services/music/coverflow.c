@@ -131,11 +131,6 @@ static int32_t decode_art(uint32_t id){
     const uint32_t *words=(const uint32_t*)packed;
     for(uint32_t i=0;i<128u;i++)palette.words[i]=words[i];
     words+=128;
-#if LINNET_COVERFLOW_SCANLINE
-    for(uint32_t by=0;by<128u;by+=8u)for(uint32_t bx=0;bx<96u;bx+=8u)
-        for(uint32_t y=by;y<by+8u;y++)for(uint32_t x=bx;x<bx+8u;x++)
-            cache_pixels[victim][y*96u+x]=palette.colors[packed[512u+x*128u+y]];
-#else
     for(uint32_t i=0;i<12288u;i+=4){
         uint32_t indices=*words++;
         cache_pixels[victim][i]=palette.colors[indices&255u];
@@ -143,7 +138,6 @@ static int32_t decode_art(uint32_t id){
         cache_pixels[victim][i+2]=palette.colors[(indices>>16)&255u];
         cache_pixels[victim][i+3]=palette.colors[indices>>24];
     }
-#endif
     cache[victim].id=id+1u;cache[victim].age=++age;
     return (int32_t)victim;
 }

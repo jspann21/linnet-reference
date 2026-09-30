@@ -39,6 +39,14 @@ CATALOG = 1024
 ART_RECORD = 13312
 
 
+def _row_major_art(record: bytes | bytearray) -> bytearray:
+    packed = bytearray(record)
+    packed[512:12800] = Image.frombytes('P', (128, 96), packed[512:12800]).transpose(
+        Image.Transpose.TRANSPOSE).tobytes()
+    struct.pack_into('<I', packed, 12800, zlib.crc32(packed[:12800]))
+    return packed
+
+
 def _original_from_rgb(image: Image.Image) -> Image.Image:
     return ImageOps.fit(image, (96, 96), method=Image.Resampling.LANCZOS)
 
@@ -161,7 +169,7 @@ def remove_tracks(source: Path, before: bytes, after: bytes, output: Path) -> No
 
 
 def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, Image.Image] | None = None,
-            cache=None, bypass_cache: bool = False) -> None:
+            cache=None, bypass_cache: bool = False, row_major: bool = False) -> None:
     from .music import validate_database, TRACK
     from .publish import _bounded
     validate_database(database)
@@ -265,7 +273,7 @@ def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, I
         for record in catalog:
             writer.write(record)
         for record in artwork:
-            writer.write(record)
+            writer.write(_row_major_art(record) if row_major else record)
     validate(temporary, database)
     temporary.replace(output)
 
