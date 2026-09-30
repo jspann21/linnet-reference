@@ -160,6 +160,7 @@ __attribute__((weak)) const struct ln_ui_asset *ln_ui_dynamic_item_asset(const s
 __attribute__((weak)) const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){(void)n;(void)item;return fallback;}
 struct rect {int32_t x,y,w,h;};
 struct painter {uint16_t *pixels;struct rect clip;};
+static bool image_independent(const struct painter*,const struct ln_ui_node*,const struct ln_ui_asset*);
 static int32_t min(int32_t a,int32_t b){return a<b?a:b;}
 static int32_t max(int32_t a,int32_t b){return a>b?a:b;}
 static struct rect intersect(struct rect a,struct rect b){int32_t x=max(a.x,b.x),y=max(a.y,b.y),r=min(a.x+a.w,b.x+b.w),d=min(a.y+a.h,b.y+b.h);return(struct rect){x,y,max(0,r-x),max(0,d-y)};}
@@ -620,7 +621,20 @@ static void image_asset(struct painter*p,const struct ln_ui_node*n,const struct 
     struct sample_axis axis;bool fast=sample_axis_begin(&axis,a->width,(uint32_t)n->w,(uint32_t)r.x-(uint32_t)n->x,(uint32_t)r.w);
     for(int32_t x=r.x;x<r.x+r.w;++x)source_x[x-r.x]=fast?sample_axis_next(&axis):divide((uint32_t)(x-n->x)*a->width,(uint32_t)n->w);
     fast=sample_axis_begin(&axis,a->height,(uint32_t)n->h,(uint32_t)r.y-(uint32_t)n->y,(uint32_t)r.h);
+    bool reuse_rows=r.w>=16&&a->height<(uint32_t)n->h&&image_independent(p,n,a);
+    uint32_t previous_sy=UINT32_MAX;
     for(int32_t y=r.y;y<r.y+r.h;++y){uint32_t sy=fast?sample_axis_next(&axis):divide((uint32_t)(y-n->y)*a->height,(uint32_t)n->h);
+        if(reuse_rows&&sy==previous_sy){
+            uint16_t *dest=p->pixels+(uint32_t)y*LINNET_UI_WIDTH+(uint32_t)r.x;
+#if defined(__arm__)
+            extern void ln_memory_copy(void *,const void *,uint32_t);
+            ln_memory_copy(dest,dest-LINNET_UI_WIDTH,(uint32_t)r.w*2u);
+#else
+            __builtin_memcpy(dest,dest-LINNET_UI_WIDTH,(uint32_t)r.w*2u);
+#endif
+            continue;
+        }
+        previous_sy=sy;
         for(int32_t x=r.x;x<r.x+r.w;++x){uint16_t value=a->pixels[sy*a->width+source_x[x-r.x]];p->pixels[(uint32_t)y*LINNET_UI_WIDTH+(uint32_t)x]=decoration?asset_pixel(value):value;}
     }
 }
