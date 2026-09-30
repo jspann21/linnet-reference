@@ -231,7 +231,7 @@ def images(root, *, artwork=False, dbids=None, render=True):
                         cache.mkdir(parents=True, exist_ok=True)
                         temporary = preview.with_name(uuid.uuid4().hex + '.tmp')
                         try:
-                            image.save(temporary, format='PNG')
+                            image.save(temporary, format='PNG', compress_level=3)
                             os.replace(temporary, preview)
                         finally:
                             temporary.unlink(missing_ok=True)
