@@ -256,9 +256,13 @@ def inspect_file(path, *, profile, ffprobe=None, cancelled=None):
         try:
             while process.poll() is None:
                 checkpoint()
-                if time.monotonic() - started >= 60:
+                remaining = 60 - (time.monotonic() - started)
+                if remaining <= 0:
                     raise subprocess.TimeoutExpired(command, 60)
-                time.sleep(.1)
+                try:
+                    process.wait(timeout=min(.1, remaining))
+                except subprocess.TimeoutExpired:
+                    pass
             checkpoint()
         finally:
             if process.poll() is None:
