@@ -115,7 +115,12 @@ class _PhotoCache:
                 if not 0 < length <= 1024 * 1024:
                     return None
                 metadata = json.loads(stream.read(length))
-                payload = stream.read(PHOTO_CACHE_ENTRY_BYTES + 1)
+                remaining = os.fstat(stream.fileno()).st_size - stream.tell()
+                if remaining < 0:
+                    return None
+                payload = stream.read(min(remaining, PHOTO_CACHE_ENTRY_BYTES) + 1)
+                if stream.read(1):
+                    return None
             if (not isinstance(metadata, dict) or metadata.get('key') != key or
                     len(payload) > PHOTO_CACHE_ENTRY_BYTES or
                     len(payload) != metadata.get('bytes') or
