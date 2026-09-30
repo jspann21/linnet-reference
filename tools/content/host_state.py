@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import time
 import uuid
 
 
@@ -36,7 +37,18 @@ def save_json(path, value):
             json.dump(value, writer, indent=2)
             writer.flush()
             os.fsync(writer.fileno())
-        temporary.replace(path)
+        # Indexers and antivirus can briefly open the existing receipt without
+        # delete sharing on Windows. Keep the fsynced temporary and retry only
+        # those transient sharing/access failures; other errors remain fatal.
+        for attempt in range(7):
+            try:
+                temporary.replace(path)
+                break
+            except OSError as error:
+                if (os.name != 'nt' or getattr(error, 'winerror', None) not in (5, 32, 33)
+                        or attempt == 6):
+                    raise
+                time.sleep(min(0.05 * (2 ** attempt), 0.5))
     finally:
         if owned:
             temporary.unlink(missing_ok=True)
