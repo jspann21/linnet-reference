@@ -147,9 +147,18 @@ bool ln_music_library_track_id_lookup(uint64_t id,uint32_t *ordinal){
         ln_read_le32(data+lo*12u+8u):UINT32_MAX;
     return true;
 }
+bool ln_music_library_id_entry(uint32_t position,uint64_t *id,uint32_t *ordinal){
+    if(library.status!=LN_LIBRARY_READY||!browse_valid||!browse_ids_valid||
+       position>=library.db.tracks||!id||!ordinal)return false;
+    const uint8_t *row=browse_data()+browse_id_at+position*12u;
+    *id=ln_read_le64(row);*ordinal=ln_read_le32(row+8u);return true;
+}
 #else
 bool ln_music_library_track_id_lookup(uint64_t id,uint32_t *ordinal){
     (void)id;(void)ordinal;return false;
+}
+bool ln_music_library_id_entry(uint32_t position,uint64_t *id,uint32_t *ordinal){
+    (void)position;(void)id;(void)ordinal;return false;
 }
 #endif
 static uint32_t browse_prefix_lower(uint32_t key){
@@ -265,6 +274,9 @@ static bool browse_load(void){
 #else
 bool ln_music_library_track_id_lookup(uint64_t id,uint32_t *ordinal){
     (void)id;(void)ordinal;return false;
+}
+bool ln_music_library_id_entry(uint32_t position,uint64_t *id,uint32_t *ordinal){
+    (void)position;(void)id;(void)ordinal;return false;
 }
 #endif
 bool ln_music_library_albums(uint32_t artist,uint32_t *out,uint32_t capacity,uint32_t *count){
