@@ -707,13 +707,13 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, s
             raise ValueError("Use Choose videos and select this file under Videos on this iPod.")
         is_folder = source.is_dir()
         records = _planning_records(source, snapshots)
-        for path, _ in (records if not is_folder else
+        for path, info in (records if not is_folder else
                         ((path, info) for path, info in records if path.suffix.lower() in allowed)):
             relative = (Path(source.name) / path.relative_to(source)).as_posix() if is_folder else source.name
             existing = folder / relative
             _plain(existing, root)
             if existing.exists():
-                if not existing.is_file() or existing.stat().st_size != path.stat().st_size or _hash(existing) != _hash(path):
+                if not existing.is_file() or existing.stat().st_size != info.st_size or not _same_file_bytes(path, existing, info.st_size):
                     raise ValueError(f"A different video already exists: {relative}. Rename the new file first.")
                 path = existing
             include(path, relative)
