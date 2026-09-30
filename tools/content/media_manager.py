@@ -230,7 +230,7 @@ def preparation_option(kind, identity, photo_dimension=640, music_verification='
         target = TARGETS[identity['target_id']]
         art_version = ('art9' if target['media_art_side'] == 128 else
                        'art8' if target['lcd_format'] == 'gray2-horizontal' else 'art7')
-        return f"{music_verification}-aac-seek1-duration-search-prefix2-names-album-owner2-title-order1-retail2-recent-album-gain-{art_version}-{identity['target_id']}"
+        return f"{music_verification}-aac-seek1-duration-search-prefix2-names-album-owner2-title-order1-retail2-recent-album-gain-icc-srgb1-{art_version}-{identity['target_id']}"
     if kind == 'Notes':
         from .notes import _display_recipe
         return f"target-wrap2-{_display_recipe(identity['target_id'])[2]}"
