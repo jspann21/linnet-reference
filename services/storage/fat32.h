@@ -7,8 +7,16 @@
 #define LN_FAT32_CACHE_SIZE 16u
 #define LN_FAT32_SET_MAX 16u
 #define LN_FAT32_DIR_MAX 32u
+/* Classic OS alternates photo, music and library files through one reader.
+ * Match the proof cache capacity so active files retain their proven seek
+ * maps; denser anchors shorten uncached positions in large photo packages. */
+#if defined(LINNET_TARGET_CLASSIC6G_N25) && defined(LINNET_IMAGE_OS)
+#define LN_FAT32_SEEK_MAPS LN_FAT32_CACHE_SIZE
+#define LN_FAT32_SEEK_ANCHORS 512u
+#else
 #define LN_FAT32_SEEK_MAPS 8u
 #define LN_FAT32_SEEK_ANCHORS 64u
+#endif
 enum ln_fat32_error { LN_FAT32_BUSY=0, LN_FAT32_DONE=1,
     LN_FAT32_ARGUMENT=-1, LN_FAT32_IO=-2, LN_FAT32_FORMAT=-3,
     LN_FAT32_CORRUPT=-4, LN_FAT32_NOT_FOUND=-5, LN_FAT32_UNSUPPORTED=-6,
