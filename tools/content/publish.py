@@ -153,7 +153,8 @@ def _hash(path: Path, expected_size: int | None = None) -> str:
     digest = hashlib.sha256()
     count = 0
     with path.open("rb") as reader:
-        while chunk := reader.read(CHUNK):
+        chunk_size = min(CHUNK, max(16 * 1024, before.st_size))
+        while chunk := reader.read(chunk_size):
             count += len(chunk)
             digest.update(chunk)
     after = path.stat()
