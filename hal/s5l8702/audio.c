@@ -5,6 +5,7 @@
 #include "board.h"
 #include "irq.h"
 #include "pcm_dma.h"
+extern void ln_memory_copy(void *,const void *,uint32_t);
 extern uint32_t ln_time_us(void);
 #ifdef LINNET_SRAM_MONITOR
 #define AUDIO_MEMORY __attribute__((section(".dram.audio"),aligned(32)))
@@ -15,6 +16,11 @@ extern uint32_t ln_time_us(void);
 #define BLOCK 1024u
 #define MASK (LINNET_AUDIO_RING_FRAMES-1u)
 static uint32_t ring[LINNET_AUDIO_RING_FRAMES] AUDIO_MEMORY;
+static void copy_frames(uint32_t offset,const int16_t *samples,uint32_t frames) {
+    if(frames>=8u && !((uintptr_t)samples&3u))ln_memory_copy(ring+offset,samples,frames*4u);
+    else for(uint32_t i=0;i<frames;i++)ring[offset+i]=(uint16_t)samples[i*2u]|
+        ((uint32_t)(uint16_t)samples[i*2u+1u]<<16);
+}
 #ifdef LINNET_SRAM_MONITOR
 /* The monitor clears BSS on entry; keep this zeroed DMA buffer out of NOR. */
 static uint32_t silence[BLOCK] AUDIO_MEMORY;
@@ -129,7 +135,8 @@ uint32_t ln_audio_submit(const int16_t *samples,uint32_t frames) {
     uint32_t room=ln_audio_capacity();if(frames>room)frames=room;
     uint32_t cursor=head,offset=cursor&MASK,first=frames;
     if(first>LINNET_AUDIO_RING_FRAMES-offset)first=LINNET_AUDIO_RING_FRAMES-offset;
-    for(uint32_t i=0;i<frames;i++)ring[(cursor+i)&MASK]=(uint16_t)samples[i*2]|((uint32_t)(uint16_t)samples[i*2+1]<<16);
+    copy_frames(offset,samples,first);
+    if(frames>first)copy_frames(0,samples+first*2u,frames-first);
     ln_arm926_data_clean_range(ring+offset,first*4u);
     if(frames>first)ln_arm926_data_clean_range(ring,(frames-first)*4u);
     __asm__ volatile("":::"memory");head=cursor+frames;status.submitted+=frames;return frames;
@@ -141,9 +148,10 @@ bool ln_audio_rewrite(uint32_t frame,const int16_t *samples,uint32_t frames) {
     bool ok=status.initialized && !status.fault && offset<=queued && frames<=queued-offset &&
         (!active || !real || offset>=inflight);
     if(ok) {
-        for(uint32_t i=0;i<frames;i++)ring[(frame+i)&MASK]=(uint16_t)samples[i*2]|((uint32_t)(uint16_t)samples[i*2+1]<<16);
         uint32_t start=frame&MASK,first=frames;
         if(first>LINNET_AUDIO_RING_FRAMES-start)first=LINNET_AUDIO_RING_FRAMES-start;
+        copy_frames(start,samples,first);
+        if(frames>first)copy_frames(0,samples+first*2u,frames-first);
         ln_arm926_data_clean_range(ring+start,first*4u);
         if(frames>first)ln_arm926_data_clean_range(ring,(frames-first)*4u);
     }
