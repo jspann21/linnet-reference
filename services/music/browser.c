@@ -140,6 +140,7 @@ static void resolve_id(uint64_t id){
     if(b.draft.count<=8u){for(uint32_t i=0;i<b.draft.count;i++)if(b.draft.ids[i]==id&&b.mapped[i]==UINT32_MAX){b.mapped[i]=b.scan;b.resolve_count++;}return;}
     uint32_t lo=0,hi=b.draft.count;
     while(lo<hi){uint32_t mid=lo+(hi-lo)/2u;if(b.draft.ids[b.positions[mid]]<id)lo=mid+1u;else hi=mid;}
+    if(lo==b.draft.count||b.draft.ids[b.positions[lo]]!=id||b.mapped[b.positions[lo]]!=UINT32_MAX)return;
     for(uint32_t i=lo;i<b.draft.count&&b.draft.ids[b.positions[i]]==id;i++){
         uint32_t position=b.positions[i];if(b.mapped[position]==UINT32_MAX){b.mapped[position]=b.scan;b.resolve_count++;}
     }
@@ -404,9 +405,11 @@ void ln_music_browser_step(void){
     }else if(b.resolving){if(!ln_music_library_count()){b.resolving=false;b.here.count=0;}
         else if(b.sort_at)resolve_sift(--b.sort_at,b.sort_end);
         else if(b.sort_end>1u){uint32_t last=--b.sort_end,position=b.positions[last];b.positions[last]=b.positions[0];b.positions[0]=position;resolve_sift(0,last);}
-        else if(b.scan_id_at<b.scan_id_count){uint64_t id=b.scan_ids[b.scan_id_at++];
-            resolve_id(id);b.scan++;
-            if(b.resolve_count==b.draft.count||b.scan==ln_music_library_count()){uint32_t count=0;for(uint32_t i=0;i<b.draft.count;i++)if(b.mapped[i]!=UINT32_MAX){b.positions[count]=i;b.mapped[count++]=b.mapped[i];}b.here.count=count;b.resolving=false;if(count!=b.draft.count)ln_music_browser_notice("Missing tracks omitted");changed();}}
+        else if(b.scan_id_at<b.scan_id_count){uint32_t started=ln_time_us();
+            /* Consume only the ready batch within a bounded metadata slice. */
+            do{resolve_id(b.scan_ids[b.scan_id_at++]);b.scan++;
+                if(b.resolve_count==b.draft.count||b.scan==ln_music_library_count()){uint32_t count=0;for(uint32_t i=0;i<b.draft.count;i++)if(b.mapped[i]!=UINT32_MAX){b.positions[count]=i;b.mapped[count++]=b.mapped[i];}b.here.count=count;b.resolving=false;if(count!=b.draft.count)ln_music_browser_notice("Missing tracks omitted");changed();break;}
+            }while(b.scan_id_at<b.scan_id_count&&(uint32_t)(ln_time_us()-started)<250u);}
         else if(ln_music_library_track_ids(b.scan))b.job=RESOLVE_IDS;
     }else if(b.status==LN_BROWSER_QUEUE_LOADING){if(ln_music_library_group_member(b.queue.source_group,b.queue.source_group&LN_QUEUE_REVERSE?b.queue.count-1-b.next:b.next))b.job=MEMBER;
     }else if(b.recent_open){if(ln_music_library_group(b.here.lower))b.job=RECENT_GROUP;
