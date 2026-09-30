@@ -894,12 +894,13 @@ def run(identity, selected, pending=(), **options):
 
 
 def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
-                   aac_recovery, flac_recovery, record):
+                   aac_recovery, flac_recovery, record, stage_progress=lambda fraction: None):
     from .aac_index import prepare_file as prepare_aac
     from .flac_index import prepare_file as prepare_flac
     supported = ('.m4a', '.m4b', '.flac', '.flc')
     checkpoint()
     next_check = time.monotonic() + 0.05
+    pending = []
     for folder in source_folders(root, 'Music'):
         for path in folder.rglob('*'):
             if time.monotonic() >= next_check:
@@ -910,21 +911,40 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
                 continue
             if path.relative_to(root).as_posix().casefold() in skipped:
                 continue
-            checkpoint()
-            next_check = time.monotonic() + 0.05
-            _plain(path, root)
-            if suffix in ('.m4a', '.m4b'):
-                progress(f'Preparing AAC seeks: {path.name}')
-                if prepare_aac(path, cache / 'aac-seek', checkpoint=checkpoint,
-                               recovery=aac_recovery, journal=record):
-                    report['steps'].append(dict(prepared_aac=str(path.relative_to(root))))
-                    record()
-            else:
-                progress(f'Preparing FLAC seeks: {path.name}')
-                if prepare_flac(path, cache / 'flac-seek', ffprobe=ffprobe,
-                                checkpoint=checkpoint, recovery=flac_recovery, journal=record):
-                    report['steps'].append(dict(prepared_flac=str(path.relative_to(root))))
-                    record()
+            pending.append((path, suffix))
+    totals = {'aac': sum(suffix in ('.m4a', '.m4b') for _, suffix in pending),
+              'flac': sum(suffix in ('.flac', '.flc') for _, suffix in pending)}
+    completed = {'aac': 0, 'flac': 0}
+    durations = {'aac': [], 'flac': []}
+    for path, suffix in pending:
+        checkpoint()
+        _plain(path, root)
+        kind = 'aac' if suffix in ('.m4a', '.m4b') else 'flac'
+        label = 'AAC' if kind == 'aac' else 'FLAC'
+        left = totals[kind] - completed[kind]
+        recent = durations[kind]
+        eta = f' · about {max(1, round(sum(recent) / len(recent) * left / 60))}m left' if len(recent) >= 2 else ''
+        stage_progress((completed['aac'] + completed['flac']) / len(pending))
+        progress(f'{label} seeks {completed[kind]}/{totals[kind]} · {left} left{eta}: {path.name}')
+        started = time.monotonic()
+        if suffix in ('.m4a', '.m4b'):
+            if prepare_aac(path, cache / 'aac-seek', checkpoint=checkpoint,
+                           recovery=aac_recovery, journal=record):
+                report['steps'].append(dict(prepared_aac=str(path.relative_to(root))))
+                record()
+        else:
+            if prepare_flac(path, cache / 'flac-seek', ffprobe=ffprobe,
+                            checkpoint=checkpoint, recovery=flac_recovery, journal=record):
+                report['steps'].append(dict(prepared_flac=str(path.relative_to(root))))
+                record()
+        recent.append(time.monotonic() - started)
+        if len(recent) > 8:
+            recent.pop(0)
+        completed[kind] += 1
+    stage_progress(1)
+    for kind, label in (('aac', 'AAC'), ('flac', 'FLAC')):
+        if totals[kind]:
+            progress(f'{label} seeks {completed[kind]}/{totals[kind]} complete')
     checkpoint()
 
 
@@ -1333,7 +1353,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             retail_photos = images(root)
         if 'Music' in selected:
             _prepare_audio(root, cache, skipped['Music'], ffprobe or shutil.which('ffprobe'),
-                           checkpoint, progress, report, aac_recovery, flac_recovery, record)
+                           checkpoint, progress, report, aac_recovery, flac_recovery, record,
+                           stage_progress=lambda fraction: emit_stage('Preparing audio seeks', 1, fraction))
         inventory = scan(root, selected, skipped=skipped, retail_photos=retail_photos,
                          fingerprint_kinds=(kind for kind in selected if kind != "Videos"))
         if "Videos" in selected:
