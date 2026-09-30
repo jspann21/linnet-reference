@@ -237,6 +237,18 @@ LN_DSP_ICODE void ln_dsp_process(struct ln_dsp *dsp,int16_t *pcm,uint32_t frames
         }
         dsp->frames=frames>UINT32_MAX-dsp->frames?UINT32_MAX:dsp->frames+frames;return;
     }
+    if(c->mode==LINNET_DSP_STEREO&&c->gain_q16<LINNET_DSP_UNITY&&
+       c->replaygain_q16==LINNET_DSP_UNITY&&c->balance==0&&
+       c->band_count==0&&c->crossfeed_amount_q16==0){
+        /* Attenuation cannot clip. Keep the two Q8 rounding steps of the
+         * general path; the signed product fits int32 below unity. */
+        for(uint32_t i=0;i<frames*2u;++i){
+            int32_t product=(int32_t)pcm[i]*(int32_t)c->gain_q16;
+            int32_t q8=(product+128-(int32_t)(product<0))>>8;
+            pcm[i]=(int16_t)((q8+128-(int32_t)(q8<0))>>8);
+        }
+        dsp->frames=frames>UINT32_MAX-dsp->frames?UINT32_MAX:dsp->frames+frames;return;
+    }
     if(c->mode==LINNET_DSP_STEREO)process_channels(dsp,pcm,frames,2);
     else process_channels(dsp,pcm,frames,1);
 }
