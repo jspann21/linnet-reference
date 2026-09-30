@@ -1126,8 +1126,15 @@ void ln_runtime_step(void){
             struct rnd_span render_span=rnd_enter();
 #endif
             uint16_t *render_pixels=NULL;
+#if defined(LINNET_SOC_S5L8702) && defined(LINNET_NATIVE_UI)
+            /* A full repaint overwrites every pixel; keep the stale draw buffer
+             * out of the path instead of copying the previous frame first. */
+            if(!shell->rendered||(shell->dirty&1u)||
+               shell->drawn_theme!=ln_ui_theme_index())
+                render_pixels=ln_display_direct_framebuffer();
+#endif
 #if defined(LINNET_VIDEO) && defined(LINNET_NATIVE_UI)
-            if(video_scene()){
+            if(!render_pixels&&video_scene()){
                 const struct ln_ui_asset *asset=ln_video_asset();
                 const struct ln_ui_scene *c=&ln_ui_scenes[shell->scene];
                 if(asset&&asset->pixels&&asset->width&&asset->width<=LINNET_VIDEO_WIDTH&&
