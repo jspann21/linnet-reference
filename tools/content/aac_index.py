@@ -119,6 +119,18 @@ def _run_tool(tool, arguments, checkpoint, timeout, *, allow_timeout=False):
     return child.returncode
 
 
+def _possibly_alac(path):
+    try:
+        from mutagen.mp4 import Atoms, MP4Info
+        with path.open('rb') as reader:
+            info = MP4Info()
+            info.load(Atoms(reader), reader)
+        return info.codec == 'alac'
+    except Exception:
+        # This hint only avoids a host copy. The full indexer decides support.
+        return False
+
+
 def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal=None):
     """Atomically augment an iPod copy; retain its compressed audio and tags."""
     from .guard import hash_file
@@ -133,11 +145,13 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
     if unsupported.exists():
         return False
     tool = executable()
-    probe = _run_tool(tool, (path,), checkpoint, 30, allow_timeout=True)
-    if (before.st_size, before.st_mtime_ns) != (path.stat().st_size, path.stat().st_mtime_ns):
-        raise OSError('AAC source changed during preparation')
-    if probe == 4:
-        unsupported.touch(); return False
+    if _possibly_alac(path):
+        checkpoint()
+        probe = _run_tool(tool, (path,), checkpoint, 30, allow_timeout=True)
+        if (before.st_size, before.st_mtime_ns) != (path.stat().st_size, path.stat().st_mtime_ns):
+            raise OSError('AAC source changed during preparation')
+        if probe == 4:
+            unsupported.touch(); return False
     with tempfile.TemporaryDirectory(prefix='aac-', dir=cache) as scratch:
         local, index = Path(scratch) / 'source.m4a', Path(scratch) / 'index.bin'
         source_hash = hashlib.sha256()
