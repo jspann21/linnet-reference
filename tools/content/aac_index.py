@@ -109,11 +109,15 @@ def _run_tool(tool, arguments, checkpoint, timeout, *, allow_timeout=False):
     try:
         while child.poll() is None:
             checkpoint()
-            if time.monotonic() - started > timeout:
+            remaining = timeout - (time.monotonic() - started)
+            if remaining <= 0:
                 if allow_timeout:
                     return None
                 raise TimeoutError('AAC preparation timed out')
-            time.sleep(.05)
+            try:
+                child.wait(timeout=min(.05, remaining))
+            except subprocess.TimeoutExpired:
+                pass
     finally:
         if child.poll() is None:
             child.terminate(); child.wait(timeout=10)
