@@ -1,5 +1,8 @@
 """Read existing iTunes media without modifying Apple's databases or originals."""
 from collections import OrderedDict
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from functools import lru_cache
 import hashlib
 import os
@@ -161,6 +164,15 @@ class _ThumbnailReaders:
         return pixels
 
 
+def _write_preview(image, preview):
+    temporary = preview.with_name(uuid.uuid4().hex + '.tmp')
+    try:
+        image.save(temporary, format='PNG', compress_level=3)
+        os.replace(temporary, preview)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def images(root, *, artwork=False, dbids=None, render=True):
     root = Path(root).resolve()
     folder = root / ('iPod_Control/Artwork' if artwork else 'Photos')
@@ -177,7 +189,9 @@ def images(root, *, artwork=False, dbids=None, render=True):
     result = []
     paths = {}
     file_info = {}
-    with _ThumbnailReaders() as readers:
+    pending, queued = deque(), set()
+    with _ThumbnailReaders() as readers, ExitStack() as workers:
+        encoder = None
         for _ in range(count):
             child, following = _record(data, at, end, b'mhii')
             if child - at < 28:
@@ -219,7 +233,7 @@ def images(root, *, artwork=False, dbids=None, render=True):
                         raise ValueError('iTunes thumbnail extends beyond its file')
                     stamp = f'{key}-{info.st_size}-{info.st_mtime_ns}'
                     preview = cache / (stamp + '.png')
-                    if render and not preview.is_file():
+                    if render and preview not in queued and not preview.is_file():
                         from PIL import Image
                         try:
                             pixels = readers.read(path, offset, width * height * 2)
@@ -229,17 +243,19 @@ def images(root, *, artwork=False, dbids=None, render=True):
                         if 0 < iw <= width and 0 < ih <= height and x < iw and y < ih:
                             image = image.crop((x, y, iw, ih))
                         cache.mkdir(parents=True, exist_ok=True)
-                        temporary = preview.with_name(uuid.uuid4().hex + '.tmp')
-                        try:
-                            image.save(temporary, format='PNG', compress_level=3)
-                            os.replace(temporary, preview)
-                        finally:
-                            temporary.unlink(missing_ok=True)
+                        if encoder is None:
+                            encoder = workers.enter_context(ThreadPoolExecutor(max_workers=4))
+                        queued.add(preview)
+                        pending.append(encoder.submit(_write_preview, image, preview))
+                        if len(pending) >= 4:
+                            pending.popleft().result()
                     result.append(dict(key=key, dbid=dbid, title=title, preview=str(preview),
                                        source=str(database), bytes=length, mtime_ns=info.st_mtime_ns,
                                        relative=f'Photos/@iTunes/{key}.png'))
                     break
             at = following
+        while pending:
+            pending.popleft().result()
         for path, before in file_info.items():
             _plain(path, folder)
             after = path.stat()
