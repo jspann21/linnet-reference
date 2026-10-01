@@ -58,10 +58,14 @@ def _publish_packs(packs, identity, root, candidate_bytes, grid_bytes):
     """Publish immutable tile packs before either catalog can name them."""
     from .publish import _same_target
 
+    if not packs:
+        return []
+
     directory = root/'.LINNET'/'PHOTOS'/'PACKS'
     guard = lambda: _volume_guard(identity)
     pending = []
     verified_existing = {}
+    distinct = {}
     for item in packs:
         source = Path(item['path'])
         _plain(source, Path(source.anchor))
@@ -71,23 +75,32 @@ def _publish_packs(packs, identity, root, candidate_bytes, grid_bytes):
             raise ValueError('invalid staged photo pack identity')
         active = root.joinpath(*expected.lstrip('/').split('/'))
         _plain(active, root)
+        previous = distinct.get(active)
+        if previous is not None:
+            if (previous['bytes'], previous['sha256']) != (item['bytes'], item['sha256']):
+                raise ValueError('different photo packs share one immutable name')
+            continue
+        distinct[active] = item
+        guard()
         if active.exists():
+            before = _pack_stamp(active)
             if _hash(active, item['bytes']) != item['sha256']:
                 raise ValueError(f'photo pack name collision or changed iPod bytes: {active}')
-            info = active.stat()
-            verified_existing[active] = (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino)
+            after = _pack_stamp(active)
+            if before != after:
+                raise OSError(f'photo pack changed during verification: {active}')
+            verified_existing[active] = after
         else:
             pending.append(item)
-    needed = candidate_bytes + grid_bytes + sum(item['bytes'] for item in pending) + 2*1024*1024
+    needed = sum(item['bytes'] for item in pending) + (2*1024*1024 if pending else 0)
     if identity['free_bytes'] < needed:
         raise ValueError('insufficient iPod space for photo packs and catalogs')
     results = []
-    for item in packs:
+    for active, item in distinct.items():
         guard()
         source = Path(item['path'])
         if _hash(source, item['bytes']) != item['sha256']:
             raise ValueError(f'staged photo pack changed: {source}')
-        active = root.joinpath(*item['device_path'].lstrip('/').split('/'))
         reused = active.exists()
         if not reused:
             for part in (root/'.LINNET', root/'.LINNET'/'PHOTOS', directory, active.parent):
@@ -100,17 +113,37 @@ def _publish_packs(packs, identity, root, candidate_bytes, grid_bytes):
                 raise RuntimeError(f'photo pack appeared during publication: {active}')
             os.rename(temporary, active)
         guard()
+        _plain(active, root)
         if reused:
-            info = active.stat()
-            if (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino) != verified_existing[active]:
+            stamp = _pack_stamp(active)
+            if stamp != verified_existing[active]:
                 raise OSError(f'photo pack changed after verification: {active}')
-        elif _hash(active, item['bytes']) != item['sha256']:
-            raise OSError(f'photo pack readback mismatch: {active}')
+        else:
+            before = _pack_stamp(active)
+            if _hash(active, item['bytes']) != item['sha256']:
+                raise OSError(f'photo pack readback mismatch: {active}')
+            stamp = _pack_stamp(active)
+            if before != stamp:
+                raise OSError(f'photo pack changed during readback: {active}')
         results.append(dict(path=item['device_path'].lstrip('/'), package=str(active),
-                            bytes=item['bytes'], sha256=item['sha256'], reused=reused))
+                            bytes=item['bytes'], sha256=item['sha256'], reused=reused, stamp=stamp))
     _same_target(identity, inspect_target(identity['disk_number'], identity['disk_serial'],
                                           identity['volume_serial'], identity['drive']))
     return results
+
+
+def _pack_stamp(path):
+    info = path.stat()
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _verify_pack_proofs(results, identity, root):
+    for item in results:
+        _volume_guard(identity)
+        path = Path(item['package'])
+        _plain(path, root)
+        if _pack_stamp(path) != item['stamp']:
+            raise OSError(f"photo pack changed after readback: {path}")
 
 
 def publish_photos(package, *, disk_number, expected_disk_serial,
@@ -156,9 +189,20 @@ def publish_photos(package, *, disk_number, expected_disk_serial,
         if grid is not None:
             return _publish_pair(package, candidate, references, grid, grid_candidate, identity, root,
                                  disk_number, expected_disk_serial, expected_volume_serial, expected_drive, pack_results)
-        return _publish(package, candidate, references, identity, root, disk_number,
-                        expected_disk_serial, expected_volume_serial, expected_drive,
-                        receipt_fields=dict(packs=pack_results))
+        receipt = _publish(package, candidate, references, identity, root, disk_number,
+                           expected_disk_serial, expected_volume_serial, expected_drive,
+                           retain_backup=bool(pack_results), receipt_fields=dict(packs=pack_results))
+        try:
+            _verify_pack_proofs(pack_results, identity, root)
+        except Exception as exc:
+            receipt.update(passed=False, phase='pack-verification-failed', error=str(exc))
+            _write_receipt(Path(receipt['receipt']), receipt)
+            raise
+        if pack_results:
+            _finish_backups(receipt, [Path(value) for value in receipt.get('backups_retained', [])], root,
+                            lambda: _volume_guard(identity), host_root=package.parent)
+            _write_receipt(Path(receipt['receipt']), receipt)
+        return receipt
 
 
 def _publish(package, candidate, references, identity, root, number, serial, volume, drive,
@@ -215,7 +259,13 @@ def _publish_pair(package, candidate, references, grid, grid_candidate, identity
                            receipt_fields=dict(grid=grid_receipt, packs=pack_results))
     except Exception as exc:
         raise RuntimeError(f"Photo pair stopped after native grid publication; inspect {grid_receipt['receipt']} and the PIMG receipt. Do not replay automatically: {exc}") from exc
-    # Both guarded readbacks have succeeded; recovery copies remain until here.
+    try:
+        _verify_pack_proofs(pack_results, identity, root)
+    except Exception as exc:
+        receipt.update(passed=False, phase='pack-verification-failed', error=str(exc))
+        _write_receipt(Path(receipt['receipt']), receipt)
+        raise
+    # Both guarded readbacks and all pack proofs have succeeded; recovery copies remain until here.
     for result, staged in ((grid_receipt, grid), (receipt, package)):
         _finish_backups(result, [Path(value) for value in result.get('backups_retained',[])], root,
                         lambda: _volume_guard(identity), host_root=staged.parent)

@@ -977,9 +977,11 @@ def _published_photo_output(root, identity, output_paths, published):
         raise RuntimeError('Photo pack output list differs from its publication receipt')
     for item in packs:
         path = root/item['path']
+        _volume_guard(identity)
         _plain(path, root)
         info = path.stat()
         if (Path(item['package']) != path or not stat.S_ISREG(info.st_mode) or
+                tuple(item.get('stamp', ())) != _receipt_stamp(info) or
                 info.st_size != item['bytes'] or not re.fullmatch('[0-9a-f]{64}', item['sha256'])):
             raise RuntimeError('Photo pack changed after verified publication')
         outputs.append((item['path'], item['sha256']))
@@ -1476,8 +1478,8 @@ def _prepare_photos(root, cache, identity, media_profile, skipped, retail_photos
     checkpoint()
     progress("Publishing prepared photos…")
     begin_publication("Photos")
-    return [".LINNET/PHOTOS/LIBRARY.PIM", ".LINNET/PHOTOS/GRID.PGR"] + [
-        item['device_path'].lstrip('/') for item in prepared.get('packs', [])], [
+    return [".LINNET/PHOTOS/LIBRARY.PIM", ".LINNET/PHOTOS/GRID.PGR"] + list(dict.fromkeys(
+        item['device_path'].lstrip('/') for item in prepared.get('packs', []))), [
         publish_photos(package, grid=package.with_suffix('.pgr'), **target_args(identity))]
 
 

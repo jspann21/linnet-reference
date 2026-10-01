@@ -545,7 +545,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
         pack_manifest = []
         pack_table = bytearray(PACK_COUNT * 12)
         if packed_target:
-            pack_root = output.parent / 'photo-packs'
+            pack_root = output.parent / 'PACKS'
             pack_root.mkdir(parents=True, exist_ok=True)
             for bucket, spool in enumerate(pack_spools):
                 size = spool.tell()
@@ -678,8 +678,7 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
                 if not any(identity) or pack_size > PACK_LIMIT:
                     raise ValueError('invalid photo pack identity or size')
                 prefix = identity.hex()
-                pack_root = path.parent/('PACKS' if path.name.upper() == 'LIBRARY.PIM' else 'photo-packs')
-                packed_path = _pack_path(pack_root, prefix)
+                packed_path = _pack_path(path.parent/'PACKS', prefix)
                 if packed_path.stat().st_size != pack_size:
                     raise ValueError('photo pack size changed')
                 packed = pack_stack.enter_context(packed_path.open('rb'))
