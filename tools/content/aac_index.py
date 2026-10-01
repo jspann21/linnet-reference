@@ -247,7 +247,8 @@ def mark_unsupported(path, cache):
         pass  # The cache is disposable; device preparation can retry.
 
 
-def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal=None):
+def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal=None,
+                 local_copy=None):
     """Atomically augment an iPod copy; retain its compressed audio and tags."""
     from .guard import hash_file
     path, cache = Path(path), Path(cache)
@@ -289,6 +290,9 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
             raise OSError('AAC source changed during preparation')
         if recovery is not None and journal is not None:
+            if local_copy is not None:
+                local_copy(local)
+                checkpoint()
             backup = cache / (uuid.uuid4().hex + '.aac-original')
             suffix_path = cache / (uuid.uuid4().hex + '.aac-append')
             with suffix_path.open('xb') as writer:

@@ -1077,7 +1077,7 @@ def run(identity, selected, pending=(), **options):
 
 def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
                    aac_recovery, flac_recovery, record, stage_progress=lambda fraction: None,
-                   force=False):
+                   force=False, cancelled=lambda: False):
     from .aac_index import prepare_file as prepare_aac
     from .flac_index import prepare_file as prepare_flac
     supported = ('.m4a', '.m4b', '.flac', '.flc')
@@ -1105,6 +1105,8 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
     prepared = False
     probe_deferred = False
     durations = {'aac': [], 'flac': []}
+    music_seeds = []
+    seed_bytes = 0
     for path, suffix in pending:
         checkpoint()
         _plain(path, root)
@@ -1126,9 +1128,20 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
         stage_progress((completed['aac'] + completed['flac']) / len(pending))
         progress(f'{label} seeks {completed[kind]}/{totals[kind]} · {left} left{eta}: {path.name}')
         started = time.monotonic()
+        metadata_seed = None
         if suffix in ('.m4a', '.m4b'):
+            def seed_local(local):
+                nonlocal metadata_seed
+                try:
+                    from .music import _read_metadata
+                    metadata = _read_metadata(local, ffprobe or shutil.which('ffprobe'), True,
+                                              cancelled, include_cover=True)
+                    metadata_seed = (metadata, metadata.pop('_embedded_cover', None))
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    pass  # The library compiler can still read the iPod copy.
             outcome = prepare_aac(path, cache / 'aac-seek', checkpoint=checkpoint,
-                                  recovery=aac_recovery, journal=record)
+                                  recovery=aac_recovery, journal=record,
+                                  local_copy=seed_local if not force else None)
             if outcome:
                 prepared = True
                 report['steps'].append(dict(prepared_aac=str(path.relative_to(root))))
@@ -1144,6 +1157,13 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
                 record()
         if outcome is not None:
             after = path.stat()
+            if outcome and metadata_seed is not None:
+                music_seeds.append((path, after, *metadata_seed))
+                seed_bytes += len(metadata_seed[1] or b'')
+                if len(music_seeds) >= 128 or seed_bytes >= 32 * 1024 * 1024:
+                    _seed_imported_music(root, cache, music_seeds)
+                    music_seeds.clear()
+                    seed_bytes = 0
             if not outcome and _receipt_stamp(before) != _receipt_stamp(after):
                 raise ValueError(f'Audio source changed during seek check: {path}')
             seek_state[key] = [after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino]
@@ -1155,6 +1175,8 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
         if len(recent) > 8:
             recent.pop(0)
         completed[kind] += 1
+    if music_seeds:
+        _seed_imported_music(root, cache, music_seeds)
     seek_state = {key: value for key, value in seek_state.items() if key in seen}
     _save_seek_state(seek_state_path, seek_state)
     stage_progress(1)
@@ -1617,7 +1639,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 prepared, probe_deferred = _prepare_audio(root, cache, skipped['Music'], probe,
                                                           checkpoint, progress, report, aac_recovery, flac_recovery, record,
                                                           stage_progress=lambda fraction: emit_stage('Preparing audio seeks', unit, fraction),
-                                                          force=force)
+                                                          force=force, cancelled=cancelled)
                 if prepared:
                     # Seek atoms change source sizes and timestamps. Publish
                     # the fingerprint of the prepared files.
