@@ -919,7 +919,9 @@ def _outputs_match(root, outputs, *, verified=None, progress=None):
             if not stat.S_ISREG(info.st_mode):
                 return False
             stamp = (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino)
-            key = (str(path), digest)
+            # The cache is already scoped to this disk, volume and partition.
+            # A Windows drive-letter change must not discard a recent hash.
+            key = (relative.as_posix(), digest)
             # NTFS can report the same timestamps for two immediate writes of
             # equal size. Hash recent files on every check until that window
             # has passed, then reuse the verified stamp on later refreshes.

@@ -1,6 +1,7 @@
 """Read-only preparation plans and verified library status for the desktop UI."""
 from functools import lru_cache
 import json
+import os
 from pathlib import Path
 import shutil
 import stat
@@ -10,6 +11,19 @@ from . import media_manager as media
 from . import media_library
 from .host_state import cache_directory, cache_root, load_json_object, save_json
 from .inventory import collect_records_by_kind as records_by_kind, skipped_paths, scan as scan_sources
+
+
+def _verification_name(name):
+    """Scope old drive-root cache names and new names to a device-relative file."""
+    path = Path(name)
+    if path.is_absolute():
+        if os.name != 'nt' or len(path.drive) != 2 or path.drive[1] != ':':
+            return None
+        path = path.relative_to(path.anchor)
+    if (path.drive or not path.parts or '..' in path.parts or
+            path.parts[0].casefold() not in {'.linnet', 'music', 'videos', 'ipod_control'}):
+        return None
+    return path.as_posix()
 
 
 @lru_cache(maxsize=4)
@@ -32,10 +46,14 @@ def _verification_cache(disk_serial, volume_serial, partition_offset, cache_disk
         rows = saved.get('files', [])
         if not isinstance(rows, list) or len(rows) > 4096:
             return cache
-        cache['files'] = {(row[0], row[1]): tuple(row[2:]) for row in rows
-                if (isinstance(row, list) and len(row) == 6 and
-                    isinstance(row[0], str) and isinstance(row[1], str) and
-                    all(type(value) is int for value in row[2:]))}
+        for row in rows:
+            if (not isinstance(row, list) or len(row) != 6 or
+                    not isinstance(row[0], str) or not isinstance(row[1], str) or
+                    not all(type(value) is int for value in row[2:])):
+                continue
+            name = _verification_name(row[0])
+            if name is not None:
+                cache['files'][(name, row[1])] = tuple(row[2:])
         cache['verified_at'] = verified_at
     except (OSError, ValueError, TypeError, AttributeError):
         pass
