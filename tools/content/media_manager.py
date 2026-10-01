@@ -38,6 +38,14 @@ def _save_seek_state(path, state):
         pass  # Seek checks are disposable; publication and recovery continue.
 
 
+def _append_audio_journal(path, kind, change):
+    entry = json.dumps(dict(kind=kind, change=change), separators=(',', ':')).encode('utf-8') + b'\n'
+    with path.open('ab') as writer:
+        writer.write(entry)
+        writer.flush()
+        os.fsync(writer.fileno())
+
+
 def discover(*, detailed=False):
     """Find mounted iPods and resolve each through publication guards."""
     if os.name != "nt":
@@ -1077,7 +1085,7 @@ def run(identity, selected, pending=(), **options):
 
 def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
                    aac_recovery, flac_recovery, record, stage_progress=lambda fraction: None,
-                   force=False, cancelled=lambda: False):
+                   force=False, cancelled=lambda: False, audio_journal=None):
     from .aac_index import prepare_file as prepare_aac
     from .flac_index import prepare_file as prepare_flac
     supported = ('.m4a', '.m4b', '.flac', '.flc')
@@ -1144,22 +1152,26 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
                 nonlocal verified_stamp
                 verified_stamp = _receipt_stamp(info)
             outcome = prepare_aac(path, cache / 'aac-seek', checkpoint=checkpoint,
-                                  recovery=aac_recovery, journal=record,
+                                  recovery=aac_recovery,
+                                  journal=(lambda: audio_journal('AAC', aac_recovery[-1])) if audio_journal else record,
                                   local_copy=seed_local if not force else None,
                                   verified_copy=retain_verified if not force else None)
             if outcome:
                 prepared = True
                 report['steps'].append(dict(prepared_aac=str(path.relative_to(root))))
-                record()
+                if audio_journal is None:
+                    record()
         else:
             outcome = prepare_flac(path, cache / 'flac-seek', ffprobe=ffprobe,
-                                   checkpoint=checkpoint, recovery=flac_recovery, journal=record)
+                                   checkpoint=checkpoint, recovery=flac_recovery,
+                                   journal=(lambda: audio_journal('FLAC', flac_recovery[-1])) if audio_journal else record)
             if outcome is None:
                 probe_deferred = True
             elif outcome:
                 prepared = True
                 report['steps'].append(dict(prepared_flac=str(path.relative_to(root))))
-                record()
+                if audio_journal is None:
+                    record()
         if outcome is not None:
             after = path.stat()
             if outcome and metadata_seed is not None and verified_stamp == _receipt_stamp(after):
@@ -1537,6 +1549,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
     verified_outputs = {}
     receipt = cache / ("session-" + uuid.uuid4().hex + ".json")
     report["receipt"] = str(receipt)
+    audio_journal_path = receipt.with_suffix('.audio.jsonl')
+    report['audio_journal'] = str(audio_journal_path)
     aac_recovery = report['aac_preparations'] = []
     flac_recovery = report['flac_preparations'] = []
     aac_committed = aac_publication_started = False
@@ -1548,6 +1562,9 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
 
     def record():
         _save(receipt, report)
+
+    def journal_audio(kind, change):
+        _append_audio_journal(audio_journal_path, kind, change)
 
     record()
     try:
@@ -1644,7 +1661,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 prepared, probe_deferred = _prepare_audio(root, cache, skipped['Music'], probe,
                                                           checkpoint, progress, report, aac_recovery, flac_recovery, record,
                                                           stage_progress=lambda fraction: emit_stage('Preparing audio seeks', unit, fraction),
-                                                          force=force, cancelled=cancelled)
+                                                          force=force, cancelled=cancelled,
+                                                          audio_journal=journal_audio)
                 if prepared:
                     # Seek atoms change source sizes and timestamps. Publish
                     # the fingerprint of the prepared files.
@@ -1831,4 +1849,5 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             progress(report["summary"])
         report["finished"] = time.time()
         record()
+        audio_journal_path.unlink(missing_ok=True)
     return report
