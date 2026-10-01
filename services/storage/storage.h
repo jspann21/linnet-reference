@@ -74,6 +74,7 @@ int ln_storage_async_poll(uint32_t ticket,uint32_t *transferred);
 /* Bounded executive poll; service runtime after returning to the caller. */
 int ln_storage_async_poll_deferred(uint32_t ticket,uint32_t *transferred);
 int ln_storage_quiesce(void);
+int ln_storage_chainload_quiesce(void);
 int ln_storage_resume(void);
 int ln_storage_recover(void);
 int ln_storage_disk_mode(void);

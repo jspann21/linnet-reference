@@ -48,6 +48,8 @@ uint32_t ln_block_request_timeout(void);
  * Returns0pending,1flush plus supported standby proved,-1failed; call repeatedly until terminal.
  * Resume accepts new requests only after a successful quiesce. */
 int ln_block_quiesce(uint32_t now,uint32_t deadline_us);
+/* Chainload barrier: drain and flush without spinning down a rotating disk. */
+int ln_block_quiesce_keep_awake(uint32_t now,uint32_t deadline_us);
 bool ln_block_resume(void);
 /* Explicit recovery is allowed only with no outstanding caller requests. */
 bool ln_block_recover(uint32_t now);

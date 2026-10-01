@@ -312,11 +312,13 @@ static _Noreturn void ln_failed_handoff(void)
     for(;;)__asm__ volatile("nop");
 }
 #endif
-int ln_recovery_quiesce(void *context)
+static int recovery_quiesce(void *context, bool chainload)
 {
     (void)context;
     #if defined(LINNET_STORAGE)
-    if (!ln_storage_quiesce()) return 0;
+    if (!(chainload?ln_storage_chainload_quiesce():ln_storage_quiesce())) return 0;
+    #else
+    (void)chainload;
     #endif
     if (!ln_recovery_presentation_stop()) {
         ln_trace_phase(0x0fu, 0x0fu, 0);
@@ -371,6 +373,7 @@ int ln_recovery_quiesce(void *context)
     ln_trace_phase(0x14u, 0, 0);
     return 1;
 }
+int ln_recovery_quiesce(void *context){return recovery_quiesce(context,false);}
 
 static _Noreturn void ln_copy_and_enter(const uint8_t *source, uint32_t size,
                                        uint32_t load, uint32_t entry)
@@ -405,7 +408,7 @@ int ln_recovery_chainload(void *context, const uint8_t *payload, uint32_t size,
         ln_trace_phase(0x21u, 0x21u, address);
         return 0;
     }
-    if (!ln_recovery_quiesce(context)) return 0;
+    if (!recovery_quiesce(context,true)) return 0;
     /* Only native prepare may carry mount/validation timing across the copy.
      * RAM launches reset it, including launches from an already running OS. */
     if(!native_timeline||!ln_running_loader||ln_control->timeline[0]!=LN_BOOT_TIMELINE_MAGIC||

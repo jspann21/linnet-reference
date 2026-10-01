@@ -565,14 +565,30 @@ int ln_storage_async_poll_deferred(uint32_t ticket,uint32_t *transferred){
     int result=ln_storage_async_poll(ticket,transferred);
     --deferred_runtime_poll_depth;return result;
 }
-int ln_storage_quiesce(void){
+static int storage_quiesce(bool chainload){
     if(locked||pending||ln_storage_busy())return 0;
     struct ln_block_info info;ln_block_snapshot(&info);
     if(!info.ready)return !info.quarantined&&!found;
+    bool keep_awake=false;
+#if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_BOOT)
+    if(chainload){
+        struct ln_ata_state media;ln_ata_state_snapshot(&media);
+        /* The OS will mount the same rotating disk immediately after handoff. */
+        keep_awake=media.media_kind==LN_ATA_MEDIA_ROTATING;
+    }
+#else
+    (void)chainload;
+#endif
     uint32_t deadline=ln_time_us()+30000000u;int result;
-    do{ln_storage_progress(0);result=ln_block_quiesce(ln_time_us(),deadline);}while(!result);
+    do{
+        ln_storage_progress(0);
+        result=keep_awake?ln_block_quiesce_keep_awake(ln_time_us(),deadline):
+                          ln_block_quiesce(ln_time_us(),deadline);
+    }while(!result);
     return result==1;
 }
+int ln_storage_quiesce(void){return storage_quiesce(false);}
+int ln_storage_chainload_quiesce(void){return storage_quiesce(true);}
 int ln_storage_resume(void){return ln_block_resume();}
 #if !defined(LINNET_PROFILE_RELEASE)
 int ln_storage_maintenance_begin(void){

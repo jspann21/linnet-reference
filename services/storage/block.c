@@ -55,6 +55,7 @@ static uint32_t active_slots[8],active_offsets[8],streak;
 static bool active_retry,recovering,frozen;
 static bool barrier_failed;
 static uint32_t quiesce_state,quiesce_deadline;
+static bool quiesce_keep_awake;
 static bool idle_allowed,idle_retry_active;
 static uint32_t power_task,last_activity,standby_at,idle_retry_at;
 static struct ln_block_info metrics;
@@ -143,7 +144,7 @@ void ln_block_init(uint32_t now) {
 #endif
     for(uint32_t i=0;i<8u;++i)slots[i].state=FREE;
     metrics=(struct ln_block_info){0};invalidate_cache();next_id=active_count=streak=quiesce_state=0;
-    frozen=recovering=active_retry=false;
+    frozen=recovering=active_retry=quiesce_keep_awake=false;
     barrier_failed=false;window_first=window_count=0;
     idle_allowed=idle_retry_active=false;power_task=standby_at=idle_retry_at=0;last_activity=now;
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -311,7 +312,8 @@ static void step_inner(uint32_t now) {
                  * wake, reset or failure clears power_safe. No new command is
                  * needed merely to acknowledge the same quiescent state. */
                 if(device.power_safe)quiesce_state=3u;
-                else if(ln_ata_start(LN_ATA_STANDBY,0,0,0,quiesce_deadline))quiesce_state=2u;
+                else if(ln_ata_start(quiesce_keep_awake?LN_ATA_FLUSH:LN_ATA_STANDBY,
+                                     0,0,0,quiesce_deadline))quiesce_state=2u;
                 else quiesce_state=4u;
             }
         }
@@ -540,22 +542,27 @@ uint32_t ln_block_request_timeout(void){
     struct ln_ata_state device;ln_ata_state_snapshot(&device);
     return (!device.powered||device.sleeping||device.initializing||power_task)?30000000u:5000000u;
 }
-int ln_block_quiesce(uint32_t now,uint32_t limit) {
+static int quiesce(uint32_t now,uint32_t limit,bool keep_awake) {
     if(!quiesce_state){
         if((int32_t)(limit-now)<=0||limit-now>30000000u)return -1;
         frozen=true;quiesce_state=1;quiesce_deadline=limit;
+        quiesce_keep_awake=keep_awake;
     }
+    if(quiesce_keep_awake!=keep_awake)return -1;
     if(quiesce_state<3u&&(int32_t)(now-quiesce_deadline)>=0)quiesce_state=4;
     return quiesce_state==3u?1:quiesce_state==4u?-1:0;
 }
+int ln_block_quiesce(uint32_t now,uint32_t limit){return quiesce(now,limit,false);}
+int ln_block_quiesce_keep_awake(uint32_t now,uint32_t limit){return quiesce(now,limit,true);}
 bool ln_block_resume(void) {
     if(!frozen&&!quiesce_state)return true;
-    if(quiesce_state!=3u)return false;frozen=false;quiesce_state=0;return true;
+    if(quiesce_state!=3u)return false;frozen=quiesce_keep_awake=false;quiesce_state=0;return true;
 }
 bool ln_block_recover(uint32_t now) {
     for(uint32_t i=0;i<8u;++i)if(slots[i].state!=FREE)return false;
     if(active_count||quiesce_state==2u||power_task)return false;
-    metrics.quarantined=0;streak=quiesce_state=0;invalidate_cache();frozen=barrier_failed=false;
+    metrics.quarantined=0;streak=quiesce_state=0;invalidate_cache();
+    frozen=barrier_failed=quiesce_keep_awake=false;
     standby_at=0;last_activity=now;idle_retry_active=false;
     window_first=window_count=0;ln_ata_recover(now);return true;
 }
