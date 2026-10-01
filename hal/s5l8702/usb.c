@@ -298,7 +298,8 @@ size_t ln_usb_read(uint8_t *data,size_t size){
 size_t ln_s5l_usb_storage_read(uint8_t *data,size_t size){
     if(!storage_mode||storage_reset||!size||!ln_usb_connected())return 0;
     if(!rx_active&&!rx_size){
-        if(size>sizeof(receive))size=sizeof(receive);
+        size_t limit=packet_size==512u?sizeof(receive):4096u;
+        if(size>limit)size=limit;
         storage_receive_size=(uint16_t)((size+packet_size-1u)&~(size_t)(packet_size-1u));
         arm_rx();
     }
