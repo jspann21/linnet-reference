@@ -585,8 +585,7 @@ def _prepare_import_mp3(item, scratch, ffprobe, cancelled, stopped):
     metadata_seed = None
     try:
         from .music import _read_metadata
-        metadata = _read_metadata(local, ffprobe, True, should_stop, include_cover=True,
-                                  fast_mp3_frames=True)
+        metadata = _read_metadata(local, ffprobe, True, should_stop, include_cover=True)
         metadata_seed = (metadata, metadata.pop('_embedded_cover', None))
     except (OSError, ValueError, subprocess.SubprocessError):
         pass  # The compiler can retry from the copied file if host parsing fails.

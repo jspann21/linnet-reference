@@ -42,15 +42,14 @@ static void le32(uint8_t *out,uint32_t value){for(uint32_t i=0;i<4u;++i)out[i]=(
 static void le64(uint8_t *out,uint64_t value){for(uint32_t i=0;i<8u;++i)out[i]=(uint8_t)(value>>(i*8u));}
 int main(int argc,char **argv){
     if(argc!=3)return 2;
-    bool count_only=!strcmp(argv[2],"--count");
     FILE *source=fopen(argv[1],"rb");
     if(!source)return 3;
     uint64_t bytes=file_size(source);
     if(bytes<1024u||bytes>0xffffffffu){fclose(source);return 4;}
-    FILE *output=count_only?NULL:fopen(argv[2],"wb");
-    if(!count_only&&!output){fclose(source);return 5;}
+    FILE *output=fopen(argv[2],"wb");
+    if(!output){fclose(source);return 5;}
     struct ln_mp3 *decoder=malloc(sizeof(*decoder));
-    if(!decoder){if(output)fclose(output);fclose(source);return 6;}
+    if(!decoder){fclose(output);fclose(source);return 6;}
     ln_mp3_init(decoder,read_media,source,bytes);
     decoder->seeking=true;decoder->seek_target=UINT64_MAX/4u;
     uint32_t previous=0,records=0,prefix_crc=0xffffffffu;
@@ -65,7 +64,7 @@ int main(int argc,char **argv){
         if(decoder->compressed_frames!=previous){
             previous=decoder->compressed_frames;
             if(decoder->gapless&&!parsed_total)parsed_total=decoder->total_frames;
-            if(!count_only&&previous%CHECKPOINT_FRAMES==0u){
+            if(previous%CHECKPOINT_FRAMES==0u){
                 if(!decoder->gapless||decoder->stream.md_len>511u||
                    decoder->pcm_cursor!=decoder->synth.pcm.length||
                    !decoder->stream.next_frame||decoder->stream.next_frame<decoder->input||
@@ -99,23 +98,16 @@ int main(int argc,char **argv){
         if(decoder->gapless&&decoder->decoded_frames==decoder->total_frames){result=LN_MP3_EOF;break;}
     }
     uint32_t samples=(decoder->frame.header.flags&MAD_FLAG_LSF_EXT)?576u:1152u;
-    bool valid=(!count_only&&result==LN_MP3_EOF&&decoder->gapless&&!decoder->recoveries&&
+    bool valid=(result==LN_MP3_EOF&&decoder->gapless&&!decoder->recoveries&&
                 !decoder->stream.freerate&&
                 decoder->decoded_frames==decoder->total_frames&&records>=2u&&
                 parsed_total==decoder->total_frames&&
                 (uint64_t)decoder->compressed_frames*samples==
                     decoder->total_frames+decoder->lead_trim+decoder->tail_trim&&
                 !ferror(source)&&!ferror(output)&&fflush(output)==0);
-    bool counted=count_only&&result==LN_MP3_ARGUMENT&&decoder->eof&&
-                 decoder->decoded_frames&&decoder->compressed_frames&&
-                 !decoder->recoveries&&!decoder->stream.freerate&&
-                 !ferror(source)&&(!decoder->gapless||
-                 decoder->decoded_frames==decoder->total_frames);
-    if(counted)printf("{\"frames\":%" PRIu64 ",\"rate\":%u,\"channels\":%u}\n",
-                      decoder->decoded_frames,decoder->rate,decoder->channels);
     if(valid)printf("{\"records\":%u,\"rate\":%u,\"channels\":%u,\"lead_trim\":%u,\"tail_trim\":%u,\"total_frames\":%" PRIu64 ",\"compressed_frames\":%u,\"samples_per_frame\":%u}\n",
                     records,decoder->rate,decoder->channels,decoder->lead_trim,
                     decoder->tail_trim,decoder->total_frames,decoder->compressed_frames,samples);
-    free(decoder);if(output)fclose(output);fclose(source);
-    return (count_only?counted:valid)?0:7;
+    free(decoder);fclose(output);fclose(source);
+    return valid?0:7;
 }

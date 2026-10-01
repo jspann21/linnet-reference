@@ -1266,7 +1266,7 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
 
 
 def _read_metadata(path: Path, ffprobe: str | None, existing: bool, cancelled=lambda: False,
-                   *, include_cover=False, fast_mp3_frames=False) -> dict:
+                   *, include_cover=False) -> dict:
     _check_cancel(cancelled)
     if path.suffix.lower() in (".wav", ".aif", ".aiff", ".aifc"):
         return _pcm(path, cancelled)
@@ -1276,12 +1276,6 @@ def _read_metadata(path: Path, ffprobe: str | None, existing: bool, cancelled=la
         metadata = _probe(path, ffprobe, exact_frames=not existing, cancelled=cancelled)
     if metadata is None:
         raise ValueError(f"{path}: compressed metadata requires explicit ffprobe executable")
-    if not metadata["frames"]:
-        if existing and fast_mp3_frames and metadata["codec"] == CODECS["mp3"]:
-            from .mp3_index import count_frames
-            metadata["frames"] = count_frames(path, rate=metadata["rate"],
-                                               channels=metadata["channels"],
-                                               checkpoint=lambda: _check_cancel(cancelled))
     if not metadata["frames"]:
         if not ffprobe:
             raise ValueError(f"{path}: track duration requires explicit ffprobe executable")
@@ -1297,7 +1291,7 @@ _METADATA_COVER = object()
 
 
 def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, progress,
-                   cancelled, prefetch_cover, fast_mp3_frames):
+                   cancelled, prefetch_cover):
     # Keep SQLite and progress callbacks on the caller's thread. Bound both
     # concurrent device reads and queued results, including on cancellation.
     pending = deque()
@@ -1325,8 +1319,7 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
         cover = prefetch_cover(path, before, pool, defer=metadata is None and
                                path.suffix.lower() in ('.m4a', '.m4b', '.mp3'))
         future = (pool.submit(_read_metadata, path, ffprobe, existing, cancelled,
-                              include_cover=cover is _METADATA_COVER,
-                              fast_mp3_frames=fast_mp3_frames)
+                              include_cover=cover is _METADATA_COVER)
                   if metadata is None else None)
         pending.append((number, path, resolved, before, metadata, future, cover))
     try:
@@ -1601,7 +1594,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     from .media_manager import _music_import_name
     for number, path, resolved, before, metadata, cached, prefetched_cover in _metadata_rows(
             paths, source, ffprobe, device_root is not None, cache, bypass_cache,
-            metadata_pool, progress, cancelled, prefetch_cover, verification != 'full'):
+            metadata_pool, progress, cancelled, prefetch_cover):
         location = None
         if device_root is not None:
             location = _device_media_path(path, device_root, alias_cache, canonical=resolved)
