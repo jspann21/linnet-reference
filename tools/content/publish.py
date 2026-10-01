@@ -337,7 +337,8 @@ def inspect_target(disk_number: int, expected_disk_serial: str, expected_volume_
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 $cfg=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('CONFIG')) | ConvertFrom-Json
-$disk=Get-Disk -Number $cfg.number -ErrorAction Stop
+$disk=Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Disk -Filter ('Number='+$cfg.number)
+if (!$disk) {throw 'Disk identity unavailable'}
 $physical=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$cfg.number)
 $native=@($cfg.native | Where-Object {$_.model -ceq $physical.Model -and $_.friendly_name -ceq $disk.FriendlyName})
 $apple=$disk.FriendlyName -ceq 'Apple iPod' -and $physical.PNPDeviceID -match '^USBSTOR\\.*VEN_APPLE.*PROD_IPOD'
@@ -351,13 +352,13 @@ if ($native.Count -eq 1) {
  if($usb -cne $expected -or $cfg.serial -cnotmatch '^[0-9A-F]{16}$' -or $disk.LogicalSectorSize -notin $native[0].sector_bytes) {throw 'Native USB identity rejected'}
  $target=$native[0].target_id
 }
-if ($disk.SerialNumber.Trim() -cne $cfg.serial -or [string]$disk.BusType -ne 'USB' -or
+if ($disk.SerialNumber.Trim() -cne $cfg.serial -or $disk.BusType -ne 7 -or
     (-not $apple -and -not $target) -or $disk.IsBoot -or $disk.IsSystem -or
     $disk.IsOffline -or $disk.IsReadOnly -or $disk.LogicalSectorSize -notin @(512,2048,4096) -or
     $physical.SerialNumber.Trim() -cne $cfg.serial) {
     throw 'Require expected serial, supported USB iPod, writable online non-system disk and supported sectors'
 }
-$parts=@(Get-Partition -DiskNumber $disk.Number | Where-Object {$_.DriveLetter})
+$parts=@(Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Partition -Filter ('DiskNumber='+$disk.Number) | Where-Object {$_.DriveLetter})
 if ($parts.Count -ne 1) {throw 'Require exactly one mounted partition'}
 $part=$parts[0]
 $drive=[string]$part.DriveLetter+':'
