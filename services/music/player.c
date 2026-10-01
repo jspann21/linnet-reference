@@ -6,11 +6,11 @@
 #include "hal/api/platform.h"
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
 #include "hal/api/ata.h"
-#define PLAYER_MP3_CACHE_BYTES 0x300000u
-#define PLAYER_MP3_CACHE(window) ((uint8_t *)(uintptr_t)(LINNET_STAGE_ADDRESS+0x100000u+(window)*PLAYER_MP3_CACHE_BYTES))
-_Static_assert(0x100000u+2u*PLAYER_MP3_CACHE_BYTES+
+#define PLAYER_COMPRESSED_CACHE_BYTES 0x300000u
+#define PLAYER_COMPRESSED_CACHE(window) ((uint8_t *)(uintptr_t)(LINNET_STAGE_ADDRESS+0x100000u+(window)*PLAYER_COMPRESSED_CACHE_BYTES))
+_Static_assert(0x100000u+2u*PLAYER_COMPRESSED_CACHE_BYTES+
     (LINNET_AUDIO_RING_FRAMES+1152u)*4u<=LINNET_STAGE_CAPACITY,
-    "MP3 read cache overlaps PCM staging");
+    "compressed read cache overlaps PCM staging");
 #endif
 #if !defined(LINNET_PROFILE_RELEASE)
 #include "kernel/development.h"
@@ -34,7 +34,7 @@ struct player_slot {
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
     struct player_cache_window cache[2];
     uint32_t cache_current;
-    bool cache_enabled,cache_initial,cache_pending,cache_pause_canceling,cache_file_checked;
+    bool cache_enabled,cache_initial,cache_pending,cache_pause_canceling,cache_codec_checked;
 #endif
 };
 static struct player_slot slots[2];
@@ -131,7 +131,8 @@ static bool cache_begin(struct player_slot *s,uint32_t window,uint32_t at,bool i
     if(available>UINT32_MAX-at)available=UINT32_MAX-at;
     if(!available)return false;
     struct player_cache_window *w=&s->cache[window];
-    w->start=at;w->valid=0;w->target=initial?131072u:PLAYER_MP3_CACHE_BYTES;
+    w->start=at;w->valid=0;
+    w->target=initial&&s->decoder.kind!=LN_DEC_AAC_M4A?131072u:PLAYER_COMPRESSED_CACHE_BYTES;
     if(w->target>available)w->target=(uint32_t)available;
     w->filling=true;return true;
 }
@@ -141,7 +142,7 @@ static int cache_progress(struct player_slot *s){
         if(!w->filling)continue;
         uint32_t chunk=w->target-w->valid;
         if(chunk>LN_STORAGE_MEDIA_MAX_READ)chunk=LN_STORAGE_MEDIA_MAX_READ;
-        int r=read_disk(s,w->start+w->valid,PLAYER_MP3_CACHE(i)+w->valid,chunk);
+        int r=read_disk(s,w->start+w->valid,PLAYER_COMPRESSED_CACHE(i)+w->valid,chunk);
         if(r<=0)return r;
         w->valid+=chunk;
         if(w->valid==w->target)w->filling=false;
@@ -151,7 +152,7 @@ static int cache_progress(struct player_slot *s){
 }
 static int cache_copy(struct player_slot *s,uint32_t window,uint32_t at,uint8_t *buffer,uint32_t length){
     struct player_cache_window *w=&s->cache[window];
-    __builtin_memcpy(buffer,PLAYER_MP3_CACHE(window)+(at-w->start),length);
+    __builtin_memcpy(buffer,PLAYER_COMPRESSED_CACHE(window)+(at-w->start),length);
     s->cache_current=window;
     if(cache_progress(s)<0)return -1;
     uint32_t consumed=at-w->start+length;
@@ -165,6 +166,21 @@ static int cache_copy(struct player_slot *s,uint32_t window,uint32_t at,uint8_t 
     }
     return 1;
 }
+static int cache_cached(struct player_slot *s,uint32_t at,uint8_t *buffer,uint32_t length){
+    int hit=cache_hit(s,at,length);
+    if(hit>=0)return cache_copy(s,(uint32_t)hit,at,buffer,length);
+    for(uint32_t i=0;i<2u;++i){
+        const struct player_cache_window *w=&s->cache[i];
+        if(at<w->start||at-w->start>=w->valid)continue;
+        uint32_t first=w->valid-(at-w->start);
+        if(first>=length)continue;
+        int next=cache_hit(s,at+first,length-first);
+        if(next<0)continue;
+        __builtin_memcpy(buffer,PLAYER_COMPRESSED_CACHE(i)+(at-w->start),first);
+        return cache_copy(s,(uint32_t)next,at+first,buffer+first,length-first);
+    }
+    return 0;
+}
 #endif
 static int read_media(void *context,uint64_t offset,uint8_t *buffer,uint32_t length){
     struct player_slot *s=context;if(offset>UINT32_MAX)return -1;
@@ -172,19 +188,21 @@ static int read_media(void *context,uint64_t offset,uint8_t *buffer,uint32_t len
     if(s->cache_enabled&&length<=LN_STORAGE_MEDIA_MAX_READ){
         uint32_t at=(uint32_t)offset;
         if(length>UINT32_MAX-at)return read_disk(s,at,buffer,length);
-        int hit=cache_hit(s,at,length);
-        if(hit>=0)return cache_copy(s,(uint32_t)hit,at,buffer,length);
+        int hit=cache_cached(s,at,buffer,length);
+        if(hit)return hit;
         if(cache_progress(s)<0)return -1;
-        hit=cache_hit(s,at,length);
-        if(hit>=0)return cache_copy(s,(uint32_t)hit,at,buffer,length);
+        hit=cache_cached(s,at,buffer,length);
+        if(hit)return hit;
         if(s->cache[0].filling||s->cache[1].filling)return 0;
         if(at>s->media.size||length>s->media.size-at)return -1;
         uint32_t window=s->cache_current^1u;
-        if(!cache_begin(s,window,at,s->cache_initial))return read_disk(s,at,buffer,length);
+        uint32_t begin=at;
+        if(s->cache_initial&&s->decoder.kind==LN_DEC_AAC_M4A)
+            begin=at&~(131072u-1u);
+        if(!cache_begin(s,window,begin,s->cache_initial))return read_disk(s,at,buffer,length);
         s->cache_initial=false;
         if(cache_progress(s)<0)return -1;
-        hit=cache_hit(s,at,length);
-        return hit>=0?cache_copy(s,(uint32_t)hit,at,buffer,length):0;
+        return cache_cached(s,at,buffer,length);
     }
 #endif
     return read_disk(s,(uint32_t)offset,buffer,length);
@@ -197,21 +215,26 @@ static void clear_slot(struct player_slot *s){
 #endif
 }
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
-static bool cache_mp3(const struct player_slot *s){
+static bool cache_supported(const struct player_slot *s){
     const char *name=s->path;
     uint32_t n=0;while(name[n])++n;
-    bool named=n>=4u&&name[n-4u]=='.'&&
+    bool mp3=n>=4u&&name[n-4u]=='.'&&
        (name[n-3u]=='m'||name[n-3u]=='M')&&
        (name[n-2u]=='p'||name[n-2u]=='P')&&name[n-1u]=='3';
+    bool m4a=n>=4u&&name[n-4u]=='.'&&
+        (name[n-3u]=='m'||name[n-3u]=='M')&&name[n-2u]=='4'&&
+        (name[n-1u]=='a'||name[n-1u]=='A'||name[n-1u]=='b'||name[n-1u]=='B');
     bool direct=name[0]=='/'&&name[1]=='F'&&name[2]=='I'&&name[3]=='L'&&
-        name[4]=='E'&&!name[5]&&s->decoder.kind==LN_DEC_MP3;
-    if(!named&&!direct)return false;
+        name[4]=='E'&&!name[5];
+    bool eligible=mp3||(direct&&s->decoder.kind==LN_DEC_MP3)||
+        ((m4a||direct)&&s->decoder.kind==LN_DEC_AAC_M4A&&s->decoder.opened);
+    if(!eligible)return false;
     struct ln_ata_info media;ln_ata_snapshot(&media);
     return media.media_kind==LN_ATA_MEDIA_ROTATING;
 }
 static void activate_cache(struct player_slot *s){
     if(io_owner==s){s->cache_pending=true;return;}
-    s->cache_enabled=cache_mp3(s);s->cache_pending=false;
+    s->cache_enabled=cache_supported(s);s->cache_pending=false;
     s->cache_initial=true;s->cache_current=1u;
     for(uint32_t i=0;i<2u;++i)s->cache[i]=(struct player_cache_window){0};
 }
@@ -227,7 +250,7 @@ static bool start_slot(struct player_slot *s,const char *name,uint64_t expected,
     s->expected=expected;s->initial=position;s->position_base=0;s->submitted=0;s->token=token;
     s->generation=generation();s->buffered=0;s->rate=0;s->seek_initial=position!=0;
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
-    s->cache_enabled=s->cache_pending=s->cache_pause_canceling=s->cache_file_checked=false;
+    s->cache_enabled=s->cache_pending=s->cache_pause_canceling=s->cache_codec_checked=false;
     s->cache_initial=true;s->cache_current=1u;
     for(uint32_t i=0;i<2u;++i)s->cache[i]=(struct player_cache_window){0};
 #endif
@@ -261,9 +284,11 @@ static int slot_step(struct player_slot *s){
 #endif
     if(interrupted())return 0;if(r<0)return r;
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
-    if(!s->cache_file_checked&&s->decoder.kind==LN_DEC_MP3&&s->path[0]=='/'&&
-       s->path[1]=='F'&&s->path[2]=='I'&&s->path[3]=='L'&&s->path[4]=='E'&&!s->path[5]){
-        s->cache_file_checked=true;activate_cache(s);
+    if(!s->cache_codec_checked&&
+       ((s->decoder.kind==LN_DEC_MP3&&s->path[0]=='/'&&s->path[1]=='F'&&
+         s->path[2]=='I'&&s->path[3]=='L'&&s->path[4]=='E'&&!s->path[5])||
+        (s->decoder.kind==LN_DEC_AAC_M4A&&s->decoder.opened))){
+        s->cache_codec_checked=true;activate_cache(s);
     }
 #endif
     if(s->decoder.opened&&s->decoder.rate){
@@ -518,6 +543,13 @@ static void player_advance(void){
 #endif
     if(state.phase==LN_PLAYER_PAUSE)return;
     if(pause_requested&&!io_owner){pause_requested=false;ln_audio_pause();state.phase=LN_PLAYER_PAUSE;return;}
+#if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
+    struct player_slot *cached=&slots[audible];
+    if(!pause_requested&&cached->cache_enabled&&cached->phase!=SLOT_EOF&&
+       (cached->cache[0].filling||cached->cache[1].filling)&&cache_progress(cached)<0){
+        fail(13);return;
+    }
+#endif
     if(state.phase==LN_PLAYER_DRAIN){
         if(have_next&&state.next_phase==LN_PLAYER_NEXT_OPENING)advance_next();if(interrupted())return;
         if(audio.queued||ln_time_us()-audio.last_irq_us<2000u)return;
