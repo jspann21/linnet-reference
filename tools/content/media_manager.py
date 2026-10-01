@@ -528,6 +528,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                                            temporary=str(temporary)) for item, temporary in batch]
         record()
         copied = []
+        music_seeds = []
         with ExitStack() as handles:
             for offset, (item, temporary) in enumerate(batch):
                 checkpoint()
@@ -543,6 +544,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                     raise ValueError(f"Source changed since selection: {source}")
                 suffix = None
                 unsupported_aac = False
+                metadata_seed = None
                 copy_source = source
                 if item['kind'] == 'Music' and source.suffix.lower() in ('.m4a', '.m4b'):
                     from .aac_index import import_suffix
@@ -557,6 +559,16 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                             copy_source.stat().st_size != info.st_size):
                         raise ValueError(f"Source changed during preparation: {source}")
                     suffix, unsupported_aac = import_suffix(copy_source, cache / 'aac-import', checkpoint=checkpoint)
+                    # The stable host snapshot already contains the exact tags
+                    # and cover that will be copied. Save the result only after
+                    # the destination has passed its full readback check.
+                    try:
+                        from .music import _read_metadata
+                        metadata = _read_metadata(copy_source, shutil.which('ffprobe'), True,
+                                                  lambda: checkpoint() or False, include_cover=True)
+                        metadata_seed = (metadata, metadata.pop('_embedded_cover', None))
+                    except (OSError, ValueError, subprocess.SubprocessError):
+                        pass  # A cache miss lets normal library preparation retry.
                 if shutil.disk_usage(root).free < remaining_original + len(suffix or b'') + 1024 * 1024:
                     raise ValueError('Not enough space for prepared additions')
                 digest = hashlib.sha256()
@@ -575,13 +587,13 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                 if _receipt_stamp(after) != _receipt_stamp(info):
                     raise ValueError(f"Source changed during copy: {source}")
                 copied.append((item, temporary, writer, digest.hexdigest(),
-                               item['bytes'] + len(suffix or b''), unsupported_aac))
+                               item['bytes'] + len(suffix or b''), unsupported_aac, metadata_seed))
                 remaining_original -= item['bytes']
             progress(f"Saving additions {start + 1}–{start + len(batch)}/{len(plan)}…")
-            for _, _, writer, _, _, _ in copied:
+            for _, _, writer, _, _, _, _ in copied:
                 checkpoint()
                 os.fsync(writer.fileno())
-        for offset, (item, temporary, _, digest, prepared_bytes, _) in enumerate(copied):
+        for offset, (item, temporary, _, digest, prepared_bytes, _, _) in enumerate(copied):
             checkpoint()
             stage_progress(start + (len(batch) + offset) / 2, len(plan), 'Checking copied files')
             destination = Path(item['destination'])
@@ -593,7 +605,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                 from .aac_index import original_size
                 if original_size(temporary, prepared_bytes) != item['bytes']:
                     raise ValueError(f"Prepared AAC seek data is invalid: {destination}")
-        for item, temporary, _, _, prepared_bytes, unsupported_aac in copied:
+        for item, temporary, _, _, prepared_bytes, unsupported_aac, metadata_seed in copied:
             checkpoint()
             destination = Path(item['destination'])
             _plain(destination, root)
@@ -610,13 +622,41 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                 key = destination.relative_to(root).as_posix().casefold()
                 seek_state[key] = [info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino]
                 seek_state_changed = True
+                if metadata_seed is not None:
+                    music_seeds.append((destination, info, *metadata_seed))
             report['steps'].append(dict(added=str(destination), bytes=prepared_bytes))
         report.pop('copies_in_progress', None)
         record()
         if seek_state_changed:
             _save_seek_state(seek_state_path, seek_state)
+        if music_seeds:
+            _seed_imported_music(root, cache, music_seeds)
         start += len(batch)
         stage_progress(start, len(plan), 'Copying originals')
+
+
+def _seed_imported_music(root, cache, rows):
+    """Reuse host-read tags and artwork after the verified iPod copy is published."""
+    import sqlite3
+    from .music import _MetadataCache
+    try:
+        saved = _MetadataCache(cache / 'music-metadata.sqlite3')
+    except (OSError, sqlite3.Error):
+        return
+    try:
+        source = Path(os.path.abspath(root))
+        for path, before, metadata, cover in rows:
+            try:
+                relative = path.relative_to(root).as_posix()
+                value = dict(metadata, data_bytes=before.st_size)
+                if _MetadataCache._valid(value, relative, before):
+                    saved.embedded_cover_lookup(path, before, bypass=True)
+                    saved.put(source, relative, before, value)
+                    saved.embedded_cover_store(path, before, cover)
+            except (OSError, ValueError, TypeError, KeyError):
+                continue  # Disposable cache; the normal compiler will reread.
+    finally:
+        saved.close()
 
 
 def format_size(value):
