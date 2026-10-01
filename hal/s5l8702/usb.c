@@ -22,7 +22,7 @@ extern void ln_memory_copy(void *to,const void *from,uint32_t size);
 static uint8_t control[256] USB_MEMORY;
 static uint8_t setup_data[64] USB_MEMORY;
 static uint8_t receive[4096] USB_MEMORY;
-static uint8_t transmit[4096] USB_MEMORY;
+static uint8_t transmit[16384] USB_MEMORY;
 static uint8_t line_coding[7]={0x00,0xc2,0x01,0,0,0,8};
 static uint8_t serial_string[66];
 static uint16_t packet_size,rx_size,rx_offset,control_size,control_offset,line_state;
