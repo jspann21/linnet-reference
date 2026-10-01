@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import hashlib
+import inspect as source_inspect
 import json
 import os
+from contextlib import ExitStack
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from pathlib import Path
@@ -16,6 +18,7 @@ import zlib
 from . import SourceError
 
 HEADER, ALBUM, PHOTO, LEVEL, TILE = 512, 32, 64, 24, 12
+PACK_COUNT, PACK_LIMIT = 32, 1 << 27
 MAX_FILE, MAX_PHOTOS, MAX_ALBUMS, MAX_TILES = 0x7fffffff, 65535, 4096, 1_000_000
 MAX_STRINGS, MAX_LEVELS = 16 * 1024 * 1024, 6
 THUMB, EDGE, NO_INDEX = 64, 32, 0xffffffff
@@ -329,6 +332,14 @@ def _pack_photo_tiles(tile_bytes, crcs, checkpoint):
     return bytes(packed), lengths
 
 
+def _pack_path(directory, identity):
+    return directory / f'{identity[:8].upper()}' / f'{identity[8:16].upper()}.PAK'
+
+
+def _pack_bucket(name):
+    return hashlib.sha256(name.casefold().encode('utf-8')).digest()[0] & (PACK_COUNT - 1)
+
+
 def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                    viewport_height=156, fallback_paths=None, excluded=None, additional_sources=None,
                    progress=None, checkpoint=None, cache_dir=None, target=None, grid_output=None):
@@ -340,7 +351,9 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
     """
     from PIL import __version__ as pillow_version
     check = checkpoint or (lambda: None)
+    packed_target = target in ('video5g-m25', 'classic6g-n25')
     source, output = Path(source).resolve(), Path(output).resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
     grid_shape = None
     if target is not None:
         from .photo_grid import GRID_SHAPES
@@ -364,8 +377,10 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
         cache_root = Path(cache_dir).resolve()
         if cache_root == source or source in cache_root.parents:
             raise ValueError('photo cache must be outside the source folder')
+        render_source = ''.join(source_inspect.getsource(func) for func in
+                                (_rgb565, _fit, _sizes, _render_photo))
         recipe = hashlib.sha256(json.dumps([
-            hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), pillow_version,
+            hashlib.sha256(render_source.encode()).hexdigest(), pillow_version,
             max_dimension, viewport_width, viewport_height, THUMB, EDGE, target, grid_shape, 'LPGR1'],
             separators=(',', ':')).encode()).hexdigest()
         try:
@@ -411,7 +426,8 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
 
     photos, levels, tile_records = [], [], []
     cache_reused = cache_rendered = 0
-    with tempfile.TemporaryFile() as thumbs, tempfile.TemporaryFile() as tiles, tempfile.TemporaryFile() as grid_pixels:
+    with tempfile.TemporaryFile() as thumbs, tempfile.TemporaryFile() as tiles, tempfile.TemporaryFile() as grid_pixels, ExitStack() as pack_stack:
+        pack_spools = [pack_stack.enter_context(tempfile.TemporaryFile()) for _ in range(PACK_COUNT)] if packed_target else []
         stopped = threading.Event()
 
         def worker_check():
@@ -496,13 +512,17 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                             raise ValueError('photo tile payload exceeds package limits')
                         levels.append((index, lw, lh, tx, ty, first_tile, count))
                         local_offset += count
-                    position = tiles.tell()
+                    bucket = _pack_bucket(names[path]) if packed_target else 0
+                    destination = pack_spools[bucket] if packed_target else tiles
+                    position = destination.tell()
+                    if packed_target and position + len(packed) > PACK_LIMIT:
+                        raise ValueError('photo pack exceeds its 128 MiB address bound')
                     for tile_index, (length, crc) in enumerate(zip(lengths, image_meta['tile_crcs'])):
                         if tile_index % 256 == 0:
                             check()
-                        tile_records.append((position, length, crc))
+                        tile_records.append(((bucket << 27) | position if packed_target else position, length, crc))
                         position += length
-                    tiles.write(packed)
+                    destination.write(packed)
                     photos.append((0, *title, *string(fallback), image_meta['width'], image_meta['height'],
                                    first_level, len(levels)-first_level, 0, image_meta['thumb_crc'],
                                    image_meta['fallback_bytes'], image_meta['fallback_crc'],
@@ -519,9 +539,43 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
         string_offset = tile_offset + len(tile_records)*TILE
         data_offset = (string_offset + len(strings) + 511) & ~511
         tile_base = data_offset + len(photos)*8192
-        total = tile_base + tiles.tell()
+        total = tile_base if packed_target else tile_base + tiles.tell()
         if total > MAX_FILE:
             raise ValueError('PIMG exceeds the 2 GiB package bound')
+        pack_manifest = []
+        pack_table = bytearray(PACK_COUNT * 12)
+        if packed_target:
+            pack_root = output.parent / 'photo-packs'
+            pack_root.mkdir(parents=True, exist_ok=True)
+            for bucket, spool in enumerate(pack_spools):
+                size = spool.tell()
+                if not size:
+                    continue
+                spool.seek(0)
+                fd, name = tempfile.mkstemp(prefix='pack-', suffix='.tmp', dir=pack_root)
+                temporary_pack = Path(name)
+                digest = hashlib.sha256()
+                try:
+                    with os.fdopen(fd, 'wb') as writer:
+                        while chunk := spool.read(1024 * 1024):
+                            check(); writer.write(chunk); digest.update(chunk)
+                        writer.flush(); os.fsync(writer.fileno())
+                    identity = digest.hexdigest()
+                    final_pack = _pack_path(pack_root, identity)
+                    final_pack.parent.mkdir(exist_ok=True)
+                    if final_pack.exists():
+                        with final_pack.open('rb') as reader:
+                            same = final_pack.stat().st_size == size and hashlib.file_digest(reader, 'sha256').hexdigest() == identity
+                        if not same:
+                            raise ValueError('photo pack name collision or changed host cache')
+                    else:
+                        temporary_pack.replace(final_pack)
+                finally:
+                    temporary_pack.unlink(missing_ok=True)
+                struct.pack_into('<8sI', pack_table, bucket*12, bytes.fromhex(identity[:16]), size)
+                pack_manifest.append(dict(bucket=bucket, path=str(final_pack),
+                    device_path=f'/.LINNET/PHOTOS/PACKS/{identity[:8].upper()}/{identity[8:16].upper()}.PAK',
+                    bytes=size, sha256=identity))
         metadata = bytearray(b''.join(album_records))
         for index, photo in enumerate(photos):
             values = list(photo)
@@ -532,15 +586,17 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
         for index, (relative, length, crc) in enumerate(tile_records):
             if index % 4096 == 0:
                 check()
-            metadata.extend(struct.pack('<III', tile_base+relative, length, crc))
+            metadata.extend(struct.pack('<III', relative if packed_target else tile_base+relative, length, crc))
         metadata.extend(strings)
         metadata.extend(bytes(data_offset - HEADER - len(metadata)))
         header = bytearray(HEADER)
-        struct.pack_into('<4sHH14I4H', header, 0, b'LPIC', 0, HEADER, 0, total,
+        struct.pack_into('<4sHH14I4H', header, 0, b'LPIC', 1 if packed_target else 0, HEADER, 0, total,
                          len(album_records), len(photos), len(levels), len(tile_records),
                          album_offset, photo_offset, level_offset, tile_offset,
                          string_offset, len(strings), _crc(metadata), data_offset,
                          THUMB, THUMB, EDGE, 1)
+        if packed_target:
+            header[72:72+len(pack_table)] = pack_table
         struct.pack_into('<I', header, 508, _crc(header[:508]))
         output.parent.mkdir(parents=True, exist_ok=True)
         fd, temporary_name = tempfile.mkstemp(prefix=output.name+'.', suffix='.tmp', dir=output.parent)
@@ -549,7 +605,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
             with os.fdopen(fd, 'wb') as result:
                 result.write(header)
                 result.write(metadata)
-                for spool in (thumbs, tiles):
+                for spool in ((thumbs,) if packed_target else (thumbs, tiles)):
                     spool.seek(0)
                     while chunk := spool.read(1024*1024):
                         check()
@@ -567,6 +623,8 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
     report.update(output=str(output), source=str(source), device_path=DEVICE_PATH,
                   orientation_applied=True, originals_modified=False,
                   cache_reused=cache_reused, cache_rendered=cache_rendered)
+    if packed_target:
+        report['packs'] = pack_manifest
     return report
 
 
@@ -578,7 +636,7 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
     if not HEADER <= size <= MAX_FILE:
         raise ValueError('invalid PIMG file size')
     hashed = hashlib.sha256() if verify_payloads else None
-    with path.open('rb') as stream:
+    with path.open('rb') as stream, ExitStack() as pack_stack:
         before = os.fstat(stream.fileno())
         def read(offset, count):
             check()
@@ -592,8 +650,10 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
         header = read(0, HEADER)
         if hashed is not None:
             hashed.update(header)
-        if (header[:4] != b'LPIC' or struct.unpack_from('<HH', header, 4) != (0, HEADER) or
-            _crc(header[:508]) != struct.unpack_from('<I', header, 508)[0] or any(header[72:508])):
+        version, header_bytes = struct.unpack_from('<HH', header, 4)
+        if (header[:4] != b'LPIC' or version not in (0, 1) or header_bytes != HEADER or
+            _crc(header[:508]) != struct.unpack_from('<I', header, 508)[0] or
+            any(header[72 + (PACK_COUNT*12 if version else 0):508])):
             raise ValueError('invalid PIMG header identity/CRC/reserved bytes')
         flags, total, ac, pc, lc, tc, ao, po, lo, to, so, sb, mc, do = struct.unpack_from('<14I', header, 8)
         if (flags or total != size or not 1 <= ac <= MAX_ALBUMS or not 1 <= pc <= MAX_PHOTOS or
@@ -602,8 +662,35 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
             raise ValueError('invalid PIMG counts or pixel contract')
         if (ao != HEADER or po != ao+ac*ALBUM or lo != po+pc*PHOTO or to != lo+lc*LEVEL or
             so != to+tc*TILE or do != (so+sb+511)&~511 or
-            size < do+pc*8192+tc or size > do+pc*8192+tc*2048):
+            (size != do+pc*8192 if version else
+             size < do+pc*8192+tc or size > do+pc*8192+tc*2048)):
             raise ValueError('noncanonical PIMG section offsets')
+        pack_streams = [None] * PACK_COUNT
+        pack_sizes = [0] * PACK_COUNT
+        pack_reports = []
+        if version:
+            for bucket in range(PACK_COUNT):
+                identity, pack_size = struct.unpack_from('<8sI', header, 72+bucket*12)
+                if not pack_size:
+                    if any(identity):
+                        raise ValueError('empty photo pack has an identity')
+                    continue
+                if not any(identity) or pack_size > PACK_LIMIT:
+                    raise ValueError('invalid photo pack identity or size')
+                prefix = identity.hex()
+                pack_root = path.parent/('PACKS' if path.name.upper() == 'LIBRARY.PIM' else 'photo-packs')
+                packed_path = _pack_path(pack_root, prefix)
+                if packed_path.stat().st_size != pack_size:
+                    raise ValueError('photo pack size changed')
+                packed = pack_stack.enter_context(packed_path.open('rb'))
+                digest = hashlib.file_digest(packed, 'sha256').hexdigest()
+                if not digest.startswith(prefix):
+                    raise ValueError('photo pack content differs from catalog')
+                packed.seek(0)
+                pack_streams[bucket], pack_sizes[bucket] = packed, pack_size
+                pack_reports.append(dict(bucket=bucket, path=str(packed_path),
+                    device_path=f'/.LINNET/PHOTOS/PACKS/{prefix[:8].upper()}/{prefix[8:16].upper()}.PAK',
+                    bytes=pack_size, sha256=digest))
         crc = 0
         for offset in range(HEADER, do, 1024*1024):
             block = read(offset, min(1024*1024, do-offset))
@@ -691,28 +778,60 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
         # Keep payload memory bounded to 1 MiB even for maximum-size libraries.
         from lz4.block import decompress as lz4_decompress
         expected = do+pc*8192
+        pack_expected = [0] * PACK_COUNT
         for first in range(0, tc, 512):
             count = min(512, tc-first)
             descriptors = list(struct.iter_unpack('<III', read(to+first*TILE, count*TILE)))
             for offset, length, _ in descriptors:
-                if offset != expected or not 1 <= length <= 2048 or length > size-offset:
-                    raise ValueError('noncanonical PIMG tile payload offset')
-                expected += length
-            base = descriptors[0][0]
-            payload = memoryview(read(base, expected-base)) if verify_payloads else None
-            if hashed is not None:
-                hashed.update(payload)
+                if not 1 <= length <= 2048:
+                    raise ValueError('invalid PIMG tile length')
+                if version:
+                    bucket, local = offset >> 27, offset & (PACK_LIMIT-1)
+                    if (local != pack_expected[bucket] or
+                        length > pack_sizes[bucket]-local):
+                        raise ValueError('noncanonical photo pack tile offset')
+                    pack_expected[bucket] += length
+                else:
+                    if offset != expected or length > size-offset:
+                        raise ValueError('noncanonical PIMG tile payload offset')
+                    expected += length
+            if version:
+                groups = []
+                start = 0
+                while start < len(descriptors):
+                    bucket = descriptors[start][0] >> 27
+                    end = start+1
+                    while end < len(descriptors) and descriptors[end][0] >> 27 == bucket:
+                        end += 1
+                    groups.append((bucket, descriptors[start:end]))
+                    start = end
+            else:
+                groups = [(None, descriptors)]
             if verify_payloads:
-                for offset, length, crc in descriptors:
-                    stored = payload[offset-base:offset-base+length]
-                    try:
-                        decoded = (stored if length == 2048 else
-                                   lz4_decompress(stored, uncompressed_size=2048))
-                    except Exception as error:
-                        raise ValueError('PIMG tile LZ4 decode failed') from error
-                    if len(decoded) != 2048 or _crc(decoded) != crc:
-                        raise ValueError('PIMG tile CRC mismatch')
-        if expected != size:
+                for bucket, group in groups:
+                    base = group[0][0] & (PACK_LIMIT-1) if version else group[0][0]
+                    end = (group[-1][0] & (PACK_LIMIT-1) if version else group[-1][0]) + group[-1][1]
+                    if version:
+                        packed = pack_streams[bucket]
+                        packed.seek(base)
+                        payload = memoryview(packed.read(end-base))
+                        if len(payload) != end-base:
+                            raise ValueError('truncated photo pack payload')
+                    else:
+                        payload = memoryview(read(base, end-base))
+                        if hashed is not None:
+                            hashed.update(payload)
+                    for offset, length, crc in group:
+                        local = (offset & (PACK_LIMIT-1) if version else offset)-base
+                        stored = payload[local:local+length]
+                        try:
+                            decoded = (stored if length == 2048 else
+                                       lz4_decompress(stored, uncompressed_size=2048))
+                        except Exception as error:
+                            raise ValueError('PIMG tile LZ4 decode failed') from error
+                        if len(decoded) != 2048 or _crc(decoded) != crc:
+                            raise ValueError('PIMG tile CRC mismatch')
+        if (any(pack_expected[index] != pack_sizes[index] for index in range(PACK_COUNT)) if version else expected != size):
             raise ValueError('noncanonical PIMG tile payload end')
         after = os.fstat(stream.fileno())
         if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
@@ -730,6 +849,9 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
                     check()
                     hashed.update(chunk)
                 digest = hashed.hexdigest()
-    return dict(format='LPIC', passed=True, photos=pc, albums=ac,
+    result = dict(format='LPIC', version=version, passed=True, photos=pc, albums=ac,
                 levels=lc, tiles=tc, bytes=size, sha256=digest,
                 album_titles=album_titles, payloads_verified=bool(verify_payloads))
+    if version:
+        result['packs'] = pack_reports
+    return result

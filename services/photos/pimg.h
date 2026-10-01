@@ -2,7 +2,13 @@
 #define LINNET_PHOTOS_PIMG_H
 #include <stdint.h>
 #include <stdbool.h>
-struct ln_pimg_header {uint32_t size,albums,photos,levels,tiles,album_at,photo_at,level_at,tile_at,string_at,string_bytes,metadata_crc,data_at,identity;};
+#define LN_PIMG_PACK_COUNT 32u
+#define LN_PIMG_PACK_LIMIT (1u<<27u)
+struct ln_pimg_header {uint32_t size,albums,photos,levels,tiles,album_at,photo_at,level_at,tile_at,string_at,string_bytes,metadata_crc,data_at,identity;
+#if LINNET_TARGET_NUMBER!=98u
+    const uint8_t *packs;
+#endif
+};
 struct ln_pimg_album {uint32_t title,bytes,first,count,parent;};
 struct ln_pimg_photo {uint32_t album,title,bytes,source,source_bytes,width,height,first,levels,thumb,thumb_crc,jpeg_bytes,jpeg_crc,orientation;};
 struct ln_pimg_level {uint32_t photo,width,height,columns,rows,first,count;};

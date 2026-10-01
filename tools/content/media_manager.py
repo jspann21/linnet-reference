@@ -254,7 +254,8 @@ def preparation_option(kind, identity, photo_dimension=640, music_verification='
         return f"target-wrap2-{_display_recipe(identity['target_id'])[2]}"
     if kind == 'Photos':
         profile = identity['media_profile']
-        return f"lpic-hc-photos-native-grid-{identity['target_id']}-{photo_dimension}-{profile['photo_width']}x{profile['photo_height']}"
+        layout = '-pack32' if identity['target_id'] in ('video5g-m25', 'classic6g-n25') else ''
+        return f"lpic-hc-photos-native-grid{layout}-{identity['target_id']}-{photo_dimension}-{profile['photo_width']}x{profile['photo_height']}"
     return 'default'
 
 
@@ -964,12 +965,24 @@ def _checking_progress(kind, checkpoint, progress, stage):
 def _published_photo_output(root, identity, output_paths, published):
     from .photos import MAX_FILE
     expected = '.LINNET/PHOTOS/LIBRARY.PIM'
-    if output_paths not in ([expected], [expected, '.LINNET/PHOTOS/GRID.PGR']) or len(published) != 1 or not isinstance(published[0], dict):
+    if (output_paths[:2] != [expected, '.LINNET/PHOTOS/GRID.PGR'] or
+            len(published) != 1 or not isinstance(published[0], dict)):
         raise RuntimeError('Photo publication did not return its expected output')
     receipt = published[0]
     outputs = []
-    for name, item in [(expected, receipt)] + ([('.LINNET/PHOTOS/GRID.PGR', receipt.get('grid'))] if len(output_paths)==2 else []):
+    for name, item in [(expected, receipt), ('.LINNET/PHOTOS/GRID.PGR', receipt.get('grid'))]:
         outputs.append(_photo_output(root, identity, name, item, MAX_FILE))
+    packs = receipt.get('packs', [])
+    if output_paths[2:] != [item.get('path') for item in packs]:
+        raise RuntimeError('Photo pack output list differs from its publication receipt')
+    for item in packs:
+        path = root/item['path']
+        _plain(path, root)
+        info = path.stat()
+        if (Path(item['package']) != path or not stat.S_ISREG(info.st_mode) or
+                info.st_size != item['bytes'] or not re.fullmatch('[0-9a-f]{64}', item['sha256'])):
+            raise RuntimeError('Photo pack changed after verified publication')
+        outputs.append((item['path'], item['sha256']))
     return outputs
 
 
@@ -1452,7 +1465,7 @@ def _prepare_photos(root, cache, identity, media_profile, skipped, retail_photos
     package = cache / "photos.pimg"
     photo_progress = _throttled_progress(checkpoint, progress,
         lambda event: f'Preparing photos {event["current"]+1}/{event["total"]}: {Path(event["file"]).name}')
-    compile_photos(root / "Photos", package, max_dimension=dimension,
+    prepared = compile_photos(root / "Photos", package, max_dimension=dimension,
                    target=identity['target_id'],
                    viewport_width=media_profile["photo_width"],
                    viewport_height=media_profile["photo_height"],
@@ -1463,7 +1476,8 @@ def _prepare_photos(root, cache, identity, media_profile, skipped, retail_photos
     checkpoint()
     progress("Publishing prepared photos…")
     begin_publication("Photos")
-    return [".LINNET/PHOTOS/LIBRARY.PIM", ".LINNET/PHOTOS/GRID.PGR"], [
+    return [".LINNET/PHOTOS/LIBRARY.PIM", ".LINNET/PHOTOS/GRID.PGR"] + [
+        item['device_path'].lstrip('/') for item in prepared.get('packs', [])], [
         publish_photos(package, grid=package.with_suffix('.pgr'), **target_args(identity))]
 
 

@@ -9,18 +9,34 @@ uint32_t ln_pimg_crc_update(uint32_t crc,const uint8_t*p,uint32_t n){
 }
 __attribute__((minsize)) bool ln_pimg_header(const uint8_t*b,uint32_t size,struct ln_pimg_header*h){
     if(!b||!h||size<512||size>0x7fffffffu||b[0]!='L'||b[1]!='P'||b[2]!='I'||b[3]!='C'||
-       ln_read_le16(b+4)!=0||ln_read_le16(b+6)!=512||ln_read_le32(b+8)||ln_read_le32(b+12)!=size||
+#if LINNET_TARGET_NUMBER==98u
+       ln_read_le16(b+4)!=0||!ln_bytes_zero(b+72,436u)||
+#else
+       ln_read_le16(b+4)!=1||!ln_bytes_zero(b+456,52u)||
+#endif
+       ln_read_le16(b+6)!=512||ln_read_le32(b+8)||ln_read_le32(b+12)!=size||
        ln_read_le16(b+64)!=64||ln_read_le16(b+66)!=64||ln_read_le16(b+68)!=32||ln_read_le16(b+70)!=1||
-       !ln_bytes_zero(b+72,436)||ln_crc32(b,508)!=ln_read_le32(b+508))return false;
-    *h=(struct ln_pimg_header){size,ln_read_le32(b+16),ln_read_le32(b+20),ln_read_le32(b+24),ln_read_le32(b+28),ln_read_le32(b+32),ln_read_le32(b+36),ln_read_le32(b+40),ln_read_le32(b+44),ln_read_le32(b+48),ln_read_le32(b+52),ln_read_le32(b+56),ln_read_le32(b+60),ln_read_le32(b+508)};
+       ln_crc32(b,508)!=ln_read_le32(b+508))return false;
+    *h=(struct ln_pimg_header){size,ln_read_le32(b+16),ln_read_le32(b+20),ln_read_le32(b+24),ln_read_le32(b+28),ln_read_le32(b+32),ln_read_le32(b+36),ln_read_le32(b+40),ln_read_le32(b+44),ln_read_le32(b+48),ln_read_le32(b+52),ln_read_le32(b+56),ln_read_le32(b+60),ln_read_le32(b+508)
+#if LINNET_TARGET_NUMBER!=98u
+       ,b+72
+#endif
+    };
     if(!h->albums||h->albums>4096||h->photos>65535||h->levels<h->photos||h->levels>h->photos*6u||h->tiles>1000000u||!h->string_bytes||h->string_bytes>16777216u||h->data_at%512u)return false;
     uint32_t at=512;
     if(!section(&at,h->album_at,h->albums,32,size)||!section(&at,h->photo_at,h->photos,64,size)||
        !section(&at,h->level_at,h->levels,24,size)||!section(&at,h->tile_at,h->tiles,12,size)||
        !section(&at,h->string_at,h->string_bytes,1,size)||h->data_at<at||h->data_at-at>=512u)return false;
     at=h->data_at;
-    return section(&at,h->data_at,h->photos,8192,size)&&
-        h->tiles<=size-at&&size-at<=h->tiles*2048u;
+    if(!section(&at,h->data_at,h->photos,8192,size))return false;
+#if LINNET_TARGET_NUMBER==98u
+    return h->tiles<=size-at&&size-at<=h->tiles*2048u;
+#else
+    if(at!=size)return false;
+    for(uint32_t i=0;i<LN_PIMG_PACK_COUNT;++i){const uint8_t*entry=b+72u+i*12u;uint32_t bytes=ln_read_le32(entry+8u);
+        if(bytes>LN_PIMG_PACK_LIMIT||(!bytes&&!ln_bytes_zero(entry,8u))||(bytes&&ln_bytes_zero(entry,8u)))return false;}
+    return true;
+#endif
 }
 static bool string_range(const struct ln_pimg_header*h,uint32_t at,uint32_t bytes,uint32_t max){return bytes<=max&&at<h->string_bytes&&bytes<h->string_bytes-at;}
 __attribute__((minsize)) bool ln_pgrid_header(const uint8_t*b,uint32_t size,const uint8_t*binding,const struct ln_pimg_header*pim,uint32_t target,uint32_t width,uint32_t height,struct ln_pgrid_header*h){
@@ -56,8 +72,13 @@ __attribute__((minsize)) bool ln_pimg_level(const struct ln_pimg_header*h,const 
 }
 __attribute__((minsize)) bool ln_pimg_tile(const struct ln_pimg_header*h,const uint8_t*b,uint32_t index,uint32_t*offset,uint32_t*length,uint32_t*crc){
     if(index>=h->tiles)return false;*offset=ln_read_le32(b);*length=ln_read_le32(b+4);*crc=ln_read_le32(b+8);
+#if LINNET_TARGET_NUMBER==98u
     uint32_t base=h->data_at+h->photos*8192u;
     return *offset>=base&&*offset<h->size&&*length>=1u&&*length<=2048u&&*length<=h->size-*offset;
+#else
+    uint32_t bucket=*offset>>27u,local=*offset&(LN_PIMG_PACK_LIMIT-1u),bytes=ln_read_le32(h->packs+bucket*12u+8u);
+    return bytes&&local<bytes&&*length>=1u&&*length<=2048u&&*length<=bytes-local;
+#endif
 }
 bool ln_pimg_decode_tile(const uint8_t*input,uint32_t bytes,uint8_t*output){
     if(!input||!output||!bytes||bytes>2048u)return false;

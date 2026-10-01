@@ -14,7 +14,7 @@ import struct
 import zlib
 
 from .photos import HEADER, PHOTO, MAX_FILE, inspect
-from .publish import (_plain, _bounded, _hash, inspect_target, _exclusive,
+from .publish import (_plain, _bounded, _hash, _copy_verified, inspect_target, _exclusive,
                       _publish_library, _volume_guard, _finish_backups, _write_receipt)
 
 
@@ -54,6 +54,65 @@ def _verify_fallbacks(items, root, guard):
             raise ValueError(f"existing JPEG fallback differs: {item['path']}")
 
 
+def _publish_packs(packs, identity, root, candidate_bytes, grid_bytes):
+    """Publish immutable tile packs before either catalog can name them."""
+    from .publish import _same_target
+
+    directory = root/'.LINNET'/'PHOTOS'/'PACKS'
+    guard = lambda: _volume_guard(identity)
+    pending = []
+    verified_existing = {}
+    for item in packs:
+        source = Path(item['path'])
+        _plain(source, Path(source.anchor))
+        suffix = item['sha256'][:16].upper()
+        expected = f'/.LINNET/PHOTOS/PACKS/{suffix[:8]}/{suffix[8:]}.PAK'
+        if item['device_path'] != expected or not 0 < item['bytes'] <= 1 << 27:
+            raise ValueError('invalid staged photo pack identity')
+        active = root.joinpath(*expected.lstrip('/').split('/'))
+        _plain(active, root)
+        if active.exists():
+            if _hash(active, item['bytes']) != item['sha256']:
+                raise ValueError(f'photo pack name collision or changed iPod bytes: {active}')
+            info = active.stat()
+            verified_existing[active] = (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino)
+        else:
+            pending.append(item)
+    needed = candidate_bytes + grid_bytes + sum(item['bytes'] for item in pending) + 2*1024*1024
+    if identity['free_bytes'] < needed:
+        raise ValueError('insufficient iPod space for photo packs and catalogs')
+    results = []
+    for item in packs:
+        guard()
+        source = Path(item['path'])
+        if _hash(source, item['bytes']) != item['sha256']:
+            raise ValueError(f'staged photo pack changed: {source}')
+        active = root.joinpath(*item['device_path'].lstrip('/').split('/'))
+        reused = active.exists()
+        if not reused:
+            for part in (root/'.LINNET', root/'.LINNET'/'PHOTOS', directory, active.parent):
+                guard(); _plain(part, root); part.mkdir(exist_ok=True)
+            temporary = active.parent/('P'+os.urandom(4).hex().upper()[:7]+'.TMP')
+            _plain(temporary, root)
+            _copy_verified(source, temporary, item, root, guard)
+            guard()
+            if active.exists():
+                raise RuntimeError(f'photo pack appeared during publication: {active}')
+            os.rename(temporary, active)
+        guard()
+        if reused:
+            info = active.stat()
+            if (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino) != verified_existing[active]:
+                raise OSError(f'photo pack changed after verification: {active}')
+        elif _hash(active, item['bytes']) != item['sha256']:
+            raise OSError(f'photo pack readback mismatch: {active}')
+        results.append(dict(path=item['device_path'].lstrip('/'), package=str(active),
+                            bytes=item['bytes'], sha256=item['sha256'], reused=reused))
+    _same_target(identity, inspect_target(identity['disk_number'], identity['disk_serial'],
+                                          identity['volume_serial'], identity['drive']))
+    return results
+
+
 def publish_photos(package, *, disk_number, expected_disk_serial,
                    expected_volume_serial, expected_drive=None, grid=None):
     """Validate all local bytes, preserve the previous package, publish last.
@@ -83,16 +142,23 @@ def publish_photos(package, *, disk_number, expected_disk_serial,
             raise ValueError('native photo grid changed during validation')
     identity = inspect_target(disk_number, expected_disk_serial, expected_volume_serial, expected_drive)
     root = Path(identity['root'])
+    from .media_manager import _identify
+    target = identity.get('native_target_id') or _identify(identity)['target_id']
+    if candidate['version'] != (0 if target == 'photo4g-p98' else 1):
+        raise ValueError('photo package layout differs from the device target')
     if package.drive.casefold() == root.drive.casefold():
         raise ValueError('photo package must be staged on a different volume from the iPod')
     if grid is not None and grid.drive.casefold() == root.drive.casefold():
         raise ValueError('native photo grid must be staged on a different volume from the iPod')
     with _exclusive(identity):
+        pack_results = _publish_packs(candidate.get('packs', []), identity, root, candidate['bytes'],
+                                      grid_candidate['bytes'] if grid_candidate else 0)
         if grid is not None:
             return _publish_pair(package, candidate, references, grid, grid_candidate, identity, root,
-                                 disk_number, expected_disk_serial, expected_volume_serial, expected_drive)
+                                 disk_number, expected_disk_serial, expected_volume_serial, expected_drive, pack_results)
         return _publish(package, candidate, references, identity, root, disk_number,
-                        expected_disk_serial, expected_volume_serial, expected_drive)
+                        expected_disk_serial, expected_volume_serial, expected_drive,
+                        receipt_fields=dict(packs=pack_results))
 
 
 def _publish(package, candidate, references, identity, root, number, serial, volume, drive,
@@ -107,7 +173,7 @@ def _publish(package, candidate, references, identity, root, number, serial, vol
 
 
 def _publish_pair(package, candidate, references, grid, grid_candidate, identity, root,
-                  number, serial, volume, drive):
+                  number, serial, volume, drive, pack_results):
     from .media_manager import _identify
     target = identity.get('native_target_id') or _identify(identity)['target_id']
     if target != grid_candidate['target']:
@@ -146,7 +212,7 @@ def _publish_pair(package, candidate, references, grid, grid_candidate, identity
     try:
         receipt = _publish(package, candidate, references, identity, root, number, serial, volume, drive,
                            previous_hint=previous['LIBRARY.PIM'], retain_backup=True,
-                           receipt_fields=dict(grid=grid_receipt))
+                           receipt_fields=dict(grid=grid_receipt, packs=pack_results))
     except Exception as exc:
         raise RuntimeError(f"Photo pair stopped after native grid publication; inspect {grid_receipt['receipt']} and the PIMG receipt. Do not replay automatically: {exc}") from exc
     # Both guarded readbacks have succeeded; recovery copies remain until here.
