@@ -203,11 +203,15 @@ void ln_ata_step(uint32_t now) {
     if(phase==PIO_MODE){
         /* These PIO4 host timings meet the drive's minimum at HClk=108
          * MHz and remain conservative at the normal 54 MHz bus clock. */
-        if(!(status&0x29u))ATA(0x2c)=0x2072u;
+        if(!(status&0x29u)&&(identity[53]&2u)&&(identity[64]&2u))ATA(0x2c)=0x2072u;
 #if !defined(LINNET_SRAM_MONITOR)
         /* UDMA0 is intentionally conservative at both supported bus clocks.
          * Enable it only when IDENTIFY explicitly advertises this mode. */
-        if(!(status&0x29u)&&(identity[49]&0x100u)&&(identity[53]&4u)&&(identity[88]&1u)){
+        /* The exact iFlash85 adapter omits word 49's DMA flag while its
+         * valid word 88 still advertises UDMA0. Keep the mode advertisement
+         * and SET FEATURES acknowledgement as the transfer gate. */
+        if(!(status&0x29u)&&((identity[49]&0x100u)||(info.quirks&8u))&&
+           (identity[53]&4u)&&(identity[88]&1u)){
             ATA(0x30)=0x04071152u;
             if(!put(0x58,3)||!put(0x5c,0x40)||!put(0x70,0xef)){finish(LN_ATA_IO);return;}
             ++info.commands;phase=DMA_MODE;return;
@@ -278,6 +282,9 @@ void ln_ata_step(uint32_t now) {
             if(!put(0x6c,0xe0)||!put(0x58,3)||!put(0x5c,0x0c)||!put(0x70,0xef)){finish(LN_ATA_IO);return;}
             ++info.commands;phase=PIO_MODE;return;
         }
+        /* iFlash85 leaves the advanced PIO bitmap blank. Probe its reported
+         * UDMA mode without requiring an unrelated PIO4 negotiation. */
+        if(info.quirks&8u){phase=PIO_MODE;return;}
 #endif
         finish_identify();return;
     }
@@ -296,7 +303,15 @@ void ln_ata_state_snapshot(struct ln_ata_state *out) {
         info.can_flush,info.powered,info.standby_supported,info.can_power_off,info.power_safe,info.idle_timeout_us,info.media_kind};
 }
 uint32_t ln_ata_next_deadline(uint32_t now){return phase==OFF?now+200000u:phase<IDENTIFY && (int32_t)(due-now)>0?due:now+100u;}
-void ln_ata_diagnostics(uint32_t out[24]){if(out){for(unsigned i=0;i<24;i++)out[i]=0;out[0]=phase;out[1]=word;out[2]=info.last_status;}}
+void ln_ata_diagnostics(uint32_t out[24]){
+    if(!out)return;
+    for(unsigned i=0;i<24;i++)out[i]=0;
+    out[0]=phase;out[1]=word;out[2]=info.last_status;
+    out[3]=identity[49];out[4]=identity[53];out[5]=identity[88];out[7]=identity[64];
+#if !defined(LINNET_SRAM_MONITOR)
+    out[6]=dma_enabled;
+#endif
+}
 /* SoC-specific timing formats are deliberately distinct from PP502x. */
 void ln_ata_capabilities(uint32_t out[16]){if(out){for(unsigned i=0;i<16;i++)out[i]=0;out[0]=0x50414341;out[1]=1;out[3]=info.capabilities;}}
 void ln_ata_clock_diagnostics(uint32_t out[8]){if(out){for(unsigned i=0;i<8;i++)out[i]=0;out[0]=0x464e4941;out[1]=1;out[2]=info.powered;out[4]=info.powered?ATA(0x2c):0;}}
