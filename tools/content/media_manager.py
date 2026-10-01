@@ -684,14 +684,20 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
             for _, _, writer, _, _, _, _ in copied:
                 checkpoint()
                 os.fsync(writer.fileno())
+        verified_stamps = {}
         for offset, (item, temporary, _, digest, prepared_bytes, _, _) in enumerate(copied):
             checkpoint()
             stage_progress(start + (len(batch) + offset) / 2, len(plan), 'Checking copied files')
             destination = Path(item['destination'])
             progress(f"Verifying addition {start + offset + 1}/{len(plan)}: {destination.name}")
             _plain(temporary, root)
+            before_readback = _receipt_stamp(temporary.stat())
             if _hash(temporary, prepared_bytes) != digest:
                 raise OSError(f"Copy verification failed: {destination}")
+            after_readback = _receipt_stamp(temporary.stat())
+            if before_readback != after_readback:
+                raise OSError(f"Copied file changed during readback: {destination}")
+            verified_stamps[temporary] = after_readback
             if prepared_bytes != item['bytes']:
                 from .aac_index import original_size
                 if original_size(temporary, prepared_bytes) != item['bytes']:
@@ -705,18 +711,20 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                 raise ValueError(f"Destination appeared during copy: {destination}")
             temporary.rename(destination)
             owned_temporaries.remove((temporary, root))
+            info = destination.stat()
+            if _receipt_stamp(info) != verified_stamps[temporary]:
+                raise OSError(f"Copied file changed after readback: {destination}")
             if unsupported_aac:
                 from .aac_index import mark_unsupported
                 mark_unsupported(destination, cache / 'aac-seek')
             if item['kind'] == 'Music' and destination.suffix.lower() in ('.m4a', '.m4b'):
-                info = destination.stat()
                 key = destination.relative_to(root).as_posix().casefold()
                 seek_state[key] = [info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino]
                 seek_state_changed = True
                 if metadata_seed is not None:
                     music_seeds.append((destination, info, *metadata_seed))
             elif item['kind'] == 'Music' and destination.suffix.lower() == '.mp3' and metadata_seed is not None:
-                music_seeds.append((destination, destination.stat(), *metadata_seed))
+                music_seeds.append((destination, info, *metadata_seed))
             report['steps'].append(dict(added=str(destination), bytes=prepared_bytes))
         report.pop('copies_in_progress', None)
         record()
