@@ -100,15 +100,24 @@ ConvertTo-Json -InputObject @{items=@($items);errors=@($errors)} -Compress
     devices = []
     errors = [f"{entry.get('drive', '?')}: {entry.get('message', '')[:240]}"
               for entry in discovered.get('errors', [])[:16] if isinstance(entry, dict)]
-    for item in items:
-        try:
-            args = dict(disk_number=item["number"], expected_disk_serial=item["serial"],
-                        expected_volume_serial=item["volume"], expected_drive=item["drive"])
-            devices.append(_inspect_identify(args, Path(item["drive"] + "\\")))
-        except Exception as error:
-            if len(errors) < 16:
-                drive = item.get('drive', '?') if isinstance(item, dict) else '?'
-                errors.append(f"{drive}: {(str(error) or type(error).__name__)[:240]}")
+    with ThreadPoolExecutor(max_workers=min(4, max(1, len(items)))) as pool:
+        pending = []
+        for item in items:
+            try:
+                args = dict(disk_number=item["number"], expected_disk_serial=item["serial"],
+                            expected_volume_serial=item["volume"], expected_drive=item["drive"])
+                pending.append((item, pool.submit(_inspect_identify, args, Path(item["drive"] + "\\"))))
+            except Exception as error:
+                if len(errors) < 16:
+                    drive = item.get('drive', '?') if isinstance(item, dict) else '?'
+                    errors.append(f"{drive}: {(str(error) or type(error).__name__)[:240]}")
+        for item, future in pending:
+            try:
+                devices.append(future.result())
+            except Exception as error:
+                if len(errors) < 16:
+                    drive = item.get('drive', '?') if isinstance(item, dict) else '?'
+                    errors.append(f"{drive}: {(str(error) or type(error).__name__)[:240]}")
     if detailed:
         return dict(devices=devices, errors=errors)
     if not devices and errors:
