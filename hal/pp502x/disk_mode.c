@@ -18,10 +18,11 @@ enum { WRITE_BUFFER_BYTES=LINNET_ATA_MAX_WRITE_SECTORS*512u,
 #endif
 };
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
-/* Disk Mode is the sole ATA owner and can use its uncached 32 KiB DMA buffer
- * for both USB and ATA, avoiding a full copy at each storage boundary. */
+/* A 512-byte physical-sector iFlash write has no ATA read-modify-write edge,
+ * so Disk Mode can give USB and ATA the same uncached 32 KiB DMA buffer. */
 extern uint8_t *ln_pp_ata_disk_mode_buffer(void);
-#define buffer ln_pp_ata_disk_mode_buffer()
+static uint8_t fallback_buffer[BUFFER_BYTES] __attribute__((aligned(32)));
+static uint8_t *buffer;
 #elif defined(LINNET_TARGET_PHOTO4G_P98) && defined(LINNET_IMAGE_OS)
 /* Disk Mode exclusively owns the 8 MiB update staging region. Keep its DMA
  * workspace out of the Photo's fully occupied Cover Flow resident budget. */
@@ -285,6 +286,13 @@ _Noreturn void ln_pp_disk_mode(const char *serial,uint32_t sector_bytes,bool wri
     if(!drive.initialized || drive.failed || !drive.can_flush || logical_sectors>UINT32_MAX)
         ln_platform_hardware_reset();
     capacity=(uint32_t)logical_sectors;
+#if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
+    struct ln_ata_info media;ln_ata_snapshot(&media);
+    buffer=media.media_kind==LN_ATA_MEDIA_SOLID_STATE &&
+        media.physical_sector_bytes==512u && (media.quirks&8u)?
+        ln_pp_ata_disk_mode_buffer():
+        (uint8_t *)ln_platform_uncached_address((uintptr_t)fallback_buffer);
+#endif
     write_batch_bytes=drive.media_kind==LN_ATA_MEDIA_SOLID_STATE?
         WRITE_BUFFER_BYTES:LINNET_ATA_MAX_SECTORS*512u;
 #if (defined(LINNET_SOC_PP5022) || defined(LINNET_TARGET_IPOD4G_Q21) || LINNET_TARGET_NUMBER == 98) && defined(LINNET_IMAGE_OS)
