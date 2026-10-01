@@ -375,7 +375,7 @@ bool ln_ata_start(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *bytes
     uint32_t now=ln_time_us();if((int32_t)(limit-now)<=0||(uint32_t)(limit-now)>30000000u)return false;
     bool data=op==LN_ATA_READ||op==LN_ATA_WRITE;
     if(data&&(!bytes||!sectors||
-        sectors>(op==LN_ATA_READ?LINNET_ATA_MAX_READ_SECTORS:LINNET_ATA_MAX_SECTORS)||
+        sectors>(op==LN_ATA_READ?LINNET_ATA_MAX_READ_SECTORS:LINNET_ATA_MAX_WRITE_SECTORS)||
         lba>=info.sectors||sectors>info.sectors-lba))return false;
     if(!data&&(sectors||bytes))return false;
     if(op==LN_ATA_WRITE&&!info.can_flush)return false;
