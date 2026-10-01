@@ -107,8 +107,7 @@ class _PhotoCache:
             while chunk := stream.read(chunk_size):
                 checkpoint()
                 digest.update(chunk)
-        identity = [str(path.resolve()), name, title, fallback,
-                    digest.hexdigest(), self.recipe]
+        identity = [name, title, fallback, digest.hexdigest(), self.recipe]
         return hashlib.sha256(json.dumps(identity, separators=(',', ':')).encode()).hexdigest()
 
     def get(self, key, checkpoint):
