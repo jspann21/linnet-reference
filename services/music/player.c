@@ -493,6 +493,11 @@ static void player_advance(void){
     if(audio_ready){ln_audio_snapshot(&audio);refresh(&audio);if(audio.fault){fail(12);return;}}
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
     if(slots[audible].cache_pending&&io_owner!=&slots[audible])activate_cache(&slots[audible]);
+    if((pause_requested||state.phase==LN_PLAYER_PAUSE)&&io_owner==&slots[audible]&&
+       slots[audible].cache_enabled){
+        ln_storage_media_cancel(io_owner->generation);
+        if(!drain_canceled())return;
+    }
 #endif
     if(state.phase==LN_PLAYER_PAUSE)return;
     if(pause_requested&&!io_owner){pause_requested=false;ln_audio_pause();state.phase=LN_PLAYER_PAUSE;return;}
