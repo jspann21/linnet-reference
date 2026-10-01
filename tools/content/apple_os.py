@@ -184,9 +184,26 @@ def _files(root, folders, kind, extensions, records_by_kind=None):
     return [found[key] for key in sorted(found)]
 
 
-def _signature(files):
-    rows = [(str(path), info.st_size, info.st_mtime_ns) for path, info in files]
+def _signature(root, files):
+    rows = [(path.relative_to(root).as_posix(), info.st_size, info.st_mtime_ns)
+            for path, info in files]
     return hashlib.sha256(json.dumps(rows, ensure_ascii=False).encode()).hexdigest()
+
+
+def _signature_matches(saved, root, files, current=None):
+    if saved == (current or _signature(root, files)):
+        return True
+    if not isinstance(saved, str) or len(saved) != 64:
+        return False
+    rows = [(path.relative_to(root), info.st_size, info.st_mtime_ns) for path, info in files]
+    legacy_roots = [root]
+    if os.name == 'nt' and root.drive:
+        legacy_roots.extend(Path(f'{letter}:\\') for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')
+    for old_root in legacy_roots:
+        legacy = [(str(old_root / relative), size, mtime) for relative, size, mtime in rows]
+        if hashlib.sha256(json.dumps(legacy, ensure_ascii=False).encode()).hexdigest() == saved:
+            return True
+    return False
 
 
 def _apple_music_path(path, root, aliases):
@@ -303,7 +320,7 @@ def inspect(identity, *, records_by_kind=None):
     music = _files(root, selected, 'Music', media.extensions('Music'), records_by_kind)
     published = state.get('published') if isinstance(state.get('published'), dict) else {}
     db = root / 'iPod_Control/iTunes/iTunesDB'
-    source_stamp = _signature(music)
+    source_stamp = _signature(root, music)
     digest = _hash(db) if db.is_file() else None
     adopted_ready = False
     if adopted and adopted_tracks is not None and digest:
@@ -315,7 +332,7 @@ def inspect(identity, *, records_by_kind=None):
                              database_sha256=digest, music_count=len(music), music_issues=[])
             state.update(folders=selected, configured=True, published=published)
             save_json(_state_path(identity), state)
-    same_published = (published.get('music_source_signature') == source_stamp and
+    same_published = (_signature_matches(published.get('music_source_signature'), root, music, source_stamp) and
                       published.get('database_sha256') == digest and
                       isinstance(published.get('music_count'), int))
     if same_published:
@@ -335,7 +352,7 @@ def inspect(identity, *, records_by_kind=None):
                 if len(issues) < 20:
                     issues.append(str(error))
         playable_count = len(playable_music)
-        stamp = _signature(playable_music)
+        stamp = _signature(root, playable_music)
     if issues and same_published:
         music_status = f'{len(music) - playable_count} music paths need attention'
     elif issues:
@@ -346,7 +363,8 @@ def inspect(identity, *, records_by_kind=None):
         music_status = 'No music folders selected'
     elif adopted:
         music_status = 'Ready' if adopted_ready else 'Needs update'
-    elif (published.get('music_signature') == stamp and
+    elif ((published.get('music_signature') == stamp if same_published else
+           _signature_matches(published.get('music_signature'), root, playable_music, stamp)) and
           published.get('database_sha256') == digest):
         music_status = 'Ready'
     else:
@@ -360,7 +378,7 @@ def inspect(identity, *, records_by_kind=None):
             photo_status = 'Apple photo library changed outside Linnet'
         elif photo_digest and not published.get('photo_database_sha256'):
             photo_status = 'Existing Apple photo library needs review'
-        elif (published.get('photo_signature') == _signature(photos) and
+        elif (_signature_matches(published.get('photo_signature'), root, photos) and
               published.get('photo_database_sha256') == photo_digest):
             photo_status = 'Ready'
         else:
@@ -384,12 +402,13 @@ def inspect(identity, *, records_by_kind=None):
                        f'{len(notes) - len(native)} notes need a short plain-text file')
         details.append({'kind': 'Notes', 'count': len(notes), 'status': note_status})
     videos = _files(root, selected, 'Videos', media.extensions('Videos'), records_by_kind)
-    video_stamp = _signature(videos)
+    video_stamp = _signature(root, videos)
+    video_matches = _signature_matches(published.get('video_source_signature'), root, videos, video_stamp)
     saved_video_issues = (published.get('video_issues', [])
-                          if published.get('video_source_signature') == video_stamp and
+                          if video_matches and
                           isinstance(published.get('video_issues'), list) else [])
     if videos or published.get('video_count', 0):
-        if published.get('video_source_signature') != video_stamp or published.get('database_sha256') != digest:
+        if not video_matches or published.get('database_sha256') != digest:
             video_status = 'Needs update'
         elif saved_video_issues:
             video_status = f'{len(saved_video_issues)} videos need attention'
@@ -460,7 +479,7 @@ def _update_photos(identity, state, selected, cache, progress):
     old_digest = _hash(photo_db) if photo_db.is_file() else None
     if old_digest and old_digest != published.get('photo_database_sha256'):
         raise ValueError('The Apple photo library changed outside Linnet. Review it before updating Photos.')
-    if (published.get('photo_signature') == _signature(photos) and
+    if (_signature_matches(published.get('photo_signature'), root, photos) and
             published.get('photo_database_sha256') == old_digest):
         return
     source_bytes = sum(info.st_size for _, info in photos)
@@ -561,7 +580,7 @@ def _update_photos(identity, state, selected, cache, progress):
                     else:
                         target.unlink(missing_ok=True)
                 raise
-        published.update(photo_signature=_signature(photos),
+        published.update(photo_signature=_signature(root, photos),
                          photo_database_sha256=_hash(prepared),
                          photo_count=len(photos))
         state['published'] = published
@@ -665,8 +684,8 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
         photo_digest = _hash(photo_db) if photo_db.is_file() else None
         if photo_digest and photo_digest != published.get('photo_database_sha256'):
             raise ValueError('The Apple photo library changed outside Linnet. Review it before updating Photos.')
-    if (published.get('music_source_signature') == _signature(files) and
-            published.get('video_source_signature') == _signature(videos) and
+    if (_signature_matches(published.get('music_source_signature'), root, files) and
+            _signature_matches(published.get('video_source_signature'), root, videos) and
             not published.get('music_issues') and not published.get('video_issues') and
             source_db.is_file() and published.get('database_sha256') == _hash(source_db)):
         _update_photos(identity, state, selected, cache, progress)
@@ -747,9 +766,9 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
             finally:
                 temporary.unlink(missing_ok=True)
         published = state.get('published') if isinstance(state.get('published'), dict) else {}
-        published.update(music_signature=_signature(playable_music),
-                         music_source_signature=_signature(files),
-                         video_source_signature=_signature(videos),
+        published.update(music_signature=_signature(root, playable_music),
+                         music_source_signature=_signature(root, files),
+                         video_source_signature=_signature(root, videos),
                          video_count=len(videos), video_ready_count=len(video_rows),
                          video_issues=video_issues, music_issues=music_issues,
                          database_sha256=digest, music_count=len(playable_music))
