@@ -46,6 +46,7 @@ EXTENSIONS = {".wav", ".aif", ".aiff", ".aifc", ".mp3", ".m4a", ".m4b",
 COVER_NAMES = ("cover.png", "cover.jpg", "folder.jpg", "Folder.jpg")
 COVERFLOW_CACHE_MAX_ENTRIES = 4096  # 14,080 bytes each: at most 55 MiB of tile payloads.
 RENDER_CACHE_MAX_ENTRIES = 2048  # At most 118 MiB of complete 128px + Cover Flow renders.
+METADATA_WORKERS = 8
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
@@ -1229,7 +1230,7 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
         stop_metadata = threading.Event()
         def stop_requested():
             return stop_metadata.is_set() or cancelled()
-        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="music-metadata") as metadata_pool:
+        with ThreadPoolExecutor(max_workers=METADATA_WORKERS, thread_name_prefix="music-metadata") as metadata_pool:
             try:
                 report = _compile_music_stage(source, prepared, metadata_pool=metadata_pool, ffprobe=ffprobe,
                                           artwork=artwork, playlists=playlists, target=target, device_root=device_root, progress=progress,
@@ -1323,7 +1324,7 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
                   if metadata is None else None)
         pending.append((number, path, resolved, before, metadata, future, cover))
     try:
-        for _ in range(4):
+        for _ in range(METADATA_WORKERS):
             enqueue()
         while pending:
             number, path, resolved, before, metadata, future, cover = pending[0]
