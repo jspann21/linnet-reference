@@ -511,8 +511,11 @@ def additions(root, pending, *, snapshots=None):
 def _prepare_import_aac(item, scratch, cache, ffprobe, cancelled, stopped):
     from .aac_index import import_suffix
 
+    def should_stop():
+        return stopped.is_set() or cancelled()
+
     def check():
-        if stopped.is_set() or cancelled():
+        if should_stop():
             raise Cancelled('Stopped while preparing AAC on the computer.')
 
     source = Path(item['source'])
@@ -532,7 +535,7 @@ def _prepare_import_aac(item, scratch, cache, ffprobe, cancelled, stopped):
     metadata_seed = None
     try:
         from .music import _read_metadata
-        metadata = _read_metadata(local, ffprobe, True, cancelled, include_cover=True)
+        metadata = _read_metadata(local, ffprobe, True, should_stop, include_cover=True)
         metadata_seed = (metadata, metadata.pop('_embedded_cover', None))
     except (OSError, ValueError, subprocess.SubprocessError):
         pass  # A cache miss lets normal library preparation retry.
