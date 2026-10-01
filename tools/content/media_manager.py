@@ -543,6 +543,29 @@ def _prepare_import_aac(item, scratch, cache, ffprobe, cancelled, stopped):
     return local, suffix, unsupported, metadata_seed, _receipt_stamp(before)
 
 
+def _prepare_import_mp3(item, ffprobe, cancelled, stopped):
+    def should_stop():
+        return stopped.is_set() or cancelled()
+
+    source = Path(item['source'])
+    _plain(source, Path(source.anchor))
+    before = source.stat()
+    if (before.st_size, before.st_mtime_ns) != (item['bytes'], item['mtime_ns']):
+        raise ValueError(f"Source changed since selection: {source}")
+    metadata_seed = None
+    try:
+        from .music import _read_metadata
+        metadata = _read_metadata(source, ffprobe, True, should_stop, include_cover=True)
+        metadata_seed = (metadata, metadata.pop('_embedded_cover', None))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass  # The compiler can retry from the copied file if host parsing fails.
+    if should_stop():
+        raise Cancelled('Stopped while reading MP3 metadata on the computer.')
+    if _receipt_stamp(source.stat()) != _receipt_stamp(before):
+        raise ValueError(f"Source changed during preparation: {source}")
+    return metadata_seed, _receipt_stamp(before)
+
+
 def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress,
                     *, cache, cancelled, stage_progress=lambda current, total, phase: None):
     # Queue a bounded set of writes before flushing and reading them back. On
@@ -577,26 +600,34 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
             aac_positions = [offset for offset, (item, _) in enumerate(batch)
                              if item['kind'] == 'Music' and
                              Path(item['destination']).suffix.lower() in ('.m4a', '.m4b')]
+            mp3_positions = [offset for offset, (item, _) in enumerate(batch)
+                             if item['kind'] == 'Music' and
+                             Path(item['destination']).suffix.lower() == '.mp3']
+            preparation_positions = sorted((*aac_positions, *mp3_positions))
             scratches = {offset: Path(handles.enter_context(tempfile.TemporaryDirectory(
                 prefix='aac-source-', dir=cache))) for offset in aac_positions}
             stopped = threading.Event()
             if aac_positions:
                 from .aac_index import executable
                 executable()
-            executor = handles.enter_context(ThreadPoolExecutor(max_workers=2)) if aac_positions else None
+            executor = handles.enter_context(ThreadPoolExecutor(max_workers=2)) if preparation_positions else None
             if executor is not None:
                 handles.callback(stopped.set)
-            upcoming = iter(aac_positions)
+            upcoming = iter(preparation_positions)
             futures = {}
-            ffprobe = shutil.which('ffprobe') if aac_positions else None
-            def fill_aac():
+            ffprobe = shutil.which('ffprobe') if preparation_positions else None
+            def fill_preparation():
                 while executor is not None and len(futures) < 2:
                     offset = next(upcoming, None)
                     if offset is None:
                         break
-                    futures[offset] = executor.submit(_prepare_import_aac, batch[offset][0],
-                        scratches[offset], cache, ffprobe, cancelled, stopped)
-            fill_aac()
+                    if offset in scratches:
+                        futures[offset] = executor.submit(_prepare_import_aac, batch[offset][0],
+                            scratches[offset], cache, ffprobe, cancelled, stopped)
+                    else:
+                        futures[offset] = executor.submit(_prepare_import_mp3, batch[offset][0],
+                            ffprobe, cancelled, stopped)
+            fill_preparation()
             try:
                 for offset, (item, temporary) in enumerate(batch):
                     checkpoint()
@@ -615,8 +646,12 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                     metadata_seed = None
                     copy_source = source
                     if offset in futures:
-                        copy_source, suffix, unsupported_aac, metadata_seed, source_stamp = futures.pop(offset).result()
-                        fill_aac()
+                        prepared = futures.pop(offset).result()
+                        fill_preparation()
+                        if offset in scratches:
+                            copy_source, suffix, unsupported_aac, metadata_seed, source_stamp = prepared
+                        else:
+                            metadata_seed, source_stamp = prepared
                         if _receipt_stamp(info) != source_stamp:
                             raise ValueError(f"Source changed during preparation: {source}")
                         checkpoint()
@@ -680,6 +715,8 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                 seek_state_changed = True
                 if metadata_seed is not None:
                     music_seeds.append((destination, info, *metadata_seed))
+            elif item['kind'] == 'Music' and destination.suffix.lower() == '.mp3' and metadata_seed is not None:
+                music_seeds.append((destination, destination.stat(), *metadata_seed))
             report['steps'].append(dict(added=str(destination), bytes=prepared_bytes))
         report.pop('copies_in_progress', None)
         record()
