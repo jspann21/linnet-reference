@@ -4,10 +4,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from pathlib import Path
 import re
 import struct
 import tempfile
+import threading
 import unicodedata
 import zlib
 from . import SourceError
@@ -309,6 +312,23 @@ def _render_photo(path, fallback, max_dimension, viewport_width, viewport_height
     return metadata, raw_thumb, bytes(tile_bytes), grid_pixels
 
 
+def _pack_photo_tiles(tile_bytes, crcs, checkpoint):
+    from lz4.block import compress as lz4_compress
+
+    packed = bytearray()
+    lengths = []
+    for index in range(len(crcs)):
+        if index % 256 == 0:
+            checkpoint()
+        raw = tile_bytes[index*2048:(index+1)*2048]
+        compressed = lz4_compress(raw, mode='high_compression', compression=9,
+                                  store_size=False)
+        stored = compressed if len(compressed) < len(raw) else raw
+        lengths.append(len(stored))
+        packed.extend(stored)
+    return bytes(packed), lengths
+
+
 def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                    viewport_height=156, fallback_paths=None, excluded=None, additional_sources=None,
                    progress=None, checkpoint=None, cache_dir=None, target=None, grid_output=None):
@@ -389,75 +409,107 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
             strings.extend(raw + b'\0')
         return string_index[value]
 
-    from lz4.block import compress as lz4_compress
     photos, levels, tile_records = [], [], []
     cache_reused = cache_rendered = 0
     with tempfile.TemporaryFile() as thumbs, tempfile.TemporaryFile() as tiles, tempfile.TemporaryFile() as grid_pixels:
-        for index, path in enumerate(paths):
+        stopped = threading.Event()
+
+        def worker_check():
+            if stopped.is_set():
+                from .media_manager import Cancelled
+                raise Cancelled('Stopped while preparing photos on the computer.')
+
+        def prepare(path, fallback, rendered):
+            if rendered is None:
+                rendered = _render_photo(path, fallback, max_dimension,
+                                         viewport_width, viewport_height, worker_check, grid_shape)
+            packed, lengths = _pack_photo_tiles(rendered[2], rendered[0]['tile_crcs'], worker_check)
+            return rendered, packed, lengths
+
+        pending = deque()
+        upcoming = iter(enumerate(paths))
+
+        def enqueue(pool):
+            item = next(upcoming, None)
+            if item is None:
+                return
+            index, path = item
             check()
-            if progress:
-                progress(dict(phase='photos', current=index, total=len(paths), file=str(path)))
             try:
                 title = _title(titles.get(path, path.stem))
             except ValueError as error:
                 raise SourceError(f'Could not prepare photo {path}: {error}', path) from error
-            title_text = title
-            title = string(title_text)
             fallback = fallback_paths.get(names[path], '')
             if fallback and (not FAT_PATH.fullmatch(fallback) or len(fallback) > 127 or
                              not fallback.endswith(('.JPG', '.JPEG'))):
                 raise ValueError('fallback path must be an absolute uppercase FAT8.3 JPEG path')
-            rendered = None
-            key = None
+            before = path.stat() if cache is not None else None
+            key = cache.key(path, names[path], title, fallback, check) if cache is not None else None
             if cache is not None:
-                before = path.stat()
-                key = cache.key(path, names[path], title_text, fallback, check)
                 after_hash = path.stat()
                 if (before.st_size, before.st_mtime_ns) != (after_hash.st_size, after_hash.st_mtime_ns):
                     raise SourceError(f'Photo changed while preparing: {path}', path)
-                rendered = cache.get(key, check)
-            if rendered is None:
-                rendered = _render_photo(path, fallback, max_dimension,
-                                         viewport_width, viewport_height, check, grid_shape)
-                cache_rendered += 1
-                if cache is not None:
-                    after_render = path.stat()
-                    if (before.st_size, before.st_mtime_ns) != (after_render.st_size, after_render.st_mtime_ns):
-                        raise SourceError(f'Photo changed while preparing: {path}', path)
-                    cache.put(key, *rendered)
-            else:
-                cache_reused += 1
-                after_render = path.stat()
-                if (before.st_size, before.st_mtime_ns) != (after_render.st_size, after_render.st_mtime_ns):
-                    raise SourceError(f'Photo changed while preparing: {path}', path)
-            image_meta, raw_thumb, tile_bytes, raw_grid = rendered
-            if grid_shape is not None:
-                if len(raw_grid) != grid_shape[0]*grid_shape[1]*2:
-                    raise ValueError('native photo grid cache contract mismatch')
-                grid_pixels.write(raw_grid)
-                grid_pixels.write(struct.pack('<I', _crc(raw_grid)))
-            thumbs.write(raw_thumb)
-            first_level = len(levels)
-            local_offset = 0
-            for lw, lh, tx, ty, count in image_meta['levels']:
-                first_tile = len(tile_records) + local_offset
-                if first_tile + count > MAX_TILES or ((len(paths)*8192)+(first_tile+count)*2048) > MAX_FILE:
-                    raise ValueError('photo tile payload exceeds package limits')
-                levels.append((index, lw, lh, tx, ty, first_tile, count))
-                local_offset += count
-            for tile_index, crc in enumerate(image_meta['tile_crcs']):
-                if tile_index % 256 == 0:
+            rendered = cache.get(key, check) if cache is not None else None
+            future = pool.submit(prepare, path, fallback, rendered)
+            pending.append((index, path, title, fallback, before, key, rendered is not None, future))
+
+        with ThreadPoolExecutor(max_workers=4, thread_name_prefix='photo-prep') as pool:
+            try:
+                for _ in range(min(4, len(paths))):
+                    enqueue(pool)
+                while pending:
+                    index, path, title_text, fallback, before, key, reused, future = pending[0]
                     check()
-                raw = tile_bytes[tile_index*2048:(tile_index+1)*2048]
-                packed = lz4_compress(raw, mode='high_compression', compression=9,
-                                      store_size=False)
-                stored = packed if len(packed) < len(raw) else raw
-                tile_records.append((tiles.tell(), len(stored), crc))
-                tiles.write(stored)
-            photos.append((0, *title, *string(fallback), image_meta['width'], image_meta['height'],
-                           first_level, len(levels)-first_level, 0, image_meta['thumb_crc'],
-                           image_meta['fallback_bytes'], image_meta['fallback_crc'],
-                           image_meta['orientation'], 0))
+                    if progress:
+                        progress(dict(phase='photos', current=index, total=len(paths), file=str(path)))
+                    while True:
+                        check()
+                        try:
+                            rendered, packed, lengths = future.result(timeout=0.1)
+                            break
+                        except FutureTimeout:
+                            continue
+                    pending.popleft()
+                    if cache is not None:
+                        after_render = path.stat()
+                        if (before.st_size, before.st_mtime_ns) != (after_render.st_size, after_render.st_mtime_ns):
+                            raise SourceError(f'Photo changed while preparing: {path}', path)
+                    if reused:
+                        cache_reused += 1
+                    else:
+                        cache_rendered += 1
+                        if cache is not None:
+                            cache.put(key, *rendered)
+                    image_meta, raw_thumb, _, raw_grid = rendered
+                    title = string(title_text)
+                    if grid_shape is not None:
+                        if len(raw_grid) != grid_shape[0]*grid_shape[1]*2:
+                            raise ValueError('native photo grid cache contract mismatch')
+                        grid_pixels.write(raw_grid)
+                        grid_pixels.write(struct.pack('<I', _crc(raw_grid)))
+                    thumbs.write(raw_thumb)
+                    first_level = len(levels)
+                    local_offset = 0
+                    for lw, lh, tx, ty, count in image_meta['levels']:
+                        first_tile = len(tile_records) + local_offset
+                        if first_tile + count > MAX_TILES or ((len(paths)*8192)+(first_tile+count)*2048) > MAX_FILE:
+                            raise ValueError('photo tile payload exceeds package limits')
+                        levels.append((index, lw, lh, tx, ty, first_tile, count))
+                        local_offset += count
+                    position = tiles.tell()
+                    for tile_index, (length, crc) in enumerate(zip(lengths, image_meta['tile_crcs'])):
+                        if tile_index % 256 == 0:
+                            check()
+                        tile_records.append((position, length, crc))
+                        position += length
+                    tiles.write(packed)
+                    photos.append((0, *title, *string(fallback), image_meta['width'], image_meta['height'],
+                                   first_level, len(levels)-first_level, 0, image_meta['thumb_crc'],
+                                   image_meta['fallback_bytes'], image_meta['fallback_crc'],
+                                   image_meta['orientation'], 0))
+                    enqueue(pool)
+            finally:
+                stopped.set()
         album_records = [_record(struct.pack('<7I', *string(_title(source.name)),
                                              0, len(photos), NO_INDEX, 0, 0))]
         album_offset = HEADER
