@@ -6,7 +6,7 @@ indexes the disk. Original files are not renamed or rewritten.
 """
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from pathlib import Path
 import hashlib
 import json
@@ -30,6 +30,7 @@ IMAGES = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tif', '.tiff', '.webp', '.h
 TEXT = {'.txt', '.text', '.md', '.rst', '.log', '.ini', '.cfg', '.toml', '.yaml', '.yml',
         '.json', '.xml', '.csv', '.nfo', '.c', '.h', '.py', '.js', '.ts', '.tsx', '.css', '.html', '.htm'}
 PREVIEW_DECODE_PIXELS = 32_000_000
+EAGER_IMAGE_OPEN = {'.webp', '.avif', '.heic', '.gif', '.tif', '.tiff'}
 
 
 class _PreviewDecodeBudget:
@@ -55,6 +56,59 @@ class _PreviewDecodeBudget:
             with self.condition:
                 self.available += amount
                 self.condition.notify_all()
+
+
+def _image_preview_pixels(original, width, height):
+    from PIL import Image, ImageOps
+    from .photos import _rgb565
+
+    oriented = ImageOps.exif_transpose(original)
+    try:
+        image = oriented.convert('RGB')
+    finally:
+        oriented.close()
+    try:
+        image.thumbnail((width, height), Image.Resampling.LANCZOS)
+        canvas = Image.new('RGB', (width, height))
+        try:
+            canvas.paste(image, ((width - image.width) // 2, (height - image.height) // 2))
+            return _rgb565(canvas)
+        finally:
+            canvas.close()
+    finally:
+        image.close()
+
+
+def _image_preview(source, width, height, image_budget, checkpoint):
+    from PIL import Image
+
+    if image_budget is None:
+        image_budget = _PreviewDecodeBudget()
+    if source.suffix.lower() in EAGER_IMAGE_OPEN:
+        # Some plugins allocate full frames in Image.open, before dimensions
+        # are available to the caller. Reserve the entire budget first.
+        with image_budget.reserve(PREVIEW_DECODE_PIXELS, checkpoint):
+            original = Image.open(source)
+            try:
+                return _image_preview_pixels(original, width, height)
+            finally:
+                try:
+                    original.close()
+                finally:
+                    original = None
+    original = Image.open(source)
+    try:
+        with image_budget.reserve(original.width * original.height, checkpoint):
+            try:
+                return _image_preview_pixels(original, width, height)
+            finally:
+                try:
+                    original.close()
+                finally:
+                    original = None
+    finally:
+        if original is not None:
+            original.close()
 
 
 def _short_name(path):
@@ -145,18 +199,7 @@ def _preview(source, cache, width, height, columns, recipe, checkpoint, info, ro
         # before reading source bytes. Cache hits only read the local cache.
         _plain(source, root)
         if suffix in IMAGES:
-            from PIL import Image, ImageOps
-            from .photos import _rgb565
-            with Image.open(source) as original:
-                admission = (image_budget.reserve(original.width * original.height, checkpoint)
-                             if image_budget is not None else nullcontext())
-                with admission:
-                    image = ImageOps.exif_transpose(original).convert('RGB')
-                    image.thumbnail((width, height), Image.Resampling.LANCZOS)
-                    canvas = Image.new('RGB', (width, height))
-                    canvas.paste(image, ((width - image.width) // 2, (height - image.height) // 2))
-                    payload = _rgb565(canvas)
-                    del image, canvas
+            payload = _image_preview(source, width, height, image_budget, checkpoint)
             header = bytearray(512)
             if compressed:
                 from lz4.block import compress as lz4_compress
