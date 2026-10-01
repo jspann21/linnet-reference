@@ -10,7 +10,7 @@
 /* USB MSC Bulk-Only Transport, one transparent SCSI direct-access LUN.
  * The filesystem owner must have quiesced before entering this exclusive loop. */
 enum { CBW, SEND, READ_WAIT, RECEIVE, WRITE_WAIT, FLUSH_WAIT, DISCARD, STATUS, STATUS_WAIT, INVALID };
-enum { WRITE_BUFFER_BYTES=LINNET_ATA_MAX_SECTORS*512u, READ_BUFFER_BYTES=32768u,
+enum { WRITE_BUFFER_BYTES=LINNET_ATA_MAX_SECTORS*512u, READ_BUFFER_BYTES=8192u,
        USB_SEND_BYTES=16384u };
 static uint8_t buffer[READ_BUFFER_BYTES] __attribute__((aligned(32)));
 static uint8_t wrapper[31],status_bytes[13];
