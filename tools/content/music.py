@@ -1059,12 +1059,13 @@ def _short_names_in(folder: Path, aliases: dict[Path, str]) -> None:
             raise ctypes.WinError(ctypes.get_last_error())
 
 
-def _device_media_path(path: Path, root: Path, alias_cache: dict[Path, str] | None = None) -> str:
+def _device_media_path(path: Path, root: Path, alias_cache: dict[Path, str] | None = None,
+                       *, canonical: Path | None = None) -> str:
     """Resolve one file against the compiler's already-resolved device root."""
     from .publish import _plain
     path = Path(path).absolute()
     _plain(path, root)
-    path = path.resolve(strict=True)
+    path = Path(canonical) if canonical is not None else path.resolve(strict=True)
     path.relative_to(root)
     if os.name == "nt" and alias_cache is not None:
         actual = []
@@ -1260,7 +1261,8 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
                                for p in paths[number:number+128]]
             cache_rows = cache.prefetch(source, cache_relatives)
         before = path.lstat()
-        if stat.S_ISLNK(before.st_mode) or source not in path.resolve().parents:
+        resolved = path.resolve()
+        if stat.S_ISLNK(before.st_mode) or source not in resolved.parents:
             raise ValueError("audio paths must remain in the source directory")
         relative = (cache_relatives[number % 128] if cache and not bypass_cache
                     else path.relative_to(source).as_posix())
@@ -1270,12 +1272,12 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
         future = (pool.submit(_read_metadata, path, ffprobe, existing, cancelled,
                               include_cover=cover is _METADATA_COVER)
                   if metadata is None else None)
-        pending.append((number, path, before, metadata, future, cover))
+        pending.append((number, path, resolved, before, metadata, future, cover))
     try:
         for _ in range(4):
             enqueue()
         while pending:
-            number, path, before, metadata, future, cover = pending[0]
+            number, path, resolved, before, metadata, future, cover = pending[0]
             cached = metadata is not None
             if progress:
                 progress(dict(phase="music", current=number, total=len(paths), file=str(path), cached=cached))
@@ -1300,9 +1302,9 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
                 raise SourceError(f"{path}: {error}", path) from error
             pending.popleft()
             enqueue()
-            yield number, path, before, metadata, cached, cover
+            yield number, path, resolved, before, metadata, cached, cover
     finally:
-        for _, _, _, _, future, cover in pending:
+        for _, _, _, _, _, future, cover in pending:
             if future is not None:
                 future.cancel()
             if cover is not None and cover is not _METADATA_COVER and not isinstance(cover, tuple):
@@ -1541,12 +1543,12 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     alias_cache: dict[Path, str] = {}
     cache_hits = 0
     from .media_manager import _music_import_name
-    for number, path, before, metadata, cached, prefetched_cover in _metadata_rows(
+    for number, path, resolved, before, metadata, cached, prefetched_cover in _metadata_rows(
             paths, source, ffprobe, device_root is not None, cache, bypass_cache,
             metadata_pool, progress, cancelled, prefetch_cover):
         location = None
         if device_root is not None:
-            location = _device_media_path(path, device_root, alias_cache)
+            location = _device_media_path(path, device_root, alias_cache, canonical=resolved)
         stage_audio = device_root is None
         hash_audio = verification == "full" or stage_audio
         relative = path.relative_to(source).as_posix()
