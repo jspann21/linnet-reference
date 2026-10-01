@@ -205,15 +205,14 @@ void ln_ata_step(uint32_t now) {
          * MHz and remain conservative at the normal 54 MHz bus clock. */
         if(!(status&0x29u)&&(identity[53]&2u)&&(identity[64]&2u))ATA(0x2c)=0x2072u;
 #if !defined(LINNET_SRAM_MONITOR)
-        /* UDMA0 is intentionally conservative at both supported bus clocks.
-         * Enable it only when IDENTIFY explicitly advertises this mode. */
         /* The exact iFlash85 adapter omits word 49's DMA flag while its
-         * valid word 88 still advertises UDMA0. Keep the mode advertisement
+         * valid word 88 advertises UDMA modes. Keep the mode advertisement
          * and SET FEATURES acknowledgement as the transfer gate. */
         if(!(status&0x29u)&&((identity[49]&0x100u)||(info.quirks&8u))&&
            (identity[53]&4u)&&(identity[88]&1u)){
-            ATA(0x30)=0x04071152u;
-            if(!put(0x58,3)||!put(0x5c,0x40)||!put(0x70,0xef)){finish(LN_ATA_IO);return;}
+            bool fast=(info.quirks&8u)&&(identity[88]&4u);
+            ATA(0x30)=fast?0x02030a52u:0x04071152u;
+            if(!put(0x58,3)||!put(0x5c,fast?0x42:0x40)||!put(0x70,0xef)){finish(LN_ATA_IO);return;}
             ++info.commands;phase=DMA_MODE;return;
         }
 #endif
