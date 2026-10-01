@@ -902,6 +902,8 @@ def _outputs_match(root, outputs, *, verified=None, progress=None):
     """Treat malformed/stale host cache entries as misses, with bounded paths."""
     if not isinstance(outputs, list) or not outputs:
         return False
+    parallel = progress is None and verified is not None and len(outputs) >= 64
+    pending = []
     for index, item in enumerate(outputs):
         if not isinstance(item, (list, tuple)) or len(item) != 2:
             return False
@@ -933,6 +935,9 @@ def _outputs_match(root, outputs, *, verified=None, progress=None):
             if verified is not None and not recent and verified.get(key) == stamp:
                 notify(info.st_size, info.st_size)
                 continue
+            if parallel:
+                pending.append((path, digest, stamp, key, recent))
+                continue
             if _hash(path, progress=notify if progress else None) != digest:
                 return False
             after = path.stat()
@@ -942,6 +947,27 @@ def _outputs_match(root, outputs, *, verified=None, progress=None):
                 verified[key] = stamp
         except (OSError, ValueError):
             return False
+    if pending:
+        def check(entry):
+            path, digest, stamp = entry[:3]
+            try:
+                # Recheck the path immediately before each concurrent read.
+                _plain(path, root)
+                if _hash(path) != digest:
+                    return False
+                after = path.stat()
+                return stamp == (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino)
+            except (OSError, ValueError):
+                return False
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            # Bound outstanding reads and keep a corrupt early output cheap.
+            for start in range(0, len(pending), 32):
+                batch = pending[start:start + 32]
+                for entry, matched in zip(batch, pool.map(check, batch)):
+                    if not matched:
+                        return False
+                    if not entry[4]:
+                        verified[entry[3]] = entry[2]
     return True
 
 
