@@ -597,7 +597,7 @@ class _CancellableReader:
         return self.stream.readinto(*args)
 
 
-def _quick_metadata(path: Path, cancelled=lambda: False) -> dict | None:
+def _quick_metadata(path: Path, cancelled=lambda: False, *, include_cover=False) -> dict | None:
     """Use optional in-process tag readers for well identified containers."""
     try:
         import mutagen
@@ -650,9 +650,14 @@ def _quick_metadata(path: Path, cancelled=lambda: False) -> dict | None:
         for key in ("track", "disc"):
             if key + "number" in tags:
                 tags[key] = tags[key + "number"]
-        return dict(codec=CODECS[codec_name], channels=channels, rate=rate, bits=bits,
-                    frames=_quick_frames(path, info, codec_name, rate, cancelled), data_offset=0,
-                    data_bytes=path.stat().st_size, tags=tags)
+        result = dict(codec=CODECS[codec_name], channels=channels, rate=rate, bits=bits,
+                      frames=_quick_frames(path, info, codec_name, rate, cancelled), data_offset=0,
+                      data_bytes=path.stat().st_size, tags=tags)
+        if include_cover and type(audio).__name__ == 'MP4':
+            covers = (audio.tags or {}).get('covr') or ()
+            cover = bytes(covers[0]) if covers else None
+            result['_embedded_cover'] = cover if cover is not None and 0 < len(cover) <= 32 * 1024 * 1024 else None
+        return result
     except (mutagen.MutagenError, ValueError, AttributeError, TypeError, KeyError, struct.error):
         return None
 
@@ -1151,11 +1156,12 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
             shutil.rmtree(prepared, ignore_errors=True)
 
 
-def _read_metadata(path: Path, ffprobe: str | None, existing: bool, cancelled=lambda: False) -> dict:
+def _read_metadata(path: Path, ffprobe: str | None, existing: bool, cancelled=lambda: False,
+                   *, include_cover=False) -> dict:
     _check_cancel(cancelled)
     if path.suffix.lower() in (".wav", ".aif", ".aiff", ".aifc"):
         return _pcm(path, cancelled)
-    metadata = _quick_metadata(path, cancelled) if existing else None
+    metadata = _quick_metadata(path, cancelled, include_cover=include_cover) if existing else None
     _check_cancel(cancelled)
     if metadata is None and ffprobe:
         metadata = _probe(path, ffprobe, exact_frames=not existing, cancelled=cancelled)
@@ -1166,8 +1172,13 @@ def _read_metadata(path: Path, ffprobe: str | None, existing: bool, cancelled=la
             raise ValueError(f"{path}: track duration requires explicit ffprobe executable")
         metadata["frames"] = _decoded_frames(path, ffprobe, recover=existing,
                                                codec=metadata["codec"], cancelled=cancelled)
+    if include_cover and '_embedded_cover' not in metadata:
+        metadata['_embedded_cover'] = _embedded_cover(path)
     _check_cancel(cancelled)
     return metadata
+
+
+_METADATA_COVER = object()
 
 
 def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, progress,
@@ -1195,8 +1206,11 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
         relative = (cache_relatives[number % 128] if cache and not bypass_cache
                     else path.relative_to(source).as_posix())
         metadata = cache.get(source, relative, before, prefetched=cache_rows) if cache and not bypass_cache else None
-        future = pool.submit(_read_metadata, path, ffprobe, existing, cancelled) if metadata is None else None
-        cover = prefetch_cover(path, before, pool)
+        cover = prefetch_cover(path, before, pool, defer=metadata is None and
+                               path.suffix.lower() in ('.m4a', '.m4b'))
+        future = (pool.submit(_read_metadata, path, ffprobe, existing, cancelled,
+                              include_cover=cover is _METADATA_COVER)
+                  if metadata is None else None)
         pending.append((number, path, before, metadata, future, cover))
     try:
         for _ in range(4):
@@ -1218,6 +1232,10 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
                                 metadata = future.result()
                                 break
                             continue
+                    if cover is _METADATA_COVER:
+                        embedded = metadata.pop('_embedded_cover')
+                        cover = (True, cache.embedded_cover_store(path, before, embedded)
+                                 if cache else embedded)
             except (ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
                 from . import SourceError
                 raise SourceError(f"{path}: {error}", path) from error
@@ -1228,7 +1246,7 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
         for _, _, _, _, future, cover in pending:
             if future is not None:
                 future.cancel()
-            if cover is not None and not isinstance(cover, tuple):
+            if cover is not None and cover is not _METADATA_COVER and not isinstance(cover, tuple):
                 cover.cancel()
 
 
@@ -1304,7 +1322,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     stable_ids: set[int] = set()
     groups: dict[tuple[int, str, str], list[int]] = {}
 
-    def prefetch_cover(path: Path, before, executor):
+    def prefetch_cover(path: Path, before, executor, *, defer=False):
         if not artwork or path.parent in art_cache:
             return None
         folder = path.parent
@@ -1317,6 +1335,8 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             hit, value = cache.embedded_cover_lookup(path, before, bypass=bypass_cache)
             if hit:
                 return (True, value)
+        if defer:
+            return _METADATA_COVER
         return executor.submit(_embedded_cover, path)
 
     def art_for(path: Path, before, prefetched_cover) -> int:
