@@ -5,6 +5,7 @@
 #include "hal/api/input.h"
 #include "hal/api/display.h"
 #include "hal/api/power.h"
+#include "hal/api/platform.h"
 #include "hal/s5l8702/board.h"
 #include "hal/link/link.h"
 #include "hal/s5l8702/registers.h"
@@ -22,21 +23,22 @@ static const uint8_t build_id[32]=LINNET_BOOTSTRAP_BUILD_BYTES;
 static bool memory_ready,transport_ready;
 static uint32_t memory_failure;
 static uint32_t usb_recoveries,usb_last_error;
+static uint32_t startup_mode,startup_stage,startup_size;
 static int (*verify_image)(void *,uint32_t,const uint8_t[32]);
 static int (*read_loader)(void *,uint16_t,uint8_t *,uint32_t *);
 static int read_status(void *context,uint16_t command,uint8_t *output,uint32_t *size) {
     if(command!=48)return read_loader(context,command,output,size);
-    static const char names[][16]={"ram_ready=", "ram_failure=", "panel_type=", "gpio6=", "pmu_identity=",
-        "usb_recoveries=", "usb_last_error="};
+    static const char names[][20]={"ram_ready=", "ram_failure=", "panel_type=", "gpio6=", "pmu_identity=",
+        "usb_recoveries=", "usb_last_error=", "startup_mode=", "startup_stage=", "startup_size="};
     struct ln_n25_power_identity identity={0};
     bool pmu=ln_n25_power_identify(&identity);
     uint32_t gpio=*(volatile uint32_t *)(uintptr_t)0x3cf000c4u;
     uint32_t values[]={memory_ready,memory_failure,(gpio>>4)&3,gpio,
         (uint32_t)identity.version|((uint32_t)identity.variant<<8)|((uint32_t)identity.status<<16)|((uint32_t)pmu<<24),
-        usb_recoveries,usb_last_error};
-    if(*size<192)return 0;
+        usb_recoveries,usb_last_error,startup_mode,startup_stage,startup_size};
+    if(*size<320)return 0;
     unsigned used=0;
-    for(unsigned i=0;i<7;i++) {
+    for(unsigned i=0;i<10;i++) {
         for(unsigned j=0;names[i][j];j++)output[used++]=(uint8_t)names[i][j];
         for(unsigned j=0;j<8;j++)output[used++]=(uint8_t)"0123456789abcdef"[(values[i]>>(28-4*j))&15];
         output[used++]='\n';
@@ -137,24 +139,33 @@ _Noreturn void ln_bootstrap_main(void) {
     (void)ln_arm926_instruction_cache(true);
     init_loader();ln_link_parser_init(&parser);
     int mode=ln_s5l_boot_mode();
+    startup_mode=(uint32_t)mode;
     const uint8_t *handoff=(const uint8_t *)(uintptr_t)0x22017e00u;
     bool ram_handoff=ln_read_le32(handoff)==0x484e494cu && ln_read_le32(handoff+72)==ln_crc32(handoff,72);
     if(memory_ready && (mode==LN_S5L_BOOT_NORMAL || mode==LN_S5L_BOOT_DISK || (mode<0 && !ram_handoff))) {
+        startup_stage=1;
         if(!ln_usb_init(LINNET_BOOTSTRAP_SERIAL))for(;;)__asm__ volatile("nop");
         transport_ready=true;
         extern uint32_t ln_n25_persistent_load(uint8_t *,struct ln_image_info *,uint8_t[32]);
         struct ln_image_info info;uint8_t sha[32];
         ln_s5l_boot_request(mode==LN_S5L_BOOT_DISK?LN_S5L_BOOT_ATTEMPT_DISK:LN_S5L_BOOT_ATTEMPT);
         uint32_t size=ln_n25_persistent_load(loader.config.stage,&info,sha);
+        startup_size=size;startup_stage=2;
         if(size && quiesce(0)) {
+            startup_stage=3;
             (void)enter(0,loader.config.stage+128,info.payload_size,info.load_address,info.entry_address,info.build_id,sha,0);
+            startup_stage=4;
         }
         (void)ln_usb_stop();transport_ready=false;
     }
     if(memory_ready&&ln_s5l_board_recovery_screen()&&ln_power_init())ln_power_backlight(true,128);
     bool input_ready=ln_input_init(),input_released=false;
     uint32_t previous_buttons=0;
-    if(!ln_usb_init(LINNET_BOOTSTRAP_SERIAL))for(;;)__asm__ volatile("nop");
+    if(!ln_usb_init(LINNET_BOOTSTRAP_SERIAL)){
+        uint32_t stage=((volatile uint32_t *)(uintptr_t)0x22017f00u)[1];
+        (void)ln_lcd_fault(0x55000000u|(stage&0xffffu),build_id);
+        for(;;)__asm__ volatile("nop");
+    }
     transport_ready=true;
     uint32_t connection=ln_usb_generation();
     uint32_t last_request=ln_time_us();

@@ -10,6 +10,7 @@ from pathlib import Path
 import struct
 import subprocess
 import time
+import zlib
 
 from tools.link.apple_dfu import AppleDFU, interfaces
 from tools.studio.targets import ROOT
@@ -332,6 +333,17 @@ def load(prepared, *, progress=print, wait_seconds=0, inspect_only=False, probe_
                             receipt['disk']['partitions']=[dict(type=sector[446+n*16+4],start_lba=struct.unpack_from('<I',sector,454+n*16)[0],sectors=struct.unpack_from('<I',sector,458+n*16)[0]) for n in range(4)]
                 receipt.update(phase='probe-returned',probe_operation=probe_operation,result=list(words))
                 record();return receipt
+            # A DFU RAM launch must enter the monitor itself. An old SRAM boot
+            # request can otherwise chainload the installed NOR image before
+            # Link is available for bring-up or recovery.
+            prior=_execute(dfu,stub,0,0x22017b00)
+            receipt['previous_boot_request']=prior[:12].hex()
+            request=struct.pack('<II',0x54424e4c,0)
+            request+=struct.pack('<I',zlib.crc32(request))
+            written=_execute(dfu,stub,1,0x22017b00,len(request),request)
+            if written[:len(request)]!=request or _execute(dfu,stub,0,0x22017b00)[:len(request)]!=request:
+                raise RuntimeError('Recovery boot request did not verify in SRAM')
+            receipt['recovery_boot_request_verified']=True;record()
             try:_execute(dfu,stub,2)
             except (OSError,TimeoutError) as error:receipt['handoff_transport']=str(error)
         # A DFU disconnect is not evidence of a successful boot. Confirm Link.

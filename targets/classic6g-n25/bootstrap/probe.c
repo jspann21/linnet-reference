@@ -25,7 +25,10 @@ uint32_t *ln_board_probe(const uint32_t *request) {
         result[3]=ln_n25_memory_init(result+4);
         /* BootROM resumes using its original vector mapping. */
         LN_REG(0x38100000u)=mapping;
-    } else if(request[0]>=2 && request[0]<=4)ln_storage_probe(request[0],request[1],result);
+    } else if(request[0]>=2 && request[0]<=4){
+        ln_storage_probe(request[0],request[1],result);
+        result[11]=LN_REG(0x3cf00164u);
+    }
     else if(request[0]>=5 && request[0]<=7)ln_filesystem_probe(request,result);
     else result[3]=UINT32_MAX;
     result[14]=ln_time_us();result[15]=0x454e4f44u;

@@ -194,7 +194,7 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
         ln_write_le32(reply,0x4252504cu);ln_write_le32(reply+4,operation);ln_write_le32(reply+8,flash_parts);
         response->length=12;response->flags=LINNET_LINK_ACK;return 1;
     }
-    if(operation==52 && request->length==72 && !(lba&4095u) && lba>=0x8000u && lba<0x29000u &&
+    if(operation==52 && request->length==72 && !(lba&4095u) && lba>=0x8000u && lba<0x28000u &&
        flash_parts==255u && ln_bootstrap_memory_ready()) {
         uint8_t digest[32]={0};struct ln_sha256 hash;ln_sha256_init(&hash);
         ln_sha256_update(&hash,flash_sector,sizeof(flash_sector));ln_sha256_finish(&hash,digest);
