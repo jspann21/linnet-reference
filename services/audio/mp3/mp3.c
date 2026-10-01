@@ -1,4 +1,5 @@
 #include "boot/include/linnet_bytes.h"
+#include "boot/include/linnet_boot.h"
 #include "mp3.h"
 #include "third_party/libmad/codeclib.h"
 #include <stddef.h>
@@ -86,22 +87,7 @@ static int read_step(struct ln_mp3 *d,uint64_t offset,uint8_t *buffer,uint32_t c
     int r=d->read(d->context,offset,buffer,count);d->pending=r==0;
     return r<0?fail(d,LN_MP3_IO):r;
 }
-static uint32_t index_crc(uint32_t crc,const uint8_t *bytes,uint32_t count)
-{
-    static uint32_t table[256];static bool ready;
-    if(!ready){
-        for(uint32_t i=0;i<256u;++i){
-            uint32_t value=i;
-            for(uint32_t bit=0;bit<8u;++bit)
-                value=(value&1u)?(value>>1u)^0xedb88320u:value>>1u;
-            table[i]=value;
-        }
-        ready=true;
-    }
-    for(uint32_t i=0;i<count;++i)crc=(crc>>8u)^table[(crc^bytes[i])&255u];
-    return crc;
-}
-static uint64_t index_divide(uint64_t numerator,uint32_t denominator)
+static __attribute__((noinline)) uint64_t index_divide(uint64_t numerator,uint32_t denominator)
 {
     uint64_t quotient=0,remainder=0;
     uint32_t high=(uint32_t)(numerator>>32);
@@ -122,7 +108,7 @@ static void index_fallback(struct ln_mp3 *d)
 }
 /* The saved reservoir and sample position depend on all earlier audio bytes.
  * Verify their complete prefix before restoring the decoder at a frame edge. */
-static int index_step(struct ln_mp3 *d)
+static __attribute__((noinline,minsize)) int index_step(struct ln_mp3 *d)
 {
     uint8_t *b=d->index_data;
     if(d->index_state==INDEX_FOOTER){
@@ -135,7 +121,7 @@ static int index_step(struct ln_mp3 *d)
         uint32_t count=ln_read_le32(b+16),samples=ln_read_le32(b+20);
         uint64_t wanted=d->seek_target-5u*1152u;
         uint64_t ordinal=index_divide(wanted+d->index_lead,d->index_samples);
-        if((index_crc(0xffffffffu,b,60u)^0xffffffffu)!=ln_read_le32(b+60)||
+        if((ln_crc32_update(0xffffffffu,b,60u)^0xffffffffu)!=ln_read_le32(b+60)||
            count<2u||count>1000000u||samples!=d->index_samples||
            ln_read_le32(b+24)!=d->index_rate||ln_read_le32(b+28)!=d->index_channels||
            ln_read_le32(b+32)!=d->index_lead||ln_read_le32(b+36)!=d->index_tail||
@@ -158,7 +144,7 @@ static int index_step(struct ln_mp3 *d)
         if(r<0){index_fallback(d);return 0;}
         uint64_t next=ln_read_le64(b),decoded=ln_read_le64(b+8);
         uint32_t ordinal=ln_read_le32(b+16),md_len=ln_read_le16(b+24);
-        if((index_crc(0xffffffffu,b,556u)^0xffffffffu)!=ln_read_le32(b+556)||
+        if((ln_crc32_update(0xffffffffu,b,556u)^0xffffffffu)!=ln_read_le32(b+556)||
            ordinal!=(d->index_record_number+1u)*INDEX_INTERVAL||
            decoded!=(uint64_t)ordinal*d->index_samples-d->index_lead||
            decoded+5u*1152u>d->seek_target||ln_read_le32(b+20)!=0u||
@@ -176,7 +162,7 @@ static int index_step(struct ln_mp3 *d)
         if(count>98304u)count=98304u;
         int r=read_step(d,d->index_proof_at,d->input,count);if(r==0)return 0;
         if(r<0){index_fallback(d);return 0;}
-        d->index_prefix_crc=index_crc(d->index_prefix_crc,d->input,count);
+        d->index_prefix_crc=ln_crc32_update(d->index_prefix_crc,d->input,count);
         d->index_proof_at+=count;
         if(d->index_proof_at==d->index_next){
             if((d->index_prefix_crc^0xffffffffu)!=d->index_expected_crc){
@@ -189,7 +175,7 @@ static int index_step(struct ln_mp3 *d)
     if(d->index_state==INDEX_FRAME){
         int r=read_step(d,d->index_next,d->input,512u);if(r==0)return 0;
         if(r<0){index_fallback(d);return 0;}
-        if((index_crc(0xffffffffu,d->input,512u)^0xffffffffu)!=ln_read_le32(b+28)){
+        if((ln_crc32_update(0xffffffffu,d->input,512u)^0xffffffffu)!=ln_read_le32(b+28)){
             index_fallback(d);return 0;
         }
         d->read_offset=d->index_next;d->decoded_frames=ln_read_le64(b+8);
