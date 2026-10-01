@@ -9,7 +9,7 @@
 #if defined(LINNET_IMAGE_OS) && (defined(LINNET_SOC_PP5022) || defined(LINNET_TARGET_CLASSIC6G_N25))
 /* Disk Mode supplies a larger buffer; ordinary storage writes stay at 8 sectors. */
 #if defined(LINNET_SOC_PP5022)
-#define LINNET_ATA_MAX_WRITE_SECTORS 64u
+#define LINNET_ATA_MAX_WRITE_SECTORS 128u
 #else
 #define LINNET_ATA_MAX_WRITE_SECTORS 32u
 #endif

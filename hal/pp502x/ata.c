@@ -42,7 +42,12 @@ static uint8_t pio_mode;
 #endif
 #define IDE_CFG R32(0xc3000028u)
 #define IDE_DMA_CONTROL R32(0xc3000400u)
-static uint8_t dma_buffer[32768] __attribute__((aligned(32)));
+#if defined(LINNET_SOC_PP5022)
+#define ATA_DMA_BUFFER_BYTES 65536u
+#else
+#define ATA_DMA_BUFFER_BYTES 32768u
+#endif
+static uint8_t dma_buffer[ATA_DMA_BUFFER_BYTES] __attribute__((aligned(32)));
 static bool dma_enabled,dma_failed;
 static uint8_t *dma_bytes(void){
     return (uint8_t *)ln_platform_uncached_address((uintptr_t)dma_buffer);
