@@ -219,7 +219,10 @@ def images(root, *, artwork=False, dbids=None, render=True):
     formats = {1009: (42, 30), 1015: (130, 88), 1024: (320, 240), 1036: (50, 41),
                1017: (56, 56), 1016: (140, 140), 1028: (100, 100), 1029: (200, 200)}
     base = Path(os.environ.get('LOCALAPPDATA', Path.home() / '.cache')) / 'Linnet/Media/retail'
-    cache = base / hashlib.sha256(str(root).encode() + data).hexdigest()
+    # Windows st_dev is the volume serial. It survives a drive-letter change,
+    # unlike root, while the database bytes still separate artwork revisions.
+    cache_scope = f'volume:{root.stat().st_dev:08x}' if os.name == 'nt' else str(root)
+    cache = base / hashlib.sha256(cache_scope.encode() + data).hexdigest()
     result = {}
     paths = {}
     file_info = {}
