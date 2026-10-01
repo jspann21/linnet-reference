@@ -173,7 +173,7 @@ static int index_step(struct ln_mp3 *d)
     }
     if(d->index_state==INDEX_PROOF){
         uint32_t count=(uint32_t)(d->index_next-d->index_proof_at);
-        if(count>131072u)count=131072u;
+        if(count>98304u)count=98304u;
         int r=read_step(d,d->index_proof_at,d->input,count);if(r==0)return 0;
         if(r<0){index_fallback(d);return 0;}
         d->index_prefix_crc=index_crc(d->index_prefix_crc,d->input,count);

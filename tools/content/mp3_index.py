@@ -4,10 +4,12 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import struct
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 import zlib
 
@@ -91,17 +93,33 @@ def same_original(source, destination, *, checkpoint=lambda: None):
     source, destination = Path(source), Path(destination)
     if not destination.is_file():
         return False
-    size = original_size(destination)
-    if size is None or source.stat().st_size != size:
+    paths = (source, destination)
+    before = [path.stat() for path in paths]
+    size = original_size(destination, before[1].st_size)
+    if size is None or before[0].st_size != size:
         return False
+    if any(not stat.S_ISREG(info.st_mode) for info in before):
+        raise ValueError('file changed while comparing existing MP3')
+    equal = True
     with source.open('rb') as left, destination.open('rb') as right:
         while size:
             checkpoint()
             count = min(size, 1024 * 1024)
-            if left.read(count) != right.read(count):
-                return False
+            a, b = left.read(count), right.read(count)
+            if len(a) != count or len(b) != count:
+                raise ValueError('file changed while comparing existing MP3')
+            if a != b:
+                equal = False
+                break
             size -= count
-    return True
+        if equal and left.read(1):
+            raise ValueError('file changed while comparing existing MP3')
+    after = [path.stat() for path in paths]
+    if any((a.st_dev, a.st_ino, a.st_size, a.st_mtime_ns, a.st_ctime_ns) !=
+           (b.st_dev, b.st_ino, b.st_size, b.st_mtime_ns, b.st_ctime_ns)
+           for a, b in zip(before, after)):
+        raise ValueError('file changed while comparing existing MP3')
+    return equal
 
 
 def import_suffix(source, *, checkpoint=lambda: None):
@@ -124,17 +142,28 @@ def import_suffix(source, *, checkpoint=lambda: None):
     checkpoint()
     with tempfile.TemporaryDirectory(prefix='mp3-index-') as folder:
         records = Path(folder) / 'records.bin'
+        child = subprocess.Popen([str(executable()), str(source), str(records)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                 creationflags=NO_WINDOW)
+        started = time.monotonic()
         try:
-            result = subprocess.run([str(executable()), str(source), str(records)],
-                                    capture_output=True, text=True, timeout=120,
-                                    creationflags=NO_WINDOW)
-        except subprocess.TimeoutExpired:
-            checkpoint()
-            return b''
+            while child.poll() is None:
+                checkpoint()
+                remaining = 120 - (time.monotonic() - started)
+                if remaining <= 0:
+                    return b''
+                try:
+                    child.wait(timeout=min(.05, remaining))
+                except subprocess.TimeoutExpired:
+                    pass
+            output, _ = child.communicate()
+        finally:
+            if child.poll() is None:
+                child.kill(); child.communicate(timeout=10)
         checkpoint()
-        if result.returncode:
+        if child.returncode:
             return b''
-        info = json.loads(result.stdout)
+        info = json.loads(output)
         count = info['records']
         if count < 2 or count > 1_000_000 or records.stat().st_size != count * RECORD_BYTES:
             return b''
