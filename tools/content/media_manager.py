@@ -5,7 +5,7 @@ No device is modified by discovery or scanning.
 """
 from __future__ import annotations
 
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
@@ -1421,10 +1421,51 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
     return prepared, probe_deferred
 
 
+def _migrate_music_metadata_sources(root, cache, identity):
+    """Move old drive-letter rows only when a session proves this volume owned them."""
+    import sqlite3
+
+    database = cache / 'music-metadata.sqlite3'
+    scope = cache_volume_scope(root)
+    if not database.is_file() or scope.casefold() != str(identity.get('volume_unique_id', '')).casefold():
+        return
+    try:
+        with closing(sqlite3.connect(database, timeout=1)) as connection, connection:
+            candidates = {source for (source,) in connection.execute(
+                "SELECT DISTINCT source FROM metadata WHERE parser='existing' AND source<>?", (scope,))
+                if isinstance(source, str) and len(source) == 3 and
+                   source[0].isalpha() and source[1:] == ':\\'}
+            if not candidates:
+                return
+            matched = set()
+            for receipt in cache.glob('session-*.json'):
+                try:
+                    if receipt.is_symlink() or receipt.stat().st_size > 1024 * 1024:
+                        continue
+                    record = json.loads(receipt.read_text(encoding='utf-8'))
+                except (OSError, ValueError, UnicodeError):
+                    continue
+                saved = record.get('identity', {}) if isinstance(record, dict) else {}
+                if (isinstance(saved, dict) and saved.get('root') in candidates and
+                        str(saved.get('volume_unique_id', '')).casefold() == scope.casefold() and
+                        all(saved.get(field) == identity.get(field) for field in
+                            ('volume_serial', 'partition_offset', 'disk_bytes'))):
+                    matched.add(saved['root'])
+            for source in matched:
+                connection.execute("INSERT OR IGNORE INTO metadata "
+                    "SELECT ?,relative,size,mtime,parser,value FROM metadata "
+                    "WHERE source=? AND parser='existing'", (scope, source))
+                connection.execute("DELETE FROM metadata WHERE source=? AND parser='existing'", (source,))
+    except (OSError, ValueError, TypeError, AttributeError, sqlite3.Error):
+        pass  # A cache migration never blocks normal metadata reads.
+
+
 def _prepare_music(root, cache, identity, skipped, *, ffprobe, verification, force,
                    cancelled, checkpoint, progress, report, begin_publication):
     from .music import compile_music
     from .publish import publish_music
+    if not force:
+        _migrate_music_metadata_sources(root, cache, identity)
     stage = cache / "music"
     music_progress = _throttled_progress(checkpoint, progress,
         lambda event: f'{"Using saved metadata" if event.get("cached") else "Reading metadata"} '
