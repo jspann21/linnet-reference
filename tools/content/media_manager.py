@@ -1849,5 +1849,12 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             progress(report["summary"])
         report["finished"] = time.time()
         record()
-        audio_journal_path.unlink(missing_ok=True)
+        try:
+            audio_journal_path.unlink(missing_ok=True)
+        except OSError as error:
+            report['cleanup']['retained'].append(dict(path=str(audio_journal_path), reason=str(error)))
+            try:
+                record()
+            except OSError:
+                pass  # The prior receipt is durable; return the retained path in this report.
     return report
