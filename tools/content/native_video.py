@@ -288,6 +288,9 @@ def inspect_file(path, *, profile, ffprobe=None, cancelled=None):
     width, height = int(v.get("width", 0)), int(v.get("height", 0))
     if not 0 < width <= limits["mpeg4_width"] or not 0 < height <= limits["mpeg4_height"] or int(v.get("has_b_frames", 1)):
         raise ValueError("Native video geometry or frame reordering is unsupported")
+    if (profile["video_backend"] == "native-mp4" and
+            (width > profile["video_width"] or height > profile["video_height"])):
+        raise ValueError("Prepare this video at the iPod display size")
     if v.get("codec_name") == "h264":
         if v.get("profile") not in ("Baseline", "Constrained Baseline", "66", "578") or int(v.get("level", 999)) > limits["h264_level"] or width > limits["h264_width"] or height > limits["h264_height"]:
             raise ValueError(f"H.264 exceeds this target’s Baseline level {limits['h264_level'] / 10:g} or {limits['h264_width']} x {limits['h264_height']} limits")
@@ -354,8 +357,9 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lamb
             progress("Preparing video for faster loading…" if relocate else "Preparing H.264 video and AAC audio…")
             limits = profile["native_video"]
             width, height, fps = profile["video_width"], profile["video_height"], profile["video_fps"]
-            if profile["video_backend"] == "native-mp4":
-                width,height=limits["h264_width"],limits["h264_height"]
+            video_kbps = min(limits["video_kbps"], 800) if profile["video_backend"] == "native-mp4" else limits["video_kbps"]
+            max_video_kbps = min(limits["max_video_kbps"], 1000) if profile["video_backend"] == "native-mp4" else limits["max_video_kbps"]
+            buffer_kbits = min(limits["buffer_kbits"], 2000) if profile["video_backend"] == "native-mp4" else limits["buffer_kbits"]
             if relocate:
                 command = [str(encoder), "-nostdin", "-v", "error", "-i", str(source),
                            "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart", str(temporary)]
@@ -363,7 +367,7 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lamb
                 probe = ffprobe or shutil.which("ffprobe")
                 if not probe:
                     raise ValueError("ffprobe is required to prepare native video")
-                duration_probe = [str(probe), "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=start_time,duration:format=start_time", "-of", "json", str(source)]
+                duration_probe = [str(probe), "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=start_time,duration,avg_frame_rate:format=start_time", "-of", "json", str(source)]
                 with tempfile.TemporaryFile() as duration_output:
                     process = subprocess.Popen(duration_probe, stdin=subprocess.DEVNULL, stdout=duration_output,
                                                stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
@@ -390,6 +394,9 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lamb
                         container_start = timestamp(container.get("start_time"))
                         origin = container_start if container_start is not None else picture_start
                         picture_duration = timestamp(picture.get("duration"))
+                        source_fps = timestamp(picture.get("avg_frame_rate"))
+                        if source_fps is not None and 0 < source_fps <= 120:
+                            fps = min(Fraction(fps), source_fps)
                         duration = (picture_start + picture_duration - origin
                                     if picture_start is not None and picture_duration is not None and origin is not None
                                     else Fraction(0))
@@ -449,7 +456,7 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lamb
                 if not 0 < duration <= 86400:
                     raise ValueError("Could not determine the video track duration")
                 duration_text = f"{float(duration):.6f}"
-                command = [str(encoder), "-nostdin", "-v", "error", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2", "-r", str(fps), "-c:v", "libx264", "-profile:v", "baseline", "-level:v", str(limits["h264_level"] / 10), "-pix_fmt", "yuv420p", "-b:v", f"{limits['video_kbps']}k", "-maxrate", f"{limits['max_video_kbps']}k", "-bufsize", f"{limits['buffer_kbits']}k", "-g", str(fps * 2), "-bf", "0", "-af", "aresample=async=1:first_pts=0,apad", "-c:a", "aac", "-profile:a", "aac_low", "-ar", "44100", "-ac", "2", "-b:a", f"{limits['audio_kbps']}k", "-t", duration_text, "-movflags", "+faststart", str(temporary)]
+                command = [str(encoder), "-nostdin", "-v", "error", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2", "-r", str(fps), "-c:v", "libx264", "-profile:v", "baseline", "-level:v", str(limits["h264_level"] / 10), "-pix_fmt", "yuv420p", "-b:v", f"{video_kbps}k", "-maxrate", f"{max_video_kbps}k", "-bufsize", f"{buffer_kbits}k", "-g", str(max(1, round(float(fps) * 2))), "-bf", "0", "-af", "aresample=async=1:first_pts=0,apad", "-c:a", "aac", "-profile:a", "aac_low", "-ar", "44100", "-ac", "2", "-b:a", f"{limits['audio_kbps']}k", "-t", duration_text, "-movflags", "+faststart", str(temporary)]
             with tempfile.TemporaryFile() as errors:
                 process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors, creationflags=NO_WINDOW)
                 try:
