@@ -19,7 +19,7 @@ enum { WRITE_BUFFER_BYTES=LINNET_ATA_MAX_WRITE_SECTORS*512u,
 };
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
 /* A 512-byte physical-sector iFlash write has no ATA read-modify-write edge,
- * so Disk Mode can give USB and ATA the same uncached 32 KiB DMA buffer. */
+ * so Disk Mode can give USB and ATA the same uncached DMA buffer. */
 extern uint8_t *ln_pp_ata_disk_mode_buffer(void);
 static uint8_t fallback_buffer[BUFFER_BYTES] __attribute__((aligned(32)));
 static uint8_t *buffer;
@@ -288,13 +288,18 @@ _Noreturn void ln_pp_disk_mode(const char *serial,uint32_t sector_bytes,bool wri
     capacity=(uint32_t)logical_sectors;
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
     struct ln_ata_info media;ln_ata_snapshot(&media);
-    buffer=media.media_kind==LN_ATA_MEDIA_SOLID_STATE &&
-        media.physical_sector_bytes==512u && (media.quirks&8u)?
+    bool shared_ata_buffer=media.media_kind==LN_ATA_MEDIA_SOLID_STATE &&
+        media.physical_sector_bytes==512u && (media.quirks&8u);
+    buffer=shared_ata_buffer?
         ln_pp_ata_disk_mode_buffer():
         (uint8_t *)ln_platform_uncached_address((uintptr_t)fallback_buffer);
 #endif
     write_batch_bytes=drive.media_kind==LN_ATA_MEDIA_SOLID_STATE?
         WRITE_BUFFER_BYTES:LINNET_ATA_MAX_SECTORS*512u;
+#if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
+    if(!shared_ata_buffer && write_batch_bytes>BUFFER_BYTES)
+        write_batch_bytes=BUFFER_BYTES;
+#endif
 #if (defined(LINNET_SOC_PP5022) || defined(LINNET_TARGET_IPOD4G_Q21) || LINNET_TARGET_NUMBER == 98) && defined(LINNET_IMAGE_OS)
     /* USB owns uncached aliases of both DMA source buffers. The CPU may cache
      * its code and private state without hiding ATA data from the controller. */
