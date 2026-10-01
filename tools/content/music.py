@@ -1064,7 +1064,8 @@ def _device_media_path(path: Path, root: Path, alias_cache: dict[Path, str] | No
     from .publish import _plain
     path = Path(path).absolute()
     _plain(path, root)
-    path.resolve(strict=True).relative_to(root)
+    path = path.resolve(strict=True)
+    path.relative_to(root)
     if os.name == "nt" and alias_cache is not None:
         actual = []
         cursor = root
