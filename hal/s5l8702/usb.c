@@ -21,7 +21,11 @@ extern void ln_memory_copy(void *to,const void *from,uint32_t size);
 #endif
 static uint8_t control[256] USB_MEMORY;
 static uint8_t setup_data[64] USB_MEMORY;
+#ifdef LINNET_SRAM_MONITOR
 static uint8_t receive[4096] USB_MEMORY;
+#else
+static uint8_t receive[16384] USB_MEMORY;
+#endif
 static uint8_t transmit[16384] USB_MEMORY;
 static uint8_t line_coding[7]={0x00,0xc2,0x01,0,0,0,8};
 static uint8_t serial_string[66];
