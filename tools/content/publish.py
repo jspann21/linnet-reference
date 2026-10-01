@@ -444,11 +444,14 @@ def _copy_verified(source: Path, destination: Path, item: dict, root: Path, guar
     return True
 
 
-def _copy_art_batch(batch, root: Path, guard) -> None:
+def _copy_art_batch(batch, stage: Path, root: Path, guard) -> None:
     """Write bounded independent covers before flushing and reading them back."""
+    if len(batch) > 16 or any(item['bytes'] not in (8192, 32768) for _, _, item in batch):
+        raise ValueError('artwork batch exceeds its file or memory bound')
     prepared = []
     for source, destination, item in batch:
-        data = source.read_bytes()
+        _plain(source, stage)
+        data = _bounded(source, item['bytes'])
         if len(data) != item['bytes'] or hashlib.sha256(data).hexdigest() != item['sha256']:
             raise RuntimeError(f"staged artwork changed during publication: {source}")
         prepared.append((destination, item, data))
@@ -584,14 +587,14 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
         art_batch = []
         def flush_art_batch():
             if art_batch:
-                _copy_art_batch(art_batch, root, guard)
+                _copy_art_batch(art_batch, stage, root, guard)
                 receipt['copied'] += len(art_batch)
                 art_batch.clear()
         for item in inventory["files"]:
             local = stage / item["path"]
             _plain(local, stage)
             destination = (root if item['kind'] == 'music' else linnet) / item['path']
-            if item['kind'] == 'art' and not destination.exists():
+            if re.fullmatch(r'ART/[0-9A-F]{8}\.RGB', item['path']) and not destination.exists():
                 art_batch.append((local, destination, item))
                 if len(art_batch) >= 16:
                     flush_art_batch()
