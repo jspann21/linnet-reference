@@ -202,8 +202,11 @@ static void step(void) {
             if(disk_request(LN_ATA_WRITE)){dirty=true;state=WRITE_WAIT;}else failure(3,0x0c);
         }
     } else if(state==DISCARD) {
-        uint32_t bytes=length>BUFFER_BYTES?BUFFER_BYTES:length;
-        length-=(uint32_t)ln_pp_usb_storage_read(buffer,bytes);if(!length)state=STATUS;
+        uint32_t bytes=length>BUFFER_BYTES-position?BUFFER_BYTES-position:length;
+        uint32_t received=(uint32_t)ln_pp_usb_storage_read(buffer+position,bytes);
+        position+=received;length-=received;
+        if(position==BUFFER_BYTES)position=0;
+        if(!length)state=STATUS;
     } else if(state==STATUS) {
         if(dirty){if(disk_request(LN_ATA_FLUSH))state=FLUSH_WAIT;else ln_platform_hardware_reset();return;}
         ln_write_le32(status_bytes,0x53425355u);ln_write_le32(status_bytes+4,tag);ln_write_le32(status_bytes+8,residue);status_bytes[12]=status;
