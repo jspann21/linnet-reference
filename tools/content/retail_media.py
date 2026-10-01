@@ -157,6 +157,18 @@ def _image_string(data, at, end):
     return data[at + 36:at + 36 + length].decode('utf-16-le' if data[at + 28] == 2 else 'utf-8').rstrip('\0')
 
 
+def _preview_cache_scope(root):
+    if os.name == 'nt' and root == Path(root.anchor):
+        import ctypes
+        volume = ctypes.create_unicode_buffer(64)
+        lookup = ctypes.windll.kernel32.GetVolumeNameForVolumeMountPointW
+        lookup.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_ulong)
+        lookup.restype = ctypes.c_int
+        if lookup(str(root), volume, len(volume)):
+            return volume.value
+    return str(root)
+
+
 def image_count(root):
     """Validate the image list without rendering every thumbnail."""
     root = Path(root).resolve()
@@ -219,7 +231,7 @@ def images(root, *, artwork=False, dbids=None, render=True):
     formats = {1009: (42, 30), 1015: (130, 88), 1024: (320, 240), 1036: (50, 41),
                1017: (56, 56), 1016: (140, 140), 1028: (100, 100), 1029: (200, 200)}
     base = Path(os.environ.get('LOCALAPPDATA', Path.home() / '.cache')) / 'Linnet/Media/retail'
-    cache = base / hashlib.sha256(str(root).encode() + data).hexdigest()
+    cache = base / hashlib.sha256(_preview_cache_scope(root).encode() + data).hexdigest()
     result = {}
     paths = {}
     file_info = {}
