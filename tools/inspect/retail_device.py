@@ -27,8 +27,11 @@ def _windows_storage(root):
     letter = root.drive[0]
     script = rf"""$ErrorActionPreference='Stop'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
-$p=Get-Partition -DriveLetter {letter}
-$d=Get-Disk -Number $p.DiskNumber
+$p=Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Partition -Filter "DriveLetter='{letter}'"
+if (!$p) {{ throw 'Could not resolve the mounted iPod partition' }}
+$d=Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Disk -Filter ('Number='+$p.DiskNumber)
+if (!$d) {{ throw 'Could not resolve the mounted iPod disk' }}
+$bus=if ($d.BusType -eq 7) {{ 'USB' }} else {{ [string]$d.BusType }}
 $volumes=@(Get-CimInstance Win32_Volume -Filter "DriveLetter='{letter}:'")
 if ($volumes.Count -ne 1) {{ throw 'Could not resolve the mounted iPod volume' }}
 $v=$volumes[0]
@@ -44,7 +47,7 @@ for ($depth=0; $depth -lt 4 -and $parent -notmatch '^USB\\VID_[0-9A-F]{{4}}&PID_
 $u=@(Get-CimInstance Win32_PnPEntity | Where-Object {{ $_.DeviceID -eq $parent }})
 if ($u.Count -ne 1) {{ throw 'Could not resolve the mounted iPod USB identity' }}
 @{{disk_number=$p.DiskNumber;disk_serial=$w.SerialNumber.Trim();disk_bytes=[long]$d.Size;
-model=$w.Model;pnp_id=$w.PNPDeviceID;usb_pnp_id=$u[0].DeviceID;bus_type=[string]$d.BusType;sector_bytes=$d.LogicalSectorSize;
+model=$w.Model;pnp_id=$w.PNPDeviceID;usb_pnp_id=$u[0].DeviceID;bus_type=$bus;sector_bytes=$d.LogicalSectorSize;
 partition_offset=[long]$p.Offset;partition_bytes=[long]$p.Size;drive='{letter}:';
 volume_label=$v.Label;filesystem=$v.FileSystem;volume_id=$v.DeviceID}} | ConvertTo-Json -Compress
 """
