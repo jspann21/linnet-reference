@@ -500,7 +500,7 @@ def additions(root, pending, *, snapshots=None):
 
 
 def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress,
-                    *, cache, stage_progress=lambda current, total, phase: None):
+                    *, cache, cancelled, stage_progress=lambda current, total, phase: None):
     # Queue a bounded set of writes before flushing and reading them back. On
     # FAT devices, alternating write/flush/read/rename for every small file is
     # expensive. Keep every handle until its flush, and publish only verified files.
@@ -565,10 +565,11 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                     try:
                         from .music import _read_metadata
                         metadata = _read_metadata(copy_source, shutil.which('ffprobe'), True,
-                                                  lambda: checkpoint() or False, include_cover=True)
+                                                  cancelled, include_cover=True)
                         metadata_seed = (metadata, metadata.pop('_embedded_cover', None))
                     except (OSError, ValueError, subprocess.SubprocessError):
                         pass  # A cache miss lets normal library preparation retry.
+                    checkpoint()
                 if shutil.disk_usage(root).free < remaining_original + len(suffix or b'') + 1024 * 1024:
                     raise ValueError('Not enough space for prepared additions')
                 digest = hashlib.sha256()
@@ -1543,7 +1544,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             raise ValueError("There is not enough space for the selected originals. Choose fewer files.")
         emit_stage('Copying originals', 0)
         _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress,
-                        cache=cache,
+                        cache=cache, cancelled=cancelled,
                         stage_progress=lambda current, total, name:
                             emit_stage(name, 0, current / total if total else 1))
         checkpoint()
