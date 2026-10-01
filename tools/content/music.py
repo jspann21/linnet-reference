@@ -209,6 +209,10 @@ def _cover_renders(source, target, coverflow_enabled, known_art=()):
     with image:
         if image.width * image.height > 16_000_000:
             raise ValueError("cover dimensions exceed bound")
+        if image.format == 'JPEG':
+            side = 2 * max(TARGETS[target]["media_art_side"] if target else 64,
+                           96 if coverflow_enabled else 0)
+            image.draft(image.mode, (side, side))
         image.load()
         normalized = _cover_normalized(image)
         pixels = _cover_pixels_rgb(normalized, target)
@@ -1530,7 +1534,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             except ImportError as exc:
                 raise ValueError("cover conversion requires Pillow, or artwork=False") from exc
             # Bump the recipe when playback or Cover Flow image processing changes.
-            recipe = ("embedded-render-v2" if cover_bytes is None else "file-render-v2",
+            recipe = ("embedded-render-v3" if cover_bytes is None else "file-render-v3",
                       target, TARGETS[target]["media_art_side"] if target else 64,
                       TARGETS[target]["lcd_format"] if target else None,
                       coverflow_enabled, pillow_version)
