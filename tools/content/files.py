@@ -100,13 +100,14 @@ def _alias(value):
     return value.encode('ascii')
 
 
-def _preview(source, cache, width, height, columns, recipe, checkpoint, info, root):
+def _preview(source, cache, width, height, columns, recipe, checkpoint, info, root, compressed):
     suffix = source.suffix.lower()
     if suffix not in IMAGES | TEXT or (suffix in IMAGES and not width):
         return None
     # Cache-key work uses file metadata; unchanged images/text are not decoded
     # again during each preparation. Output hashes still guard publication.
-    key = hashlib.sha256(f'files-v2:{source}:{info.st_size}:{info.st_mtime_ns}:{width}:{height}:{columns}:{recipe[2]}'.encode()).hexdigest()
+    format_key = 'lfim' if compressed else 'fimg'
+    key = hashlib.sha256(f'files-{format_key}:{source}:{info.st_size}:{info.st_mtime_ns}:{width}:{height}:{columns}:{recipe[2]}'.encode()).hexdigest()
     output = cache / (key + ('.FIM' if suffix in IMAGES else '.TXT'))
     if not output.exists():
         checkpoint()
@@ -123,9 +124,32 @@ def _preview(source, cache, width, height, columns, recipe, checkpoint, info, ro
                 canvas.paste(image, ((width - image.width) // 2, (height - image.height) // 2))
                 payload = _rgb565(canvas)
             header = bytearray(512)
-            struct.pack_into('<4s4I', header, 0, b'FIMG', 1, width, height, zlib.crc32(payload))
+            if compressed:
+                from lz4.block import compress as lz4_compress
+
+                blocks = []
+                lengths = []
+                for at in range(0, len(payload), 2048):
+                    checkpoint()
+                    raw = payload[at:at + 2048].ljust(2048, b'\0')
+                    packed = lz4_compress(raw, mode='high_compression', compression=9,
+                                          store_size=False)
+                    stored = packed if len(packed) < len(raw) else raw
+                    blocks.append(stored)
+                    lengths.append(len(stored))
+                if len(lengths) > (508 - 24) // 2:
+                    raise ValueError('Files image preview exceeds its block table')
+                size = 512 + sum(lengths)
+                struct.pack_into('<4s5I', header, 0, b'LFIM', size, width, height,
+                                 zlib.crc32(payload), len(lengths))
+                struct.pack_into(f'<{len(lengths)}H', header, 24, *lengths)
+                data = header + b''.join(blocks)
+            else:
+                struct.pack_into('<4s4I', header, 0, b'FIMG', 1, width, height,
+                                 zlib.crc32(payload))
+                data = header + payload
             struct.pack_into('<I', header, 508, zlib.crc32(header[:508]))
-            data = header + payload
+            data[:512] = header
         else:
             if info.st_size > 16 * 1024 * 1024:
                 return None  # Native bounded byte/text paging remains available.
@@ -355,7 +379,8 @@ def compile_files(root, package, cache, *, width=0, height=0, text_columns=24, t
                 preview = videos.get(key)
                 if not preview and source.suffix.lower() in IMAGES | TEXT and not source.is_relative_to(root / '.LINNET'):
                     try:
-                        preview = _preview(source, cache, width, height, text_columns, recipe, checkpoint, info, root)
+                        preview = _preview(source, cache, width, height, text_columns, recipe, checkpoint,
+                                           info, root, target != 'photo4g-p98')
                     except (OSError, ValueError) as error:
                         warnings.append(dict(path=source.relative_to(root).as_posix(), message=str(error)))
                 if preview:
