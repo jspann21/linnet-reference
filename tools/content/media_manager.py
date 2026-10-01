@@ -22,7 +22,7 @@ import unicodedata
 import uuid
 
 from .guard import guarded_path as _plain, hash_file as _hash, require_same_target as _same_target, guard_volume as _volume_guard, inspect_target
-from .host_state import cache_directory as _cache_directory, cache_root, load_json_object as _optional_state, save_json as _save
+from .host_state import cache_directory as _cache_directory, cache_root, cache_volume_scope, load_json_object as _optional_state, save_json as _save
 from .inventory import KINDS, VIDEO_EXTENSIONS, extensions, source_folders, file_records as _file_records, skipped_paths as _skipped_paths, scan
 
 _RETAIL_ADOPTION = None
@@ -1526,6 +1526,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
     if not isinstance(video_state, dict):
         video_state = {}
     state["video_files"] = video_state
+    volume_scope = cache_volume_scope(root)
     failed = 0
     retail_titles = None
     catalog_snapshot = {}
@@ -1534,6 +1535,8 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
         checkpoint()
         source = Path(job["source"])
         relative = job["relative"]
+        source_key = (f'{volume_scope}:{source.relative_to(root).as_posix()}'
+                      if source.is_relative_to(root) else str(source))
         file_publication_started = False
         try:
             key = hashlib.sha256(relative.encode()).hexdigest()[:8].upper()
@@ -1550,7 +1553,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                 from .native_video import inspect_file as inspect_native, prepare as prepare_native
                 from .publish_video import device_video_path, index_video
                 native_version = 5 if media_profile["video_backend"] == "native-mp4" else 3
-                fingerprint = hashlib.sha256(f"native-mp4-v{native_version}:{json.dumps(media_profile, sort_keys=True)}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
+                fingerprint = hashlib.sha256(f"native-mp4-v{native_version}:{json.dumps(media_profile, sort_keys=True)}:{source_key}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
                 cached = video_state.get(relative, {})
                 if not isinstance(cached, dict):
                     cached = {}
@@ -1642,7 +1645,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                 continue
             profile_key = (f"{media_profile['video_width']}x{media_profile['video_height']}-"
                            f"{media_profile['video_fps']}-{media_profile['video_color']}-realtime")
-            fingerprint = hashlib.sha256(f"ipvf-{profile_key}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
+            fingerprint = hashlib.sha256(f"ipvf-{profile_key}:{source_key}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
             cached = video_state.get(relative, {})
             if not isinstance(cached, dict):
                 cached = {}
