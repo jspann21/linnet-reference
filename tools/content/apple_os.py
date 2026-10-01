@@ -579,6 +579,9 @@ def _metadata(identity, files):
         for source, relative, size, mtime, value in connection.execute(
                 'SELECT source,relative,size,mtime,value FROM metadata WHERE parser=?',
                 ('existing',)):
+            legacy_root = len(source) == 3 and source[0].isalpha() and source[1:] == ':\\'
+            if source != scope and not legacy_root:
+                continue
             key = (relative.casefold(), size, mtime)
             priority = 0 if source == scope else 1 if source == str(root) else 2
             if key not in rows or priority < rows[key][0]:
