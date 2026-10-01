@@ -34,7 +34,7 @@ struct player_slot {
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
     struct player_cache_window cache[2];
     uint32_t cache_current;
-    bool cache_enabled,cache_initial,cache_pending;
+    bool cache_enabled,cache_initial,cache_pending,cache_pause_canceling;
 #endif
 };
 static struct player_slot slots[2];
@@ -192,7 +192,8 @@ static int read_media(void *context,uint64_t offset,uint8_t *buffer,uint32_t len
 static void clear_slot(struct player_slot *s){
     ln_decoder_close(&s->decoder);s->phase=SLOT_EMPTY;s->buffered=0;
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
-    s->cache_enabled=s->cache_pending=false;s->cache[0].filling=s->cache[1].filling=false;
+    s->cache_enabled=s->cache_pending=s->cache_pause_canceling=false;
+    s->cache[0].filling=s->cache[1].filling=false;
 #endif
 }
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
@@ -222,7 +223,8 @@ static bool start_slot(struct player_slot *s,const char *name,uint64_t expected,
     s->expected=expected;s->initial=position;s->position_base=0;s->submitted=0;s->token=token;
     s->generation=generation();s->buffered=0;s->rate=0;s->seek_initial=position!=0;
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
-    s->cache_enabled=s->cache_pending=false;s->cache_initial=true;s->cache_current=1u;
+    s->cache_enabled=s->cache_pending=s->cache_pause_canceling=false;
+    s->cache_initial=true;s->cache_current=1u;
     for(uint32_t i=0;i<2u;++i)s->cache[i]=(struct player_cache_window){0};
 #endif
     s->phase=SLOT_OPEN;s->dsp=*dsp;s->config_rate=config_rate;return true;
@@ -493,10 +495,15 @@ static void player_advance(void){
     if(audio_ready){ln_audio_snapshot(&audio);refresh(&audio);if(audio.fault){fail(12);return;}}
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
     if(slots[audible].cache_pending&&io_owner!=&slots[audible])activate_cache(&slots[audible]);
-    if((pause_requested||state.phase==LN_PLAYER_PAUSE)&&io_owner==&slots[audible]&&
-       slots[audible].cache_enabled){
-        ln_storage_media_cancel(io_owner->generation);
-        if(!drain_canceled())return;
+    struct player_slot *paused=&slots[audible];
+    if((pause_requested||state.phase==LN_PLAYER_PAUSE)&&io_owner==paused&&paused->cache_enabled)
+        paused->cache_pause_canceling=true;
+    if(paused->cache_pause_canceling){
+        if(io_owner==paused){
+            ln_storage_media_cancel(io_owner->generation);
+            if(!drain_canceled())return;
+        }
+        paused->cache_pause_canceling=false;
     }
 #endif
     if(state.phase==LN_PLAYER_PAUSE)return;
