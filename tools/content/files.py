@@ -6,12 +6,14 @@ indexes the disk. Original files are not renamed or rewritten.
 """
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import hashlib
 import json
 import os
 import stat
 import struct
+import threading
 import time
 import unicodedata
 import uuid
@@ -27,6 +29,32 @@ PACK_BYTES = 4 * 1024 * 1024
 IMAGES = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tif', '.tiff', '.webp', '.heic', '.avif'}
 TEXT = {'.txt', '.text', '.md', '.rst', '.log', '.ini', '.cfg', '.toml', '.yaml', '.yml',
         '.json', '.xml', '.csv', '.nfo', '.c', '.h', '.py', '.js', '.ts', '.tsx', '.css', '.html', '.htm'}
+PREVIEW_DECODE_PIXELS = 32_000_000
+
+
+class _PreviewDecodeBudget:
+    def __init__(self):
+        self.available = PREVIEW_DECODE_PIXELS
+        self.condition = threading.Condition()
+
+    @contextmanager
+    def reserve(self, pixels, checkpoint):
+        # An oversized image retains the sequential path's behavior, while
+        # smaller images share a fixed aggregate decode budget.
+        amount = min(max(pixels, 1), PREVIEW_DECODE_PIXELS)
+        while True:
+            checkpoint()
+            with self.condition:
+                if self.available >= amount:
+                    self.available -= amount
+                    break
+                self.condition.wait(timeout=0.05)
+        try:
+            yield
+        finally:
+            with self.condition:
+                self.available += amount
+                self.condition.notify_all()
 
 
 def _short_name(path):
@@ -101,7 +129,8 @@ def _alias(value):
     return value.encode('ascii')
 
 
-def _preview(source, cache, width, height, columns, recipe, checkpoint, info, root, compressed):
+def _preview(source, cache, width, height, columns, recipe, checkpoint, info, root, compressed,
+             image_budget=None):
     suffix = source.suffix.lower()
     if suffix not in IMAGES | TEXT or (suffix in IMAGES and not width):
         return None
@@ -119,11 +148,15 @@ def _preview(source, cache, width, height, columns, recipe, checkpoint, info, ro
             from PIL import Image, ImageOps
             from .photos import _rgb565
             with Image.open(source) as original:
-                image = ImageOps.exif_transpose(original).convert('RGB')
-                image.thumbnail((width, height), Image.Resampling.LANCZOS)
-                canvas = Image.new('RGB', (width, height))
-                canvas.paste(image, ((width - image.width) // 2, (height - image.height) // 2))
-                payload = _rgb565(canvas)
+                admission = (image_budget.reserve(original.width * original.height, checkpoint)
+                             if image_budget is not None else nullcontext())
+                with admission:
+                    image = ImageOps.exif_transpose(original).convert('RGB')
+                    image.thumbnail((width, height), Image.Resampling.LANCZOS)
+                    canvas = Image.new('RGB', (width, height))
+                    canvas.paste(image, ((width - image.width) // 2, (height - image.height) // 2))
+                    payload = _rgb565(canvas)
+                    del image, canvas
             header = bytearray(512)
             if compressed:
                 from lz4.block import compress as lz4_compress
@@ -331,6 +364,7 @@ def compile_files(root, package, cache, *, width=0, height=0, text_columns=24, t
     struct.pack_into('<I', records[0], 0, 16)
     folders = deque([(root, 0)])
     previews, warnings, preview_rows = {}, [], []
+    image_budget = _PreviewDecodeBudget()
     videos = _prepared_videos(root, warnings)
     with ThreadPoolExecutor(max_workers=8, thread_name_prefix='files-preview') as preview_pool:
         while folders:
@@ -364,7 +398,7 @@ def compile_files(root, package, cache, *, width=0, height=0, text_columns=24, t
                             not source.is_relative_to(root / '.LINNET')):
                         futures[index] = preview_pool.submit(
                             _preview, source, cache, width, height, text_columns, recipe,
-                            checkpoint, info, root, target != 'photo4g-p98')
+                            checkpoint, info, root, target != 'photo4g-p98', image_budget)
                 for index, (name, directory, info, alternate) in enumerate(batch):
                     checkpoint()
                     source = folder / name
