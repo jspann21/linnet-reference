@@ -22,6 +22,7 @@ import zlib
 from types import SimpleNamespace
 
 from .publish import _plain, _hash
+from .host_state import cache_volume_scope
 
 RECORD = 256
 MAX_RECORDS = 1_000_000
@@ -216,14 +217,15 @@ def _alias(value):
 
 
 def _preview(source, cache, width, height, columns, recipe, checkpoint, info, root, compressed,
-             image_budget=None):
+             image_budget=None, cache_scope=None):
     suffix = source.suffix.lower()
     if suffix not in IMAGES | TEXT or (suffix in IMAGES and not width):
         return None
     # Cache-key work uses file metadata; unchanged images/text are not decoded
     # again during each preparation. Output hashes still guard publication.
     format_key = 'lfim' if compressed else 'fimg'
-    key = hashlib.sha256(f'files-{format_key}:{source}:{info.st_size}:{info.st_mtime_ns}:{width}:{height}:{columns}:{recipe[2]}'.encode()).hexdigest()
+    source_key = f'{cache_scope}:{source.relative_to(root).as_posix()}' if cache_scope else str(source)
+    key = hashlib.sha256(f'files-{format_key}:{source_key}:{info.st_size}:{info.st_mtime_ns}:{width}:{height}:{columns}:{recipe[2]}'.encode()).hexdigest()
     output = cache / (key + ('.FIM' if suffix in IMAGES else '.TXT'))
     if not output.exists():
         checkpoint()
@@ -430,6 +432,7 @@ def compile_files(root, package, cache, *, width=0, height=0, text_columns=24, t
     if package.is_relative_to(root) or cache.is_relative_to(root):
         raise ValueError('Files index and preview cache must be staged on the computer')
     cache.mkdir(parents=True, exist_ok=True)
+    cache_scope = cache_volume_scope(root)
     from .music import EXTENSIONS
     from .notes import _display_recipe
     recipe = _display_recipe(target, 'linnet.system.files')
@@ -473,7 +476,7 @@ def compile_files(root, package, cache, *, width=0, height=0, text_columns=24, t
                             not source.is_relative_to(root / '.LINNET')):
                         futures[index] = preview_pool.submit(
                             _preview, source, cache, width, height, text_columns, recipe,
-                            checkpoint, info, root, target != 'photo4g-p98', image_budget)
+                            checkpoint, info, root, target != 'photo4g-p98', image_budget, cache_scope)
                 for index, (name, directory, info, alternate) in enumerate(batch):
                     checkpoint()
                     source = folder / name

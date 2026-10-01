@@ -18,6 +18,27 @@ def cache_root(identity):
                            identity["volume_serial"])
 
 
+def cache_volume_scope(root):
+    """Use the host's volume identity when a Windows mount letter changes."""
+    root = Path(root)
+    name = str(root)
+    if os.name == 'nt':
+        if root == Path(root.anchor):
+            mount = name
+        elif name.startswith('\\\\?\\Volume{') and name.endswith('}'):
+            mount = name + '\\'
+        else:
+            return name
+        import ctypes
+        volume = ctypes.create_unicode_buffer(64)
+        lookup = ctypes.windll.kernel32.GetVolumeNameForVolumeMountPointW
+        lookup.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_ulong)
+        lookup.restype = ctypes.c_int
+        if lookup(mount, volume, len(volume)):
+            return volume.value
+    return name
+
+
 def load_json_object(path, *, encoding='utf-8'):
     """Missing, unreadable, or non-object cache state is a cache miss."""
     try:
