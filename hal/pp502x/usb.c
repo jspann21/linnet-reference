@@ -74,6 +74,8 @@ static struct {
 } ln_usb;
 static const uint8_t *storage_tx_pointer;
 static uint16_t storage_tx_bytes;
+static uint8_t *storage_rx_pointer;
+static uint16_t storage_rx_bytes,storage_rx_ready;
 
 enum { LINNET_USB_IDLE, LINNET_USB_DATA_IN, LINNET_USB_LINE_OUT,
        LINNET_USB_STATUS_IN, LINNET_USB_STATUS_OUT };
@@ -194,6 +196,7 @@ static bool flush_pipes(uint32_t mask) {
     }
     LINNET_USB_DONE = mask;
     for (unsigned i = 0; i < 6; ++i) if (mask & pipe_bit(i)) {
+        if(i==4u){storage_rx_pointer=0;storage_rx_bytes=storage_rx_ready=0;}
         if(i==5u){storage_tx_pointer=0;storage_tx_bytes=0;}
         ln_usb.active[i] = 0;
         LINNET_USB_QH[i].transfer.next = 1;
@@ -419,7 +422,12 @@ static bool complete(unsigned pipe) {
     }
     uint32_t received = ln_usb.requested[pipe] - remaining;
     ln_usb.active[pipe] = 0;
-    if (pipe == 4) { ln_usb.rx_size = (uint16_t)received; ln_usb.rx_offset = 0; }
+    if (pipe == 4) {
+        if(storage_rx_bytes){
+            if(received!=storage_rx_bytes){ln_usb.failure=0x206u;return false;}
+            storage_rx_ready=(uint16_t)received;
+        }else{ln_usb.rx_size=(uint16_t)received;ln_usb.rx_offset=0;}
+    }
     if (pipe == 5 && remaining) { ln_usb.failure = 0x205u; return false; }
     if (pipe > 1) return true;
     if (pipe == 1 && remaining) return false;
@@ -496,6 +504,7 @@ static bool controller_start(void) {
     for (unsigned i = 0; i < LINNET_USB_WORKSPACE / 4u; ++i) workspace[i] = 0;
     for (unsigned i = 0; i < 6; ++i) ln_usb.active[i] = 0;
     storage_tx_pointer=0;storage_tx_bytes=0;
+    storage_rx_pointer=0;storage_rx_bytes=storage_rx_ready=0;
     endpoints();
     ln_usb.control_stage = LINNET_USB_IDLE;
     ln_usb.pending_address = ln_usb.pending_configuration = 0xffu;
@@ -625,7 +634,7 @@ bool ln_usb_poll(void) {
          * writes (notably UPLOAD_BEGIN) need not append a ZLP; a 512-byte dTD
          * would wait for more data while the host waits for its command ACK.
          * High-speed Disk Mode instead receives complete 512-byte packets. */
-        if (!ln_usb.active[4] && !ln_usb.rx_size &&
+        if (!ln_usb.active[4] && !ln_usb.rx_size && !storage_rx_bytes &&
             !prime(4, LINNET_USB_RX, (uint16_t)bulk_packet())) goto failed;
         if (!ln_usb.storage_mode && ln_usb.notify_pending && !ln_usb.active[3]) {
             const uint8_t note[10] = {0xa1,0x20,0,0,0,0,2,0,3,0};
@@ -743,6 +752,7 @@ bool ln_usb_stop(void) {
     ln_usb.rx_size = ln_usb.rx_offset = 0;
     for (unsigned i = 0; i < 6; ++i) ln_usb.active[i] = 0;
     storage_tx_pointer=0;storage_tx_bytes=0;
+    storage_rx_pointer=0;storage_rx_bytes=storage_rx_ready=0;
     ln_usb.stopped = settled && reset && phy_ready && idle;
     return ln_usb.stopped != 0;
 }
@@ -763,7 +773,39 @@ void ln_usb_disconnect(void) { (void)ln_usb_stop(); }
 
 size_t ln_pp_usb_storage_read(uint8_t *output, size_t capacity) {
     if (!ln_usb.storage_mode || ln_usb.storage_reset) return 0;
-    return ln_usb_read(output, capacity);
+    /* A WRITE batch owns this uncached buffer until its OUT dTD retires.
+     * Keep CBWs and short responses on the packet-sized shared receiver. */
+    if(bulk_packet()!=512u || capacity<512u)return ln_usb_read(output,capacity);
+    if(storage_rx_bytes){
+        if(!storage_rx_ready)return 0;
+        if(output!=storage_rx_pointer || capacity<storage_rx_ready){
+            ln_usb.failure=0x207u;ln_usb_disconnect();return 0;
+        }
+        size_t received=storage_rx_ready;
+        storage_rx_pointer=0;storage_rx_bytes=storage_rx_ready=0;
+        output+=received;capacity-=received;
+        if(capacity>=512u && !ln_usb.active[4] && !ln_usb.rx_size){
+            size_t span=capacity>16384u?16384u:capacity;
+            span&=~511u;
+            if(prime(4,(volatile uint8_t *)ln_platform_uncached_address((uintptr_t)output),
+                     (uint16_t)span)){
+                storage_rx_pointer=output;storage_rx_bytes=(uint16_t)span;
+            }
+        }
+        return received;
+    }
+    size_t copied=ln_usb_read(output,capacity);
+    if(capacity-copied>=512u && !ln_usb.active[4] && !ln_usb.rx_size){
+        size_t span=capacity-copied;
+        if(span>16384u)span=16384u;
+        span&=~511u;
+        uint8_t *next=output+copied;
+        if(prime(4,(volatile uint8_t *)ln_platform_uncached_address((uintptr_t)next),
+                 (uint16_t)span)){
+            storage_rx_pointer=next;storage_rx_bytes=(uint16_t)span;
+        }
+    }
+    return copied;
 }
 
 size_t ln_pp_usb_storage_write(const uint8_t *input, size_t length) {
