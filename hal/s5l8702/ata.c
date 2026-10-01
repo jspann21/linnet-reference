@@ -16,10 +16,10 @@ static uint32_t phase,due,expires,word,total,done,command_left;
 static uint64_t sector;
 static uint8_t *data;
 static enum ln_ata_op operation;
-static bool result_ready,identifying;
+static bool result_ready,identifying,lba_probe_required;
 static uint64_t previous_sectors;
 static char previous_model[41],previous_serial[21];
-enum { OFF,RESET_ON,RESET_OFF,SOFT_ON,SOFT_OFF,CONFIGURE,IDENTIFY,TRANSFER,FINISH,PIO_MODE,DMA_MODE,DMA_WAIT,STANDBY_FLUSH };
+enum { OFF,RESET_ON,RESET_OFF,SOFT_ON,SOFT_OFF,CONFIGURE,IDENTIFY,TRANSFER,FINISH,PIO_MODE,DMA_MODE,DMA_WAIT,STANDBY_FLUSH,LBA_PROBE };
 static void finish(uint32_t status) {
 #if !defined(LINNET_SRAM_MONITOR)
     if(dma_active){ATA(8)=2;ATA(0x18)&=~0x100cu;ATA(0x14)=0;dma_active=false;}
@@ -31,6 +31,14 @@ static void finish(uint32_t status) {
     phase=OFF;
 }
 static bool put(unsigned offset,uint16_t value){return ln_s5l_ata_write(offset,value);}
+static void finish_identify(void){
+    if(!lba_probe_required){finish(LN_ATA_OK);return;}
+    /* This exact CFA controller omits word 49's LBA bit. Prove an LBA taskfile
+     * command succeeds before exposing its otherwise valid capacity. */
+    if(!put(0x6c,0xe0)||!put(0x5c,1)||!put(0x60,0)||!put(0x64,0)||
+       !put(0x68,0)||!put(0x70,0x40)){finish(LN_ATA_IO);return;}
+    ++info.commands;phase=LBA_PROBE;
+}
 static void text(char *out,unsigned first,unsigned count) {
     unsigned capacity=count*2;
     for(unsigned i=0;i<capacity;i++){
@@ -40,8 +48,17 @@ static void text(char *out,unsigned first,unsigned count) {
     unsigned length=capacity;while(length&&out[length-1]==' ')length--;
     for(unsigned i=length;i<=capacity;i++)out[i]=0;
 }
+static bool exact(const char *left,const char *right){
+    unsigned at=0;while(right[at]&&left[at]==right[at])at++;
+    return !left[at]&&!right[at];
+}
 static bool decode(void) {
-    if(!(identity[49]&(1u<<9)))return false;
+    text(info.model,27,20);text(info.serial,10,10);text(info.firmware,23,4);
+    bool iflash=exact(info.model,"iFlash-Platform iPod Adapters")&&
+        exact(info.firmware,"iFlash85")&&(identity[83]&0xc004u)==0x4004u;
+    lba_probe_required=!(identity[49]&(1u<<9));
+    if(lba_probe_required&&!iflash)return false;
+    if(iflash){info.compact_flash=1;info.quirks=(lba_probe_required?1u:0u)|12u;}
     info.lba48=(identity[83]&0xc400u)==0x4400u;
     info.sectors=(uint32_t)identity[60]|((uint32_t)identity[61]<<16);
     if(info.lba48)info.sectors=(uint64_t)identity[100]|((uint64_t)identity[101]<<16)|
@@ -57,9 +74,8 @@ static bool decode(void) {
     info.apm_supported=(identity[83]&0xc008u)==0x4008u;
     info.write_cache_enabled=(identity[85]&(1u<<5))!=0;
     info.rotation_rpm=identity[217]>=0x401u && identity[217]!=0xffff?identity[217]:0;
-    info.media_kind=identity[217]==1?LN_ATA_MEDIA_SOLID_STATE:
+    info.media_kind=iflash||identity[217]==1?LN_ATA_MEDIA_SOLID_STATE:
         info.rotation_rpm?LN_ATA_MEDIA_ROTATING:LN_ATA_MEDIA_UNKNOWN;
-    text(info.model,27,20);text(info.serial,10,10);text(info.firmware,23,4);
     if(previous_sectors){
         if(info.sectors!=previous_sectors)return false;
         for(unsigned i=0;i<sizeof previous_model;i++)if(info.model[i]!=previous_model[i])return false;
@@ -82,7 +98,7 @@ static void reset(uint32_t now) {
     dma_enabled=dma_active=dma_request=false;
 #endif
     info.initialized=info.initializing=info.busy=info.failed=info.sleeping=info.power_safe=0;
-    result_ready=false;identifying=true;word=total=done=0;phase=OFF;
+    result_ready=false;identifying=true;lba_probe_required=false;word=total=done=0;phase=OFF;
     if(!ln_s5l_board_disk_power()){finish(LN_ATA_OFFLINE);return;}
     info.powered=info.initializing=1;
     ATA(0x18)=1;due=now+10000;expires=now+15000000;phase=RESET_ON;
@@ -133,12 +149,16 @@ bool ln_ata_start(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *buffe
     if(transfer && (!buffer || !sectors || sectors>(op==LN_ATA_WRITE?LINNET_ATA_MAX_SECTORS:LINNET_ATA_MAX_READ_SECTORS) ||
        lba>=info.sectors || sectors>info.sectors-lba || (op==LN_ATA_WRITE && !info.can_flush)))return false;
     if(!transfer && (buffer || sectors || lba))return false;
-    if((op==LN_ATA_FLUSH && !info.can_flush) || (op==LN_ATA_STANDBY && !info.standby_supported))return false;
+    if((op==LN_ATA_FLUSH && !info.can_flush) ||
+       (op==LN_ATA_STANDBY && !info.standby_supported && !info.can_flush))return false;
     operation=op;sector=lba;total=sectors;data=buffer;done=word=0;expires=deadline;
     info.busy=1;info.power_safe=0;
     if(transfer){if(!issue())finish(LN_ATA_IO);}
     else {
-        bool flush=op==LN_ATA_STANDBY&&info.can_flush&&info.write_cache_enabled;
+        /* Some flash adapters can flush but cannot enter ATA Standby. A flush
+         * still provides the storage barrier required for a mode handoff. */
+        bool flush=op==LN_ATA_STANDBY&&info.can_flush&&
+            (info.write_cache_enabled||!info.standby_supported);
         uint16_t command=op==LN_ATA_FLUSH||flush?0xe7:op==LN_ATA_STANDBY?0xe0:0xe1;
         if(!put(0x6c,0xe0) || !put(0x70,command))finish(LN_ATA_IO);
         else {info.commands++;phase=flush?STANDBY_FLUSH:FINISH;}
@@ -193,11 +213,16 @@ void ln_ata_step(uint32_t now) {
             ++info.commands;phase=DMA_MODE;return;
         }
 #endif
-        finish(LN_ATA_OK);return;
+        finish_identify();return;
     }
 #if !defined(LINNET_SRAM_MONITOR)
-    if(phase==DMA_MODE){dma_enabled=!(status&0x29u);finish(LN_ATA_OK);return;}
+    if(phase==DMA_MODE){dma_enabled=!(status&0x29u);finish_identify();return;}
 #endif
+    if(phase==LBA_PROBE){
+        if((status&0x29u)||!(status&0x40u))finish(LN_ATA_IO);
+        else finish(LN_ATA_OK);
+        return;
+    }
     if(status&0x21) {
         uint16_t error=0;(void)ln_s5l_ata_read(0x58,&error);info.last_error=error;finish(LN_ATA_IO);return;
     }
@@ -242,6 +267,7 @@ void ln_ata_step(uint32_t now) {
     }
     if(status&8)return;
     if(phase==STANDBY_FLUSH){
+        if(!info.standby_supported){info.sleeping=0;info.power_safe=1;finish(LN_ATA_OK);return;}
         if(!put(0x70,0xe0)){finish(LN_ATA_IO);return;}
         ++info.commands;phase=FINISH;return;
     }
@@ -253,13 +279,13 @@ void ln_ata_step(uint32_t now) {
             ++info.commands;phase=PIO_MODE;return;
         }
 #endif
-        finish(LN_ATA_OK);return;
+        finish_identify();return;
     }
     if(operation==LN_ATA_READ || operation==LN_ATA_WRITE) {
         done++;sector++;info.sleeping=0;
         if(operation==LN_ATA_READ)info.sectors_read++;else info.sectors_written++;
         if(done<total){if(!issue())finish(LN_ATA_IO);return;}
-    } else if(operation==LN_ATA_STANDBY){info.sleeping=1;info.power_safe=1;}
+    } else if(operation==LN_ATA_STANDBY){info.sleeping=info.standby_supported;info.power_safe=1;}
     else if(operation==LN_ATA_WAKE)info.sleeping=0;
     finish(LN_ATA_OK);
 }
