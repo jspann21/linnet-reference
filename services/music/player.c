@@ -287,7 +287,7 @@ static int slot_step(struct player_slot *s){
     if(!s->cache_codec_checked&&
        ((s->decoder.kind==LN_DEC_MP3&&s->path[0]=='/'&&s->path[1]=='F'&&
          s->path[2]=='I'&&s->path[3]=='L'&&s->path[4]=='E'&&!s->path[5])||
-        (s->decoder.kind==LN_DEC_AAC_M4A&&s->decoder.opened))){
+        (s==&slots[audible]&&s->decoder.kind==LN_DEC_AAC_M4A&&s->decoder.opened))){
         s->cache_codec_checked=true;activate_cache(s);
     }
 #endif
