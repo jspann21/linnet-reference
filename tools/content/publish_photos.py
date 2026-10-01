@@ -92,7 +92,8 @@ def _publish_packs(packs, identity, root, candidate_bytes, grid_bytes):
             verified_existing[active] = after
         else:
             pending.append(item)
-    needed = sum(item['bytes'] for item in pending) + (2*1024*1024 if pending else 0)
+    needed = (sum(item['bytes'] for item in pending) + candidate_bytes + grid_bytes +
+              2*1024*1024) if pending else 0
     if identity['free_bytes'] < needed:
         raise ValueError('insufficient iPod space for photo packs and catalogs')
     results = []
