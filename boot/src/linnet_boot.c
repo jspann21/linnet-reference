@@ -45,9 +45,9 @@ uint32_t ln_crc32(const uint8_t *bytes, size_t length)
     return ln_crc32_progress(bytes, length, NULL, NULL);
 }
 
-enum ln_image_result ln_image_validate_progress(const uint8_t *image, size_t length,
+static enum ln_image_result validate_image(const uint8_t *image, size_t length,
     const struct ln_image_policy *policy, struct ln_image_info *info,
-    void (*progress)(void *context), void *context)
+    void (*progress)(void *context), void *context, int check_payload_crc)
 {
     uint32_t profile, payload, load, entry, offset;
     unsigned i;
@@ -73,7 +73,8 @@ enum ln_image_result ln_image_validate_progress(const uint8_t *image, size_t len
     offset = load - policy->ram_start;
     if (offset >= policy->ram_size || payload > policy->ram_size - offset ||
         entry < load || entry - load > payload - 4u) return LINNET_IMAGE_RANGE;
-    if (ln_crc32_progress(image + LINNET_IMAGE_HEADER_SIZE, payload, progress, context) != ln_read_le32(image + 32))
+    if (check_payload_crc &&
+        ln_crc32_progress(image + LINNET_IMAGE_HEADER_SIZE, payload, progress, context) != ln_read_le32(image + 32))
         return LINNET_IMAGE_CHECKSUM;
     info->profile = profile;
     info->payload_size = payload;
@@ -81,6 +82,19 @@ enum ln_image_result ln_image_validate_progress(const uint8_t *image, size_t len
     info->entry_address = entry;
     for (i = 0; i < 32; ++i) info->build_id[i] = image[36 + i];
     return LINNET_IMAGE_OK;
+}
+
+enum ln_image_result ln_image_validate_progress(const uint8_t *image, size_t length,
+    const struct ln_image_policy *policy, struct ln_image_info *info,
+    void (*progress)(void *context), void *context)
+{
+    return validate_image(image, length, policy, info, progress, context, 1);
+}
+
+enum ln_image_result ln_image_validate_sha256_matched(const uint8_t *image, size_t length,
+    const struct ln_image_policy *policy, struct ln_image_info *info)
+{
+    return validate_image(image, length, policy, info, NULL, NULL, 0);
 }
 
 enum ln_image_result ln_image_validate(const uint8_t *image, size_t length,

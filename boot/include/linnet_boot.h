@@ -49,6 +49,10 @@ enum ln_image_result ln_image_validate(const uint8_t *image, size_t length,
 enum ln_image_result ln_image_validate_progress(const uint8_t *image, size_t length,
     const struct ln_image_policy *policy, struct ln_image_info *info,
     void (*progress)(void *context), void *context);
+/* For a previously published slot after its complete image SHA256 matches
+ * the stored digest. Installation still checks the payload CRC32. */
+enum ln_image_result ln_image_validate_sha256_matched(const uint8_t *image, size_t length,
+    const struct ln_image_policy *policy, struct ln_image_info *info);
 
 struct ln_boot_state {
     uint32_t generation;
