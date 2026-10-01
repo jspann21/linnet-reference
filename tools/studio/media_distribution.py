@@ -48,6 +48,8 @@ def create(output):
         distribution(work / "dist/Linnet Media/_internal/apple-tools")
         from tools.content.aac_index import executable as aac_executable
         shutil.copy2(aac_executable(), work / 'dist/Linnet Media/_internal/aac-index.exe')
+        from tools.content.mp3_index import executable as mp3_executable
+        shutil.copy2(mp3_executable(), work / 'dist/Linnet Media/_internal/mp3-index.exe')
         archive = work / "media.zip"
         with zipfile.ZipFile(archive, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
             for path in sorted((work / "dist").rglob("*")):

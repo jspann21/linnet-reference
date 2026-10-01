@@ -498,7 +498,7 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                     # Planning only estimates work. The preparation call checks
                     # the complete original before it copies or publishes.
                     if destination.stat().st_size != info.st_size and not (
-                            kind == 'Music' and path.suffix.lower() in ('.m4a', '.m4b', '.flac', '.flc')):
+                            kind == 'Music' and path.suffix.lower() in ('.m4a', '.m4b', '.flac', '.flc', '.mp3')):
                         raise ValueError(f"A different file already exists: {destination}. Rename the new file or folder first.")
                     if unverified is not None:
                         unverified.append(kind)
@@ -510,6 +510,9 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                         equivalent = same_original(path, destination)
                     elif kind == 'Music' and path.suffix.lower() in ('.flac', '.flc'):
                         from .flac_index import same_original
+                        equivalent = same_original(path, destination)
+                    elif kind == 'Music' and path.suffix.lower() == '.mp3':
+                        from .mp3_index import same_original
                         equivalent = same_original(path, destination)
                     if not equivalent:
                         raise ValueError(f"A different file already exists: {destination}. Rename the new file or folder first.")
@@ -554,19 +557,35 @@ def _prepare_import_aac(item, scratch, cache, ffprobe, cancelled, stopped):
     return local, suffix, unsupported, metadata_seed, _receipt_stamp(before)
 
 
-def _prepare_import_mp3(item, ffprobe, cancelled, stopped):
+def _prepare_import_mp3(item, scratch, ffprobe, cancelled, stopped):
     def should_stop():
         return stopped.is_set() or cancelled()
+    def check():
+        if should_stop():
+            raise Cancelled('Stopped while preparing MP3 on the computer.')
 
     source = Path(item['source'])
     _plain(source, Path(source.anchor))
     before = source.stat()
     if (before.st_size, before.st_mtime_ns) != (item['bytes'], item['mtime_ns']):
         raise ValueError(f"Source changed since selection: {source}")
+    local = source
+    suffix = b''
+    if before.st_size >= 8 * 1024 * 1024:
+        local = scratch / 'source.mp3'
+        with source.open('rb') as reader, local.open('xb') as frozen:
+            while chunk := reader.read(1024 * 1024):
+                check()
+                frozen.write(chunk)
+        if (_receipt_stamp(before) != _receipt_stamp(source.stat()) or
+                local.stat().st_size != before.st_size):
+            raise ValueError(f"Source changed during preparation: {source}")
+        from .mp3_index import import_suffix
+        suffix = import_suffix(local, checkpoint=check)
     metadata_seed = None
     try:
         from .music import _read_metadata
-        metadata = _read_metadata(source, ffprobe, True, should_stop, include_cover=True)
+        metadata = _read_metadata(local, ffprobe, True, should_stop, include_cover=True)
         metadata_seed = (metadata, metadata.pop('_embedded_cover', None))
     except (OSError, ValueError, subprocess.SubprocessError):
         pass  # The compiler can retry from the copied file if host parsing fails.
@@ -574,7 +593,7 @@ def _prepare_import_mp3(item, ffprobe, cancelled, stopped):
         raise Cancelled('Stopped while reading MP3 metadata on the computer.')
     if _receipt_stamp(source.stat()) != _receipt_stamp(before):
         raise ValueError(f"Source changed during preparation: {source}")
-    return metadata_seed, _receipt_stamp(before)
+    return local, suffix, metadata_seed, _receipt_stamp(before)
 
 
 def _prepare_import_flac(item, scratch, cache, ffprobe, cancelled, stopped):
@@ -658,10 +677,13 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                               Path(item['destination']).suffix.lower() in ('.flac', '.flc')]
             preparation_positions = sorted((*aac_positions, *mp3_positions, *flac_positions))
             scratches = {offset: Path(handles.enter_context(tempfile.TemporaryDirectory(
-                prefix='audio-source-', dir=cache))) for offset in (*aac_positions, *flac_positions)}
+                prefix='audio-source-', dir=cache))) for offset in preparation_positions}
             stopped = threading.Event()
             if aac_positions:
                 from .aac_index import executable
+                executable()
+            if mp3_positions and any(batch[offset][0]['bytes'] >= 8 * 1024 * 1024 for offset in mp3_positions):
+                from .mp3_index import executable
                 executable()
             executor = handles.enter_context(ThreadPoolExecutor(max_workers=2)) if preparation_positions else None
             if executor is not None:
@@ -674,16 +696,15 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                     offset = next(upcoming, None)
                     if offset is None:
                         break
-                    if offset in scratches:
-                        if offset in aac_positions:
-                            futures[offset] = executor.submit(_prepare_import_aac, batch[offset][0],
-                                scratches[offset], cache, ffprobe, cancelled, stopped)
-                        else:
-                            futures[offset] = executor.submit(_prepare_import_flac, batch[offset][0],
-                                scratches[offset], cache, ffprobe, cancelled, stopped)
+                    if offset in aac_positions:
+                        futures[offset] = executor.submit(_prepare_import_aac, batch[offset][0],
+                            scratches[offset], cache, ffprobe, cancelled, stopped)
+                    elif offset in flac_positions:
+                        futures[offset] = executor.submit(_prepare_import_flac, batch[offset][0],
+                            scratches[offset], cache, ffprobe, cancelled, stopped)
                     else:
                         futures[offset] = executor.submit(_prepare_import_mp3, batch[offset][0],
-                            ffprobe, cancelled, stopped)
+                            scratches[offset], ffprobe, cancelled, stopped)
             fill_preparation()
             try:
                 for offset, (item, temporary) in enumerate(batch):
@@ -711,7 +732,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                         elif offset in flac_positions:
                             copy_source, metadata_seed, flac_seek_checked, source_stamp = prepared
                         else:
-                            metadata_seed, source_stamp = prepared
+                            copy_source, suffix, metadata_seed, source_stamp = prepared
                         if _receipt_stamp(info) != source_stamp:
                             raise ValueError(f"Source changed during preparation: {source}")
                         checkpoint()
@@ -760,9 +781,14 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                 raise OSError(f"Copied file changed during readback: {destination}")
             verified_stamps[temporary] = after_readback
             if prepared_bytes != item['bytes'] and not flac_seek_checked:
-                from .aac_index import original_size
-                if original_size(temporary, prepared_bytes) != item['bytes']:
-                    raise ValueError(f"Prepared AAC seek data is invalid: {destination}")
+                if destination.suffix.lower() == '.mp3':
+                    from .mp3_index import original_size
+                    valid = original_size(temporary, prepared_bytes) == item['bytes']
+                else:
+                    from .aac_index import original_size
+                    valid = original_size(temporary, prepared_bytes) == item['bytes']
+                if not valid:
+                    raise ValueError(f"Prepared audio seek data is invalid: {destination}")
         for item, temporary, _, digest, prepared_bytes, unsupported_aac, metadata_seed, flac_seek_checked in copied:
             checkpoint()
             destination = Path(item['destination'])

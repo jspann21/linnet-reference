@@ -364,6 +364,16 @@ def _decoded_frames(path: Path, executable: str, *, recover: bool = False,
     # Existing device files can arrive over slow USB while other metadata reads
     # share the disk. Keep a bounded I/O allowance as well as the decode budget.
     budget = max(30, min(600, 30 + path.stat().st_size // 65536)) if recover else 30
+    indexed_bytes = None
+    if codec == CODECS["mp3"]:
+        from .mp3_index import original_size
+        indexed_bytes = original_size(path)
+    if indexed_bytes is not None:
+        with path.open('rb') as reader:
+            reader.seek(-64, os.SEEK_END)
+            footer = reader.read(64)
+        indexed_tail = struct.unpack_from('<I', footer, 36)[0]
+        indexed_total = struct.unpack_from('<Q', footer, 40)[0]
     command = [executable, "-v", "fatal" if recover else "error"]
     # Tags can fool FFprobe's format sniffing (including MP3 misdetected as
     # WAV). Use the MP3 identity already established by the metadata reader.
@@ -371,12 +381,39 @@ def _decoded_frames(path: Path, executable: str, *, recover: bool = False,
         command += ["-f", "mp3"]
     command += ["-select_streams", "a:0",
                "-show_entries", "frame=nb_samples:frame_side_data=",
-               "-of", "csv=p=0", str(path)]
+               "-of", "csv=p=0", 'pipe:0' if indexed_bytes is not None else str(path)]
     # Recovery counts decoded audio only; unrelated embedded-art diagnostics
     # must not become sample-count rows. Fatal exits are still rejected below.
-    with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+    with subprocess.Popen(command, stdin=subprocess.PIPE if indexed_bytes is not None else subprocess.DEVNULL,
+                          stdout=subprocess.PIPE,
                           stderr=subprocess.DEVNULL if recover else subprocess.STDOUT,
                           creationflags=NO_WINDOW) as process:
+        feed_error = []
+        def feed_original():
+            try:
+                with path.open('rb') as reader:
+                    remaining = indexed_bytes
+                    while remaining:
+                        _check_cancel(cancelled)
+                        chunk = reader.read(min(remaining, 1024 * 1024))
+                        if not chunk:
+                            raise OSError('Indexed MP3 changed during verification')
+                        process.stdin.write(chunk)
+                        remaining -= len(chunk)
+            except Exception as error:
+                feed_error.append(error)
+                if process.poll() is None:
+                    process.kill()
+            finally:
+                try:
+                    process.stdin.close()
+                except OSError as error:
+                    if not feed_error:
+                        feed_error.append(error)
+        feeder = None
+        if indexed_bytes is not None:
+            feeder = threading.Thread(target=feed_original, name='music-mp3-prefix', daemon=True)
+            feeder.start()
         stop_watch, was_cancelled, watcher = _watch_cancellation(process, cancelled)
         timed_out = threading.Event()
         def expire():
@@ -407,6 +444,12 @@ def _decoded_frames(path: Path, executable: str, *, recover: bool = False,
                 process.kill()
             process.wait()
             watcher.join()
+            if feeder is not None:
+                feeder.join(timeout=5)
+                if feeder.is_alive():
+                    raise TimeoutError(f"{path}: MP3 verification reader did not stop")
+        if feed_error:
+            raise feed_error[0]
     frames = 0
     for line in output.splitlines():
         if not line:
@@ -419,6 +462,12 @@ def _decoded_frames(path: Path, executable: str, *, recover: bool = False,
         frames += samples
     if not 0 < frames <= 0xFFFFFFFFFFFFFFFF:
         raise ValueError(f"{path}: missing or oversized decoded sample count")
+    if indexed_bytes is not None:
+        # A pipe cannot seek to the LAME footer, so FFprobe emits the encoder's
+        # trailing padding. The indexed metadata was verified above.
+        if frames < indexed_tail or frames - indexed_tail != indexed_total:
+            raise ValueError(f"{path}: prepared MP3 audio sample count disagrees with its checkpoint")
+        frames -= indexed_tail
     return frames
 
 

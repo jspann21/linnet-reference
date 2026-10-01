@@ -9,11 +9,18 @@ struct ln_mp3 {
     struct mad_stream stream;struct mad_frame frame;struct mad_synth synth;
     mad_fixed_t subband[2][36][32],overlap[2][32][18];
     uint8_t reservoir[MAD_BUFFER_MDLEN] __attribute__((aligned(4)));
-    uint8_t input[8192+MAD_BUFFER_GUARD] __attribute__((aligned(4)));
+    uint8_t input[131072+MAD_BUFFER_GUARD] __attribute__((aligned(4)));
     ln_mp3_read_fn read;void *context;uint64_t file_size,read_offset,decoded_frames,total_frames,seek_target;
     uint32_t valid,retained,read_bytes,pcm_cursor,rate,channels,compressed_frames,recoveries;
     uint32_t lead_trim,tail_trim,trim_remaining;
     uint32_t unsynced_bytes,consecutive_recoveries;
+    uint8_t index_data[560];
+    uint64_t index_original,index_next,index_proof_at;
+    uint32_t index_prefix_crc,index_expected_crc,index_record_number;
+    uint32_t index_samples,index_rate,index_channels,index_lead,index_tail;
+    uint64_t index_total;
+    uint8_t index_state;
+    bool index_unusable;
     bool initialized,need_input,refilling,pending,eof,first_frame_checked,gapless,seeking;int error;
 };
 /* Caller owns all storage. Exact asynchronous read returns0 pending/1 complete/

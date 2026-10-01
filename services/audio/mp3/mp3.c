@@ -1,8 +1,9 @@
 #include "boot/include/linnet_bytes.h"
 #include "mp3.h"
 #include "third_party/libmad/codeclib.h"
-#include "hal/api/platform.h"
+#include <stddef.h>
 #if !defined(LINNET_PROFILE_RELEASE)
+#include "hal/api/platform.h"
 static struct ln_mp3_timing timing;
 static void timing_add(uint32_t *value,uint32_t amount)
 {*value=amount>UINT32_MAX-*value?UINT32_MAX:*value+amount;}
@@ -18,9 +19,16 @@ void ln_mp3_timing_snapshot(struct ln_mp3_timing *out){if(out)*out=timing;}
 static int fail(struct ln_mp3 *d,int error){d->error=error;return error;}
 #define RESYNC_BYTES 65536u
 #define RESYNC_ERRORS 65536u
+#define INDEX_RECORD_BYTES 560u
+#define INDEX_INTERVAL 128u
+enum {INDEX_NONE,INDEX_FOOTER,INDEX_RECORD,INDEX_PROOF,INDEX_FRAME};
 void ln_mp3_init(struct ln_mp3 *d,ln_mp3_read_fn read,void *context,uint64_t size)
 {
-    ln_mad_set(d,0,sizeof(*d));d->read=read;d->context=context;d->file_size=size;
+    /* Input is always filled before libmad sees it. Leave its 128 KiB alone
+     * when opening a track or restarting a seek. */
+    ln_mad_set(d,0,offsetof(struct ln_mp3,input));
+    ln_mad_set(&d->read,0,sizeof(*d)-offsetof(struct ln_mp3,read));
+    d->read=read;d->context=context;d->file_size=size;
     d->stream.main_data=&d->reservoir;d->frame.sbsample=&d->subband;
     d->frame.sbsample_prev=&d->subband;d->frame.overlap=&d->overlap;
     mad_stream_init(&d->stream);mad_frame_init(&d->frame);mad_synth_init(&d->synth);
@@ -29,13 +37,27 @@ void ln_mp3_init(struct ln_mp3 *d,ln_mp3_read_fn read,void *context,uint64_t siz
 bool ln_mp3_seek(struct ln_mp3 *d,uint64_t frame)
 {
     if(!d||!d->read||d->pending||(d->gapless&&frame>d->total_frames))return false;
-    if(d->initialized&&!d->error&&!d->seeking&&frame>=d->decoded_frames){
+    bool indexed=d->initialized&&!d->error&&!d->seeking&&d->gapless&&
+        !d->index_unusable&&frame>5u*1152u+INDEX_INTERVAL*1152u&&
+        (frame<d->decoded_frames||frame-d->decoded_frames>INDEX_INTERVAL*1152u);
+    if(d->initialized&&!d->error&&!d->seeking&&frame>=d->decoded_frames&&!indexed){
         /* Keep the valid bit reservoir and synthesis history for a forward
          * seek. Buffered PCM is discarded against the same trimmed timeline. */
         d->seek_target=frame;d->seeking=frame!=d->decoded_frames;return true;
     }
     ln_mp3_read_fn read=d->read;void *context=d->context;uint64_t size=d->file_size;
-    ln_mp3_init(d,read,context,size);d->seek_target=frame;d->seeking=frame!=0;return true;
+    bool unusable=d->index_unusable;
+    uint32_t rate=d->rate,channels=d->channels,lead=d->lead_trim,tail=d->tail_trim;
+    uint64_t total=d->total_frames;
+    uint32_t samples=(d->frame.header.flags&MAD_FLAG_LSF_EXT)?576u:1152u;
+    ln_mp3_init(d,read,context,size);d->seek_target=frame;d->seeking=frame!=0;
+    d->index_unusable=unusable;
+    if(indexed){
+        d->index_state=INDEX_FOOTER;d->index_rate=rate;d->index_channels=channels;
+        d->index_lead=lead;d->index_tail=tail;d->index_total=total;
+        d->index_samples=samples;
+    }
+    return true;
 }
 static int finish(struct ln_mp3 *d)
 {
@@ -63,6 +85,123 @@ static int read_step(struct ln_mp3 *d,uint64_t offset,uint8_t *buffer,uint32_t c
     if(offset>d->file_size||count>d->file_size-offset)return fail(d,LN_MP3_FORMAT);
     int r=d->read(d->context,offset,buffer,count);d->pending=r==0;
     return r<0?fail(d,LN_MP3_IO):r;
+}
+static uint32_t index_crc(uint32_t crc,const uint8_t *bytes,uint32_t count)
+{
+    static uint32_t table[256];static bool ready;
+    if(!ready){
+        for(uint32_t i=0;i<256u;++i){
+            uint32_t value=i;
+            for(uint32_t bit=0;bit<8u;++bit)
+                value=(value&1u)?(value>>1u)^0xedb88320u:value>>1u;
+            table[i]=value;
+        }
+        ready=true;
+    }
+    for(uint32_t i=0;i<count;++i)crc=(crc>>8u)^table[(crc^bytes[i])&255u];
+    return crc;
+}
+static uint64_t index_divide(uint64_t numerator,uint32_t denominator)
+{
+    uint64_t quotient=0,remainder=0;
+    uint32_t high=(uint32_t)(numerator>>32);
+    uint32_t bits=high?64u-(uint32_t)__builtin_clz(high):
+        numerator?32u-(uint32_t)__builtin_clz((uint32_t)numerator):0u;
+    for(uint32_t bit=bits;bit;--bit){
+        remainder=(remainder<<1)|((numerator>>(bit-1u))&1u);
+        if(remainder>=denominator){remainder-=denominator;quotient|=(uint64_t)1u<<(bit-1u);}
+    }
+    return quotient;
+}
+static void index_fallback(struct ln_mp3 *d)
+{
+    ln_mp3_read_fn read=d->read;void *context=d->context;
+    uint64_t size=d->file_size,target=d->seek_target;
+    ln_mp3_init(d,read,context,size);
+    d->seek_target=target;d->seeking=target!=0;d->index_unusable=true;
+}
+/* The saved reservoir and sample position depend on all earlier audio bytes.
+ * Verify their complete prefix before restoring the decoder at a frame edge. */
+static int index_step(struct ln_mp3 *d)
+{
+    uint8_t *b=d->index_data;
+    if(d->index_state==INDEX_FOOTER){
+        if(d->file_size<16u+2u*INDEX_RECORD_BYTES+64u){index_fallback(d);return 0;}
+        int r=read_step(d,d->file_size-64u,b,64u);if(r==0)return 0;
+        if(r<0){index_fallback(d);return 0;}
+        static const uint8_t magic[8]={'L','N','M','P','3','I','X','!'};
+        for(uint32_t i=0;i<8u;++i)if(b[i]!=magic[i]){index_fallback(d);return 0;}
+        uint64_t original=ln_read_le64(b+8);
+        uint32_t count=ln_read_le32(b+16),samples=ln_read_le32(b+20);
+        uint64_t wanted=d->seek_target-5u*1152u;
+        uint64_t ordinal=index_divide(wanted+d->index_lead,d->index_samples);
+        if((index_crc(0xffffffffu,b,60u)^0xffffffffu)!=ln_read_le32(b+60)||
+           count<2u||count>1000000u||samples!=d->index_samples||
+           ln_read_le32(b+24)!=d->index_rate||ln_read_le32(b+28)!=d->index_channels||
+           ln_read_le32(b+32)!=d->index_lead||ln_read_le32(b+36)!=d->index_tail||
+           ln_read_le64(b+40)!=d->index_total||
+           ln_read_le32(b+48)*(uint64_t)samples!=d->index_total+d->index_lead+d->index_tail||
+           b[52]||b[53]||b[54]||b[55]||b[56]||b[57]||b[58]||b[59]||
+           original>d->file_size||
+           16u+(uint64_t)count*INDEX_RECORD_BYTES+64u>d->file_size-original||
+           original+16u+(uint64_t)count*INDEX_RECORD_BYTES+64u!=d->file_size||
+           ordinal<INDEX_INTERVAL){index_fallback(d);return 0;}
+        uint64_t record=(ordinal>>7u)-1u;
+        if(record>=count)record=count-1u;
+        d->index_record_number=(uint32_t)record;
+        d->index_original=original;
+        d->index_next=original+16u+record*INDEX_RECORD_BYTES;
+        d->index_state=INDEX_RECORD;return 0;
+    }
+    if(d->index_state==INDEX_RECORD){
+        int r=read_step(d,d->index_next,b,INDEX_RECORD_BYTES);if(r==0)return 0;
+        if(r<0){index_fallback(d);return 0;}
+        uint64_t next=ln_read_le64(b),decoded=ln_read_le64(b+8);
+        uint32_t ordinal=ln_read_le32(b+16),md_len=ln_read_le16(b+24);
+        if((index_crc(0xffffffffu,b,556u)^0xffffffffu)!=ln_read_le32(b+556)||
+           ordinal!=(d->index_record_number+1u)*INDEX_INTERVAL||
+           decoded!=(uint64_t)ordinal*d->index_samples-d->index_lead||
+           decoded+5u*1152u>d->seek_target||ln_read_le32(b+20)!=0u||
+           md_len>511u||b[26]>15u||b[27]!=0u||
+           next>=d->index_original||d->index_original-next<512u){
+            index_fallback(d);return 0;
+        }
+        d->index_next=next;d->index_proof_at=0u;
+        d->index_prefix_crc=0xffffffffu;
+        d->index_expected_crc=ln_read_le32(b+544);
+        d->index_state=INDEX_PROOF;return 0;
+    }
+    if(d->index_state==INDEX_PROOF){
+        uint32_t count=(uint32_t)(d->index_next-d->index_proof_at);
+        if(count>131072u)count=131072u;
+        int r=read_step(d,d->index_proof_at,d->input,count);if(r==0)return 0;
+        if(r<0){index_fallback(d);return 0;}
+        d->index_prefix_crc=index_crc(d->index_prefix_crc,d->input,count);
+        d->index_proof_at+=count;
+        if(d->index_proof_at==d->index_next){
+            if((d->index_prefix_crc^0xffffffffu)!=d->index_expected_crc){
+                index_fallback(d);return 0;
+            }
+            d->index_state=INDEX_FRAME;
+        }
+        return 0;
+    }
+    if(d->index_state==INDEX_FRAME){
+        int r=read_step(d,d->index_next,d->input,512u);if(r==0)return 0;
+        if(r<0){index_fallback(d);return 0;}
+        if((index_crc(0xffffffffu,d->input,512u)^0xffffffffu)!=ln_read_le32(b+28)){
+            index_fallback(d);return 0;
+        }
+        d->read_offset=d->index_next;d->decoded_frames=ln_read_le64(b+8);
+        d->compressed_frames=ln_read_le32(b+16);d->trim_remaining=ln_read_le32(b+20);
+        d->stream.md_len=ln_read_le16(b+24);d->synth.phase=b[26];
+        for(uint32_t i=0;i<d->stream.md_len;++i)d->reservoir[i]=b[32+i];
+        d->rate=d->index_rate;d->channels=d->index_channels;
+        d->lead_trim=d->index_lead;d->tail_trim=d->index_tail;
+        d->total_frames=d->index_total;d->gapless=d->first_frame_checked=true;
+        d->initialized=d->need_input=true;d->index_state=INDEX_NONE;
+    }
+    return 0;
 }
 static int initialize(struct ln_mp3 *d)
 {
@@ -174,6 +313,7 @@ int ln_mp3_decode(struct ln_mp3 *d,int16_t *output,uint32_t capacity,uint32_t *f
     if(frames)*frames=0;
     if(!d||!d->read||!output||!capacity||!frames)return LN_MP3_ARGUMENT;
     if(d->error)return d->error;
+    if(d->index_state)return index_step(d);
     if(!d->initialized)return initialize(d);
     if(d->gapless&&d->decoded_frames==d->total_frames)return finish(d);
     if(d->pcm_cursor<d->synth.pcm.length)return drain_pcm(d,output,capacity,frames);
