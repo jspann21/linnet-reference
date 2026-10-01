@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
+import shutil
 import struct
 import zlib
 
@@ -101,7 +102,8 @@ def _publish(package, candidate, references, identity, root, number, serial, vol
         kind="photos", label="photo", filename="LIBRARY.PIM", max_file=MAX_FILE,
         summary=dict(photos=candidate['photos'], albums=candidate['albums']),
         verify_references=lambda root, guard: _verify_fallbacks(references, root, guard),
-        receipt_fields=dict(fallback_files=references, **(receipt_fields or {})), **options)
+        receipt_fields=dict(fallback_files=references, **(receipt_fields or {})),
+        backup_on_host=True, **options)
 
 
 def _publish_pair(package, candidate, references, grid, grid_candidate, identity, root,
@@ -111,7 +113,8 @@ def _publish_pair(package, candidate, references, grid, grid_candidate, identity
     if target != grid_candidate['target']:
         raise ValueError('native photo grid target differs from the iPod')
     previous, needed = {}, 0
-    for name, item in (('GRID.PGR', grid_candidate), ('LIBRARY.PIM', candidate)):
+    host_backup_space = {}
+    for name, item, staged in (('GRID.PGR', grid_candidate, grid), ('LIBRARY.PIM', candidate, package)):
         _volume_guard(identity)
         active = root/'.LINNET'/'PHOTOS'/name
         _plain(active, root)
@@ -124,14 +127,22 @@ def _publish_pair(package, candidate, references, grid, grid_candidate, identity
                         stamp=(info.st_size,info.st_mtime_ns,info.st_ctime_ns,info.st_ino))
         previous[name] = hint
         if hint is None or (hint['bytes'],hint['sha256']) != (item['bytes'],item['sha256']):
-            needed += item['bytes']+(hint['bytes'] if hint else 0)+3*65536+1024*1024
+            needed += item['bytes']+3*65536+1024*1024
+            if hint is not None:
+                location = staged.parent
+                host_device = location.stat().st_dev
+                representative, required = host_backup_space.get(host_device, (location, 0))
+                host_backup_space[host_device] = (representative, required + hint['bytes'])
     if identity['free_bytes'] < needed:
         raise ValueError('insufficient free space for both photo outputs and retained backups')
+    for location, required in host_backup_space.values():
+        if shutil.disk_usage(location).free < required + 1024*1024:
+            raise ValueError('insufficient computer space for both previous photo outputs')
     grid_receipt = _publish_library(
         grid, grid_candidate, identity, root, number, serial, volume, drive,
         kind='photos', label='native photo grid', filename='GRID.PGR', max_file=MAX_FILE,
         summary=dict(photos=grid_candidate['photos'],target=grid_candidate['target']),
-        previous_hint=previous['GRID.PGR'], retain_backup=True)
+        previous_hint=previous['GRID.PGR'], retain_backup=True, backup_on_host=True)
     try:
         receipt = _publish(package, candidate, references, identity, root, number, serial, volume, drive,
                            previous_hint=previous['LIBRARY.PIM'], retain_backup=True,
@@ -139,8 +150,8 @@ def _publish_pair(package, candidate, references, grid, grid_candidate, identity
     except Exception as exc:
         raise RuntimeError(f"Photo pair stopped after native grid publication; inspect {grid_receipt['receipt']} and the PIMG receipt. Do not replay automatically: {exc}") from exc
     # Both guarded readbacks have succeeded; recovery copies remain until here.
-    for result in (grid_receipt, receipt):
+    for result, staged in ((grid_receipt, grid), (receipt, package)):
         _finish_backups(result, [Path(value) for value in result.get('backups_retained',[])], root,
-                        lambda: _volume_guard(identity))
+                        lambda: _volume_guard(identity), host_root=staged.parent)
         _write_receipt(Path(result['receipt']), result)
     return receipt

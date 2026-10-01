@@ -20,6 +20,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import stat
 import struct
 import subprocess
@@ -419,10 +420,11 @@ def _volume_guard(identity: dict) -> None:
         raise RuntimeError("mounted iPod volume changed during publication")
 
 
-def _copy_verified(source: Path, destination: Path, item: dict, root: Path, guard) -> bool:
+def _copy_verified(source: Path, destination: Path, item: dict, root: Path, guard,
+                   destination_root: Path | None = None) -> bool:
     """Create only; preserve existing different objects and failed partial files."""
     guard()
-    _plain(destination, root)
+    _plain(destination, destination_root or root)
     if destination.exists():
         if _hash(destination, item["bytes"]) != item["sha256"]:
             raise ValueError(f"existing different object is a hash collision: {destination}")
@@ -709,12 +711,12 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
         raise RuntimeError(f"Music publication stopped in {receipt['phase']}: {exc}. Inspect {receipt_path}; do not replay automatically") from exc
 
 
-def _finish_backups(receipt, paths, root, guard):
+def _finish_backups(receipt, paths, root, guard, host_root=None):
     """Discard this operation's recovery copies only after verified publication."""
     for path in paths:
         try:
             guard()
-            _plain(path, root)
+            _plain(path, host_root if host_root is not None else root)
             path.unlink()
             if not any(path.parent.iterdir()):
                 guard()
@@ -727,7 +729,7 @@ def _finish_backups(receipt, paths, root, guard):
 def _publish_library(package, candidate, identity, root, number, serial, volume, drive,
                      *, kind, label, filename, max_file, summary,
                      verify_references=None, receipt_fields=None, previous_hint=None,
-                     retain_backup=False):
+                     retain_backup=False, backup_on_host=False):
     def guard():
         _volume_guard(identity)
     linnet, directory = root/'.LINNET', root/'.LINNET'/kind.upper()
@@ -751,9 +753,11 @@ def _publish_library(package, candidate, identity, root, number, serial, volume,
                   else _hash(active, size))
         previous = dict(bytes=size, sha256=digest)
     reuse = previous is not None and previous['bytes'] == candidate['bytes'] and previous['sha256'] == candidate['sha256']
-    needed = 0 if reuse else candidate['bytes'] + (previous['bytes'] if previous else 0) + 3*65536 + 1024*1024
+    needed = 0 if reuse else candidate['bytes'] + (previous['bytes'] if previous and not backup_on_host else 0) + 3*65536 + 1024*1024
     if identity['free_bytes'] < needed:
         raise ValueError(f'insufficient free space for new {label} package and retained backup')
+    if previous and not reuse and backup_on_host and shutil.disk_usage(package.parent).free < previous['bytes'] + 1024*1024:
+        raise ValueError(f'insufficient computer space for previous {label} package')
     _same_target(identity, inspect_target(number, serial, volume, drive))
     receipt_path = package.parent/('publish-'+kind+'-'+uuid.uuid4().hex+'.json')
     receipt = dict(operation='publish-'+kind, passed=False, phase='preflight-complete',
@@ -796,10 +800,13 @@ def _publish_library(package, candidate, identity, root, number, serial, volume,
         if previous:
             receipt['phase'] = 'backing-up-previous'
             record()
-            backup = backups/(previous['sha256'][:8].upper()+Path(filename).suffix)
-            _plain(backup.parent, root)
+            backup = ((package.parent/'recovery')/(uuid.uuid4().hex+'-'+previous['sha256'][:8].upper()+Path(filename).suffix)
+                      if backup_on_host else backups/(previous['sha256'][:8].upper()+Path(filename).suffix))
+            _plain(backup.parent, package.parent if backup_on_host else root)
             backup.parent.mkdir(exist_ok=True)
-            _copy_verified(active, backup, previous, root, guard)
+            _plain(active, root)
+            _copy_verified(active, backup, previous, root, guard,
+                           destination_root=package.parent if backup_on_host else None)
             receipt['backup'] = str(backup)
         temporary = directory/('P'+uuid.uuid4().hex[:7].upper()+'.TMP')
         receipt.update(phase='copying-candidate', temporary=str(temporary))
@@ -833,7 +840,8 @@ def _publish_library(package, candidate, identity, root, number, serial, volume,
         if retain_backup:
             receipt['backups_retained'] = [str(backup)] if previous else []
         else:
-            _finish_backups(receipt, [backup] if previous else [], root, guard)
+            _finish_backups(receipt, [backup] if previous else [], root, guard,
+                            host_root=package.parent if backup_on_host else None)
         receipt.update(passed=True, phase='published', finished_at=time.time(), package=str(active),
                        **summary)
         record()
