@@ -28,6 +28,7 @@ import time
 import zlib
 
 from tools.studio.targets import TARGETS
+from .host_state import cache_volume_scope
 
 HEADER = 128
 TRACK = 132
@@ -743,6 +744,7 @@ class _MetadataCache:
     """Disposable acceleration only; unreadable caches never block an import."""
     def __init__(self, path: Path):
         self.connection = None
+        self.source_keys = {}
         self.pending_writes = 0
         self.coverflow_writes = 0
         self.render_writes = 0
@@ -825,6 +827,12 @@ class _MetadataCache:
         return (isinstance(tags, dict) and all(isinstance(k, str) and isinstance(v, str)
                                              for k, v in tags.items()))
 
+    def _source_key(self, source):
+        name = str(source)
+        if name not in self.source_keys:
+            self.source_keys[name] = cache_volume_scope(source)
+        return self.source_keys[name]
+
     def prefetch(self, source, relatives):
         """Fetch a bounded window without trusting cached file timestamps."""
         if self.connection is None or not relatives:
@@ -837,7 +845,7 @@ class _MetadataCache:
                     self.connection.execute(
                         "SELECT relative,size,mtime,value FROM metadata WHERE source=? "
                         f"AND parser=? AND relative IN ({placeholders})",
-                        (str(source), "existing", *relatives))}
+                        (self._source_key(source), "existing", *relatives))}
         except sqlite3.Error:
             self._disable()
             return {}
@@ -849,7 +857,7 @@ class _MetadataCache:
             if prefetched is None:
                 row = self.connection.execute("SELECT value FROM metadata WHERE source=? "
                     "AND relative=? AND size=? AND mtime=? AND parser=?",
-                    (str(source), relative, stat.st_size, stat.st_mtime_ns, "existing")).fetchone()
+                    (self._source_key(source), relative, stat.st_size, stat.st_mtime_ns, "existing")).fetchone()
             else:
                 saved = prefetched.get(relative)
                 row = (saved[2],) if saved and saved[:2] == (stat.st_size, stat.st_mtime_ns) else None
@@ -868,7 +876,7 @@ class _MetadataCache:
             return
         try:
             self.connection.execute("INSERT OR REPLACE INTO metadata VALUES (?,?,?,?,?,?)",
-                (str(source), relative, stat.st_size, stat.st_mtime_ns, "existing",
+                (self._source_key(source), relative, stat.st_size, stat.st_mtime_ns, "existing",
                  json.dumps(metadata)))
             # The cache is disposable; amortize durable writes across tracks.
             # close() also commits the final partial group on cancellation.
