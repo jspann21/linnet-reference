@@ -15,6 +15,7 @@ import re
 import shutil
 import stat
 import subprocess
+import tempfile
 import time
 import unicodedata
 import uuid
@@ -497,6 +498,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
     # FAT devices, alternating write/flush/read/rename for every small file is
     # expensive. Keep every handle until its flush, and publish only verified files.
     start = 0
+    remaining_original = sum(item['bytes'] for item in plan)
     while start < len(plan):
         batch = []
         batch_bytes = 0
@@ -529,15 +531,26 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                     raise ValueError(f"Source changed since selection: {source}")
                 suffix = None
                 unsupported_aac = False
+                copy_source = source
                 if item['kind'] == 'Music' and source.suffix.lower() in ('.m4a', '.m4b'):
                     from .aac_index import import_suffix
-                    suffix, unsupported_aac = import_suffix(source, cache / 'aac-import', checkpoint=checkpoint)
-                    if suffix and shutil.disk_usage(root).free < len(suffix) + 1024 * 1024:
-                        raise ValueError('Not enough space for prepared AAC seek data')
+                    scratch = Path(handles.enter_context(tempfile.TemporaryDirectory(
+                        prefix='aac-source-', dir=cache)))
+                    copy_source = scratch / ('source' + source.suffix.lower())
+                    with source.open('rb') as reader, copy_source.open('xb') as frozen:
+                        while chunk := reader.read(1024 * 1024):
+                            checkpoint()
+                            frozen.write(chunk)
+                    if (_receipt_stamp(info) != _receipt_stamp(source.stat()) or
+                            copy_source.stat().st_size != info.st_size):
+                        raise ValueError(f"Source changed during preparation: {source}")
+                    suffix, unsupported_aac = import_suffix(copy_source, cache / 'aac-import', checkpoint=checkpoint)
+                if shutil.disk_usage(root).free < remaining_original + len(suffix or b'') + 1024 * 1024:
+                    raise ValueError('Not enough space for prepared additions')
                 digest = hashlib.sha256()
                 writer = handles.enter_context(temporary.open('xb'))
                 owned_temporaries.append((temporary, root))
-                with source.open('rb') as reader:
+                with copy_source.open('rb') as reader:
                     while chunk := reader.read(1024 * 1024):
                         checkpoint()
                         writer.write(chunk)
@@ -547,10 +560,11 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                     digest.update(suffix)
                 writer.flush()
                 after = source.stat()
-                if (after.st_size, after.st_mtime_ns) != (info.st_size, info.st_mtime_ns):
+                if _receipt_stamp(after) != _receipt_stamp(info):
                     raise ValueError(f"Source changed during copy: {source}")
                 copied.append((item, temporary, writer, digest.hexdigest(),
                                item['bytes'] + len(suffix or b''), unsupported_aac))
+                remaining_original -= item['bytes']
             progress(f"Saving additions {start + 1}–{start + len(batch)}/{len(plan)}…")
             for _, _, writer, _, _, _ in copied:
                 checkpoint()
