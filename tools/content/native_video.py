@@ -315,6 +315,8 @@ def inspect_file(path, *, profile, ffprobe=None, cancelled=None):
         a = audio[0]
         if a.get("codec_name") != "aac" or a.get("profile") not in ("LC", "1") or not 1 <= int(a.get("channels", 0)) <= 2 or not 8000 <= int(a.get("sample_rate", 0)) <= 48000:
             raise ValueError("Native video audio needs mono/stereo AAC-LC at 8–48 kHz")
+        if float(a.get("duration") or 0) > float(v.get("duration") or 0) + .25:
+            raise ValueError("Native video audio extends beyond the picture")
     brand = data.get("format", {}).get("tags", {}).get("major_brand", "").strip()
     extension = ".mov" if brand == "qt" else ".mp4"
     if extension not in profile["video_extensions"]:
@@ -354,10 +356,39 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lamb
             width, height, fps = profile["video_width"], profile["video_height"], profile["video_fps"]
             if profile["video_backend"] == "native-mp4":
                 width,height=limits["h264_width"],limits["h264_height"]
-            command = [str(encoder), "-nostdin", "-v", "error", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2", "-r", str(fps), "-c:v", "libx264", "-profile:v", "baseline", "-level:v", str(limits["h264_level"] / 10), "-pix_fmt", "yuv420p", "-b:v", f"{limits['video_kbps']}k", "-maxrate", f"{limits['max_video_kbps']}k", "-bufsize", f"{limits['buffer_kbits']}k", "-g", str(fps * 2), "-bf", "0", "-c:a", "aac", "-profile:a", "aac_low", "-ar", "44100", "-ac", "2", "-b:a", f"{limits['audio_kbps']}k", "-movflags", "+faststart", str(temporary)]
             if relocate:
                 command = [str(encoder), "-nostdin", "-v", "error", "-i", str(source),
                            "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart", str(temporary)]
+            else:
+                probe = ffprobe or shutil.which("ffprobe")
+                if not probe:
+                    raise ValueError("ffprobe is required to prepare native video")
+                duration_probe = [str(probe), "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(source)]
+                with tempfile.TemporaryFile() as duration_output:
+                    process = subprocess.Popen(duration_probe, stdin=subprocess.DEVNULL, stdout=duration_output,
+                                               stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
+                    try:
+                        deadline = time.monotonic() + 60
+                        while process.poll() is None:
+                            checkpoint()
+                            if time.monotonic() >= deadline:
+                                raise ValueError("Could not determine the video track duration")
+                            try:
+                                process.wait(timeout=.2)
+                            except subprocess.TimeoutExpired:
+                                pass
+                        duration_output.seek(0)
+                        duration_text = duration_output.read(64).decode("ascii", errors="replace").strip()
+                        try:
+                            duration = Fraction(duration_text)
+                        except (ValueError, ZeroDivisionError):
+                            raise ValueError("Could not determine the video track duration") from None
+                        if process.returncode or not 0 < duration <= 86400:
+                            raise ValueError("Could not determine the video track duration")
+                    finally:
+                        if process.poll() is None:
+                            process.kill(); process.wait()
+                command = [str(encoder), "-nostdin", "-v", "error", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2", "-r", str(fps), "-c:v", "libx264", "-profile:v", "baseline", "-level:v", str(limits["h264_level"] / 10), "-pix_fmt", "yuv420p", "-b:v", f"{limits['video_kbps']}k", "-maxrate", f"{limits['max_video_kbps']}k", "-bufsize", f"{limits['buffer_kbits']}k", "-g", str(fps * 2), "-bf", "0", "-af", "aresample=async=1:first_pts=0,apad", "-c:a", "aac", "-profile:a", "aac_low", "-ar", "44100", "-ac", "2", "-b:a", f"{limits['audio_kbps']}k", "-t", duration_text, "-movflags", "+faststart", str(temporary)]
             with tempfile.TemporaryFile() as errors:
                 process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors, creationflags=NO_WINDOW)
                 try:
