@@ -776,7 +776,9 @@ size_t ln_pp_usb_storage_write(const uint8_t *input, size_t length) {
             size_t sent=storage_tx_bytes;storage_tx_pointer=0;storage_tx_bytes=0;return sent;
         }
         if(!input||!length||!ln_usb_connected()||ln_usb.active[5])return 0;
-        if(length>4096u)length=4096u;
+        /* One dTD describes five 4 KiB pages; a 16 KiB span fits even when
+         * the ATA buffer begins partway into its first page. */
+        if(length>16384u)length=16384u;
         volatile uint8_t *physical=(volatile uint8_t *)ln_platform_uncached_address((uintptr_t)input);
         if(prime(5,physical,(uint16_t)length)){storage_tx_pointer=input;storage_tx_bytes=(uint16_t)length;}
         return 0;
