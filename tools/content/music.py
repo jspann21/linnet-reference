@@ -8,6 +8,7 @@ from __future__ import annotations
 import ctypes
 from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from contextlib import nullcontext
 import os
 from typing import Callable
 import hashlib
@@ -551,7 +552,7 @@ def _probe(path: Path, executable: str, *, exact_frames: bool = True,
                  data_bytes=path.stat().st_size, tags=tags)
 
 
-def _mp3_header_frames(path: Path, info, cancelled=lambda: False) -> int:
+def _mp3_header_frames(path: Path, info, cancelled=lambda: False, stream=None) -> int:
     """Read an exact Xing/Info or VBRI sample count without scanning the MP3."""
     rate = int(info.sample_rate)
     # Mutagen only assigns a known bitrate mode after finding a Xing/Info or
@@ -564,7 +565,7 @@ def _mp3_header_frames(path: Path, info, cancelled=lambda: False) -> int:
         return 0
     version, mode = float(info.version), int(info.mode)
     side = (21 if mode == 3 else 36) if version == 1 else (13 if mode == 3 else 21)
-    with path.open("rb") as raw_stream:
+    with path.open("rb") if stream is None else nullcontext(stream) as raw_stream:
         stream = _CancellableReader(raw_stream, cancelled)
         stream.seek(int(info.frame_offset) + side)
         marker = stream.read(4)
@@ -608,12 +609,12 @@ def _mp3_header_frames(path: Path, info, cancelled=lambda: False) -> int:
 
 
 def _quick_frames(path: Path, info, codec_name: str, rate: int,
-                  cancelled=lambda: False) -> int:
+                  cancelled=lambda: False, stream=None) -> int:
     """Return exact container/header samples, or zero to request full probing."""
     if codec_name == "flac":
         frames = int(getattr(info, "total_samples", 0))
     elif codec_name == "mp3":
-        frames = _mp3_header_frames(path, info, cancelled)
+        frames = _mp3_header_frames(path, info, cancelled, stream)
     else:
         # Ogg uses the final granule position and WavPack uses its total-sample
         # header (or block indices), all of which Mutagen exposes as length.
@@ -656,10 +657,11 @@ def _quick_metadata(path: Path, cancelled=lambda: False, *, include_cover=False)
     # Raw AAC still needs probing; MP4's sample entry identifies its codec.
     if path.suffix.lower() not in (".mp3", ".m4a", ".m4b", ".flac", ".flc", ".ogg", ".opus", ".ops", ".wv"):
         return None
+    stream = None
     try:
-        with path.open('rb') as stream:
-            audio = mutagen.File(_CancellableReader(stream, cancelled),
-                                 easy=path.suffix.lower() not in ('.m4a', '.m4b'))
+        stream = path.open('rb')
+        reader = _CancellableReader(stream, cancelled)
+        audio = mutagen.File(reader, easy=path.suffix.lower() not in ('.m4a', '.m4b'))
         _check_cancel(cancelled)
         mp3_cover = None
         if include_cover and type(audio).__name__ == 'EasyMP3' and audio.tags is not None:
@@ -684,17 +686,15 @@ def _quick_metadata(path: Path, cancelled=lambda: False, *, include_cover=False)
         if type(audio).__name__ == "MP4":
             codec_name = {"mp4a.40.2": "aac", "alac": "alac"}.get(audio.info.codec)
             from mutagen.mp4 import Atoms
-            with path.open('rb') as stream:
-                reader = _CancellableReader(stream, cancelled)
-                atoms = Atoms(reader)
-                audio_tracks = 0
-                for track in atoms[b'moov'].findall(b'trak'):
-                    ok, handler = track[b'mdia', b'hdlr'].read(reader)
-                    if not ok:
-                        return None
-                    audio_tracks += handler[8:12] == b'soun'
-                if audio_tracks != 1:
+            atoms = Atoms(reader)
+            audio_tracks = 0
+            for track in atoms[b'moov'].findall(b'trak'):
+                ok, handler = track[b'mdia', b'hdlr'].read(reader)
+                if not ok:
                     return None
+                audio_tracks += handler[8:12] == b'soun'
+            if audio_tracks != 1:
+                return None
         if codec_name is None:
             return None
         info = audio.info
@@ -719,7 +719,7 @@ def _quick_metadata(path: Path, cancelled=lambda: False, *, include_cover=False)
             if key + "number" in tags:
                 tags[key] = tags[key + "number"]
         result = dict(codec=CODECS[codec_name], channels=channels, rate=rate, bits=bits,
-                      frames=_quick_frames(path, info, codec_name, rate, cancelled), data_offset=0,
+                      frames=_quick_frames(path, info, codec_name, rate, cancelled, stream), data_offset=0,
                       data_bytes=path.stat().st_size, tags=tags)
         if include_cover and type(audio).__name__ == 'EasyMP3':
             result['_embedded_cover'] = mp3_cover
@@ -730,6 +730,9 @@ def _quick_metadata(path: Path, cancelled=lambda: False, *, include_cover=False)
         return result
     except (mutagen.MutagenError, ValueError, AttributeError, TypeError, KeyError, struct.error):
         return None
+    finally:
+        if stream is not None:
+            stream.close()
 
 
 class _MetadataCache:
