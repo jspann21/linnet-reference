@@ -29,7 +29,13 @@ def _windows_storage(root):
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $p=Get-Partition -DriveLetter {letter}
 $d=Get-Disk -Number $p.DiskNumber
-$v=Get-Volume -DriveLetter {letter}
+$volumes=@(Get-CimInstance Win32_Volume -Filter "DriveLetter='{letter}:'")
+if ($volumes.Count -ne 1) {{ throw 'Could not resolve the mounted iPod volume' }}
+$v=$volumes[0]
+if ($v.DeviceID -notin $p.AccessPaths) {{
+ $bound=Get-Volume -Partition $p
+ if ($bound.UniqueId -ne $v.DeviceID) {{ throw 'Mounted iPod volume does not match its partition' }}
+}}
 $w=Get-CimInstance Win32_DiskDrive | Where-Object Index -eq $p.DiskNumber
 $parent=(Get-PnpDeviceProperty -InstanceId $w.PNPDeviceID -KeyName 'DEVPKEY_Device_Parent').Data
 for ($depth=0; $depth -lt 4 -and $parent -notmatch '^USB\\VID_[0-9A-F]{{4}}&PID_[0-9A-F]{{4}}\\'; $depth++) {{
@@ -40,7 +46,7 @@ if ($u.Count -ne 1) {{ throw 'Could not resolve the mounted iPod USB identity' }
 @{{disk_number=$p.DiskNumber;disk_serial=$w.SerialNumber.Trim();disk_bytes=[long]$d.Size;
 model=$w.Model;pnp_id=$w.PNPDeviceID;usb_pnp_id=$u[0].DeviceID;bus_type=[string]$d.BusType;sector_bytes=$d.LogicalSectorSize;
 partition_offset=[long]$p.Offset;partition_bytes=[long]$p.Size;drive='{letter}:';
-volume_label=$v.FileSystemLabel;filesystem=$v.FileSystem;volume_id=$v.UniqueId}} | ConvertTo-Json -Compress
+volume_label=$v.Label;filesystem=$v.FileSystem;volume_id=$v.DeviceID}} | ConvertTo-Json -Compress
 """
     try:
         result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
