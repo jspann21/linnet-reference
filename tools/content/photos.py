@@ -262,7 +262,8 @@ def _render_photo(path, fallback, max_dimension, viewport_width, viewport_height
                     raise ValueError('fallback JPEG exceeds baseline format/size bounds')
                 orientation = source_orientation
                 fallback_crc = _crc(path.read_bytes())
-            else:
+            drafted = not fallback and original.format == 'JPEG'
+            if drafted:
                 side = 2 * max(max_dimension, viewport_width, viewport_height,
                                *(grid_shape or ()))
                 original.draft(original.mode, (side, side))
@@ -280,8 +281,11 @@ def _render_photo(path, fallback, max_dimension, viewport_width, viewport_height
     except (OSError, ValueError, SyntaxError, Image.DecompressionBombError) as error:
         raise SourceError(f'Could not prepare photo {path}: {error}', path) from error
 
-    if source_orientation in (5, 6, 7, 8):
-        width, height = height, width
+    if drafted:
+        if source_orientation in (5, 6, 7, 8):
+            width, height = height, width
+    else:
+        width, height = image.size
     thumb = Image.new('RGB', (THUMB, THUMB), (0, 0, 0))
     tw, th = _fit(width, height, THUMB, THUMB)
     thumb.paste(image.resize((tw, th), Image.Resampling.LANCZOS, reducing_gap=3.0),
