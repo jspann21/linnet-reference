@@ -248,7 +248,7 @@ def mark_unsupported(path, cache):
 
 
 def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal=None,
-                 local_copy=None):
+                 local_copy=None, verified_copy=None):
     """Atomically augment an iPod copy; retain its compressed audio and tags."""
     from .guard import hash_file
     path, cache = Path(path), Path(cache)
@@ -314,9 +314,18 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
                     raise OSError('AAC source changed during preparation')
                 writer.write(suffix); writer.flush(); os.fsync(writer.fileno())
             checkpoint()
+            verified_before = path.stat()
             if (hash_file(path, before.st_size + len(suffix)) != digest.hexdigest()
                     or original_size(path) != before.st_size):
                 raise OSError('AAC prepared copy did not verify')
+            verified_after = path.stat()
+            if ((verified_before.st_dev, verified_before.st_ino, verified_before.st_size,
+                 verified_before.st_mtime_ns, verified_before.st_ctime_ns) !=
+                (verified_after.st_dev, verified_after.st_ino, verified_after.st_size,
+                 verified_after.st_mtime_ns, verified_after.st_ctime_ns)):
+                raise OSError('AAC prepared copy changed during verification')
+            if verified_copy is not None:
+                verified_copy(verified_after)
             return True
         temporary = path.with_name('L' + uuid.uuid4().hex[:7] + '.TMP')
         owned = False

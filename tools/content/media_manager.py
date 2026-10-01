@@ -1129,6 +1129,7 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
         progress(f'{label} seeks {completed[kind]}/{totals[kind]} · {left} left{eta}: {path.name}')
         started = time.monotonic()
         metadata_seed = None
+        verified_stamp = None
         if suffix in ('.m4a', '.m4b'):
             def seed_local(local):
                 nonlocal metadata_seed
@@ -1139,9 +1140,13 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
                     metadata_seed = (metadata, metadata.pop('_embedded_cover', None))
                 except (OSError, ValueError, subprocess.SubprocessError):
                     pass  # The library compiler can still read the iPod copy.
+            def retain_verified(info):
+                nonlocal verified_stamp
+                verified_stamp = _receipt_stamp(info)
             outcome = prepare_aac(path, cache / 'aac-seek', checkpoint=checkpoint,
                                   recovery=aac_recovery, journal=record,
-                                  local_copy=seed_local if not force else None)
+                                  local_copy=seed_local if not force else None,
+                                  verified_copy=retain_verified if not force else None)
             if outcome:
                 prepared = True
                 report['steps'].append(dict(prepared_aac=str(path.relative_to(root))))
@@ -1157,7 +1162,7 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
                 record()
         if outcome is not None:
             after = path.stat()
-            if outcome and metadata_seed is not None:
+            if outcome and metadata_seed is not None and verified_stamp == _receipt_stamp(after):
                 music_seeds.append((path, after, *metadata_seed))
                 seed_bytes += len(metadata_seed[1] or b'')
                 if len(music_seeds) >= 128 or seed_bytes >= 32 * 1024 * 1024:
