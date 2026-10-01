@@ -22,7 +22,7 @@ from fractions import Fraction
 from functools import lru_cache
 
 from . import media_manager as media
-from .host_state import cache_root, save_json
+from .host_state import cache_root, cache_volume_scope, save_json
 from .inventory import file_records
 from .music import _device_media_path
 from .guard import guarded_path as _plain, guard_volume as _volume_guard, hash_file as _hash
@@ -577,7 +577,7 @@ def _metadata(identity, files):
     with closing(sqlite3.connect(f'file:{database.as_posix()}?mode=ro', uri=True)) as connection:
         for relative, size, mtime, value in connection.execute(
                 'SELECT relative,size,mtime,value FROM metadata WHERE source=? AND parser=?',
-                (str(root), 'existing')):
+                (cache_volume_scope(root), 'existing')):
             rows[relative.casefold()] = (size, mtime, json.loads(value))
     result = []
     aliases = {}
