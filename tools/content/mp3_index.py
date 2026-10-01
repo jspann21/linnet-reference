@@ -29,15 +29,18 @@ def executable():
         return bundled
     from tools.studio.build import toolchain
     compiler = toolchain()['compiler']
-    sources = ['tools/content/mp3_index.c', 'services/audio/mp3/mp3.c']
+    sources = ['tools/content/mp3_index.c', 'services/audio/mp3/mp3.c',
+               'boot/src/linnet_boot.c']
     sources += ['third_party/libmad/' + name + '.c' for name in
                 ('bit', 'frame', 'huffman', 'layer12', 'layer3', 'stream', 'synth')]
-    flags = ['-O3', '-fwrapv', '-fno-strict-aliasing', '-DLINNET_PROFILE_RELEASE=1', '-I.']
+    flags = ['-O3', '-fwrapv', '-fno-strict-aliasing', '-DLINNET_PROFILE_RELEASE=1',
+             '-I.', '-Iboot/include']
     digest = hashlib.sha256(compiler['sha256'].encode())
     digest.update('\0'.join(flags).encode())
     inputs = set(sources)
     for folder in ('services/audio/mp3', 'third_party/libmad', 'boot/include', 'hal/api'):
         inputs.update(p.relative_to(ROOT).as_posix() for p in (ROOT / folder).rglob('*.h'))
+    inputs.update(p.relative_to(ROOT).as_posix() for p in (ROOT / 'boot/src').glob('crc32*.inc'))
     for name in sorted(inputs):
         digest.update(name.encode()); digest.update((ROOT / name).read_bytes())
     directory = ROOT / 'out/mp3-index' / digest.hexdigest()[:24]
