@@ -16,6 +16,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import threading
 import time
 import unicodedata
 import uuid
@@ -507,6 +508,38 @@ def additions(root, pending, *, snapshots=None):
     return list(planned.values())
 
 
+def _prepare_import_aac(item, scratch, cache, ffprobe, cancelled, stopped):
+    from .aac_index import import_suffix
+
+    def check():
+        if stopped.is_set() or cancelled():
+            raise Cancelled('Stopped while preparing AAC on the computer.')
+
+    source = Path(item['source'])
+    _plain(source, Path(source.anchor))
+    before = source.stat()
+    if (before.st_size, before.st_mtime_ns) != (item['bytes'], item['mtime_ns']):
+        raise ValueError(f"Source changed since selection: {source}")
+    local = scratch / ('source' + source.suffix.lower())
+    with source.open('rb') as reader, local.open('xb') as frozen:
+        while chunk := reader.read(1024 * 1024):
+            check()
+            frozen.write(chunk)
+    if (_receipt_stamp(before) != _receipt_stamp(source.stat()) or
+            local.stat().st_size != before.st_size):
+        raise ValueError(f"Source changed during preparation: {source}")
+    suffix, unsupported = import_suffix(local, cache / 'aac-import', checkpoint=check)
+    metadata_seed = None
+    try:
+        from .music import _read_metadata
+        metadata = _read_metadata(local, ffprobe, True, cancelled, include_cover=True)
+        metadata_seed = (metadata, metadata.pop('_embedded_cover', None))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass  # A cache miss lets normal library preparation retry.
+    check()
+    return local, suffix, unsupported, metadata_seed, _receipt_stamp(before)
+
+
 def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress,
                     *, cache, cancelled, stage_progress=lambda current, total, phase: None):
     # Queue a bounded set of writes before flushing and reading them back. On
@@ -538,66 +571,75 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
         copied = []
         music_seeds = []
         with ExitStack() as handles:
-            for offset, (item, temporary) in enumerate(batch):
-                checkpoint()
-                stage_progress(start + offset / 2, len(plan), 'Copying originals')
-                source, destination = Path(item['source']), Path(item['destination'])
-                progress(f"Adding {start + offset + 1}/{len(plan)}: {source.name}")
-                _plain(source, Path(source.anchor))
-                _plain(destination, root)
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                _plain(destination.parent, root)
-                info = source.stat()
-                if (info.st_size, info.st_mtime_ns) != (item['bytes'], item['mtime_ns']):
-                    raise ValueError(f"Source changed since selection: {source}")
-                suffix = None
-                unsupported_aac = False
-                metadata_seed = None
-                copy_source = source
-                if item['kind'] == 'Music' and source.suffix.lower() in ('.m4a', '.m4b'):
-                    from .aac_index import import_suffix
-                    scratch = Path(handles.enter_context(tempfile.TemporaryDirectory(
-                        prefix='aac-source-', dir=cache)))
-                    copy_source = scratch / ('source' + source.suffix.lower())
-                    with source.open('rb') as reader, copy_source.open('xb') as frozen:
+            aac_positions = [offset for offset, (item, _) in enumerate(batch)
+                             if item['kind'] == 'Music' and
+                             Path(item['destination']).suffix.lower() in ('.m4a', '.m4b')]
+            scratches = {offset: Path(handles.enter_context(tempfile.TemporaryDirectory(
+                prefix='aac-source-', dir=cache))) for offset in aac_positions}
+            stopped = threading.Event()
+            if aac_positions:
+                from .aac_index import executable
+                executable()
+            executor = handles.enter_context(ThreadPoolExecutor(max_workers=2)) if aac_positions else None
+            upcoming = iter(aac_positions)
+            futures = {}
+            ffprobe = shutil.which('ffprobe') if aac_positions else None
+            def fill_aac():
+                while executor is not None and len(futures) < 2:
+                    offset = next(upcoming, None)
+                    if offset is None:
+                        break
+                    futures[offset] = executor.submit(_prepare_import_aac, batch[offset][0],
+                        scratches[offset], cache, ffprobe, cancelled, stopped)
+            fill_aac()
+            try:
+                for offset, (item, temporary) in enumerate(batch):
+                    checkpoint()
+                    stage_progress(start + offset / 2, len(plan), 'Copying originals')
+                    source, destination = Path(item['source']), Path(item['destination'])
+                    progress(f"Adding {start + offset + 1}/{len(plan)}: {source.name}")
+                    _plain(source, Path(source.anchor))
+                    _plain(destination, root)
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    _plain(destination.parent, root)
+                    info = source.stat()
+                    if (info.st_size, info.st_mtime_ns) != (item['bytes'], item['mtime_ns']):
+                        raise ValueError(f"Source changed since selection: {source}")
+                    suffix = None
+                    unsupported_aac = False
+                    metadata_seed = None
+                    copy_source = source
+                    if offset in futures:
+                        copy_source, suffix, unsupported_aac, metadata_seed, source_stamp = futures.pop(offset).result()
+                        fill_aac()
+                        if _receipt_stamp(info) != source_stamp:
+                            raise ValueError(f"Source changed during preparation: {source}")
+                        checkpoint()
+                    if shutil.disk_usage(root).free < remaining_original + len(suffix or b'') + 1024 * 1024:
+                        raise ValueError('Not enough space for prepared additions')
+                    digest = hashlib.sha256()
+                    writer = handles.enter_context(temporary.open('xb'))
+                    owned_temporaries.append((temporary, root))
+                    with copy_source.open('rb') as reader:
                         while chunk := reader.read(1024 * 1024):
                             checkpoint()
-                            frozen.write(chunk)
-                    if (_receipt_stamp(info) != _receipt_stamp(source.stat()) or
-                            copy_source.stat().st_size != info.st_size):
-                        raise ValueError(f"Source changed during preparation: {source}")
-                    suffix, unsupported_aac = import_suffix(copy_source, cache / 'aac-import', checkpoint=checkpoint)
-                    # The stable host snapshot already contains the exact tags
-                    # and cover that will be copied. Save the result only after
-                    # the destination has passed its full readback check.
-                    try:
-                        from .music import _read_metadata
-                        metadata = _read_metadata(copy_source, shutil.which('ffprobe'), True,
-                                                  cancelled, include_cover=True)
-                        metadata_seed = (metadata, metadata.pop('_embedded_cover', None))
-                    except (OSError, ValueError, subprocess.SubprocessError):
-                        pass  # A cache miss lets normal library preparation retry.
-                    checkpoint()
-                if shutil.disk_usage(root).free < remaining_original + len(suffix or b'') + 1024 * 1024:
-                    raise ValueError('Not enough space for prepared additions')
-                digest = hashlib.sha256()
-                writer = handles.enter_context(temporary.open('xb'))
-                owned_temporaries.append((temporary, root))
-                with copy_source.open('rb') as reader:
-                    while chunk := reader.read(1024 * 1024):
-                        checkpoint()
-                        writer.write(chunk)
-                        digest.update(chunk)
-                if suffix:
-                    writer.write(suffix)
-                    digest.update(suffix)
-                writer.flush()
-                after = source.stat()
-                if _receipt_stamp(after) != _receipt_stamp(info):
-                    raise ValueError(f"Source changed during copy: {source}")
-                copied.append((item, temporary, writer, digest.hexdigest(),
-                               item['bytes'] + len(suffix or b''), unsupported_aac, metadata_seed))
-                remaining_original -= item['bytes']
+                            writer.write(chunk)
+                            digest.update(chunk)
+                    if suffix:
+                        writer.write(suffix)
+                        digest.update(suffix)
+                    writer.flush()
+                    after = source.stat()
+                    if _receipt_stamp(after) != _receipt_stamp(info):
+                        raise ValueError(f"Source changed during copy: {source}")
+                    copied.append((item, temporary, writer, digest.hexdigest(),
+                                   item['bytes'] + len(suffix or b''), unsupported_aac, metadata_seed))
+                    remaining_original -= item['bytes']
+            except BaseException:
+                stopped.set()
+                for future in futures.values():
+                    future.cancel()
+                raise
             progress(f"Saving additions {start + 1}–{start + len(batch)}/{len(plan)}…")
             for _, _, writer, _, _, _, _ in copied:
                 checkpoint()
