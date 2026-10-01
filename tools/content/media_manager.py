@@ -1497,7 +1497,8 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                     mark_publication()
                     file_publication_started = True
                     result = publish_video(package, title=label, library_key=relative,
-                                           ffprobe=ffprobe, source_to_preserve=source,
+                                           ffprobe=ffprobe,
+                                           source_to_preserve=source if source.is_relative_to(root) else None,
                                            **target_args(identity))
                     output_name = Path(result['package']).relative_to(root).as_posix()
                     outputs = [(output_name, result["candidate_sha256"])]
@@ -1598,7 +1599,8 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
             mark_publication()
             file_publication_started = True
             result = publish_video(package, title=label, library_key=relative,
-                                   source_to_preserve=source, **target_args(identity))
+                                   source_to_preserve=source if source.is_relative_to(root) else None,
+                                   **target_args(identity))
             catalog_snapshot.clear()
             output_name = Path(result['package']).relative_to(root).as_posix()
             published.append(result)
