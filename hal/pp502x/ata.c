@@ -322,7 +322,14 @@ bool ln_ata_power_on(uint32_t now) {
 }
 static void transfer_begin(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *bytes){
 #if ATA_READ_DMA
-    if(dma_enabled&&op==LN_ATA_READ&&sectors>sizeof(dma_buffer)/512u)
+    bool dma_transfer=dma_enabled&&op==LN_ATA_READ;
+#if defined(LINNET_SOC_PP5022)
+    /* DMA writes are useful on this flash adapter. Keep rotating drives and
+     * other adapters on the established PIO path. */
+    if(dma_enabled&&op==LN_ATA_WRITE&&info.compact_flash&&(info.quirks&8u)&&
+       same_string(info.firmware,"iFlash85",9u))dma_transfer=true;
+#endif
+    if(dma_transfer&&sectors>sizeof(dma_buffer)/512u)
         sectors=sizeof(dma_buffer)/512u;
 #endif
     transfer_operation=op;transfer_count=sectors;transfer_done=0;transfer_buffer=bytes;
@@ -336,17 +343,23 @@ static void transfer_begin(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8
     if(op==LN_ATA_WRITE)write_dirty=true;
 #endif
 #if ATA_READ_DMA
-    if(dma_enabled&&op==LN_ATA_READ){
+    if(dma_transfer){
         /* Only the uncached alias touches this dedicated buffer. Caller cache
-         * lines are updated by CPU copy after the engine has stopped. */
+         * lines are updated by CPU copy after a read engine has stopped. */
+        if(op==LN_ATA_WRITE){
+            extern void ln_memory_copy(void *,const void *,uint32_t);
+            ln_memory_copy(dma_bytes(),bytes,sectors*512u);
+        }
         /* PIO uses alternate status, leaving the previous device INTRQ
          * asserted. Acknowledge it before unmasking and clearing the latch. */
         (void)COMMAND;CONTROL=0u;settle();IDE_CFG|=8u;
         IDE_DMA_CONTROL|=2u;
         R32(0xc3000408u)=sectors*512u-4u;
         R32(0xc300040cu)=(uint32_t)(uintptr_t)dma_bytes();
-        IDE_DMA_CONTROL|=8u;IDE_CFG|=0x8000u;
-        uint8_t cmd=extended?0x25u:0xc8u;
+        if(op==LN_ATA_READ)IDE_DMA_CONTROL|=8u;
+        else IDE_DMA_CONTROL&=~8u;
+        IDE_CFG|=0x8000u;
+        uint8_t cmd=op==LN_ATA_READ?(extended?0x25u:0xc8u):(extended?0x35u:0xcau);
         ATA_RECORD(3,cmd);COMMAND=cmd;++info.commands;
         IDE_DMA_CONTROL|=1u;not_before=ln_time_us()+1u;
         phase=DMA_TRANSFER;return;
@@ -413,9 +426,12 @@ void ln_ata_step(uint32_t now) {
         if(!status||status==0xffu||(status&0xa9u)){
             dma_enabled=false;dma_failed=true;fail(LN_ATA_IO);return;
         }
-        extern void ln_memory_copy(void *,const void *,uint32_t);
-        ln_memory_copy(transfer_buffer,dma_bytes(),transfer_count*512u);
-        transfer_done=transfer_count;info.sectors_read+=transfer_count;
+        if(transfer_operation==LN_ATA_READ){
+            extern void ln_memory_copy(void *,const void *,uint32_t);
+            ln_memory_copy(transfer_buffer,dma_bytes(),transfer_count*512u);
+            info.sectors_read+=transfer_count;
+        }else info.sectors_written+=transfer_count;
+        transfer_done=transfer_count;
         phase=FINISH;
     }
 #endif
