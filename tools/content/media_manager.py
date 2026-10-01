@@ -1319,13 +1319,36 @@ def _prepare_music(root, cache, identity, skipped, *, ffprobe, verification, for
     checkpoint()
     progress("Publishing the music index and artwork…")
     begin_publication("Music")
-    published = [publish_music(stage, progress=progress, **target_args(identity))]
+    publication = publish_music(stage, progress=progress, **target_args(identity))
+    verified_outputs = publication.pop('_verified_outputs')
+    published = [publication]
     output_paths = [".LINNET/LIBRARY.PDB"] + [entry["path"].lstrip("/") for entry in preparation["entries"]
                     if entry["storage"] == "staged"] + [
         ".LINNET/ART/" + path.name for path in sorted((stage / "ART").glob("*.RGB"))]
     if (stage / "COVERS.CFL").exists(): output_paths.append(".LINNET/COVERS.CFL")
     if (stage / "BROWSE.BIN").exists(): output_paths.append(".LINNET/BROWSE.BIN")
-    return output_paths, published
+    return output_paths, published, verified_outputs
+
+
+def _music_outputs_from_publication(root, output_paths, verified_outputs, identity):
+    """Reuse fresh artwork readbacks and hash all other published outputs."""
+    _volume_guard(identity)
+    outputs = []
+    for name in output_paths:
+        proof = verified_outputs.get(name)
+        path = root / name
+        _plain(path, root)
+        if proof is None:
+            outputs.append((name, _hash(path)))
+            continue
+        if not isinstance(proof, tuple) or len(proof) != 2:
+            raise ValueError(f"invalid music publication proof: {name}")
+        digest, stamp = proof
+        info = path.stat()
+        if _receipt_stamp(info) != stamp:
+            raise ValueError(f"music output changed after publication: {path}")
+        outputs.append((name, digest))
+    return outputs
 
 
 def _prepare_photos(root, cache, identity, media_profile, skipped, retail_photos, *,
@@ -1780,7 +1803,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     nonlocal publication_started
                     publication_started = True
                 if kind == "Music":
-                    output_paths, published = _prepare_music(root, cache, identity, skipped["Music"],
+                    output_paths, published, music_proofs = _prepare_music(root, cache, identity, skipped["Music"],
                         ffprobe=ffprobe, verification=music_verification, force=force,
                         cancelled=cancelled, checkpoint=checkpoint, progress=progress,
                         report=report, begin_publication=begin_publication)
@@ -1814,6 +1837,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 if kind == 'Photos':
                     checkpoint()
                     outputs = _published_photo_output(root, identity, output_paths, published)
+                elif kind == 'Music':
+                    outputs = _music_outputs_from_publication(root, output_paths, music_proofs, identity)
                 else:
                     outputs = [(name, _hash(root / name)) for name in output_paths]
                 state[kind] = dict(signature=signature, outputs=outputs)

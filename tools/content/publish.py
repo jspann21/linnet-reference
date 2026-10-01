@@ -444,7 +444,7 @@ def _copy_verified(source: Path, destination: Path, item: dict, root: Path, guar
     return True
 
 
-def _copy_art_batch(batch, stage: Path, root: Path, guard) -> None:
+def _copy_art_batch(batch, stage: Path, root: Path, guard) -> list:
     """Write bounded independent covers before flushing and reading them back."""
     if len(batch) > 16 or any(item['bytes'] not in (8192, 32768) for _, _, item in batch):
         raise ValueError('artwork batch exceeds its file or memory bound')
@@ -469,10 +469,18 @@ def _copy_art_batch(batch, stage: Path, root: Path, guard) -> None:
             guard()
             writer.flush()
             os.fsync(writer.fileno())
+    verified = []
     for _, destination, item in written:
         guard()
+        before = destination.stat()
         if _hash(destination, item['bytes']) != item['sha256']:
             raise OSError(f"copied artwork failed complete readback: {destination}")
+        after = destination.stat()
+        stamp = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != stamp:
+            raise OSError(f"copied artwork changed during readback: {destination}")
+        verified.append((destination, item, stamp))
+    return verified
 
 
 def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
@@ -578,6 +586,7 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
     # Receipt stays on the host; it records uncertainty without writing extra
     # mutable state beside the device's immutable database.
     receipt_path = stage / ("publish-" + uuid.uuid4().hex + ".json")
+    verified_outputs = {}
 
     def record() -> None:
         _write_receipt(receipt_path, receipt)
@@ -587,7 +596,8 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
         art_batch = []
         def flush_art_batch():
             if art_batch:
-                _copy_art_batch(art_batch, stage, root, guard)
+                for destination, item, stamp in _copy_art_batch(art_batch, stage, root, guard):
+                    verified_outputs[destination.relative_to(root).as_posix()] = (item['sha256'], stamp)
                 receipt['copied'] += len(art_batch)
                 art_batch.clear()
         for item in inventory["files"]:
@@ -676,12 +686,19 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
             os.fsync(writer.fileno())
         if _hash(active, inventory["database"]["bytes"]) != inventory["database"]["sha256"]:
             raise OSError("published database readback mismatch")
+        for name, (_, stamp) in verified_outputs.items():
+            path = root / name
+            _plain(path, root)
+            info = path.stat()
+            if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns) != stamp:
+                raise OSError(f"published music asset changed after readback: {path}")
         if backup:
             _finish_backups(receipt, [backup], root, guard)
         receipt.update(passed=True, phase="published", finished_at=time.time(), database=str(active),
                        receipt=str(receipt_path), tracks=inventory["database"]["tracks"],
                        database_reused=database_unchanged)
         record()
+        receipt['_verified_outputs'] = verified_outputs
         return receipt
     except Exception as exc:
         receipt.update(error=str(exc), finished_at=time.time(), receipt=str(receipt_path))
