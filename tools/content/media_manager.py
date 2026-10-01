@@ -584,6 +584,8 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                 from .aac_index import executable
                 executable()
             executor = handles.enter_context(ThreadPoolExecutor(max_workers=2)) if aac_positions else None
+            if executor is not None:
+                handles.callback(stopped.set)
             upcoming = iter(aac_positions)
             futures = {}
             ffprobe = shutil.which('ffprobe') if aac_positions else None
