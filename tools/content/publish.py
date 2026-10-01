@@ -12,6 +12,7 @@ Mode throughout publication and handle reboot only after a successful receipt.
 from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 import base64
 import ctypes
@@ -276,7 +277,7 @@ def validate_stage(stage: Path, *, device_root: Path | None = None,
         if _hash(local, size) != sha:
             raise ValueError(f"staged media hash mismatch: {relative}")
         files[relative] = dict(path=relative, bytes=size, sha256=sha, kind="music")
-    for index in range(info["artwork"]):
+    def check_artwork(index):
         offset = art_offset + index * ART
         identity, path_offset, width, height, encoding, count, crc, reserved = struct.unpack_from("<QIHHIIII", database, offset)
         path = _pool_string(database, pool, path_offset)
@@ -291,9 +292,18 @@ def validate_stage(stage: Path, *, device_root: Path | None = None,
             Path(path).stem != digest[:4].hex().upper()):
             raise ValueError(f"staged artwork identity/CRC mismatch: {relative}")
         record = dict(path=relative, bytes=count, sha256=digest.hex(), kind="art")
-        if relative in files and files[relative] != record:
-            raise ValueError("conflicting artwork short name")
-        files[relative] = record
+        return relative, record
+    if info["artwork"]:
+        # Bound both open files and queued results while preserving database order.
+        with ThreadPoolExecutor(max_workers=min(8, info["artwork"])) as executor:
+            for first in range(0, info["artwork"], 8):
+                pending = [executor.submit(check_artwork, index)
+                           for index in range(first, min(first + 8, info["artwork"]))]
+                for future in pending:
+                    relative, record = future.result()
+                    if relative in files and files[relative] != record:
+                        raise ValueError("conflicting artwork short name")
+                    files[relative] = record
     if (stage / "BROWSE.BIN").exists():
         _plain(stage / "BROWSE.BIN", stage)
         from .browse import prepare as prepare_browse
