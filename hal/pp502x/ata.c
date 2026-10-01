@@ -468,9 +468,13 @@ void ln_ata_step(uint32_t now) {
         * flags. Its mode table, SET FEATURES and LBA probe remain required. */
        info.compact_flash&&(info.quirks&8u)&&same_string(info.firmware,"iFlash85",9u)&&
 #else
-       (identify[49]&0x100u)&&
-       (same_string(info.model,"TOSHIBA MK8010GAH",17u)||
-        same_string(info.model,"TOSHIBA MK3008GAL",17u))&&
+       (((identify[49]&0x100u)&&
+         (same_string(info.model,"TOSHIBA MK8010GAH",17u)||
+          same_string(info.model,"TOSHIBA MK3008GAL",17u)))||
+        /* iFlash85 omits word 49's DMA flag but reports UDMA modes. This
+         * exact CFA adapter is also admitted by the existing LBA probe. */
+        (info.compact_flash&&(info.quirks&8u)&&
+         same_string(info.firmware,"iFlash85",9u)))&&
 #endif
        (R32(0x60006020u)&65535u)==0x7777u&&R32(0x60006034u)==LN_PLL_80&&
        R32(0x600060c4u)==0xc0000000u){
