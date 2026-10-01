@@ -34,7 +34,7 @@ struct player_slot {
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
     struct player_cache_window cache[2];
     uint32_t cache_current;
-    bool cache_enabled,cache_initial;
+    bool cache_enabled,cache_initial,cache_pending;
 #endif
 };
 static struct player_slot slots[2];
@@ -192,7 +192,7 @@ static int read_media(void *context,uint64_t offset,uint8_t *buffer,uint32_t len
 static void clear_slot(struct player_slot *s){
     ln_decoder_close(&s->decoder);s->phase=SLOT_EMPTY;s->buffered=0;
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
-    s->cache_enabled=false;s->cache[0].filling=s->cache[1].filling=false;
+    s->cache_enabled=s->cache_pending=false;s->cache[0].filling=s->cache[1].filling=false;
 #endif
 }
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
@@ -205,8 +205,9 @@ static bool cache_mp3(const char *name){
     return media.media_kind==LN_ATA_MEDIA_ROTATING;
 }
 static void activate_cache(struct player_slot *s){
-    if(io_owner==s)return;
-    s->cache_enabled=cache_mp3(s->path);s->cache_initial=true;s->cache_current=1u;
+    if(io_owner==s){s->cache_pending=true;return;}
+    s->cache_enabled=cache_mp3(s->path);s->cache_pending=false;
+    s->cache_initial=true;s->cache_current=1u;
     for(uint32_t i=0;i<2u;++i)s->cache[i]=(struct player_cache_window){0};
 }
 #endif
@@ -221,7 +222,7 @@ static bool start_slot(struct player_slot *s,const char *name,uint64_t expected,
     s->expected=expected;s->initial=position;s->position_base=0;s->submitted=0;s->token=token;
     s->generation=generation();s->buffered=0;s->rate=0;s->seek_initial=position!=0;
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
-    s->cache_enabled=false;s->cache_initial=true;s->cache_current=1u;
+    s->cache_enabled=s->cache_pending=false;s->cache_initial=true;s->cache_current=1u;
     for(uint32_t i=0;i<2u;++i)s->cache[i]=(struct player_cache_window){0};
 #endif
     s->phase=SLOT_OPEN;s->dsp=*dsp;s->config_rate=config_rate;return true;
@@ -490,6 +491,9 @@ static void player_advance(void){
 #endif
     struct ln_audio_status audio={0};
     if(audio_ready){ln_audio_snapshot(&audio);refresh(&audio);if(audio.fault){fail(12);return;}}
+#if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
+    if(slots[audible].cache_pending&&io_owner!=&slots[audible])activate_cache(&slots[audible]);
+#endif
     if(state.phase==LN_PLAYER_PAUSE)return;
     if(pause_requested&&!io_owner){pause_requested=false;ln_audio_pause();state.phase=LN_PLAYER_PAUSE;return;}
     if(state.phase==LN_PLAYER_DRAIN){
@@ -530,7 +534,7 @@ static void player_advance(void){
     /* Start after the background reserve is available. Next-track I/O still
      * waits for its larger runway; priming need not pay that cost up front. */
     if(state.phase==LN_PLAYER_PRIME&&(s->submitted>=ln_player_background_frames(s->rate)||s->phase==SLOT_EOF)){
-        if(submitted==consumed){(void)ln_audio_stop();audio_ready=false;clear_slot(s);state.phase=LN_PLAYER_IDLE;return;}
+        if(submitted==consumed){stop_player(false);return;}
         /* A paused seek fills a fresh ring while muted. Resume starts DMA;
          * priming must not briefly expose audio before returning to pause. */
         if(seek_paused){seek_paused=false;state.phase=LN_PLAYER_PAUSE;return;}
