@@ -611,6 +611,24 @@ def _quick_metadata(path: Path, cancelled=lambda: False, *, include_cover=False)
             audio = mutagen.File(_CancellableReader(stream, cancelled),
                                  easy=path.suffix.lower() not in ('.m4a', '.m4b'))
         _check_cancel(cancelled)
+        mp3_cover = None
+        if include_cover and type(audio).__name__ == 'EasyMP3' and audio.tags is not None:
+            # EasyID3 already holds the loaded ID3 frames. Its instance-only
+            # fallback exposes APIC without changing the normal tag mappings.
+            easy_tags = audio.tags
+            previous_fallback = easy_tags.GetFallback
+            def picture_frames(id3, key):
+                if key == 'linnet_apic':
+                    return id3.getall('APIC')
+                if previous_fallback is not None:
+                    return previous_fallback(id3, key)
+                raise KeyError(key)
+            easy_tags.GetFallback = picture_frames
+            pictures = easy_tags['linnet_apic']
+            if pictures:
+                picture = next((p for p in pictures if p.type == 3), pictures[0])
+                data = picture.data
+                mp3_cover = data if 0 < len(data) <= 32 * 1024 * 1024 else None
         codec_name = {"MP3": "mp3", "EasyMP3": "mp3", "FLAC": "flac", "OggVorbis": "vorbis",
                       "OggOpus": "opus", "WavPack": "wavpack"}.get(type(audio).__name__)
         if type(audio).__name__ == "MP4":
@@ -653,7 +671,9 @@ def _quick_metadata(path: Path, cancelled=lambda: False, *, include_cover=False)
         result = dict(codec=CODECS[codec_name], channels=channels, rate=rate, bits=bits,
                       frames=_quick_frames(path, info, codec_name, rate, cancelled), data_offset=0,
                       data_bytes=path.stat().st_size, tags=tags)
-        if include_cover and type(audio).__name__ == 'MP4':
+        if include_cover and type(audio).__name__ == 'EasyMP3':
+            result['_embedded_cover'] = mp3_cover
+        elif include_cover and type(audio).__name__ == 'MP4':
             covers = (audio.tags or {}).get('covr') or ()
             cover = bytes(covers[0]) if covers else None
             result['_embedded_cover'] = cover if cover is not None and 0 < len(cover) <= 32 * 1024 * 1024 else None
@@ -1207,7 +1227,7 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
                     else path.relative_to(source).as_posix())
         metadata = cache.get(source, relative, before, prefetched=cache_rows) if cache and not bypass_cache else None
         cover = prefetch_cover(path, before, pool, defer=metadata is None and
-                               path.suffix.lower() in ('.m4a', '.m4b'))
+                               path.suffix.lower() in ('.m4a', '.m4b', '.mp3'))
         future = (pool.submit(_read_metadata, path, ffprobe, existing, cancelled,
                               include_cover=cover is _METADATA_COVER)
                   if metadata is None else None)
