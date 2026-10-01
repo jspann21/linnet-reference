@@ -31,6 +31,13 @@ def _receipt_stamp(info):
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
+def _save_seek_state(path, state):
+    try:
+        _save(path, state)
+    except OSError:
+        pass  # Seek checks are disposable; publication and recovery continue.
+
+
 def discover(*, detailed=False):
     """Find mounted iPods and resolve each through publication guards."""
     if os.name != "nt":
@@ -607,7 +614,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
         report.pop('copies_in_progress', None)
         record()
         if seek_state_changed:
-            _save(seek_state_path, seek_state)
+            _save_seek_state(seek_state_path, seek_state)
         start += len(batch)
         stage_progress(start, len(plan), 'Copying originals')
 
@@ -1079,8 +1086,9 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
         progress(f'{label} seeks {completed[kind]}/{totals[kind]} · {left} left{eta}: {path.name}')
         started = time.monotonic()
         if suffix in ('.m4a', '.m4b'):
-            if prepare_aac(path, cache / 'aac-seek', checkpoint=checkpoint,
-                           recovery=aac_recovery, journal=record):
+            outcome = prepare_aac(path, cache / 'aac-seek', checkpoint=checkpoint,
+                                  recovery=aac_recovery, journal=record)
+            if outcome:
                 prepared = True
                 report['steps'].append(dict(prepared_aac=str(path.relative_to(root))))
                 record()
@@ -1093,19 +1101,21 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
                 prepared = True
                 report['steps'].append(dict(prepared_flac=str(path.relative_to(root))))
                 record()
-        if kind == 'aac' or outcome is not None:
+        if outcome is not None:
             after = path.stat()
+            if not outcome and _receipt_stamp(before) != _receipt_stamp(after):
+                raise ValueError(f'Audio source changed during seek check: {path}')
             seek_state[key] = [after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino]
             pending_checks += 1
             if pending_checks >= 128:
-                _save(seek_state_path, seek_state)
+                _save_seek_state(seek_state_path, seek_state)
                 pending_checks = 0
         recent.append(time.monotonic() - started)
         if len(recent) > 8:
             recent.pop(0)
         completed[kind] += 1
     seek_state = {key: value for key, value in seek_state.items() if key in seen}
-    _save(seek_state_path, seek_state)
+    _save_seek_state(seek_state_path, seek_state)
     stage_progress(1)
     for kind, label in (('aac', 'AAC'), ('flac', 'FLAC')):
         if totals[kind]:
