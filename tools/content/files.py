@@ -62,6 +62,10 @@ def _image_preview_pixels(original, width, height):
     from PIL import Image, ImageOps
     from .photos import _rgb565
 
+    # JPEG decoders can discard high-resolution DCT detail before allocating
+    # pixels that will be downsampled for this small native preview.
+    side = 2 * max(width, height)
+    original.draft('RGB', (side, side))
     oriented = ImageOps.exif_transpose(original)
     try:
         image = oriented.convert('RGB')
