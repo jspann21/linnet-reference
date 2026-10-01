@@ -58,8 +58,8 @@ $ErrorActionPreference='Stop'
 $names=ConvertFrom-Json 'NATIVE_NAMES'
 $items=@()
 $errors=@()
-foreach ($disk in @(Get-Disk | Where-Object {$_.BusType -eq 'USB' -and $_.FriendlyName -in $names})) {
- try {$partitions=@(Get-Partition -DiskNumber $disk.Number | Where-Object {$_.DriveLetter})}
+foreach ($disk in @(Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Disk -Filter 'BusType=7' | Where-Object {$_.FriendlyName -in $names})) {
+ try {$partitions=@(Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Partition -Filter ('DiskNumber='+$disk.Number) | Where-Object {$_.DriveLetter})}
  catch {$errors+=@{drive="Disk $($disk.Number)";message=[string]$_};continue}
  foreach ($partition in $partitions) {
   $drive=[string]$partition.DriveLetter+':'
