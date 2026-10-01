@@ -146,7 +146,7 @@ bool ln_ata_start(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *buffe
     if(!info.initialized || info.failed || info.busy || result_ready || (int32_t)(deadline-now)<=0 ||
        deadline-now>30000000u || op<LN_ATA_READ || op>LN_ATA_WAKE)return false;
     bool transfer=op==LN_ATA_READ || op==LN_ATA_WRITE;
-    if(transfer && (!buffer || !sectors || sectors>(op==LN_ATA_WRITE?LINNET_ATA_MAX_SECTORS:LINNET_ATA_MAX_READ_SECTORS) ||
+    if(transfer && (!buffer || !sectors || sectors>(op==LN_ATA_WRITE?LINNET_ATA_MAX_WRITE_SECTORS:LINNET_ATA_MAX_READ_SECTORS) ||
        lba>=info.sectors || sectors>info.sectors-lba || (op==LN_ATA_WRITE && !info.can_flush)))return false;
     if(!transfer && (buffer || sectors || lba))return false;
     if((op==LN_ATA_FLUSH && !info.can_flush) ||

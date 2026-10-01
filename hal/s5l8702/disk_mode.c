@@ -10,12 +10,12 @@
 /* USB MSC Bulk-Only Transport, one transparent SCSI direct-access LUN.
  * The filesystem owner must have quiesced before entering this exclusive loop. */
 enum { CBW, SEND, READ_WAIT, RECEIVE, WRITE_WAIT, FLUSH_WAIT, DISCARD, STATUS, STATUS_WAIT, INVALID };
-enum { WRITE_BUFFER_BYTES=LINNET_ATA_MAX_SECTORS*512u, READ_BUFFER_BYTES=8192u,
+enum { WRITE_BUFFER_BYTES=LINNET_ATA_MAX_WRITE_SECTORS*512u, READ_BUFFER_BYTES=8192u,
        USB_SEND_BYTES=16384u };
-static uint8_t buffer[READ_BUFFER_BYTES] __attribute__((aligned(32)));
+static uint8_t buffer[WRITE_BUFFER_BYTES>READ_BUFFER_BYTES?WRITE_BUFFER_BYTES:READ_BUFFER_BYTES] __attribute__((aligned(32)));
 static uint8_t wrapper[31],status_bytes[13];
 static uint32_t state,tag,residue,length,position,lba,blocks,block_bytes,block_shift,scale,capacity;
-static uint32_t batch_blocks;
+static uint32_t batch_blocks,write_batch_bytes;
 static uint8_t status,sense_key,sense_code;
 static bool direction_in,reading,writing,eject,write_enabled,dirty;
 static const char *device_serial;
@@ -32,7 +32,7 @@ static void failure(uint8_t key,uint8_t code) {
 static bool disk_request(enum ln_ata_op operation) {
     bool transfer=operation==LN_ATA_READ || operation==LN_ATA_WRITE;
     if(transfer){
-        batch_blocks=(operation==LN_ATA_READ?READ_BUFFER_BYTES:WRITE_BUFFER_BYTES)>>block_shift;
+        batch_blocks=(operation==LN_ATA_READ?READ_BUFFER_BYTES:write_batch_bytes)>>block_shift;
         if(batch_blocks>blocks)batch_blocks=blocks;
     }
     return ln_ata_start(operation,operation==LN_ATA_READ || operation==LN_ATA_WRITE?(uint64_t)lba*scale:0,
@@ -126,7 +126,7 @@ static void command(void) {
         if(c[0]==0x2a && !write_enabled){failure(7,0x27);break;}
         reading=c[0]==0x28;writing=!reading;
         if(reading){if(!disk_request(LN_ATA_READ))failure(3,0x11);else state=READ_WAIT;}
-        else {state=RECEIVE;batch_blocks=WRITE_BUFFER_BYTES>>block_shift;if(batch_blocks>blocks)batch_blocks=blocks;length=batch_blocks*block_bytes;}
+        else {state=RECEIVE;batch_blocks=write_batch_bytes>>block_shift;if(batch_blocks>blocks)batch_blocks=blocks;length=batch_blocks*block_bytes;}
         break;
     case 0x35: /* SYNCHRONIZE CACHE */
     case 0x1b: /* START STOP UNIT */
@@ -149,7 +149,7 @@ static void step(void) {
         if(state==READ_WAIT){length=batch_blocks*block_bytes;position=0;state=SEND;return;}
         if(state==FLUSH_WAIT){dirty=false;state=STATUS;return;}
         lba+=batch_blocks;blocks-=batch_blocks;position=0;
-        if(blocks){batch_blocks=WRITE_BUFFER_BYTES>>block_shift;if(batch_blocks>blocks)batch_blocks=blocks;length=batch_blocks*block_bytes;state=RECEIVE;}
+        if(blocks){batch_blocks=write_batch_bytes>>block_shift;if(batch_blocks>blocks)batch_blocks=blocks;length=batch_blocks*block_bytes;state=RECEIVE;}
         else if(disk_request(LN_ATA_FLUSH))state=FLUSH_WAIT;else failure(4,0x44);
         return;
     }
@@ -221,6 +221,10 @@ _Noreturn void ln_s5l_disk_mode(const char *serial,uint32_t sector_bytes,bool wr
     uint64_t logical_sectors=drive.sectors>>(sector_bytes==4096?3:sector_bytes==2048?2:0);
     if(!drive.initialized || drive.failed || !drive.can_flush || logical_sectors>UINT32_MAX)ln_platform_hardware_reset();
     capacity=(uint32_t)logical_sectors;
+    struct ln_ata_info media;ln_ata_snapshot(&media);
+    write_batch_bytes=media.media_kind==LN_ATA_MEDIA_SOLID_STATE &&
+        media.physical_sector_bytes==512u && (media.quirks&8u)?
+        WRITE_BUFFER_BYTES:LINNET_ATA_MAX_SECTORS*512u;
     if(!ln_s5l_usb_storage_init(serial))ln_platform_hardware_reset();
     uint32_t connection=ln_usb_generation();
     for(;;) {
