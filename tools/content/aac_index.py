@@ -207,6 +207,46 @@ def _possibly_alac(path, checkpoint):
         return False
 
 
+def import_suffix(path, cache, *, checkpoint=lambda: None):
+    """Return host-built seek data and unsupported status without changing a source."""
+    path, cache = Path(path), Path(cache)
+    checkpoint()
+    before = path.stat()
+    if original_size(path, before.st_size) is not None:
+        return None, False
+    cache.mkdir(parents=True, exist_ok=True)
+    tool = executable()
+    if _possibly_alac(path, checkpoint):
+        result = _run_tool(tool, (path,), checkpoint, 30, allow_timeout=True)
+        if result == 4:
+            return None, True
+    with tempfile.TemporaryDirectory(prefix='aac-import-', dir=cache) as scratch:
+        index = Path(scratch) / 'index.bin'
+        result = _run_tool(tool, (path, index), checkpoint, 600)
+        if result in (4, 6, 7, 8):
+            return None, True
+        if result:
+            raise RuntimeError(f'AAC preparation failed ({result})')
+        suffix = index.read_bytes()
+        if not suffix:
+            raise ValueError('AAC preparation produced no seek data')
+    after = path.stat()
+    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        raise OSError('AAC source changed during preparation')
+    return (suffix, False) if before.st_size + len(suffix) <= 0xffffffff else (None, True)
+
+
+def mark_unsupported(path, cache):
+    path, cache = Path(path), Path(cache)
+    before = path.stat()
+    key = hashlib.sha256(f'{path}:{before.st_size}:{before.st_mtime_ns}'.encode()).hexdigest()
+    try:
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / (key + '.unsupported')).touch()
+    except OSError:
+        pass  # The cache is disposable; device preparation can retry.
+
+
 def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal=None):
     """Atomically augment an iPod copy; retain its compressed audio and tags."""
     from .guard import hash_file

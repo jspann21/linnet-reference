@@ -492,7 +492,7 @@ def additions(root, pending, *, snapshots=None):
 
 
 def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress,
-                    stage_progress=lambda current, total, phase: None):
+                    *, cache, stage_progress=lambda current, total, phase: None):
     # Queue a bounded set of writes before flushing and reading them back. On
     # FAT devices, alternating write/flush/read/rename for every small file is
     # expensive. Keep every handle until its flush, and publish only verified files.
@@ -527,6 +527,13 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                 info = source.stat()
                 if (info.st_size, info.st_mtime_ns) != (item['bytes'], item['mtime_ns']):
                     raise ValueError(f"Source changed since selection: {source}")
+                suffix = None
+                unsupported_aac = False
+                if item['kind'] == 'Music' and source.suffix.lower() in ('.m4a', '.m4b'):
+                    from .aac_index import import_suffix
+                    suffix, unsupported_aac = import_suffix(source, cache / 'aac-import', checkpoint=checkpoint)
+                    if suffix and shutil.disk_usage(root).free < len(suffix) + 1024 * 1024:
+                        raise ValueError('Not enough space for prepared AAC seek data')
                 digest = hashlib.sha256()
                 writer = handles.enter_context(temporary.open('xb'))
                 owned_temporaries.append((temporary, root))
@@ -535,24 +542,32 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                         checkpoint()
                         writer.write(chunk)
                         digest.update(chunk)
+                if suffix:
+                    writer.write(suffix)
+                    digest.update(suffix)
                 writer.flush()
                 after = source.stat()
                 if (after.st_size, after.st_mtime_ns) != (info.st_size, info.st_mtime_ns):
                     raise ValueError(f"Source changed during copy: {source}")
-                copied.append((item, temporary, writer, digest.hexdigest()))
+                copied.append((item, temporary, writer, digest.hexdigest(),
+                               item['bytes'] + len(suffix or b''), unsupported_aac))
             progress(f"Saving additions {start + 1}–{start + len(batch)}/{len(plan)}…")
-            for _, _, writer, _ in copied:
+            for _, _, writer, _, _, _ in copied:
                 checkpoint()
                 os.fsync(writer.fileno())
-        for offset, (item, temporary, _, digest) in enumerate(copied):
+        for offset, (item, temporary, _, digest, prepared_bytes, _) in enumerate(copied):
             checkpoint()
             stage_progress(start + (len(batch) + offset) / 2, len(plan), 'Checking copied files')
             destination = Path(item['destination'])
             progress(f"Verifying addition {start + offset + 1}/{len(plan)}: {destination.name}")
             _plain(temporary, root)
-            if _hash(temporary, item['bytes']) != digest:
+            if _hash(temporary, prepared_bytes) != digest:
                 raise OSError(f"Copy verification failed: {destination}")
-        for item, temporary, _, _ in copied:
+            if prepared_bytes != item['bytes']:
+                from .aac_index import original_size
+                if original_size(temporary, prepared_bytes) != item['bytes']:
+                    raise ValueError(f"Prepared AAC seek data is invalid: {destination}")
+        for item, temporary, _, _, prepared_bytes, unsupported_aac in copied:
             checkpoint()
             destination = Path(item['destination'])
             _plain(destination, root)
@@ -561,7 +576,10 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                 raise ValueError(f"Destination appeared during copy: {destination}")
             temporary.rename(destination)
             owned_temporaries.remove((temporary, root))
-            report['steps'].append(dict(added=str(destination), bytes=item['bytes']))
+            if unsupported_aac:
+                from .aac_index import mark_unsupported
+                mark_unsupported(destination, cache / 'aac-seek')
+            report['steps'].append(dict(added=str(destination), bytes=prepared_bytes))
         report.pop('copies_in_progress', None)
         record()
         start += len(batch)
@@ -1427,6 +1445,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             raise ValueError("There is not enough space for the selected originals. Choose fewer files.")
         emit_stage('Copying originals', 0)
         _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress,
+                        cache=cache,
                         stage_progress=lambda current, total, name:
                             emit_stage(name, 0, current / total if total else 1))
         checkpoint()
