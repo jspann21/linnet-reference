@@ -1347,6 +1347,9 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                         embedded = prefetched_cover.result(timeout=0.1)
                         break
                     except FutureTimeout:
+                        if prefetched_cover.done():
+                            embedded = prefetched_cover.result()
+                            break
                         continue
                 if cache is not None:
                     embedded = cache.embedded_cover_store(path, before, embedded)
