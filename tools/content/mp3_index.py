@@ -9,6 +9,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 import zlib
@@ -18,6 +19,7 @@ NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 SENTINEL = b'LNMP3SEEKDATA\0\0\0'
 MAGIC = b'LNMP3IX!'
 RECORD_BYTES = 560
+_BUILD_LOCK = threading.Lock()
 
 
 @lru_cache(maxsize=1)
@@ -42,19 +44,20 @@ def executable():
         digest.update(name.encode()); digest.update((ROOT / name).read_bytes())
     directory = ROOT / 'out/mp3-index' / digest.hexdigest()[:24]
     destination = directory / ('mp3-index.exe' if os.name == 'nt' else 'mp3-index')
-    if destination.is_file():
-        return destination
-    directory.mkdir(parents=True, exist_ok=True)
-    temporary = directory / (uuid.uuid4().hex + destination.suffix)
-    try:
-        result = subprocess.run([compiler['path'], *flags, *sources, '-o', str(temporary)],
-                                cwd=ROOT, capture_output=True, text=True, timeout=120,
-                                creationflags=NO_WINDOW)
-        if result.returncode:
-            raise RuntimeError('MP3 preparation build failed: ' + result.stderr[-4000:])
-        temporary.replace(destination)
-    finally:
-        temporary.unlink(missing_ok=True)
+    with _BUILD_LOCK:
+        if destination.is_file():
+            return destination
+        directory.mkdir(parents=True, exist_ok=True)
+        temporary = directory / (uuid.uuid4().hex + destination.suffix)
+        try:
+            result = subprocess.run([compiler['path'], *flags, *sources, '-o', str(temporary)],
+                                    cwd=ROOT, capture_output=True, text=True, timeout=120,
+                                    creationflags=NO_WINDOW)
+            if result.returncode:
+                raise RuntimeError('MP3 preparation build failed: ' + result.stderr[-4000:])
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
     return destination
 
 
@@ -120,6 +123,48 @@ def same_original(source, destination, *, checkpoint=lambda: None):
            for a, b in zip(before, after)):
         raise ValueError('file changed while comparing existing MP3')
     return equal
+
+
+def count_frames(source, *, rate, channels, checkpoint=lambda: None):
+    """Count samples with the native MP3 parser; fall back on ambiguous input."""
+    source = Path(source)
+    before = source.stat()
+    if before.st_size < 1024 or before.st_size > 0xffffffff:
+        return 0
+    try:
+        child = subprocess.Popen([str(executable()), str(source), '--count'],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                 creationflags=NO_WINDOW)
+    except (OSError, RuntimeError):
+        return 0
+    started = time.monotonic()
+    try:
+        while True:
+            checkpoint()
+            if time.monotonic() - started >= min(600, 30 + before.st_size // 65536):
+                return 0
+            try:
+                output, _ = child.communicate(timeout=0.05)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.communicate(timeout=10)
+    checkpoint()
+    if child.returncode or len(output) > 256:
+        return 0
+    try:
+        result = json.loads(output)
+    except (ValueError, UnicodeError):
+        return 0
+    after = source.stat()
+    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        raise ValueError(f'MP3 changed during sample count: {source}')
+    frames = result.get('frames') if isinstance(result, dict) else None
+    return (frames if type(frames) is int and 0 < frames <= 0xffffffffffffffff and
+            result.get('rate') == rate and result.get('channels') == channels else 0)
 
 
 def import_suffix(source, *, checkpoint=lambda: None):
