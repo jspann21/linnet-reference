@@ -1544,6 +1544,8 @@ class MediaWindow(QMainWindow):
                    (' · conversion output size is unknown' if result['conversion'] else '')]
         if result['reusable']:
             preview.append('Likely reusable prepared libraries: ' + ', '.join(result['reusable']))
+        if result['existing_unverified']:
+            preview.append(f"Existing originals checked during preparation: {result['existing_unverified']:,} files")
         if result['excluded']:
             preview.append(f"Queue entries outside this selection: {result['excluded']:,}")
         for source, description in list(result['previews'].items())[:5]:

@@ -463,7 +463,7 @@ def _same_file_bytes(left, right, size):
     return equal
 
 
-def additions(root, pending, *, snapshots=None):
+def additions(root, pending, *, snapshots=None, verify_existing=True, unverified=None):
     """Resolve selected files/folders to concrete destinations without writing."""
     root = Path(root).resolve(strict=True)
     planned = {}
@@ -492,7 +492,18 @@ def additions(root, pending, *, snapshots=None):
             if key in planned and planned[key]["source"] != str(path):
                 raise ValueError(f"Two selected files have the same destination: {destination}")
             if destination.exists():
-                if not destination.is_file() or destination.stat().st_size != info.st_size or not _same_file_bytes(path, destination, info.st_size):
+                if not destination.is_file():
+                    raise ValueError(f"A different file already exists: {destination}. Rename the new file or folder first.")
+                if not verify_existing:
+                    # Planning only estimates work. The preparation call checks
+                    # the complete original before it copies or publishes.
+                    if destination.stat().st_size != info.st_size and not (
+                            kind == 'Music' and path.suffix.lower() in ('.m4a', '.m4b', '.flac', '.flc')):
+                        raise ValueError(f"A different file already exists: {destination}. Rename the new file or folder first.")
+                    if unverified is not None:
+                        unverified.append(kind)
+                    continue
+                if destination.stat().st_size != info.st_size or not _same_file_bytes(path, destination, info.st_size):
                     equivalent = False
                     if kind == 'Music' and path.suffix.lower() in ('.m4a', '.m4b'):
                         from .aac_index import same_original

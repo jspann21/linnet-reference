@@ -216,7 +216,9 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
                   not in skipped['Videos']]
     included = [p for p in pending if p[0] in selected]
     snapshots = {}
-    copies = media.additions(root, [p for p in included if p[0] != 'Videos'], snapshots=snapshots)
+    unverified = []
+    copies = media.additions(root, [p for p in included if p[0] != 'Videos'], snapshots=snapshots,
+                             verify_existing=False, unverified=unverified)
     jobs = media.video_jobs(root, included, videos, skipped=skipped['Videos'], identity=identity,
                             snapshots=snapshots) if 'Videos' in selected else []
     previews = {}
@@ -244,7 +246,7 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
     reusable = []
     if current_inventory and not force:
         for kind in selected:
-            if copy_kinds[kind] or kind == 'Videos' or (kind == 'Music' and
+            if copy_kinds[kind] or kind in unverified or kind == 'Videos' or (kind == 'Music' and
                     (online_artwork or music_verification == 'full')):
                 continue
             item = current_inventory.get(kind)
@@ -256,6 +258,7 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
                     isinstance(saved.get('outputs'), list) and saved['outputs']):
                 reusable.append(kind)
     return dict(copies=len(copies), bytes=needed, videos=len(jobs), free=identity['free_bytes'], previews=previews,
+                existing_unverified=len(unverified),
                 conversion=any(Path(j['source']).suffix.lower() not in media.native_video_extensions(identity) for j in jobs),
                 computer_free=shutil.disk_usage(parent).free, excluded=len(pending)-len(included),
                 copy_kinds=copy_kinds, selected=list(selected), reusable=reusable)
