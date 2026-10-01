@@ -12,7 +12,8 @@ bool ln_pimg_header(const uint8_t *,uint32_t,struct ln_pimg_header *);
 bool ln_pimg_album(const struct ln_pimg_header *,const uint8_t *,uint32_t,struct ln_pimg_album *);
 bool ln_pimg_photo(const struct ln_pimg_header *,const uint8_t *,uint32_t,struct ln_pimg_photo *);
 bool ln_pimg_level(const struct ln_pimg_header *,const uint8_t *,uint32_t,struct ln_pimg_level *);
-bool ln_pimg_tile(const struct ln_pimg_header *,const uint8_t *,uint32_t,uint32_t *,uint32_t *);
+bool ln_pimg_tile(const struct ln_pimg_header *,const uint8_t *,uint32_t,uint32_t *,uint32_t *,uint32_t *);
+bool ln_pimg_decode_tile(const uint8_t *,uint32_t,uint8_t *);
 bool ln_pimg_text(const uint8_t *,uint32_t,bool);
 uint32_t ln_pimg_crc_update(uint32_t,const uint8_t *,uint32_t);
 #endif

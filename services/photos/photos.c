@@ -45,8 +45,8 @@ static struct {
     uint32_t verify_cached,verify_cursor,grid_at;bool metadata_valid,pim_verified,grid_cache;
     uint8_t metadata[131072],pim_header[512],resume[16],tile_records[512],tile_hints[TILES];char title[192],album_title[192],source[128];
     uint32_t phase,view,album,first,count,photo_index,window_first,window_count,epoch,working,generation,revision,navigation;
-    uint32_t io_bytes,verify_at,verify_crc,job_index,job_slot,level_count,level,zoom,rotation,tile_index,tile_slot,tile_crc,age;
-    uint32_t tile_records_first,tile_records_count,tile_group_count,tile_group_cursor,thumb_group_count,thumb_group_cursor;
+    uint32_t io_bytes,verify_at,verify_crc,v_payload_at,job_index,job_slot,level_count,level,zoom,rotation,tile_index,tile_slot,tile_crc,age;
+    uint32_t tile_records_first,tile_records_count,tile_group_count,tile_group_cursor,tile_group_at,tile_group_bytes,thumb_group_count,thumb_group_cursor;
     uint32_t visible[TILES],visible_count,front,render_y,slide_at,jpeg_at,ready_tiles,resume_stage,file_offset;
     uint8_t verify_record[64];uint32_t v_photos,v_levels,v_tiles,v_album,v_photo,v_level,v_width,v_height,v_text_bytes,v_more,v_code,v_min,jpeg_crc;
     int32_t pan_x,pan_y;
@@ -179,13 +179,13 @@ static int read_at(const struct ln_fat32_file*f,uint32_t at,void*buffer,uint32_t
 static int tile_record(void){
     if(p.tile_index>=p.header.tiles)return -1;
     if(!p.tile_records_count||p.tile_index<p.tile_records_first||p.tile_index-p.tile_records_first>=p.tile_records_count){
-        uint32_t first=p.tile_index/64u*64u,count=p.header.tiles-first;if(count>64u)count=64u;
+        uint32_t first=p.tile_index/42u*42u,count=p.header.tiles-first;if(count>42u)count=42u;
         /* A partial/canceled read must never publish a cache page. */
         p.tile_records_count=0;
-        int r=read_at(&p.file,p.header.tile_at+first*8u,p.tile_records,count*8u);if(r<=0)return r;
+        int r=read_at(&p.file,p.header.tile_at+first*12u,p.tile_records,count*12u);if(r<=0)return r;
         p.tile_records_first=first;p.tile_records_count=count;
     }
-    uint32_t at;return ln_pimg_tile(&p.header,p.tile_records+(p.tile_index-p.tile_records_first)*8u,p.tile_index,&at,&p.tile_crc)?1:-1;
+    uint32_t at,length;return ln_pimg_tile(&p.header,p.tile_records+(p.tile_index-p.tile_records_first)*12u,p.tile_index,&at,&length,&p.tile_crc)?1:-1;
 }
 static int open_file(const char*path,struct ln_fat32_file*f){
     if(!p.pending){if(!allowed())return 0;int r=ln_storage_media_open(path,next_generation());if(r<=0)return r;PHOTO_DIAG(timing.io_started=ln_time_us());p.pending=p.io_open=true;return 0;}
@@ -209,7 +209,7 @@ static int string_read(uint32_t at,uint32_t bytes,bool path){
 }
 static void verify_begin(bool grid){
     p.metadata_valid=p.grid_cache=false;p.tile_records_count=0;p.verify_cached=p.verify_cursor=p.grid_at=0;
-    p.verify_at=512u;p.verify_crc=UINT32_MAX;
+    p.verify_at=512u;p.verify_crc=UINT32_MAX;p.v_payload_at=p.header.data_at+p.header.photos*8192u;
     p.v_photos=p.v_levels=p.v_tiles=p.v_album=p.v_photo=p.v_level=p.v_width=p.v_height=p.v_text_bytes=p.v_more=p.v_code=p.v_min=0;
     /* Verification uses the thumbnail/tile arena for bounded photo dimensions.
      * Canceled verification must regenerate pixels and the compact cache. */
@@ -232,17 +232,17 @@ static bool verify_bytes(uint32_t at,const uint8_t*b,uint32_t n){
      * performs the same metadata CRC over every byte, while split/partial
      * records retain the existing scratch-buffer path. */
     if(at>=h->tile_at&&at<=h->string_at&&n<=h->string_at-at&&
-       (at-h->tile_at)%8u==0&&n%8u==0){
-        uint32_t index=(at-h->tile_at)/8u;
-        if(index>h->tiles||n/8u>h->tiles-index)return false;
-        uint32_t expected=h->data_at+h->photos*8192u+index*2048u;
-        for(uint32_t i=0;i<n;i+=8u,expected+=2048u)
-            if(ln_read_le32(b+i)!=expected)return false;
+       (at-h->tile_at)%12u==0&&n%12u==0){
+        uint32_t index=(at-h->tile_at)/12u;
+        if(index>h->tiles||n/12u>h->tiles-index)return false;
+        for(uint32_t i=0;i<n;i+=12u){uint32_t offset,length,crc;
+            if(!ln_pimg_tile(h,b+i,index+i/12u,&offset,&length,&crc)||offset!=p.v_payload_at)return false;
+            p.v_payload_at+=length;}
         return true;
     }
     for(uint32_t i=0;i<n;i++,at++){
         if(at<h->string_at){uint32_t base,width;
-            if(at<h->photo_at){base=h->album_at;width=32;}else if(at<h->level_at){base=h->photo_at;width=64;}else if(at<h->tile_at){base=h->level_at;width=24;}else{base=h->tile_at;width=8;}
+            if(at<h->photo_at){base=h->album_at;width=32;}else if(at<h->level_at){base=h->photo_at;width=64;}else if(at<h->tile_at){base=h->level_at;width=24;}else{base=h->tile_at;width=12;}
             /* Metadata chunks can split a record. Compute its position once
              * per fragment, keeping the same record validation at its end. */
             uint32_t offset=(at-base)%width,index=(at-base)/width,take=width-offset;
@@ -258,7 +258,7 @@ static bool verify_bytes(uint32_t at,const uint8_t*b,uint32_t n){
                 uint32_t info=photo_buffers.pixels.photo_info[p.v_photo],w=(info&16383u)+1u,height=((info>>14)&16383u)+1u,levels=(info>>28)+1u;
                 if(l.width>w||l.height>height||(!p.v_level&&(l.width>WIDTH||l.height>HEIGHT))||(p.v_level&&(l.width<p.v_width||l.height<p.v_height||(l.width==p.v_width&&l.height==p.v_height))))return false;
                 p.v_width=l.width;p.v_height=l.height;p.v_tiles+=l.count;if(++p.v_level==levels){++p.v_photo;p.v_level=0;}}
-            else {uint32_t offset,crc;if(!ln_pimg_tile(h,p.verify_record,index,&offset,&crc))return false;}
+            else {uint32_t offset,length,crc;if(!ln_pimg_tile(h,p.verify_record,index,&offset,&length,&crc)||offset!=p.v_payload_at)return false;p.v_payload_at+=length;}
         }else if(at<h->string_at+h->string_bytes){uint32_t c=b[i];
             if(at==h->string_at&&c)return false;
             if(!c){if(p.v_more)return false;p.v_text_bytes=0;continue;}
@@ -611,6 +611,11 @@ static void photo_step(void){
                 p.verify_cached=bytes;p.verify_cursor=at;
             }
             uint32_t n=p.verify_cached;if(n>4096)n=4096;
+            if(p.verify_at<p.header.tile_at&&p.verify_at+n>p.header.tile_at)n=p.header.tile_at-p.verify_at;
+            else if(p.verify_at>=p.header.tile_at&&p.verify_at<p.header.string_at){
+                if(p.verify_at+n>p.header.string_at)n=p.header.string_at-p.verify_at;
+                if(n>=12u)n-=n%12u;
+            }
             const uint8_t *bytes=photo_buffers.surface.verify.metadata+p.verify_cursor;
             if(!verify_bytes(p.verify_at,bytes,n)){fail(4);return;}
             uint32_t cached_end=metadata_end();
@@ -624,7 +629,7 @@ static void photo_step(void){
             p.verify_crc=ln_pimg_crc_update(p.verify_crc,bytes,n);
             p.verify_at+=n;p.verify_cursor+=n;p.verify_cached-=n;return;
         }
-        if((p.verify_crc^UINT32_MAX)!=p.header.metadata_crc||p.v_photos!=p.header.photos||p.v_levels!=p.header.levels||p.v_tiles!=p.header.tiles||p.v_photo!=p.header.photos||p.v_text_bytes||p.v_more){fail(5);return;}p.metadata_valid=metadata_end()!=0;p.pim_verified=true;
+        if((p.verify_crc^UINT32_MAX)!=p.header.metadata_crc||p.v_photos!=p.header.photos||p.v_levels!=p.header.levels||p.v_tiles!=p.header.tiles||p.v_photo!=p.header.photos||p.v_payload_at!=p.header.size||p.v_text_bytes||p.v_more){fail(5);return;}p.metadata_valid=metadata_end()!=0;p.pim_verified=true;
         if(!p.ready){p.first=0;p.count=p.header.photos;}p.ready=true;p.phase=IDLE;++p.revision;
         if(p.resume_pending&&!resume_matches())p.resume_pending=false;
         if(!p.active&&p.resume_pending){uint32_t index=ln_read_le32(p.resume+4);p.photo_index=index==EMPTY_ALBUM_RESUME?0:index;p.window_first=p.photo_index/GRID_PAGE*GRID_PAGE;}return;
@@ -712,6 +717,9 @@ static void photo_step(void){
         /* Adjacent visible tiles share one read, using the existing scratch
          * buffer. Stop at the level/page boundary and never fetch hidden tiles. */
         const struct ln_pimg_level*l=&p.levels[p.level];p.tile_group_count=1;
+        uint32_t first_length,first_crc;
+        if(!ln_pimg_tile(&p.header,p.tile_records+(p.tile_index-p.tile_records_first)*12u,p.tile_index,&p.tile_group_at,&first_length,&first_crc)){image_fail(10);return;}
+        p.tile_group_bytes=first_length;
         struct ln_player_status player;ln_player_snapshot(&player);
         uint32_t batch=(player.phase==LN_PLAYER_IDLE||player.phase==LN_PLAYER_ERROR||player.phase==LN_PLAYER_PAUSE)?sizeof photo_scratch/2048u:4u;
         while(p.tile_group_count<batch){
@@ -719,19 +727,25 @@ static void photo_step(void){
             if(index>=p.header.tiles||index-l->first>=l->count||
                index-p.tile_records_first>=p.tile_records_count||
                !is_visible(index)||tile_find(index)>=0)break;
-            uint32_t at,crc;
-            if(!ln_pimg_tile(&p.header,p.tile_records+(index-p.tile_records_first)*8u,index,&at,&crc)){image_fail(10);return;}
+            uint32_t at,length,crc;
+            if(!ln_pimg_tile(&p.header,p.tile_records+(index-p.tile_records_first)*12u,index,&at,&length,&crc)||
+               at!=p.tile_group_at+p.tile_group_bytes){image_fail(10);return;}
+            if(length>batch*2048u-p.tile_group_bytes)break;
+            p.tile_group_bytes+=length;
             ++p.tile_group_count;
         }
         p.tile_group_cursor=0;p.phase=TILE_DATA;return;}
-    if(p.phase==TILE_DATA){r=read_at(&p.file,p.header.data_at+p.header.photos*8192u+p.tile_index*2048u,photo_scratch,p.tile_group_count*2048u);if(!r)return;
+    if(p.phase==TILE_DATA){r=read_at(&p.file,p.tile_group_at,photo_scratch,p.tile_group_bytes);if(!r)return;
         if(r<0){image_fail(11);return;}p.phase=TILE_COMMIT;return;}
     if(p.phase==TILE_COMMIT){
-        uint32_t index=p.tile_index+p.tile_group_cursor,at,crc;
-        const uint8_t*bytes=photo_scratch+p.tile_group_cursor*2048u;
-        if(!ln_pimg_tile(&p.header,p.tile_records+(index-p.tile_records_first)*8u,index,&at,&crc)||ln_crc32(bytes,2048)!=crc){image_fail(11);return;}
+        uint32_t index=p.tile_index+p.tile_group_cursor,at,length,crc;
+        if(!ln_pimg_tile(&p.header,p.tile_records+(index-p.tile_records_first)*12u,index,&at,&length,&crc)||
+           at<p.tile_group_at||at-p.tile_group_at>p.tile_group_bytes||length>p.tile_group_bytes-(at-p.tile_group_at)){image_fail(11);return;}
+        const uint8_t*bytes=photo_scratch+(at-p.tile_group_at);
         p.tile_slot=victim();if(p.tile_slot==UINT32_MAX){fail(19);return;}
-        p.tiles[p.tile_slot].valid=false;copy(photo_buffers.pixels.viewer_tiles[p.tile_slot],bytes,2048);
+        p.tiles[p.tile_slot].valid=false;
+        uint8_t*decoded=(uint8_t*)photo_buffers.pixels.viewer_tiles[p.tile_slot];
+        if(!ln_pimg_decode_tile(bytes,length,decoded)||ln_crc32(decoded,2048u)!=crc){image_fail(11);return;}
         const struct ln_pimg_level*l=&p.levels[p.level];uint32_t local=index-l->first,tx=local%l->columns*32u,ty=local/l->columns*32u;
         /* Interior tiles have no padding; edge tiles inspect only padding.
          * The full payload CRC above still covers every pixel. */

@@ -15,7 +15,7 @@ DEVICE_PATH = '/.LINNET/PHOTOS/GRID.PGR'
 
 
 def _pim_header(header):
-    if (len(header) != 512 or header[:4] != b'PIMG' or
+    if (len(header) != 512 or header[:4] != b'LPIC' or
             struct.unpack_from('<HH', header, 4) != (0, 512) or any(header[72:508]) or
             _crc(header[:508]) != struct.unpack_from('<I', header, 508)[0]):
         raise ValueError('invalid grid PIMG binding header')
@@ -24,7 +24,8 @@ def _pim_header(header):
             not pc <= lc <= pc*6 or not 1 <= tc <= 1_000_000 or not 1 <= sb <= MAX_STRINGS or
             struct.unpack_from('<4H', header, 64) != (64, 64, 32, 1) or
             ao != 512 or po != ao+ac*32 or lo != po+pc*64 or to != lo+lc*24 or
-            so != to+tc*8 or do != (so+sb+511)&~511 or size != do+pc*8192+tc*2048 or size > MAX_FILE):
+            so != to+tc*12 or do != (so+sb+511)&~511 or
+            size < do+pc*8192+tc or size > do+pc*8192+tc*2048 or size > MAX_FILE):
         raise ValueError('invalid grid PIMG binding ranges')
     return dict(size=size, albums=ac, photos=pc, levels=lc, photo_at=po,
                 level_at=lo, string_at=so, string_bytes=sb, data_at=do)

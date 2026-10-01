@@ -8,7 +8,7 @@ uint32_t ln_pimg_crc_update(uint32_t crc,const uint8_t*p,uint32_t n){
     return ln_crc32_update(crc,p,n);
 }
 bool ln_pimg_header(const uint8_t*b,uint32_t size,struct ln_pimg_header*h){
-    if(!b||!h||size<512||size>0x7fffffffu||b[0]!='P'||b[1]!='I'||b[2]!='M'||b[3]!='G'||
+    if(!b||!h||size<512||size>0x7fffffffu||b[0]!='L'||b[1]!='P'||b[2]!='I'||b[3]!='C'||
        ln_read_le16(b+4)!=0||ln_read_le16(b+6)!=512||ln_read_le32(b+8)||ln_read_le32(b+12)!=size||
        ln_read_le16(b+64)!=64||ln_read_le16(b+66)!=64||ln_read_le16(b+68)!=32||ln_read_le16(b+70)!=1||
        !ln_bytes_zero(b+72,436)||ln_crc32(b,508)!=ln_read_le32(b+508))return false;
@@ -16,10 +16,11 @@ bool ln_pimg_header(const uint8_t*b,uint32_t size,struct ln_pimg_header*h){
     if(!h->albums||h->albums>4096||h->photos>65535||h->levels<h->photos||h->levels>h->photos*6u||h->tiles>1000000u||!h->string_bytes||h->string_bytes>16777216u||h->data_at%512u)return false;
     uint32_t at=512;
     if(!section(&at,h->album_at,h->albums,32,size)||!section(&at,h->photo_at,h->photos,64,size)||
-       !section(&at,h->level_at,h->levels,24,size)||!section(&at,h->tile_at,h->tiles,8,size)||
+       !section(&at,h->level_at,h->levels,24,size)||!section(&at,h->tile_at,h->tiles,12,size)||
        !section(&at,h->string_at,h->string_bytes,1,size)||h->data_at<at||h->data_at-at>=512u)return false;
     at=h->data_at;
-    return section(&at,h->data_at,h->photos,8192,size)&&section(&at,at,h->tiles,2048,size)&&at==size;
+    return section(&at,h->data_at,h->photos,8192,size)&&
+        h->tiles<=size-at&&size-at<=h->tiles*2048u;
 }
 static bool string_range(const struct ln_pimg_header*h,uint32_t at,uint32_t bytes,uint32_t max){return bytes<=max&&at<h->string_bytes&&bytes<h->string_bytes-at;}
 bool ln_pgrid_header(const uint8_t*b,uint32_t size,const uint8_t*binding,const struct ln_pimg_header*pim,uint32_t target,uint32_t width,uint32_t height,struct ln_pgrid_header*h){
@@ -53,9 +54,31 @@ bool ln_pimg_level(const struct ln_pimg_header*h,const uint8_t*b,uint32_t index,
     return l->photo<h->photos&&l->width&&l->height&&l->width<=2048&&l->height<=2048&&
         l->columns==(l->width+31u)/32u&&l->rows==(l->height+31u)/32u&&l->count==l->columns*l->rows&&l->first<h->tiles&&l->count<=h->tiles-l->first;
 }
-bool ln_pimg_tile(const struct ln_pimg_header*h,const uint8_t*b,uint32_t index,uint32_t*offset,uint32_t*crc){
-    if(index>=h->tiles)return false;*offset=ln_read_le32(b);*crc=ln_read_le32(b+4);
-    return *offset==h->data_at+h->photos*8192u+index*2048u;
+bool ln_pimg_tile(const struct ln_pimg_header*h,const uint8_t*b,uint32_t index,uint32_t*offset,uint32_t*length,uint32_t*crc){
+    if(index>=h->tiles)return false;*offset=ln_read_le32(b);*length=ln_read_le32(b+4);*crc=ln_read_le32(b+8);
+    uint32_t base=h->data_at+h->photos*8192u;
+    return *offset>=base&&*offset<h->size&&*length>=1u&&*length<=2048u&&*length<=h->size-*offset;
+}
+bool ln_pimg_decode_tile(const uint8_t*input,uint32_t bytes,uint8_t*output){
+    if(!input||!output||!bytes||bytes>2048u)return false;
+    if(bytes==2048u){for(uint32_t i=0;i<2048u;++i)output[i]=input[i];return true;}
+    uint32_t src=0,dst=0;bool matched=false;
+    while(src<bytes){
+        uint32_t token=input[src++],literal=token>>4u;
+        if(literal==15u){uint32_t more;do{if(src>=bytes)return false;more=input[src++];if(more>2048u-literal)return false;literal+=more;}while(more==255u);}
+        if(literal>bytes-src||literal>2048u-dst)return false;
+        for(uint32_t i=0;i<literal;++i)output[dst+i]=input[src+i];src+=literal;dst+=literal;
+        if(src==bytes)return dst==2048u&&(literal>=5u||(!matched&&bytes<5u));
+        if(bytes-src<2u)return false;
+        uint32_t offset=(uint32_t)input[src]|((uint32_t)input[src+1u]<<8u);src+=2u;
+        if(!offset||offset>dst)return false;
+        uint32_t match=token&15u;
+        if(match==15u){uint32_t more;do{if(src>=bytes)return false;more=input[src++];if(more>2048u-match)return false;match+=more;}while(more==255u);}
+        if(match>2044u)return false;match+=4u;
+        if(match>2048u-dst||2048u-dst<12u)return false;
+        for(uint32_t i=0;i<match;++i)output[dst+i]=output[dst+i-offset];dst+=match;matched=true;
+    }
+    return false;
 }
 bool ln_pimg_text(const uint8_t*s,uint32_t n,bool path){
     if(s[n]||(!n&&path))return false;
