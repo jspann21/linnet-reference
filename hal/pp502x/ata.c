@@ -47,6 +47,9 @@ static bool dma_enabled,dma_failed;
 static uint8_t *dma_bytes(void){
     return (uint8_t *)ln_platform_uncached_address((uintptr_t)dma_buffer);
 }
+#if defined(LINNET_SOC_PP5022)
+uint8_t *ln_pp_ata_disk_mode_buffer(void){return dma_bytes();}
+#endif
 static void dma_stop(void){
     IDE_CFG&=~0x8000u;
     IDE_DMA_CONTROL&=~0x80000001u;
@@ -344,9 +347,9 @@ static void transfer_begin(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8
 #endif
 #if ATA_READ_DMA
     if(dma_transfer){
-        /* Only the uncached alias touches this dedicated buffer. Caller cache
-         * lines are updated by CPU copy after a read engine has stopped. */
-        if(op==LN_ATA_WRITE){
+        /* Only the uncached alias touches this dedicated buffer. Other callers
+         * copy at the boundary; Disk Mode can own the buffer directly. */
+        if(op==LN_ATA_WRITE&&bytes!=dma_bytes()){
             extern void ln_memory_copy(void *,const void *,uint32_t);
             ln_memory_copy(dma_bytes(),bytes,sectors*512u);
         }
@@ -428,7 +431,8 @@ void ln_ata_step(uint32_t now) {
         }
         if(transfer_operation==LN_ATA_READ){
             extern void ln_memory_copy(void *,const void *,uint32_t);
-            ln_memory_copy(transfer_buffer,dma_bytes(),transfer_count*512u);
+            if(transfer_buffer!=dma_bytes())
+                ln_memory_copy(transfer_buffer,dma_bytes(),transfer_count*512u);
             info.sectors_read+=transfer_count;
         }else info.sectors_written+=transfer_count;
         transfer_done=transfer_count;

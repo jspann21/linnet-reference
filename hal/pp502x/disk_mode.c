@@ -17,7 +17,12 @@ enum { WRITE_BUFFER_BYTES=LINNET_ATA_MAX_WRITE_SECTORS*512u,
        BUFFER_BYTES=32768u
 #endif
 };
-#if defined(LINNET_TARGET_PHOTO4G_P98) && defined(LINNET_IMAGE_OS)
+#if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
+/* Disk Mode is the sole ATA owner and can use its uncached 32 KiB DMA buffer
+ * for both USB and ATA, avoiding a full copy at each storage boundary. */
+extern uint8_t *ln_pp_ata_disk_mode_buffer(void);
+#define buffer ln_pp_ata_disk_mode_buffer()
+#elif defined(LINNET_TARGET_PHOTO4G_P98) && defined(LINNET_IMAGE_OS)
 /* Disk Mode exclusively owns the 8 MiB update staging region. Keep its DMA
  * workspace out of the Photo's fully occupied Cover Flow resident budget. */
 #define buffer ((uint8_t *)ln_platform_uncached_address(LINNET_STAGE_ADDRESS))
