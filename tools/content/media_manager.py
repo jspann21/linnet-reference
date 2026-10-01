@@ -702,18 +702,25 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                 from .aac_index import original_size
                 if original_size(temporary, prepared_bytes) != item['bytes']:
                     raise ValueError(f"Prepared AAC seek data is invalid: {destination}")
-        for item, temporary, _, _, prepared_bytes, unsupported_aac, metadata_seed in copied:
+        for item, temporary, _, digest, prepared_bytes, unsupported_aac, metadata_seed in copied:
             checkpoint()
             destination = Path(item['destination'])
             _plain(destination, root)
             # Windows rename refuses an existing destination, preserving both files.
             if destination.exists():
                 raise ValueError(f"Destination appeared during copy: {destination}")
+            if _receipt_stamp(temporary.stat()) != verified_stamps[temporary]:
+                raise OSError(f"Copied file changed before rename: {destination}")
             temporary.rename(destination)
             owned_temporaries.remove((temporary, root))
             info = destination.stat()
             if _receipt_stamp(info) != verified_stamps[temporary]:
-                raise OSError(f"Copied file changed after readback: {destination}")
+                before_recheck = _receipt_stamp(info)
+                if info.st_size != prepared_bytes or _hash(destination, prepared_bytes) != digest:
+                    raise OSError(f"Copied file changed after readback: {destination}")
+                info = destination.stat()
+                if _receipt_stamp(info) != before_recheck:
+                    raise OSError(f"Copied file changed during final readback: {destination}")
             if unsupported_aac:
                 from .aac_index import mark_unsupported
                 mark_unsupported(destination, cache / 'aac-seek')
