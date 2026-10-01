@@ -363,7 +363,7 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lamb
                 probe = ffprobe or shutil.which("ffprobe")
                 if not probe:
                     raise ValueError("ffprobe is required to prepare native video")
-                duration_probe = [str(probe), "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(source)]
+                duration_probe = [str(probe), "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=start_time,duration:format=start_time", "-of", "json", str(source)]
                 with tempfile.TemporaryFile() as duration_output:
                     process = subprocess.Popen(duration_probe, stdin=subprocess.DEVNULL, stdout=duration_output,
                                                stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
@@ -378,11 +378,21 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lamb
                             except subprocess.TimeoutExpired:
                                 pass
                         duration_output.seek(0)
-                        duration_text = duration_output.read(64).decode("ascii", errors="replace").strip()
-                        try:
-                            duration = Fraction(duration_text)
-                        except (ValueError, ZeroDivisionError):
-                            duration = 0
+                        metadata = json.loads(duration_output.read(4096).decode("utf-8"))
+                        picture = metadata.get("streams", [{}])[0]
+                        container = metadata.get("format", {})
+                        def timestamp(value):
+                            try:
+                                return Fraction(str(value))
+                            except (ValueError, ZeroDivisionError):
+                                return None
+                        picture_start = timestamp(picture.get("start_time"))
+                        container_start = timestamp(container.get("start_time"))
+                        origin = container_start if container_start is not None else picture_start
+                        picture_duration = timestamp(picture.get("duration"))
+                        duration = (picture_start + picture_duration - origin
+                                    if picture_start is not None and picture_duration is not None and origin is not None
+                                    else Fraction(0))
                         if process.returncode:
                             raise ValueError("Could not determine the video track duration")
                     finally:
@@ -410,6 +420,8 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lamb
                                 raise ValueError("Could not determine the video track duration")
                             packet_output.seek(0)
                             last_step = Fraction(0)
+                            first_pts = None
+                            picture_end = None
                             for count, line in enumerate(packet_output):
                                 if count >= 1000000:
                                     raise ValueError("Video packet count exceeds preparation limits")
@@ -420,19 +432,23 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lamb
                                     pts = Fraction(fields[0])
                                 except (ValueError, ZeroDivisionError):
                                     continue
+                                first_pts = pts if first_pts is None else min(first_pts, pts)
                                 try:
                                     step = Fraction(fields[1])
                                     if step > 0:
                                         last_step = step
                                 except (IndexError, ValueError, ZeroDivisionError):
                                     step = last_step
-                                duration = max(duration, pts + max(step, 0))
-                            duration_text = f"{float(duration):.6f}"
+                                end = pts + max(step, 0)
+                                picture_end = end if picture_end is None else max(picture_end, end)
+                            if picture_end is not None:
+                                duration = picture_end - (origin if origin is not None else first_pts)
                         finally:
                             if process.poll() is None:
                                 process.kill(); process.wait()
                 if not 0 < duration <= 86400:
                     raise ValueError("Could not determine the video track duration")
+                duration_text = f"{float(duration):.6f}"
                 command = [str(encoder), "-nostdin", "-v", "error", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2", "-r", str(fps), "-c:v", "libx264", "-profile:v", "baseline", "-level:v", str(limits["h264_level"] / 10), "-pix_fmt", "yuv420p", "-b:v", f"{limits['video_kbps']}k", "-maxrate", f"{limits['max_video_kbps']}k", "-bufsize", f"{limits['buffer_kbits']}k", "-g", str(fps * 2), "-bf", "0", "-af", "aresample=async=1:first_pts=0,apad", "-c:a", "aac", "-profile:a", "aac_low", "-ar", "44100", "-ac", "2", "-b:a", f"{limits['audio_kbps']}k", "-t", duration_text, "-movflags", "+faststart", str(temporary)]
             with tempfile.TemporaryFile() as errors:
                 process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors, creationflags=NO_WINDOW)

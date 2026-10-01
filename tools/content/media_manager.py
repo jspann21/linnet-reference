@@ -1787,7 +1787,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     lambda fraction: emit_stage(f'Checking saved {kind}', unit, fraction))
                 if _outputs_match(root, outputs, verified=verified_outputs, progress=checking):
                     videos_compatible = True
-                    if kind == 'Videos':
+                    if kind == 'Videos' and media_profile['video_backend'] in ('bcm-mp4', 'native-mp4'):
                         from .native_video import inspect_file as inspect_native
                         video_outputs = [root / name for name, _ in outputs
                                          if Path(name).suffix.lower() in native_video_extensions(identity)]
