@@ -833,6 +833,14 @@ class _MetadataCache:
             self.source_keys[name] = cache_volume_scope(source)
         return self.source_keys[name]
 
+    def _embedded_source_key(self, path):
+        name = str(path)
+        drive, relative = os.path.splitdrive(name)
+        if not drive or not relative.startswith(('\\', '/')):
+            return name
+        relative = relative.lstrip('\\/').replace('\\', '/')
+        return f'{self._source_key(Path(drive + os.sep))}:{relative}'
+
     def prefetch(self, source, relatives):
         """Fetch a bounded window without trusting cached file timestamps."""
         if self.connection is None or not relatives:
@@ -915,7 +923,8 @@ class _MetadataCache:
                     "SELECT i.value,i.digest,s.checked FROM embedded_sources s "
                     "JOIN embedded_images i ON i.digest=s.digest "
                     "WHERE s.path=? AND s.size=? AND s.mtime=? AND length(i.value)<=?",
-                    (str(path), before.st_size, before.st_mtime_ns, 32 * 1024 * 1024)).fetchone()
+                    (self._embedded_source_key(path), before.st_size, before.st_mtime_ns,
+                     32 * 1024 * 1024)).fetchone()
                 if (row and type(row[2]) in (int, float) and 0 <= now - row[2] <= 3600 and
                         isinstance(row[0], bytes) and hashlib.sha256(row[0]).digest() == row[1]):
                     return True, row[0] or None
@@ -942,7 +951,8 @@ class _MetadataCache:
                         "WHERE embedded_images.value IS NOT excluded.value", (digest, value))
                     self.artwork_bytes += len(value) - (exists[0] or 0) if exists else len(value)
                     self.connection.execute("INSERT OR REPLACE INTO embedded_sources VALUES (?,?,?,?,?)",
-                        (str(path), before.st_size, before.st_mtime_ns, now, digest))
+                        (self._embedded_source_key(path), before.st_size, before.st_mtime_ns,
+                         now, digest))
                     self._written()
             except OverflowError:
                 pass
