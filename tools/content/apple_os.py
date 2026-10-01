@@ -574,19 +574,23 @@ def _metadata(identity, files):
     if not database.is_file():
         raise ValueError('Prepare Music for Linnet first, then update Apple OS.')
     rows = {}
+    scope = cache_volume_scope(root)
     with closing(sqlite3.connect(f'file:{database.as_posix()}?mode=ro', uri=True)) as connection:
-        for relative, size, mtime, value in connection.execute(
-                'SELECT relative,size,mtime,value FROM metadata WHERE source=? AND parser=?',
-                (cache_volume_scope(root), 'existing')):
-            rows[relative.casefold()] = (size, mtime, json.loads(value))
+        for source, relative, size, mtime, value in connection.execute(
+                'SELECT source,relative,size,mtime,value FROM metadata WHERE parser=?',
+                ('existing',)):
+            key = (relative.casefold(), size, mtime)
+            priority = 0 if source == scope else 1 if source == str(root) else 2
+            if key not in rows or priority < rows[key][0]:
+                rows[key] = (priority, json.loads(value))
     result = []
     aliases = {}
     for path, info in files:
         relative = path.relative_to(root).as_posix()
-        cached = rows.get(relative.casefold())
-        if cached is None or cached[:2] != (info.st_size, info.st_mtime_ns):
+        cached = rows.get((relative.casefold(), info.st_size, info.st_mtime_ns))
+        if cached is None:
             raise ValueError(f'Prepare Music for Linnet first: {relative}')
-        details = cached[2]
+        details = cached[1]
         if details.get('rate', 0) <= 0 or details.get('frames', 0) <= 0:
             raise ValueError(f'Invalid music duration: {relative}')
         tags = details.get('tags') or {}
