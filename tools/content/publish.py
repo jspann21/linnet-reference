@@ -11,7 +11,7 @@ Mode throughout publication and handle reboot only after a successful receipt.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from functools import lru_cache
 import base64
 import ctypes
@@ -444,6 +444,34 @@ def _copy_verified(source: Path, destination: Path, item: dict, root: Path, guar
     return True
 
 
+def _copy_art_batch(batch, root: Path, guard) -> None:
+    """Write bounded independent covers before flushing and reading them back."""
+    prepared = []
+    for source, destination, item in batch:
+        data = source.read_bytes()
+        if len(data) != item['bytes'] or hashlib.sha256(data).hexdigest() != item['sha256']:
+            raise RuntimeError(f"staged artwork changed during publication: {source}")
+        prepared.append((destination, item, data))
+    with ExitStack() as handles:
+        written = []
+        for destination, item, data in prepared:
+            guard()
+            _plain(destination, root)
+            if destination.exists():
+                raise ValueError(f"artwork destination appeared during publication: {destination}")
+            writer = handles.enter_context(destination.open('xb'))
+            writer.write(data)
+            written.append((writer, destination, item))
+        for writer, _, _ in written:
+            guard()
+            writer.flush()
+            os.fsync(writer.fileno())
+    for _, destination, item in written:
+        guard()
+        if _hash(destination, item['bytes']) != item['sha256']:
+            raise OSError(f"copied artwork failed complete readback: {destination}")
+
+
 def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
                   expected_volume_serial: str, expected_drive: str | None = None,
                   progress: Callable[[str], None] | None = None) -> dict:
@@ -553,11 +581,23 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
 
     record()
     try:
+        art_batch = []
+        def flush_art_batch():
+            if art_batch:
+                _copy_art_batch(art_batch, root, guard)
+                receipt['copied'] += len(art_batch)
+                art_batch.clear()
         for item in inventory["files"]:
             local = stage / item["path"]
             _plain(local, stage)
+            destination = (root if item['kind'] == 'music' else linnet) / item['path']
+            if item['kind'] == 'art' and not destination.exists():
+                art_batch.append((local, destination, item))
+                if len(art_batch) >= 16:
+                    flush_art_batch()
+                continue
+            flush_art_batch()
             if item['path'] in ('COVERS.CFL', 'BROWSE.BIN'):
-                destination = linnet / item['path']
                 if item['path'] in unchanged_assets:
                     guard()
                     if (_hash(local, item['bytes']) != item['sha256'] or
@@ -574,9 +614,9 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
                     guard()
                     temporary_cover.replace(destination)
             else:
-                destination = (root if item["kind"] == "music" else linnet) / item["path"]
                 copied = _copy_verified(local, destination, item, root, guard)
             receipt["copied" if copied else "reused"] += 1
+        flush_art_batch()
         receipt["phase"] = "media-verified"
         record()
         if not any(journal_exists):
