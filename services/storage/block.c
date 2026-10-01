@@ -548,7 +548,9 @@ static int quiesce(uint32_t now,uint32_t limit,bool keep_awake) {
         frozen=true;quiesce_state=1;quiesce_deadline=limit;
         quiesce_keep_awake=keep_awake;
     }
-    if(quiesce_keep_awake!=keep_awake)return -1;
+    /* Standby also satisfies a later flush-only handoff request. A prior
+     * flush-only barrier cannot satisfy a later request to stop the drive. */
+    if(quiesce_keep_awake&&!keep_awake)return -1;
     if(quiesce_state<3u&&(int32_t)(now-quiesce_deadline)>=0)quiesce_state=4;
     return quiesce_state==3u?1:quiesce_state==4u?-1:0;
 }

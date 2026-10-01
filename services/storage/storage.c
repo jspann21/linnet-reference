@@ -945,7 +945,7 @@ void ln_storage_boot(void){
     if(!ln_recovery_chainload(0,scratch+128,info.payload_size,info.load_address,info.entry_address,
        info.build_id,updater.image[slot].sha256,ln_recovery_generation()+1u))error=403;
 #else
-    if(!ln_storage_quiesce()||!ln_platform_audio_idle()){handoff[0]=0;error=403;return;}
+    if(!ln_storage_chainload_quiesce()||!ln_platform_audio_idle()){handoff[0]=0;error=403;return;}
     ln_core_watchdog_disarm();ln_platform_quiesce();
     if(!ln_platform_dma_idle()){handoff[0]=0;ln_core_watchdog_arm();error=403;return;}
     (void)ln_platform_enter(scratch+128,info.payload_size,info.load_address,info.entry_address);
