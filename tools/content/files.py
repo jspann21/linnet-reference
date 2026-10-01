@@ -5,6 +5,7 @@ short name relative to its live parent handle. It never sorts or recursively
 indexes the disk. Original files are not renamed or rewritten.
 """
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import hashlib
 import json
@@ -331,68 +332,78 @@ def compile_files(root, package, cache, *, width=0, height=0, text_columns=24, t
     folders = deque([(root, 0)])
     previews, warnings, preview_rows = {}, [], []
     videos = _prepared_videos(root, warnings)
-    while folders:
-        folder, parent = folders.popleft()
-        checkpoint()
-        # Generated cache/backup contents remain accessible in Live folder;
-        # indexing the index itself would grow a new snapshot on every run.
-        if folder == root / '.LINNET' / 'FILES':
-            struct.pack_into('<I', records[parent], 24, 2)
-            continue
-        _plain(folder, root)
-        entries = []
-        try:
-            for entry in _directory_entries(folder):
-                checkpoint()
-                entries.append(entry)
-        except PermissionError as error:
-            warnings.append(dict(path=folder.relative_to(root).as_posix(), message=str(error)))
-            struct.pack_into('<I', records[parent], 24, 2)
-            continue
-        entries.sort(key=lambda e: (not e[1], unicodedata.normalize('NFKC', e[0]).casefold(), e[0]))
-        if len(records) + len(entries) > MAX_RECORDS:
-            raise ValueError('Files index exceeds one million entries; use Live folder')
-        struct.pack_into('<II', records[parent], 8, len(records), len(entries))
-        for name, directory, info, alternate in entries:
+    with ThreadPoolExecutor(max_workers=8, thread_name_prefix='files-preview') as preview_pool:
+        while folders:
+            folder, parent = folders.popleft()
             checkpoint()
-            source = folder / name
-            row = bytearray(RECORD)
-            struct.pack_into('<II', row, 0, 16 if directory else 0, 0 if directory else info.st_size)
-            native = 1 if source.suffix.lower() in EXTENSIONS else 2 if source.suffix.lower() in {'.mp4', '.m4v', '.mov', '.ipvf'} else 3 if source.suffix.lower() in {'.jpg', '.jpeg'} else 0
-            struct.pack_into('<I', row, 28, native)
-            label = _label(name, 127)
-            row[32:32+len(label)] = label
+            # Generated cache/backup contents remain accessible in Live folder;
+            # indexing the index itself would grow a new snapshot on every run.
+            if folder == root / '.LINNET' / 'FILES':
+                struct.pack_into('<I', records[parent], 24, 2)
+                continue
+            _plain(folder, root)
+            entries = []
             try:
-                alias = _alias(alternate if alternate is not None and short_name is _short_name else short_name(source))
-            except PermissionError:
-                alias = b''
-            # An unrepresentable short alias is shown, then resolved through
-            # the live folder reader instead of pointing at another file.
-            row[160:160+len(alias)] = alias
-            if not alias:
-                row[160:165] = b'LIVE!'
-                struct.pack_into('<I', row, 24, 1)
-            if directory:
-                folders.append((source, len(records)))
-            else:
-                key = hashlib.sha256(source.relative_to(root).as_posix().encode('utf-8')).digest()
-                preview = videos.get(key)
-                if not preview and source.suffix.lower() in IMAGES | TEXT and not source.is_relative_to(root / '.LINNET'):
+                for entry in _directory_entries(folder):
+                    checkpoint()
+                    entries.append(entry)
+            except PermissionError as error:
+                warnings.append(dict(path=folder.relative_to(root).as_posix(), message=str(error)))
+                struct.pack_into('<I', records[parent], 24, 2)
+                continue
+            entries.sort(key=lambda e: (not e[1], unicodedata.normalize('NFKC', e[0]).casefold(), e[0]))
+            if len(records) + len(entries) > MAX_RECORDS:
+                raise ValueError('Files index exceeds one million entries; use Live folder')
+            struct.pack_into('<II', records[parent], 8, len(records), len(entries))
+            for start in range(0, len(entries), 16):
+                batch = entries[start:start + 16]
+                futures = {}
+                for index, (name, directory, info, _) in enumerate(batch):
+                    source = folder / name
+                    if (not directory and source.suffix.lower() in IMAGES | TEXT and
+                            not source.is_relative_to(root / '.LINNET')):
+                        futures[index] = preview_pool.submit(
+                            _preview, source, cache, width, height, text_columns, recipe,
+                            checkpoint, info, root, target != 'photo4g-p98')
+                for index, (name, directory, info, alternate) in enumerate(batch):
+                    checkpoint()
+                    source = folder / name
+                    row = bytearray(RECORD)
+                    struct.pack_into('<II', row, 0, 16 if directory else 0, 0 if directory else info.st_size)
+                    native = 1 if source.suffix.lower() in EXTENSIONS else 2 if source.suffix.lower() in {'.mp4', '.m4v', '.mov', '.ipvf'} else 3 if source.suffix.lower() in {'.jpg', '.jpeg'} else 0
+                    struct.pack_into('<I', row, 28, native)
+                    label = _label(name, 127)
+                    row[32:32+len(label)] = label
                     try:
-                        preview = _preview(source, cache, width, height, text_columns, recipe, checkpoint,
-                                           info, root, target != 'photo4g-p98')
-                    except (OSError, ValueError) as error:
-                        warnings.append(dict(path=source.relative_to(root).as_posix(), message=str(error)))
-                if preview:
-                    if preview['kind'] != 3:
-                        previews[preview['sha256']] = preview
-                        preview_rows.append((row, preview['sha256']))
-                    struct.pack_into('<II', row, 16, preview['kind'], preview['bytes'])
-                    path = ('/' + preview['path'].lstrip('/')).encode('ascii')
-                    assert len(path) < 76
-                    row[176:176+len(path)] = path
-            records.append(row)
-        progress(f'Indexing Files: {len(records)-1:,} entries')
+                        alias = _alias(alternate if alternate is not None and short_name is _short_name else short_name(source))
+                    except PermissionError:
+                        alias = b''
+                    # An unrepresentable short alias is shown, then resolved through
+                    # the live folder reader instead of pointing at another file.
+                    row[160:160+len(alias)] = alias
+                    if not alias:
+                        row[160:165] = b'LIVE!'
+                        struct.pack_into('<I', row, 24, 1)
+                    if directory:
+                        folders.append((source, len(records)))
+                    else:
+                        key = hashlib.sha256(source.relative_to(root).as_posix().encode('utf-8')).digest()
+                        preview = videos.get(key)
+                        if not preview and index in futures:
+                            try:
+                                preview = futures[index].result()
+                            except (OSError, ValueError) as error:
+                                warnings.append(dict(path=source.relative_to(root).as_posix(), message=str(error)))
+                        if preview:
+                            if preview['kind'] != 3:
+                                previews[preview['sha256']] = preview
+                                preview_rows.append((row, preview['sha256']))
+                            struct.pack_into('<II', row, 16, preview['kind'], preview['bytes'])
+                            path = ('/' + preview['path'].lstrip('/')).encode('ascii')
+                            assert len(path) < 76
+                            row[176:176+len(path)] = path
+                    records.append(row)
+            progress(f'Indexing Files: {len(records)-1:,} entries')
     progress('Packing Files previews')
     packs, locations = _pack_previews(previews, cache, checkpoint)
     for row, key in preview_rows:
