@@ -1436,8 +1436,16 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                 if not isinstance(cached, dict):
                     cached = {}
                 outputs = cached.get('outputs', [])
-                if (not force and cached.get("signature") == fingerprint and
+                cached_output_ready = False
+                if (not force and cached.get("signature") == fingerprint and len(outputs) == 1 and
                         _outputs_match(root, outputs, verified=verified_outputs)):
+                    try:
+                        inspect_native(root / outputs[0][0], profile=media_profile,
+                                       ffprobe=ffprobe, cancelled=cancelled)
+                        cached_output_ready = True
+                    except (OSError, ValueError):
+                        pass
+                if cached_output_ready:
                     if catalog_contains(root, relative, label, path=False,
                                         snapshot=catalog_snapshot):
                         output_paths.extend(name for name, digest in outputs)
@@ -1778,9 +1786,23 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 checking = _checking_progress(kind, checkpoint, progress,
                     lambda fraction: emit_stage(f'Checking saved {kind}', unit, fraction))
                 if _outputs_match(root, outputs, verified=verified_outputs, progress=checking):
-                    progress(f"{kind}: already up to date.")
-                    report["steps"].append(dict(kind=kind, status="unchanged"))
-                    continue
+                    videos_compatible = True
+                    if kind == 'Videos':
+                        from .native_video import inspect_file as inspect_native
+                        video_outputs = [root / name for name, _ in outputs
+                                         if Path(name).suffix.lower() in native_video_extensions(identity)]
+                        videos_compatible = bool(video_outputs)
+                        for path in video_outputs:
+                            try:
+                                inspect_native(path, profile=media_profile, ffprobe=ffprobe,
+                                               cancelled=cancelled)
+                            except (OSError, ValueError):
+                                videos_compatible = False
+                                break
+                    if videos_compatible:
+                        progress(f"{kind}: already up to date.")
+                        report["steps"].append(dict(kind=kind, status="unchanged"))
+                        continue
             if kind == 'Music':
                 prepared, probe_deferred = _prepare_audio(root, cache, skipped['Music'], probe,
                                                           checkpoint, progress, report, aac_recovery, flac_recovery, record,

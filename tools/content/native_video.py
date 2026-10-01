@@ -382,12 +382,57 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lamb
                         try:
                             duration = Fraction(duration_text)
                         except (ValueError, ZeroDivisionError):
-                            raise ValueError("Could not determine the video track duration") from None
-                        if process.returncode or not 0 < duration <= 86400:
+                            duration = 0
+                        if process.returncode:
                             raise ValueError("Could not determine the video track duration")
                     finally:
                         if process.poll() is None:
                             process.kill(); process.wait()
+                if not duration:
+                    # Matroska often omits stream.duration. Read the picture
+                    # packet timeline instead of the container duration, which
+                    # may include a much longer damaged soundtrack.
+                    packet_probe = [str(probe), "-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,duration_time", "-of", "csv=p=0", str(source)]
+                    with tempfile.TemporaryFile() as packet_output:
+                        process = subprocess.Popen(packet_probe, stdin=subprocess.DEVNULL, stdout=packet_output,
+                                                   stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
+                        try:
+                            deadline = time.monotonic() + 60
+                            while process.poll() is None:
+                                checkpoint()
+                                if time.monotonic() >= deadline:
+                                    raise ValueError("Could not determine the video track duration")
+                                try:
+                                    process.wait(timeout=.2)
+                                except subprocess.TimeoutExpired:
+                                    pass
+                            if process.returncode:
+                                raise ValueError("Could not determine the video track duration")
+                            packet_output.seek(0)
+                            last_step = Fraction(0)
+                            for count, line in enumerate(packet_output):
+                                if count >= 1000000:
+                                    raise ValueError("Video packet count exceeds preparation limits")
+                                if not count % 4096:
+                                    checkpoint()
+                                fields = line.decode("ascii", errors="replace").strip().split(",")
+                                try:
+                                    pts = Fraction(fields[0])
+                                except (ValueError, ZeroDivisionError):
+                                    continue
+                                try:
+                                    step = Fraction(fields[1])
+                                    if step > 0:
+                                        last_step = step
+                                except (IndexError, ValueError, ZeroDivisionError):
+                                    step = last_step
+                                duration = max(duration, pts + max(step, 0))
+                            duration_text = f"{float(duration):.6f}"
+                        finally:
+                            if process.poll() is None:
+                                process.kill(); process.wait()
+                if not 0 < duration <= 86400:
+                    raise ValueError("Could not determine the video track duration")
                 command = [str(encoder), "-nostdin", "-v", "error", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2", "-r", str(fps), "-c:v", "libx264", "-profile:v", "baseline", "-level:v", str(limits["h264_level"] / 10), "-pix_fmt", "yuv420p", "-b:v", f"{limits['video_kbps']}k", "-maxrate", f"{limits['max_video_kbps']}k", "-bufsize", f"{limits['buffer_kbits']}k", "-g", str(fps * 2), "-bf", "0", "-af", "aresample=async=1:first_pts=0,apad", "-c:a", "aac", "-profile:a", "aac_low", "-ar", "44100", "-ac", "2", "-b:a", f"{limits['audio_kbps']}k", "-t", duration_text, "-movflags", "+faststart", str(temporary)]
             with tempfile.TemporaryFile() as errors:
                 process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors, creationflags=NO_WINDOW)
