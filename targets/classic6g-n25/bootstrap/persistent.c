@@ -3,12 +3,10 @@
 #include "boot/include/linnet_boot.h"
 #include "boot/include/sha256.h"
 #include "hal/api/usb.h"
-/* The archive begins after the independently bootable, authenticated monitor.
- * Its first flash sector also contains only the verified monitor tail and erased
- * padding, so the installer can still program every archive sector before the
- * boot header sector that makes the new image executable. */
-#define ARCHIVE 0x17800u
-#define ARCHIVE_BYTES 0x11800u
+/* Keep the archive inside the original boot region. The next NOR sector is
+ * occupied on this board and is preserved by the installer. */
+#define ARCHIVE 0x17000u
+#define ARCHIVE_BYTES 0x11000u
 static bool unpack(const uint8_t *source,uint32_t size,uint8_t *out,uint32_t capacity) {
     uint32_t input=0,used=0;
     while(input<size) {

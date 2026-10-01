@@ -12,9 +12,8 @@ from tools.link.transport import SerialTransport
 from tools.studio.targets import ROOT
 
 TARGET='classic6g-n25'
-START,END=0x8000,0x29000
-SPARE=0x28000
-ARCHIVE=0x17800
+START,END=0x8000,0x28000
+ARCHIVE=0x17000
 ARCHIVE_SECTOR=ARCHIVE&~0xfff
 
 
@@ -29,10 +28,6 @@ def _backup(path, serial):
         raise ValueError('Expected a verified complete NOR backup for this device')
     if data[START:START+8]!=b'87021.0\x01' or struct.unpack_from('<II',data,START+8)!=(0,129024):
         raise ValueError('Original bootloader layout differs from the verified N25 layout')
-    # The archive may use one additional sector only when the original NOR
-    # proves that sector was erased. The next firmware region starts at 0x30000.
-    if data[SPARE:END]!=b'\xff'*(END-SPARE):
-        raise ValueError('The extra A1238 boot archive sector is not erased in the original NOR')
     return data
 
 
