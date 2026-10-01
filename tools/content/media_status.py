@@ -27,7 +27,8 @@ def _verification_name(name):
 
 
 @lru_cache(maxsize=4)
-def _verification_cache(disk_serial, volume_serial, partition_offset, cache_disk_serial):
+def _verification_cache(disk_serial, volume_serial, partition_offset, volume_unique_id,
+                        cache_disk_serial):
     # A refresh still stats each file. Reuse a recent hash across app restarts
     # only for this exact disk, volume and partition; changed stamps are read.
     # Native Disk Mode can reuse a verified Apple cache directory. Keep the
@@ -40,6 +41,7 @@ def _verification_cache(disk_serial, volume_serial, partition_offset, cache_disk
         saved = json.loads(path.read_text(encoding='utf-8'))
         verified_at = saved.get('verified_at')
         if (saved.get('partition_offset') != partition_offset or
+                saved.get('volume_unique_id', '').casefold() != volume_unique_id.casefold() or
                 type(verified_at) not in (int, float) or
                 not 0 <= cache['verified_at'] - verified_at <= 3600):
             return cache
@@ -60,8 +62,10 @@ def _verification_cache(disk_serial, volume_serial, partition_offset, cache_disk
     return cache
 
 
-def _verified_outputs(disk_serial, volume_serial, partition_offset, *, cache_disk_serial=None):
-    cache = _verification_cache(disk_serial, volume_serial, partition_offset, cache_disk_serial)
+def _verified_outputs(disk_serial, volume_serial, partition_offset, volume_unique_id,
+                      *, cache_disk_serial=None):
+    cache = _verification_cache(disk_serial, volume_serial, partition_offset,
+                                volume_unique_id, cache_disk_serial)
     now = time.time()
     # Expire memory entries too, including after a clock rollback. Preserving
     # the loaded timestamp prevents refreshes from extending persisted hashes.
@@ -86,12 +90,14 @@ def _remember_verified(identity, verified, before):
             previous = json.loads(path.read_text(encoding='utf-8'))
             old_time = previous.get('verified_at')
             if (previous.get('partition_offset') == identity['partition_offset'] and
+                    previous.get('volume_unique_id', '').casefold() == identity['volume_unique_id'].casefold() and
                     type(old_time) in (int, float) and
                     0 <= verified_at - old_time <= 3600):
                 verified_at = old_time
         except (OSError, ValueError, TypeError, AttributeError):
             pass
         save_json(path, {'partition_offset': identity['partition_offset'],
+                           'volume_unique_id': identity['volume_unique_id'],
                            'verified_at': verified_at,
                            'files': [[name, digest, *stamp]
                                      for (name, digest), stamp in verified.items()]})
@@ -167,7 +173,7 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     identity = boot_review['identity']
     root = Path(identity['root'])
     verified = _verified_outputs(identity['disk_serial'], identity['volume_serial'],
-                                 identity['partition_offset'],
+                                 identity['partition_offset'], identity['volume_unique_id'],
                                  cache_disk_serial=identity.get('media_cache_disk_serial'))
     if len(verified) > 4096:
         verified.clear()
