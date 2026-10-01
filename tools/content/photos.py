@@ -449,7 +449,8 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                 if tile_index % 256 == 0:
                     check()
                 raw = tile_bytes[tile_index*2048:(tile_index+1)*2048]
-                packed = lz4_compress(raw, mode='fast', store_size=False)
+                packed = lz4_compress(raw, mode='high_compression', compression=9,
+                                      store_size=False)
                 stored = packed if len(packed) < len(raw) else raw
                 tile_records.append((tiles.tell(), len(stored), crc))
                 tiles.write(stored)

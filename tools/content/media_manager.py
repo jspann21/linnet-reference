@@ -254,7 +254,7 @@ def preparation_option(kind, identity, photo_dimension=640, music_verification='
         return f"target-wrap2-{_display_recipe(identity['target_id'])[2]}"
     if kind == 'Photos':
         profile = identity['media_profile']
-        return f"lpic-photos-native-grid-{identity['target_id']}-{photo_dimension}-{profile['photo_width']}x{profile['photo_height']}"
+        return f"lpic-hc-photos-native-grid-{identity['target_id']}-{photo_dimension}-{profile['photo_width']}x{profile['photo_height']}"
     return 'default'
 
 
