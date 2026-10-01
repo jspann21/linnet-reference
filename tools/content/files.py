@@ -15,6 +15,7 @@ import stat
 import struct
 import threading
 import time
+import traceback
 import unicodedata
 import uuid
 import zlib
@@ -30,7 +31,6 @@ IMAGES = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tif', '.tiff', '.webp', '.h
 TEXT = {'.txt', '.text', '.md', '.rst', '.log', '.ini', '.cfg', '.toml', '.yaml', '.yml',
         '.json', '.xml', '.csv', '.nfo', '.c', '.h', '.py', '.js', '.ts', '.tsx', '.css', '.html', '.htm'}
 PREVIEW_DECODE_PIXELS = 32_000_000
-EAGER_IMAGE_OPEN = {'.webp', '.avif', '.heic', '.gif', '.tif', '.tiff'}
 
 
 class _PreviewDecodeBudget:
@@ -79,36 +79,64 @@ def _image_preview_pixels(original, width, height):
         image.close()
 
 
+def _lazy_image_header(source):
+    # Pillow selects decoders by content, so a renamed WebP must not bypass
+    # admission just because its extension says JPEG.
+    with source.open('rb') as reader:
+        header = reader.read(12)
+    return (header.startswith(b'\xff\xd8\xff') or
+            header.startswith(b'\x89PNG\r\n\x1a\n') or header.startswith(b'BM'))
+
+
+def _close_preview_original(original):
+    try:
+        original.close()
+    finally:
+        # Pillow's WebP decoder retains native canvases after Image.close().
+        # A Future may retain an exception traceback containing this object.
+        original.__dict__.pop('_decoder', None)
+
+
 def _image_preview(source, width, height, image_budget, checkpoint):
     from PIL import Image
 
     if image_budget is None:
         image_budget = _PreviewDecodeBudget()
-    if source.suffix.lower() in EAGER_IMAGE_OPEN:
+    if not _lazy_image_header(source):
         # Some plugins allocate full frames in Image.open, before dimensions
         # are available to the caller. Reserve the entire budget first.
         with image_budget.reserve(PREVIEW_DECODE_PIXELS, checkpoint):
-            original = Image.open(source)
             try:
-                return _image_preview_pixels(original, width, height)
-            finally:
+                original = Image.open(source)
                 try:
-                    original.close()
+                    return _image_preview_pixels(original, width, height)
                 finally:
-                    original = None
+                    try:
+                        _close_preview_original(original)
+                    finally:
+                        original = None
+            except Exception as error:
+                # A failed Pillow open/decode can leave native buffers in its
+                # completed traceback frames, which Futures retain.
+                traceback.clear_frames(error.__traceback__)
+                raise
     original = Image.open(source)
     try:
         with image_budget.reserve(original.width * original.height, checkpoint):
             try:
-                return _image_preview_pixels(original, width, height)
-            finally:
                 try:
-                    original.close()
+                    return _image_preview_pixels(original, width, height)
                 finally:
-                    original = None
+                    try:
+                        _close_preview_original(original)
+                    finally:
+                        original = None
+            except Exception as error:
+                traceback.clear_frames(error.__traceback__)
+                raise
     finally:
         if original is not None:
-            original.close()
+            _close_preview_original(original)
 
 
 def _short_name(path):
