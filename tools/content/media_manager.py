@@ -499,9 +499,14 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
     # expensive. Keep every handle until its flush, and publish only verified files.
     start = 0
     remaining_original = sum(item['bytes'] for item in plan)
+    seek_state_path = cache / 'seek-checked.json'
+    seek_state = (_optional_state(seek_state_path) if any(
+        item['kind'] == 'Music' and Path(item['destination']).suffix.lower() in ('.m4a', '.m4b')
+        for item in plan) else {})
     while start < len(plan):
         batch = []
         batch_bytes = 0
+        seek_state_changed = False
         for item in plan[start:start + 16]:
             if batch and batch_bytes + item['bytes'] > 64 * 1024 * 1024:
                 break
@@ -593,9 +598,16 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
             if unsupported_aac:
                 from .aac_index import mark_unsupported
                 mark_unsupported(destination, cache / 'aac-seek')
+            if item['kind'] == 'Music' and destination.suffix.lower() in ('.m4a', '.m4b'):
+                info = destination.stat()
+                key = destination.relative_to(root).as_posix().casefold()
+                seek_state[key] = [info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino]
+                seek_state_changed = True
             report['steps'].append(dict(added=str(destination), bytes=prepared_bytes))
         report.pop('copies_in_progress', None)
         record()
+        if seek_state_changed:
+            _save(seek_state_path, seek_state)
         start += len(batch)
         stage_progress(start, len(plan), 'Copying originals')
 
@@ -1016,7 +1028,8 @@ def run(identity, selected, pending=(), **options):
 
 
 def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
-                   aac_recovery, flac_recovery, record, stage_progress=lambda fraction: None):
+                   aac_recovery, flac_recovery, record, stage_progress=lambda fraction: None,
+                   force=False):
     from .aac_index import prepare_file as prepare_aac
     from .flac_index import prepare_file as prepare_flac
     supported = ('.m4a', '.m4b', '.flac', '.flc')
@@ -1037,6 +1050,10 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
     totals = {'aac': sum(suffix in ('.m4a', '.m4b') for _, suffix in pending),
               'flac': sum(suffix in ('.flac', '.flc') for _, suffix in pending)}
     completed = {'aac': 0, 'flac': 0}
+    seek_state_path = cache / 'seek-checked.json'
+    seek_state = {} if force else _optional_state(seek_state_path)
+    seen = set()
+    pending_checks = 0
     prepared = False
     probe_deferred = False
     durations = {'aac': [], 'flac': []}
@@ -1044,6 +1061,14 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
         checkpoint()
         _plain(path, root)
         kind = 'aac' if suffix in ('.m4a', '.m4b') else 'flac'
+        key = path.relative_to(root).as_posix().casefold()
+        seen.add(key)
+        before = path.stat()
+        stamp = [before.st_size, before.st_mtime_ns, before.st_ctime_ns, before.st_ino]
+        if seek_state.get(key) == stamp:
+            completed[kind] += 1
+            stage_progress((completed['aac'] + completed['flac']) / len(pending))
+            continue
         label = 'AAC' if kind == 'aac' else 'FLAC'
         left = totals[kind] - completed[kind]
         recent = durations[kind]
@@ -1068,10 +1093,19 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
                 prepared = True
                 report['steps'].append(dict(prepared_flac=str(path.relative_to(root))))
                 record()
+        if kind == 'aac' or outcome is not None:
+            after = path.stat()
+            seek_state[key] = [after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino]
+            pending_checks += 1
+            if pending_checks >= 128:
+                _save(seek_state_path, seek_state)
+                pending_checks = 0
         recent.append(time.monotonic() - started)
         if len(recent) > 8:
             recent.pop(0)
         completed[kind] += 1
+    seek_state = {key: value for key, value in seek_state.items() if key in seen}
+    _save(seek_state_path, seek_state)
     stage_progress(1)
     for kind, label in (('aac', 'AAC'), ('flac', 'FLAC')):
         if totals[kind]:
@@ -1531,7 +1565,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             if kind == 'Music':
                 prepared, probe_deferred = _prepare_audio(root, cache, skipped['Music'], probe,
                                                           checkpoint, progress, report, aac_recovery, flac_recovery, record,
-                                                          stage_progress=lambda fraction: emit_stage('Preparing audio seeks', unit, fraction))
+                                                          stage_progress=lambda fraction: emit_stage('Preparing audio seeks', unit, fraction),
+                                                          force=force)
                 if prepared:
                     # Seek atoms change source sizes and timestamps. Publish
                     # the fingerprint of the prepared files.
