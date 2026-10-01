@@ -99,9 +99,10 @@ def _rebalance(path, layout):
     return (table[0], table[1], replacement) if replacement != table[1] else None
 
 
-def same_original(source, destination):
+def same_original(source, destination, *, checkpoint=lambda: None):
     """Recognize this metadata-only augmentation during repeat imports."""
     source, destination = Path(source), Path(destination)
+    checkpoint()
     original, prepared = _layout(source), _layout(destination)
     if not original or not prepared or not prepared[4]:
         return False
@@ -121,6 +122,7 @@ def same_original(source, destination):
                 source.stat().st_size + added != destination.stat().st_size):
             return False
     with source.open('rb') as left, destination.open('rb') as right:
+        checkpoint()
         metadata = bytearray(left.read(audio_at))
         if len(metadata) != audio_at:
             return False
@@ -142,6 +144,7 @@ def same_original(source, destination):
                 return False
         remaining = source.stat().st_size - audio_at
         while remaining:
+            checkpoint()
             size = min(remaining, 1024 * 1024)
             if left.read(size) != right.read(size):
                 return False
