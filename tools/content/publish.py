@@ -360,16 +360,22 @@ if ($disk.SerialNumber.Trim() -cne $cfg.serial -or [string]$disk.BusType -ne 'US
 $parts=@(Get-Partition -DiskNumber $disk.Number | Where-Object {$_.DriveLetter})
 if ($parts.Count -ne 1) {throw 'Require exactly one mounted partition'}
 $part=$parts[0]
-$volume=Get-Volume -Partition $part
 $drive=[string]$part.DriveLetter+':'
+$volumes=@(Get-CimInstance Win32_Volume -Filter ("DriveLetter='"+$drive+"'"))
+if ($volumes.Count -ne 1) {throw 'Partition volume identity rejected'}
+$volume=$volumes[0]
+if ($volume.DeviceID -notin $part.AccessPaths) {
+ $bound=Get-Volume -Partition $part
+ if ($bound.UniqueId -ne $volume.DeviceID) {throw 'Partition volume identity rejected'}
+}
 $logical=Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='"+$drive+"'")
-if ([string]$volume.FileSystemType -ne 'FAT32' -or $logical.VolumeSerialNumber.ToUpper() -cne $cfg.volume -or
+if ([string]$volume.FileSystem -ne 'FAT32' -or $logical.VolumeSerialNumber.ToUpper() -cne $cfg.volume -or
     ($cfg.drive -and $drive -cne $cfg.drive) -or $drive -eq $env:SystemDrive) {throw 'Volume identity rejected'}
 @{disk_number=[int]$disk.Number;disk_serial=$disk.SerialNumber.Trim();disk_unique_id=[string]$disk.UniqueId;
   disk_bytes=[uint64]$disk.Size;sector_bytes=[int]$disk.LogicalSectorSize;partition_number=[int]$part.PartitionNumber;partition_offset=[uint64]$part.Offset;
-  partition_bytes=[uint64]$part.Size;drive=$drive;root=$drive+'\';volume_unique_id=[string]$volume.UniqueId;
-  volume_serial=$logical.VolumeSerialNumber.ToUpper();filesystem=[string]$volume.FileSystemType;
-  pnp_id=[string]$physical.PNPDeviceID;native_target_id=$target;usb_pnp_id=$usb;free_bytes=[uint64]$volume.SizeRemaining} | ConvertTo-Json -Compress
+  partition_bytes=[uint64]$part.Size;drive=$drive;root=$drive+'\';volume_unique_id=[string]$volume.DeviceID;
+  volume_serial=$logical.VolumeSerialNumber.ToUpper();filesystem=[string]$volume.FileSystem;
+  pnp_id=[string]$physical.PNPDeviceID;native_target_id=$target;usb_pnp_id=$usb;free_bytes=[uint64]$volume.FreeSpace} | ConvertTo-Json -Compress
 '''.replace("CONFIG", config)
     encoded = base64.b64encode(script.encode("utf-16-le")).decode()
     result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
