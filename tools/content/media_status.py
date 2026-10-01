@@ -1,4 +1,5 @@
 """Read-only preparation plans and verified library status for the desktop UI."""
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 import json
 import os
@@ -169,8 +170,7 @@ def _preparation_state(identity):
 
 def inspect(identity, photo_dimension=640, verification="metadata"):
     from tools.studio import installer
-    boot_review = installer.assess(identity)
-    identity = boot_review['identity']
+    identity = media.refresh(identity)
     root = Path(identity['root'])
     verified = _verified_outputs(identity['disk_serial'], identity['volume_serial'],
                                  identity['partition_offset'], identity['volume_unique_id'],
@@ -178,19 +178,24 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     if len(verified) > 4096:
         verified.clear()
     verified_before = verified.copy()
-    identity['linnet'] = boot_review['linnet']
-    identity['default_boot'] = installer.default_boot(boot_review)
     state = _preparation_state(identity)
     skipped = {kind: skipped_paths(state, kind) for kind in media.KINDS}
     # Inventory and visible rows describe the same refresh. Traverse the iPod
-    # once, retaining excluded files for the library's removal controls.
-    records = records_by_kind(root)
-    from .retail_media import images
-    retail_photos = images(root)
-    inventory = scan_sources(root, skipped=skipped, records_by_kind=records, retail_photos=retail_photos,
-                           fingerprint_kinds=('Music', 'Notes', 'Photos'))
-    rows = media_library.list_items(identity, records_by_kind=records, retail_photos=retail_photos,
-                                    _validated_identity=True)
+    # once, retaining excluded files for the library's removal controls. The
+    # installer reads separate OS files after the shared identity check.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        boot_future = pool.submit(installer.assess, identity, _validated_identity=True)
+        records = records_by_kind(root)
+        from .retail_media import images
+        retail_photos = images(root)
+        inventory = scan_sources(root, skipped=skipped, records_by_kind=records, retail_photos=retail_photos,
+                               fingerprint_kinds=('Music', 'Notes', 'Photos'))
+        rows = media_library.list_items(identity, records_by_kind=records, retail_photos=retail_photos,
+                                        _validated_identity=True)
+        boot_review = boot_future.result()
+    identity = boot_review['identity']
+    identity['linnet'] = boot_review['linnet']
+    identity['default_boot'] = installer.default_boot(boot_review)
     readiness = {}
     for kind in media.KINDS:
         saved = state.get(kind, {})

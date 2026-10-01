@@ -392,10 +392,11 @@ def _previous_boot(review):
     return active if active in ("apple", "rockbox") else "apple"
 
 
-def assess(identity):
+def assess(identity, *, _validated_identity=False):
     """Inspect a mounted device without changing it."""
-    from tools.content.media_manager import refresh
-    identity = refresh(identity)
+    if not _validated_identity:
+        from tools.content.media_manager import refresh
+        identity = refresh(identity)
     root = Path(identity["root"]).resolve(strict=True)
     target_id = identity["target_id"]
     spec = TARGETS[target_id]
