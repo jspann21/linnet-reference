@@ -1021,6 +1021,8 @@ if os.name == "nt":
     _find_kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     _find_kernel.FindFirstFileW.argtypes = (wintypes.LPCWSTR, ctypes.POINTER(_FindData))
     _find_kernel.FindFirstFileW.restype = wintypes.HANDLE
+    _find_kernel.FindNextFileW.argtypes = (wintypes.HANDLE, ctypes.POINTER(_FindData))
+    _find_kernel.FindNextFileW.restype = wintypes.BOOL
     _find_kernel.FindClose.argtypes = (wintypes.HANDLE,)
     _find_kernel.FindClose.restype = wintypes.BOOL
 
@@ -1038,13 +1040,44 @@ def _actual_short_component(path: Path) -> str:
             raise ctypes.WinError(ctypes.get_last_error())
 
 
+def _short_names_in(folder: Path, aliases: dict[Path, str]) -> None:
+    """Read every FAT alias in one directory query for the music compiler."""
+    data = _FindData()
+    handle = _find_kernel.FindFirstFileW(str(folder / '*'), ctypes.byref(data))
+    if handle == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        while True:
+            if data.name not in ('.', '..'):
+                aliases[folder / data.name] = data.alternate or data.name
+            if not _find_kernel.FindNextFileW(handle, ctypes.byref(data)):
+                if ctypes.get_last_error() != 18:  # ERROR_NO_MORE_FILES
+                    raise ctypes.WinError(ctypes.get_last_error())
+                break
+    finally:
+        if not _find_kernel.FindClose(handle):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+
 def _device_media_path(path: Path, root: Path, alias_cache: dict[Path, str] | None = None) -> str:
     """Resolve one file against the compiler's already-resolved device root."""
     from .publish import _plain
     path = Path(path).absolute()
     _plain(path, root)
     path.resolve(strict=True).relative_to(root)
-    if os.name == "nt":
+    if os.name == "nt" and alias_cache is not None:
+        actual = []
+        cursor = root
+        for part in path.relative_to(root).parts:
+            parent = cursor
+            cursor /= part
+            if cursor not in alias_cache:
+                _short_names_in(parent, alias_cache)
+            if cursor not in alias_cache:
+                raise ValueError(f"Cannot resolve the iPod FAT short name: {cursor}")
+            actual.append(alias_cache[cursor])
+        path = root.joinpath(*actual)
+    elif os.name == "nt":
         get_short = ctypes.windll.kernel32.GetShortPathNameW
         get_short.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
         get_short.restype = ctypes.c_uint32
