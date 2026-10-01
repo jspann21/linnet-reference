@@ -1427,7 +1427,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                 if cache is not None:
                     embedded = cache.embedded_cover_store(path, before, embedded)
         if cover is None and embedded is None:
-            key = str(path.resolve()).casefold()
+            key = str(path).casefold()
             if key in retail and retail_artwork is None:
                 retail_artwork = retail_metadata(device_root)
             saved_cover = (retail_artwork or {}).get(key, {}).get('artwork')
@@ -1585,7 +1585,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         if stage_audio:
             temporary.replace(output / "MUSIC" / name)
         location = location or "/MUSIC/" + name
-        saved_tags = retail.get(str(path.resolve()).casefold(), {})
+        saved_tags = retail.get(str(path).casefold(), {})
         tags = {**{key: str(value) for key, value in saved_tags.items() if value},
                 **{key: value for key, value in metadata["tags"].items() if value}}
         if device_root is not None:
