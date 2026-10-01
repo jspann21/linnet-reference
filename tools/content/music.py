@@ -1077,7 +1077,12 @@ def _device_media_path(path: Path, root: Path, alias_cache: dict[Path, str] | No
             if cursor not in alias_cache:
                 raise ValueError(f"Cannot resolve the iPod FAT short name: {cursor}")
             actual.append(alias_cache[cursor])
-        path = root.joinpath(*actual)
+        short_path = root.joinpath(*actual)
+        if short_path != path:
+            _plain(short_path, root)
+            if short_path.resolve(strict=True) != path:
+                raise ValueError(f"FAT short name changed during compilation: {path}")
+        path = short_path
     elif os.name == "nt":
         get_short = ctypes.windll.kernel32.GetShortPathNameW
         get_short.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
