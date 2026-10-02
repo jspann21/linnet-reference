@@ -108,22 +108,39 @@ def _validate_manifest(value, token):
                 any(c not in '0123456789abcdef' for c in item['sha256'])):
             raise ValueError('Invalid photo dependency')
         path = _relative(item.get('relative'))
-        if not path.startswith('.LINNET/PHOTOS/PACKS/') or not path.endswith('.PAK'):
+        kind = item.get('kind', 'pack')
+        if (kind == 'pack' and path.startswith('.LINNET/PHOTOS/PACKS/') and path.endswith('.PAK')):
+            continue
+        if kind == 'jpeg':
+            from .photos import FAT_PATH
+            if (FAT_PATH.fullmatch('/' + path) and path.endswith(('.JPG', '.JPEG')) and
+                    0 < item['bytes'] <= 262144):
+                continue
+        if kind not in ('pack', 'jpeg'):
+            raise ValueError('Unknown photo dependency type')
+        else:
             raise ValueError('Unsupported photo dependency')
     return value
 
 
 def _photo_pack_requirements(package):
     """Read the pack identities bound into a previously validated PIMG."""
-    from .photos import HEADER, PACK_COUNT, _crc
+    from .photos import HEADER, PACK_COUNT, PHOTO, MAX_PHOTOS, MAX_STRINGS, _crc
+    from .publish_photos import _fallbacks
     with package.open('rb') as reader:
         header = reader.read(HEADER)
     if (len(header) != HEADER or header[:4] != b'LPIC' or
             _crc(header[:508]) != struct.unpack_from('<I', header, 508)[0]):
         raise ValueError('Photo package changed before Trash recovery.')
+    size = package.stat().st_size
+    count, photo_at = struct.unpack_from('<I', header, 20)[0], struct.unpack_from('<I', header, 36)[0]
+    pool_at, pool_bytes = struct.unpack_from('<II', header, 48)
+    if (not 1 <= count <= MAX_PHOTOS or not 1 <= pool_bytes <= MAX_STRINGS or
+            photo_at + count * PHOTO > size or pool_at + pool_bytes > size):
+        raise ValueError('Photo package has invalid fallback bounds.')
     version = struct.unpack_from('<H', header, 4)[0]
     if version == 0:
-        return {}
+        return {}, _fallbacks(package)
     if version != 1:
         raise ValueError('Unsupported photo package in Trash.')
     result = {}
@@ -133,7 +150,7 @@ def _photo_pack_requirements(package):
             continue
         prefix = identity.hex().upper()
         result[f'.LINNET/PHOTOS/PACKS/{prefix[:8]}/{prefix[8:]}.PAK'] = (prefix.lower(), size)
-    return result
+    return result, _fallbacks(package)
 
 
 def _removal(identity, root, token):
@@ -232,11 +249,11 @@ def recover(identity, token, *, erase=False):
             if _recovery_temporary(relative):
                 recovery_temporaries.append(source)
                 continue
+            if name in dependencies:
+                dependency_sources.append((source, root / relative, info, dependencies[name]))
+                continue
             allowed = relative.parts[0] in media.KINDS or relative.parts[:2] == ('iPod_Control', 'Music') or name in ('.LINNET/LIBRARY.PDB', '.LINNET/PHOTOS/LIBRARY.PIM', '.LINNET/PHOTOS/GRID.PGR', '.LINNET/NOTES/LIBRARY.NNT') or (relative.parent.as_posix() == '.LINNET/VIDEOS' and relative.suffix.lower() in ('.ipv', '.ipvf', '.mp4', '.m4v', '.mov'))
             if not allowed:
-                if name in dependencies:
-                    dependency_sources.append((source, root / relative, info, dependencies[name]))
-                    continue
                 raise ValueError('Unexpected file in Trash; inspect the report before restoring.')
             if selected_paths is not None and name not in selected_paths:
                 raise ValueError('Trash contains a file outside its portable recovery manifest.')
@@ -262,11 +279,21 @@ def recover(identity, token, *, erase=False):
             if photo_name in selected_paths:
                 package = (trash / photo_name) if photo_name in moved_names else (root / photo_name)
                 _plain(package, trash if photo_name in moved_names else root)
-                expected = _photo_pack_requirements(package)
-                if set(expected) != set(dependencies) or any(
+                expected_packs, fallbacks = _photo_pack_requirements(package)
+                expected_names = set(expected_packs)
+                selected_folded = {name.casefold() for name in selected_paths}
+                for fallback in fallbacks:
+                    name = fallback['path'].lstrip('/')
+                    if name.casefold() not in selected_folded:
+                        expected_names.add(name)
+                        item = dependencies.get(name)
+                        if item is None or item.get('kind') != 'jpeg' or item['bytes'] != fallback['bytes']:
+                            raise ValueError('Photo JPEG recovery metadata differs from its catalog.')
+                if set(dependencies) != expected_names or any(
+                        dependencies[name].get('kind', 'pack') != 'pack' or
                         dependencies[name]['bytes'] != size or
                         not dependencies[name]['sha256'].startswith(prefix)
-                        for name, (prefix, size) in expected.items()):
+                        for name, (prefix, size) in expected_packs.items()):
                     raise ValueError('Photo pack recovery metadata differs from its catalog.')
                 grid_name = '.LINNET/PHOTOS/GRID.PGR'
                 if grid_name in selected_paths:

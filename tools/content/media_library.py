@@ -587,6 +587,7 @@ def _remove(identity, items):
         if package.is_file():
             from .photos import inspect as inspect_photos
             from .photo_grid import inspect_grid
+            from .publish_photos import _fallbacks, _verify_fallbacks
             _volume_guard(identity)
             package_report = inspect_photos(package, verify_payloads=False,
                                             checkpoint=lambda: _volume_guard(identity))
@@ -597,7 +598,18 @@ def _remove(identity, items):
                 path = root / relative
                 _plain(path, root)
                 photo_dependencies.append(dict(relative=relative, bytes=item['bytes'],
-                                               sha256=item['sha256'], source=path))
+                                               sha256=item['sha256'], source=path, kind='pack'))
+            fallbacks = _fallbacks(package)
+            _verify_fallbacks(fallbacks, root, lambda: _volume_guard(identity))
+            selected_locations = {str(Path(row['path']).resolve()).casefold() for row in selected}
+            for item in fallbacks:
+                relative = item['path'].lstrip('/')
+                path = root / relative
+                _plain(path, root)
+                if str(path.resolve()).casefold() not in selected_locations:
+                    photo_dependencies.append(dict(relative=relative, bytes=item['bytes'],
+                                                   sha256=hash_file(path, item['bytes']), source=path,
+                                                   kind='jpeg'))
     if (photo_dependencies and
             sum(item['bytes'] for item in photo_dependencies) + 1048576 > identity.get('free_bytes', 0)):
         raise ValueError('Not enough iPod space to preserve photo packs in Trash.')
@@ -668,7 +680,7 @@ def _remove(identity, items):
     report = dict(operation='remove-media', started=time.time(), complete=False, receipt=str(receipt),
                   trash=str(trash), removed=[], requires_update=sorted({r['kind'] for r in selected if r['category'] == 'original'}),
                   catalog_paths={key.hex(): _device_path(root, path).relative_to(root).as_posix() for key, path, _ in entries},
-                  selected=selected, dependencies=[{k: item[k] for k in ('relative', 'bytes', 'sha256')}
+                  selected=selected, dependencies=[{k: item[k] for k in ('relative', 'bytes', 'sha256', 'kind')}
                                                    for item in photo_dependencies],
                   moves=[dict(source=str(p), trash=str(trash / p.relative_to(root))) for p in paths.values()])
     save_json(receipt, report)
