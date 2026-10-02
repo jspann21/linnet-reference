@@ -85,6 +85,10 @@ The CLI equivalent is `installer install --mount X:/ --from-source`; add
 
 ## Prepare your library
 
+If you need the same files in Apple's original OS, check **Preparation →
+Available in Apple OS** before copying media. That update is limited to the
+exact qualified FAT32 devices and file paths described below.
+
 1. Browse **Music**, **Photos**, **Videos**, or **Notes** and add files or folders.
    Adding to the queue does not copy files yet.
 2. Open **Preparation**, select the media types to update, and review video choices.
@@ -118,7 +122,9 @@ location. Queue removal leaves source files intact.
 Queue choices are retained per device. Completed work is reused after an
 interruption; unfinished or missing sources remain visible. Stop takes effect at
 a safe operation boundary. The preparation report records completed, skipped,
-and failed work.
+and failed work. During a scan, device search, or preparation planning, **Stop**
+waits for the current read-only check to return and discards its result; the
+window remains busy until that check finishes.
 
 ## Playlists, games, and screens
 
@@ -145,7 +151,9 @@ Pulse Path, Solitaire, Sudoku, Brick, Music Quiz, Vortex, Minesweeper, Falling
 Blocks, Reversi, Snake, and Word Search. **Screens** configures supported menus.
 See the [device menu hierarchy](navigation.md) for the default organization and
 controls. Save changes, eject, and restart to apply them. Game availability
-follows the target manifest; it is not enabled on every color iPod.
+follows the target manifest; it is not enabled on every color iPod. If game
+settings cannot be read because they are damaged, use **Replace damaged game
+settings** to choose and save a new selection.
 
 ## Make folders available in Apple OS
 
@@ -180,9 +188,21 @@ permanently delete it. Moving files to `.LINNET/TRASH` is recoverable and does
 not free space. Removing a prepared library does not necessarily remove originals;
 preparing those originals again can recreate it.
 
-After source changes, rebuild the affected library. Empty source folders do not
-implicitly erase the previous published library. Video updates do not
-automatically prune every older catalog entry.
+After source changes, prepare the affected library again. When a same-name
+source would replace an existing file, an empty source folder would retire a
+published library, or a video catalog contains a missing entry, the
+**Review preparation changes** dialog lists each proposed action. Check that
+list before **Approve changes and prepare**. Approved existing files and
+retired libraries move to recoverable Trash; the video catalog is backed up
+before missing entries are removed from its index. Canceling the review leaves
+those changes unapplied.
+
+If Videos shows **Needs repair** because its catalog is damaged, open
+**Preparation → Review catalog backups**. The picker shows validated on-device
+backups and their titles; restoring one saves the damaged catalog bytes for
+recovery. Videos added after that backup may need preparation again. If no
+complete backup is available, the app keeps the damaged catalog and prepared
+videos in place for manual recovery.
 
 Caches and receipts live under `%LOCALAPPDATA%/Linnet/Media`. Fast music
 verification checks sizes and modification times; full verification reads media
@@ -195,14 +215,28 @@ backups and device receipts independently of disposable caches; see
 ### Reconnect and collect diagnostics
 
 If an iPod disconnects during an operation, reconnect it in Disk Mode and use
-**Refresh** to inspect its current state before retrying. If the app still
-shows the previous device after reconnecting, close and reopen Media Manager,
-then choose **Find iPod**. Review the library and preparation status before
-another write; do not assume that an interrupted step finished.
+**Refresh** to rediscover and inspect its current state. **Choose iPod** in the
+sidebar is available whenever you need to select a device; when multiple iPods
+are found, choose the intended one in the picker. A failed scan clears the old
+connection so the next Refresh can rediscover the volume. Review the library
+and preparation status before another write; do not assume that an interrupted
+step finished.
+
+If the app shows **Media index recovery needed**, choose **Recover media indexes**
+and review the affected Music or Photos groups. Keep the iPod connected while
+the app checks its saved recovery record and restores a verified index set.
+The app holds normal library actions and eject until recovery finishes, then
+rescans the collection. Leave the recovery files on the iPod for the app to
+inspect; an invalid record needs manual attention.
 
 After preparation, open **Preparation details** to see completed, skipped, and
 failed steps and open the saved receipt. Receipts and cache data are stored under
 `%LOCALAPPDATA%/Linnet/Media`; installation backups are separate under
-`%LOCALAPPDATA%/Linnet/Installer`. When reporting a problem, include the exact
-error message, target model, the step you attempted, and the relevant receipt
-after checking it for personal file paths or media names.
+`%LOCALAPPDATA%/Linnet/Installer`. **Diagnostics** in the footer shows the last
+50 recorded operation errors on this computer. **Export support file** saves
+that history as JSON with device serials, recognized paths, and email addresses
+filtered out. Review the file before sharing it, since an error may still
+contain a personal media name. When reporting a problem, include the target
+model, the step you attempted, and any relevant preparation receipt after
+checking it for personal details. **Settings → Help and About** shows the
+Linnet system version reported by the app and quick setup guidance.
