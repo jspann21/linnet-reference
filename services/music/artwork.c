@@ -109,10 +109,11 @@ void ln_music_art_request(const char *name,uint32_t checksum){
                 front=slot;visible=true;phase=0;preload=false;working=token;return;
             }
         }
-#if LINNET_ART_MAX_SIDE >= 160u && defined(LINNET_COVERFLOW)
-        preview();
-#endif
     }
+#if LINNET_ART_MAX_SIDE >= 160u && defined(LINNET_COVERFLOW)
+    /* The owned preview is independent of both full-cover read buffers. */
+    preview();
+#endif
 }
 static void finish(void){
     phase=0;pending=false;preload=false;working=token;

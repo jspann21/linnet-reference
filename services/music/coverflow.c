@@ -206,9 +206,17 @@ const uint16_t *ln_coverflow_playback_preview(const char *path,uint32_t crc){
     }
     const char *tail=path+sizeof prefix-1u+8u;
     if(tail[0]!='.'||tail[1]!='R'||tail[2]!='G'||tail[3]!='B'||tail[4])return 0;
-    uint8_t *r=row(selected);
-    if(!r||ln_read_le32(r+240)!=hash||ln_read_le32(r+244)!=crc)return 0;
-    uint32_t id=ln_read_le32(r+248);int32_t slot=decode_art(id);
+    uint8_t *r=row(selected);int32_t slot=-1;
+    if(r&&ln_read_le32(r+240)==hash&&ln_read_le32(r+244)==crc)
+        slot=decode_art(ln_read_le32(r+248));
+    /* Songs, queue changes and resume can request any retained album. Only
+     * published catalog rows may bind its exact playback path and checksum. */
+    for(uint32_t i=0;slot<0&&i<CATALOG_SLOTS;i++){
+        if(!tags[i]||tags[i]>count)continue;
+        r=catalog[i];
+        if(ln_read_le32(r+240)==hash&&ln_read_le32(r+244)==crc)
+            slot=decode_art(ln_read_le32(r+248));
+    }
     if(slot>=0){cache[slot].age=++age;return cache_pixels[slot];}
 #else
     (void)path;(void)crc;

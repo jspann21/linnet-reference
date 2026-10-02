@@ -91,3 +91,30 @@ verification. A 6G framebuffer capture confirms that artwork reaches the
 bottom of the pane; 32 alternating home wheel events again had zero drops.
 The change reuses the existing artwork and framebuffer buffers.
 Local evidence is under `out/art-quality/cropped-com11/`.
+
+## Arbitrary song preview follow-up
+
+Performance testing found that Songs could open album 01 while Cover Flow
+still selected album 12, leaving a placeholder during disk audio startup.
+The preview bridge previously checked only the selected catalog row.
+It now checks that row first, then scans the bounded set of published
+resident rows for the requested artwork path and CRC. An independent
+preview can also publish while an older full-cover read drains.
+
+On the rotating 30GB 5G, the baseline capture still lacked artwork while
+audio was OPEN at 1.5 seconds and PRIME at 3 seconds. Full artwork appeared
+by the 4.7-second observation. With the repair, the first requested-song
+capture already contained its cover during PRIME, with Cover Flow still
+on album 12. Four replacement selections also displayed their matching
+cover after the new player generation published, with zero audio underruns.
+These timings include Link capture and observation overhead.
+
+Astra's review confirmed library identity, exact path/CRC matching,
+published catalog tags, validated tiles, and pending-read buffer ownership.
+The repair adds no memory or cache slots. Its immediate preview applies
+to resident mapped album covers; uncached covers and differing per-track
+artwork continue through the full artwork reader. Audio startup admission
+and LCD transfer behavior remain as before.
+
+Local receipts and captures are under `out/art-quality/arbitrary-before-correct/`,
+`arbitrary-after/`, and `arbitrary-switches-published/`.
