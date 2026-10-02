@@ -27,6 +27,36 @@ def _verification_name(name):
     return path.as_posix()
 
 
+class _VerifiedFiles(dict):
+    """Expire retained hashes even during a long preparation or status scan."""
+
+    def __init__(self, owner):
+        super().__init__()
+        self.owner = owner
+
+    def refresh(self):
+        now = time.time()
+        if not 0 <= now - self.owner['verified_at'] <= 3600:
+            super().clear()
+            self.owner['verified_at'] = now
+
+    def get(self, key, default=None):
+        self.refresh()
+        return super().get(key, default)
+
+    def __setitem__(self, key, value):
+        self.refresh()
+        super().__setitem__(key, value)
+
+    def update(self, *args, **kwargs):
+        self.refresh()
+        super().update(*args, **kwargs)
+
+    def copy(self):
+        self.refresh()
+        return dict(self)
+
+
 @lru_cache(maxsize=4)
 def _verification_cache(disk_serial, volume_serial, partition_offset, volume_unique_id,
                         cache_disk_serial):
@@ -35,7 +65,8 @@ def _verification_cache(disk_serial, volume_serial, partition_offset, volume_uni
     # Native Disk Mode can reuse a verified Apple cache directory. Keep the
     # live disk identity in the memory key while reading the same file we save.
     path = cache_directory(cache_disk_serial or disk_serial, volume_serial) / 'verified-outputs.json'
-    cache = dict(verified_at=time.time(), files={})
+    cache = dict(verified_at=time.time())
+    cache['files'] = _VerifiedFiles(cache)
     try:
         if path.stat().st_size > 4 * 1024 * 1024:
             return cache
@@ -77,7 +108,10 @@ def _verified_outputs(disk_serial, volume_serial, partition_offset, volume_uniqu
 
 
 def _remember_verified(identity, verified, before):
+    verified.refresh()
     if verified == before:
+        return
+    if not verified:
         return
     path = cache_root(identity) / 'verified-outputs.json'
     try:
@@ -86,15 +120,16 @@ def _remember_verified(identity, verified, before):
         if len(verified) > 4096:
             for key in list(verified)[:-4096]:
                 del verified[key]
-        verified_at = time.time()
+        now = time.time()
+        verified_at = verified.owner['verified_at']
         try:
             previous = json.loads(path.read_text(encoding='utf-8'))
             old_time = previous.get('verified_at')
             if (previous.get('partition_offset') == identity['partition_offset'] and
                     previous.get('volume_unique_id', '').casefold() == identity['volume_unique_id'].casefold() and
                     type(old_time) in (int, float) and
-                    0 <= verified_at - old_time <= 3600):
-                verified_at = old_time
+                    0 <= now - old_time <= 3600):
+                verified_at = min(verified_at, old_time)
         except (OSError, ValueError, TypeError, AttributeError):
             pass
         save_json(path, {'partition_offset': identity['partition_offset'],
