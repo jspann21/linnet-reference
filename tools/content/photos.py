@@ -345,7 +345,9 @@ def _pack_path(directory, identity):
 
 
 def _pack_bucket(name):
-    return hashlib.sha256(name.casefold().encode('utf-8')).digest()[0] & (PACK_COUNT - 1)
+    # Bucket zero keeps default viewer tiles in navigation order. Stable
+    # buckets for zoom levels keep a single changed photo from rewriting them.
+    return 1 + hashlib.sha256(name.casefold().encode('utf-8')).digest()[0] % (PACK_COUNT - 1)
 
 
 def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
@@ -520,17 +522,39 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                             raise ValueError('photo tile payload exceeds package limits')
                         levels.append((index, lw, lh, tx, ty, first_tile, count))
                         local_offset += count
-                    bucket = _pack_bucket(names[path]) if packed_target else 0
-                    destination = pack_spools[bucket] if packed_target else tiles
-                    position = destination.tell()
-                    if packed_target and position + len(packed) > PACK_LIMIT:
-                        raise ValueError('photo pack exceeds its 128 MiB address bound')
-                    for tile_index, (length, crc) in enumerate(zip(lengths, image_meta['tile_crcs'])):
-                        if tile_index % 256 == 0:
-                            check()
-                        tile_records.append(((bucket << 27) | position if packed_target else position, length, crc))
-                        position += length
-                    destination.write(packed)
+                    if packed_target:
+                        zoom_bucket = _pack_bucket(names[path])
+                        default_count = image_meta['levels'][0][4]
+                        default_bytes = sum(lengths[:default_count])
+                        default_bucket = (0 if pack_spools[0].tell() + default_bytes <= PACK_LIMIT
+                                          else zoom_bucket)
+                        packed_at = 0
+                        for bucket, first, end in ((default_bucket, 0, default_count),
+                                                   (zoom_bucket, default_count, len(lengths))):
+                            if first == end:
+                                continue
+                            destination = pack_spools[bucket]
+                            position = destination.tell()
+                            group_bytes = sum(lengths[first:end])
+                            if position + group_bytes > PACK_LIMIT:
+                                raise ValueError('photo pack exceeds its 128 MiB address bound')
+                            for tile_index in range(first, end):
+                                if tile_index % 256 == 0:
+                                    check()
+                                length = lengths[tile_index]
+                                tile_records.append(((bucket << 27) | position, length,
+                                                     image_meta['tile_crcs'][tile_index]))
+                                position += length
+                            destination.write(memoryview(packed)[packed_at:packed_at + group_bytes])
+                            packed_at += group_bytes
+                    else:
+                        position = tiles.tell()
+                        for tile_index, (length, crc) in enumerate(zip(lengths, image_meta['tile_crcs'])):
+                            if tile_index % 256 == 0:
+                                check()
+                            tile_records.append((position, length, crc))
+                            position += length
+                        tiles.write(packed)
                     photos.append((0, *title, *string(fallback), image_meta['width'], image_meta['height'],
                                    first_level, len(levels)-first_level, 0, image_meta['thumb_crc'],
                                    image_meta['fallback_bytes'], image_meta['fallback_crc'],
