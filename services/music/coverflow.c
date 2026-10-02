@@ -224,7 +224,12 @@ void ln_coverflow_step(bool allow_read){
     }
     uint32_t now=ln_time_us();
     if(failed){io_due=NONE;return;}
-    if(!allow_read||ln_music_library_status()!=LN_LIBRARY_READY||!ln_music_library_count()){
+    enum ln_music_library_status status=ln_music_library_status();
+    if(status==LN_LIBRARY_ERROR||(status==LN_LIBRARY_READY&&!ln_music_library_count())){
+        if(phase!=CLOSED||count)invalidate();
+        io_due=NONE;return;
+    }
+    if(!allow_read||status!=LN_LIBRARY_READY){
         io_due=now+10000u;return;
     }
     if(phase>=READY&&!identity())invalidate();
