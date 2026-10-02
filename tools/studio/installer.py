@@ -1444,6 +1444,22 @@ def _repair_uninstall_recovery(identity, pending):
     receipt, backup = pending
     root = Path(identity["root"]).resolve(strict=True)
     private, recovery = root / ".LINNET", root / ".LINNET" / "RECOVERY"
+
+    def restore_file(source, target):
+        data = source.read_bytes()
+        temporary = target.with_name("L" + uuid.uuid4().hex[:8] + ".TMP")
+        guarded_path(temporary, root)
+        with temporary.open("xb") as writer:
+            writer.write(data)
+            writer.flush()
+            os.fsync(writer.fileno())
+        guard_volume(identity)
+        if temporary.read_bytes() != data:
+            raise OSError("saved recovery copy failed verification on the iPod")
+        os.replace(temporary, target)
+        if target.read_bytes() != data:
+            raise OSError("restored recovery file failed verification")
+
     with _exclusive(identity):
         refresh(identity)
         guard_volume(identity)
@@ -1453,6 +1469,8 @@ def _repair_uninstall_recovery(identity, pending):
         guarded_path(recovery, root)
         recovery.mkdir(exist_ok=True)
         for source in backup.rglob("*"):
+            if source.is_file() and re.fullmatch(r"L[0-9a-f]{8}\.TMP", source.name, re.IGNORECASE):
+                continue
             guarded_path(source, backup)
             target = recovery / source.relative_to(backup)
             guard_volume(identity)
@@ -1460,11 +1478,24 @@ def _repair_uninstall_recovery(identity, pending):
             if source.is_dir():
                 target.mkdir(exist_ok=True)
             elif target.exists():
-                if not target.is_file() or target.read_bytes() != source.read_bytes():
+                if not target.is_file():
                     raise ValueError("on-device recovery differs from the saved uninstall backup")
+                if target.read_bytes() != source.read_bytes():
+                    if source.name != "INSTALL.JSON":
+                        raise ValueError("on-device recovery differs from the saved uninstall backup")
+                    try:
+                        saved = json.loads(source.read_text(encoding="utf-8"))
+                        current = json.loads(target.read_text(encoding="utf-8"))
+                        stable = (set(saved) | set(current)) - {"restored_at"}
+                        if (saved.get("phase") != "restored" or current.get("phase") != "restored" or
+                                any(saved.get(key) != current.get(key) for key in stable)):
+                            raise ValueError("the recovery journal changed outside this removal")
+                    except (OSError, ValueError, TypeError, AttributeError) as error:
+                        raise ValueError("on-device recovery differs from the saved uninstall backup") from error
+                    restore_file(source, target)
             else:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source, target)
+                restore_file(source, target)
 
 
 def uninstall(identity, progress=lambda _message: None, expected=None):
