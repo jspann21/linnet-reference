@@ -75,7 +75,8 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
     }
     int32_t bottom=c->clip_y+c->clip_h;if(bottom>190)bottom=190;
     for(int32_t y=c->clip_y;y<bottom;y++){
-        struct span {int16_t left,right,card;} spans[15]={{c->clip_x,c->clip_x+c->clip_w,-1}};
+        struct span {int16_t left,right,card;} spans[15];
+        spans[0]=(struct span){c->clip_x,c->clip_x+c->clip_w,-1};
         uint32_t spans_count=1;
         for(uint32_t n=0;n<card_count;n++){
             const struct card *card=&cards[n];const struct ln_coverflow_scanline *line=&ln_coverflow_rows[card->pose][y];
