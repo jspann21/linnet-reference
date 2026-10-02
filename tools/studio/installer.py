@@ -1006,14 +1006,18 @@ def install(identity, progress=lambda _message: None, build="user", installation
     method_id = installation_method or reviewed["default_installation_method"]
     method = next((item for item in reviewed["installation_methods"]
                    if item["id"] == method_id), None)
-    if method and method["strategy"] == "rockbox-file":
+    route = (reviewed["action"], (reviewed.get("recovery") or {}).get("strategy"),
+             method["strategy"] if method else None)
+    mixed_native_restore = (reviewed["action"] == "replace" and
+                            (reviewed.get("recovery") or {}).get("strategy") == "native-directory")
+    if method and method["strategy"] == "rockbox-file" and not mixed_native_restore:
         with _exclusive(reviewed["identity"]):
-            return _install(identity, progress, build, method_id, firmware, from_source)
-    return _install(identity, progress, build, method_id, firmware, from_source)
+            return _install(identity, progress, build, method_id, firmware, from_source, route)
+    return _install(identity, progress, build, method_id, firmware, from_source, route)
 
 
 def _install(identity, progress=lambda _message: None, build="user", installation_method=None,
-            firmware=None, from_source=False):
+            firmware=None, from_source=False, reviewed_route=None):
     if build not in ("user", "dev"):
         raise ValueError("installer build must be user or dev")
     if from_source and firmware is not None:
@@ -1026,6 +1030,10 @@ def _install(identity, progress=lambda _message: None, build="user", installatio
     method_id = installation_method or reviewed["default_installation_method"]
     method = next((item for item in reviewed["installation_methods"]
                    if item["id"] == method_id), None)
+    route = (reviewed["action"], (reviewed.get("recovery") or {}).get("strategy"),
+             method["strategy"] if method else None)
+    if route != reviewed_route:
+        raise RuntimeError("installation route changed after review; inspect the iPod again")
     if not method or not method["enabled"]:
         raise ValueError("the selected Linnet installation method is unavailable")
     strategy = method["strategy"]
@@ -1103,9 +1111,13 @@ def _install(identity, progress=lambda _message: None, build="user", installatio
             raise RuntimeError("installation state changed after review")
         combined_native_reinstall = (
             reviewed["action"] == "replace" and
-            reviewed.get("recovery", {}).get("strategy") == "native-directory" and
+            (reviewed.get("recovery") or {}).get("strategy") == "native-directory" and
             strategy == "native-directory")
-        if strategy == "rockbox-file" and reviewed["action"] == "replace":
+        mixed_native_restore = (
+            reviewed["action"] == "replace" and
+            (reviewed.get("recovery") or {}).get("strategy") == "native-directory" and
+            strategy == "rockbox-file")
+        if strategy == "rockbox-file" and reviewed["action"] == "replace" and not mixed_native_restore:
             receipt["device_write_attempted"] = True
             receipt["phase"] = "restore-before-reinstall"
             _save(receipt_path, receipt)
@@ -1133,7 +1145,21 @@ def _install(identity, progress=lambda _message: None, build="user", installatio
         receipt["device_write_attempted"] = True
         receipt["phase"] = "device-transaction"
         _save(receipt_path, receipt)
-        if strategy == "rockbox-file":
+        if mixed_native_restore:
+            progress("Requesting administrator access to restore the previous boot and reinstall Linnet…")
+            marker = reviewed["recovery"]
+            job = dict(mode="rockbox-reinstall", identity=identity, artifacts=artifacts,
+                       transaction=str(transaction), installation_method=method_id,
+                       reviewed_action=reviewed["action"], archive=str(archive),
+                       restoration=dict(transaction=marker["transaction"], plan=marker["plan"],
+                                        plan_sha256=marker["plan_sha256"], marker=marker),
+                       result=str(receipt_path.with_suffix(".result.json")))
+            job_path = transaction / ("worker-" + uuid.uuid4().hex + ".json")
+            _save(job_path, job, replace=False)
+            result = _run_elevated(job_path)
+            receipt["restored_boot"] = result.pop("restored_boot")
+            receipt["previous_linnet_archive"] = result["previous_linnet_archive"]
+        elif strategy == "rockbox-file":
             result = _install_rockbox(identity, artifacts, progress, transaction, archive)
         else:
             progress(("Requesting administrator access to restore and reinstall the iPod boot partition…"
@@ -1243,6 +1269,21 @@ def _native_worker(job):
                 marker.get("plan") != job["plan"] or
                 marker.get("plan_sha256") != job["plan_sha256"]):
             raise RuntimeError("native recovery state changed before the worker acquired exclusivity")
+    elif job["reviewed_action"] == "resume":
+        # UAC may run under another administrator account with a different
+        # LocalAppData cache, so assess() cannot discover the caller's context.
+        context = json.loads((transaction / "context.json").read_text(encoding="utf-8"))
+        if (current.get("recovery") is not None or
+                current["linnet"]["state"] not in ("absent", "incomplete", "installed") or
+                context.get("target_id") != expected["target_id"] or
+                context.get("device_id") != expected["disk_serial"] or
+                context.get("strategy") != "native-directory" or
+                context.get("installation_method") != job["installation_method"] or
+                context.get("previous_boot") != job["previous_boot"] or
+                context.get("build") != job["artifacts"].get("build") or
+                context.get("artifacts") != job["artifacts"]):
+            raise RuntimeError("saved native installation changed before resume")
+        _validate_artifacts(expected, job["artifacts"])
     elif current["action"] != job["reviewed_action"]:
         raise RuntimeError("installation state changed before the worker acquired exclusivity")
     if job["mode"] == "restore":
@@ -1253,10 +1294,14 @@ def _native_worker(job):
               dict(marker, phase="restored", restored_at=_now()))
         return result
     reinstall = None
-    if job["mode"] == "reinstall":
+    if job["mode"] in ("reinstall", "rockbox-reinstall"):
         action = job["reviewed_action"]
         if action not in ("replace", "adopt"):
             raise ValueError("native reinstall action is invalid")
+        if (job["mode"] == "rockbox-reinstall" and
+                (action != "replace" or
+                 job.get("restoration", {}).get("marker", {}).get("strategy") != "native-directory")):
+            raise ValueError("mixed bootloader reinstall state is invalid")
         if action == "replace":
             restoration = job["restoration"]
             marker = restoration["marker"]
@@ -1297,6 +1342,11 @@ def _native_worker(job):
             reinstall["restored_boot"] = (restored if marker.get("strategy") == "rockbox-file" else
                                           dict(passed=True, boot=restored, media_preserved=True,
                                                linnet_files_preserved=True, requires_safe_eject=True))
+        if job["mode"] == "rockbox-reinstall":
+            result = _install_rockbox(expected, job["artifacts"], lambda _message: None,
+                                      transaction, Path(job["archive"]))
+            result["restored_boot"] = reinstall["restored_boot"]
+            return result
     mbr, firmware = _read_raw_backup(expected, transaction)
     device_path = transaction / "device.json"
     device_value = detected
@@ -1352,7 +1402,7 @@ def _native_worker(job):
 def restore(identity, expected=None):
     from tools.content.publish import _exclusive
     reviewed = assess(identity)
-    strategy = reviewed.get("recovery", {}).get("strategy")
+    strategy = (reviewed.get("recovery") or {}).get("strategy")
     if strategy == "rockbox-file":
         with _exclusive(reviewed["identity"]):
             return _restore(identity, expected, strategy)
@@ -1399,7 +1449,7 @@ def worker(job_path):
     result_path = Path(job["result"]).resolve()
     response = dict(passed=False, operation=job.get("mode"), started_at=_now())
     try:
-        if job.get("mode") not in ("install", "restore", "reinstall"):
+        if job.get("mode") not in ("install", "restore", "reinstall", "rockbox-reinstall"):
             raise ValueError("unsupported installer worker job")
         from tools.content.publish import _exclusive
         with _exclusive(job["identity"]):

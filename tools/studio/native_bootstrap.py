@@ -416,18 +416,22 @@ def write_verified(device, offset, payload, receipt, receipt_path, phase, sector
 def execute(mode, plan_path, expected_sha, disk_number):
     """Own the media publisher mutex for direct raw apply and restore calls."""
     from tools.content.publish import _exclusive
-    from tools.inspect.retail_device import detect
+    from tools.content.media_manager import discover, refresh
     _manifest, artifacts, _original = load_plan(plan_path, expected_sha)
-    storage = _device(json.loads(artifacts["device.json"]))["storage"]
+    planned_device = _device(json.loads(artifacts["device.json"]))
+    storage = planned_device["storage"]
     volume_id = storage.get("volume_id")
-    drive = storage.get("drive")
-    if not isinstance(volume_id, str) or not volume_id or not isinstance(drive, str):
+    if not isinstance(volume_id, str) or not volume_id:
         raise ValueError("native plan lacks a mounted volume identity for publisher exclusion")
     with _exclusive({"volume_unique_id": volume_id}):
-        observed = detect(Path(drive + "\\"))["storage"]
-        if (observed["volume_id"].casefold() != volume_id.casefold() or
-                observed["disk_number"] != disk_number or
-                observed["disk_serial"] != storage["disk_serial"]):
+        matches = [item for item in discover()
+                   if item["volume_unique_id"].casefold() == volume_id.casefold()]
+        if len(matches) != 1:
+            raise RuntimeError("native plan volume is not uniquely mounted")
+        observed = refresh(matches[0])
+        if (observed["disk_number"] != disk_number or
+                observed["disk_serial"] != storage["disk_serial"] or
+                observed["target_id"] != planned_device["target_id"]):
             raise RuntimeError("native plan no longer matches the mounted iPod volume")
         return _execute(mode, plan_path, expected_sha, disk_number)
 
