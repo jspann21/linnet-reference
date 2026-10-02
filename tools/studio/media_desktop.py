@@ -871,7 +871,7 @@ class GamesController:
 
     def save_games(self):
         window = self.window
-        if not window.identity or window.busy or not games.available(window.identity):
+        if not window.identity or not window.device_connected or window.busy or not games.available(window.identity):
             return
         selected = {index for index, check in enumerate(window.game_checks) if check.isChecked()}
         identity = window.identity
@@ -946,7 +946,7 @@ class ScreensController:
 
     def save_screens(self):
         window = self.window
-        if not window.identity or window.busy:
+        if not window.identity or not window.device_connected or window.busy:
             return
         state = {name: list(rows) for name, rows in window.screen_state.items()}
         try:
@@ -1312,14 +1312,15 @@ class MediaWindow(QMainWindow):
 
     def selection_changed(self, *_):
         rows = self.selected()
-        self.selection_bar.setVisible(bool(rows))
+        self.selection_bar.setVisible(bool(rows) and self.device_connected)
         self.selection_text.setText(f'{len(rows):,} selected  ·  {size(sum(r["bytes"] for r in rows))}')
         self.restore_button.setVisible(self.page == 'Trash')
-        self.restore_button.setEnabled(not self.busy)
+        self.restore_button.setEnabled(self.device_connected and not self.busy)
         retail_photos = bool(rows) and all(r.get('retail_photo') for r in rows)
         self.remove_button.setText('Exclude from preparation' if retail_photos else
                                    'Delete permanently' if self.page == 'Trash' else 'Move to Trash')
-        self.remove_button.setEnabled(not self.busy and (retail_photos or all(r.get('removable', True) for r in rows)))
+        self.remove_button.setEnabled(self.device_connected and not self.busy and
+                                      (retail_photos or all(r.get('removable', True) for r in rows)))
         self.info_button.setEnabled(len(rows) == 1 and not self.busy)
 
     def clear_selection(self):
@@ -1512,6 +1513,14 @@ class MediaWindow(QMainWindow):
         if outcome.cancel_requested and tag in ('scan', 'plan', 'devices'):
             if tag == 'plan':
                 self.plan_context = None
+            elif tag == 'scan' and isinstance(result, dict) and result.get('publication_recovery_pending'):
+                self._complete_scan(result)
+                self.show_progress('An interrupted media update needs review before this iPod can be used.')
+                return
+            elif tag == 'devices' and self.publication_recovery_pending:
+                self.update_controls()
+            else:
+                self.transition_device(None)
             self.show_progress('Stopped after the current check. Refresh when ready.')
             return
         if outcome.status not in ('succeeded', 'partial', 'cancelled', 'failed'):
@@ -1774,6 +1783,10 @@ class MediaWindow(QMainWindow):
             self.publication_recovery_groups = result['groups']
             self.inventory = self.review = self.apple_info = None
             self.rows = []; self.readiness = {}
+            self.trash_rows = []
+            self.group = None
+            self._selection_context = None
+            self.clear_selection()
             self._library_source = None
             self.device_name.setText('Media index recovery needed')
             self.device_info.setText('Review recovery before reading or ejecting this iPod')
@@ -1953,7 +1966,7 @@ class MediaWindow(QMainWindow):
             **media.target_args(identity)), 'Recovering media indexes…')
 
     def open_playlists(self):
-        if self.identity and not self.busy:
+        if self.identity and self.device_connected and not self.busy:
             from tools.content import playlists
             identity = self.identity
             self.work('playlists', lambda: playlists.read(identity), 'Reading iPod playlists…')
@@ -2519,7 +2532,7 @@ class MediaWindow(QMainWindow):
         layout.addWidget(button('Apply video choices', accept, 'primary'), 0, Qt.AlignRight); dialog.exec()
 
     def prepare(self):
-        if self.busy or not self.inventory:
+        if self.busy or not self.device_connected or not self.inventory:
             return
         selected = [kind for kind, check in self.prep_checks.items() if check.isChecked() and check.isEnabled()]
         if not selected:
@@ -2562,7 +2575,7 @@ class MediaWindow(QMainWindow):
 
     def remove_selected(self):
         rows = self.selected()
-        if self.busy or not self.identity or not rows:
+        if self.busy or not self.identity or not self.device_connected or not rows:
             return
         if any(not row.get('removable', True) for row in rows):
             self.show_error('This item cannot be removed. Review its details for recovery guidance.')
@@ -2602,7 +2615,7 @@ class MediaWindow(QMainWindow):
 
     def restore_selected(self):
         rows = self.selected()
-        if self.busy or self.page != 'Trash' or not rows:
+        if self.busy or not self.device_connected or self.page != 'Trash' or not rows:
             return
         identity = self.identity
         dimension = 2048 if self.photo_detail.currentIndex() else 640
@@ -2623,7 +2636,7 @@ class MediaWindow(QMainWindow):
         self.work('restore', restore, 'Restoring your files…')
 
     def sync_videos(self):
-        if self.identity and not self.busy:
+        if self.identity and self.device_connected and not self.busy:
             identity = self.identity
             self.work('sync', lambda: media_library.organize_videos(identity), 'Syncing the video folder…')
 
@@ -2689,7 +2702,7 @@ class MediaWindow(QMainWindow):
             self.install_button.setText(('Reinstall ' if option.get('active') else 'Install ') + option['label'] if linnet else 'Set as default boot')
 
     def install_selected(self):
-        if not self.install_button.isEnabled():
+        if not self.device_connected or not self.install_button.isEnabled():
             return
         option, method, identity = self.boot_choice.currentData(), self.method_choice.currentData(), self.identity
         description = f"Make {option['label']} the default startup software?" + (f"\n\nMethod: {method['label']}" if option['kind'] == 'linnet' else '')
@@ -2803,7 +2816,7 @@ class MediaWindow(QMainWindow):
         dialog.exec()
 
     def review_skipped(self):
-        if self.busy or not self.identity:
+        if self.busy or not self.identity or not self.device_connected:
             return
         identity = self.identity
         self.work('review_skipped', lambda: (identity, media.list_skipped_files(identity)), 'Loading skipped files…')
@@ -2827,7 +2840,7 @@ class MediaWindow(QMainWindow):
         layout.addWidget(button('Include selected files again', restore, 'primary'), 0, Qt.AlignRight); dialog.exec()
 
     def eject(self):
-        if not self.identity or self.busy:
+        if not self.identity or not self.device_connected or self.busy:
             return
         self.save_choices_draft()
         identity = self.identity
