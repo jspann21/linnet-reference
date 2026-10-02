@@ -168,30 +168,43 @@ def _preparation_state(identity):
         return {}
 
 
-def inspect(identity, photo_dimension=640, verification="metadata"):
-    from tools.studio import installer
-    identity = media.refresh(identity)
+def _library_snapshot(identity):
     root = Path(identity['root'])
-    verified = _verified_outputs(identity['disk_serial'], identity['volume_serial'],
-                                 identity['partition_offset'], identity['volume_unique_id'],
-                                 cache_disk_serial=identity.get('media_cache_disk_serial'))
-    if len(verified) > 4096:
-        verified.clear()
-    verified_before = verified.copy()
     state = _preparation_state(identity)
     skipped = {kind: skipped_paths(state, kind) for kind in media.KINDS}
-    # Inventory and visible rows describe the same refresh. Traverse the iPod
-    # once, retaining excluded files for the library's removal controls. The
-    # installer reads separate OS files after the shared identity check.
+    # Inventory and visible rows share one traversal, including excluded files.
+    records = records_by_kind(root)
+    from .retail_media import images
+    retail_photos = images(root)
+    inventory = scan_sources(root, skipped=skipped, records_by_kind=records, retail_photos=retail_photos,
+                             fingerprint_kinds=('Music', 'Notes', 'Photos'))
+    rows = media_library.list_items(identity, records_by_kind=records, retail_photos=retail_photos,
+                                    _validated_identity=True)
+    return state, skipped, records, inventory, rows
+
+
+def inspect(identity, photo_dimension=640, verification="metadata"):
+    from tools.studio import installer
+    media._volume_guard(identity)
+    root = Path(identity['root'])
+    # A discovered identity already binds the mounted volume. Revalidate it
+    # while collecting read-only library data, then use the refreshed identity
+    # before reporting readiness or returning anything to the caller.
     with ThreadPoolExecutor(max_workers=2) as pool:
+        refresh_future = pool.submit(media.refresh, identity)
+        snapshot_future = pool.submit(_library_snapshot, identity)
+        refreshed = refresh_future.result()
+        state, skipped, records, inventory, rows = snapshot_future.result()
+        if identity.get('media_cache_disk_serial') != refreshed.get('media_cache_disk_serial'):
+            state, skipped, records, inventory, rows = _library_snapshot(refreshed)
+        identity = refreshed
+        verified = _verified_outputs(identity['disk_serial'], identity['volume_serial'],
+                                     identity['partition_offset'], identity['volume_unique_id'],
+                                     cache_disk_serial=identity.get('media_cache_disk_serial'))
+        if len(verified) > 4096:
+            verified.clear()
+        verified_before = verified.copy()
         boot_future = pool.submit(installer.assess, identity, _validated_identity=True)
-        records = records_by_kind(root)
-        from .retail_media import images
-        retail_photos = images(root)
-        inventory = scan_sources(root, skipped=skipped, records_by_kind=records, retail_photos=retail_photos,
-                               fingerprint_kinds=('Music', 'Notes', 'Photos'))
-        rows = media_library.list_items(identity, records_by_kind=records, retail_photos=retail_photos,
-                                        _validated_identity=True)
         boot_review = boot_future.result()
     identity = boot_review['identity']
     identity['linnet'] = boot_review['linnet']
