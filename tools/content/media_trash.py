@@ -19,6 +19,12 @@ _MAX_MANIFEST = 16 * 1024 * 1024
 _BACKUPS = {'INDEX.VID.before', 'LIBRARY.PDB.before', 'COVERS.CFL.before'}
 
 
+def _manifest_temporary(relative):
+    name = relative.as_posix()
+    return (len(name) == 12 and name[0] == 'R' and name[8:] == '.TMP' and
+            all(c in '0123456789ABCDEF' for c in name[1:8]))
+
+
 def _relative(value):
     """Accept only a canonical path below the device root."""
     if (not isinstance(value, str) or not value or value.startswith('/') or '\\' in value or
@@ -216,11 +222,15 @@ def recover(identity, token, *, erase=False):
         dependencies = {item['relative']: item for item in report.get('dependencies', [])}
         selected_paths = {row['relative'] for row in report['selected']} if portable else None
         dependency_sources = []
+        manifest_temporaries = []
         # Derive destinations from the guarded removal tree; never trust absolute receipt paths.
         for source, info in file_records(trash):
             relative = source.relative_to(trash)
             name = relative.as_posix()
             if name in _BACKUPS or name == _MANIFEST:
+                continue
+            if _manifest_temporary(relative):
+                manifest_temporaries.append(source)
                 continue
             allowed = relative.parts[0] in media.KINDS or relative.parts[:2] == ('iPod_Control', 'Music') or name in ('.LINNET/LIBRARY.PDB', '.LINNET/PHOTOS/LIBRARY.PIM', '.LINNET/PHOTOS/GRID.PGR', '.LINNET/NOTES/LIBRARY.NNT') or (relative.parent.as_posix() == '.LINNET/VIDEOS' and relative.suffix.lower() in ('.ipv', '.ipvf', '.mp4', '.m4v', '.mov'))
             if not allowed:
@@ -305,7 +315,13 @@ def recover(identity, token, *, erase=False):
         data = _encode_catalog(entries + restore_entries) if restore_entries else None
         for source, destination, info, item in dependency_sources:
             _volume_guard(identity); _plain(source, trash); _plain(destination, root)
-            if not destination.exists():
+            if destination.exists():
+                if (destination.stat().st_size != item['bytes'] or
+                        hash_file(destination, item['bytes']) != item['sha256']):
+                    raise ValueError('A photo pack changed during recovery; its Trash copy was retained.')
+            else:
+                if source.stat().st_size != item['bytes'] or hash_file(source, item['bytes']) != item['sha256']:
+                    raise ValueError('The photo pack in Trash changed during recovery.')
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 source.rename(destination)
         for source, destination, info in moves:
@@ -345,8 +361,15 @@ def recover(identity, token, *, erase=False):
             _save_device(identity, root, trash, report)
         save_json(receipt, report)
         # Backup is no longer needed only after file and catalog restoration succeeded.
+        for source, destination, _, item in dependency_sources:
+            if source.exists():
+                _volume_guard(identity); _plain(destination, root)
+                if (not destination.is_file() or destination.stat().st_size != item['bytes'] or
+                        hash_file(destination, item['bytes']) != item['sha256']):
+                    raise ValueError('A restored photo pack changed; its Trash copy was retained.')
         for backup_path in (backup, trash / 'LIBRARY.PDB.before', trash / 'COVERS.CFL.before',
-                            *(source for source, _, _, _ in dependency_sources if source.exists())):
+                            *(source for source, _, _, _ in dependency_sources if source.exists()),
+                            *manifest_temporaries):
             if backup_path.exists():
                 _volume_guard(identity)
                 _plain(backup_path, trash)
