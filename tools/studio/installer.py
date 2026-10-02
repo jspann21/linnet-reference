@@ -1344,9 +1344,13 @@ def worker(job_path):
     result_path = Path(job["result"]).resolve()
     response = dict(passed=False, operation=job.get("mode"), started_at=_now())
     try:
-        if job.get("mode") not in ("install", "restore", "reinstall"):
+        if job.get("mode") not in ("install", "restore", "reinstall", "upgrade-boot"):
             raise ValueError("unsupported installer worker job")
-        response.update(_native_worker(job))
+        if job["mode"] == "upgrade-boot":
+            from tools.studio.boot_upgrade import worker as upgrade_worker
+            response.update(upgrade_worker(job))
+        else:
+            response.update(_native_worker(job))
     except BaseException as error:
         response["failure"] = f"{type(error).__name__}: {error}"
     response["finished_at"] = _now()
