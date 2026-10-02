@@ -86,7 +86,7 @@ def run_media(args, emit):
                     max_record_sectors=spec['storage_max_read_sectors'],
                     ffmpeg=args.ffmpeg,ffprobe=args.ffprobe))
         elif args.action=='inspect':
-            if args.package.suffix.lower() in ('.mp4', '.m4v'):
+            if args.package.suffix.lower() in ('.mp4', '.m4v', '.mov'):
                 from tools.content.native_video import inspect_file
                 from tools.studio.targets import media_profile
                 if not args.target:
