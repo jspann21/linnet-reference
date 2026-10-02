@@ -132,3 +132,24 @@ still showed Linnet home. A physical restart restored USB enumeration and Link.
 The subsequent persistent installation and restart reported healthy; the
 transport interruption was not attributed to the artwork repair. Classic
 evidence is under `out/art-quality/arbitrary-classic-installed/`.
+
+The remaining flash 30GB-board 5G and rotating 80GB 5G also passed after
+the repair was persistently installed and restarted healthy. The selected
+Cover Flow album differed from the requested Songs album in both checks.
+All 12,544 artwork pixels in the first requested-song preview captures
+matched the corresponding resident native tile. Later captures matched
+the exact host-prepared 112 px RGB565 rendition at all 12,544 pixels,
+confirming correct preview-to-full promotion without another rescale.
+
+Both devices then navigated from Cover Flow album 0 through album 12,
+recording 12 resident hits and no artwork-read delta. Mean render CPU time
+across the measured frames was 23.89 ms on the flash 5G and 23.64 ms on
+the 80GB 5G. Their 50 and 603 unique native covers fit the existing cache.
+Each completed 32 alternating home wheel events with zero drops; the
+captured 284-pixel highlight top and bottom edges were continuous.
+
+This completes artwork repair qualification on both 30GB 5Gs, the 80GB
+5G, and Classic. Per-device evidence is in `arbitrary-com8-installed/`,
+`arbitrary-com12-installed/`, `speed-com8-repair-full/`, and
+`speed-com12-repair-full/` under `out/art-quality/`; pixel comparison
+results are in `out/art-quality/repair-pixel-validation.json`.
