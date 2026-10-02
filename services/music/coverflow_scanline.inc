@@ -115,7 +115,18 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
                             __builtin_memcpy(dest,source+x,(uint32_t)(limit-x)*2u);
 #endif
                             dest+=limit-x;x=limit;
-                        }else for(;x<limit;x++)*dest++=source[card->sources[x]];
+                        }else{
+#if defined(LINNET_SOC_PP5022)
+                            for(;x+3<limit;x+=4){
+                                dest[0]=source[card->sources[x]];
+                                dest[1]=source[card->sources[x+1]];
+                                dest[2]=source[card->sources[x+2]];
+                                dest[3]=source[card->sources[x+3]];
+                                dest+=4;
+                            }
+#endif
+                            for(;x<limit;x++)*dest++=source[card->sources[x]];
+                        }
                     }else if(!card->palette){
                         uint16_t pixel=sy<TEXTURE_WIDTH?0x18e4u:0;
                         for(;x<limit;x++)*dest++=pixel;
