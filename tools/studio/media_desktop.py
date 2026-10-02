@@ -2383,7 +2383,9 @@ class MediaWindow(QMainWindow):
         self.boot_choice.setEnabled(not self.busy and self.review is not None and self.boot_choice.count() > 0)
         self.install_button.setEnabled(enabled)
         self.uninstall_button.setEnabled(not self.busy and bool(self.review and self.review['uninstall']['available']))
-        if option and not option.get('selectable'):
+        if option is None:
+            self.install_button.setText('No startup change available')
+        elif not option.get('selectable'):
             self.install_button.setText('Current startup software' if option.get('active') else
                                         'Choose on iPod at startup' if option.get('chooser_available') else
                                         'Startup change unavailable')
