@@ -29,7 +29,8 @@ the folder containing both `.exe` files and that each runs from PowerShell:
 
 Replace the example path with your extracted folder. The status in Settings
 reports which tool could not run. Choose the folder again after moving or
-replacing the tools; conversion will remain unavailable until both checks pass.
+replacing the tools. FFprobe-only inspection can run when FFprobe passes its
+check, but video conversion remains unavailable until both tools pass.
 
 ## Install or restore firmware
 
