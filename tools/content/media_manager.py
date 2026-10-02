@@ -26,6 +26,7 @@ from .host_state import cache_directory as _cache_directory, cache_root, cache_v
 from .inventory import KINDS, VIDEO_EXTENSIONS, extensions, source_folders, file_records as _file_records, skipped_paths as _skipped_paths, scan
 
 _RETAIL_ADOPTION = None
+_RECENT_OUTPUT_NS = 5_000_000_000
 
 
 def _receipt_stamp(info):
@@ -927,7 +928,7 @@ def _outputs_match(root, outputs, *, verified=None, progress=None):
             # NTFS can report the same timestamps for two immediate writes of
             # equal size. Hash recent files on every check until that window
             # has passed, then reuse the verified stamp on later refreshes.
-            recent = os.name == "nt" and info.st_mtime_ns > time.time_ns() - 5_000_000_000
+            recent = os.name == "nt" and info.st_mtime_ns > time.time_ns() - _RECENT_OUTPUT_NS
             def notify(current, total):
                 if progress:
                     progress(dict(current=index, total=len(outputs), file=name,
@@ -1477,24 +1478,37 @@ def _prepare_music(root, cache, identity, skipped, *, ffprobe, verification, for
 
 
 def _music_outputs_from_publication(root, output_paths, verified_outputs, identity):
-    """Reuse fresh artwork readbacks and hash all other published outputs."""
+    """Return publication digests and stamps safe for the status hash cache."""
     _volume_guard(identity)
-    outputs = []
+    outputs, stamps = [], {}
     for name in output_paths:
         proof = verified_outputs.get(name)
         path = root / name
         _plain(path, root)
         if proof is None:
-            outputs.append((name, _hash(path)))
-            continue
-        if not isinstance(proof, tuple) or len(proof) != 2:
-            raise ValueError(f"invalid music publication proof: {name}")
-        digest, stamp = proof
-        info = path.stat()
-        if _receipt_stamp(info) != stamp:
-            raise ValueError(f"music output changed after publication: {path}")
+            before = path.stat()
+            hash_started = time.time_ns()
+            digest = _hash(path)
+            info = path.stat()
+            if _receipt_stamp(before) != _receipt_stamp(info):
+                raise ValueError(f"music output changed after verification: {path}")
+            # Match _outputs_match's cache admission rule. A hash of a recent
+            # write cannot become a trusted cache entry once the window ends.
+            cacheable = os.name != "nt" or before.st_mtime_ns <= hash_started - _RECENT_OUTPUT_NS
+        else:
+            if not isinstance(proof, tuple) or len(proof) != 2:
+                raise ValueError(f"invalid music publication proof: {name}")
+            digest, stamp = proof
+            info = path.stat()
+            if _receipt_stamp(info) != stamp:
+                raise ValueError(f"music output changed after publication: {path}")
+            # Publication proofs do not record when their readback happened.
+            # Fresh copies must get one hash after the recent-write window.
+            cacheable = os.name != "nt"
         outputs.append((name, digest))
-    return outputs
+        if cacheable:
+            stamps[(name, digest)] = (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino)
+    return outputs, stamps
 
 
 def _prepare_photos(root, cache, identity, media_profile, skipped, retail_photos, *,
@@ -2012,7 +2026,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     checkpoint()
                     outputs = _published_photo_output(root, identity, output_paths, published)
                 elif kind == 'Music':
-                    outputs = _music_outputs_from_publication(root, output_paths, music_proofs, identity)
+                    outputs, music_stamps = _music_outputs_from_publication(root, output_paths, music_proofs, identity)
                 else:
                     outputs = [(name, _hash(root / name)) for name in output_paths]
                 state[kind] = dict(signature=signature, outputs=outputs)
@@ -2021,6 +2035,16 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 if kind == "Videos":
                     state[kind]["media_profile"] = media_profile
                 _save(state_path, state)
+                if kind == 'Music':
+                    # Reuse stable hashes above for the status view without a
+                    # second read of unchanged covers on the iPod.
+                    from .media_status import _remember_verified, _verified_outputs
+                    verified = _verified_outputs(identity['disk_serial'], identity['volume_serial'],
+                                                 identity['partition_offset'], identity['volume_unique_id'],
+                                                 cache_disk_serial=identity.get('media_cache_disk_serial'))
+                    before = verified.copy()
+                    verified.update(music_stamps)
+                    _remember_verified(identity, verified, before)
                 report["steps"].append(dict(kind=kind, status="published", publications=published))
                 progress(f"{kind}: published and verified on your iPod ({root / '.LINNET'}).")
                 record()
