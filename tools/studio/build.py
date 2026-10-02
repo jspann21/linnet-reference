@@ -172,6 +172,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     if kind == "boot":
         configuration["boot_selector"] = boot_selector
         configuration["apple_firmware_fallback"] = True
+        configuration["startup_default_format"] = 1
     if kind == "os":
         configuration["system_config"] = str(system_config or "config/system.toml")
     # Keep generated inputs, objects, and final artifacts together for this

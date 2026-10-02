@@ -638,6 +638,8 @@ def _validate_artifacts(identity, artifacts):
             raise ValueError("installer Boot report uses the wrong startup selector")
         if kind == "boot" and report.get("apple_firmware_fallback") is not True:
             raise ValueError("installer Boot report does not preserve the Apple firmware fallback")
+        if kind == "boot" and report.get("startup_default_format") != 1:
+            raise ValueError("installer Boot image does not support startup defaults")
         if build == "user" and (report.get("release_exclusion") or {}).get("passed") is not True:
             raise ValueError("user installer artifacts require release exclusion verification")
 
@@ -808,6 +810,7 @@ def _journal(identity, artifacts, strategy, transaction, extra=None):
                  linnet_usb_serial=identity["linnet_usb_serial"], strategy=strategy,
                  build=artifacts["build"],
                  os_build_id=artifacts["os_build_id"], boot_build_id=artifacts["boot_build_id"],
+                 startup_default_format=1,
                  transaction=str(transaction), installed_at=_now(), phase="installed")
     if extra:
         value.update(extra)
