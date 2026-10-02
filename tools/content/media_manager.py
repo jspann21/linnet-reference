@@ -9,6 +9,7 @@ from contextlib import ExitStack
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -482,7 +483,8 @@ def _same_file_bytes(left, right, size):
     return equal
 
 
-def additions(root, pending, *, snapshots=None, verify_existing=True, unverified=None):
+def additions(root, pending, *, snapshots=None, verify_existing=True, unverified=None,
+              replacements=None):
     """Resolve selected files/folders to concrete destinations without writing."""
     root = Path(root).resolve(strict=True)
     planned = {}
@@ -513,16 +515,17 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
             if destination.exists():
                 if not destination.is_file():
                     raise ValueError(f"A different file already exists: {destination}. Rename the new file or folder first.")
+                old = destination.stat()
+                different = False
                 if not verify_existing:
                     # Planning only estimates work. The preparation call checks
                     # the complete original before it copies or publishes.
-                    if destination.stat().st_size != info.st_size and not (
+                    if old.st_size != info.st_size and not (
                             kind == 'Music' and path.suffix.lower() in ('.m4a', '.m4b', '.flac', '.flc', '.mp3')):
-                        raise ValueError(f"A different file already exists: {destination}. Rename the new file or folder first.")
-                    if unverified is not None:
+                        different = True
+                    elif unverified is not None:
                         unverified.append(kind)
-                    continue
-                if destination.stat().st_size != info.st_size or not _same_file_bytes(path, destination, info.st_size):
+                elif old.st_size != info.st_size or not _same_file_bytes(path, destination, info.st_size):
                     equivalent = False
                     if kind == 'Music' and path.suffix.lower() in ('.m4a', '.m4b'):
                         from .aac_index import same_original
@@ -533,9 +536,16 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                     elif kind == 'Music' and path.suffix.lower() == '.mp3':
                         from .mp3_index import same_original
                         equivalent = same_original(path, destination)
-                    if not equivalent:
-                        raise ValueError(f"A different file already exists: {destination}. Rename the new file or folder first.")
-                continue
+                    different = not equivalent
+                if not different:
+                    continue
+                if replacements is None:
+                    raise ValueError(f"A different file already exists: {destination}. Review its replacement before preparing.")
+                replacements.append(dict(action='replace', kind=kind, source=str(path),
+                    destination=str(destination), old_bytes=old.st_size,
+                    old_mtime_ns=old.st_mtime_ns, new_bytes=info.st_size,
+                    new_mtime_ns=info.st_mtime_ns,
+                    old_sha256=_hash(destination), new_sha256=_hash(path)))
             planned[key] = dict(kind=kind, source=str(path), destination=str(destination),
                                 bytes=info.st_size, mtime_ns=info.st_mtime_ns)
     return list(planned.values())
@@ -1140,8 +1150,31 @@ def _video_is_native(source, identity, *, ffprobe=None, cancelled=None):
         return False
 
 
+def _video_duration(source, ffprobe):
+    probe = ffprobe or shutil.which('ffprobe')
+    if not probe:
+        raise ValueError('FFprobe is required to estimate video conversion space.')
+    command = [str(probe), '-v', 'error', '-show_entries',
+               'stream=duration:format=duration', '-of', 'json', str(source)]
+    try:
+        result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True,
+                                timeout=60, check=True,
+                                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+        data = json.loads(result.stdout[:1024 * 1024])
+        values = [row.get('duration') for row in data.get('streams', [])
+                  if isinstance(row, dict)]
+        values.append(data.get('format', {}).get('duration'))
+        durations = [float(value) for value in values if value not in (None, 'N/A')]
+        duration = max((value for value in durations if math.isfinite(value) and value > 0), default=0)
+        if duration:
+            return duration
+    except (OSError, ValueError, subprocess.SubprocessError, TypeError, AttributeError):
+        pass
+    raise ValueError(f'Could not determine video duration for space planning: {source.name}')
+
+
 def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, snapshots=None,
-               ffprobe=None, cancelled=None):
+               ffprobe=None, cancelled=None, replacements=None):
     """Resolve selected conversions and this device's supported on-disk videos."""
     root = Path(root).resolve(strict=True)
     folder = root / "Videos"
@@ -1220,9 +1253,19 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, s
             existing = folder / relative
             _plain(existing, root)
             if existing.exists():
-                if not existing.is_file() or existing.stat().st_size != info.st_size or not _same_file_bytes(path, existing, info.st_size):
+                if not existing.is_file():
                     raise ValueError(f"A different video already exists: {relative}. Rename the new file first.")
-                path = existing
+                old = existing.stat()
+                if old.st_size != info.st_size or not _same_file_bytes(path, existing, info.st_size):
+                    if replacements is None:
+                        raise ValueError(f"A different video already exists: {relative}. Review its replacement before preparing.")
+                    replacements.append(dict(action='replace', kind='Videos', source=str(path),
+                        destination=str(existing), old_bytes=old.st_size,
+                        old_mtime_ns=old.st_mtime_ns, new_bytes=info.st_size,
+                        new_mtime_ns=info.st_mtime_ns,
+                        old_sha256=_hash(existing), new_sha256=_hash(path)))
+                else:
+                    path = existing
             include(path, relative)
     if len(jobs) > 256:
         raise ValueError("Choose at most 256 videos per update.")
@@ -1267,7 +1310,7 @@ def video_requires_conversion(jobs, identity, *, ffprobe=None, ffmpeg=None):
 
 def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimension=640,
                       current_inventory=None, ffprobe=None, ffmpeg=None,
-                      no_conversions=False):
+                      no_conversions=False, force=False):
     """Bound peak free-space needs before the first device copy.
 
     Estimates include originals, prepared outputs, host scratch, existing
@@ -1292,21 +1335,56 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
             2 * photo_dimension * photo_dimension * 2 + 16 * 1024)
     notes_bytes = (1024 * 1024 + counts['Notes'] * 64 * 1024
                    if 'Notes' in selected and counts['Notes'] else 0)
+    audio_backup = 0
+    largest_audio = 0
+    if 'Music' in selected:
+        seek_state = {} if force else _optional_state(cache / 'seek-checked.json')
+        for value in inventory.get('Music', {}).get('files', []):
+            path = Path(value)
+            if not path.is_relative_to(root / 'Music') or path.suffix.lower() not in ('.m4a', '.m4b', '.flac', '.flc'):
+                continue
+            info = path.stat()
+            stamp = [info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino]
+            if seek_state.get(path.relative_to(root).as_posix().casefold()) != stamp:
+                audio_backup += info.st_size
+                largest_audio = max(largest_audio, info.st_size)
+        for copy in copies:
+            if copy['kind'] == 'Music' and Path(copy['source']).suffix.lower() in ('.m4a', '.m4b', '.flac', '.flc'):
+                audio_backup += copy['bytes']
+                largest_audio = max(largest_audio, copy['bytes'])
     video_bytes = 0
     video_host = 0
     if 'Videos' in selected:
         for job in jobs:
             source = Path(job['source'])
-            if source.is_relative_to(root) and _video_is_native(source, identity, ffprobe=ffprobe):
-                # Compatible on-device originals are indexed in place when
-                # no conversion is selected.
-                if no_conversions:
+            backend = identity['media_profile']['video_backend']
+            native = _video_is_native(source, identity, ffprobe=ffprobe)
+            encoder = ffmpeg or shutil.which('ffmpeg')
+            if native:
+                if backend in ('bcm-mp4', 'native-mp4'):
+                    from .native_video import inspect_file
+                    details = inspect_file(source, profile=identity['media_profile'], ffprobe=ffprobe)
+                    direct = no_conversions or details['fast_start'] or not encoder
+                else:
+                    direct = True
+                if direct and source.is_relative_to(root):
                     continue
-            estimate = min(0x7fffffff, max(32 * 1024 * 1024, job['bytes'] * 3))
-            if no_conversions:
-                estimate = job['bytes']
+                estimate = job['bytes'] if direct else min(0x7fffffff, job['bytes'] * 2)
+                scratch = 0
+            else:
+                duration = _video_duration(source, ffprobe)
+                if backend in ('bcm-mp4', 'native-mp4'):
+                    limit = identity['media_profile']['native_video']['max_video_kbps'] + 256
+                    estimate = min(0x7fffffff, max(job['bytes'] * 3,
+                        math.ceil(duration * limit * 1000 / 8 * 1.25)))
+                    scratch = 0
+                else:
+                    profile = identity['media_profile']
+                    estimate = min(0x7fffffff,
+                        math.ceil(duration * profile['video_fps'] * profile['max_read_sectors'] * 512))
+                    scratch = math.ceil(duration * 44100 * 4) + 32 * 1024 * 1024
             video_bytes += estimate
-            video_host += estimate * 2
+            video_host += estimate * 2 + scratch
     files_bytes = 4 * 1024 * 1024 + sum(counts.values()) * 128 * 1024 + len(jobs) * 128 * 1024
     prepared = music_bytes + photo_bytes + notes_bytes + video_bytes + files_bytes
     previous = 0
@@ -1327,16 +1405,45 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
     # Budget a previous package as large as the candidate when the exact old
     # path is unavailable from a host receipt.
     previous += video_bytes
-    device_needed = original_bytes + prepared + previous * 2 + 16 * 1024 * 1024
-    largest_audio = max((item['bytes'] for item in copies if item['kind'] == 'Music'), default=0)
+    device_needed = original_bytes + prepared + previous * 2 + largest_audio + 16 * 1024 * 1024
     host_needed = (music_bytes * 2 + photo_bytes * 2 + notes_bytes * 2 + video_host +
-                   files_bytes * 2 + largest_audio * 2 + 16 * 1024 * 1024)
+                   files_bytes * 2 + audio_backup * 2 + 16 * 1024 * 1024)
     parent = cache
     while not parent.exists():
         parent = parent.parent
     return dict(device_peak_bytes=device_needed, computer_peak_bytes=host_needed,
                 device_free_bytes=shutil.disk_usage(root).free,
                 computer_free_bytes=shutil.disk_usage(parent).free)
+
+
+def reconciliation_actions(identity, selected, copies, *, replacements=(), current_inventory=None):
+    """Describe removals that require explicit review before preparation."""
+    root = Path(identity['root'])
+    actions = list(replacements)
+    inventory = current_inventory or scan(root, tuple(k for k in selected if k != 'Videos'))
+    for kind, name in (('Music', '.LINNET/LIBRARY.PDB'),
+                       ('Photos', '.LINNET/PHOTOS/LIBRARY.PIM'),
+                       ('Notes', '.LINNET/NOTES/LIBRARY.NNT')):
+        if kind not in selected:
+            continue
+        count = inventory.get(kind, {}).get('count', 0)
+        count += sum(item['kind'] == kind and
+                     Path(item['source']).suffix.lower() in extensions(kind) for item in copies)
+        path = root / name
+        _plain(path, root)
+        if not count and path.is_file():
+            info = path.stat()
+            actions.append(dict(action='retire-library', kind=kind, destination=str(path),
+                                old_bytes=info.st_size, old_mtime_ns=info.st_mtime_ns))
+    if 'Videos' in selected:
+        from .media_library import _catalog, _device_path
+        _, _, entries = _catalog(root)
+        for key, name, title in entries:
+            path = _device_path(root, name)
+            if not path.is_file():
+                actions.append(dict(action='prune-video', kind='Videos',
+                                    destination=str(path), key=key.hex(), title=title))
+    return sorted(actions, key=lambda row: (row['kind'], row['action'], row['destination'].casefold()))
 
 
 def _video_inventory(jobs):
@@ -1484,6 +1591,8 @@ def run(identity, selected, pending=(), **options):
             current_options = dict(options, excluded_sources=excluded_sources)
             if attempts:
                 current_options['force'] = False
+                if any(attempt.get('reconciliation') for attempt in attempts):
+                    current_options['approved_reconciliation'] = None
             retry_pending = tuple(item for item in pending if item[0] in retry_selected)
             report = _run(identity, retry_selected, retry_pending, **current_options)
             attempts.append(report)
@@ -2034,7 +2143,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
 def _run(identity, selected, pending=(), *, progress=lambda message: None, cancelled=lambda: False,
         photo_dimension=640, ffmpeg=None, ffprobe=None, force=False, music_verification="metadata",
         video_selection=None, progress_detail=None, progress_stage=lambda event: None,
-        excluded_sources=None, online_artwork=False):
+        excluded_sources=None, online_artwork=False, approved_reconciliation=None):
     """Copy additions, prepare and publish selected folders; retain per-step receipts.
 
     Stop requests are honored between files and between compiler/publication calls.
@@ -2097,12 +2206,20 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             video_selection = [value for value in video_selection
                                if Path(value).resolve().relative_to(root).as_posix().casefold()
                                not in skipped["Videos"]]
+        replacements = []
         videos = video_jobs(root, pending, video_selection, skipped=skipped["Videos"],
-                            identity=identity, ffprobe=ffprobe, cancelled=cancelled) if "Videos" in selected else []
+                            identity=identity, ffprobe=ffprobe, cancelled=cancelled,
+                            replacements=replacements) if "Videos" in selected else []
         excluded_sources = {str(Path(value).resolve()).casefold() for value in (excluded_sources or ())}
         videos = [job for job in videos if str(Path(job["source"]).resolve()).casefold() not in excluded_sources]
-        plan = additions(root, [item for item in pending if item[0] in selected and item[0] != "Videos"])
+        plan = additions(root, [item for item in pending if item[0] in selected and item[0] != "Videos"],
+                         replacements=replacements)
         planned = True
+        reconciliation = reconciliation_actions(identity, selected, plan, replacements=replacements)
+        report['reconciliation'] = reconciliation
+        if ((reconciliation and approved_reconciliation is None) or
+                (approved_reconciliation is not None and approved_reconciliation != reconciliation)):
+            raise ValueError('Source replacement or library cleanup needs review. Refresh the preparation plan and approve its exact actions.')
         for kind, maximum in (("Notes", 256),):
             if kind in selected:
                 existing = scan(root, (kind,), skipped=skipped)[kind]["count"]
@@ -2111,12 +2228,50 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     raise ValueError(f"{kind} supports {maximum} files; this selection contains {existing + added}. Choose a smaller source folder.")
         space = preparation_space(identity, plan, videos, selected, cache,
             photo_dimension=photo_dimension, ffprobe=ffprobe, ffmpeg=ffmpeg,
-            no_conversions=video_selection is not None and not video_selection)
+            no_conversions=video_selection is not None and not video_selection,
+            force=force)
         report['space'] = space
         if space['device_peak_bytes'] > min(identity['free_bytes'], space['device_free_bytes']):
             raise ValueError('Not enough iPod space for originals, prepared media, and recovery copies.')
         if space['computer_peak_bytes'] > space['computer_free_bytes']:
             raise ValueError('Not enough computer space for prepared media and conversion scratch.')
+        if reconciliation:
+            from .media_library import list_items, remove_items
+            rows = list_items(identity)
+            selected_rows = []
+            for action in reconciliation:
+                matches = [row for row in rows if row['kind'] == action['kind'] and
+                    (row.get('key') == action.get('key') if action['action'] == 'prune-video' else
+                     row['path'].casefold() == action['destination'].casefold()) and
+                    row['category'] == ('library' if action['action'] == 'retire-library' else
+                                        'published' if action['action'] == 'prune-video' else row['category']) and
+                    row.get('removable')]
+                if len(matches) != 1:
+                    raise ValueError('A reconciliation target changed. Refresh the preparation plan.')
+                selected_rows.append(matches[0])
+            checkpoint()
+            removal = remove_items(identity, selected_rows)
+            report['steps'].append(dict(kind='Reconciliation', actions=reconciliation, removal=removal))
+            record()
+            for action in reconciliation:
+                if action['action'] == 'retire-library':
+                    state.pop(action['kind'], None)
+                elif action['action'] == 'prune-video':
+                    state.pop('Videos', None)
+                    saved_videos = state.get('video_files', {})
+                    if isinstance(saved_videos, dict):
+                        for relative, saved in list(saved_videos.items()):
+                            if not isinstance(saved, dict):
+                                continue
+                            outputs = saved.get('outputs', [])
+                            if not isinstance(outputs, list):
+                                continue
+                            if any(isinstance(output, (list, tuple)) and len(output) == 2
+                                   and isinstance(output[0], str) and
+                                   str(root / output[0]).casefold() == action['destination'].casefold()
+                                   for output in outputs):
+                                saved_videos.pop(relative, None)
+            _save(state_path, state)
         emit_stage('Copying originals', 0)
         _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress,
                         cache=cache, cancelled=cancelled,
@@ -2158,17 +2313,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             checkpoint()
             item = inventory[kind]
             if not item["count"]:
-                if kind == 'Photos' and item.get('skipped'):
-                    from .media_library import list_items, remove_items
-                    libraries = [row for row in list_items(identity)
-                                 if row['kind'] == 'Photos' and row['category'] == 'library']
-                    if libraries:
-                        remove_items(identity, libraries)
-                    state.pop(kind, None)
-                    _save(state_path, state)
-                    progress('Photos: all sources excluded; Linnet photo index retired.')
-                    continue
-                progress(f"{kind}: no supported files; existing prepared library retained.")
+                progress(f"{kind}: no supported files to prepare.")
                 continue
             option = preparation_option(kind, identity, photo_dimension, music_verification)
             video_version = 6 if media_profile.get("video_backend") == "native-mp4" else 4

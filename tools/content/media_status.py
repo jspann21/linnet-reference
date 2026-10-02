@@ -4,7 +4,6 @@ from functools import lru_cache
 import json
 import os
 from pathlib import Path
-import shutil
 import stat
 import time
 
@@ -178,7 +177,8 @@ def _video_readiness(inventory, published, identity=None, state=None, verified=N
                  and output[0].casefold() != ('Videos/' + relative).casefold()}
     if missing:
         return 'Needs update'
-    if generated - cataloged:
+    if any(not Path(path).resolve().is_relative_to(root) or Path(path).is_file()
+           for path in generated - cataloged):
         return 'Needs update'
     # A computer import can have only its published package on the iPod. It
     # still needs a stored digest and a readback, even with no source row.
@@ -337,10 +337,14 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
     included = [p for p in pending if p[0] in selected]
     snapshots = {}
     unverified = []
+    replacements = []
     copies = media.additions(root, [p for p in included if p[0] != 'Videos'], snapshots=snapshots,
-                             verify_existing=False, unverified=unverified)
+                             verify_existing=True, unverified=unverified, replacements=replacements)
     jobs = media.video_jobs(root, included, videos, skipped=skipped['Videos'], identity=identity,
-                            snapshots=snapshots, ffprobe=ffprobe) if 'Videos' in selected else []
+                            snapshots=snapshots, ffprobe=ffprobe,
+                            replacements=replacements) if 'Videos' in selected else []
+    reconciliation = media.reconciliation_actions(identity, selected, copies,
+        replacements=replacements, current_inventory=current_inventory)
     previews = {}
     for kind, name in included:
         source = Path(name).absolute().resolve(strict=True)
@@ -359,7 +363,8 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
     cache = cache_root(identity)
     space = media.preparation_space(identity, copies, jobs, selected, cache,
         photo_dimension=photo_dimension, current_inventory=current_inventory,
-        ffprobe=ffprobe, ffmpeg=ffmpeg, no_conversions=videos is not None and not videos)
+        ffprobe=ffprobe, ffmpeg=ffmpeg, no_conversions=videos is not None and not videos,
+        force=force)
     if space['device_peak_bytes'] > min(identity['free_bytes'], space['device_free_bytes']):
         raise ValueError('Not enough iPod space for originals, prepared media, and recovery copies.')
     if space['computer_peak_bytes'] > space['computer_free_bytes']:
@@ -386,4 +391,5 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
                 computer_free=space['computer_free_bytes'],
                 device_peak_bytes=space['device_peak_bytes'], computer_peak_bytes=space['computer_peak_bytes'],
                 excluded=len(pending)-len(included),
-                copy_kinds=copy_kinds, selected=list(selected), reusable=reusable)
+                copy_kinds=copy_kinds, selected=list(selected), reusable=reusable,
+                reconciliation=reconciliation)
