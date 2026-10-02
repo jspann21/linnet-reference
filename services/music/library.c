@@ -908,7 +908,7 @@ static void library_step_once(void)
         if(library.guard_stage<2u){
             if(!library.io_active){
                 if(library.paused)return;
-                int result=ln_storage_media_open("/.LINNET/TXN/MUSIC/STATE.JSON",library.generation);
+                int result=ln_storage_media_open("/.LINNET/TXN/MUSIC/STATE.TXN",library.generation);
                 if(result<0){fail(LN_MUSIC_LIBRARY_RECOVERY_REQUIRED);return;}
                 if(!result)return;
                 library.io_active=true;library.guard_stage=1u;return;

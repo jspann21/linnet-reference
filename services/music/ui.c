@@ -240,9 +240,13 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
     if(n->kind==LN_UI_ALBUM_ART&&in_scene(n,LN_UI_SCENE_NOW_PLAYING)&&ln_music_art_pixels())return "";
     if(in_scene(n,LN_UI_SCENE_MUSIC)){
         if(n->kind==LN_UI_TEXT){
+            if(ln_music_library_status()==LN_LIBRARY_ERROR&&
+               ln_music_library_error()==LN_MUSIC_LIBRARY_RECOVERY_REQUIRED)
+                return "Connect to Media Manager to recover music";
             return ln_music_browser_hint();
         }
-        if(n->kind==LN_UI_STATUS_BAR){uint32_t status=ln_music_library_status();return status==LN_LIBRARY_READY?ln_music_browser_title():status==LN_LIBRARY_ERROR?"Music - no library":"Music - loading";}
+        if(n->kind==LN_UI_STATUS_BAR){uint32_t status=ln_music_library_status();return status==LN_LIBRARY_READY?ln_music_browser_title():status==LN_LIBRARY_ERROR?
+            ln_music_library_error()==LN_MUSIC_LIBRARY_RECOVERY_REQUIRED?"Music - recovery needed":"Music - no library":"Music - loading";}
         if(n->kind==LN_UI_VIRTUAL_LIST&&item!=UINT32_MAX)return ln_music_browser_label(item);
     }
     if(in_scene(n,LN_UI_SCENE_NOW_PLAYING)&&n->kind==LN_UI_TEXT){

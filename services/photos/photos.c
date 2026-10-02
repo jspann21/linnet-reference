@@ -92,7 +92,7 @@ static struct {uint32_t view_started,frame_ready,io_started,max_open_us,max_read
 #endif
 static const char package[]="/.LINNET/PHOTOS/LIBRARY.PIM";
 static const char grid_package[]="/.LINNET/PHOTOS/GRID.PGR";
-static const char transaction_marker[]="/.LINNET/TXN/PHOTOS/STATE.JSON";
+static const char transaction_marker[]="/.LINNET/TXN/PHOTOS/STATE.TXN";
 #define PHOTO_RECOVERY_REQUIRED 25
 static void clear(void*v,uint32_t n){
 #if defined(__arm__)
