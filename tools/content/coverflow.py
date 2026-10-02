@@ -93,7 +93,7 @@ def validate(path: Path, database: bytes) -> None:
         if header[:4] == b'LCF1':
             return _validate_legacy(path, database)
         side, height, art_record = _layout(header)
-        mapped = header[:4] == b'LCFN' and struct.unpack_from('<I', header, 68)[0] == 1
+        mapped = len(header) == 1024 and header[:4] == b'LCFN' and struct.unpack_from('<I', header, 68)[0] == 1
         end = 512 + side * height
         if (len(header) != 1024 or header[:4] not in (b'LCF2', b'LCFR', b'LCFN') or header[16:48] != database[64:96] or
                 struct.unpack_from('<II', header, 8) != (art_record, side) or
@@ -238,6 +238,8 @@ def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, I
                     draw = ImageDraw.Draw(cover)
                     draw.ellipse((side//4, side//4, side*3//4, side*3//4), outline='#819fbc', width=2)
                     draw.ellipse((side*11//24, side*11//24, side*13//24, side*13//24), fill='#819fbc')
+                if cover.size != (side, side):
+                    cover = _original_from_rgb(cover, side)
                 # Include the recipe and Pillow version; never reuse art by timestamp.
                 key = hashlib.sha256(b'LCF-tile-2\0' + struct.pack('<II', side, height) + pillow_version.encode() + b'\0' +
                                      cover.mode.encode() + struct.pack('<II', *cover.size) + cover.tobytes()).digest()
