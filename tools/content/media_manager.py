@@ -2134,6 +2134,12 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         checkpoint()
         emit_stage('Preparing Files', total_stages - 2)
         from .files import compile_files, publish_files
+        # Include the managed Files folder in the first snapshot. Its contents
+        # are excluded by compile_files, so publication cannot add a new row
+        # that forces an otherwise unchanged second update to rewrite INDEX.FIL.
+        files_dir = root / '.LINNET' / 'FILES'
+        _plain(files_dir, root)
+        files_dir.mkdir(parents=True, exist_ok=True)
         files_package = cache / 'files.fil'
         next_files_guard = 0.0
         def files_checkpoint():
