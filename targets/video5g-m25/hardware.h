@@ -1,7 +1,11 @@
 /* Board policy consumed by the shared PP502x drivers. */
 #pragma once
 #define LINNET_BOOT_HASH_IRAM 1
+#if defined(LINNET_IMAGE_BOOT)
+#define LINNET_INPUT_FIRST_PACKET_FIX 1
+#else
 #define LINNET_INPUT_FIRST_PACKET_FIX 0
+#endif
 #define LINNET_BOOT_MENU_QUERY_BEFORE_INPUT 1
 #define LINNET_BOOT_HOLD_SELECTOR 1
 #define LINNET_RETAIL_TIMER2_IRQ 1
