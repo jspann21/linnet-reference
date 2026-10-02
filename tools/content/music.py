@@ -740,6 +740,10 @@ def _quick_metadata(path: Path, cancelled=lambda: False, *, include_cover=False)
             stream.close()
 
 
+_EMBEDDED_PREFETCH_BYTES = 4 * 1024 * 1024
+_EMBEDDED_FALLBACK = object()
+
+
 class _MetadataCache:
     """Disposable acceleration only; unreadable caches never block an import."""
     def __init__(self, path: Path):
@@ -895,11 +899,10 @@ class _MetadataCache:
         except sqlite3.Error:
             self._disable()
 
-    def embedded_cover_lookup(self, path, before, *, bypass=False):
+    def _prepare_embedded(self, now):
         # Keep original encoded bytes so all target artwork recipes remain exact.
         # Equal covers share one blob; source stamps expire after one hour even
         # when repeated imports keep using them. A refresh always rereads tags.
-        now = time.time()
         if self.connection is not None and self.artwork_bytes is None:
             # Library browsing uses this metadata cache too. Defer artwork
             # maintenance until preparation actually needs embedded covers.
@@ -917,14 +920,66 @@ class _MetadataCache:
                 self._commit()
             except sqlite3.Error:
                 self._disable()
+
+    def prefetch_embedded(self, paths):
+        """Share bounded artwork blobs across the next small source window."""
+        if not paths:
+            return {}
+        self._prepare_embedded(time.time())
+        if self.connection is None:
+            return {}
+        keys = [self._embedded_source_key(path) for path in paths]
+        try:
+            placeholders = ",".join("?" for _ in keys)
+            rows = list(self.connection.execute(
+                "SELECT s.path,s.size,s.mtime,s.checked,s.digest,length(i.value) "
+                "FROM embedded_sources s JOIN embedded_images i ON i.digest=s.digest "
+                f"WHERE s.path IN ({placeholders}) AND length(i.value)<=?",
+                (*keys, 32 * 1024 * 1024)))
+            chosen = {}
+            held = 0
+            for _, _, _, _, digest, size in rows:
+                if digest not in chosen and isinstance(size, int) and size >= 0 and \
+                        held + size <= _EMBEDDED_PREFETCH_BYTES:
+                    chosen[digest] = size
+                    held += size
+            images = {}
+            for digest, size in chosen.items():
+                # Recheck each length in SQL: another cache writer may replace
+                # a blob between the size query and this materialization.
+                image = self.connection.execute(
+                    "SELECT value FROM embedded_images WHERE digest=? AND length(value)=?",
+                    (digest, size)).fetchone()
+                if image and isinstance(image[0], bytes) and len(image[0]) == size:
+                    images[digest] = image[0]
+            result = dict.fromkeys(keys)
+            for key, size, mtime, checked, digest, _ in rows:
+                value = images.get(digest, _EMBEDDED_FALLBACK)
+                result[key] = ((size, mtime, value, digest, checked)
+                               if value is not _EMBEDDED_FALLBACK else _EMBEDDED_FALLBACK)
+            return result
+        except sqlite3.Error:
+            self._disable()
+            return {}
+
+    def embedded_cover_lookup(self, path, before, *, bypass=False, prefetched=None):
+        now = time.time()
+        self._prepare_embedded(now)
         if self.connection is not None and not bypass:
             try:
-                row = self.connection.execute(
-                    "SELECT i.value,i.digest,s.checked FROM embedded_sources s "
-                    "JOIN embedded_images i ON i.digest=s.digest "
-                    "WHERE s.path=? AND s.size=? AND s.mtime=? AND length(i.value)<=?",
-                    (self._embedded_source_key(path), before.st_size, before.st_mtime_ns,
-                     32 * 1024 * 1024)).fetchone()
+                if prefetched is None:
+                    saved = _EMBEDDED_FALLBACK
+                else:
+                    saved = prefetched.get(self._embedded_source_key(path), _EMBEDDED_FALLBACK)
+                if saved is _EMBEDDED_FALLBACK:
+                    row = self.connection.execute(
+                        "SELECT i.value,i.digest,s.checked FROM embedded_sources s "
+                        "JOIN embedded_images i ON i.digest=s.digest "
+                        "WHERE s.path=? AND s.size=? AND s.mtime=? AND length(i.value)<=?",
+                        (self._embedded_source_key(path), before.st_size, before.st_mtime_ns,
+                         32 * 1024 * 1024)).fetchone()
+                else:
+                    row = saved[2:] if saved and saved[:2] == (before.st_size, before.st_mtime_ns) else None
                 if (row and type(row[2]) in (int, float) and 0 <= now - row[2] <= 3600 and
                         isinstance(row[0], bytes) and hashlib.sha256(row[0]).digest() == row[1]):
                     return True, row[0] or None
@@ -1317,15 +1372,16 @@ _METADATA_COVER = object()
 
 
 def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, progress,
-                   cancelled, prefetch_cover):
+                   cancelled, prefetch_cover, needs_embedded):
     # Keep SQLite and progress callbacks on the caller's thread. Bound both
     # concurrent device reads and queued results, including on cancellation.
     pending = deque()
     iterator = iter(enumerate(paths))
     cache_rows = {}
     cache_relatives = []
+    cover_rows = {}
     def enqueue():
-        nonlocal cache_rows, cache_relatives
+        nonlocal cache_rows, cache_relatives, cover_rows
         _check_cancel(cancelled)
         item = next(iterator, None)
         if item is None:
@@ -1335,6 +1391,9 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
             cache_relatives = [p.relative_to(source).as_posix()
                                for p in paths[number:number+128]]
             cache_rows = cache.prefetch(source, cache_relatives)
+        if cache and not bypass_cache and number % METADATA_WORKERS == 0:
+            cover_rows = cache.prefetch_embedded(
+                [p for p in paths[number:number+METADATA_WORKERS] if needs_embedded(p)])
         before = path.lstat()
         resolved = path.resolve()
         if stat.S_ISLNK(before.st_mode) or source not in resolved.parents:
@@ -1342,8 +1401,8 @@ def _metadata_rows(paths, source, ffprobe, existing, cache, bypass_cache, pool, 
         relative = (cache_relatives[number % 128] if cache and not bypass_cache
                     else path.relative_to(source).as_posix())
         metadata = cache.get(source, relative, before, prefetched=cache_rows) if cache and not bypass_cache else None
-        cover = prefetch_cover(path, before, pool, defer=metadata is None and
-                               path.suffix.lower() in ('.m4a', '.m4b', '.mp3'))
+        cover = prefetch_cover(path, before, pool, prefetched=cover_rows,
+                               defer=metadata is None and path.suffix.lower() in ('.m4a', '.m4b', '.mp3'))
         future = (pool.submit(_read_metadata, path, ffprobe, existing, cancelled,
                               include_cover=cover is _METADATA_COVER)
                   if metadata is None else None)
@@ -1458,17 +1517,21 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     stable_ids: set[int] = set()
     groups: dict[tuple[int, str, str], list[int]] = {}
 
-    def prefetch_cover(path: Path, before, executor, *, defer=False):
+    def needs_embedded(path: Path):
         if not artwork or path.parent in art_cache:
-            return None
+            return False
         folder = path.parent
         if folder not in folder_covers:
             folder_covers[folder] = next((p for p in (folder / name for name in COVER_NAMES)
                                           if p.is_file()), None)
-        if folder_covers[folder] is not None:
+        return folder_covers[folder] is None
+
+    def prefetch_cover(path: Path, before, executor, *, prefetched=None, defer=False):
+        if not needs_embedded(path):
             return None
         if cache is not None:
-            hit, value = cache.embedded_cover_lookup(path, before, bypass=bypass_cache)
+            hit, value = cache.embedded_cover_lookup(path, before, bypass=bypass_cache,
+                                                     prefetched=prefetched)
             if hit:
                 return (True, value)
         if defer:
@@ -1620,7 +1683,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     from .media_manager import _music_import_name
     for number, path, resolved, before, metadata, cached, prefetched_cover in _metadata_rows(
             paths, source, ffprobe, device_root is not None, cache, bypass_cache,
-            metadata_pool, progress, cancelled, prefetch_cover):
+            metadata_pool, progress, cancelled, prefetch_cover, needs_embedded):
         location = None
         if device_root is not None:
             location = _device_media_path(path, device_root, alias_cache, canonical=resolved)
