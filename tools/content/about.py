@@ -42,6 +42,45 @@ def _device_serial(root):
     return value if re.fullmatch(r"[A-Z0-9]{6,16}", value) else None
 
 
+def _apple_name(root):
+    """Read the master playlist name from a bounded Apple database, if present."""
+    from .publish import _bounded
+    from .retail_media import _record, _u32
+    path = root / "iPod_Control" / "iTunes" / "iTunesDB"
+    guarded_path(path, root)
+    if not path.is_file():
+        return None
+    try:
+        data = _bounded(path, 128 * 1024 * 1024)
+        section, end = _record(data, 0, len(data), b"mhbd")
+        while section < end:
+            body, following = _record(data, section, end, b"mhsd")
+            if body - section >= 16 and _u32(data, section + 12) in (2, 3):
+                if body + 12 > following or data[body:body + 4] != b"mhlp":
+                    raise ValueError("Invalid Apple playlist list")
+                header, count = struct.unpack_from("<II", data, body + 4)
+                if header < 12 or body + header > following or count > 100000:
+                    raise ValueError("Invalid Apple playlist count")
+                at = body + header
+                for _ in range(count):
+                    child, next_playlist = _record(data, at, following, b"mhyp")
+                    if child - at >= 24 and _u32(data, at + 20) == 1:
+                        while child < next_playlist and data[child:child + 4] == b"mhod":
+                            text, next_text = _record(data, child, next_playlist, b"mhod")
+                            if _u32(data, child + 12) == 1 and text + 16 <= next_text:
+                                length = _u32(data, text + 4)
+                                if length % 2 == 0 and length <= 1024 and text + 16 + length <= next_text:
+                                    name = data[text + 16:text + 16 + length].decode("utf-16-le").strip("\0 ")
+                                    if name:
+                                        return name
+                            child = next_text
+                    at = next_playlist
+            section = following
+    except (OSError, ValueError, UnicodeError, struct.error):
+        return None
+    return None
+
+
 def _category_bytes(root):
     """One metadata-only walk; do not follow links or read media payloads."""
     suffixes = {kind: extensions(kind) for kind in ("Music", "Videos", "Photos")}
@@ -60,7 +99,8 @@ def _category_bytes(root):
                 elif stat.S_ISREG(info.st_mode):
                     relative = Path(entry.path).relative_to(root)
                     top = relative.parts[0].casefold()
-                    if top in (".trashes", ".trash", "$recycle.bin") or top.startswith(".trash-"):
+                    if (top in (".trashes", ".trash", "$recycle.bin") or top.startswith(".trash-") or
+                            top == ".linnet" and len(relative.parts) > 1 and relative.parts[1].casefold() == "trash"):
                         totals["Trash"] += info.st_size
                         continue
                     suffix = Path(entry.name).suffix.lower()
@@ -77,8 +117,9 @@ def _category_bytes(root):
     return totals
 
 
-def make_record(identity):
+def make_record(identity, *, ipod_name=None):
     root = Path(identity["root"]).resolve(strict=True)
+    name = ipod_name if ipod_name is not None else _apple_name(root) or identity.get("volume_label")
     usage = shutil.disk_usage(root)
     by_kind = _category_bytes(root)
     used = usage.total - usage.free
@@ -86,17 +127,19 @@ def make_record(identity):
     other = max(0, used - categorized)
     serial = _device_serial(root) or identity.get("linnet_usb_serial") or identity["disk_serial"]
     model = identity.get("model_number") or identity.get("regulatory_model") or "Unknown"
-    def detail(label, value):
+    def detail(label, value, *, truncate=False):
         if value is None or value == "":
             return None
         row = f"{label}  {value}"
         # Values such as USB storage model names are supplied by Windows.
         # Keep identifiers intact and omit optional labels that cannot fit.
         ascii_row = row.encode("ascii", errors="replace").decode("ascii")
+        if truncate and len(ascii_row) >= ROW_BYTES:
+            return ascii_row[:ROW_BYTES - 4] + "..."
         return ascii_row if len(ascii_row) < ROW_BYTES else None
 
     rows = [
-        detail("Name", identity.get("volume_label")),
+        detail("Name", name, truncate=True),
         f"Device  {identity['target_name']}",
         f"Model no.  {model}",
         detail("Regulatory", identity.get("regulatory_model")
@@ -127,6 +170,10 @@ def make_record(identity):
         f"Synced  {datetime.now().astimezone():%Y-%m-%d %H:%M}",
     ]
     rows = [row for row in rows if row is not None]
+    if name != identity.get("volume_label") and len(rows) < ROW_COUNT:
+        volume = detail("Volume", identity.get("volume_label"))
+        if volume is not None:
+            rows.insert(1, volume)
     if len(rows) > ROW_COUNT or any(len(row.encode("ascii")) >= ROW_BYTES for row in rows):
         raise ValueError("About details exceed the firmware display record")
     record = bytearray(SIZE)
@@ -176,9 +223,10 @@ def publish(identity, verify):
 def read_details(identity, verify):
     """Read the same facts for Media Manager without writing to the iPod."""
     current = verify(identity)
-    data = make_record(current)
+    name = _apple_name(Path(current["root"]).resolve(strict=True)) or current.get("volume_label") or "Unnamed iPod"
+    data = make_record(current, ipod_name=name)
     require_same_target(current, verify(current))
     rows = [data[16 + i * ROW_BYTES:16 + (i + 1) * ROW_BYTES].split(b"\0", 1)[0].decode("ascii")
             for i in range(data[5])]
     rows[-1] = rows[-1].replace("Synced", "Read", 1)
-    return dict(name=current.get("volume_label") or "Unnamed iPod", rows=rows, used_percent=data[6])
+    return dict(name=name, rows=rows, used_percent=data[6])
