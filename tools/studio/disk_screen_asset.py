@@ -98,14 +98,16 @@ def image(width: int, height: int) -> list[int]:
         pixels[y * width:(y + 1) * width] = [color] * width
     draw_text(pixels, width, height, "Disk Mode", font("font-sans13-bold.json"),
               7 if photo else 9, 1 if photo else 1.45, INK)
-    draw_text(pixels, width, height, "LINNET OS", font("font-sans12.json"),
-              37 if photo else 50, .9 if photo else 1.05, MUTED)
+    if not photo:
+        draw_text(pixels, width, height, "LINNET OS", font("font-sans12.json"),
+                  50, 1.05, MUTED)
     draw_symbol(pixels, width, height, 91 if photo else 121,
                 34 if photo else 47, 3.2 if photo else 4.0)
     draw_text(pixels, width, height, "Do not disconnect", font("font-sans14.json"),
-              130 if photo else 180, 1 if photo else 1.25, INK)
-    draw_text(pixels, width, height, "Eject safely when finished", font("font-sans12.json"),
-              153 if photo else 210, .9 if photo else 1.05, MUTED)
+              138 if photo else 180, 1 if photo else 1.25, INK)
+    if not photo:
+        draw_text(pixels, width, height, "Eject safely when finished", font("font-sans12.json"),
+                  210, 1.05, MUTED)
     return pixels
 
 
