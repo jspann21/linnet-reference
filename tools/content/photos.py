@@ -332,7 +332,7 @@ def _pack_photo_tiles(tile_bytes, crcs, checkpoint):
         if index % 256 == 0:
             checkpoint()
         raw = tile_bytes[index*2048:(index+1)*2048]
-        compressed = lz4_compress(raw, mode='high_compression', compression=9,
+        compressed = lz4_compress(raw, mode='high_compression', compression=3,
                                   store_size=False)
         stored = compressed if len(compressed) < len(raw) else raw
         lengths.append(len(stored))
