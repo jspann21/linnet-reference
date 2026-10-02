@@ -1,5 +1,6 @@
 #ifndef LINNET_PHOTOS_PIMG_H
 #define LINNET_PHOTOS_PIMG_H
+#include "linnet_target.h"
 #include <stdint.h>
 #include <stdbool.h>
 #define LN_PIMG_PACK_COUNT 32u
