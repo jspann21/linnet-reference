@@ -79,10 +79,13 @@ class PlaylistEditor(QDialog):
         self.songs = self.track_list()
         self.song_stack, self.empty_songs = self.list_area(right, self.songs, '')
         self.add_tracks_button = self.button(right, '← Add to playlist', self.add)
+        ordered = sorted(state['tracks'].items(), key=lambda item: item[1].casefold())
+        self.song_ids = [identity for identity, _ in ordered]
+        self.songs.addItems([title for _, title in ordered])
         self.song_search = []
-        for identity, title in sorted(state['tracks'].items(), key=lambda item: item[1].casefold()):
-            item = QListWidgetItem(title); item.setData(Qt.UserRole, str(identity))
-            item.setToolTip(title); self.songs.addItem(item)
+        for row, (_, title) in enumerate(ordered):
+            item = self.songs.item(row)
+            item.setToolTip(title)
             self.song_search.append((item, title.casefold()))
         footer = QHBoxLayout(); footer.setSpacing(10); layout.addLayout(footer)
         self.message = self.label(footer, '', 'muted'); self.message.setWordWrap(True)
@@ -216,7 +219,7 @@ class PlaylistEditor(QDialog):
         selected = sorted((item for item in self.songs.selectedItems() if not item.isHidden()), key=self.songs.row)
         if len(ids) + len(selected) > 1024:
             self.message.setText('A playlist can contain at most 1024 songs.'); return
-        added = [int(item.data(Qt.UserRole)) for item in selected]
+        added = [self.song_ids[self.songs.row(item)] for item in selected]
         ids.extend(added)
         with QSignalBlocker(self.members):
             self.members.clearSelection()
