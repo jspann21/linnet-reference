@@ -13,6 +13,7 @@ import re
 import struct
 import tempfile
 import threading
+import time
 import unicodedata
 import zlib
 from . import SourceError
@@ -31,6 +32,10 @@ _GREEN_HIGH = [v >> 5 for v in range(256)]
 FAT_PATH = re.compile(r'(?:/[A-Z0-9_]{1,8}(?:\.[A-Z0-9_]{1,3})?)+')
 PHOTO_CACHE_BYTES = 512 * 1024 * 1024
 PHOTO_CACHE_ENTRY_BYTES = 32 * 1024 * 1024
+
+
+def _source_stamp(info):
+    return (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino)
 
 
 def _crc(data):
@@ -84,9 +89,18 @@ def _sizes(width, height, max_dimension, viewport_width, viewport_height):
 
 class _PhotoCache:
     """Bounded, disposable cache of one image's prepared pixel payload."""
-    def __init__(self, directory, recipe):
+    def __init__(self, directory, recipe, source):
+        from .host_state import cache_volume_scope
+
         self.directory = Path(directory).resolve()
         self.recipe = recipe
+        self.source = Path(source).resolve()
+        self.source_scope = (cache_volume_scope(Path(self.source.anchor)) +
+                             self.source.relative_to(self.source.anchor).as_posix())
+        self.hash_path = self.directory / 'source-hashes.json'
+        self.hashes = {}
+        self.hashes_at = time.time()
+        self.hashes_dirty = False
         self.entries = {}
         self.bytes = 0
         self.lock = threading.Lock()
@@ -100,16 +114,61 @@ class _PhotoCache:
                 continue
             self.entries[path] = (info.st_size, info.st_mtime_ns)
             self.bytes += info.st_size
+        try:
+            if self.hash_path.stat().st_size <= 16 * 1024 * 1024:
+                saved = json.loads(self.hash_path.read_text(encoding='utf-8'))
+                rows = saved.get('files', [])
+                age = self.hashes_at - saved.get('verified_at', -1)
+                if (saved.get('version') == 1 and saved.get('scope') == self.source_scope and
+                        0 <= age <= 3600 and isinstance(rows, list) and len(rows) <= MAX_PHOTOS):
+                    for row in rows:
+                        if (isinstance(row, list) and len(row) == 6 and isinstance(row[0], str) and
+                                all(type(value) is int for value in row[1:5]) and
+                                isinstance(row[5], str) and re.fullmatch(r'[0-9a-f]{64}', row[5])):
+                            self.hashes[row[0]] = (tuple(row[1:5]), row[5])
+                    self.hashes_at = saved['verified_at']
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
 
-    def key(self, path, name, title, fallback, checkpoint):
-        digest = hashlib.sha256()
-        with path.open('rb') as stream:
-            chunk_size = min(1024 * 1024, max(16 * 1024, os.fstat(stream.fileno()).st_size))
-            while chunk := stream.read(chunk_size):
-                checkpoint()
-                digest.update(chunk)
-        identity = [name, title, fallback, digest.hexdigest(), self.recipe]
-        return hashlib.sha256(json.dumps(identity, separators=(',', ':')).encode()).hexdigest()
+    def key(self, path, name, title, fallback, checkpoint, info, *, force_hash=False):
+        relative = path.relative_to(self.source).as_posix() if path.is_relative_to(self.source) else None
+        stamp = _source_stamp(info)
+        now = time.time()
+        recent = os.name == 'nt' and info.st_mtime_ns > time.time_ns() - 5_000_000_000
+        with self.lock:
+            if not 0 <= now - self.hashes_at <= 3600:
+                self.hashes.clear()
+                self.hashes_at = now
+                self.hashes_dirty = True
+            remembered = (self.hashes.get(relative)
+                          if relative is not None and not recent and not force_hash else None)
+        source_digest = remembered[1] if remembered is not None and remembered[0] == stamp else None
+        reused_hash = source_digest is not None
+        if source_digest is None:
+            digest = hashlib.sha256()
+            with path.open('rb') as stream:
+                chunk_size = min(1024 * 1024, max(16 * 1024, os.fstat(stream.fileno()).st_size))
+                while chunk := stream.read(chunk_size):
+                    checkpoint()
+                    digest.update(chunk)
+            source_digest = digest.hexdigest()
+            if relative is not None and not recent:
+                with self.lock:
+                    self.hashes[relative] = (stamp, source_digest)
+                    self.hashes_dirty = True
+        identity = [name, title, fallback, source_digest, self.recipe]
+        return hashlib.sha256(json.dumps(identity, separators=(',', ':')).encode()).hexdigest(), reused_hash
+
+    def save_hashes(self):
+        if not self.hashes_dirty:
+            return
+        from .host_state import save_json
+        try:
+            save_json(self.hash_path, dict(version=1, scope=self.source_scope,
+                verified_at=self.hashes_at,
+                files=[[name, *stamp, digest] for name, (stamp, digest) in self.hashes.items()]))
+        except OSError:
+            pass
 
     def get(self, key, checkpoint):
         path = self.directory / (key + '.bin')
@@ -425,7 +484,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
             max_dimension, viewport_width, viewport_height, THUMB, EDGE, target, grid_shape, 'LPGR1'],
             separators=(',', ':')).encode()).hexdigest()
         try:
-            cache = _PhotoCache(cache_root, recipe)
+            cache = _PhotoCache(cache_root, recipe, source)
         except OSError:
             pass
     excluded = {Path(value).as_posix().casefold() for value in (excluded or ())}
@@ -478,12 +537,21 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
 
         def prepare(path, name, title, fallback):
             before = path.stat() if cache is not None else None
-            key = cache.key(path, name, title, fallback, worker_check) if cache is not None else None
+            key, reused_hash = (cache.key(path, name, title, fallback, worker_check, before)
+                                if cache is not None else (None, False))
             if cache is not None:
                 after_hash = path.stat()
-                if (before.st_size, before.st_mtime_ns) != (after_hash.st_size, after_hash.st_mtime_ns):
+                if _source_stamp(before) != _source_stamp(after_hash):
                     raise SourceError(f'Photo changed while preparing: {path}', path)
             cached = cache.get(key, worker_check) if cache is not None else None
+            if cached is None and reused_hash:
+                # A missing pixel entry must never be rendered under a digest
+                # borrowed from the source stamp cache.
+                key, _ = cache.key(path, name, title, fallback, worker_check, before,
+                                   force_hash=True)
+                if _source_stamp(before) != _source_stamp(path.stat()):
+                    raise SourceError(f'Photo changed while preparing: {path}', path)
+                cached = cache.get(key, worker_check)
             reused = cached is not None
             if cached is None:
                 rendered = _render_photo(path, fallback, max_dimension,
@@ -538,7 +606,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                     pending.popleft()
                     if cache is not None:
                         after_render = path.stat()
-                        if (before.st_size, before.st_mtime_ns) != (after_render.st_size, after_render.st_mtime_ns):
+                        if _source_stamp(before) != _source_stamp(after_render):
                             raise SourceError(f'Photo changed while preparing: {path}', path)
                     if reused:
                         cache_reused += 1
@@ -699,6 +767,8 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                   cache_reused=cache_reused, cache_rendered=cache_rendered)
     if packed_target:
         report['packs'] = pack_manifest
+    if cache is not None:
+        cache.save_hashes()
     return report
 
 
