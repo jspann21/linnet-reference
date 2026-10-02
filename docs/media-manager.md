@@ -7,6 +7,30 @@ The packaged app includes Python and the native Apple database helpers.
 Prebuilt firmware installation needs no compiler or WSL. Media conversion
 requires FFmpeg and FFprobe; select their folder in **Settings**.
 
+### Set up FFmpeg on Windows
+
+1. Obtain a Windows FFmpeg build and extract it to a folder you can keep. Find
+   `ffmpeg.exe` and `ffprobe.exe` together, usually in its `bin` folder.
+2. In Media Manager, open **Settings → Choose FFmpeg folder** and select the
+   folder containing both executables. The app runs each tool's `-version`
+   check and shows **FFmpeg and FFprobe are ready** when both pass.
+3. Return to **Preparation** and review the video plan. Video conversion needs
+   both tools; checking videos for Apple OS needs FFprobe. Some music metadata
+   and FLAC preparation also use FFprobe.
+
+Media Manager checks for both commands on `PATH` when it starts, but choosing
+their folder records exact paths. If the check fails, confirm that you selected
+the folder containing both `.exe` files and that each runs from PowerShell:
+
+```powershell
+& 'C:\path\to\ffmpeg\bin\ffmpeg.exe' -version
+& 'C:\path\to\ffmpeg\bin\ffprobe.exe' -version
+```
+
+Replace the example path with your extracted folder. The status in Settings
+reports which tool could not run. Choose the folder again after moving or
+replacing the tools; conversion will remain unavailable until both checks pass.
+
 ## Install or restore firmware
 
 1. Connect the iPod in Disk Mode and choose **Find iPod**.
@@ -96,13 +120,22 @@ interruption; unfinished or missing sources remain visible. Stop takes effect at
 a safe operation boundary. The preparation report records completed, skipped,
 and failed work.
 
-## Games and screens
+## Playlists, games, and screens
 
-On Photo and Video, **Games** selects Comet Run, Pulse Path, and Solitaire.
-**Screens** configures supported menus. See the [device menu hierarchy](navigation.md)
-for the default organization and controls. Save changes, eject, and restart to apply
-them. Game availability follows the target manifest; it is not enabled on every
-color iPod.
+After preparing Music, open **Music → Playlists** to create a playlist, search
+the prepared song library, add songs, and arrange their playback order with
+**Up** and **Down**. Choose **Save to iPod**, then eject safely. A device holds
+up to **16 playlists**, each with up to **1,024 song entries**. Names can use
+1–31 UTF-8 bytes; a character outside ASCII may use more than one byte.
+Missing tracks are shown in the editor so you can remove or replace their
+entries. Changes in the editor take effect only when you choose **Save to iPod**.
+
+On Photo and Video, **Games** lets you choose from twelve games: Comet Run,
+Pulse Path, Solitaire, Sudoku, Brick, Music Quiz, Vortex, Minesweeper, Falling
+Blocks, Reversi, Snake, and Word Search. **Screens** configures supported menus.
+See the [device menu hierarchy](navigation.md) for the default organization and
+controls. Save changes, eject, and restart to apply them. Game availability
+follows the target manifest; it is not enabled on every color iPod.
 
 ## Make folders available in Apple OS
 
@@ -113,13 +146,22 @@ are read directly by Apple OS.
 
 This is a separate update to Apple's library, not Linnet adopting iTunesDB as its
 own index. Existing Apple tracks and playlists are preserved by the managed
-writer. It is enabled only for explicitly qualified device/volume combinations.
+writer. It is enabled only for explicitly qualified **FAT32** device/volume
+combinations. The current allowlist contains one **iPod Video MA146** specimen
+and one **iPod classic MB147** specimen. Eligibility checks the target, disk
+serial, volume serial, and sector size together; matching the model alone does
+not qualify another iPod or a reformatted volume. Other devices can still use
+Linnet media preparation when their target supports it, but **Update Apple OS**
+remains unavailable until that exact device and volume are qualified.
 
 The current music path accepts MP3s whose real FAT short path below `/Music`
-fits the 23-character Apple limit. Unsupported paths or formats need attention;
-the normal workflow does not rewrite FAT aliases. Native videos are checked with
-FFprobe, and photos use the supported preparation formats.
-See [Apple database behavior](apple-stock-music.md).
+fits the 23-character Apple limit. Prepare Music for Linnet first so its
+metadata is available. Apple videos must be MP4, M4V, or MOV files below
+`/Videos` with a short FAT alias that fits the 22-character video limit;
+FFprobe checks their codecs and dimensions. Choose existing folders under
+`/Music`, `/Photos`, or `/Videos`; Notes are read directly by Apple OS.
+Unsupported paths or formats need attention, and the normal workflow does not
+rewrite FAT aliases. See [Apple database behavior](apple-stock-music.md).
 
 ## Removal, recovery, and caching
 
@@ -139,3 +181,18 @@ hashes. Cached readiness is not proof of unchanged file contents.
 Use the skipped-file controls to retry repaired sources. Preserve installation
 backups and device receipts independently of disposable caches; see
 [local artifacts](local-artifacts.md).
+
+### Reconnect and collect diagnostics
+
+If an iPod disconnects during an operation, reconnect it in Disk Mode and use
+**Refresh** to inspect its current state before retrying. If the app still
+shows the previous device after reconnecting, close and reopen Media Manager,
+then choose **Find iPod**. Review the library and preparation status before
+another write; do not assume that an interrupted step finished.
+
+After preparation, open **Preparation details** to see completed, skipped, and
+failed steps and open the saved receipt. Receipts and cache data are stored under
+`%LOCALAPPDATA%/Linnet/Media`; installation backups are separate under
+`%LOCALAPPDATA%/Linnet/Installer`. When reporting a problem, include the exact
+error message, target model, the step you attempted, and the relevant receipt
+after checking it for personal file paths or media names.
