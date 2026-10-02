@@ -1850,7 +1850,10 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                   stopped=False, cache_directory=str(cache), cleanup=dict(removed=[], retained=[]))
     plan, videos, planned = [], [], False
     owned_temporaries = []
-    verified_outputs = {}
+    from .media_status import _remember_verified, _verified_outputs
+    verified_outputs = _verified_outputs(identity['disk_serial'], identity['volume_serial'],
+                                         identity['partition_offset'], identity['volume_unique_id'],
+                                         cache_disk_serial=identity.get('media_cache_disk_serial'))
     receipt = cache / ("session-" + uuid.uuid4().hex + ".json")
     report["receipt"] = str(receipt)
     audio_journal_path = receipt.with_suffix('.audio.jsonl')
@@ -1957,7 +1960,9 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 emit_stage(f'Checking saved {kind}', unit)
                 checking = _checking_progress(kind, checkpoint, progress,
                     lambda fraction: emit_stage(f'Checking saved {kind}', unit, fraction))
+                verified_before = verified_outputs.copy()
                 if _outputs_match(root, outputs, verified=verified_outputs, progress=checking):
+                    _remember_verified(identity, verified_outputs, verified_before)
                     videos_compatible = True
                     if kind == 'Videos' and media_profile['video_backend'] in ('bcm-mp4', 'native-mp4'):
                         from .native_video import inspect_file as inspect_native
@@ -2044,15 +2049,11 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     state[kind]["media_profile"] = media_profile
                 _save(state_path, state)
                 if kind == 'Music':
-                    # Reuse stable hashes above for the status view without a
-                    # second read of unchanged covers on the iPod.
-                    from .media_status import _remember_verified, _verified_outputs
-                    verified = _verified_outputs(identity['disk_serial'], identity['volume_serial'],
-                                                 identity['partition_offset'], identity['volume_unique_id'],
-                                                 cache_disk_serial=identity.get('media_cache_disk_serial'))
-                    before = verified.copy()
-                    verified.update(music_stamps)
-                    _remember_verified(identity, verified, before)
+                    # Reuse publication readbacks for later preparation and
+                    # status checks without rereading unchanged iPod covers.
+                    before = verified_outputs.copy()
+                    verified_outputs.update(music_stamps)
+                    _remember_verified(identity, verified_outputs, before)
                 report["steps"].append(dict(kind=kind, status="published", publications=published))
                 progress(f"{kind}: published and verified on your iPod ({root / '.LINNET'}).")
                 record()
