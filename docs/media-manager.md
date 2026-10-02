@@ -43,6 +43,10 @@ The previous startup software is Apple OS when the verified recovery record
 identifies Apple, or Rockbox when the iPod was installed using its loader. Media
 that was prepared only for Linnet may need an Apple library sync before it appears
 in Apple OS. Removal is unavailable without a verified recovery record.
+Restore or empty Media Manager Trash before removal, since it can contain
+original media files. If the iPod is connected through Linnet's native Disk
+Mode, restart into Apple iPod software and reconnect in Apple Disk Mode so the
+saved firmware backup can be matched to the original storage identity.
 Keep the matching backup and receipt; restoration cannot be inferred from files
 merely remaining on the disk.
 An OS-only Link update does not replace Boot or add a newer startup chooser.
