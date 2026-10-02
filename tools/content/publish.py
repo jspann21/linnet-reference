@@ -600,6 +600,21 @@ def _recover_pending_groups(root: Path, identity: dict) -> list[str]:
     return [name for name in _GROUP_PATHS if _recover_group(root, identity, name)]
 
 
+def recover_pending_publications(*, disk_number: int, expected_disk_serial: str,
+                                 expected_volume_serial: str,
+                                 expected_drive: str | None = None) -> list[str]:
+    """Recover interrupted index groups on a verified, exclusively held iPod.
+
+    This can run on reconnect without an old host stage or a new media package.
+    A corrupt record or an unavailable volume remains untouched and raises.
+    """
+    identity = inspect_target(disk_number, expected_disk_serial, expected_volume_serial, expected_drive)
+    with _exclusive(identity):
+        _same_target(identity, inspect_target(disk_number, expected_disk_serial,
+                                              expected_volume_serial, expected_drive))
+        return _recover_pending_groups(Path(identity['root']), identity)
+
+
 def _publish_group(root: Path, identity: dict, name: str, outputs: list[tuple[str, Path, dict]],
                    verify_complete=None) -> None:
     """Stage new bytes and old recovery copies before changing any live name."""
