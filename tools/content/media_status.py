@@ -174,11 +174,13 @@ def _library_snapshot(identity):
     skipped = {kind: skipped_paths(state, kind) for kind in media.KINDS}
     # Inventory and visible rows share one traversal, including excluded files.
     records = records_by_kind(root)
-    from .retail_media import images
+    from .retail_media import available_tracks, images
+    retail_tracks = available_tracks(root, known_records=records['Music'])
     retail_photos = images(root)
     inventory = scan_sources(root, skipped=skipped, records_by_kind=records, retail_photos=retail_photos,
-                             fingerprint_kinds=('Music', 'Notes', 'Photos'))
+                             fingerprint_kinds=('Music', 'Notes', 'Photos'), retail_tracks=retail_tracks)
     rows = media_library.list_items(identity, records_by_kind=records, retail_photos=retail_photos,
+                                    retail_tracks=retail_tracks,
                                     _validated_identity=True)
     return state, skipped, records, inventory, rows
 

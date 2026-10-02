@@ -5,14 +5,17 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from functools import lru_cache
 import hashlib
+import json
+import math
 import os
 from pathlib import Path
 import stat
 import struct
+import time
 import uuid
 
 from .publish import _bounded, _plain
-from .host_state import cache_volume_scope
+from .host_state import cache_volume_scope, save_json
 
 
 def _u32(data, offset):
@@ -45,7 +48,7 @@ def _list(data, magic, list_tag):
     return 0, 0, 0
 
 
-def _path(root, value, *, with_identity=False, parent_checks=None):
+def _path(root, value, *, with_identity=False, parent_checks=None, known_paths=None):
     parts = value.replace(':', '/').strip('/').split('/')
     # Apple's tested Classic database route to a shared /Music tree begins at
     # iPod_Control/Music, then steps back to the volume root. Accept that one
@@ -56,6 +59,12 @@ def _path(root, value, *, with_identity=False, parent_checks=None):
     if not parts or any(not p or p in ('.', '..') or '\\' in p for p in parts):
         raise ValueError('Unsafe iTunes media path')
     path = root.joinpath(*parts)
+    if known_paths is not None:
+        known = known_paths.get(str(path).casefold())
+        if known is not None:
+            # The shared inventory already rejected links while traversing
+            # this exact file, so no second USB lookup is needed.
+            return (path, known) if with_identity else path
     if parent_checks is None:
         _plain(path, root)
     else:
@@ -87,27 +96,139 @@ def _path(root, value, *, with_identity=False, parent_checks=None):
     return (path, resolved) if with_identity else path
 
 
-def tracks(root):
+def tracks(root, *, known_records=None):
     root = Path(root).resolve()
     path = root / 'iPod_Control/iTunes/iTunesDB'
     _plain(path, root)
     if not path.is_file():
         return {}
     info = path.stat()
-    return _tracks(str(root), info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    stamp = (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino)
+    return (_tracks(str(root), *stamp) if known_records is None else
+            _parse_tracks(str(root), stamp, known_records))
 
 
-def available_tracks(root):
+def available_tracks(root, *, known_records=None):
     """Apple metadata is optional when its database cannot be read."""
     try:
-        return tracks(root)
+        return tracks(root, known_records=known_records)
     except (OSError, ValueError, UnicodeError, struct.error):
         return {}
 
 
+def _tracks_cache_path(root):
+    base = Path(os.environ.get('LOCALAPPDATA', Path.home() / '.cache')) / 'Linnet/Media/retail'
+    key = hashlib.sha256(cache_volume_scope(root).encode()).hexdigest()[:24]
+    return base / ('tracks-' + key + '.json')
+
+
+def _known_paths(root, records):
+    if records is None:
+        return None, None
+    paths, stamps = {}, []
+    for path, info in records:
+        key = str(path).casefold()
+        paths[key] = None if key in paths else path
+        stamps.append((path.relative_to(root).as_posix().casefold(), info.st_ino,
+                       info.st_size, info.st_mtime_ns, info.st_ctime_ns))
+    digest = hashlib.sha256(json.dumps(sorted(stamps), separators=(',', ':')).encode()).hexdigest()
+    return paths, digest
+
+
+def _relative_parts(value):
+    if not isinstance(value, str) or not value or '\\' in value or ':' in value:
+        return None
+    parts = value.split('/')
+    return parts if all(part and part not in ('.', '..') for part in parts) else None
+
+
+def _cached_tracks(root, stamp, known_paths, known_signature):
+    path = _tracks_cache_path(root)
+    try:
+        if path.stat().st_size > 16 * 1024 * 1024:
+            return None
+        saved = json.loads(path.read_text(encoding='utf-8'))
+        rows = saved.get('rows')
+        age = time.time() - saved.get('created', -1)
+        if (saved.get('version') != 2 or saved.get('stamp') != list(stamp) or
+                not 0 <= age <= 3600 or not isinstance(rows, list) or len(rows) > 100000):
+            return None
+        if hashlib.sha256(json.dumps(rows, separators=(',', ':')).encode()).hexdigest() != saved.get('rows_hash'):
+            return None
+        fast = known_paths is not None and saved.get('known_signature') == known_signature
+        result, parent_checks = {}, {}
+        text_fields = {'title', 'album', 'artist', 'genre', 'composer', 'album_artist'}
+        numbers = {'track', 'disc', 'dbid', 'media_type'}
+        required = numbers | {'duration', 'compilation'}
+        for entry in rows:
+            if (not isinstance(entry, list) or len(entry) != 3 or
+                    not isinstance(entry[2], dict)):
+                return None
+            relative, resolved_relative, row = entry
+            display_parts = _relative_parts(relative)
+            resolved_parts = _relative_parts(resolved_relative)
+            if display_parts is None or resolved_parts is None:
+                return None
+            if (not required <= row.keys() or
+                    any(type(row.get(name)) is not str for name in text_fields if name in row) or
+                    any(type(row.get(name)) is not int for name in numbers) or
+                    type(row.get('duration')) not in (int, float) or
+                    not math.isfinite(row['duration']) or
+                    type(row.get('compilation')) is not bool or
+                    set(row) - text_fields - numbers - {'duration', 'compilation'}):
+                return None
+            resolved = (known_paths.get(str(root.joinpath(*resolved_parts)).casefold())
+                        if fast else None)
+            if resolved is not None:
+                path = root.joinpath(*display_parts)
+            else:
+                path, resolved = _path(root, relative, with_identity=True,
+                                       parent_checks=parent_checks, known_paths=known_paths)
+            result[str(resolved).casefold()] = dict(row, path=str(path))
+        for parent, before in parent_checks.items():
+            _plain(parent, root)
+            info = parent.lstat()
+            if not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino, info.st_ctime_ns) != before:
+                return None
+        info = (root / 'iPod_Control/iTunes/iTunesDB').stat()
+        if (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino) != stamp:
+            return None
+        return result, saved.get('known_signature')
+    except (OSError, ValueError, TypeError, AttributeError, OverflowError):
+        return None
+
+
+def _remember_tracks(root, stamp, rows, known_signature):
+    try:
+        entries = [[Path(row['path']).relative_to(root).as_posix(),
+                    Path(resolved).relative_to(root).as_posix(),
+                    {key: value for key, value in row.items() if key != 'path'}]
+                   for resolved, row in rows.items()]
+        payload = json.dumps(entries, separators=(',', ':')).encode()
+        if len(payload) > 15 * 1024 * 1024:
+            return
+        save_json(_tracks_cache_path(root), dict(version=2, stamp=list(stamp),
+                                                 known_signature=known_signature,
+                                                 rows_hash=hashlib.sha256(payload).hexdigest(),
+                                                 created=time.time(), rows=entries))
+    except (OSError, ValueError):
+        pass  # Parsed Apple metadata remains usable without a host cache.
+
+
 @lru_cache(maxsize=4)
-def _tracks(root_name, size, mtime, ctime):
+def _tracks(root_name, size, mtime, ctime, inode):
+    return _parse_tracks(root_name, (size, mtime, ctime, inode))
+
+
+def _parse_tracks(root_name, stamp, known_records=None):
     root = Path(root_name)
+    known_paths, known_signature = _known_paths(root, known_records)
+    cached = _cached_tracks(root, stamp, known_paths, known_signature)
+    if cached is not None:
+        rows, cached_signature = cached
+        if known_signature is not None and cached_signature != known_signature:
+            _remember_tracks(root, stamp, rows, known_signature)
+        return rows
     data = _bounded(root / 'iPod_Control/iTunes/iTunesDB', 128 * 1024 * 1024)
     at, end, count = _list(data, b'mhbd', b'mhlt')
     result = {}
@@ -135,7 +256,7 @@ def _tracks(root_name, size, mtime, ctime):
             child = next_child
         if row.get('path'):
             path, resolved = _path(root, row.pop('path'), with_identity=True,
-                                   parent_checks=parent_checks)
+                                   parent_checks=parent_checks, known_paths=known_paths)
             row['path'] = str(path)
             result[str(resolved).casefold()] = row
         at = following
@@ -146,6 +267,10 @@ def _tracks(root_name, size, mtime, ctime):
         info = path.lstat()
         if not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino, info.st_ctime_ns) != before:
             raise ValueError('iTunes media directory changed during scan')
+    info = (root / 'iPod_Control/iTunes/iTunesDB').stat()
+    if (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino) != stamp:
+        raise ValueError('iTunes database changed during scan')
+    _remember_tracks(root, stamp, result, known_signature)
     return result
 
 
@@ -306,9 +431,9 @@ def images(root, *, artwork=False, dbids=None, render=True):
     return [result[order] for order in sorted(result)]
 
 
-def metadata(root):
+def metadata(root, *, tracks_rows=None):
     from .album_art import _identity, cached
-    rows = available_tracks(root)
+    rows = available_tracks(root) if tracks_rows is None else tracks_rows
     if not rows:
         return {}
     used_dbids = {row['dbid'] for row in rows.values()}
