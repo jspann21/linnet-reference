@@ -2420,8 +2420,9 @@ class MediaWindow(QMainWindow):
         pending = getattr(self, 'boot_upgrade_pending', False)
         self.boot_upgrade_button.setVisible(show_default and (upgrade or pending))
         self.boot_upgrade_button.setText('Resume startup selector update' if pending else 'Update startup selector')
+        selected_build = (option or {}).get('build')
         self.boot_upgrade_button.setEnabled(not self.busy and (pending or upgrade) and
-            (pending or from_source or bool(self.firmware_path)))
+            (pending or from_source or bool(self.firmware_path) and selected_build == 'user'))
         self.boot_upgrade_detail.setVisible(show_default and not startup['supported'])
         self.boot_upgrade_detail.setText('Finish the interrupted startup update before changing the default.' if pending else
             'Update Boot to enable the Menu startup selector and default choices.' if upgrade else
@@ -2439,7 +2440,9 @@ class MediaWindow(QMainWindow):
         if not self.install_button.isEnabled():
             return
         option, method, identity = self.boot_choice.currentData(), self.method_choice.currentData(), self.identity
-        description = f"Make {option['label']} the default startup software?" + (f"\n\nMethod: {method['label']}" if option['kind'] == 'linnet' else '')
+        description = (f"Install or update {option['label']}?" + f"\n\nMethod: {method['label']}"
+                       if option['kind'] == 'linnet' else
+                       f"Make {option['label']} the default startup software?")
         if option['kind'] == 'linnet' and self.review.get('action') in ('replace', 'adopt'):
             description += ('\n\nYour settings, selected theme, playback history, and media libraries '
                             'will be preserved. ' + ('The confirmed OS will be retained for rollback.'
