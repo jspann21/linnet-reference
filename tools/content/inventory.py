@@ -100,7 +100,7 @@ def skipped_paths(state, kind):
 
 
 def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos=None,
-         fingerprint_kinds=None):
+         fingerprint_kinds=None, retail_tracks=None):
     root = Path(root).resolve(strict=True)
     kinds = tuple(kinds)
     if records_by_kind is None:
@@ -157,7 +157,8 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
                     rows.append((path.relative_to(root).as_posix(), info.st_size, info.st_mtime_ns))
                 from .album_art import signature as artwork_signature
                 from .retail_media import available_tracks
-                rows.append(('album-art', artwork_signature(available_tracks(root).values())))
+                tracks = available_tracks(root) if retail_tracks is None else retail_tracks
+                rows.append(('album-art', artwork_signature(tracks.values())))
         if kind == 'Photos':
             from .retail_media import images
             photos = retail_photos if retail_photos is not None else images(root)
