@@ -4,6 +4,7 @@ import re
 import struct
 import zlib
 from collections import defaultdict
+from urllib.parse import unquote, urlsplit
 
 from . import media_manager as manager
 from .music import MAX_DATABASE, TRACK, validate_database
@@ -20,9 +21,11 @@ MAX_M3U_ENTRIES = 10000
 def _m3u_key(path):
     """Normalize a playlist reference without resolving or opening a file."""
     key = path.strip(' \t').replace('\\', '/')
+    if key.casefold().startswith('file://'):
+        key = unquote(urlsplit(key).path, errors='strict')
+    key = key.lstrip('/')
     if re.match(r'^[A-Za-z]:/', key):
         key = key[3:]
-    key = key.lstrip('/')
     while key.startswith('./'):
         key = key[2:]
     return key.casefold()
