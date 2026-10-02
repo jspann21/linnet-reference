@@ -44,6 +44,7 @@ def _decode(root, target_id):
 
 def _rockbox_available(root, marker, review):
     from tools.content.publish import _plain
+    from tools.content.music import device_media_path
 
     if (marker.get('installation_method') != 'native-selector' or
             not review['rockbox'].get('selector_compatible')):
@@ -57,6 +58,12 @@ def _rockbox_available(root, marker, review):
     except UnicodeEncodeError:
         return False
     if not encoded or len(encoded) > 255 or not encoded.startswith(b'/'):
+        return False
+    try:
+        current_path = device_media_path(Path(review['rockbox']['boot_file']), root)
+    except (KeyError, OSError, ValueError):
+        return False
+    if current_path != configured_path:
         return False
     config = root / '.LINNET/RBPATH.CFG'
     _plain(config, root)
