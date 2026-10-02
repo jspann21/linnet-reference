@@ -472,6 +472,26 @@ def _remove(identity, items):
         _plain(grid, root)
         if grid.exists():
             selected.append(_row('library','Photos','Prepared photo grid',grid,'Native thumbnails',info=grid.stat()))
+    photo_dependencies = []
+    if any(row['kind'] == 'Photos' and row['category'] == 'library' for row in selected):
+        package = root / '.LINNET' / 'PHOTOS' / 'LIBRARY.PIM'
+        if package.is_file():
+            from .photos import inspect as inspect_photos
+            from .photo_grid import inspect_grid
+            _volume_guard(identity)
+            package_report = inspect_photos(package, verify_payloads=False,
+                                            checkpoint=lambda: _volume_guard(identity))
+            if grid.is_file():
+                inspect_grid(grid, package=package, checkpoint=lambda: _volume_guard(identity))
+            for item in package_report.get('packs', []):
+                relative = item['device_path'].lstrip('/')
+                path = root / relative
+                _plain(path, root)
+                photo_dependencies.append(dict(relative=relative, bytes=item['bytes'],
+                                               sha256=item['sha256'], source=path))
+    if (photo_dependencies and
+            sum(item['bytes'] for item in photo_dependencies) + 1048576 > identity.get('free_bytes', 0)):
+        raise ValueError('Not enough iPod space to preserve photo packs in Trash.')
     catalog, before, entries = _catalog(root)
     selected_keys = {row['key'] for row in selected if row['category'] == 'published'}
     paths = {}
@@ -539,13 +559,27 @@ def _remove(identity, items):
     report = dict(operation='remove-media', started=time.time(), complete=False, receipt=str(receipt),
                   trash=str(trash), removed=[], requires_update=sorted({r['kind'] for r in selected if r['category'] == 'original'}),
                   catalog_paths={key.hex(): _device_path(root, path).relative_to(root).as_posix() for key, path, _ in entries},
-                  selected=selected, moves=[dict(source=str(p), trash=str(trash / p.relative_to(root))) for p in paths.values()])
+                  selected=selected, dependencies=[{k: item[k] for k in ('relative', 'bytes', 'sha256')}
+                                                   for item in photo_dependencies],
+                  moves=[dict(source=str(p), trash=str(trash / p.relative_to(root))) for p in paths.values()])
     save_json(receipt, report)
+    from .media_trash import _save_device
+    def record():
+        _save_device(identity, root, trash, report)
+        save_json(receipt, report)
     temporary = None
     temporary_owned = False
     try:
         _volume_guard(identity)
         trash.mkdir(parents=True, exist_ok=False)
+        record()
+        if photo_dependencies:
+            from .publish import _copy_verified
+            for item in photo_dependencies:
+                destination = trash / item['relative']
+                _volume_guard(identity); _plain(item['source'], root); _plain(destination, root)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                _copy_verified(item['source'], destination, item, root, lambda: _volume_guard(identity))
         if music_before is not None:
             backup = trash / 'LIBRARY.PDB.before'
             _write_verified(backup, music_before, 'Music index backup verification failed')
@@ -665,6 +699,7 @@ def _remove(identity, items):
             report['summary'] += '. Update ' + ', '.join(report['requires_update']) + ' to rebuild its library.'
         if empty:
             report['summary'] += ' Empty playback libraries were also moved to Trash.'
+        record()
         return report
     except Exception as error:
         report['error'] = str(error)

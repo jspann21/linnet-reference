@@ -2,15 +2,132 @@
 import json
 import os
 from pathlib import Path
+import struct
 import uuid
 from datetime import datetime
 
 from . import media_manager as media, media_library as library
 from .host_state import cache_root, save_json
 from .inventory import file_records
-from .guard import guarded_path as _plain, guard_volume as _volume_guard
+from .guard import guarded_path as _plain, guard_volume as _volume_guard, hash_file
 from .publish import _exclusive, _write_verified
 from .video_catalog import encode as _encode_catalog, read_file as _read_catalog_file
+
+
+_MANIFEST = 'RECOVERY.JSON'
+_MAX_MANIFEST = 16 * 1024 * 1024
+_BACKUPS = {'INDEX.VID.before', 'LIBRARY.PDB.before', 'COVERS.CFL.before'}
+
+
+def _relative(value):
+    """Accept only a canonical path below the device root."""
+    if (not isinstance(value, str) or not value or value.startswith('/') or '\\' in value or
+            ':' in value or any(part in ('', '.', '..') for part in value.split('/'))):
+        raise ValueError('Unsafe Trash recovery path')
+    return value
+
+
+def _portable(root, token, report):
+    selected = []
+    for row in report['selected']:
+        if 'relative' in row:
+            relative = _relative(row['relative'])
+        else:
+            path = Path(row['path'])
+            _plain(path, root)
+            relative = _relative(path.relative_to(root).as_posix())
+        selected.append(dict(category=row['category'], kind=row['kind'],
+                             title=str(row['title'])[:512], key=row.get('key'),
+                             relative=relative,
+                             bytes=row['bytes'], mtime_ns=row['mtime_ns']))
+    return dict(version=1, token=token, started=report['started'],
+                complete=bool(report.get('complete')), restored=bool(report.get('restored')),
+                trash_emptied=bool(report.get('trash_emptied')),
+                selected=selected, requires_update=report.get('requires_update', []),
+                catalog_paths=report.get('catalog_paths', {}),
+                dependencies=report.get('dependencies', []))
+
+
+def _save_device(identity, root, trash, report):
+    """Publish a small portable receipt on the identified device before mutation."""
+    token = trash.name
+    manifest = trash / _MANIFEST
+    temporary = trash / ('R' + uuid.uuid4().hex[:7].upper() + '.TMP')
+    _plain(manifest, root); _plain(temporary, root)
+    data = json.dumps(_portable(root, token, report), ensure_ascii=False,
+                      separators=(',', ':')).encode('utf-8')
+    if len(data) > _MAX_MANIFEST:
+        raise ValueError('Too many selected items for portable Trash recovery')
+    owned = []
+    try:
+        _volume_guard(identity)
+        _write_verified(temporary, data, 'Trash recovery metadata verification failed', owned=owned)
+        _volume_guard(identity)
+        os.replace(temporary, manifest)
+        if manifest.read_bytes() != data:
+            raise OSError('Portable Trash recovery metadata verification failed')
+    finally:
+        if temporary in owned and temporary.exists():
+            _volume_guard(identity); _plain(temporary, root); temporary.unlink()
+
+
+def _validate_manifest(value, token):
+    if (not isinstance(value, dict) or value.get('version') != 1 or value.get('token') != token or
+            type(value.get('started')) not in (int, float) or
+            not isinstance(value.get('selected'), list) or
+            not isinstance(value.get('catalog_paths'), dict) or
+            not isinstance(value.get('dependencies'), list)):
+        raise ValueError('Invalid portable Trash metadata')
+    datetime.fromtimestamp(value['started'])
+    if len(value['selected']) > 100000 or len(value['dependencies']) > 100000:
+        raise ValueError('Oversized Trash metadata')
+    for row in value['selected']:
+        if (not isinstance(row, dict) or row.get('category') not in ('original', 'library', 'published') or
+                row.get('kind') not in media.KINDS or not isinstance(row.get('title'), str) or
+                type(row.get('bytes')) is not int or row['bytes'] < 0 or
+                row.get('mtime_ns') is not None and type(row['mtime_ns']) is not int):
+            raise ValueError('Invalid selected Trash item')
+        _relative(row.get('relative'))
+        key = row.get('key')
+        if key is not None and (not isinstance(key, str) or len(key) != 64 or
+                                any(c not in '0123456789abcdef' for c in key)):
+            raise ValueError('Invalid video recovery key')
+    for key, path in value['catalog_paths'].items():
+        if not isinstance(key, str) or len(key) != 64 or any(c not in '0123456789abcdef' for c in key):
+            raise ValueError('Invalid catalog recovery key')
+        _relative(path)
+    for item in value['dependencies']:
+        if (not isinstance(item, dict) or type(item.get('bytes')) is not int or item['bytes'] < 0 or
+                not isinstance(item.get('sha256'), str) or len(item['sha256']) != 64 or
+                any(c not in '0123456789abcdef' for c in item['sha256'])):
+            raise ValueError('Invalid photo dependency')
+        path = _relative(item.get('relative'))
+        if not path.startswith('.LINNET/PHOTOS/PACKS/') or not path.endswith('.PAK'):
+            raise ValueError('Unsupported photo dependency')
+    return value
+
+
+def _photo_pack_requirements(package):
+    """Read the pack identities bound into a previously validated PIMG."""
+    from .photos import HEADER, PACK_COUNT, _crc
+    with package.open('rb') as reader:
+        header = reader.read(HEADER)
+    if (len(header) != HEADER or header[:4] != b'LPIC' or
+            _crc(header[:508]) != struct.unpack_from('<I', header, 508)[0]):
+        raise ValueError('Photo package changed before Trash recovery.')
+    version = struct.unpack_from('<H', header, 4)[0]
+    if version == 0:
+        return {}
+    if version != 1:
+        raise ValueError('Unsupported photo package in Trash.')
+    result = {}
+    for bucket in range(PACK_COUNT):
+        identity, size = struct.unpack_from('<8sI', header, 72 + bucket * 12)
+        if not size:
+            continue
+        prefix = identity.hex().upper()
+        result[f'.LINNET/PHOTOS/PACKS/{prefix[:8]}/{prefix[8:]}.PAK'] = (prefix.lower(), size)
+    return result
 
 
 def _removal(identity, root, token):
@@ -18,21 +135,27 @@ def _removal(identity, root, token):
         return None
     receipt = cache_root(identity) / f'remove-{token}.json'
     try:
-        report = json.loads(receipt.read_text(encoding='utf-8'))
-        if not isinstance(report, dict):
-            return None
-        started = report.get('started', 0)
-        if type(started) not in (int, float):
-            return None
-        datetime.fromtimestamp(started)
         trash = root / '.LINNET' / 'TRASH' / token
         _plain(trash, root)
         if not trash.is_dir():
             return None
+        manifest = trash / _MANIFEST
+        _plain(manifest, root)
+        if manifest.exists():
+            if manifest.stat().st_size > _MAX_MANIFEST:
+                return None
+            report = _validate_manifest(json.loads(manifest.read_text(encoding='utf-8')), token)
+            title = ', '.join(row['title'] for row in report['selected'][:3])
+        else:
+            # Receipts created by older Linnet builds remain recoverable here.
+            report = json.loads(receipt.read_text(encoding='utf-8'))
+            if not isinstance(report, dict) or type(report.get('started')) not in (int, float):
+                return None
+            datetime.fromtimestamp(report['started'])
+            title = ', '.join(str(row['title']) for row in report.get('selected', [])[:3])
         files = file_records(trash)
         return (dict(id=token, receipt=str(receipt), path=str(trash), bytes=sum(i.st_size for _, i in files),
-                     title=', '.join(r['title'] for r in report.get('selected', [])[:3]),
-                     started=started), report)
+                     title=title, started=report['started']), report)
     except (OSError, ValueError, TypeError, KeyError, OverflowError):
         return None
 
@@ -40,8 +163,14 @@ def _removal(identity, root, token):
 def removals(identity):
     root = Path(identity['root']).resolve(strict=True)
     found = []
-    for receipt in cache_root(identity).glob('remove-*.json'):
-        removal = _removal(identity, root, receipt.stem.removeprefix('remove-'))
+    tokens = set()
+    trash_root = root / '.LINNET' / 'TRASH'
+    _plain(trash_root, root)
+    if trash_root.is_dir():
+        tokens.update(path.name for path in trash_root.iterdir() if path.is_dir())
+    tokens.update(receipt.stem.removeprefix('remove-') for receipt in cache_root(identity).glob('remove-*.json'))
+    for token in tokens:
+        removal = _removal(identity, root, token)
         if removal is not None:
             found.append(removal[0])
     return sorted(found, key=lambda r: r['started'], reverse=True)
@@ -57,10 +186,14 @@ def recover(identity, token, *, erase=False):
         removal, report = found
         trash = Path(removal['path'])
         receipt = Path(removal['receipt'])
+        manifest = trash / _MANIFEST
+        portable = manifest.exists()
         if erase:
             # Enumerate guarded ordinary files before deleting any of them.
             files = file_records(trash)
             for path, info in files:
+                if path == manifest:
+                    continue
                 _volume_guard(identity)
                 _plain(path, trash)
                 current = path.stat()
@@ -72,25 +205,81 @@ def recover(identity, token, *, erase=False):
                 _volume_guard(identity)
                 _plain(path, trash)
                 path.rmdir()
+            if portable:
+                _volume_guard(identity); _plain(manifest, trash); manifest.unlink()
             _volume_guard(identity)
             trash.rmdir()
             report['trash_emptied'] = True
             save_json(receipt, report)
             return dict(receipt=str(receipt), summary='Trash removal permanently deleted. Its storage is now available.')
         moves = []
+        dependencies = {item['relative']: item for item in report.get('dependencies', [])}
+        selected_paths = {row['relative'] for row in report['selected']} if portable else None
+        dependency_sources = []
         # Derive destinations from the guarded removal tree; never trust absolute receipt paths.
         for source, info in file_records(trash):
             relative = source.relative_to(trash)
-            if relative.as_posix() in ('INDEX.VID.before', 'LIBRARY.PDB.before', 'COVERS.CFL.before'):
+            name = relative.as_posix()
+            if name in _BACKUPS or name == _MANIFEST:
                 continue
-            allowed = relative.parts[0] in media.KINDS or relative.parts[:2] == ('iPod_Control', 'Music') or relative.as_posix() in ('.LINNET/LIBRARY.PDB', '.LINNET/PHOTOS/LIBRARY.PIM', '.LINNET/NOTES/LIBRARY.NNT') or (relative.parent.as_posix() == '.LINNET/VIDEOS' and relative.suffix.lower() in ('.ipv', '.ipvf', '.mp4', '.m4v', '.mov'))
+            allowed = relative.parts[0] in media.KINDS or relative.parts[:2] == ('iPod_Control', 'Music') or name in ('.LINNET/LIBRARY.PDB', '.LINNET/PHOTOS/LIBRARY.PIM', '.LINNET/PHOTOS/GRID.PGR', '.LINNET/NOTES/LIBRARY.NNT') or (relative.parent.as_posix() == '.LINNET/VIDEOS' and relative.suffix.lower() in ('.ipv', '.ipvf', '.mp4', '.m4v', '.mov'))
             if not allowed:
+                if name in dependencies:
+                    dependency_sources.append((source, root / relative, info, dependencies[name]))
+                    continue
                 raise ValueError('Unexpected file in Trash; inspect the report before restoring.')
+            if selected_paths is not None and name not in selected_paths:
+                raise ValueError('Trash contains a file outside its portable recovery manifest.')
             destination = root / relative
             _plain(destination, root)
             if destination.exists():
                 raise ValueError(f'Cannot restore over an existing file: {relative}. Move that file first.')
             moves.append((source, destination, info))
+        moved_names = {p.relative_to(trash).as_posix() for p, _, _ in moves}
+        if portable:
+            for row in report['selected']:
+                name = row['relative']
+                if name in moved_names or row['mtime_ns'] is None:
+                    continue
+                active = root / name
+                _plain(active, root)
+                if not active.is_file():
+                    raise ValueError('A selected Trash file is missing from both recovery locations.')
+                info = active.stat()
+                if (info.st_size, info.st_mtime_ns) != (row['bytes'], row['mtime_ns']):
+                    raise ValueError('A selected file changed since removal.')
+            photo_name = '.LINNET/PHOTOS/LIBRARY.PIM'
+            if photo_name in selected_paths:
+                package = (trash / photo_name) if photo_name in moved_names else (root / photo_name)
+                _plain(package, trash if photo_name in moved_names else root)
+                expected = _photo_pack_requirements(package)
+                if set(expected) != set(dependencies) or any(
+                        dependencies[name]['bytes'] != size or
+                        not dependencies[name]['sha256'].startswith(prefix)
+                        for name, (prefix, size) in expected.items()):
+                    raise ValueError('Photo pack recovery metadata differs from its catalog.')
+                grid_name = '.LINNET/PHOTOS/GRID.PGR'
+                if grid_name in selected_paths:
+                    from .photo_grid import inspect_grid
+                    grid = (trash / grid_name) if grid_name in moved_names else (root / grid_name)
+                    _plain(grid, trash if grid_name in moved_names else root)
+                    inspect_grid(grid, package=package, checkpoint=lambda: _volume_guard(identity))
+        found_dependencies = {source.relative_to(trash).as_posix() for source, _, _, _ in dependency_sources}
+        for name, item in dependencies.items():
+            if name not in found_dependencies:
+                existing = root / name
+                _plain(existing, root)
+                if (not existing.is_file() or existing.stat().st_size != item['bytes'] or
+                        hash_file(existing, item['bytes']) != item['sha256']):
+                    raise ValueError('A photo pack needed for recovery is missing.')
+        for source, destination, info, item in dependency_sources:
+            _plain(source, trash); _plain(destination, root)
+            destination_valid = destination.exists() and destination.stat().st_size == item['bytes'] and hash_file(destination, item['bytes']) == item['sha256']
+            if destination.exists() and not destination_valid:
+                raise ValueError('A different photo pack occupies the recovery path.')
+            source_valid = info.st_size == item['bytes'] and hash_file(source, info.st_size) == item['sha256']
+            if not source_valid and not destination_valid:
+                raise ValueError('Photo recovery pack changed in Trash.')
         catalog, before, entries = library._catalog(root)
         entries_by_key = {entry[0]: entry for entry in entries}
         backup = trash / 'INDEX.VID.before'
@@ -114,6 +303,11 @@ def recover(identity, token, *, erase=False):
                         restore_entries.append(entry)
                         restore_paths[entry[0]] = path
         data = _encode_catalog(entries + restore_entries) if restore_entries else None
+        for source, destination, info, item in dependency_sources:
+            _volume_guard(identity); _plain(source, trash); _plain(destination, root)
+            if not destination.exists():
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                source.rename(destination)
         for source, destination, info in moves:
             _volume_guard(identity)
             _plain(source, trash)
@@ -147,9 +341,12 @@ def recover(identity, token, *, erase=False):
                     _plain(temporary, root)
                     temporary.unlink()
         report['restored'] = True
+        if portable:
+            _save_device(identity, root, trash, report)
         save_json(receipt, report)
         # Backup is no longer needed only after file and catalog restoration succeeded.
-        for backup_path in (backup, trash / 'LIBRARY.PDB.before', trash / 'COVERS.CFL.before'):
+        for backup_path in (backup, trash / 'LIBRARY.PDB.before', trash / 'COVERS.CFL.before',
+                            *(source for source, _, _, _ in dependency_sources if source.exists())):
             if backup_path.exists():
                 _volume_guard(identity)
                 _plain(backup_path, trash)
@@ -158,6 +355,8 @@ def recover(identity, token, *, erase=False):
             _volume_guard(identity)
             _plain(path, trash)
             path.rmdir()
+        if portable:
+            _volume_guard(identity); _plain(manifest, trash); manifest.unlink()
         _volume_guard(identity)
         trash.rmdir()
         return dict(receipt=str(receipt), summary='Content restored. Update the affected categories to refresh their libraries.',
