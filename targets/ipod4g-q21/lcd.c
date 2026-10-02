@@ -240,7 +240,7 @@ failed:
 }
 
 bool ln_lcd_fill(uint16_t color){return draw(color,0,false);}
-bool ln_target_disk_screen(void){return draw(0xffffu,0,true);}
+bool ln_target_disk_screen(bool symbol_visible){(void)symbol_visible;return draw(0xffffu,0,true);}
 #if defined(LINNET_IMAGE_BOOT)
 bool ln_lcd_boot(void)
 {

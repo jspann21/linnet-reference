@@ -275,9 +275,7 @@ _Noreturn void ln_pp_disk_mode(const char *serial,uint32_t sector_bytes,bool wri
     block_bytes=sector_bytes;scale=sector_bytes>>9;write_enabled=writable;state=CBW;position=0;
     activity=ln_time_us();dirty=false;
     ln_core_watchdog_arm();
-    /* Render once before enumerating USB. No display work enters the storage
-     * loop, so host transfers retain the controller and CPU budget. */
-    (void)ln_target_disk_screen();
+    (void)ln_target_disk_screen(true);
     ln_core_watchdog_feed();
     ln_ata_init(ln_time_us());
     struct ln_ata_state drive;
@@ -309,6 +307,10 @@ _Noreturn void ln_pp_disk_mode(const char *serial,uint32_t sector_bytes,bool wri
     device_serial=storage_serial;
     if(!ln_pp_usb_storage_init(storage_serial))ln_platform_hardware_reset();
     uint32_t connection=ln_usb_generation();
+#if LINNET_TARGET_NUMBER == 25 || LINNET_TARGET_NUMBER == 98
+    uint32_t blink_started=ln_time_us();
+    bool symbol_visible=true;
+#endif
     for(;;) {
         /* Read-only probes can expire safely. Writable host filesystems retain
          * ownership until eject, transport failure, or physical disconnect. */
@@ -324,6 +326,16 @@ _Noreturn void ln_pp_disk_mode(const char *serial,uint32_t sector_bytes,bool wri
             (void)drain();ln_platform_hardware_reset();
         }
         if(ln_usb_connected())step();
+#if LINNET_TARGET_NUMBER == 25 || LINNET_TARGET_NUMBER == 98
+        /* Redraw only while command idle and after a quiet USB interval.
+         * Active transfers always take priority over the optional blink. */
+        uint32_t now=ln_time_us();
+        if(state==CBW && now-activity>=250000u && now-blink_started>=1200000u){
+            ln_core_watchdog_feed();
+            if(ln_target_disk_screen(!symbol_visible))symbol_visible=!symbol_visible;
+            blink_started=ln_time_us();
+        }
+#endif
         ln_core_watchdog_feed();
     }
 }

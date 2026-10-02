@@ -92,13 +92,13 @@ bool ln_lcd_fill(uint16_t color){
     for(uint32_t y=0;y<240u;++y)if(!ln_m25_lcd_write(y*320u,row,320u))return false;
     return ln_m25_lcd_commit()&&await_ready();
 }
-bool ln_target_disk_screen(void){
+bool ln_target_disk_screen(bool symbol_visible){
     if(!ln_m25_lcd_init()||!await_ready())return false;
     struct ln_color_disk_decoder decoder={0};
     uint16_t row[LINNET_LCD_WIDTH];
     for(uint32_t y=0;y<LINNET_LCD_HEIGHT;++y){
         ln_core_watchdog_feed();
-        if(!ln_color_disk_expand(&decoder,row,LINNET_LCD_WIDTH))return false;
+        if(!ln_color_disk_expand(&decoder,row,LINNET_LCD_WIDTH,symbol_visible))return false;
         if(!ln_m25_lcd_write(y*LINNET_LCD_WIDTH,row,LINNET_LCD_WIDTH))return false;
     }
     return ln_color_disk_finished(&decoder)&&ln_m25_lcd_commit()&&await_ready();

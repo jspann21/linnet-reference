@@ -2,7 +2,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 /* Board wiring and presentation supplied by targets/<device>/. */
-bool ln_s5l_board_disk_screen(void);
+bool ln_s5l_board_disk_screen(bool symbol_visible);
 bool ln_s5l_board_recovery_screen(void);
 bool ln_s5l_board_input_power(void);
 bool ln_s5l_board_disk_power(void);

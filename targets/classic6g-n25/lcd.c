@@ -53,12 +53,12 @@ bool ln_lcd_boot_apple(void){
     if(!ln_lcd_fill(0xffff))return false;
     text(94,"Apple iPod Software",0x0000);text(150,"Starting",0x4208);return present();
 }
-bool ln_s5l_board_disk_screen(void){
+bool ln_s5l_board_disk_screen(bool symbol_visible){
     uint16_t *frame=ln_display_framebuffer();
     if(!frame){if(!ln_display_init())return false;frame=ln_display_framebuffer();}
     if(!frame||!ln_display_quiesce())return false;
     struct ln_color_disk_decoder decoder={0};
-    if(!ln_color_disk_expand(&decoder,frame,LINNET_DISPLAY_PIXELS)||
+    if(!ln_color_disk_expand(&decoder,frame,LINNET_DISPLAY_PIXELS,symbol_visible)||
        !ln_color_disk_finished(&decoder))return false;
     return present();
 }
