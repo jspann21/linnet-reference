@@ -1477,24 +1477,29 @@ def _prepare_music(root, cache, identity, skipped, *, ffprobe, verification, for
 
 
 def _music_outputs_from_publication(root, output_paths, verified_outputs, identity):
-    """Reuse fresh artwork readbacks and hash all other published outputs."""
+    """Return verified digests and stable stamps from publication readbacks."""
     _volume_guard(identity)
-    outputs = []
+    outputs, stamps = [], {}
     for name in output_paths:
         proof = verified_outputs.get(name)
         path = root / name
         _plain(path, root)
         if proof is None:
-            outputs.append((name, _hash(path)))
-            continue
-        if not isinstance(proof, tuple) or len(proof) != 2:
-            raise ValueError(f"invalid music publication proof: {name}")
-        digest, stamp = proof
-        info = path.stat()
-        if _receipt_stamp(info) != stamp:
-            raise ValueError(f"music output changed after publication: {path}")
+            before = path.stat()
+            digest = _hash(path)
+            info = path.stat()
+            if _receipt_stamp(before) != _receipt_stamp(info):
+                raise ValueError(f"music output changed after verification: {path}")
+        else:
+            if not isinstance(proof, tuple) or len(proof) != 2:
+                raise ValueError(f"invalid music publication proof: {name}")
+            digest, stamp = proof
+            info = path.stat()
+            if _receipt_stamp(info) != stamp:
+                raise ValueError(f"music output changed after publication: {path}")
         outputs.append((name, digest))
-    return outputs
+        stamps[(name, digest)] = (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino)
+    return outputs, stamps
 
 
 def _prepare_photos(root, cache, identity, media_profile, skipped, retail_photos, *,
@@ -2012,7 +2017,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     checkpoint()
                     outputs = _published_photo_output(root, identity, output_paths, published)
                 elif kind == 'Music':
-                    outputs = _music_outputs_from_publication(root, output_paths, music_proofs, identity)
+                    outputs, music_stamps = _music_outputs_from_publication(root, output_paths, music_proofs, identity)
                 else:
                     outputs = [(name, _hash(root / name)) for name in output_paths]
                 state[kind] = dict(signature=signature, outputs=outputs)
@@ -2021,6 +2026,16 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 if kind == "Videos":
                     state[kind]["media_profile"] = media_profile
                 _save(state_path, state)
+                if kind == 'Music':
+                    # The readbacks above satisfy the status view's hash cache
+                    # without a second pass over every cover on the iPod.
+                    from .media_status import _remember_verified, _verified_outputs
+                    verified = _verified_outputs(identity['disk_serial'], identity['volume_serial'],
+                                                 identity['partition_offset'], identity['volume_unique_id'],
+                                                 cache_disk_serial=identity.get('media_cache_disk_serial'))
+                    before = verified.copy()
+                    verified.update(music_stamps)
+                    _remember_verified(identity, verified, before)
                 report["steps"].append(dict(kind=kind, status="published", publications=published))
                 progress(f"{kind}: published and verified on your iPod ({root / '.LINNET'}).")
                 record()
