@@ -47,6 +47,9 @@ Restore or empty Media Manager Trash before removal, since it can contain
 original media files. If the iPod is connected through Linnet's native Disk
 Mode, restart into Apple iPod software and reconnect in Apple Disk Mode so the
 saved firmware backup can be matched to the original storage identity.
+If cleanup is interrupted, reconnect the same iPod and choose **Remove Linnet OS**
+again. Media Manager matches its host recovery copy to that iPod and resumes
+the removal.
 Keep the matching backup and receipt; restoration cannot be inferred from files
 merely remaining on the disk.
 An OS-only Link update does not replace Boot or add a newer startup chooser.
