@@ -123,8 +123,10 @@ Queue choices are retained per device. Completed work is reused after an
 interruption; unfinished or missing sources remain visible. Stop takes effect at
 a safe operation boundary. The preparation report records completed, skipped,
 and failed work. During a scan, device search, or preparation planning, **Stop**
-waits for the current read-only check to return and discards its result; the
-window remains busy until that check finishes.
+waits for the current read-only check to return; the window remains busy until
+that check finishes. Ordinary results are discarded. If a scan finds an
+interrupted media-index update, the app keeps the blocked recovery state so it
+can be reviewed before another device action.
 
 ## Playlists, games, and screens
 
