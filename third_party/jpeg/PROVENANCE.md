@@ -15,7 +15,7 @@ multiplication.
 The bounded incremental marker/entropy driver in
 [services/photos/jpeg.c](../../services/photos/jpeg.c) is Linnet code.
 The upstream synchronous file parser was not imported. Prepared photos remain
-the normal display path; see [PIMG](../../docs/photo-format.md).
+the normal display path; see [LPIC](../../docs/photo-format.md).
 
 Host reference and emulator comparisons do not establish physical playback
 speed or LCD quality.

@@ -138,7 +138,7 @@ static bool allowed(void){
     struct ln_player_status player;struct ln_audio_status audio;ln_player_snapshot(&player);ln_audio_snapshot(&audio);
     if(player.phase==LN_PLAYER_IDLE||player.phase==LN_PLAYER_ERROR||player.phase==LN_PLAYER_PAUSE)return true;
     uint32_t reserve=ln_player_background_frames(audio.rate);
-    /* Verified PIMG record/thumbnail/tile requests are capped at 8 KiB.
+    /* Verified LPIC record/thumbnail/tile requests are capped at 8 KiB.
      * Keep 500 ms (and the existing 8192-frame floor) for those bounded reads;
      * catalog opening/verification and JPEG retain the larger reserve. */
     if(p.ready&&!p.jpeg_mode&&p.phase>=RECORD&&p.phase<=TILE_DATA){

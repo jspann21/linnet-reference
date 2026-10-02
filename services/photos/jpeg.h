@@ -33,7 +33,7 @@ struct ln_photo_jpeg {
  * aspect-fit with black margins, no upscale, and explicit EXIF orientation1..8.
  * Baseline 8-bit grayscale/YCbCr one interleaved scan, 1x1/2x1/1x2/2x2 luma;
  * progressive, CMYK, RGB Adobe, repeated tables and other coding modes return
- * UNSUPPORTED. Chroma reconstruction uses nearest-neighbor samples; the PIMG
+ * UNSUPPORTED. Chroma reconstruction uses nearest-neighbor samples; the LPIC
  * compiler remains the high-quality scaling and normal interaction path.
  * Partial surface contents must not be presented before READY. */
 int ln_photo_jpeg_init(struct ln_photo_jpeg *,const uint8_t *source,uint32_t bytes,

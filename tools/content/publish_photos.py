@@ -1,4 +1,4 @@
-"""Guarded, unelevated PIMG publication to an explicitly identified iPod.
+"""Guarded, unelevated LPIC publication to an explicitly identified iPod.
 
 The verified package replaces LIBRARY.PIM last, after its previous bytes have a
 verified backup. Existing optional JPEG references must already match on-device.
@@ -259,7 +259,7 @@ def _publish_pair(package, candidate, references, grid, grid_candidate, identity
                            previous_hint=previous['LIBRARY.PIM'], retain_backup=True,
                            receipt_fields=dict(grid=grid_receipt, packs=pack_results))
     except Exception as exc:
-        raise RuntimeError(f"Photo pair stopped after native grid publication; inspect {grid_receipt['receipt']} and the PIMG receipt. Do not replay automatically: {exc}") from exc
+        raise RuntimeError(f"Photo pair stopped after native grid publication; inspect {grid_receipt['receipt']} and the LPIC receipt. Do not replay automatically: {exc}") from exc
     try:
         _verify_pack_proofs(pack_results, identity, root)
     except Exception as exc:
