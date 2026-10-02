@@ -23,10 +23,15 @@ class _Progress:
         self.detail = detail
         self.started = time.monotonic()
         self.last_report = 0
+        self.phase = None
 
     def emit(self, phase, *, fraction=None, complete=False, frames=None,
              total_frames=None, force=False):
         now = time.monotonic()
+        if phase != self.phase:
+            self.phase = phase
+            self.started = now
+            self.last_report = 0
         if not force and not complete and now - self.last_report < .5:
             return
         self.last_report = now
@@ -60,21 +65,20 @@ def _seconds(value):
     return result if math.isfinite(result) and 0 < result <= 86400 else None
 
 
-def _conversion_updates(path, offset, pending, duration, progress, phase, total_frames):
+def _conversion_updates(path, offset, pending, values, duration, progress, phase, total_frames):
     """Read FFmpeg's bounded key/value progress stream without blocking its writer."""
     try:
         with path.open("rb") as stream:
             stream.seek(offset)
             chunk = stream.read(65536)
     except FileNotFoundError:
-        return offset, pending
+        return offset, pending, values
     offset += len(chunk)
     pending += chunk
     if len(pending) > 65536:
         pending = pending[-65536:]
     lines = pending.split(b"\n")
     pending = lines.pop()
-    values = {}
     for line in lines:
         key, separator, value = line.strip().partition(b"=")
         if not separator:
@@ -94,10 +98,12 @@ def _conversion_updates(path, offset, pending, duration, progress, phase, total_
             elapsed_media, frame = None, None
         fraction = (max(0.0, elapsed_media) / duration
                     if duration and elapsed_media is not None and math.isfinite(elapsed_media) else None)
+        # FFmpeg can write progress=end and still fail while closing the output.
+        # Report completion only after its exit status has been checked.
         progress.emit(phase, fraction=fraction, frames=frame, total_frames=total_frames,
-                      complete=value == b"end", force=True)
+                      force=True)
         values.clear()
-    return offset, pending
+    return offset, pending, values
 
 class _Bits:
     def __init__(self, data):
@@ -460,7 +466,6 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None,
                 raise ValueError("ffmpeg is required to prepare native video")
             progress("Preparing video for faster loading…" if relocate else "Preparing H.264 video and AAC audio…")
             phase = "remux" if relocate else "transcode"
-            updates.emit(phase, fraction=0 if relocate and source_info.get("duration_seconds") else None, force=True)
             limits = profile["native_video"]
             width, height, fps = profile["video_width"], profile["video_height"], profile["video_fps"]
             video_kbps = min(limits["video_kbps"], 800) if profile["video_backend"] == "native-mp4" else limits["video_kbps"]
@@ -569,22 +574,23 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None,
             with tempfile.TemporaryDirectory(prefix="linnet-video-progress-") as progress_dir, tempfile.TemporaryFile() as errors:
                 progress_path = Path(progress_dir) / "ffmpeg.progress"
                 command[-1:-1] = ["-nostats", "-stats_period", "0.5", "-progress", str(progress_path)]
+                updates.emit(phase, fraction=0 if duration else None, force=True)
                 process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                            stderr=errors, creationflags=NO_WINDOW)
                 try:
-                    offset, pending = 0, b""
+                    offset, pending, values = 0, b"", {}
                     while process.poll() is None:
                         checkpoint()
-                        offset, pending = _conversion_updates(progress_path, offset, pending,
-                                                               float(duration) if duration else None,
-                                                               updates, phase, total_frames)
+                        offset, pending, values = _conversion_updates(
+                            progress_path, offset, pending, values,
+                            float(duration) if duration else None, updates, phase, total_frames)
                         try:
                             process.wait(timeout=.2)
                         except subprocess.TimeoutExpired:
                             pass
-                    offset, pending = _conversion_updates(progress_path, offset, pending,
-                                                           float(duration) if duration else None,
-                                                           updates, phase, total_frames)
+                    offset, pending, values = _conversion_updates(
+                        progress_path, offset, pending, values,
+                        float(duration) if duration else None, updates, phase, total_frames)
                     checkpoint()
                     if process.returncode:
                         errors.seek(0, os.SEEK_END)
