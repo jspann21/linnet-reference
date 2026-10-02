@@ -54,7 +54,7 @@ static struct {
     uint32_t visible[TILES],visible_count,front,render_y,slide_at,jpeg_at,ready_tiles,resume_stage,file_offset,file_payload_at;
     uint8_t verify_record[64];uint32_t v_photos,v_levels,v_tiles,v_album,v_photo,v_level,v_width,v_height,v_text_bytes,v_more,v_code,v_min,jpeg_crc;
     int32_t pan_x,pan_y;
-    bool active,ready,pending,io_open,job_album,view_loaded,frame_valid,frame_complete,rendering,redraw,slide,slide_armed,resume_pending,jpeg_mode,stepping,album_known,direct,grid_available,prepared,prefetching;
+    bool active,ready,pending,io_open,job_album,view_loaded,frame_valid,frame_complete,rendering,redraw,slide,slide_armed,resume_pending,jpeg_mode,stepping,album_known,direct,grid_available,prepared,prefetching,prefetch_job;
     int error;
 } p;
 /* Transient reads are fully filled before use; retain cache capacity while
@@ -556,6 +556,7 @@ static bool plan_content(bool apply){
         if(p.photo_index<p.first||p.photo_index-p.first>=p.count){fail(18);return true;}
         p.photo=row->data.p;text(p.title,row->title);p.level_count=0;p.phase=LEVEL;return true;
     }
+    if(apply)p.prefetch_job=false;
     if(plan_grid_rows(p.window_first,p.window_count,apply))return true;
     /* The grid cache has room for two complete pages. Fill its spare half
      * while storage is awake, after all cells on the visible page are ready. */
@@ -564,7 +565,12 @@ static bool plan_content(bool apply){
         uint32_t adjacent=UINT32_MAX;
         if(p.prefetch_direction<0&&p.window_first>=GRID_PAGE)adjacent=p.window_first-GRID_PAGE;
         else if(p.prefetch_direction>0&&p.window_first+GRID_PAGE<p.count)adjacent=p.window_first+GRID_PAGE;
-        if(adjacent!=UINT32_MAX)return plan_grid_rows(adjacent,GRID_PAGE,apply);
+        if(adjacent!=UINT32_MAX){
+            if(apply)p.prefetch_job=true;
+            bool work=plan_grid_rows(adjacent,GRID_PAGE,apply);
+            if(apply&&!work)p.prefetch_job=false;
+            return work;
+        }
     }
     return false;
 }
@@ -601,12 +607,18 @@ static void image_fail(int error){
 static void photo_step(void){
     if(p.working!=p.epoch){
         if(p.pending){ln_storage_media_cancel(p.generation);if(!ln_storage_media_poll(p.generation,0,0))return;p.pending=false;}
-        p.working=p.epoch;p.phase=p.ready?IDLE:OPEN;if(p.rendering&&!p.jpeg_mode)p.redraw=true;p.rendering=false;
+        p.working=p.epoch;p.phase=p.ready?IDLE:OPEN;p.prefetch_job=false;if(p.rendering&&!p.jpeg_mode)p.redraw=true;p.rendering=false;
         if(p.jpeg_mode&&!p.frame_valid){p.jpeg_mode=false;p.view_loaded=false;}
     }
     if(!p.active&&!p.prefetching)return;
     if(!p.active&&!p.pending&&!background_disk_awake()){p.prefetching=false;return;}
     if(!p.active&&!p.pending&&!background_allowed())return;
+    /* A neighbor job may wait between planning and admission. Stop it if
+     * playback starts or standby closes the disk before its next read. */
+    if(p.prefetch_job&&!p.pending&&!memory_work()&&
+       (!background_allowed()||!background_disk_awake())){
+        p.prefetch_job=false;p.phase=IDLE;return;
+    }
     if(p.slide&&p.slide_armed&&p.frame_valid&&(int32_t)(ln_time_us()-p.slide_at)>=0){ln_photos_next(1);return;}
     if(idle_plan(true))return;
     if(!p.pending&&!memory_work()&&!allowed())return;
