@@ -102,10 +102,11 @@ bool ln_input_boot_menu_held(void) {
             REG(0x7000c104u)|=0x0c000000u;
             REG(0x7000c100u)=0x400a1f00u;
             if((packet&0x8000ffffu)==0x8000023au){
+                /* Handshake button bits use the same 16..20 positions as wheel packets. */
 #if !defined(LINNET_PROFILE_RELEASE)
-                ln_boot_menu_query[3]=(packet&0x00100000u)?2u:1u;
+                ln_boot_menu_query[3]=(packet&0x00010000u)?2u:1u;
 #endif
-                return (packet&0x00100000u)!=0u;
+                return (packet&0x00010000u)!=0u;
             }
         }
     }
