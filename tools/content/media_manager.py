@@ -1121,7 +1121,27 @@ class Cancelled(RuntimeError):
     pass
 
 
-def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, snapshots=None):
+def _video_is_native(source, identity, *, ffprobe=None, cancelled=None):
+    """Check the actual container and codecs before treating a suffix as native."""
+    if source.suffix.lower() not in native_video_extensions(identity):
+        return False
+    profile = identity['media_profile']
+    try:
+        if profile['video_backend'] in ('bcm-mp4', 'native-mp4'):
+            from .native_video import inspect_file
+            inspect_file(source, profile=profile, ffprobe=ffprobe, cancelled=cancelled)
+        else:
+            from .ipvf_validate import inspect_file
+            inspect_file(source, expected_width=profile['video_width'],
+                         expected_height=profile['video_height'],
+                         max_record_sectors=profile['max_read_sectors'])
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, snapshots=None,
+               ffprobe=None, cancelled=None):
     """Resolve selected conversions and this device's supported on-disk videos."""
     root = Path(root).resolve(strict=True)
     folder = root / "Videos"
@@ -1161,6 +1181,7 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, s
     chosen = list(dict.fromkeys([*native, *chosen]))
     source_roots = [path.resolve() for path in source_folders(root, 'Videos')]
     jobs = {}
+    queued_relatives = set()
 
     def include(source, relative):
         _plain(source, Path(source.anchor))
@@ -1195,6 +1216,7 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, s
         for path, info in (records if not is_folder else
                         ((path, info) for path, info in records if path.suffix.lower() in allowed)):
             relative = (Path(source.name) / path.relative_to(source)).as_posix() if is_folder else source.name
+            queued_relatives.add(relative.casefold())
             existing = folder / relative
             _plain(existing, root)
             if existing.exists():
@@ -1204,7 +1226,117 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, s
             include(path, relative)
     if len(jobs) > 256:
         raise ValueError("Choose at most 256 videos per update.")
+    if selection is not None and not selection:
+        if identity is None:
+            raise ValueError('A device target is needed to check video compatibility.')
+        if (identity['media_profile']['video_backend'] in ('bcm-mp4', 'native-mp4')
+                and not (ffprobe or shutil.which('ffprobe')) and jobs):
+            raise ValueError('FFprobe is required to check native video compatibility.')
+        # No conversions includes only videos whose content is playable as-is.
+        # A queued source must be called out instead of silently discarded.
+        ready = []
+        for job in jobs.values():
+            source = Path(job['source'])
+            if _video_is_native(source, identity, ffprobe=ffprobe, cancelled=cancelled):
+                ready.append(job)
+            elif not source.is_relative_to(root) or job['relative'].casefold() in queued_relatives:
+                raise ValueError(f"{source.name} needs conversion or is not a playable native video. Choose a conversion mode or remove it from the queue.")
+        return ready
     return list(jobs.values())
+
+
+def video_requires_conversion(jobs, identity, *, ffprobe=None, ffmpeg=None):
+    """Use the same native validator as preparation for tool preflight."""
+    profile = identity['media_profile']
+    for job in jobs:
+        source = Path(job['source'])
+        if source.suffix.lower() not in native_video_extensions(identity):
+            return True
+        if profile['video_backend'] in ('bcm-mp4', 'native-mp4'):
+            try:
+                from .native_video import inspect_file
+                details = inspect_file(source, profile=profile, ffprobe=ffprobe)
+            except (OSError, ValueError):
+                return True
+            if not details['fast_start'] and (ffmpeg or shutil.which('ffmpeg')):
+                return True
+        elif not _video_is_native(source, identity):
+            return True
+    return False
+
+
+def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimension=640,
+                      current_inventory=None, ffprobe=None, ffmpeg=None,
+                      no_conversions=False):
+    """Bound peak free-space needs before the first device copy.
+
+    Estimates include originals, prepared outputs, host scratch, existing
+    publication backups, and the staged index recovery groups. Publishers
+    still make their own exact checks immediately before individual writes.
+    """
+    root = Path(identity['root'])
+    cache = Path(cache)
+    inventory = current_inventory or scan(root, tuple(k for k in selected if k != 'Videos'))
+    counts = {kind: inventory.get(kind, {}).get('count', 0) for kind in KINDS}
+    for copy in copies:
+        if Path(copy['source']).suffix.lower() in extensions(copy['kind']):
+            counts[copy['kind']] += 1
+    original_bytes = sum(item['bytes'] for item in copies)
+    # Audio index, artwork and transaction files grow with the track count.
+    music_bytes = 0
+    if 'Music' in selected and counts['Music']:
+        music_bytes = 8 * 1024 * 1024 + counts['Music'] * 384 * 1024
+    photo_bytes = 0
+    if 'Photos' in selected and counts['Photos']:
+        photo_bytes = 8 * 1024 * 1024 + counts['Photos'] * (
+            2 * photo_dimension * photo_dimension * 2 + 16 * 1024)
+    notes_bytes = (1024 * 1024 + counts['Notes'] * 64 * 1024
+                   if 'Notes' in selected and counts['Notes'] else 0)
+    video_bytes = 0
+    video_host = 0
+    if 'Videos' in selected:
+        for job in jobs:
+            source = Path(job['source'])
+            if source.is_relative_to(root) and _video_is_native(source, identity, ffprobe=ffprobe):
+                # Compatible on-device originals are indexed in place when
+                # no conversion is selected.
+                if no_conversions:
+                    continue
+            estimate = min(0x7fffffff, max(32 * 1024 * 1024, job['bytes'] * 3))
+            if no_conversions:
+                estimate = job['bytes']
+            video_bytes += estimate
+            video_host += estimate * 2
+    files_bytes = 4 * 1024 * 1024 + sum(counts.values()) * 128 * 1024 + len(jobs) * 128 * 1024
+    prepared = music_bytes + photo_bytes + notes_bytes + video_bytes + files_bytes
+    previous = 0
+    fixed = []
+    if 'Music' in selected:
+        fixed += ['.LINNET/COVERS.CFL', '.LINNET/BROWSE.BIN', '.LINNET/LIBRARY.PDB']
+    if 'Photos' in selected:
+        fixed += ['.LINNET/PHOTOS/GRID.PGR', '.LINNET/PHOTOS/LIBRARY.PIM']
+    if 'Notes' in selected:
+        fixed += ['.LINNET/NOTES/LIBRARY.NNT']
+    fixed += ['.LINNET/FILES/INDEX.FIL']
+    for name in fixed:
+        path = root / name
+        _plain(path, root)
+        if path.is_file():
+            previous += path.stat().st_size
+    # A video replacement can keep both the prior active package and backup.
+    # Budget a previous package as large as the candidate when the exact old
+    # path is unavailable from a host receipt.
+    previous += video_bytes
+    device_needed = original_bytes + prepared + previous * 2 + 16 * 1024 * 1024
+    largest_audio = max((item['bytes'] for item in copies if item['kind'] == 'Music'), default=0)
+    host_needed = (music_bytes * 2 + photo_bytes * 2 + notes_bytes * 2 + video_host +
+                   files_bytes * 2 + largest_audio * 2 + 16 * 1024 * 1024)
+    parent = cache
+    while not parent.exists():
+        parent = parent.parent
+    return dict(device_peak_bytes=device_needed, computer_peak_bytes=host_needed,
+                device_free_bytes=shutil.disk_usage(root).free,
+                computer_free_bytes=shutil.disk_usage(parent).free)
 
 
 def _video_inventory(jobs):
@@ -1626,7 +1758,7 @@ def _prepare_notes(root, cache, identity, skipped, *, checkpoint, progress,
 def _prepare_videos(root, cache, identity, media_profile, state, state_path, videos, item, *,
                     ffmpeg, ffprobe, force, cancelled, checkpoint, progress, emit_stage, unit,
                     record, report, verified_outputs, owned_temporaries, progress_detail,
-                    mark_publication):
+                    mark_publication, no_conversions=False):
     kind = "Videos"
     published = []
     from .ipvf_encode import encode_ipvf
@@ -1707,7 +1839,8 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                 if source.suffix.lower() in native_video_extensions(identity):
                     try:
                         native_info = inspect_native(source, ffprobe=ffprobe, profile=media_profile, cancelled=cancelled)
-                        compatible = native_info['fast_start'] or not (ffmpeg or shutil.which('ffmpeg'))
+                        compatible = (no_conversions or native_info['fast_start'] or
+                                      not (ffmpeg or shutil.which('ffmpeg')))
                     except ValueError:
                         pass
                 progress(f"Preparing native video {index+1}/{item['count']}: {relative}")
@@ -1721,7 +1854,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                     output_paths.append(source.relative_to(root).as_posix())
                 else:
                     package = cache / "videos" / (key + "-" + fingerprint[:16] + ".mp4")
-                    reusable = package.exists() and not force
+                    reusable = package.exists() and not force and not no_conversions
                     if reusable:
                         try:
                             inspect_native(package, ffprobe=ffprobe, profile=media_profile,
@@ -1729,7 +1862,26 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                         except (OSError, ValueError):
                             reusable = False
                     if not reusable:
-                        prepare_native(source, package, profile=media_profile, ffmpeg=ffmpeg, ffprobe=ffprobe, progress=progress, cancelled=cancelled)
+                        if no_conversions:
+                            package.parent.mkdir(parents=True, exist_ok=True)
+                            temporary = package.with_name(package.stem + '.' + uuid.uuid4().hex + '.mp4')
+                            owned_temporaries.append((temporary, cache))
+                            with source.open('rb') as reader, temporary.open('xb') as writer:
+                                while chunk := reader.read(1024 * 1024):
+                                    checkpoint()
+                                    writer.write(chunk)
+                                writer.flush()
+                                os.fsync(writer.fileno())
+                            inspect_native(temporary, ffprobe=ffprobe, profile=media_profile,
+                                           cancelled=cancelled)
+                            os.replace(temporary, package)
+                            owned_temporaries.remove((temporary, cache))
+                        else:
+                            prepare_native(source, package, profile=media_profile, ffmpeg=ffmpeg,
+                                           ffprobe=ffprobe, progress=progress, cancelled=cancelled,
+                                           progress_detail=(lambda event: progress_detail(dict(event,
+                                               video_index=index+1, video_total=item['count'])))
+                                               if progress_detail else None)
                     checkpoint()
                     after = source.stat()
                     if (after.st_size, after.st_mtime_ns) != source_stamp:
@@ -1945,7 +2097,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             video_selection = [value for value in video_selection
                                if Path(value).resolve().relative_to(root).as_posix().casefold()
                                not in skipped["Videos"]]
-        videos = video_jobs(root, pending, video_selection, skipped=skipped["Videos"], identity=identity) if "Videos" in selected else []
+        videos = video_jobs(root, pending, video_selection, skipped=skipped["Videos"],
+                            identity=identity, ffprobe=ffprobe, cancelled=cancelled) if "Videos" in selected else []
         excluded_sources = {str(Path(value).resolve()).casefold() for value in (excluded_sources or ())}
         videos = [job for job in videos if str(Path(job["source"]).resolve()).casefold() not in excluded_sources]
         plan = additions(root, [item for item in pending if item[0] in selected and item[0] != "Videos"])
@@ -1956,9 +2109,14 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 added = sum(item["kind"] == kind and Path(item["source"]).suffix.lower() in extensions(kind) for item in plan)
                 if existing + added > maximum:
                     raise ValueError(f"{kind} supports {maximum} files; this selection contains {existing + added}. Choose a smaller source folder.")
-        needed = sum(item["bytes"] for item in plan)
-        if needed + 1024 * 1024 > identity["free_bytes"]:
-            raise ValueError("There is not enough space for the selected originals. Choose fewer files.")
+        space = preparation_space(identity, plan, videos, selected, cache,
+            photo_dimension=photo_dimension, ffprobe=ffprobe, ffmpeg=ffmpeg,
+            no_conversions=video_selection is not None and not video_selection)
+        report['space'] = space
+        if space['device_peak_bytes'] > min(identity['free_bytes'], space['device_free_bytes']):
+            raise ValueError('Not enough iPod space for originals, prepared media, and recovery copies.')
+        if space['computer_peak_bytes'] > space['computer_free_bytes']:
+            raise ValueError('Not enough computer space for prepared media and conversion scratch.')
         emit_stage('Copying originals', 0)
         _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress,
                         cache=cache, cancelled=cancelled,
@@ -2090,7 +2248,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                         checkpoint=checkpoint, progress=progress, emit_stage=emit_stage, unit=unit,
                         record=record, report=report, verified_outputs=verified_outputs,
                         owned_temporaries=owned_temporaries, progress_detail=progress_detail,
-                        mark_publication=mark_publication)
+                        mark_publication=mark_publication,
+                        no_conversions=video_selection is not None and not video_selection)
                     if failed:
                         progress(f"Videos: {failed} file(s) need attention; completed videos are saved.")
                         continue

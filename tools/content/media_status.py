@@ -178,6 +178,18 @@ def _video_readiness(inventory, published, identity=None, state=None, verified=N
                  and output[0].casefold() != ('Videos/' + relative).casefold()}
     if missing:
         return 'Needs update'
+    if generated - cataloged:
+        return 'Needs update'
+    # A computer import can have only its published package on the iPod. It
+    # still needs a stored digest and a readback, even with no source row.
+    for row in ready:
+        matches = [output for saved in video_files.values() if isinstance(saved, dict)
+                   for output in (saved.get('outputs') if isinstance(saved.get('outputs'), list) else [])
+                   if isinstance(output, (list, tuple)) and len(output) == 2
+                   and isinstance(output[0], str) and root is not None
+                   and str(root / output[0]).casefold() == row['path'].casefold()]
+        if not matches or not media._outputs_match(root, [matches[0]], verified=verified):
+            return 'Needs update'
     # Scan and library rows already carry absolute device paths. Recheck each
     # source without following a link that appeared since traversal.
     for value in compatible_files:
@@ -306,7 +318,7 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
 
 def plan(identity, pending, selected, videos, *, current_inventory=None,
          photo_dimension=640, music_verification='metadata', force=False,
-         online_artwork=False):
+         online_artwork=False, ffprobe=None, ffmpeg=None):
     identity = media.refresh(identity)
     unsupported = [kind for kind in selected if kind not in media.supported_kinds(identity)]
     if unsupported:
@@ -328,7 +340,7 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
     copies = media.additions(root, [p for p in included if p[0] != 'Videos'], snapshots=snapshots,
                              verify_existing=False, unverified=unverified)
     jobs = media.video_jobs(root, included, videos, skipped=skipped['Videos'], identity=identity,
-                            snapshots=snapshots) if 'Videos' in selected else []
+                            snapshots=snapshots, ffprobe=ffprobe) if 'Videos' in selected else []
     previews = {}
     for kind, name in included:
         source = Path(name).absolute().resolve(strict=True)
@@ -340,16 +352,18 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
         if kind == 'Videos' and other:
             previews[name] = f'{supported} videos · {other} non-video files skipped'
     needed = sum(p['bytes'] for p in copies)
-    if needed + 1048576 > identity['free_bytes']:
-        raise ValueError('Not enough iPod space for these originals. Remove additions from the queue.')
     if 'Notes' in selected:
         total = scan_sources(root, ('Notes',), skipped=skipped)['Notes']['count'] + sum(p['kind'] == 'Notes' and Path(p['source']).suffix.lower() in media.extensions('Notes') for p in copies)
         if total > 256:
             raise ValueError(f'Notes supports 256 files; this update includes {total}.')
     cache = cache_root(identity)
-    parent = cache
-    while not parent.exists():
-        parent = parent.parent
+    space = media.preparation_space(identity, copies, jobs, selected, cache,
+        photo_dimension=photo_dimension, current_inventory=current_inventory,
+        ffprobe=ffprobe, ffmpeg=ffmpeg, no_conversions=videos is not None and not videos)
+    if space['device_peak_bytes'] > min(identity['free_bytes'], space['device_free_bytes']):
+        raise ValueError('Not enough iPod space for originals, prepared media, and recovery copies.')
+    if space['computer_peak_bytes'] > space['computer_free_bytes']:
+        raise ValueError('Not enough computer space for prepared media and conversion scratch.')
     copy_kinds = {kind: sum(item['kind'] == kind for item in copies) for kind in selected}
     reusable = []
     if current_inventory and not force:
@@ -365,8 +379,11 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
             if (saved.get('signature') == f"{option}:{item.get('fingerprint')}" and
                     isinstance(saved.get('outputs'), list) and saved['outputs']):
                 reusable.append(kind)
-    return dict(copies=len(copies), bytes=needed, videos=len(jobs), free=identity['free_bytes'], previews=previews,
+    return dict(copies=len(copies), bytes=needed, videos=len(jobs), free=space['device_free_bytes'], previews=previews,
                 existing_unverified=len(unverified),
-                conversion=any(Path(j['source']).suffix.lower() not in media.native_video_extensions(identity) for j in jobs),
-                computer_free=shutil.disk_usage(parent).free, excluded=len(pending)-len(included),
+                conversion=media.video_requires_conversion(jobs, identity, ffprobe=ffprobe,
+                                                            ffmpeg=ffmpeg) if videos is None or videos else False,
+                computer_free=space['computer_free_bytes'],
+                device_peak_bytes=space['device_peak_bytes'], computer_peak_bytes=space['computer_peak_bytes'],
+                excluded=len(pending)-len(included),
                 copy_kinds=copy_kinds, selected=list(selected), reusable=reusable)
