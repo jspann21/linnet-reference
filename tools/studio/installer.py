@@ -57,7 +57,7 @@ def _sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def _save(path, value, *, replace=True):
+def _save(path, value, *, replace=True, durable=False):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if not replace:
@@ -66,6 +66,9 @@ def _save(path, value, *, replace=True):
             writer.write("\n")
             writer.flush()
             os.fsync(writer.fileno())
+        if durable:
+            with path.open("r+b") as saved:
+                os.fsync(saved.fileno())
         return
     temporary = path.with_suffix(path.suffix + ".tmp-" + uuid.uuid4().hex)
     with temporary.open("x", encoding="utf-8", newline="\n") as writer:
@@ -73,7 +76,21 @@ def _save(path, value, *, replace=True):
         writer.write("\n")
         writer.flush()
         os.fsync(writer.fileno())
-    temporary.replace(path)
+    if durable and os.name == "nt":
+        # The uninstall receipt must remain discoverable after a host power loss.
+        # MoveFileExW waits for the rename to reach disk before cleanup begins.
+        import ctypes
+
+        move = ctypes.WinDLL("kernel32", use_last_error=True).MoveFileExW
+        move.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32)
+        move.restype = ctypes.c_int
+        if not move(str(temporary.resolve()), str(path.resolve()), 0x1 | 0x8):
+            raise ctypes.WinError(ctypes.get_last_error())
+    else:
+        temporary.replace(path)
+    if durable:
+        with path.open("r+b") as saved:
+            os.fsync(saved.fileno())
 
 
 def cache_root(identity):
@@ -1555,12 +1572,12 @@ def uninstall(identity, progress=lambda _message: None, expected=None):
                    identity=reviewed["identity"], previous_boot=previous,
                    media_folders=media_folders, private_stamp=_private_stamp(private),
                    phase="restore-boot")
-    _save(receipt_path, receipt, replace=False)
+    _save(receipt_path, receipt, replace=False, durable=True)
     try:
         progress(f"Restoring and verifying {option['previous']} as the default startup software…")
         boot = restore(reviewed["identity"], expected=previous)
         receipt.update(boot=boot, phase="remove-linnet-files")
-        _save(receipt_path, receipt)
+        _save(receipt_path, receipt, durable=True)
         progress("Removing Linnet system files and prepared libraries from the iPod…")
         with _exclusive(reviewed["identity"]):
             from tools.content.media_manager import refresh
@@ -1592,7 +1609,7 @@ def uninstall(identity, progress=lambda _message: None, expected=None):
                     with copy.open("r+b") as saved:
                         os.fsync(saved.fileno())
             receipt["recovery_backup"] = str(recovery_backup)
-            _save(receipt_path, receipt)
+            _save(receipt_path, receipt, durable=True)
             try:
                 for child in private.iterdir():
                     if child.name.upper() != "RECOVERY":
@@ -1621,7 +1638,7 @@ def uninstall(identity, progress=lambda _message: None, expected=None):
         raise
     finally:
         receipt.update(finished_at=_now(), receipt=str(receipt_path))
-        _save(receipt_path, receipt)
+        _save(receipt_path, receipt, durable=True)
     return receipt
 
 
