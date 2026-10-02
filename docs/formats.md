@@ -31,7 +31,7 @@ payload checksum, and full-image hash have distinct meanings.
 | Format | Guide or implementation |
 | --- | --- |
 | `PODB` music index | [Music library](music-format.md) |
-| `PIMG` prepared photos | [Prepared photos](photo-format.md) |
+| `LPIC` prepared photos | [Prepared photos](photo-format.md) |
 | `IPVF` and native MP4 video | [Video formats](video-format.md) |
 | `NOTE` notes and `LDSP` DSP profiles | [Notes compiler](../tools/content/notes.py), [DSP compiler](../tools/content/dsp.py) |
 | `FONT`, `LNUI`, `APPL`, `THME`, `CNTN` | [UI compiler](ui-compiler.md); these are host artifacts |

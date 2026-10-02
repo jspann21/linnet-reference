@@ -40,7 +40,7 @@ static struct {
     struct ln_photo_jpeg jpeg;
     struct ln_pimg_header header;struct ln_pgrid_header grid;struct ln_fat32_file file,jpeg_file,grid_file;
 #if LINNET_TARGET_NUMBER!=98u
-    struct ln_fat32_file pack_file;uint32_t v_pack_at[LN_PIMG_PACK_COUNT],pack_bucket;bool pack_ready;char pack_path[96];
+    struct ln_fat32_file pack_file;uint32_t v_pack_at[LN_LPIC_PACK_COUNT],pack_bucket;bool pack_ready;char pack_path[96];
 #endif
     struct row rows[ROWS];struct tile tiles[TILES];struct ln_pimg_photo photo;struct ln_pimg_level levels[6];
     struct level_cache level_cache[2];
@@ -124,7 +124,7 @@ static void pack_name(uint32_t bucket){
     p.pack_path[n++]='.';p.pack_path[n++]='P';p.pack_path[n++]='A';p.pack_path[n++]='K';p.pack_path[n]=0;
 }
 static bool pack_coverage(void){
-    for(uint32_t i=0;i<LN_PIMG_PACK_COUNT;++i){
+    for(uint32_t i=0;i<LN_LPIC_PACK_COUNT;++i){
         if(p.v_pack_at[i]!=ln_read_le32(p.header.packs+i*12u+8u))return false;
     }
     return true;
@@ -138,7 +138,7 @@ static bool allowed(void){
     struct ln_player_status player;struct ln_audio_status audio;ln_player_snapshot(&player);ln_audio_snapshot(&audio);
     if(player.phase==LN_PLAYER_IDLE||player.phase==LN_PLAYER_ERROR||player.phase==LN_PLAYER_PAUSE)return true;
     uint32_t reserve=ln_player_background_frames(audio.rate);
-    /* Verified PIMG record/thumbnail/tile requests are capped at 8 KiB.
+    /* Verified LPIC record/thumbnail/tile requests are capped at 8 KiB.
      * Keep 500 ms (and the existing 8192-frame floor) for those bounded reads;
      * catalog opening/verification and JPEG retain the larger reserve. */
     if(p.ready&&!p.jpeg_mode&&p.phase>=RECORD&&p.phase<=TILE_DATA){
@@ -272,7 +272,7 @@ static bool verify_bytes(uint32_t at,const uint8_t*b,uint32_t n){
 #if LINNET_TARGET_NUMBER==98u
             if(offset!=p.v_payload_at)return false;p.v_payload_at+=length;
 #else
-            uint32_t bucket=offset>>27u,local=offset&(LN_PIMG_PACK_LIMIT-1u);
+            uint32_t bucket=offset>>27u,local=offset&(LN_LPIC_PACK_LIMIT-1u);
             if(local!=p.v_pack_at[bucket])return false;p.v_pack_at[bucket]+=length;
 #endif
         }
@@ -300,7 +300,7 @@ static bool verify_bytes(uint32_t at,const uint8_t*b,uint32_t n){
 #if LINNET_TARGET_NUMBER==98u
                 if(offset!=p.v_payload_at)return false;p.v_payload_at+=length;
 #else
-                uint32_t bucket=offset>>27u,local=offset&(LN_PIMG_PACK_LIMIT-1u);
+                uint32_t bucket=offset>>27u,local=offset&(LN_LPIC_PACK_LIMIT-1u);
                 if(local!=p.v_pack_at[bucket])return false;p.v_pack_at[bucket]+=length;
 #endif
             }
@@ -886,7 +886,7 @@ static void photo_step(void){
 #if LINNET_TARGET_NUMBER==98u
         r=read_at(&p.file,p.tile_group_at,photo_scratch,p.tile_group_bytes);
 #else
-        r=read_at(&p.pack_file,p.tile_group_at&(LN_PIMG_PACK_LIMIT-1u),photo_scratch,p.tile_group_bytes);
+        r=read_at(&p.pack_file,p.tile_group_at&(LN_LPIC_PACK_LIMIT-1u),photo_scratch,p.tile_group_bytes);
 #endif
         if(!r)return;
         if(r<0){image_fail(11);return;}p.phase=TILE_COMMIT;return;}

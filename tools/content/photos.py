@@ -1,4 +1,4 @@
-"""Deterministic PIMG compiler and bounded, streaming package validator."""
+"""Deterministic LPIC compiler and bounded, streaming package validator."""
 from __future__ import annotations
 
 import hashlib
@@ -239,7 +239,7 @@ class _PhotoCache:
                 self.bytes += info.st_size - previous
                 self._trim()
         except OSError:
-            pass  # A host cache failure must not fail an otherwise valid PIMG.
+            pass  # A host cache failure must not fail an otherwise valid LPIC.
         finally:
             if temporary is not None:
                 try:
@@ -462,7 +462,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
         grid_shape = GRID_SHAPES[target][1:]
         grid_output = Path(grid_output).resolve() if grid_output is not None else output.with_suffix('.pgr')
         if grid_output == output or grid_output == source or source in grid_output.parents:
-            raise ValueError('native grid output must be separate from PIMG and source photos')
+            raise ValueError('native grid output must be separate from LPIC and source photos')
     elif grid_output is not None:
         raise ValueError('native grid output requires an explicit target')
     if (not source.is_dir() or type(viewport_width) is not int or
@@ -683,7 +683,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
         tile_base = data_offset + len(photos)*8192
         total = tile_base if packed_target else tile_base + tiles.tell()
         if total > MAX_FILE:
-            raise ValueError('PIMG exceeds the 2 GiB package bound')
+            raise ValueError('LPIC exceeds the 2 GiB package bound')
         pack_manifest = []
         pack_table = bytearray(PACK_COUNT * 12)
         if packed_target:
@@ -778,18 +778,18 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
     path = Path(path)
     size = path.stat().st_size
     if not HEADER <= size <= MAX_FILE:
-        raise ValueError('invalid PIMG file size')
+        raise ValueError('invalid LPIC file size')
     hashed = hashlib.sha256() if verify_payloads else None
     with path.open('rb') as stream, ExitStack() as pack_stack:
         before = os.fstat(stream.fileno())
         def read(offset, count):
             check()
             if offset < 0 or count < 0 or offset > size or count > size-offset:
-                raise ValueError('PIMG read outside package bounds')
+                raise ValueError('LPIC read outside package bounds')
             stream.seek(offset)
             data = stream.read(count)
             if len(data) != count:
-                raise ValueError('truncated PIMG')
+                raise ValueError('truncated LPIC')
             return data
         header = read(0, HEADER)
         if hashed is not None:
@@ -798,17 +798,17 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
         if (header[:4] != b'LPIC' or version not in (0, 1) or header_bytes != HEADER or
             _crc(header[:508]) != struct.unpack_from('<I', header, 508)[0] or
             any(header[72 + (PACK_COUNT*12 if version else 0):508])):
-            raise ValueError('invalid PIMG header identity/CRC/reserved bytes')
+            raise ValueError('invalid LPIC header identity/CRC/reserved bytes')
         flags, total, ac, pc, lc, tc, ao, po, lo, to, so, sb, mc, do = struct.unpack_from('<14I', header, 8)
         if (flags or total != size or not 1 <= ac <= MAX_ALBUMS or not 1 <= pc <= MAX_PHOTOS or
             not pc <= lc <= pc*MAX_LEVELS or not 1 <= tc <= MAX_TILES or not 1 <= sb <= MAX_STRINGS or
             struct.unpack_from('<4H', header, 64) != (THUMB, THUMB, EDGE, 1)):
-            raise ValueError('invalid PIMG counts or pixel contract')
+            raise ValueError('invalid LPIC counts or pixel contract')
         if (ao != HEADER or po != ao+ac*ALBUM or lo != po+pc*PHOTO or to != lo+lc*LEVEL or
             so != to+tc*TILE or do != (so+sb+511)&~511 or
             (size != do+pc*8192 if version else
              size < do+pc*8192+tc or size > do+pc*8192+tc*2048)):
-            raise ValueError('noncanonical PIMG section offsets')
+            raise ValueError('noncanonical LPIC section offsets')
         pack_streams = [None] * PACK_COUNT
         pack_sizes = [0] * PACK_COUNT
         pack_reports = []
@@ -841,23 +841,23 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
             if hashed is not None:
                 hashed.update(block)
         if crc & 0xffffffff != mc or any(read(so+sb, do-so-sb)):
-            raise ValueError('PIMG metadata CRC/alignment mismatch')
+            raise ValueError('LPIC metadata CRC/alignment mismatch')
         pool = read(so, sb)
         if pool[0] != 0 or pool[-1] != 0:
-            raise ValueError('PIMG string pool lacks empty sentinel')
+            raise ValueError('LPIC string pool lacks empty sentinel')
         pool.decode('utf-8', errors='strict')
         def text(offset, count, *, source=False):
             if count > (127 if source else 191) or offset >= sb or count >= sb-offset:
-                raise ValueError('PIMG string outside pool')
+                raise ValueError('LPIC string outside pool')
             if pool[offset+count] != 0 or (offset and pool[offset-1] != 0) or b'\0' in pool[offset:offset+count]:
-                raise ValueError('PIMG string is not independently NUL delimited')
+                raise ValueError('LPIC string is not independently NUL delimited')
             value = pool[offset:offset+count].decode('ascii' if source else 'utf-8', errors='strict')
             if source:
                 if (not value and offset != 0) or (value and (not FAT_PATH.fullmatch(value) or not value.endswith(('.JPG', '.JPEG')))):
-                    raise ValueError('invalid PIMG fallback device path')
+                    raise ValueError('invalid LPIC fallback device path')
             else:
                 if _title(value) != value:
-                    raise ValueError('noncanonical PIMG title')
+                    raise ValueError('noncanonical LPIC title')
             return value
         def records(offset, count, length):
             # Each table retains at most 64 KiB while photo and level records
@@ -868,18 +868,18 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
                 for start in range(0, len(block), length):
                     data = block[start:start+length]
                     if _crc(data[:-4]) != struct.unpack_from('<I', data, length-4)[0]:
-                        raise ValueError('PIMG record CRC mismatch')
+                        raise ValueError('LPIC record CRC mismatch')
                     yield data
         intervals, count, album_titles = [], 0, []
         for index, data in enumerate(records(ao, ac, ALBUM)):
             title, length, first, photos, parent, r0, r1 = struct.unpack('<7I', data[:-4])
             if r0 or r1 or first != count or photos > pc-count or parent != (NO_INDEX if index == 0 else parent) or (index and parent >= index):
-                raise ValueError('invalid PIMG album ordering/range')
+                raise ValueError('invalid LPIC album ordering/range')
             intervals.append((first, photos))
             album_titles.append(text(title, length))
             count += photos
         if count != pc:
-            raise ValueError('PIMG albums do not cover the photo catalog')
+            raise ValueError('LPIC albums do not cover the photo catalog')
         next_level = next_tile = 0
         level_records = records(lo, lc, LEVEL)
         thumb_crcs = []
@@ -889,11 +889,11 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
             if (album >= ac or not intervals[album][0] <= index < sum(intervals[album]) or reserved or
                 not 1 <= width <= 16384 or not 1 <= height <= 16384 or width*height > 32_000_000 or
                 first != next_level or not 1 <= count <= MAX_LEVELS or count > lc-first or thumb != do+index*8192):
-                raise ValueError('invalid PIMG photo record')
+                raise ValueError('invalid LPIC photo record')
             text(title, length)
             fallback = text(source_offset, source_length, source=True)
             if (not fallback and (fallback_bytes or fallback_crc or orientation)) or (fallback and (not 1 <= fallback_bytes <= 262144 or not 1 <= orientation <= 8 or max(width, height) > 2048 or width*height > 4_000_000)):
-                raise ValueError('invalid PIMG fallback metadata')
+                raise ValueError('invalid LPIC fallback metadata')
             if verify_payloads:
                 thumb_crcs.append(thumb_crc)
             previous = None
@@ -903,12 +903,12 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
                     x != (w+31)//32 or y != (h+31)//32 or tiles != x*y or first_tile != next_tile or tiles > tc-first_tile or
                     (ordinal == 0 and w*h > 131072) or
                     (previous and (w < previous[0] or h < previous[1] or (w, h) == previous))):
-                    raise ValueError('invalid PIMG level/tile range')
+                    raise ValueError('invalid LPIC level/tile range')
                 previous = (w, h)
                 next_tile += tiles
             next_level += count
         if next_level != lc or next_tile != tc:
-            raise ValueError('PIMG levels do not cover tile index exactly')
+            raise ValueError('LPIC levels do not cover tile index exactly')
         for first in range(0, len(thumb_crcs), 128):
             count = min(128, len(thumb_crcs)-first)
             payload = memoryview(read(do+first*8192, count*8192))
@@ -916,7 +916,7 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
                 hashed.update(payload)
             for ordinal in range(count):
                 if _crc(payload[ordinal*8192:(ordinal+1)*8192]) != thumb_crcs[first+ordinal]:
-                    raise ValueError('PIMG thumbnail CRC mismatch')
+                    raise ValueError('LPIC thumbnail CRC mismatch')
         # Group the index and contiguous payloads to avoid two seeks per tile.
         # Keep payload memory bounded to 1 MiB even for maximum-size libraries.
         from lz4.block import decompress as lz4_decompress
@@ -927,7 +927,7 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
             descriptors = list(struct.iter_unpack('<III', read(to+first*TILE, count*TILE)))
             for offset, length, _ in descriptors:
                 if not 1 <= length <= 2048:
-                    raise ValueError('invalid PIMG tile length')
+                    raise ValueError('invalid LPIC tile length')
                 if version:
                     bucket, local = offset >> 27, offset & (PACK_LIMIT-1)
                     if (local != pack_expected[bucket] or
@@ -936,7 +936,7 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
                     pack_expected[bucket] += length
                 else:
                     if offset != expected or length > size-offset:
-                        raise ValueError('noncanonical PIMG tile payload offset')
+                        raise ValueError('noncanonical LPIC tile payload offset')
                     expected += length
             if version:
                 groups = []
@@ -971,15 +971,15 @@ def inspect(path, *, verify_payloads=True, checkpoint=None):
                             decoded = (stored if length == 2048 else
                                        lz4_decompress(stored, uncompressed_size=2048))
                         except Exception as error:
-                            raise ValueError('PIMG tile LZ4 decode failed') from error
+                            raise ValueError('LPIC tile LZ4 decode failed') from error
                         if len(decoded) != 2048 or _crc(decoded) != crc:
-                            raise ValueError('PIMG tile CRC mismatch')
+                            raise ValueError('LPIC tile CRC mismatch')
         if (any(pack_expected[index] != pack_sizes[index] for index in range(PACK_COUNT)) if version else expected != size):
-            raise ValueError('noncanonical PIMG tile payload end')
+            raise ValueError('noncanonical LPIC tile payload end')
         after = os.fstat(stream.fileno())
         if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
                 after.st_size, after.st_mtime_ns, after.st_ctime_ns):
-            raise ValueError('PIMG changed during validation')
+            raise ValueError('LPIC changed during validation')
     if hashed is not None:
         digest = hashed.hexdigest()
     else:
