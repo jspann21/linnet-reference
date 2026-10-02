@@ -344,10 +344,14 @@ def _pack_path(directory, identity):
     return directory / f'{identity[:8].upper()}' / f'{identity[8:16].upper()}.PAK'
 
 
+DEFAULT_PACKS = 8
+
+
 def _pack_bucket(name):
-    # Bucket zero keeps default viewer tiles in navigation order. Stable
-    # buckets for zoom levels keep a single changed photo from rewriting them.
-    return 1 + hashlib.sha256(name.casefold().encode('utf-8')).digest()[0] % (PACK_COUNT - 1)
+    # Reserve sequential packs for default viewer tiles. Hash zoom levels so
+    # editing one photo does not rewrite an entire default-resolution catalog.
+    digest = hashlib.sha256(name.casefold().encode('utf-8')).digest()[0]
+    return DEFAULT_PACKS + digest % (PACK_COUNT - DEFAULT_PACKS)
 
 
 def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
@@ -526,7 +530,9 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                         zoom_bucket = _pack_bucket(names[path])
                         default_count = image_meta['levels'][0][4]
                         default_bytes = sum(lengths[:default_count])
-                        default_bucket = (0 if pack_spools[0].tell() + default_bytes <= PACK_LIMIT
+                        sequential_bucket = min(DEFAULT_PACKS - 1, index * DEFAULT_PACKS // len(paths))
+                        default_bucket = (sequential_bucket
+                                          if pack_spools[sequential_bucket].tell() + default_bytes <= PACK_LIMIT
                                           else zoom_bucket)
                         packed_at = 0
                         for bucket, first, end in ((default_bucket, 0, default_count),
