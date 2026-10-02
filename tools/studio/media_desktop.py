@@ -998,6 +998,8 @@ class MediaWindow(QMainWindow):
         self.tool_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='linnet-tools')
         self.tool_check_id = 0
         self.tools_ready = False
+        self.verified_ffmpeg = None
+        self.verified_ffprobe = None
         self.events = Events(self)
         self.events.done.connect(self.completed)
         self.events.progress.connect(self.show_progress)
@@ -2402,7 +2404,7 @@ class MediaWindow(QMainWindow):
         if self.busy or not self.identity or not self.apple_info or not self.apple_info.get('can_update'):
             return
         identity = self.identity
-        ffprobe = self.ffprobe
+        ffprobe = self.verified_ffprobe
         self.work('apple_update', lambda: apple_os.update(identity, ffprobe=ffprobe,
                                                           progress=self.events.progress.emit),
                   'Updating Apple OS availability…')
@@ -2551,7 +2553,7 @@ class MediaWindow(QMainWindow):
         dimension = 2048 if self.photo_detail.currentIndex() else 640
         online_artwork = self.online_artwork.isChecked()
         force, verification = self.rebuild.isChecked(), 'full' if self.verify_audio.isChecked() else 'metadata'
-        ffmpeg, ffprobe = (self.ffmpeg, self.ffprobe) if self.tools_ready else (None, None)
+        ffmpeg, ffprobe = self.verified_ffmpeg, self.verified_ffprobe
         approval = {'actions': None}
         def run():
             return media.run(identity, selected, pending, photo_dimension=dimension, force=force,
@@ -2598,7 +2600,7 @@ class MediaWindow(QMainWindow):
         if not self.confirm_trash(rows):
             return
         dimension = 2048 if self.photo_detail.currentIndex() else 640
-        ffmpeg, ffprobe = self.ffmpeg, self.ffprobe
+        ffmpeg, ffprobe = self.verified_ffmpeg, self.verified_ffprobe
         def remove():
             result = media_library.remove_items(identity, rows)
             needed = [kind for kind in result['requires_update'] if kind != 'Videos'
@@ -2619,7 +2621,7 @@ class MediaWindow(QMainWindow):
             return
         identity = self.identity
         dimension = 2048 if self.photo_detail.currentIndex() else 640
-        ffmpeg, ffprobe = self.ffmpeg, self.ffprobe
+        ffmpeg, ffprobe = self.verified_ffmpeg, self.verified_ffprobe
         def restore():
             needed = set()
             for row in rows:
@@ -2748,7 +2750,7 @@ class MediaWindow(QMainWindow):
         self.tools_label.setText('Checking FFmpeg and FFprobe…')
         def check():
             errors = []
-            resolved = []
+            validated = {}
             for name, value in zip(('FFmpeg', 'FFprobe'), paths):
                 if not value:
                     errors.append(f'{name} is not configured.')
@@ -2762,26 +2764,36 @@ class MediaWindow(QMainWindow):
                                             timeout=5, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                     if result.returncode:
                         raise OSError(f'version check exited with status {result.returncode}')
-                    resolved.append(str(path))
+                    validated[name] = str(path)
                 except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
                     errors.append(f'{name} at {value} could not run: {error}')
-            self.events.tools_checked.emit(request, dict(candidate=candidate, paths=resolved, errors=errors))
+            self.events.tools_checked.emit(request, dict(candidate=candidate, validated=validated, errors=errors))
         self.tool_pool.submit(check)
 
     @Slot(int, object)
     def tools_checked(self, request, result):
         if self.closed or request != self.tool_check_id:
             return
+        validated = result['validated']
+        if result['candidate'] is not None:
+            for name, setting in (('FFmpeg', 'ffmpeg'), ('FFprobe', 'ffprobe')):
+                if name in validated:
+                    setattr(self, setting, validated[name])
+                    self.settings.setValue(setting, validated[name])
+            if validated:
+                self.update_tools()
+                return
+        else:
+            self.verified_ffmpeg = validated.get('FFmpeg')
+            self.verified_ffprobe = validated.get('FFprobe')
+            self.tools_ready = bool(self.verified_ffmpeg and self.verified_ffprobe)
         if result['errors']:
             self.record_diagnostic('tools', 'ToolCheckError', '; '.join(result['errors']), 'failed')
-            self.tools_label.setText(' '.join(result['errors']) + ' Choose a folder containing both tools.')
-            self.tools_ready = False
+            available = (('FFprobe is ready. ' if self.verified_ffprobe else '') +
+                         ('FFmpeg is ready. ' if self.verified_ffmpeg else ''))
+            self.tools_label.setText(available + ' '.join(result['errors']) +
+                ' Choose a folder containing the missing tool.')
             return
-        self.tools_ready = True
-        if result['candidate'] is not None:
-            self.ffmpeg, self.ffprobe = result['paths']
-            self.settings.setValue('ffmpeg', self.ffmpeg)
-            self.settings.setValue('ffprobe', self.ffprobe)
         self.tools_label.setText('FFmpeg and FFprobe are ready.')
 
     def show_preparation_details(self):
