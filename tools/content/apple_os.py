@@ -74,6 +74,24 @@ def _qualified_device(identity):
                      identity.get('sector_bytes') == row['sector_bytes'])), None)
 
 
+def _eligibility(identity):
+    """Explain the exact specimen gate and the media paths this writer accepts."""
+    if identity.get('filesystem') != 'FAT32':
+        reason = 'Apple OS updates require a FAT32 iPod volume.'
+    elif not _qualified_specimens():
+        reason = 'No audited Apple OS device specimens are configured.'
+    elif not any(row['target_id'] == identity.get('target_id') for row in _qualified_specimens()):
+        reason = 'This iPod model has not been physically qualified for Apple OS updates.'
+    elif _qualified_device(identity) is None:
+        reason = ('This iPod unit does not match the audited disk serial, volume serial and '
+                  'sector size for its model.')
+    else:
+        reason = 'This exact iPod unit is qualified for Apple OS updates.'
+    return (reason + ' Music requires MP3 files under /Music with short FAT paths; videos require '
+            'compatible MP4, M4V or MOV files under /Videos with short FAT paths. Photos must be '
+            'selected under /Photos, and an existing Apple photo library must match its Linnet receipt.')
+
+
 def supported(identity):
     return _qualified_device(identity) is not None
 
@@ -295,8 +313,9 @@ def inspect(identity, *, records_by_kind=None):
     """Return folder choices and readiness without writing the device."""
     root = Path(identity['root']).resolve(strict=True)
     if not supported(identity):
+        eligibility = _eligibility(identity)
         return {'supported': False, 'folders': [], 'selected': [],
-                'status': 'Apple OS folder updates are not yet validated for this iPod.',
+                'status': eligibility, 'eligibility': eligibility,
                 'details': []}
     folders = (_folder_rows(root, records_by_kind) if records_by_kind is not None else
                _walk_folders(root))
@@ -434,13 +453,13 @@ def inspect(identity, *, records_by_kind=None):
         status = 'Choose folders to make available in Apple OS'
     return {'supported': True, 'folders': folders, 'selected': selected,
             'status': status, 'details': details, 'issues': issues,
-            'can_update': can_update}
+             'can_update': can_update, 'eligibility': _eligibility(identity)}
 
 
 def save_selection(identity, folders):
     identity = media.refresh(identity)
     if not supported(identity):
-        raise ValueError('Apple OS folder updates are not validated for this iPod.')
+        raise ValueError(_eligibility(identity))
     root = Path(identity['root']).resolve(strict=True)
     selected = _normalize(root, folders)
     state = _load(identity)
@@ -465,10 +484,27 @@ def _writer(cache, kind='music'):
     return writer(kind, cache)
 
 
+def _revalidate_device(identity, *paths):
+    """Check the full disk identity and mounted volume before a device mutation."""
+    media.refresh(identity)
+    _volume_guard(identity)
+    root = Path(identity['root'])
+    for path in paths:
+        _plain(path, root)
+
+
+def _recovery_error(kind, failure, recovery, stopped):
+    return RuntimeError(
+        f'Apple {kind} update failed ({failure}); automatic recovery stopped ({stopped}). '
+        f'Recovery information is at {recovery}. Reconnect the original iPod, inspect the '
+        'listed device paths and saved originals, then restore or retry only after verifying its identity.'
+    )
+
+
 def _update_photos(identity, state, selected, cache, progress):
     device = _qualified_device(identity)
     if device is None:
-        raise ValueError('Apple OS folder updates are not validated for this iPod.')
+        raise ValueError(_eligibility(identity))
     root = Path(identity['root']).resolve(strict=True)
     photos = _files(root, selected, 'Photos', media.extensions('Photos'))
     published = state.get('published') or {}
@@ -547,44 +583,102 @@ def _update_photos(identity, state, selected, cache, progress):
             raise ValueError('Not enough iPod space for the Apple photo library.')
         backup = cache / 'apple-photo-recovery' / uuid.uuid4().hex
         backup.mkdir(parents=True)
+        recovery = backup / 'recovery.json'
+        prepared_hashes = {source_file.relative_to(stage): _hash(source_file)
+                           for source_file in outputs}
+        record = {'kind': 'Apple photos', 'disk_serial': identity['disk_serial'],
+                  'volume_serial': identity['volume_serial'],
+                  'volume_unique_id': identity['volume_unique_id'],
+                  'device_root': str(root), 'status': 'in_progress',
+                  'files': [{'path': relative.as_posix(), 'prepared_sha256': digest}
+                            for relative, digest in prepared_hashes.items()]}
+        save_json(recovery, record)
         changed = []
+        temporary = None
+        temporary_created = False
         with _exclusive(identity):
-            _volume_guard(identity)
+            _revalidate_device(identity)
             try:
                 for source_file in outputs:
                     relative = source_file.relative_to(stage)
                     target = root / relative
                     _plain(target, root)
+                    _revalidate_device(identity, target.parent)
                     target.parent.mkdir(parents=True, exist_ok=True)
                     prior = backup / relative
+                    old_hash = None
                     if target.exists():
                         prior.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(target, prior)
+                        old_hash = _hash(prior)
+                        if old_hash != _hash(target):
+                            raise ValueError(f'Apple photo changed while backing up: {relative}')
                     temporary = target.with_name(target.name + '.linnet-tmp')
                     if temporary.exists():
                         raise ValueError('An interrupted Apple photo update needs attention.')
-                    try:
-                        shutil.copyfile(source_file, temporary)
-                        expected = _hash(source_file)
-                        if _hash(temporary) != expected:
-                            raise ValueError(f'Apple photo readback failed: {relative}')
-                        _volume_guard(identity)
-                        temporary.replace(target)
-                        changed.append((target, prior))
-                    finally:
+                    expected = prepared_hashes[relative]
+                    _revalidate_device(identity, temporary)
+                    with temporary.open('xb') as destination:
+                        temporary_created = True
+                        with source_file.open('rb') as prepared_source:
+                            shutil.copyfileobj(prepared_source, destination)
+                    if _hash(temporary) != expected:
+                        raise ValueError(f'Apple photo readback failed: {relative}')
+                    _revalidate_device(identity, target, temporary)
+                    temporary.replace(target)
+                    temporary_created = False
+                    changed.append((target, prior, old_hash, expected))
+                record['status'] = 'published'
+                save_json(recovery, record)
+            except Exception as failure:
+                try:
+                    if temporary_created:
+                        _revalidate_device(identity, temporary)
                         temporary.unlink(missing_ok=True)
-            except Exception:
-                for target, prior in reversed(changed):
-                    if prior.is_file():
-                        shutil.copy2(prior, target)
-                    else:
-                        target.unlink(missing_ok=True)
+                    for target, prior, old_hash, expected in reversed(changed):
+                        _revalidate_device(identity, target)
+                        if not target.is_file() or _hash(target) != expected:
+                            raise RuntimeError(f'Apple photo changed after publication: {target}')
+                        if old_hash is None:
+                            _revalidate_device(identity, target)
+                            target.unlink()
+                        else:
+                            if not prior.is_file() or _hash(prior) != old_hash:
+                                raise RuntimeError(f'Apple photo backup is incomplete: {prior}')
+                            rollback_temp = target.with_name(target.name + '.linnet-rollback-tmp')
+                            _plain(rollback_temp, root)
+                            if rollback_temp.exists():
+                                raise RuntimeError(f'An earlier rollback needs attention: {rollback_temp}')
+                            _revalidate_device(identity, rollback_temp)
+                            shutil.copy2(prior, rollback_temp)
+                            if _hash(rollback_temp) != old_hash:
+                                raise RuntimeError(f'Apple photo rollback readback failed: {target}')
+                            _revalidate_device(identity, target, rollback_temp)
+                            rollback_temp.replace(target)
+                except Exception as stopped:
+                    record['status'] = 'needs_manual_recovery'
+                    try:
+                        save_json(recovery, record)
+                    except OSError:
+                        pass
+                    raise _recovery_error('photo', failure, recovery, stopped) from failure
+                record['status'] = 'rolled_back'
+                save_json(recovery, record)
                 raise
         published.update(photo_signature=_signature(root, photos),
                          photo_database_sha256=_hash(prepared),
                          photo_count=len(photos))
         state['published'] = published
-        save_json(_state_path(identity), state)
+        try:
+            save_json(_state_path(identity), state)
+        except OSError as error:
+            record['status'] = 'published_without_host_state'
+            try:
+                save_json(recovery, record)
+            except OSError:
+                pass
+            raise RuntimeError(f'Apple photos were published, but their host state could not be saved. '
+                               f'Inspect recovery information at {recovery} before retrying.') from error
 
 
 def _metadata(identity, files):
@@ -662,7 +756,7 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
     identity = media.refresh(identity)
     device = _qualified_device(identity)
     if device is None:
-        raise ValueError('Apple OS folder updates are not validated for this iPod.')
+        raise ValueError(_eligibility(identity))
     root = Path(identity['root']).resolve(strict=True)
     state = _load(identity)
     selected = _normalize(root, state.get('folders', []))
@@ -718,6 +812,7 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
         stage = Path(directory)
         stage_db = stage / 'iPod_Control/iTunes/iTunesDB'
         stage_db.parent.mkdir(parents=True)
+        source_digest = _hash(source_db) if source_db.is_file() else None
         if source_db.is_file():
             shutil.copy2(source_db, stage_db)
         stage_sysinfo = stage / 'iPod_Control/Device/SysInfo'
@@ -741,30 +836,66 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
                 parsed.get(path, {}).get('media_type') != kind for path, kind in expected.items()):
             raise ValueError('Apple database did not retain the selected songs and videos.')
         digest = _hash(stage_db)
-        backup = cache / ('apple-itunesdb-' + _hash(source_db)[:16] + '.bak') if source_db.is_file() else None
+        backup = cache / ('apple-itunesdb-' + source_digest[:16] + '.bak') if source_digest else None
+        recovery = cache / 'apple-database-recovery' / uuid.uuid4().hex / 'recovery.json'
+        record = {'kind': 'Apple database', 'disk_serial': identity['disk_serial'],
+                  'volume_serial': identity['volume_serial'],
+                  'volume_unique_id': identity['volume_unique_id'],
+                  'device_path': str(source_db), 'temporary_path': str(source_db.with_name('iTunesDB.linnet-tmp')),
+                  'previous_sha256': source_digest, 'prepared_sha256': digest,
+                  'previous_backup': str(backup) if backup else None, 'status': 'in_progress'}
+        save_json(recovery, record)
         for path, original in (*files, *videos):
             current = path.stat()
             if (current.st_size, current.st_mtime_ns) != (original.st_size, original.st_mtime_ns):
                 raise ValueError(f'Media changed during Apple OS preparation: {path.relative_to(root)}')
         with _exclusive(identity):
-            _volume_guard(identity)
-            current = media.refresh(identity)
-            if current['disk_serial'] != identity['disk_serial']:
-                raise ValueError('iPod changed during Apple OS update')
+            _revalidate_device(identity, source_db)
+            current_digest = _hash(source_db) if source_db.is_file() else None
+            if current_digest != source_digest:
+                raise ValueError('Apple database changed during preparation; review it before retrying.')
             if backup and not backup.is_file():
                 shutil.copy2(source_db, backup)
+            if backup and _hash(backup) != source_digest:
+                raise ValueError(f'Apple database backup needs attention: {backup}')
+            _revalidate_device(identity, source_db.parent)
             source_db.parent.mkdir(parents=True, exist_ok=True)
             temporary = source_db.with_name('iTunesDB.linnet-tmp')
             if temporary.exists():
-                raise ValueError('An interrupted Apple database update needs attention.')
+                raise ValueError(f'An interrupted Apple database update needs attention: {temporary}')
+            temporary_created = False
             try:
-                shutil.copyfile(stage_db, temporary)
+                _revalidate_device(identity, temporary)
+                with temporary.open('xb') as destination:
+                    temporary_created = True
+                    with stage_db.open('rb') as prepared_source:
+                        shutil.copyfileobj(prepared_source, destination)
                 if _hash(temporary) != digest:
                     raise ValueError('Apple database readback did not match the prepared version.')
-                _volume_guard(identity)
+                _revalidate_device(identity, source_db, temporary)
                 temporary.replace(source_db)
-            finally:
-                temporary.unlink(missing_ok=True)
+                temporary_created = False
+            except Exception as failure:
+                if temporary_created:
+                    try:
+                        _revalidate_device(identity, temporary)
+                        temporary.unlink(missing_ok=True)
+                    except Exception as stopped:
+                        record['status'] = 'needs_manual_recovery'
+                        try:
+                            save_json(recovery, record)
+                        except OSError:
+                            pass
+                        raise _recovery_error('database', failure,
+                                              recovery,
+                                              stopped) from failure
+                raise
+            record['status'] = 'published'
+            try:
+                save_json(recovery, record)
+            except OSError as error:
+                raise RuntimeError(f'Apple database was published, but its recovery record could not be '
+                                   f'updated at {recovery}. The previous backup is {backup}.') from error
         published = state.get('published') if isinstance(state.get('published'), dict) else {}
         published.update(music_signature=_signature(root, playable_music),
                          music_source_signature=_signature(root, files),
@@ -773,7 +904,16 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
                          video_issues=video_issues, music_issues=music_issues,
                          database_sha256=digest, music_count=len(playable_music))
         state['published'] = published
-        save_json(_state_path(identity), state)
+        try:
+            save_json(_state_path(identity), state)
+        except OSError as error:
+            record['status'] = 'published_without_host_state'
+            try:
+                save_json(recovery, record)
+            except OSError:
+                pass
+            raise RuntimeError(f'Apple database was published, but its host state could not be saved. '
+                               f'Inspect recovery information at {recovery} before retrying.') from error
     _update_photos(identity, state, selected, cache, progress)
     summary = (f'{len(playable_music):,} songs, {len(video_rows):,} videos and '
                f'{state["published"].get("photo_count", 0):,} photos are ready in Apple OS.')
