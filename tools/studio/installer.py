@@ -1273,15 +1273,19 @@ def _native_worker(job):
         # UAC may run under another administrator account with a different
         # LocalAppData cache, so assess() cannot discover the caller's context.
         context = json.loads((transaction / "context.json").read_text(encoding="utf-8"))
+        saved_method = _saved_method(context)
+        saved_artifacts = dict(context.get("artifacts") or {})
+        saved_artifacts.setdefault("installation_method", saved_method)
+        saved_artifacts.setdefault("boot_selector", INSTALLATION_METHODS[saved_method]["boot_selector"])
         if (current.get("recovery") is not None or
                 current["linnet"]["state"] not in ("absent", "incomplete", "installed") or
                 context.get("target_id") != expected["target_id"] or
                 context.get("device_id") != expected["disk_serial"] or
                 context.get("strategy") != "native-directory" or
-                context.get("installation_method") != job["installation_method"] or
-                context.get("previous_boot") != job["previous_boot"] or
+                saved_method != job["installation_method"] or
+                _saved_previous_boot(context) != job["previous_boot"] or
                 context.get("build") != job["artifacts"].get("build") or
-                context.get("artifacts") != job["artifacts"]):
+                saved_artifacts != job["artifacts"]):
             raise RuntimeError("saved native installation changed before resume")
         _validate_artifacts(expected, job["artifacts"])
     elif current["action"] != job["reviewed_action"]:
