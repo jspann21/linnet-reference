@@ -1546,6 +1546,8 @@ def uninstall(identity, progress=lambda _message: None, expected=None):
             guarded_path(path, root)
     media_folders = {name: (root / name).exists() for name in ("Music", "Photos", "Videos", "Notes")}
     receipt_path = cache_root(reviewed["identity"]) / ("uninstall-" + uuid.uuid4().hex + ".json")
+    if root.drive and receipt_path.drive.casefold() == root.drive.casefold():
+        raise ValueError("The installer recovery location must be on the computer, not on the iPod.")
     receipt = dict(operation="uninstall-linnet", started_at=_now(), passed=False,
                    identity=reviewed["identity"], previous_boot=previous,
                    media_folders=media_folders, private_stamp=_private_stamp(private),
@@ -1575,6 +1577,15 @@ def uninstall(identity, progress=lambda _message: None, expected=None):
                 raise ValueError("the Linnet recovery directory disappeared after startup restoration")
             recovery_backup = receipt_path.with_suffix(".recovery")
             shutil.copytree(recovery, recovery_backup)
+            from tools.content.guard import hash_file
+
+            for source in recovery.rglob("*"):
+                if source.is_file():
+                    guard_volume(reviewed["identity"])
+                    guarded_path(source, root)
+                    copy = recovery_backup / source.relative_to(recovery)
+                    if not copy.is_file() or hash_file(source, source.stat().st_size) != hash_file(copy, copy.stat().st_size):
+                        raise OSError("the computer recovery copy differs from the iPod")
             receipt["recovery_backup"] = str(recovery_backup)
             _save(receipt_path, receipt)
             try:
@@ -1589,25 +1600,11 @@ def uninstall(identity, progress=lambda _message: None, expected=None):
                 _remove_private_tree(recovery, root, reviewed["identity"])
                 guard_volume(reviewed["identity"])
                 private.rmdir()
-            except OSError as error:
-                # Restore the journal and original loader backup if cleanup
-                # stopped after removing some recovery files. Keep the host copy.
-                if private.is_dir():
-                    try:
-                        guard_volume(reviewed["identity"])
-                        recovery.mkdir(exist_ok=True)
-                        for source in recovery_backup.rglob("*"):
-                            target = recovery / source.relative_to(recovery_backup)
-                            guard_volume(reviewed["identity"])
-                            guarded_path(target, root)
-                            if source.is_dir():
-                                target.mkdir(exist_ok=True)
-                            elif not target.exists():
-                                target.parent.mkdir(parents=True, exist_ok=True)
-                                shutil.copy2(source, target)
-                    except (OSError, ValueError):
-                        pass  # The host backup and receipt remain for manual recovery.
-                raise OSError(f"Startup software was restored, but Linnet cleanup stopped. Recovery files are saved at {recovery_backup}.") from error
+            except (OSError, RuntimeError) as error:
+                raise OSError(
+                    "Startup software was restored, but Linnet cleanup stopped. "
+                    f"Reconnect this iPod and retry removal; recovery files are saved at {recovery_backup}."
+                ) from error
         guard_volume(reviewed["identity"])
         if private.exists() or any((root / name).exists() != existed for name, existed in media_folders.items()):
             raise RuntimeError("Linnet removal or media-folder verification failed")
