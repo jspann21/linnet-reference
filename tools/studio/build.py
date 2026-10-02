@@ -318,7 +318,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         add_sources([ROOT / "ui/runtime/shell_adapter.c", ROOT / "services/display/clock.c"], "OS display")
     if profile != "release":
         add_sources(sorted((ROOT / "hal/link").glob("*.c")), "development link")
-        add_sources([ROOT / name for name in ("boot/src/loader.c", "boot/src/sha256.c")], "development loader")
+        add_sources([ROOT / "boot/src/loader.c"], "development loader")
+        add_sources([ROOT / "boot/src/sha256.c"], "development integrity", ['-O2'])
         add_sources([hal / name for name in ("usb.c", "recovery.c")], "development HAL")
         if (hal / "recovery.S").is_file():
             add_sources([hal / "recovery.S"], "development recovery")
@@ -340,7 +341,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     add_sources([hal / "persistent_enter.S"], "HAL persistence")
     add_sources([hal / "ata.c"], "HAL ATA")
     if profile == "release":
-        add_sources([ROOT / "boot/src/sha256.c"], "release integrity")
+        add_sources([ROOT / "boot/src/sha256.c"], "release integrity", ['-O2'])
     else:
         add_sources([ROOT / "kernel/storage_link.c"], "development storage")
         if kind == "os":
