@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import struct
 import zlib
+from collections import defaultdict
 
 from . import media_manager as manager
 from .music import MAX_DATABASE, TRACK, validate_database
@@ -11,6 +12,80 @@ SIZE, SLOTS, CAPACITY = 147456, 16, 1024
 RESUME = 80 + 6 * CAPACITY + 44
 LISTS, ENTRY = 512 + 4 + RESUME, 40 + 8 * CAPACITY
 RECENT = LISTS + SLOTS * ENTRY
+MAX_M3U_BYTES = 2 * 1024 * 1024
+MAX_M3U_ENTRIES = 10000
+
+
+def _m3u_key(path):
+    """Normalize a playlist reference without resolving or opening a file."""
+    return path.strip().replace('\\', '/').lstrip('/').casefold()
+
+
+def preview_m3u(source, tracks, paths=None):
+    """Match an M3U to known library IDs; leave missing/ambiguous rows for review.
+
+    The file is only read as text. In particular, its paths are never followed.
+    Matches retain file order and duplicates, as the device playlist does.
+    """
+    source = Path(source)
+    if source.stat().st_size > MAX_M3U_BYTES:
+        raise ValueError('M3U file exceeds the 2 MiB import limit')
+    with source.open('rb') as reader:
+        data = reader.read(MAX_M3U_BYTES + 1)
+    if len(data) > MAX_M3U_BYTES or b'\0' in data:
+        raise ValueError('M3U file is too large or contains invalid text')
+    text = data.decode('utf-8-sig')
+    by_path, by_label = defaultdict(list), defaultdict(list)
+    for identity, label in tracks.items():
+        by_label[label.casefold()].append(identity)
+        if paths and identity in paths:
+            by_path[_m3u_key(paths[identity])].append(identity)
+    matched, unmatched = [], []
+    hint, label = None, None
+    for line_number, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith('#LINNET-ID:'):
+            try:
+                hint = int(line.partition(':')[2].strip(), 16)
+            except ValueError:
+                hint = None
+            continue
+        if line.startswith('#EXTINF:'):
+            label = line.partition(',')[2].strip() or None
+            continue
+        if line.startswith('#'):
+            continue
+        if len(matched) + len(unmatched) >= MAX_M3U_ENTRIES:
+            raise ValueError('M3U file exceeds the 10,000-entry review limit')
+        key = _m3u_key(line)
+        candidates = by_path.get(key, ())
+        if not candidates and hint in tracks:
+            candidates = (hint,)
+        if not candidates and label:
+            candidates = by_label.get(label.casefold(), ())
+        if len(candidates) == 1:
+            matched.append(candidates[0])
+        else:
+            unmatched.append((line_number, line, 'ambiguous' if candidates else 'not in library'))
+        hint, label = None, None
+    return matched, unmatched
+
+
+def export_m3u(ids, tracks, paths=None):
+    if len(ids) > CAPACITY:
+        raise ValueError('A playlist can contain at most 1024 songs')
+    lines = ['#EXTM3U']
+    for identity in ids:
+        if identity not in tracks:
+            raise ValueError(f'Track {identity:016x} is missing from the music library')
+        label = tracks[identity].replace('\r', ' ').replace('\n', ' ')
+        location = (paths or {}).get(identity, f'LINNET-ID-{identity:016x}')
+        if '\r' in location or '\n' in location or '\0' in location:
+            raise ValueError('A track path contains invalid text')
+        lines.extend((f'#EXTINF:-1,{label}', f'#LINNET-ID:{identity:016x}', location))
+    return ('\n'.join(lines) + '\n').encode('utf-8')
 
 
 def decode(data):
@@ -68,6 +143,7 @@ def read(identity):
     path = root / '.LINNET' / 'LIBRARY.PDB'
     _plain(path, root)
     tracks = {}
+    paths = {}
     if path.exists():
         if path.stat().st_size > MAX_DATABASE:
             raise ValueError('Music library is too large')
@@ -85,7 +161,12 @@ def read(identity):
                     labels[offset] = data[start:data.index(b'\0', start)].decode('utf-8')
                 strings.append(labels[offset])
             tracks[struct.unpack_from('<Q', data, at)[0]] = ' · '.join(filter(None, strings))
-    return dict(identity=identity, snapshots=snapshots, lists=lists, tracks=tracks)
+            path_offset = struct.unpack_from('<I', data, at + 64)[0]
+            if path_offset not in labels:
+                start = fields[10] + path_offset
+                labels[path_offset] = data[start:data.index(b'\0', start)].decode('utf-8')
+            paths[struct.unpack_from('<Q', data, at)[0]] = labels[path_offset]
+    return dict(identity=identity, snapshots=snapshots, lists=lists, tracks=tracks, paths=paths)
 
 
 def save(state):
