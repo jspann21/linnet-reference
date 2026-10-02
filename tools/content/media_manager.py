@@ -263,7 +263,7 @@ def preparation_option(kind, identity, photo_dimension=640, music_verification='
         return f"target-wrap2-{_display_recipe(identity['target_id'])[2]}"
     if kind == 'Photos':
         profile = identity['media_profile']
-        layout = '-pack32' if identity['target_id'] in ('video5g-m25', 'classic6g-n25') else ''
+        layout = '-pack32-sequential8' if identity['target_id'] in ('video5g-m25', 'classic6g-n25') else ''
         return f"lpic-hc-photos-native-grid{layout}-{identity['target_id']}-{photo_dimension}-{profile['photo_width']}x{profile['photo_height']}"
     return 'default'
 
