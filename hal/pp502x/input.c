@@ -81,6 +81,14 @@ bool ln_input_poll(struct ln_input_state *out)
             next.buttons = 0;
             next.touched = 0;
             ln_last_wheel = -1;
+#if defined(LINNET_IMAGE_BOOT)
+            /* A malformed startup frame can leave the wheel receive latch
+             * stuck. Restart reception so a held key can be sampled again. */
+            if (!ln_core_delay_us(2000u)) return false;
+            LINNET_MMIO(0x7000c100u) &= ~0x60000000u;
+            LINNET_MMIO(0x7000c104u) |= 0x04000000u;
+            LINNET_MMIO(0x7000c100u) |= 0x60000000u;
+#endif
         }
         LINNET_MMIO(0x7000c104u) |= 0x0c000000u;
         LINNET_MMIO(0x7000c100u) = 0x400a1f00u;
