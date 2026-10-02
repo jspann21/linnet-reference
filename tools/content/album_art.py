@@ -41,6 +41,10 @@ def _identity(row):
 
 def _base(row):
     artist, album = _identity(row)
+    return _base_identity(artist, album)
+
+
+def _base_identity(artist, album):
     if not artist or not album:
         return None
     key = hashlib.sha256((_normal(artist) + '\0' + _normal(album)).encode()).hexdigest()
@@ -56,7 +60,8 @@ def cached(row):
 def signature(rows):
     # One library may contain many tracks per album. Check each cached cover
     # only once instead of issuing a host filesystem lookup for every track.
-    bases = {_base(row) for row in rows}
+    identities = {_identity(row) for row in rows}
+    bases = {_base_identity(*identity) for identity in identities}
     stamps = []
     for base in bases:
         if base is None:

@@ -307,7 +307,7 @@ def images(root, *, artwork=False, dbids=None, render=True):
 
 
 def metadata(root):
-    from .album_art import _base, cached
+    from .album_art import _identity, cached
     rows = available_tracks(root)
     if not rows:
         return {}
@@ -320,7 +320,7 @@ def metadata(root):
     def artwork(row):
         if row['dbid'] in covers:
             return covers[row['dbid']]
-        album = _base(row)
+        album = _identity(row)
         if album not in cached_covers:
             cached_covers[album] = cached(row)
         return cached_covers[album]
