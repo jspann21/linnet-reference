@@ -4,6 +4,9 @@ struct ln_coverflow_scanline {uint16_t offset;uint8_t left,width,runs;};
 extern const struct ln_coverflow_scanline ln_coverflow_rows[33][190];
 extern const uint8_t ln_coverflow_samples[];
 extern const uint8_t ln_coverflow_sources[33][COVER_WIDTH];
+#if defined(LINNET_SOC_S5L8702)
+extern const uint8_t ln_coverflow_mirror_sources[33][COVER_WIDTH];
+#endif
 /* The ambient palette is unchanged on redraws at the same album position. */
 static bool glow_palette_valid;
 static uint32_t glow_ambient[3], glow_pairs[2][192];
@@ -13,7 +16,12 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
     uint32_t began=ln_time_us();
 #endif
     struct card {int32_t x,width;uint32_t pose;bool mirror,preview,decoded;
-        const uint16_t *palette;const uint8_t *pixels,*indices;uint8_t sources[COVER_WIDTH];} cards[7];
+#if defined(LINNET_SOC_S5L8702)
+        const uint16_t *palette;const uint8_t *pixels,*indices,*sources;
+#else
+        const uint16_t *palette;const uint8_t *pixels,*indices;uint8_t sources[COVER_WIDTH];
+#endif
+    } cards[7];
     uint32_t card_count=0;
     int32_t center=(position+128)/256;
     for(int32_t layer=0;layer<=3;layer++)for(int32_t side=1;side>=-1;side-=2){
@@ -33,11 +41,15 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
         card->decoded=pixels!=0;
         card->preview=!packed;
         card->palette=packed?(const uint16_t*)packed:r?(const uint16_t*)(header+512):0;
+#if defined(LINNET_SOC_S5L8702)
+        card->sources=card->mirror?ln_coverflow_mirror_sources[card->pose]:ln_coverflow_sources[card->pose];
+#else
         for(int32_t x=0;x<card->width;x++){
             uint32_t sx=ln_coverflow_sources[card->pose][card->mirror?card->width-1-x:x];
             if(card->mirror)sx=TEXTURE_WIDTH-1u-sx;
             card->sources[x]=(uint8_t)sx;
         }
+#endif
     }
     uint32_t ambient[3]={0};
     if(count){
@@ -88,7 +100,7 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
                 if(x&1){*dest++=(uint16_t)(palette[*mask++]>>16);++x;}
                 typedef uint32_t pixel_pair __attribute__((may_alias));
                 pixel_pair *output=(pixel_pair *)dest;
-#if defined(LINNET_SOC_PP5022)
+#if defined(LINNET_SOC_PP5022) || defined(LINNET_SOC_S5L8702)
                 for(;x+7<span->right;x+=8){
                     output[0]=palette[mask[0]];
                     output[1]=palette[mask[1]];

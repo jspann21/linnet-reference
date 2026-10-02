@@ -594,7 +594,7 @@ def generate_c(doc, packed_fonts=None):
             out.append(f'const uint8_t ln_coverflow_glow[{gw}][{gh}]={{'+','.join('{'+','.join(map(str,glow[x*gh:(x+1)*gh]))+'}' for x in range(gw))+'};')
         out.append('const uint8_t ln_coverflow_widths[33]={'+','.join(map(str,widths))+'};')
         if not scanline:out.append(f'const struct ln_coverflow_column ln_coverflow_columns[33][{cover_size}]={{')
-        scanlines,samples,sources=[],[],[]
+        scanlines,samples,sources,mirrors=[],[],[],[]
         for pose,width in enumerate(widths):
             tilt=pose*8
             columns=[];geometry=[]
@@ -605,6 +605,8 @@ def generate_c(doc, packed_fonts=None):
             if not scanline:out.append('{'+','.join(columns)+'},')
             else:
                 sources.append('{'+','.join(str(c[1]) for c in geometry)+'}')
+                mirrors.append('{'+','.join(str(texture_side-1-geometry[width-1-x][1])
+                                            for x in range(width))+'}')
                 rows=[]
                 for y in range(gh):
                     visible=[x for x,c in enumerate(geometry) if c[2]<=y<c[2]+c[4]]
@@ -621,6 +623,9 @@ def generate_c(doc, packed_fonts=None):
             if len(samples)>65535:
                 raise ValueError('Cover Flow scanline offsets exceed the 16-bit table bound')
             out.append(f'const uint8_t ln_coverflow_sources[33][{cover_size}]={{'+','.join(sources)+'};')
+            out.append('#if defined(LINNET_SOC_S5L8702)')
+            out.append(f'const uint8_t ln_coverflow_mirror_sources[33][{cover_size}]={{'+','.join(mirrors)+'};')
+            out.append('#endif')
             out.append(f'const struct ln_coverflow_scanline ln_coverflow_rows[33][{gh}]={{'+','.join(scanlines)+'};')
             out.append('const uint8_t ln_coverflow_samples[]={'+','.join(map(str,samples))+'};')
         else:out.append('};')
