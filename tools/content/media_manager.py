@@ -2073,12 +2073,19 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         emit_stage('Preparing Files', total_stages - 2)
         from .files import compile_files, publish_files
         files_package = cache / 'files.fil'
+        next_files_guard = 0.0
+        def files_checkpoint():
+            nonlocal next_files_guard
+            now = time.monotonic()
+            if cancelled() or now >= next_files_guard:
+                checkpoint()
+                next_files_guard = time.monotonic() + 0.05
         files_report = compile_files(root, files_package, cache / 'file-previews',
             target=identity['target_id'],
             width=media_profile['photo_width'] if 'Photos' in supported_kinds(identity) else 0,
             height=media_profile['photo_height'] if 'Photos' in supported_kinds(identity) else 0,
             text_columns=20 if media_profile['photo_width'] < 220 else 24,
-            checkpoint=checkpoint, progress=progress)
+            checkpoint=files_checkpoint, progress=progress)
         checkpoint()
         emit_stage('Publishing Files', total_stages - 2, can_stop=False)
         files_outputs = [('.LINNET/FILES/INDEX.FIL', files_report['sha256'])]
