@@ -280,7 +280,11 @@ _Noreturn void ln_main(void)
                     }
                 }else{
                     menu_holding=false;
-                    if(now-menu_started>=1500000u){
+                    if(now-menu_started>=1500000u
+#if LINNET_BOOT_MENU_FIRST_PACKET_WAIT_US
+                       && (input.packets||now-menu_started>=LINNET_BOOT_MENU_FIRST_PACKET_WAIT_US)
+#endif
+                    ){
                         boot_decided=true;ln_storage_boot_choice(4u);
                     }
                 }
