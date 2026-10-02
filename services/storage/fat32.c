@@ -334,8 +334,9 @@ static int next_cluster(struct ln_fat32*f){
         struct ln_fat32_cache*c=&f->cache[f->cluster%LN_FAT32_CACHE_SIZE];
         if(c->cluster==f->cluster){f->fat_value=c->next;return 1;}
         f->fat_cluster=f->cluster;
-        /* Only this proof request may reuse the validated primary sector. */
-        if(f->state==VERIFY_CHAIN&&f->verified_fat_sector==f->cluster/128u+1u){
+        /* Chain and set proofs may reuse this request's mirror-checked sector. */
+        if((f->state==VERIFY_CHAIN||f->state==SET_CHAIN)&&
+           f->verified_fat_sector==f->cluster/128u+1u){
             f->fat_value=ln_read_le32(f->sector+(f->cluster%128u)*4u)&0x0fffffffu;
             f->fat_phase=3;
         }else f->fat_phase=1;
@@ -356,7 +357,8 @@ static int next_cluster(struct ln_fat32*f){
     if(f->fat_value<EOC&&!cluster_valid(f,f->fat_value))return LN_FAT32_CORRUPT;
     if(f->fat_value==f->fat_cluster)return LN_FAT32_CORRUPT;
     /* Phase3 follows the required full mirror comparison, or a proven hit. */
-    if(f->state==VERIFY_CHAIN)f->verified_fat_sector=f->fat_cluster/128u+1u;
+    if(f->state==VERIFY_CHAIN||f->state==SET_CHAIN)
+        f->verified_fat_sector=f->fat_cluster/128u+1u;
     /* The whole sector (and mirror when enabled) is already validated. Fill
      * the existing cache with its aligned group of16 edges, so consecutive
      * clusters avoid repeated sector copies, mirror comparisons and polls.
