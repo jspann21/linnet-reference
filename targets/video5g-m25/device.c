@@ -95,6 +95,7 @@ bool ln_input_boot_menu_held(void) {
         ln_boot_menu_query[1]=status;
 #endif
         if(status&0x04000000u){
+            if(!ln_core_delay_us(50u))return false;
             uint32_t packet=REG(0x7000c140u);
 #if !defined(LINNET_PROFILE_RELEASE)
             ln_boot_menu_query[2]=packet;
@@ -106,6 +107,13 @@ bool ln_input_boot_menu_held(void) {
                 ln_boot_menu_query[3]=(packet&0x00100000u)?2u:1u;
 #endif
                 return (packet&0x00100000u)!=0u;
+            }
+            if((packet&0x800000ffu)==0x8000001au&&
+               (!(packet&0x40000000u)||((packet>>16)&0x7fu)<96u)){
+#if !defined(LINNET_PROFILE_RELEASE)
+                ln_boot_menu_query[3]=(packet&0x00001000u)?4u:3u;
+#endif
+                return (packet&0x00001000u)!=0u;
             }
         }
     }
