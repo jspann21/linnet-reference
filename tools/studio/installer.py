@@ -84,7 +84,7 @@ def _save(path, value, *, replace=True, durable=False):
         move = ctypes.WinDLL("kernel32", use_last_error=True).MoveFileExW
         move.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32)
         move.restype = ctypes.c_int
-        if not move(str(temporary.resolve()), str(path.resolve()), 0x1 | 0x8):
+        if not move(os.path.abspath(temporary), os.path.abspath(path), 0x1 | 0x8):
             raise ctypes.WinError(ctypes.get_last_error())
     else:
         temporary.replace(path)
