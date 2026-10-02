@@ -3,6 +3,7 @@
 #include "pimg.h"
 #include "jpeg.h"
 #include "services/storage/storage.h"
+#include "services/storage/block.h"
 #include "services/music/player.h"
 #include "hal/api/audio.h"
 #include "hal/api/ata.h"
@@ -80,6 +81,12 @@ static bool background_allowed(void){
 static bool background_disk_awake(void){
     struct ln_ata_state disk;ln_ata_state_snapshot(&disk);
     return disk.powered&&disk.initialized&&!disk.sleeping&&!disk.failed;
+}
+static bool background_disk_prefetch_ready(void){
+    struct ln_ata_state disk;ln_ata_state_snapshot(&disk);
+    if(!disk.powered||!disk.initialized||disk.initializing||disk.busy||disk.sleeping||disk.failed)return false;
+    struct ln_block_info block;ln_block_snapshot(&block);
+    return !block.power_transition;
 }
 bool ln_photos_file_mode(void){return file_mode;}
 
@@ -169,7 +176,7 @@ static bool memory_work(void){
           (p.rendering||p.redraw||!p.frame_complete))));
 }
 static void change(void){++p.epoch;++p.revision;}
-static void fail(int error){p.error=error;p.phase=IDLE;p.rendering=false;p.slide=p.prefetching=false;++p.revision;}
+static void fail(int error){p.error=error;p.phase=IDLE;p.rendering=false;p.slide=p.prefetching=p.prefetch_job=false;++p.revision;}
 static int poll_file(struct ln_fat32_file *file,uint32_t *bytes){
     /* Drain a small burst of ready FAT/cache transitions before another full
      * decoder turn. Real hardware waits still return to the executive. */
@@ -245,7 +252,7 @@ static void verify_begin(bool grid){
     p.phase=grid?GRID_VERIFY:VERIFY;
 }
 static void grid_fallback(void){
-    p.grid_available=false;
+    p.grid_available=p.prefetch_job=false;
     for(uint32_t i=0;i<ROWS;++i)p.rows[i].thumb=false;
     if(!p.active){p.prefetching=p.ready=p.metadata_valid=false;p.phase=OPEN;return;}
     if(!p.pim_verified)verify_begin(false);else p.phase=IDLE;++p.revision;
@@ -404,7 +411,7 @@ void ln_photos_open(void){if(!p.active){bool joining=p.prefetching;p.prefetching
     p.view=LN_PHOTOS_LIST;p.window_first=p.photo_index=0;}p.active=true;p.error=0;if(joining)++p.revision;else change();++p.navigation;}}
 static bool begin_file(const struct ln_fat32_file*file,uint32_t offset,uint32_t bytes,const char*title){
     if(p.pending||!file||!bytes||bytes>sizeof photo_buffers.pixels.jpeg||(file->attributes&24u)||offset>file->size||bytes>file->size-offset)return false;
-    p.prefetching=false;p.ready=p.metadata_valid=false;p.active=p.jpeg_mode=file_mode=true;
+    p.prefetching=p.prefetch_job=false;p.ready=p.metadata_valid=false;p.active=p.jpeg_mode=file_mode=true;
     for(uint32_t i=0;i<2u;++i)p.frame_cache[i].valid=false;
     p.view=LN_PHOTOS_VIEWER;p.frame_valid=p.view_loaded=p.rendering=p.redraw=p.slide=p.slide_armed=p.resume_pending=false;
     p.error=0;p.count=0;p.jpeg_file=*file;p.file_offset=offset;p.photo.jpeg_bytes=bytes;p.photo.orientation=1;
@@ -561,7 +568,7 @@ static bool plan_content(bool apply){
     /* The grid cache has room for two complete pages. Fill its spare half
      * while storage is awake, after all cells on the visible page are ready. */
     if(p.grid_available&&p.view==LN_PHOTOS_LIST&&p.window_count==GRID_PAGE&&
-       p.window_first%GRID_PAGE==0&&background_allowed()&&background_disk_awake()){
+       p.window_first%GRID_PAGE==0&&background_allowed()&&background_disk_prefetch_ready()){
         uint32_t adjacent=UINT32_MAX;
         if(p.prefetch_direction<0&&p.window_first>=GRID_PAGE)adjacent=p.window_first-GRID_PAGE;
         else if(p.prefetch_direction>0&&p.window_first+GRID_PAGE<p.count)adjacent=p.window_first+GRID_PAGE;
@@ -616,7 +623,7 @@ static void photo_step(void){
     /* A neighbor job may wait between planning and admission. Stop it if
      * playback starts or standby closes the disk before its next read. */
     if(p.prefetch_job&&!p.pending&&!memory_work()&&
-       (!background_allowed()||!background_disk_awake())){
+       (!background_allowed()||!background_disk_prefetch_ready())){
         p.prefetch_job=false;p.phase=IDLE;return;
     }
     if(p.slide&&p.slide_armed&&p.frame_valid&&(int32_t)(ln_time_us()-p.slide_at)>=0){ln_photos_next(1);return;}
