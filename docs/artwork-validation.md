@@ -118,3 +118,17 @@ and LCD transfer behavior remain as before.
 
 Local receipts and captures are under `out/art-quality/arbitrary-before-correct/`,
 `arbitrary-after/`, and `arbitrary-switches-published/`.
+
+The repair was persistently installed and restarted healthy on the rotating
+30GB 5G and Classic 6G. Classic's arbitrary Songs selection was checked with
+Cover Flow left on its last album: the published song's cover and the filled
+home pane were correct. Both devices completed 32 home wheel events with zero
+drops; the captured Classic highlight top edge was one continuous color across
+all 160 menu pixels. The user had confirmed physical 6G scrolling smoothness
+before this follow-up; these additional checks establish framebuffer geometry.
+
+Classic temporarily lost Link after an accepted RAM boot while its screen
+still showed Linnet home. A physical restart restored USB enumeration and Link.
+The subsequent persistent installation and restart reported healthy; the
+transport interruption was not attributed to the artwork repair. Classic
+evidence is under `out/art-quality/arbitrary-classic-installed/`.
