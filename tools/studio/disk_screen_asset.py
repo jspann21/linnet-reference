@@ -1,123 +1,190 @@
-"""Generate the iPod Photo Disk Mode LCD stream from Linnet's licensed fonts."""
+"""Generate compact, native-resolution Disk Mode images from licensed fonts."""
 
 from __future__ import annotations
 
 import argparse
 import json
+from math import hypot, sqrt
 from pathlib import Path
 
+from PIL import Image
+
 ROOT = Path(__file__).resolve().parents[2]
-WIDTH, HEIGHT = 220, 176
+PAPER = (249, 251, 252)
+HEADER = (232, 239, 243)
+INK = (34, 49, 60)
+MUTED = (91, 109, 120)
+ACCENT = (172, 74, 69)
 
 
 def rgb565(red: int, green: int, blue: int) -> int:
     return (red >> 3) << 11 | (green >> 2) << 5 | (blue >> 3)
 
 
-def blend(background: tuple[int, int, int], foreground: tuple[int, int, int], alpha: int) -> int:
-    return rgb565(*(b + ((f - b) * alpha + 127) // 255 for b, f in zip(background, foreground)))
+def components(value: int) -> tuple[int, int, int]:
+    return (((value >> 11) & 31) * 255 // 31,
+            ((value >> 5) & 63) * 255 // 63,
+            (value & 31) * 255 // 31)
+
+
+def blend(background: int, foreground: tuple[int, int, int], alpha: int) -> int:
+    return rgb565(*(b + ((f - b) * alpha + 127) // 255
+                    for b, f in zip(components(background), foreground)))
 
 
 def font(name: str) -> dict:
     return json.loads((ROOT / "sdk" / "assets" / name).read_text(encoding="utf-8"))
 
 
-def draw_text(pixels: list[int], label: str, glyphs: dict, top: int,
-              background: tuple[int, int, int], foreground: tuple[int, int, int]) -> None:
+def draw_text(pixels: list[int], width: int, height: int, label: str, glyphs: dict,
+              top: int, scale: float, color: tuple[int, int, int]) -> None:
     advances = glyphs["advances"]
     glyph_width, glyph_height = glyphs["width"], glyphs["height"]
-    text_width = sum(advances[ord(char) - 32] for char in label)
-    left = (WIDTH - text_width) // 2
+    native_width = sum(advances[ord(char) - 32] for char in label)
+    mask = Image.new("L", (native_width, glyph_height))
+    left = 0
     for char in label:
         index = ord(char) - 32
         offset = index * glyph_width * glyph_height
-        for y in range(glyph_height):
-            for x in range(glyph_width):
-                alpha = glyphs["alpha"][offset + y * glyph_width + x]
-                # Three coverage levels keep the LCD edges smooth and the
-                # storage image compact enough for the Photo's resident RAM.
-                alpha = 0 if alpha < 64 else 128 if alpha < 192 else 255
-                if alpha and 0 <= left + x < WIDTH and 0 <= top + y < HEIGHT:
-                    pixels[(top + y) * WIDTH + left + x] = blend(background, foreground, alpha)
+        glyph = Image.frombytes("L", (glyph_width, glyph_height),
+                                bytes(glyphs["alpha"][offset:offset + glyph_width * glyph_height]))
+        mask.paste(glyph, (left, 0))
         left += advances[index]
+    if scale != 1:
+        mask = mask.resize((round(mask.width * scale), round(mask.height * scale)), Image.Resampling.LANCZOS)
+    left = (width - mask.width) // 2
+    for y in range(mask.height):
+        if top + y >= height:
+            break
+        for x in range(mask.width):
+            if 0 <= left + x < width:
+                alpha = mask.getpixel((x, y))
+                step = 64 if width == 220 else 16
+                alpha = (alpha + step // 2) // step * step if alpha < 256 - step // 2 else 255
+                if alpha:
+                    at = (top + y) * width + left + x
+                    pixels[at] = blend(pixels[at], color, min(alpha, 255))
 
 
-def image() -> list[int]:
-    paper = (250, 251, 250)
-    header = (227, 233, 236)
-    ink = (35, 43, 47)
-    red = (169, 51, 45)
-    pixels = [rgb565(*paper)] * (WIDTH * HEIGHT)
-    for y in range(36):
-        color = rgb565(*(header if y < 35 else (164, 177, 184)))
-        pixels[y * WIDTH:(y + 1) * WIDTH] = [color] * WIDTH
+def draw_symbol(pixels: list[int], width: int, height: int, center_y: int,
+                radius: int, stroke: float) -> None:
+    center_x = width // 2
+    extent = radius + 2
+    for y in range(center_y - extent, center_y + extent + 1):
+        for x in range(center_x - extent, center_x + extent + 1):
+            coverage = 0
+            for sub_y in (0.125, 0.375, 0.625, 0.875):
+                for sub_x in (0.125, 0.375, 0.625, 0.875):
+                    dx, dy = x + sub_x - center_x, y + sub_y - center_y
+                    distance = hypot(dx, dy)
+                    ring = radius - stroke <= distance <= radius
+                    slash = (distance < radius - stroke and
+                             abs(dx + dy) / sqrt(2) <= stroke / 2)
+                    coverage += ring or slash
+            if coverage and 0 <= x < width and 0 <= y < height:
+                alpha = (coverage + 2) // 4 * 64
+                at = y * width + x
+                pixels[at] = blend(pixels[at], ACCENT, min(alpha, 255))
 
-    draw_text(pixels, "Linnet Disk Mode", font("font-sans12.json"), 10, header, ink)
-    draw_text(pixels, "Do not disconnect", font("font-sans14.json"), 148, paper, ink)
 
-    center_x, center_y = 110, 92
-    for y in range(43, 142):
-        for x in range(60, 160):
-            inside = 0
-            for sub_y in (1, 3):
-                for sub_x in (1, 3):
-                    dx = 4 * (x - center_x) + sub_x - 2
-                    dy = 4 * (y - center_y) + sub_y - 2
-                    distance = dx * dx + dy * dy
-                    ring = (4 * 31) ** 2 <= distance <= (4 * 43) ** 2
-                    slash = distance < (4 * 39) ** 2 and -32 <= dx + dy <= 32
-                    if ring or slash:
-                        inside += 1
-            if inside:
-                pixels[y * WIDTH + x] = blend(paper, red, inside * 255 // 4)
+def image(width: int, height: int) -> list[int]:
+    if (width, height) not in ((220, 176), (320, 240)):
+        raise ValueError("Unsupported Disk Mode display size")
+    photo = width == 220
+    header_height = 32 if photo else 42
+    pixels = [rgb565(*PAPER)] * (width * height)
+    for y in range(header_height):
+        color = rgb565(*(HEADER if y < header_height - 1 else (203, 215, 223)))
+        pixels[y * width:(y + 1) * width] = [color] * width
+    draw_text(pixels, width, height, "Disk Mode", font("font-sans13-bold.json"),
+              7 if photo else 9, 1 if photo else 1.45, INK)
+    draw_text(pixels, width, height, "LINNET OS", font("font-sans12.json"),
+              37 if photo else 50, .9 if photo else 1.05, MUTED)
+    draw_symbol(pixels, width, height, 91 if photo else 121,
+                34 if photo else 47, 3.2 if photo else 4.0)
+    draw_text(pixels, width, height, "Do not disconnect", font("font-sans14.json"),
+              130 if photo else 180, 1 if photo else 1.25, INK)
+    draw_text(pixels, width, height, "Eject safely when finished", font("font-sans12.json"),
+              153 if photo else 210, .9 if photo else 1.05, MUTED)
     return pixels
 
 
-def encode(pixels: list[int]) -> tuple[list[int], list[int]]:
+def encode_photo(pixels: list[int]) -> tuple[list[int], list[int]]:
     palette: list[int] = []
+    positions: dict[int, int] = {}
     runs: list[int] = []
     for i in range(0, len(pixels), 2):
         first, second = pixels[i:i + 2]
         first = ((first << 8) | (first >> 8)) & 0xffff
         second = ((second << 8) | (second >> 8)) & 0xffff
         pair = first | second << 16
-        if pair not in palette:
+        if pair not in positions:
+            positions[pair] = len(palette)
             palette.append(pair)
-        index = palette.index(pair)
+        index = positions[pair]
         if runs and runs[-1] >> 8 == index and runs[-1] & 255 < 255:
             runs[-1] += 1
         else:
             runs.append(index << 8 | 1)
-    if len(palette) > 256 or sum(run & 255 for run in runs) != WIDTH * HEIGHT // 2:
-        raise ValueError("Disk Mode image exceeds the LCD stream format")
+    if len(palette) > 256 or sum(run & 255 for run in runs) != len(pixels) // 2:
+        raise ValueError("Photo Disk Mode image exceeds its LCD stream format")
     return palette, runs
+
+
+def encode_color(pixels: list[int]) -> tuple[list[int], list[int]]:
+    palette: list[int] = []
+    positions: dict[int, int] = {}
+    runs: list[int] = []
+    for color in pixels:
+        if color not in positions:
+            positions[color] = len(palette)
+            palette.append(color)
+        index = positions[color]
+        if runs and runs[-1] & 255 == index and runs[-1] >> 8 < 255:
+            runs[-1] += 256
+        else:
+            runs.append(256 | index)
+    if len(palette) > 256 or sum(run >> 8 for run in runs) != len(pixels):
+        raise ValueError("Color Disk Mode image exceeds its LCD stream format")
+    return palette, runs
+
+
+def header(palette: list[int], runs: list[int], *, photo: bool) -> str:
+    if photo:
+        palette_type, palette_name = "uint32_t", "ln_disk_palette"
+        run_name, palette_width = "ln_disk_runs", 8
+    else:
+        palette_type, palette_name = "uint16_t", "ln_color_disk_palette"
+        run_name, palette_width = "ln_color_disk_runs", 4
+    lines = ["/* Generated by tools/studio/disk_screen_asset.py from the licensed DejaVu font assets.",
+             " * See sdk/assets/FONT-LICENSE.txt. */",
+             f"static const {palette_type} {palette_name}[] = {{"]
+    lines.extend("    " + ", ".join(f"0x{item:0{palette_width}x}u" for item in palette[i:i + 8]) + ","
+                 for i in range(0, len(palette), 8))
+    lines.append(f"}};\nstatic const uint16_t {run_name}[] = {{")
+    lines.extend("    " + ", ".join(f"0x{item:04x}u" for item in runs[i:i + 12]) + ","
+                 for i in range(0, len(runs), 12))
+    lines.append("};\n")
+    return "\n".join(lines)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--target", choices=("photo4g-p98", "color320"), default="photo4g-p98")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--preview", type=Path)
     args = parser.parse_args()
-    pixels = image()
-    palette, runs = encode(pixels)
-    lines = ["/* Generated by tools/studio/disk_screen_asset.py from sdk/assets/font-sans12.json",
-             " * and font-sans14.json; see sdk/assets/FONT-LICENSE.txt. */",
-             "static const uint32_t ln_disk_palette[] = {"]
-    lines.extend("    " + ", ".join(f"0x{item:08x}u" for item in palette[i:i + 8]) + ","
-                 for i in range(0, len(palette), 8))
-    lines.append("};\nstatic const uint16_t ln_disk_runs[] = {")
-    lines.extend("    " + ", ".join(f"0x{item:04x}u" for item in runs[i:i + 12]) + ","
-                 for i in range(0, len(runs), 12))
-    lines.append("};\n")
-    args.output.write_text("\n".join(lines), encoding="ascii")
+    photo = args.target == "photo4g-p98"
+    width, height = (220, 176) if photo else (320, 240)
+    pixels = image(width, height)
+    palette, runs = (encode_photo if photo else encode_color)(pixels)
+    args.output.write_text(header(palette, runs, photo=photo), encoding="ascii")
     if args.preview:
-        from PIL import Image
-        preview = Image.new("RGB", (WIDTH, HEIGHT))
-        preview.putdata([(((value >> 11) & 31) * 255 // 31,
-                          ((value >> 5) & 63) * 255 // 63,
-                          (value & 31) * 255 // 31) for value in pixels])
+        preview = Image.new("RGB", (width, height))
+        preview.putdata([components(value) for value in pixels])
         preview.save(args.preview)
-    print(f"{len(palette)} palette entries, {len(runs)} runs, {len(runs) * 2 + len(palette) * 4} bytes")
+    print(f"{len(palette)} palette entries, {len(runs)} runs, "
+          f"{len(runs) * 2 + len(palette) * (4 if photo else 2)} bytes")
 
 
 if __name__ == "__main__":
