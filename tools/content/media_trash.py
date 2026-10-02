@@ -58,11 +58,11 @@ def _normal_location(category, kind, relative):
 def _video_location(relative):
     """Conservatively identify paths that can carry restored Video media."""
     parts = tuple(part.casefold() for part in relative.split('/'))
-    return (parts[0] == 'videos' or
-            len(parts) >= 2 and parts[:2] == ('.linnet', 'videos') or
-            len(parts) >= 3 and parts[:2] in
-            (('ipod_control', 'music'), ('ipod_c~1', 'music')) and
-            PurePosixPath(relative).suffix.lower() in media.extensions('Videos'))
+    video_folder = (parts[0] == 'videos' or
+                    len(parts) >= 2 and parts[:2] in
+                    (('.linnet', 'videos'), ('ipod_control', 'music'), ('ipod_c~1', 'music')))
+    suffix = PurePosixPath(relative).suffix.lower()
+    return video_folder and (suffix == '.ipv' or suffix in media.extensions('Videos'))
 
 
 def _portable(root, token, report):
