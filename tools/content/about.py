@@ -64,13 +64,17 @@ def _apple_name(root):
                 at = body + header
                 for _ in range(count):
                     child, next_playlist = _record(data, at, following, b"mhyp")
-                    if child - at >= 24 and _u32(data, at + 20) == 1:
+                    if child - at >= 48 and data[at + 20] == 1:
                         while child < next_playlist and data[child:child + 4] == b"mhod":
                             text, next_text = _record(data, child, next_playlist, b"mhod")
-                            if _u32(data, child + 12) == 1 and text + 16 <= next_text:
+                            if text - child >= 16 and _u32(data, child + 12) == 1 and text + 16 <= next_text:
+                                encoding = _u32(data, text)
                                 length = _u32(data, text + 4)
-                                if length % 2 == 0 and length <= 1024 and text + 16 + length <= next_text:
-                                    name = data[text + 16:text + 16 + length].decode("utf-16-le").strip("\0 ")
+                                if (encoding in (0, 1, 2) and length <= 1024 and
+                                        (encoding == 2 or length % 2 == 0) and text + 16 + length <= next_text):
+                                    raw = data[text + 16:text + 16 + length]
+                                    name = raw.decode("utf-8" if encoding == 2 else "utf-16-le")
+                                    name = "".join(char if char.isprintable() else " " for char in name).strip()
                                     if name:
                                         return name
                             child = next_text
@@ -134,6 +138,7 @@ def make_record(identity, *, ipod_name=None):
         # Values such as USB storage model names are supplied by Windows.
         # Keep identifiers intact and omit optional labels that cannot fit.
         ascii_row = row.encode("ascii", errors="replace").decode("ascii")
+        ascii_row = "".join(char if 32 <= ord(char) <= 126 else " " for char in ascii_row)
         if truncate and len(ascii_row) >= ROW_BYTES:
             return ascii_row[:ROW_BYTES - 4] + "..."
         return ascii_row if len(ascii_row) < ROW_BYTES else None
