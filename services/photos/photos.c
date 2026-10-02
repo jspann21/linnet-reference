@@ -48,6 +48,7 @@ static struct {
     uint32_t verify_cached,verify_cursor,grid_at;bool metadata_valid,pim_verified,grid_cache;
     uint8_t metadata[131072],pim_header[512],resume[16],tile_records[512],tile_hints[TILES];char title[192],album_title[192],source[128];
     uint32_t phase,view,album,first,count,photo_index,window_first,window_count,epoch,working,generation,revision,navigation;
+    int32_t prefetch_direction;
     uint32_t io_bytes,verify_at,verify_crc,v_payload_at,job_index,job_slot,level_count,level,zoom,rotation,tile_index,tile_slot,tile_crc,age;
     uint32_t tile_records_first,tile_records_count,tile_group_count,tile_group_cursor,tile_group_at,tile_group_bytes,thumb_group_count,thumb_group_cursor;
     uint32_t visible[TILES],visible_count,front,render_y,slide_at,jpeg_at,ready_tiles,resume_stage,file_offset,file_payload_at;
@@ -391,7 +392,7 @@ static void begin_view(uint32_t index){PHOTO_DIAG(timing.view_started=ln_time_us
 void ln_photos_init(void){
     /* The runtime calls this once after startup has cleared BSS. Clearing
      * the control state again would duplicate that startup work. */
-    p.generation=0x60000000u;p.phase=OPEN;p.view=LN_PHOTOS_LIST;
+    p.generation=0x60000000u;p.phase=OPEN;p.view=LN_PHOTOS_LIST;p.prefetch_direction=1;
     p.window_count=ROWS;p.asset=(struct ln_ui_asset){WIDTH,HEIGHT,photo_buffers.surface.frame[0]};
 }
 void ln_photos_prepare(bool eligible){
@@ -437,7 +438,12 @@ void ln_photos_diagnostics(uint32_t out[32]){
 uint32_t ln_photos_view(void){return p.view;}
 uint32_t ln_photos_count(void){return !p.ready?1u:p.view==LN_PHOTOS_ALBUMS?p.header.albums:p.view==LN_PHOTOS_LIST?p.count:0u;}
 const char *ln_photos_label(uint32_t row){if(!p.ready)return p.error?"Photos unavailable":"Loading photos...";uint32_t index=p.view==LN_PHOTOS_ALBUMS?row:p.first+row;struct row*r=cached(index,p.view==LN_PHOTOS_ALBUMS);return r?r->title:"Loading...";}
-void ln_photos_window(uint32_t first,uint32_t count){if(count>ROWS)count=ROWS;if(p.window_first==first&&p.window_count==count)return;p.window_first=first;p.window_count=count;if(p.ready)change();}
+void ln_photos_window(uint32_t first,uint32_t count){
+    if(count>ROWS)count=ROWS;
+    if(p.window_first==first&&p.window_count==count)return;
+    if(first!=p.window_first)p.prefetch_direction=first>p.window_first?1:-1;
+    p.window_first=first;p.window_count=count;if(p.ready)change();
+}
 const struct ln_ui_asset *ln_photos_thumbnail(uint32_t row){if(!p.ready||p.view!=LN_PHOTOS_LIST||row>=p.count||p.jpeg_mode)return 0;struct row*r=cached(p.first+row,false);return r&&r->thumb?&r->asset:0;}
 const struct ln_ui_asset *ln_photos_asset(void){return p.view==LN_PHOTOS_VIEWER&&p.frame_valid?&p.asset:0;}
 bool ln_photos_select(uint32_t row){
@@ -507,6 +513,34 @@ static void restore_resume(void){
     }
     begin_view(index);
 }
+static bool plan_grid_rows(uint32_t first,uint32_t visible,bool apply){
+    uint32_t count=ln_photos_count();
+    /* Native previews form a contiguous host-prepared atlas. Load the records
+     * first so a read can fill several cells and publish one grid update. */
+    if(p.grid_available&&p.view==LN_PHOTOS_LIST){
+        for(uint32_t i=0;i<visible&&i<ROWS&&first+i<count;++i){
+            uint32_t index=p.first+first+i;
+            if(!cached(index,false)){if(apply)begin_row(index,false);return true;}
+        }
+    }
+    for(uint32_t i=0;i<visible&&i<ROWS&&first+i<count;i++){
+        uint32_t index=p.view==LN_PHOTOS_ALBUMS?first+i:p.first+first+i;
+        struct row*row=cached(index,p.view==LN_PHOTOS_ALBUMS);
+        if(!row){if(apply)begin_row(index,p.view==LN_PHOTOS_ALBUMS);return true;}
+        if(p.view==LN_PHOTOS_LIST&&!row->thumb){if(apply){
+            p.job_index=index;p.job_slot=index%ROWS;p.thumb_group_count=1;p.thumb_group_cursor=0;
+            if(p.grid_available){uint32_t bytes=background_allowed()?sizeof photo_scratch:8192u;
+                uint32_t maximum=bytes/p.grid.stride;
+                while(p.thumb_group_count<maximum&&i+p.thumb_group_count<visible&&i+p.thumb_group_count<ROWS&&
+                      first+i+p.thumb_group_count<count){
+                    struct row*next=cached(index+p.thumb_group_count,false);if(!next||next->thumb)break;++p.thumb_group_count;
+                }
+            }
+            p.phase=THUMB;
+        }return true;}
+    }
+    return false;
+}
 /* Inspect at most ROWS cached entries, or one unloaded viewer row. Planning
  * never submits I/O; the selected phase retains the normal admission gate. */
 static bool plan_content(bool apply){
@@ -522,30 +556,15 @@ static bool plan_content(bool apply){
         if(p.photo_index<p.first||p.photo_index-p.first>=p.count){fail(18);return true;}
         p.photo=row->data.p;text(p.title,row->title);p.level_count=0;p.phase=LEVEL;return true;
     }
-    uint32_t count=ln_photos_count();
-    /* Native previews form a contiguous host-prepared atlas. Load the records
-     * first so a read can fill several cells and publish one grid update. */
-    if(p.grid_available&&p.view==LN_PHOTOS_LIST){
-        for(uint32_t i=0;i<p.window_count&&i<ROWS&&p.window_first+i<count;++i){
-            uint32_t index=p.first+p.window_first+i;
-            if(!cached(index,false)){if(apply)begin_row(index,false);return true;}
-        }
-    }
-    for(uint32_t i=0;i<p.window_count&&i<ROWS&&p.window_first+i<count;i++){
-        uint32_t index=p.view==LN_PHOTOS_ALBUMS?p.window_first+i:p.first+p.window_first+i;
-        struct row*row=cached(index,p.view==LN_PHOTOS_ALBUMS);
-        if(!row){if(apply)begin_row(index,p.view==LN_PHOTOS_ALBUMS);return true;}
-        if(p.view==LN_PHOTOS_LIST&&!row->thumb){if(apply){
-            p.job_index=index;p.job_slot=index%ROWS;p.thumb_group_count=1;p.thumb_group_cursor=0;
-            if(p.grid_available){uint32_t bytes=background_allowed()?sizeof photo_scratch:8192u;
-                uint32_t maximum=bytes/p.grid.stride;
-                while(p.thumb_group_count<maximum&&i+p.thumb_group_count<p.window_count&&i+p.thumb_group_count<ROWS&&
-                      p.window_first+i+p.thumb_group_count<count){
-                    struct row*next=cached(index+p.thumb_group_count,false);if(!next||next->thumb)break;++p.thumb_group_count;
-                }
-            }
-            p.phase=THUMB;
-        }return true;}
+    if(plan_grid_rows(p.window_first,p.window_count,apply))return true;
+    /* The grid cache has room for two complete pages. Fill its spare half
+     * while storage is awake, after all cells on the visible page are ready. */
+    if(p.grid_available&&p.view==LN_PHOTOS_LIST&&p.window_count==GRID_PAGE&&
+       p.window_first%GRID_PAGE==0&&background_allowed()&&background_disk_awake()){
+        uint32_t adjacent=UINT32_MAX;
+        if(p.prefetch_direction<0&&p.window_first>=GRID_PAGE)adjacent=p.window_first-GRID_PAGE;
+        else if(p.prefetch_direction>0&&p.window_first+GRID_PAGE<p.count)adjacent=p.window_first+GRID_PAGE;
+        if(adjacent!=UINT32_MAX)return plan_grid_rows(adjacent,GRID_PAGE,apply);
     }
     return false;
 }
