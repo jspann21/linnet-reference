@@ -40,14 +40,8 @@ if ($v.DeviceID -notin $p.AccessPaths) {{
  if ($bound.UniqueId -ne $v.DeviceID) {{ throw 'Mounted iPod volume does not match its partition' }}
 }}
 $w=Get-CimInstance Win32_DiskDrive | Where-Object Index -eq $p.DiskNumber
-$parent=(Get-PnpDeviceProperty -InstanceId $w.PNPDeviceID -KeyName 'DEVPKEY_Device_Parent').Data
-for ($depth=0; $depth -lt 4 -and $parent -notmatch '^USB\\VID_[0-9A-F]{{4}}&PID_[0-9A-F]{{4}}\\'; $depth++) {{
- $parent=(Get-PnpDeviceProperty -InstanceId $parent -KeyName 'DEVPKEY_Device_Parent').Data
-}}
-$u=@(Get-CimInstance Win32_PnPEntity | Where-Object {{ $_.DeviceID -eq $parent }})
-if ($u.Count -ne 1) {{ throw 'Could not resolve the mounted iPod USB identity' }}
 @{{disk_number=$p.DiskNumber;disk_serial=$w.SerialNumber.Trim();disk_bytes=[long]$d.Size;
-model=$w.Model;pnp_id=$w.PNPDeviceID;usb_pnp_id=$u[0].DeviceID;bus_type=$bus;sector_bytes=$d.LogicalSectorSize;
+model=$w.Model;pnp_id=$w.PNPDeviceID;bus_type=$bus;sector_bytes=$d.LogicalSectorSize;
 partition_offset=[long]$p.Offset;partition_bytes=[long]$p.Size;drive='{letter}:';
 volume_label=$v.Label;filesystem=$v.FileSystem;volume_id=$v.DeviceID}} | ConvertTo-Json -Compress
 """
@@ -59,6 +53,8 @@ volume_label=$v.Label;filesystem=$v.FileSystem;volume_id=$v.DeviceID}} | Convert
         detail = (error.stderr or error.stdout or "Windows storage query failed").strip()
         raise RuntimeError("Could not inspect the mounted iPod: " + detail) from error
     storage = json.loads(result.stdout)
+    from .windows_pnp import usb_parent
+    storage["usb_pnp_id"] = usb_parent(storage["pnp_id"])
     models={"Apple iPod USB Device"} | {spec["native_storage"]["model"] for spec in TARGETS.values() if "native_storage" in spec}
     if (storage.get("model") not in models or
             storage.get("bus_type") != "USB" or storage.get("filesystem") != "FAT32" or

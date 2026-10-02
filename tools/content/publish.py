@@ -352,14 +352,9 @@ if (!$disk) {throw 'Disk identity unavailable'}
 $physical=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$cfg.number)
 $native=@($cfg.native | Where-Object {$_.model -ceq $physical.Model -and $_.friendly_name -ceq $disk.FriendlyName})
 $apple=$disk.FriendlyName -ceq 'Apple iPod' -and $physical.PNPDeviceID -match '^USBSTOR\\.*VEN_APPLE.*PROD_IPOD'
-$usb='';$target=''
+$target=''
 if ($native.Count -eq 1) {
- $usb=(Get-PnpDeviceProperty -InstanceId $physical.PNPDeviceID -KeyName 'DEVPKEY_Device_Parent').Data
- for($depth=0;$depth -lt 4 -and $usb -notmatch '^USB\\VID_[0-9A-F]{4}&PID_[0-9A-F]{4}\\';$depth++) {
-  $usb=(Get-PnpDeviceProperty -InstanceId $usb -KeyName 'DEVPKEY_Device_Parent').Data
- }
- $expected='USB\VID_{0:X4}&PID_{1:X4}\{2}' -f $native[0].usb_vid,$native[0].usb_pid,$cfg.serial
- if($usb -cne $expected -or $cfg.serial -cnotmatch '^[0-9A-F]{16}$' -or $disk.LogicalSectorSize -notin $native[0].sector_bytes) {throw 'Native USB identity rejected'}
+ if($cfg.serial -cnotmatch '^[0-9A-F]{16}$' -or $disk.LogicalSectorSize -notin $native[0].sector_bytes) {throw 'Native USB identity rejected'}
  $target=$native[0].target_id
 }
 if ($disk.SerialNumber.Trim() -cne $cfg.serial -or $disk.BusType -ne 7 -or
@@ -386,7 +381,7 @@ if ([string]$volume.FileSystem -ne 'FAT32' -or $logical.VolumeSerialNumber.ToUpp
   disk_bytes=[uint64]$disk.Size;sector_bytes=[int]$disk.LogicalSectorSize;partition_number=[int]$part.PartitionNumber;partition_offset=[uint64]$part.Offset;
   partition_bytes=[uint64]$part.Size;drive=$drive;root=$drive+'\';volume_unique_id=[string]$volume.DeviceID;
   volume_serial=$logical.VolumeSerialNumber.ToUpper();filesystem=[string]$volume.FileSystem;
-  pnp_id=[string]$physical.PNPDeviceID;native_target_id=$target;usb_pnp_id=$usb;free_bytes=[uint64]$volume.FreeSpace} | ConvertTo-Json -Compress
+  pnp_id=[string]$physical.PNPDeviceID;native_target_id=$target;free_bytes=[uint64]$volume.FreeSpace} | ConvertTo-Json -Compress
 '''.replace("CONFIG", config)
     encoded = base64.b64encode(script.encode("utf-16-le")).decode()
     result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
@@ -399,6 +394,15 @@ if ([string]$volume.FileSystem -ne 'FAT32' -or $logical.VolumeSerialNumber.ToUpp
         identity.get("volume_serial") != volume_serial or not re.fullmatch(r"[A-Z]:\\", identity.get("root", "")) or
         not identity.get("disk_unique_id") or not identity.get("volume_unique_id")):
         raise RuntimeError("incomplete Windows disk/volume identity")
+    if identity["native_target_id"]:
+        from tools.inspect.windows_pnp import usb_parent
+        spec = TARGETS[identity["native_target_id"]]["native_storage"]
+        identity["usb_pnp_id"] = usb_parent(identity["pnp_id"])
+        expected_usb = f"USB\\VID_{spec['usb_vid']:04X}&PID_{spec['usb_pid']:04X}\\{expected_disk_serial.strip()}"
+        if identity["usb_pnp_id"] != expected_usb:
+            raise RuntimeError("Native USB identity rejected")
+    else:
+        identity["usb_pnp_id"] = ""
     return identity
 
 
