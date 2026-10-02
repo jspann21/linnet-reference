@@ -767,10 +767,15 @@ class SetupPage:
         layout.addWidget(card)
         layout.addSpacing(12); layout.addWidget(label('Firmware', 'section'))
         window.firmware_path = str(window.settings.value('firmware_bundle', ''))
-        window.firmware_label = label(window.firmware_path or 'Choose a downloaded Linnet firmware ZIP.', 'muted', True)
+        window.firmware_label = label(window.firmware_path or 'Choose a Linnet firmware ZIP or extracted bundle folder.', 'muted', True)
         layout.addWidget(window.firmware_label)
         window.firmware_button = button('Choose firmware ZIP', window.choose_firmware, None, 'folder')
-        layout.addWidget(window.firmware_button, 0, Qt.AlignLeft)
+        window.firmware_folder_button = button('Choose firmware folder', window.choose_firmware_folder, None, 'folder')
+        firmware_actions = box(horizontal=True, spacing=8)
+        firmware_actions.addWidget(window.firmware_button)
+        firmware_actions.addWidget(window.firmware_folder_button)
+        firmware_actions.addStretch()
+        layout.addLayout(firmware_actions)
         window.build_from_source = CheckBox('Build from source (development)')
         window.build_from_source.setChecked(not getattr(sys, 'frozen', False) and
             window.settings.value('build_from_source', False, type=bool))
@@ -2365,9 +2370,11 @@ class MediaWindow(QMainWindow):
         from_source = self.build_from_source.isChecked()
         resume = bool(self.review and self.review.get('action') == 'resume')
         self.build_from_source.setEnabled(not self.busy and not resume)
-        self.firmware_button.setEnabled(not self.busy and not from_source and not resume)
-        self.firmware_label.setVisible(not from_source)
-        self.firmware_button.setVisible(not from_source)
+        self.firmware_button.setEnabled(not self.busy and not resume)
+        self.firmware_folder_button.setEnabled(not self.busy and not resume)
+        self.firmware_label.setText(('Building from source. Choose a ZIP or folder to use saved firmware.'
+                                     if from_source else self.firmware_path or
+                                     'Choose a Linnet firmware ZIP or extracted bundle folder.'))
         self.boot_detail.setText(option.get('detail', '') if option else '')
         show_methods = bool(linnet and option.get('selectable') and method)
         for widget in (self.method_title, self.method_choice, self.method_detail, self.selector_note):
@@ -2436,7 +2443,17 @@ class MediaWindow(QMainWindow):
         if path:
             self.firmware_path = path
             self.settings.setValue('firmware_bundle', path)
-            self.firmware_label.setText(path)
+            self.build_from_source.setChecked(False)
+            self.update_install_action()
+
+    def choose_firmware_folder(self):
+        initial = (self.firmware_path if self.firmware_path and Path(self.firmware_path).is_dir() else
+                   str(Path(self.firmware_path).parent) if self.firmware_path else str(Path.home()))
+        path = QFileDialog.getExistingDirectory(self, 'Choose extracted Linnet firmware folder', initial)
+        if path:
+            self.firmware_path = path
+            self.settings.setValue('firmware_bundle', path)
+            self.build_from_source.setChecked(False)
             self.update_install_action()
 
     def firmware_source_changed(self, enabled):

@@ -1661,7 +1661,7 @@ def main():
             command.add_argument("--build", choices=("user", "dev"), default="user")
             command.add_argument("--method", choices=tuple(INSTALLATION_METHODS))
             source = command.add_mutually_exclusive_group()
-            source.add_argument("--firmware", type=Path, help="prebuilt firmware ZIP")
+            source.add_argument("--firmware", type=Path, help="prebuilt firmware ZIP or extracted bundle folder")
             source.add_argument("--from-source", action="store_true", help="compile fresh firmware locally")
     args = cli.parse_args()
     if args.worker or args.worker_token:
