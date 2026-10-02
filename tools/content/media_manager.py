@@ -857,8 +857,8 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                 if metadata_seed is not None:
                     music_seeds.append((destination, info, *metadata_seed))
             report['steps'].append(dict(added=str(destination), bytes=prepared_bytes))
+            completed_batch([item])
         report.pop('copies_in_progress', None)
-        completed_batch([item for item, *_ in copied])
         record()
         if seek_state_changed:
             _save_seek_state(seek_state_path, seek_state)
