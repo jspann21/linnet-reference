@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import shutil
 import struct
+import time
 import zlib
 
 from .photos import HEADER, PHOTO, MAX_FILE, inspect
@@ -84,12 +85,13 @@ def _publish_packs(packs, identity, root, candidate_bytes, grid_bytes):
         guard()
         if active.exists():
             before = _pack_stamp(active)
+            hash_started_ns = time.time_ns()
             if _hash(active, item['bytes']) != item['sha256']:
                 raise ValueError(f'photo pack name collision or changed iPod bytes: {active}')
             after = _pack_stamp(active)
             if before != after:
                 raise OSError(f'photo pack changed during verification: {active}')
-            verified_existing[active] = after
+            verified_existing[active] = (after, hash_started_ns)
         else:
             pending.append(item)
     needed = (sum(item['bytes'] for item in pending) + candidate_bytes + grid_bytes +
@@ -117,7 +119,8 @@ def _publish_packs(packs, identity, root, candidate_bytes, grid_bytes):
         _plain(active, root)
         if reused:
             stamp = _pack_stamp(active)
-            if stamp != verified_existing[active]:
+            verified_stamp, hash_started_ns = verified_existing[active]
+            if stamp != verified_stamp:
                 raise OSError(f'photo pack changed after verification: {active}')
         else:
             before = _pack_stamp(active)
@@ -127,7 +130,8 @@ def _publish_packs(packs, identity, root, candidate_bytes, grid_bytes):
             if before != stamp:
                 raise OSError(f'photo pack changed during readback: {active}')
         results.append(dict(path=item['device_path'].lstrip('/'), package=str(active),
-                            bytes=item['bytes'], sha256=item['sha256'], reused=reused, stamp=stamp))
+                            bytes=item['bytes'], sha256=item['sha256'], reused=reused, stamp=stamp,
+                            hash_started_ns=hash_started_ns if reused else None))
     _same_target(identity, inspect_target(identity['disk_number'], identity['disk_serial'],
                                           identity['volume_serial'], identity['drive']))
     return results
