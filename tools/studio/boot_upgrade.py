@@ -193,31 +193,43 @@ def _finish_pending(expected, pending_marker, transaction):
     old, _old_files, _old_backup = native.load_plan(*paths['prior'])
     new, _new_files, _new_backup = native.load_plan(*paths['native'])
     apple, _apple_files, _apple_backup = native.load_plan(*paths['apple'])
-    if (old['expected_storage_serial'] != expected['disk_serial'] or
-            new['expected_storage_serial'] != expected['disk_serial'] or
+    old_transaction = Path(pending_marker['transaction']).resolve(strict=True)
+    prior_apple = (Path(pending_marker['plan']).resolve(strict=True),
+                   pending_marker['plan_sha256'])
+    if (prior_apple[0] != old_transaction / 'native-plan/plan.json' or
+            old_transaction.parent.parent != installer.cache_root(original_identity)):
+        raise ValueError('Original Apple recovery plan path changed')
+    original, _original_files, _original_backup = native.load_plan(*prior_apple)
+    if (old['expected_storage_serial'] != upgrade['native_serial'] or
+            new['expected_storage_serial'] != upgrade['native_serial'] or
             apple['expected_storage_serial'] != pending_marker['device_id'] or
+            original['expected_storage_serial'] != pending_marker['device_id'] or
             any(item['expected_linnet_usb_serial'] != expected['linnet_usb_serial'] or
                 item['target_id'] != expected['target_id'] or
-                item['expected_device_bytes'] != expected['disk_bytes'] for item in (old, new, apple)) or
+                item['expected_device_bytes'] != expected['disk_bytes'] for item in (old, new, apple, original)) or
+            expected['disk_serial'] not in (upgrade['native_serial'], pending_marker['device_id']) or
             new['image']['build_id'] != upgrade['boot_build_id'] or
-            new['firmware_backup_sha256'] != apple['firmware_backup_sha256']):
+            new['firmware_backup_sha256'] != apple['firmware_backup_sha256'] or
+            original['image']['build_id'] != old['image']['build_id']):
         raise ValueError('Pending Boot upgrade plans differ from this iPod')
+    live_prior = paths['prior'] if expected['disk_serial'] == upgrade['native_serial'] else prior_apple
+    live_new = paths['native'] if expected['disk_serial'] == upgrade['native_serial'] else paths['apple']
     prior_state = None
     try:
-        prior_state = _guard_plan(*paths['prior'], expected['disk_number'])[3]
+        prior_state = _guard_plan(*live_prior, expected['disk_number'])[3]
     except RuntimeError:
         pass
     if prior_state is not None:
-        restored = native.execute('restore', *paths['prior'], expected['disk_number'])
+        restored = native.execute('restore', *live_prior, expected['disk_number'])
         if not restored.get('passed'):
             raise RuntimeError(restored.get('failure', 'Could not restore Apple startup'))
     else:
         restored = None
     try:
-        _guard_plan(*paths['native'], expected['disk_number'])
+        _guard_plan(*live_new, expected['disk_number'])
     except RuntimeError as error:
         raise RuntimeError('Boot upgrade remains pending; inspect the raw write receipt before retrying') from error
-    applied = native.execute('apply', *paths['native'], expected['disk_number'])
+    applied = native.execute('apply', *live_new, expected['disk_number'])
     if not applied.get('passed'):
         raise RuntimeError(applied.get('failure', 'Could not publish the new Boot'))
     updated = dict(pending_marker, phase='installed', installed_at=installer._now(),
@@ -283,6 +295,7 @@ def worker(job):
         planned['plan'], planned['plan_sha256'], transaction / 'apple-recovery-plan',
         identity=expected, apple_serial=marker['device_id'])
     upgrade = dict(transaction=str(transaction),
+                   native_serial=expected['disk_serial'],
                    prior_plan=str(rebound_path), prior_sha256=rebound_sha,
                    native_plan=planned['plan'], native_sha256=planned['plan_sha256'],
                    apple_plan=str(recovery_path), apple_sha256=recovery_sha,
