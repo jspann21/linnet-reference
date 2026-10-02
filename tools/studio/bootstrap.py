@@ -133,11 +133,23 @@ def restore(mount):
     from tools.studio.targets import TARGETS
     relative=TARGETS[state['target_id']]['installer']['file_loader']
     target=mount.joinpath(*relative.split('/'));_plain(target,mount)
+    temporary=target.with_name('linnet-restore.ipod');_plain(temporary,mount)
+    if temporary.exists():
+        if not temporary.is_file() or temporary.stat().st_size > len(original):
+            raise ValueError('restore staging differs from the saved original')
+        staged=temporary.read_bytes()
+        if staged != original:
+            if not staged or not original.startswith(staged):
+                raise ValueError('restore staging differs from the saved original')
+            temporary.unlink()  # An interrupted write left only a verified prefix.
+        elif state['active_sha256']==state['original_sha256']:
+            temporary.unlink()  # A previous restore finished before cleanup.
     if state['active_sha256']!=state['original_sha256']:
-        temporary=target.with_name('linnet-restore.ipod')
-        if temporary.exists():
-            raise ValueError('restore staging already exists; inspect before continuing')
-        sync_write(temporary,original);temporary.replace(target)
+        if not temporary.exists():
+            sync_write(temporary,original)
+        if digest(temporary.read_bytes())!=state['original_sha256']:
+            raise OSError('restore staging failed verification')
+        temporary.replace(target)
     if digest(target.read_bytes())!=state['original_sha256']:
         raise OSError('restored boot file failed verification')
     state['phase']='restored';state['active_sha256']=state['original_sha256']
