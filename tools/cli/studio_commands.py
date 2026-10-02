@@ -15,9 +15,9 @@ def register_primary(commands):
     target_report = commands.add_parser("target-report", help="Inspect resolved target inputs without building")
     target_report.add_argument("--target", required=True, type=target_id)
     commands.add_parser("media", help="Open the desktop iPod media manager")
-    installer = commands.add_parser("installer", help="Inspect, install, or restore Linnet without erasing media")
+    installer = commands.add_parser("installer", help="Inspect, install, restore, or remove Linnet without erasing media")
     installer_actions = installer.add_subparsers(dest="installer_action", required=True)
-    for action in ("inspect", "install", "restore", "upgrade-boot"):
+    for action in ("inspect", "install", "restore", "uninstall", "upgrade-boot"):
         entry = installer_actions.add_parser(action)
         entry.add_argument("--mount", type=Path, required=True)
         if action in ("install", "upgrade-boot"):
@@ -98,7 +98,7 @@ def run_studio(args, emit):
         from tools.studio.media_app import launch
         launch()
     elif args.command == "installer":
-        from tools.studio.installer import assess, identity_for_mount, install, restore
+        from tools.studio.installer import assess, identity_for_mount, install, restore, uninstall
         identity = identity_for_mount(args.mount)
         if args.installer_action == "inspect":
             emit(assess(identity))
@@ -109,6 +109,8 @@ def run_studio(args, emit):
             from tools.studio.boot_upgrade import upgrade
             emit(upgrade(identity, progress=lambda message: print(message, file=sys.stderr),
                          build=args.build, firmware=args.firmware, from_source=args.from_source))
+        elif args.installer_action == "uninstall":
+            emit(uninstall(identity, progress=lambda message: print(message, file=sys.stderr)))
         else:
             emit(restore(identity))
     elif args.command == "build":
