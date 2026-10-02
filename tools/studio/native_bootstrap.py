@@ -352,7 +352,7 @@ def _validate_residue(observed, original, residue):
 
 
 def guard_device(device, manifest, artifacts, original, *, allow_rockbox_uninstalled=False,
-                 compatible_residue=None):
+                 compatible_residue=None, allow_interrupted_restore=False):
     sector = manifest.get("sector_bytes", SECTOR)
     if read_at(device, 0, sector) != artifacts["mbr.bin"]:
         raise RuntimeError("device MBR changed")
@@ -362,19 +362,24 @@ def guard_device(device, manifest, artifacts, original, *, allow_rockbox_uninsta
     directory = observed[directory_offset:directory_offset + sector]
     allowed_directories = [artifacts["directory-original.bin"], artifacts["directory-candidate.bin"]]
     residue = compatible_residue
+    interrupted_directory = False
     if directory not in allowed_directories:
         residue = (_rockbox_uninstalled_residue(observed, manifest, artifacts, original, directory)
                    if allow_rockbox_uninstalled and compatible_residue is None else None)
-        if residue is None:
+        interrupted_directory = (allow_interrupted_restore and residue is None and
+                                 all(byte in (before, after) for byte, before, after in
+                                     zip(directory, *allowed_directories)))
+        if residue is None and not interrupted_directory:
             raise RuntimeError("firmware directory differs from both reviewed states")
     stage, span = manifest["candidate_partition_offset"], manifest["candidate_write_bytes"]
     staged = observed[stage:stage + span]
-    if residue is None and staged not in (bytes(span), artifacts["candidate.bin"]):
+    if residue is None and not allow_interrupted_restore and staged not in (bytes(span), artifacts["candidate.bin"]):
         raise RuntimeError("staging region differs from both reviewed states")
-    if residue is None and directory == artifacts["directory-candidate.bin"] and staged != artifacts["candidate.bin"]:
+    if (residue is None and not allow_interrupted_restore and
+            directory == artifacts["directory-candidate.bin"] and staged != artifacts["candidate.bin"]):
         raise RuntimeError("published directory references absent candidate bytes")
     normalized = bytearray(observed)
-    normalized[stage:stage + span] = bytes(span)
+    normalized[stage:stage + span] = original[stage:stage + span]
     normalized[directory_offset:directory_offset + sector] = artifacts["directory-original.bin"]
     if residue is not None:
         normalized = _validate_residue(observed, original, residue)
@@ -386,9 +391,10 @@ def guard_device(device, manifest, artifacts, original, *, allow_rockbox_uninsta
         raise RuntimeError("original RetailOS payload is no longer intact")
     directory_state = ("candidate" if directory == artifacts["directory-candidate.bin"] else
                        "original" if directory == artifacts["directory-original.bin"] else
-                       "candidate-rockbox-uninstalled")
+                       "candidate-rockbox-uninstalled" if residue is not None else "interrupted")
     staging_state = ("candidate-rockbox-residue" if residue is not None else
-                     "candidate" if staged == artifacts["candidate.bin"] else "zero")
+                     "candidate" if staged == artifacts["candidate.bin"] else
+                     "zero" if staged == bytes(span) else "interrupted")
     result = dict(directory=directory_state, staging=staging_state, original_payload_intact=True)
     if residue is not None:
         result["compatible_residue"] = residue
@@ -429,7 +435,8 @@ def execute(mode, plan_path, expected_sha, disk_number):
         with open(r"\\.\PhysicalDrive" + str(disk_number), "r+b", buffering=0) as device:
             receipt["before"] = guard_device(
                 device, manifest, artifacts, original,
-                allow_rockbox_uninstalled=mode == "restore")
+                allow_rockbox_uninstalled=mode == "restore",
+                allow_interrupted_restore=mode == "restore")
             if mode == "apply":
                 if receipt["before"]["staging"] != "candidate":
                     write_verified(device, manifest["candidate_disk_offset"], artifacts["candidate.bin"],
@@ -443,7 +450,8 @@ def execute(mode, plan_path, expected_sha, disk_number):
                                receipt, receipt_path, "restore-directory", sector)
             receipt["after"] = guard_device(
                 device, manifest, artifacts, original,
-                compatible_residue=receipt["before"].get("compatible_residue"))
+                compatible_residue=receipt["before"].get("compatible_residue"),
+                allow_interrupted_restore=mode == "restore")
             expected = "candidate" if mode == "apply" else "original"
             if receipt["after"]["directory"] != expected:
                 raise RuntimeError("directory did not reach the requested state")
