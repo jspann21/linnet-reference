@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import hashlib
 import struct
 import uuid
 import zlib
@@ -41,6 +42,34 @@ def _decode(root, target_id):
     return next((name for name, value in CHOICES.items() if value == choice), 'linnet')
 
 
+def _rockbox_available(root, marker, review):
+    from tools.content.publish import _plain
+
+    if (marker.get('installation_method') != 'native-selector' or
+            not review['rockbox'].get('selector_compatible')):
+        return False
+    selector = marker.get('selector') or {}
+    configured_path = selector.get('path')
+    if not isinstance(configured_path, str):
+        return False
+    try:
+        encoded = configured_path.encode('ascii')
+    except UnicodeEncodeError:
+        return False
+    if not encoded or len(encoded) > 255 or not encoded.startswith(b'/'):
+        return False
+    config = root / '.LINNET/RBPATH.CFG'
+    _plain(config, root)
+    if not config.is_file() or config.is_symlink() or config.stat().st_size != 512:
+        return False
+    data = config.read_bytes()
+    return (data[:8] == b'RBPATH1\0' and
+            struct.unpack_from('<I', data, 8)[0] == len(encoded) and
+            data[12:12 + len(encoded)] == encoded and data[12 + len(encoded)] == 0 and
+            zlib.crc32(data[:508]) == struct.unpack_from('<I', data, 508)[0] and
+            hashlib.sha256(data).hexdigest() == selector.get('sha256'))
+
+
 def inspect(review):
     """Expose only defaults supported by the installed Boot and current files."""
     from tools.studio.apple_firmware import available as apple_available
@@ -49,12 +78,12 @@ def inspect(review):
     identity = review['identity']
     supported = (review['linnet']['state'] == 'installed' and
                  marker.get('phase') == 'installed' and
-                 marker.get('startup_default_format') == 1)
+                 marker.get('startup_default_format') == 1 and
+                 not review['rockbox'].get('supersedes_linnet_recovery'))
     choices = ['linnet']
     if supported:
         root = Path(identity['root']).resolve(strict=True)
-        if (marker.get('installation_method') == 'native-selector' and
-                review['rockbox'].get('selector_compatible')):
+        if _rockbox_available(root, marker, review):
             choices.append('rockbox')
         if apple_available(root, identity['target_id']):
             choices.append('apple')
