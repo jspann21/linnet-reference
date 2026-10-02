@@ -276,6 +276,8 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     identity = boot_review['identity']
     identity['linnet'] = boot_review['linnet']
     identity['default_boot'] = installer.default_boot(boot_review)
+    if inventory['Videos'].get('errors'):
+        inventory['Videos']['repair'] = media_library.video_catalog_recovery_options(identity)
     readiness = {}
     for kind in media.KINDS:
         if inventory[kind].get('errors'):
