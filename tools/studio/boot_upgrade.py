@@ -62,6 +62,17 @@ def _durable_bytes(path, data):
         raise OSError('Boot upgrade backup failed readback')
 
 
+def _flush_recovery(transaction):
+    """Persist every local recovery input before publishing the pending marker."""
+    paths = [transaction / 'backup/firmware.bin', transaction / 'backup/mbr.bin',
+             transaction / 'device.json']
+    for directory in ('prior-plan-native', 'native-plan', 'apple-recovery-plan'):
+        paths.extend(transaction / directory / name for name in (*native.ARTIFACTS, 'plan.json'))
+    for path in paths:
+        with path.open('r+b') as saved:
+            os.fsync(saved.fileno())
+
+
 def _saved_plan(review):
     from tools.studio import installer
 
@@ -239,7 +250,7 @@ def _finish_pending(expected, pending_marker, transaction):
                    firmware_backup_sha256=new['firmware_backup_sha256'])
     updated.pop('upgrade', None)
     updated.pop('restored_at', None)
-    installer._save(Path(expected['root']) / installer.JOURNAL, updated)
+    installer._save(Path(expected['root']) / installer.JOURNAL, updated, durable=True)
     return dict(passed=True, restored=restored, applied=applied,
                 recovery=updated, requires_safe_eject=True)
 
@@ -301,5 +312,6 @@ def worker(job):
                    apple_plan=str(recovery_path), apple_sha256=recovery_sha,
                    boot_build_id=job['artifacts']['boot_build_id'])
     pending_marker = dict(marker, phase='boot-upgrade-pending', upgrade=upgrade)
-    installer._save(root / installer.JOURNAL, pending_marker)
+    _flush_recovery(transaction)
+    installer._save(root / installer.JOURNAL, pending_marker, durable=True)
     return _finish_pending(expected, pending_marker, transaction)
