@@ -51,8 +51,9 @@ static uint32_t deferred_runtime_poll_depth __attribute__((unused));
 static struct ln_state_store boot_store,settings_store,theme_store;
 #if !defined(LINNET_PROFILE_RELEASE)
 static struct ln_state_store history_store;
+static bool history_opened;
 #endif
-static bool theme_available,theme_opened,history_opened;
+static bool theme_available,theme_opened;
 static uint32_t history_summary=UINT32_MAX;
 static struct ln_update updater;
 static bool stores_ready,boot_checked,health_checked;
@@ -666,8 +667,8 @@ static uint32_t image_capacity(void *context,uint32_t slot){(void)context;return
 /* Optional history is independent of boot metadata and settings. It never authorizes a boot
  * or blocks one merely because the sidecars are absent or their records corrupt.
  * Invalid FAT allocation still fails the shared write-safety proof. */
-static void history_open(void){
 #if !defined(LINNET_PROFILE_RELEASE)
+static void history_open(void){
     if(history_opened||!stores_ready||ln_storage_busy())return;
     history_opened=true;
     history_summary=UINT32_MAX;
@@ -682,8 +683,8 @@ static void history_open(void){
         history_store.ready=0;return;
     }
     history_summary=ln_read_le32(p+8)|(ln_read_le32(p+12)<<8);
-#endif
 }
+#endif
 uint32_t ln_storage_update_history(void){return history_summary;}
 static void theme_open(void){
     theme_available=false;
@@ -728,11 +729,14 @@ static int open_stores(void){
 #endif
         LINNET_LOAD_ADDRESS,LINNET_OS_CAPACITY};
     if(!ln_update_open(&updater,&boot_store,&io,&policy)){error=401;return 0;}
-    stores_ready=true;theme_opened=history_opened=false;history_summary=UINT32_MAX;
+    stores_ready=true;theme_opened=false;history_summary=UINT32_MAX;
+#if !defined(LINNET_PROFILE_RELEASE)
+    history_opened=false;
 #if defined(LINNET_IMAGE_OS)
     /* Keep the Update screen responsive; Boot only needs this optional store
      * when recording a failed attempt or rejected candidate. */
     history_open();
+#endif
 #endif
     return 1;
 }
