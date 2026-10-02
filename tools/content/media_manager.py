@@ -1770,8 +1770,10 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
             if (not force and cached.get("signature") == fingerprint
                     and catalog_contains(root, relative, label, path=False,
                                          snapshot=catalog_snapshot)
-                    and (index_in_place or (output_name.casefold().startswith("videos/ipvf/")
-                         and _outputs_match(root, cached.get("outputs", []), verified=verified_outputs)))):
+                    and ((index_in_place and output_name.casefold() ==
+                          source.relative_to(root).as_posix().casefold()) or
+                         output_name.casefold().startswith("videos/ipvf/"))
+                    and _outputs_match(root, cached.get("outputs", []), verified=verified_outputs)):
                 if not index_in_place:
                     output_paths.append(output_name)
                 progress(f"Video {index+1}/{item['count']} already ready: {relative}")
@@ -1788,7 +1790,9 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                 result = index_ipvf(source, title=label, library_key=relative, **target_args(identity))
                 published.append(result)
                 catalog_snapshot.clear()
-                video_state[relative] = dict(signature=fingerprint, outputs=[], source_stamp=source_stamp)
+                video_state[relative] = dict(signature=fingerprint,
+                    outputs=[(source.relative_to(root).as_posix(), _hash(source))],
+                    source_stamp=source_stamp)
                 _save(state_path, state)
                 report["steps"].append(dict(kind=kind, file=relative, status="published", publication=result))
                 record()

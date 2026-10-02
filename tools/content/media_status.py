@@ -168,13 +168,21 @@ def _video_readiness(inventory, published, identity=None, state=None, verified=N
     ready = [row for row in published if row['status'] == 'Ready on iPod']
     missing = [row for row in published if row['status'] != 'Ready on iPod']
     cataloged = {row['path'].casefold() for row in ready}
+    generated = {str(root / output[0]).casefold()
+                 for relative, saved in video_files.items()
+                 if root is not None and isinstance(relative, str) and isinstance(saved, dict)
+                 for output in (saved.get('outputs') if isinstance(saved.get('outputs'), list) else [])
+                 if isinstance(output, (list, tuple))
+                 and len(output) == 2 and isinstance(output[0], str)
+                 and output[0].casefold().startswith('videos/')
+                 and output[0].casefold() != ('Videos/' + relative).casefold()}
     if missing:
         return 'Needs update'
     # Scan and library rows already carry absolute device paths. Recheck each
     # source without following a link that appeared since traversal.
     for value in compatible_files:
         source = Path(value)
-        if str(source).casefold() in cataloged:
+        if str(source).casefold() in generated:
             continue
         if root is None:
             return 'Needs update'
@@ -188,8 +196,13 @@ def _video_readiness(inventory, published, identity=None, state=None, verified=N
             return 'Needs update'
         if not stat.S_ISREG(info.st_mode) or getattr(info, 'st_file_attributes', 0) & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400):
             return 'Needs update'
+        outputs = saved.get('outputs', [])
         if (saved.get('source_stamp') != [info.st_size, info.st_mtime_ns] or
-                not media._outputs_match(root, saved.get('outputs', []), verified=verified)):
+                not media._outputs_match(root, outputs, verified=verified)):
+            return 'Needs update'
+        if str(source).casefold() in cataloged and not any(
+                str(root / name).casefold() == str(source).casefold()
+                for name, _ in outputs):
             return 'Needs update'
     if ready:
         return 'Ready'
