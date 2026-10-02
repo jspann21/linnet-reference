@@ -19,7 +19,6 @@ def _eligible(review):
             review['linnet']['state'] == 'installed' and
             marker.get('strategy') == 'native-directory' and
             marker.get('phase') == 'installed' and
-            marker.get('startup_default_format') != 1 and
             marker.get('linnet_usb_serial') == identity.get('linnet_usb_serial') and
             not review['rockbox'].get('supersedes_linnet_recovery'))
 
@@ -80,7 +79,9 @@ def _saved_plan(review):
     transaction = Path(marker['transaction']).resolve(strict=True)
     path = Path(marker['plan']).resolve(strict=True)
     original_identity = dict(identity, disk_serial=marker['device_id'])
-    if (path != transaction / 'native-plan/plan.json' or
+    plan_name = ('apple-recovery-plan' if marker.get('startup_default_format') == 1
+                 else 'native-plan')
+    if (path != transaction / plan_name / 'plan.json' or
             transaction.parent.parent != installer.cache_root(original_identity)):
         raise ValueError('Saved Boot plan is outside this iPod’s recovery records')
     manifest, artifacts, firmware = native.load_plan(path, marker['plan_sha256'])
@@ -163,6 +164,8 @@ def upgrade(identity, *, build='dev', firmware=None, from_source=False,
             raise ValueError('Choose a Linnet firmware ZIP before upgrading Boot')
         from tools.studio.firmware_bundle import load
         artifacts = load(firmware, current, method)
+    if artifacts['boot_build_id'] == reviewed['recovery']['boot_build_id']:
+        raise ValueError('The selected firmware already has the installed startup selector')
     recovery_identity = dict(current, disk_serial=reviewed['recovery']['device_id'])
     transaction = installer._transaction(recovery_identity, artifacts)
     transaction.mkdir(parents=True, exist_ok=False)
@@ -207,7 +210,9 @@ def _finish_pending(expected, pending_marker, transaction):
     old_transaction = Path(pending_marker['transaction']).resolve(strict=True)
     prior_apple = (Path(pending_marker['plan']).resolve(strict=True),
                    pending_marker['plan_sha256'])
-    if (prior_apple[0] != old_transaction / 'native-plan/plan.json' or
+    prior_name = ('apple-recovery-plan' if pending_marker.get('startup_default_format') == 1
+                  else 'native-plan')
+    if (prior_apple[0] != old_transaction / prior_name / 'plan.json' or
             old_transaction.parent.parent != installer.cache_root(original_identity)):
         raise ValueError('Original Apple recovery plan path changed')
     original, _original_files, _original_backup = native.load_plan(*prior_apple)
