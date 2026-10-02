@@ -15,9 +15,9 @@ def register_primary(commands):
     target_report = commands.add_parser("target-report", help="Inspect resolved target inputs without building")
     target_report.add_argument("--target", required=True, type=target_id)
     commands.add_parser("media", help="Open the desktop iPod media manager")
-    installer = commands.add_parser("installer", help="Inspect, install, or restore Linnet without erasing media")
+    installer = commands.add_parser("installer", help="Inspect, install, restore, or remove Linnet without erasing media")
     installer_actions = installer.add_subparsers(dest="installer_action", required=True)
-    for action in ("inspect", "install", "restore"):
+    for action in ("inspect", "install", "restore", "uninstall"):
         entry = installer_actions.add_parser(action)
         entry.add_argument("--mount", type=Path, required=True)
         if action == "install":
@@ -97,12 +97,14 @@ def run_studio(args, emit):
         from tools.studio.media_app import launch
         launch()
     elif args.command == "installer":
-        from tools.studio.installer import assess, identity_for_mount, install, restore
+        from tools.studio.installer import assess, identity_for_mount, install, restore, uninstall
         identity = identity_for_mount(args.mount)
         emit(assess(identity) if args.installer_action == "inspect" else
              install(identity, progress=lambda message: print(message, file=sys.stderr), build=args.build,
                      installation_method=args.method, firmware=args.firmware, from_source=args.from_source)
-             if args.installer_action == "install" else restore(identity))
+             if args.installer_action == "install" else
+             uninstall(identity, progress=lambda message: print(message, file=sys.stderr))
+             if args.installer_action == "uninstall" else restore(identity))
     elif args.command == "build":
         emit(build(args.profile, args.target, args.verify, args.kind, args.probe,
                    args.device_serial, system_config=args.system,

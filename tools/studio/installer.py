@@ -502,10 +502,12 @@ def assess(identity, *, _validated_identity=False):
     if native:
         available = linnet["state"] in ("installed", "absent", "incomplete") and not linnet.get("candidate_pending")
         initial = linnet["state"] in ("absent", "incomplete")
-        boot_options = [option for option in boot_options if option["kind"] == "linnet"]
+        boot_options = [option for option in boot_options if option["kind"] == "linnet" or
+                        marker and marker.get("phase") == "restored" and option["id"] == _saved_previous_boot(marker)]
         for option in boot_options:
-            option["selectable"] = available
-        if linnet["state"] == "installed":
+            if option["kind"] == "linnet":
+                option["selectable"] = available
+        if linnet["state"] == "installed" and not (marker and marker.get("phase") == "restored"):
             from tools.studio.apple_firmware import available as apple_available
             if apple_available(root, target_id):
                 boot_options.append(dict(id="apple", label="Apple iPod software", kind="previous",
@@ -529,12 +531,24 @@ def assess(identity, *, _validated_identity=False):
                 retail_os=not native, linnet=linnet, rockbox=rockbox, other_installations=others,
                 boot_options=boot_options, installation_methods=installation_methods,
                 default_installation_method=default_method,
+                uninstall=_uninstall_option(marker, linnet),
                 recovery=marker, resume=resume, action=action, strategy=strategy, summary=summary,
                 preservation=dict(formats_disk=False, repartitions_disk=False, deletes_media=False,
                                   overwrites_existing_linnet_files=native, archives_previous_linnet=not native,
                                   preserves_settings=True, preserves_media_libraries=True,
                                   archive_contains_superseded_system_files_only=True,
                                   original_boot_backed_up=not native))
+
+
+def _uninstall_option(marker, linnet):
+    if marker and marker.get("phase") in ("installed", "restored"):
+        previous = "Rockbox" if marker.get("strategy") == "rockbox-file" or _saved_previous_boot(marker) == "rockbox" else "Apple iPod software"
+        return dict(available=True, previous=previous,
+                    detail=f"Restore {previous} as the default startup software, then remove Linnet’s files from this iPod.")
+    if linnet.get("state") != "absent":
+        return dict(available=False, previous=None,
+                    detail="Linnet files were found, but no verified installer recovery record is available. Removal is disabled to protect the iPod’s startup software.")
+    return dict(available=False, previous=None, detail="Linnet is not installed on this iPod.")
 
 
 def _run_build(arguments):
@@ -1335,6 +1349,79 @@ def restore(identity, expected=None):
                 requires_safe_eject=True)
 
 
+def uninstall(identity, progress=lambda _message: None, expected=None):
+    """Verify the saved previous boot, then remove only Linnet's private directory."""
+    from tools.content.guard import guarded_path, guard_volume
+
+    reviewed = assess(identity)
+    option = reviewed["uninstall"]
+    if not option["available"]:
+        raise ValueError(option["detail"])
+    marker = reviewed["recovery"]
+    previous = "rockbox" if option["previous"] == "Rockbox" else "apple"
+    if expected is not None and expected != previous:
+        raise RuntimeError("the saved startup software changed after review; check the iPod again")
+    root = Path(reviewed["identity"]["root"]).resolve(strict=True)
+    private = root / ".LINNET"
+    guarded_path(private, root)
+    if private.is_symlink() or not private.is_dir() or private.resolve(strict=True).parent != root:
+        raise ValueError("the Linnet system directory is unsafe or missing")
+    # Refuse a linked subtree before any boot or file change. No media folder
+    # outside .LINNET is part of the removal plan.
+    def fail_walk(error):
+        raise error
+
+    for base, directories, files in os.walk(private, followlinks=False, onerror=fail_walk):
+        for name in directories + files:
+            path = Path(base) / name
+            guarded_path(path, root)
+    media_folders = {name: (root / name).exists() for name in ("Music", "Photos", "Videos", "Notes")}
+    receipt_path = cache_root(reviewed["identity"]) / ("uninstall-" + uuid.uuid4().hex + ".json")
+    receipt = dict(operation="uninstall-linnet", started_at=_now(), passed=False,
+                   identity=reviewed["identity"], previous_boot=previous,
+                   media_folders=media_folders, phase="restore-boot")
+    _save(receipt_path, receipt, replace=False)
+    try:
+        progress(f"Restoring and verifying {option['previous']} as the default startup software…")
+        boot = restore(reviewed["identity"], expected=previous)
+        receipt.update(boot=boot, phase="remove-linnet-files")
+        _save(receipt_path, receipt)
+        progress("Removing Linnet system files and prepared libraries from the iPod…")
+        guard_volume(reviewed["identity"])
+        guarded_path(private, root)
+        if private.is_symlink() or not private.is_dir() or private.resolve(strict=True).parent != root:
+            raise ValueError("the Linnet system directory changed after startup restoration")
+        try:
+            for child in private.iterdir():
+                if child.name.upper() == "RECOVERY":
+                    continue
+                guarded_path(child, root)
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+            recovery = private / "RECOVERY"
+            if recovery.is_dir():
+                guarded_path(recovery, root)
+                shutil.rmtree(recovery)
+            private.rmdir()
+        except OSError as error:
+            raise OSError("Startup software was restored, but some Linnet files could not be removed. Reconnect the same iPod and retry removal.") from error
+        guard_volume(reviewed["identity"])
+        if private.exists() or any((root / name).exists() != existed for name, existed in media_folders.items()):
+            raise RuntimeError("Linnet removal or media-folder verification failed")
+        receipt.update(passed=True, phase="complete", media_preserved=True,
+                       requires_safe_eject=True,
+                       summary=f"Linnet removed. {option['previous']} is the default startup software. Your Music, Photos, Videos, and Notes folders remain on the iPod.")
+    except BaseException as error:
+        receipt.update(phase="failed", failure=f"{type(error).__name__}: {error}")
+        raise
+    finally:
+        receipt.update(finished_at=_now(), receipt=str(receipt_path))
+        _save(receipt_path, receipt)
+    return receipt
+
+
 def worker(job_path):
     job_path = Path(job_path).resolve(strict=True)
     job = json.loads(job_path.read_text(encoding="utf-8"))
@@ -1356,7 +1443,7 @@ def main():
     cli.add_argument("--worker", type=Path)
     cli.add_argument("--worker-token")
     commands = cli.add_subparsers(dest="command")
-    for name in ("inspect", "install", "restore"):
+    for name in ("inspect", "install", "restore", "uninstall"):
         command = commands.add_parser(name)
         command.add_argument("--mount", type=Path, required=True)
         if name == "install":
@@ -1371,12 +1458,12 @@ def main():
         result = worker(worker_path)
     else:
         if not args.command:
-            cli.error("choose inspect, install, or restore")
+            cli.error("choose inspect, install, restore, or uninstall")
         identity = identity_for_mount(args.mount)
         result = (assess(identity) if args.command == "inspect" else
                   install(identity, progress=print, build=args.build,
                           installation_method=args.method, firmware=args.firmware, from_source=args.from_source)
-                  if args.command == "install" else restore(identity))
+                  if args.command == "install" else uninstall(identity) if args.command == "uninstall" else restore(identity))
     print(json.dumps(result, indent=2))
     return 0 if result.get("passed", True) else 2
 
