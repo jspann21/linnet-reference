@@ -96,6 +96,8 @@ def publish_video(package, *, disk_number, expected_disk_serial,
     if package.drive.casefold() == root.drive.casefold():
         raise ValueError('video package must be staged on a different volume from the iPod')
     with _exclusive(identity):
+        from .publish import _recover_pending_groups
+        _recover_pending_groups(root, identity)
         return _publish(package, candidate, identity, root, disk_number,
                         expected_disk_serial, expected_volume_serial, expected_drive,
                         library_key, title, protected)
@@ -313,6 +315,8 @@ def index_video(source, *, disk_number, expected_disk_serial,
         _write_receipt(receipt_path, receipt)
     record()
     with _exclusive(identity):
+        from .publish import _recover_pending_groups
+        _recover_pending_groups(root, identity)
         try:
             _volume_guard(identity); _plain(catalog, root); _plain(backups, root)
             previous, entries = _read_catalog_file(catalog) if catalog.exists() else (None, [])

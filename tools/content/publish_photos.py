@@ -1,21 +1,23 @@
 """Guarded, unelevated PIMG publication to an explicitly identified iPod.
 
-The verified package replaces LIBRARY.PIM last, after its previous bytes have a
-verified backup. Existing optional JPEG references must already match on-device.
-No raw device access, UAC, eject, automatic retry, rollback or cleanup is used.
+Related grid and catalog outputs are staged with device recovery copies before
+their guarded fixed-name replacements. Existing optional JPEG references must
+already match on-device.
 """
 from __future__ import annotations
 
 import hashlib
 import os
 from pathlib import Path
-import shutil
 import struct
+import time
+import uuid
 import zlib
 
 from .photos import HEADER, PHOTO, MAX_FILE, inspect
 from .publish import (_plain, _bounded, _hash, _copy_verified, inspect_target, _exclusive,
-                      _publish_library, _volume_guard, _finish_backups, _write_receipt)
+                      _publish_library, _volume_guard, _finish_backups, _write_receipt,
+                      _publish_group, _recover_pending_groups)
 
 
 def _fallbacks(package):
@@ -151,8 +153,7 @@ def publish_photos(package, *, disk_number, expected_disk_serial,
                    expected_volume_serial, expected_drive=None, grid=None):
     """Validate all local bytes, preserve the previous package, publish last.
 
-    A failure after replacement is an uncertain publication; inspect the host
-    receipt and retained package/backup instead of automatically replaying it.
+    An interrupted pair is rolled back under the device mutex on the next run.
     The iPod must remain exclusively in Disk Mode throughout the operation.
     """
     package = Path(os.path.abspath(package))
@@ -185,6 +186,7 @@ def publish_photos(package, *, disk_number, expected_disk_serial,
     if grid is not None and grid.drive.casefold() == root.drive.casefold():
         raise ValueError('native photo grid must be staged on a different volume from the iPod')
     with _exclusive(identity):
+        _recover_pending_groups(root, identity)
         pack_results = _publish_packs(candidate.get('packs', []), identity, root, candidate['bytes'],
                                       grid_candidate['bytes'] if grid_candidate else 0)
         if grid is not None:
@@ -224,7 +226,6 @@ def _publish_pair(package, candidate, references, grid, grid_candidate, identity
     if target != grid_candidate['target']:
         raise ValueError('native photo grid target differs from the iPod')
     previous, needed = {}, 0
-    host_backup_space = {}
     for name, item, staged in (('GRID.PGR', grid_candidate, grid), ('LIBRARY.PIM', candidate, package)):
         _volume_guard(identity)
         active = root/'.LINNET'/'PHOTOS'/name
@@ -237,38 +238,48 @@ def _publish_pair(package, candidate, references, grid, grid_candidate, identity
             hint = dict(bytes=info.st_size, sha256=_hash(active, info.st_size),
                         stamp=(info.st_size,info.st_mtime_ns,info.st_ctime_ns,info.st_ino))
         previous[name] = hint
-        if hint is None or (hint['bytes'],hint['sha256']) != (item['bytes'],item['sha256']):
-            needed += item['bytes']+3*65536+1024*1024
-            if hint is not None:
-                location = staged.parent
-                host_device = location.stat().st_dev
-                representative, required = host_backup_space.get(host_device, (location, 0))
-                host_backup_space[host_device] = (representative, required + hint['bytes'])
+        # The transaction stages both new outputs and both old copies even
+        # when one fixed-name output already carries the requested bytes.
+        needed += item['bytes'] + (hint['bytes'] if hint else 0) + 3*65536+1024*1024
     if identity['free_bytes'] < needed:
-        raise ValueError('insufficient free space for both photo outputs and retained backups')
-    for location, required in host_backup_space.values():
-        if shutil.disk_usage(location).free < required + 1024*1024:
-            raise ValueError('insufficient computer space for both previous photo outputs')
-    grid_receipt = _publish_library(
-        grid, grid_candidate, identity, root, number, serial, volume, drive,
-        kind='photos', label='native photo grid', filename='GRID.PGR', max_file=MAX_FILE,
-        summary=dict(photos=grid_candidate['photos'],target=grid_candidate['target']),
-        previous_hint=previous['GRID.PGR'], retain_backup=True, backup_on_host=True)
+        raise ValueError('insufficient free space for both photo outputs and device recovery copies')
+    receipt_path = package.parent/('publish-photos-'+uuid.uuid4().hex+'.json')
+    receipt = dict(operation='publish-photos', passed=False, phase='preflight-complete',
+                   identity=identity, candidate_sha256=candidate['sha256'],
+                   candidate_bytes=candidate['bytes'], previous=previous['LIBRARY.PIM'],
+                   grid_previous=previous['GRID.PGR'], packs=pack_results,
+                   started_at=time.time(), receipt=str(receipt_path), elevation=False,
+                   durability='file fsync and readback; FAT rename is not a power-loss journal')
+    def record():
+        _write_receipt(receipt_path, receipt)
+    record()
     try:
-        receipt = _publish(package, candidate, references, identity, root, number, serial, volume, drive,
-                           previous_hint=previous['LIBRARY.PIM'], retain_backup=True,
-                           receipt_fields=dict(grid=grid_receipt, packs=pack_results))
-    except Exception as exc:
-        raise RuntimeError(f"Photo pair stopped after native grid publication; inspect {grid_receipt['receipt']} and the PIMG receipt. Do not replay automatically: {exc}") from exc
-    try:
+        for source, item in ((grid, grid_candidate), (package, candidate)):
+            _plain(source, Path(source.anchor))
+            if _hash(source, item['bytes']) != item['sha256']:
+                raise RuntimeError(f'staged photo output changed: {source}')
+        _verify_fallbacks(references, root, lambda: _volume_guard(identity))
         _verify_pack_proofs(pack_results, identity, root)
+        from .publish import _same_target
+        _same_target(identity, inspect_target(number, serial, volume, drive))
+        receipt['phase'] = 'replacing-related-indexes'; record()
+        _publish_group(root, identity, 'PHOTOS', [
+            ('.LINNET/PHOTOS/GRID.PGR', grid, grid_candidate),
+            ('.LINNET/PHOTOS/LIBRARY.PIM', package, candidate),
+        ])
+        _verify_pack_proofs(pack_results, identity, root)
+        grid_receipt = dict(operation='publish-photos', passed=True, phase='published', identity=identity,
+                            candidate_sha256=grid_candidate['sha256'], candidate_bytes=grid_candidate['bytes'],
+                            package=str(root/'.LINNET'/'PHOTOS'/'GRID.PGR'), receipt=str(receipt_path))
+        receipt.update(passed=True, phase='published', package=str(root/'.LINNET'/'PHOTOS'/'LIBRARY.PIM'),
+                       grid=grid_receipt, photos=candidate['photos'], albums=candidate['albums'],
+                       finished_at=time.time())
+        record()
+        return receipt
     except Exception as exc:
-        receipt.update(passed=False, phase='pack-verification-failed', error=str(exc))
-        _write_receipt(Path(receipt['receipt']), receipt)
-        raise
-    # Both guarded readbacks and all pack proofs have succeeded; recovery copies remain until here.
-    for result, staged in ((grid_receipt, grid), (receipt, package)):
-        _finish_backups(result, [Path(value) for value in result.get('backups_retained',[])], root,
-                        lambda: _volume_guard(identity), host_root=staged.parent)
-        _write_receipt(Path(result['receipt']), result)
-    return receipt
+        receipt.update(error=str(exc), finished_at=time.time())
+        try:
+            record()
+        except OSError:
+            pass
+        raise RuntimeError(f"Photo pair stopped in {receipt['phase']}: {exc}. Inspect {receipt_path} and the device recovery record") from exc

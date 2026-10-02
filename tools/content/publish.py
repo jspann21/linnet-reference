@@ -508,14 +508,163 @@ def _copy_art_batch(batch, stage: Path, root: Path, guard) -> list:
     return verified
 
 
+_GROUP_PATHS = {
+    'MUSIC': ('.LINNET/COVERS.CFL', '.LINNET/BROWSE.BIN', '.LINNET/LIBRARY.PDB'),
+    'PHOTOS': ('.LINNET/PHOTOS/GRID.PGR', '.LINNET/PHOTOS/LIBRARY.PIM'),
+}
+
+
+def _group_directory(root: Path, name: str) -> Path:
+    if name not in _GROUP_PATHS:
+        raise ValueError('unknown publication group')
+    return root / '.LINNET' / 'TXN' / name
+
+
+def _group_digest(path: Path, item: dict | None) -> bool:
+    return (path.is_file() and item is not None and
+            _hash(path, item['bytes']) == item['sha256'])
+
+
+def _clear_group(root: Path, directory: Path, guard) -> None:
+    """Remove only our known transaction files, after the marker is gone."""
+    _plain(directory, root)
+    if not directory.exists():
+        return
+    for path in directory.iterdir():
+        guard(); _plain(path, root)
+        if not (re.fullmatch(r'[BNR][0-2]\.DAT', path.name) or path.name == 'STATE.NEW'):
+            raise ValueError(f'unexpected publication recovery file: {path}')
+        path.unlink()
+    guard(); directory.rmdir()
+
+
+def _recover_group(root: Path, identity: dict, name: str) -> bool:
+    """Restore the old complete set after an interrupted grouped replacement."""
+    guard = lambda: _volume_guard(identity)
+    directory = _group_directory(root, name)
+    marker = directory / 'STATE.JSON'
+    guard(); _plain(marker, root)
+    if not marker.exists():
+        _clear_group(root, directory, guard)
+        return False
+    state = json.loads(_bounded(marker, 8192))
+    if (state.get('version') != 1 or state.get('name') != name or
+            not isinstance(state.get('items'), list) or
+            not 1 <= len(state['items']) <= len(_GROUP_PATHS[name])):
+        raise ValueError('invalid publication recovery record')
+    paths = [item.get('path') for item in state['items']]
+    if len(paths) != len(set(paths)) or any(path not in _GROUP_PATHS[name] for path in paths):
+        raise ValueError('invalid publication recovery paths')
+    for index, item in reversed(list(enumerate(state['items']))):
+        old, new = item.get('old'), item.get('new')
+        if not isinstance(new, dict) or not isinstance(new.get('bytes'), int) or not isinstance(new.get('sha256'), str):
+            raise ValueError('invalid publication recovery digest')
+        if old is not None and (not isinstance(old, dict) or not isinstance(old.get('bytes'), int) or
+                                not isinstance(old.get('sha256'), str)):
+            raise ValueError('invalid publication recovery backup digest')
+        active = root.joinpath(*item['path'].split('/'))
+        backup = directory / f'B{index}.DAT'
+        _plain(active, root); _plain(backup, root)
+        guard()
+        if old is not None and not _group_digest(backup, old):
+            raise OSError(f'publication recovery backup missing or changed: {backup}')
+        if _group_digest(active, old):
+            continue
+        if active.exists() and not _group_digest(active, new):
+            raise RuntimeError(f'publication output changed; preserving recovery record: {active}')
+        if old is None:
+            if active.exists():
+                guard(); active.unlink()
+        else:
+            restored = directory / f'R{index}.DAT'
+            guard(); _plain(restored, root)
+            if restored.exists():
+                if not _group_digest(restored, old):
+                    raise RuntimeError(f'publication recovery temporary changed: {restored}')
+            else:
+                _copy_verified(backup, restored, old, root, guard)
+            guard(); _plain(active, root); os.replace(restored, active)
+            guard()
+            if not _group_digest(active, old):
+                raise OSError(f'publication recovery readback failed: {active}')
+    guard(); marker.unlink()
+    _clear_group(root, directory, guard)
+    return True
+
+
+def _recover_pending_groups(root: Path, identity: dict) -> list[str]:
+    """Resolve incomplete related-index switches before any publisher proceeds."""
+    return [name for name in _GROUP_PATHS if _recover_group(root, identity, name)]
+
+
+def _publish_group(root: Path, identity: dict, name: str, outputs: list[tuple[str, Path, dict]]) -> None:
+    """Stage new bytes and old recovery copies before changing any live name."""
+    guard = lambda: _volume_guard(identity)
+    _recover_group(root, identity, name)
+    paths = [entry[0] for entry in outputs]
+    if len(paths) != len(set(paths)) or paths != [p for p in _GROUP_PATHS[name] if p in paths]:
+        raise ValueError('invalid publication group order')
+    directory = _group_directory(root, name)
+    for part in (directory.parent.parent, directory.parent, directory):
+        guard(); _plain(part, root); part.mkdir(exist_ok=True)
+    items = []
+    try:
+        for index, (relative, source, new) in enumerate(outputs):
+            active = root.joinpath(*relative.split('/'))
+            _plain(active, root); _plain(source, Path(source.anchor))
+            guard()
+            active.parent.mkdir(parents=True, exist_ok=True)
+            _plain(active.parent, root)
+            old = None
+            if active.exists():
+                size = active.stat().st_size
+                if size > 0x7fffffff:
+                    raise ValueError(f'publication output exceeds recovery size: {active}')
+                old = dict(bytes=size, sha256=_hash(active, size))
+                _copy_verified(active, directory / f'B{index}.DAT', old, root, guard)
+            _copy_verified(source, directory / f'N{index}.DAT', new, root, guard)
+            items.append(dict(path=relative, old=old, new=dict(bytes=new['bytes'], sha256=new['sha256'])))
+        state = dict(version=1, name=name, items=items)
+        encoded = json.dumps(state, sort_keys=True).encode('utf-8')
+        marker = directory / 'STATE.JSON'
+        marker_new = directory / 'STATE.NEW'
+        guard(); _write_verified(marker_new, encoded, 'publication recovery record readback mismatch')
+        guard(); os.replace(marker_new, marker)
+        if _bounded(marker, 8192) != encoded:
+            raise OSError('publication recovery record changed after replacement')
+        for index, item in enumerate(items):
+            active = root.joinpath(*item['path'].split('/'))
+            staged = directory / f'N{index}.DAT'
+            guard(); _plain(active, root)
+            if item['old'] is None:
+                if active.exists():
+                    raise RuntimeError(f'publication output appeared: {active}')
+            elif not _group_digest(active, item['old']):
+                raise RuntimeError(f'publication output changed: {active}')
+            os.replace(staged, active)
+            guard()
+            if not _group_digest(active, item['new']):
+                raise OSError(f'publication output readback mismatch: {active}')
+        guard(); marker.unlink()
+        _clear_group(root, directory, guard)
+    except Exception:
+        # A failed guard also prevents rollback. Keep the record for the next
+        # run on the same verified device rather than writing to a new volume.
+        if (directory / 'STATE.JSON').exists():
+            try:
+                _recover_group(root, identity, name)
+            except Exception:
+                pass
+        raise
+
+
 def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
                   expected_volume_serial: str, expected_drive: str | None = None,
                   progress: Callable[[str], None] | None = None) -> dict:
     """Validate locally, guard the explicit iPod, then publish media before PODB.
 
-    No elevation, cleanup deletions, raw writes, ejection, or reboot is performed.
-    An exception after the final replace is an uncertain publication: inspect
-    LIBRARY.PDB and retained LIBBAK backup; never automatically replay the call.
+    Related mutable indexes are staged together and recovered under the device
+    mutex before another publication begins.
     """
     identity = inspect_target(disk_number, expected_disk_serial, expected_volume_serial, expected_drive)
     with _exclusive(identity):
@@ -526,6 +675,7 @@ def publish_music(stage: Path, *, disk_number: int, expected_disk_serial: str,
 def _publish_music(stage, identity, disk_number, expected_disk_serial,
                    expected_volume_serial, expected_drive, progress):
     root = Path(identity["root"])
+    _recover_pending_groups(root, identity)
     inventory = validate_stage(stage, device_root=root, progress=progress)
     stage = Path(inventory["stage"])
     if stage.drive.casefold() == root.drive.casefold():
@@ -554,6 +704,8 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
                 unchanged_assets.add(item["path"])
             else:
                 needed += item["bytes"] + 65536
+                if destination.exists():
+                    needed += destination.stat().st_size + 65536
         elif destination.exists():
             if _hash(destination, item["bytes"]) != item["sha256"]:
                 raise ValueError(f"existing media differs; refusing overwrite: {item['path']}")
@@ -590,6 +742,9 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
         needed += inventory["database"]["bytes"]
         if previous:
             needed += previous["bytes"] + 65536
+    elif any(item['path'] in ('COVERS.CFL', 'BROWSE.BIN') and item['path'] not in unchanged_assets
+             for item in inventory['files']):
+        needed += 2 * inventory['database']['bytes'] + 65536
     if identity["free_bytes"] < needed + 1024 * 1024:
         raise ValueError("insufficient free space for media, new database, and retained backup")
     _same_target(identity, inspect_target(disk_number, expected_disk_serial, expected_volume_serial, expected_drive))
@@ -612,6 +767,7 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
     # mutable state beside the device's immutable database.
     receipt_path = stage / ("publish-" + uuid.uuid4().hex + ".json")
     verified_outputs = {}
+    group_outputs = []
 
     def record() -> None:
         _write_receipt(receipt_path, receipt)
@@ -643,14 +799,8 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
                         raise RuntimeError(f"music asset changed during publication: {item['path']}")
                     copied = False
                 else:
-                    temporary_cover = linnet / ('COVERS.NEW' if item['path'] == 'COVERS.CFL' else 'BROWSE.NEW')
-                    _plain(temporary_cover, root)
-                    if temporary_cover.exists():
-                        temporary_cover.unlink()
-                    copied = _copy_verified(local, temporary_cover, item, root, guard)
-                    _plain(destination, root)
-                    guard()
-                    temporary_cover.replace(destination)
+                    group_outputs.append(('.LINNET/' + item['path'], local, item))
+                    copied = True
             else:
                 copied = _copy_verified(local, destination, item, root, guard)
             receipt["copied" if copied else "reused"] += 1
@@ -668,18 +818,8 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
                 if _hash(journal,HISTORY_BANK_BYTES)!=digest:raise OSError('Music history initialization readback mismatch')
             receipt['initialized_music_state']=True
         provision_collections(linnet, guard)
-        # Preserve previous published bytes before replacing a changed entry.
-        backup = None
-        if previous and not database_unchanged:
-            backup = linnet / "LIBBAK" / (previous["sha256"][:8].upper() + ".PDB")
-            _plain(backup.parent, root)
-            backup.parent.mkdir(exist_ok=True)
-            _copy_verified(active, backup, previous, root, guard)
-            receipt["backup"] = str(backup)
-        if not database_unchanged:
-            temporary = linnet / ("L" + uuid.uuid4().hex[:7].upper() + ".TMP")
-            _copy_verified(stage / "LIBRARY.PDB", temporary, inventory["database"], root, guard)
-            receipt["temporary"] = str(temporary)
+        if not database_unchanged or group_outputs:
+            group_outputs.append(('.LINNET/LIBRARY.PDB', stage / 'LIBRARY.PDB', inventory['database']))
         receipt["phase"] = "candidate-verified"
         record()
         # Database and manifest are immutable inputs to this logical operation.
@@ -703,8 +843,11 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
             raise RuntimeError("another database appeared during publication")
         receipt["phase"] = "reusing-database" if database_unchanged else "replacing-database"
         record()
-        if not database_unchanged:
-            os.replace(temporary, active)
+        if group_outputs:
+            group_outputs.sort(key=lambda item: _GROUP_PATHS['MUSIC'].index(item[0]))
+            receipt['phase'] = 'replacing-related-indexes'
+            record()
+            _publish_group(root, identity, 'MUSIC', group_outputs)
         guard()
         with active.open("rb+") as writer:
             writer.flush()
@@ -717,8 +860,6 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
             info = path.stat()
             if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns) != stamp:
                 raise OSError(f"published music asset changed after readback: {path}")
-        if backup:
-            _finish_backups(receipt, [backup], root, guard)
         receipt.update(passed=True, phase="published", finished_at=time.time(), database=str(active),
                        receipt=str(receipt_path), tracks=inventory["database"]["tracks"],
                        database_reused=database_unchanged)
