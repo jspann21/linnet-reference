@@ -89,6 +89,7 @@ class _PhotoCache:
         self.recipe = recipe
         self.entries = {}
         self.bytes = 0
+        self.lock = threading.Lock()
         self.directory.mkdir(parents=True, exist_ok=True)
         for path in self.directory.glob('*.bin'):
             if not re.fullmatch(r'[0-9a-f]{64}', path.stem):
@@ -136,7 +137,9 @@ class _PhotoCache:
                 return None
             try:
                 os.utime(path, None)
-                self.entries[path] = (path.stat().st_size, path.stat().st_mtime_ns)
+                info = path.stat()
+                with self.lock:
+                    self.entries[path] = (info.st_size, info.st_mtime_ns)
             except OSError:
                 pass
             grid_bytes = metadata.get('grid_width', 0)*metadata.get('grid_height', 0)*2
@@ -166,10 +169,11 @@ class _PhotoCache:
                 os.fsync(stream.fileno())
             os.replace(temporary, path)
             info = path.stat()
-            previous = self.entries.get(path, (0, 0))[0]
-            self.entries[path] = (info.st_size, info.st_mtime_ns)
-            self.bytes += info.st_size - previous
-            self._trim()
+            with self.lock:
+                previous = self.entries.get(path, (0, 0))[0]
+                self.entries[path] = (info.st_size, info.st_mtime_ns)
+                self.bytes += info.st_size - previous
+                self._trim()
         except OSError:
             pass  # A host cache failure must not fail an otherwise valid PIMG.
         finally:
@@ -449,12 +453,20 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                 from .media_manager import Cancelled
                 raise Cancelled('Stopped while preparing photos on the computer.')
 
-        def prepare(path, fallback, rendered):
+        def prepare(path, name, title, fallback):
+            before = path.stat() if cache is not None else None
+            key = cache.key(path, name, title, fallback, worker_check) if cache is not None else None
+            if cache is not None:
+                after_hash = path.stat()
+                if (before.st_size, before.st_mtime_ns) != (after_hash.st_size, after_hash.st_mtime_ns):
+                    raise SourceError(f'Photo changed while preparing: {path}', path)
+            rendered = cache.get(key, worker_check) if cache is not None else None
+            reused = rendered is not None
             if rendered is None:
                 rendered = _render_photo(path, fallback, max_dimension,
                                          viewport_width, viewport_height, worker_check, grid_shape)
             packed, lengths = _pack_photo_tiles(rendered[2], rendered[0]['tile_crcs'], worker_check)
-            return rendered, packed, lengths
+            return before, key, reused, rendered, packed, lengths
 
         pending = deque()
         upcoming = iter(enumerate(paths))
@@ -473,29 +485,22 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
             if fallback and (not FAT_PATH.fullmatch(fallback) or len(fallback) > 127 or
                              not fallback.endswith(('.JPG', '.JPEG'))):
                 raise ValueError('fallback path must be an absolute uppercase FAT8.3 JPEG path')
-            before = path.stat() if cache is not None else None
-            key = cache.key(path, names[path], title, fallback, check) if cache is not None else None
-            if cache is not None:
-                after_hash = path.stat()
-                if (before.st_size, before.st_mtime_ns) != (after_hash.st_size, after_hash.st_mtime_ns):
-                    raise SourceError(f'Photo changed while preparing: {path}', path)
-            rendered = cache.get(key, check) if cache is not None else None
-            future = pool.submit(prepare, path, fallback, rendered)
-            pending.append((index, path, title, fallback, before, key, rendered is not None, future))
+            future = pool.submit(prepare, path, names[path], title, fallback)
+            pending.append((index, path, title, fallback, future))
 
         with ThreadPoolExecutor(max_workers=4, thread_name_prefix='photo-prep') as pool:
             try:
                 for _ in range(min(4, len(paths))):
                     enqueue(pool)
                 while pending:
-                    index, path, title_text, fallback, before, key, reused, future = pending[0]
+                    index, path, title_text, fallback, future = pending[0]
                     check()
                     if progress:
                         progress(dict(phase='photos', current=index, total=len(paths), file=str(path)))
                     while True:
                         check()
                         try:
-                            rendered, packed, lengths = future.result(timeout=0.1)
+                            before, key, reused, rendered, packed, lengths = future.result(timeout=0.1)
                             break
                         except FutureTimeout:
                             continue
