@@ -2081,7 +2081,18 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             checkpoint=checkpoint, progress=progress)
         checkpoint()
         emit_stage('Publishing Files', total_stages - 2, can_stop=False)
-        files_publication = publish_files(files_package, files_report, **target_args(identity))
+        files_outputs = [('.LINNET/FILES/INDEX.FIL', files_report['sha256'])]
+        files_outputs.extend((item['path'], item['sha256']) for item in files_report['previews'])
+        verified_before = verified_outputs.copy()
+        if _outputs_match(root, files_outputs, verified=verified_outputs):
+            checkpoint()
+            _remember_verified(identity, verified_outputs, verified_before)
+            files_publication = dict(operation='publish-files', passed=True, phase='verified',
+                                     reused_index=True, previews_added=0,
+                                     entries=files_report['entries'],
+                                     preview_files=len(files_report['previews']))
+        else:
+            files_publication = publish_files(files_package, files_report, **target_args(identity))
         files_status = 'unchanged' if files_publication.get('reused_index') and not files_publication['previews_added'] else 'published'
         report['steps'].append(dict(kind='Files', status=files_status, publication=files_publication,
                                    warnings=files_report['warnings']))
