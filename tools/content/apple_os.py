@@ -586,18 +586,29 @@ def _update_photos(identity, state, selected, cache, progress):
         recovery = backup / 'recovery.json'
         prepared_hashes = {source_file.relative_to(stage): _hash(source_file)
                            for source_file in outputs}
-        record = {'kind': 'Apple photos', 'disk_serial': identity['disk_serial'],
-                  'volume_serial': identity['volume_serial'],
-                  'volume_unique_id': identity['volume_unique_id'],
-                  'device_root': str(root), 'status': 'in_progress',
-                  'files': [{'path': relative.as_posix(), 'prepared_sha256': digest}
-                            for relative, digest in prepared_hashes.items()]}
-        save_json(recovery, record)
         changed = []
         temporary = None
         temporary_created = False
         with _exclusive(identity):
             _revalidate_device(identity)
+            previous_hashes = {}
+            for relative in prepared_hashes:
+                target = root / relative
+                _plain(target, root)
+                if target.exists() and not target.is_file():
+                    raise ValueError(f'An Apple photo library path is occupied by a folder: {target}')
+                previous_hashes[relative] = _hash(target) if target.is_file() else None
+            record = {'kind': 'Apple photos', 'disk_serial': identity['disk_serial'],
+                      'volume_serial': identity['volume_serial'],
+                      'volume_unique_id': identity['volume_unique_id'],
+                      'device_root': str(root), 'status': 'in_progress',
+                      'files': [{'path': relative.as_posix(),
+                                 'previous_exists': previous_hashes[relative] is not None,
+                                 'previous_sha256': previous_hashes[relative],
+                                 'prepared_sha256': digest,
+                                 'backup_path': str(backup / relative)}
+                                for relative, digest in prepared_hashes.items()]}
+            save_json(recovery, record)
             try:
                 for source_file in outputs:
                     relative = source_file.relative_to(stage)
@@ -606,13 +617,16 @@ def _update_photos(identity, state, selected, cache, progress):
                     _revalidate_device(identity, target.parent)
                     target.parent.mkdir(parents=True, exist_ok=True)
                     prior = backup / relative
-                    old_hash = None
-                    if target.exists():
+                    old_hash = previous_hashes[relative]
+                    if old_hash is not None:
+                        if not target.is_file() or _hash(target) != old_hash:
+                            raise ValueError(f'Apple photo changed during preparation: {relative}')
                         prior.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(target, prior)
-                        old_hash = _hash(prior)
-                        if old_hash != _hash(target):
+                        if _hash(prior) != old_hash or _hash(target) != old_hash:
                             raise ValueError(f'Apple photo changed while backing up: {relative}')
+                    elif target.exists():
+                        raise ValueError(f'Apple photo appeared during preparation: {relative}')
                     temporary = target.with_name(target.name + '.linnet-tmp')
                     if temporary.exists():
                         raise ValueError('An interrupted Apple photo update needs attention.')
