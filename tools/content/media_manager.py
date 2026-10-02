@@ -405,10 +405,18 @@ def _normalize_music_paths(root, checkpoint, renamed):
     while directories:
         folder = directories.pop()
         _plain(folder, root)
-        for path in sorted(folder.iterdir()):
+        with os.scandir(folder) as iterator:
+            entries = sorted(((folder / entry.name, entry) for entry in iterator),
+                             key=lambda item: item[0])
+        for path, entry in entries:
             checkpoint()
-            _plain(path, root)
-            directory = path.is_dir()
+            # The parent was checked above. DirEntry keeps the leaf's file
+            # attributes from enumeration, including Windows junctions.
+            info = entry.stat(follow_symlinks=False)
+            if (stat.S_ISLNK(info.st_mode) or
+                    getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                raise ValueError(f"reparse/symlink path rejected: {path}")
+            directory = entry.is_dir(follow_symlinks=False)
             if not directory and path.suffix.lower() not in extensions("Music"):
                 continue
             try:
