@@ -93,7 +93,7 @@ def _publish_packs(packs, identity, root, candidate_bytes, grid_bytes):
         else:
             pending.append(item)
     old_indexes = 0
-    if pending:
+    if pending and grid_bytes:
         for name in ('GRID.PGR', 'LIBRARY.PIM'):
             active = root/'.LINNET'/'PHOTOS'/name
             guard(); _plain(active, root)
