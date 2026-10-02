@@ -447,6 +447,72 @@ def remove_items(identity, items):
         return _remove(identity, items)
 
 
+def remove_supporting_file(identity, kind, relative, *, expected_bytes, expected_mtime_ns,
+                           expected_sha256):
+    """Trash one reviewed supporting file in an ordinary source folder."""
+    if kind not in manager.KINDS or not isinstance(relative, str):
+        raise ValueError('Unsupported supporting-file location.')
+    parts = relative.split('/')
+    if (len(parts) < 2 or parts[0] != kind or any(not part or part in ('.', '..') or
+            '\\' in part or ':' in part for part in parts) or
+            any(part.casefold() in ('.linnet', 'ipod_control', 'system volume information')
+                for part in parts[1:])):
+        raise ValueError('Supporting file must be inside an ordinary media source folder.')
+    if (type(expected_bytes) is not int or expected_bytes < 0 or
+            type(expected_mtime_ns) is not int or not isinstance(expected_sha256, str) or
+            len(expected_sha256) != 64 or any(c not in '0123456789abcdef' for c in expected_sha256)):
+        raise ValueError('A reviewed file size, timestamp, and SHA-256 are required.')
+    if Path(relative).suffix.lower() in manager.extensions(kind):
+        raise ValueError('Use normal media removal for a supported media file.')
+    identity = manager.refresh(identity)
+    with _exclusive(identity):
+        root = Path(identity['root']).resolve(strict=True)
+        source = root.joinpath(*parts)
+        _plain(source, root)
+        _volume_guard(identity)
+        if not source.is_file():
+            raise ValueError('The reviewed supporting file is missing.')
+        info = source.stat()
+        if ((info.st_size, info.st_mtime_ns) != (expected_bytes, expected_mtime_ns) or
+                hash_file(source, expected_bytes) != expected_sha256):
+            raise ValueError('The supporting file changed; review it again.')
+        token = uuid.uuid4().hex
+        trash = root / '.LINNET' / 'TRASH' / token
+        destination = trash / relative
+        _plain(trash, root); _plain(destination, root)
+        receipt = cache_root(identity) / ('remove-' + token + '.json')
+        selected = [dict(category='supporting', kind=kind, title=source.name, path=str(source),
+                         bytes=expected_bytes, mtime_ns=expected_mtime_ns,
+                         sha256=expected_sha256)]
+        report = dict(operation='remove-supporting-file', started=time.time(), complete=False,
+                      receipt=str(receipt), trash=str(trash), selected=selected, dependencies=[],
+                      catalog_paths={}, requires_update=[kind], removed=[],
+                      moves=[dict(source=str(source), trash=str(destination))])
+        save_json(receipt, report)
+        from .media_trash import _save_device
+        try:
+            _volume_guard(identity); trash.mkdir(parents=True, exist_ok=False)
+            _save_device(identity, root, trash, report)
+            _volume_guard(identity); _plain(source, root); _plain(destination, root)
+            current = source.stat()
+            if ((current.st_size, current.st_mtime_ns) != (expected_bytes, expected_mtime_ns) or
+                    hash_file(source, expected_bytes) != expected_sha256):
+                raise ValueError('The supporting file changed during removal.')
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            _volume_guard(identity); source.rename(destination)
+            report['removed'].append(report['moves'][0])
+            report['complete'] = True
+            report['summary'] = f'Moved {relative} to recoverable iPod Trash.'
+            _save_device(identity, root, trash, report)
+            return report
+        except Exception as error:
+            report['error'] = str(error)
+            raise RuntimeError(f'Supporting file removal could not finish: {error}. Recovery details: {receipt}') from error
+        finally:
+            report['finished'] = time.time()
+            save_json(receipt, report)
+
+
 def organize_videos(identity):
     """Give managed videos readable names and reconcile files deleted in Explorer."""
     from .publish_video import video_filename, device_video_path
@@ -521,14 +587,21 @@ def organize_videos(identity):
         return dict(summary=f'{len(moves)} videos renamed · {len(entries) - len(updated)} missing entries cleared.', receipt='', **cleanup)
 
 
-def _removal_items(root):
+def _removal_items(root, *, allow_video_error=False):
     """Validate mutation IDs and file stamps without loading display metadata."""
     from .retail_media import images as retail_images
     records_by_kind = collect_records_by_kind(root)
-    _, _, entries, resolved_videos = _catalog(root, with_paths=True)
+    try:
+        _, _, entries, resolved_videos = _catalog(root, with_paths=True)
+    except (OSError, ValueError, UnicodeError, struct.error):
+        if not allow_video_error:
+            raise
+        entries, resolved_videos = [], []
     published_paths = {str(path).casefold() for path in resolved_videos}
     result = {}
     for kind in manager.KINDS:
+        if allow_video_error and kind == 'Videos':
+            continue
         allowed = manager.extensions(kind)
         for path, info in records_by_kind[kind]:
             if path.suffix.lower() not in allowed or (kind == 'Videos' and str(path).casefold() in published_paths):
@@ -554,14 +627,16 @@ def _removal_items(root):
 def _remove(identity, items):
     root = Path(identity['root']).resolve(strict=True)
     identity = manager.refresh(identity)
-    fresh = _removal_items(root)
+    allow_video_error = bool(items) and all(isinstance(item, dict) and
+        item.get('kind') in ('Music', 'Photos', 'Notes') for item in items)
+    fresh = _removal_items(root, allow_video_error=allow_video_error)
     selected = []
     selected_ids = set()
     for item in items:
         row = fresh.get(item['id'])
         if row is None or not row['removable']:
             raise ValueError('Selection changed or cannot be removed; refresh the library.')
-        if any(row.get(field) != item.get(field) for field in ('path', 'bytes', 'mtime_ns')):
+        if any(row.get(field) != item.get(field) for field in ('kind', 'category', 'path', 'bytes', 'mtime_ns')):
             raise ValueError('Selected file changed; refresh before removing: ' + row['title'])
         if row['id'] not in selected_ids:
             if isinstance(item.get('title'), str):
@@ -613,7 +688,12 @@ def _remove(identity, items):
     if (photo_dependencies and
             sum(item['bytes'] for item in photo_dependencies) + 1048576 > identity.get('free_bytes', 0)):
         raise ValueError('Not enough iPod space to preserve photo packs in Trash.')
-    catalog, before, entries = _catalog(root)
+    try:
+        catalog, before, entries = _catalog(root)
+    except (OSError, ValueError, UnicodeError, struct.error):
+        if not allow_video_error:
+            raise
+        catalog, before, entries = root / '.LINNET' / 'VIDEOS' / 'INDEX.VID', None, []
     selected_keys = {row['key'] for row in selected if row['category'] == 'published'}
     paths = {}
     expected_by_path = {}
@@ -816,7 +896,7 @@ def _remove(identity, items):
         remaining_kinds = set()
         if report['requires_update']:
             manager.refresh(identity)
-            remaining_kinds = {row['kind'] for row in _removal_items(root).values()
+            remaining_kinds = {row['kind'] for row in _removal_items(root, allow_video_error=allow_video_error).values()
                                if row['category'] == 'original'}
         empty = [kind for kind in report['requires_update'] if kind not in remaining_kinds]
         report['empty_folders'] = empty

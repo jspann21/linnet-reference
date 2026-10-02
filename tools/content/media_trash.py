@@ -45,8 +45,9 @@ def _portable(root, token, report):
         selected.append(dict(category=row['category'], kind=row['kind'],
                              title=str(row['title'])[:512], key=row.get('key'),
                              relative=relative,
-                             bytes=row['bytes'], mtime_ns=row['mtime_ns']))
-    return dict(version=1, token=token, started=report['started'],
+                             bytes=row['bytes'], mtime_ns=row['mtime_ns'],
+                             sha256=row.get('sha256')))
+    return dict(version=2, token=token, started=report['started'],
                 complete=bool(report.get('complete')), restored=bool(report.get('restored')),
                 trash_emptied=bool(report.get('trash_emptied')),
                 selected=selected, requires_update=report.get('requires_update', []),
@@ -78,7 +79,7 @@ def _save_device(identity, root, trash, report):
 
 
 def _validate_manifest(value, token):
-    if (not isinstance(value, dict) or value.get('version') != 1 or value.get('token') != token or
+    if (not isinstance(value, dict) or value.get('version') not in (1, 2) or value.get('token') != token or
             type(value.get('started')) not in (int, float) or
             not isinstance(value.get('selected'), list) or
             not isinstance(value.get('catalog_paths'), dict) or
@@ -87,13 +88,25 @@ def _validate_manifest(value, token):
     datetime.fromtimestamp(value['started'])
     if len(value['selected']) > 100000 or len(value['dependencies']) > 100000:
         raise ValueError('Oversized Trash metadata')
+    if len({item.get('relative', '').casefold() for item in value['dependencies']
+            if isinstance(item, dict) and isinstance(item.get('relative'), str)}) != len(value['dependencies']):
+        raise ValueError('Duplicate photo recovery dependency')
     for row in value['selected']:
-        if (not isinstance(row, dict) or row.get('category') not in ('original', 'library', 'published') or
+        if (not isinstance(row, dict) or row.get('category') not in ('original', 'library', 'published', 'supporting') or
                 row.get('kind') not in media.KINDS or not isinstance(row.get('title'), str) or
                 type(row.get('bytes')) is not int or row['bytes'] < 0 or
                 row.get('mtime_ns') is not None and type(row['mtime_ns']) is not int):
             raise ValueError('Invalid selected Trash item')
-        _relative(row.get('relative'))
+        relative = _relative(row.get('relative'))
+        if row['category'] == 'supporting':
+            digest = row.get('sha256')
+            if (relative.split('/')[0] != row['kind'] or len(relative.split('/')) < 2 or
+                    any(part.casefold() in ('.linnet', 'ipod_control', 'system volume information')
+                        for part in relative.split('/')[1:]) or
+                    Path(relative).suffix.lower() in media.extensions(row['kind']) or
+                    not isinstance(digest, str) or len(digest) != 64 or
+                    any(c not in '0123456789abcdef' for c in digest)):
+                raise ValueError('Invalid supporting-file recovery record')
         key = row.get('key')
         if key is not None and (not isinstance(key, str) or len(key) != 64 or
                                 any(c not in '0123456789abcdef' for c in key)):
@@ -125,8 +138,7 @@ def _validate_manifest(value, token):
 
 def _photo_pack_requirements(package):
     """Read the pack identities bound into a previously validated PIMG."""
-    from .photos import HEADER, PACK_COUNT, PHOTO, MAX_PHOTOS, MAX_STRINGS, _crc
-    from .publish_photos import _fallbacks
+    from .photos import HEADER, PACK_COUNT, PHOTO, MAX_PHOTOS, MAX_STRINGS, FAT_PATH, _crc
     with package.open('rb') as reader:
         header = reader.read(HEADER)
     if (len(header) != HEADER or header[:4] != b'LPIC' or
@@ -139,8 +151,39 @@ def _photo_pack_requirements(package):
             photo_at + count * PHOTO > size or pool_at + pool_bytes > size):
         raise ValueError('Photo package has invalid fallback bounds.')
     version = struct.unpack_from('<H', header, 4)[0]
+    with package.open('rb') as reader:
+        reader.seek(pool_at)
+        pool = reader.read(pool_bytes)
+        if len(pool) != pool_bytes or pool[0] != 0 or pool[-1] != 0:
+            raise ValueError('Invalid photo fallback string pool.')
+        reader.seek(photo_at)
+        distinct = {}
+        for _ in range(count):
+            photo = reader.read(PHOTO)
+            if len(photo) != PHOTO or _crc(photo[:-4]) != struct.unpack_from('<I', photo, PHOTO - 4)[0]:
+                raise ValueError('Invalid photo recovery record CRC.')
+            start, length = struct.unpack_from('<II', photo, 12)
+            if not length:
+                continue
+            if (length > 127 or start >= pool_bytes or length >= pool_bytes - start or
+                    pool[start + length] != 0 or (start and pool[start - 1] != 0) or
+                    b'\0' in pool[start:start + length]):
+                raise ValueError('Invalid photo fallback string range.')
+            try:
+                name = pool[start:start + length].decode('ascii')
+            except UnicodeError as error:
+                raise ValueError('Invalid photo fallback path encoding.') from error
+            fallback_bytes, crc = struct.unpack_from('<II', photo, 44)
+            if (not FAT_PATH.fullmatch(name) or not name.endswith(('.JPG', '.JPEG')) or
+                    not 0 < fallback_bytes <= 262144):
+                raise ValueError('Invalid photo fallback reference in Trash.')
+            item = dict(path=name, bytes=fallback_bytes, crc32=crc)
+            if name in distinct and distinct[name] != item:
+                raise ValueError('Conflicting photo fallback references.')
+            distinct[name] = item
+    fallbacks = list(distinct.values())
     if version == 0:
-        return {}, _fallbacks(package)
+        return {}, fallbacks
     if version != 1:
         raise ValueError('Unsupported photo package in Trash.')
     result = {}
@@ -150,7 +193,7 @@ def _photo_pack_requirements(package):
             continue
         prefix = identity.hex().upper()
         result[f'.LINNET/PHOTOS/PACKS/{prefix[:8]}/{prefix[8:]}.PAK'] = (prefix.lower(), size)
-    return result, _fallbacks(package)
+    return result, fallbacks
 
 
 def _removal(identity, root, token):
@@ -236,8 +279,8 @@ def recover(identity, token, *, erase=False):
             save_json(receipt, report)
             return dict(receipt=str(receipt), summary='Trash removal permanently deleted. Its storage is now available.')
         moves = []
-        dependencies = {item['relative']: item for item in report.get('dependencies', [])}
-        selected_paths = {row['relative'] for row in report['selected']} if portable else None
+        dependencies = {item['relative'].casefold(): item for item in report.get('dependencies', [])}
+        selected_paths = {row['relative'].casefold() for row in report['selected']} if portable else None
         dependency_sources = []
         recovery_temporaries = []
         # Derive destinations from the guarded removal tree; never trust absolute receipt paths.
@@ -249,24 +292,29 @@ def recover(identity, token, *, erase=False):
             if _recovery_temporary(relative):
                 recovery_temporaries.append(source)
                 continue
-            if name in dependencies:
-                dependency_sources.append((source, root / relative, info, dependencies[name]))
+            if name.casefold() in dependencies:
+                dependency_sources.append((source, root / relative, info, dependencies[name.casefold()]))
                 continue
-            allowed = relative.parts[0] in media.KINDS or relative.parts[:2] == ('iPod_Control', 'Music') or name in ('.LINNET/LIBRARY.PDB', '.LINNET/PHOTOS/LIBRARY.PIM', '.LINNET/PHOTOS/GRID.PGR', '.LINNET/NOTES/LIBRARY.NNT') or (relative.parent.as_posix() == '.LINNET/VIDEOS' and relative.suffix.lower() in ('.ipv', '.ipvf', '.mp4', '.m4v', '.mov'))
+            allowed = relative.parts[0].casefold() in {kind.casefold() for kind in media.KINDS} or tuple(part.casefold() for part in relative.parts[:2]) == ('ipod_control', 'music') or name.casefold() in ('.linnet/library.pdb', '.linnet/photos/library.pim', '.linnet/photos/grid.pgr', '.linnet/notes/library.nnt') or (relative.parent.as_posix().casefold() == '.linnet/videos' and relative.suffix.lower() in ('.ipv', '.ipvf', '.mp4', '.m4v', '.mov'))
             if not allowed:
                 raise ValueError('Unexpected file in Trash; inspect the report before restoring.')
-            if selected_paths is not None and name not in selected_paths:
+            if selected_paths is not None and name.casefold() not in selected_paths:
                 raise ValueError('Trash contains a file outside its portable recovery manifest.')
+            if portable:
+                supporting = next((row for row in report['selected'] if row['relative'].casefold() == name.casefold() and
+                                   row['category'] == 'supporting'), None)
+                if supporting is not None and hash_file(source, info.st_size) != supporting['sha256']:
+                    raise ValueError('Supporting file changed in Trash.')
             destination = root / relative
             _plain(destination, root)
             if destination.exists():
                 raise ValueError(f'Cannot restore over an existing file: {relative}. Move that file first.')
             moves.append((source, destination, info))
-        moved_names = {p.relative_to(trash).as_posix() for p, _, _ in moves}
+        moved_names = {p.relative_to(trash).as_posix().casefold() for p, _, _ in moves}
         if portable:
             for row in report['selected']:
                 name = row['relative']
-                if name in moved_names or row['mtime_ns'] is None:
+                if name.casefold() in moved_names or row['mtime_ns'] is None:
                     continue
                 active = root / name
                 _plain(active, root)
@@ -275,36 +323,41 @@ def recover(identity, token, *, erase=False):
                 info = active.stat()
                 if (info.st_size, info.st_mtime_ns) != (row['bytes'], row['mtime_ns']):
                     raise ValueError('A selected file changed since removal.')
+                if row['category'] == 'supporting' and hash_file(active, info.st_size) != row['sha256']:
+                    raise ValueError('A supporting file changed since removal.')
             photo_name = '.LINNET/PHOTOS/LIBRARY.PIM'
-            if photo_name in selected_paths:
-                package = (trash / photo_name) if photo_name in moved_names else (root / photo_name)
-                _plain(package, trash if photo_name in moved_names else root)
+            if photo_name.casefold() in selected_paths:
+                package = (trash / photo_name) if photo_name.casefold() in moved_names else (root / photo_name)
+                _plain(package, trash if photo_name.casefold() in moved_names else root)
                 expected_packs, fallbacks = _photo_pack_requirements(package)
-                expected_names = set(expected_packs)
-                selected_folded = {name.casefold() for name in selected_paths}
+                expected_names = {name.casefold() for name in expected_packs}
                 for fallback in fallbacks:
                     name = fallback['path'].lstrip('/')
-                    if name.casefold() not in selected_folded:
-                        expected_names.add(name)
-                        item = dependencies.get(name)
-                        if item is None or item.get('kind') != 'jpeg' or item['bytes'] != fallback['bytes']:
-                            raise ValueError('Photo JPEG recovery metadata differs from its catalog.')
+                    if name.casefold() not in selected_paths:
+                        if report['version'] >= 2:
+                            expected_names.add(name.casefold())
+                            item = dependencies.get(name.casefold())
+                            if item is None or item.get('kind') != 'jpeg' or item['bytes'] != fallback['bytes']:
+                                raise ValueError('Photo JPEG recovery metadata differs from its catalog.')
+                        else:
+                            from .publish_photos import _verify_fallbacks
+                            _verify_fallbacks([fallback], root, lambda: _volume_guard(identity))
                 if set(dependencies) != expected_names or any(
-                        dependencies[name].get('kind', 'pack') != 'pack' or
-                        dependencies[name]['bytes'] != size or
-                        not dependencies[name]['sha256'].startswith(prefix)
+                        dependencies[name.casefold()].get('kind', 'pack') != 'pack' or
+                        dependencies[name.casefold()]['bytes'] != size or
+                        not dependencies[name.casefold()]['sha256'].startswith(prefix)
                         for name, (prefix, size) in expected_packs.items()):
                     raise ValueError('Photo pack recovery metadata differs from its catalog.')
                 grid_name = '.LINNET/PHOTOS/GRID.PGR'
-                if grid_name in selected_paths:
+                if grid_name.casefold() in selected_paths:
                     from .photo_grid import inspect_grid
-                    grid = (trash / grid_name) if grid_name in moved_names else (root / grid_name)
-                    _plain(grid, trash if grid_name in moved_names else root)
+                    grid = (trash / grid_name) if grid_name.casefold() in moved_names else (root / grid_name)
+                    _plain(grid, trash if grid_name.casefold() in moved_names else root)
                     inspect_grid(grid, package=package, checkpoint=lambda: _volume_guard(identity))
-        found_dependencies = {source.relative_to(trash).as_posix() for source, _, _, _ in dependency_sources}
+        found_dependencies = {source.relative_to(trash).as_posix().casefold() for source, _, _, _ in dependency_sources}
         for name, item in dependencies.items():
             if name not in found_dependencies:
-                existing = root / name
+                existing = root / item['relative']
                 _plain(existing, root)
                 if (not existing.is_file() or existing.stat().st_size != item['bytes'] or
                         hash_file(existing, item['bytes']) != item['sha256']):
@@ -317,9 +370,15 @@ def recover(identity, token, *, erase=False):
             source_valid = info.st_size == item['bytes'] and hash_file(source, info.st_size) == item['sha256']
             if not source_valid and not destination_valid:
                 raise ValueError('Photo recovery pack changed in Trash.')
-        catalog, before, entries = library._catalog(root)
-        entries_by_key = {entry[0]: entry for entry in entries}
         backup = trash / 'INDEX.VID.before'
+        video_involved = backup.exists() or any(row.get('kind') == 'Videos' and
+                                                row.get('category') != 'supporting'
+                                                for row in report.get('selected', []))
+        if video_involved:
+            catalog, before, entries = library._catalog(root)
+        else:
+            catalog, before, entries = root / '.LINNET' / 'VIDEOS' / 'INDEX.VID', None, []
+        entries_by_key = {entry[0]: entry for entry in entries}
         restore_entries = []
         restore_paths = {}
         if backup.exists():
@@ -333,7 +392,10 @@ def recover(identity, token, *, erase=False):
                 if entry[0].hex() in selected_keys or str(path).casefold() in restored_paths:
                     existing = entries_by_key.get(entry[0])
                     if existing is not None and existing != entry:
-                        raise ValueError('A newer video uses this library entry. Resolve the conflict before restoring.')
+                        existing_path = library._device_path(root, existing[1])
+                        if (existing[2] != entry[2] or
+                                str(existing_path).casefold() != str(path).casefold()):
+                            raise ValueError('A newer video uses this library entry. Resolve the conflict before restoring.')
                     if existing is None:
                         if not path.exists() and str(path).casefold() not in restored_paths:
                             raise ValueError('The original video needed for recovery is missing.')
