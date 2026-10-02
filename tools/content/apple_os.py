@@ -590,7 +590,10 @@ def _update_photos(identity, state, selected, cache, progress):
         temporary = None
         temporary_created = False
         with _exclusive(identity):
-            _revalidate_device(identity)
+            _revalidate_device(identity, photo_db)
+            current_photo_digest = _hash(photo_db) if photo_db.is_file() else None
+            if current_photo_digest != old_digest:
+                raise ValueError('The Apple photo library changed during preparation. Review it before retrying.')
             previous_hashes = {}
             for relative in prepared_hashes:
                 target = root / relative
@@ -638,6 +641,12 @@ def _update_photos(identity, state, selected, cache, progress):
                             shutil.copyfileobj(prepared_source, destination)
                     if _hash(temporary) != expected:
                         raise ValueError(f'Apple photo readback failed: {relative}')
+                    _revalidate_device(identity, target, temporary)
+                    if old_hash is None:
+                        if target.exists():
+                            raise ValueError(f'Apple photo appeared during publication: {relative}')
+                    elif not target.is_file() or _hash(target) != old_hash:
+                        raise ValueError(f'Apple photo changed during publication: {relative}')
                     _revalidate_device(identity, target, temporary)
                     temporary.replace(target)
                     temporary_created = False
