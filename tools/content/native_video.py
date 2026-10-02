@@ -1,5 +1,6 @@
 """Native MP4 preparation using each device's declared decoder limits."""
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -11,6 +12,92 @@ import uuid
 from fractions import Fraction
 
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+
+
+class _Progress:
+    """Report native stages using the same event fields as IPVF conversion."""
+
+    def __init__(self, source, message, detail):
+        self.name = source.name
+        self.message = message
+        self.detail = detail
+        self.started = time.monotonic()
+        self.last_report = 0
+
+    def emit(self, phase, *, fraction=None, complete=False, frames=None,
+             total_frames=None, force=False):
+        now = time.monotonic()
+        if not force and not complete and now - self.last_report < .5:
+            return
+        self.last_report = now
+        elapsed = now - self.started
+        fraction = min(1.0, max(0.0, fraction)) if fraction is not None else None
+        percent = 100 if complete else min(99, 100 * fraction) if fraction is not None else None
+        eta = ((1 - fraction) * elapsed / fraction
+               if fraction is not None and 0 < fraction < 1 and elapsed >= 2 else None)
+        if complete:
+            eta = 0
+        label = "Checking" if phase == "validate" else "Preparing"
+        status = (f"{percent:.0f}%" if percent is not None else "working")
+        if eta is not None and not complete:
+            status += f" · about {round(eta)}s left"
+        message = f"{label} {self.name}: {status} · {round(elapsed)}s elapsed"
+        self.message(message)
+        if self.detail:
+            self.detail(dict(stage="verify" if phase == "validate" else "convert",
+                             phase=phase, name=self.name, percent=percent,
+                             message=message, frames=frames, total_frames=total_frames,
+                             eta_seconds=eta, elapsed_seconds=elapsed,
+                             frames_per_second=(frames / elapsed if frames is not None and elapsed > 0 else None)))
+
+
+def _seconds(value):
+    """Return a bounded positive media timestamp, or None for unknown metadata."""
+    try:
+        result = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return result if math.isfinite(result) and 0 < result <= 86400 else None
+
+
+def _conversion_updates(path, offset, pending, duration, progress, phase, total_frames):
+    """Read FFmpeg's bounded key/value progress stream without blocking its writer."""
+    try:
+        with path.open("rb") as stream:
+            stream.seek(offset)
+            chunk = stream.read(65536)
+    except FileNotFoundError:
+        return offset, pending
+    offset += len(chunk)
+    pending += chunk
+    if len(pending) > 65536:
+        pending = pending[-65536:]
+    lines = pending.split(b"\n")
+    pending = lines.pop()
+    values = {}
+    for line in lines:
+        key, separator, value = line.strip().partition(b"=")
+        if not separator:
+            continue
+        values[key] = value
+        if key != b"progress":
+            continue
+        elapsed_media = None
+        try:
+            if b"out_time_us" in values or b"out_time_ms" in values:
+                elapsed_media = int(values.get(b"out_time_us", values.get(b"out_time_ms"))) / 1000000
+            elif b"out_time" in values:
+                hours, minutes, seconds = values[b"out_time"].split(b":")
+                elapsed_media = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+            frame = int(values[b"frame"]) if b"frame" in values else None
+        except (ValueError, TypeError):
+            elapsed_media, frame = None, None
+        fraction = (max(0.0, elapsed_media) / duration
+                    if duration and elapsed_media is not None and math.isfinite(elapsed_media) else None)
+        progress.emit(phase, fraction=fraction, frames=frame, total_frames=total_frames,
+                      complete=value == b"end", force=True)
+        values.clear()
+    return offset, pending
 
 class _Bits:
     def __init__(self, data):
@@ -324,9 +411,20 @@ def inspect_file(path, *, profile, ffprobe=None, cancelled=None):
     extension = ".mov" if brand == "qt" else ".mp4"
     if extension not in profile["video_extensions"]:
         raise ValueError("This video container is unsupported by the selected iPod target")
-    return dict(format="MP4", extension=extension, width=width, height=height, frames=frames, codec=v["codec_name"], file_bytes=size, bytes=size, fast_start=fast_start)
+    return dict(format="MP4", extension=extension, width=width, height=height, frames=frames,
+                codec=v["codec_name"], file_bytes=size, bytes=size, fast_start=fast_start,
+                duration_seconds=_seconds(v.get("duration")) or _seconds(data.get("format", {}).get("duration")))
 
-def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lambda message: None, cancelled=None):
+def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None,
+            progress=lambda message: None, progress_detail=None, cancelled=None):
+    """Prepare native MP4, reporting optional IPVF-compatible stage events.
+
+    ``progress(message)`` remains the existing string callback. Optional
+    ``progress_detail(event)`` receives stage, phase, name, percent, message,
+    frames, total_frames, eta_seconds, elapsed_seconds and frames_per_second.
+    Percent and ETA apply to the named stage and may be None when duration is
+    unknown. The destination is replaced only after complete validation.
+    """
     source, output = Path(source), Path(output)
     if source.suffix.lower() in (".ipvf", ".ipv"):
         raise ValueError("IPVF is not supported by this target")
@@ -335,6 +433,7 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lamb
             from .media_manager import Cancelled
             raise Cancelled("Native video preparation cancelled")
     checkpoint()
+    updates = _Progress(source, progress, progress_detail)
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(output.stem + "." + uuid.uuid4().hex + ".mp4")
     try:
@@ -347,20 +446,29 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lamb
         relocate = compatible and not source_info['fast_start'] and encoder
         if compatible and not relocate:
             progress("Copying compatible native video…")
+            updates.emit("copy", fraction=0, force=True)
+            copied = 0
             with source.open("rb") as reader, temporary.open("xb") as writer:
                 while chunk := reader.read(1024 * 1024):
                     checkpoint(); writer.write(chunk)
+                    copied += len(chunk)
+                    updates.emit("copy", fraction=copied / source_info["file_bytes"])
                 writer.flush(); os.fsync(writer.fileno())
+            updates.emit("copy", complete=True)
         else:
             if not encoder:
                 raise ValueError("ffmpeg is required to prepare native video")
             progress("Preparing video for faster loading…" if relocate else "Preparing H.264 video and AAC audio…")
+            phase = "remux" if relocate else "transcode"
+            updates.emit(phase, fraction=0 if relocate and source_info.get("duration_seconds") else None, force=True)
             limits = profile["native_video"]
             width, height, fps = profile["video_width"], profile["video_height"], profile["video_fps"]
             video_kbps = min(limits["video_kbps"], 800) if profile["video_backend"] == "native-mp4" else limits["video_kbps"]
             max_video_kbps = min(limits["max_video_kbps"], 1000) if profile["video_backend"] == "native-mp4" else limits["max_video_kbps"]
             buffer_kbits = min(limits["buffer_kbits"], 2000) if profile["video_backend"] == "native-mp4" else limits["buffer_kbits"]
             if relocate:
+                duration = source_info.get("duration_seconds")
+                total_frames = source_info.get("frames")
                 command = [str(encoder), "-nostdin", "-v", "error", "-i", str(source),
                            "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart", str(temporary)]
             else:
@@ -455,25 +563,41 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None, progress=lamb
                                 process.kill(); process.wait()
                 if not 0 < duration <= 86400:
                     raise ValueError("Could not determine the video track duration")
+                total_frames = max(1, round(float(duration) * float(fps)))
                 duration_text = f"{float(duration):.6f}"
                 command = [str(encoder), "-nostdin", "-v", "error", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2", "-r", str(fps), "-c:v", "libx264", "-profile:v", "baseline", "-level:v", str(limits["h264_level"] / 10), "-pix_fmt", "yuv420p", "-b:v", f"{video_kbps}k", "-maxrate", f"{max_video_kbps}k", "-bufsize", f"{buffer_kbits}k", "-g", str(max(1, round(float(fps) * 2))), "-bf", "0", "-af", "aresample=async=1:first_pts=0,apad", "-c:a", "aac", "-profile:a", "aac_low", "-ar", "44100", "-ac", "2", "-b:a", f"{limits['audio_kbps']}k", "-t", duration_text, "-movflags", "+faststart", str(temporary)]
-            with tempfile.TemporaryFile() as errors:
-                process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors, creationflags=NO_WINDOW)
+            with tempfile.TemporaryDirectory(prefix="linnet-video-progress-") as progress_dir, tempfile.TemporaryFile() as errors:
+                progress_path = Path(progress_dir) / "ffmpeg.progress"
+                command[-1:-1] = ["-nostats", "-stats_period", "0.5", "-progress", str(progress_path)]
+                process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                           stderr=errors, creationflags=NO_WINDOW)
                 try:
+                    offset, pending = 0, b""
                     while process.poll() is None:
                         checkpoint()
+                        offset, pending = _conversion_updates(progress_path, offset, pending,
+                                                               float(duration) if duration else None,
+                                                               updates, phase, total_frames)
                         try:
                             process.wait(timeout=.2)
                         except subprocess.TimeoutExpired:
                             pass
+                    offset, pending = _conversion_updates(progress_path, offset, pending,
+                                                           float(duration) if duration else None,
+                                                           updates, phase, total_frames)
+                    checkpoint()
                     if process.returncode:
                         errors.seek(0, os.SEEK_END)
                         errors.seek(max(0, errors.tell() - 4000))
                         raise ValueError("Native video conversion failed: " + errors.read().decode("utf-8", errors="replace"))
+                    updates.emit(phase, complete=True)
                 finally:
                     if process.poll() is None:
                         process.kill(); process.wait()
+        updates.emit("validate", force=True)
         candidate = inspect_file(temporary, profile=profile, ffprobe=ffprobe, cancelled=cancelled)
+        checkpoint()
+        updates.emit("validate", complete=True)
         checkpoint(); os.replace(temporary, output)
         return candidate
     finally:
