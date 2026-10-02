@@ -15,7 +15,8 @@ from .host_state import cache_root, save_json
 from .inventory import collect_records_by_kind, skipped_paths, scan as scan_sources
 from .guard import guarded_path as _plain, guard_volume as _volume_guard, hash_file
 from .publish import _bounded, _exclusive, _write_verified, _finish_backups
-from .video_catalog import encode as _encode_catalog, read_file as _read_catalog_file
+from .video_catalog import (CATALOG_MAX_BYTES, encode as _encode_catalog,
+                            read_file as _read_catalog_file)
 
 
 def _device_path(root, value):
@@ -43,6 +44,109 @@ def _catalog(root, *, with_paths=False):
     data, entries = _read_catalog_file(path)
     resolved = [_device_path(root, name) for _, name, _ in entries]
     return (path, data, entries, resolved) if with_paths else (path, data, entries)
+
+
+def video_catalog_recovery_options(identity):
+    """Review complete verified backups without changing a damaged catalog."""
+    identity = manager.refresh(identity)
+    root = Path(identity['root']).resolve(strict=True)
+    catalog = root / '.LINNET' / 'VIDEOS' / 'INDEX.VID'
+    _plain(catalog, root)
+    if not catalog.is_file():
+        return dict(status='missing', options=[], explanation='No video catalog is present.')
+    try:
+        _catalog(root)
+    except (OSError, ValueError, UnicodeError, struct.error) as error:
+        issue = str(error)
+    else:
+        return dict(status='healthy', options=[], explanation='The video catalog is valid.')
+    info = catalog.stat()
+    if info.st_size > 16 * 1024 * 1024:
+        return dict(status='damaged', options=[], issue=issue,
+                    explanation='The damaged catalog exceeds the safe automatic backup limit.')
+    digest = hash_file(catalog, info.st_size)
+    backup_dir = catalog.parent / 'BACKUP'
+    _plain(backup_dir, root)
+    options = []
+    if backup_dir.is_dir():
+        for candidate in sorted(backup_dir.iterdir()):
+            if candidate.suffix.upper() != '.VID':
+                continue
+            _plain(candidate, root)
+            if not candidate.is_file():
+                continue
+            try:
+                data, entries = _read_catalog_file(candidate)
+                if not entries:
+                    continue
+                missing = [name for _, name, _ in entries if not _device_path(root, name).is_file()]
+                if missing:
+                    continue
+                options.append(dict(name=candidate.name, sha256=hashlib.sha256(data).hexdigest(),
+                                    bytes=len(data), entries=len(entries),
+                                    titles=[title for _, _, title in entries]))
+            except (OSError, ValueError, UnicodeError, struct.error):
+                continue
+    return dict(status='damaged', issue=issue, catalog_sha256=digest, catalog_bytes=info.st_size,
+                options=options,
+                explanation=('Choose a complete backup to restore its earlier video entries. '
+                             'Prepared video files are retained, including files absent from that backup.'
+                             if options else 'No complete on-device video catalog backup is available. '
+                             'The damaged catalog needs manual recovery; prepared video files remain untouched.'))
+
+
+def restore_video_catalog_backup(identity, name, sha256, catalog_sha256):
+    """Explicitly restore one reviewed snapshot, preserving the damaged bytes."""
+    identity = manager.refresh(identity)
+    with _exclusive(identity):
+        review = video_catalog_recovery_options(identity)
+        if (review['status'] != 'damaged' or review.get('catalog_sha256') != catalog_sha256 or
+                not any(item['name'] == name and item['sha256'] == sha256 for item in review['options'])):
+            raise ValueError('Video recovery choices changed; review them again.')
+        root = Path(identity['root']).resolve(strict=True)
+        catalog = root / '.LINNET' / 'VIDEOS' / 'INDEX.VID'
+        candidate = catalog.parent / 'BACKUP' / name
+        _plain(catalog, root); _plain(candidate, root)
+        data = _bounded(candidate, CATALOG_MAX_BYTES)
+        if hashlib.sha256(data).hexdigest() != sha256:
+            raise ValueError('Video backup changed; review recovery again.')
+        damaged = dict(bytes=review['catalog_bytes'], sha256=catalog_sha256)
+        if identity['free_bytes'] < damaged['bytes'] + len(data) + 1048576:
+            raise ValueError('Not enough device space to preserve the damaged video catalog.')
+        from .publish import _copy_verified
+        token = uuid.uuid4().hex[:8].upper()
+        backup = candidate.parent / ('D' + token[:7] + '.BAD')
+        recovery = candidate.parent / ('D' + token[:7] + '.JSON')
+        temporary = catalog.with_name('R' + token[:7] + '.TMP')
+        for path in (backup, recovery, temporary):
+            _plain(path, root)
+        guard = lambda: _volume_guard(identity)
+        guard()
+        _copy_verified(catalog, backup, damaged, root, guard)
+        record = dict(operation='restore-video-catalog-backup', damaged=backup.relative_to(root).as_posix(),
+                      damaged_sha256=catalog_sha256, candidate=candidate.relative_to(root).as_posix(),
+                      candidate_sha256=sha256, started=time.time())
+        guard()
+        _write_verified(recovery, json.dumps(record, separators=(',', ':')).encode('utf-8'),
+                        'Video recovery record verification failed')
+        owned = []
+        try:
+            guard()
+            _write_verified(temporary, data, 'Video recovery catalog verification failed', owned=owned)
+            guard()
+            if hash_file(catalog, damaged['bytes']) != catalog_sha256 or hash_file(candidate, len(data)) != sha256:
+                raise ValueError('Video catalog or backup changed during recovery.')
+            os.replace(temporary, catalog)
+            if catalog.read_bytes() != data:
+                raise OSError('Restored video catalog readback failed.')
+        finally:
+            if temporary in owned and temporary.exists():
+                guard(); _plain(temporary, root); temporary.unlink()
+        entries = next(item['entries'] for item in review['options'] if item['name'] == name)
+        return dict(summary=f'Restored a video catalog with {entries} entries from the selected backup.',
+                    entries=entries,
+                    damaged_backup=str(backup), recovery_record=str(recovery),
+                    consequence='Video entries newer than the selected backup may need preparation again; video files were retained.')
 
 
 def _row(category, kind, title, path, status, *, info=None, **extra):
