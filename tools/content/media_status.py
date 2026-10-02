@@ -230,6 +230,10 @@ def _library_snapshot(identity):
     rows = media_library.list_items(identity, records_by_kind=records, retail_photos=retail_photos,
                                     retail_tracks=retail_tracks,
                                     _validated_identity=True)
+    for row in rows:
+        if row.get('category') == 'error' and row.get('kind') in inventory:
+            inventory[row['kind']].setdefault('errors', []).append(
+                str(row.get('error') or row.get('status') or 'Catalog damaged'))
     return state, skipped, records, inventory, rows
 
 
@@ -261,6 +265,9 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     identity['default_boot'] = installer.default_boot(boot_review)
     readiness = {}
     for kind in media.KINDS:
+        if inventory[kind].get('errors'):
+            readiness[kind] = 'Needs repair'
+            continue
         saved = state.get(kind, {})
         if not isinstance(saved, dict):
             saved = {}
@@ -278,11 +285,15 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
         else:
             readiness[kind] = 'Not prepared' if inventory[kind]['count'] else 'No content yet'
     for row in rows:
+        if row.get('category') == 'error':
+            continue
         if row['id'].startswith('retail-photo:'):
             relative = Path(row['path']).relative_to(root).as_posix().casefold()
             row['status'] = ('Excluded from preparation' if relative in skipped['Photos']
                              else 'iTunes photo · ' + readiness['Photos'])
     for row in rows:
+        if row.get('category') == 'error':
+            continue
         path = Path(row['path'])
         if path.is_relative_to(root) and path.relative_to(root).as_posix().casefold() in skipped.get(row['kind'], set()):
             row['status'] = 'Excluded from preparation'
@@ -299,6 +310,10 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
     unsupported = [kind for kind in selected if kind not in media.supported_kinds(identity)]
     if unsupported:
         raise ValueError(f"{', '.join(unsupported)} playback is unavailable on this iPod model.")
+    if current_inventory:
+        damaged = [kind for kind in selected if current_inventory.get(kind, {}).get('errors')]
+        if damaged:
+            raise ValueError(f"{', '.join(damaged)} catalog needs repair before preparing this category.")
     root = Path(identity['root'])
     state = _preparation_state(identity)
     skipped = {kind: skipped_paths(state, kind) for kind in media.KINDS}
