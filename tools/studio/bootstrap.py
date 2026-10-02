@@ -152,6 +152,8 @@ def restore(mount):
         if digest(temporary.read_bytes())!=state['original_sha256']:
             raise OSError('restore staging failed verification')
         temporary.replace(target)
+    with target.open('r+b') as restored_file:
+        os.fsync(restored_file.fileno())
     if digest(target.read_bytes())!=state['original_sha256']:
         raise OSError('restored boot file failed verification')
     state['phase']='restored';state['active_sha256']=state['original_sha256']
