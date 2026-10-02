@@ -62,34 +62,24 @@ def load(path, identity, installation_method):
     if method not in INSTALLATION_METHODS:
         raise ValueError("unsupported firmware installation method")
     path = Path(path).resolve(strict=True)
-    if path.is_dir():
-        entries = {item.name: item for item in path.iterdir()}
-        if (set(entries) != FILES | {"manifest.json"} or
-                any(item.is_symlink() or not item.is_file() or item.stat().st_size > MAX_BYTES
-                    for item in entries.values()) or
-                sum(item.stat().st_size for item in entries.values()) > MAX_BYTES):
-            raise ValueError("firmware folder must contain exactly the extracted bundle files")
-        manifest = json.loads(entries["manifest.json"].read_text(encoding="utf-8"))
-        payloads = {name: entries[name].read_bytes() for name in FILES}
-    else:
-        if path.stat().st_size > MAX_BYTES:
-            raise ValueError("firmware bundle exceeds its size limit")
-        try:
-            with zipfile.ZipFile(path) as bundle:
-                entries = bundle.infolist()
-                if (len(entries) != len(FILES) + 1 or
-                        {item.filename for item in entries} != FILES | {"manifest.json"} or
-                        any(item.file_size > MAX_BYTES for item in entries) or
-                        sum(item.file_size for item in entries) > MAX_BYTES):
-                    raise ValueError("firmware bundle has unexpected files or sizes")
-                manifest = json.loads(bundle.read("manifest.json"))
-                payloads = {name: bundle.read(name) for name in FILES}
-        except (zipfile.BadZipFile, KeyError, UnicodeError, RuntimeError) as error:
-            raise ValueError("invalid firmware bundle") from error
-    if (not isinstance(manifest, dict) or manifest.get("format") != 1 or
-            manifest.get("target_id") != identity["target_id"] or
-            not isinstance(manifest.get("files"), dict) or set(manifest["files"]) != FILES):
-        raise ValueError("firmware bundle does not match the detected iPod")
+    if path.stat().st_size > MAX_BYTES:
+        raise ValueError("firmware bundle exceeds its size limit")
+    try:
+        with zipfile.ZipFile(path) as bundle:
+            entries = bundle.infolist()
+            if (len(entries) != len(FILES) + 1 or
+                    {item.filename for item in entries} != FILES | {"manifest.json"} or
+                    any(item.file_size > MAX_BYTES for item in entries) or
+                    sum(item.file_size for item in entries) > MAX_BYTES):
+                raise ValueError("firmware bundle has unexpected files or sizes")
+            manifest = json.loads(bundle.read("manifest.json"))
+            if (not isinstance(manifest, dict) or manifest.get("format") != 1 or
+                    manifest.get("target_id") != identity["target_id"] or
+                    not isinstance(manifest.get("files"), dict) or set(manifest["files"]) != FILES):
+                raise ValueError("firmware bundle does not match the detected iPod")
+            payloads = {name: bundle.read(name) for name in FILES}
+    except (zipfile.BadZipFile, KeyError, UnicodeError, RuntimeError) as error:
+        raise ValueError("invalid firmware bundle") from error
     for name, data in payloads.items():
         if manifest["files"][name] != dict(bytes=len(data), sha256=hashlib.sha256(data).hexdigest()):
             raise ValueError("firmware bundle checksum mismatch: " + name)

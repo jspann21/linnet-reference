@@ -10,12 +10,8 @@ requires FFmpeg and FFprobe; select their folder in **Settings**.
 ## Install or restore firmware
 
 1. Connect the iPod in Disk Mode and choose **Find iPod**.
-2. Open **iPod setup**, choose the firmware ZIP or its extracted bundle folder for the device, and review the detected installation.
+2. Open **iPod setup**, choose the firmware ZIP for the device, and review the detected installation.
 3. Choose an available startup method, install, then **Eject safely**.
-
-An extracted firmware folder must contain the bundle's `manifest.json` and all
-firmware files at its top level. The installer applies the same identity and
-checksum checks as it does for the ZIP.
 
 The installer checks hardware identity, geometry, checksums, and image
 compatibility. Automatic native installation is enabled for Photo P98,

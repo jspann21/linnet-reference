@@ -26,7 +26,7 @@ def register_primary(commands):
             entry.add_argument("--method", choices=("rockbox-loader", "native-preserve", "native-selector"),
                                help="boot installation method (default: recommended detected method)")
             source = entry.add_mutually_exclusive_group()
-            source.add_argument("--firmware", type=Path, help="prebuilt firmware ZIP or extracted bundle folder")
+            source.add_argument("--firmware", type=Path, help="prebuilt firmware ZIP")
             source.add_argument("--from-source", action="store_true", help="compile fresh firmware locally")
     compile_ = commands.add_parser("build")
     compile_.add_argument("--target", default="photo4g-p98", type=target_id)
