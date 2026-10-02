@@ -309,6 +309,7 @@ _Noreturn void ln_pp_disk_mode(const char *serial,uint32_t sector_bytes,bool wri
     uint32_t connection=ln_usb_generation();
 #if LINNET_TARGET_NUMBER == 25 || LINNET_TARGET_NUMBER == 98
     uint32_t blink_started=ln_time_us();
+    uint32_t idle_started=blink_started;
     bool symbol_visible=true;
 #endif
     for(;;) {
@@ -321,16 +322,24 @@ _Noreturn void ln_pp_disk_mode(const char *serial,uint32_t sector_bytes,bool wri
             if(!drain())ln_platform_hardware_reset();
             if(ln_pp_usb_storage_reset_pending() && !ln_pp_usb_storage_reset_complete())ln_platform_hardware_reset();
             connection=ln_usb_generation();state=CBW;position=0;
+#if LINNET_TARGET_NUMBER == 25 || LINNET_TARGET_NUMBER == 98
+            idle_started=ln_time_us();
+#endif
         }
         if((state==RECEIVE || state==DISCARD || state==INVALID) && ln_time_us()-activity>15000000u) {
             (void)drain();ln_platform_hardware_reset();
         }
+#if LINNET_TARGET_NUMBER == 25 || LINNET_TARGET_NUMBER == 98
+        bool was_idle=state==CBW && position==0;
+#endif
         if(ln_usb_connected())step();
 #if LINNET_TARGET_NUMBER == 25 || LINNET_TARGET_NUMBER == 98
-        /* Redraw only while command idle and after a quiet USB interval.
-         * Active transfers always take priority over the optional blink. */
+        /* Count quiet time from completed transport work, including the CSW,
+         * rather than from command receipt (which may precede a long read). */
         uint32_t now=ln_time_us();
-        if(state==CBW && now-activity>=20000u && now-blink_started>=1200000u){
+        bool idle=state==CBW && position==0;
+        if(!idle || !was_idle)idle_started=now;
+        if(idle && now-idle_started>=20000u && now-blink_started>=1200000u){
             ln_core_watchdog_feed();
             if(ln_target_disk_screen(!symbol_visible))symbol_visible=!symbol_visible;
             blink_started=ln_time_us();

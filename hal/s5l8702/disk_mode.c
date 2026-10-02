@@ -228,6 +228,7 @@ _Noreturn void ln_s5l_disk_mode(const char *serial,uint32_t sector_bytes,bool wr
     if(!ln_s5l_usb_storage_init(serial))ln_platform_hardware_reset();
     uint32_t connection=ln_usb_generation();
     uint32_t blink_started=ln_time_us();
+    uint32_t idle_started=blink_started;
     bool symbol_visible=true;
     for(;;) {
         diagnostic[7]=state;diagnostic[8]=position;diagnostic[9]=lba;diagnostic[10]=residue;
@@ -240,15 +241,19 @@ _Noreturn void ln_s5l_disk_mode(const char *serial,uint32_t sector_bytes,bool wr
             if(!drain())ln_platform_hardware_reset();
             if(ln_s5l_usb_storage_reset_pending() && !ln_s5l_usb_storage_reset_complete())ln_platform_hardware_reset();
             connection=ln_usb_generation();state=CBW;position=0;
+            idle_started=ln_time_us();
         }
         if((state==RECEIVE || state==DISCARD || state==INVALID) && ln_time_us()-activity>15000000u) {
             (void)drain();ln_platform_hardware_reset();
         }
+        bool was_idle=state==CBW && position==0;
         if(ln_usb_connected())step();
-        /* Skip display work until the current USB command and recent activity
-         * have settled. The text remains visible in both blink phases. */
+        /* Wait until the full command and status exchange have been quiet.
+         * The text remains visible in both blink phases. */
         uint32_t now=ln_time_us();
-        if(state==CBW && now-activity>=250000u && now-blink_started>=1200000u){
+        bool idle=state==CBW && position==0;
+        if(!idle || !was_idle)idle_started=now;
+        if(idle && now-idle_started>=250000u && now-blink_started>=1200000u){
             ln_core_watchdog_feed();
             if(ln_s5l_board_disk_screen(!symbol_visible))symbol_visible=!symbol_visible;
             blink_started=ln_time_us();
