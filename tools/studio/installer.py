@@ -418,7 +418,7 @@ def assess(identity, *, _validated_identity=False):
             if (value.get("target_id") == target_id and
                     value.get("device_id") == identity["disk_serial"] and
                     value.get("strategy") in ("rockbox-file", "native-directory") and
-                    value.get("phase") in ("installed", "restored")):
+                    value.get("phase") in ("installed", "restored", "boot-upgrade-pending")):
                 marker = value
         except (ValueError, OSError):
             marker = None
@@ -457,7 +457,10 @@ def assess(identity, *, _validated_identity=False):
     native = identity.get("native_target_id") == target_id and (
         install_spec["boot_layout"] == "s5l-nor" or
         install_spec["boot_layout"] == "ipod-directory" and linnet["state"] == "installed")
-    if native and linnet["state"] == "installed":
+    if marker and marker.get("phase") == "boot-upgrade-pending":
+        action, strategy = "attention", None
+        summary = "A startup upgrade was interrupted. Resume it before changing iPod setup."
+    elif native and linnet["state"] == "installed":
         action, strategy = "replace", "native-volume"
         summary = "Linnet is installed. Update the OS through native Disk Mode, preserving the confirmed OS for rollback."
     elif native and linnet["state"] in ("absent", "incomplete"):
@@ -500,12 +503,14 @@ def assess(identity, *, _validated_identity=False):
         active_override="rockbox" if external_rockbox else None)
     installation_methods, default_method = _installation_methods(action, rockbox, marker, resume)
     if native:
-        available = linnet["state"] in ("installed", "absent", "incomplete") and not linnet.get("candidate_pending")
+        available = (linnet["state"] in ("installed", "absent", "incomplete") and
+                     not linnet.get("candidate_pending") and
+                     not (marker and marker.get("phase") == "boot-upgrade-pending"))
         initial = linnet["state"] in ("absent", "incomplete")
         boot_options = [option for option in boot_options if option["kind"] == "linnet"]
         for option in boot_options:
             option["selectable"] = available
-        if linnet["state"] == "installed":
+        if linnet["state"] == "installed" and available:
             from tools.studio.apple_firmware import available as apple_available
             if apple_available(root, target_id):
                 boot_options.append(dict(id="apple", label="Apple iPod software", kind="previous",
@@ -629,6 +634,7 @@ def _validate_artifacts(identity, artifacts):
         report = json.loads(report_path.read_text(encoding="utf-8"))
         expected_serial = "" if build == "user" else identity["linnet_usb_serial"]
         if (report.get("kind") != kind or report.get("profile") != expected_profile or
+                report.get("probe") != "frame" or
                 report.get("target_id") != identity["target_id"] or
                 report.get("device_serial") != expected_serial or
                 report.get("build_id") != image_identity["build_id"] or
@@ -1363,12 +1369,13 @@ def main():
     cli.add_argument("--worker", type=Path)
     cli.add_argument("--worker-token")
     commands = cli.add_subparsers(dest="command")
-    for name in ("inspect", "install", "restore"):
+    for name in ("inspect", "install", "restore", "upgrade-boot"):
         command = commands.add_parser(name)
         command.add_argument("--mount", type=Path, required=True)
-        if name == "install":
+        if name in ("install", "upgrade-boot"):
             command.add_argument("--build", choices=("user", "dev"), default="user")
-            command.add_argument("--method", choices=tuple(INSTALLATION_METHODS))
+            if name == "install":
+                command.add_argument("--method", choices=tuple(INSTALLATION_METHODS))
             source = command.add_mutually_exclusive_group()
             source.add_argument("--firmware", type=Path, help="prebuilt firmware ZIP")
             source.add_argument("--from-source", action="store_true", help="compile fresh firmware locally")
@@ -1380,10 +1387,18 @@ def main():
         if not args.command:
             cli.error("choose inspect, install, or restore")
         identity = identity_for_mount(args.mount)
-        result = (assess(identity) if args.command == "inspect" else
-                  install(identity, progress=print, build=args.build,
-                          installation_method=args.method, firmware=args.firmware, from_source=args.from_source)
-                  if args.command == "install" else restore(identity))
+        if args.command == "inspect":
+            result = assess(identity)
+        elif args.command == "install":
+            result = install(identity, progress=print, build=args.build,
+                             installation_method=args.method, firmware=args.firmware,
+                             from_source=args.from_source)
+        elif args.command == "upgrade-boot":
+            from tools.studio.boot_upgrade import upgrade
+            result = upgrade(identity, progress=print, build=args.build,
+                             firmware=args.firmware, from_source=args.from_source)
+        else:
+            result = restore(identity)
     print(json.dumps(result, indent=2))
     return 0 if result.get("passed", True) else 2
 

@@ -17,14 +17,15 @@ def register_primary(commands):
     commands.add_parser("media", help="Open the desktop iPod media manager")
     installer = commands.add_parser("installer", help="Inspect, install, or restore Linnet without erasing media")
     installer_actions = installer.add_subparsers(dest="installer_action", required=True)
-    for action in ("inspect", "install", "restore"):
+    for action in ("inspect", "install", "restore", "upgrade-boot"):
         entry = installer_actions.add_parser(action)
         entry.add_argument("--mount", type=Path, required=True)
-        if action == "install":
+        if action in ("install", "upgrade-boot"):
             entry.add_argument("--build", choices=("user", "dev"), default="user",
                                help="OS build to install (default: user)")
-            entry.add_argument("--method", choices=("rockbox-loader", "native-preserve", "native-selector"),
-                               help="boot installation method (default: recommended detected method)")
+            if action == "install":
+                entry.add_argument("--method", choices=("rockbox-loader", "native-preserve", "native-selector"),
+                                   help="boot installation method (default: recommended detected method)")
             source = entry.add_mutually_exclusive_group()
             source.add_argument("--firmware", type=Path, help="prebuilt firmware ZIP")
             source.add_argument("--from-source", action="store_true", help="compile fresh firmware locally")
@@ -99,10 +100,17 @@ def run_studio(args, emit):
     elif args.command == "installer":
         from tools.studio.installer import assess, identity_for_mount, install, restore
         identity = identity_for_mount(args.mount)
-        emit(assess(identity) if args.installer_action == "inspect" else
-             install(identity, progress=lambda message: print(message, file=sys.stderr), build=args.build,
-                     installation_method=args.method, firmware=args.firmware, from_source=args.from_source)
-             if args.installer_action == "install" else restore(identity))
+        if args.installer_action == "inspect":
+            emit(assess(identity))
+        elif args.installer_action == "install":
+            emit(install(identity, progress=lambda message: print(message, file=sys.stderr), build=args.build,
+                         installation_method=args.method, firmware=args.firmware, from_source=args.from_source))
+        elif args.installer_action == "upgrade-boot":
+            from tools.studio.boot_upgrade import upgrade
+            emit(upgrade(identity, progress=lambda message: print(message, file=sys.stderr),
+                         build=args.build, firmware=args.firmware, from_source=args.from_source))
+        else:
+            emit(restore(identity))
     elif args.command == "build":
         emit(build(args.profile, args.target, args.verify, args.kind, args.probe,
                    args.device_serial, system_config=args.system,
