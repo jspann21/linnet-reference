@@ -77,3 +77,17 @@ Per-device JSON receipts, timing summaries, and framebuffer PNGs are local
 ignored artifacts under `out/art-quality/`. The tested matching firmware
 was installed on the flash 5G, 80GB 5G, and Classic with user authorization;
 persistent restart checks verify the installed image identity and health.
+
+## Classic home pane follow-up
+
+After the user confirmed smooth home highlight and triangle scrolling on
+the 6G, its home artwork was changed to fill the right pane below the
+status bar. The square cover is drawn at 216 px and centered in the
+160 by 216 px pane, cropping 28 display pixels from each side. This
+replaces the reflection area with the continuing cover image.
+
+Classic development and release builds and the Video release build passed
+verification. A 6G framebuffer capture confirms that artwork reaches the
+bottom of the pane; 32 alternating home wheel events again had zero drops.
+The change reuses the existing artwork and framebuffer buffers.
+Local evidence is under `out/art-quality/cropped-com11/`.
