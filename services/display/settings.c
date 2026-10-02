@@ -367,13 +367,13 @@ static void about_step(void){
     if(about_phase==2){result=ln_storage_media_read(&about_file,0,about_data,sizeof about_data,generation);if(!result)return;if(result<0){about_loaded=true;return;}about_phase=3;return;}
     result=ln_storage_media_poll_deferred(generation,0,&transferred);if(!result)return;
     if(result>0&&transferred==sizeof about_data&&
-       about_data[0]=='A'&&about_data[1]=='B'&&about_data[2]=='T'&&about_data[3]=='1'&&
-       about_data[4]==1u&&about_data[5]<=26u&&about_data[6]<=100u&&about_data[7]==0u&&
+       about_data[0]=='A'&&about_data[1]=='B'&&about_data[2]=='T'&&about_data[3]=='2'&&
+       about_data[4]==2u&&about_data[5]<=28u&&about_data[6]<=100u&&about_data[7]==0u&&
        ln_read_le32(about_data+1020)==ln_crc32(about_data,1020u)){
         bool valid=true;
         for(uint32_t i=0;i<about_data[5]&&valid;++i){
-            const uint8_t *row=about_data+16u+i*36u;bool ended=false;
-            for(uint32_t j=0;j<36u;++j){
+            const uint8_t *row=about_data+16u+i*35u;bool ended=false;
+            for(uint32_t j=0;j<35u;++j){
                 if(!row[j])ended=true;
                 else if(ended||row[j]<32u||row[j]>126u)valid=false;
             }
@@ -384,7 +384,9 @@ static void about_step(void){
     about_loaded=true;++revision;
 }
 static void about_ata_text(const char *prefix,const char *value){
-    if(about_ata_count>=8u||!value||!value[0])return;
+    if(!value)return;
+    while(*value==' ')++value;
+    if(about_ata_count>=8u||!value[0])return;
     char *out=about_ata_rows[about_ata_count++];uint32_t at=0;
     while(*prefix&&at<63u)out[at++]=*prefix++;
     while(*value&&at<63u)out[at++]=*value++;
@@ -417,7 +419,7 @@ const char *ln_display_about_row(uint32_t item){
     if(item==0u)return about_version;
     if(item==1u)return about_build;
     item-=2u;
-    if(item<about_count)return (const char *)(about_data+16u+item*36u);
+    if(item<about_count)return (const char *)(about_data+16u+item*35u);
     if(!about_count){if(!item)return "Sync in Media Manager for details";--item;}
     else item-=about_count;
     return item<about_ata_count?about_ata_rows[item]:"";

@@ -904,15 +904,17 @@ def format_size(value):
 def eject_device(identity):
     from .publish import _exclusive
     from .about import publish as publish_about
+    from tools.studio.installer import installed_state
     from tools.link.eject import eject
     with _exclusive(identity):
         current = refresh(identity)
         warning = None
-        try:
-            publish_about(current, refresh)
-        except (OSError, ValueError) as error:
-            # Optional About data must not prevent a requested safe eject.
-            warning = str(error)
+        if installed_state(current['root'], current['target_id'])['state'] == 'installed':
+            try:
+                publish_about(current, refresh)
+            except (OSError, ValueError) as error:
+                # Optional About data must not prevent a requested safe eject.
+                warning = str(error)
         report = eject(current['disk_number'], current['disk_serial'], wait_link=False)
         report['about_warning'] = warning
         return report

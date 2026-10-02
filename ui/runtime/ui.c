@@ -969,7 +969,7 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
                 if(layout()==LN_UI_LAYOUT_SUNSET&&n->kind!=LN_UI_VIRTUAL_LIST){char ordinal[11];number(ordinal,i+1u);text(p,r.x+2,r.y+max(0,(row_h-(int32_t)ln_ui_font.height)/2),ordinal,ink);padding=max(28,text_width(ordinal)+10);}
                 if(cols==2u){struct ln_ui_node tile=*n;tile.x=r.x+7;tile.y=r.y+7;tile.w=r.w-14;tile.h=r.h-12;tile.flags=32u;text_block(p,&tile,label,ink);}
                 else if(setting_text(p,n,r,label,ink)){}
-                else if(chosen&&(layout()==LN_UI_LAYOUT_IPOD_PHOTO||layout()==LN_UI_LAYOUT_IPOD_CLASSIC))scrolling_text(p,s,r.x+padding,r.y+max(0,(row_h-(int32_t)ln_ui_font.height)/2)+(layout()==LN_UI_LAYOUT_IPOD_PHOTO?1:0),label,ink,r.w-padding-6-(mark||arrow?12:0));
+                else if(chosen&&(layout()==LN_UI_LAYOUT_IPOD_PHOTO||layout()==LN_UI_LAYOUT_IPOD_CLASSIC||s->scene==LN_UI_SCENE_ABOUT))scrolling_text(p,s,r.x+padding,r.y+max(0,(row_h-(int32_t)ln_ui_font.height)/2)+(layout()==LN_UI_LAYOUT_IPOD_PHOTO?1:0),label,ink,r.w-padding-6-(mark||arrow?12:0));
                 else fitted_text(p,r.x+padding,r.y+max(0,(row_h-(int32_t)ln_ui_font.height)/2)+(layout()==LN_UI_LAYOUT_IPOD_PHOTO?1:0),label,ink,r.w-padding-6-(mark||arrow?12:0));
                 if(mark)symbol_mask(p,r.x+r.w-16,r.y+(row_h-11)/2,11,11,symbol_check,ink);
                 else if(arrow){
@@ -1462,7 +1462,7 @@ static bool content_damage(struct ln_ui_state*s,uint16_t*pixels,ln_ui_damage_fn 
  * participate; sleeping/backlight-off callers suspend the deadline. */
 uint32_t ln_ui_scroll_tick(struct ln_ui_state*s,uint32_t now){
     if(!s)return UINT32_MAX;theme_sync();
-    if(layout()!=LN_UI_LAYOUT_IPOD_PHOTO&&layout()!=LN_UI_LAYOUT_IPOD_CLASSIC){scroll_owner=0;scroll_pixels=0;return UINT32_MAX;}
+    if(layout()!=LN_UI_LAYOUT_IPOD_PHOTO&&layout()!=LN_UI_LAYOUT_IPOD_CLASSIC&&s->scene!=LN_UI_SCENE_ABOUT){scroll_owner=0;scroll_pixels=0;return UINT32_MAX;}
     const struct ln_ui_scene*c=scene(s);if(!c)return UINT32_MAX;
     uint32_t key=(s->scene_epoch*16777619u)^s->scene^(s->selected*257u)^active_theme;
     int32_t overflow=0;

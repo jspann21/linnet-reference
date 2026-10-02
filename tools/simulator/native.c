@@ -214,7 +214,8 @@ int main(int argc,char **argv){
                 ln_ui_refresh(&state);
             }
             simulated_us+=33333u;if(ln_games_tick(simulated_us))ln_ui_refresh(&state);
-            clock_step(&state);ln_ui_render(&state,pixels,damage);save_presented=ln_clock_editor_pending();}
+            clock_step(&state);(void)ln_ui_scroll_tick(&state,simulated_us);
+            ln_ui_render(&state,pixels,damage);save_presented=ln_clock_editor_pending();}
         total+=repeat;
         if(capture){if(++index>512u||!snapshot(&state,argv[1],index))return 5;}
     }

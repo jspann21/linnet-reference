@@ -1,6 +1,6 @@
 """Host-prepared, bounded About snapshot for Linnet's memory-only UI.
 
-ABOUT.BIN is 1024 bytes: ABT1, version/count/used percent, twenty-six 36-byte
+ABOUT.BIN is 1024 bytes: ABT2, version/count/used percent, twenty-eight 35-byte
 ASCII rows at offset 16, and CRC32 at offset 1020. An absent record is valid;
 the iPod never scans its filesystem to fill this screen.
 """
@@ -19,8 +19,8 @@ import zlib
 from .guard import guarded_path, guard_volume, require_same_target
 from .inventory import extensions
 
-ROW_COUNT = 26
-ROW_BYTES = 36
+ROW_COUNT = 28
+ROW_BYTES = 35
 SIZE = 1024
 
 
@@ -124,8 +124,8 @@ def make_record(identity):
     if len(rows) > ROW_COUNT or any(len(row.encode("ascii")) >= ROW_BYTES for row in rows):
         raise ValueError("About details exceed the firmware display record")
     record = bytearray(SIZE)
-    record[:4] = b"ABT1"
-    record[4] = 1
+    record[:4] = b"ABT2"
+    record[4] = 2
     record[5] = len(rows)
     record[6] = min(100, (used * 100 + usage.total // 2) // usage.total) if usage.total else 0
     for index, row in enumerate(rows):
@@ -138,13 +138,14 @@ def make_record(identity):
 def publish(identity, verify):
     """Replace the optional record after confirming the mounted target."""
     root = Path(identity["root"]).resolve(strict=True)
-    data = make_record(identity)
-    require_same_target(identity, verify(identity))
-    guard_volume(identity)
     directory = root / ".LINNET"
     guarded_path(directory, root)
     if not directory.is_dir():
-        directory.mkdir()
+        raise ValueError("Linnet system storage is unavailable for the About snapshot")
+    require_same_target(identity, verify(identity))
+    data = make_record(identity)
+    require_same_target(identity, verify(identity))
+    guard_volume(identity)
     target = directory / "ABOUT.BIN"
     temporary = directory / ("AB" + uuid.uuid4().hex[:6].upper() + ".TMP")
     guarded_path(target, root)
