@@ -996,6 +996,24 @@ def _restore_reinstall_data(root, archive):
 
 def install(identity, progress=lambda _message: None, build="user", installation_method=None,
             firmware=None, from_source=False):
+    """Keep file-bootloader transactions in the caller's publisher exclusion.
+
+    Native directory transactions are owned by the elevated worker; holding the
+    mutex here while waiting for that worker would deadlock it.
+    """
+    from tools.content.publish import _exclusive
+    reviewed = assess(identity)
+    method_id = installation_method or reviewed["default_installation_method"]
+    method = next((item for item in reviewed["installation_methods"]
+                   if item["id"] == method_id), None)
+    if method and method["strategy"] == "rockbox-file":
+        with _exclusive(reviewed["identity"]):
+            return _install(identity, progress, build, method_id, firmware, from_source)
+    return _install(identity, progress, build, method_id, firmware, from_source)
+
+
+def _install(identity, progress=lambda _message: None, build="user", installation_method=None,
+            firmware=None, from_source=False):
     if build not in ("user", "dev"):
         raise ValueError("installer build must be user or dev")
     if from_source and firmware is not None:
@@ -1087,7 +1105,7 @@ def install(identity, progress=lambda _message: None, build="user", installation
             reviewed["action"] == "replace" and
             reviewed.get("recovery", {}).get("strategy") == "native-directory" and
             strategy == "native-directory")
-        if reviewed["action"] == "replace" and not combined_native_reinstall:
+        if strategy == "rockbox-file" and reviewed["action"] == "replace":
             receipt["device_write_attempted"] = True
             receipt["phase"] = "restore-before-reinstall"
             _save(receipt_path, receipt)
@@ -1101,7 +1119,7 @@ def install(identity, progress=lambda _message: None, build="user", installation
                                    if item["id"] == method_id), None)
             if current["action"] != "install" or not current_method or not current_method["enabled"]:
                 raise RuntimeError("fresh installation state differs after preserving the previous Linnet folder")
-        elif reviewed["action"] == "adopt":
+        elif strategy == "rockbox-file" and reviewed["action"] == "adopt":
             receipt["device_write_attempted"] = True
             receipt["phase"] = "preserve-superseded-install"
             progress("Preserving the previous Linnet folder before the fresh installation…")
@@ -1121,22 +1139,23 @@ def install(identity, progress=lambda _message: None, build="user", installation
             progress(("Requesting administrator access to restore and reinstall the iPod boot partition…"
                       if combined_native_reinstall else
                       "Requesting administrator access to back up and update the iPod boot partition…"))
-            job = dict(mode="reinstall" if combined_native_reinstall else "install",
+            job = dict(mode="reinstall" if reviewed["action"] in ("replace", "adopt") else "install",
                        identity=identity, artifacts=artifacts,
                        transaction=str(transaction), installation_method=method_id,
-                       previous_boot=previous_boot,
+                       previous_boot=previous_boot, reviewed_action=reviewed["action"],
                        result=str(receipt_path.with_suffix(".result.json")))
-            if combined_native_reinstall:
+            if reviewed["action"] == "replace":
                 marker = reviewed["recovery"]
-                job["restoration"] = dict(
+                job["restoration"] = (dict(
                     transaction=marker["transaction"], plan=marker["plan"],
                     plan_sha256=marker["plan_sha256"], marker=marker)
+                    if combined_native_reinstall else dict(marker=marker))
             if archive is not None:
                 job["archive"] = str(archive)
             job_path = transaction / ("worker-" + uuid.uuid4().hex + ".json")
             _save(job_path, job, replace=False)
             result = _run_elevated(job_path)
-            if combined_native_reinstall:
+            if reviewed["action"] == "replace":
                 reinstall = result.pop("reinstall")
                 receipt["restored_boot"] = reinstall["restored_boot"]
                 receipt["previous_linnet_archive"] = reinstall["previous_linnet_archive"]
@@ -1216,42 +1235,68 @@ def _native_worker(job):
                     partition_bytes=detected["storage"]["partition_bytes"],
                     linnet_usb_serial=detected["linnet_usb_serial"])
     _same_device(expected, observed)
+    current = assess(expected)
+    if job["mode"] == "restore":
+        marker = current.get("recovery")
+        if (not marker or marker.get("strategy") != "native-directory" or
+                marker.get("phase") not in ("installed", "restored") or
+                marker.get("plan") != job["plan"] or
+                marker.get("plan_sha256") != job["plan_sha256"]):
+            raise RuntimeError("native recovery state changed before the worker acquired exclusivity")
+    elif current["action"] != job["reviewed_action"]:
+        raise RuntimeError("installation state changed before the worker acquired exclusivity")
     if job["mode"] == "restore":
         result = native.execute("restore", Path(job["plan"]), job["plan_sha256"], expected["disk_number"])
         if not result.get("passed"):
             raise RuntimeError(result.get("failure", "native restore failed"))
+        _save(Path(expected["root"]) / JOURNAL,
+              dict(marker, phase="restored", restored_at=_now()))
         return result
     reinstall = None
     if job["mode"] == "reinstall":
-        restoration = job["restoration"]
-        saved_transaction = Path(restoration["transaction"]).resolve(strict=True)
-        plan = Path(restoration["plan"]).resolve(strict=True)
-        marker = restoration["marker"]
-        marker_transaction = Path(marker["transaction"]).resolve(strict=True)
-        marker_plan = Path(marker["plan"]).resolve(strict=True)
-        if (plan.parent.parent != saved_transaction or
-                marker_transaction != saved_transaction or marker_plan != plan or
-                marker.get("plan_sha256") != restoration["plan_sha256"]):
-            raise ValueError("saved native restore plan does not match its recovery journal")
-        if (marker.get("strategy") != "native-directory" or marker.get("phase") != "installed" or
-                marker.get("target_id") != expected["target_id"] or
-                marker.get("device_id") != expected["disk_serial"]):
-            raise ValueError("saved native recovery journal differs from the connected iPod")
-        restored = native.execute("restore", plan, restoration["plan_sha256"], expected["disk_number"])
-        if not restored.get("passed"):
-            raise RuntimeError(restored.get("failure", "native restore failed"))
-        marker = dict(marker, phase="restored", restored_at=_now())
-        _save(Path(expected["root"]) / JOURNAL, marker)
+        action = job["reviewed_action"]
+        if action not in ("replace", "adopt"):
+            raise ValueError("native reinstall action is invalid")
+        if action == "replace":
+            restoration = job["restoration"]
+            marker = restoration["marker"]
+            if marker != current.get("recovery"):
+                raise RuntimeError("saved recovery state changed before reinstall")
+            if marker.get("strategy") == "native-directory":
+                saved_transaction = Path(restoration["transaction"]).resolve(strict=True)
+                plan = Path(restoration["plan"]).resolve(strict=True)
+                marker_transaction = Path(marker["transaction"]).resolve(strict=True)
+                marker_plan = Path(marker["plan"]).resolve(strict=True)
+                if (plan.parent.parent != saved_transaction or
+                        marker_transaction != saved_transaction or marker_plan != plan or
+                        marker.get("plan_sha256") != restoration["plan_sha256"]):
+                    raise ValueError("saved native restore plan does not match its recovery journal")
+                if (marker.get("phase") != "installed" or
+                        marker.get("target_id") != expected["target_id"] or
+                        marker.get("device_id") != expected["disk_serial"]):
+                    raise ValueError("saved native recovery journal differs from the connected iPod")
+                restored = native.execute("restore", plan, restoration["plan_sha256"], expected["disk_number"])
+                if not restored.get("passed"):
+                    raise RuntimeError(restored.get("failure", "native restore failed"))
+                _save(Path(expected["root"]) / JOURNAL,
+                      dict(marker, phase="restored", restored_at=_now()))
+            elif marker.get("strategy") == "rockbox-file":
+                restored = restore(expected)
+            else:
+                raise ValueError("unsupported previous boot strategy")
+        else:
+            restored = None
         archived = _archive_linnet(expected["root"], Path(job["archive"]))
         current = assess(expected)
         current_method = next((item for item in current["installation_methods"]
                                if item["id"] == job["installation_method"]), None)
         if current["action"] != "install" or not current_method or not current_method["enabled"]:
             raise RuntimeError("fresh installation state differs after preserving the previous Linnet folder")
-        reinstall = dict(
-            restored_boot=dict(passed=True, boot=restored, media_preserved=True,
-                               linnet_files_preserved=True, requires_safe_eject=True),
-            previous_linnet_archive=archived)
+        reinstall = dict(previous_linnet_archive=archived)
+        if restored is not None:
+            reinstall["restored_boot"] = (restored if marker.get("strategy") == "rockbox-file" else
+                                          dict(passed=True, boot=restored, media_preserved=True,
+                                               linnet_files_preserved=True, requires_safe_eject=True))
     mbr, firmware = _read_raw_backup(expected, transaction)
     device_path = transaction / "device.json"
     device_value = detected
@@ -1305,10 +1350,22 @@ def _native_worker(job):
 
 
 def restore(identity, expected=None):
+    from tools.content.publish import _exclusive
+    reviewed = assess(identity)
+    strategy = reviewed.get("recovery", {}).get("strategy")
+    if strategy == "rockbox-file":
+        with _exclusive(reviewed["identity"]):
+            return _restore(identity, expected, strategy)
+    return _restore(identity, expected, strategy)
+
+
+def _restore(identity, expected=None, reviewed_strategy=None):
     reviewed = assess(identity)
     marker = reviewed.get("recovery")
     if not marker or marker.get("phase") not in ("installed", "restored"):
         raise ValueError("no Linnet installation with a verified recovery journal was found")
+    if marker.get("strategy") != reviewed_strategy:
+        raise RuntimeError("the boot recovery strategy changed after review")
     if expected is not None and expected not in ("rockbox", "apple"):
         raise ValueError("unsupported default boot selection")
     previous_boot = ("rockbox" if marker.get("strategy") == "rockbox-file" else
@@ -1329,8 +1386,9 @@ def restore(identity, expected=None):
         result = _run_elevated(job_path)
     else:
         raise ValueError("unsupported recovery strategy")
-    marker = dict(marker, phase="restored", restored_at=_now())
-    _save(Path(reviewed["identity"]["root"]) / JOURNAL, marker)
+    if marker["strategy"] == "rockbox-file":
+        marker = dict(marker, phase="restored", restored_at=_now())
+        _save(Path(reviewed["identity"]["root"]) / JOURNAL, marker)
     return dict(passed=True, boot=result, media_preserved=True, linnet_files_preserved=True,
                 requires_safe_eject=True)
 
@@ -1343,7 +1401,9 @@ def worker(job_path):
     try:
         if job.get("mode") not in ("install", "restore", "reinstall"):
             raise ValueError("unsupported installer worker job")
-        response.update(_native_worker(job))
+        from tools.content.publish import _exclusive
+        with _exclusive(job["identity"]):
+            response.update(_native_worker(job))
     except BaseException as error:
         response["failure"] = f"{type(error).__name__}: {error}"
     response["finished_at"] = _now()
