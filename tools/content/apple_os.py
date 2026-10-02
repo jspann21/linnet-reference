@@ -601,6 +601,8 @@ def _update_photos(identity, state, selected, cache, progress):
                 if target.exists() and not target.is_file():
                     raise ValueError(f'An Apple photo library path is occupied by a folder: {target}')
                 previous_hashes[relative] = _hash(target) if target.is_file() else None
+            if previous_hashes[photo_db.relative_to(root)] != old_digest:
+                raise ValueError('The Apple photo library changed during preparation. Review it before retrying.')
             record = {'kind': 'Apple photos', 'disk_serial': identity['disk_serial'],
                       'volume_serial': identity['volume_serial'],
                       'volume_unique_id': identity['volume_unique_id'],
