@@ -54,22 +54,46 @@ def _row(category, kind, title, path, status, *, info=None, **extra):
     return dict(id=category + ':' + str(extra.get('key', path)), category=category,
                 kind=kind, title=title, path=str(path), source='', status=status,
                 bytes=info.st_size if info else 0, mtime_ns=info.st_mtime_ns if info else None,
-                removable=category != 'cache', **extra)
+                removable=category != 'cache' and not _apple_managed(path), **extra)
+
+
+def _apple_managed(path):
+    """Apple database references are not reconciled by Linnet removal."""
+    parts = tuple(part.casefold() for part in Path(path).parts)
+    return any(parts[index:index + 2] in (('ipod_control', 'music'), ('ipod_c~1', 'music'))
+               for index in range(len(parts) - 1))
+
+
+def _catalog_error(kind, path, error):
+    return dict(id='error:' + kind, category='error', kind=kind,
+                title=kind + ' catalog needs repair', path=str(path), source='',
+                status='Catalog damaged', error=str(error), bytes=0, mtime_ns=None,
+                removable=False, description='Repair this catalog before preparing or removing this category.')
 
 
 def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tracks=None,
-               _validated_identity=False):
+               _validated_identity=False, category_errors=None):
     """Read file names, timestamps and the bounded catalog; never decode media."""
     if not _validated_identity:
         identity = manager.refresh(identity)
     root = Path(identity['root']).resolve(strict=True)
     if records_by_kind is None:
         records_by_kind = collect_records_by_kind(root)
-    _, _, entries, resolved_videos = _catalog(root, with_paths=True)
+    catalog_errors = []
+    if category_errors is None:
+        _, _, entries, resolved_videos = _catalog(root, with_paths=True)
+    else:
+        try:
+            _, _, entries, resolved_videos = _catalog(root, with_paths=True)
+        except (OSError, ValueError, UnicodeError, struct.error) as error:
+            entries, resolved_videos = [], []
+            category_errors.append(dict(kind='Videos', message=str(error),
+                                        path=str(root / '.LINNET' / 'VIDEOS' / 'INDEX.VID')))
+            catalog_errors.append(_catalog_error('Videos', root / '.LINNET' / 'VIDEOS' / 'INDEX.VID', error))
     published_paths = {str(path).casefold() for path in resolved_videos}
     source_video_extensions = manager.video_source_extensions(identity)
     native_video_extensions = manager.native_video_extensions(identity)
-    result = []
+    result = catalog_errors
     music_records = records_by_kind['Music']
     metadata = _music_metadata(root, music_records=music_records,
                                music_inodes=getattr(records_by_kind, 'inodes', None))
@@ -96,7 +120,8 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
                     artist=tags.get('artist', ''), album=tags.get('album', ''), genre=tags.get('genre', ''),
                     artwork=tags.get('artwork', ''), duration=tags.get('duration', 0), track=tags.get('track', 0),
                     album_artist=tags.get('album_artist', ''), disc=tags.get('disc', 0),
-                    description='Removing this source requires preparing its media type afterward.'))
+                    description=('Apple-managed media must be removed with Apple software.' if _apple_managed(path)
+                                 else 'Removing this source requires preparing its media type afterward.')))
     photos = retail_photos if retail_photos is not None else retail_images(root)
     for photo in photos:
         result.append(dict(id='retail-photo:' + str(photo['key']), category='original', kind='Photos',
@@ -117,7 +142,8 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
              else 'Ready on iPod' if path.is_file() else 'Missing published file'), key=key.hex(),
             artist=tags.get('artist', ''), album=tags.get('album', ''), genre=tags.get('genre', ''),
             artwork=tags.get('artwork', ''), duration=tags.get('duration', 0),
-            description='Remove this video from the playback catalog and move its file to Trash.'))
+            description=('Apple-managed media must be removed with Apple software.' if _apple_managed(path)
+                         else 'Remove this video from the playback catalog and move its file to Trash.')))
     cache = cache_root(identity)
     names = {}
     try:
