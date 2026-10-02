@@ -1,7 +1,7 @@
 """Guarded recovery and permanent deletion of removed media."""
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import struct
 import uuid
 from datetime import datetime
@@ -31,6 +31,36 @@ def _relative(value):
             ':' in value or any(part in ('', '.', '..') for part in value.split('/'))):
         raise ValueError('Unsafe Trash recovery path')
     return value
+
+
+def _normal_location(category, kind, relative):
+    """Check that a portable receipt describes a location this library can create."""
+    parts = tuple(part.casefold() for part in relative.split('/'))
+    suffix = PurePosixPath(relative).suffix.lower()
+    apple_music = (len(parts) >= 3 and parts[:2] in
+                   (('ipod_control', 'music'), ('ipod_c~1', 'music')))
+    if category == 'original':
+        return (suffix in media.extensions(kind) and
+                ((len(parts) >= 2 and parts[0] == kind.casefold()) or
+                 (kind in ('Music', 'Videos') and apple_music)))
+    if category == 'library':
+        locations = {('Music', '.linnet/library.pdb'),
+                     ('Photos', '.linnet/photos/library.pim'),
+                     ('Photos', '.linnet/photos/grid.pgr'),
+                     ('Notes', '.linnet/notes/library.nnt')}
+        return (kind, relative.casefold()) in locations
+    if category == 'published':
+        return (kind == 'Videos' and suffix in ('.ipv', '.ipvf', '.mp4', '.m4v', '.mov') and
+                ((len(parts) >= 2 and parts[0] in ('videos', '.linnet')) or apple_music))
+    return False
+
+
+def _video_location(relative):
+    """Conservatively identify paths that can carry restored Video media."""
+    parts = tuple(part.casefold() for part in relative.split('/'))
+    return (parts[0] == 'videos' or
+            len(parts) >= 2 and parts[:2] in
+            (('.linnet', 'videos'), ('ipod_control', 'music'), ('ipod_c~1', 'music')))
 
 
 def _portable(root, token, report):
@@ -107,6 +137,8 @@ def _validate_manifest(value, token):
             if (not isinstance(digest, str) or len(digest) != 64 or
                     any(c not in '0123456789abcdef' for c in digest)):
                 raise ValueError('Invalid supporting-file recovery record')
+        elif not _normal_location(row['category'], row['kind'], relative):
+            raise ValueError('Selected Trash item does not match its recovery location')
         key = row.get('key')
         if key is not None and (not isinstance(key, str) or len(key) != 64 or
                                 any(c not in '0123456789abcdef' for c in key)):
@@ -372,9 +404,13 @@ def recover(identity, token, *, erase=False):
             if not source_valid and not destination_valid:
                 raise ValueError('Photo recovery pack changed in Trash.')
         backup = trash / 'INDEX.VID.before'
-        video_involved = backup.exists() or any(row.get('kind') == 'Videos' and
-                                                row.get('category') != 'supporting'
-                                                for row in report.get('selected', []))
+        video_involved = (backup.exists() or
+                          any(_video_location(destination.relative_to(root).as_posix())
+                              for _, destination, _ in moves) or
+                          any(row.get('kind') == 'Videos' and row.get('category') != 'supporting'
+                              for row in report.get('selected', [])) or
+                          portable and any(_video_location(row['relative'])
+                                           for row in report['selected']))
         if video_involved:
             catalog, before, entries = library._catalog(root)
         else:
