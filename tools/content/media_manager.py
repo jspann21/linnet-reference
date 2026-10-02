@@ -665,7 +665,8 @@ def _prepare_import_flac(item, scratch, cache, ffprobe, cancelled, stopped):
 
 
 def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress,
-                    *, cache, cancelled, stage_progress=lambda current, total, phase: None):
+                    *, cache, cancelled, stage_progress=lambda current, total, phase: None,
+                    completed_batch=lambda items: None):
     # Queue a bounded set of writes before flushing and reading them back. On
     # FAT devices, alternating write/flush/read/rename for every small file is
     # expensive. Keep every handle until its flush, and publish only verified files.
@@ -857,6 +858,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                     music_seeds.append((destination, info, *metadata_seed))
             report['steps'].append(dict(added=str(destination), bytes=prepared_bytes))
         report.pop('copies_in_progress', None)
+        completed_batch([item for item, *_ in copied])
         record()
         if seek_state_changed:
             _save_seek_state(seek_state_path, seek_state)
@@ -1389,7 +1391,9 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
                     scratch = math.ceil(duration * 44100 * 4) + 32 * 1024 * 1024
             video_bytes += estimate
             video_host += estimate * 2 + scratch
-    files_bytes = 4 * 1024 * 1024 + sum(counts.values()) * 128 * 1024 + len(jobs) * 128 * 1024
+    files_entries = sum(counts.values()) + len(jobs)
+    preview_sources = counts['Photos'] + counts['Notes'] + len(jobs)
+    files_bytes = 4 * 1024 * 1024 + files_entries * 512 + preview_sources * 256 * 1024
     prepared = music_bytes + photo_bytes + notes_bytes + video_bytes + files_bytes
     previous = 0
     fixed = []
@@ -1399,6 +1403,8 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
         fixed += ['.LINNET/PHOTOS/GRID.PGR', '.LINNET/PHOTOS/LIBRARY.PIM']
     if 'Notes' in selected:
         fixed += ['.LINNET/NOTES/LIBRARY.NNT']
+    if 'Videos' in selected:
+        fixed += ['.LINNET/VIDEOS/INDEX.VID']
     fixed += ['.LINNET/FILES/INDEX.FIL']
     for name in fixed:
         path = root / name
@@ -2236,7 +2242,9 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             if kind in selected:
                 existing = scan(root, (kind,), skipped=skipped)[kind]["count"]
                 replacing = {action['destination'].casefold() for action in replacements
-                             if action['kind'] == kind}
+                             if action['kind'] == kind and
+                             Path(action['destination']).relative_to(root).as_posix().casefold()
+                             not in skipped[kind]}
                 added = sum(item["kind"] == kind and
                             Path(item["source"]).suffix.lower() in extensions(kind) and
                             item['destination'].casefold() not in replacing for item in plan)
@@ -2252,23 +2260,41 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         if space['computer_peak_bytes'] > space['computer_free_bytes']:
             raise ValueError('Not enough computer space for prepared media and conversion scratch.')
         if reconciliation:
-            from .media_library import list_items, remove_items
-            rows = list_items(identity)
+            from .media_library import list_items, remove_items, remove_supporting_file
+            supporting = [action for action in reconciliation
+                if action['action'] == 'replace' and
+                Path(action['destination']).suffix.lower() not in extensions(action['kind'])]
+            normal = [action for action in reconciliation if action not in supporting]
             selected_rows = []
-            for action in reconciliation:
-                matches = [row for row in rows if row['kind'] == action['kind'] and
-                    (row.get('key') == action.get('key') if action['action'] == 'prune-video' else
-                     row['path'].casefold() == action['destination'].casefold()) and
-                    row['category'] == ('library' if action['action'] == 'retire-library' else
-                                        'published' if action['action'] == 'prune-video' else row['category']) and
-                    row.get('removable')]
-                if len(matches) != 1:
-                    raise ValueError('A reconciliation target changed. Refresh the preparation plan.')
-                selected_rows.append(matches[0])
+            if normal:
+                # A damaged video catalog must not prevent reviewed changes to
+                # other categories; video removals still require the catalog.
+                rows = (list_items(identity) if any(action['kind'] == 'Videos' for action in normal)
+                        else list_items(identity, category_errors=[]))
+                for action in normal:
+                    matches = [row for row in rows if row['kind'] == action['kind'] and
+                        (row.get('key') == action.get('key') if action['action'] == 'prune-video' else
+                         row['path'].casefold() == action['destination'].casefold()) and
+                        row['category'] == ('library' if action['action'] == 'retire-library' else
+                                            'published' if action['action'] == 'prune-video' else row['category']) and
+                        row.get('removable')]
+                    if len(matches) != 1:
+                        raise ValueError('A reconciliation target changed. Refresh the preparation plan.')
+                    selected_rows.append(matches[0])
             checkpoint()
-            removal = remove_items(identity, selected_rows)
-            report['steps'].append(dict(kind='Reconciliation', actions=reconciliation, removal=removal))
-            record()
+            if selected_rows:
+                removal = remove_items(identity, selected_rows)
+                report['steps'].append(dict(kind='Reconciliation', actions=normal, removal=removal))
+                record()
+            for action in supporting:
+                checkpoint()
+                relative = Path(action['destination']).relative_to(root).as_posix()
+                removal = remove_supporting_file(identity, action['kind'], relative,
+                    expected_bytes=action['old_bytes'],
+                    expected_mtime_ns=action['old_mtime_ns'],
+                    expected_sha256=action['old_sha256'])
+                report['steps'].append(dict(kind='Reconciliation', actions=[action], removal=removal))
+                record()
             for action in reconciliation:
                 if action['action'] == 'retire-library':
                     state.pop(action['kind'], None)
@@ -2289,8 +2315,22 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                 saved_videos.pop(relative, None)
             _save(state_path, state)
         emit_stage('Copying originals', 0)
+        def include_copied(items):
+            changed = False
+            for copied in items:
+                kind = copied['kind']
+                key = Path(copied['destination']).relative_to(root).as_posix().casefold()
+                if key in skipped[kind]:
+                    skipped[kind].remove(key)
+                    changed = True
+            if changed:
+                saved_skipped = state.setdefault('skipped_files', {})
+                for kind, paths in skipped.items():
+                    saved_skipped[kind] = sorted(paths)
+                _save(state_path, state)
         _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress,
                         cache=cache, cancelled=cancelled,
+                        completed_batch=include_copied,
                         stage_progress=lambda current, total, name:
                             emit_stage(name, 0, current / total if total else 1))
         checkpoint()

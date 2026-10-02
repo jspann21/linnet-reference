@@ -365,7 +365,9 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
     needed = sum(p['bytes'] for p in copies)
     if 'Notes' in selected:
         replacing_notes = {action['destination'].casefold() for action in replacements
-                           if action['kind'] == 'Notes'}
+                           if action['kind'] == 'Notes' and
+                           Path(action['destination']).relative_to(root).as_posix().casefold()
+                           not in skipped['Notes']}
         total = scan_sources(root, ('Notes',), skipped=skipped)['Notes']['count'] + sum(
             p['kind'] == 'Notes' and Path(p['source']).suffix.lower() in media.extensions('Notes')
             and p['destination'].casefold() not in replacing_notes for p in copies)
