@@ -24,7 +24,7 @@ _Static_assert(ROWS*THUMB_WIDTH*THUMB_HEIGHT*2u<=262144u,"native grid cache exce
 #define TILES (GRID_TILES==64u?128u:GRID_TILES)
 _Static_assert(VISIBLE_TILES<=TILES,"photo viewport exceeds tile cache capacity");
 #define EMPTY_ALBUM_RESUME 65535u
-enum phase {OPEN,HEADER,VERIFY,IDLE,RECORD,TITLE,THUMB,LEVEL,TILE_RECORD,PACK_OPEN,TILE_DATA,SOURCE,JPEG_OPEN,JPEG_LOAD,JPEG_DECODE,TILE_COMMIT,FILE_HEADER,FILE_PIXELS,GRID_OPEN,GRID_HEADER,GRID_VERIFY,GRID_THUMB_COMMIT};
+enum phase {OPEN,HEADER,VERIFY,IDLE,RECORD,TITLE,THUMB,LEVEL,TILE_RECORD,PACK_OPEN,TILE_DATA,SOURCE,JPEG_OPEN,JPEG_LOAD,JPEG_DECODE,TILE_COMMIT,FILE_HEADER,FILE_PIXELS,GRID_OPEN,GRID_HEADER,GRID_VERIFY,GRID_THUMB_COMMIT,TXN_GUARD};
 struct row {uint32_t index;bool valid,album,thumb,title_ready;char title[192];union {struct ln_pimg_album a;struct ln_pimg_photo p;} data;struct ln_ui_asset asset;};
 struct tile {uint32_t index,age;bool valid;};
 struct level_cache {uint32_t index,count;bool valid;};
@@ -92,6 +92,8 @@ static struct {uint32_t view_started,frame_ready,io_started,max_open_us,max_read
 #endif
 static const char package[]="/.LINNET/PHOTOS/LIBRARY.PIM";
 static const char grid_package[]="/.LINNET/PHOTOS/GRID.PGR";
+static const char transaction_marker[]="/.LINNET/TXN/PHOTOS/STATE.JSON";
+#define PHOTO_RECOVERY_REQUIRED 25
 static void clear(void*v,uint32_t n){
 #if defined(__arm__)
     extern void ln_memory_clear(void *,uint32_t);ln_memory_clear(v,n);
@@ -391,7 +393,7 @@ static void begin_view(uint32_t index){PHOTO_DIAG(timing.view_started=ln_time_us
 void ln_photos_init(void){
     /* The runtime calls this once after startup has cleared BSS. Clearing
      * the control state again would duplicate that startup work. */
-    p.generation=0x60000000u;p.phase=OPEN;p.view=LN_PHOTOS_LIST;
+    p.generation=0x60000000u;p.phase=TXN_GUARD;p.view=LN_PHOTOS_LIST;
     p.window_count=ROWS;p.asset=(struct ln_ui_asset){WIDTH,HEIGHT,photo_buffers.surface.frame[0]};
 }
 void ln_photos_prepare(bool eligible){
@@ -436,7 +438,7 @@ void ln_photos_diagnostics(uint32_t out[32]){
 #endif
 uint32_t ln_photos_view(void){return p.view;}
 uint32_t ln_photos_count(void){return !p.ready?1u:p.view==LN_PHOTOS_ALBUMS?p.header.albums:p.view==LN_PHOTOS_LIST?p.count:0u;}
-const char *ln_photos_label(uint32_t row){if(!p.ready)return p.error?"Photos unavailable":"Loading photos...";uint32_t index=p.view==LN_PHOTOS_ALBUMS?row:p.first+row;struct row*r=cached(index,p.view==LN_PHOTOS_ALBUMS);return r?r->title:"Loading...";}
+const char *ln_photos_label(uint32_t row){if(!p.ready)return p.error==PHOTO_RECOVERY_REQUIRED?"Recover photos in Media Manager":p.error?"Photos unavailable":"Loading photos...";uint32_t index=p.view==LN_PHOTOS_ALBUMS?row:p.first+row;struct row*r=cached(index,p.view==LN_PHOTOS_ALBUMS);return r?r->title:"Loading...";}
 void ln_photos_window(uint32_t first,uint32_t count){if(count>ROWS)count=ROWS;if(p.window_first==first&&p.window_count==count)return;p.window_first=first;p.window_count=count;if(p.ready)change();}
 const struct ln_ui_asset *ln_photos_thumbnail(uint32_t row){if(!p.ready||p.view!=LN_PHOTOS_LIST||row>=p.count||p.jpeg_mode)return 0;struct row*r=cached(p.first+row,false);return r&&r->thumb?&r->asset:0;}
 const struct ln_ui_asset *ln_photos_asset(void){return p.view==LN_PHOTOS_VIEWER&&p.frame_valid?&p.asset:0;}
@@ -478,7 +480,7 @@ bool ln_photos_focus(uint32_t row){
     p.photo_index=p.first+row;return true;
 }
 const char *ln_photos_title(void){return p.view==LN_PHOTOS_ALBUMS?"Photo albums":p.view==LN_PHOTOS_LIST?"Photo Library":p.title;}
-const char *ln_photos_status(void){return p.error?"Image unavailable":file_mode&&!p.frame_valid?"Loading image":!p.ready?"Loading catalog":!p.pim_verified&&!p.metadata_valid&&!file_mode?(p.view==LN_PHOTOS_VIEWER?"Loading image":"Loading catalog"):p.jpeg_mode&&!p.frame_valid?"Decoding JPEG":p.view==LN_PHOTOS_VIEWER&&!p.frame_valid?"Loading image":"";}
+const char *ln_photos_status(void){return p.error==PHOTO_RECOVERY_REQUIRED?"Recover photos in Media Manager":p.error?"Image unavailable":file_mode&&!p.frame_valid?"Loading image":!p.ready?"Loading catalog":!p.pim_verified&&!p.metadata_valid&&!file_mode?(p.view==LN_PHOTOS_VIEWER?"Loading image":"Loading catalog"):p.jpeg_mode&&!p.frame_valid?"Decoding JPEG":p.view==LN_PHOTOS_VIEWER&&!p.frame_valid?"Loading image":"";}
 void ln_photos_resume_get(uint8_t out[16]){
     if(p.resume_pending){copy(out,p.resume,16);return;}
     bool empty=p.ready&&p.album_known&&p.view!=LN_PHOTOS_VIEWER&&!p.count;
@@ -582,7 +584,7 @@ static void image_fail(int error){
 static void photo_step(void){
     if(p.working!=p.epoch){
         if(p.pending){ln_storage_media_cancel(p.generation);if(!ln_storage_media_poll(p.generation,0,0))return;p.pending=false;}
-        p.working=p.epoch;p.phase=p.ready?IDLE:OPEN;if(p.rendering&&!p.jpeg_mode)p.redraw=true;p.rendering=false;
+        p.working=p.epoch;p.phase=p.ready?IDLE:TXN_GUARD;if(p.rendering&&!p.jpeg_mode)p.redraw=true;p.rendering=false;
         if(p.jpeg_mode&&!p.frame_valid){p.jpeg_mode=false;p.view_loaded=false;}
     }
     if(!p.active&&!p.prefetching)return;
@@ -644,6 +646,13 @@ static void photo_step(void){
         if(p.file_payload_at+512u!=p.photo.jpeg_bytes||(p.jpeg_crc^UINT32_MAX)!=p.photo.jpeg_crc){fail(24);return;}
         p.front^=1u;p.asset.pixels=photo_buffers.surface.frame[p.front];p.frame_valid=p.view_loaded=p.ready=true;p.phase=IDLE;++p.revision;return;}
 #endif
+    if(p.phase==TXN_GUARD){
+        /* A missing marker is the only result that permits catalog reads.
+         * Direct file viewing enters its own phase and bypasses this guard. */
+        r=open_file(transaction_marker,0);if(!r)return;
+        if(r!=LN_FAT32_NOT_FOUND){fail(PHOTO_RECOVERY_REQUIRED);return;}
+        p.phase=OPEN;return;
+    }
     if(p.phase==OPEN){r=open_file(package,&p.file);if(!r)return;if(r<0){fail(1);return;}p.phase=HEADER;return;}
     if(p.phase==HEADER){r=read_at(&p.file,0,photo_scratch,512);if(!r)return;if(r<0){fail(2);return;}
         copy(p.pim_header,photo_scratch,512u);if(!ln_pimg_header(p.pim_header,p.file.size,&p.header)){fail(2);return;}

@@ -58,7 +58,7 @@ struct library {
     bool queue_pending,queue_ready;
     enum ln_music_library_status status;
     enum job job,query;
-    uint8_t stage;
+    uint8_t stage,guard_stage;
     int error;
 };
 static struct library library;
@@ -903,6 +903,22 @@ static void library_step_once(void)
     }
     if(library.status==LN_LIBRARY_CLOSED||library.status==LN_LIBRARY_ERROR)return;
     if(library.status==LN_LIBRARY_OPENING){
+        /* The host retains this marker throughout a grouped index switch.
+         * Complete the bounded lookup before opening any music index. */
+        if(library.guard_stage<2u){
+            if(!library.io_active){
+                if(library.paused)return;
+                int result=ln_storage_media_open("/.LINNET/TXN/MUSIC/STATE.JSON",library.generation);
+                if(result<0){fail(LN_MUSIC_LIBRARY_RECOVERY_REQUIRED);return;}
+                if(!result)return;
+                library.io_active=true;library.guard_stage=1u;return;
+            }
+            int result=ln_storage_media_poll(library.generation,0,0);
+            if(!result)return;
+            library.io_active=false;
+            if(result!=LN_FAT32_NOT_FOUND){fail(LN_MUSIC_LIBRARY_RECOVERY_REQUIRED);return;}
+            library.guard_stage=2u;library.generation=next_generation();return;
+        }
         if(!library.io_active){
             if(library.paused)return;
             int result=ln_storage_media_open("/.LINNET/LIBRARY.PDB",library.generation);

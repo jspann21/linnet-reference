@@ -9,6 +9,9 @@ enum ln_music_library_status {
     LN_LIBRARY_CLOSED=0,LN_LIBRARY_OPENING,LN_LIBRARY_VERIFYING,
     LN_LIBRARY_READY,LN_LIBRARY_ERROR,LN_LIBRARY_DRAINING
 };
+/* A publication marker exists, or its absence could not be established.
+ * Reconnect to Media Manager to recover the interrupted library switch. */
+#define LN_MUSIC_LIBRARY_RECOVERY_REQUIRED (-12)
 struct ln_music_library_row {
     struct ln_music_track track;
     uint32_t index;
