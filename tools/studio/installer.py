@@ -1546,7 +1546,10 @@ def uninstall(identity, progress=lambda _message: None, expected=None):
             guarded_path(path, root)
     media_folders = {name: (root / name).exists() for name in ("Music", "Photos", "Videos", "Notes")}
     receipt_path = cache_root(reviewed["identity"]) / ("uninstall-" + uuid.uuid4().hex + ".json")
-    if root.drive and receipt_path.drive.casefold() == root.drive.casefold():
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    host_directory = receipt_path.parent.resolve(strict=True)
+    if (host_directory.stat().st_dev == root.stat().st_dev or
+            root.drive and host_directory.drive.casefold() == root.drive.casefold()):
         raise ValueError("The installer recovery location must be on the computer, not on the iPod.")
     receipt = dict(operation="uninstall-linnet", started_at=_now(), passed=False,
                    identity=reviewed["identity"], previous_boot=previous,
@@ -1576,7 +1579,7 @@ def uninstall(identity, progress=lambda _message: None, expected=None):
             if not recovery.is_dir():
                 raise ValueError("the Linnet recovery directory disappeared after startup restoration")
             recovery_backup = receipt_path.with_suffix(".recovery")
-            shutil.copytree(recovery, recovery_backup)
+            shutil.copytree(recovery, recovery_backup, copy_function=shutil.copyfile)
             from tools.content.guard import hash_file
 
             for source in recovery.rglob("*"):
@@ -1586,6 +1589,8 @@ def uninstall(identity, progress=lambda _message: None, expected=None):
                     copy = recovery_backup / source.relative_to(recovery)
                     if not copy.is_file() or hash_file(source, source.stat().st_size) != hash_file(copy, copy.stat().st_size):
                         raise OSError("the computer recovery copy differs from the iPod")
+                    with copy.open("r+b") as saved:
+                        os.fsync(saved.fileno())
             receipt["recovery_backup"] = str(recovery_backup)
             _save(receipt_path, receipt)
             try:
