@@ -447,23 +447,32 @@ def remove_items(identity, items):
         return _remove(identity, items)
 
 
-def remove_supporting_file(identity, kind, relative, *, expected_bytes, expected_mtime_ns,
-                           expected_sha256):
-    """Trash one reviewed supporting file in an ordinary source folder."""
+def _supporting_parts(kind, relative):
+    """Require a canonical ordinary-folder path with no Windows aliases."""
     if kind not in manager.KINDS or not isinstance(relative, str):
         raise ValueError('Unsupported supporting-file location.')
     parts = relative.split('/')
     if (len(parts) < 2 or parts[0] != kind or any(not part or part in ('.', '..') or
-            '\\' in part or ':' in part for part in parts) or
-            any(part.casefold() in ('.linnet', 'ipod_control', 'system volume information')
+            part.rstrip(' .') != part or any(ord(char) < 32 or char in '<>:"\\|?*' for char in part)
+            for part in parts) or
+            any(part.casefold() in ('.linnet', 'ipod_control', 'system volume information',
+                                    '.appledouble', '.trashes', '$recycle.bin', '.ds_store',
+                                    'desktop.ini', 'thumbs.db') or part.startswith('._')
                 for part in parts[1:])):
         raise ValueError('Supporting file must be inside an ordinary media source folder.')
+    if Path(relative).suffix.lower() in manager.extensions(kind):
+        raise ValueError('Use normal media removal for a supported media file.')
+    return parts
+
+
+def remove_supporting_file(identity, kind, relative, *, expected_bytes, expected_mtime_ns,
+                           expected_sha256):
+    """Trash one reviewed supporting file in an ordinary source folder."""
+    parts = _supporting_parts(kind, relative)
     if (type(expected_bytes) is not int or expected_bytes < 0 or
             type(expected_mtime_ns) is not int or not isinstance(expected_sha256, str) or
             len(expected_sha256) != 64 or any(c not in '0123456789abcdef' for c in expected_sha256)):
         raise ValueError('A reviewed file size, timestamp, and SHA-256 are required.')
-    if Path(relative).suffix.lower() in manager.extensions(kind):
-        raise ValueError('Use normal media removal for a supported media file.')
     identity = manager.refresh(identity)
     with _exclusive(identity):
         root = Path(identity['root']).resolve(strict=True)

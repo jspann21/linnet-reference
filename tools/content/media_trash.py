@@ -47,7 +47,7 @@ def _portable(root, token, report):
                              relative=relative,
                              bytes=row['bytes'], mtime_ns=row['mtime_ns'],
                              sha256=row.get('sha256')))
-    return dict(version=2, token=token, started=report['started'],
+    return dict(version=report.get('version', 2), token=token, started=report['started'],
                 complete=bool(report.get('complete')), restored=bool(report.get('restored')),
                 trash_emptied=bool(report.get('trash_emptied')),
                 selected=selected, requires_update=report.get('requires_update', []),
@@ -100,11 +100,11 @@ def _validate_manifest(value, token):
         relative = _relative(row.get('relative'))
         if row['category'] == 'supporting':
             digest = row.get('sha256')
-            if (relative.split('/')[0] != row['kind'] or len(relative.split('/')) < 2 or
-                    any(part.casefold() in ('.linnet', 'ipod_control', 'system volume information')
-                        for part in relative.split('/')[1:]) or
-                    Path(relative).suffix.lower() in media.extensions(row['kind']) or
-                    not isinstance(digest, str) or len(digest) != 64 or
+            try:
+                library._supporting_parts(row['kind'], relative)
+            except ValueError as error:
+                raise ValueError('Invalid supporting-file recovery location') from error
+            if (not isinstance(digest, str) or len(digest) != 64 or
                     any(c not in '0123456789abcdef' for c in digest)):
                 raise ValueError('Invalid supporting-file recovery record')
         key = row.get('key')
@@ -281,6 +281,8 @@ def recover(identity, token, *, erase=False):
         moves = []
         dependencies = {item['relative'].casefold(): item for item in report.get('dependencies', [])}
         selected_paths = {row['relative'].casefold() for row in report['selected']} if portable else None
+        supporting_rows = ({row['relative'].casefold(): row for row in report['selected']
+                            if row['category'] == 'supporting'} if portable else {})
         dependency_sources = []
         recovery_temporaries = []
         # Derive destinations from the guarded removal tree; never trust absolute receipt paths.
@@ -301,8 +303,7 @@ def recover(identity, token, *, erase=False):
             if selected_paths is not None and name.casefold() not in selected_paths:
                 raise ValueError('Trash contains a file outside its portable recovery manifest.')
             if portable:
-                supporting = next((row for row in report['selected'] if row['relative'].casefold() == name.casefold() and
-                                   row['category'] == 'supporting'), None)
+                supporting = supporting_rows.get(name.casefold())
                 if supporting is not None and hash_file(source, info.st_size) != supporting['sha256']:
                     raise ValueError('Supporting file changed in Trash.')
             destination = root / relative
