@@ -15,7 +15,7 @@ from .host_state import cache_root, save_json
 from .inventory import collect_records_by_kind, skipped_paths, scan as scan_sources
 from .guard import guarded_path as _plain, guard_volume as _volume_guard, hash_file
 from .publish import _bounded, _exclusive, _write_verified, _finish_backups
-from .video_catalog import (CATALOG_MAX_BYTES, encode as _encode_catalog,
+from .video_catalog import (CATALOG_MAX_BYTES, decode as _decode_catalog, encode as _encode_catalog,
                             read_file as _read_catalog_file)
 
 
@@ -136,6 +136,11 @@ def restore_video_catalog_backup(identity, name, sha256, catalog_sha256):
             guard()
             if hash_file(catalog, damaged['bytes']) != catalog_sha256 or hash_file(candidate, len(data)) != sha256:
                 raise ValueError('Video catalog or backup changed during recovery.')
+            for _, path, _ in _decode_catalog(data):
+                guard()
+                if not _device_path(root, path).is_file():
+                    raise ValueError('A video in the selected backup disappeared; review recovery again.')
+            guard()
             os.replace(temporary, catalog)
             if catalog.read_bytes() != data:
                 raise OSError('Restored video catalog readback failed.')
@@ -710,7 +715,13 @@ def _remove(identity, items):
         if remaining != entries:
             backup = trash / 'INDEX.VID.before'
             _plain(backup, root)
-            _write_verified(backup, before, 'Video catalog backup verification failed')
+            backup_temporary = trash / ('I' + token[:7].upper() + '.TMP')
+            _plain(backup_temporary, root)
+            _write_verified(backup_temporary, before, 'Video catalog backup verification failed')
+            _volume_guard(identity)
+            os.replace(backup_temporary, backup)
+            if backup.read_bytes() != before:
+                raise OSError('Video catalog backup readback failed')
             report['catalog_backup'] = str(backup)
             save_json(receipt, report)
             temporary = catalog.with_name('I' + token[:7].upper() + '.TMP')
