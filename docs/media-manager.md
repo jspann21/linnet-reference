@@ -124,11 +124,21 @@ and failed work.
 
 After preparing Music, open **Music → Playlists** to create a playlist, search
 the prepared song library, add songs, and arrange their playback order with
-**Up** and **Down**. Choose **Save to iPod**, then eject safely. A device holds
-up to **16 playlists**, each with up to **1,024 song entries**. Names can use
+**Up**, **Down**, **Move to top**, and **Move to bottom**. Choose **Save to iPod**,
+then eject safely. A device holds up to **16 playlists**, each with up to
+**1,024 song entries**. Names can use
 1–31 UTF-8 bytes; a character outside ASCII may use more than one byte.
 Missing tracks are shown in the editor so you can remove or replace their
 entries. Changes in the editor take effect only when you choose **Save to iPod**.
+
+**Import M3U…** reads a UTF-8 `.m3u` or `.m3u8` file and creates a new playlist.
+Review matched and unmatched entries before choosing **Import matched songs**;
+unmatched or ambiguous entries are skipped, and the imported playlist still
+needs **Save to iPod**. Import is blocked when 16 playlists already exist or
+more than 1,024 songs match. Files above 2 MiB or 10,000 entries are rejected.
+**Export M3U…** writes the selected playlist in its current order as UTF-8
+M3U text. If a track is missing from the prepared library, export reports it
+instead of writing an incomplete playlist.
 
 On Photo and Video, **Games** lets you choose from twelve games: Comet Run,
 Pulse Path, Solitaire, Sudoku, Brick, Music Quiz, Vortex, Minesweeper, Falling
