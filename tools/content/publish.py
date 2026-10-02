@@ -543,7 +543,7 @@ def _recover_group(root: Path, identity: dict, name: str) -> bool:
     """Restore the old complete set after an interrupted grouped replacement."""
     guard = lambda: _volume_guard(identity)
     directory = _group_directory(root, name)
-    marker = directory / 'STATE.JSON'
+    marker = directory / 'STATE.TXN'
     guard(); _plain(marker, root)
     if not marker.exists():
         _clear_group(root, directory, guard)
@@ -653,7 +653,7 @@ def _publish_group(root: Path, identity: dict, name: str, outputs: list[tuple[st
             items.append(dict(path=relative, old=old, new=dict(bytes=new['bytes'], sha256=new['sha256'])))
         state = dict(version=1, name=name, items=items)
         encoded = json.dumps(state, sort_keys=True).encode('utf-8')
-        marker = directory / 'STATE.JSON'
+        marker = directory / 'STATE.TXN'
         marker_new = directory / 'STATE.NEW'
         guard(); _write_verified(marker_new, encoded, 'publication recovery record readback mismatch')
         guard(); os.replace(marker_new, marker)
@@ -682,7 +682,7 @@ def _publish_group(root: Path, identity: dict, name: str, outputs: list[tuple[st
     except Exception:
         # A failed guard also prevents rollback. Keep the record for the next
         # run on the same verified device rather than writing to a new volume.
-        if (directory / 'STATE.JSON').exists():
+        if (directory / 'STATE.TXN').exists():
             try:
                 _recover_group(root, identity, name)
             except Exception:
