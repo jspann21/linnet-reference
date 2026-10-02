@@ -1002,6 +1002,8 @@ class MediaWindow(QMainWindow):
         self.device_info = label('USB · Disk Mode', 'deviceInfo', True)
         self.capacity = QProgressBar(); self.capacity.setTextVisible(False); self.capacity.setRange(0, 100); self.capacity.setValue(0)
         layout.addWidget(self.device_name); layout.addWidget(self.device_info); layout.addWidget(self.capacity)
+        self.device_details_button = button('Device details', self.device_details, 'sidebarAction', 'setup')
+        layout.addWidget(self.device_details_button)
         self.choose_device_button = button('Find or switch iPod', self.discover, 'sidebarAction', 'refresh')
         layout.addWidget(self.choose_device_button)
         self.eject_button = button('Eject safely', self.eject, 'sidebarAction', 'eject'); layout.addWidget(self.eject_button)
@@ -1481,6 +1483,7 @@ class MediaWindow(QMainWindow):
             'devices': self._complete_devices, 'scan': self._complete_scan,
             'trash': self._complete_trash, 'setup': self._complete_setup,
             'prepare': self._complete_prepare, 'eject': self._complete_eject,
+            'device_details': self._complete_device_details,
         }
         for change in ('remove', 'restore', 'erase', 'sync', 'install', 'uninstall', 'skipped',
                        'startup_default', 'boot_upgrade'):
@@ -1737,7 +1740,23 @@ class MediaWindow(QMainWindow):
     def _complete_eject(self, result):
         self.transition_device(None)
         self.device_name.setText('Safely ejected'); self.device_info.setText('You can disconnect your iPod.'); self.capacity.setValue(0)
-        self.show_progress('Your iPod is safe to disconnect.')
+        if result.get('about_warning'):
+            self.show_progress('Your iPod is safe to disconnect. Device details could not be refreshed: '
+                               + result['about_warning'])
+        else:
+            self.show_progress('Your iPod is safe to disconnect.')
+
+    def _complete_device_details(self, result):
+        dialog = QDialog(self); dialog.setWindowTitle('iPod details'); dialog.resize(540, 560)
+        layout = box(dialog, margins=(26, 24, 26, 22), spacing=14)
+        layout.addWidget(label(result['name'], 'section'))
+        layout.addWidget(label('Storage and hardware information read from this iPod.', 'subtitle', True))
+        usage = QProgressBar(); usage.setRange(0, 100); usage.setValue(result['used_percent'])
+        usage.setFormat(f"{result['used_percent']}% used"); layout.addWidget(usage)
+        details = QTextEdit(); details.setReadOnly(True); details.setPlainText('\n'.join(result['rows']))
+        layout.addWidget(details, 1)
+        layout.addWidget(button('Close', dialog.accept, 'primary'), 0, Qt.AlignRight)
+        dialog.exec()
 
 
     def discover(self):
@@ -1954,7 +1973,7 @@ class MediaWindow(QMainWindow):
         self.screen_save.setEnabled(ready and all(self.screen_state.values()))
         self.screen_items.setEnabled(not self.busy)
         self.screen_picker.setEnabled(not self.busy)
-        for item in (self.eject_button, self.add_button, self.playlists_button, self.sync_button, self.choose_videos_button, self.queue_add, self.folder_button):
+        for item in (self.eject_button, self.device_details_button, self.add_button, self.playlists_button, self.sync_button, self.choose_videos_button, self.queue_add, self.folder_button):
             item.setEnabled(ready)
         self.update_queue_controls()
         self.prepare_button.setEnabled(ready and self.inventory is not None)
@@ -2624,6 +2643,14 @@ class MediaWindow(QMainWindow):
         def run():
             return media.eject_device(identity)
         self.work('eject', run, 'Safely ejecting your iPod…')
+
+    def device_details(self):
+        if not self.identity or self.busy:
+            return
+        from tools.content import about
+        identity = self.identity
+        self.work('device_details', lambda: about.read_details(identity, media.refresh),
+                  'Reading iPod details…')
 
     def stop(self):
         context = self.active_operation

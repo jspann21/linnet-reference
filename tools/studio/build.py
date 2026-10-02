@@ -258,7 +258,10 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         configuration["content_id"] = ui_report["content_id"]
     source_inventory = []
     build_id = source_identity(configuration, chain, source_inventory)
-    (generated / "linnet_build.h").write_text('#define LINNET_BUILD_ID "' + build_id + '"\n#define LINNET_BUILD_ID_BYTES {' + ','.join('0x' + build_id[i:i+2] for i in range(0, 64, 2)) + '}\n')
+    version = tomllib.loads((ROOT / (system_config or "config/system.toml")).read_text(encoding="utf-8"))["system"]["version"] if kind == "os" else "0.1.0"
+    if not isinstance(version, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,23}", version):
+        raise ValueError("system version is not safe for the firmware About screen")
+    (generated / "linnet_build.h").write_text('#define LINNET_BUILD_ID "' + build_id + '"\n#define LINNET_BUILD_ID_BYTES {' + ','.join('0x' + build_id[i:i+2] for i in range(0, 64, 2)) + '}\n#define LINNET_SYSTEM_VERSION "' + version + '"\n')
     with (generated / "linnet_build.h").open('a') as header:
         header.write('#define LINNET_USB_SERIAL "' + device_serial + '"\n')
     prefix = f"linnet-{kind}-0.1.0-{target}-{profile}-{build_id[:12]}"

@@ -49,13 +49,32 @@ bool ln_ui_dynamic_navigation(const struct ln_ui_node*n,uint32_t item){
     return n->text&&!strcmp(n->text,"Option ")&&(item>=2u&&item<=5u);
 }
 uint32_t ln_ui_dynamic_count(const struct ln_ui_node *node,uint32_t fallback){
+    if(node_scene(node,"linnet.system.about")&&node->text&&!strcmp(node->text,"About detail"))return 33u;
     if(node_scene(node,"linnet.system.files")&&(node->kind==LN_UI_VIRTUAL_LIST||node->kind==LN_UI_SCROLLBAR))return 6u;
     if(music_category_node(node)&&(node->kind==LN_UI_VIRTUAL_LIST||node->kind==LN_UI_SCROLLBAR))return ln_music_menu_count(sample_more);
     if(node_scene(node,"linnet.system.music-sound")&&(node->kind==LN_UI_VIRTUAL_LIST||node->kind==LN_UI_SCROLLBAR))return ln_sound_menu_count(sample_sound_view,LINNET_EXTENDED_SOUND,SAMPLE_CLICKER);
     if(node_scene(node,"linnet.system.display")&&node->kind==LN_UI_VIRTUAL_LIST)return ln_music_menu_scene_enabled(LN_UI_SCENE_THEMES)?2u:1u;
     return fallback;
 }
+uint32_t ln_ui_dynamic_value(const struct ln_ui_node *node,uint32_t fallback){
+    if(node_scene(node,"linnet.system.about")&&node->text&&!strcmp(node->text,"About storage"))return 27u;
+    return fallback;
+}
 const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){
+    if(node_scene(n,"linnet.system.about")&&n->text&&!strcmp(n->text,"About detail")&&item!=UINT32_MAX){
+        static const char*const details[]={
+            "Linnet OS 0.1.0","Build 4e37dca803b2","Name  My iPod","Device  iPod Classic",
+            "Model no.  MB147","Board  n25","Apple OS  1.1.2","Family  classic",
+            "Region  LL","Serial  8K12345TTXK","USB serial  000000001234TTXK",
+            "Disk ID  000000001234TTXK","USB model  Apple iPod USB Device",
+            "USB  05AC:1261","Volume ID  ABCD-1234","Disk size  30.0 GB",
+            "Partition  29.9 GB","Sector  512 B","Capacity  29.8 GB",
+            "Used  8.2 GB","Free  21.6 GB","Audio  6.1 GB","Video  1.0 GB",
+            "Data  64.0 MB","Other  1.0 GB","Drive model  TOSHIBA MK3008GAL",
+            "Drive serial  12ABC3456","Drive FW  JC102A","Drive type  Hard disk",
+            "Rotation  4200","Physical sector  512","Addressing  LBA28","Write cache  On"};
+        return item<sizeof details/sizeof details[0]?details[item]:fallback;
+    }
     if(node_scene(n,"linnet.system.files")){
         static const char*const names[]={"Music","Notes","Photos","Videos",".LINNET","README.txt"};
         if(n->kind==LN_UI_VIRTUAL_LIST&&item<6u)return names[item];

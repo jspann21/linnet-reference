@@ -5,6 +5,8 @@
 #include "boot/include/linnet_boot.h"
 #include "ui/runtime/ui.h"
 #include "services/games/games.h"
+#include "linnet_build.h"
+#include "hal/api/ata.h"
 /* Append Off so existing saved timeout choices retain their meaning. */
 enum { BACKLIGHT_OFF=7 };
 static const uint32_t seconds[]={0,5,10,15,30,60,120,0};
@@ -30,8 +32,17 @@ static bool games_loaded;
 static uint32_t games_phase;
 static uint8_t games_data[12];
 static struct ln_fat32_file games_file;
+static bool about_loaded;
+static uint32_t about_phase,about_count,about_percent;
+static uint8_t about_data[1024];
+static struct ln_fat32_file about_file;
+static char about_build[20];
+static char about_version[40];
+static bool about_ata_ready;
+static uint32_t about_ata_count;
+static char about_ata_rows[8][64];
 extern void ln_games_configure(uint16_t mask);
-bool ln_display_settings_boot_ready(void){return theme_loaded&&menus_loaded&&games_loaded;}
+bool ln_display_settings_boot_ready(void){return theme_loaded&&menus_loaded&&games_loaded&&about_loaded;}
 static bool step_busy;
 static char battery_label[25];
 static char update_labels[5][32];
@@ -61,7 +72,15 @@ void ln_display_settings_diagnostics(uint32_t words[8]){
     words[7]=(loaded?1u:0u)|(theme_loaded?2u:0u);
 }
 #endif
-void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loaded=false;games_phase=0;for(uint32_t i=0;i<LN_GAME_COUNT;++i)game_best[i]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;click_tone=0;click_fallback_ready=click_changed=false;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;record_first_dirty_at=record_last_dirty_at=0;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;
+void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loaded=false;games_phase=0;about_loaded=false;about_phase=about_count=about_percent=0;about_ata_ready=false;about_ata_count=0;for(uint32_t i=0;i<LN_GAME_COUNT;++i)game_best[i]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;click_tone=0;click_fallback_ready=click_changed=false;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;record_first_dirty_at=record_last_dirty_at=0;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;
+    const char *build=LINNET_BUILD_ID;const char *prefix="Build ";uint32_t at=0;
+    while(*prefix&&at<sizeof about_build-1u)about_build[at++]=*prefix++;
+    for(uint32_t i=0;i<12u&&build[i]&&at<sizeof about_build-1u;++i)about_build[at++]=build[i];
+    about_build[at]=0;
+    const char *version=LINNET_SYSTEM_VERSION;prefix="Linnet OS ";at=0;
+    while(*prefix&&at<sizeof about_version-1u)about_version[at++]=*prefix++;
+    while(*version&&at<sizeof about_version-1u)about_version[at++]=*version++;
+    about_version[at]=0;
 #if !defined(LINNET_PROFILE_RELEASE)
     record_publishes=theme_publishes=0;
 #endif
@@ -340,6 +359,69 @@ static void games_step(void){
          ln_games_configure(mask);}
     games_loaded=true;++revision;
 }
+static void about_step(void){
+    if(about_loaded||!games_loaded||!ln_storage_mounted())return;
+    const uint32_t generation=0x41424f54u;int result;uint32_t transferred=0;
+    if(about_phase==0){result=ln_storage_media_open("/.LINNET/ABOUT.BIN",generation);if(!result)return;if(result<0){about_loaded=true;return;}about_phase=1;return;}
+    if(about_phase==1){result=ln_storage_media_poll_deferred(generation,&about_file,0);if(!result)return;if(result<0||about_file.size!=sizeof about_data){about_loaded=true;return;}about_phase=2;}
+    if(about_phase==2){result=ln_storage_media_read(&about_file,0,about_data,sizeof about_data,generation);if(!result)return;if(result<0){about_loaded=true;return;}about_phase=3;return;}
+    result=ln_storage_media_poll_deferred(generation,0,&transferred);if(!result)return;
+    if(result>0&&transferred==sizeof about_data&&
+       about_data[0]=='A'&&about_data[1]=='B'&&about_data[2]=='T'&&about_data[3]=='1'&&
+       about_data[4]==1u&&about_data[5]<=26u&&about_data[6]<=100u&&about_data[7]==0u&&
+       ln_read_le32(about_data+1020)==ln_crc32(about_data,1020u)){
+        bool valid=true;
+        for(uint32_t i=0;i<about_data[5]&&valid;++i){
+            const uint8_t *row=about_data+16u+i*36u;bool ended=false;
+            for(uint32_t j=0;j<36u;++j){
+                if(!row[j])ended=true;
+                else if(ended||row[j]<32u||row[j]>126u)valid=false;
+            }
+            if(!ended)valid=false;
+        }
+        if(valid){about_count=about_data[5];about_percent=about_data[6];}
+    }
+    about_loaded=true;++revision;
+}
+static void about_ata_text(const char *prefix,const char *value){
+    if(about_ata_count>=8u||!value||!value[0])return;
+    char *out=about_ata_rows[about_ata_count++];uint32_t at=0;
+    while(*prefix&&at<63u)out[at++]=*prefix++;
+    while(*value&&at<63u)out[at++]=*value++;
+    out[at]=0;
+}
+static void about_ata_number(const char *prefix,uint32_t value){
+    char digits[10];uint32_t count=0;
+    do{digits[count++]=(char)('0'+value%10u);value/=10u;}while(value&&count<10u);
+    char text[12];for(uint32_t i=0;i<count;++i)text[i]=digits[count-i-1u];text[count]=0;
+    about_ata_text(prefix,text);
+}
+static void about_ata_step(void){
+    if(about_ata_ready)return;
+    struct ln_ata_info info;ln_ata_snapshot(&info);
+    if(!info.initialized)return;
+    about_ata_text("Drive model  ",info.model);
+    about_ata_text("Drive serial  ",info.serial);
+    about_ata_text("Drive FW  ",info.firmware);
+    about_ata_text("Drive type  ",info.media_kind==LN_ATA_MEDIA_ROTATING?"Hard disk":
+                   info.media_kind==LN_ATA_MEDIA_SOLID_STATE?"Solid state":"Unknown");
+    if(info.rotation_rpm)about_ata_number("Rotation  ",info.rotation_rpm);
+    if(info.physical_sector_bytes)about_ata_number("Physical sector  ",info.physical_sector_bytes);
+    about_ata_text("Addressing  ",info.lba48?"LBA48":"LBA28");
+    about_ata_text("Write cache  ",info.write_cache_enabled?"On":"Off");
+    about_ata_ready=true;++revision;
+}
+uint32_t ln_display_about_count(void){return 2u+(about_count?about_count:1u)+about_ata_count;}
+uint32_t ln_display_about_percent(void){return about_percent;}
+const char *ln_display_about_row(uint32_t item){
+    if(item==0u)return about_version;
+    if(item==1u)return about_build;
+    item-=2u;
+    if(item<about_count)return (const char *)(about_data+16u+item*36u);
+    if(!about_count){if(!item)return "Sync in Media Manager for details";--item;}
+    else item-=about_count;
+    return item<about_ata_count?about_ata_rows[item]:"";
+}
 static void settings_work(bool may_write,bool presented,uint32_t presented_revision,bool flush){
     if(!may_write||((loaded&&!dirty)&&(theme_loaded&&!theme_dirty))||ln_storage_busy()||!ln_storage_mounted())return;
     if(!flush&&loaded&&dirty&&theme_loaded&&!theme_dirty&&!record_publish_due())return;
@@ -364,7 +446,7 @@ static void settings_work(bool may_write,bool presented,uint32_t presented_revis
 }
 static void settings_step(bool may_write,bool presented,uint32_t presented_revision,bool flush){
     if(step_busy)return;
-    step_busy=true;if(may_write){menus_step();games_step();}settings_work(may_write,presented,presented_revision,flush);step_busy=false;
+    step_busy=true;if(may_write){menus_step();games_step();about_step();}about_ata_step();settings_work(may_write,presented,presented_revision,flush);step_busy=false;
 }
 void ln_display_settings_step_ready(bool may_write,bool theme_presented,uint32_t presented_revision){
     settings_step(may_write,theme_presented,presented_revision,false);
