@@ -532,6 +532,7 @@ def assess(identity, *, _validated_identity=False):
             option["active"] = False
             if option["id"] == "apple":
                 option["detail"] = "Apple Disk Mode detected; normal firmware startup has not been verified."
+    pending_uninstall = _pending_uninstall(identity, root)
     return dict(checked_at=_now(), identity=identity,
                 target=dict(id=target_id, name=spec["name"],
                             installer_enabled=install_spec["enabled"] or native, boot_layout=install_spec["boot_layout"],
@@ -539,7 +540,9 @@ def assess(identity, *, _validated_identity=False):
                 retail_os=not native, linnet=linnet, rockbox=rockbox, other_installations=others,
                 boot_options=boot_options, installation_methods=installation_methods,
                 default_installation_method=default_method,
-                uninstall=_uninstall_option(marker, linnet, root, native),
+                uninstall=_uninstall_option(marker, linnet, root,
+                                            identity.get("native_target_id") == target_id,
+                                            pending_uninstall),
                 recovery=marker, resume=resume, action=action, strategy=strategy, summary=summary,
                 preservation=dict(formats_disk=False, repartitions_disk=False, deletes_media=False,
                                   overwrites_existing_linnet_files=native, archives_previous_linnet=not native,
@@ -548,12 +551,55 @@ def assess(identity, *, _validated_identity=False):
                                   original_boot_backed_up=not native))
 
 
-def _uninstall_option(marker, linnet, root, native):
-    if marker and marker.get("phase") in ("installed", "restored"):
+def _private_stamp(path):
+    info = path.stat()
+    return [info.st_dev, info.st_ino, info.st_ctime_ns]
+
+
+def _pending_uninstall(identity, root):
+    """Find a host recovery copy for this exact unfinished device directory."""
+    from tools.content.guard import guarded_path
+
+    private = root / ".LINNET"
+    try:
+        guarded_path(private, root)
+        if not private.is_dir():
+            return None
+        stamp = _private_stamp(private)
+    except (OSError, ValueError):
+        return None
+    scope = cache_root(identity)
+    matches = []
+    for receipt_path in scope.glob("uninstall-*.json"):
+        try:
+            if receipt_path.is_symlink() or receipt_path.stat().st_size > 1048576:
+                continue
+            value = json.loads(receipt_path.read_text(encoding="utf-8"))
+            saved = value.get("identity", {})
+            backup = receipt_path.with_suffix(".recovery")
+            if (value.get("operation") != "uninstall-linnet" or value.get("passed") or
+                    value.get("phase") not in ("failed", "remove-linnet-files") or
+                    value.get("private_stamp") != stamp or
+                    value.get("recovery_backup") != str(backup) or
+                    value.get("previous_boot") not in ("apple", "rockbox") or
+                    not value.get("boot", {}).get("passed") or
+                    not backup.is_dir() or backup.is_symlink() or
+                    not (backup / "INSTALL.JSON").is_file() or
+                    any(saved.get(key) != identity.get(key) for key in
+                        ("disk_serial", "volume_serial", "volume_unique_id", "target_id", "disk_bytes", "partition_offset"))):
+                continue
+            matches.append((receipt_path.stat().st_mtime_ns, value, backup))
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+    return max(matches, default=None, key=lambda item: item[0])[1:] if matches else None
+
+
+def _uninstall_option(marker, linnet, root, native, pending=None):
+    if marker and marker.get("phase") in ("installed", "restored") or pending:
         if native:
             return dict(available=False, previous=None,
                         detail="Restart into Apple iPod software, reconnect in Apple Disk Mode, then refresh to remove Linnet OS. The saved boot backup is bound to the original Apple storage identity.")
-        if (root / "LNETPEND").exists():
+        if (root / "LNETPEND").exists() or (root / "LNETPEND").is_symlink():
             return dict(available=False, previous=None,
                         detail="An unfinished Linnet reinstall archive (LNETPEND) is on this iPod. Resolve that archive before removing Linnet OS so its saved media is not lost.")
         trash = root / ".LINNET" / "TRASH"
@@ -567,9 +613,13 @@ def _uninstall_option(marker, linnet, root, native):
             except (OSError, ValueError):
                 return dict(available=False, previous=None,
                             detail="Could not inspect Trash. Reconnect the iPod and refresh before removing Linnet OS.")
-        previous = "Rockbox" if marker.get("strategy") == "rockbox-file" or _saved_previous_boot(marker) == "rockbox" else "Apple iPod software"
+        previous = ("Rockbox" if pending and pending[0]["previous_boot"] == "rockbox" or
+                    marker and (marker.get("strategy") == "rockbox-file" or _saved_previous_boot(marker) == "rockbox")
+                    else "Apple iPod software")
         return dict(available=True, previous=previous,
-                    detail=f"Restore {previous} as the default startup software, then remove Linnet’s files from this iPod.")
+                    detail=(f"Finish removing Linnet after the interrupted cleanup. The verified {previous} startup backup is saved on this computer."
+                            if pending else
+                            f"Restore {previous} as the default startup software, then remove Linnet’s files from this iPod."))
     if linnet.get("state") != "absent":
         return dict(available=False, previous=None,
                     detail="Linnet files were found, but no verified installer recovery record is available. Removal is disabled to protect the iPod’s startup software.")
@@ -1394,11 +1444,54 @@ def _remove_private_tree(path, root, identity):
     path.rmdir()
 
 
+def _repair_uninstall_recovery(identity, pending):
+    """Repopulate only missing recovery files after an interrupted cleanup."""
+    from tools.content.guard import guarded_path, guard_volume
+    from tools.content.publish import _exclusive
+    from tools.content.media_manager import refresh
+
+    receipt, backup = pending
+    root = Path(identity["root"]).resolve(strict=True)
+    private, recovery = root / ".LINNET", root / ".LINNET" / "RECOVERY"
+    with _exclusive(identity):
+        refresh(identity)
+        guard_volume(identity)
+        guarded_path(private, root)
+        if not private.is_dir() or _private_stamp(private) != receipt["private_stamp"]:
+            raise ValueError("the interrupted Linnet directory changed; removal cannot resume")
+        guarded_path(recovery, root)
+        recovery.mkdir(exist_ok=True)
+        for source in backup.rglob("*"):
+            guarded_path(source, backup)
+            target = recovery / source.relative_to(backup)
+            guard_volume(identity)
+            guarded_path(target, root)
+            if source.is_dir():
+                target.mkdir(exist_ok=True)
+            elif target.exists():
+                if not target.is_file() or target.read_bytes() != source.read_bytes():
+                    raise ValueError("on-device recovery differs from the saved uninstall backup")
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+
+
 def uninstall(identity, progress=lambda _message: None, expected=None):
     """Verify the saved previous boot, then remove only Linnet's private directory."""
     from tools.content.guard import guarded_path, guard_volume
     from tools.content.publish import _exclusive
 
+    from tools.content.media_manager import refresh
+
+    identity = refresh(identity)
+    if identity.get("native_target_id") == identity.get("target_id"):
+        raise ValueError("Reconnect in Apple Disk Mode before removing Linnet OS so the saved firmware backup matches the original storage identity.")
+    pending = _pending_uninstall(identity, Path(identity["root"]).resolve(strict=True))
+    if pending:
+        if expected is not None and expected != pending[0]["previous_boot"]:
+            raise RuntimeError("the saved startup software changed after review; check the iPod again")
+        progress("Recovering the saved startup backup after an interrupted removal…")
+        _repair_uninstall_recovery(identity, pending)
     reviewed = assess(identity)
     option = reviewed["uninstall"]
     if not option["available"]:
@@ -1424,7 +1517,8 @@ def uninstall(identity, progress=lambda _message: None, expected=None):
     receipt_path = cache_root(reviewed["identity"]) / ("uninstall-" + uuid.uuid4().hex + ".json")
     receipt = dict(operation="uninstall-linnet", started_at=_now(), passed=False,
                    identity=reviewed["identity"], previous_boot=previous,
-                   media_folders=media_folders, phase="restore-boot")
+                   media_folders=media_folders, private_stamp=_private_stamp(private),
+                   phase="restore-boot")
     _save(receipt_path, receipt, replace=False)
     try:
         progress(f"Restoring and verifying {option['previous']} as the default startup software…")
