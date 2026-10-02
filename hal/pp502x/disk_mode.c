@@ -330,7 +330,7 @@ _Noreturn void ln_pp_disk_mode(const char *serial,uint32_t sector_bytes,bool wri
         /* Redraw only while command idle and after a quiet USB interval.
          * Active transfers always take priority over the optional blink. */
         uint32_t now=ln_time_us();
-        if(state==CBW && now-activity>=250000u && now-blink_started>=1200000u){
+        if(state==CBW && now-activity>=20000u && now-blink_started>=1200000u){
             ln_core_watchdog_feed();
             if(ln_target_disk_screen(!symbol_visible))symbol_visible=!symbol_visible;
             blink_started=ln_time_us();
