@@ -944,14 +944,17 @@ class _MetadataCache:
                     chosen[digest] = size
                     held += size
             images = {}
-            for digest, size in chosen.items():
-                # Recheck each length in SQL: another cache writer may replace
-                # a blob between the size query and this materialization.
-                image = self.connection.execute(
-                    "SELECT value FROM embedded_images WHERE digest=? AND length(value)=?",
-                    (digest, size)).fetchone()
-                if image and isinstance(image[0], bytes) and len(image[0]) == size:
-                    images[digest] = image[0]
+            if chosen:
+                # Recheck lengths in SQL: another cache writer may replace a
+                # blob between the size query and this bounded materialization.
+                wanted = ",".join("(?,?)" for _ in chosen)
+                arguments = tuple(part for pair in chosen.items() for part in pair)
+                for digest, image in self.connection.execute(
+                        f"WITH wanted(digest,size) AS (VALUES {wanted}) "
+                        "SELECT i.digest,i.value FROM wanted w JOIN embedded_images i "
+                        "ON i.digest=w.digest WHERE length(i.value)=w.size", arguments):
+                    if isinstance(image, bytes) and len(image) == chosen[digest]:
+                        images[digest] = image
             result = dict.fromkeys(keys)
             for key, size, mtime, checked, digest, _ in rows:
                 value = images.get(digest, _EMBEDDED_FALLBACK)
