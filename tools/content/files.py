@@ -445,6 +445,20 @@ def compile_files(root, package, cache, *, width=0, height=0, text_columns=24, t
     previews, warnings, preview_rows = {}, [], []
     image_budget = _PreviewDecodeBudget()
     videos = _prepared_videos(root, warnings)
+    pending_previews = deque()
+
+    def finish_preview():
+        source, row, future = pending_previews.popleft()
+        try:
+            preview = future.result()
+        except (OSError, ValueError) as error:
+            warnings.append(dict(path=source.relative_to(root).as_posix(), message=str(error)))
+            return
+        if preview:
+            previews[preview['sha256']] = preview
+            preview_rows.append((row, preview['sha256']))
+            struct.pack_into('<II', row, 16, preview['kind'], preview['bytes'])
+
     with ThreadPoolExecutor(max_workers=8, thread_name_prefix='files-preview') as preview_pool:
         while folders:
             folder, parent = folders.popleft()
@@ -503,10 +517,9 @@ def compile_files(root, package, cache, *, width=0, height=0, text_columns=24, t
                         key = hashlib.sha256(source.relative_to(root).as_posix().encode('utf-8')).digest()
                         preview = videos.get(key)
                         if not preview and index in futures:
-                            try:
-                                preview = futures[index].result()
-                            except (OSError, ValueError) as error:
-                                warnings.append(dict(path=source.relative_to(root).as_posix(), message=str(error)))
+                            pending_previews.append((source, row, futures[index]))
+                            if len(pending_previews) >= 64:
+                                finish_preview()
                         if preview:
                             if preview['kind'] != 3:
                                 previews[preview['sha256']] = preview
@@ -517,6 +530,9 @@ def compile_files(root, package, cache, *, width=0, height=0, text_columns=24, t
                             row[176:176+len(path)] = path
                     records.append(row)
             progress(f'Indexing Files: {len(records)-1:,} entries')
+        while pending_previews:
+            checkpoint()
+            finish_preview()
     progress('Packing Files previews')
     packs, locations = _pack_previews(previews, cache, checkpoint)
     for row, key in preview_rows:
