@@ -18,7 +18,7 @@ static uint8_t *data;
 static enum ln_ata_op operation;
 static bool result_ready,identifying,lba_probe_required;
 static uint64_t previous_sectors;
-static char previous_model[41],previous_serial[21];
+static char previous_model[41],previous_serial[21],previous_firmware[9];
 enum { OFF,RESET_ON,RESET_OFF,SOFT_ON,SOFT_OFF,CONFIGURE,IDENTIFY,TRANSFER,FINISH,PIO_MODE,DMA_MODE,DMA_WAIT,STANDBY_FLUSH,LBA_PROBE };
 static void finish(uint32_t status) {
 #if !defined(LINNET_SRAM_MONITOR)
@@ -79,14 +79,18 @@ static bool decode(void) {
     if(previous_sectors){
         if(info.sectors!=previous_sectors)return false;
         for(unsigned i=0;i<sizeof previous_model;i++)if(info.model[i]!=previous_model[i])return false;
-        for(unsigned i=0;i<sizeof previous_serial;i++)if(info.serial[i]!=previous_serial[i])return false;
+        for(unsigned i=0;i<sizeof previous_firmware;i++)if(info.firmware[i]!=previous_firmware[i])return false;
+        /* This exact adapter reports a different synthetic serial after a
+         * rail cycle. Its matched model, firmware, and capacity identify it. */
+        if(!iflash)for(unsigned i=0;i<sizeof previous_serial;i++)if(info.serial[i]!=previous_serial[i])return false;
     }
     static const char toshiba[]="TOSHIBA MK3008GAL";
     unsigned match=0;while(toshiba[match]&&toshiba[match]==info.model[match])match++;
     if(!toshiba[match]&&!info.model[match]&&info.media_kind==LN_ATA_MEDIA_UNKNOWN){
         info.media_kind=LN_ATA_MEDIA_ROTATING;info.rotation_rpm=4200;
     }
-    info.can_power_off=info.media_kind!=LN_ATA_MEDIA_UNKNOWN&&info.standby_supported&&info.can_flush;
+    info.can_power_off=info.media_kind!=LN_ATA_MEDIA_UNKNOWN&&info.can_flush&&
+        (info.standby_supported||iflash);
     info.capabilities=info.lba48|(info.can_flush<<1)|(info.standby_supported<<2)|
         (info.apm_supported<<3)|(info.write_cache_enabled<<4);
     info.idle_timeout_us=30000000;info.wake_timeout_us=15000000;
@@ -108,6 +112,7 @@ void ln_ata_recover(uint32_t now){
     previous_sectors=info.sectors;
     for(unsigned i=0;i<sizeof previous_model;i++)previous_model[i]=info.model[i];
     for(unsigned i=0;i<sizeof previous_serial;i++)previous_serial[i]=info.serial[i];
+    for(unsigned i=0;i<sizeof previous_firmware;i++)previous_firmware[i]=info.firmware[i];
     reset(now);
 }
 bool ln_ata_power_off(void){
