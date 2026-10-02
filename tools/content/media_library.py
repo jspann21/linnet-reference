@@ -57,7 +57,8 @@ def _row(category, kind, title, path, status, *, info=None, **extra):
                 removable=category != 'cache', **extra)
 
 
-def list_items(identity, *, records_by_kind=None, retail_photos=None, _validated_identity=False):
+def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tracks=None,
+               _validated_identity=False):
     """Read file names, timestamps and the bounded catalog; never decode media."""
     if not _validated_identity:
         identity = manager.refresh(identity)
@@ -73,7 +74,7 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, _validated
     metadata = _music_metadata(root, music_records=music_records,
                                music_inodes=getattr(records_by_kind, 'inodes', None))
     from .retail_media import metadata as retail_metadata, images as retail_images
-    retail = retail_metadata(root)
+    retail = retail_metadata(root, tracks_rows=retail_tracks)
     source_metadata = _source_music_metadata(root, music_records, cache_root(identity), retail, metadata)
     for kind in manager.KINDS:
         allowed = manager.extensions(kind)
