@@ -986,6 +986,8 @@ class MediaWindow(QMainWindow):
         self.device_info = label('USB · Disk Mode', 'deviceInfo', True)
         self.capacity = QProgressBar(); self.capacity.setTextVisible(False); self.capacity.setRange(0, 100); self.capacity.setValue(0)
         layout.addWidget(self.device_name); layout.addWidget(self.device_info); layout.addWidget(self.capacity)
+        self.choose_device_button = button('Find or switch iPod', self.discover, 'sidebarAction', 'refresh')
+        layout.addWidget(self.choose_device_button)
         self.eject_button = button('Eject safely', self.eject, 'sidebarAction', 'eject'); layout.addWidget(self.eject_button)
         side.addWidget(device)
         main.addWidget(sidebar)
@@ -1600,7 +1602,7 @@ class MediaWindow(QMainWindow):
         self.show_progress(result['summary']); self.refresh(); return
 
     def _complete_devices(self, result):
-        devices, errors = result['devices'], result['errors']
+        devices, errors = sorted(result['devices'], key=lambda item: item['drive']), result['errors']
         self.discovery_errors = errors
         if not devices:
             self.transition_device(None)
@@ -1614,7 +1616,9 @@ class MediaWindow(QMainWindow):
             dialog = QDialog(self); dialog.setWindowTitle('Choose an iPod'); layout = box(dialog, margins=(24, 24, 24, 24))
             picker = ComboBox()
             for device in devices:
-                picker.addItem(f"{device['drive']} · {device['target_name']}", device)
+                picker.addItem(self.device_title(device), device)
+                if self.same_device(self.identity, device):
+                    picker.setCurrentIndex(picker.count() - 1)
             layout.addWidget(picker); layout.addWidget(button('Use this iPod', dialog.accept, 'primary'))
             if dialog.exec() != QDialog.Accepted:
                 return
@@ -1626,6 +1630,13 @@ class MediaWindow(QMainWindow):
             self.notice.show()
         self.transition_device(identity)
         self.refresh()
+
+    @staticmethod
+    def device_title(identity):
+        name = (identity.get('volume_label') or 'Unnamed iPod').strip()
+        model = identity['target_name'].replace('Linnet for ', '')
+        serial = identity['disk_serial'][-6:]
+        return f"{name} · {identity['drive']} · {model} · {serial}"
 
     def _complete_scan(self, result):
         cached_photos = {row['path']: (row['bytes'], row['mtime_ns'], row.get('artwork')) for row in self.rows
@@ -1884,8 +1895,8 @@ class MediaWindow(QMainWindow):
 
     def update_device(self):
         identity = self.identity
-        self.device_name.setText(identity['target_name'].replace('Linnet for ', ''))
-        self.device_info.setText(f"Connected · {identity['drive']}\n{size(identity['free_bytes'])} available")
+        self.device_name.setText((identity.get('volume_label') or 'Unnamed iPod').strip())
+        self.device_info.setText(f"{identity['drive']} · {identity['target_name'].replace('Linnet for ', '')} · {identity['disk_serial'][-6:]}\n{size(identity['free_bytes'])} available")
         total = identity.get('total_bytes') or shutil.disk_usage(identity['root']).total
         self.capacity.setValue(int(100 * (1 - identity['free_bytes'] / total)))
 
@@ -1900,6 +1911,7 @@ class MediaWindow(QMainWindow):
 
     def update_controls(self):
         ready = self.identity is not None and not self.busy
+        self.choose_device_button.setEnabled(not self.busy)
         self.retry_button.setEnabled(ready)
         self.prep_details.setVisible(self.last_preparation is not None)
         self.prep_details.setEnabled(ready and self.last_preparation is not None and
@@ -2303,7 +2315,7 @@ class MediaWindow(QMainWindow):
 
     def render_setup(self):
         review = self.review
-        self.setup_device.setText(f"{review['identity']['target_name']} · {review['identity']['drive']}")
+        self.setup_device.setText(self.device_title(review['identity']))
         self.setup_software.setText('Linnet: ' + installer.build_description(review['linnet']))
         available_boot = review['boot_options']
         with QSignalBlocker(self.boot_choice):
