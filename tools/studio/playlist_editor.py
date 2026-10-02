@@ -1,7 +1,8 @@
-from PySide6.QtCore import Qt, QSize, QSignalBlocker
+from PySide6.QtCore import (Qt, QSize, QSignalBlocker, QAbstractListModel,
+    QModelIndex, QItemSelection, QItemSelectionModel)
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QLabel,
-    QLineEdit, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout,
+    QLineEdit, QListView, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout,
     QFrame, QStackedWidget, QStyledItemDelegate, QStyle)
 
 
@@ -37,6 +38,54 @@ class TrackDelegate(QStyledItemDelegate):
         painter.drawText(area, Qt.AlignVCenter, painter.fontMetrics().elidedText(detail, Qt.ElideRight, area.width()))
         painter.setPen(QColor('#edf1f2')); painter.drawLine(rect.bottomLeft(), rect.bottomRight())
         painter.restore()
+
+
+class SongModel(QAbstractListModel):
+    def __init__(self, tracks, parent=None):
+        super().__init__(parent)
+        self.tracks = [(str(identity), title, title.casefold()) for identity, title in
+                       sorted(tracks.items(), key=lambda item: item[1].casefold())]
+        self.visible = None
+        self.query = ''
+
+    def rowCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self.tracks) if self.visible is None else len(self.visible)
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid() or not 0 <= index.row() < self.rowCount():
+            return None
+        identity, title, _ = self.tracks[index.row() if self.visible is None else self.visible[index.row()]]
+        if role in (Qt.DisplayRole, Qt.ToolTipRole):
+            return title
+        if role == Qt.UserRole:
+            return identity
+        return None
+
+    def filter(self, query):
+        if query == self.query:
+            return self.rowCount()
+        selected = [row for row, (_, _, folded) in enumerate(self.tracks) if query in folded] if query else None
+        self.beginResetModel()
+        self.visible = selected
+        self.query = query
+        self.endResetModel()
+        return self.rowCount()
+
+
+class SongView(QListView):
+    def __init__(self, on_replace):
+        super().__init__()
+        self.on_replace = on_replace
+
+    def selectionCommand(self, index, event=None):
+        command = super().selectionCommand(index, event)
+        if command & QItemSelectionModel.Clear:
+            self.on_replace()
+        return command
+
+    def selectAll(self):
+        self.on_replace()
+        super().selectAll()
 
 
 class PlaylistEditor(QDialog):
@@ -76,14 +125,16 @@ class PlaylistEditor(QDialog):
         self.search = QLineEdit(); self.search.setPlaceholderText('Search songs, artists, albums')
         self.search.setClearButtonEnabled(True); right.addWidget(self.search)
         self.library_count = self.label(right, '', 'muted')
-        self.songs = self.track_list()
+        self.songs = SongView(self.replace_song_selection); self.songs.setObjectName('playlistTracks')
+        self.songs.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.songs.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.songs.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.songs.setItemDelegate(TrackDelegate(self.songs)); self.songs.setUniformItemSizes(True)
+        self.song_selected = set()
+        self.song_model = SongModel(state['tracks'], self.songs)
+        self.songs.setModel(self.song_model)
         self.song_stack, self.empty_songs = self.list_area(right, self.songs, '')
         self.add_tracks_button = self.button(right, '← Add to playlist', self.add)
-        self.song_search = []
-        for identity, title in sorted(state['tracks'].items(), key=lambda item: item[1].casefold()):
-            item = QListWidgetItem(title); item.setData(Qt.UserRole, str(identity))
-            item.setToolTip(title); self.songs.addItem(item)
-            self.song_search.append((item, title.casefold()))
         footer = QHBoxLayout(); footer.setSpacing(10); layout.addLayout(footer)
         self.message = self.label(footer, '', 'muted'); self.message.setWordWrap(True)
         footer.setStretch(0, 1)
@@ -92,9 +143,9 @@ class PlaylistEditor(QDialog):
         self.playlists.currentRowChanged.connect(self.select)
         self.name.textEdited.connect(self.rename)
         self.search.textChanged.connect(self.filter)
-        self.songs.itemDoubleClicked.connect(lambda _: self.add())
+        self.songs.doubleClicked.connect(lambda _: self.add())
         self.members.itemSelectionChanged.connect(self.update_actions)
-        self.songs.itemSelectionChanged.connect(self.update_actions)
+        self.songs.selectionModel().selectionChanged.connect(self.song_selection_changed)
         self.render(); self.filter('')
 
     def label(self, layout, text, name):
@@ -138,8 +189,14 @@ class PlaylistEditor(QDialog):
         self.remove_button.setEnabled(active and bool(selected))
         self.up_button.setEnabled(active and len(selected) == 1 and row > 0)
         self.down_button.setEnabled(active and len(selected) == 1 and 0 <= row < self.members.count() - 1)
-        self.add_tracks_button.setEnabled(active and any(not item.isHidden() for item in self.songs.selectedItems()))
+        self.add_tracks_button.setEnabled(active and bool(self.songs.selectionModel().selectedRows()))
         self.new_button.setEnabled(self.playlists.count() < 16)
+
+    def song_selection_changed(self, selected, deselected):
+        self.update_actions()
+
+    def replace_song_selection(self):
+        self.song_selected.clear()
 
     def render(self, selected=None):
         with QSignalBlocker(self.playlists):
@@ -213,10 +270,10 @@ class PlaylistEditor(QDialog):
         if self.slot is None:
             return
         ids = self.state['lists'][self.slot]['ids']
-        selected = sorted((item for item in self.songs.selectedItems() if not item.isHidden()), key=self.songs.row)
+        selected = sorted(self.songs.selectionModel().selectedRows(), key=lambda index: index.row())
         if len(ids) + len(selected) > 1024:
             self.message.setText('A playlist can contain at most 1024 songs.'); return
-        added = [int(item.data(Qt.UserRole)) for item in selected]
+        added = [int(index.data(Qt.UserRole)) for index in selected]
         ids.extend(added)
         with QSignalBlocker(self.members):
             self.members.clearSelection()
@@ -252,15 +309,34 @@ class PlaylistEditor(QDialog):
             self.update_actions()
 
     def filter(self, text):
-        query, count = text.casefold(), 0
-        for item, folded in self.song_search:
-            visible = query in folded
-            item.setHidden(not visible)
-            count += visible
+        selection_model = self.songs.selectionModel()
+        selected_ids = self.song_selected | {index.data(Qt.UserRole) for index in selection_model.selectedRows()}
+        with QSignalBlocker(selection_model):
+            count = self.song_model.filter(text.casefold())
+            visible_selected = set()
+            if selected_ids:
+                selection = QItemSelection()
+                rows = self.song_model.visible if self.song_model.visible is not None else range(len(self.song_model.tracks))
+                first = last = None
+                for row, source in enumerate(rows):
+                    identity = self.song_model.tracks[source][0]
+                    if identity in selected_ids:
+                        visible_selected.add(identity)
+                        if first is None:
+                            first = row
+                        elif row != last + 1:
+                            selection.select(self.song_model.index(first, 0), self.song_model.index(last, 0))
+                            first = row
+                        last = row
+                if first is not None:
+                    selection.select(self.song_model.index(first, 0), self.song_model.index(last, 0))
+                selection_model.select(selection, QItemSelectionModel.Select | QItemSelectionModel.Rows)
+            self.song_selected = selected_ids - visible_selected
         self.library_count.setText(f'{count:,} songs' + (' matching your search' if text else ' available'))
         self.song_stack.setCurrentIndex(0 if count else 1)
         self.empty_songs.setText('No matching songs\n\nTry another title, artist, or album.' if text else
                                 'No prepared songs\n\nPrepare your music to add songs to playlists.')
+        self.update_actions()
         self.update_actions()
 
     def accept_checked(self):
