@@ -522,6 +522,7 @@ def _group_directory(root: Path, name: str) -> Path:
 
 def _group_digest(path: Path, item: dict | None) -> bool:
     return (path.is_file() and item is not None and
+            path.stat().st_size == item['bytes'] and
             _hash(path, item['bytes']) == item['sha256'])
 
 
@@ -580,8 +581,10 @@ def _recover_group(root: Path, identity: dict, name: str) -> bool:
             guard(); _plain(restored, root)
             if restored.exists():
                 if not _group_digest(restored, old):
-                    raise RuntimeError(f'publication recovery temporary changed: {restored}')
-            else:
+                    # Rn is only a disposable scratch copy. The verified Bn
+                    # remains the authority even after interrupted rollback.
+                    guard(); restored.unlink()
+            if not restored.exists():
                 _copy_verified(backup, restored, old, root, guard)
             guard(); _plain(active, root); os.replace(restored, active)
             guard()
@@ -597,13 +600,22 @@ def _recover_pending_groups(root: Path, identity: dict) -> list[str]:
     return [name for name in _GROUP_PATHS if _recover_group(root, identity, name)]
 
 
-def _publish_group(root: Path, identity: dict, name: str, outputs: list[tuple[str, Path, dict]]) -> None:
+def _publish_group(root: Path, identity: dict, name: str, outputs: list[tuple[str, Path, dict]],
+                   verify_complete=None) -> None:
     """Stage new bytes and old recovery copies before changing any live name."""
     guard = lambda: _volume_guard(identity)
     _recover_group(root, identity, name)
     paths = [entry[0] for entry in outputs]
     if len(paths) != len(set(paths)) or paths != [p for p in _GROUP_PATHS[name] if p in paths]:
         raise ValueError('invalid publication group order')
+    guard()
+    required = 1024 * 1024
+    for relative, _, new in outputs:
+        active = root.joinpath(*relative.split('/'))
+        _plain(active, root)
+        required += new['bytes'] + (active.stat().st_size if active.exists() else 0) + 2 * 65536
+    if shutil.disk_usage(root).free < required:
+        raise ValueError('insufficient device space for related outputs and recovery copies')
     directory = _group_directory(root, name)
     for part in (directory.parent.parent, directory.parent, directory):
         guard(); _plain(part, root); part.mkdir(exist_ok=True)
@@ -643,8 +655,13 @@ def _publish_group(root: Path, identity: dict, name: str, outputs: list[tuple[st
                 raise RuntimeError(f'publication output changed: {active}')
             os.replace(staged, active)
             guard()
+            with active.open('rb+') as writer:
+                writer.flush()
+                os.fsync(writer.fileno())
             if not _group_digest(active, item['new']):
                 raise OSError(f'publication output readback mismatch: {active}')
+        if verify_complete is not None:
+            verify_complete()
         guard(); marker.unlink()
         _clear_group(root, directory, guard)
     except Exception:
@@ -843,23 +860,26 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
             raise RuntimeError("another database appeared during publication")
         receipt["phase"] = "reusing-database" if database_unchanged else "replacing-database"
         record()
+        def verify_related():
+            for name, (_, stamp) in verified_outputs.items():
+                path = root / name
+                guard(); _plain(path, root)
+                info = path.stat()
+                if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns) != stamp:
+                    raise OSError(f'published music asset changed after readback: {path}')
         if group_outputs:
             group_outputs.sort(key=lambda item: _GROUP_PATHS['MUSIC'].index(item[0]))
             receipt['phase'] = 'replacing-related-indexes'
             record()
-            _publish_group(root, identity, 'MUSIC', group_outputs)
-        guard()
-        with active.open("rb+") as writer:
-            writer.flush()
-            os.fsync(writer.fileno())
+            _publish_group(root, identity, 'MUSIC', group_outputs, verify_related)
+        else:
+            verify_related()
+            guard()
+            with active.open("rb+") as writer:
+                writer.flush()
+                os.fsync(writer.fileno())
         if _hash(active, inventory["database"]["bytes"]) != inventory["database"]["sha256"]:
             raise OSError("published database readback mismatch")
-        for name, (_, stamp) in verified_outputs.items():
-            path = root / name
-            _plain(path, root)
-            info = path.stat()
-            if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns) != stamp:
-                raise OSError(f"published music asset changed after readback: {path}")
         receipt.update(passed=True, phase="published", finished_at=time.time(), database=str(active),
                        receipt=str(receipt_path), tracks=inventory["database"]["tracks"],
                        database_reused=database_unchanged)

@@ -17,7 +17,7 @@ import zlib
 from .photos import HEADER, PHOTO, MAX_FILE, inspect
 from .publish import (_plain, _bounded, _hash, _copy_verified, inspect_target, _exclusive,
                       _publish_library, _volume_guard, _finish_backups, _write_receipt,
-                      _publish_group, _recover_pending_groups)
+                      _publish_group, _recover_pending_groups, _same_target)
 
 
 def _fallbacks(package):
@@ -58,8 +58,6 @@ def _verify_fallbacks(items, root, guard):
 
 def _publish_packs(packs, identity, root, candidate_bytes, grid_bytes):
     """Publish immutable tile packs before either catalog can name them."""
-    from .publish import _same_target
-
     if not packs:
         return []
 
@@ -94,9 +92,22 @@ def _publish_packs(packs, identity, root, candidate_bytes, grid_bytes):
             verified_existing[active] = after
         else:
             pending.append(item)
+    old_indexes = 0
+    if pending:
+        for name in ('GRID.PGR', 'LIBRARY.PIM'):
+            active = root/'.LINNET'/'PHOTOS'/name
+            guard(); _plain(active, root)
+            if active.exists():
+                size = active.stat().st_size
+                if size > MAX_FILE:
+                    raise ValueError('existing photo output exceeds the supported backup size')
+                old_indexes += size
     needed = (sum(item['bytes'] for item in pending) + candidate_bytes + grid_bytes +
-              2*1024*1024) if pending else 0
-    if identity['free_bytes'] < needed:
+              old_indexes + 2*1024*1024) if pending else 0
+    refreshed = inspect_target(identity['disk_number'], identity['disk_serial'],
+                               identity['volume_serial'], identity['drive'])
+    _same_target(identity, refreshed)
+    if refreshed['free_bytes'] < needed:
         raise ValueError('insufficient iPod space for photo packs and catalogs')
     results = []
     for active, item in distinct.items():
@@ -241,7 +252,9 @@ def _publish_pair(package, candidate, references, grid, grid_candidate, identity
         # The transaction stages both new outputs and both old copies even
         # when one fixed-name output already carries the requested bytes.
         needed += item['bytes'] + (hint['bytes'] if hint else 0) + 3*65536+1024*1024
-    if identity['free_bytes'] < needed:
+    refreshed = inspect_target(number, serial, volume, drive)
+    _same_target(identity, refreshed)
+    if refreshed['free_bytes'] < needed:
         raise ValueError('insufficient free space for both photo outputs and device recovery copies')
     receipt_path = package.parent/('publish-photos-'+uuid.uuid4().hex+'.json')
     receipt = dict(operation='publish-photos', passed=False, phase='preflight-complete',
@@ -260,14 +273,15 @@ def _publish_pair(package, candidate, references, grid, grid_candidate, identity
                 raise RuntimeError(f'staged photo output changed: {source}')
         _verify_fallbacks(references, root, lambda: _volume_guard(identity))
         _verify_pack_proofs(pack_results, identity, root)
-        from .publish import _same_target
         _same_target(identity, inspect_target(number, serial, volume, drive))
         receipt['phase'] = 'replacing-related-indexes'; record()
+        def verify_related():
+            _verify_fallbacks(references, root, lambda: _volume_guard(identity))
+            _verify_pack_proofs(pack_results, identity, root)
         _publish_group(root, identity, 'PHOTOS', [
             ('.LINNET/PHOTOS/GRID.PGR', grid, grid_candidate),
             ('.LINNET/PHOTOS/LIBRARY.PIM', package, candidate),
-        ])
-        _verify_pack_proofs(pack_results, identity, root)
+        ], verify_related)
         grid_receipt = dict(operation='publish-photos', passed=True, phase='published', identity=identity,
                             candidate_sha256=grid_candidate['sha256'], candidate_bytes=grid_candidate['bytes'],
                             package=str(root/'.LINNET'/'PHOTOS'/'GRID.PGR'), receipt=str(receipt_path))
