@@ -738,6 +738,19 @@ static void music_step(void){
     }
     ln_player_expect_next(expected&&!sleep_holds_next()&&!sleep_due);
     ln_player_snapshot(&before);ln_player_step();ln_player_snapshot(&p);ln_audio_snapshot(&audio);
+    /* A muted seek can discard thousands of MPEG frames without producing
+     * PCM. Advance cached decoder work in this turn, bounded so input and
+     * display service still run promptly. A pending disk request resumes in
+     * the normal storage turn instead of spinning here. */
+    if(p.phase==LN_PLAYER_PRIME&&!audio.playing){
+        uint32_t started=ln_time_us();
+        for(uint32_t n=0;n<32u&&!ln_storage_busy()&&
+            (uint32_t)(ln_time_us()-started)<800u;++n){
+            ln_player_step();ln_player_snapshot(&p);
+            if(p.phase!=LN_PLAYER_PRIME)break;
+        }
+        ln_audio_snapshot(&audio);
+    }
     if(file_mode){
         current.track.rate=p.rate;current.track.frames=p.frames;
         if(sleep_active&&sleep_mode>=9u&&before.phase!=LN_PLAYER_IDLE&&before.phase!=LN_PLAYER_ERROR&&
