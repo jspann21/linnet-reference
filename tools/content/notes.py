@@ -76,7 +76,7 @@ def _display_recipe(target, scene_id='linnet.system.notes'):
         font = load_font(font_path.read_bytes())
         advances = font.get('advances', [font['advance']] * 95)
         widths = [max(a, b) for a, b in zip(widths, advances)]
-        layout = ('default' if manifest['lcd_format'].startswith('gray') else
+        layout = ('default' if manifest['lcd_format'].startswith('gray') and metadata.get('layout') != 'classic-split' else
                   metadata.get('layout', 'default'))
         theme = dict(layout=layout, font=font,
                      metrics=spec['metrics'])

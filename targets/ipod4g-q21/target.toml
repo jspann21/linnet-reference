@@ -22,7 +22,7 @@ lcd_width = 160
 lcd_height = 128
 lcd_format = "gray2-horizontal"
 presentation_policy = { music_hint_menu_back = true }
-capabilities = { photos = false, video = false, themes = false, cover_flow = false }
+capabilities = { photos = false, video = false, themes = true, cover_flow = false }
 media_photo_width = 160
 media_photo_height = 108
 media_video_width = 160
@@ -40,7 +40,7 @@ mailbox_address = 33550336
 mailbox_bytes = 4096
 
 [ui]
-allowed_themes = ["linnet.theme.ipod4g-mono"]
+allowed_themes = ["linnet.theme.ipod4g-mono", "linnet.theme.classic-split"]
 default_theme = "linnet.theme.ipod4g-mono"
 
 [retail]

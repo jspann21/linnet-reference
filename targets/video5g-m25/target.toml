@@ -72,7 +72,7 @@ firmware_entry_type = "soso"
 max_firmware_bytes = 268435456
 
 [ui]
-allowed_themes = ["linnet.theme.default", "local.example.midnight", "linnet.theme.graphite", "linnet.theme.aurora", "linnet.theme.sunset", "linnet.theme.blueprint", "linnet.theme.minimal-light", "linnet.theme.minimal-dark", "linnet.theme.album-colors"]
+allowed_themes = ["linnet.theme.default", "local.example.midnight", "linnet.theme.graphite", "linnet.theme.aurora", "linnet.theme.sunset", "linnet.theme.blueprint", "linnet.theme.minimal-light", "linnet.theme.minimal-dark", "linnet.theme.album-colors", "linnet.theme.classic-split"]
 default_theme = "linnet.theme.default"
 
 [resources]

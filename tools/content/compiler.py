@@ -10,10 +10,10 @@ from pathlib import Path
 import re
 import tomllib
 from .tsx import ContentError, compile_tsx, COLOR_ROLES
-from .layouts import apply_layout, gate_features, feature_enabled
+from .layouts import apply_layout, gate_features, feature_enabled, place_classic_split_home
 import importlib.util
 
-LAYOUTS = ('default','ipod-photo','graphite','aurora','sunset','blueprint','minimal','native','ipod-classic')
+LAYOUTS = ('default','ipod-photo','graphite','aurora','sunset','blueprint','minimal','native','ipod-classic','classic-split')
 REFERENCE_WIDTH, REFERENCE_HEIGHT = 220, 176
 
 def canonical(value):
@@ -276,7 +276,7 @@ def compile_system(root, output, configpath=None, target_override=None):
         if style not in ('standard','monochrome','apple-photo','apple-classic','album-art'): raise ContentError('unknown theme style')
         layout=metadata.get('layout','default')
         if layout not in LAYOUTS: raise ContentError('unknown theme layout')
-        if monochrome: layout='default'
+        if monochrome and layout != 'classic-split': layout='default'
         palette=spec.get('colors',{})
         if not {'foreground','background','accent','muted','panel'}<=set(palette): raise ContentError('theme lacks required color tokens')
         for key,value in palette.items():
@@ -467,6 +467,8 @@ def compile_system(root, output, configpath=None, target_override=None):
                     elif node['text'] == 'Photo count':
                         node.update(x=8, y=top, w=width-16, h=24)
                         if target != 'classic6g-n25': node['flags'] |= 2
+        if variant['layout']=='classic-split':
+            place_classic_split_home(variant['scenes'],width,height)
         enabled_scenes=gate_features(variant['scenes'],features)
         if not enabled_scenes&1:
             raise ContentError('the first UI scene must be enabled')
@@ -652,7 +654,8 @@ def generate_c(doc, packed_fonts=None):
     out.append('const struct ln_ui_font ln_ui_clock_font = '+font_values[doc['clock_font_index']]+';')
     # Share immutable arrays by their complete emitted contents. First occurrence
     # owns the symbol, retaining deterministic traversal and all scene identities.
-    item_arrays,target_arrays,node_arrays={},{},{}
+    item_arrays,target_arrays,node_arrays,scene_arrays={},{},{},{}
+    theme_scenes=[]
     for theme_index,theme in enumerate(doc['themes']):
         scene_nodes=[]
         scene_counts=[]
@@ -700,20 +703,26 @@ def generate_c(doc, packed_fonts=None):
             scene_nodes.append(node_arrays[key])
             scene_counts.append(len(initializers))
             scene_focus.append(native_focus)
-        out.append(f'static const struct ln_ui_scene ln_scenes_{theme_index}[] = {{')
+        initializers=[]
         for i,scene in enumerate(theme['scenes']):
-            out.append('{'+','.join([quote(scene['id']),quote(scene['title']),scene_nodes[i],str(scene_counts[i])+'u',str(scene_focus[i])+'u'])+'},')
-        out.append('};')
+            initializers.append('{'+','.join([quote(scene['id']),quote(scene['title']),scene_nodes[i],str(scene_counts[i])+'u',str(scene_focus[i])+'u'])+'},')
+        key=tuple(initializers)
+        if key not in scene_arrays:
+            scene_arrays[key]=f'ln_scenes_{theme_index}'
+            out.append(f'static const struct ln_ui_scene {scene_arrays[key]}[] = {{')
+            out.extend(initializers)
+            out.append('};')
+        theme_scenes.append(scene_arrays[key])
     out.append('const struct ln_ui_theme ln_ui_themes[] = {')
     for index,theme in enumerate(doc['themes']):
         values=[rgb565(*(int(theme['colors'][role][i:i+2],16) for i in (1,3,5))) for role in COLOR_ROLES]
         descriptor=[quote(theme['id']),quote(theme['name']),'{'+','.join(str(v)+'u' for v in values)+'}',str(theme['flags'])+'u',
-                    f'ln_scenes_{index}',f'&ln_ui_fonts[{theme["font_index"]}]',str(theme['metrics']['row_height'])+'u',
+                    theme_scenes[index],f'&ln_ui_fonts[{theme["font_index"]}]',str(theme['metrics']['row_height'])+'u',
                     str(theme['metrics']['padding'])+'u',str(LAYOUTS.index(theme['layout']))+'u']
         out.append('{'+','.join(descriptor)+'},')
     out.extend(['};',f'const uint32_t ln_ui_theme_count = {len(doc["themes"])}u;',
                 f'const uint32_t ln_ui_default_theme = {default}u;',
-                f'const struct ln_ui_scene *ln_ui_scenes = ln_scenes_{default};',
+                f'const struct ln_ui_scene *ln_ui_scenes = {theme_scenes[default]};',
                 f'const uint32_t ln_ui_scene_count = {len(doc["scenes"])}u;',
                 f'const uint64_t ln_ui_enabled_scenes = UINT64_C({doc["enabled_scenes"]});',''])
     return '\n'.join(out)

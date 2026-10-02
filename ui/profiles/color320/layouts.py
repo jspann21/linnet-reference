@@ -44,8 +44,13 @@ def apply_layout(scenes, theme):
             place_video_controls(scene, 320, 240, theme)
             mark_control_footer(scene, (8, 212, 304, 24))
         return result
-    if style == 'ipod-classic':
-        return apply_ipod_classic(scenes, theme)
+    if style in ('ipod-classic', 'classic-split'):
+        result = apply_ipod_classic(scenes, theme)
+        if style == 'classic-split':
+            for scene in result:
+                if scene['id'] == 'linnet.system.home':
+                    next(n for n in scene['nodes'] if n['kind'] == 11)['text'] = 'Linnet'
+        return result
     # Graphite/Sunset reserve the bottom 30 pixels for transport chrome;
     # Aurora reserves 38 pixels at the left. Blueprint puts status below content.
     shells = {
