@@ -227,8 +227,9 @@ def _library_snapshot(identity):
     retail_photos = images(root)
     inventory = scan_sources(root, skipped=skipped, records_by_kind=records, retail_photos=retail_photos,
                              fingerprint_kinds=('Music', 'Notes', 'Photos'), retail_tracks=retail_tracks)
+    category_errors = []
     rows = media_library.list_items(identity, records_by_kind=records, retail_photos=retail_photos,
-                                    retail_tracks=retail_tracks,
+                                    retail_tracks=retail_tracks, category_errors=category_errors,
                                     _validated_identity=True)
     for row in rows:
         if row.get('category') == 'error' and row.get('kind') in inventory:
