@@ -547,6 +547,10 @@ def execute(mode, plan_path, expected_sha, disk_number):
             elif receipt["before"]["directory"] != "original":
                 write_verified(device, manifest["directory_disk_offset"], artifacts["directory-original.bin"],
                                receipt, receipt_path, "restore-directory", sector)
+            # A retry may see a completed write in cache after the previous flush
+            # failed. Flush even when there is no new directory write.
+            device.flush()
+            os.fsync(device.fileno())
             receipt["after"] = guard_device(
                 device, manifest, artifacts, original,
                 compatible_residue=receipt["before"].get("compatible_residue"),
