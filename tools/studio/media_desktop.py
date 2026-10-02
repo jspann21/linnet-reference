@@ -2344,8 +2344,7 @@ class MediaWindow(QMainWindow):
         self.setup_device.setText(self.device_title(review['identity']))
         self.setup_software.setText('Linnet: ' + installer.build_description(review['linnet']))
         native = review['identity'].get('native_target_id') == review['identity']['target_id']
-        available_boot = ([option for option in review['boot_options'] if option['kind'] == 'linnet']
-                          if native else review['boot_options'])
+        available_boot = [option for option in review['boot_options'] if option['kind'] == 'linnet']
         with QSignalBlocker(self.boot_choice):
             self.boot_choice.clear()
             for option in available_boot:
@@ -2370,7 +2369,7 @@ class MediaWindow(QMainWindow):
         self.install_detail.setText(review['summary'])
         self.install_detail.setVisible(review['action'] not in ('install', 'replace', 'adopt') or review['linnet']['state'] in ('invalid', 'incomplete'))
         self.uninstall_detail.setText(review['uninstall']['detail'] + (' Music, Photos, Videos, and Notes folders are kept.' if review['uninstall']['available'] else ''))
-        startup = startup_default.inspect(review) if native else dict(supported=False, choices=[], default='linnet')
+        startup = startup_default.inspect(review)
         self.startup_state = startup
         labels = {'linnet': 'Linnet', 'rockbox': 'Rockbox', 'apple': 'Apple iPod software'}
         with QSignalBlocker(self.default_choice):
@@ -2407,8 +2406,7 @@ class MediaWindow(QMainWindow):
         self.boot_choice.setEnabled(not self.busy and self.review is not None and self.boot_choice.count() > 0)
         self.install_button.setEnabled(enabled)
         self.uninstall_button.setEnabled(not self.busy and bool(self.review and self.review['uninstall']['available']))
-        show_default = bool(self.review and self.review['identity'].get('native_target_id') == self.review['identity']['target_id']
-                            and self.review['linnet']['state'] == 'installed')
+        show_default = bool(self.review and self.review['linnet']['state'] == 'installed')
         for widget in (self.default_title, self.default_detail, self.default_choice, self.default_button,
                        self.boot_upgrade_button, self.boot_upgrade_detail):
             widget.setVisible(show_default)
