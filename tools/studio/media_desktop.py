@@ -2388,9 +2388,10 @@ class MediaWindow(QMainWindow):
         from_source = self.build_from_source.isChecked()
         resume = bool(self.review and self.review.get('action') == 'resume')
         self.build_from_source.setEnabled(not self.busy and not resume)
-        self.firmware_button.setEnabled(not self.busy and not from_source and not resume)
-        self.firmware_label.setVisible(not from_source)
-        self.firmware_button.setVisible(not from_source)
+        self.firmware_button.setEnabled(not self.busy and not resume)
+        self.firmware_label.setText(('Building from source. Choose a ZIP to use downloaded firmware.'
+                                     if from_source else self.firmware_path or
+                                     'Choose a downloaded Linnet firmware ZIP.'))
         self.boot_detail.setText(option.get('detail', '') if option else '')
         show_methods = bool(linnet and option.get('selectable') and method)
         for widget in (self.method_title, self.method_choice, self.method_detail, self.selector_note):
@@ -2506,7 +2507,7 @@ class MediaWindow(QMainWindow):
         if path:
             self.firmware_path = path
             self.settings.setValue('firmware_bundle', path)
-            self.firmware_label.setText(path)
+            self.build_from_source.setChecked(False)
             self.update_install_action()
 
     def firmware_source_changed(self, enabled):
