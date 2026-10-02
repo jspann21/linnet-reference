@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
+import struct
 import subprocess
 import tempfile
 import tomllib
@@ -295,8 +296,18 @@ def inspect(identity, *, records_by_kind=None):
     """Return folder choices and readiness without writing the device."""
     root = Path(identity['root']).resolve(strict=True)
     if not supported(identity):
+        database = root / 'iPod_Control/iTunes/iTunesDB'
+        if database.is_file():
+            try:
+                from .retail_media import tracks
+                count = len(tracks(root))
+                library = f'Apple music database lists {count:,} track' + ('' if count == 1 else 's') + '. '
+            except (OSError, ValueError, UnicodeError, struct.error):
+                library = 'Apple music database could not be read. '
+        else:
+            library = 'No Apple music database found. '
         return {'supported': False, 'folders': [], 'selected': [],
-                'status': 'Apple OS folder updates are not yet validated for this iPod.',
+                'status': library + 'Apple OS folder updates are not yet validated for this iPod.',
                 'details': []}
     folders = (_folder_rows(root, records_by_kind) if records_by_kind is not None else
                _walk_folders(root))
