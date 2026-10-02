@@ -36,11 +36,33 @@ static void extra_start(void){score=0;ex_choice=1u;ex_menu=0;ex_tick_at=ex_effec
 #endif
     ++hud_revision;
 }
-static int extra_wheel(int32_t value){if(!value)return 1;if(ex_phase==EX_LEVEL){uint8_t count=3u;ex_choice=(uint8_t)((ex_choice+value%(int32_t)count+count)%count);}else if(game==BRICK&&(ex_phase==EX_READY||ex_phase==EX_PLAY)){int32_t target=br_target+value*3;if(target<27)target=27;if(target>229)target=229;br_target=(int16_t)target;if(ex_phase==EX_READY){br_paddle=br_target;br_ball_x=(int32_t)br_paddle<<8;}}else if(game==VORTEX&&(ex_phase==EX_READY||ex_phase==EX_PLAY))vx_angle+=(uint8_t)(value*3);else if(game==FALLING&&ex_phase==EX_PLAY){int8_t x=(int8_t)(fb_x+(value>0?1:-1));if(!fb_hit(x,fb_y,fb_rot)){fb_x=(uint8_t)x;if(fb_lock_at&&fb_lock_resets++<8u)fb_lock_at=ex_tick_at+350000u;}}else if(game==MINESWEEPER&&ex_phase==EX_PLAY)ms_cursor=(uint8_t)((ms_cursor+(value>0?1:ms_w*ms_h-1u))%(ms_w*ms_h));else if(game==REVERSI&&ex_phase==EX_PLAY&&rv_turn==1u)rv_cursor=rv_next(rv_cursor,value>0?1:-1,1u);else if(game==SNAKE&&(ex_phase==EX_READY||ex_phase==EX_PLAY))sn_turn=(uint8_t)((sn_dir+(value>0?1u:3u))&3u);else if(game==WORD_SEARCH&&ex_phase==EX_PLAY)ws_cursor=(uint8_t)((ws_cursor+(value>0?1:ws_w*ws_h-1u))%(ws_w*ws_h));
+static int extra_wheel(int32_t value){
+    if(!value)return 3;bool changed=false;
+    if(ex_phase==EX_LEVEL){uint8_t next=(uint8_t)((ex_choice+value%3+3)%3);changed=next!=ex_choice;ex_choice=next;}
+    else if(game==BRICK&&(ex_phase==EX_READY||ex_phase==EX_PLAY)){
+        int64_t target=(int64_t)br_target+(int64_t)value*3;
+        if(target<27)target=27;if(target>229)target=229;
+        changed=target!=br_target;br_target=(int16_t)target;
+        if(changed&&ex_phase==EX_READY){br_paddle=br_target;br_ball_x=(int32_t)br_paddle<<8;}
+    }else if(game==VORTEX&&(ex_phase==EX_READY||ex_phase==EX_PLAY)){
+        uint8_t next=(uint8_t)(vx_angle+(uint32_t)value*3u);changed=next!=vx_angle;vx_angle=next;
+    }else if(game==FALLING&&ex_phase==EX_PLAY){
+        int8_t x=(int8_t)(fb_x+(value>0?1:-1));
+        if(!fb_hit(x,fb_y,fb_rot)){fb_x=(uint8_t)x;changed=true;if(fb_lock_at&&fb_lock_resets++<8u)fb_lock_at=ex_tick_at+350000u;}
+    }else if(game==MINESWEEPER&&ex_phase==EX_PLAY){
+        uint8_t next=(uint8_t)((ms_cursor+(value>0?1:ms_w*ms_h-1u))%(ms_w*ms_h));changed=next!=ms_cursor;ms_cursor=next;
+    }else if(game==REVERSI&&ex_phase==EX_PLAY&&rv_turn==1u){
+        uint8_t next=rv_next(rv_cursor,value>0?1:-1,1u);changed=next!=rv_cursor;rv_cursor=next;
+    }else if(game==SNAKE&&(ex_phase==EX_READY||ex_phase==EX_PLAY)){
+        uint8_t next=(uint8_t)((sn_dir+(value>0?1u:3u))&3u);changed=next!=sn_turn;sn_turn=next;
+    }else if(game==WORD_SEARCH&&ex_phase==EX_PLAY){
+        uint8_t next=(uint8_t)((ws_cursor+(value>0?1:ws_w*ws_h-1u))%(ws_w*ws_h));changed=next!=ws_cursor;ws_cursor=next;
+    }
 #if defined(LINNET_AUDIO)
-    else if(game==MUSIC_QUIZ&&ex_phase==EX_PLAY&&!mq_answered)mq_focus=(uint8_t)((mq_focus+(value>0?1u:3u))&3u);
+    else if(game==MUSIC_QUIZ&&ex_phase==EX_PLAY&&!mq_answered){uint8_t next=(uint8_t)((mq_focus+(value>0?1u:3u))&3u);changed=next!=mq_focus;mq_focus=next;}
 #endif
-    ++hud_revision;return 1;}
+    if(changed)++hud_revision;return changed?1:3;
+}
 static int extra_button(uint32_t pressed){if(pressed&1u){extra_leave();return 2;}if((ex_phase==EX_WON||ex_phase==EX_LOST||ex_phase==EX_REVEAL)&&(pressed&16u)){
 #if defined(LINNET_AUDIO)
         if(game==MUSIC_QUIZ){mq_restart();++hud_revision;return 1;}

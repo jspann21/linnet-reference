@@ -106,7 +106,8 @@ typedef void (*ln_ui_damage_fn)(int32_t x,int32_t y,int32_t w,int32_t h);
 void ln_ui_init(struct ln_ui_state *state);
 /* Clock editor bridge: labels/input are memory-only; begin is explicit foreground input. */
 bool ln_ui_clock_begin(void);
-bool ln_ui_clock_input(struct ln_ui_state *,uint32_t kind,int32_t value);
+/* 0 unhandled, 1 changed, 2 consumed unchanged. */
+int ln_ui_clock_input(struct ln_ui_state *,uint32_t kind,int32_t value);
 void ln_ui_clock_cancel(void);
 const char *ln_ui_clock_text(const struct ln_ui_node *,uint32_t item,const char *fallback);
 

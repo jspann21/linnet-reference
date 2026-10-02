@@ -9,6 +9,7 @@ uint32_t ln_games_count(void);
 const char *ln_games_label(uint32_t row);
 const char *ln_games_description(uint32_t row);
 void ln_games_start(uint32_t row);
+/* 0 unhandled, 1 changed, 2 exit, 3 consumed unchanged. */
 int ln_games_input(uint32_t kind,int32_t value);
 bool ln_games_tick(uint32_t now);
 uint32_t ln_games_deadline(uint32_t now);

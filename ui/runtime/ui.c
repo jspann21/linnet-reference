@@ -13,7 +13,7 @@ __attribute__((weak)) uint32_t ln_ui_clock_seconds(void){return UINT32_MAX;}
 __attribute__((weak)) uint32_t ln_ui_playback_status(void){return 0;}
 __attribute__((weak)) uint32_t ln_ui_playback_modes(void){return 0;}
 __attribute__((weak)) bool ln_ui_clock_begin(void){return false;}
-__attribute__((weak)) bool ln_ui_clock_input(struct ln_ui_state*s,uint32_t kind,int32_t value){(void)s;(void)kind;(void)value;return false;}
+__attribute__((weak)) int ln_ui_clock_input(struct ln_ui_state*s,uint32_t kind,int32_t value){(void)s;(void)kind;(void)value;return 0;}
 __attribute__((weak)) void ln_ui_clock_cancel(void){}
 __attribute__((weak)) const char *ln_ui_clock_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){(void)n;(void)item;return fallback;}
 __attribute__((weak)) bool ln_ui_dynamic_navigation(const struct ln_ui_node*n,uint32_t item){(void)n;(void)item;return false;}
@@ -1089,6 +1089,7 @@ bool ln_ui_input(struct ln_ui_state*s,uint32_t kind,int32_t value){if(!s)return 
     bool clock_edit=s->scene==LN_UI_SCENE_CLOCK_EDIT;
     if(!s->hold&&s->scene==LN_UI_SCENE_GAME_PLAY&&(kind==1u||kind==2u)){
         int result=ln_games_input(kind,value);if(kind==2u)s->buttons=(uint32_t)value;
+        if(result==3)return false;
         if(result==2){(void)ln_ui_show(s,"linnet.system.games");return true;}
         if(result){s->dirty|=8u;if(kind==2u)ln_ui_refresh(s);return true;}
     }
@@ -1097,7 +1098,9 @@ bool ln_ui_input(struct ln_ui_state*s,uint32_t kind,int32_t value){if(!s)return 
     }
     if(clock_edit&&(kind==1u||kind==2u)){
         uint32_t pressed=kind==2u?(uint32_t)value&~s->buttons:0;
-        if(ln_ui_clock_input(s,kind,value)){s->dirty|=1u;return true;}
+        int result=ln_ui_clock_input(s,kind,value);
+        if(result==2)return false;
+        if(result){s->dirty|=1u;return true;}
         if(!s->hold&&(pressed&1u)){ln_ui_clock_cancel();s->buttons=(uint32_t)value;return previous_scene(s);}
         if(kind==2u){s->buttons=(uint32_t)value;return false;}
     }

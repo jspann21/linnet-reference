@@ -668,11 +668,13 @@ bool ln_music_quiesce(bool save_settings){
         ln_storage_step();
     }
 }
-void ln_music_volume(int32_t steps){
-    if(shutting_down)return;
+bool ln_music_volume(int32_t steps){
+    if(shutting_down)return false;
     int64_t next=(int64_t)queue.volume_db_tenths+(int64_t)steps*10;
     if(next<-730)next=-730;if(next>profile.max_volume_db_tenths)next=profile.max_volume_db_tenths;
-    queue.volume_db_tenths=(int32_t)next;++revision;
+    bool changed=queue.volume_db_tenths!=(int32_t)next;
+    /* Zero-step calls also publish a changed sound profile and sync gain. */
+    queue.volume_db_tenths=(int32_t)next;if(changed||!steps)++revision;
     struct ln_audio_status audio;ln_audio_snapshot(&audio);
     if(audio.initialized){
         if(ln_audio_volume(output_volume())){
@@ -681,6 +683,7 @@ void ln_music_volume(int32_t steps){
             volume_retry_pending=true;volume_retry_at=ln_time_us()+LN_MUSIC_VOLUME_RETRY_US;
         }
     }else{volume_retry_pending=false;volume_retry_at=0;}
+    return changed;
 }
 /* Shared output gain also runs while video owns the audio sink. */
 void ln_music_volume_sync(void){

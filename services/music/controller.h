@@ -28,7 +28,7 @@ bool ln_music_next(bool previous);
 void ln_music_toggle(void);
 void ln_music_stop(void);
 bool ln_music_seek(uint64_t frame);
-void ln_music_volume(int32_t steps);
+bool ln_music_volume(int32_t steps);
 void ln_music_volume_sync(void);
 void ln_music_headphones(bool connected);
 /* Terminal normal shutdown / Disk Mode only. Caller must admit with storage

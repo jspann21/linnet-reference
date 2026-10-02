@@ -214,23 +214,29 @@ static void finish(bool won){games_phase=won?WON:LOST;sound_pending=4u;if(score>
     }}
 int ln_games_input(uint32_t kind,int32_t value){
     if(game>=BRICK){if(kind==1u)return extra_wheel(value);if(kind!=2u)return 0;uint32_t pressed=(uint32_t)value&~buttons;buttons=(uint32_t)value;return extra_button(pressed);}
-    if(kind==1u){if(!value)return 1;
+    if(kind==1u){if(!value)return 3;
         if(game==SUDOKU){
-            if(games_phase==SUDOKU_LEVEL){sud_choice=(uint8_t)((sud_choice+value%4+4)%4);sud_message=0;}
-            else if(games_phase==SUDOKU_PICK){sud_picker=(uint8_t)((sud_picker+value%10+10)%10);sud_message=0;}
+            uint8_t choice=sud_choice,picker=sud_picker,menu=sud_menu,cursor=sud_cursor;
+            if(games_phase==SUDOKU_LEVEL){sud_choice=(uint8_t)((sud_choice+value%4+4)%4);}
+            else if(games_phase==SUDOKU_PICK){sud_picker=(uint8_t)((sud_picker+value%10+10)%10);}
             else if(games_phase==SUDOKU_MENU){sud_menu=(uint8_t)((sud_menu+value%6+6)%6);}
-            else if(games_phase==PLAY){int32_t next=(int32_t)sud_cursor+value%81;while(next<0)next+=81;while(next>=81)next-=81;sud_cursor=(uint8_t)next;sud_message=0;}
-            ++hud_revision;return 1;
+            else if(games_phase==PLAY){int32_t next=(int32_t)sud_cursor+value%81;while(next<0)next+=81;while(next>=81)next-=81;sud_cursor=(uint8_t)next;}
+            bool changed=choice!=sud_choice||picker!=sud_picker||menu!=sud_menu||cursor!=sud_cursor;
+            if(changed){if(games_phase!=SUDOKU_MENU)sud_message=0;++hud_revision;}return changed?1:3;
         }
-        if(game==SOLITAIRE&&games_phase==PAUSED){sol_menu=(uint8_t)((sol_menu+value%3+3)%3);sol_message=0;return 1;}
+        if(game==SOLITAIRE&&games_phase==PAUSED){uint8_t next=(uint8_t)((sol_menu+value%3+3)%3);
+            if(next==sol_menu)return 3;sol_menu=next;sol_message=0;return 1;}
         if(games_phase==PLAY&&game==SOLITAIRE){
             int32_t next=(int32_t)sol_cursor+value%13;
             while(next<0)next+=13;while(next>=13)next-=13;
+            if((uint8_t)next==sol_cursor)return 3;
             sol_focus((uint8_t)next);sol_message=0;++hud_revision;return 1;
         }if(games_phase==PLAY&&game==COMET){
             int32_t steps=value<-24?-24:value>24?24:value;
-            int32_t next=(int32_t)ship+steps*6;if(next<18)next=18;if(next>302)next=302;ship=(uint16_t)next;}
-        else if(games_phase==PLAY&&game==PULSE)focus=(uint8_t)((focus+value%4+4)&3u);return 1;}
+            int32_t next=(int32_t)ship+steps*6;if(next<18)next=18;if(next>302)next=302;
+            if(next==ship)return 3;ship=(uint16_t)next;return 1;}
+        else if(games_phase==PLAY&&game==PULSE){uint8_t next=(uint8_t)((focus+value%4+4)&3u);
+            if(next==focus)return 3;focus=next;return 1;}return 3;}
     if(kind!=2u)return 0;
     uint32_t pressed=(uint32_t)value&~buttons;buttons=(uint32_t)value;
     if(game==SUDOKU){

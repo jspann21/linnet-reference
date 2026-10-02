@@ -49,23 +49,26 @@ static uint32_t adjusted(uint32_t value,int32_t delta,uint32_t low,uint32_t high
     if(delta<0){uint32_t step=0u-(uint32_t)delta;return step>value-low?low:value-step;}
     return value;
 }
-static void adjust(int32_t delta){
+static bool adjust(int32_t delta){
+    struct ln_calendar before=draft;
     if(edit_field==0u)draft.year=(uint16_t)adjusted(draft.year,delta,2000,2099);
     else if(edit_field==1u)draft.month=(uint8_t)adjusted(draft.month,delta,1,12);
     else if(edit_field==2u)draft.day=(uint8_t)adjusted(draft.day,delta,1,month_days(draft.year,draft.month));
     else if(edit_field==3u)draft.hour=(uint8_t)adjusted(draft.hour,delta,0,23);
     else if(edit_field==4u)draft.minute=(uint8_t)adjusted(draft.minute,delta,0,59);
     uint8_t maximum=month_days(draft.year,draft.month);if(draft.day>maximum)draft.day=maximum;
-    source="Unsaved changes";refresh_labels();
+    if(before.year==draft.year&&before.month==draft.month&&before.day==draft.day&&
+       before.hour==draft.hour&&before.minute==draft.minute)return false;
+    source="Unsaved changes";refresh_labels();return true;
 }
-bool ln_clock_editor_input(struct ln_ui_state *state,uint32_t kind,int32_t value){
+int ln_clock_editor_input(struct ln_ui_state *state,uint32_t kind,int32_t value){
     if(!active||!state||state->scene>=ln_ui_scene_count||
        !same(ln_ui_scenes[state->scene].id,"linnet.system.clock-edit")||(kind!=1u&&kind!=2u))return false;
     if(state->hold)return false;
     if(kind==1u){
         if(!pending&&!editing)return false;
-        if(!pending&&value){adjust(value);state->dirty|=1u;}
-        return true;
+        if(!pending&&value&&adjust(value)){state->dirty|=1u;return 1;}
+        return 2;
     }
     uint32_t pressed=(uint32_t)value&~state->buttons;
     /* An accepted save owns the RTC until delayed verification completes. */

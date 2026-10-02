@@ -117,7 +117,7 @@ bool ln_ui_clock_begin(void){
     if(sample_read==LN_CALENDAR_READ_UNAVAILABLE)ln_clock_editor_block("Clock unavailable. Edit, retry Save.");
     return true;
 }
-bool ln_ui_clock_input(struct ln_ui_state*s,uint32_t kind,int32_t value){return ln_clock_editor_input(s,kind,value);}
+int ln_ui_clock_input(struct ln_ui_state*s,uint32_t kind,int32_t value){return ln_clock_editor_input(s,kind,value);}
 void ln_ui_clock_cancel(void){ln_clock_editor_cancel();}
 const char *ln_ui_clock_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){return ln_clock_editor_text(n,item,fallback);}
 static void clock_step(struct ln_ui_state*s){

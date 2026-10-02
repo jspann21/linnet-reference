@@ -452,11 +452,21 @@ bool ln_photos_select(uint32_t row){
 }
 bool ln_photos_back(void){p.resume_pending=false;if(p.view==LN_PHOTOS_VIEWER){p.view=LN_PHOTOS_LIST;p.slide=p.jpeg_mode=false;p.error=0;p.window_first=(p.photo_index-p.first)/GRID_PAGE*GRID_PAGE;change();++p.navigation;return true;}ln_photos_close();return false;}
 void ln_photos_next(int direction){if(p.view!=LN_PHOTOS_VIEWER||!p.count)return;uint32_t i=p.photo_index-p.first;if(direction<0)i=i?i-1:p.count-1;else i=i+1==p.count?0:i+1;bool slide=p.slide;begin_view(p.first+i);p.slide=slide;}
-void ln_photos_zoom(int direction){if(!p.view_loaded||p.jpeg_mode)return;uint32_t z=p.zoom,max=p.photo.levels-1u;
+bool ln_photos_zoom(int direction){if(!p.view_loaded||p.jpeg_mode)return false;uint32_t z=p.zoom,max=p.photo.levels-1u;
     if(direction>0){uint32_t delta=(uint32_t)direction;z+=delta>max-z?max-z:delta;}
     else if(direction<0)z=direction<-(int)z?0u:(uint32_t)((int)z+direction);
-    if(z!=p.zoom){p.zoom=z;p.pan_x=p.pan_y=0;change();layout();}}
-void ln_photos_pan(int dx,int dy){if(!p.view_loaded||!p.zoom||p.jpeg_mode)return;p.pan_x+=dx;p.pan_y+=dy;change();layout();}
+    if(z==p.zoom)return false;p.zoom=z;p.pan_x=p.pan_y=0;change();layout();return true;}
+bool ln_photos_pan(int64_t dx,int64_t dy){
+    if(!p.view_loaded||!p.zoom||p.jpeg_mode)return false;
+    const struct ln_pimg_level*l=&p.levels[p.level];
+    int32_t max_x=(int32_t)((p.rotation&1u)?l->height:l->width)/2;
+    int32_t max_y=(int32_t)((p.rotation&1u)?l->width:l->height)/2;
+    /* Compare remaining travel before adding, even for extreme deltas. */
+    int32_t x=dx>max_x-p.pan_x?max_x:dx< -max_x-p.pan_x?-max_x:p.pan_x+(int32_t)dx;
+    int32_t y=dy>max_y-p.pan_y?max_y:dy< -max_y-p.pan_y?-max_y:p.pan_y+(int32_t)dy;
+    if(x==p.pan_x&&y==p.pan_y)return false;
+    p.pan_x=x;p.pan_y=y;change();layout();return true;
+}
 void ln_photos_rotate(void){if(!p.view_loaded||p.jpeg_mode)return;p.rotation=(p.rotation+1u)&3u;p.pan_x=p.pan_y=0;change();layout();}
 void ln_photos_slideshow(bool enabled){p.slide=enabled&&p.view==LN_PHOTOS_VIEWER;p.slide_armed=false;if(p.frame_valid)slide_ready();++p.revision;}
 bool ln_photos_slideshow_active(void){return p.slide;}

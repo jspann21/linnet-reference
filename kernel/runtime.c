@@ -343,8 +343,8 @@ static void apply(uint32_t kind,int32_t value){
         scene_is(LN_UI_SCENE_MUSIC_SOUND)&&ln_music_sound_action(shell->selected)==13u&&
         ((uint32_t)value&~shell->buttons&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV));
     if(kind==LN_INPUT_HOLD&&value)ln_platform_click_stop();
-    else if(!changing_click&&!shell->hold&&((kind==LN_INPUT_WHEEL&&value)||
-            (kind==LN_INPUT_BUTTON&&((uint32_t)value&~shell->buttons))))
+    else if(!changing_click&&!shell->hold&&
+            kind==LN_INPUT_BUTTON&&((uint32_t)value&~shell->buttons))
         ln_platform_click(ln_display_click_tone());
 #endif
     if((kind==LN_INPUT_WHEEL&&value&&!shell->hold)||
@@ -355,7 +355,7 @@ static void apply(uint32_t kind,int32_t value){
        (kind==LN_INPUT_BUTTON&&!shell->hold&&((uint32_t)value&~shell->buttons)))shutdown_activity();
     uint32_t before=shell->scene;
 #endif
-    bool handled=false;
+    bool handled=false,wheel_changed=false;
 #if defined(LINNET_NOTES)
     handled=ln_notes_input(shell,kind,value);
 #endif
@@ -393,7 +393,7 @@ static void apply(uint32_t kind,int32_t value){
                 else if(pressed&LN_BUTTON_SELECT){bool show=scene_is(LN_UI_SCENE_VIDEO_PLAYER);if(ln_video_controls(show))(void)ln_ui_show(shell,show?"linnet.system.video-controls":"linnet.system.video-player");}
                 shell->buttons=(uint32_t)value;handled=true;dirty=true;ln_ui_refresh(shell);
             }
-        }else if(kind==LN_INPUT_WHEEL&&video_scene()){ln_music_volume(value);handled=true;}
+        }else if(kind==LN_INPUT_WHEEL&&video_scene()){wheel_changed=ln_music_volume(value);handled=true;}
     }
     if((video_requested||ln_video_active()||ln_video_pending())&&!video_scene()&&!scene_is(LN_UI_SCENE_VIDEOS)){
         video_requested=false;video_save();ln_video_stop();if(kind==LN_INPUT_BUTTON){shell->buttons=(uint32_t)value;handled=true;}
@@ -429,9 +429,9 @@ static void apply(uint32_t kind,int32_t value){
                 photo_navigation_update();photo_save();
             }
         }else if(kind==LN_INPUT_WHEEL&&scene_is(LN_UI_SCENE_PHOTOS_VIEWER)){
-            if(photo_wheel_mode==1u)ln_photos_pan(value*16,0);
-            else if(photo_wheel_mode==2u)ln_photos_pan(0,value*16);
-            else ln_photos_zoom(value);
+            if(photo_wheel_mode==1u)wheel_changed=ln_photos_pan((int64_t)value*16,0);
+            else if(photo_wheel_mode==2u)wheel_changed=ln_photos_pan(0,(int64_t)value*16);
+            else wheel_changed=ln_photos_zoom(value);
             photo_save();handled=true;
         }
     }
@@ -555,11 +555,12 @@ static void apply(uint32_t kind,int32_t value){
         if(handled)shell->buttons=(uint32_t)value;
     }
 #if defined(LINNET_COVERFLOW)
-    if(kind==LN_INPUT_WHEEL&&!shell->hold&&scene_is(LN_UI_SCENE_COVER_FLOW)){ln_coverflow_move(value);handled=true;}
+    if(kind==LN_INPUT_WHEEL&&!shell->hold&&scene_is(LN_UI_SCENE_COVER_FLOW)){wheel_changed=ln_coverflow_move(value);handled=true;}
 #endif
-    if(kind==LN_INPUT_WHEEL&&!shell->hold&&scene_is(LN_UI_SCENE_NOW_PLAYING)){ln_music_volume(value);handled=true;}
+    if(kind==LN_INPUT_WHEEL&&!shell->hold&&scene_is(LN_UI_SCENE_NOW_PLAYING)){wheel_changed=ln_music_volume(value);handled=true;}
 #endif
     if(!handled&&ln_shell_input(shell,kind,value)){
+        wheel_changed=kind==LN_INPUT_WHEEL;
         dirty=true;
 #if defined(LINNET_AUDIO)
         /* Bind a newly selected music page before this input's frame renders.
@@ -568,6 +569,14 @@ static void apply(uint32_t kind,int32_t value){
         if(kind==LN_INPUT_WHEEL&&scene_is(LN_UI_SCENE_MUSIC))music_window_pending=true;
 #endif
     }
+#if defined(LINNET_HARDWARE_CLICKER)
+    /* A batched/accelerated move is one accepted action. Rejected movement
+     * stays silent; the platform coalesces overlapping pulses without delaying
+     * input or queuing sounds for the rows skipped by a fast turn. */
+    if(wheel_changed)ln_platform_click(ln_display_click_tone());
+#else
+    (void)wheel_changed;
+#endif
 #if defined(LINNET_PHOTOS)
     if(photo_scene())photo_navigation_update();
     else if(ln_photos_active()){photo_save();ln_photos_close();}

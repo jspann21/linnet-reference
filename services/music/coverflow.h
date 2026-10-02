@@ -4,7 +4,7 @@
 #if defined(LINNET_COVERFLOW)
 void ln_coverflow_visible(bool visible);
 void ln_coverflow_step(bool allow_read);
-void ln_coverflow_move(int32_t delta);
+bool ln_coverflow_move(int32_t delta);
 uint32_t ln_coverflow_count(void);
 bool ln_coverflow_active(void);
 bool ln_coverflow_select(void);

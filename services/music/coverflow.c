@@ -99,9 +99,9 @@ void ln_coverflow_visible(bool value){
 }
 uint32_t ln_coverflow_count(void){return count;}
 bool ln_coverflow_active(void){return visible;}
-void ln_coverflow_move(int32_t delta){
-    if(!count||!delta)return;int32_t n=(int32_t)selected+(delta>64?64:delta< -64?-64:delta);
-    uint32_t target=n<0?0u:(uint32_t)n>=count?count-1u:(uint32_t)n;if(target==selected)return;
+bool ln_coverflow_move(int32_t delta){
+    if(!count||!delta)return false;int32_t n=(int32_t)selected+(delta>64?64:delta< -64?-64:delta);
+    uint32_t target=n<0?0u:(uint32_t)n>=count?count-1u:(uint32_t)n;if(target==selected)return false;
     int32_t moving=target>selected?1:-1;
     direction=moving;
     if(target/CATALOG_SLOTS!=selected/CATALOG_SLOTS)warm=(target/CATALOG_SLOTS)*CATALOG_SLOTS;
@@ -121,7 +121,7 @@ void ln_coverflow_move(int32_t delta){
     moved_in_visit=visible;
     if(selected_full()){++hits;last_full_us=0;}else if(row(selected))++preview_hits;else ++misses;
     last_preview_us=row(selected)?0u:NONE;
-    ++revision;next=0;
+    ++revision;next=0;return true;
 }
 const char *ln_coverflow_text(bool artist){
     enum ln_music_library_status status=ln_music_library_status();

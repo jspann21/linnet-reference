@@ -9,7 +9,7 @@ import subprocess
 import zlib
 from tools.content.compiler import compile_system
 from tools.studio.build import toolchain
-from tools.studio.targets import presentation_defines, target_spec
+from tools.studio.targets import TARGET_NUMBERS, presentation_defines, target_spec
 from tools.studio.menu_definition import write_firmware_header
 
 def png(raw,width,height):
@@ -37,6 +37,7 @@ def simulate(root,output,tape=None,system=None,target=None,all_scenes=False):
         raise ValueError('simulator scene dimensions differ from the target manifest')
     (output/'generated/linnet_target.h').write_text(
         f'#include "targets/{scenes["target"]}/hardware.h"\n' +
+        f'#define LINNET_TARGET_NUMBER {TARGET_NUMBERS[scenes["target"]]}u\n' +
         f'#define LINNET_EXTENDED_SOUND {int(spec.get("runtime_policy", {}).get("extended_sound", False))}\n' +
         ''.join(f'#define {name} {value}\n' for name, value in presentation_defines(spec).items()))
     write_firmware_header(output/'generated')
