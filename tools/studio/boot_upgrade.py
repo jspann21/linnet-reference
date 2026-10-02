@@ -79,9 +79,8 @@ def _saved_plan(review):
     transaction = Path(marker['transaction']).resolve(strict=True)
     path = Path(marker['plan']).resolve(strict=True)
     original_identity = dict(identity, disk_serial=marker['device_id'])
-    plan_name = ('apple-recovery-plan' if marker.get('startup_default_format') == 1
-                 else 'native-plan')
-    if (path != transaction / plan_name / 'plan.json' or
+    if (path not in (transaction / 'native-plan/plan.json',
+                     transaction / 'apple-recovery-plan/plan.json') or
             transaction.parent.parent != installer.cache_root(original_identity)):
         raise ValueError('Saved Boot plan is outside this iPod’s recovery records')
     manifest, artifacts, firmware = native.load_plan(path, marker['plan_sha256'])
@@ -210,9 +209,8 @@ def _finish_pending(expected, pending_marker, transaction):
     old_transaction = Path(pending_marker['transaction']).resolve(strict=True)
     prior_apple = (Path(pending_marker['plan']).resolve(strict=True),
                    pending_marker['plan_sha256'])
-    prior_name = ('apple-recovery-plan' if pending_marker.get('startup_default_format') == 1
-                  else 'native-plan')
-    if (prior_apple[0] != old_transaction / prior_name / 'plan.json' or
+    if (prior_apple[0] not in (old_transaction / 'native-plan/plan.json',
+                               old_transaction / 'apple-recovery-plan/plan.json') or
             old_transaction.parent.parent != installer.cache_root(original_identity)):
         raise ValueError('Original Apple recovery plan path changed')
     original, _original_files, _original_backup = native.load_plan(*prior_apple)
