@@ -544,7 +544,10 @@ def _recover_group(root: Path, identity: dict, name: str) -> bool:
     guard = lambda: _volume_guard(identity)
     directory = _group_directory(root, name)
     marker = directory / 'STATE.TXN'
-    guard(); _plain(marker, root)
+    legacy = directory / 'STATE.JSON'
+    guard(); _plain(marker, root); _plain(legacy, root)
+    if legacy.exists():
+        raise RuntimeError(f'unsupported publication recovery record: {legacy}')
     if not marker.exists():
         _clear_group(root, directory, guard)
         return False
@@ -598,6 +601,25 @@ def _recover_group(root: Path, identity: dict, name: str) -> bool:
 def _recover_pending_groups(root: Path, identity: dict) -> list[str]:
     """Resolve incomplete related-index switches before any publisher proceeds."""
     return [name for name in _GROUP_PATHS if _recover_group(root, identity, name)]
+
+
+def pending_publications(identity: dict) -> list[str]:
+    """Read only the fixed transaction marker names for a verified device."""
+    _same_target(identity, inspect_target(identity['disk_number'], identity['disk_serial'],
+                                          identity['volume_serial'], identity['drive']))
+    root = Path(identity['root'])
+    pending = []
+    for name in _GROUP_PATHS:
+        _volume_guard(identity)
+        directory = _group_directory(root, name)
+        marker = directory / 'STATE.TXN'
+        legacy = directory / 'STATE.JSON'
+        _plain(marker, root); _plain(legacy, root)
+        if legacy.exists():
+            raise RuntimeError(f'unsupported publication recovery record: {legacy}')
+        if marker.exists():
+            pending.append(name)
+    return pending
 
 
 def recover_pending_publications(*, disk_number: int, expected_disk_serial: str,
