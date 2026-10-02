@@ -88,6 +88,15 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
                 if(x&1){*dest++=(uint16_t)(palette[*mask++]>>16);++x;}
                 typedef uint32_t pixel_pair __attribute__((may_alias));
                 pixel_pair *output=(pixel_pair *)dest;
+#if defined(LINNET_SOC_PP5022)
+                for(;x+7<span->right;x+=8){
+                    output[0]=palette[mask[0]];
+                    output[1]=palette[mask[1]];
+                    output[2]=palette[mask[2]];
+                    output[3]=palette[mask[3]];
+                    output+=4;mask+=4;
+                }
+#endif
                 for(;x+1<span->right;x+=2)*output++=palette[*mask++];
                 if(x<span->right)*(uint16_t *)output=(uint16_t)palette[*mask];
             }else{
