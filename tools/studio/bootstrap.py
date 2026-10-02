@@ -139,7 +139,7 @@ def restore(mount):
             raise ValueError('restore staging differs from the saved original')
         staged=temporary.read_bytes()
         if staged != original:
-            if not staged or not original.startswith(staged):
+            if not original.startswith(staged):
                 raise ValueError('restore staging differs from the saved original')
             temporary.unlink()  # An interrupted write left only a verified prefix.
         elif state['active_sha256']==state['original_sha256']:
@@ -147,6 +147,8 @@ def restore(mount):
     if state['active_sha256']!=state['original_sha256']:
         if not temporary.exists():
             sync_write(temporary,original)
+        with temporary.open('r+b') as staged_file:
+            os.fsync(staged_file.fileno())
         if digest(temporary.read_bytes())!=state['original_sha256']:
             raise OSError('restore staging failed verification')
         temporary.replace(target)
