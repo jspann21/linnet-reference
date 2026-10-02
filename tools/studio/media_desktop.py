@@ -2779,8 +2779,10 @@ class MediaWindow(QMainWindow):
             for name, setting in (('FFmpeg', 'ffmpeg'), ('FFprobe', 'ffprobe')):
                 if name in validated:
                     setattr(self, setting, validated[name])
+                    setattr(self, 'verified_' + setting, validated[name])
                     self.settings.setValue(setting, validated[name])
             if validated:
+                self.tools_ready = bool(self.verified_ffmpeg and self.verified_ffprobe)
                 self.update_tools()
                 return
         else:
