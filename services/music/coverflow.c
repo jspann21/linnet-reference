@@ -52,6 +52,7 @@ static uint32_t count,arts,selected,phase,loading,length,revision,drawn,next,io_
 static uint32_t catalog_loaded,full_reads,read_bytes,hits,preview_hits,misses,last_full_us,max_full_us,last_preview_us;
 static int32_t position,direction=1;
 static bool visible,pending,failed,canceling,moved_in_visit;
+static enum ln_music_library_status displayed_library_status=LN_LIBRARY_CLOSED;
 static const uint32_t generation=0x79000001u;
 struct ln_coverflow_column {uint32_t step;uint8_t source,top,height,length;};
 extern const struct ln_coverflow_column ln_coverflow_columns[33][COVER_WIDTH];
@@ -106,6 +107,11 @@ void ln_coverflow_move(int32_t delta){
     ++revision;next=0;
 }
 const char *ln_coverflow_text(bool artist){
+    enum ln_music_library_status status=ln_music_library_status();
+    if(status==LN_LIBRARY_ERROR&&ln_music_library_error()==LN_FAT32_NOT_FOUND)
+        return artist?"":"No albums";
+    if(status==LN_LIBRARY_ERROR)return artist?"":"Music library unavailable";
+    if(status==LN_LIBRARY_READY&&!ln_music_library_count())return artist?"":"No albums";
     if(failed)return artist?"Sync music to prepare artwork":"Cover Flow needs a sync";
     if(!count)return artist?"":phase>=READY?"No albums":"Loading albums...";
     uint8_t *r=row(selected);return r?(const char*)r+(artist?128:8):(artist?"":"Loading albums...");
@@ -218,7 +224,9 @@ void ln_coverflow_step(bool allow_read){
     }
     uint32_t now=ln_time_us();
     if(failed){io_due=NONE;return;}
-    if(!allow_read||ln_music_library_status()!=LN_LIBRARY_READY){io_due=now+10000u;return;}
+    if(!allow_read||ln_music_library_status()!=LN_LIBRARY_READY||!ln_music_library_count()){
+        io_due=now+10000u;return;
+    }
     if(phase>=READY&&!identity())invalidate();
     if(phase==READY){
         if(visible&&count&&!row(selected))request_catalog(selected);
@@ -273,6 +281,8 @@ uint32_t ln_coverflow_io_deadline(void){return io_due;}
 uint32_t ln_coverflow_deadline(void){return visible?next:NONE;}
 uint32_t ln_coverflow_tick(uint32_t now){
     if(!visible)return 0;
+    enum ln_music_library_status status=ln_music_library_status();
+    if(status!=displayed_library_status){displayed_library_status=status;++revision;}
     if(next!=NONE&&next&&(int32_t)(now-next)<0)return 0;
     int32_t diff=(int32_t)(selected*256u)-position;
     if(diff){
