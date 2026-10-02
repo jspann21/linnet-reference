@@ -47,6 +47,7 @@ def _category_bytes(root):
     suffixes = {kind: extensions(kind) for kind in ("Music", "Videos", "Photos")}
     totals = {kind: 0 for kind in suffixes}
     totals["Data"] = 0
+    totals["Trash"] = 0
     directories = [root]
     while directories:
         with os.scandir(directories.pop()) as entries:
@@ -57,6 +58,11 @@ def _category_bytes(root):
                 if stat.S_ISDIR(info.st_mode):
                     directories.append(Path(entry.path))
                 elif stat.S_ISREG(info.st_mode):
+                    relative = Path(entry.path).relative_to(root)
+                    top = relative.parts[0].casefold()
+                    if top in (".trashes", ".trash", "$recycle.bin") or top.startswith(".trash-"):
+                        totals["Trash"] += info.st_size
+                        continue
                     suffix = Path(entry.name).suffix.lower()
                     matched = False
                     for kind, allowed in suffixes.items():
@@ -66,8 +72,7 @@ def _category_bytes(root):
                             break
                     # User files without a known media suffix are data. Linnet
                     # and Apple control files are accounted for under Other.
-                    relative = Path(entry.path).relative_to(root)
-                    if not matched and relative.parts[0].casefold() not in (".linnet", "ipod_control"):
+                    if not matched and not top.startswith(".") and top not in ("ipod_control", "system volume information"):
                         totals["Data"] += info.st_size
     return totals
 
@@ -116,6 +121,7 @@ def make_record(identity):
         f"Video  {_size(by_kind['Videos'])}",
         f"Photos  {_size(by_kind['Photos'])}",
         f"Data  {_size(by_kind['Data'])}",
+        f"Trash  {_size(by_kind['Trash'])}",
         f"Other  {_size(other)}",
         "Storage at last sync",
         f"Synced  {datetime.now().astimezone():%Y-%m-%d %H:%M}",
