@@ -677,7 +677,8 @@ static void photo_step(void){
         if(!p.active&&p.resume_pending){uint32_t index=ln_read_le32(p.resume+4);p.photo_index=index==EMPTY_ALBUM_RESUME?0:index;p.window_first=p.photo_index/GRID_PAGE*GRID_PAGE;}return;
     }
     if(p.phase==VERIFY){
-        /* Coalesce catalog reads; keep CPU validation bounded to 4 KiB. */
+        /* Coalesce catalog reads. When audio is idle, validate a larger memory
+         * slice; keep the existing bound while audio is running. */
         uint32_t left=p.header.data_at-p.verify_at;
         if(left){
             if(!p.verify_cached){
@@ -693,7 +694,9 @@ static void photo_step(void){
                 if(!r)return;if(r<0){fail(3);return;}
                 p.verify_cached=bytes;p.verify_cursor=at;
             }
-            uint32_t n=p.verify_cached;if(n>4096)n=4096;
+            struct ln_audio_status audio;ln_audio_snapshot(&audio);
+            uint32_t limit=audio.playing&&!audio.paused?4096u:16384u;
+            uint32_t n=p.verify_cached;if(n>limit)n=limit;
             if(p.verify_at<p.header.tile_at&&p.verify_at+n>p.header.tile_at)n=p.header.tile_at-p.verify_at;
             else if(p.verify_at>=p.header.tile_at&&p.verify_at<p.header.string_at){
                 if(p.verify_at+n>p.header.string_at)n=p.header.string_at-p.verify_at;
