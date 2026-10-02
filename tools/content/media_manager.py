@@ -6,7 +6,7 @@ No device is modified by discovery or scanning.
 from __future__ import annotations
 
 from contextlib import ExitStack
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import hashlib
 import json
 import os
@@ -911,14 +911,22 @@ def _outputs_match(root, outputs, *, verified=None, progress=None):
     """Treat malformed/stale host cache entries as misses, with bounded paths."""
     if not isinstance(outputs, list) or not outputs:
         return False
-    parallel = progress is None and verified is not None and len(outputs) >= 64
+    parallel = verified is not None and len(outputs) >= 64
     pending = []
+    cached_count = 0
+    last_cached = None
+    last_prepass = time.monotonic()
     for index, item in enumerate(outputs):
         if not isinstance(item, (list, tuple)) or len(item) != 2:
             return False
         name, digest = item
         if not isinstance(name, str) or not isinstance(digest, str):
             return False
+        if parallel and progress and time.monotonic() - last_prepass >= 0.2:
+            # A long stat/path pass still needs to service Stop and volume checks.
+            progress(dict(current=0, total=len(outputs), file=name,
+                          bytes=0, file_bytes=1))
+            last_prepass = time.monotonic()
         relative = Path(name)
         if (relative.is_absolute() or relative.drive or ".." in relative.parts or not relative.parts or
                 relative.parts[0].casefold() not in {".linnet", "music", "videos", "ipod_control"}):
@@ -942,10 +950,14 @@ def _outputs_match(root, outputs, *, verified=None, progress=None):
                     progress(dict(current=index, total=len(outputs), file=name,
                                   bytes=current, file_bytes=total))
             if verified is not None and not recent and verified.get(key) == stamp:
-                notify(info.st_size, info.st_size)
+                if parallel:
+                    cached_count += 1
+                    last_cached = (name, info.st_size)
+                else:
+                    notify(info.st_size, info.st_size)
                 continue
             if parallel:
-                pending.append((path, digest, stamp, key, recent))
+                pending.append((path, digest, stamp, key, recent, name))
                 continue
             if _hash(path, progress=notify if progress else None) != digest:
                 return False
@@ -956,27 +968,77 @@ def _outputs_match(root, outputs, *, verified=None, progress=None):
                 verified[key] = stamp
         except (OSError, ValueError):
             return False
+    if progress and cached_count:
+        progress(dict(current=cached_count - 1, total=len(outputs),
+                      file=last_cached[0], bytes=last_cached[1], file_bytes=last_cached[1]))
     if pending:
+        stop = threading.Event()
+        def stop_check(_current, _total):
+            if stop.is_set():
+                raise Cancelled('Stopped while checking published output.')
         def check(entry):
             path, digest, stamp = entry[:3]
             try:
                 # Recheck the path immediately before each concurrent read.
                 _plain(path, root)
-                if _hash(path) != digest:
+                if _hash(path, progress=stop_check) != digest:
                     return False
                 after = path.stat()
                 return stamp == (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino)
             except (OSError, ValueError):
                 return False
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            # Bound outstanding reads and keep a corrupt early output cheap.
-            for start in range(0, len(pending), 32):
-                batch = pending[start:start + 32]
-                for entry, matched in zip(batch, pool.map(check, batch)):
-                    if not matched:
+        def report(entry, current, completed):
+            if progress:
+                size = entry[2][0]
+                progress(dict(current=current, total=len(outputs), file=entry[5],
+                              bytes=size if completed else 0,
+                              file_bytes=size if completed else max(1, size)))
+
+        if len(pending) < 8:
+            for index, entry in enumerate(pending):
+                current = cached_count + index
+                try:
+                    _plain(entry[0], root)
+                    notify = (lambda done, total: progress(dict(
+                            current=current, total=len(outputs), file=entry[5],
+                            bytes=done, file_bytes=total))) if progress else None
+                    if _hash(entry[0], progress=notify) != entry[1]:
                         return False
-                    if not entry[4]:
-                        verified[entry[3]] = entry[2]
+                    after = entry[0].stat()
+                    if entry[2] != (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino):
+                        return False
+                except (OSError, ValueError):
+                    return False
+                if not entry[4]:
+                    verified[entry[3]] = entry[2]
+        else:
+            completed = cached_count
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                futures = []
+                try:
+                    # Bound outstanding reads and keep a corrupt early output cheap.
+                    for start in range(0, len(pending), 32):
+                        batch = pending[start:start + 32]
+                        futures = [pool.submit(check, entry) for entry in batch]
+                        for entry, future in zip(batch, futures):
+                            while True:
+                                try:
+                                    matched = future.result(timeout=0.2 if progress else None)
+                                    break
+                                except FutureTimeout:
+                                    if future.done():
+                                        future.result()
+                                    report(entry, completed, False)
+                            if not matched:
+                                return False
+                            if not entry[4]:
+                                verified[entry[3]] = entry[2]
+                            report(entry, completed, True)
+                            completed += 1
+                finally:
+                    stop.set()
+                    for future in futures:
+                        future.cancel()
     return True
 
 
