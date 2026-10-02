@@ -1077,7 +1077,7 @@ def _published_photo_output(root, identity, output_paths, published):
             len(published) != 1 or not isinstance(published[0], dict)):
         raise RuntimeError('Photo publication did not return its expected output')
     receipt = published[0]
-    outputs = []
+    outputs, stamps = [], {}
     for name, item in [(expected, receipt), ('.LINNET/PHOTOS/GRID.PGR', receipt.get('grid'))]:
         outputs.append(_photo_output(root, identity, name, item, MAX_FILE))
     packs = receipt.get('packs', [])
@@ -1093,7 +1093,13 @@ def _published_photo_output(root, identity, output_paths, published):
                 info.st_size != item['bytes'] or not re.fullmatch('[0-9a-f]{64}', item['sha256'])):
             raise RuntimeError('Photo pack changed after verified publication')
         outputs.append((item['path'], item['sha256']))
-    return outputs
+        # Reused packs were hashed during publication. A fresh copy still
+        # needs a hash after Windows' recent-write window before caching it.
+        if item.get('reused') is True and (os.name != 'nt' or
+                info.st_mtime_ns <= time.time_ns() - _RECENT_OUTPUT_NS):
+            stamps[(item['path'], item['sha256'])] = (
+                info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino)
+    return outputs, stamps
 
 
 def _photo_output(root, identity, expected, receipt, max_file):
@@ -2099,7 +2105,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     raise ValueError(f"{kind} changed during processing. Scan again before updating.")
                 if kind == 'Photos':
                     checkpoint()
-                    outputs = _published_photo_output(root, identity, output_paths, published)
+                    outputs, photo_stamps = _published_photo_output(root, identity, output_paths, published)
                 elif kind == 'Music':
                     outputs, music_stamps = _music_outputs_from_publication(root, output_paths, music_proofs, identity)
                 else:
@@ -2115,6 +2121,11 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     # status checks without rereading unchanged iPod covers.
                     before = verified_outputs.copy()
                     verified_outputs.update(music_stamps)
+                    _remember_verified(identity, verified_outputs, before)
+                elif kind == 'Photos':
+                    # Publication already hashed reused immutable tile packs.
+                    before = verified_outputs.copy()
+                    verified_outputs.update(photo_stamps)
                     _remember_verified(identity, verified_outputs, before)
                 report["steps"].append(dict(kind=kind, status="published", publications=published))
                 progress(f"{kind}: published and verified on your iPod ({root / '.LINNET'}).")
