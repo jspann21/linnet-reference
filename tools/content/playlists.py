@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import re
 import struct
 import zlib
 from collections import defaultdict
@@ -18,7 +19,13 @@ MAX_M3U_ENTRIES = 10000
 
 def _m3u_key(path):
     """Normalize a playlist reference without resolving or opening a file."""
-    return path.strip().replace('\\', '/').lstrip('/').casefold()
+    key = path.strip(' \t').replace('\\', '/')
+    if re.match(r'^[A-Za-z]:/', key):
+        key = key[3:]
+    key = key.lstrip('/')
+    while key.startswith('./'):
+        key = key[2:]
+    return key.casefold()
 
 
 def preview_m3u(source, tracks, paths=None):
@@ -35,15 +42,17 @@ def preview_m3u(source, tracks, paths=None):
     if len(data) > MAX_M3U_BYTES or b'\0' in data:
         raise ValueError('M3U file is too large or contains invalid text')
     text = data.decode('utf-8-sig')
-    by_path, by_label = defaultdict(list), defaultdict(list)
+    by_path, by_basename, by_label = defaultdict(list), defaultdict(list), defaultdict(list)
     for identity, label in tracks.items():
         by_label[label.casefold()].append(identity)
         if paths and identity in paths:
-            by_path[_m3u_key(paths[identity])].append(identity)
+            key = _m3u_key(paths[identity])
+            by_path[key].append(identity)
+            by_basename[key.rsplit('/', 1)[-1]].append((identity, key))
     matched, unmatched = [], []
     hint, label = None, None
-    for line_number, raw in enumerate(text.splitlines(), 1):
-        line = raw.strip()
+    for line_number, raw in enumerate(re.split(r'\r\n|\r|\n', text), 1):
+        line = raw.strip(' \t')
         if not line:
             continue
         if line.startswith('#LINNET-ID:'):
@@ -61,6 +70,10 @@ def preview_m3u(source, tracks, paths=None):
             raise ValueError('M3U file exceeds the 10,000-entry review limit')
         key = _m3u_key(line)
         candidates = by_path.get(key, ())
+        if not candidates:
+            basename = key.rsplit('/', 1)[-1]
+            candidates = [identity for identity, known in by_basename.get(basename, ())
+                          if known.endswith('/' + key) or key.endswith('/' + known)]
         if not candidates and hint in tracks:
             candidates = (hint,)
         if not candidates and label:

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize, QSignalBlocker, QAbstractListModel, QModelIndex, QTimer
+from PySide6.QtCore import Qt, QSize, QSignalBlocker, QAbstractListModel, QModelIndex, QTimer, QItemSelection, QItemSelectionModel
 from PySide6.QtGui import QColor, QFont, QGuiApplication
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QLabel,
     QLineEdit, QListView, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout,
@@ -28,7 +28,8 @@ class SongModel(QAbstractListModel):
         if role in (Qt.DisplayRole, Qt.ToolTipRole):
             return title
         if role == Qt.UserRole:
-            return identity
+            # QVariant uses a signed 64-bit integer; stable music IDs are uint64.
+            return str(identity)
         return None
 
     def set_query(self, text):
@@ -129,11 +130,12 @@ class PlaylistEditor(QDialog):
         self.add_tracks_button = self.button(right, '← Add to playlist', self.add)
         self.song_model = SongModel(state['tracks'], self.songs)
         self.songs.setModel(self.song_model)
+        self.song_selection = set()
         self.search_timer = QTimer(self); self.search_timer.setSingleShot(True)
         self.search_timer.setInterval(150); self.search_timer.timeout.connect(self.apply_filter)
-        footer = QHBoxLayout(); footer.setSpacing(10); layout.addLayout(footer)
-        self.message = self.label(footer, '', 'muted'); self.message.setWordWrap(True)
-        footer.setStretch(0, 1)
+        self.message = self.label(layout, '', 'muted'); self.message.setWordWrap(True)
+        footer = QHBoxLayout(); footer.setSpacing(8); layout.addLayout(footer)
+        footer.addStretch()
         self.button(footer, 'Cancel', self.reject)
         self.export_button = self.button(footer, 'Export M3U…', self.export_m3u)
         self.button(footer, 'Save to iPod', self.accept_checked, 'primary')
@@ -143,7 +145,7 @@ class PlaylistEditor(QDialog):
         self.search.returnPressed.connect(self.apply_filter)
         self.songs.doubleClicked.connect(lambda _: self.add())
         self.members.itemSelectionChanged.connect(self.update_actions)
-        self.songs.selectionModel().selectionChanged.connect(self.update_actions)
+        self.songs.selectionModel().selectionChanged.connect(self.song_selection_changed)
         self.render(); self.apply_filter()
 
     def label(self, layout, text, name):
@@ -324,6 +326,7 @@ class PlaylistEditor(QDialog):
                 item.setSelected(chosen[row])
         selected = self.members.selectedItems()
         if selected:
+            self.members.setCurrentItem(selected[0], QItemSelectionModel.SelectionFlag.NoUpdate)
             self.members.scrollToItem(selected[0])
         self.message.setText('Changes are saved when you choose Save to iPod.')
         self.update_actions()
@@ -331,12 +334,36 @@ class PlaylistEditor(QDialog):
     def apply_filter(self):
         self.search_timer.stop()
         text = self.search.text()
-        self.song_model.set_query(text)
+        selection = self.songs.selectionModel()
+        with QSignalBlocker(selection):
+            self.song_model.set_query(text)
+            if self.song_selection:
+                ranges = QItemSelection()
+                first = last = None
+                positions = self.song_model.matches if self.song_model.matches is not None else range(len(self.song_model.rows))
+                for row, position in enumerate(positions):
+                    if self.song_model.rows[position][0] in self.song_selection:
+                        if first is None:
+                            first = row
+                        last = row
+                    elif first is not None:
+                        ranges.select(self.song_model.index(first), self.song_model.index(last))
+                        first = last = None
+                if first is not None:
+                    ranges.select(self.song_model.index(first), self.song_model.index(last))
+                selection.select(ranges, selection.SelectionFlag.Select)
         count = self.song_model.rowCount()
         self.library_count.setText(f'{count:,} songs' + (' matching your search' if text else ' available'))
         self.song_stack.setCurrentIndex(0 if count else 1)
         self.empty_songs.setText('No matching songs\n\nTry another title, artist, or album.' if text else
                                 'No prepared songs\n\nPrepare your music to add songs to playlists.')
+        self.update_actions()
+
+    def song_selection_changed(self, selected, deselected):
+        for index in deselected.indexes():
+            self.song_selection.discard(int(index.data(Qt.UserRole)))
+        for index in selected.indexes():
+            self.song_selection.add(int(index.data(Qt.UserRole)))
         self.update_actions()
 
     def _import_name(self, source):
