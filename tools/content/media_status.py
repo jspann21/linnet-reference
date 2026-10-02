@@ -277,7 +277,12 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     identity['linnet'] = boot_review['linnet']
     identity['default_boot'] = installer.default_boot(boot_review)
     if inventory['Videos'].get('errors'):
-        inventory['Videos']['repair'] = media_library.video_catalog_recovery_options(identity)
+        try:
+            inventory['Videos']['repair'] = media_library.video_catalog_recovery_options(identity)
+        except (OSError, ValueError, UnicodeError) as error:
+            media._volume_guard(identity)
+            inventory['Videos']['repair'] = dict(status='unavailable', options=[],
+                explanation='Video catalog backup inspection failed: ' + str(error))
     readiness = {}
     for kind in media.KINDS:
         if inventory[kind].get('errors'):
@@ -346,7 +351,7 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
                             snapshots=snapshots, ffprobe=ffprobe,
                             replacements=replacements) if 'Videos' in selected else []
     reconciliation = media.reconciliation_actions(identity, selected, copies,
-        replacements=replacements, current_inventory=current_inventory)
+        replacements=replacements, current_inventory=current_inventory, skipped=skipped)
     previews = {}
     for kind, name in included:
         source = Path(name).absolute().resolve(strict=True)
@@ -359,14 +364,18 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
             previews[name] = f'{supported} videos · {other} non-video files skipped'
     needed = sum(p['bytes'] for p in copies)
     if 'Notes' in selected:
-        total = scan_sources(root, ('Notes',), skipped=skipped)['Notes']['count'] + sum(p['kind'] == 'Notes' and Path(p['source']).suffix.lower() in media.extensions('Notes') for p in copies)
+        replacing_notes = {action['destination'].casefold() for action in replacements
+                           if action['kind'] == 'Notes'}
+        total = scan_sources(root, ('Notes',), skipped=skipped)['Notes']['count'] + sum(
+            p['kind'] == 'Notes' and Path(p['source']).suffix.lower() in media.extensions('Notes')
+            and p['destination'].casefold() not in replacing_notes for p in copies)
         if total > 256:
             raise ValueError(f'Notes supports 256 files; this update includes {total}.')
     cache = cache_root(identity)
     space = media.preparation_space(identity, copies, jobs, selected, cache,
         photo_dimension=photo_dimension, current_inventory=current_inventory,
         ffprobe=ffprobe, ffmpeg=ffmpeg, no_conversions=videos is not None and not videos,
-        force=force)
+        force=force, skipped=skipped)
     if space['device_peak_bytes'] > min(identity['free_bytes'], space['device_free_bytes']):
         raise ValueError('Not enough iPod space for originals, prepared media, and recovery copies.')
     if space['computer_peak_bytes'] > space['computer_free_bytes']:

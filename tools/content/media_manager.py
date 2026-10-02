@@ -1249,6 +1249,8 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, s
         for path, info in (records if not is_folder else
                         ((path, info) for path, info in records if path.suffix.lower() in allowed)):
             relative = (Path(source.name) / path.relative_to(source)).as_posix() if is_folder else source.name
+            if relative.casefold() in queued_relatives:
+                raise ValueError(f"Two queued videos have the same library name: {relative}.")
             queued_relatives.add(relative.casefold())
             existing = folder / relative
             _plain(existing, root)
@@ -1264,6 +1266,7 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, s
                         old_mtime_ns=old.st_mtime_ns, new_bytes=info.st_size,
                         new_mtime_ns=info.st_mtime_ns,
                         old_sha256=_hash(existing), new_sha256=_hash(path)))
+                    jobs.pop(relative.casefold(), None)
                 else:
                     path = existing
             include(path, relative)
@@ -1310,7 +1313,7 @@ def video_requires_conversion(jobs, identity, *, ffprobe=None, ffmpeg=None):
 
 def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimension=640,
                       current_inventory=None, ffprobe=None, ffmpeg=None,
-                      no_conversions=False, force=False):
+                      no_conversions=False, force=False, skipped=None):
     """Bound peak free-space needs before the first device copy.
 
     Estimates include originals, prepared outputs, host scratch, existing
@@ -1319,7 +1322,8 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
     """
     root = Path(identity['root'])
     cache = Path(cache)
-    inventory = current_inventory or scan(root, tuple(k for k in selected if k != 'Videos'))
+    inventory = (current_inventory if current_inventory is not None else
+                 scan(root, tuple(k for k in selected if k != 'Videos'), skipped=skipped))
     counts = {kind: inventory.get(kind, {}).get('count', 0) for kind in KINDS}
     for copy in copies:
         if Path(copy['source']).suffix.lower() in extensions(copy['kind']):
@@ -1341,7 +1345,7 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
         seek_state = {} if force else _optional_state(cache / 'seek-checked.json')
         for value in inventory.get('Music', {}).get('files', []):
             path = Path(value)
-            if not path.is_relative_to(root / 'Music') or path.suffix.lower() not in ('.m4a', '.m4b', '.flac', '.flc'):
+            if not path.is_relative_to(root) or path.suffix.lower() not in ('.m4a', '.m4b', '.flac', '.flc'):
                 continue
             info = path.stat()
             stamp = [info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino]
@@ -1416,11 +1420,18 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
                 computer_free_bytes=shutil.disk_usage(parent).free)
 
 
-def reconciliation_actions(identity, selected, copies, *, replacements=(), current_inventory=None):
+def reconciliation_actions(identity, selected, copies, *, replacements=(),
+                           current_inventory=None, skipped=None):
     """Describe removals that require explicit review before preparation."""
     root = Path(identity['root'])
     actions = list(replacements)
-    inventory = current_inventory or scan(root, tuple(k for k in selected if k != 'Videos'))
+    if current_inventory is None:
+        if skipped is None:
+            state = _optional_state(cache_root(identity) / 'state.json')
+            skipped = {kind: _skipped_paths(state, kind) for kind in KINDS}
+        inventory = scan(root, tuple(k for k in selected if k != 'Videos'), skipped=skipped)
+    else:
+        inventory = current_inventory
     for kind, name in (('Music', '.LINNET/LIBRARY.PDB'),
                        ('Photos', '.LINNET/PHOTOS/LIBRARY.PIM'),
                        ('Notes', '.LINNET/NOTES/LIBRARY.NNT')):
@@ -2215,7 +2226,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         plan = additions(root, [item for item in pending if item[0] in selected and item[0] != "Videos"],
                          replacements=replacements)
         planned = True
-        reconciliation = reconciliation_actions(identity, selected, plan, replacements=replacements)
+        reconciliation = reconciliation_actions(identity, selected, plan,
+            replacements=replacements, skipped=skipped)
         report['reconciliation'] = reconciliation
         if ((reconciliation and approved_reconciliation is None) or
                 (approved_reconciliation is not None and approved_reconciliation != reconciliation)):
@@ -2223,13 +2235,17 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         for kind, maximum in (("Notes", 256),):
             if kind in selected:
                 existing = scan(root, (kind,), skipped=skipped)[kind]["count"]
-                added = sum(item["kind"] == kind and Path(item["source"]).suffix.lower() in extensions(kind) for item in plan)
+                replacing = {action['destination'].casefold() for action in replacements
+                             if action['kind'] == kind}
+                added = sum(item["kind"] == kind and
+                            Path(item["source"]).suffix.lower() in extensions(kind) and
+                            item['destination'].casefold() not in replacing for item in plan)
                 if existing + added > maximum:
                     raise ValueError(f"{kind} supports {maximum} files; this selection contains {existing + added}. Choose a smaller source folder.")
         space = preparation_space(identity, plan, videos, selected, cache,
             photo_dimension=photo_dimension, ffprobe=ffprobe, ffmpeg=ffmpeg,
             no_conversions=video_selection is not None and not video_selection,
-            force=force)
+            force=force, skipped=skipped)
         report['space'] = space
         if space['device_peak_bytes'] > min(identity['free_bytes'], space['device_free_bytes']):
             raise ValueError('Not enough iPod space for originals, prepared media, and recovery copies.')
