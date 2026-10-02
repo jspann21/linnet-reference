@@ -81,7 +81,7 @@ QPushButton:focus { border: 1px solid #16859c; }
 QDialog#playlistEditor QFrame#playlistPanel { background: white; border: 1px solid #dfe7e9; border-radius: 12px; }
 QDialog#playlistEditor QFrame#playlistPanel QLabel { background: transparent; }
 QDialog#playlistEditor QLabel#playlistEmpty { color: #718287; padding: 16px; }
-QDialog#playlistEditor QListWidget#playlistTracks { background: white; }
+QDialog#playlistEditor #playlistTracks { background: white; }
 QDialog#playlistEditor QPushButton#danger:disabled { color: #96a2a6; background: #edf1f2; border-color: #e7edef; }
 
 QListWidget#screenItems { background: white; border: 1px solid #dce3e5; border-radius: 8px; padding: 6px; }
