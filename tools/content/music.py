@@ -1510,6 +1510,8 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     folder_covers: dict[Path, Path | None] = {}
     file_covers: dict[Path, tuple[tuple[int, int, int, int], int]] = {}
     art_indices: dict[bytes, int] = {}
+    art_directory = output / "ART"
+    art_directory_ready = False
     embedded_cache: OrderedDict[bytes, int] = OrderedDict()
     embedded_cache_bytes = 0
     filenames: set[str] = set()
@@ -1539,7 +1541,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         return executor.submit(_embedded_cover, path)
 
     def art_for(path: Path, before, prefetched_cover) -> int:
-        nonlocal embedded_cache_bytes, retail_artwork
+        nonlocal art_directory_ready, embedded_cache_bytes, retail_artwork
         if not artwork:
             return NO_INDEX
         folder = path.parent
@@ -1663,8 +1665,10 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             remember_cover(art_indices[digest])
             return art_indices[digest]
         name = digest[:4].hex().upper() + ".RGB"
-        (output / "ART").mkdir(exist_ok=True)
-        destination = output / "ART" / name
+        if not art_directory_ready:
+            art_directory.mkdir(exist_ok=True)
+            art_directory_ready = True
+        destination = art_directory / name
         if destination.exists() and destination.read_bytes() != pixels:
             raise ValueError("art filename collision")
         destination.write_bytes(pixels)
