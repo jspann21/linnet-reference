@@ -9,6 +9,7 @@ void ln_music_art_prefetch(const char *path,uint32_t crc);
 void ln_music_art_step(bool allow_read);
 uint32_t ln_music_art_deadline(uint32_t now);
 const uint16_t *ln_music_art_pixels(void);
+const uint16_t *ln_music_art_pixels_sized(uint32_t side,uint32_t *actual_side);
 uint32_t ln_music_art_side(void);
 uint32_t ln_music_art_revision(void);
 bool ln_music_art_loading(void);

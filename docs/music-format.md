@@ -44,8 +44,24 @@ Host-decoded sample counts supply duration where container headers do not.
 Native decoder timing takes precedence during playback.
 
 Artwork is prepared for the selected target: 64 × 64 on Photo and monochrome
-4G, 128 × 128 on Video and Classic. Host extraction, resizing, and caches are
-separate from device decoding; see [artwork preparation](../tools/content/album_art.py).
+4G. Video and Classic use one RGB565 bundle with a 160 × 160 cover and an exact
+112 × 112 Now Playing rendition; Classic also includes its 126 × 126 rendition.
+The host normalizes orientation and color profiles, resizes from the source,
+and rounds to the display's RGB565 colors. Encoding 2 identifies these bundles;
+the older encoding 1 square covers remain readable.
+
+Cover Flow uses a separate host-prepared catalog. Video and Classic's `LCFN`
+tiles contain a native 130 × 130 cover and its reflection, with 256 RGB565
+palette entries. The mapped catalog associates each album's representative
+cover with its playback identity and CRC. A validated resident Cover Flow cover
+can appear immediately when that track starts while the full playback bundle
+loads. Full bundle cache hits also publish in the request turn. The 5G retains
+its full-width home menu; Classic's existing home pane uses the 160 px cover.
+
+Host extraction and caches are separate from device decoding; see the
+[music compiler](../tools/content/music.py), [Cover Flow preparation](../tools/content/coverflow.py),
+and [artwork loader](../services/music/artwork.c). Cold disk reads can still delay
+an uncached cover; resident previews avoid a loading label while it arrives.
 
 ## Inspect and publish
 

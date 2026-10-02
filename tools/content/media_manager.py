@@ -255,7 +255,7 @@ def preparation_option(kind, identity, photo_dimension=640, music_verification='
     if kind == 'Music':
         from tools.studio.targets import TARGETS
         target = TARGETS[identity['target_id']]
-        art_version = ('art-row' if target.get('presentation_profile') == 'color320' else
+        art_version = ('art-native130-playback160-exact-np-bridge1' if target.get('presentation_profile') == 'color320' else
                        'art9' if target['media_art_side'] == 128 else
                        'art8' if target['lcd_format'] == 'gray2-horizontal' else 'art7')
         return f"{music_verification}-aac-seek1-duration-search-prefix2-browse-id-names-album-owner2-title-order1-retail2-recent-album-gain-icc-srgb1-{art_version}-{identity['target_id']}"

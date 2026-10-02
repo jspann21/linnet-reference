@@ -46,8 +46,8 @@ CODECS = {"pcm_le": 1, "pcm_be": 2, "float_le": 3, "float_be": 4,
 EXTENSIONS = {".wav", ".aif", ".aiff", ".aifc", ".mp3", ".m4a", ".m4b",
               ".aac", ".flac", ".flc", ".ogg", ".opus", ".ops", ".wv"}
 COVER_NAMES = ("cover.png", "cover.jpg", "folder.jpg", "Folder.jpg")
-COVERFLOW_CACHE_MAX_ENTRIES = 4096  # 14,080 bytes each: at most 55 MiB of tile payloads.
-RENDER_CACHE_MAX_ENTRIES = 2048  # At most 118 MiB of complete 128px + Cover Flow renders.
+COVERFLOW_CACHE_MAX_ENTRIES = 4096  # At most 95 MiB of native tile payloads.
+RENDER_CACHE_MAX_ENTRIES = 2048  # At most 310 MiB of complete native playback + Cover Flow renders.
 METADATA_WORKERS = 8
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
@@ -180,10 +180,23 @@ def _cover_normalized(image):
 def _cover_pixels_rgb(image, target):
     from PIL import Image, ImageOps
     side = TARGETS[target]["media_art_side"] if target else 64
+    original = image
     image = ImageOps.fit(image, (side, side), method=Image.Resampling.LANCZOS)
     if target and TARGETS[target]["lcd_format"] == "gray2-horizontal":
         image = _mp102_cover(image)
     from .photos import _rgb565
+    if side == 160:
+        # Exact display renditions share one read and CRC. The home pane uses
+        # 160px; the standard Now Playing layout copies the appended 112px.
+        small = ImageOps.fit(original, (112, 112), method=Image.Resampling.LANCZOS)
+        def rounded_rgb565(cover):
+            return struct.pack(f'<{cover.width * cover.height}H', *[
+                ((r * 31 + 127) // 255) << 11 | ((g * 63 + 127) // 255) << 5 | (b * 31 + 127) // 255
+                for r, g, b in cover.getdata()])
+        pixels = rounded_rgb565(image) + rounded_rgb565(small)
+        if target == 'classic6g-n25':
+            pixels += rounded_rgb565(ImageOps.fit(original, (126, 126), method=Image.Resampling.LANCZOS))
+        return pixels
     return _rgb565(image)
 
 
@@ -220,7 +233,7 @@ def _cover_renders(source, target, coverflow_enabled, known_art=()):
         digest = hashlib.sha256(pixels).digest()
         if coverflow_enabled and digest not in known_art:
             from .coverflow import _original_from_rgb
-            flow = _original_from_rgb(normalized)
+            flow = _original_from_rgb(normalized, 130 if target and TARGETS[target].get('presentation_profile') == 'color320' else 96)
         else:
             flow = None
     return pixels, digest, flow
@@ -1022,12 +1035,12 @@ class _MetadataCache:
         hit, cover = self.embedded_cover_lookup(path, before, bypass=bypass)
         return cover if hit else self.embedded_cover_store(path, before, _embedded_cover(path))
 
-    def coverflow_get(self, key):
+    def coverflow_get(self, key, value_bytes=14080):
         if self.connection is None:
             return None
         try:
             row = self.connection.execute("SELECT value, digest FROM coverflow WHERE key=?", (key,)).fetchone()
-            if row and isinstance(row[0], bytes) and len(row[0]) == 14080 and hashlib.sha256(row[0]).digest() == row[1]:
+            if row and isinstance(row[0], bytes) and len(row[0]) == value_bytes and hashlib.sha256(row[0]).digest() == row[1]:
                 return row[0]
         except sqlite3.Error:
             self._disable()
@@ -1062,7 +1075,7 @@ class _MetadataCache:
                 self._disable()
         return self.render_ready
 
-    def render_get(self, key, pixel_bytes, with_flow):
+    def render_get(self, key, pixel_bytes, with_flow, flow_side=96):
         if not self._render_table():
             return None
         try:
@@ -1071,9 +1084,9 @@ class _MetadataCache:
                 "AND typeof(pixels)='blob' AND length(pixels)=? "
                 "AND typeof(flow)='blob' AND length(flow)=? "
                 "AND typeof(digest)='blob' AND length(digest)=32",
-                (key, pixel_bytes, 27648 if with_flow else 0)).fetchone()
+                (key, pixel_bytes, flow_side * flow_side * 3 if with_flow else 0)).fetchone()
             if (row and isinstance(row[0], bytes) and len(row[0]) == pixel_bytes and
-                    isinstance(row[1], bytes) and len(row[1]) == (27648 if with_flow else 0) and
+                    isinstance(row[1], bytes) and len(row[1]) == (flow_side * flow_side * 3 if with_flow else 0) and
                     hashlib.sha256(row[0] + row[1]).digest() == row[2]):
                 return row[0], row[1]
         except sqlite3.Error:
@@ -1620,7 +1633,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             except ImportError as exc:
                 raise ValueError("cover conversion requires Pillow, or artwork=False") from exc
             # Bump the recipe when playback or Cover Flow image processing changes.
-            recipe = ("embedded-render-v3" if cover_bytes is None else "file-render-v3",
+            recipe = ("embedded-render-v4" if cover_bytes is None else "file-render-v4",
                       target, TARGETS[target]["media_art_side"] if target else 64,
                       TARGETS[target]["lcd_format"] if target else None,
                       coverflow_enabled, pillow_version)
@@ -1628,7 +1641,9 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                                         hashlib.sha256(embedded if cover_bytes is None else cover_bytes).digest()).digest()
             if not bypass_cache:
                 side = TARGETS[target]["media_art_side"] if target else 64
-                rendered = cache.render_get(render_key, side * side * 2, coverflow_enabled)
+                pixel_bytes = side * side * 2 + (112 * 112 * 2 if side == 160 else 0) + (126 * 126 * 2 if target == 'classic6g-n25' else 0)
+                rendered = cache.render_get(render_key, pixel_bytes, coverflow_enabled,
+                                            130 if target and TARGETS[target].get('presentation_profile') == 'color320' else 96)
         try:
             if rendered is None:
                 pixels, digest, flow = _cover_renders(io.BytesIO(cover_bytes) if cover_bytes is not None else
@@ -1642,7 +1657,8 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                 digest = hashlib.sha256(pixels).digest()
                 if coverflow_enabled:
                     from PIL import Image
-                    flow = Image.frombytes("RGB", (96, 96), flow_bytes)
+                    flow_side = 130 if target and TARGETS[target].get('presentation_profile') == 'color320' else 96
+                    flow = Image.frombytes("RGB", (flow_side, flow_side), flow_bytes)
                 else:
                     flow = None
         except ImportError as exc:
@@ -1680,7 +1696,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             coverflow_originals[index] = flow
         side = TARGETS[target]["media_art_side"] if target else 64
         artwork_records.append(struct.pack("<QIHHIIII", int.from_bytes(digest[:8], "little"),
-            string("/.LINNET/ART/" + name), side, side, 1, len(pixels), zlib.crc32(pixels), 0))
+            string("/.LINNET/ART/" + name), side, side, 2 if side == 160 else 1, len(pixels), zlib.crc32(pixels), 0))
         art_indices[digest] = index
         remember_cover(index)
         return index
@@ -2051,8 +2067,9 @@ def validate_database(data: bytes) -> dict:
     for index in range(arts):
         identity, path, width, height, encoding, count, crc, reserved = struct.unpack_from("<QIHHIIII", data, ao + index * ART)
         if (not re.fullmatch(r"/\.LINNET/ART/[0-9A-F]{8}\.RGB", get_string(path)) or
-                width not in (64, 128) or (height, encoding, count, reserved) !=
-                (width, 1, width * width * 2, 0)):
+                width not in (64, 128, 160) or height != width or reserved or
+                not ((encoding == 1 and count == width * width * 2) or
+                     (encoding == 2 and width == 160 and count in (76288, 108040)))):
             raise ValueError("art record")
     return dict(tracks=tracks, groups=groups, members=members, artwork=arts, bytes=size)
 

@@ -214,12 +214,24 @@ int ln_music_db_step(struct ln_music_db *d)
         d->art.id=ln_read_le64(b);d->art.path=ln_read_le32(b+8);d->art.crc=ln_read_le32(b+24);
         uint32_t side=ln_read_le16(b+12);
         if(d->art.path>=d->pool_bytes||
-#if LINNET_ART_MAX_SIDE == 128u
+#if LINNET_ART_MAX_SIDE == 160u
+           (side!=64u&&side!=128u&&side!=160u)||
+#elif LINNET_ART_MAX_SIDE == 128u
            (side!=64u&&side!=128u)||
 #else
            side!=64u||
 #endif
-           ln_read_le16(b+14)!=side||ln_read_le32(b+16)!=1u||ln_read_le32(b+20)!=side*side*2u||ln_read_le32(b+28))return bad(d,LN_DB_FORMAT);
+           ln_read_le16(b+14)!=side||ln_read_le32(b+28))return bad(d,LN_DB_FORMAT);
+        uint32_t encoding=ln_read_le32(b+16),bytes=ln_read_le32(b+20);
+        if(encoding==1u){if(bytes!=side*side*2u)return bad(d,LN_DB_FORMAT);}
+#if LINNET_ART_MAX_SIDE >= 160u
+        else if(encoding==2u){if(side!=160u||(bytes!=76288u
+#if LINNET_TARGET_NUMBER == 1238u
+            &&bytes!=108040u
+#endif
+            ))return bad(d,LN_DB_FORMAT);}
+#endif
+        else return bad(d,LN_DB_FORMAT);
     }
     d->busy=false;return 1;
 }

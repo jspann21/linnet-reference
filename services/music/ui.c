@@ -66,6 +66,13 @@ const struct ln_ui_asset *ln_ui_now_playing_art(uint32_t *revision){
     art.width=art.height=(uint16_t)ln_music_art_side();
     return art.pixels?&art:0;
 }
+const struct ln_ui_asset *ln_ui_now_playing_art_sized(uint32_t *revision,uint32_t side){
+    static struct ln_ui_asset art;
+    uint32_t actual;
+    *revision=ln_music_art_revision();art.pixels=ln_music_art_pixels_sized(side,&actual);
+    art.width=art.height=(uint16_t)actual;
+    return art.pixels?&art:0;
+}
 static bool in_scene(const struct ln_ui_node*n,uint32_t id){
     static const struct ln_ui_node *cached_node;
     static const struct ln_ui_scene *cached_scenes;
@@ -89,7 +96,8 @@ const struct ln_ui_asset *ln_ui_dynamic_asset(const struct ln_ui_node*n,const st
 #endif
     static struct ln_ui_asset art={64,64,0};
     if(n->kind==LN_UI_ALBUM_ART&&in_scene(n,LN_UI_SCENE_NOW_PLAYING)){
-        art.pixels=ln_music_art_pixels();art.width=art.height=(uint16_t)ln_music_art_side();
+        uint32_t actual;
+        art.pixels=ln_music_art_pixels_sized((uint32_t)n->w,&actual);art.width=art.height=(uint16_t)actual;
         if(art.pixels)return &art;}
     return fallback;
 }
@@ -257,7 +265,14 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
             if(equal(fallback,"Track duration"))return clock_text(duration,frames,rate,false);
             return clock_text(remaining,position<frames?frames-position:0,rate,true);
         }
-        if(equal(fallback,"Native playback shell"))return ln_music_notice()?ln_music_notice():ln_music_loading()?"Loading...":p.phase==LN_PLAYER_PLAY?"":p.phase==LN_PLAYER_PAUSE?"":p.phase==LN_PLAYER_ERROR?"Playback error":ln_player_busy()?"Loading...":r?"Stopped":"";
+        if(equal(fallback,"Native playback shell")){
+#if LINNET_ART_MAX_SIDE >= 160u
+            return ln_music_notice()?ln_music_notice():p.phase==LN_PLAYER_ERROR?"Playback error":
+                p.phase==LN_PLAYER_IDLE&&!ln_music_loading()&&r?"Stopped":"";
+#else
+            return ln_music_notice()?ln_music_notice():ln_music_loading()?"Loading...":p.phase==LN_PLAYER_PLAY?"":p.phase==LN_PLAYER_PAUSE?"":p.phase==LN_PLAYER_ERROR?"Playback error":ln_player_busy()?"Loading...":r?"Stopped":"";
+#endif
+        }
     }
     return fallback;
 }

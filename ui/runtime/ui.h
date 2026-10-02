@@ -123,6 +123,7 @@ void ln_ui_refresh(struct ln_ui_state *state);
 uint32_t ln_ui_scroll_tick(struct ln_ui_state *state,uint32_t now_us);
 /* Retained artwork only; revision changes when published pixels or availability change. */
 const struct ln_ui_asset *ln_ui_now_playing_art(uint32_t *revision);
+const struct ln_ui_asset *ln_ui_now_playing_art_sized(uint32_t *revision,uint32_t side);
 bool ln_ui_now_playing_art_loading(void);
 uint32_t ln_ui_palette_tick(struct ln_ui_state *state,uint32_t now_us);
 bool ln_ui_status_refresh(struct ln_ui_state *state);

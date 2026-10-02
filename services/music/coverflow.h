@@ -18,6 +18,8 @@ void ln_coverflow_render_diagnostics(uint32_t words[16]);
 #endif
 #endif
 const char *ln_coverflow_text(bool artist);
+/* Retained, verified native square, matched to the selected album; no I/O. */
+const uint16_t *ln_coverflow_playback_preview(const char *path,uint32_t crc);
 void ln_coverflow_draw(const struct ln_ui_canvas_context *c);
 #endif
 #endif

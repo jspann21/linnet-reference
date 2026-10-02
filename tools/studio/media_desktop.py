@@ -297,12 +297,12 @@ class Covers(QObject):
                             image = self.read_image(buffer)
                 if image.isNull() and source.suffix.lower() == '.rgb':
                     with source.open('rb') as reader:
-                        pixels = reader.read(32769)
-                    # Prepared artwork is RGB565: 64 pixels on older targets,
-                    # 128 on the Classic. Reject truncated or oversized files.
-                    side = {8192: 64, 32768: 128}.get(len(pixels))
+                        pixels = reader.read(108041)
+                    # RGB565 covers may append exact Now Playing renditions.
+                    # Preview their leading square; reject unknown file sizes.
+                    side = {8192: 64, 32768: 128, 51200: 160, 76288: 160, 108040: 160}.get(len(pixels))
                     if side:
-                        image = QImage(pixels, side, side, side * 2, QImage.Format_RGB16).copy()
+                        image = QImage(pixels[:side * side * 2], side, side, side * 2, QImage.Format_RGB16).copy()
             else:
                 image = self.read_image(path)
         except (OSError, ValueError):

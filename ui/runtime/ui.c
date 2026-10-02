@@ -39,6 +39,7 @@ uint32_t ln_ui_theme_index(void){uint32_t index=ln_ui_theme_preference();return 
 static uint16_t album_colors[LN_UI_COLOR_COUNT];
 static bool album_colors_valid;
 __attribute__((weak)) const struct ln_ui_asset *ln_ui_now_playing_art(uint32_t *revision){*revision=0;return 0;}
+__attribute__((weak)) const struct ln_ui_asset *ln_ui_now_playing_art_sized(uint32_t *revision,uint32_t side){(void)side;return ln_ui_now_playing_art(revision);}
 __attribute__((weak)) bool ln_ui_now_playing_art_loading(void){return false;}
 uint16_t ln_ui_color(uint32_t value){return value>=LN_UI_COLOR_TOKEN&&value<LN_UI_COLOR_TOKEN+LN_UI_COLOR_COUNT?((ln_ui_themes[active_theme].flags&LN_UI_THEME_ALBUM_ART)&&album_colors_valid?album_colors[value-LN_UI_COLOR_TOKEN]:ln_ui_themes[active_theme].colors[value-LN_UI_COLOR_TOKEN]):(uint16_t)value;}
 static void theme_sync(void){
@@ -1049,7 +1050,7 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
     case LN_UI_DIALOG:case LN_UI_TOAST:fill(p,bounds(n),bg);border(p,bounds(n),fg);fitted_text(p,n->x+7,n->y+max(0,(n->h-(int32_t)ln_ui_font.height)/2),node_text,fg,n->w-14);break;
     case LN_UI_ALBUM_ART:case LN_UI_PHOTO_SURFACE:case LN_UI_VIDEO_SURFACE:{
         if(n->kind==LN_UI_ALBUM_ART&&(layout()==LN_UI_LAYOUT_IPOD_PHOTO||layout()==LN_UI_LAYOUT_IPOD_CLASSIC)){
-            uint32_t revision;const struct ln_ui_asset*art=ln_ui_now_playing_art(&revision);
+            uint32_t revision;const struct ln_ui_asset*art=ln_ui_now_playing_art_sized(&revision,(uint32_t)n->w);
             if(image_independent(p,n,art))image_letterbox(p,n,art,bg);
             else fill(p,bounds(n),bg);
             if(art&&art->pixels)image_asset(p,n,art);break;

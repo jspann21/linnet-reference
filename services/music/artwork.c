@@ -1,16 +1,36 @@
 #include "services/music/artwork.h"
 #include "services/storage/storage.h"
 #include "services/music/database.h"
+#include "services/music/coverflow.h"
 #include "boot/include/linnet_boot.h"
 #include "hal/api/platform.h"
 /* Visibility and cache validity remain in BSS; reads fill pixels before use. */
-static uint16_t pixels[2][LINNET_ART_MAX_SIDE*LINNET_ART_MAX_SIDE] __attribute__((section(".media_workspace"),aligned(32)));
+#if LINNET_TARGET_NUMBER == 1238u
+#define ART_PIXELS (160u*160u+112u*112u+126u*126u)
+#elif LINNET_ART_MAX_SIDE >= 160u
+#define ART_PIXELS (160u*160u+112u*112u)
+#else
+#define ART_PIXELS (LINNET_ART_MAX_SIDE*LINNET_ART_MAX_SIDE)
+#endif
+static uint16_t pixels[2][ART_PIXELS] __attribute__((section(".media_workspace"),aligned(32)));
 static uint16_t cached_side[2];
+static uint32_t cached_bytes[2];
 static struct ln_fat32_file file;
 static char requested[256],path[256];
 static uint32_t requested_crc,crc,token,working,revision,generation=0x20000000u;
 static uint32_t phase,front,transfer_bytes;
 static bool pending,visible,preload,prefetch_tried,read_allowed;
+#if LINNET_ART_MAX_SIDE >= 160u && defined(LINNET_COVERFLOW)
+static uint16_t preview_pixels[130u*130u] __attribute__((section(".cover_high"),aligned(32)));
+static bool preview_visible;
+static void preview(void){
+    if(visible||preview_visible)return;
+    const uint16_t *source=ln_coverflow_playback_preview(requested,requested_crc);
+    if(!source)return;
+    for(uint32_t i=0;i<130u*130u;i++)preview_pixels[i]=source[i];
+    preview_visible=true;++revision;
+}
+#endif
 /* Keep the previous or prefetched cover in the existing second buffer. */
 static char cached_path[2][256];
 static uint32_t cached_crc[2];
@@ -37,8 +57,30 @@ static void monochrome_cover(uint16_t *image){
     }
 }
 #endif
-const uint16_t *ln_music_art_pixels(void){return visible?pixels[front]:0;}
-uint32_t ln_music_art_side(void){return visible?cached_side[front]:0u;}
+const uint16_t *ln_music_art_pixels(void){
+#if LINNET_ART_MAX_SIDE >= 160u && defined(LINNET_COVERFLOW)
+    if(!visible&&preview_visible)return preview_pixels;
+#endif
+    return visible?pixels[front]:0;
+}
+const uint16_t *ln_music_art_pixels_sized(uint32_t side,uint32_t *actual_side){
+    *actual_side=ln_music_art_side();
+#if LINNET_ART_MAX_SIDE >= 160u
+    if(visible&&side==112u&&cached_bytes[front]>=76288u){*actual_side=112u;return pixels[front]+160u*160u;}
+#if LINNET_TARGET_NUMBER == 1238u
+    if(visible&&side==126u&&cached_bytes[front]==108040u){*actual_side=126u;return pixels[front]+160u*160u+112u*112u;}
+#endif
+#else
+    (void)side;
+#endif
+    return ln_music_art_pixels();
+}
+uint32_t ln_music_art_side(void){
+#if LINNET_ART_MAX_SIDE >= 160u && defined(LINNET_COVERFLOW)
+    if(!visible&&preview_visible)return 130u;
+#endif
+    return visible?cached_side[front]:0u;
+}
 uint32_t ln_music_art_revision(void){return revision;}
 bool ln_music_art_loading(void){return !visible&&requested[0]&&(working!=token||(!preload&&phase));}
 uint32_t ln_music_art_deadline(uint32_t now){
@@ -52,10 +94,25 @@ void ln_music_art_request(const char *name,uint32_t checksum){
     if(!preload&&(!requested[0]||visible||phase||working!=token)&&
        requested_crc==checksum&&same_path(name?name:"",requested))return;
     bool promote=preload&&checksum==crc&&same_path(name?name:"",path);
+#if LINNET_ART_MAX_SIDE >= 160u && defined(LINNET_COVERFLOW)
+    preview_visible=false;
+#endif
     copy_path(requested,name?name:"");
     requested_crc=checksum;++token;
     if(promote){working=token;preload=false;}
     visible=cached_valid[front]&&checksum==cached_crc[front]&&same_path(requested,cached_path[front]);++revision;
+    /* Publish a retained cover in the request turn. In-flight reads must drain
+     * before front changes because their destination is the other bank. */
+    if(!pending){
+        for(uint32_t slot=0;slot<2u;slot++){
+            if(cached_valid[slot]&&checksum==cached_crc[slot]&&same_path(requested,cached_path[slot])){
+                front=slot;visible=true;phase=0;preload=false;working=token;return;
+            }
+        }
+#if LINNET_ART_MAX_SIDE >= 160u && defined(LINNET_COVERFLOW)
+        preview();
+#endif
+    }
 }
 static void finish(void){
     phase=0;pending=false;preload=false;working=token;
@@ -85,6 +142,9 @@ void ln_music_art_step(bool allow_read){
         }
         copy_path(path,requested);
         if(!path[0]||!ln_music_db_safe_path(path)){finish();return;}
+#if LINNET_ART_MAX_SIDE >= 160u && defined(LINNET_COVERFLOW)
+        preview();
+#endif
         if(++generation>=0x30000000u)generation=0x20000000u;
     }
     if(!phase)return;
@@ -109,8 +169,14 @@ void ln_music_art_step(bool allow_read){
     if(!result)return;pending=false;if(result<0){finish();return;}
     if(phase==1){
         if(file.size!=8192u
-#if LINNET_ART_MAX_SIDE == 128u
+#if LINNET_ART_MAX_SIDE >= 128u
            &&file.size!=32768u
+#endif
+#if LINNET_ART_MAX_SIDE >= 160u
+           &&file.size!=51200u&&file.size!=76288u
+#endif
+#if LINNET_TARGET_NUMBER == 1238u
+           &&file.size!=108040u
 #endif
         ){finish();return;}
         transfer_bytes=file.size;phase=2;return;
@@ -122,7 +188,8 @@ void ln_music_art_step(bool allow_read){
             monochrome_cover(pixels[front^1u]);
 #endif
             uint32_t slot=front^1u;
-            cached_side[slot]=transfer_bytes==32768u?128u:64u;
+            cached_side[slot]=transfer_bytes>=51200u?160u:transfer_bytes==32768u?128u:64u;
+            cached_bytes[slot]=transfer_bytes;
             cached_crc[slot]=crc;
             copy_path(cached_path[slot],path);
             cached_valid[slot]=true;

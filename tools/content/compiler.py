@@ -572,7 +572,11 @@ def generate_c(doc, packed_fonts=None):
         gw,gh=doc['width'],doc['height']*140//176
         glow=[round(63*max(0,1-((x-(gw-1)/2)/(gw*116/220))**2-((y-gh*62/140)/(gh*84/140))**2)**2)*4+((0,2),(3,1))[y&1][x&1] for x in range(gw) for y in range(gh)]
         scanline=doc.get('coverflow_scanline',False)
+        texture_side,texture_height=(130,174) if scanline else (96,128)
         if scanline:
+            for name,count,source in (('legacy_x',130,96),('legacy_y',174,128),
+                                      ('preview_x',130,24),('preview_y',174,32)):
+                out.append(f'const uint8_t ln_coverflow_{name}[{count}]={{'+','.join(str(i*source//count) for i in range(count))+'};')
             pairs=[[],[]];indices=[]
             for y in range(gh):
                 row=[];palette=pairs[y&1]
@@ -594,7 +598,7 @@ def generate_c(doc, packed_fonts=None):
             columns=[];geometry=[]
             for x in range(width):
                 height=round((96-tilt*15/256+(x+.5)*tilt*13/(width*256))*cover_size/96)
-                values=((96<<16)//height,(2*x+1)*96//(2*width),24*doc['height']//176+(cover_size-height)//2,height,height*128//96)
+                values=((texture_side<<16)//height,(2*x+1)*texture_side//(2*width),24*doc['height']//176+(cover_size-height)//2,height,height*texture_height//texture_side)
                 columns.append('{'+','.join(map(str,values))+'}');geometry.append(values)
             if not scanline:out.append('{'+','.join(columns)+'},')
             else:
@@ -604,13 +608,16 @@ def generate_c(doc, packed_fonts=None):
                     visible=[x for x,c in enumerate(geometry) if c[2]<=y<c[2]+c[4]]
                     left=visible[0] if visible else 0
                     assert not visible or visible==list(range(left,left+len(visible)))
-                    rows.append('{'+f'{len(samples)},{left},{len(visible)}'+'}')
+                    start=len(samples)
                     for x in visible:
                         sy=((geometry[x][0]>>1)+(y-geometry[x][2])*geometry[x][0])>>16
                         if x==left or samples[-1]!=sy:samples.extend((x+1,sy))
                         else:samples[-2]=x+1
+                    rows.append('{'+f'{start},{left},{len(visible)},{(len(samples)-start)//2}'+'}')
                 scanlines.append('{'+','.join(rows)+'}')
         if scanline:
+            if len(samples)>65535:
+                raise ValueError('Cover Flow scanline offsets exceed the 16-bit table bound')
             out.append(f'const uint8_t ln_coverflow_sources[33][{cover_size}]={{'+','.join(sources)+'};')
             out.append(f'const struct ln_coverflow_scanline ln_coverflow_rows[33][{gh}]={{'+','.join(scanlines)+'};')
             out.append('const uint8_t ln_coverflow_samples[]={'+','.join(map(str,samples))+'};')

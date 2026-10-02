@@ -334,9 +334,9 @@ def _validate_profiles(path, spec):
 
 def _validate_media(path, spec):
     _require(path, spec, 'media_art_side', type(spec['media_art_side']) is int and
-             spec['media_art_side'] in (64, 128) and
+             spec['media_art_side'] in (64, 128, 160) and
              (spec['lcd_format'] != 'gray2-horizontal' or spec['media_art_side'] == 64),
-             'be 64 or 128, and 64 for gray2-horizontal displays')
+             'be 64, 128 or 160, and 64 for gray2-horizontal displays')
     backend = spec.get("media_video_backend")
     decoder = spec.get("h264_decoder", "software")
     _require(path, spec, 'h264_decoder', decoder in ('software', 's5l8702-vpu') and

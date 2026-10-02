@@ -1,6 +1,6 @@
 /* Host-baked scanlines retain all 33 poses. Each run stores its exclusive
  * column end and source row, so projection and row offsets stay out of pixel loops. */
-struct ln_coverflow_scanline {uint32_t offset;uint8_t left,width;};
+struct ln_coverflow_scanline {uint16_t offset;uint8_t left,width,runs;};
 extern const struct ln_coverflow_scanline ln_coverflow_rows[33][190];
 extern const uint8_t ln_coverflow_samples[];
 extern const uint8_t ln_coverflow_sources[33][COVER_WIDTH];
@@ -35,8 +35,8 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
         card->palette=packed?(const uint16_t*)packed:r?(const uint16_t*)(header+512):0;
         for(int32_t x=0;x<card->width;x++){
             uint32_t sx=ln_coverflow_sources[card->pose][card->mirror?card->width-1-x:x];
-            if(card->mirror)sx=95u-sx;
-            card->sources[x]=(uint8_t)(sx*2u);
+            if(card->mirror)sx=TEXTURE_WIDTH-1u-sx;
+            card->sources[x]=(uint8_t)sx;
         }
     }
     uint32_t ambient[3]={0};
@@ -95,24 +95,38 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
                 const struct ln_coverflow_scanline *line=&ln_coverflow_rows[card->pose][y];
                 int32_t x=span->left-card->x,end=span->right-card->x;
                 const uint8_t *samples=ln_coverflow_samples+line->offset;
-                int32_t u=card->mirror?card->width-1-x:x,run=0;
-                while(samples[run*2]<=u)++run;
+                int32_t u=card->mirror?card->width-1-x:x,run;
+                /* Begin at the nearer end of the host-prepared runs. A
+                 * mirrored card usually begins at its final run. */
+                if(u>card->width/2){run=line->runs-1;while(run&&samples[(run-1)*2]>u)--run;}
+                else {run=0;while(samples[run*2]<=u)++run;}
                 while(x<end){
                     int32_t left=run?samples[(run-1)*2]:line->left;
                     int32_t length=card->mirror?u-left+1:samples[run*2]-u;
                     if(length>end-x)length=end-x;
                     int32_t limit=x+length;uint32_t sy=samples[run*2+1];
                     if(card->decoded){
-                        const uint8_t *source=card->pixels+sy*192u;
-                        for(;x<limit;x++)*dest++=*(const uint16_t*)(source+card->sources[x]);
+                        const uint16_t *source=(const uint16_t *)card->pixels+sy*TEXTURE_WIDTH;
+                        if(card->pose==0){
+#if defined(__arm__)
+                            extern void ln_memory_copy(void *,const void *,uint32_t);
+                            ln_memory_copy(dest,source+x,(uint32_t)(limit-x)*2u);
+#else
+                            __builtin_memcpy(dest,source+x,(uint32_t)(limit-x)*2u);
+#endif
+                            dest+=limit-x;x=limit;
+                        }else for(;x<limit;x++)*dest++=source[card->sources[x]];
                     }else if(!card->palette){
-                        uint16_t pixel=sy<96?0x18e4u:0;
+                        uint16_t pixel=sy<TEXTURE_WIDTH?0x18e4u:0;
                         for(;x<limit;x++)*dest++=pixel;
                     }else if(card->preview){
-                        sy>>=2;
-                        for(;x<limit;x++)*dest++=card->palette[card->indices[(card->sources[x]>>3)*32u+sy]];
+                        sy=ln_coverflow_preview_y[sy];
+                        for(;x<limit;x++)*dest++=card->palette[card->indices[ln_coverflow_preview_x[card->sources[x]]*32u+sy]];
                     }else{
-                        for(;x<limit;x++)*dest++=card->palette[card->indices[sy*96u+(card->sources[x]>>1)]];
+                        if(art_side==96u){
+                            sy=ln_coverflow_legacy_y[sy];
+                            for(;x<limit;x++)*dest++=card->palette[card->indices[sy*96u+ln_coverflow_legacy_x[card->sources[x]]]];
+                        }else for(;x<limit;x++)*dest++=card->palette[card->indices[sy*TEXTURE_WIDTH+card->sources[x]]];
                     }
                     if(card->mirror){u-=length;--run;}else{u+=length;++run;}
                 }

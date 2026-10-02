@@ -286,8 +286,10 @@ def validate_stage(stage: Path, *, device_root: Path | None = None,
         _plain(local, stage)
         pixels = _bounded(local, count)
         digest = hashlib.sha256(pixels).digest()
-        if (width not in (64, 128) or height != width or encoding != 1 or
-            count != width * height * 2 or reserved or len(pixels) != count or
+        if (width not in (64, 128, 160) or height != width or
+            not ((encoding == 1 and count == width * height * 2) or
+                 (encoding == 2 and width == 160 and count in (76288, 108040))) or
+            reserved or len(pixels) != count or
             int.from_bytes(digest[:8], "little") != identity or zlib.crc32(pixels) != crc or
             Path(path).stem != digest[:4].hex().upper()):
             raise ValueError(f"staged artwork identity/CRC mismatch: {relative}")
@@ -469,7 +471,7 @@ def _copy_verified(source: Path, destination: Path, item: dict, root: Path, guar
 
 def _copy_art_batch(batch, stage: Path, root: Path, guard) -> list:
     """Write bounded independent covers before flushing and reading them back."""
-    if len(batch) > 16 or any(item['bytes'] not in (8192, 32768) for _, _, item in batch):
+    if len(batch) > 16 or any(item['bytes'] not in (8192, 32768, 51200, 76288, 108040) for _, _, item in batch):
         raise ValueError('artwork batch exceeds its file or memory bound')
     prepared = []
     for source, destination, item in batch:
