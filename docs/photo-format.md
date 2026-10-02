@@ -1,8 +1,8 @@
-# Prepared photos (PIMG)
+# Prepared photos (LPIC)
 
-PIMG is the tiled photo library used by Linnet. The computer applies orientation,
-creates thumbnails and zoom levels, and converts pixels to RGB565. The iPod
-loads only the catalog pages and visible tiles it needs.
+LPIC is the tiled photo library used by Linnet. The computer applies orientation,
+creates thumbnails and zoom levels, converts pixels to RGB565, and compresses
+tiles. The iPod loads only the catalog pages and visible tiles it needs.
 
 For normal use, prepare Photos in [Media Manager](media-manager.md). The original
 images are preserved. Monochrome Q21 does not support photo playback.
@@ -24,15 +24,22 @@ operation handled by Media Manager.
 ## Package structure
 
 Host files use `.pimg`; the device reads `/.LINNET/PHOTOS/LIBRARY.PIM`.
-Integers and RGB565 words are little-endian.
+The header starts with `LPIC`. Version 0 stores compressed tiles in the library
+on the Photo 4G. Version 1 stores them in content-addressed packs under
+`/.LINNET/PHOTOS/PACKS/` on the Video 5G and Classic 6G. Both versions use
+little-endian integers and RGB565 words.
 
 | Section | Purpose |
 | --- | --- |
 | 512-byte header | Counts, offsets, dimensions, file size, and checksums |
 | Album and photo tables | Folder hierarchy, titles, image dimensions, and references |
-| Resolution levels and tile index | Locate prepared pixels without loading a whole image |
+| Resolution levels and tile index | Locate compressed prepared pixels without loading a whole image |
 | UTF-8 string pool | Deduplicated titles and optional fallback paths |
-| Payloads | 64 × 64 thumbnails followed by 32 × 32 RGB565 tiles |
+| Payloads | 64 × 64 thumbnails followed by compressed 32 × 32 RGB565 tiles on Photo 4G; Video 5G and Classic 6G keep tiles in separate packs |
+
+`/.LINNET/PHOTOS/GRID.PGR` contains host-rendered thumbnails at each target's
+grid size and binds to the exact LPIC header. The iPod can display a prepared
+grid page without scaling 64 × 64 thumbnails while browsing.
 
 Limits include 4,096 albums, 65,535 photos, six levels per photo, one million
 tiles, and a file smaller than 2 GiB. The compiler checks all size and offset

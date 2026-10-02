@@ -1,4 +1,4 @@
-"""Host-prepared native photo grids, bound to the exact PIMG header."""
+"""Host-prepared native photo grids, bound to the exact LPIC header."""
 from __future__ import annotations
 
 import hashlib
@@ -20,7 +20,7 @@ def _pim_header(header):
             version not in (0, 1) or header_bytes != 512 or
             any(header[72 + (384 if version else 0):508]) or
             _crc(header[:508]) != struct.unpack_from('<I', header, 508)[0]):
-        raise ValueError('invalid grid PIMG binding header')
+        raise ValueError('invalid grid LPIC binding header')
     flags, size, ac, pc, lc, tc, ao, po, lo, to, so, sb, mc, do = struct.unpack_from('<14I', header, 8)
     if (flags or not 1 <= ac <= MAX_ALBUMS or not 1 <= pc <= MAX_PHOTOS or
             not pc <= lc <= pc*6 or not 1 <= tc <= 1_000_000 or not 1 <= sb <= MAX_STRINGS or
@@ -29,7 +29,7 @@ def _pim_header(header):
             so != to+tc*12 or do != (so+sb+511)&~511 or
             (size != do+pc*8192 if version else
              size < do+pc*8192+tc or size > do+pc*8192+tc*2048) or size > MAX_FILE):
-        raise ValueError('invalid grid PIMG binding ranges')
+        raise ValueError('invalid grid LPIC binding ranges')
     return dict(size=size, albums=ac, photos=pc, levels=lc, photo_at=po,
                 level_at=lo, string_at=so, string_bytes=sb, data_at=do)
 
@@ -108,7 +108,7 @@ def inspect_grid(path, *, package=None, target=None, checkpoint=None):
             package = Path(package)
             with package.open('rb') as pim:
                 if os.fstat(pim.fileno()).st_size != pim_size or pim.read(512) != binding:
-                    raise ValueError('native grid belongs to a different PIMG')
+                    raise ValueError('native grid belongs to a different LPIC')
         check();metadata = stream.read(data_at-1024)
         if len(metadata) != data_at-1024 or _crc(metadata) != crc or any(metadata[prefix_bytes+string_bytes:]):
             raise ValueError('native grid catalog CRC/padding mismatch')
@@ -136,7 +136,7 @@ def write_grid(package, output, target, pixels, checkpoint):
     with package.open('rb') as pim:
         binding = pim.read(512);h = _pim_header(binding)
         if os.fstat(pim.fileno()).st_size != h['size']:
-            raise ValueError('PIMG size changed before native grid preparation')
+            raise ValueError('LPIC size changed before native grid preparation')
         prefix = pim.read(h['level_at']-512)
         pim.seek(h['string_at']);strings = pim.read(h['data_at']-h['string_at'])
     metadata = prefix+strings

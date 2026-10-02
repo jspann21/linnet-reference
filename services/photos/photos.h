@@ -43,7 +43,7 @@ bool ln_photos_focus(uint32_t row);
 const char *ln_photos_title(void);
 const char *ln_photos_status(void);
 /* 16-byte resume: catalog identity, photo index, zoom/rotation/view, packed pan.
- * Photo index65535 is outside every valid PIMG photo range and denotes an empty
+ * Photo index65535 is outside every valid LPIC photo range and denotes an empty
  * album: zoom/rotation are zero, view is albums/list, and the pan word is the
  * album index. This fits the compact 16-bit index.
  * Restore validates catalog identity, album bounds and its empty record first. */
