@@ -1174,7 +1174,7 @@ class Cancelled(RuntimeError):
     pass
 
 
-def _video_is_native(source, identity, *, ffprobe=None, cancelled=None):
+def _video_is_native(source, identity, *, ffprobe=None, cancelled=None, details=None):
     """Check the actual container and codecs before treating a suffix as native."""
     if source.suffix.lower() not in native_video_extensions(identity):
         return False
@@ -1182,7 +1182,9 @@ def _video_is_native(source, identity, *, ffprobe=None, cancelled=None):
     try:
         if profile['video_backend'] in ('bcm-mp4', 'native-mp4'):
             from .native_video import inspect_file
-            inspect_file(source, profile=profile, ffprobe=ffprobe, cancelled=cancelled)
+            inspected = inspect_file(source, profile=profile, ffprobe=ffprobe, cancelled=cancelled)
+            if details is not None:
+                details.update(inspected)
         else:
             from .ipvf_validate import inspect_file
             inspect_file(source, expected_width=profile['video_width'],
@@ -1190,6 +1192,21 @@ def _video_is_native(source, identity, *, ffprobe=None, cancelled=None):
                          max_record_sectors=profile['max_read_sectors'])
         return True
     except (OSError, ValueError):
+        return False
+
+
+def _native_check_reusable(job, source, profile):
+    proof = job.get('_native_check')
+    if (not isinstance(proof, tuple) or len(proof) != 3 or
+            not isinstance(proof[2], tuple) or len(proof[2]) != 5 or
+            not all(type(value) is int for value in proof[2]) or
+            proof[0] != str(source) or proof[1] != json.dumps(profile, sort_keys=True) or
+            (os.name == 'nt' and proof[2][3] > time.time_ns() - _RECENT_OUTPUT_NS)):
+        return False
+    try:
+        return (source.resolve(strict=True) == source and
+                _receipt_stamp(source.stat()) == proof[2])
+    except OSError:
         return False
 
 
@@ -1332,12 +1349,14 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, s
         for job in jobs.values():
             source = Path(job['source'])
             proof_before = None
-            if identity['media_profile']['video_backend'] not in ('bcm-mp4', 'native-mp4'):
+            if source.suffix.lower() in native_extensions:
                 try:
                     proof_before = _receipt_stamp(source.stat())
                 except OSError:
                     pass
-            if _video_is_native(source, identity, ffprobe=ffprobe, cancelled=cancelled):
+            details = {}
+            if _video_is_native(source, identity, ffprobe=ffprobe, cancelled=cancelled,
+                                details=details):
                 if proof_before is not None:
                     try:
                         proof_after = _receipt_stamp(source.stat())
@@ -1348,6 +1367,8 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, s
                              proof_after[3] <= time.time_ns() - _RECENT_OUTPUT_NS)):
                         job['_native_check'] = (str(source),
                             json.dumps(identity['media_profile'], sort_keys=True), proof_after)
+                        if details:
+                            job['_native_details'] = details
                 ready.append(job)
             elif not source.is_relative_to(root) or job['relative'].casefold() in queued_relatives:
                 raise ValueError(f"{source.name} needs conversion or is not a playable native video. Choose a conversion mode or remove it from the queue.")
@@ -1430,27 +1451,21 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
             details = None
             if (backend in ('bcm-mp4', 'native-mp4') and
                     source.suffix.lower() in native_video_extensions(identity)):
-                from .native_video import inspect_file
-                try:
-                    details = inspect_file(source, profile=identity['media_profile'], ffprobe=ffprobe)
-                except (OSError, ValueError):
-                    pass
+                hint = job.get('_native_details') if no_conversions else None
+                if (isinstance(hint, dict) and type(hint.get('fast_start')) is bool and
+                        hint.get('file_bytes') == job['bytes'] and
+                        _native_check_reusable(job, source, identity['media_profile'])):
+                    details = hint
+                else:
+                    from .native_video import inspect_file
+                    try:
+                        details = inspect_file(source, profile=identity['media_profile'], ffprobe=ffprobe)
+                    except (OSError, ValueError):
+                        pass
                 native = details is not None
             else:
-                proof = job.get('_native_check') if no_conversions else None
-                native = False
-                if (isinstance(proof, tuple) and len(proof) == 3 and
-                        isinstance(proof[2], tuple) and len(proof[2]) == 5 and
-                        all(type(value) is int for value in proof[2]) and
-                        proof[0] == str(source) and
-                        proof[1] == json.dumps(identity['media_profile'], sort_keys=True) and
-                        (os.name != 'nt' or
-                         proof[2][3] <= time.time_ns() - _RECENT_OUTPUT_NS)):
-                    try:
-                        native = (source.resolve(strict=True) == source and
-                                  _receipt_stamp(source.stat()) == proof[2])
-                    except OSError:
-                        pass
+                native = (no_conversions and
+                          _native_check_reusable(job, source, identity['media_profile']))
                 if not native:
                     native = _video_is_native(source, identity, ffprobe=ffprobe)
             encoder = ffmpeg or shutil.which('ffmpeg')
