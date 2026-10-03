@@ -247,11 +247,17 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     identity['linnet'] = boot_review['linnet']
     identity['default_boot'] = installer.default_boot(boot_review)
     readiness = {}
+    published_by_kind = {kind: [] for kind in media.KINDS}
+    for row in rows:
+        if row['category'] in ('library', 'published'):
+            bucket = published_by_kind.get(row['kind'])
+            if bucket is not None:
+                bucket.append(row)
     for kind in media.KINDS:
         saved = state.get(kind, {})
         if not isinstance(saved, dict):
             saved = {}
-        published = [r for r in rows if r['kind'] == kind and r['category'] in ('library', 'published')]
+        published = published_by_kind[kind]
         if kind == 'Videos':
             readiness[kind] = _video_readiness(inventory[kind], published, identity, state, verified)
             continue
