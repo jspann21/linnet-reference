@@ -75,7 +75,7 @@ uint32_t ln_video_revision(void){return v.revision;}
 void ln_video_presented(void){}
 void ln_video_resume_get(uint32_t out[2]){out[0]=v.active?v.identity:v.resume[0];out[1]=v.active?v.position:v.resume[1];}
 void ln_video_resume_set(const uint32_t in[2]){v.resume[0]=in[0];v.resume[1]=in[1];}
-uint32_t ln_video_deadline(uint32_t now){return ln_m25_coprocessor_active()?now:now+200000u;}
+uint32_t ln_video_deadline(uint32_t now){return ln_m25_coprocessor_deadline(now);}
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_video_diagnostics(uint32_t out[32]){uint32_t command[32];ln_m25_coprocessor_snapshot(out);ln_m25_coprocessor_channel(10u,command);out[24]=v.position;out[25]=ln_m25_coprocessor_duration();out[26]=v.active;out[27]=command[7];out[28]=v.options;out[29]=ln_video_paused();}
 bool ln_video_measurement_arm(uint32_t mode){return mode==0u&&!v.active;}

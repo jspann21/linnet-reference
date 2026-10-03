@@ -51,7 +51,7 @@ static struct {
     uint64_t read_offset;void *read_buffer;uint32_t read_bytes,read_at,read_requested;
     bool read_active,read_io;
     uint32_t stream_packet[332],stream_phase,stream_at,stream_wr,stream_address,stream_capacity,stream_frames;
-    bool mapped;
+    bool mapped,stream_waiting;
     struct ln_fat32_file file;
     struct ln_sha256 hash;
     uint8_t image[201376] __attribute__((aligned(32)));
@@ -226,6 +226,7 @@ static bool audio_service(void){
     return true;
 }
 static bool stream_service(void){
+    vc.stream_waiting=false;
     if(vc.operation!=2u)return true;
     uint32_t slot=0;while(slot<8u&&halfword(vc.channel[slot],4u)!=7u)++slot;
     if(slot==8u)return false;
@@ -311,7 +312,7 @@ static bool stream_service(void){
     uint32_t lo=halfword(c,10),hi=halfword(c,12),rd=halfword(c,48),wr=halfword(c,64);
     if(!ring_valid(lo,hi,rd)||!ring_valid(lo,hi,wr))return false;
     uint32_t available=wr>=rd?wr-rd:hi-rd+wr-lo;
-    if(available<16u)return true;
+    if(available<16u){vc.stream_waiting=true;return true;}
     uint32_t count=available>128u?128u:available;
     if(!ring_transfer(false,lo,hi,&rd,vc.host_channel,count)||vc.host_channel[0]!=0xf1a55a1fu)return false;
     if(vc.host_channel[2]==68u){
@@ -597,6 +598,23 @@ bool ln_m25_coprocessor_control(uint32_t command){
     vc.control=command;vc.return_deadline=vc.deadline;phase(VERSION_SEND,5000000u);return true;
 }
 bool ln_m25_coprocessor_active(void){return vc.fs_canceling||(vc.phase!=IDLE&&vc.phase!=RESTORED&&vc.phase!=FAILED);}
+uint32_t ln_m25_coprocessor_deadline(uint32_t now){
+    if(!ln_m25_coprocessor_active())return now+200000u;
+    /* Poll an empty BCM request ring at the LCD wait cadence only after
+     * startup, with no host work and a full PCM reserve. IRQs still wake us. */
+    if(vc.phase!=PLAYER_SETTLE||!vc.normal||vc.command_index!=8u||vc.control||
+       vc.restore||vc.fs_canceling||vc.fs_phase||vc.read_active||vc.seek_pending||vc.seek_stage||
+       vc.want_paused!=vc.paused||!vc.stream_waiting)return now;
+#if !defined(LINNET_PROFILE_RELEASE)
+    if(fault_mode)return now;
+#endif
+    if(vc.audio_ready){
+        struct ln_audio_status a;ln_audio_snapshot(&a);
+        if(a.fault||(!vc.audio_eof&&a.queued<AUDIO_BUFFER_FRAMES))return now;
+    }
+    if((int32_t)(vc.deadline-now)<=0)return now;
+    return (int32_t)(vc.deadline-now)<1000?vc.deadline:now+1000u;
+}
 bool ln_m25_coprocessor_open(const char *path,uint8_t options){
     if(!path||path[0]!='/')return false;uint32_t n=0;while(path[n]&&n<255u)++n;if(!n||n==255u)return false;
     if(!ln_m25_coprocessor_begin(2u))return false;

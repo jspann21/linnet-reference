@@ -126,6 +126,13 @@ bool ln_display_service(uint32_t max_pairs){
     return true;
 }
 bool ln_display_wait_deadline(uint32_t *deadline){
+#if defined(LINNET_IMAGE_OS)
+    /* BCM playback owns scanout; pending UI damage cannot be drawn yet. */
+    if(ln_m25_coprocessor_owned()){
+        if(deadline)*deadline=ln_time_us()+1000u;
+        return true;
+    }
+#endif
     if(phase!=1u&&phase!=3u)return false;
     if(deadline)*deadline=poll_at;
     return true;
