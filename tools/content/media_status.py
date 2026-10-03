@@ -328,8 +328,11 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     for row in rows:
         if row.get('category') == 'error':
             continue
+        excluded = skipped.get(row['kind'])
+        if not excluded:
+            continue
         path = Path(row['path'])
-        if path.is_relative_to(root) and path.relative_to(root).as_posix().casefold() in skipped.get(row['kind'], set()):
+        if path.is_relative_to(root) and path.relative_to(root).as_posix().casefold() in excluded:
             row['status'] = 'Excluded from preparation'
     from . import apple_os
     apple = apple_os.inspect(identity, records_by_kind=records)
