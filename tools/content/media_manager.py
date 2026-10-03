@@ -2288,15 +2288,17 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         plan = additions(root, [item for item in pending if item[0] in selected and item[0] != "Videos"],
                          replacements=replacements)
         planned = True
+        current_inventory = scan(root, tuple(kind for kind in selected if kind != "Videos"),
+                                 skipped=skipped) if any(kind != "Videos" for kind in selected) else {}
         reconciliation = reconciliation_actions(identity, selected, plan,
-            replacements=replacements, skipped=skipped)
+            replacements=replacements, current_inventory=current_inventory, skipped=skipped)
         report['reconciliation'] = reconciliation
         if ((reconciliation and approved_reconciliation is None) or
                 (approved_reconciliation is not None and approved_reconciliation != reconciliation)):
             raise ValueError('Source replacement or library cleanup needs review. Refresh the preparation plan and approve its exact actions.')
         for kind, maximum in (("Notes", 256),):
             if kind in selected:
-                existing = scan(root, (kind,), skipped=skipped)[kind]["count"]
+                existing = current_inventory[kind]["count"]
                 replacing = {action['destination'].casefold() for action in replacements
                              if action['kind'] == kind and
                              Path(action['destination']).relative_to(root).as_posix().casefold()
@@ -2309,7 +2311,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         space = preparation_space(identity, plan, videos, selected, cache,
             photo_dimension=photo_dimension, ffprobe=ffprobe, ffmpeg=ffmpeg,
             no_conversions=video_selection is not None and not video_selection,
-            force=force, skipped=skipped)
+            force=force, current_inventory=current_inventory, skipped=skipped)
         report['space'] = space
         if space['device_peak_bytes'] > min(identity['free_bytes'], space['device_free_bytes']):
             raise ValueError('Not enough iPod space for originals, prepared media, and recovery copies.')
