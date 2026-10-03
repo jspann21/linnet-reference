@@ -1410,12 +1410,20 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
         for job in jobs:
             source = Path(job['source'])
             backend = identity['media_profile']['video_backend']
-            native = _video_is_native(source, identity, ffprobe=ffprobe)
+            details = None
+            if (backend in ('bcm-mp4', 'native-mp4') and
+                    source.suffix.lower() in native_video_extensions(identity)):
+                from .native_video import inspect_file
+                try:
+                    details = inspect_file(source, profile=identity['media_profile'], ffprobe=ffprobe)
+                except (OSError, ValueError):
+                    pass
+                native = details is not None
+            else:
+                native = _video_is_native(source, identity, ffprobe=ffprobe)
             encoder = ffmpeg or shutil.which('ffmpeg')
             if native:
                 if backend in ('bcm-mp4', 'native-mp4'):
-                    from .native_video import inspect_file
-                    details = inspect_file(source, profile=identity['media_profile'], ffprobe=ffprobe)
                     direct = no_conversions or (details['fast_start'] and backend != 'bcm-mp4') or not encoder
                 else:
                     direct = True
