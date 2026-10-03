@@ -10,10 +10,10 @@ from pathlib import Path
 import re
 import tomllib
 from .tsx import ContentError, compile_tsx, COLOR_ROLES
-from .layouts import apply_layout, gate_features, feature_enabled
+from .layouts import apply_layout, gate_features, feature_enabled, place_classic_split_home
 import importlib.util
 
-LAYOUTS = ('default','ipod-photo','graphite','aurora','sunset','blueprint','minimal','native','ipod-classic')
+LAYOUTS = ('default','ipod-photo','graphite','aurora','sunset','blueprint','minimal','native','ipod-classic','classic-split')
 REFERENCE_WIDTH, REFERENCE_HEIGHT = 220, 176
 
 def canonical(value):
@@ -276,7 +276,7 @@ def compile_system(root, output, configpath=None, target_override=None):
         if style not in ('standard','monochrome','apple-photo','apple-classic','album-art'): raise ContentError('unknown theme style')
         layout=metadata.get('layout','default')
         if layout not in LAYOUTS: raise ContentError('unknown theme layout')
-        if monochrome: layout='default'
+        if monochrome and layout != 'classic-split': layout='default'
         palette=spec.get('colors',{})
         if not {'foreground','background','accent','muted','panel'}<=set(palette): raise ContentError('theme lacks required color tokens')
         for key,value in palette.items():
@@ -467,6 +467,8 @@ def compile_system(root, output, configpath=None, target_override=None):
                     elif node['text'] == 'Photo count':
                         node.update(x=8, y=top, w=width-16, h=24)
                         if target != 'classic6g-n25': node['flags'] |= 2
+        if variant['layout']=='classic-split':
+            place_classic_split_home(variant['scenes'],width,height)
         enabled_scenes=gate_features(variant['scenes'],features)
         if not enabled_scenes&1:
             raise ContentError('the first UI scene must be enabled')

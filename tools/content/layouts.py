@@ -41,6 +41,9 @@ def place_video_controls(scene,width,height,theme):
     hint['text']='MENU Exit  PLAY Pause  < > Seek'
 
 def apply_layout(scenes,theme,compact=False):
+    if theme['layout']=='classic-split':
+        base=dict(theme,layout='default' if compact else 'ipod-photo')
+        return apply_layout(scenes,base,compact)
     result=deepcopy(scenes)
     style=theme['layout']
     if style in ('default','minimal'):
@@ -124,6 +127,21 @@ def apply_layout(scenes,theme,compact=False):
         place_video_controls(scene,220,176,theme)
         scene['count']=len(nodes)
     return result
+
+
+def place_classic_split_home(scenes,width,height):
+    """Final-pixel Home geometry; smaller panels keep useful label width."""
+    header,left,row={320:(24,160,27),220:(22,132,22),160:(18,104,18)}[width]
+    for scene in scenes:
+        if scene['id']!='linnet.system.home':continue
+        for node in scene['nodes']:
+            if node['kind']==11:
+                place(node,0,0,width,header);node['text']='Linnet'
+            elif node['kind']==7:
+                place(node,0,header,left,height-header)
+                node['row_height']=row
+            elif node['kind']==9:
+                node['flags']|=2
 
 
 def align_scrollbars(scene,theme):
