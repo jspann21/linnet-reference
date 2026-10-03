@@ -1125,13 +1125,14 @@ class _MetadataCache:
             self.connection = None
 
 
+_SHORT_MEDIA_COMPONENT = r"[A-Z0-9_~!#$%&'()@^`{}-]{1,8}(?:\.[A-Z0-9_~!#$%&'()@^`{}-]{1,3})?"
+_SAFE_MEDIA_PATH = re.compile(
+    rf"/(?:\.LINNET|{_SHORT_MEDIA_COMPONENT})(?:/{_SHORT_MEDIA_COMPONENT}){{0,15}}")
+
+
 def safe_media_path(path: str) -> bool:
     """Match the firmware's bounded FAT short-name path contract."""
-    parts = path.split("/")
-    return (path.startswith("/") and len(path) <= 255 and 1 <= len(parts) - 1 <= 16
-            and all((index == 1 and part == ".LINNET") or
-                    re.fullmatch(r"[A-Z0-9_~!#$%&'()@^`{}-]{1,8}(?:\.[A-Z0-9_~!#$%&'()@^`{}-]{1,3})?", part)
-                    for index, part in enumerate(parts[1:], 1)))
+    return len(path) <= 255 and _SAFE_MEDIA_PATH.fullmatch(path) is not None
 
 
 class UnsupportedMediaPath(ValueError):
