@@ -1,4 +1,4 @@
-from PySide6.QtCore import (QItemSelection, QItemSelectionModel, QSortFilterProxyModel,
+from PySide6.QtCore import (QItemSelection, QItemSelectionModel,
                            QStringListModel, Qt, QSize, QSignalBlocker)
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QLabel,
@@ -6,76 +6,72 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QLabel,
     QFrame, QStackedWidget, QStyledItemDelegate, QStyle)
 
 
-class SongLibraryModel(QSortFilterProxyModel):
+class SongLibraryModel(QStringListModel):
     def __init__(self, tracks, parent=None):
-        super().__init__(parent)
         self.songs = sorted(((identity, title, title.casefold()) for identity, title in tracks.items()),
                             key=lambda song: song[2])
-        self.visible = list(range(len(self.songs)))
-        self.source = QStringListModel([song[2] for song in self.songs], self)
-        self.setSourceModel(self.source)
+        super().__init__([song[1] for song in self.songs], parent)
+        self.shown = [True] * len(self.songs)
+        self.applied_shown = self.shown
+        self.match_count = len(self.songs)
         self.query = ''
 
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid():
             return None
-        if role in (Qt.DisplayRole, Qt.ToolTipRole):
-            return self.songs[self.mapToSource(index).row()][1]
+        if role == Qt.ToolTipRole:
+            return self.songs[index.row()][1]
+        return super().data(index, role)
 
     def identity(self, index):
         # Track IDs are unsigned 64-bit values; keep them out of QVariant's
         # signed integer conversion on Windows.
-        return self.songs[self.mapToSource(index).row()][0]
+        return self.songs[index.row()][0]
 
-    def selection_ids(self, selection):
-        return (self.songs[self.visible[row]][0] for span in selection
-                for row in range(span.top(), span.bottom() + 1))
-
-    def selection_for_ids(self, identities):
-        positions = [row for row, source in enumerate(self.visible) if self.songs[source][0] in identities]
-        selection = QItemSelection()
-        start = previous = None
-        for row in positions:
-            if previous is not None and row != previous + 1:
-                selection.select(self.index(start, 0), self.index(previous, 0))
-                start = None
-            if start is None:
-                start = row
-            previous = row
-        if start is not None:
-            selection.select(self.index(start, 0), self.index(previous, 0))
-        return selection
-
-    def filter(self, text):
-        query = text.casefold()
-        if query == self.query:
-            return
-        self.setFilterFixedString(query)
-        self.visible = [row for row, song in enumerate(self.songs) if query in song[2]] if query else list(range(len(self.songs)))
-        self.query = query
+    def selected_rows(self, selection):
+        return (row for span in selection for row in range(span.top(), span.bottom() + 1)
+                if self.shown[row])
 
 
 class SongLibraryView(QListView):
-    def __init__(self):
-        super().__init__()
-        self.selected_ids = set()
-
-    def selectionCommand(self, index, event=None):
-        command = super().selectionCommand(index, event)
-        if command & (QItemSelectionModel.Clear | QItemSelectionModel.Current) and self.selected_ids:
-            # Replacing the selection also clears songs hidden by a search.
-            # Keep visible IDs until selectionChanged reports their new state.
-            self.selected_ids.intersection_update(self.model().selection_ids(self.selectionModel().selection()))
-        return command
-
     def selectAll(self):
         model = self.model()
         selection = QItemSelection()
-        if model.rowCount():
-            selection.select(model.index(0, 0), model.index(model.rowCount() - 1, 0))
-        self.selected_ids.clear()
+        count = model.rowCount()
+        if not model.query:
+            if count:
+                selection.select(model.index(0, 0), model.index(count - 1, 0))
+            self.selectionModel().select(selection, QItemSelectionModel.ClearAndSelect)
+            return
+        start = None
+        for row in range(count + 1):
+            shown = row < count and model.shown[row]
+            if shown and start is None:
+                start = row
+            elif not shown and start is not None:
+                selection.select(model.index(start, 0), model.index(row - 1, 0))
+                start = None
         self.selectionModel().select(selection, QItemSelectionModel.ClearAndSelect)
-        self.selected_ids.update(model.selection_ids(selection))
+
+    def filter(self, text):
+        model = self.model()
+        query = text.casefold()
+        if query != model.query:
+            # Keep stable rows so Qt retains current, hidden selections and
+            # the full Ctrl/Shift selection state while the query changes.
+            shown = [query in song[2] for song in model.songs]
+            model.match_count = sum(shown)
+            # Empty results show the empty-state panel. Defer row layout until
+            # a query has matches, comparing against the last applied mask.
+            if model.match_count:
+                changed = [row for row, (before, after) in enumerate(zip(model.applied_shown, shown)) if before != after]
+                hide = self.setRowHidden
+                for row in changed:
+                    hide(row, not shown[row])
+                model.applied_shown = shown
+            model.shown = shown
+            model.query = query
+        return model.match_count
 
 
 class TrackDelegate(QStyledItemDelegate):
@@ -155,7 +151,6 @@ class PlaylistEditor(QDialog):
         self.songs.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.song_model = SongLibraryModel(state['tracks'], self.songs)
         self.songs.setModel(self.song_model)
-        self.song_selection = self.songs.selected_ids
         self.song_stack, self.empty_songs = self.list_area(right, self.songs, '')
         self.add_tracks_button = self.button(right, '← Add to playlist', self.add)
         footer = QHBoxLayout(); footer.setSpacing(10); layout.addLayout(footer)
@@ -168,7 +163,7 @@ class PlaylistEditor(QDialog):
         self.search.textChanged.connect(self.filter)
         self.songs.doubleClicked.connect(lambda _: self.add())
         self.members.itemSelectionChanged.connect(self.update_actions)
-        self.songs.selectionModel().selectionChanged.connect(self.song_selection_changed)
+        self.songs.selectionModel().selectionChanged.connect(self.update_actions)
         self.render(); self.filter('')
 
     def label(self, layout, text, name):
@@ -213,7 +208,7 @@ class PlaylistEditor(QDialog):
         self.remove_button.setEnabled(active and bool(selected))
         self.up_button.setEnabled(active and len(selected) == 1 and row > 0)
         self.down_button.setEnabled(active and len(selected) == 1 and 0 <= row < self.members.count() - 1)
-        self.add_tracks_button.setEnabled(active and self.songs.selectionModel().hasSelection())
+        self.add_tracks_button.setEnabled(active and next(self.song_model.selected_rows(self.songs.selectionModel().selection()), None) is not None)
         self.new_button.setEnabled(self.playlists.count() < 16)
 
     def render(self, selected=None):
@@ -289,11 +284,10 @@ class PlaylistEditor(QDialog):
             return
         ids = self.state['lists'][self.slot]['ids']
         selection = self.songs.selectionModel().selection()
-        count = sum(span.bottom() - span.top() + 1 for span in selection)
+        count = sum(sum(self.song_model.shown[span.top():span.bottom() + 1]) for span in selection)
         if len(ids) + count > 1024:
             self.message.setText('A playlist can contain at most 1024 songs.'); return
-        added = [self.song_model.songs[self.song_model.visible[row]][0]
-                 for row in sorted(row for span in selection for row in range(span.top(), span.bottom() + 1))]
+        added = [self.song_model.songs[row][0] for row in sorted(self.song_model.selected_rows(selection))]
         ids.extend(added)
         with QSignalBlocker(self.members):
             self.members.clearSelection()
@@ -328,22 +322,8 @@ class PlaylistEditor(QDialog):
             self.message.setText('Changes are saved when you choose Save to iPod.')
             self.update_actions()
 
-    def song_selection_changed(self, selected, deselected):
-        self.song_selection.difference_update(self.song_model.selection_ids(deselected))
-        self.song_selection.update(self.song_model.selection_ids(selected))
-        self.update_actions()
-
     def filter(self, text):
-        selection_model = self.songs.selectionModel()
-        # Hidden selections survive searches, just as they did in QListWidget.
-        # Native proxy filtering keeps the current song and Shift selection
-        # anchor for surviving rows. Restore only newly visible selections.
-        hidden_ids = self.song_selection.difference(self.song_model.selection_ids(selection_model.selection()))
-        with QSignalBlocker(selection_model):
-            self.song_model.filter(text)
-            if hidden_ids:
-                selection_model.select(self.song_model.selection_for_ids(hidden_ids), QItemSelectionModel.Select)
-        count = self.song_model.rowCount()
+        count = self.songs.filter(text)
         self.library_count.setText(f'{count:,} songs' + (' matching your search' if text else ' available'))
         self.song_stack.setCurrentIndex(0 if count else 1)
         self.empty_songs.setText('No matching songs\n\nTry another title, artist, or album.' if text else
