@@ -13,11 +13,15 @@
 static uint8_t saved[LN_COLLECTION_BYTES] __attribute__((aligned(4)));
 static uint8_t io[LN_COLLECTION_BYTES] __attribute__((aligned(4)));
 static uint32_t bank,generation,revision,durable,snapshot,snapshot_crc,phase,offset,ticket,loading;
+static uint32_t running_crc;
 static bool ready,pending,failed,available,stepping;
 static struct ln_collection entry;
-static uint32_t crc(uint8_t *p){uint32_t old=ln_read_le32(p+12);ln_write_le32(p+12,0);uint32_t value=ln_crc32(p,LN_COLLECTION_BYTES);ln_write_le32(p+12,old);return value;}
+static uint32_t crc_chunk(uint8_t *p,uint32_t bytes,bool header){
+    uint32_t old=header?ln_read_le32(p+12):0;if(header)ln_write_le32(p+12,0);
+    uint32_t value=ln_crc32_update(running_crc,p,bytes);if(header)ln_write_le32(p+12,old);return value;
+}
 static bool valid(uint8_t *p){
-    if(ln_read_le32(p)!=0x54534c4cu||ln_read_le32(p+4)!=1||!ln_read_le32(p+8)||ln_read_le32(p+12)!=crc(p)||ln_read_le32(p+BODY)>LN_COLLECTION_RESUME||ln_read_le32(p+RECENT)>RECENT_MAX)return false;
+    if(ln_read_le32(p)!=0x54534c4cu||ln_read_le32(p+4)!=1||!ln_read_le32(p+8)||ln_read_le32(p+12)!=(running_crc^UINT32_MAX)||ln_read_le32(p+BODY)>LN_COLLECTION_RESUME||ln_read_le32(p+RECENT)>RECENT_MAX)return false;
     for(uint32_t n=0;n<LN_COLLECTION_SLOTS;n++){uint8_t *e=p+LISTS+n*ENTRY;
         if(e[31]||ln_read_le32(e+32)>LINNET_QUEUE_CAPACITY||(!e[0]&&ln_read_le32(e+32)))return false;}
     return true;
@@ -54,28 +58,39 @@ static void step(bool read,bool write){
     if(!ready&&!phase){
         if(!read||!ln_storage_startup_complete())return;
         available=ln_storage_capacity(LN_STORAGE_LIST0)==LN_COLLECTION_BYTES&&ln_storage_capacity(LN_STORAGE_LIST1)==LN_COLLECTION_BYTES;
-        if(!available){ready=true;return;}phase=1;loading=offset=0;
+        if(!available){ready=true;return;}phase=1;loading=offset=0;running_crc=UINT32_MAX;
     }
     if(!phase){
         if(!write||revision==durable)return;
         int proof=ln_storage_prepare_writes();if(!proof)return;if(proof<0){failed=true;return;}
+        if(generation==UINT32_MAX){failed=true;return;}
         for(uint32_t i=0;i<LN_COLLECTION_BYTES;i++)io[i]=saved[i];
-        ln_write_le32(io,0x54534c4cu);ln_write_le32(io+4,1);ln_write_le32(io+8,generation+1u);ln_write_le32(io+12,crc(io));
-        if(generation==UINT32_MAX){failed=true;return;}snapshot=revision;snapshot_crc=ln_read_le32(io+12);offset=BODY;phase=2;
+        ln_write_le32(io,0x54534c4cu);ln_write_le32(io+4,1);ln_write_le32(io+8,generation+1u);ln_write_le32(io+12,0);
+        snapshot=revision;running_crc=UINT32_MAX;offset=0;phase=6;return;
+    }
+    /* Snapshot bytes stay fixed while the live bank accepts newer edits. Read
+     * verification uses the same bounded CRC slices as snapshot preparation. */
+    if(phase==6){
+        if(!write)return;
+        uint32_t bytes=LN_COLLECTION_BYTES-offset;if(bytes>4096u)bytes=4096u;
+        running_crc=crc_chunk(io+offset,bytes,offset==0);offset+=bytes;
+        if(offset==LN_COLLECTION_BYTES){snapshot_crc=running_crc^UINT32_MAX;ln_write_le32(io+12,snapshot_crc);offset=BODY;phase=2;}
+        return;
     }
     uint32_t size=phase==5?0:phase==3?BODY:4096u;
     if(size>LN_COLLECTION_BYTES-offset)size=LN_COLLECTION_BYTES-offset;
     if(pending){uint32_t transferred=0;int result=ln_storage_async_poll_deferred(ticket,&transferred);if(!result)return;pending=false;
         if(result!=1||transferred!=size){failed=true;return;}
+        if(phase==1||phase==4)running_crc=crc_chunk(io+offset,size,offset==0);
         offset+=size;
         if(phase==1&&offset==LN_COLLECTION_BYTES){
             if(valid(io)){uint32_t seq=ln_read_le32(io+8);
                 if(seq==generation&&generation){for(uint32_t i=0;i<LN_COLLECTION_BYTES;i++)if(saved[i]!=io[i]){failed=true;return;}}
                 if(seq>generation){for(uint32_t i=0;i<LN_COLLECTION_BYTES;i++)saved[i]=io[i];generation=seq;bank=loading;}}
-            if(!loading){loading=1;offset=0;}else{ready=true;phase=0;if(!generation)failed=true;}
+            if(!loading){loading=1;offset=0;running_crc=UINT32_MAX;}else{ready=true;phase=0;if(!generation)failed=true;}
         }else if(phase==2&&offset==LN_COLLECTION_BYTES){phase=3;offset=0;}
         else if(phase==3){phase=5;offset=0;}
-        else if(phase==5){phase=4;offset=0;}
+        else if(phase==5){phase=4;offset=0;running_crc=UINT32_MAX;}
         else if(phase==4&&offset==LN_COLLECTION_BYTES){
             if(!valid(io)||ln_read_le32(io+8)!=generation+1u||ln_read_le32(io+12)!=snapshot_crc){failed=true;return;}
             generation++;bank^=1u;durable=snapshot;phase=0;
