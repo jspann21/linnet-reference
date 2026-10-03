@@ -364,7 +364,8 @@ def inspect(identity, *, records_by_kind=None):
                              database_sha256=digest, music_count=len(music), music_issues=[])
             state.update(folders=selected, configured=True, published=published)
             save_json(_state_path(identity), state)
-    same_published = (_signature_matches(published.get('music_source_signature'), root, music, source_stamp) and
+    source_matches = _signature_matches(published.get('music_source_signature'), root, music, source_stamp)
+    same_published = (source_matches and
                       published.get('database_sha256') == digest and
                       isinstance(published.get('music_count'), int))
     if same_published:
@@ -395,12 +396,19 @@ def inspect(identity, *, records_by_kind=None):
         music_status = 'No music folders selected'
     elif adopted:
         music_status = 'Ready' if adopted_ready else 'Needs update'
-    elif ((published.get('music_signature') == stamp if same_published else
-           _signature_matches(published.get('music_signature'), root, playable_music, stamp)) and
-          published.get('database_sha256') == digest):
-        music_status = 'Ready'
     else:
-        music_status = 'Needs update'
+        if same_published:
+            signature_matches = published.get('music_signature') == stamp
+        elif (published.get('music_signature') == published.get('music_source_signature') and
+              playable_count == len(music) and stamp == source_stamp):
+            # The playable subset is the full source list, so the first
+            # signature comparison already checked these same files.
+            signature_matches = source_matches
+        else:
+            signature_matches = _signature_matches(published.get('music_signature'), root,
+                                                   playable_music, stamp)
+        music_status = ('Ready' if signature_matches and
+                        published.get('database_sha256') == digest else 'Needs update')
     details = [{'kind': 'Music', 'count': len(music), 'status': music_status}]
     photos = _files(root, selected, 'Photos', media.extensions('Photos'), records_by_kind)
     photo_db = root / 'Photos/Photo Database'
