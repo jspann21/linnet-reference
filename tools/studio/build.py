@@ -149,6 +149,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     if batch>=6 and kind=='os':
         flags += ['-DLINNET_VIDEO=1']
         sources += sorted((ROOT/'services/video').glob('*.c'))
+        sources += sorted((ROOT/'services/video').glob('*.S'))
     if batch>=7 and kind=='os':
         flags += ['-DLINNET_BATTERY_GUARD=1']
         if profile!='release':flags += ['-DLINNET_AUDIO_CACHE_DIAGNOSTIC=1']

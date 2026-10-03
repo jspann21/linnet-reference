@@ -364,7 +364,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             if not item["count"]:
                 progress(f"{kind}: no supported files; existing prepared library retained.")
                 continue
-            option = photo_dimension if kind == "Photos" else music_verification if kind == "Music" else "ipvf-24-v1" if kind == "Videos" else "default"
+            option = photo_dimension if kind == "Photos" else music_verification if kind == "Music" else "ipvf-24-v2-realtime" if kind == "Videos" else "default"
             signature = f"{CACHE_VERSION}:{option}:{item['fingerprint']}"
             saved = state.get(kind, {})
             if not isinstance(saved, dict):
@@ -439,7 +439,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             key = hashlib.sha256(relative.encode()).hexdigest()[:8].upper()
                             source_info = source.stat()
                             source_stamp = (source_info.st_size, source_info.st_mtime_ns)
-                            fingerprint = hashlib.sha256(f"{CACHE_VERSION}:ipvf-24-v1:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
+                            fingerprint = hashlib.sha256(f"{CACHE_VERSION}:ipvf-24-v2-realtime:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
                             label = video_title(relative)
                             cached = video_state.get(relative, {})
                             if not isinstance(cached, dict):
