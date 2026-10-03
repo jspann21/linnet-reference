@@ -507,7 +507,7 @@ def execute(mode, plan_path, expected_sha, disk_number):
     """Own the media publisher mutex for direct raw apply and restore calls."""
     from tools.content.publish import _exclusive
     from tools.content.media_manager import discover, refresh
-    _manifest, artifacts, _original = load_plan(plan_path, expected_sha)
+    manifest, artifacts, _original = load_plan(plan_path, expected_sha)
     planned_device = _device(json.loads(artifacts["device.json"]))
     storage = planned_device["storage"]
     volume_id = storage.get("volume_id")
@@ -520,7 +520,7 @@ def execute(mode, plan_path, expected_sha, disk_number):
             raise RuntimeError("native plan volume is not uniquely mounted")
         observed = refresh(matches[0])
         if (observed["disk_number"] != disk_number or
-                observed["disk_serial"] != storage["disk_serial"] or
+                observed["disk_serial"] != manifest["expected_storage_serial"] or
                 observed["target_id"] != planned_device["target_id"]):
             raise RuntimeError("native plan no longer matches the mounted iPod volume")
         return _execute(mode, plan_path, expected_sha, disk_number)
