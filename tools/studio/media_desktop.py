@@ -655,9 +655,11 @@ def build_preparation_page(window):
     layout.addWidget(window.queue_table)
     queue_actions = box(horizontal=True)
     window.queue_add = button('Add files or folder', window.add_media, None, 'plus'); queue_actions.addWidget(window.queue_add)
+    window.queue_incompatible = button('Queue incompatible iPod music', window.queue_existing_audio)
+    queue_actions.addWidget(window.queue_incompatible)
     window.queue_open = button('Show source', window.open_queued, None, 'folder'); queue_actions.addWidget(window.queue_open)
     window.queue_remove = button('Remove from queue', window.remove_queued, 'quiet'); queue_actions.addWidget(window.queue_remove); queue_actions.addStretch()
-    window.queue_remove.setToolTip('Remove selected entries from this queue. Source files stay on your computer.')
+    window.queue_remove.setToolTip('Remove selected entries from this queue. Source files stay in place.')
     window.queue_table.selectionModel().selectionChanged.connect(window.update_queue_controls)
     window.queue_table.activated.connect(window.open_queued)
     shortcut = QShortcut(QKeySequence('Delete'), window.queue_table, activated=window.remove_queued)
@@ -2150,7 +2152,7 @@ class MediaWindow(QMainWindow):
     def draft_key(identity):
         fields = (identity['target_id'], identity['disk_serial'], identity['volume_serial'])
         digest = hashlib.sha256('\0'.join(fields).encode('utf-8')).hexdigest()
-        return f'preparation_draft/v2/{digest}'
+        return f'preparation_draft/v3/{digest}'
 
     def save_draft(self):
         if not self.identity:
@@ -2162,10 +2164,12 @@ class MediaWindow(QMainWindow):
                 videos.append(Path(path).relative_to(root).as_posix())
             except ValueError:
                 continue
-        draft = dict(version=2, target_id=self.identity['target_id'],
+        draft = dict(version=3, target_id=self.identity['target_id'],
                      disk_serial=self.identity['disk_serial'],
                      volume_serial=self.identity['volume_serial'],
-                     pending=[list(item) for item in self.pending],
+                     pending=[[kind, '@device/' + Path(name).relative_to(root).as_posix()
+                               if Path(name).is_relative_to(root) else name]
+                              for kind, name in self.pending],
                      video_mode=self.video_mode, videos=videos,
                      outcomes=[dict(row) for key, row in self.queue_outcomes.items()
                                if key in self.pending_keys])
@@ -2200,7 +2204,7 @@ class MediaWindow(QMainWindow):
         raw = self.settings.value(self.draft_key(identity), '')
         try:
             draft = json.loads(raw)
-            if (not isinstance(draft, dict) or draft.get('version') != 2 or
+            if (not isinstance(draft, dict) or draft.get('version') != 3 or
                     any(draft.get(key) != identity[key] for key in
                         ('target_id', 'disk_serial', 'volume_serial')) or
                     not isinstance(draft.get('pending'), list) or
@@ -2213,9 +2217,17 @@ class MediaWindow(QMainWindow):
                         not all(isinstance(value, str) for value in item) or
                         item[0] not in media.KINDS or not item[1]):
                     continue
-                key = (item[0], os.path.normcase(item[1]))
+                kind, name = item
+                if name.startswith('@device/'):
+                    relative = Path(name[8:])
+                    if (kind != 'Music' or relative.is_absolute() or relative.drive or
+                            '..' in relative.parts or not relative.parts or
+                            relative.parts[0].casefold() != 'music'):
+                        continue
+                    name = str(Path(identity['root']) / relative)
+                key = (kind, os.path.normcase(name))
                 if key not in self.pending_keys:
-                    self.pending.append(tuple(item))
+                    self.pending.append((kind, name))
                     self.pending_keys.add(key)
             for value in draft['videos']:
                 if not isinstance(value, str) or '\\' in value:
@@ -2341,6 +2353,12 @@ class MediaWindow(QMainWindow):
         self.screen_picker.setEnabled(not self.busy)
         for item in (self.eject_button, self.device_details_button, self.add_button, self.playlists_button, self.sync_button, self.choose_videos_button, self.queue_add, self.folder_button):
             item.setEnabled(ready)
+        music_root = Path(self.identity['root']) / 'Music' if ready else None
+        convertible = ready and any(row['kind'] == 'Music' and row['category'] == 'original' and
+                                    str(row['status']).startswith('Needs conversion:') and
+                                    Path(row['path']).is_relative_to(music_root) for row in self.rows)
+        self.queue_incompatible.setVisible(convertible)
+        self.queue_incompatible.setEnabled(convertible)
         self.update_queue_controls()
         self.prepare_button.setEnabled(ready and self.inventory is not None)
         apple_ready = ready and self.apple_info is not None and self.apple_info['supported']
@@ -2400,7 +2418,7 @@ class MediaWindow(QMainWindow):
                                      status=self.queue_status(kind, path))
                                 for kind, path in self.pending],
                                [('title', 'FILE'), ('kind', 'TYPE'), ('status', 'STATUS'),
-                                ('path', 'FROM YOUR COMPUTER')])
+                                ('path', 'SOURCE')])
         self.queue_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.queue_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self.queue_table.setVisible(bool(self.pending)); self.queue_remove.setVisible(bool(self.pending))
@@ -2498,6 +2516,29 @@ class MediaWindow(QMainWindow):
         self.work('apple_update', lambda: apple_os.update(identity, ffprobe=ffprobe,
                                                           progress=self.events.progress.emit),
                   'Updating Apple OS availability…')
+
+    def queue_existing_audio(self):
+        if self.busy or not self.identity:
+            return
+        music_root = Path(self.identity['root']) / 'Music'
+        additions = []
+        for row in self.rows:
+            if (row['kind'] != 'Music' or row['category'] != 'original' or
+                    not str(row['status']).startswith('Needs conversion:')):
+                continue
+            path = Path(row['path'])
+            key = ('Music', os.path.normcase(str(path)))
+            if path.is_relative_to(music_root) and key not in self.pending_keys:
+                additions.append(('Music', str(path)))
+                self.pending_keys.add(key)
+        self.pending.extend(additions)
+        self.convert_audio.setChecked(True)
+        self.prep_checks['Music'].setChecked(True)
+        self.validate_draft()
+        self.save_draft()
+        self.update_preparation()
+        self.navigate('Preparation')
+        self.show_progress(f'{len(additions):,} incompatible iPod tracks queued for host conversion.')
 
     def add_media(self):
         if self.busy or not self.identity:

@@ -363,10 +363,20 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
     snapshots = {}
     unverified = []
     replacements = []
+    reused_audio = []
     copies = media.additions(root, [p for p in included if p[0] != 'Videos'], snapshots=snapshots,
                              verify_existing=True, unverified=unverified, replacements=replacements,
                              convert_audio=convert_audio, target=identity['target_id'], ffprobe=ffprobe,
-                             cancelled=cancelled)
+                             cancelled=cancelled, reused_audio=reused_audio)
+    device_conversions = [source for source, _ in reused_audio] + [Path(item['source']) for item in copies
+        if 'converted_bytes' in item and Path(item['source']).is_relative_to(root / 'Music')]
+    for source in device_conversions:
+        skipped['Music'].add(source.relative_to(root).as_posix().casefold())
+    for _, destination in reused_audio:
+        skipped['Music'].discard(destination.relative_to(root).as_posix().casefold())
+    if device_conversions and current_inventory is not None:
+        current_inventory = {**current_inventory, **media.scan(
+            root, tuple(kind for kind in selected if kind != 'Videos'), skipped=skipped)}
     audio_conversions = sum('converted_bytes' in item for item in copies)
     audio_unplayable = sum('compatibility_issue' in item and 'converted_bytes' not in item for item in copies)
     audio_issues = [dict(source=item['source'], reason=item['compatibility_issue']) for item in copies

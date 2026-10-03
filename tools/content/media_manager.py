@@ -505,7 +505,7 @@ def _same_file_bytes(left, right, size):
 
 def additions(root, pending, *, snapshots=None, verify_existing=True, unverified=None,
               replacements=None, convert_audio=False, target=None, ffprobe=None,
-              cancelled=lambda: False):
+              cancelled=lambda: False, reused_audio=None):
     """Resolve selected files/folders to concrete destinations without writing."""
     root = Path(root).resolve(strict=True)
     planned = {}
@@ -515,7 +515,9 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
         source = Path(selected).absolute()
         _plain(source, Path(source.anchor))
         source = source.resolve(strict=True)
-        if source.is_relative_to(root):
+        on_device = source.is_relative_to(root)
+        if on_device and not (kind == 'Music' and convert_audio and source.is_file() and
+                              source.is_relative_to(root / 'Music')):
             raise ValueError(f"{source.name} is already on this iPod. Use its existing {kind} folder.")
         is_folder = source.is_dir()
         records = _planning_records(source, snapshots)
@@ -527,7 +529,8 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                 raise ValueError(f"{path.name} is not a supported {kind.lower()} source.")
             if info.st_size > 0xFFFFFFFF:
                 raise ValueError(f"{path.name} exceeds the iPod's FAT32 file size limit (4 GiB minus 1 byte).")
-            relative = Path(source.name) / path.relative_to(source) if is_folder else Path(source.name)
+            relative = (path.relative_to(root / 'Music') if on_device else
+                        Path(source.name) / path.relative_to(source) if is_folder else Path(source.name))
             if kind == "Music":
                 relative = Path(*(_music_import_name(part) for part in relative.parts))
             converted_bytes = None
@@ -560,7 +563,8 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                     metadata = None
                     issue = f'Cannot inspect audio: {error}'
                 if issue and convert_audio and metadata is not None:
-                    relative = relative.with_suffix('.wav')
+                    relative = (relative.with_name(_music_import_name(relative.name + '.linnet.wav'))
+                                if on_device else relative.with_suffix('.wav'))
                     converted_frames = math.ceil(metadata['frames'] * 44100 / metadata['rate'])
                     converted_bytes = (math.ceil(converted_frames * 4 * 1.1)
                                        + min(info.st_size, 32 * 1024 * 1024) + 4096)
@@ -569,6 +573,11 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                 after = path.stat()
                 if (after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (info.st_size, info.st_mtime_ns, info.st_ctime_ns):
                     raise ValueError(f'Source changed during audio planning: {path}')
+            if on_device and converted_bytes is None:
+                if issue:
+                    from . import SourceError
+                    raise SourceError(f'{path}: {issue}', path)
+                continue
             destination = root / kind / relative
             _plain(destination, root)
             key = str(destination).casefold()
@@ -587,6 +596,8 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                                 prepared['frames'] >= converted_frames - max(2205, converted_frames // 100) and
                                 prepared['tags'].get('source_sha256') == _hash(path) and
                                 prepared['tags'].get('pcm_sha256') == _wave_pcm_hash(destination, prepared)):
+                            if on_device and reused_audio is not None:
+                                reused_audio.append((path, destination))
                             continue
                     except (OSError, ValueError, KeyError, struct.error):
                         pass
@@ -626,6 +637,12 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                                 **({'compatibility_issue': issue} if issue else {}),
                                 **({'converted_bytes': converted_bytes, 'converted_frames': converted_frames}
                                    if converted_bytes is not None else {}))
+    reserved = {str(value).casefold() for source, destination in (reused_audio or ())
+                for value in (source, destination)}
+    reserved.update(str(item['source']).casefold() for item in planned.values()
+                    if 'converted_bytes' in item and Path(item['source']).is_relative_to(root / 'Music'))
+    if reserved.intersection(planned):
+        raise ValueError('Queued sources overlap an iPod conversion. Remove one before preparing.')
     return list(planned.values())
 
 
@@ -2628,16 +2645,25 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             replacements=replacements) if "Videos" in selected else []
         excluded_sources = {str(Path(value).resolve()).casefold() for value in (excluded_sources or ())}
         videos = [job for job in videos if str(Path(job["source"]).resolve()).casefold() not in excluded_sources]
+        reused_audio = []
         plan = additions(root, [item for item in pending if item[0] in selected and item[0] != "Videos"],
                          replacements=replacements, convert_audio=convert_audio,
-                         target=identity['target_id'], ffprobe=ffprobe, cancelled=cancelled)
+                         target=identity['target_id'], ffprobe=ffprobe, cancelled=cancelled,
+                         reused_audio=reused_audio)
+        device_conversions = [source for source, _ in reused_audio] + [Path(item['source']) for item in plan
+            if 'converted_bytes' in item and Path(item['source']).is_relative_to(root / 'Music')]
+        projected_skipped = {kind: paths.copy() for kind, paths in skipped.items()}
+        for source in device_conversions:
+            projected_skipped['Music'].add(source.relative_to(root).as_posix().casefold())
+        for _, destination in reused_audio:
+            projected_skipped['Music'].discard(destination.relative_to(root).as_posix().casefold())
         if any('converted_bytes' in item for item in plan) and not ffmpeg:
             raise ValueError('Audio conversion needs FFmpeg on the computer.')
         planned = True
         current_inventory = scan(root, tuple(kind for kind in selected if kind != "Videos"),
-                                 skipped=skipped) if any(kind != "Videos" for kind in selected) else {}
+                                 skipped=projected_skipped) if any(kind != "Videos" for kind in selected) else {}
         reconciliation = reconciliation_actions(identity, selected, plan,
-            replacements=replacements, current_inventory=current_inventory, skipped=skipped)
+            replacements=replacements, current_inventory=current_inventory, skipped=projected_skipped)
         report['reconciliation'] = reconciliation
         if ((reconciliation and approved_reconciliation is None) or
                 (approved_reconciliation is not None and approved_reconciliation != reconciliation)):
@@ -2657,7 +2683,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         space = preparation_space(identity, plan, videos, selected, cache,
             photo_dimension=photo_dimension, ffprobe=ffprobe, ffmpeg=ffmpeg,
             no_conversions=video_selection is not None and not video_selection,
-            force=force, current_inventory=current_inventory, skipped=skipped)
+            force=force, current_inventory=current_inventory, skipped=projected_skipped)
         report['space'] = space
         if space['device_peak_bytes'] > min(identity['free_bytes'], space['device_free_bytes']):
             raise ValueError('Not enough iPod space for originals, prepared media, and recovery copies.')
@@ -2718,6 +2744,12 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                    for output in outputs):
                                 saved_videos.pop(relative, None)
             _save(state_path, state)
+        if reused_audio:
+            for source, destination in reused_audio:
+                skipped['Music'].add(source.relative_to(root).as_posix().casefold())
+                skipped['Music'].discard(destination.relative_to(root).as_posix().casefold())
+            state.setdefault('skipped_files', {})['Music'] = sorted(skipped['Music'])
+            _save(state_path, state)
         emit_stage('Copying originals', 0)
         def include_copied(items):
             changed = False
@@ -2727,6 +2759,12 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 if key in skipped[kind]:
                     skipped[kind].remove(key)
                     changed = True
+                source = Path(copied['source'])
+                if 'converted_bytes' in copied and source.is_relative_to(root / 'Music'):
+                    source_key = source.relative_to(root).as_posix().casefold()
+                    if source_key not in skipped['Music']:
+                        skipped['Music'].add(source_key)
+                        changed = True
             if changed:
                 saved_skipped = state.setdefault('skipped_files', {})
                 for kind, paths in skipped.items():
