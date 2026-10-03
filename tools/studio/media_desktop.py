@@ -325,19 +325,19 @@ class Covers(QObject):
             self.events.artwork.emit(generation, path, image)
 
     def sidecar(self, folder, generation):
-        """Share positive folder lookups within one artwork generation."""
+        """Share folder lookups within one artwork generation."""
         with self.sidecar_lock:
             if self.closed or generation != self.generation:
                 return None
-            original = self.sidecars.pop(folder, None)
-            if original is not None and original.is_file():
-                self.sidecars[folder] = original
-                return original
+            if folder in self.sidecars:
+                original = self.sidecars.pop(folder)
+                if original is None or original.is_file():
+                    self.sidecars[folder] = original
+                    return original
             original = next((folder / name for name in COVER_NAMES if (folder / name).is_file()), None)
-            if original is not None:
-                self.sidecars[folder] = original
-                if len(self.sidecars) > 256:
-                    self.sidecars.popitem(last=False)
+            self.sidecars[folder] = original
+            if len(self.sidecars) > 256:
+                self.sidecars.popitem(last=False)
             return original
 
     @staticmethod
@@ -1879,17 +1879,29 @@ class MediaWindow(QMainWindow):
             return
         self.publication_recovery_pending = False
         self.publication_recovery_groups = []
-        cached_photos = {row['path']: (row['bytes'], row['mtime_ns'], row.get('artwork')) for row in self.rows
-                         if row['kind'] in ('Photos', 'Music') and
-                         (row.get('artwork') in self.covers.cache or row.get('artwork') in self.covers.pending)}
+        with self.covers.sidecar_lock:
+            missing_folders = {folder for folder, found in self.covers.sidecars.items() if found is None}
+        cached_photos, missing_covers = {}, set()
+        for row in self.rows:
+            artwork = row.get('artwork')
+            if row['kind'] not in ('Photos', 'Music') or (artwork not in self.covers.cache and
+                                                       artwork not in self.covers.pending):
+                continue
+            cached_photos[row['path']] = (row['bytes'], row['mtime_ns'], artwork)
+            if row['kind'] == 'Music' and Path(row.get('cover_source') or row['path']).parent in missing_folders:
+                missing_covers.add(row['path'])
         self.identity, self.inventory, self.rows, self.readiness, self.apple_info, self.review = result
         self.device_connected = True
+        changed = []
         if cached_photos:
             current_photos = {row['path']: (row['bytes'], row['mtime_ns'], row.get('artwork')) for row in self.rows
                               if row['path'] in cached_photos}
-            changed = [stamp[2] for path, stamp in cached_photos.items() if current_photos.get(path) != stamp]
-            if changed:
-                self.covers.invalidate(changed)
+            changed = [stamp[2] for path, stamp in cached_photos.items()
+                       if current_photos.get(path) != stamp or path in missing_covers or
+                       (stamp[2] in self.covers.cache and self.covers.cache[stamp[2]] is None)]
+        # A refresh may discover a new sidecar even when track metadata and
+        # previously loaded pixmaps did not change.
+        self.covers.invalidate(changed)
         if self.group:
             field = {'Albums': 'album', 'Artists': 'artist', 'Genres': 'genre'}[self.group['group_kind']]
             members = [row for row in self.library_rows()
