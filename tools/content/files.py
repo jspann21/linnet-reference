@@ -205,7 +205,7 @@ def _label(value, limit):
     # Linnet's fonts are ASCII; normalize on the host once, not each UI frame.
     from .notes import _ascii
     value = _ascii(value)
-    return ''.join(c if 32 <= ord(c) < 127 else ' ' for c in value).encode('ascii')[:limit]
+    return value.translate(_TEXT_CONTROL_SPACES).encode('ascii')[:limit]
 
 
 def _alias(value):
