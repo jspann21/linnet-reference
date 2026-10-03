@@ -32,6 +32,7 @@ IMAGES = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tif', '.tiff', '.webp', '.h
 TEXT = {'.txt', '.text', '.md', '.rst', '.log', '.ini', '.cfg', '.toml', '.yaml', '.yml',
         '.json', '.xml', '.csv', '.nfo', '.c', '.h', '.py', '.js', '.ts', '.tsx', '.css', '.html', '.htm'}
 PREVIEW_DECODE_PIXELS = 32_000_000
+_TEXT_CONTROL_SPACES = dict.fromkeys((*range(32), 127), ' ')
 
 
 class _PreviewDecodeBudget:
@@ -283,7 +284,7 @@ def _preview(source, cache, width, height, columns, recipe, checkpoint, info, ro
                 if now >= next_checkpoint:
                     checkpoint()
                     next_checkpoint = now + .05
-                clean = ''.join(c if 32 <= ord(c) < 127 else ' ' for c in line.expandtabs(4))
+                clean = line.expandtabs(4).translate(_TEXT_CONTROL_SPACES)
                 for wrapped in _display_lines(clean, recipe[0], recipe[1], columns):
                     now = time.monotonic()
                     if now >= next_checkpoint:
