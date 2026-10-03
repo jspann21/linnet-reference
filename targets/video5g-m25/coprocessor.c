@@ -570,7 +570,7 @@ bool ln_m25_coprocessor_begin(uint32_t operation){
     /* Retail display selection uses the SysCfg model/revision at +0x84;
      * the older boardHwRev field at +0x48 is zero on production M25. */
     vc.board_revision=REG(info+0x84u);
-    if(vc.board_revision!=0x000b0010u&&vc.board_revision!=0x000b0011u){vc.error=51u;phase(FAILED,0);return false;}
+    if((vc.board_revision>>16)!=0xbu){vc.error=51u;phase(FAILED,0);return false;}
     if(!rom_image()){vc.error=18u;phase(FAILED,0);return false;}
     vc.error=vc.restore_error=vc.restore=vc.at=vc.hash_at=vc.requested=0;vc.io=false;
     vc.normal=vc.paused=vc.want_paused=vc.seek_pending=vc.clock_valid=vc.syncing_seek=vc.seek_seen=false;vc.seek_ms=vc.position_base=vc.seek_frames=0;++vc.revision;
@@ -834,9 +834,9 @@ bool ln_m25_coprocessor_step(void){
         if(!ln_m25_bcm_write(vc.at,(const uint32_t *)(source+vc.at),n/4u)){recover(8);break;}
         vc.at+=n;if(vc.at==bytes)phase(VALIDATE_BEGIN,1000000u);break;}
     case VALIDATE_BEGIN:
-        /* RetailOS 1.3 at 0x265518 selects model 2 for family 0xb, revision
-         * >=0x10. Both admitted boards (0xb0010 and 0xb0011) use this path. */
-        if(!vc.restore&&!put(0x1f4u,2u)){recover(9);break;}
+        /* RetailOS at 0x265518 selects model 1 for family 0xb revisions
+         * below 0x10, and model 2 for revisions from 0x10 onward. */
+        if(!vc.restore&&!put(0x1f4u,(vc.board_revision&0xffffu)>=0x10u?2u:1u)){recover(9);break;}
         if(!put(0x1f8u,0)||!put(0x10000c00u,0xc0000000u)){recover(9);break;}
         phase(VALIDATE_WAIT,2000000u);break;
     case VALIDATE_WAIT:
@@ -882,7 +882,7 @@ bool ln_m25_coprocessor_step(void){
         char seek_command[32]="mp_seek ";
         if(vc.control==4u){vc.seek_seen=false;uint32_t n=vc.seek_ms,at=8u,divisor=1000000000u;while(divisor>1u&&n<divisor)divisor/=10u;do{seek_command[at++]=(char)('0'+n/divisor);n%=divisor;divisor/=10u;}while(divisor);seek_command[at]=0;}
         bool tv=(vc.options&32u)!=0,wide=(vc.options&8u)!=0,svideo=(vc.options&16u)!=0,pal=(vc.options&4u)!=0;
-        const char *native=vc.command_index==1u&&tv?tv_encoding[pal?1u:0u]:vc.command_index==2u&&tv?tv_shape[(svideo?2u:0u)|(wide?1u:0u)]:vc.command_index==6u?lcd_region:native_commands[vc.command_index];
+        const char *native=vc.command_index==1u?tv?tv_encoding[pal?1u:0u]:(vc.board_revision&0xffffu)<0x10u?"display_control 0 model=1 power=2":native_commands[1u]:vc.command_index==2u&&tv?tv_shape[(svideo?2u:0u)|(wide?1u:0u)]:vc.command_index==6u?lcd_region:native_commands[vc.command_index];
         const char *command=vc.control==4u?seek_command:vc.control?(vc.control==1u?"mp_pause":vc.control==2u?"mp_play":"mp_get_status"):vc.operation==2u?native:!vc.operation?"version":vc.command_index==0u?"load_application mplayer":vc.command_index==2u?"mp_selectplay passthru:linnet 0":"mp_get_status";
         uint32_t message[32]={0xf1a55a1fu,vc.command_index+1u,1u,0},length=0;
         while(command[length]){((uint8_t *)(message+4))[length]=(uint8_t)command[length];++length;}
