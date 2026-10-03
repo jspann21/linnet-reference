@@ -1098,7 +1098,7 @@ class MediaWindow(QMainWindow):
                 copy = dict(row)
                 if row['kind'] == 'Photos':
                     copy['artwork'] = row.get('artwork') or row['path']
-                unique[str(Path(row['path'])).casefold()] = copy
+                unique[row['path'].casefold()] = copy
         page_rows = list(unique.values())
         albums = len({(r.get('album'), r.get('album_artist') or r.get('artist')) for r in page_rows}) if self.page == 'Music' else 0
         self._library_stats[self.page] = (len(page_rows), sum(r['bytes'] for r in page_rows), albums)
