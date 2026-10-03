@@ -9,7 +9,9 @@
 #define ENTRY (40u+8u*LINNET_QUEUE_CAPACITY)
 #define RECENT (LISTS+LN_COLLECTION_SLOTS*ENTRY)
 #define RECENT_MAX 256u
-static uint8_t saved[LN_COLLECTION_BYTES],io[LN_COLLECTION_BYTES];
+/* Full-bank CRCs can use word loads only when both snapshots are aligned. */
+static uint8_t saved[LN_COLLECTION_BYTES] __attribute__((aligned(4)));
+static uint8_t io[LN_COLLECTION_BYTES] __attribute__((aligned(4)));
 static uint32_t bank,generation,revision,durable,snapshot,snapshot_crc,phase,offset,ticket,loading;
 static bool ready,pending,failed,available,stepping;
 static struct ln_collection entry;
