@@ -207,7 +207,7 @@ static bool drain(void) {
 }
 _Noreturn void ln_s5l_disk_mode(const char *serial,uint32_t sector_bytes,bool writable) {
     if(sector_bytes!=512 && sector_bytes!=2048 && sector_bytes!=4096)ln_platform_hardware_reset();
-    (void)ln_s5l_board_disk_screen();
+    (void)ln_s5l_board_disk_screen(true);
     /* Exclusive Disk Mode needs the faster bus; exit resets the normal clock. */
     (void)ln_core_clock_set(216000000u);
     block_bytes=sector_bytes;block_shift=sector_bytes==4096u?12u:sector_bytes==2048u?11u:9u;
@@ -227,6 +227,9 @@ _Noreturn void ln_s5l_disk_mode(const char *serial,uint32_t sector_bytes,bool wr
         WRITE_BUFFER_BYTES:LINNET_ATA_MAX_SECTORS*512u;
     if(!ln_s5l_usb_storage_init(serial))ln_platform_hardware_reset();
     uint32_t connection=ln_usb_generation();
+    uint32_t blink_started=ln_time_us();
+    uint32_t idle_started=blink_started;
+    bool symbol_visible=true;
     for(;;) {
         diagnostic[7]=state;diagnostic[8]=position;diagnostic[9]=lba;diagnostic[10]=residue;
         /* Read-only probes can expire safely. Writable host filesystems retain
@@ -238,11 +241,23 @@ _Noreturn void ln_s5l_disk_mode(const char *serial,uint32_t sector_bytes,bool wr
             if(!drain())ln_platform_hardware_reset();
             if(ln_s5l_usb_storage_reset_pending() && !ln_s5l_usb_storage_reset_complete())ln_platform_hardware_reset();
             connection=ln_usb_generation();state=CBW;position=0;
+            idle_started=ln_time_us();
         }
         if((state==RECEIVE || state==DISCARD || state==INVALID) && ln_time_us()-activity>15000000u) {
             (void)drain();ln_platform_hardware_reset();
         }
+        bool was_idle=state==CBW && position==0;
         if(ln_usb_connected())step();
+        /* Wait until the full command and status exchange have been quiet.
+         * The text remains visible in both blink phases. */
+        uint32_t now=ln_time_us();
+        bool idle=state==CBW && position==0;
+        if(!idle || !was_idle)idle_started=now;
+        if(idle && now-idle_started>=250000u && now-blink_started>=1200000u){
+            ln_core_watchdog_feed();
+            if(ln_s5l_board_disk_screen(!symbol_visible))symbol_visible=!symbol_visible;
+            blink_started=ln_time_us();
+        }
         ln_core_watchdog_feed();
     }
 }

@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox,
 from tools.content import apple_os, games, media_manager as media, media_library, media_status, media_trash
 from tools.content.media_manager import format_size as size
 from tools.content.music import COVER_NAMES, EXTENSIONS as MUSIC_EXTENSIONS
-from tools.studio import installer, screen_settings
+from tools.studio import installer, screen_settings, startup_default, boot_upgrade
 
 
 UI_FONT = 'Century Gothic'
@@ -781,17 +781,27 @@ class SetupPage:
         window.build_from_source.setVisible(not getattr(sys, 'frozen', False))
         window.build_from_source.toggled.connect(window.firmware_source_changed)
         layout.addWidget(window.build_from_source)
-        layout.addSpacing(12); layout.addWidget(label('Startup software', 'section'))
-        layout.addWidget(label('Choose a default or see options available by holding Menu at startup.', 'muted'))
+        layout.addSpacing(12); layout.addWidget(label('Linnet version', 'section'))
+        layout.addWidget(label('Choose the Linnet build to install or update.', 'muted'))
         window.boot_choice = ComboBox(); window.boot_choice.currentIndexChanged.connect(window.update_install_action); layout.addWidget(window.boot_choice)
         window.boot_detail = label('', 'muted', True); layout.addWidget(window.boot_detail)
-        window.method_title = label('Startup behavior', 'section'); layout.addWidget(window.method_title)
+        window.method_title = label('Installation method', 'section'); layout.addWidget(window.method_title)
         window.method_choice = ComboBox(); window.method_choice.currentIndexChanged.connect(window.update_install_action); layout.addWidget(window.method_choice)
         window.method_detail = label('', 'muted', True); layout.addWidget(window.method_detail)
-        window.selector_note = label('A startup selector can offer a choice at boot when compatible software is installed.', 'muted', True); layout.addWidget(window.selector_note)
+        window.selector_note = label('Hold Menu while starting the iPod to choose an installed system.', 'muted', True); layout.addWidget(window.selector_note)
         layout.addSpacing(10)
         window.install_button = button('Install Linnet', window.install_selected, 'primary'); layout.addWidget(window.install_button, 0, Qt.AlignLeft)
         layout.addWidget(label('Your media is kept. Previous startup files are saved for recovery.', 'muted', True))
+        layout.addSpacing(16); window.default_title = label('Default startup', 'section'); layout.addWidget(window.default_title)
+        window.default_detail = label('Choose which installed system starts automatically. Hold Menu at startup to choose each time.', 'muted', True)
+        layout.addWidget(window.default_detail)
+        window.default_choice = ComboBox(); window.default_choice.currentIndexChanged.connect(window.update_install_action)
+        layout.addWidget(window.default_choice)
+        window.default_button = button('Save default startup', window.save_default_startup, 'primary')
+        layout.addWidget(window.default_button, 0, Qt.AlignLeft)
+        window.boot_upgrade_button = button('Update startup selector', window.upgrade_startup_selector)
+        layout.addWidget(window.boot_upgrade_button, 0, Qt.AlignLeft)
+        window.boot_upgrade_detail = label('', 'muted', True); layout.addWidget(window.boot_upgrade_detail)
         layout.addStretch()
         return page
 
@@ -997,6 +1007,8 @@ class MediaWindow(QMainWindow):
         self.device_info = label('USB · Disk Mode', 'deviceInfo', True)
         self.capacity = QProgressBar(); self.capacity.setTextVisible(False); self.capacity.setRange(0, 100); self.capacity.setValue(0)
         layout.addWidget(self.device_name); layout.addWidget(self.device_info); layout.addWidget(self.capacity)
+        self.device_details_button = button('Device details', self.device_details, 'sidebarAction', 'setup')
+        layout.addWidget(self.device_details_button)
         self.choose_device_button = button('Find or switch iPod', self.discover, 'sidebarAction', 'refresh')
         layout.addWidget(self.choose_device_button)
         self.eject_button = button('Eject safely', self.eject, 'sidebarAction', 'eject'); layout.addWidget(self.eject_button)
@@ -1501,8 +1513,10 @@ class MediaWindow(QMainWindow):
             'devices': self._complete_devices, 'scan': self._complete_scan,
             'trash': self._complete_trash, 'setup': self._complete_setup,
             'prepare': self._complete_prepare, 'eject': self._complete_eject,
+            'device_details': self._complete_device_details,
         }
-        for change in ('remove', 'restore', 'erase', 'sync', 'install', 'uninstall', 'skipped'):
+        for change in ('remove', 'restore', 'erase', 'sync', 'install', 'uninstall', 'skipped',
+                       'startup_default', 'boot_upgrade'):
             handlers[change] = self._complete_change
         handler = handlers.get(tag)
         if handler is None:
@@ -1756,7 +1770,23 @@ class MediaWindow(QMainWindow):
     def _complete_eject(self, result):
         self.transition_device(None)
         self.device_name.setText('Safely ejected'); self.device_info.setText('You can disconnect your iPod.'); self.capacity.setValue(0)
-        self.show_progress('Your iPod is safe to disconnect.')
+        if result.get('about_warning'):
+            self.show_progress('Your iPod is safe to disconnect. Device details could not be refreshed: '
+                               + result['about_warning'])
+        else:
+            self.show_progress('Your iPod is safe to disconnect.')
+
+    def _complete_device_details(self, result):
+        dialog = QDialog(self); dialog.setWindowTitle('iPod details'); dialog.resize(540, 560)
+        layout = box(dialog, margins=(26, 24, 26, 22), spacing=14)
+        layout.addWidget(label(result['name'], 'section'))
+        layout.addWidget(label('Storage and hardware information read from this iPod.', 'subtitle', True))
+        usage = QProgressBar(); usage.setRange(0, 100); usage.setValue(result['used_percent'])
+        usage.setFormat(f"{result['used_percent']}% used"); layout.addWidget(usage)
+        details = QTextEdit(); details.setReadOnly(True); details.setPlainText('\n'.join(result['rows']))
+        layout.addWidget(details, 1)
+        layout.addWidget(button('Close', dialog.accept, 'primary'), 0, Qt.AlignRight)
+        dialog.exec()
 
 
     def discover(self):
@@ -1907,9 +1937,10 @@ class MediaWindow(QMainWindow):
         self.identity = identity
         self._selection_context = None
         self.inventory = self.review = self.apple_info = None
-        with QSignalBlocker(self.boot_choice), QSignalBlocker(self.method_choice):
+        with QSignalBlocker(self.boot_choice), QSignalBlocker(self.method_choice), QSignalBlocker(self.default_choice):
             self.boot_choice.clear()
             self.method_choice.clear()
+            self.default_choice.clear()
         self.uninstall_detail.setText('Checking removal options…' if identity else 'Connect an iPod to check removal options.')
         self.rows = []
         self.trash_rows = []
@@ -1978,7 +2009,7 @@ class MediaWindow(QMainWindow):
         self.screen_save.setEnabled(ready and all(self.screen_state.values()))
         self.screen_items.setEnabled(not self.busy)
         self.screen_picker.setEnabled(not self.busy)
-        for item in (self.eject_button, self.add_button, self.playlists_button, self.sync_button, self.choose_videos_button, self.queue_add, self.folder_button):
+        for item in (self.eject_button, self.device_details_button, self.add_button, self.playlists_button, self.sync_button, self.choose_videos_button, self.queue_add, self.folder_button):
             item.setEnabled(ready)
         self.update_queue_controls()
         self.prepare_button.setEnabled(ready and self.inventory is not None)
@@ -2367,7 +2398,8 @@ class MediaWindow(QMainWindow):
         review = self.review
         self.setup_device.setText(self.device_title(review['identity']))
         self.setup_software.setText('Linnet: ' + installer.build_description(review['linnet']))
-        available_boot = review['boot_options']
+        native = review['identity'].get('native_target_id') == review['identity']['target_id']
+        available_boot = [option for option in review['boot_options'] if option['kind'] == 'linnet']
         with QSignalBlocker(self.boot_choice):
             self.boot_choice.clear()
             for option in available_boot:
@@ -2392,6 +2424,16 @@ class MediaWindow(QMainWindow):
         self.install_detail.setText(review['summary'])
         self.install_detail.setVisible(review['action'] not in ('install', 'replace', 'adopt') or review['linnet']['state'] in ('invalid', 'incomplete'))
         self.uninstall_detail.setText(review['uninstall']['detail'] + (' Music, Photos, Videos, and Notes folders are kept.' if review['uninstall']['available'] else ''))
+        startup = startup_default.inspect(review)
+        self.startup_state = startup
+        labels = {'linnet': 'Linnet', 'rockbox': 'Rockbox', 'apple': 'Apple iPod software'}
+        with QSignalBlocker(self.default_choice):
+            self.default_choice.clear()
+            for choice in startup['choices'] if startup['supported'] else []:
+                self.default_choice.addItem(labels[choice], choice)
+            self.default_choice.setCurrentIndex(self.default_choice.findData(startup['default']))
+        self.boot_upgrade_available = native and boot_upgrade.available(review)
+        self.boot_upgrade_pending = bool(review['recovery'] and review['recovery'].get('phase') == 'boot-upgrade-pending')
         self.update_install_action()
 
     def update_install_action(self):
@@ -2420,6 +2462,27 @@ class MediaWindow(QMainWindow):
         self.boot_choice.setEnabled(not self.busy and self.review is not None and self.boot_choice.count() > 0)
         self.install_button.setEnabled(enabled)
         self.uninstall_button.setEnabled(not self.busy and bool(self.review and self.review['uninstall']['available']))
+        show_default = bool(self.review and self.review['linnet']['state'] == 'installed')
+        for widget in (self.default_title, self.default_detail, self.default_choice, self.default_button,
+                       self.boot_upgrade_button, self.boot_upgrade_detail):
+            widget.setVisible(show_default)
+        startup = getattr(self, 'startup_state', dict(supported=False, choices=[], default='linnet'))
+        self.default_choice.setVisible(show_default and startup['supported'])
+        self.default_button.setVisible(show_default and startup['supported'])
+        self.default_choice.setEnabled(not self.busy and startup['supported'])
+        self.default_button.setEnabled(not self.busy and startup['supported'] and
+                                       self.default_choice.currentData() != startup['default'])
+        upgrade = getattr(self, 'boot_upgrade_available', False)
+        pending = getattr(self, 'boot_upgrade_pending', False)
+        self.boot_upgrade_button.setVisible(show_default and (upgrade or pending))
+        self.boot_upgrade_button.setText('Resume startup selector update' if pending else 'Update startup selector')
+        selected_build = (option or {}).get('build')
+        self.boot_upgrade_button.setEnabled(not self.busy and (pending or upgrade) and
+            (pending or from_source or bool(self.firmware_path) and selected_build == 'user'))
+        self.boot_upgrade_detail.setVisible(show_default and not startup['supported'])
+        self.boot_upgrade_detail.setText('Finish the interrupted startup update before changing the default.' if pending else
+            'Update Boot to enable the Menu startup selector and default choices.' if upgrade else
+            'This Boot version cannot save a default startup choice from Media Manager.')
         if option is None:
             self.install_button.setText('No startup change available')
         elif not option.get('selectable'):
@@ -2433,7 +2496,9 @@ class MediaWindow(QMainWindow):
         if not self.install_button.isEnabled():
             return
         option, method, identity = self.boot_choice.currentData(), self.method_choice.currentData(), self.identity
-        description = f"Make {option['label']} the default startup software?" + (f"\n\nMethod: {method['label']}" if option['kind'] == 'linnet' else '')
+        description = (f"Install or update {option['label']}?" + f"\n\nMethod: {method['label']}"
+                       if option['kind'] == 'linnet' else
+                       f"Make {option['label']} the default startup software?")
         if option['kind'] == 'linnet' and self.review.get('action') in ('replace', 'adopt'):
             description += ('\n\nYour settings, selected theme, playback history, and media libraries '
                             'will be preserved. ' + ('The confirmed OS will be retained for rollback.'
@@ -2449,6 +2514,30 @@ class MediaWindow(QMainWindow):
             build=option['build'], installation_method=method['id'], firmware=firmware,
             from_source=from_source)) if option['kind'] == 'linnet' else lambda: installer.restore(identity, expected=option['id'])
         self.work('install', operation, 'Updating your iPod setup…')
+
+    def save_default_startup(self):
+        if not self.default_button.isEnabled():
+            return
+        identity, choice = self.identity, self.default_choice.currentData()
+        self.work('startup_default', lambda: startup_default.set_default(identity, choice),
+                  'Saving default startup…')
+
+    def upgrade_startup_selector(self):
+        if not self.boot_upgrade_button.isEnabled():
+            return
+        identity = self.identity
+        pending = self.boot_upgrade_pending
+        option = self.boot_choice.currentData()
+        build = (option or {}).get('build', self.review['linnet'].get('build', 'dev'))
+        from_source = self.build_from_source.isChecked()
+        firmware = None if from_source or not self.firmware_path else Path(self.firmware_path)
+        if not pending and not self.dialog('Update startup selector',
+                f'Update startup firmware on {self.device_title(identity)}? Linnet and the saved Apple software will remain available.\n\nKeep the iPod connected until the update finishes.',
+                'Update startup selector'):
+            return
+        self.work('boot_upgrade', lambda: boot_upgrade.upgrade(identity, build=build,
+                  firmware=firmware, from_source=from_source, progress=self.events.progress.emit),
+                  'Updating startup selector…')
 
     def uninstall_selected(self):
         if not self.uninstall_button.isEnabled():
@@ -2590,6 +2679,14 @@ class MediaWindow(QMainWindow):
         def run():
             return media.eject_device(identity)
         self.work('eject', run, 'Safely ejecting your iPod…')
+
+    def device_details(self):
+        if not self.identity or self.busy:
+            return
+        from tools.content import about
+        identity = self.identity
+        self.work('device_details', lambda: about.read_details(identity, media.refresh),
+                  'Reading iPod details…')
 
     def stop(self):
         context = self.active_operation

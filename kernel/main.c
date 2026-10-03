@@ -280,14 +280,19 @@ _Noreturn void ln_main(void)
                     }
                 }else{
                     menu_holding=false;
-                    if(now-menu_started>=1500000u){
-                        boot_decided=true;ln_storage_boot_choice(1u);
+                    if(now-menu_started>=1500000u
+#if LINNET_BOOT_MENU_FIRST_PACKET_WAIT_US
+                       && (input.packets||now-menu_started>=LINNET_BOOT_MENU_FIRST_PACKET_WAIT_US)
+#endif
+                    ){
+                        boot_decided=true;ln_storage_boot_choice(4u);
                     }
                 }
             }else{
                 if(!menu_options){
                     menu_options=ln_storage_boot_options();
                     if(menu_options){
+                        menu_selected=ln_storage_boot_default(menu_options);
                         menu_activity=now;
                         (void)ln_lcd_boot_menu(menu_options,menu_selected,false);
 #if LINNET_BOOT_MENU_REDRAW_US
@@ -355,8 +360,9 @@ _Noreturn void ln_main(void)
                 }
                 if(!boot_decided&&menu_options&&now-menu_activity>=30000000u){
                     boot_decided=true;
-                    (void)ln_lcd_boot_menu(menu_options,1u,true);
-                    ln_storage_boot_choice(1u);
+                    uint32_t default_choice=ln_storage_boot_default(menu_options);
+                    (void)ln_lcd_boot_menu(menu_options,default_choice,true);
+                    ln_storage_boot_choice(default_choice);
                 }
             }
         }

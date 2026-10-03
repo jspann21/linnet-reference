@@ -141,7 +141,7 @@ def _inspect_identify(args, root):
 
 def _identify(identity, detected=None):
     """Bind Disk Mode storage identity to one target manifest."""
-    from tools.inspect.retail_device import detect
+    from tools.inspect.retail_device import detect, _sysinfo
     from tools.studio.targets import TARGETS, media_profile
     if detected is None:
         detected = detect(identity["root"])
@@ -152,7 +152,21 @@ def _identify(identity, detected=None):
             storage["partition_offset"] != identity["partition_offset"]):
         raise RuntimeError("USB and mounted storage identities disagree")
     spec = TARGETS[detected["target_id"]]
-    model_number = detected["retail_os"].get("model_number")
+    retail = dict(detected["retail_os"])
+    if identity.get("native_target_id"):
+        # Native USB identifies the running board. Retained Apple SysInfo is
+        # optional display metadata and never decides the target identity.
+        try:
+            root = Path(identity["root"])
+            _plain(root / "iPod_Control" / "Device" / "SysInfo", root)
+            saved = _sysinfo(root)
+            for key, field in (("ModelNumStr", "model_number"), ("BoardHwName", "board"),
+                               ("visibleBuildID", "build"), ("iPodFamily", "family"),
+                               ("RegionCode", "region")):
+                retail[field] = retail.get(field) or saved.get(key)
+        except (OSError, ValueError, UnicodeError):
+            pass
+    model_number = retail.get("model_number")
     regulatory_models = spec["retail"]["regulatory_models"]
     regulatory_model = spec["retail"].get("regulatory_model_by_model", {}).get(model_number)
     if regulatory_model is None and len(regulatory_models) == 1:
@@ -162,6 +176,14 @@ def _identify(identity, detected=None):
                 linnet_usb_serial=detected["linnet_usb_serial"],
                 model_number=model_number,
                 regulatory_model=regulatory_model,
+                board_name=retail.get("board"),
+                apple_build=retail.get("build"),
+                ipod_family=retail.get("family"),
+                region_code=retail.get("region"),
+                usb_storage_model=storage.get("model"),
+                usb_vid_pid=(f"{detected['native_usb']['vid']:04X}:{detected['native_usb']['pid']:04X}"
+                             if "native_usb" in detected else
+                             f"{detected['retail_usb']['vid']:04X}:{detected['retail_usb']['pid']:04X}"),
                 media_profile=media_profile(detected["target_id"]))
     if identity.get("native_target_id"):
         result["media_cache_disk_serial"] = _retail_cache_serial(result)
@@ -890,10 +912,21 @@ def format_size(value):
 
 def eject_device(identity):
     from .publish import _exclusive
+    from .about import publish as publish_about
+    from tools.studio.installer import installed_state
     from tools.link.eject import eject
     with _exclusive(identity):
         current = refresh(identity)
-        return eject(current['disk_number'], current['disk_serial'], wait_link=False)
+        warning = None
+        if installed_state(current['root'], current['target_id'])['state'] == 'installed':
+            try:
+                publish_about(current, refresh)
+            except (OSError, ValueError) as error:
+                # Optional About data must not prevent a requested safe eject.
+                warning = str(error)
+        report = eject(current['disk_number'], current['disk_serial'], wait_link=False)
+        report['about_warning'] = warning
+        return report
 
 
 def _throttled_progress(checkpoint, progress, describe):

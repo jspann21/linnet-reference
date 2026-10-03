@@ -4,7 +4,7 @@
 #include "hal/api/platform.h"
 #include "hal/api/core.h"
 #include "hal/pp502x/target.h"
-#include "hal/pp502x/disk_screen.h"
+#include "ui/profiles/color320/disk_screen.h"
 #include "ui/profiles/color320/boot_font.h"
 #include "ui/profiles/color320/boot_menu.h"
 #if defined(LINNET_IMAGE_BOOT)
@@ -92,16 +92,16 @@ bool ln_lcd_fill(uint16_t color){
     for(uint32_t y=0;y<240u;++y)if(!ln_m25_lcd_write(y*320u,row,320u))return false;
     return ln_m25_lcd_commit()&&await_ready();
 }
-bool ln_target_disk_screen(void){
+bool ln_target_disk_screen(bool symbol_visible){
     if(!ln_m25_lcd_init()||!await_ready())return false;
+    struct ln_color_disk_decoder decoder={0};
     uint16_t row[LINNET_LCD_WIDTH];
     for(uint32_t y=0;y<LINNET_LCD_HEIGHT;++y){
         ln_core_watchdog_feed();
-        for(uint32_t x=0;x<LINNET_LCD_WIDTH;++x)
-            row[x]=ln_pp_disk_screen_pixel(LINNET_LCD_WIDTH,LINNET_LCD_HEIGHT,x,y,false);
+        if(!ln_color_disk_expand(&decoder,row,LINNET_LCD_WIDTH,symbol_visible))return false;
         if(!ln_m25_lcd_write(y*LINNET_LCD_WIDTH,row,LINNET_LCD_WIDTH))return false;
     }
-    return ln_m25_lcd_commit()&&await_ready();
+    return ln_color_disk_finished(&decoder)&&ln_m25_lcd_commit()&&await_ready();
 }
 static void text_row(uint16_t row[320],uint32_t y,uint32_t top,const char *text,uint16_t color){
     if(y<top||y>=top+22u)return;

@@ -9,9 +9,17 @@ requires FFmpeg and FFprobe; select their folder in **Settings**.
 
 ## Install or restore firmware
 
-1. Connect the iPod in Disk Mode and choose **Find iPod**.
-2. Open **iPod setup**, choose the firmware ZIP for the device, and review the detected installation.
-3. Choose an available startup method, install, then **Eject safely**.
+1. Connect the iPod in Disk Mode and choose **Find or switch iPod**.
+2. Open **iPod setup**, choose a firmware ZIP or build from source, and review the detected installation.
+3. Choose the Linnet version and available installation method, install, then **Eject safely**.
+
+On a supported native Boot installation, **Default startup** chooses which
+installed system starts automatically. Hold **MENU** while the iPod starts to
+open the selector and choose a different installed system. The default can be
+changed without reinstalling Linnet. Older native installations offer **Update
+startup selector** first; that guarded update keeps the saved Apple firmware
+and recovery plan. Finish an interrupted update with **Resume startup selector
+update** before making other setup changes.
 
 The installer checks hardware identity, geometry, checksums, and image
 compatibility. Automatic native installation is enabled for Photo P98,
@@ -130,6 +138,10 @@ are read directly by Apple OS.
 This is a separate update to Apple's library, not Linnet adopting iTunesDB as its
 own index. Existing Apple tracks and playlists are preserved by the managed
 writer. It is enabled only for explicitly qualified device/volume combinations.
+An iPod can contain Apple firmware while its Apple music library is empty.
+Preparing Music, Photos, or Videos for Linnet does not add them to Apple's
+databases; select compatible folders and complete **Update Apple OS** on a
+qualified device.
 
 The current music path accepts MP3s whose real FAT short path below `/Music`
 fits the 23-character Apple limit. Unsupported paths or formats need attention;

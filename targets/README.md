@@ -81,6 +81,7 @@ control features; avoid adding board-name conditions to portable services.
 | --- | --- |
 | Photo Boot menu font | `python tools/studio/boot_menu_font.py --output targets/photo4g-p98/boot_menu_font.h` |
 | Photo Disk Mode screen | `python tools/studio/disk_screen_asset.py --output targets/photo4g-p98/disk_screen_runs.h` |
+| Video and Classic Disk Mode screen | `python tools/studio/disk_screen_asset.py --target color320 --output ui/profiles/color320/disk_screen_runs.h` |
 | Game graphics | Native drawing sources in `services/games/presentations/` |
 | Solitaire court art | [Austin Gabriel's CC0 cards](https://github.com/AustinGabriel/Public-Domain-and-CC0-Playing-Cards); retain notices in both presentation headers |
 

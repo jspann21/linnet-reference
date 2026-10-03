@@ -21,6 +21,15 @@
  * below the independent 500 ms watchdog; do not refresh watchdog progress here. */
 #define LINNET_LCD_FRAME_TIMEOUT_US 250000u
 static bool ln_panel_ready;
+static bool ln_disk_symbol_visible = true;
+static uint16_t ln_disk_blink_pixel(uint16_t bus_color)
+{
+    uint16_t color = (uint16_t)((bus_color << 8) | (bus_color >> 8));
+    /* The symbol is the only warm tint in the generated artwork. */
+    if ((((color >> 11) & 31u) * 2u) > (((color >> 5) & 63u) + 2u))
+        return 0xdfffu; /* Byte-swapped RGB565 paper (0xffdf). */
+    return bus_color;
+}
 #if defined(LINNET_IMAGE_BOOT)
 static uint32_t ln_text_pairs[LINNET_LCD_WIDTH*LINNET_LCD_HEIGHT/2u];
 #endif
@@ -149,6 +158,7 @@ static uint16_t ln_fault_pixel(const char lines[8][33],uint32_t x,uint32_t y)
 static bool ln_lcd_draw(uint16_t color, const char (*fault_rows)[33], const uint16_t *runs,
     const uint32_t *palette,const uint32_t *prepared_pairs)
 {
+    bool disk_runs = runs == ln_disk_runs;
 #if defined(LINNET_IMAGE_BOOT)
     if(fault_rows&&!prepared_pairs){
         /* Render text before opening the LCD transaction. The panel's FIFO
@@ -239,6 +249,11 @@ static bool ln_lcd_draw(uint16_t color, const char (*fault_rows)[33], const uint
                     uint16_t run = *runs++;
                     run_left = run & 255u;
                     pixel_pair = palette[run >> 8];
+                    if (disk_runs && !ln_disk_symbol_visible) {
+                        uint16_t first = ln_disk_blink_pixel((uint16_t)pixel_pair);
+                        uint16_t second = ln_disk_blink_pixel((uint16_t)(pixel_pair >> 16));
+                        pixel_pair = (uint32_t)first | ((uint32_t)second << 16);
+                    }
                 }
                 if (span > run_left) span = run_left;
                 run_left -= span;
@@ -306,7 +321,10 @@ failed:
 }
 
 bool ln_lcd_fill(uint16_t color){return ln_lcd_draw(color,0,0,0,0);}
-bool ln_target_disk_screen(void){return ln_lcd_draw(0,0,ln_disk_runs,ln_disk_palette,0);}
+bool ln_target_disk_screen(bool symbol_visible){
+    ln_disk_symbol_visible = symbol_visible;
+    return ln_lcd_draw(0,0,ln_disk_runs,ln_disk_palette,0);
+}
 #if defined(LINNET_IMAGE_BOOT)
 bool ln_lcd_boot(void){return ln_lcd_draw(0,0,ln_boot_runs,ln_boot_palette,0);}
 bool ln_lcd_boot_apple(void)

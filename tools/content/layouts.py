@@ -154,7 +154,7 @@ def align_scrollbars(scene,theme):
             continue
         bar['y']=listing['y']
         bottom={'graphite':150,'aurora':170,'sunset':150,'blueprint':146}.get(theme['layout'],172)
-        bar['h']=listing['h'] if scene['id']=='linnet.system.games' else max(1,bottom-bar['y'])
+        bar['h']=listing['h'] if scene['id'] in ('linnet.system.games','linnet.system.about') else max(1,bottom-bar['y'])
         for node in scene['nodes']:
             if node['kind']==3:node['w']=min(node['w'],bar['x']-node['x']-4)
         listing['w']=min(listing['w'],bar['x']-listing['x']-2)
@@ -208,12 +208,19 @@ def refine_scene(scene,theme,body):
             elif n['kind']==12:place(n,x if style=='aurora' else x+4,dialog_y,w if style=='aurora' else w-8,dialog_h)
             elif n['kind']==13:place(n,x+4,toast_y,w-8,toast_h)
     elif sid=='about':
-        # Preserve theme chrome while centering the shared brand mask.
-        art_h=min(104,h-2*fh-14);art_w=art_h*68//104
+        # Keep the logo visible above a scrollable, host-prepared fact list.
+        art_h=min(48,max(24,h//3));art_w=art_h*68//104
         art=next(n for n in nodes if n['kind']==17)
-        place(art,x+(w-art_w)//2,y+2,art_w,art_h)
-        for i,n in enumerate(texts):
-            place(n,x,y+art_h+7+i*(fh+4),w,fh);n['flags']=CENTER
+        place(art,x+4,y+2,art_w,art_h)
+        place(texts[0],x+art_w+12,y+4,w-art_w-16,fh+2)
+        place(texts[1],x+art_w+12,y+fh+10,w-art_w-16,fh)
+        for n in texts:n['flags']=0
+        progress=next(n for n in nodes if n['kind']==10)
+        place(progress,x+4,y+art_h+5,w-8,6)
+        list_y=y+art_h+15
+        list_h=max(rh,((bottom-18-list_y)//rh)*rh)
+        place(listing,x,list_y,w-10,list_h)
+        place(texts[2],x+4,bottom-16,w-8,fh);texts[2]['flags']=0
     elif sid=='update' and style=='sunset':
         for i,n in enumerate(texts):place(n,12,40+i*17,196,17);n['flags']=0
         place(listing,12,126,196,26)
@@ -341,7 +348,7 @@ def refine_ipod_photo(scene,theme):
                'photos-options':'Photo Options','music-sound':'Sound',
                'clock-edit':'Date & Time','music-options':'Playback Options'}
         if sid in names:header['text']=names[sid]
-    if listing:
+    if listing and sid!='about':
         # White edge at the right keeps the thumb and chevrons inside the LCD.
         top=21 if listing['y']<=24 else listing['y']
         bottom=min(176,listing['y']+listing['h']+1)

@@ -9,6 +9,7 @@
 #include "services/music/menu.h"
 #include "services/music/search.h"
 #include "services/music/queue_view.h"
+#include "services/display/settings.h"
 #if defined(LINNET_FILES)
 #include "services/files/files.h"
 #endif
@@ -125,6 +126,7 @@ bool ln_ui_dynamic_navigation(const struct ln_ui_node*n,uint32_t item){
     return false;
 }
 uint32_t ln_ui_dynamic_count(const struct ln_ui_node*n,uint32_t fallback){
+    if(in_scene(n,LN_UI_SCENE_ABOUT)&&n->kind==LN_UI_VIRTUAL_LIST)return ln_display_about_count();
 #if defined(LINNET_FILES)
     if(in_scene(n,LN_UI_SCENE_FILES)&&(n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_SCROLLBAR))return ln_files_count();
 #endif
@@ -153,6 +155,7 @@ uint32_t ln_ui_dynamic_count(const struct ln_ui_node*n,uint32_t fallback){
     return fallback;
 }
 uint32_t ln_ui_dynamic_value(const struct ln_ui_node*n,uint32_t fallback){
+    if(in_scene(n,LN_UI_SCENE_ABOUT)&&n->kind==LN_UI_PROGRESS_BAR)return ln_display_about_percent();
 #if defined(LINNET_VIDEO)
     if(in_scene(n,LN_UI_SCENE_VIDEO_CONTROLS)&&n->kind==LN_UI_PROGRESS_BAR)return ln_video_progress();
 #endif
@@ -160,6 +163,7 @@ uint32_t ln_ui_dynamic_value(const struct ln_ui_node*n,uint32_t fallback){
     return fallback;
 }
 const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){
+    if(in_scene(n,LN_UI_SCENE_ABOUT)&&n->kind==LN_UI_VIRTUAL_LIST&&item!=UINT32_MAX)return ln_display_about_row(item);
 #if defined(LINNET_FILES)
     if(in_scene(n,LN_UI_SCENE_FILES)){
         if(n->kind==LN_UI_STATUS_BAR)return ln_files_title();

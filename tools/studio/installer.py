@@ -438,7 +438,7 @@ def assess(identity, *, _validated_identity=False):
             if (value.get("target_id") == target_id and
                     (same_storage or same_native_usb) and
                     value.get("strategy") in ("rockbox-file", "native-directory") and
-                    value.get("phase") in ("installed", "restored")):
+                    value.get("phase") in ("installed", "restored", "boot-upgrade-pending")):
                 marker = value
         except (ValueError, OSError):
             marker = None
@@ -477,7 +477,10 @@ def assess(identity, *, _validated_identity=False):
     native = identity.get("native_target_id") == target_id and (
         install_spec["boot_layout"] == "s5l-nor" or
         install_spec["boot_layout"] == "ipod-directory" and linnet["state"] == "installed")
-    if native and linnet["state"] == "installed":
+    if marker and marker.get("phase") == "boot-upgrade-pending":
+        action, strategy = "attention", None
+        summary = "A startup upgrade was interrupted. Resume it before changing iPod setup."
+    elif native and linnet["state"] == "installed":
         action, strategy = "replace", "native-volume"
         summary = "Linnet is installed. Update the OS through native Disk Mode, preserving the confirmed OS for rollback."
     elif native and linnet["state"] in ("absent", "incomplete"):
@@ -520,14 +523,16 @@ def assess(identity, *, _validated_identity=False):
         active_override="rockbox" if external_rockbox else None)
     installation_methods, default_method = _installation_methods(action, rockbox, marker, resume)
     if native:
-        available = linnet["state"] in ("installed", "absent", "incomplete") and not linnet.get("candidate_pending")
+        available = (linnet["state"] in ("installed", "absent", "incomplete") and
+                     not linnet.get("candidate_pending") and
+                     not (marker and marker.get("phase") == "boot-upgrade-pending"))
         initial = linnet["state"] in ("absent", "incomplete")
         boot_options = [option for option in boot_options if option["kind"] == "linnet" or
                         marker and marker.get("phase") == "restored" and option["id"] == _saved_previous_boot(marker)]
         for option in boot_options:
             if option["kind"] == "linnet":
                 option["selectable"] = available
-        if linnet["state"] == "installed" and not (marker and marker.get("phase") == "restored"):
+        if linnet["state"] == "installed" and available and not (marker and marker.get("phase") == "restored"):
             from tools.studio.apple_firmware import available as apple_available
             if apple_available(root, target_id):
                 boot_options.append(dict(id="apple", label="Apple iPod software", kind="previous",
@@ -730,6 +735,7 @@ def _validate_artifacts(identity, artifacts):
         report = json.loads(report_path.read_text(encoding="utf-8"))
         expected_serial = "" if build == "user" else identity["linnet_usb_serial"]
         if (report.get("kind") != kind or report.get("profile") != expected_profile or
+                report.get("probe") != "frame" or
                 report.get("target_id") != identity["target_id"] or
                 report.get("device_serial") != expected_serial or
                 report.get("build_id") != image_identity["build_id"] or
@@ -739,6 +745,8 @@ def _validate_artifacts(identity, artifacts):
             raise ValueError("installer Boot report uses the wrong startup selector")
         if kind == "boot" and report.get("apple_firmware_fallback") is not True:
             raise ValueError("installer Boot report does not preserve the Apple firmware fallback")
+        if kind == "boot" and report.get("startup_default_format") != 1:
+            raise ValueError("installer Boot image does not support startup defaults")
         if build == "user" and (report.get("release_exclusion") or {}).get("passed") is not True:
             raise ValueError("user installer artifacts require release exclusion verification")
 
@@ -909,6 +917,7 @@ def _journal(identity, artifacts, strategy, transaction, extra=None):
                  linnet_usb_serial=identity["linnet_usb_serial"], strategy=strategy,
                  build=artifacts["build"],
                  os_build_id=artifacts["os_build_id"], boot_build_id=artifacts["boot_build_id"],
+                 startup_default_format=1,
                  transaction=str(transaction), installed_at=_now(), phase="installed")
     if extra:
         value.update(extra)
@@ -1639,9 +1648,13 @@ def worker(job_path):
     result_path = Path(job["result"]).resolve()
     response = dict(passed=False, operation=job.get("mode"), started_at=_now())
     try:
-        if job.get("mode") not in ("install", "restore", "reinstall"):
+        if job.get("mode") not in ("install", "restore", "reinstall", "upgrade-boot"):
             raise ValueError("unsupported installer worker job")
-        response.update(_native_worker(job))
+        if job["mode"] == "upgrade-boot":
+            from tools.studio.boot_upgrade import worker as upgrade_worker
+            response.update(upgrade_worker(job))
+        else:
+            response.update(_native_worker(job))
     except BaseException as error:
         response["failure"] = f"{type(error).__name__}: {error}"
     response["finished_at"] = _now()
@@ -1654,12 +1667,13 @@ def main():
     cli.add_argument("--worker", type=Path)
     cli.add_argument("--worker-token")
     commands = cli.add_subparsers(dest="command")
-    for name in ("inspect", "install", "restore", "uninstall"):
+    for name in ("inspect", "install", "restore", "uninstall", "upgrade-boot"):
         command = commands.add_parser(name)
         command.add_argument("--mount", type=Path, required=True)
-        if name == "install":
+        if name in ("install", "upgrade-boot"):
             command.add_argument("--build", choices=("user", "dev"), default="user")
-            command.add_argument("--method", choices=tuple(INSTALLATION_METHODS))
+            if name == "install":
+                command.add_argument("--method", choices=tuple(INSTALLATION_METHODS))
             source = command.add_mutually_exclusive_group()
             source.add_argument("--firmware", type=Path, help="prebuilt firmware ZIP")
             source.add_argument("--from-source", action="store_true", help="compile fresh firmware locally")
@@ -1669,12 +1683,22 @@ def main():
         result = worker(worker_path)
     else:
         if not args.command:
-            cli.error("choose inspect, install, restore, or uninstall")
+            cli.error("choose inspect, install, restore, uninstall, or upgrade-boot")
         identity = identity_for_mount(args.mount)
-        result = (assess(identity) if args.command == "inspect" else
-                  install(identity, progress=print, build=args.build,
-                          installation_method=args.method, firmware=args.firmware, from_source=args.from_source)
-                  if args.command == "install" else uninstall(identity) if args.command == "uninstall" else restore(identity))
+        if args.command == "inspect":
+            result = assess(identity)
+        elif args.command == "install":
+            result = install(identity, progress=print, build=args.build,
+                             installation_method=args.method, firmware=args.firmware,
+                             from_source=args.from_source)
+        elif args.command == "upgrade-boot":
+            from tools.studio.boot_upgrade import upgrade
+            result = upgrade(identity, progress=print, build=args.build,
+                             firmware=args.firmware, from_source=args.from_source)
+        elif args.command == "uninstall":
+            result = uninstall(identity)
+        else:
+            result = restore(identity)
     print(json.dumps(result, indent=2))
     return 0 if result.get("passed", True) else 2
 

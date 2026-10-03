@@ -32,9 +32,10 @@ def create(target, output, jobs=2):
             payloads[name + ".ipod"] = (ROOT / report["artifacts"]["ipod"]).read_bytes()
         # Keep the verified image contract, without build-machine paths.
         portable = {key: report[key] for key in (
-            "kind", "profile", "target_id", "device_serial", "build_id", "image", "release_exclusion")}
+            "kind", "profile", "target_id", "device_serial", "build_id", "image", "release_exclusion", "probe")}
         if kind == "boot":
-            portable.update(boot_selector=selector, apple_firmware_fallback=report["apple_firmware_fallback"])
+            portable.update(boot_selector=selector, apple_firmware_fallback=report["apple_firmware_fallback"],
+                            startup_default_format=report["startup_default_format"])
         payloads[name + ".json"] = (json.dumps(portable, indent=2) + "\n").encode("utf-8")
     manifest = dict(format=1, target_id=target,
                     files={name: dict(bytes=len(data), sha256=hashlib.sha256(data).hexdigest())

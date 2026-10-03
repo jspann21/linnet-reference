@@ -157,12 +157,16 @@ def apply_layout(scenes, theme):
             ])
         elif sid == 'about':
             art = next(n for n in nodes if n['kind'] == 17)
-            ah = h - 58
+            ah = min(64, max(32, h // 3))
             aw = ah * 68 // 104
-            place(art, x + (w - aw) // 2, y, aw, ah)
-            for i, node in enumerate(texts):
-                place(node, x, bottom - 46 + i * 24, w, 22)
-                node['flags'] = CENTER
+            place(art, x + 4, y + 2, aw, ah)
+            place(texts[0], x + aw + 16, y + 7, w - aw - 20, 24)
+            place(texts[1], x + aw + 16, y + 34, w - aw - 20, 22)
+            place(next(n for n in nodes if n['kind'] == 10), x + 4, y + ah + 7, w - 8, 7)
+            list_y = y + ah + 21
+            place(listing, x, list_y, w - 12, max(row, ((bottom - 20 - list_y) // row) * row))
+            place(texts[2], x + 4, bottom - 19, w - 8, 18)
+            if bars: place(bars[0], x + w - 8, list_y, 8, listing['h'])
         elif sid == 'photos-grid':
             for node in texts:
                 place(node, x + 8, y + h // 2 - 22, w - 24, 44)
@@ -292,9 +296,13 @@ def apply_ipod_classic(scenes, theme):
                 place(n, 8, 204, 304, 2 * fh); n['flags'] = WRAP
         elif sid == 'about':
             art = next(n for n in nodes if n['kind'] == 17)
-            place(art, 125, 36, 70, 107)
-            for i, n in enumerate(texts):
-                place(n, 8, 164 + i * 26, 304, fh); n['flags'] = CENTER
+            place(art, 12, 30, 46, 70)
+            place(texts[0], 70, 48, 238, fh + 2)
+            place(texts[1], 70, 76, 238, fh)
+            place(next(n for n in nodes if n['kind'] == 10), 12, 106, 296, 8)
+            place(listing, 0, 121, 312, 94)
+            place(scroll, 312, 121, 8, 94)
+            place(texts[2], 8, 218, 304, fh)
         elif sid == 'update' and listing:
             for i, n in enumerate(texts):
                 place(n, 8, 30 + i * 26, 304, fh)

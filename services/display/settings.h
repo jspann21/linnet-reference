@@ -24,6 +24,10 @@ bool ln_display_theme_presented(uint32_t revision);
 uint32_t ln_display_backlight_timeout_us(void);
 bool ln_display_backlight_off(void);
 uint32_t ln_display_settings_revision(void);
+/* Host-prepared About rows are read once at boot, then served from RAM. */
+uint32_t ln_display_about_count(void);
+uint32_t ln_display_about_percent(void);
+const char *ln_display_about_row(uint32_t item);
 /* UINT32_MAX keeps the compiled default; persistence stores the stable theme ID. */
 uint32_t ln_display_theme_index(void);
 bool ln_display_theme_set(uint32_t index);

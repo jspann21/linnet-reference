@@ -105,9 +105,11 @@ void ln_storage_maintenance_end(bool success);
 #endif
 void ln_storage_progress(void *context);
 #if defined(LINNET_IMAGE_BOOT) && (LINNET_BOOT_APPLE_FALLBACK || LINNET_BOOT_SELECTOR_ROCKBOX)
-/* choice1 boots Linnet,2 starts configured Rockbox,3 starts verified Apple firmware. */
+/* choice1 boots Linnet,2 starts configured Rockbox,3 starts verified Apple firmware.
+ * choice4 defers to the verified on-disk startup default after storage is ready. */
 void ln_storage_boot_choice(uint32_t choice);
 uint32_t ln_storage_boot_options(void);
+uint32_t ln_storage_boot_default(uint32_t options);
 #endif
 void ln_storage_boot(void);
 void ln_storage_healthy(uint32_t readiness);

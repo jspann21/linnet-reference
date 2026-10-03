@@ -747,7 +747,7 @@ static int open_stores(void){
     return 1;
 }
 #if defined(LINNET_IMAGE_BOOT) && (LINNET_BOOT_APPLE_FALLBACK || LINNET_BOOT_SELECTOR_ROCKBOX)
-void ln_storage_boot_choice(uint32_t choice){if(!boot_choice&&choice>=1u&&choice<=3u)boot_choice=choice;}
+void ln_storage_boot_choice(uint32_t choice){if(!boot_choice&&choice>=1u&&choice<=4u)boot_choice=choice;}
 static int selector_open(const char *path,struct ln_fat32_file *file){
     if(!ln_fat32_open(&volume,path,next_generation()))return 0;
     locked=true;if(!finish())return 0;*file=volume.file;return 1;
@@ -799,6 +799,20 @@ uint32_t ln_storage_boot_options(void){
     }
 #endif
     return options;
+}
+uint32_t ln_storage_boot_default(uint32_t options){
+    if(!options||!ln_storage_mounted()||ln_storage_busy())return 1u;
+    struct ln_fat32_file config_file;
+    uint8_t config[512];
+    static const uint8_t magic[8]={'L','N','S','T','A','R','T','1'};
+    if(!selector_open("/.LINNET/STARTUP.CFG",&config_file)||config_file.size!=sizeof(config)||
+       !selector_read(&config_file,0,config,sizeof(config)))return 1u;
+    for(uint32_t i=0;i<8u;++i)if(config[i]!=magic[i])return 1u;
+    if(ln_read_le32(config+8u)!=LINNET_TARGET_NUMBER||
+       ln_crc32(config,508u)!=ln_read_le32(config+508u))return 1u;
+    for(uint32_t i=16u;i<508u;++i)if(config[i])return 1u;
+    uint32_t choice=ln_read_le32(config+12u);
+    return choice>=1u&&choice<=3u&&(options&(1u<<(choice-1u)))?choice:1u;
 }
 #if LINNET_BOOT_SELECTOR_ROCKBOX
 static int selector_rockbox(void){
@@ -916,6 +930,7 @@ void ln_storage_boot(void){
          * on an incompatible drive; explicit storage recovery remains available. */
         boot_choice=1u;return;
     }
+    if(boot_choice==4u)boot_choice=ln_storage_boot_default(ln_storage_boot_options());
 #if LINNET_BOOT_SELECTOR_ROCKBOX
     if(boot_choice==2u){
         boot_choice=1u;

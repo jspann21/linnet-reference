@@ -19,7 +19,7 @@ void ln_target_switches_prepare(void);
 uint32_t ln_target_switches_read(void);
 void ln_target_switches_rearm(uint32_t sample);
 /* Direct panel draw after the normal display owner has quiesced. */
-bool ln_target_disk_screen(void);
+bool ln_target_disk_screen(bool symbol_visible);
 /* Normalized switch bits: bit 5 is Hold released, bit 7 headphones present. */
 
 /* A target may fill older IDENTIFY fields that predate the ATA media/rotation
