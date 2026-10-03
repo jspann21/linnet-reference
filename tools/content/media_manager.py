@@ -2194,11 +2194,13 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                             record()
                             continue
                 compatible = False
-                # Native preparation checks conversion-enabled host sources
-                # before copying or converting. Device sources need this check
-                # here to decide whether they can be indexed in place.
-                if ((no_conversions or source.is_relative_to(root)) and
-                        source.suffix.lower() in native_video_extensions(identity)):
+                # Native preparation checks conversion-enabled host sources.
+                # No-conversion planning supplies a short-lived proof for host
+                # sources; the copied package is still validated below. Device
+                # sources need this check to decide on indexing in place.
+                if (source.suffix.lower() in native_video_extensions(identity) and
+                        (source.is_relative_to(root) or
+                         (no_conversions and not _native_check_reusable(job, source, media_profile)))):
                     try:
                         native_info = inspect_native(source, ffprobe=ffprobe, profile=media_profile, cancelled=cancelled)
                         compatible = (no_conversions or (native_info['fast_start'] and media_profile['video_backend'] != 'bcm-mp4') or
@@ -2225,6 +2227,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                             reusable = False
                     if not reusable:
                         if no_conversions:
+                            checkpoint()
                             package.parent.mkdir(parents=True, exist_ok=True)
                             temporary = package.with_name(package.stem + '.' + uuid.uuid4().hex + '.mp4')
                             owned_temporaries.append((temporary, cache))
