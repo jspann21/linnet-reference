@@ -801,7 +801,7 @@ def _wave_metadata(output, tags):
 
 
 def _convert_audio(source, output, ffmpeg, checkpoint, max_bytes, expected_frames,
-                   tags=None, cover=None):
+                   tags=None, cover=None, source_sha256=None):
     if not ffmpeg:
         raise ValueError('Audio conversion needs FFmpeg on the computer.')
     if shutil.disk_usage(output.parent).free < max_bytes + 1024 * 1024:
@@ -834,7 +834,7 @@ def _convert_audio(source, output, ffmpeg, checkpoint, max_bytes, expected_frame
     metadata = _pcm(output)
     if metadata['frames'] < expected_frames - max(2205, expected_frames // 100):
         raise ValueError('Audio conversion ended before the source duration.')
-    _wave_metadata(output, {**(tags or {}), 'source_sha256': _hash(source),
+    _wave_metadata(output, {**(tags or {}), 'source_sha256': source_sha256 or _hash(source),
                             'pcm_sha256': _wave_pcm_hash(output, metadata)})
     if cover:
         from mutagen.id3 import APIC
@@ -959,10 +959,25 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                         copy_source = scratch / 'audio.wav'
                         progress(f'Converting on computer: {source.name}')
                         seed = _import_metadata_seed(source, ffprobe, cancelled)
-                        converted = _convert_audio(source, copy_source, ffmpeg, checkpoint,
+                        conversion_source, source_sha256 = source, None
+                        if source.is_relative_to(root / 'Music'):
+                            conversion_source = scratch / ('source' + source.suffix)
+                            digest = hashlib.sha256()
+                            with source.open('rb') as reader, conversion_source.open('xb') as frozen:
+                                while chunk := reader.read(1024 * 1024):
+                                    checkpoint()
+                                    frozen.write(chunk)
+                                    digest.update(chunk)
+                            if (conversion_source.stat().st_size != info.st_size or
+                                    _receipt_stamp(source.stat()) != _receipt_stamp(info)):
+                                raise ValueError(f'Source changed during conversion: {source}')
+                            source_sha256 = digest.hexdigest()
+                        converted = _convert_audio(conversion_source, copy_source, ffmpeg, checkpoint,
                                                    item['converted_bytes'], item['converted_frames'],
                                                    seed[0]['tags'] if seed else None,
-                                                   seed[1] if seed else None)
+                                                   seed[1] if seed else None, source_sha256)
+                        if conversion_source != source:
+                            conversion_source.unlink()
                         if copy_source.stat().st_size > 0xffffffff:
                             raise ValueError(f'Converted audio exceeds the iPod file limit: {source}')
                         converted['tags'] = {**converted['tags'], **(seed[0]['tags'] if seed else {})}
@@ -1605,6 +1620,9 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
     original_bytes = sum(item.get('converted_bytes', item['bytes']) for item in copies)
     converted_sizes = [item['converted_bytes'] for item in copies if 'converted_bytes' in item]
     audio_scratch = min(sum(converted_sizes), max(64 * 1024 * 1024, max(converted_sizes, default=0)))
+    staged_sizes = [item['bytes'] for item in copies if 'converted_bytes' in item and
+                    Path(item['source']).is_relative_to(root / 'Music')]
+    audio_scratch += max(staged_sizes, default=0)
     # Audio index, artwork and transaction files grow with the track count.
     music_bytes = 0
     if 'Music' in selected and counts['Music']:
