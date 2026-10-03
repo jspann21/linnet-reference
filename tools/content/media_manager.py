@@ -1345,8 +1345,7 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, s
             raise ValueError('FFprobe is required to check native video compatibility.')
         # No conversions includes only videos whose content is playable as-is.
         # A queued source must be called out instead of silently discarded.
-        ready = []
-        for job in jobs.values():
+        def check_native(job, stop=None):
             source = Path(job['source'])
             proof_before = None
             if source.suffix.lower() in native_extensions:
@@ -1355,24 +1354,56 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, s
                 except OSError:
                     pass
             details = {}
-            if _video_is_native(source, identity, ffprobe=ffprobe, cancelled=cancelled,
-                                details=details):
-                if proof_before is not None:
-                    try:
-                        proof_after = _receipt_stamp(source.stat())
-                    except OSError:
-                        proof_after = None
-                    if (proof_before == proof_after and
-                            (os.name != 'nt' or
-                             proof_after[3] <= time.time_ns() - _RECENT_OUTPUT_NS)):
+            should_stop = (lambda: stop.is_set() or bool(cancelled and cancelled())) if stop else cancelled
+            native = _video_is_native(source, identity, ffprobe=ffprobe, cancelled=should_stop,
+                                      details=details)
+            proof_after = None
+            if native and proof_before is not None:
+                try:
+                    proof_after = _receipt_stamp(source.stat())
+                except OSError:
+                    pass
+            reusable = (proof_before is not None and proof_before == proof_after and
+                        (os.name != 'nt' or
+                         proof_after[3] <= time.time_ns() - _RECENT_OUTPUT_NS))
+            return native, details, proof_after if reusable else None
+
+        def collect(items, futures=None):
+            ready = []
+            for job in items:
+                source = Path(job['source'])
+                native, details, proof = (
+                    futures[id(job)].result() if futures and id(job) in futures else check_native(job))
+                if native:
+                    if proof is not None:
                         job['_native_check'] = (str(source),
-                            json.dumps(identity['media_profile'], sort_keys=True), proof_after)
+                            json.dumps(identity['media_profile'], sort_keys=True), proof)
                         if details:
                             job['_native_details'] = details
-                ready.append(job)
-            elif not source.is_relative_to(root) or job['relative'].casefold() in queued_relatives:
-                raise ValueError(f"{source.name} needs conversion or is not a playable native video. Choose a conversion mode or remove it from the queue.")
-        return ready
+                    ready.append(job)
+                elif not source.is_relative_to(root) or job['relative'].casefold() in queued_relatives:
+                    raise ValueError(f"{source.name} needs conversion or is not a playable native video. Choose a conversion mode or remove it from the queue.")
+            return ready
+
+        all_jobs = list(jobs.values())
+        host_checks = [job for job in all_jobs
+                       if (identity['media_profile']['video_backend'] in ('bcm-mp4', 'native-mp4') and
+                           Path(job['source']).suffix.lower() in native_extensions and
+                           not Path(job['source']).is_relative_to(root))]
+        host_ids = {id(job) for job in host_checks}
+        first_host = next((index for index, job in enumerate(all_jobs) if id(job) in host_ids), len(all_jobs))
+        # The device's own videos precede queued host files. Complete those
+        # reads before starting several FFprobe processes on host sources.
+        if len(host_checks) > 1 and all(id(job) in host_ids for job in all_jobs[first_host:]):
+            ready = collect(all_jobs[:first_host])
+            stop = threading.Event()
+            with ThreadPoolExecutor(max_workers=min(4, len(host_checks))) as pool:
+                try:
+                    futures = {id(job): pool.submit(check_native, job, stop) for job in host_checks}
+                    return ready + collect(all_jobs[first_host:], futures)
+                finally:
+                    stop.set()
+        return collect(all_jobs)
     return list(jobs.values())
 
 
