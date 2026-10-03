@@ -269,10 +269,14 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
             relative = Path(row['path']).relative_to(root).as_posix().casefold()
             row['status'] = ('Excluded from preparation' if relative in skipped['Photos']
                              else 'iTunes photo · ' + readiness['Photos'])
-    for row in rows:
-        path = Path(row['path'])
-        if path.is_relative_to(root) and path.relative_to(root).as_posix().casefold() in skipped.get(row['kind'], set()):
-            row['status'] = 'Excluded from preparation'
+    if any(skipped.values()):
+        for row in rows:
+            excluded = skipped.get(row['kind'])
+            if not excluded:
+                continue
+            path = Path(row['path'])
+            if path.is_relative_to(root) and path.relative_to(root).as_posix().casefold() in excluded:
+                row['status'] = 'Excluded from preparation'
     from . import apple_os
     apple = apple_os.inspect(identity, records_by_kind=records)
     _remember_verified(identity, verified, verified_before)
