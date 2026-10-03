@@ -2983,8 +2983,9 @@ class MediaWindow(QMainWindow):
                     self.settings.setValue(setting, validated[name])
             if validated:
                 self.tools_ready = bool(self.verified_ffmpeg and self.verified_ffprobe)
-                self.update_tools()
-                return
+                if len(validated) != 2:
+                    self.update_tools()
+                    return
         else:
             self.verified_ffmpeg = validated.get('FFmpeg')
             self.verified_ffprobe = validated.get('FFprobe')
