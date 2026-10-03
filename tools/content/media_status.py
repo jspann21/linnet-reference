@@ -241,7 +241,15 @@ def _library_snapshot(identity):
     state = _preparation_state(identity)
     skipped = {kind: skipped_paths(state, kind) for kind in media.KINDS}
     # Inventory and visible rows share one traversal, including excluded files.
-    records = records_by_kind(root)
+    # File IDs are needed only when resolving either music metadata database.
+    # Without those databases, avoid a separate Windows query for every track.
+    try:
+        music_inodes = ((root / 'iPod_Control/iTunes/iTunesDB').is_file() or
+                        (root / '.LINNET/LIBRARY.PDB').is_file())
+    except (OSError, ValueError):
+        # Let the existing metadata readers handle inaccessible databases.
+        music_inodes = True
+    records = records_by_kind(root, include_inodes=music_inodes)
     from .retail_media import available_tracks, images
     retail_tracks = available_tracks(root, known_records=records['Music'], known_inodes=records.inodes)
     retail_photos = images(root)
