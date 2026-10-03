@@ -449,7 +449,8 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None,
         except ValueError:
             compatible = False
         encoder = ffmpeg or shutil.which("ffmpeg")
-        relocate = compatible and not source_info['fast_start'] and encoder
+        relocate = compatible and encoder and (not source_info['fast_start'] or
+                                                profile['video_backend'] == 'bcm-mp4')
         if compatible and not relocate:
             progress("Copying compatible native video…")
             updates.emit("copy", fraction=0, force=True)
@@ -571,6 +572,10 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None,
                 total_frames = max(1, round(float(duration) * float(fps)))
                 duration_text = f"{float(duration):.6f}"
                 command = [str(encoder), "-nostdin", "-v", "error", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?", "-sn", "-dn", "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease:force_divisible_by=2,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2", "-r", str(fps), "-c:v", "libx264", "-profile:v", "baseline", "-level:v", str(limits["h264_level"] / 10), "-pix_fmt", "yuv420p", "-b:v", f"{video_kbps}k", "-maxrate", f"{max_video_kbps}k", "-bufsize", f"{buffer_kbits}k", "-g", str(max(1, round(float(fps) * 2))), "-bf", "0", "-af", "aresample=async=1:first_pts=0,apad", "-c:a", "aac", "-profile:a", "aac_low", "-ar", "44100", "-ac", "2", "-b:a", f"{limits['audio_kbps']}k", "-t", duration_text, "-movflags", "+faststart", str(temporary)]
+            if profile['video_backend'] == 'bcm-mp4':
+                # Group unchanged packets on the host so the Video CPU walks
+                # fewer chunk offsets and reads less overlapping media data.
+                command[-1:-1] = ['-chunk_duration', '1000000']
             with tempfile.TemporaryDirectory(prefix="linnet-video-progress-") as progress_dir, tempfile.TemporaryFile() as errors:
                 progress_path = Path(progress_dir) / "ffmpeg.progress"
                 command[-1:-1] = ["-nostats", "-stats_period", "0.5", "-progress", str(progress_path)]
