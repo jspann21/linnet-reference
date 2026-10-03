@@ -72,21 +72,15 @@ static uint32_t browse_phase,browse_at,browse_size,browse_file_size,browse_base_
 static uint32_t browse_prefix_at,browse_prefix_count;
 static uint32_t browse_fence_at,browse_fence_count;
 static bool browse_valid;
-#if !defined(LINNET_TARGET_PHOTO4G_P98)
 static uint32_t browse_crc;
 static uint32_t browse_id_at,browse_id_crc,browse_id_scan;
 static uint64_t browse_id_previous;
 static bool browse_ids_valid;
-#endif
 static bool browse_check(void){
     const uint8_t *data=browse_data();
     if(browse_base_size<128u||ln_read_le32(data)!=0x4952424cu||ln_read_le32(data+4)!=browse_file_size||
        ln_read_le32(data+20)!=library.db.groups||ln_crc32(data,60)!=ln_read_le32(data+60))return false;
-#if defined(LINNET_TARGET_PHOTO4G_P98)
-    if(ln_crc32(data+64,browse_base_size-64)!=ln_read_le32(data+56))return false;
-#else
     if((browse_crc^UINT32_MAX)!=ln_read_le32(data+56))return false;
-#endif
     for(uint32_t i=0;i<32;i++)if(data[24+i]!=library.db.expected_hash[i])return false;
     uint32_t artists=ln_read_le32(data+8),links=ln_read_le32(data+12),owners=ln_read_le32(data+16);
     uint64_t end=128ull+12ull*artists+4ull*links+4ull*owners;
@@ -136,7 +130,6 @@ static bool browse_check(void){
     for(uint32_t i=0;i<links+owners;i++)if(ln_read_le32(data+128+artists*12+i*4)>=library.db.groups)return false;
     return true;
 }
-#if !defined(LINNET_TARGET_PHOTO4G_P98)
 bool ln_music_library_track_id_lookup(uint64_t id,uint32_t *ordinal){
     if(library.status!=LN_LIBRARY_READY||!browse_valid||!browse_ids_valid||!ordinal)return false;
     const uint8_t *data=browse_data()+browse_id_at;
@@ -153,14 +146,6 @@ bool ln_music_library_id_entry(uint32_t position,uint64_t *id,uint32_t *ordinal)
     const uint8_t *row=browse_data()+browse_id_at+position*12u;
     *id=ln_read_le64(row);*ordinal=ln_read_le32(row+8u);return true;
 }
-#else
-bool ln_music_library_track_id_lookup(uint64_t id,uint32_t *ordinal){
-    (void)id;(void)ordinal;return false;
-}
-bool ln_music_library_id_entry(uint32_t position,uint64_t *id,uint32_t *ordinal){
-    (void)position;(void)id;(void)ordinal;return false;
-}
-#endif
 static uint32_t browse_prefix_lower(uint32_t key){
     const uint8_t *data=browse_data()+browse_prefix_at;
     uint32_t lo=0,hi=browse_prefix_count-1u;
@@ -200,7 +185,6 @@ static void browse_search_bounds(void){
 static bool browse_load(void){
     if(browse_phase==3)return true;
     if(library.paused&&!library.io_active)return false;
-#if !defined(LINNET_TARGET_PHOTO4G_P98)
     if(browse_phase==2){
         const uint8_t *ids=browse_data()+browse_id_at;
         uint32_t end=browse_id_scan+64u;if(end>library.db.tracks)end=library.db.tracks;
@@ -215,7 +199,6 @@ static bool browse_load(void){
         if(browse_id_scan==library.db.tracks){browse_ids_valid=true;browse_phase=3;return true;}
         return false;
     }
-#endif
     if(!library.io_active){
         uint32_t bytes=browse_size-browse_at;if(bytes>4096u)bytes=4096u;
         int result=browse_phase==0?ln_storage_media_open("/.LINNET/BROWSE.BIN",library.generation):
@@ -232,24 +215,17 @@ static bool browse_load(void){
         uint64_t footer=4ull+12ull*library.db.tracks;
         if(browse_file_size<footer+128u){browse_phase=3;return true;}
         browse_base_size=browse_file_size-(uint32_t)footer;
-#if defined(LINNET_TARGET_PHOTO4G_P98)
-        browse_size=browse_base_size;
-#else
         browse_size=browse_file_size;
         if(browse_size>sizeof titles.heap&&browse_size>TITLE_BYTES-title_used)browse_size=browse_base_size;
-#endif
         if(browse_size<=sizeof titles.heap)browse_buffer=(uint8_t*)titles.heap;
         else if(browse_size<=TITLE_BYTES-title_used)browse_buffer=(uint8_t*)titles.text+title_used;
         else {browse_phase=3;return true;}
-#if !defined(LINNET_TARGET_PHOTO4G_P98)
         browse_crc=UINT32_MAX;
         browse_id_crc=UINT32_MAX;
-#endif
         browse_phase=1;return false;
     }
     uint32_t expected=browse_size-browse_at;if(expected>4096u)expected=4096u;
     if(bytes!=expected){browse_phase=3;return true;}
-#if !defined(LINNET_TARGET_PHOTO4G_P98)
     uint32_t start=browse_at,end=start+bytes;
     if(end>64u&&start<browse_base_size){
         uint32_t first=start<64u?64u:start,last=end>browse_base_size?browse_base_size:end;
@@ -259,16 +235,13 @@ static bool browse_load(void){
         uint32_t first=start<browse_base_size+4u?browse_base_size+4u:start;
         browse_id_crc=ln_crc32_update(browse_id_crc,browse_data()+first,end-first);
     }
-#endif
     browse_at+=bytes;if(browse_at<browse_size)return false;
     browse_valid=browse_check();
-#if !defined(LINNET_TARGET_PHOTO4G_P98)
     if(browse_valid&&browse_size==browse_file_size&&
        (browse_id_crc^UINT32_MAX)==ln_read_le32(browse_data()+browse_base_size)){
         browse_id_at=browse_base_size+4u;browse_id_scan=0;browse_id_previous=0;
         browse_phase=2;return false;
     }
-#endif
     browse_phase=3;return true;
 }
 #else
@@ -421,9 +394,7 @@ static void start(void)
 #if LINNET_MUSIC_BROWSE_INDEX
     browse_phase=browse_at=browse_size=browse_file_size=browse_base_size=0;
     browse_valid=false;browse_buffer=0;
-#if !defined(LINNET_TARGET_PHOTO4G_P98)
     browse_ids_valid=false;
-#endif
 #endif
 #if defined(LINNET_MUSIC_METADATA_BYTES)
     metadata_offset=metadata_bytes=0;
@@ -729,7 +700,6 @@ static void row_complete(void)
 static void row_step(void)
 {
     if(library.job==JOB_SELECTION&&library.selection_id){
-#if !defined(LINNET_TARGET_PHOTO4G_P98)
         uint32_t ordinal;
         if(ln_music_library_track_id_lookup(library.selection_id,&ordinal)){
             library.selection_id=0;
@@ -739,7 +709,6 @@ static void row_step(void)
             }
             library.job_index=ordinal;return;
         }
-#endif
         uint32_t count=library.db.tracks-library.job_index;
         if(count>LN_MUSIC_ID_BATCH)count=LN_MUSIC_ID_BATCH;
         if(count){

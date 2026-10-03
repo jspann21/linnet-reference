@@ -20,6 +20,9 @@
 #include "hal/api/audio.h"
 #include "hal/api/platform.h"
 static struct ln_queue queue;
+/* Selection and resume decoding finish synchronously before yielding; neither
+ * retains its candidate after publishing the active queue. */
+static struct ln_queue queue_candidate;
 static struct ln_music_profile profile;
 static struct ln_music_library_row current,waiting;
 static struct ln_fat32_file direct_file;
@@ -491,27 +494,27 @@ static bool select_queue(const struct ln_music_browser_queue *selection){
     if(shutting_down||!selection->count||selection->count>LINNET_QUEUE_SOURCE_MAX||
        selection->cursor>=selection->count||!ln_music_library_identity(identity)||
        !same(identity,selection->library_hash))return false;
-    static struct ln_queue replacement;ln_queue_init(&replacement,ln_time_us());
-    replacement.volume_db_tenths=queue.volume_db_tenths;replacement.repeat=queue.repeat;
-    for(uint32_t i=0;i<32;++i)replacement.library_identity[i]=identity[i];
+    struct ln_queue *replacement=&queue_candidate;ln_queue_init(replacement,ln_time_us());
+    replacement->volume_db_tenths=queue.volume_db_tenths;replacement->repeat=queue.repeat;
+    for(uint32_t i=0;i<32;++i)replacement->library_identity[i]=identity[i];
     if(selection->source){
         if((selection->source==LN_QUEUE_ALL&&selection->count!=count)||
            (selection->source==LN_QUEUE_GROUP&&(selection->source_group&~LN_QUEUE_REVERSE)>=ln_music_library_group_count())||
-           !ln_queue_set_source(&replacement,selection->source,selection->source_group,selection->count,selection->cursor))return false;
+           !ln_queue_set_source(replacement,selection->source,selection->source_group,selection->count,selection->cursor))return false;
     }else{
         if(selection->count>LINNET_QUEUE_CAPACITY)return false;
         for(uint32_t i=0;i<selection->count;++i)
-            if(selection->tracks[i]>=count||!ln_queue_add(&replacement,selection->tracks[i]))return false;
-        if(!ln_queue_select_occurrence(&replacement,selection->cursor))return false;
+            if(selection->tracks[i]>=count||!ln_queue_add(replacement,selection->tracks[i]))return false;
+        if(!ln_queue_select_occurrence(replacement,selection->cursor))return false;
     }
     if(selection->shuffle_all){
-        uint32_t random=replacement.seed;random^=random<<13;random^=random>>17;random^=random<<5;
-        replacement.seed=random;
-        (void)ln_queue_select_at(&replacement,(uint32_t)(((uint64_t)random*replacement.count)>>32));
-        if(replacement.repeat==LINNET_QUEUE_REPEAT_ONE)replacement.repeat=LINNET_QUEUE_REPEAT_NONE;
+        uint32_t random=replacement->seed;random^=random<<13;random^=random>>17;random^=random<<5;
+        replacement->seed=random;
+        (void)ln_queue_select_at(replacement,(uint32_t)(((uint64_t)random*replacement->count)>>32));
+        if(replacement->repeat==LINNET_QUEUE_REPEAT_ONE)replacement->repeat=LINNET_QUEUE_REPEAT_NONE;
     }
-    ln_queue_shuffle(&replacement,selection->shuffle_all||queue.shuffled);
-    sleep_cancel_boundary();remember_position();queue=replacement;++revision;skipped=0;active=true;requested_position=selection->frame;
+    ln_queue_shuffle(replacement,selection->shuffle_all||queue.shuffled);
+    sleep_cancel_boundary();remember_position();queue=*replacement;++revision;skipped=0;active=true;requested_position=selection->frame;
     return select_current();
 }
 bool ln_music_select(uint32_t index){
@@ -912,20 +915,20 @@ static void music_step(void){
                 }
             }else {
                 if(result==1){
-                    static struct ln_queue saved;struct ln_music_profile saved_profile;
-                    if(ln_music_settings_decode(&saved,&saved_profile,resume,length)&&revision==snapshot_revision&&revision==restore_revision&&!active&&!selecting&&!have_waiting&&resolver_kind!=1){
+                    struct ln_queue *saved=&queue_candidate;struct ln_music_profile saved_profile;
+                    if(ln_music_settings_decode(saved,&saved_profile,resume,length)&&revision==snapshot_revision&&revision==restore_revision&&!active&&!selecting&&!have_waiting&&resolver_kind!=1){
                         profile=saved_profile;(void)ln_audio_lineout(profile.lineout);
                         bool valid=true;
-                        if(!same(saved.library_identity,identity))valid=false;
-                        if(saved.source==LN_QUEUE_ALL)valid=valid&&saved.source_count==ln_music_library_count();
-                        else if(saved.source==LN_QUEUE_GROUP)valid=valid&&(saved.source_group&~LN_QUEUE_REVERSE)<ln_music_library_group_count();
-                        else for(uint32_t i=0;i<saved.count;++i)if(saved.tracks[i]>=ln_music_library_count())valid=false;
-                        if(valid){queue=saved;(void)select_current();}
+                        if(!same(saved->library_identity,identity))valid=false;
+                        if(saved->source==LN_QUEUE_ALL)valid=valid&&saved->source_count==ln_music_library_count();
+                        else if(saved->source==LN_QUEUE_GROUP)valid=valid&&(saved->source_group&~LN_QUEUE_REVERSE)<ln_music_library_group_count();
+                        else for(uint32_t i=0;i<saved->count;++i)if(saved->tracks[i]>=ln_music_library_count())valid=false;
+                        if(valid){queue=*saved;(void)select_current();}
                         else {
-                            queue.volume_db_tenths=saved.volume_db_tenths;queue.repeat=saved.repeat;queue.shuffled=saved.shuffled;
+                            queue.volume_db_tenths=saved->volume_db_tenths;queue.repeat=saved->repeat;queue.shuffled=saved->shuffled;
                             (void)ln_music_library_identity(queue.library_identity);
-                            if(saved.last_track_id&&ln_music_library_select_id(saved.last_track_id)){
-                                queue.position_samples=saved.position_samples;queue.shuffled=saved.shuffled;
+                            if(saved->last_track_id&&ln_music_library_select_id(saved->last_track_id)){
+                                queue.position_samples=saved->position_samples;queue.shuffled=saved->shuffled;
                                 selecting=restore_remap=true;
                             }
                         }
