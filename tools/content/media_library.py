@@ -292,13 +292,14 @@ def _source_music_metadata(root, records, cache_root, retail=None, published=Non
     cache = _MetadataCache(cache_root / 'music-metadata.sqlite3')
     result = {}
     prefetched = {}
+    relatives = []
     try:
         for index, (path, before) in enumerate(records):
             if index % 128 == 0:
-                prefetched = cache.prefetch(root, [p.relative_to(root).as_posix()
-                                                 for p, _ in records[index:index + 128]])
+                relatives = [p.relative_to(root).as_posix() for p, _ in records[index:index + 128]]
+                prefetched = cache.prefetch(root, relatives)
             try:
-                relative = path.relative_to(root).as_posix()
+                relative = relatives[index % 128]
                 key = str(path).casefold()
                 saved = (retail or {}).get(key, {})
                 value = cache.get(root, relative, before, prefetched=prefetched)
