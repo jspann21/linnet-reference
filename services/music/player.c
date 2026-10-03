@@ -124,15 +124,33 @@ static int cache_hit(struct player_slot *s,uint32_t at,uint32_t length){
     }
     return -1;
 }
-static bool cache_begin(struct player_slot *s,uint32_t window,uint32_t at,bool initial){
+static bool cache_metadata(const struct player_slot *s,uint32_t at){
+    /* Indexed AAC seeks read small tables far from their media packets. */
+    if(s->decoder.kind!=LN_DEC_AAC_M4A)return false;
+    const struct ln_alac *m=&s->decoder.data->m4a.container;
+    return m->mdat_end>m->mdat_start&&
+        ((uint64_t)at<m->mdat_start||(uint64_t)at>=m->mdat_end);
+}
+static bool cache_begin(struct player_slot *s,uint32_t window,uint32_t at,bool initial,uint32_t minimum){
     if(at>=s->media.size)return false;
     uint64_t available=s->media.size-at;
+    if(s->decoder.kind==LN_DEC_AAC_M4A){
+        const struct ln_alac *m=&s->decoder.data->m4a.container;
+        if(m->mdat_end>m->mdat_start){
+            uint64_t end=(uint64_t)at<m->mdat_start?m->mdat_start:
+                (uint64_t)at<m->mdat_end?m->mdat_end:s->media.size;
+            uint64_t region=end-(uint64_t)at;
+            if(region<minimum)region=minimum;
+            if(region<available)available=region;
+        }
+    }
     /* Every subsequent storage offset must remain representable. */
     if(available>UINT32_MAX-at)available=UINT32_MAX-at;
     if(!available)return false;
     struct player_cache_window *w=&s->cache[window];
     w->start=at;w->valid=0;
-    w->target=initial&&s->decoder.kind!=LN_DEC_AAC_M4A?131072u:PLAYER_COMPRESSED_CACHE_BYTES;
+    w->target=cache_metadata(s,at)?65536u:
+        initial&&s->decoder.kind!=LN_DEC_AAC_M4A?131072u:PLAYER_COMPRESSED_CACHE_BYTES;
     if(w->target>available)w->target=(uint32_t)available;
     w->filling=true;return true;
 }
@@ -157,12 +175,13 @@ static int cache_copy(struct player_slot *s,uint32_t window,uint32_t at,uint8_t 
     if(cache_progress(s)<0)return -1;
     uint32_t consumed=at-w->start+length;
     uint32_t threshold=w->target/2u;if(threshold>524288u)threshold=524288u;
-    if(!w->filling&&w->target-consumed<=threshold){
+    /* A metadata window must not prefetch a distant media region. */
+    if(!w->filling&&!cache_metadata(s,w->start)&&w->target-consumed<=threshold){
         uint32_t next=w->start+w->target,other=window^1u;
         struct player_cache_window *candidate=&s->cache[other];
         if(next<s->media.size&&!candidate->filling&&
            (candidate->start!=next||candidate->valid!=candidate->target)&&
-           cache_begin(s,other,next,false)&&cache_progress(s)<0)return -1;
+           cache_begin(s,other,next,false,0)&&cache_progress(s)<0)return -1;
     }
     return 1;
 }
@@ -197,9 +216,13 @@ static int read_media(void *context,uint64_t offset,uint8_t *buffer,uint32_t len
         if(at>s->media.size||length>s->media.size-at)return -1;
         uint32_t window=s->cache_current^1u;
         uint32_t begin=at;
-        if(s->cache_initial&&s->decoder.kind==LN_DEC_AAC_M4A)
+        if(s->cache_initial&&s->decoder.kind==LN_DEC_AAC_M4A&&!cache_metadata(s,at)){
             begin=at&~(131072u-1u);
-        if(!cache_begin(s,window,begin,s->cache_initial))return read_disk(s,at,buffer,length);
+            const struct ln_alac *m=&s->decoder.data->m4a.container;
+            if(m->mdat_end>m->mdat_start&&begin<m->mdat_start)begin=(uint32_t)m->mdat_start;
+        }
+        if(!cache_begin(s,window,begin,s->cache_initial,length+(at-begin)))
+            return read_disk(s,at,buffer,length);
         s->cache_initial=false;
         if(cache_progress(s)<0)return -1;
         return cache_cached(s,at,buffer,length);
