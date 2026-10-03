@@ -130,7 +130,12 @@ the installed Linnet build is shown separately as inactive files on the device.
    automatically and finishes the rest of the update. Select it in **Files that
    need attention** to open its folder or retry it after fixing it. Settings
    contains preparation options and library recovery.
-5. Select **Eject iPod**, then restart Linnet if Disk Mode remains active.
+5. The Media Manager's **Eject iPod** action is storage-only. If Linnet sent the
+   iPod into Apple Disk Mode for this session, instead run
+   `python linnet device eject --reboot --disk-number N --expected-serial STORAGE_SERIAL --allow-uac`.
+   A plain or UI eject can leave the device in Apple Disk Mode with Windows
+   reporting **No Media**; at that point the remaining recovery is a physical
+   Menu+Select restart.
 
 The main window is a fixed preparation overview with no page scrollbar. Place
 source media in the Music, Notes, Photos and Videos folders on the iPod, then

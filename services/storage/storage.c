@@ -165,7 +165,7 @@ int ln_storage_publication_fault(uint32_t stage){
 }
 void ln_state_publication_step(uint32_t stage){
     if(publication_fault!=stage)return;publication_fault=0;
-    /* Deliberate crash-consistency campaign cut: bypass the flush barrier. */
+    /* Deliberate crash-consistency cut: bypass the flush barrier. */
     *(volatile uint32_t *)(uintptr_t)0x60006004|=4u;
     for(;;)__asm__ volatile("nop");
 }

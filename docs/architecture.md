@@ -19,7 +19,6 @@ There is no runtime JavaScript VM or general-purpose allocator.
 | `apps/`, `ui/`, `themes/` | Applications, renderer and static layouts |
 | `config/`, `sdk/` | Build configuration and app/theme authoring |
 | `tools/` | CLI, compiler, media preparation, device link and simulator |
-| `scenarios/` | Existing device verification scenarios |
 | `third_party/` | Codec dependencies, licenses and provenance |
 | `docs/` | Architecture, formats, workflows and project notes |
 

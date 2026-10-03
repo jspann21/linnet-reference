@@ -4,14 +4,25 @@
 Keep durable documentation in the source tree and retain useful local outputs.
 Build artifacts are written to `out/<profile>/<target>/<kind>/`.
 
-Firmware backups, installation plans, predecessor files and recovery receipts
-belong to the physical device and installation that produced them. Preserve them
-together in a separate local backup before cleaning `out/`. Keep device serials,
-hardware GUIDs, disk identities and personal media out of GitHub contributions.
+Do not use `out/` as a documentation, investigation-note, transcript, or research
+archive. Agents and repository tools must not recursively inventory, search, or
+load `out/`, sibling artifact archives, or prior worktrees for general context.
+Read an exact artifact only when the current operation requires it, check its
+size first, and keep the read bounded. Generated receipts and binary evidence
+are operation outputs; they are not project documentation or current source of
+truth.
 
-Plans can reference absolute paths and pinned hashes. If an artifact archive is
-relocated, restore the required files and dependencies to the paths expected by
-the plan before using it. Do not edit hashes to accommodate relocation.
+Keep only the current device-owned recovery material that is still required to
+restore an installed device. Old standalone plan archives are not repository
+context and are not retained for future agent use. Keep device serials, hardware
+GUIDs, disk identities and personal media out of GitHub contributions.
+
+Archived plans are not inputs to the normal Disk Mode exit workflow. Run
+`python linnet device eject --reboot --disk-number N --expected-serial STORAGE_SERIAL --allow-uac` without an
+explicit plan so the command resolves the current installation record from the
+mounted iPod. Delete obsolete plan archives instead of searching them or old
+worktrees to make an eject work. If current metadata fails validation, keep the
+volume mounted and repair the current installation state.
 
 Inspect the connected device and its matching receipts before a firmware
 operation; an old build report does not establish the current installed state.

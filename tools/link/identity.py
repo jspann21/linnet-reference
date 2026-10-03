@@ -1,4 +1,4 @@
-"""Linnet Link running-image identity shared by discovery and campaigns."""
+"""Linnet Link running-image identity helpers."""
 import struct
 import zlib
 from tools.studio.targets import TARGET_IDS_BY_NUMBER as TARGETS

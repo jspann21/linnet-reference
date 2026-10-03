@@ -53,5 +53,5 @@ harness or fixture files:
 - Every ALAC core/service ARM object linked together without garbage collection
   or unresolved symbols, using freestanding ARM7 and strict warning flags.
 
-The integrated player campaign measures real-time throughput, DMA interaction
-and listening behavior.
+Integrated player testing measures real-time throughput, DMA interaction, and
+listening behavior.

@@ -24,7 +24,9 @@ speeds up music indexing.
 
 1. Connect the iPod in Disk Mode and select **Find iPod**.
 2. Select Music, Notes, Photos or Videos; optionally add files or folders.
-3. Select **Prepare & update iPod**, then safely eject and restart Linnet.
+3. Select **Prepare & update iPod**. If Linnet entered Apple Disk Mode for this
+   session, leave it with `python linnet device eject --reboot --disk-number N --expected-serial STORAGE_SERIAL --allow-uac`;
+   do not use a storage-only eject.
 
 Originals are preserved. Music and native IPVF video can be indexed in place;
 photos and other videos need prepared copies. See the [Media Manager guide](docs/media-manager.md)

@@ -118,6 +118,6 @@ the repository default.
 
 Build and simulator results cannot establish hardware compatibility. On the
 physical model, exercise startup, display, controls, audio, storage, power,
-recovery, update and installer restoration through the existing `scenarios/`
-and device workflows. Document the exact hardware and storage combination,
+recovery, update, and installer restoration with the relevant Linnet Link
+commands and device workflows. Document the exact hardware and storage combination,
 checks performed and known limitations when contributing the target.

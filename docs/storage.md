@@ -35,7 +35,7 @@ board's existing storage supply and a conservative settling delay; it does not
 raise USB charging current based on an adapter name or card capacity. PIO remains enabled for reads and writes;
 SSD identification does not select a DMA policy.
 
-`python linnet device media-info --port COM6` reports identity, capacity, sector
+`python linnet device media-info --port COMx` reports identity, capacity, sector
 sizes, capabilities, profile quirks, rail/standby state, wake and power-off counts,
 and idle failures without waking storage. The block cache retains two read
 windows so corresponding mirrored FAT sectors remain resident. Writes, reset,

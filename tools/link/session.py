@@ -7,6 +7,11 @@ import zlib
 from .protocol import ACK, ERROR, MAX_FRAME, MAX_PAYLOAD, Command, Frame, Parser, ProtocolError
 from .transport import Transport
 
+STORAGE_STATE_FIELDS = ('magic','phase','error','files','prepared','sectors_low',
+    'sectors_high','ready','quarantined','pending','completed','submitted','retries',
+    'failed','canceled','coalesced','cache_hits','read_ahead_sectors','max_service_us',
+    'partition_lba','partition_sectors','clusters','epoch','work_capacity')
+
 
 class AmbiguousCommand(RuntimeError):
     """Reconnect and inspect device state before deciding whether to act again."""

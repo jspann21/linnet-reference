@@ -1,6 +1,7 @@
 # Linnet Link Protocol
 
-`device media-info --port COM6` reads command 95 with an empty payload. The
+`device media-info --port COMx` reads command 95 with an empty payload. Replace
+`COMx` with the currently discovered port for the intended device. The
 192-byte MEDI response reports discovered media and power state without waking
 the drive. Fields are documented in `storage.md` and `formats.md`.
 Storage data commands allow 45 seconds to cover a bounded 30-second cold wake;
@@ -10,6 +11,69 @@ Linnet Link is a development-only binary protocol. Host framing, an optional
 serial adapter, a bounded native framing codec and command dispatcher establish
 the development software contracts. The native PP5020 CDC ACM driver implements endpoint
 descriptors, control transfers and bulk DMA. Serial port discovery alone does not establish Linnet Link support.
+
+## Device ownership and connection
+
+Coordinate with other active work before opening a serial port, entering Disk
+Mode, ejecting, rebooting, installing firmware, or writing device files.
+Discover connected devices and select the intended Linnet endpoint by its
+observed USB serial and target. Never hard-code or reuse a USB serial, COM port,
+disk number, storage serial, or target identity from another device or session.
+A COM number is only a current Windows assignment; do not probe unrelated ports.
+
+Install `pyserial==3.5`. `python linnet device info` lists serial metadata without
+opening or probing candidate ports. After selecting the intended endpoint,
+`python linnet device info --port COMx` performs HELLO and STATUS. Before every
+mutation, match the observed USB serial, target, profile, image kind, build ID,
+image SHA-256, boot generation, health, and advertised capabilities to the
+intended operation. Never infer device identity from a COM or disk number.
+
+Linnet Link exists in development and trace firmware; release images exclude it.
+USB reset, reconnect, reconfiguration, and DTR changes create a new session. A
+boot generation is device runtime state and is distinct from the USB connection
+generation. A missing, corrupt, mismatched, rejected multi-command, or
+out-of-order acknowledgement poisons the session. Close it, rediscover by USB
+serial, reconnect, and inspect identity and state. Never automatically replay a
+mutation.
+
+## Entering and leaving Apple Disk Mode
+
+Read this before sending command 34 or updating files through Apple's Disk
+Mode. A complete interactive round trip on Windows is:
+
+```powershell
+python linnet device reboot --mode disk --port COMx
+# Perform the intended filesystem work while the iPod is mounted.
+python linnet device eject --reboot --disk-number N --expected-serial STORAGE_SERIAL --allow-uac
+```
+
+Replace `COMx` and `N` with the currently observed Linnet port and Windows disk
+number for the intended device. Discover and validate its USB serial, target,
+storage serial, port, and disk identity for every session; never reuse another
+device's values. The first command asks the running Linnet image to start Apple
+Disk Mode. The second command resolves the current installation record from the
+mounted iPod, validates the disk and installed Boot state, rewrites the exact
+same guarded firmware-directory sector, ejects storage, and verifies that Linnet
+Link returns. An explicit `--plan` and `--plan-sha256` are low-level overrides,
+not the normal workflow. Do not look in archived `out/` directories or old
+worktrees for a plan.
+
+Do not use plain `device eject`, `device eject --wait-link`, Windows Shell eject,
+or the Media Manager's storage-only eject to finish a Linnet-initiated Disk Mode
+session. They only remove storage. They do not request a firmware restart and
+can leave Apple Disk Mode running while Windows reports **No Media** and Linnet
+has no COM endpoint. `--wait-link` only observes; it never changes that state.
+
+If `device eject --reboot` fails its preflight, keep the volume mounted and fix
+the current installation metadata or elevation/session setup. Never substitute
+a plain eject. If storage has already been ejected and the iPod has no Linnet
+endpoint, no host software command can reach either firmware; use a physical
+Menu+Select restart.
+
+For an unattended workflow, prepare and start the matching finite refresh session
+before `device reboot --mode disk`. Treat a missing session or failed readiness
+check as a reason not to enter Disk Mode. The session procedure is documented
+under [Finite refresh sessions](#finite-refresh-sessions).
 
 ## Frame layout
 
@@ -58,12 +122,49 @@ before dispatching mutation. A new session does not authorize replaying old work
 | 50 | READ_CRASH | Empty / bounded crash record |
 | 51 | CLEAR_CRASH | Empty / accepted acknowledgement |
 | 52 | CRASH | u32 mode, currently zero only / accepted acknowledgement before deliberate fault |
+| 53 | STARTUP_TIMING | Empty / 64-byte retained startup timing record |
+| 54 | BOOT_TIMELINE | Empty / 192-byte Boot and OS timeline record |
 | 64 | PLATFORM_STATE | Empty / 128-byte `PLAT` state record |
 | 65 | INJECT_INPUT | Boot generation, count, event triples / generation and accepted count |
 | 66 | CAPTURE_SCREEN | Boot generation / 28-byte immutable snapshot descriptor |
 | 67 | SCREEN_READ | Capture ID, boot generation, offset, length / capture ID, generation, offset, pixel bytes |
 | 68 | PLATFORM_CONTROL | Boot generation, action, argument / same three words on acceptance |
 | 69 | UI_STATE | Empty / 64-byte `UIST` native UI record |
+| 70 | INPUT_STATE | Empty / 64-byte `INP1` low-level input diagnostic record |
+| 80 | STORAGE_STATE | Empty / 96-byte `STOR` record |
+| 81 | SCRATCH_READ | Offset and length / offset and bytes |
+| 82 | SCRATCH_WRITE | Generation, offset and bytes / generation and end offset |
+| 83 | SETTINGS_GET | Empty / generation and settings bytes |
+| 84 | SETTINGS_PUT | Generation and settings bytes / generation and length |
+| 85 | UPDATE_BEGIN | Generation, image length and SHA-256 / generation and zero |
+| 86 | UPDATE_CHUNK | Generation, offset and bytes / generation and end offset |
+| 87 | UPDATE_FINISH | Generation / generation and zero after durable verification |
+| 88 | UPDATE_STATUS | Empty / 64-byte `USTA` record |
+| 89 | STORAGE_FAULT | Generation and mode / generation and mode |
+| 91 | STORAGE_RECOVER | Generation / generation and zero |
+| 92 | REBOOT_PERSISTENT | Generation / accepted acknowledgement before transition |
+| 93 | PUBLICATION_FAULT | Generation and stage / generation and stage |
+| 94 | ATA_DIAGNOSTICS | Empty or diagnostic subcommand / fixed diagnostic record |
+| 95 | MEDIA_INFO | Empty / 192-byte `MEDI` record |
+| 96 | FILE_RESIZE | Generation, create/grow action and size / generation and size |
+| 97 | WORK_READ | Offset and length / offset and bytes |
+| 98 | WORK_WRITE | Generation, offset and bytes / generation and end offset |
+| 100 | NATIVE_BEGIN | Generation, package length and SHA-256 / generation and zero |
+| 101 | NATIVE_CHUNK | Generation, offset and bytes / generation and end offset |
+| 102 | NATIVE_APPLY | Generation / generation and zero after complete verification |
+| 103 | NATIVE_STATUS | Empty / 64-byte `LNPK` status |
+| 112 | AUDIO_STATE | Empty / 80-byte `AUDS` record |
+| 113 | AUDIO_CONFIG | Generation and sample rate / generation and rate |
+| 114 | AUDIO_PCM | Generation, expected frame offset and stereo PCM / generation and next frame offset |
+| 115 | AUDIO_CONTROL | Generation, action and argument / generation and action |
+| 116 | PLAYER_STATE | Empty / 64-byte `PLYR` record |
+| 117 | PLAYER_OPEN | Generation and NUL-terminated absolute ASCII path / generation and zero |
+| 118 | PLAYER_CONTROL | Generation, action and optional seek position / generation and action |
+| 119 | LIBRARY_STATE | Empty / 64-byte `LIBS` record and library SHA-256 |
+| 120 | PLAYER_TIMING_STATE | Empty / 124-byte `TIME` record |
+| 121 | PHOTOS_STATE | Empty / 128-byte `PHOT` record |
+| 122 | VIDEO_STATE | Empty or development metadata page / 128-byte `VIDS` or metadata record |
+| 123 | VIDEO_MEASUREMENT | Generation and mode / generation and mode |
 
 HELLO, INFO and STATUS return the same 96-byte native identity record:
 `LNID` at offset 0; u32 target ID at 4, reserved zero at 8, profile at 12, image kind
@@ -77,6 +178,114 @@ an unsupported operation must reject explicitly, never report success. The
 implemented storage and installation commands are described below; log
 subscription is not implemented.
 
+Reserved command gaps are unsupported and must be rejected. New commands must
+be added to the protocol enum, native dispatcher, host validation, release
+exclusion, and this document. Do not send experimental numeric commands to
+physical hardware.
+
+## Host CLI reference
+
+Use the CLI when it exposes an operation. It performs identity checks, bounded
+timeouts, reply validation, and reconnect handling that raw requests do not.
+Commands emit JSON on stdout. Operations that need durable evidence keep a
+bounded receipt below `out/runs/`.
+
+Passive commands are:
+
+- `device info` to list ports without probing, or `device info --port COMx` to
+  read HELLO and STATUS for the selected endpoint.
+- `device media-info --port COMx` for media geometry, identity, capabilities,
+  quirks, power state, timeouts, power cycles, and spin-up state without waking
+  the drive.
+- `device ui-state --port COMx` for scene, selection, lifecycle, paint, dirty,
+  pending action, arena, generation, and scene-count state.
+- `device startup-timing --port COMx`, `device boot-timeline --port COMx`, and
+  `device video-startup-timing --port COMx` for their retained timing records.
+- `device storage-info --port COMx` for storage plus persistent-update state,
+  and `device native-status --port COMx` for native-package progress and result.
+- `device audio-state|player-state|player-timing-state|library-state|photos-state|video-state
+  --port COMx` for the corresponding runtime telemetry.
+
+Controlled mutation commands are:
+
+- `device boot --mode ram --image IMAGE.los --port COMx` to upload, CRC/SHA
+  verify, validate, and chainload once without persistent installation.
+- `device reboot --mode os|boot|disk|persistent --port COMx` to request an OS,
+  recovery Boot, Apple Disk Mode, or prepared persistent restart. An ACK means
+  accepted for deferred execution; observe the next identity to prove completion.
+- `device install --image IMAGE.los --port COMx` to publish a persistent A/B OS
+  candidate, and `device native-install --package PACKAGE.lnb --package-sha256
+  SHA256 --port COMx` to apply one fixed device-bound native Boot package.
+- `device storage-recover --port COMx` to start an asynchronous remount; poll
+  `storage-info`. `device storage-fault --mode 1..5 --port COMx` deliberately
+  injects timeout-before-issue, short completion, reset-before-issue, stale
+  completion, or flush failure.
+- `device player-open --path /ABSOLUTE/ASCII/PATH --port COMx`, followed by
+  `player-pause`, `player-resume`, `player-stop`, or
+  `player-seek --sample POSITION`. Read `player-state` after acceptance.
+- `device eject --reboot --disk-number N --expected-serial STORAGE_SERIAL
+  --allow-uac` for the interactive Apple Disk Mode exit. Always pass the
+  currently observed storage serial rather than relying on a default.
+  `refresh-session prepare|start|status|stop` provides a finite plan-bound
+  elevated helper for unattended exits; `refresh-session install` is the
+  separately authorized reviewed-Boot installation operation.
+
+Mount-based `device detect-retail`, `bootstrap`, `bootstrap-status`, `restore`,
+and content publication commands are not Linnet Link operations.
+
+`tools.link.session.Session` additionally exposes direct helpers for identity,
+upload/verify/boot, crash read, platform state/input/control/capture, media and
+storage state, storage performance and timing, ATA capabilities, scratch,
+settings, WORK, persistent publication, native maintenance, publication faults,
+and video measurement. Use these only when no CLI command covers the task,
+and preserve the same identity, generation, timeout, evidence, and ambiguity
+rules.
+
+## Logs, crashes, and low-level diagnostics
+
+`READ_LOG` returns the bounded 96-byte completion and recovery diagnostic
+snapshot. It is a snapshot, not a stream; log subscription is not implemented.
+`READ_METRICS` returns the bounded 32-byte native metrics record.
+
+`READ_CRASH` returns the retained 144-byte CRC-protected `CRSH` mailbox with its
+sequence, reason, r0..r15, CPSR, flags, build identity, boot generation, service,
+and event. `CLEAR_CRASH` clears it. `CRASH` accepts only mode zero and
+deliberately faults after the acceptance ACK retires. Clearing or triggering a
+crash has no standalone CLI command and must never be retried after an uncertain
+acknowledgement.
+
+`STARTUP_TIMING` records candidate validation, copy, entry, BSS, IRAM and C-entry
+timestamps. `BOOT_TIMELINE` records native Boot and OS milestones, intervals,
+image I/O/hash counters, inherited clock/cache state, and Boot clock-transition
+diagnostics. The CLI validates their size, magic, generation, masks, counters,
+and only reports intervals whose endpoints exist.
+
+`INPUT_STATE` returns sixteen words beginning with `INP1`: input poll, ready-read,
+packet and invalid-packet counters; last controller status, packet, and wheel
+position; and the relevant controller registers. It has no standalone CLI
+wrapper.
+
+`ATA_DIAGNOSTICS` is a passive diagnostic multiplexer. Empty payload returns the
+base 24-word ATA record. Development subcommands are:
+
+| Subcommand | Record or purpose |
+| ---: | --- |
+| 1 | `SIOP`: block/ATA command, sector, wall-time, service-time, poll, queue, retry, failure and timeout performance |
+| 2 | `POLL`: storage poll, progress, FAT and runtime callback inclusive timing |
+| 3 | `ACAP`: cached IDENTIFY capability words plus passive controller and clock registers |
+| 4 | `RNDR`: dirty render and publication timing |
+| 5 | `SCHD`: scheduler opportunity, wait, overdue, completion-age and cancellation telemetry |
+| 6 | ATA clock diagnostics |
+| 7 | `DSYN`: display synchronization and presentation timing |
+| 8 | `BLIT`: resident display-worker, packed scanout and queue consistency |
+| 9 | Target LCD register and panel snapshot, where implemented |
+| 10 | Target runtime idle-clock diagnostics, where implemented |
+| 11 | Cover Flow diagnostics, where compiled |
+
+`Session` has validated helpers for subcommands 1 through 5. The remaining
+subcommands are low-level and can reject based on target, image kind, profile,
+or compiled features.
+
 ## Platform commands
 
 Commands 64 through 68 are available in development and trace OS images. They
@@ -84,6 +293,14 @@ use normal frame sequence, CRC and acknowledgement rules. Their
 generation field is the running boot generation from `LNID`, not the USB
 connection counter. A mismatching generation is rejected before mutation.
 The exact state and screenshot layouts are in [formats.md](formats.md).
+
+`PLATFORM_STATE` returns 32 words beginning with `PLAT`: generation; readiness,
+sleep, COP, input and backlight flags; selection and scene; accepted, processed
+and dropped events; maximum event latency and queue high-water marks; arena and
+frame counters; maximum LCD presentation time; COP queue and reset state;
+sleep/wake and idle counters; physical buttons, hold and headphones; synthetic
+flags and last injected sequence; animation; clock; battery; charge flags; and
+maximum IRQ time.
 
 INJECT_INPUT contains u32 generation, u32 count, then 1..32 triples of u32
 event sequence, u32 kind and **signed i32** value. Event sequences must increase
@@ -113,6 +330,7 @@ PLATFORM_CONTROL actions are:
 | 5 | Start animation | 1..120 frames; rejected while an animation is active |
 | 6 | Clear synthetic switch overrides | 0; restores physical hold/headphone state |
 | 7 | Reset shell | 0; requires no queued events, animation or sleep |
+| 8 | Target display diagnostic | Target-specific argument; rejected when the target does not implement it |
 
 Control ACKs confirm acceptance. Poll state for asynchronous completion. In
 particular, a COP queue reset advances its reset counter and requests a redraw;
@@ -128,22 +346,11 @@ image restarts. A stale capture ID, changed boot generation or out-of-range read
 is rejected. The host verifies the full raw framebuffer CRC before saving a PNG
 preview; capture proves framebuffer contents, not physical LCD appearance.
 
-Run the production platform campaign against the intended `.los` image:
-
-```powershell
-python linnet device platform-cycle --port COM6 --image <development-os.los> --scenario scenarios/platform.json
-```
-
-The port is selected explicitly and reconnects use its physical serial identity.
-The campaign records exact image/hash/generation, synthetic navigation and button
-transitions, input latency, hold suppression, framebuffer CRCs, COP activity and
-queue wrap/reset, three backlight transitions, three sleep/wake cycles, and idle
-time without redraws. Receipts, raw screenshots and PNG previews share one run
-directory. No ambiguous mutation is retried.
-
-`automated_passed` records the measured automated checks. Physical buttons,
-wheel, hold switch, headphone detection, visible backlight, sleep/wake and screen
-artifacts are checked on the device.
+`Session.capture_screen()` reads the descriptor and chunks, verifies the complete
+framebuffer CRC, and returns the RGB565 bytes and dimensions. Save or convert a
+capture only when the current task needs it. Physical LCD appearance, buttons,
+wheel, switches, headphones, visible backlight, and wake behavior are observations
+made on the device rather than claims derived from the captured framebuffer.
 
 ## Native UI inspection
 
@@ -201,8 +408,8 @@ The CLI verifies the size and magic and prints named fields alongside the
 HELLO identity:
 
 ```powershell
-python linnet build --profile dev --device-serial 000000F7A765 --verify
-python linnet device ui-state --port COM6
+python linnet build --profile dev --device-serial DEVICE_USB_SERIAL --verify
+python linnet device ui-state --port COMx
 python linnet ui compile --system themes/midnight/system.toml --output out/ui-midnight
 python linnet simulator --system themes/midnight/system.toml --tape out/ui-tape.json --output out/simulator-midnight
 ```
@@ -224,7 +431,7 @@ quality or wheel feel.
 ## Upload and uncertainty
 
 The generic host upload API allows images up to 16 MiB. The physical P98
-staging region and campaign accept at most 8 MiB including the LOS header.
+staging region accepts at most 8 MiB including the LOS header.
 The upload owns one staging region and
 accepts contiguous offsets only. Each chunk receives an explicit next-offset
 acknowledgement; the host pipelines up to four chunks before collecting their
@@ -242,7 +449,7 @@ USB serial identity, reconnect, and inspect identity/state before a new decision
 Never replay BOOT_RAM, a reboot, crash clearing, or an upload mutation merely
 because its acknowledgement was lost. Offset-based resume is deferred until
 the device exposes a verified image identity plus committed offset. Ordinary
-cycles must never overwrite the developer loader.
+operations must never overwrite the developer loader.
 
 ## Host integration and release exclusion
 
@@ -303,10 +510,11 @@ entry points, staging buffers, crash developer services and chainload code. The
 release verifier checks linked symbols and protocol magic. Host tools do not
 run on the device and are never packaged into the release image.
 
-On Windows, automatic eject/restart requires the exact installed Boot plan and
-its SHA-256, plus the observed disk identity. See `python linnet device eject --help`
-for arguments and elevation options. Plain eject may leave Apple Disk Mode active;
-`--wait-link` alone does not request reboot. Never replay an ambiguous mutation.
+On Windows, automatic eject/restart validates the exact current installed Boot
+state and observed disk identity. The normal interactive command resolves that
+installation record automatically; see `python linnet device eject --help` for
+the low-level explicit-plan and elevation options. Never replay an ambiguous
+mutation.
 
 ## Storage commands
 
@@ -352,27 +560,9 @@ exercise software error paths; they do not certify electrical fault handling.
 Publication stages cut execution before writing the inactive record, after its
 write callback, after the explicit flush, and after readback. The FAT write
 callback itself flushes, so stage 2 already follows a durable file write.
-Cuts reset without the normal flush barrier and are used only by the explicit
-crash-consistency campaign. Ambiguous commands require reconnect and inspection;
+Cuts reset without the normal flush barrier and are used only when explicitly
+testing crash consistency. Ambiguous commands require reconnect and inspection;
 none are automatically replayed.
-
-`device storage-cycle` uses `scenarios/storage.json` for deterministic
-scratch writes, full readback hashes, random reads, settings restoration and
-fault recovery, plus `WORK.BIN` creation/growth with preserved old contents and
-zeroed extensions. Resize returns after publication and starts a remount; callers
-wait for prepared state and the expected capacity before new file operations.
-`device update-cycle` takes a healthy OS and a deliberate crash
-OS for candidate confirmation, rollback and four publication cuts each for
-settings and candidate activation. Each saves
-receipts under `out/runs`.
-
-`device storage-sync-cycle` requires an explicit physical disk number and the
-SHA-pinned installed Boot plan. It verifies the running OS, enters Apple Disk
-Mode, writes/fsyncs/readbacks a new deterministic 1 MiB `LINNET/HOSTSYNC.BIN`,
-then uses the guarded directory refresh/eject mechanism and verifies the exact
-healthy OS returns. Existing evidence files are refused. For automatic boot,
-the eject helper can explicitly expect a validated OS identity while also
-checking any transient Boot against its installed plan.
 
 
 ## Native Boot maintenance commands
@@ -397,11 +587,11 @@ bit 1 records that directory writing was attempted. These bits alone do not prov
 durability. The host requires phase 10, error zero, writes mask 3, the complete
 package offset and the exact expected final firmware hash before reporting success.
 
-The fixed package pins target 98, storage serial `JQ5081G3SAY`, USB serial
-`000000F7A765`, capacity and reviewed partition geometry. The host re-derives
-the package from the hash-pinned plan. Its exact before-state assumes the original
-firmware is installed and the new candidate region is zero. A different full
-firmware hash is rejected before writing.
+Each fixed package pins the target, storage serial, USB serial, capacity, and
+reviewed partition geometry from its hash-pinned plan. Never reuse a package for
+another device. Its exact before-state assumes the original firmware is installed
+and the new candidate region is zero. A different full firmware hash is rejected
+before writing.
 
 Apply validates the package and reconstructed Boot LOS, acquires exclusive storage
 maintenance ownership after quiescing FAT activity, and checks MBR, original OSOS
@@ -415,8 +605,8 @@ The native directory is a single sector, so its interrupted publication does not
 have the dual-record guarantee of the persistent A/B metadata.
 
 ```powershell
-python linnet device native-install --package out/native-boot.lnb --package-sha256 <reviewed-package-sha256> --port COM6
-python linnet device native-status --port COM6
+python linnet device native-install --package out/native-boot.lnb --package-sha256 <reviewed-package-sha256> --port COMx
+python linnet device native-status --port COMx
 ```
 
 Receipts are saved under `out/runs`. A successful apply still requires a separate
@@ -424,12 +614,11 @@ restart and identity observation.
 
 No UAC elevation is used by native-install, persistent OS installation, package
 preparation, or ordinary file provisioning with sufficient filesystem permissions.
-The host raw-directory refresh is different: CLI eject/reboot defaults and sync callers
-pass `allow_prompt=False`. They reuse an already elevated token with a hidden
-child process or reject the operation without prompting. The sync campaign
-checks this prerequisite before entering Disk Mode. Plain Shell eject remains
-available without elevation and only confirms storage removal; it does not
-promise a firmware restart.
+The host raw-directory refresh is different: unattended callers pass
+`allow_prompt=False`. They reuse a matching live refresh session or an already
+elevated process, and must establish that prerequisite before entering Disk Mode.
+Plain Shell eject remains available without elevation and only confirms storage
+removal; it does not promise a firmware restart.
 
 Upload startup discovery now allows up to 180 seconds for the USB endpoint,
 then waits for matching healthy HELLO/STATUS before sending upload bytes.
@@ -461,8 +650,8 @@ python linnet device refresh-session status
 Subsequent `device eject --reboot` commands automatically reuse the matching
 live session. Omit `--allow-uac` for unattended use: if the session is unavailable
 and the calling process is not elevated, the command fails without a prompt.
-The sync campaign also checks for a matching live session before entering Disk
-Mode. OS/package installation through Linnet Link already needs no elevation;
+Any unattended Disk Mode workflow must check for a matching live session before
+entering Disk Mode. OS/package installation through Linnet Link already needs no elevation;
 this session covers the remaining Windows Disk Mode restart operation. A new
 Boot plan needs a new bound session. Stop explicitly with:
 
@@ -474,6 +663,36 @@ The process survives the launcher and individual CLI commands. It ends at the
 chosen expiry, explicit stop, or Windows logoff/restart; it is not an automatically
 starting Windows service.
 
+## Audio and player commands
+
+`AUDIO_STATE` is passive. Its `AUDS` record reports sample rate, queued and free
+frames, consumed and submitted frames, interrupts, underruns, inserted silence,
+fault, playing/paused/initialized state, last and maximum IRQ time, volume in
+tenths of a decibel, FIFO-empty interrupts, and maximum completion interval and
+lateness.
+
+The raw audio mutation commands have no public CLI wrapper. `AUDIO_CONFIG`
+initializes the requested sample rate. `AUDIO_PCM` submits sequential stereo
+16-bit PCM frames and requires the exact current submitted-frame offset.
+`AUDIO_CONTROL` actions are start 1, pause 2, stop 3, volume 4, and finish 5.
+These commands are generation-bound and reject incompatible storage, player, or
+video ownership. Use them only through a purpose-built, receipt-producing host
+operation.
+
+`PLAYER_STATE` returns phase, error, generation, sample rate, decode/render and
+underrun counters, total frames, pending transition, gapless join counters, and
+current position. `PLAYER_OPEN` accepts a generation plus an absolute NUL-
+terminated ASCII path of at most 255 bytes. `PLAYER_CONTROL` actions are pause
+1, resume 2, stop 3, and seek 4; seek adds an unsigned 64-bit sample position.
+The corresponding CLI commands perform a fresh STATUS identity check before
+sending a mutation and poison the session on any acknowledgement mismatch.
+
+`LIBRARY_STATE` reports library phase, signed error, tracks, groups, verified
+bytes, revision, and SHA-256. `PLAYER_TIMING_STATE` reports cumulative decoder,
+DSP, runtime, music, storage, Link and MP3 frame/synthesis/PCM timing plus clock,
+cache, idle, and decoder identity. Timing counters are observations, not proof
+of audible correctness.
+
 ## Media diagnostics
 
 Development command 121 (`PHOTOS_STATE`) is read-only and returns 32
@@ -484,10 +703,17 @@ are albums 0, grid 1, viewer 2. Release firmware excludes this command.
 
 Development command 122 (`VIDEO_STATE`) returns exactly 128 bytes with a `VIDS`
 header and the complete current playback, storage, audio and timing snapshot.
-Passing page 8 returns exactly 128 bytes with a `VMEA` header for startup
+Development metadata pages 0 through 8 are also available. Passing page 8
+returns exactly 128 bytes with a `VMEA` header for startup
 milestones. Latencies are measured from video open; zero means the milestone has
-not occurred. `python linnet device video-startup-timing --port COM6` reads the
+not occurred. `python linnet device video-startup-timing --port COMx` reads the
 passive snapshot.
+
+Development command 123 (`VIDEO_MEASUREMENT`) accepts the current generation
+and mode 0 cancel, 1 display, or 2 no display. It requires inactive, drained
+video; does not open media; preserves resume state; and stops after eight seconds
+of playback or preparation. `Session.video_measurement()` validates its reply;
+there is no standalone CLI command.
 
 Player timing uses the fixed 124-byte `TIME` record. It includes clock and
 decoder identity plus cumulative MP3 decode, synthesis and PCM conversion

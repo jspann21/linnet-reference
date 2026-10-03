@@ -6,7 +6,7 @@ import re
 import tempfile
 from datetime import datetime, timezone
 from tools.studio.native_package import prepare, PACKAGE_BYTES, MAX_PACKAGE_BYTES
-from .campaign import connect, _run_directory, _save
+from .device import connect, create_run_directory, save_json
 from .identity import decode
 
 
@@ -34,16 +34,16 @@ def validate_package(path, expected_sha):
 
 def install(root,package_path,expected_sha,port,progress=None):
     package,provenance=validate_package(package_path,expected_sha)
-    run_id,directory=_run_directory(root,provenance['image'])
+    run_id,directory=create_run_directory(root,provenance['image'])
     path=directory/'receipt.json'
     receipt=dict(run_id=run_id,operation='device-native-boot-update',passed=False,
         package=str(Path(package_path).resolve()),package_sha256=expected_sha.lower(),
         plan=provenance['plan'],plan_sha256=provenance['plan_sha256'],image=provenance['image'],
         device_write_attempted=False,steps=[],started_at=datetime.now(timezone.utc).isoformat())
-    _save(path,receipt);session=None
+    save_json(path,receipt);session=None
     def record(step):
         if step.get('device_write_attempted'):receipt['device_write_attempted']=True
-        receipt['steps'].append(step);_save(path,receipt)
+        receipt['steps'].append(step);save_json(path,receipt)
         if progress:progress(dict(run_id=run_id,**step))
     try:
         session,endpoint,identity=connect(port=port,serial_number=provenance['expected_linnet_usb_serial'])
@@ -53,7 +53,7 @@ def install(root,package_path,expected_sha,port,progress=None):
         if (status['target_id'] != provenance['image']['target_id'] or
                 status['profile']=='release' or status['image_kind']!='os'):
             raise RuntimeError('native install requires the authorized development RAM OS')
-        receipt['before']=dict(identity=status,endpoint=endpoint);_save(path,receipt)
+        receipt['before']=dict(identity=status,endpoint=endpoint);save_json(path,receipt)
         result=session.native_install(status['generation'],package,record)
         receipt.update(result)
     except (ValueError,RuntimeError,OSError) as exc:
@@ -61,5 +61,5 @@ def install(root,package_path,expected_sha,port,progress=None):
         receipt['inspection_required']=True
     finally:
         if session:session.close()
-        receipt['finished_at']=datetime.now(timezone.utc).isoformat();_save(path,receipt)
+        receipt['finished_at']=datetime.now(timezone.utc).isoformat();save_json(path,receipt)
     return receipt

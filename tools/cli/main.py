@@ -144,20 +144,6 @@ def parser():
     native.add_argument("--port",required=True)
     native_status=device.add_parser("native-status")
     native_status.add_argument("--port",required=True)
-    storage_cycle=device.add_parser("storage-cycle")
-    storage_cycle.add_argument("--image",type=Path,required=True)
-    storage_cycle.add_argument("--scenario",type=Path,required=True)
-    storage_cycle.add_argument("--port",required=True)
-    update_cycle=device.add_parser("update-cycle")
-    update_cycle.add_argument("--image",type=Path,required=True)
-    update_cycle.add_argument("--crash-image",type=Path,required=True)
-    update_cycle.add_argument("--port",required=True)
-    sync_cycle=device.add_parser("storage-sync-cycle")
-    sync_cycle.add_argument("--image",type=Path,required=True)
-    sync_cycle.add_argument("--port",required=True)
-    sync_cycle.add_argument("--disk-number",type=int,required=True)
-    sync_cycle.add_argument("--plan",type=Path,required=True)
-    sync_cycle.add_argument("--plan-sha256",required=True)
     for action in ("storage-info","storage-recover","storage-fault","install"):
         entry=device.add_parser(action)
         entry.add_argument("--port",required=True)
@@ -165,9 +151,9 @@ def parser():
         if action=="install":entry.add_argument("--image",type=Path,required=True)
     eject = device.add_parser("eject", help="Safely eject an explicitly identified Windows USB iPod disk")
     eject.add_argument("--disk-number", type=int, required=True)
-    eject.add_argument("--expected-serial", default="JQ5081G3SAY")
+    eject.add_argument("--expected-serial", required=True)
     eject.add_argument("--wait-link", action="store_true")
-    eject.add_argument("--link-serial", default="000000F7A765")
+    eject.add_argument("--link-serial")
     eject.add_argument("--reboot", action="store_true", help="Refresh the exact installed Boot directory before eject and verify restart")
     eject.add_argument("--plan", type=Path)
     eject.add_argument("--plan-sha256")
@@ -186,19 +172,6 @@ def parser():
     refresh_actions.add_parser("stop")
     refresh_install=refresh_actions.add_parser("install")
     refresh_install.add_argument("--disk-number",type=int,required=True)
-    cycle = device.add_parser("cycle")
-    cycle.add_argument("--image", type=Path, required=True)
-    cycle.add_argument("--scenario", type=Path, required=True)
-    cycle.add_argument("--port")
-    cycle.add_argument("--resume-run", type=Path, help="Resume an interrupted run using validated healthy-cycle evidence")
-    cycle.add_argument("--crash-image", type=Path, required=True)
-    cycle.add_argument("--hang-image", type=Path, required=True)
-    cycle.add_argument("--release-image", type=Path, required=True)
-    cycle.add_argument("--release-symbols", type=Path, required=True)
-    platform = device.add_parser("platform-cycle")
-    platform.add_argument("--image", type=Path, required=True)
-    platform.add_argument("--scenario", type=Path, required=True)
-    platform.add_argument("--port", required=True)
     reboot = device.add_parser("reboot")
     reboot.add_argument("--mode", choices=("os", "boot", "disk", "persistent"), required=True)
     reboot.add_argument("--port", required=True)
@@ -371,38 +344,6 @@ def main():
                            lambda item:print(json.dumps(item),file=sys.stderr))
             emit(result)
             return 0 if result['passed'] else 2
-        elif args.command == "device" and args.action == "update-cycle":
-            from tools.link.storage_campaign import update_cycle
-            result=update_cycle(ROOT/'out/runs',args.image,args.crash_image,args.port,
-                                lambda item:print(json.dumps(item),file=sys.stderr))
-            emit(result)
-            return 0 if result['automated_passed'] else 2
-        elif args.command == "device" and args.action == "storage-sync-cycle":
-            from tools.link.sync_campaign import cycle
-            result=cycle(ROOT/'out/runs',args.image,args.port,args.disk_number,args.plan,args.plan_sha256,
-                         lambda item:print(json.dumps(item),file=sys.stderr))
-            emit(result)
-            return 0 if result['passed'] else 2
-        elif args.command == "device" and args.action == "storage-cycle":
-            from tools.link.storage_campaign import cycle
-            result=cycle(ROOT/'out/runs',args.image,args.scenario,args.port,
-                         lambda item:print(json.dumps(item),file=sys.stderr))
-            emit(result)
-            return 0 if result['automated_passed'] else 2
-        elif args.command == "device" and args.action == "platform-cycle":
-            from tools.link.platform_campaign import cycle
-            result = cycle(ROOT / 'out/runs', args.image, args.scenario, args.port,
-                           lambda item: print(json.dumps(item), file=sys.stderr))
-            emit(result)
-            return 0 if result['automated_passed'] else 2
-        elif args.command == "device" and args.action == "cycle":
-            from tools.link.campaign import cycle
-            result = cycle(ROOT / "out/runs", args.image, args.scenario, args.port, args.crash_image,
-                           lambda item: print(json.dumps(item), file=sys.stderr),
-                           args.release_image, args.release_symbols, hang_image=args.hang_image,
-                           resume_run=args.resume_run)
-            emit(result)
-            return 0 if result["passed"] else 2
         elif args.command == "device" and args.action in ("bootstrap", "restore", "bootstrap-status"):
             from tools.studio.bootstrap import install, restore, status
             if args.action == "bootstrap":
@@ -414,14 +355,14 @@ def main():
         elif args.command == "device":
             from tools.link.transport import SerialTransport
             if args.port:
-                from tools.link.campaign import connect
+                from tools.link.device import connect
                 if args.action == 'boot':
                     print('Waiting for the device startup endpoint before upload.', file=sys.stderr)
                 session, connected_device, identity = connect(port=args.port,
                     deadline_seconds=180 if args.action == 'boot' else 15)
                 try:
                     if args.action == 'boot' and not identity.get('healthy'):
-                        from tools.link.campaign import wait_upload_ready
+                        from tools.link.device import wait_upload_ready
                         print('Waiting for persistent startup to settle before upload.', file=sys.stderr)
                         session, connected_device, identity = wait_upload_ready(session, connected_device, identity)
                     from tools.link.identity import decode
@@ -452,8 +393,8 @@ def main():
                     elif args.action=="native-status":
                         emit(dict(identity=identity,native=session.native_status()))
                     elif args.action=="storage-info":
-                        from tools.link.storage_campaign import FIELDS
-                        emit(dict(identity=identity,storage=dict(zip(FIELDS,session.storage_state())),update=list(session.update_status())))
+                        from tools.link.session import STORAGE_STATE_FIELDS
+                        emit(dict(identity=identity,storage=dict(zip(STORAGE_STATE_FIELDS,session.storage_state())),update=list(session.update_status())))
                     elif args.action=="storage-fault":
                         session.storage_fault(identity['generation'],args.mode)
                         emit(dict(accepted=True,mode=args.mode,synthetic=True))

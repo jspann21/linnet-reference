@@ -198,7 +198,7 @@ $logical=Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='"+$drive+"'")
             if identity["image_kind"] != "boot" or identity["build_id"] != manifest["image"]["build_id"]:
                 raise RuntimeError("ejection completed but returning Boot does not match the reviewed plan")
         else:
-            from .campaign import connect, _check_healthy_identity
+            from .device import connect, check_healthy_identity
             from .identity import decode
             # Persistent Boot validates the filesystem, image and durable
             # attempt before the OS performs its own mount/healthy publication.
@@ -233,7 +233,7 @@ $logical=Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='"+$drive+"'")
                         if status['generation'] != os_generation:
                             raise RuntimeError('OS generation changed during post-eject verification')
                         if status.get('healthy') is True:
-                            _check_healthy_identity(status, expected_os)
+                            check_healthy_identity(status, expected_os)
                             report.update(identity=status, link_serial=device['serial_number'], link_reconnected=True)
                             break
                     elif os_generation is not None or identity['image_kind'] != 'boot' or identity['build_id'] != manifest['image']['build_id']:
@@ -249,12 +249,14 @@ $logical=Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='"+$drive+"'")
         raise RuntimeError(f"Eject/reboot failed: {exc}. Retained refresh receipt: {receipt_path}; do not replay automatically") from exc
 
 
-def eject(disk_number: int, expected_serial: str = "JQ5081G3SAY",
-          wait_link: bool = False, link_serial: str = "000000F7A765") -> dict:
+def eject(disk_number: int, expected_serial: str,
+          wait_link: bool = False, link_serial: str | None = None) -> dict:
     if os.name != "nt":
         raise RuntimeError("device eject requires Windows")
-    if disk_number < 0 or not expected_serial.strip() or not link_serial.strip():
-        raise ValueError("explicit disk number and nonempty expected serials are required")
+    if disk_number < 0 or not expected_serial.strip():
+        raise ValueError("explicit disk number and expected storage serial are required")
+    if wait_link and (not link_serial or not link_serial.strip()):
+        raise ValueError("--wait-link requires an explicit Linnet Link USB serial")
     config = base64.b64encode(json.dumps(dict(number=disk_number,
         serial=expected_serial.strip())).encode()).decode()
     script = r'''
@@ -359,12 +361,12 @@ throw ('Eject requested once, but storage removal or media unavailability was no
     report = json.loads(result.stdout)
     report["link_reconnected"] = False
     if wait_link:
-        from .campaign import connect
+        from .device import connect
         try:
             # Enumeration can precede command readiness. Retry only discovery,
             # opening and read-only HELLO on fresh sessions; the single eject
             # request above is outside this loop and is never replayed.
-            session, device, identity = connect(serial_number=link_serial,
+            session, device, identity = connect(serial_number=link_serial.strip(),
                                                 deadline_seconds=20)
         except (OSError, RuntimeError) as exc:
             raise RuntimeError("Storage ejection confirmed, but Linnet Link did not reconnect; Apple Disk Mode requires a physical Menu+Select restart") from exc
