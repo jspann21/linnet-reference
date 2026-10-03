@@ -198,41 +198,44 @@ def lz4_decompress(data: bytes, expected_size: int | None = None) -> bytes:
         raise ValueError("negative expected LZ4 size")
     output = bytearray()
     position = 0
+    data_size = len(data)
+    output_size = 0
     last_match_start: int | None = None
-    while position < len(data):
+    while position < data_size:
         token = data[position]
         position += 1
         literal_length = token >> 4
         if literal_length == 15:
             while True:
-                if position >= len(data):
+                if position >= data_size:
                     raise ValueError("truncated LZ4 literal length")
                 extra = data[position]
                 position += 1
                 literal_length += extra
                 if extra != 255:
                     break
-        if (position + literal_length > len(data) or
+        if (position + literal_length > data_size or
                 (expected_size is not None and
-                 literal_length > expected_size - len(output))):
+                 literal_length > expected_size - output_size)):
             raise ValueError("truncated LZ4 literals")
         output.extend(data[position:position + literal_length])
+        output_size += literal_length
         position += literal_length
-        if position == len(data):
+        if position == data_size:
             if literal_length == 0 or (
-                    literal_length < 5 and len(output) >= 5):
+                    literal_length < 5 and output_size >= 5):
                 raise ValueError("LZ4 block lacks canonical terminal literals")
             break
-        if position + 2 > len(data):
+        if position + 2 > data_size:
             raise ValueError("truncated LZ4 offset")
         offset = struct.unpack_from("<H", data, position)[0]
         position += 2
-        if offset == 0 or offset > len(output):
+        if offset == 0 or offset > output_size:
             raise ValueError("invalid LZ4 offset")
         match_length = token & 0x0F
         if match_length == 15:
             while True:
-                if position >= len(data):
+                if position >= data_size:
                     raise ValueError("truncated LZ4 match length")
                 extra = data[position]
                 position += 1
@@ -241,10 +244,10 @@ def lz4_decompress(data: bytes, expected_size: int | None = None) -> bytes:
                     break
         match_length += 4
         if (expected_size is not None and
-                match_length > expected_size - len(output)):
+                match_length > expected_size - output_size):
             raise ValueError("LZ4 decoded size exceeds expected size")
-        last_match_start = len(output)
-        source = len(output) - offset
+        last_match_start = output_size
+        source = output_size - offset
         if match_length <= offset:
             output.extend(output[source:source + match_length])
         else:
@@ -253,9 +256,10 @@ def lz4_decompress(data: bytes, expected_size: int | None = None) -> bytes:
             repeats, remainder = divmod(match_length, offset)
             output.extend(pattern * repeats)
             output.extend(pattern[:remainder])
-    if expected_size is not None and len(output) != expected_size:
+        output_size += match_length
+    if expected_size is not None and output_size != expected_size:
         raise ValueError("LZ4 decoded size mismatch")
-    if last_match_start is not None and len(output) - last_match_start < 12:
+    if last_match_start is not None and output_size - last_match_start < 12:
         raise ValueError("LZ4 final match starts too near block end")
     return bytes(output)
 
