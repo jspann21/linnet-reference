@@ -1893,12 +1893,12 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     header[64:96] = hashlib.sha256(payload).digest()
     struct.pack_into("<I", header, 124, zlib.crc32(header[:124]))
     database = bytes(header) + payload
-    validate_database(database)
+    from .browse import prepare as prepare_browse
+    browse_data = prepare_browse(database)
     temporary = output / "LIBRARY.TMP"
     temporary.write_bytes(database)
     temporary.replace(output / "LIBRARY.PDB")
-    from .browse import prepare as prepare_browse
-    (output / "BROWSE.BIN").write_bytes(prepare_browse(database))
+    (output / "BROWSE.BIN").write_bytes(browse_data)
     if coverflow_enabled:
         from .coverflow import prepare
         prepare(database, output, output / 'COVERS.CFL', originals=coverflow_originals,
