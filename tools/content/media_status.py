@@ -2,7 +2,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 import json
-import os
 from pathlib import Path
 import stat
 import time
@@ -14,13 +13,9 @@ from .inventory import collect_records_by_kind as records_by_kind, skipped_paths
 
 
 def _verification_name(name):
-    """Scope old drive-root cache names and new names to a device-relative file."""
+    """Validate device-relative file names stored in the verification cache."""
     path = Path(name)
-    if path.is_absolute():
-        if os.name != 'nt' or len(path.drive) != 2 or path.drive[1] != ':':
-            return None
-        path = path.relative_to(path.anchor)
-    if (path.drive or not path.parts or '..' in path.parts or
+    if (path.is_absolute() or path.drive or not path.parts or '..' in path.parts or
             path.parts[0].casefold() not in {'.linnet', 'music', 'videos', 'ipod_control'}):
         return None
     return path.as_posix()

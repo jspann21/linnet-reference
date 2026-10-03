@@ -230,30 +230,6 @@ def _signature(root, files):
     return hashlib.sha256(json.dumps(rows, ensure_ascii=False).encode()).hexdigest()
 
 
-def _signature_matches(saved, root, files, current=None):
-    if saved == (current or _signature(root, files)):
-        return True
-    if not isinstance(saved, str) or len(saved) != 64:
-        return False
-    rows = [(str(path.relative_to(root)), info.st_size, info.st_mtime_ns)
-            for path, info in files]
-    legacy_roots = [root]
-    if os.name == 'nt' and root.drive:
-        legacy_roots.extend(Path(f'{letter}:\\') for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')
-    for old_root in legacy_roots:
-        prefix = str(old_root)
-        if old_root.is_absolute():
-            base = prefix if prefix.endswith(os.sep) else prefix + os.sep
-            legacy = [(base + relative, size, mtime)
-                      for relative, size, mtime in rows]
-        else:
-            legacy = [(os.path.join(prefix, relative), size, mtime)
-                      for relative, size, mtime in rows]
-        if hashlib.sha256(json.dumps(legacy, ensure_ascii=False).encode()).hexdigest() == saved:
-            return True
-    return False
-
-
 def _apple_music_path(path, root, aliases):
     if not path.is_relative_to(root / 'Music'):
         raise ValueError('Apple music must be under /Music')
@@ -390,7 +366,7 @@ def inspect(identity, *, records_by_kind=None):
                              database_sha256=digest, music_count=len(music), music_issues=[])
             state.update(folders=selected, configured=True, published=published)
             save_json(_state_path(identity), state)
-    source_matches = _signature_matches(published.get('music_source_signature'), root, music, source_stamp)
+    source_matches = published.get('music_source_signature') == source_stamp
     same_published = (source_matches and
                       published.get('database_sha256') == digest and
                       isinstance(published.get('music_count'), int))
@@ -431,8 +407,7 @@ def inspect(identity, *, records_by_kind=None):
             # signature comparison already checked these same files.
             signature_matches = source_matches
         else:
-            signature_matches = _signature_matches(published.get('music_signature'), root,
-                                                   playable_music, stamp)
+            signature_matches = published.get('music_signature') == stamp
         music_status = ('Ready' if signature_matches and
                         published.get('database_sha256') == digest else 'Needs update')
     details = [{'kind': 'Music', 'count': len(music), 'status': music_status}]
@@ -444,7 +419,7 @@ def inspect(identity, *, records_by_kind=None):
             photo_status = 'Apple photo library changed outside Linnet'
         elif photo_digest and not published.get('photo_database_sha256'):
             photo_status = 'Existing Apple photo library needs review'
-        elif (_signature_matches(published.get('photo_signature'), root, photos) and
+        elif (published.get('photo_signature') == _signature(root, photos) and
               published.get('photo_database_sha256') == photo_digest):
             photo_status = 'Ready'
         else:
@@ -469,7 +444,7 @@ def inspect(identity, *, records_by_kind=None):
         details.append({'kind': 'Notes', 'count': len(notes), 'status': note_status})
     videos = _files(root, selected, 'Videos', media.extensions('Videos'), records_by_kind)
     video_stamp = _signature(root, videos)
-    video_matches = _signature_matches(published.get('video_source_signature'), root, videos, video_stamp)
+    video_matches = published.get('video_source_signature') == video_stamp
     saved_video_issues = (published.get('video_issues', [])
                           if video_matches and
                           isinstance(published.get('video_issues'), list) else [])
@@ -562,7 +537,7 @@ def _update_photos(identity, state, selected, cache, progress):
     old_digest = _hash(photo_db) if photo_db.is_file() else None
     if old_digest and old_digest != published.get('photo_database_sha256'):
         raise ValueError('The Apple photo library changed outside Linnet. Review it before updating Photos.')
-    if (_signature_matches(published.get('photo_signature'), root, photos) and
+    if (published.get('photo_signature') == _signature(root, photos) and
             published.get('photo_database_sha256') == old_digest):
         return
     source_bytes = sum(info.st_size for _, info in photos)
@@ -761,16 +736,12 @@ def _metadata(identity, files):
     rows = {}
     scope = cache_volume_scope(root)
     with closing(sqlite3.connect(f'file:{database.as_posix()}?mode=ro', uri=True)) as connection:
-        for source, relative, size, mtime, value in connection.execute(
-                'SELECT source,relative,size,mtime,value FROM metadata WHERE parser=?',
-                ('existing',)):
-            legacy_root = len(source) == 3 and source[0].isalpha() and source[1:] == ':\\'
-            if source != scope and not legacy_root:
-                continue
+        for relative, size, mtime, value in connection.execute(
+                'SELECT relative,size,mtime,value FROM metadata WHERE parser=? AND source=?',
+                ('existing', scope)):
             key = (relative.casefold(), size, mtime)
-            priority = 0 if source == scope else 1 if source == str(root) else 2
-            if key not in rows or priority < rows[key][0]:
-                rows[key] = (priority, json.loads(value))
+            if key not in rows:
+                rows[key] = json.loads(value)
     result = []
     aliases = {}
     for path, info in files:
@@ -778,7 +749,7 @@ def _metadata(identity, files):
         cached = rows.get((relative.casefold(), info.st_size, info.st_mtime_ns))
         if cached is None:
             raise ValueError(f'Prepare Music for Linnet first: {relative}')
-        details = cached[1]
+        details = cached
         if details.get('rate', 0) <= 0 or details.get('frames', 0) <= 0:
             raise ValueError(f'Invalid music duration: {relative}')
         tags = details.get('tags') or {}
@@ -850,8 +821,8 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
         photo_digest = _hash(photo_db) if photo_db.is_file() else None
         if photo_digest and photo_digest != published.get('photo_database_sha256'):
             raise ValueError('The Apple photo library changed outside Linnet. Review it before updating Photos.')
-    if (_signature_matches(published.get('music_source_signature'), root, files) and
-            _signature_matches(published.get('video_source_signature'), root, videos) and
+    if (published.get('music_source_signature') == _signature(root, files) and
+            published.get('video_source_signature') == _signature(root, videos) and
             not published.get('music_issues') and not published.get('video_issues') and
             source_db.is_file() and published.get('database_sha256') == _hash(source_db)):
         _update_photos(identity, state, selected, cache, progress)

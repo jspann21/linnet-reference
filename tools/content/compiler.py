@@ -582,8 +582,7 @@ def generate_c(doc, packed_fonts=None):
         scanline=doc.get('coverflow_scanline',False)
         texture_side,texture_height=(130,174) if scanline else (96,128)
         if scanline:
-            for name,count,source in (('legacy_x',130,96),('legacy_y',174,128),
-                                      ('preview_x',130,24),('preview_y',174,32)):
+            for name,count,source in (('preview_x',130,24),('preview_y',174,32)):
                 out.append(f'const uint8_t ln_coverflow_{name}[{count}]={{'+','.join(str(i*source//count) for i in range(count))+'};')
             pairs=[[],[]];indices=[]
             for y in range(gh):

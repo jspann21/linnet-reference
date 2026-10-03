@@ -22,7 +22,7 @@ import zlib
 from types import SimpleNamespace
 
 from .publish import _plain, _hash
-from .host_state import cache_volume_scope
+from .host_state import cache_volume_scope, file_stamp as _preview_source_stamp
 
 RECORD = 256
 MAX_RECORDS = 1_000_000
@@ -37,10 +37,6 @@ _NEGATIVE_TEXT_PREVIEWS = OrderedDict()
 _NEGATIVE_TEXT_PREVIEWS_LOCK = threading.Lock()
 _NEGATIVE_TEXT_PREVIEW_LIMIT = 128
 _NEGATIVE_TEXT_PREVIEW_SECONDS = 300
-
-
-def _preview_source_stamp(info):
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
 def _forget_negative_text_preview(key, cached):

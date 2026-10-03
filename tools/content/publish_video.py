@@ -8,12 +8,8 @@ import uuid
 from .ipvf_validate import inspect_file
 from .publish import _plain, _hash, _copy_verified, _same_target, _volume_guard, inspect_target, _exclusive, _write_receipt, _write_verified, _finish_backups
 from .video_catalog import encode as _encode_catalog, read_file as _read_catalog_file
+from .host_state import file_stamp
 MAX_FILE=0x7fffffff
-
-
-def _video_stamp(path):
-    info = path.stat()
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
 def video_filename(title, extension=".ipvf"):
@@ -207,13 +203,13 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
         readback_stamp = None
         hash_started_ns = None
         if previous:
-            before_readback = _video_stamp(active) if reuse_package else None
+            before_readback = file_stamp(active.stat()) if reuse_package else None
             if reuse_package:
                 hash_started_ns = time.time_ns()
             if _hash(active, previous['bytes']) != previous['sha256']:
                 raise RuntimeError('active video package changed during publication')
             if reuse_package:
-                readback_stamp = _video_stamp(active)
+                readback_stamp = file_stamp(active.stat())
                 if before_readback != readback_stamp:
                     raise RuntimeError('active video package changed during readback')
         elif active.exists():
@@ -227,11 +223,11 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
                 writer.flush()
                 os.fsync(writer.fileno())
         if not reuse_package:
-            before_readback = _video_stamp(active)
+            before_readback = file_stamp(active.stat())
             hash_started_ns = time.time_ns()
             if _hash(active, candidate['bytes']) != candidate['sha256']:
                 raise OSError('published video package readback mismatch')
-            readback_stamp = _video_stamp(active)
+            readback_stamp = file_stamp(active.stat())
             if before_readback != readback_stamp:
                 raise OSError('published video package changed during readback')
         path = device_video_path(active, root)

@@ -15,6 +15,7 @@ import uuid
 import zlib
 
 from .photos import HEADER, PHOTO, MAX_FILE, inspect
+from .host_state import file_stamp
 from .publish import (_plain, _bounded, _hash, _copy_verified, inspect_target, _exclusive,
                       _publish_library, _volume_guard, _finish_backups, _write_receipt,
                       _publish_group, _recover_pending_groups, _same_target)
@@ -83,11 +84,11 @@ def _publish_packs(packs, identity, root, candidate_bytes, grid_bytes):
         distinct[active] = item
         guard()
         if active.exists():
-            before = _pack_stamp(active)
+            before = file_stamp(active.stat())
             hash_started_ns = time.time_ns()
             if _hash(active, item['bytes']) != item['sha256']:
                 raise ValueError(f'photo pack name collision or changed iPod bytes: {active}')
-            after = _pack_stamp(active)
+            after = file_stamp(active.stat())
             if before != after:
                 raise OSError(f'photo pack changed during verification: {active}')
             verified_existing[active] = (after, hash_started_ns)
@@ -130,15 +131,15 @@ def _publish_packs(packs, identity, root, candidate_bytes, grid_bytes):
         guard()
         _plain(active, root)
         if reused:
-            stamp = _pack_stamp(active)
+            stamp = file_stamp(active.stat())
             verified_stamp, hash_started_ns = verified_existing[active]
             if stamp != verified_stamp:
                 raise OSError(f'photo pack changed after verification: {active}')
         else:
-            before = _pack_stamp(active)
+            before = file_stamp(active.stat())
             if _hash(active, item['bytes']) != item['sha256']:
                 raise OSError(f'photo pack readback mismatch: {active}')
-            stamp = _pack_stamp(active)
+            stamp = file_stamp(active.stat())
             if before != stamp:
                 raise OSError(f'photo pack changed during readback: {active}')
         results.append(dict(path=item['device_path'].lstrip('/'), package=str(active),
@@ -149,17 +150,12 @@ def _publish_packs(packs, identity, root, candidate_bytes, grid_bytes):
     return results
 
 
-def _pack_stamp(path):
-    info = path.stat()
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
-
-
 def _verify_pack_proofs(results, identity, root):
     for item in results:
         _volume_guard(identity)
         path = Path(item['package'])
         _plain(path, root)
-        if _pack_stamp(path) != item['stamp']:
+        if file_stamp(path.stat()) != item['stamp']:
             raise OSError(f"photo pack changed after readback: {path}")
 
 

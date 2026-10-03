@@ -7,6 +7,10 @@ import time
 import uuid
 
 
+def file_stamp(info):
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
 def cache_directory(disk_serial, volume_serial):
     base = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".cache")) / "Linnet" / "Media"
     key = hashlib.sha256((disk_serial + volume_serial).encode()).hexdigest()[:24]

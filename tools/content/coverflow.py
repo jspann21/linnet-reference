@@ -1,39 +1,10 @@
 import hashlib
-import io
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import nullcontext
 import struct
 import zlib
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageOps, __version__ as pillow_version
-
-RECORD = 25088
-
-
-def _validate_legacy(path: Path, database: bytes) -> None:
-    with path.open('rb') as reader:
-        header = reader.read(512)
-        if (len(header) != 512 or header[:4] != b'LCF1' or
-                header[16:48] != database[64:96] or struct.unpack_from('<I', header, 48)[0] > 1 or
-                struct.unpack_from('<II', header, 8) != (RECORD, 96) or
-                zlib.crc32(header[:508]) != struct.unpack_from('<I', header, 508)[0]):
-            raise ValueError('Invalid Cover Flow header or library identity')
-        count = struct.unpack_from('<I', header, 4)[0]
-        if count > 100000 or path.stat().st_size != 512 + count * RECORD:
-            raise ValueError('Invalid Cover Flow size')
-        groups, groups_at = struct.unpack_from('<I', database, 20)[0], struct.unpack_from('<I', database, 36)[0]
-        for _ in range(count):
-            record = reader.read(RECORD)
-            if len(record) != RECORD:
-                raise ValueError('Truncated Cover Flow album record')
-            group, tracks = struct.unpack_from('<II', record)
-            if (group >= groups or struct.unpack_from('<I', database, groups_at + group * 32)[0] != 2 or
-                    tracks != struct.unpack_from('<I', database, groups_at + group * 32 + 16)[0] or
-                    record[135] or record[263] or
-                    zlib.crc32(record[512:], zlib.crc32(record[:508])) != struct.unpack_from('<I', record, 508)[0]):
-                raise ValueError('Invalid Cover Flow album record')
-
 
 CATALOG = 1024
 ART_RECORD = 13312
@@ -60,18 +31,6 @@ def _original_from_rgb(image: Image.Image, side=96) -> Image.Image:
     return ImageOps.fit(image, (side, side), method=Image.Resampling.LANCZOS)
 
 
-def original_cover(source) -> Image.Image:
-    from .music import _cover_normalized
-    if isinstance(source, Image.Image):
-        opened = nullcontext(source)
-    else:
-        opened = Image.open(io.BytesIO(source) if isinstance(source, bytes) else source)
-    with opened as image:
-        if image.width * image.height > 16_000_000:
-            raise ValueError('cover dimensions exceed bound')
-        return _original_from_rgb(_cover_normalized(image))
-
-
 def _indexed_tile(tile: Image.Image) -> tuple[Image.Image, list[int]]:
     palette = tile.quantize(colors=256, method=Image.Quantize.MEDIANCUT, kmeans=3)
     rgb = palette.getpalette()
@@ -90,16 +49,14 @@ def _indexed_tile(tile: Image.Image) -> tuple[Image.Image, list[int]]:
 def validate(path: Path, database: bytes) -> None:
     with path.open('rb') as reader:
         header = reader.read(1024)
-        if header[:4] == b'LCF1':
-            return _validate_legacy(path, database)
         side, height, art_record = _layout(header)
-        mapped = len(header) == 1024 and header[:4] == b'LCFN' and struct.unpack_from('<I', header, 68)[0] == 1
+        mapped = header[:4] == b'LCFN'
         end = 512 + side * height
-        if (len(header) != 1024 or header[:4] not in (b'LCF2', b'LCFR', b'LCFN') or header[16:48] != database[64:96] or
+        if (len(header) != 1024 or header[:4] not in (b'LCF2', b'LCFN') or header[16:48] != database[64:96] or
                 struct.unpack_from('<II', header, 8) != (art_record, side) or
                 struct.unpack_from('<I', header, 48)[0] != CATALOG or
                 struct.unpack_from('<II', header, 56) != (24, 32) or
-                (header[:4] == b'LCFN' and struct.unpack_from('<I', header, 68)[0] not in (0, 1)) or
+                (mapped and struct.unpack_from('<I', header, 68)[0] != 1) or
                 zlib.crc32(header[512:]) != struct.unpack_from('<I', header, 64)[0] or
                 zlib.crc32(header[:508]) != struct.unpack_from('<I', header, 508)[0]):
             raise ValueError('Invalid Cover Flow header or library identity')
@@ -143,31 +100,26 @@ def remove_tracks(source: Path, before: bytes, after: bytes, output: Path) -> No
     try:
         with source.open('rb') as reader, output.open('xb') as writer:
             created = True
-            legacy = reader.read(4) == b'LCF1'
-            reader.seek(0)
-            header = bytearray(reader.read(512 if legacy else 1024))
+            header = bytearray(reader.read(1024))
             _, _, art_record = _layout(header)
             count = struct.unpack_from('<I', header, 4)[0]
             records, art_ids = [], {}
             for _ in range(count):
-                row = bytearray(reader.read(RECORD if legacy else CATALOG))
+                row = bytearray(reader.read(CATALOG))
                 group = struct.unpack_from('<I', row)[0]
                 if group not in mapping:
                     continue
                 struct.pack_into('<II', row, 0, *mapping[group])
-                if not legacy:
-                    art = struct.unpack_from('<I', row, 248)[0]
-                    art_ids.setdefault(art, len(art_ids))
-                    struct.pack_into('<I', row, 248, art_ids[art])
-                crc_at = 508 if legacy else 252
-                struct.pack_into('<I', row, crc_at,
-                                 zlib.crc32(row[crc_at + 4:], zlib.crc32(row[:crc_at])))
+                art = struct.unpack_from('<I', row, 248)[0]
+                art_ids.setdefault(art, len(art_ids))
+                struct.pack_into('<I', row, 248, art_ids[art])
+                struct.pack_into('<I', row, 252,
+                                 zlib.crc32(row[256:], zlib.crc32(row[:252])))
                 records.append(row)
             records.sort(key=lambda row: struct.unpack_from('<I', row)[0])
             header[16:48] = after[64:96]
             struct.pack_into('<I', header, 4, len(records))
-            if not legacy:
-                struct.pack_into('<I', header, 52, len(art_ids))
+            struct.pack_into('<I', header, 52, len(art_ids))
             struct.pack_into('<I', header, 508, zlib.crc32(header[:508]))
             writer.write(header)
             for row in records:

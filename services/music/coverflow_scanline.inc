@@ -156,10 +156,7 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
                         sy=ln_coverflow_preview_y[sy];
                         for(;x<limit;x++)*dest++=card->palette[card->indices[ln_coverflow_preview_x[card->sources[x]]*32u+sy]];
                     }else{
-                        if(art_side==96u){
-                            sy=ln_coverflow_legacy_y[sy];
-                            for(;x<limit;x++)*dest++=card->palette[card->indices[sy*96u+ln_coverflow_legacy_x[card->sources[x]]]];
-                        }else for(;x<limit;x++)*dest++=card->palette[card->indices[sy*TEXTURE_WIDTH+card->sources[x]]];
+                        for(;x<limit;x++)*dest++=card->palette[card->indices[sy*TEXTURE_WIDTH+card->sources[x]]];
                     }
                     if(card->mirror){u-=length;--run;}else{u+=length;++run;}
                 }

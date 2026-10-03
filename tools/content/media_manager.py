@@ -23,15 +23,11 @@ import unicodedata
 import uuid
 
 from .guard import guarded_path as _plain, hash_file as _hash, require_same_target as _same_target, guard_volume as _volume_guard, inspect_target
-from .host_state import cache_directory as _cache_directory, cache_root, cache_volume_scope, load_json_object as _optional_state, save_json as _save
+from .host_state import cache_directory as _cache_directory, cache_root, cache_volume_scope, file_stamp as _receipt_stamp, load_json_object as _optional_state, save_json as _save
 from .inventory import KINDS, VIDEO_EXTENSIONS, extensions, source_folders, file_records as _file_records, skipped_paths as _skipped_paths, scan
 
 _RETAIL_ADOPTION = None
 _RECENT_OUTPUT_NS = 5_000_000_000
-
-
-def _receipt_stamp(info):
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
 def _save_seek_state(path, state):
@@ -1402,26 +1398,6 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, s
                     stop.set()
         return collect(all_jobs)
     return list(jobs.values())
-
-
-def video_requires_conversion(jobs, identity, *, ffprobe=None, ffmpeg=None):
-    """Use the same native validator as preparation for tool preflight."""
-    profile = identity['media_profile']
-    for job in jobs:
-        source = Path(job['source'])
-        if source.suffix.lower() not in native_video_extensions(identity):
-            return True
-        if profile['video_backend'] in ('bcm-mp4', 'native-mp4'):
-            try:
-                from .native_video import inspect_file
-                details = inspect_file(source, profile=profile, ffprobe=ffprobe)
-            except (OSError, ValueError):
-                return True
-            if (not details['fast_start'] or profile['video_backend'] == 'bcm-mp4') and (ffmpeg or shutil.which('ffmpeg')):
-                return True
-        elif not _video_is_native(source, identity):
-            return True
-    return False
 
 
 def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimension=640,

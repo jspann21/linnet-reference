@@ -200,19 +200,6 @@ def _cover_pixels_rgb(image, target):
     return _rgb565(image)
 
 
-def _cover_pixels(cover, target: str | None = None) -> bytes:
-    from contextlib import nullcontext
-    from PIL import Image
-    try:
-        source = nullcontext(cover) if isinstance(cover, Image.Image) else Image.open(cover)
-    except Image.DecompressionBombError as error:
-        raise ValueError("cover dimensions exceed bound") from error
-    with source as image:
-        if image.width * image.height > 16_000_000:
-            raise ValueError("cover dimensions exceed bound")
-        return _cover_pixels_rgb(_cover_normalized(image), target)
-
-
 def _cover_renders(source, target, coverflow_enabled, known_art=()):
     """Decode once, then apply the distinct playback and Cover Flow recipes."""
     from PIL import Image
