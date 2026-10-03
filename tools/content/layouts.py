@@ -57,8 +57,8 @@ def apply_layout(scenes,theme,compact=False):
         return result
     font_h=theme['font']['height']
     # Each body rectangle is its own layout, not a recolor of the default shell.
-    bodies={'ipod-photo':(0,22,220,154),'graphite':(10,42,200,108),
-            'aurora':(34,38,178,132),'sunset':(12,46,196,104),'blueprint':(8,8,204,138)}
+    bodies={'ipod-photo':(0,22,220,154),'graphite':(10,28,200,124),
+            'aurora':(34,38,178,132),'sunset':(12,34,196,118),'blueprint':(8,8,204,142)}
     headers={'ipod-photo':(0,0,220,22),'graphite':(0,0,220,26),
              'aurora':(34,7,178,25),'sunset':(0,0,220,30),'blueprint':(0,154,220,22)}
     bx,by,bw,bh=bodies[style]
@@ -106,16 +106,6 @@ def apply_layout(scenes,theme,compact=False):
         if scene['id']=='linnet.system.home':
             menu=next(n for n in nodes if n['kind']==7)
             if style=='blueprint':place(menu,8,8,204,138)
-        if scene['id']=='linnet.system.themes':
-            listing=next(n for n in nodes if n['kind']==6)
-            foot=next(n for n in nodes if n['kind']==3)
-            if style=='ipod-photo':place(listing,0,22,210,132);place(foot,6,156,208,18)
-            elif style=='graphite':place(listing,10,36,194,90);place(foot,12,132,196,18)
-            elif style=='aurora':place(listing,34,36,172,104);place(foot,34,144,178,30)
-            elif style=='sunset':place(listing,12,42,190,84);place(foot,12,132,196,20)
-            elif style=='blueprint':place(listing,8,8,196,126);place(foot,8,136,204,16)
-            foot['flags']=0
-            bar=next(n for n in nodes if n['kind']==9);bar['y']=listing['y'];bar['h']=listing['h']
         refine_scene(scene,theme,(bx,by,bw,bh))
         refine_footers(scene,theme)
         if style=='ipod-photo':refine_ipod_photo(scene,theme)
@@ -144,6 +134,36 @@ def place_classic_split_home(scenes,width,height):
                 node['flags']|=2
 
 
+def fit_monochrome_text(scenes,font,height):
+    """Reserve native font lines after the authoring rectangles are scaled."""
+    fh=font['height']
+    rows={'about':1,'themes':1,'music-sound':1,'sleep-timer':1,
+          'music-search':3,'shutdown':3}
+    for scene in scenes:
+        sid=scene['id'].rsplit('.',1)[-1]
+        texts=[n for n in scene['nodes'] if n['kind']==3 and not n['flags']&2]
+        listing=next((n for n in scene['nodes'] if n['kind'] in (6,7) and n['flags']&1),None)
+        for node in texts:
+            if node['flags']&64:
+                bottom=min(height-2,node['y']+node['h'])
+                node['h']=max(node['h'],rows.get(sid,2)*(fh+1)-1)
+                node['y']=bottom-node['h']
+                if listing:
+                    listing['h']=min(listing['h'],node['y']-3-listing['y'])
+            elif node['text'] in ('Search prefix','LINNET OS'):
+                node['h']=max(node['h'],fh)
+        if sid=='music-search' and listing:
+            prefix=next(n for n in texts if n['text']=='Search prefix')
+            header=next(n for n in scene['nodes'] if n['kind']==11)
+            prefix['y']=header['y']+header['h']+2
+            bottom=listing['y']+listing['h']
+            listing['y']=prefix['y']+prefix['h']+2
+            listing['h']=bottom-listing['y']
+        if listing:
+            for node in scene['nodes']:
+                if node['kind']==9:node['y']=listing['y'];node['h']=listing['h']
+
+
 def align_scrollbars(scene,theme):
     listing=next((n for n in scene['nodes'] if n['kind'] in (6,7,8) and n['flags']&1),None)
     if not listing:return
@@ -153,8 +173,7 @@ def align_scrollbars(scene,theme):
             place(bar,210,listing['y'],10,listing['h'])
             continue
         bar['y']=listing['y']
-        bottom={'graphite':150,'aurora':170,'sunset':150,'blueprint':146}.get(theme['layout'],172)
-        bar['h']=listing['h'] if scene['id'] in ('linnet.system.games','linnet.system.about') else max(1,bottom-bar['y'])
+        bar['h']=listing['h']
         for node in scene['nodes']:
             if node['kind']==3:node['w']=min(node['w'],bar['x']-node['x']-4)
         listing['w']=min(listing['w'],bar['x']-listing['x']-2)
@@ -168,17 +187,16 @@ def refine_footers(scene,theme):
     texts=[n for n in scene['nodes'] if n['kind']==3]
     if sid in keys:foot=[n for n in texts if n['text'] in keys[sid]]
     elif sid in ('display','battery','shutdown'):foot=texts[0 if sid=='display' else 1:]
-    elif sid in ('music','music-queue','music-sound','video-settings','video-output'):foot=texts
+    elif sid in ('music','music-queue','music-sound','video-settings','video-output','files'):foot=texts
     else:return
     if not foot:return
     style=theme['layout']
-    x,w,bottom={'aurora':(38,170,172),'graphite':(14,192,150),
-                'sunset':(16,188,150),'blueprint':(8,204,150)}.get(style,(6,208,172))
+    x,w,bottom={'aurora':(38,170,172),'graphite':(14,192,152),
+                'sunset':(16,188,152),'blueprint':(8,204,150)}.get(style,(6,208,172))
     if len(foot)>1:
         foot[0]['text']='  '.join(n['text'] for n in foot)
         for n in foot[1:]:n['flags']|=2
-    height=36 if sid in ('clock','clock-edit','music-search','display','battery','shutdown') else 24
-    if sid=='themes':height=12
+    height=36 if sid in ('clock','display','battery','shutdown') or (sid=='music-search' and style=='aurora') else 24 if sid=='clock-edit' else 12
     place(foot[0],x,bottom-height,w,height);foot[0]['flags']=64
     for n in scene['nodes']:
         if n['kind'] in (6,7) and n['y']<bottom-height and n['y']+n['h']>bottom-height-4:
@@ -209,24 +227,26 @@ def refine_scene(scene,theme,body):
             elif n['kind']==13:place(n,x+4,toast_y,w-8,toast_h)
     elif sid=='about':
         # Keep the logo visible above a scrollable, host-prepared fact list.
-        art_h=min(48,max(24,h//3));art_w=art_h*68//104
+        art_h=min(28,max(22,h//6));art_w=art_h*68//104
         art=next(n for n in nodes if n['kind']==17)
         place(art,x+4,y+2,art_w,art_h)
-        place(texts[0],x+art_w+12,y+4,w-art_w-16,fh+2)
-        place(texts[1],x+art_w+12,y+fh+10,w-art_w-16,fh)
-        for n in texts:n['flags']=0
+        place(texts[0],x+art_w+12,y+(art_h-fh)//2,w-art_w-16,fh+2)
+        texts[1]['flags']|=2
+        texts[0]['flags']=0
         progress=next(n for n in nodes if n['kind']==10)
-        place(progress,x+4,y+art_h+5,w-8,6)
-        list_y=y+art_h+15
-        list_h=max(rh,((bottom-18-list_y)//rh)*rh)
+        place(progress,x+4,y+art_h+3,w-8,4)
+        list_y=y+art_h+10
+        list_h=max(rh,((bottom-14-list_y)//rh)*rh)
         place(listing,x,list_y,w-10,list_h)
-        place(texts[2],x+4,bottom-16,w-8,fh);texts[2]['flags']=0
+        place(texts[2],x+4,bottom-12,w-8,12);texts[2]['flags']=64
     elif sid=='update' and style=='sunset':
         for i,n in enumerate(texts):place(n,12,40+i*17,196,17);n['flags']=0
         place(listing,12,126,196,26)
     elif sid=='games':
-        place(listing,x,y,w-10,max(rh,h-2*fh-8))
-        for n in texts:place(n,x,bottom-2*fh,w,2*fh);n['flags']=WRAP
+        footer_h=24 if style=='aurora' else 12
+        if style=='aurora':y=34;bottom=172;h=bottom-y
+        place(listing,x,y,w-10,max(rh,h-footer_h-2))
+        for n in texts:place(n,x,bottom-footer_h,w,footer_h);n['flags']=64
     elif sid=='clock':
         clock_h=2*fh+4
         row_h=max(20,fh+6)
@@ -235,9 +255,8 @@ def refine_scene(scene,theme,body):
             if n['text']=='System clock':place(n,x+4,y,w-8,clock_h);n['flags']=CENTER
             elif n['text']=='Clock source':place(n,x+4,bottom-2*fh,w-8,2*fh);n['flags']=WRAP
     elif sid=='clock-edit':
-        if style=='graphite':y=36;h=bottom-y
         field_h=24 if style=='graphite' else 22 if style=='ipod-photo' else max(18,fh+3)
-        list_h=max(field_h,((h-2*fh-8)//field_h)*field_h)
+        list_h=max(field_h,((h-28)//field_h)*field_h)
         place(listing,x,y,w-8,list_h)
         for n in texts:place(n,x+4,bottom-2*fh,w-8,2*fh);n['flags']=WRAP
     elif sid=='sleep-timer':
@@ -252,16 +271,16 @@ def refine_scene(scene,theme,body):
         for i,n in enumerate(texts):
             top=y+list_h+note_gap if i==0 and sid!='display' else bottom-(len(texts)-i)*(fh+5)
             place(n,x+4,top,w-8,fh);n['flags']=0
-    elif sid in ('music','music-sound','music-queue'):
-        footer_h=fh if sid=='music-sound' else 2*fh
+    elif sid in ('music','music-sound','music-queue','themes','files'):
+        footer_h=12
         place(listing,listing['x'],y,listing['w'],max(rh,((h-footer_h-8)//rh)*rh))
         for n in texts:place(n,x+4,bottom-footer_h,w-8,footer_h);n['flags']=WRAP
     elif sid=='music-search':
         prefix=next(n for n in texts if n['text']=='Search prefix')
         footer=next(n for n in texts if n['text']=='Search controls')
-        prefix_y=y-4 if style in ('graphite','sunset') else y
+        prefix_y=y
         place(prefix,x+4,prefix_y,w-8,fh);prefix['flags']=0
-        top=prefix_y+fh+3;foot=bottom-2*fh
+        top=prefix_y+fh+3;foot=bottom-12
         place(listing,listing['x'],top,listing['w'],max(rh,((foot-top-4)//rh)*rh))
         place(footer,x+4,foot,w-8,2*fh);footer['flags']=WRAP
     elif sid=='photos-grid':

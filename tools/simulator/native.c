@@ -83,6 +83,10 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
     if(n->kind==LN_UI_STATUS_BAR&&music_category_node(n))return sample_more?"More Music":"Music";
     if(n->kind==LN_UI_STATUS_BAR&&node_scene(n,"linnet.system.music-sound"))return sample_sound_view==LN_SOUND_EQ?"Custom EQ":sample_sound_view==LN_SOUND_ADVANCED?"Advanced Sound":"Sound";
     if(!n->text)return fallback;
+    if(item==UINT32_MAX&&node_scene(n,"linnet.system.music-search")){
+        if(!strcmp(n->text,"Search prefix"))return "Enter name prefix";
+        if(!strcmp(n->text,"Search controls"))return "Select: Add  Left: Erase  Right: Find";
+    }
     if(item==UINT32_MAX&&strcmp(n->text,"Right: Actions  Menu: Back")==0&&music_category_node(n))
         return "Select: Choose  Menu: Back";
     if(item!=UINT32_MAX&&strcmp(n->text,"Track ")==0&&music_category_node(n)){

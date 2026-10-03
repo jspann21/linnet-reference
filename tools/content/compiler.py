@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 import tomllib
 from .tsx import ContentError, compile_tsx, COLOR_ROLES
-from .layouts import apply_layout, gate_features, feature_enabled, place_classic_split_home
+from .layouts import apply_layout, gate_features, feature_enabled, place_classic_split_home, fit_monochrome_text
 import importlib.util
 
 LAYOUTS = ('default','ipod-photo','graphite','aurora','sunset','blueprint','minimal','native','ipod-classic','classic-split')
@@ -467,8 +467,14 @@ def compile_system(root, output, configpath=None, target_override=None):
                     elif node['text'] == 'Photo count':
                         node.update(x=8, y=top, w=width-16, h=24)
                         if target != 'classic6g-n25': node['flags'] |= 2
+                    elif node['text'] == 'Photo count background':
+                        # The full-width count band covers theme side chrome.
+                        node.update(x=0, y=top, w=width, h=24)
+                        if target == 'classic6g-n25': node['flags'] &= ~2
         if variant['layout']=='classic-split':
             place_classic_split_home(variant['scenes'],width,height)
+        if monochrome:
+            fit_monochrome_text(variant['scenes'],font,height)
         enabled_scenes=gate_features(variant['scenes'],features)
         if not enabled_scenes&1:
             raise ContentError('the first UI scene must be enabled')
