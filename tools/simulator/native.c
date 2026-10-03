@@ -232,6 +232,7 @@ int main(int argc,char **argv){
             }
             simulated_us+=33333u;if(ln_games_tick(simulated_us))ln_ui_refresh(&state);
             clock_step(&state);(void)ln_ui_scroll_tick(&state,simulated_us);
+            (void)ln_ui_palette_tick(&state,simulated_us);
             ln_ui_render(&state,pixels,damage);save_presented=ln_clock_editor_pending();}
         total+=repeat;
         if(capture){if(++index>512u||!snapshot(&state,argv[1],index))return 5;}
@@ -254,6 +255,18 @@ int main(int argc,char **argv){
                         sample_playback=status==2u?2u:1u;sample_video_frame=status>=3u;
                         ln_ui_refresh(&state);ln_ui_render(&state,pixels,damage);
                         if(++index>2048u||!snapshot(&state,argv[1],index))return 7;
+                    }
+                    if(ln_ui_themes[theme].flags&LN_UI_THEME_ALBUM_ART){
+                        sample_video_frame=false;sample_art=true;
+                        for(uint32_t step=0;step<=6u;++step){
+                            (void)ln_ui_palette_tick(&state,200000u+step*25000u);
+                            ln_ui_refresh(&state);ln_ui_render(&state,pixels,damage);
+                            if(++index>2048u||!snapshot(&state,argv[1],index))return 7;
+                        }
+                        sample_art=false;
+                        (void)ln_ui_palette_tick(&state,400000u);
+                        (void)ln_ui_palette_tick(&state,1400000u);
+                        (void)ln_ui_palette_tick(&state,1550000u);
                     }
                     sample_video_frame=false;sample_playback=0;
                 }

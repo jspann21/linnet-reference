@@ -202,10 +202,12 @@ static uint16_t album_pack(struct album_rgb c){return (uint16_t)(((c.r>>3)<<11)|
 static uint32_t album_luma(struct album_rgb c){return (c.r*77u+c.g*150u+c.b*29u)>>8;}
 /* Video fallbacks and controls keep the theme hue without a bright canvas. */
 static uint16_t video_background(uint16_t value){
-    return album_luma(album_unpack(value))>64u?mix(0u,value,207u):value;
+    uint32_t luma=album_luma(album_unpack(value));
+    return luma>48u?mix(0u,value,255u-divide(48u*255u,luma)):value;
 }
 static uint16_t video_ink(uint16_t value){
-    return album_luma(album_unpack(value))<160u?mix(0xffffu,value,192u):value;
+    uint32_t luma=album_luma(album_unpack(value));
+    return luma<180u?mix(0xffffu,value,divide((180u-luma)*255u,255u-luma)):value;
 }
 static uint32_t album_bucket(uint16_t c){struct album_rgb v=album_unpack(c);return ((v.r>>4)<<8)|((v.g>>4)<<4)|(v.b>>4);}
 static struct album_rgb album_average(const struct ln_ui_asset*a,uint32_t bucket){
