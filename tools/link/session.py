@@ -358,16 +358,19 @@ class Session:
             raise ProtocolError('invalid storage state')
         return struct.unpack('<24I', reply)
 
+    def _diagnostic_words(self, selector: int, count: int, label: str) -> tuple[int, ...]:
+        raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', selector))
+        if len(raw) != count * 4:
+            raise ProtocolError(f'invalid {label} length')
+        return struct.unpack(f'<{count}I', raw)
+
     def storage_performance(self) -> dict:
         """Read storage performance; no I/O, reset or arming. Timings overlap, not additive.
 
         New counters saturate (flags bit31). Compare same-identity/epoch idle
         endpoints for the bounded run; pending attempts bias terminal wall averages.
         """
-        raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 1))
-        if len(raw) != 128:
-            raise ProtocolError('invalid storage performance length')
-        words = struct.unpack('<32I', raw)
+        words = self._diagnostic_words(1, 32, 'storage performance')
         if words[0] != int.from_bytes(b'SIOP', 'little') or words[1] or words[3] & ~0x8000000f:
             raise ProtocolError('invalid storage performance header')
         names = ('magic', 'reserved', 'snapshot_us', 'flags', 'ata_commands', 'ata_sectors_read',
@@ -384,10 +387,7 @@ class Session:
         return result
 
     def block_workload(self) -> dict:
-        raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 13))
-        if len(raw) != 32:
-            raise ProtocolError('invalid block workload length')
-        words = struct.unpack('<8I', raw)
+        words = self._diagnostic_words(13, 8, 'block workload')
         if words[0] != int.from_bytes(b'BIOQ', 'little'):
             raise ProtocolError('invalid block workload header')
         keys = ('magic', 'read_calls', 'requested_read_sectors', 'requested_write_sectors',
@@ -395,10 +395,7 @@ class Session:
         return dict(zip(keys, words))
 
     def mp4_table_workload(self) -> dict:
-        raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 16))
-        if len(raw) != 48:
-            raise ProtocolError('invalid MP4 table workload length')
-        words = struct.unpack('<12I', raw)
+        words = self._diagnostic_words(16, 12, 'MP4 table workload')
         if words[0] != int.from_bytes(b'MPTB', 'little') or words[11]:
             raise ProtocolError('invalid MP4 table workload header')
         keys = ('magic', 'attempts', 'completed', 'pending', 'failed', 'bytes',
@@ -406,10 +403,7 @@ class Session:
         return dict(zip(keys, words))
 
     def music_budget_workload(self) -> dict:
-        raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 17))
-        if len(raw) != 48:
-            raise ProtocolError('invalid music budget workload length')
-        words = struct.unpack('<12I', raw)
+        words = self._diagnostic_words(17, 12, 'music budget workload')
         if words[0] != int.from_bytes(b'MBDG', 'little') or words[11]:
             raise ProtocolError('invalid music budget workload header')
         keys = ('magic', 'steps', 'max_step_us', 'photo_priority_windows', 'urgent_windows',
@@ -418,10 +412,7 @@ class Session:
         return dict(zip(keys, words))
 
     def executive_workload(self) -> dict:
-        raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 14))
-        if len(raw) != 96:
-            raise ProtocolError('invalid executive workload length')
-        words = struct.unpack('<24I', raw)
+        words = self._diagnostic_words(14, 24, 'executive workload')
         if words[0] != int.from_bytes(b'EXSV', 'little') or words[1] != 5 or words[2] > 64:
             raise ProtocolError('invalid executive workload header')
         services = ('input', 'power', 'display', 'shell', 'link')
@@ -431,10 +422,7 @@ class Session:
                              for i, name in enumerate(services)}}
 
     def settings_publications(self) -> dict:
-        raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 15))
-        if len(raw) != 32:
-            raise ProtocolError('invalid settings publication length')
-        words = struct.unpack('<8I', raw)
+        words = self._diagnostic_words(15, 8, 'settings publication')
         if words[0] != int.from_bytes(b'SETP', 'little') or words[6] & ~3 or words[7] & ~3:
             raise ProtocolError('invalid settings publication header')
         keys = ('magic', 'revision', 'record_revision', 'theme_revision',
@@ -449,10 +437,7 @@ class Session:
         identical boot/epoch, overflow_mask=0 at both endpoints, and paired
         idle/ATA-epoch checks. Bracket with host times and snapshot timestamps.
         """
-        raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 2))
-        if len(raw) != 64:
-            raise ProtocolError('invalid storage poll timing length')
-        words = struct.unpack('<16I', raw)
+        words = self._diagnostic_words(2, 16, 'storage poll timing')
         if words[0] != int.from_bytes(b'POLL', 'little') or words[1]:
             raise ProtocolError('invalid storage poll timing header')
         names = ('magic', 'reserved', 'epoch', 'overflow_mask', 'poll_calls', 'poll_us',
@@ -471,10 +456,7 @@ class Session:
         elapsed or predicted idle time. Completion age is DONE-to-take wall time.
         Compare only identical build/epoch endpoints with flags=0.
         """
-        raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 5))
-        if len(raw) != 96:
-            raise ProtocolError('invalid storage schedule diagnostics length')
-        words = struct.unpack('<24I', raw)
+        words = self._diagnostic_words(5, 24, 'storage schedule diagnostics')
         if (words[0] != int.from_bytes(b'SCHD', 'little') or words[1] or
                 not words[2] or words[3] & ~0x80000003 or words[15] > 4 or
                 (not (words[3] & 0x80000000) and sum(words[5:10]) != words[4]) or
@@ -501,10 +483,7 @@ class Session:
         Animation-only calls excluded. Match identity/epoch and idle flags=0
         endpoints. Reentry overlaps totals; maxima are lifetime, not deltas.
         """
-        raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 4))
-        if len(raw) != 64:
-            raise ProtocolError('invalid render timing length')
-        w = struct.unpack('<16I', raw)
+        w = self._diagnostic_words(4, 16, 'render timing')
         if (w[0] != int.from_bytes(b'RNDR', 'little') or w[1] or not w[2] or
                 w[3] & ~0x8000001f or any(w[6:8]) or
                 bool(w[3] & 0x80000000) != bool(w[5])):
@@ -520,10 +499,7 @@ class Session:
 
     def ata_capabilities(self) -> dict:
         """Read cached IDENTIFY and passive controller/clock registers."""
-        raw = self.request(Command.ATA_DIAGNOSTICS, struct.pack('<I', 3))
-        if len(raw) != 64:
-            raise ProtocolError('invalid ATA capabilities length')
-        words = struct.unpack('<16I', raw)
+        words = self._diagnostic_words(3, 16, 'ATA capabilities')
         if (words[0] != int.from_bytes(b'ACAP', 'little') or words[1] or
                 words[3] & ~63 or any(value > 65535 for value in words[4:8])):
             raise ProtocolError('invalid ATA capabilities header')
