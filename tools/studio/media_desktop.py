@@ -127,6 +127,10 @@ def music_group_key(row, field):
     return (title, row.get('album_artist') or row.get('artist', '')) if field == 'album' else title
 
 
+def library_search_text(row):
+    return ' '.join(str(row.get(field, '')) for field in ('title', 'artist', 'album', 'genre', 'path')).casefold()
+
+
 class StatusLabel(QLabel):
     def __init__(self, text):
         super().__init__()
@@ -1145,7 +1149,7 @@ class MediaWindow(QMainWindow):
             for row in rows:
                 text = row.get('_linnet_search_text')
                 if text is None:
-                    text = ' '.join(str(row.get(field, '')) for field in ('title', 'artist', 'album', 'genre', 'path')).casefold()
+                    text = library_search_text(row)
                     row['_linnet_search_text'] = text
                 if first in text and (not remaining or all(word in text for word in remaining)):
                     matches.append(row)
@@ -1735,7 +1739,13 @@ class MediaWindow(QMainWindow):
         identity = self.identity
         dimension = 2048 if self.photo_detail.currentIndex() else 640
         verification = 'full' if self.verify_audio.isChecked() else 'metadata'
-        self.work('scan', lambda: media_status.inspect(identity, dimension, verification),
+        def scan():
+            result = media_status.inspect(identity, dimension, verification)
+            for row in result[2]:
+                if row['category'] in ('original', 'published'):
+                    row['_linnet_search_text'] = library_search_text(row)
+            return result
+        self.work('scan', scan,
                   'Reading your collection and checking prepared media…')
 
     @staticmethod
