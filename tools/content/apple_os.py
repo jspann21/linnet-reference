@@ -221,8 +221,13 @@ def _signature_matches(saved, root, files, current=None):
         legacy_roots.extend(Path(f'{letter}:\\') for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')
     for old_root in legacy_roots:
         prefix = str(old_root)
-        legacy = [(os.path.join(prefix, relative), size, mtime)
-                  for relative, size, mtime in rows]
+        if old_root.is_absolute():
+            base = prefix if prefix.endswith(os.sep) else prefix + os.sep
+            legacy = [(base + relative, size, mtime)
+                      for relative, size, mtime in rows]
+        else:
+            legacy = [(os.path.join(prefix, relative), size, mtime)
+                      for relative, size, mtime in rows]
         if hashlib.sha256(json.dumps(legacy, ensure_ascii=False).encode()).hexdigest() == saved:
             return True
     return False
