@@ -45,6 +45,8 @@ bool ln_storage_mounted(void);
 /* Wake the disk when the video library opens, then defer standby for at most
  * one minute after entering or navigating the list. Leaving releases the hint. */
 void ln_storage_video_browse(bool active, bool activity);
+/* A streaming owner can defer standby across reads satisfied from RAM. */
+void ln_storage_media_realtime(bool active);
 uint32_t ln_storage_disk_sector_bytes(void);
 bool ln_storage_startup_complete(void);
 bool ln_storage_prepared(void);

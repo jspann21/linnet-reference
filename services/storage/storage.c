@@ -34,7 +34,7 @@ static const char *const paths[STORAGE_FILE_COUNT]={"/.LINNET/OS0.LOS","/.LINNET
 };
 static uint8_t mbr[512] __attribute__((aligned(32)));
 static uint32_t phase,error,found,opening,epoch=1,request,request_generation,request_sectors;
-static bool pending,locked;
+static bool pending,locked,media_realtime;
 static uint32_t partition_scale;
 static uint32_t media_owner;
 #define VIDEO_WAKE_GENERATION 0x76000001u
@@ -234,7 +234,7 @@ void ln_storage_progress(void *context){
         struct ln_block_completion completion;
         if(ln_block_take(VIDEO_WAKE_GENERATION,&completion))video_wake_ticket=0;
     }
-    ln_block_allow_idle(phase==6&&!locked&&!pending&&
+    ln_block_allow_idle(phase==6&&!locked&&!pending&&!media_realtime&&
         (!video_browse||(int32_t)(now-video_browse_until)>=0));
     ln_block_step(now);
 #if defined(LINNET_IMAGE_OS)
@@ -258,7 +258,7 @@ void ln_storage_progress(void *context){
     ln_core_watchdog_feed();
 #endif
 }
-void ln_storage_init(void){phase=1;partition_scale=1;error=found=opening=0;pending=locked=false;media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
+void ln_storage_init(void){phase=1;partition_scale=1;error=found=opening=0;pending=locked=media_realtime=false;media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
 #if !defined(LINNET_PROFILE_RELEASE)
     uint32_t timing_flags=(poll_timing.depth[0]||poll_timing.depth[1])?1u<<29:0u;
     if(poll_timing.epoch==UINT32_MAX)timing_flags|=1u<<31;
@@ -351,6 +351,7 @@ void ln_storage_step(void){storage_step(false);}
 void ln_storage_step_deferred(void){storage_step(true);}
 bool ln_storage_busy(void){return locked||background_running||(phase>=1&&phase<6)||phase==7||phase==10;}
 bool ln_storage_mounted(void){return phase==6&&volume.mounted;}
+void ln_storage_media_realtime(bool active){media_realtime=active;}
 void ln_storage_video_browse(bool active,bool activity){
     uint32_t now=ln_time_us();
     if(!active){video_browse=false;video_wake_requested=false;return;}

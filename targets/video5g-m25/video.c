@@ -3,6 +3,8 @@
 #include "targets/video5g-m25/coprocessor.h"
 #include "hal/api/display.h"
 #include "hal/api/platform.h"
+#include "hal/api/ata.h"
+#include "services/storage/storage.h"
 static struct {char path[256],title[128];uint32_t identity,position,revision,backend_revision,resume[2];uint8_t options,output_once;bool active,resume_pending,headphone_known,headphones;} v;
 void ln_video_init(void){v.active=v.resume_pending=false;v.position=0;v.options=8u;v.output_once=0;v.headphone_known=false;}
 bool ln_video_open(const char *path){
@@ -21,6 +23,10 @@ bool ln_video_open_file(const struct ln_fat32_file*file,const char*title){
     if(v.active)ln_m25_coprocessor_file(file);return true;
 }
 void ln_video_step(void){
+    struct ln_ata_state disk;ln_ata_state_snapshot(&disk);
+    /* A cold HDD wake can exceed the PCM reserve. Keep it ready even when
+     * extended RAM temporarily supplies every packet and index read. */
+    ln_storage_media_realtime(v.active&&disk.media_kind==LN_ATA_MEDIA_ROTATING);
     ln_video_catalog_step(ln_m25_coprocessor_active());
     if(v.active&&ln_m25_coprocessor_active())v.position=ln_m25_coprocessor_position();
     if(ln_m25_coprocessor_step()){ln_display_damage(0,0,LINNET_UI_WIDTH,LINNET_UI_HEIGHT);(void)ln_display_present();}
