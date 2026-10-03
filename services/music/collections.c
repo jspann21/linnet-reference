@@ -2,6 +2,7 @@
 #include "services/storage/storage.h"
 #include "boot/include/linnet_bytes.h"
 #include "boot/include/linnet_boot.h"
+extern void ln_memory_copy(void *,const void *,uint32_t);
 /* Independent dual banks. Body first, header last; CRC covers the complete
  * snapshot. The previous bank remains intact until readback verifies its peer. */
 #define BODY 512u
@@ -64,7 +65,7 @@ static void step(bool read,bool write){
         if(!write||revision==durable)return;
         int proof=ln_storage_prepare_writes();if(!proof)return;if(proof<0){failed=true;return;}
         if(generation==UINT32_MAX){failed=true;return;}
-        for(uint32_t i=0;i<LN_COLLECTION_BYTES;i++)io[i]=saved[i];
+        ln_memory_copy(io,saved,LN_COLLECTION_BYTES);
         ln_write_le32(io,0x54534c4cu);ln_write_le32(io+4,1);ln_write_le32(io+8,generation+1u);ln_write_le32(io+12,0);
         snapshot=revision;running_crc=UINT32_MAX;offset=0;phase=6;return;
     }
@@ -86,7 +87,7 @@ static void step(bool read,bool write){
         if(phase==1&&offset==LN_COLLECTION_BYTES){
             if(valid(io)){uint32_t seq=ln_read_le32(io+8);
                 if(seq==generation&&generation){for(uint32_t i=0;i<LN_COLLECTION_BYTES;i++)if(saved[i]!=io[i]){failed=true;return;}}
-                if(seq>generation){for(uint32_t i=0;i<LN_COLLECTION_BYTES;i++)saved[i]=io[i];generation=seq;bank=loading;}}
+                if(seq>generation){ln_memory_copy(saved,io,LN_COLLECTION_BYTES);generation=seq;bank=loading;}}
             if(!loading){loading=1;offset=0;running_crc=UINT32_MAX;}else{ready=true;phase=0;if(!generation)failed=true;}
         }else if(phase==2&&offset==LN_COLLECTION_BYTES){phase=3;offset=0;}
         else if(phase==3){phase=5;offset=0;}
