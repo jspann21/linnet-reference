@@ -1226,7 +1226,7 @@ def _video_duration(source, ffprobe):
     raise ValueError(f'Could not determine video duration for space planning: {source.name}')
 
 
-def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, snapshots=None,
+def video_jobs(root, pending=(), selection=None, skipped=(), *, identity, snapshots=None,
                ffprobe=None, cancelled=None, replacements=None):
     """Resolve selected conversions and this device's supported on-disk videos."""
     root = Path(root).resolve(strict=True)
@@ -1236,24 +1236,23 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, s
     scan_allowed = native_extensions if selection is not None else allowed
     excluded = {Path(value).as_posix().casefold() for value in skipped}
     generated = set()
-    if identity is not None:
-        try:
-            saved = json.loads((cache_root(identity) / 'state.json').read_text(encoding='utf-8'))
-            for name in saved.get('video_generated', []):
+    try:
+        saved = json.loads((cache_root(identity) / 'state.json').read_text(encoding='utf-8'))
+        for name in saved.get('video_generated', []):
+            path = Path(name)
+            if (path.parts and path.parts[0].casefold() == 'videos' and
+                    not path.is_absolute() and '..' not in path.parts):
+                generated.add(str(root / path).casefold())
+        for relative, item in saved.get('video_files', {}).items():
+            for output in item.get('outputs', []):
+                name = output[0]
                 path = Path(name)
                 if (path.parts and path.parts[0].casefold() == 'videos' and
-                        not path.is_absolute() and '..' not in path.parts):
+                        not path.is_absolute() and '..' not in path.parts and
+                        name.casefold() != ('Videos/' + relative).casefold()):
                     generated.add(str(root / path).casefold())
-            for relative, item in saved.get('video_files', {}).items():
-                for output in item.get('outputs', []):
-                    name = output[0]
-                    path = Path(name)
-                    if (path.parts and path.parts[0].casefold() == 'videos' and
-                            not path.is_absolute() and '..' not in path.parts and
-                            name.casefold() != ('Videos/' + relative).casefold()):
-                        generated.add(str(root / path).casefold())
-        except (OSError, ValueError, UnicodeError, TypeError, AttributeError, IndexError):
-            pass
+    except (OSError, ValueError, UnicodeError, TypeError, AttributeError, IndexError):
+        pass
     available = [str(path) for source in source_folders(root, "Videos")
                  for path, _ in _file_records(source, allowed=scan_allowed)
                  if str(path).casefold() not in generated and
@@ -1331,8 +1330,6 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, s
     if len(jobs) > 256:
         raise ValueError("Choose at most 256 videos per update.")
     if selection is not None and not selection:
-        if identity is None:
-            raise ValueError('A device target is needed to check video compatibility.')
         if (identity['media_profile']['video_backend'] in ('bcm-mp4', 'native-mp4')
                 and not (ffprobe or shutil.which('ffprobe')) and jobs):
             raise ValueError('FFprobe is required to check native video compatibility.')
@@ -2280,12 +2277,12 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
             package = cache / "videos" / (key + "-" + fingerprint[:16] + ".ipvf")
             progress(f"Preparing video {index+1}/{item['count']}: {relative}")
             if index_in_place:
-                from .publish_video import index_ipvf
+                from .publish_video import index_video
                 emit_stage('Publishing Videos', unit,
                            (index + 0.5) / len(videos), can_stop=False)
                 mark_publication()
                 file_publication_started = True
-                result = index_ipvf(source, title=label, library_key=relative, **target_args(identity))
+                result = index_video(source, title=label, library_key=relative, **target_args(identity))
                 published.append(result)
                 catalog_snapshot.clear()
                 video_state[relative] = dict(signature=fingerprint,

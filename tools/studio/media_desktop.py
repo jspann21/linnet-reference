@@ -1759,8 +1759,7 @@ class MediaWindow(QMainWindow):
 
     def _complete_review_skipped(self, result):
         identity, rows = result
-        if not self.identity or any(self.identity.get(key) != identity.get(key)
-                                    for key in ('root', 'disk_serial', 'volume_serial', 'target_id')):
+        if not self.same_device(self.identity, identity):
             self.show_error('The selected iPod changed while skipped files were loading. Try again.')
         elif rows:
             self.show_skipped_dialog(identity, rows)
@@ -2312,8 +2311,7 @@ class MediaWindow(QMainWindow):
         self.retry_button.setEnabled(ready)
         self.prep_details.setVisible(self.last_preparation is not None)
         self.prep_details.setEnabled(ready and self.last_preparation is not None and
-                                     all(self.identity.get(key) == self.last_preparation[0].get(key)
-                                         for key in ('root', 'disk_serial', 'volume_serial', 'target_id')))
+                                    self.same_device(self.identity, self.last_preparation[0]))
         games_ready = ready and games.available(self.identity)
         self.games_save.setEnabled(games_ready and self.games_loaded_for == self.identity['root'])
         self.games_recover.setVisible(bool(self.identity and self.game_read_failed and games.available(self.identity)))
@@ -2961,8 +2959,7 @@ class MediaWindow(QMainWindow):
         if not self.identity or self.last_preparation is None:
             return
         identity, report = self.last_preparation
-        if any(self.identity.get(key) != identity.get(key)
-               for key in ('root', 'disk_serial', 'volume_serial', 'target_id')):
+        if not self.same_device(self.identity, identity):
             return
         lines = [report.get('summary') or 'Preparation result', '']
         for step in report.get('steps', [])[:500]:
@@ -3000,8 +2997,7 @@ class MediaWindow(QMainWindow):
         table = QTableView(); model = MediaModel(table); model.reset([dict(title=row['relative'], kind=row['kind']) for row in rows], [('title', 'FILE'), ('kind', 'TYPE')]); table.setModel(model)
         table.setSelectionBehavior(QAbstractItemView.SelectRows); table.setSelectionMode(QAbstractItemView.ExtendedSelection); table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch); layout.addWidget(table)
         def restore():
-            if not self.identity or any(self.identity.get(key) != identity.get(key)
-                                        for key in ('root', 'disk_serial', 'volume_serial', 'target_id')):
+            if not self.same_device(self.identity, identity):
                 dialog.reject(); self.show_error('The selected iPod changed. Load skipped files again.'); return
             selected = [rows[i.row()] for i in table.selectionModel().selectedRows()]
             if selected:

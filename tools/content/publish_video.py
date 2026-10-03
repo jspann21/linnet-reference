@@ -375,7 +375,3 @@ def index_video(source, *, disk_number, expected_disk_serial,
         except Exception as exc:
             receipt.update(error=str(exc), finished_at=time.time()); record()
             raise RuntimeError(f"Video indexing stopped in {receipt['phase']}: {exc}. Inspect {receipt_path}; do not replay automatically") from exc
-
-
-def index_ipvf(source, **kwargs):
-    return index_video(source, **kwargs)
