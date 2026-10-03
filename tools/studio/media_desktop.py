@@ -1117,10 +1117,9 @@ class MediaWindow(QMainWindow):
         selected_keys = set()
         active = self.views.currentWidget()
         if getattr(self, '_selection_context', None) == context and active in (self.table, self.grid):
-            indices = active.selectionModel().selectedRows() if active is self.table else active.selectionModel().selectedIndexes()
-            for index in indices:
-                if 0 <= index.row() < len(self.model.rows):
-                    row = self.model.rows[index.row()]
+            for first, last in self.selected_row_ranges():
+                for at in range(first, last + 1):
+                    row = self.model.rows[at]
                     selected_keys.add(('group', row['group_kind'], row['group_key']) if 'group_key' in row else ('row', row['id']))
         self._selection_context = context
         rows = self.library_rows()
@@ -1239,16 +1238,27 @@ class MediaWindow(QMainWindow):
                 active.selectionModel().select(selection, flags)
                 self.selection_changed()
 
-    def selected(self):
+    def selected_row_ranges(self):
         view = self.views.currentWidget()
         if view not in (self.grid, self.table):
             return []
-        indices = view.selectionModel().selectedRows() if view is self.table else view.selectionModel().selectedIndexes()
-        rows = [self.model.rows[index.row()] for index in indices]
+        selection = view.selectionModel().selection()
+        # Row selections already contain compact intervals. Avoid expanding a
+        # bulk selection into one Python Qt index per song just to read rows.
+        if view is self.table and any(part.left() != 0 or part.right() != self.model.columnCount() - 1 for part in selection):
+            spans = [(index.row(), index.row()) for index in view.selectionModel().selectedRows()]
+        else:
+            spans = [(part.top(), part.bottom()) for part in selection]
+        return [(max(0, first), min(len(self.model.rows) - 1, last))
+                for first, last in spans if last >= 0 and first < len(self.model.rows)]
+
+    def selected(self):
         unique = {}
-        for row in rows:
-            for member in row.get('members', [row]):
-                unique[member['id']] = member
+        for first, last in self.selected_row_ranges():
+            for at in range(first, last + 1):
+                row = self.model.rows[at]
+                for member in row.get('members', (row,)):
+                    unique[member['id']] = member
         return list(unique.values())
 
     def selection_changed(self, *_):
