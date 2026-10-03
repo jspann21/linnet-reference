@@ -1406,6 +1406,7 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
                 largest_audio = max(largest_audio, copy['bytes'])
     video_bytes = 0
     video_host = 0
+    video_conversion_required = False
     if 'Videos' in selected:
         for job in jobs:
             source = Path(job['source'])
@@ -1424,7 +1425,9 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
             encoder = ffmpeg or shutil.which('ffmpeg')
             if native:
                 if backend in ('bcm-mp4', 'native-mp4'):
-                    direct = no_conversions or (details['fast_start'] and backend != 'bcm-mp4') or not encoder
+                    converts = (not details['fast_start'] or backend == 'bcm-mp4') and bool(encoder)
+                    video_conversion_required |= converts
+                    direct = no_conversions or not converts
                 else:
                     direct = True
                 if direct and source.is_relative_to(root):
@@ -1432,6 +1435,7 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
                 estimate = job['bytes'] if direct else min(0x7fffffff, job['bytes'] * 2)
                 scratch = 0
             else:
+                video_conversion_required = True
                 duration = _video_duration(source, ffprobe)
                 if backend in ('bcm-mp4', 'native-mp4'):
                     limit = identity['media_profile']['native_video']['max_video_kbps'] + 256
@@ -1477,7 +1481,8 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
         parent = parent.parent
     return dict(device_peak_bytes=device_needed, computer_peak_bytes=host_needed,
                 device_free_bytes=shutil.disk_usage(root).free,
-                computer_free_bytes=shutil.disk_usage(parent).free)
+                computer_free_bytes=shutil.disk_usage(parent).free,
+                video_conversion_required=video_conversion_required)
 
 
 def reconciliation_actions(identity, selected, copies, *, replacements=(),
