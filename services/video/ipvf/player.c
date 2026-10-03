@@ -621,7 +621,8 @@ bool ln_video_seek(int32_t seconds){
     if(v.measurement)return false;
 #endif
     if(!v.ready||v.stopping)return false;struct ln_audio_status a;ln_audio_snapshot(&a);int64_t frame=(int64_t)(v.started&&v.working==v.epoch?sample_frame(v.origin+a.consumed):v.target)+(int64_t)(seconds*(int32_t)v.fps_num/(int32_t)v.fps_den);
-    if(frame<0)frame=0;if(frame>=v.count)frame=v.count-1;v.target=(uint32_t)frame;seek_preroll();v.seeking=true;++v.epoch;return true;
+    if(frame<0)frame=0;if(frame>=v.count)frame=v.count-1;v.target=(uint32_t)frame;seek_preroll();
+    v.active=true;v.completed=false;v.seeking=true;++v.epoch;return true;
 }
 uint8_t ln_video_options(void){return video_options;}
 void ln_video_options_set(uint8_t options){video_options=options&31u;}
