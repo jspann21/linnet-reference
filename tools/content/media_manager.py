@@ -2194,7 +2194,11 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                             record()
                             continue
                 compatible = False
-                if source.suffix.lower() in native_video_extensions(identity):
+                # Native preparation checks conversion-enabled host sources
+                # before copying or converting. Device sources need this check
+                # here to decide whether they can be indexed in place.
+                if ((no_conversions or source.is_relative_to(root)) and
+                        source.suffix.lower() in native_video_extensions(identity)):
                     try:
                         native_info = inspect_native(source, ffprobe=ffprobe, profile=media_profile, cancelled=cancelled)
                         compatible = (no_conversions or (native_info['fast_start'] and media_profile['video_backend'] != 'bcm-mp4') or
