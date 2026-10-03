@@ -12,6 +12,7 @@
 #include "services/audio/aac/aac.h"
 #include "hal/api/audio.h"
 #include "boot/include/sha256.h"
+extern void ln_memory_copy(void *,const void *,uint32_t);
 /* Native playback exclusively owns the existing media staging arena. */
 #define audio_decoder (*(struct ln_aac *)(uintptr_t)LINNET_STAGE_ADDRESS)
 #define AUDIO_PRIME_FRAMES 32768u
@@ -152,13 +153,22 @@ static int video_read(void *context,uint64_t at,void *buffer,uint32_t bytes){
         int result=media_read(context,cache->offset[slot],base+slot*16384u,cache->bytes[slot]);
         if(result<=0)return result;cache->pending=false;cache->age[slot]=++cache->clock;
     }
-    for(uint32_t i=0;i<3u;++i)if(cache->bytes[i]&&at>=cache->offset[i]&&at-cache->offset[i]<=cache->bytes[i]&&bytes<=cache->bytes[i]-(uint32_t)(at-cache->offset[i])){
-        const uint8_t *source=base+i*16384u+(uint32_t)(at-cache->offset[i]);
-        for(uint32_t j=0;j<bytes;++j)((uint8_t *)buffer)[j]=source[j];cache->age[i]=++cache->clock;return 1;
+    if(at>vc.video_file.size||bytes>vc.video_file.size-at)return -1;
+    uint32_t copied=0;
+    while(copied<bytes){
+        uint64_t position=at+copied;bool found=false;
+        for(uint32_t i=0;i<3u;++i)if(cache->bytes[i]&&position>=cache->offset[i]&&position-cache->offset[i]<cache->bytes[i]){
+            uint32_t within=(uint32_t)(position-cache->offset[i]),count=cache->bytes[i]-within;
+            if(count>bytes-copied)count=bytes-copied;
+            ln_memory_copy((uint8_t *)buffer+copied,base+i*16384u+within,count);
+            cache->age[i]=++cache->clock;copied+=count;found=true;break;
+        }
+        if(!found)break;
     }
+    if(copied==bytes)return 1;
     uint32_t slot=0;for(uint32_t i=1;i<3u;++i)if(cache->age[i]<cache->age[slot])slot=i;
-    uint64_t offset=at&~4095ull;if(at-offset+bytes>16384u)offset=at;
-    if(offset>=vc.video_file.size)return -1;
+    uint64_t position=at+copied,offset=position&~4095ull;
+    if(position-offset+bytes-copied>16384u)offset=position;
     uint32_t count=vc.video_file.size-(uint32_t)offset;if(count>16384u)count=16384u;
     cache->offset[slot]=offset;cache->bytes[slot]=count;cache->filling=slot;cache->pending=true;
     return 0;
