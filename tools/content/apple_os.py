@@ -166,13 +166,19 @@ def _walk_folders(root):
 def _folder_rows(root, records_by_kind):
     paths = set()
     for kind in ROOTS:
-        if (root / kind).is_dir():
+        kind_root = root / kind
+        if kind_root.is_dir():
             paths.add(kind)
+        last_parent = None
         for path, _ in records_by_kind[kind]:
-            if not path.is_relative_to(root / kind):
-                continue
             parent = path.parent
-            while parent.is_relative_to(root / kind):
+            parent_key = str(parent)
+            if parent != root and parent_key == last_parent:
+                continue
+            last_parent = parent_key if parent != root else None
+            if not path.is_relative_to(kind_root):
+                continue
+            while parent.is_relative_to(kind_root):
                 relative = parent.relative_to(root).as_posix()
                 if relative in paths:
                     break
