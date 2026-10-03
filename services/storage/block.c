@@ -245,7 +245,7 @@ static void step_inner(uint32_t now) {
         if(power_task==2u){
             if(device.initializing)return;
             power_task=0;last_activity=now;
-            if(device.failed){++metrics.idle_failures;idle_retry_at=now+5000000u;idle_retry_active=true;}
+            if(device.failed){++metrics.idle_failures;idle_retry_at=now+5000000u;idle_retry_active=true;invalidate_cache();}
             return;
         }
         struct ln_ata_result power_result;
@@ -322,8 +322,9 @@ static void step_inner(uint32_t now) {
             bool free=true;for(uint32_t i=0;i<8u;++i)if(slots[i].state!=FREE)free=false;
             if(free&&device.powered&&standby_at&&
                now-standby_at>=2000000u&&device.can_power_off){
-                if(ln_ata_power_off())invalidate_cache();
-                else {++metrics.idle_failures;idle_retry_at=now+5000000u;idle_retry_active=true;}
+                /* A clean rail-off leaves the media unchanged. Retain verified
+                 * read windows so a cached request can leave the drive off. */
+                if(!ln_ata_power_off()){++metrics.idle_failures;idle_retry_at=now+5000000u;idle_retry_active=true;invalidate_cache();}
             }else if(free&&device.powered&&!device.sleeping&&!standby_at&&(device.standby_supported||device.can_power_off)&&
                      now-last_activity>=device.idle_timeout_us){
                 if(ln_ata_start(LN_ATA_STANDBY,0,0,0,now+30000000u))power_task=1u;
@@ -357,9 +358,10 @@ static void step_inner(uint32_t now) {
     }
 #endif
     if(!device.powered){
-        invalidate_cache();
+        /* ATA re-identification checks the same media before new reads. A
+         * successful idle wake preserves clean pages; failures discard them. */
         if(ln_ata_power_on(now))power_task=2u;
-        else {++metrics.idle_failures;complete(s,LN_ATA_IO,0);}
+        else {++metrics.idle_failures;invalidate_cache();complete(s,LN_ATA_IO,0);}
         return;
     }
     if(device.sleeping){
