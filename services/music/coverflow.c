@@ -54,7 +54,11 @@ static uint8_t catalog[CATALOG_SLOTS][CATALOG_RECORD] __attribute__((section(".m
 #endif
 static uint32_t tags[CATALOG_SLOTS];
 static struct ln_fat32_file file;
-static uint8_t header[1024] __attribute__((aligned(32)));
+static uint8_t header[1024] __attribute__((aligned(32)))
+#if defined(LINNET_COVERFLOW_HEADER_SECTION)
+    __attribute__((section(LINNET_COVERFLOW_HEADER_SECTION)))
+#endif
+;
 static uint8_t art_low[ART_LOW*ART_RECORD] __attribute__((section(".cover_low"),aligned(32)));
 static uint8_t art_high[ART_HIGH*ART_RECORD] __attribute__((section(".cover_high"),aligned(32)));
 static uint32_t art_tags[ART_SLOTS],art_warm,art_loaded;

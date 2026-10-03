@@ -17,3 +17,6 @@
 #define LINNET_BATTERY_CURVE_MV {3450,3660,3700,3730,3770,3820,3870,3920,4040,4100,4170}
 
 #define LINNET_DISPLAY_SERVICE_PAIRS 256u
+/* The validated catalog header shares the artwork reservation, outside the
+ * resident image. It is filled completely before Cover Flow publishes it. */
+#define LINNET_COVERFLOW_HEADER_SECTION ".cover_high"
