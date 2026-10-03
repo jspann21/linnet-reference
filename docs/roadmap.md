@@ -121,6 +121,8 @@ accessory-dependent features are expansion suggestions for other targets.
   catalogs, uncached navigation during audio, fallback decoding, empty folders,
   and restart with changed/missing content. Measure first usable frame and audio
   reserve. [Photos](../services/photos/photos.c), [saved state](../services/display/settings.c).
+  Partial: physical catalog and photo navigation continued during PCM playback
+  without reported underruns; fallback, empty-folder, and restart cases remain.
 
 - [ ] **Measure/Improve: competing media work during playback.** Profile artwork,
   photos, metadata/history and next-track preparation at track boundaries. Measure
@@ -129,6 +131,8 @@ accessory-dependent features are expansion suggestions for other targets.
   does not add underruns or missed joins. [Controller](../services/music/controller.c),
   [player](../services/music/player.c), [M25](../targets/video5g-m25/coprocessor.c),
   [Classic](../services/video/native/player.c).
+  Partial: photo navigation during playback kept audio active without reported
+  underruns; artwork, history, track boundaries, and backend throughput remain.
 
 - [ ] **Measure/Improve: deferred 75 ms search goal at 100,000 tracks.** Search,
   retained pages and lower-bound caching are implemented. Measure first result,
@@ -162,6 +166,8 @@ accessory-dependent features are expansion suggestions for other targets.
   buffers. H.264 playback is recorded; MPEG-4 acceptance remains open. M25 uses a
   different BCM backend. [Player](../services/video/native/player.c),
   [decoder](../services/video/native/decoder.c), [video scope](video-format.md).
+  Partial: two MPEG-4 clips completed on Classic hardware without errors or
+  dropped frames; startup counters were captured. Buffer and broader A/V acceptance remain.
 
 - [ ] **Measure: Classic small-update display costs.** Measure framebuffer
   preservation and panel transfer for status/list updates. Full-repaint copy
