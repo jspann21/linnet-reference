@@ -214,12 +214,15 @@ def _signature_matches(saved, root, files, current=None):
         return True
     if not isinstance(saved, str) or len(saved) != 64:
         return False
-    rows = [(path.relative_to(root), info.st_size, info.st_mtime_ns) for path, info in files]
+    rows = [(str(path.relative_to(root)), info.st_size, info.st_mtime_ns)
+            for path, info in files]
     legacy_roots = [root]
     if os.name == 'nt' and root.drive:
         legacy_roots.extend(Path(f'{letter}:\\') for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')
     for old_root in legacy_roots:
-        legacy = [(str(old_root / relative), size, mtime) for relative, size, mtime in rows]
+        prefix = str(old_root)
+        legacy = [(os.path.join(prefix, relative), size, mtime)
+                  for relative, size, mtime in rows]
         if hashlib.sha256(json.dumps(legacy, ensure_ascii=False).encode()).hexdigest() == saved:
             return True
     return False
