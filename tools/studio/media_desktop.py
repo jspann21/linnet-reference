@@ -2099,11 +2099,11 @@ class MediaWindow(QMainWindow):
         dimension = 2048 if self.photo_detail.currentIndex() else 640
         verification = 'full' if self.verify_audio.isChecked() else 'metadata'
         def inspect():
-            current = media.refresh(identity)
-            pending = publish.pending_publications(current)
+            pending = publish.pending_publications(identity)
             if pending:
+                current = media.refresh(identity)
                 return dict(publication_recovery_pending=True, identity=current, groups=pending)
-            result = media_status.inspect(current, dimension, verification)
+            result = media_status.inspect(identity, dimension, verification)
             for row in result[2]:
                 if row['category'] in ('original', 'published'):
                     row['_linnet_search_text'] = library_search_text(row)
