@@ -200,6 +200,13 @@ static struct album_rgb album_unpack(uint16_t c){
 }
 static uint16_t album_pack(struct album_rgb c){return (uint16_t)(((c.r>>3)<<11)|((c.g>>2)<<5)|(c.b>>3));}
 static uint32_t album_luma(struct album_rgb c){return (c.r*77u+c.g*150u+c.b*29u)>>8;}
+/* Video fallbacks and controls keep the theme hue without a bright canvas. */
+static uint16_t video_background(uint16_t value){
+    return album_luma(album_unpack(value))>64u?mix(0u,value,207u):value;
+}
+static uint16_t video_ink(uint16_t value){
+    return album_luma(album_unpack(value))<160u?mix(0xffffu,value,192u):value;
+}
 static uint32_t album_bucket(uint16_t c){struct album_rgb v=album_unpack(c);return ((v.r>>4)<<8)|((v.g>>4)<<4)|(v.b>>4);}
 static struct album_rgb album_average(const struct ln_ui_asset*a,uint32_t bucket){
     struct album_rgb sum={0,0,0};uint32_t count=0,size=a->width*a->height;
@@ -858,6 +865,7 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
     if(n->flags&2u)return;
     struct rect previous=p->clip;p->clip=intersect(previous,bounds(n));if(!p->clip.w||!p->clip.h){p->clip=previous;return;}
     uint16_t fg=ln_ui_color(n->fg),bg=ln_ui_color(n->bg);int32_t row_h=(int32_t)row_height(n);
+    if(s->scene==LN_UI_SCENE_VIDEO_CONTROLS&&n->kind==LN_UI_TEXT)fg=video_ink(fg);
     const char *node_text=s->scene==LN_UI_SCENE_GAMES&&same(n->text,"Game description")?
         ln_games_description(s->selected):s->scene==LN_UI_SCENE_GAME_PLAY&&n->text&&
         (same(n->text,"Game title")||same(n->text,"Game score")||same(n->text,"Game hint")||
@@ -1023,7 +1031,10 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
         }else fill(p,(struct rect){n->x,n->y+top,n->w,height},fg);break;}
 
     case LN_UI_PROGRESS_BAR:{uint32_t count=ln_ui_dynamic_count(n,n->count?n->count:100u),value=ln_ui_dynamic_value(n,n->index);int32_t width=(int32_t)fraction(value>count?count:value,(uint32_t)n->w,count);
-        if(layout()==LN_UI_LAYOUT_IPOD_PHOTO){
+        if(s->scene==LN_UI_SCENE_VIDEO_CONTROLS){
+            fg=video_ink(color(LN_UI_ACCENT));bg=mix(fg,video_background(color(LN_UI_PANEL)),56u);
+            fill(p,bounds(n),bg);fill(p,(struct rect){n->x,n->y,width,n->h},fg);
+        }else if(layout()==LN_UI_LAYOUT_IPOD_PHOTO){
             photo_stripes(p,bounds(n),photo_progress_empty,11);
             struct rect r=intersect((struct rect){n->x,n->y,width,n->h},p->clip);
             for(int32_t y=r.y;y<r.y+r.h;++y)for(int32_t x=r.x;x<r.x+r.w;++x)
@@ -1034,7 +1045,8 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
         }else {fill(p,bounds(n),bg);fill(p,(struct rect){n->x,n->y,width,n->h},fg);}break;}
     case LN_UI_STATUS_BAR:{
         fg=color(LN_UI_STATUS_FG);bg=color(LN_UI_STATUS_BG);
-        if(layout()==LN_UI_LAYOUT_IPOD_PHOTO)photo_stripes(p,bounds(n),photo_header,21);
+        if(s->scene==LN_UI_SCENE_VIDEO_CONTROLS){fg=video_ink(fg);bg=video_background(bg);fill(p,bounds(n),bg);}
+        else if(layout()==LN_UI_LAYOUT_IPOD_PHOTO)photo_stripes(p,bounds(n),photo_header,21);
         else if(classic_layout()&&!(ln_ui_themes[active_theme].flags&LN_UI_THEME_MONOCHROME))gradient(p,bounds(n),0xffffu,0xbdf7u);
         else fill(p,bounds(n),bg);
         fill(p,(struct rect){n->x,n->y+n->h-1,n->w,1},color(LN_UI_BORDER));
@@ -1078,6 +1090,7 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
         /* Asset providers are side-effect-free retained-memory lookups. Moving
          * these writes is not a contract for framebuffer-inspecting overrides. */
         bool video=n->kind==LN_UI_VIDEO_SURFACE;
+        if(video){bg=video_background(bg);fg=video_ink(fg);}
         const struct ln_ui_asset*a=video?ln_ui_dynamic_asset(n,n->resource<ln_ui_asset_count?&ln_ui_assets[n->resource]:0):0;
         if(video&&image_independent(p,n,a)){
             /* Paint only the letterbox bars: the image overwrites the interior. */
@@ -1220,10 +1233,10 @@ static bool paint_video_overlay(struct painter*p,struct ln_ui_state*s,const stru
     struct rect clip=p->clip;p->clip=(struct rect){0,(int32_t)top,LINNET_UI_WIDTH,(int32_t)(bottom-top)};
     draw_node(p,&c->nodes[1],s,false);p->clip=clip;
     if(changed){
-        const uint16_t header_bg=color(LN_UI_STATUS_BG),footer_bg=color(LN_UI_PANEL);
-        const uint16_t ink=color(LN_UI_STATUS_FG),accent=color(LN_UI_ACCENT);
+        const uint16_t header_bg=video_background(color(LN_UI_STATUS_BG)),footer_bg=video_background(color(LN_UI_PANEL));
+        const uint16_t ink=video_ink(color(LN_UI_STATUS_FG)),accent=video_ink(color(LN_UI_ACCENT));
         const uint16_t header_hint=mix(ink,header_bg,210u);
-        const uint16_t footer_hint=mix(color(LN_UI_FOREGROUND),footer_bg,210u);
+        const uint16_t footer_hint=mix(video_ink(color(LN_UI_FOREGROUND)),footer_bg,210u);
         const uint16_t track=mix(accent,footer_bg,56u);
         uint32_t style=layout();
         fill(p,(struct rect){0,0,LINNET_UI_WIDTH,(int32_t)top},header_bg);
@@ -1313,7 +1326,9 @@ static void paint(struct ln_ui_state*s,uint16_t*pixels,struct rect r,ln_ui_damag
     }
     if(layout()==LN_UI_LAYOUT_MINIMAL){
         uint32_t status=ln_ui_battery_status();
-        fill(&p,(struct rect){0,0,LINNET_UI_WIDTH,2},color(LN_UI_BACKGROUND));
+        uint16_t bg=color(LN_UI_BACKGROUND);
+        if(s->scene==LN_UI_SCENE_VIDEO_PLAYER||s->scene==LN_UI_SCENE_VIDEO_CONTROLS)bg=video_background(bg);
+        fill(&p,(struct rect){0,0,LINNET_UI_WIDTH,2},bg);
         if(status!=UINT32_MAX&&(status&255u)<=100u)
             fill(&p,(struct rect){0,0,(int32_t)((status&255u)*LINNET_UI_WIDTH/100u),2},color(LN_UI_BATTERY));
     }

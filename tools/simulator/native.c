@@ -10,6 +10,9 @@
 #include <string.h>
 static uint32_t sample_battery=80u,sample_clock=9u*3600u+41u*60u,sample_playback,sample_modes;
 static bool sample_art,sample_more;
+static bool sample_video_frame;
+static uint16_t sample_video_pixels[LINNET_UI_WIDTH*LINNET_UI_HEIGHT];
+static const struct ln_ui_asset sample_video_asset={LINNET_UI_WIDTH,LINNET_UI_HEIGHT,sample_video_pixels};
 static uint32_t sample_sound_view,sample_sound_parent,sample_music_parent;
 #if defined(LINNET_HARDWARE_CLICKER)
 #define SAMPLE_CLICKER true
@@ -28,6 +31,9 @@ uint32_t ln_ui_playback_status(void){return sample_playback;}
 uint32_t ln_ui_playback_modes(void){return sample_modes;}
 const struct ln_ui_asset *ln_ui_now_playing_art(uint32_t *revision){
     *revision=sample_art?1u:0u;return sample_art&&ln_ui_asset_count?&ln_ui_assets[0]:0;
+}
+const struct ln_ui_asset *ln_ui_dynamic_asset(const struct ln_ui_node*n,const struct ln_ui_asset*fallback){
+    return n->kind==LN_UI_VIDEO_SURFACE&&sample_video_frame?&sample_video_asset:fallback;
 }
 /* Explicit sample metadata; device builds bind these keys to the music service. */
 static bool music_category_node(const struct ln_ui_node *node){
@@ -61,6 +67,11 @@ uint32_t ln_ui_dynamic_value(const struct ln_ui_node *node,uint32_t fallback){
     return fallback;
 }
 const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const char*fallback){
+    if(n->kind==LN_UI_VIDEO_SURFACE||
+       (n->kind==LN_UI_STATUS_BAR&&node_scene(n,"linnet.system.video-controls"))){
+        if(n->kind==LN_UI_VIDEO_SURFACE&&sample_video_frame)return "";
+        return sample_playback==2u?"Paused":sample_playback?"Playing":"Stopped";
+    }
     if(node_scene(n,"linnet.system.about")&&n->text&&!strcmp(n->text,"About detail")&&item!=UINT32_MAX){
         static const char*const details[]={
             "Linnet OS 0.1.0","Build 4e37dca803b2","Name  My iPod","Device  iPod Classic",
@@ -197,6 +208,8 @@ static void menu_input(struct ln_ui_state *s,uint32_t kind,int32_t value){
 }
 int main(int argc,char **argv){
     if(argc!=2&&(argc!=3||strcmp(argv[2],"--all-scenes")))return 2;
+    for(uint32_t y=0;y<LINNET_UI_HEIGHT;++y)for(uint32_t x=0;x<LINNET_UI_WIDTH;++x)
+        sample_video_pixels[y*LINNET_UI_WIDTH+x]=(uint16_t)(((x*31u/LINNET_UI_WIDTH)<<11)|((y*63u/LINNET_UI_HEIGHT)<<5)|10u);
     struct ln_ui_state state;ln_ui_init(&state);ln_ui_render(&state,pixels,damage);
     if(!snapshot(&state,argv[1],0))return 3;
     uint32_t kind,repeat,capture,index=0,total=0,simulated_us=0;int32_t value;
@@ -229,11 +242,21 @@ int main(int argc,char **argv){
             ln_ui_theme_changed(theme);ln_ui_init(&state);
             for(uint32_t scene=0;scene<ln_ui_scene_count&&scene<LINNET_UI_MAX_SCENES;++scene){
                 if(!(ln_ui_enabled_scenes&(UINT64_C(1)<<scene)))continue;
+                sample_video_frame=false;sample_playback=0;
                 (void)ln_ui_show(&state,ln_ui_scenes[scene].id);
                 memset(pixels,0,sizeof pixels);
                 if(!strcmp(ln_ui_scenes[scene].id,"linnet.system.game-play"))ln_games_start(0);
                 state.selected=0;ln_ui_refresh(&state);ln_ui_render(&state,pixels,damage);
                 if(++index>2048u||!snapshot(&state,argv[1],index))return 7;
+                if(!strcmp(ln_ui_scenes[scene].id,"linnet.system.video-player")||
+                   !strcmp(ln_ui_scenes[scene].id,"linnet.system.video-controls")){
+                    for(uint32_t status=1;status<=4u;++status){
+                        sample_playback=status==2u?2u:1u;sample_video_frame=status>=3u;
+                        ln_ui_refresh(&state);ln_ui_render(&state,pixels,damage);
+                        if(++index>2048u||!snapshot(&state,argv[1],index))return 7;
+                    }
+                    sample_video_frame=false;sample_playback=0;
+                }
                 uint32_t count=ln_ui_focused_count(&state);
                 if(count>ln_ui_visible_capacity(&state)){
                     state.selected=count-1u;ln_ui_refresh(&state);ln_ui_render(&state,pixels,damage);

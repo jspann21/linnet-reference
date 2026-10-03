@@ -39,6 +39,7 @@ def simulate(root,output,tape=None,system=None,target=None,all_scenes=False):
         f'#include "targets/{scenes["target"]}/hardware.h"\n' +
         f'#define LINNET_TARGET_NUMBER {TARGET_NUMBERS[scenes["target"]]}u\n' +
         f'#define LINNET_EXTENDED_SOUND {int(spec.get("runtime_policy", {}).get("extended_sound", False))}\n' +
+        ('#define LINNET_VIDEO 1\n' if spec.get('capabilities', {}).get('video', False) else '') +
         ''.join(f'#define {name} {value}\n' for name, value in presentation_defines(spec).items()))
     write_firmware_header(output/'generated')
     executable=output/('linnet-simulator.exe' if os.name == 'nt' else 'linnet-simulator')
