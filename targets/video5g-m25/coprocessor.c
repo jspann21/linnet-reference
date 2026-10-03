@@ -31,7 +31,7 @@ static struct {
     char path[256];bool normal,paused,want_paused,seek_pending,clock_valid;uint8_t options;
     uint32_t requested_seek,clock_ms,clock_us,position_base,revision,board_revision;
     uint32_t header[4],directory[4],legacy_header[4],restore_error;
-    bool io,owned,reply_stream,fs_canceling,syncing_seek,seek_forward,seek_seen;
+    bool io,owned,reply_stream,fs_canceling,syncing_seek,seek_forward,seek_seen,image_valid;
     const uint8_t *rom;
     uint32_t rom_bytes;
     uint32_t rom_sum,rom_expected,rom_checked,map_logical,map_physical;
@@ -550,6 +550,7 @@ static bool file_service(void){
 static void recover(uint32_t error){
     vc.clock_ms=ln_m25_coprocessor_position();vc.clock_us=ln_time_us();vc.clock_valid=true;vc.paused=true;
     if(vc.audio_ready){ln_audio_snapshot(&vc.audio_status);if(!ln_audio_stop()&&!error)error=49u;vc.audio_ready=false;}
+    if(error)vc.image_valid=false;
     if(vc.fs_phase==1u||vc.fs_phase==2u||vc.read_io||vc.io){ln_storage_media_cancel(vc.generation);vc.fs_canceling=true;}
     vc.read_active=vc.read_io=vc.io=false;
     vc.fs_phase=0;
@@ -694,7 +695,10 @@ bool ln_m25_coprocessor_step(void){
         for(uint32_t i=0;i<n;++i)vc.rom_sum+=vc.rom[vc.rom_checked+i];
         vc.rom_checked+=n;
         if(vc.rom_checked==vc.rom_bytes){
-            if(vc.rom_sum!=vc.rom_expected)recover(17);else phase(OPEN,60000000u);
+            if(vc.rom_sum!=vc.rom_expected)recover(17);
+            else if(vc.image_valid)phase(vc.operation==2u?MEDIA_OPEN:ACQUIRE,
+                                         vc.operation==2u?60000000u:1000000u);
+            else{vc.image_valid=false;phase(OPEN,60000000u);}
         }
         return false;
     }
@@ -729,6 +733,7 @@ bool ln_m25_coprocessor_step(void){
         if(vc.hash_at==sizeof vc.image){
             uint8_t digest[32];ln_sha256_finish(&vc.hash,digest);
             for(uint32_t i=0;i<32u;++i)if(digest[i]!=expected_sha[i]){recover(6);return false;}
+            vc.image_valid=true;
             phase(vc.operation==2u?MEDIA_OPEN:ACQUIRE,vc.operation==2u?60000000u:1000000u);
         }
         return false;
