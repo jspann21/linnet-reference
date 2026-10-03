@@ -59,6 +59,8 @@ def file_records(folder, *, allowed=None, inodes=None):
 
 
 def collect_records_by_kind(root, kinds=KINDS, *, include_inodes=True):
+    kinds = tuple(kinds)
+    inode_folders = set(source_folders(root, 'Music')) if include_inodes and 'Music' in kinds else set()
     folders, result = {}, _RecordInventory()
     for kind in kinds:
         if kind not in KINDS:
@@ -66,7 +68,7 @@ def collect_records_by_kind(root, kinds=KINDS, *, include_inodes=True):
         result[kind] = []
         for folder in source_folders(root, kind):
             if folder not in folders:
-                folders[folder] = file_records(folder, inodes=result.inodes if include_inodes else None)
+                folders[folder] = file_records(folder, inodes=result.inodes if folder in inode_folders else None)
             result[kind].extend(folders[folder])
     return result
 
