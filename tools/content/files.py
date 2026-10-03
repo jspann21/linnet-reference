@@ -345,10 +345,28 @@ def _preview(source, cache, width, height, columns, recipe, checkpoint, info, ro
                 return None
             from .notes import _ascii, _display_lines
             text = _ascii(text)
+            lines = text.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+            if len(text) > 4 * 1024 * 1024 and columns > 0:
+                # Every non-space character needs a display cell, and each
+                # paragraph needs at least one row. Reject provably oversized
+                # previews before measuring font widths and wrapping them.
+                minimum_rows = 0
+                next_checkpoint = time.monotonic() + .05
+                for line in lines:
+                    now = time.monotonic()
+                    if now >= next_checkpoint:
+                        checkpoint()
+                        next_checkpoint = now + .05
+                    clean = line.expandtabs(4).translate(_TEXT_CONTROL_SPACES)
+                    nonspaces = len(clean) - clean.count(' ')
+                    minimum_rows += max(1, (nonspaces + columns - 1) // columns)
+                    if minimum_rows * columns > 4 * 1024 * 1024:
+                        _remember_negative_text_preview(source, info, negative_key, raw, before)
+                        return None
             # One record per visual line; whole pages start on line boundaries.
             data = bytearray()
             next_checkpoint = time.monotonic() + .05
-            for line in text.replace('\r\n', '\n').replace('\r', '\n').split('\n'):
+            for line in lines:
                 now = time.monotonic()
                 if now >= next_checkpoint:
                     checkpoint()
