@@ -1229,6 +1229,11 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, s
     if identity is not None:
         try:
             saved = json.loads((cache_root(identity) / 'state.json').read_text(encoding='utf-8'))
+            for name in saved.get('video_generated', []):
+                path = Path(name)
+                if (path.parts and path.parts[0].casefold() == 'videos' and
+                        not path.is_absolute() and '..' not in path.parts):
+                    generated.add(str(root / path).casefold())
             for relative, item in saved.get('video_files', {}).items():
                 for output in item.get('outputs', []):
                     name = output[0]
@@ -1347,7 +1352,7 @@ def video_requires_conversion(jobs, identity, *, ffprobe=None, ffmpeg=None):
                 details = inspect_file(source, profile=profile, ffprobe=ffprobe)
             except (OSError, ValueError):
                 return True
-            if not details['fast_start'] and (ffmpeg or shutil.which('ffmpeg')):
+            if (not details['fast_start'] or profile['video_backend'] == 'bcm-mp4') and (ffmpeg or shutil.which('ffmpeg')):
                 return True
         elif not _video_is_native(source, identity):
             return True
@@ -1411,7 +1416,7 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
                 if backend in ('bcm-mp4', 'native-mp4'):
                     from .native_video import inspect_file
                     details = inspect_file(source, profile=identity['media_profile'], ffprobe=ffprobe)
-                    direct = no_conversions or details['fast_start'] or not encoder
+                    direct = no_conversions or (details['fast_start'] and backend != 'bcm-mp4') or not encoder
                 else:
                     direct = True
                 if direct and source.is_relative_to(root):
@@ -1941,6 +1946,13 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
     failed = 0
     retail_titles = None
     catalog_snapshot = {}
+    def remember_generated(source, outputs):
+        if media_profile['video_backend'] != 'bcm-mp4':
+            return
+        original = source.relative_to(root).as_posix().casefold() if source.is_relative_to(root) else None
+        generated = set(state.get('video_generated', []))
+        generated.update(name for name, digest in outputs if name.casefold() != original)
+        state['video_generated'] = sorted(generated)
     for index, job in enumerate(videos):
         emit_stage('Preparing Videos', unit, index / len(videos))
         checkpoint()
@@ -1963,12 +1975,14 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
             if media_profile["video_backend"] in ("bcm-mp4", "native-mp4"):
                 from .native_video import inspect_file as inspect_native, prepare as prepare_native
                 from .publish_video import device_video_path, index_video
-                native_version = 5 if media_profile["video_backend"] == "native-mp4" else 3
-                fingerprint = hashlib.sha256(f"native-mp4-v{native_version}:{json.dumps(media_profile, sort_keys=True)}:{source_key}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
+                native_version = 5 if media_profile["video_backend"] == "native-mp4" else 4
+                native_mode = (':chunked' if not no_conversions and (ffmpeg or shutil.which('ffmpeg')) else ':copy') if media_profile['video_backend'] == 'bcm-mp4' else ''
+                fingerprint = hashlib.sha256(f"native-mp4-v{native_version}{native_mode}:{json.dumps(media_profile, sort_keys=True)}:{source_key}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
                 cached = video_state.get(relative, {})
                 if not isinstance(cached, dict):
                     cached = {}
                 outputs = cached.get('outputs', [])
+                remember_generated(source, outputs)
                 cached_output_ready = False
                 if (not force and cached.get("signature") == fingerprint and len(outputs) == 1 and
                         _outputs_match(root, outputs, verified=verified_outputs)):
@@ -2006,7 +2020,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                 if source.suffix.lower() in native_video_extensions(identity):
                     try:
                         native_info = inspect_native(source, ffprobe=ffprobe, profile=media_profile, cancelled=cancelled)
-                        compatible = (no_conversions or native_info['fast_start'] or
+                        compatible = (no_conversions or (native_info['fast_start'] and media_profile['video_backend'] != 'bcm-mp4') or
                                       not (ffmpeg or shutil.which('ffmpeg')))
                     except ValueError:
                         pass
@@ -2069,6 +2083,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                     raise ValueError("Video changed during publication; scan again")
                 published.append(result)
                 catalog_snapshot.clear()
+                remember_generated(source, outputs)
                 video_state[relative] = dict(signature=fingerprint, outputs=outputs, source_stamp=source_stamp)
                 _save(state_path, state)
                 report["steps"].append(dict(kind=kind, file=relative, status="published", publication=result))
@@ -2413,8 +2428,9 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 progress(f"{kind}: no supported files to prepare.")
                 continue
             option = preparation_option(kind, identity, photo_dimension, music_verification)
-            video_version = 6 if media_profile.get("video_backend") == "native-mp4" else 4
-            signature = (f"videos-v{video_version}-{json.dumps(media_profile, sort_keys=True)}:{item['fingerprint']}" if kind == "Videos"
+            video_version = 6 if media_profile.get("video_backend") == "native-mp4" else 5 if media_profile.get("video_backend") == "bcm-mp4" else 4
+            video_mode = (':chunked' if (video_selection is None or video_selection) and (ffmpeg or shutil.which('ffmpeg')) else ':copy') if media_profile.get('video_backend') == 'bcm-mp4' else ''
+            signature = (f"videos-v{video_version}{video_mode}-{json.dumps(media_profile, sort_keys=True)}:{item['fingerprint']}" if kind == "Videos"
                          else f"{option}:{item['fingerprint']}")
             saved = state.get(kind, {})
             if not isinstance(saved, dict):
