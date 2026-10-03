@@ -860,7 +860,11 @@ def _remove(identity, items):
             destination.parent.mkdir(parents=True, exist_ok=True)
             source.rename(destination)
             report['removed'].append(move)
-            save_json(receipt, report)
+            # The portable manifest records every intended move before this
+            # loop, and recovery checks the actual Trash tree. Batch only the
+            # host progress receipt; final and failure paths save all moves.
+            if len(report['removed']) % 32 == 0:
+                save_json(receipt, report)
         if music_after is not None:
             temporary = music_index.with_name('M' + token[:7].upper() + '.TMP')
             temporary_owned = False

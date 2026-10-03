@@ -286,7 +286,7 @@ static void present(struct ln_audio_status*a){
              * The decoder's previous-frame ownership is independent of display. */
             uint32_t reserve=a->queued+staged_pcm();
             bool expired=v.started&&clock>=frame_sample(v.slot_frame[s]+1u);
-            if(expired||(v.started&&!v.paused&&reserve<v.rate&&
+            if(expired||(v.started&&!v.paused&&!v.finish&&reserve<v.rate&&
                ((v.slot_frame[s]&1u)||reserve<v.rate/4u))){
 #if !defined(LINNET_PROFILE_RELEASE)
                 ++v.dropped_frames;
