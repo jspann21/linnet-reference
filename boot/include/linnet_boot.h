@@ -40,6 +40,8 @@ struct ln_image_info {
 
 /* CRC32/ISO-HDLC: reflected polynomial 0xedb88320, init/final xor ffffffff. */
 uint32_t ln_crc32(const uint8_t *bytes, size_t length);
+/* Incremental raw accumulator; callers own the initial/final XOR. */
+uint32_t ln_crc32_update(uint32_t crc, const uint8_t *bytes, size_t length);
 uint32_t ln_crc32_progress(const uint8_t *bytes, size_t length,
     void (*progress)(void *context), void *context);
 enum ln_image_result ln_image_validate(const uint8_t *image, size_t length,

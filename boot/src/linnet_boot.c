@@ -30,9 +30,14 @@ uint32_t ln_crc32_progress(const uint8_t *bytes, size_t length,
     void (*progress)(void *context), void *context)
 {
 #if defined(LINNET_IMAGE_BOOT) && defined(LINNET_PLATFORM_CORE) && defined(LINNET_STORAGE)
-    if (ln_sha256_boot_iram_active()) return crc32_iram(bytes,length,progress,context);
+    if (ln_sha256_boot_iram_active()) return crc32_iram(UINT32_MAX,bytes,length,progress,context)^UINT32_MAX;
 #endif
-    return crc32_sdram(bytes,length,progress,context);
+    return crc32_sdram(UINT32_MAX,bytes,length,progress,context)^UINT32_MAX;
+}
+
+uint32_t ln_crc32_update(uint32_t crc, const uint8_t *bytes, size_t length)
+{
+    return crc32_sdram(crc, bytes, length, NULL, NULL);
 }
 
 uint32_t ln_crc32(const uint8_t *bytes, size_t length)
