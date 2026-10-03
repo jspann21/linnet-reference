@@ -1178,6 +1178,7 @@ class MediaWindow(QMainWindow):
         # and view changes, returning a new list so model sorting stays local.
         if self._library_source is not self.rows:
             self._library_source, self._library_cache, self._library_stats = self.rows, {}, {}
+            self._library_title_cache = {}
             self._group_cards_cache = {}
             self._library_search = None
         if self.page in self._library_cache:
@@ -1208,6 +1209,14 @@ class MediaWindow(QMainWindow):
                     selected_keys.add(('group', row['group_kind'], row['group_key']) if 'group_key' in row else ('row', row['id']))
         self._selection_context = context
         rows = self.library_rows()
+        grouped = self.page == 'Music' and self.view != 'Songs' and self.group is None
+        title_order = self.page != 'Trash' and not grouped and self.group is None
+        if title_order:
+            # Filtering preserves this order. Keep the original page order for
+            # grouped views, whose representative artwork comes from members.
+            if self.page not in self._library_title_cache:
+                self._library_title_cache[self.page] = sorted(rows, key=lambda row: row['title'].casefold())
+            rows = list(self._library_title_cache[self.page])
         all_rows = rows
         music = self.page == 'Music'
         self.heading_label.setText(self.group['title'] if self.group else self.page)
@@ -1225,7 +1234,8 @@ class MediaWindow(QMainWindow):
         if self.group:
             rows = list(self.group['members'])
         scope_count = len(rows)
-        source = self.group['members'] if self.group else self._library_cache.get(self.page)
+        source = (self._library_title_cache[self.page] if title_order else
+                  self.group['members'] if self.group else self._library_cache.get(self.page))
         filters = (artist, genre) if music else (None, None)
         previous = self._library_search
         narrower = bool(words and source is not None and previous is not None
@@ -1254,7 +1264,6 @@ class MediaWindow(QMainWindow):
             self._library_search = None
         matched_count = len(rows)
         filtered = bool(words or (music and (artist or genre)))
-        grouped = music and self.view != 'Songs' and self.group is None
         if grouped:
             cards = self._group_cards_cache.get(self.view) if not filtered else None
             if cards is None:
@@ -1273,16 +1282,19 @@ class MediaWindow(QMainWindow):
                 if not filtered:
                     self._group_cards_cache[self.view] = cards
             rows = list(cards)
-        # The table applies its own title sort after reset. Keep this first
-        # sort for grids and as a stable title tie-break for other columns.
-        if grouped or self.group is not None or self.table.horizontalHeader().sortIndicatorSection() > 0:
+        # Ordinary pages already have the title tie-break order. Groups keep
+        # their own order; Trash rows are rebuilt with formatted timestamps.
+        if grouped or self.group is not None or (self.page == 'Trash' and self.table.horizontalHeader().sortIndicatorSection() > 0):
             rows.sort(key=lambda r: (r.get('disc', 0), r.get('track', 0), r['title'].casefold()) if self.group and self.view == 'Albums' else (r['title'].casefold(),))
         columns = ([('title', 'TITLE'), ('album', 'ALBUM'), ('genre', 'GENRE'), ('duration', 'TIME'), ('bytes', 'SIZE')]
                    if music and not grouped else [('title', 'NAME'), ('status', 'STATUS'), ('bytes', 'SIZE')])
         self.model.reset(rows, columns)
         if not grouped and self.group is None:
             header = self.table.horizontalHeader()
-            self.model.sort(max(0, min(header.sortIndicatorSection(), self.model.columnCount() - 1)), header.sortIndicatorOrder())
+            column = max(0, min(header.sortIndicatorSection(), self.model.columnCount() - 1))
+            order = header.sortIndicatorOrder()
+            if self.page == 'Trash' or column != 0 or order != Qt.AscendingOrder:
+                self.model.sort(column, order)
         layout = tuple(columns)
         if getattr(self, '_table_layout', None) != layout:
             self._table_layout = layout
