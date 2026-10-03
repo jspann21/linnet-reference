@@ -1944,6 +1944,35 @@ def _music_outputs_from_publication(root, output_paths, verified_outputs, identi
     return outputs, stamps
 
 
+def _video_outputs_from_publication(root, identity, output_paths, proofs):
+    """Reuse active-package readbacks, hashing outputs without publication proofs."""
+    outputs = []
+    for name in output_paths:
+        _volume_guard(identity)
+        path = root / name
+        _plain(path, root)
+        proof = proofs.get(name)
+        if proof is None:
+            before = path.stat()
+            digest = _hash(path)
+            if _receipt_stamp(path.stat()) != _receipt_stamp(before):
+                raise ValueError(f"video output changed during final verification: {path}")
+        else:
+            if (not isinstance(proof, dict) or not isinstance(proof.get('path'), str) or
+                    Path(proof['path']) != path or
+                    not isinstance(proof.get('sha256'), str) or
+                    re.fullmatch('[0-9a-f]{64}', proof['sha256']) is None or
+                    not isinstance(proof.get('stamp'), tuple) or len(proof['stamp']) != 5 or
+                    not all(type(value) is int for value in proof['stamp'])):
+                raise ValueError(f"invalid video publication proof: {name}")
+            info = path.stat()
+            if not stat.S_ISREG(info.st_mode) or _receipt_stamp(info) != proof['stamp']:
+                raise ValueError(f"video output changed after publication: {path}")
+            digest = proof['sha256']
+        outputs.append((name, digest))
+    return outputs
+
+
 def _prepare_photos(root, cache, identity, media_profile, skipped, retail_photos, *,
                     dimension, checkpoint, progress, begin_publication):
     from .photos import compile_photos
@@ -1992,6 +2021,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                     mark_publication, no_conversions=False):
     kind = "Videos"
     published = []
+    video_proofs = {}
     from .ipvf_encode import encode_ipvf
     from .ipvf_validate import inspect_file
     from .publish_video import publish_video
@@ -2130,11 +2160,15 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                                (index + 0.5) / len(videos), can_stop=False)
                     mark_publication()
                     file_publication_started = True
+                    readback_proof = {}
                     result = publish_video(package, title=label, library_key=relative,
                                            ffprobe=ffprobe,
                                            source_to_preserve=source if source.is_relative_to(root) else None,
+                                           readback_proof=readback_proof,
                                            **target_args(identity))
                     output_name = Path(result['package']).relative_to(root).as_posix()
+                    if readback_proof:
+                        video_proofs[output_name] = readback_proof
                     outputs = [(output_name, result["candidate_sha256"])]
                     output_paths.append(output_name)
                 after = source.stat()
@@ -2237,11 +2271,15 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                        (index + 0.5) / len(videos), can_stop=False)
             mark_publication()
             file_publication_started = True
+            readback_proof = {}
             result = publish_video(package, title=label, library_key=relative,
                                    source_to_preserve=source if source.is_relative_to(root) else None,
+                                   readback_proof=readback_proof,
                                    **target_args(identity))
             catalog_snapshot.clear()
             output_name = Path(result['package']).relative_to(root).as_posix()
+            if readback_proof:
+                video_proofs[output_name] = readback_proof
             published.append(result)
             output_paths.append(output_name)
             after = source.stat()
@@ -2269,7 +2307,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
             report["errors"].append(failure)
             progress(f"Video could not finish, continuing with the next file: {relative}: {error}")
             record()
-    return output_paths, published, failed
+    return output_paths, published, failed, video_proofs
 
 
 def _run(identity, selected, pending=(), *, progress=lambda message: None, cancelled=lambda: False,
@@ -2561,7 +2599,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                         checkpoint=checkpoint, progress=progress, report=report,
                         begin_publication=begin_publication)
                 else:
-                    output_paths, published, failed = _prepare_videos(
+                    output_paths, published, failed, video_proofs = _prepare_videos(
                         root, cache, identity, media_profile, state, state_path, videos, item,
                         ffmpeg=ffmpeg, ffprobe=ffprobe, force=force, cancelled=cancelled,
                         checkpoint=checkpoint, progress=progress, emit_stage=emit_stage, unit=unit,
@@ -2584,6 +2622,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     outputs, photo_stamps = _published_photo_output(root, identity, output_paths, published)
                 elif kind == 'Music':
                     outputs, music_stamps = _music_outputs_from_publication(root, output_paths, music_proofs, identity)
+                elif kind == 'Videos':
+                    outputs = _video_outputs_from_publication(root, identity, output_paths, video_proofs)
                 else:
                     outputs = [(name, _hash(root / name)) for name in output_paths]
                 state[kind] = dict(signature=signature, outputs=outputs)

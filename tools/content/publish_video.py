@@ -11,6 +11,11 @@ from .video_catalog import encode as _encode_catalog, read_file as _read_catalog
 MAX_FILE=0x7fffffff
 
 
+def _video_stamp(path):
+    info = path.stat()
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
 def video_filename(title, extension=".ipvf"):
     """A Windows/FAT-safe name; collisions are resolved against the actual folder."""
     name = Path(str(title).replace('\\', '/')).stem
@@ -62,7 +67,7 @@ def _target_check(candidate, root, profile=None):
 
 def publish_video(package, *, disk_number, expected_disk_serial,
                    expected_volume_serial, expected_drive=None, library_key=None, title=None,
-                   ffprobe=None, source_to_preserve=None):
+                   ffprobe=None, source_to_preserve=None, readback_proof=None):
     """Validate all local bytes, preserve the previous package, publish last.
 
     A failure after replacement is an uncertain publication; inspect the host
@@ -100,11 +105,11 @@ def publish_video(package, *, disk_number, expected_disk_serial,
         _recover_pending_groups(root, identity)
         return _publish(package, candidate, identity, root, disk_number,
                         expected_disk_serial, expected_volume_serial, expected_drive,
-                        library_key, title, protected)
+                        library_key, title, protected, readback_proof)
 
 
 def _publish(package, candidate, identity, root, number, serial, volume, drive,
-             library_key=None, title=None, protected=None):
+             library_key=None, title=None, protected=None, readback_proof=None):
     def guard():
         _volume_guard(identity)
     linnet, metadata = root/'.LINNET', root/'.LINNET'/'VIDEOS'
@@ -199,9 +204,18 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
         _same_target(identity, inspect_target(number, serial, volume, drive))
         guard()
         _plain(active, root)
+        readback_stamp = None
+        hash_started_ns = None
         if previous:
+            before_readback = _video_stamp(active) if reuse_package else None
+            if reuse_package:
+                hash_started_ns = time.time_ns()
             if _hash(active, previous['bytes']) != previous['sha256']:
                 raise RuntimeError('active video package changed during publication')
+            if reuse_package:
+                readback_stamp = _video_stamp(active)
+                if before_readback != readback_stamp:
+                    raise RuntimeError('active video package changed during readback')
         elif active.exists():
             raise RuntimeError('another video package appeared during publication')
         receipt['phase'] = 'reusing-package' if reuse_package else 'replacing-package'
@@ -212,8 +226,14 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
             with active.open('rb+') as writer:
                 writer.flush()
                 os.fsync(writer.fileno())
-        if not reuse_package and _hash(active, candidate['bytes']) != candidate['sha256']:
-            raise OSError('published video package readback mismatch')
+        if not reuse_package:
+            before_readback = _video_stamp(active)
+            hash_started_ns = time.time_ns()
+            if _hash(active, candidate['bytes']) != candidate['sha256']:
+                raise OSError('published video package readback mismatch')
+            readback_stamp = _video_stamp(active)
+            if before_readback != readback_stamp:
+                raise OSError('published video package changed during readback')
         path = device_video_path(active, root)
         entries = [(k, path if k == key else p, t) for k, p, t in entries]
         catalog_bytes = _encode_catalog(entries)
@@ -235,6 +255,9 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
             receipt.update(passed=True, phase='published', finished_at=time.time(), package=str(active),
                            catalog=str(catalog), frames=candidate['frames'])
             record()
+            if readback_proof is not None:
+                readback_proof.update(path=str(active), sha256=candidate['sha256'],
+                                      stamp=readback_stamp, hash_started_ns=hash_started_ns)
             return receipt
         if catalog_before is not None:
             backups.mkdir(exist_ok=True)
@@ -270,6 +293,9 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
         receipt.update(passed=True, phase='published', finished_at=time.time(), package=str(active),
                        frames=candidate['frames'], package_reused=reuse_package, catalog_reused=False)
         record()
+        if readback_proof is not None:
+            readback_proof.update(path=str(active), sha256=candidate['sha256'],
+                                  stamp=readback_stamp, hash_started_ns=hash_started_ns)
         return receipt
     except Exception as exc:
         receipt.update(error=str(exc), finished_at=time.time())
