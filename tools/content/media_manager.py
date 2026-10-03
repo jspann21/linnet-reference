@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import tempfile
 import threading
@@ -503,7 +504,8 @@ def _same_file_bytes(left, right, size):
 
 
 def additions(root, pending, *, snapshots=None, verify_existing=True, unverified=None,
-              replacements=None):
+              replacements=None, convert_audio=False, target=None, ffprobe=None,
+              cancelled=lambda: False):
     """Resolve selected files/folders to concrete destinations without writing."""
     root = Path(root).resolve(strict=True)
     planned = {}
@@ -518,6 +520,8 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
         is_folder = source.is_dir()
         records = _planning_records(source, snapshots)
         for path, info in records:
+            if cancelled():
+                raise Cancelled('Stopped while checking queued media.')
             # Preserve supporting files (cover art, playlists) inside selected folders.
             if not is_folder and path.suffix.lower() not in extensions(kind):
                 raise ValueError(f"{path.name} is not a supported {kind.lower()} source.")
@@ -526,6 +530,45 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
             relative = Path(source.name) / path.relative_to(source) if is_folder else Path(source.name)
             if kind == "Music":
                 relative = Path(*(_music_import_name(part) for part in relative.parts))
+            converted_bytes = None
+            converted_frames = None
+            issue = None
+            if target and kind == 'Music' and path.suffix.lower() in extensions('Music'):
+                from .music import CODECS, _pcm, _quick_metadata, _probe, _read_metadata, compatibility_issue
+                try:
+                    if path.suffix.lower() in ('.wav', '.aif', '.aiff', '.aifc'):
+                        try:
+                            metadata = _pcm(path, cancelled)
+                        except (ValueError, struct.error):
+                            if not ffprobe:
+                                raise
+                            metadata = _probe(path, ffprobe, exact_frames=False,
+                                              cancelled=cancelled, allow_unknown=True)
+                    else:
+                        metadata = _quick_metadata(path, cancelled, allow_unknown=True)
+                    if metadata is None:
+                        if not ffprobe:
+                            raise ValueError('FFprobe is needed to check this audio file')
+                        metadata = _probe(path, ffprobe, exact_frames=False,
+                                          cancelled=cancelled, allow_unknown=True)
+                    issue = compatibility_issue(metadata, target)
+                    if issue and convert_audio and not metadata['frames']:
+                        metadata = (_probe(path, ffprobe, exact_frames=True, cancelled=cancelled,
+                                           allow_unknown=True) if metadata['codec'] == CODECS['unknown'] else
+                                    _read_metadata(path, ffprobe, True, cancelled))
+                except (OSError, ValueError, struct.error, subprocess.SubprocessError) as error:
+                    metadata = None
+                    issue = f'Cannot inspect audio: {error}'
+                if issue and convert_audio and metadata is not None:
+                    relative = relative.with_suffix('.wav')
+                    converted_frames = math.ceil(metadata['frames'] * 44100 / metadata['rate'])
+                    converted_bytes = (math.ceil(converted_frames * 4 * 1.1)
+                                       + min(info.st_size, 32 * 1024 * 1024) + 4096)
+                    if converted_bytes > 0xffffffff:
+                        raise ValueError(f'{path.name} would exceed the iPod file limit after PCM conversion.')
+                after = path.stat()
+                if (after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (info.st_size, info.st_mtime_ns, info.st_ctime_ns):
+                    raise ValueError(f'Source changed during audio planning: {path}')
             destination = root / kind / relative
             _plain(destination, root)
             key = str(destination).casefold()
@@ -534,9 +577,22 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
             if destination.exists():
                 if not destination.is_file():
                     raise ValueError(f"A different file already exists: {destination}. Rename the new file or folder first.")
+                if converted_bytes is not None:
+                    from .music import CODECS, _pcm, compatibility_issue
+                    try:
+                        prepared = _pcm(destination)
+                        if (prepared['container'] == 'wav' and prepared['codec'] == CODECS['pcm_le'] and
+                                prepared['bits'] == 16 and prepared['channels'] == 2 and
+                                prepared['rate'] == 44100 and not compatibility_issue(prepared, target) and
+                                prepared['frames'] >= converted_frames - max(2205, converted_frames // 100) and
+                                prepared['tags'].get('source_sha256') == _hash(path) and
+                                prepared['tags'].get('pcm_sha256') == _wave_pcm_hash(destination, prepared)):
+                            continue
+                    except (OSError, ValueError, KeyError, struct.error):
+                        pass
                 old = destination.stat()
-                different = False
-                if not verify_existing:
+                different = converted_bytes is not None
+                if not different and not verify_existing:
                     # Planning only estimates work. The preparation call checks
                     # the complete original before it copies or publishes.
                     if old.st_size != info.st_size and not (
@@ -544,7 +600,7 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                         different = True
                     elif unverified is not None:
                         unverified.append(kind)
-                elif old.st_size != info.st_size or not _same_file_bytes(path, destination, info.st_size):
+                elif not different and (old.st_size != info.st_size or not _same_file_bytes(path, destination, info.st_size)):
                     equivalent = False
                     if kind == 'Music' and path.suffix.lower() in ('.m4a', '.m4b'):
                         from .aac_index import same_original
@@ -566,17 +622,28 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                     new_mtime_ns=info.st_mtime_ns,
                     old_sha256=_hash(destination), new_sha256=_hash(path)))
             planned[key] = dict(kind=kind, source=str(path), destination=str(destination),
-                                bytes=info.st_size, mtime_ns=info.st_mtime_ns)
+                                bytes=info.st_size, mtime_ns=info.st_mtime_ns,
+                                **({'compatibility_issue': issue} if issue else {}),
+                                **({'converted_bytes': converted_bytes, 'converted_frames': converted_frames}
+                                   if converted_bytes is not None else {}))
     return list(planned.values())
 
 
 def _import_metadata_seed(local, ffprobe, should_stop):
+    from .music import _embedded_cover, _quick_metadata, _read_metadata, _probe
     try:
-        from .music import _read_metadata
         metadata = _read_metadata(local, ffprobe, True, should_stop, include_cover=True)
-        return metadata, metadata.pop('_embedded_cover', None)
     except (OSError, ValueError, subprocess.SubprocessError):
-        return None  # The library compiler can retry if host parsing fails.
+        metadata = _quick_metadata(local, should_stop, include_cover=True, allow_unknown=True)
+        if metadata is None and ffprobe:
+            try:
+                metadata = _probe(local, ffprobe, exact_frames=False, cancelled=should_stop,
+                                  allow_unknown=True)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                pass
+        if metadata is not None and '_embedded_cover' not in metadata:
+            metadata['_embedded_cover'] = _embedded_cover(local)
+    return (metadata, metadata.pop('_embedded_cover', None)) if metadata else None
 
 
 def _prepare_import_aac(item, scratch, cache, ffprobe, cancelled, stopped):
@@ -674,14 +741,108 @@ def _prepare_import_flac(item, scratch, cache, ffprobe, cancelled, stopped):
     return local, metadata_seed, outcome is not None, _receipt_stamp(before)
 
 
+def _wave_pcm_hash(path, metadata):
+    digest = hashlib.sha256()
+    with path.open('rb') as wave:
+        wave.seek(metadata['data_offset'])
+        remaining = metadata['data_bytes']
+        while remaining:
+            chunk = wave.read(min(1024 * 1024, remaining))
+            if not chunk:
+                raise ValueError('Converted WAV data changed while checking it')
+            digest.update(chunk)
+            remaining -= len(chunk)
+    return digest.hexdigest()
+
+
+def _wave_metadata(output, tags):
+    fields = {'title': b'INAM', 'artist': b'IART', 'album': b'IPRD', 'genre': b'IGNR',
+              'date': b'ICRD', 'track': b'ITRK', 'album_artist': b'IAMP',
+              'composer': b'ICMP', 'disc': b'IDIS', 'replaygain_track_gain': b'IGAN',
+              'replaygain_album_gain': b'IGAL', 'compilation': b'ICPL',
+              'source_sha256': b'IHS1', 'pcm_sha256': b'IHC1'}
+    body = bytearray(b'INFO')
+    for key, atom in fields.items():
+        text = tags.get(key) or (tags.get('albumartist') if key == 'album_artist' else '')
+        value = str(text or '').encode('utf-8')[:1024]
+        if value:
+            value += b'\0'
+            body += atom + struct.pack('<I', len(value)) + value + (b'\0' if len(value) & 1 else b'')
+    if len(body) == 4:
+        return
+    chunk = b'LIST' + struct.pack('<I', len(body)) + body + (b'\0' if len(body) & 1 else b'')
+    with output.open('r+b') as wave:
+        if wave.read(4) != b'RIFF':
+            raise ValueError('Audio conversion did not produce standard RIFF WAV')
+        wave.seek(0, os.SEEK_END)
+        size = wave.tell() + len(chunk)
+        if size > 0xffffffff + 8:
+            raise ValueError('Converted WAV exceeds the iPod file limit')
+        wave.write(chunk)
+        wave.seek(4)
+        wave.write(struct.pack('<I', size - 8))
+
+
+def _convert_audio(source, output, ffmpeg, checkpoint, max_bytes, expected_frames,
+                   tags=None, cover=None):
+    if not ffmpeg:
+        raise ValueError('Audio conversion needs FFmpeg on the computer.')
+    if shutil.disk_usage(output.parent).free < max_bytes + 1024 * 1024:
+        raise ValueError('Not enough computer space for audio conversion.')
+    command = [str(ffmpeg), '-nostdin', '-v', 'error', '-i', str(source), '-map', '0:a:0',
+               '-vn', '-ac', '2', '-ar', '44100', '-c:a', 'pcm_s16le', '-map_metadata', '0',
+               '-fs', str(max_bytes), '-f', 'wav', str(output)]
+    with tempfile.TemporaryFile() as errors:
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                   stderr=errors,
+                                   creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+        try:
+            while process.poll() is None:
+                checkpoint()
+                if output.exists() and output.stat().st_size >= max_bytes:
+                    raise ValueError('Audio conversion exceeded its planned size.')
+                try:
+                    process.wait(timeout=0.1)
+                except subprocess.TimeoutExpired:
+                    pass
+        finally:
+            if process.poll() is None:
+                process.kill(); process.wait()
+        if process.returncode:
+            errors.seek(0)
+            raise ValueError(f'Audio conversion failed: {errors.read(1000).decode("utf-8", "replace")}')
+    if output.stat().st_size >= max_bytes * 0.95:
+        raise ValueError('Audio conversion reached its size limit; source duration may be incorrect.')
+    from .music import _pcm, compatibility_issue
+    metadata = _pcm(output)
+    if metadata['frames'] < expected_frames - max(2205, expected_frames // 100):
+        raise ValueError('Audio conversion ended before the source duration.')
+    _wave_metadata(output, {**(tags or {}), 'source_sha256': _hash(source),
+                            'pcm_sha256': _wave_pcm_hash(output, metadata)})
+    if cover:
+        from mutagen.id3 import APIC
+        from mutagen.wave import WAVE
+        wave = WAVE(output)
+        if wave.tags is None:
+            wave.add_tags()
+        mime = 'image/png' if cover.startswith(b'\x89PNG') else 'image/jpeg'
+        wave.tags.add(APIC(encoding=3, mime=mime, type=3, desc='Cover', data=cover))
+        wave.save()
+    metadata = _pcm(output)
+    if compatibility_issue(metadata):
+        raise ValueError(f'Audio conversion produced an unsupported WAV: {source}')
+    return metadata
+
+
 def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress,
-                    *, cache, cancelled, stage_progress=lambda current, total, phase: None,
+                    *, cache, cancelled, ffmpeg=None, ffprobe=None,
+                    stage_progress=lambda current, total, phase: None,
                     completed_batch=lambda items: None):
     # Queue a bounded set of writes before flushing and reading them back. On
     # FAT devices, alternating write/flush/read/rename for every small file is
     # expensive. Keep every handle until its flush, and publish only verified files.
     start = 0
-    remaining_original = sum(item['bytes'] for item in plan)
+    remaining_original = sum(item.get('converted_bytes', item['bytes']) for item in plan)
     seek_state_path = cache / 'seek-checked.json'
     seek_state = (_optional_state(seek_state_path) if any(
         item['kind'] == 'Music' and Path(item['destination']).suffix.lower() in ('.m4a', '.m4b', '.flac', '.flc')
@@ -691,12 +852,12 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
         batch_bytes = 0
         seek_state_changed = False
         for item in plan[start:start + 16]:
-            if batch and batch_bytes + item['bytes'] > 64 * 1024 * 1024:
+            if batch and batch_bytes + item.get('converted_bytes', item['bytes']) > 64 * 1024 * 1024:
                 break
             destination = Path(item['destination'])
             temporary = destination.parent / ('L' + uuid.uuid4().hex[:7] + '.TMP')
             batch.append((item, temporary))
-            batch_bytes += item['bytes']
+            batch_bytes += item.get('converted_bytes', item['bytes'])
         checkpoint()
         # Persist all candidate scratch paths before creating any of them. The
         # receipt stays bounded during a batch instead of growing twice per song.
@@ -730,7 +891,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                 handles.callback(stopped.set)
             upcoming = iter(preparation_positions)
             futures = {}
-            ffprobe = shutil.which('ffprobe') if preparation_positions else None
+            seek_probe = (ffprobe or shutil.which('ffprobe')) if preparation_positions else None
             def fill_preparation():
                 while executor is not None and len(futures) < 2:
                     offset = next(upcoming, None)
@@ -738,13 +899,13 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                         break
                     if offset in aac_positions:
                         futures[offset] = executor.submit(_prepare_import_aac, batch[offset][0],
-                            scratches[offset], cache, ffprobe, cancelled, stopped)
+                            scratches[offset], cache, seek_probe, cancelled, stopped)
                     elif offset in flac_positions:
                         futures[offset] = executor.submit(_prepare_import_flac, batch[offset][0],
-                            scratches[offset], cache, ffprobe, cancelled, stopped)
+                            scratches[offset], cache, seek_probe, cancelled, stopped)
                     else:
                         futures[offset] = executor.submit(_prepare_import_mp3, batch[offset][0],
-                            scratches[offset], ffprobe, cancelled, stopped)
+                            scratches[offset], seek_probe, cancelled, stopped)
             fill_preparation()
             try:
                 for offset, (item, temporary) in enumerate(batch):
@@ -776,7 +937,23 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                         if _receipt_stamp(info) != source_stamp:
                             raise ValueError(f"Source changed during preparation: {source}")
                         checkpoint()
-                    if shutil.disk_usage(root).free < remaining_original + len(suffix or b'') + 1024 * 1024:
+                    if 'converted_bytes' in item:
+                        scratch = Path(handles.enter_context(tempfile.TemporaryDirectory(prefix='audio-convert-', dir=cache)))
+                        copy_source = scratch / 'audio.wav'
+                        progress(f'Converting on computer: {source.name}')
+                        seed = _import_metadata_seed(source, ffprobe, cancelled)
+                        converted = _convert_audio(source, copy_source, ffmpeg, checkpoint,
+                                                   item['converted_bytes'], item['converted_frames'],
+                                                   seed[0]['tags'] if seed else None,
+                                                   seed[1] if seed else None)
+                        if copy_source.stat().st_size > 0xffffffff:
+                            raise ValueError(f'Converted audio exceeds the iPod file limit: {source}')
+                        converted['tags'] = {**converted['tags'], **(seed[0]['tags'] if seed else {})}
+                        metadata_seed = (converted, seed[1] if seed else None)
+                        if _receipt_stamp(source.stat()) != _receipt_stamp(info):
+                            raise ValueError(f'Source changed during conversion: {source}')
+                    target_bytes = copy_source.stat().st_size + len(suffix or b'')
+                    if shutil.disk_usage(root).free < remaining_original - item.get('converted_bytes', item['bytes']) + target_bytes + 1024 * 1024:
                         raise ValueError('Not enough space for prepared additions')
                     digest = hashlib.sha256()
                     writer = handles.enter_context(temporary.open('xb'))
@@ -796,7 +973,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                     copied.append((item, temporary, writer, digest.hexdigest(),
                                    copy_source.stat().st_size + len(suffix or b''), unsupported_aac,
                                    metadata_seed, flac_seek_checked))
-                    remaining_original -= item['bytes']
+                    remaining_original -= item.get('converted_bytes', item['bytes'])
             except BaseException:
                 stopped.set()
                 for future in futures.values():
@@ -820,7 +997,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
             if before_readback != after_readback:
                 raise OSError(f"Copied file changed during readback: {destination}")
             verified_stamps[temporary] = after_readback
-            if prepared_bytes != item['bytes'] and not flac_seek_checked:
+            if prepared_bytes != item['bytes'] and not flac_seek_checked and 'converted_bytes' not in item:
                 if destination.suffix.lower() == '.mp3':
                     from .mp3_index import original_size
                     valid = original_size(temporary, prepared_bytes) == item['bytes']
@@ -859,6 +1036,8 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                     music_seeds.append((destination, info, *metadata_seed))
             elif item['kind'] == 'Music' and destination.suffix.lower() == '.mp3' and metadata_seed is not None:
                 music_seeds.append((destination, info, *metadata_seed))
+            elif item['kind'] == 'Music' and 'converted_bytes' in item and metadata_seed is not None:
+                music_seeds.append((destination, info, *metadata_seed))
             elif item['kind'] == 'Music' and destination.suffix.lower() in ('.flac', '.flc'):
                 if flac_seek_checked:
                     key = destination.relative_to(root).as_posix().casefold()
@@ -866,7 +1045,8 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                     seek_state_changed = True
                 if metadata_seed is not None:
                     music_seeds.append((destination, info, *metadata_seed))
-            report['steps'].append(dict(added=str(destination), bytes=prepared_bytes))
+            report['steps'].append(dict(added=str(destination), bytes=prepared_bytes,
+                                        **({'converted_from': str(item['source'])} if 'converted_bytes' in item else {})))
             completed_batch([item])
         report.pop('copies_in_progress', None)
         record()
@@ -891,7 +1071,7 @@ def _seed_imported_music(root, cache, rows):
         for path, before, metadata, cover in rows:
             try:
                 relative = path.relative_to(root).as_posix()
-                value = dict(metadata, data_bytes=before.st_size)
+                value = dict(metadata, data_bytes=before.st_size if metadata['codec'] >= 16 else metadata['data_bytes'])
                 if _MetadataCache._valid(value, relative, before):
                     saved.embedded_cover_lookup(path, before, bypass=True)
                     saved.put(source, relative, before, value)
@@ -1405,7 +1585,9 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
     for copy in copies:
         if Path(copy['source']).suffix.lower() in extensions(copy['kind']):
             counts[copy['kind']] += 1
-    original_bytes = sum(item['bytes'] for item in copies)
+    original_bytes = sum(item.get('converted_bytes', item['bytes']) for item in copies)
+    converted_sizes = [item['converted_bytes'] for item in copies if 'converted_bytes' in item]
+    audio_scratch = min(sum(converted_sizes), max(64 * 1024 * 1024, max(converted_sizes, default=0)))
     # Audio index, artwork and transaction files grow with the track count.
     music_bytes = 0
     if 'Music' in selected and counts['Music']:
@@ -1572,7 +1754,7 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
     # path is unavailable from a host receipt.
     previous += video_bytes
     device_needed = original_bytes + prepared + previous * 2 + largest_audio + 16 * 1024 * 1024
-    host_needed = (music_bytes * 2 + photo_bytes * 2 + notes_bytes * 2 + video_host +
+    host_needed = (music_bytes * 2 + photo_bytes * 2 + notes_bytes * 2 + video_host + audio_scratch +
                    files_bytes * 2 + audio_backup * 2 + 16 * 1024 * 1024)
     parent = cache
     while not parent.exists():
@@ -2376,7 +2558,8 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
 def _run(identity, selected, pending=(), *, progress=lambda message: None, cancelled=lambda: False,
         photo_dimension=640, ffmpeg=None, ffprobe=None, force=False, music_verification="metadata",
         video_selection=None, progress_detail=None, progress_stage=lambda event: None,
-        excluded_sources=None, online_artwork=False, approved_reconciliation=None):
+        excluded_sources=None, online_artwork=False, approved_reconciliation=None,
+        convert_audio=False):
     """Copy additions, prepare and publish selected folders; retain per-step receipts.
 
     Stop requests are honored between files and between compiler/publication calls.
@@ -2446,7 +2629,10 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         excluded_sources = {str(Path(value).resolve()).casefold() for value in (excluded_sources or ())}
         videos = [job for job in videos if str(Path(job["source"]).resolve()).casefold() not in excluded_sources]
         plan = additions(root, [item for item in pending if item[0] in selected and item[0] != "Videos"],
-                         replacements=replacements)
+                         replacements=replacements, convert_audio=convert_audio,
+                         target=identity['target_id'], ffprobe=ffprobe, cancelled=cancelled)
+        if any('converted_bytes' in item for item in plan) and not ffmpeg:
+            raise ValueError('Audio conversion needs FFmpeg on the computer.')
         planned = True
         current_inventory = scan(root, tuple(kind for kind in selected if kind != "Videos"),
                                  skipped=skipped) if any(kind != "Videos" for kind in selected) else {}
@@ -2547,7 +2733,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     saved_skipped[kind] = sorted(paths)
                 _save(state_path, state)
         _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress,
-                        cache=cache, cancelled=cancelled,
+                        cache=cache, cancelled=cancelled, ffmpeg=ffmpeg, ffprobe=ffprobe,
                         completed_batch=include_copied,
                         stage_progress=lambda current, total, name:
                             emit_stage(name, 0, current / total if total else 1))

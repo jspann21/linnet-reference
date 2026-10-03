@@ -384,7 +384,11 @@ def _pcm(path: Path, cancelled=lambda: False) -> dict:
                 if raw[:4] == b"INFO":
                     cursor = 4
                     tags = {b"INAM": "title", b"IART": "artist", b"IPRD": "album",
-                            b"IGNR": "genre", b"ICRD": "date", b"ITRK": "track"}
+                            b"IGNR": "genre", b"ICRD": "date", b"ITRK": "track",
+                            b"IAMP": "album_artist", b"ICMP": "composer", b"IDIS": "disc",
+                            b"IGAN": "replaygain_track_gain", b"IGAL": "replaygain_album_gain",
+                            b"ICPL": "compilation", b"IHS1": "source_sha256",
+                            b"IHC1": "pcm_sha256"}
                     while cursor + 8 <= len(raw):
                         tag, count = struct.unpack_from("<4sI", raw, cursor)
                         cursor += 8
@@ -576,7 +580,7 @@ def _watch_cancellation(process, cancelled):
 
 
 def _probe(path: Path, executable: str, *, exact_frames: bool = True,
-           cancelled=lambda: False) -> dict:
+           cancelled=lambda: False, allow_unknown=False) -> dict:
     # ffprobe is optional host metadata tooling, never a native decoder substitute.
     command = [executable, "-v", "error", "-show_entries",
                "stream=codec_name,codec_type,profile,sample_rate,channels,bits_per_raw_sample:format_tags:stream_tags",
@@ -613,7 +617,7 @@ def _probe(path: Path, executable: str, *, exact_frames: bool = True,
         raise ValueError("exactly one audio stream required")
     audio = streams[0]
     codec = CODECS.get(audio.get("codec_name"), CODECS["unknown"])
-    if codec == CODECS["unknown"]:
+    if codec == CODECS["unknown"] and not allow_unknown:
         raise ValueError("unrecognized compressed audio codec")
     tags = {str(k).lower(): v for k, v in info.get("format", {}).get("tags", {}).items()}
     tags.update({str(k).lower(): v for k, v in audio.get("tags", {}).items()})
@@ -802,7 +806,8 @@ def _mp4_audio_config(track, reader, codec: str) -> dict:
                               1 <= (raw[1] >> 3 & 15) <= 2 and raw[1] & 7 == 0)}
 
 
-def _quick_metadata(path: Path, cancelled=lambda: False, *, include_cover=False) -> dict | None:
+def _quick_metadata(path: Path, cancelled=lambda: False, *, include_cover=False,
+                    allow_unknown=False) -> dict | None:
     """Use optional in-process tag readers for well identified containers."""
     try:
         import mutagen
@@ -853,6 +858,8 @@ def _quick_metadata(path: Path, cancelled=lambda: False, *, include_cover=False)
                     audio_track = track
             if audio_tracks != 1:
                 return None
+        if codec_name is None and allow_unknown:
+            codec_name = 'unknown'
         if codec_name is None:
             return None
         info = audio.info
@@ -1529,7 +1536,33 @@ def _read_metadata(path: Path, ffprobe: str | None, existing: bool, cancelled=la
                    *, include_cover=False) -> dict:
     _check_cancel(cancelled)
     if path.suffix.lower() in (".wav", ".aif", ".aiff", ".aifc"):
-        return _pcm(path, cancelled)
+        try:
+            metadata = _pcm(path, cancelled)
+        except (ValueError, struct.error):
+            if not ffprobe:
+                raise
+            metadata = _probe(path, ffprobe, cancelled=cancelled, allow_unknown=True)
+        if include_cover:
+            metadata['_embedded_cover'] = _embedded_cover(path)
+            try:
+                import mutagen
+                tagged = mutagen.File(path)
+                id3 = getattr(tagged, 'tags', None)
+                if id3 and hasattr(id3, 'getall'):
+                    for frame, key in (('TIT2', 'title'), ('TPE1', 'artist'), ('TALB', 'album'),
+                                       ('TPE2', 'album_artist'), ('TCON', 'genre'), ('TDRC', 'date'),
+                                       ('TRCK', 'track'), ('TPOS', 'disc'), ('TCMP', 'compilation'),
+                                       ('TCOM', 'composer')):
+                        values = id3.getall(frame)
+                        if values and getattr(values[0], 'text', None):
+                            metadata['tags'][key] = str(values[0].text[0])
+                    for value in id3.getall('TXXX'):
+                        key = value.desc.lower()
+                        if key in ('replaygain_track_gain', 'replaygain_album_gain') and value.text:
+                            metadata['tags'][key] = str(value.text[0])
+            except Exception:
+                pass
+        return metadata
     metadata = _quick_metadata(path, cancelled, include_cover=include_cover) if existing else None
     _check_cancel(cancelled)
     if metadata is None and ffprobe:

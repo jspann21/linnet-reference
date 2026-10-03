@@ -813,6 +813,10 @@ def build_settings_page(window):
     layout.addWidget(label('Install FFmpeg and FFprobe on your computer, then choose the folder containing both programs. Video conversions need both tools; ordinary media browsing does not.', 'muted', True))
     layout.addWidget(button('Help and About', window.show_help, 'quiet'), 0, Qt.AlignLeft)
     layout.addSpacing(20); layout.addWidget(label('Advanced preparation', 'section'))
+    window.convert_audio = CheckBox('Convert incompatible music to PCM WAV on the computer')
+    window.convert_audio.setChecked(str(window.settings.value('convert_audio', True)).lower() in ('true', '1'))
+    window.convert_audio.toggled.connect(lambda checked: window.settings.setValue('convert_audio', checked))
+    layout.addWidget(window.convert_audio)
     window.verify_audio = CheckBox('Read entire audio files when verifying (slower)'); layout.addWidget(window.verify_audio)
     window.rebuild = CheckBox('Rebuild content that is already prepared'); layout.addWidget(window.rebuild)
     layout.addStretch(); window.update_tools()
@@ -1677,12 +1681,18 @@ class MediaWindow(QMainWindow):
             return
         copies = ', '.join(f'{kind}: {count}' for kind, count in result['copy_kinds'].items() if count)
         preview = [f"Prepare: {', '.join(result['selected'])}",
-                   f"Copy originals: {result['copies']:,} files ({size(result['bytes'])})" +
+                   f"Add to iPod: {result['copies']:,} files ({size(result['bytes'])})" +
                    (f' · {copies}' if copies else ''),
                    f"iPod free before copying: {size(result['free'])}",
                    f"Computer free for preparation: {size(result['computer_free'])}",
                    f"Video jobs: {result['videos']:,}" +
                    (' · conversion output size is unknown' if result['conversion'] else '')]
+        if result.get('audio_conversions'):
+            preview.append(f"Convert on computer: {result['audio_conversions']:,} music files; source files stay in place")
+        if result.get('audio_unplayable'):
+            preview.append(f"Needs conversion: {result['audio_unplayable']:,} music files will be copied but skipped for playback")
+        for issue in result.get('audio_issues', []):
+            preview.append(f"{Path(issue['source']).name}: {issue['reason']}")
         if 'device_peak_bytes' in result:
             preview.append(f"Estimated peak iPod space needed: {size(result['device_peak_bytes'])}")
         if 'computer_peak_bytes' in result:
@@ -2632,10 +2642,12 @@ class MediaWindow(QMainWindow):
         online_artwork = self.online_artwork.isChecked()
         force, verification = self.rebuild.isChecked(), 'full' if self.verify_audio.isChecked() else 'metadata'
         ffmpeg, ffprobe = self.verified_ffmpeg, self.verified_ffprobe
+        convert_audio = self.convert_audio.isChecked()
         approval = {'actions': None}
         def run():
             return media.run(identity, selected, pending, photo_dimension=dimension, force=force,
                 music_verification=verification, ffmpeg=ffmpeg, ffprobe=ffprobe, video_selection=videos,
+                convert_audio=convert_audio,
                 online_artwork=online_artwork, approved_reconciliation=approval['actions'],
                 progress=self.events.progress.emit, progress_detail=self.events.conversion.emit,
                 progress_stage=self.events.stage.emit,
@@ -2647,7 +2659,8 @@ class MediaWindow(QMainWindow):
             result = media_status.plan(identity, all_pending, selected, videos,
                 current_inventory=self.inventory, photo_dimension=dimension,
                 music_verification=verification, force=force, online_artwork=online_artwork,
-                ffprobe=ffprobe, ffmpeg=ffmpeg)
+                ffprobe=ffprobe, ffmpeg=ffmpeg, convert_audio=convert_audio,
+                cancelled=self.stop_event.is_set)
             if result['conversion'] and (not ffmpeg or not ffprobe):
                 raise ValueError('Video conversion needs FFmpeg and FFprobe. Choose their folder in Settings.')
             return result

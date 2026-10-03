@@ -342,7 +342,8 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
 
 def plan(identity, pending, selected, videos, *, current_inventory=None,
          photo_dimension=640, music_verification='metadata', force=False,
-         online_artwork=False, ffprobe=None, ffmpeg=None):
+         online_artwork=False, ffprobe=None, ffmpeg=None, convert_audio=False,
+         cancelled=lambda: False):
     identity = media.refresh(identity)
     unsupported = [kind for kind in selected if kind not in media.supported_kinds(identity)]
     if unsupported:
@@ -363,7 +364,15 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
     unverified = []
     replacements = []
     copies = media.additions(root, [p for p in included if p[0] != 'Videos'], snapshots=snapshots,
-                             verify_existing=True, unverified=unverified, replacements=replacements)
+                             verify_existing=True, unverified=unverified, replacements=replacements,
+                             convert_audio=convert_audio, target=identity['target_id'], ffprobe=ffprobe,
+                             cancelled=cancelled)
+    audio_conversions = sum('converted_bytes' in item for item in copies)
+    audio_unplayable = sum('compatibility_issue' in item and 'converted_bytes' not in item for item in copies)
+    audio_issues = [dict(source=item['source'], reason=item['compatibility_issue']) for item in copies
+                    if 'compatibility_issue' in item][:5]
+    if audio_conversions and not ffmpeg:
+        raise ValueError('Audio conversion needs FFmpeg on the computer. Choose its folder in Settings.')
     jobs = media.video_jobs(root, included, videos, skipped=skipped['Videos'], identity=identity,
                             snapshots=snapshots, ffprobe=ffprobe,
                             replacements=replacements) if 'Videos' in selected else []
@@ -379,7 +388,7 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
         previews[name] = f'{supported} media files' + (f' · {other} supporting/other files' if other else '')
         if kind == 'Videos' and other:
             previews[name] = f'{supported} videos · {other} non-video files skipped'
-    needed = sum(p['bytes'] for p in copies)
+    needed = sum(p.get('converted_bytes', p['bytes']) for p in copies)
     if 'Notes' in selected:
         replacing_notes = {action['destination'].casefold() for action in replacements
                            if action['kind'] == 'Notes' and
@@ -414,7 +423,9 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
             if (saved.get('signature') == f"{option}:{item.get('fingerprint')}" and
                     isinstance(saved.get('outputs'), list) and saved['outputs']):
                 reusable.append(kind)
-    return dict(copies=len(copies), bytes=needed, videos=len(jobs), free=space['device_free_bytes'], previews=previews,
+    return dict(copies=len(copies), bytes=needed, videos=len(jobs), audio_conversions=audio_conversions,
+                audio_unplayable=audio_unplayable, audio_issues=audio_issues,
+                free=space['device_free_bytes'], previews=previews,
                 existing_unverified=len(unverified),
                 conversion=space['video_conversion_required'] if videos is None or videos else False,
                 computer_free=space['computer_free_bytes'],
