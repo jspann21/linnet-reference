@@ -786,7 +786,14 @@ bool ln_m25_coprocessor_step(void){
         }
         return false;
     }
-    if(vc.phase==SYNC_WAIT){if(expired())phase(VERSION_SEND,5000000u);return false;}
+    if(vc.phase==SYNC_WAIT){
+        /* Keep PCM and native stream requests moving between status polls. */
+        if(!service_resets()){recover(36);return false;}
+        if(!file_service()){recover(30);return false;}
+        if(!audio_service()||!stream_service()){recover(37);return false;}
+        if(expired())phase(VERSION_SEND,5000000u);
+        return false;
+    }
     if(vc.phase==PLAYER_SETTLE){
         if(!service_resets()||!file_service()||!audio_service()||!stream_service()){recover(36);return false;}
         if(vc.normal&&vc.command_index==8u){
