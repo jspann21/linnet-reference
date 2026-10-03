@@ -136,7 +136,7 @@ def _remember_verified(identity, verified, before):
         pass
 
 
-def _video_readiness(inventory, published, identity=None, state=None, verified=None):
+def _video_readiness(inventory, published, identity, state=None, verified=None):
     state = state if isinstance(state, dict) else {}
     video_state = state.get('Videos', {})
     if not isinstance(video_state, dict):
@@ -150,21 +150,21 @@ def _video_readiness(inventory, published, identity=None, state=None, verified=N
                         if Path(value).suffix.lower() in source_extensions]
     published = [row for row in published
                  if Path(row['path']).suffix.lower() in native_extensions]
-    root = Path(identity['root']).resolve() if identity else None
-    if ((compatible_files or published) and identity and
+    root = Path(identity['root']).resolve()
+    if ((compatible_files or published) and
             identity['media_profile'].get('video_backend') == 'bcm-mp4' and
             any(not (root / '.LINNET' / 'BCM' / name).is_file() for name in
                 ('VMCS.BIN', 'MPLAYER.VLL', 'H264DEC.VLL', 'MPG4DEC.VLL',
                  'AACDEC.VLL', 'PASSTHRU.VLL'))):
         return 'Video resources missing on iPod'
-    if compatible_files and identity and video_state.get('media_profile') != identity['media_profile']:
+    if compatible_files and video_state.get('media_profile') != identity['media_profile']:
         return 'Needs update'
     ready = [row for row in published if row['status'] == 'Ready on iPod']
     missing = [row for row in published if row['status'] != 'Ready on iPod']
     cataloged = {row['path'].casefold() for row in ready}
     generated = {str(root / output[0]).casefold()
                  for relative, saved in video_files.items()
-                 if root is not None and isinstance(relative, str) and isinstance(saved, dict)
+                 if isinstance(relative, str) and isinstance(saved, dict)
                  for output in (saved.get('outputs') if isinstance(saved.get('outputs'), list) else [])
                  if isinstance(output, (list, tuple))
                  and len(output) == 2 and isinstance(output[0], str)
@@ -187,7 +187,7 @@ def _video_readiness(inventory, published, identity=None, state=None, verified=N
                 continue
             for output in outputs:
                 if (isinstance(output, (list, tuple)) and len(output) == 2 and
-                        isinstance(output[0], str) and root is not None):
+                        isinstance(output[0], str)):
                     saved_outputs.setdefault(str(root / output[0]).casefold(), output)
     for row in ready:
         output = saved_outputs.get(row['path'].casefold())
@@ -199,8 +199,6 @@ def _video_readiness(inventory, published, identity=None, state=None, verified=N
         source = Path(value)
         if str(source).casefold() in generated:
             continue
-        if root is None:
-            return 'Needs update'
         relative = source.relative_to(root / 'Videos').as_posix() if source.is_relative_to(root / 'Videos') else source.relative_to(root).as_posix()
         saved = video_files.get(relative, {})
         if not isinstance(saved, dict):
@@ -328,9 +326,6 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
             relative = Path(row['path']).relative_to(root).as_posix().casefold()
             row['status'] = ('Excluded from preparation' if relative in skipped['Photos']
                              else 'iTunes photo · ' + readiness['Photos'])
-    for row in rows:
-        if row.get('category') == 'error':
-            continue
         excluded = skipped.get(row['kind'])
         if not excluded:
             continue

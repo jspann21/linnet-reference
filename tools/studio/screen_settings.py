@@ -51,7 +51,7 @@ def available_items(name, identity=None):
     return item_availability(name, identity)[0]
 
 
-def locked_items(name, identity=None, selected=()):
+def locked_items(name):
     """Items firmware restores automatically in addition to navigation anchors."""
     locked = set(REQUIRED.get(name, ()))
     if name == 'Settings':
