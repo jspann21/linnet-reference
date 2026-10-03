@@ -213,6 +213,7 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
     for kind in manager.KINDS:
         allowed = manager.extensions(kind)
         records = records_by_kind[kind]
+        last_parent, parent_managed = None, False
         # Traversal already supplied absolute, reparse-free paths under root.
         # Resolving each file again adds an iPod filesystem query per row.
         for path, info in records:
@@ -222,7 +223,11 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
                 key = str(path).casefold()
                 indexed = metadata.get(key, {}) if kind == 'Music' else {}
                 tags = dict(indexed, **source_metadata.get(key, {})) if kind == 'Music' else retail.get(key, {})
-                managed = _apple_managed(path)
+                parent = str(path.parent)
+                if parent != last_parent:
+                    parent_managed = _apple_managed(path)
+                    last_parent = parent
+                managed = parent_managed
                 if indexed.get('artwork') and tags.get('artwork') == str(path):
                     tags['artwork'] = indexed['artwork']
                 result.append(_row('original', kind, tags.get('title') or path.name, path,
