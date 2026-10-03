@@ -154,7 +154,7 @@ def restore_video_catalog_backup(identity, name, sha256, catalog_sha256):
                     consequence='Video entries newer than the selected backup may need preparation again; video files were retained.')
 
 
-def _row(category, kind, title, path, status, *, info=None, **extra):
+def _row(category, kind, title, path, status, *, info=None, removable=None, **extra):
     if info is None:
         try:
             info = path.stat()
@@ -163,7 +163,8 @@ def _row(category, kind, title, path, status, *, info=None, **extra):
     return dict(id=category + ':' + str(extra.get('key', path)), category=category,
                 kind=kind, title=title, path=str(path), source='', status=status,
                 bytes=info.st_size if info else 0, mtime_ns=info.st_mtime_ns if info else None,
-                removable=category != 'cache' and not _apple_managed(path), **extra)
+                removable=(category != 'cache' and not _apple_managed(path)
+                           if removable is None else removable), **extra)
 
 
 def _apple_managed(path):
@@ -221,15 +222,17 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
                 key = str(path).casefold()
                 indexed = metadata.get(key, {}) if kind == 'Music' else {}
                 tags = dict(indexed, **source_metadata.get(key, {})) if kind == 'Music' else retail.get(key, {})
+                managed = _apple_managed(path)
                 if indexed.get('artwork') and tags.get('artwork') == str(path):
                     tags['artwork'] = indexed['artwork']
                 result.append(_row('original', kind, tags.get('title') or path.name, path,
                     ('Not supported on this iPod' if kind == 'Videos' and path.suffix.lower() not in source_video_extensions
                      else 'Indexed on iPod' if indexed else 'Source on iPod'), info=info,
+                    removable=not managed,
                     artist=tags.get('artist', ''), album=tags.get('album', ''), genre=tags.get('genre', ''),
                     artwork=tags.get('artwork', ''), duration=tags.get('duration', 0), track=tags.get('track', 0),
                     album_artist=tags.get('album_artist', ''), disc=tags.get('disc', 0),
-                    description=('Apple-managed media must be removed with Apple software.' if _apple_managed(path)
+                    description=('Apple-managed media must be removed with Apple software.' if managed
                                  else 'Removing this source requires preparing its media type afterward.')))
     photos = retail_photos if retail_photos is not None else retail_images(root)
     for photo in photos:
