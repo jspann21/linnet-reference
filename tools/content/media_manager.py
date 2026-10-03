@@ -1331,7 +1331,23 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None, *, s
         ready = []
         for job in jobs.values():
             source = Path(job['source'])
+            proof_before = None
+            if identity['media_profile']['video_backend'] not in ('bcm-mp4', 'native-mp4'):
+                try:
+                    proof_before = _receipt_stamp(source.stat())
+                except OSError:
+                    pass
             if _video_is_native(source, identity, ffprobe=ffprobe, cancelled=cancelled):
+                if proof_before is not None:
+                    try:
+                        proof_after = _receipt_stamp(source.stat())
+                    except OSError:
+                        proof_after = None
+                    if (proof_before == proof_after and
+                            (os.name != 'nt' or
+                             proof_after[3] <= time.time_ns() - _RECENT_OUTPUT_NS)):
+                        job['_native_check'] = (str(source),
+                            json.dumps(identity['media_profile'], sort_keys=True), proof_after)
                 ready.append(job)
             elif not source.is_relative_to(root) or job['relative'].casefold() in queued_relatives:
                 raise ValueError(f"{source.name} needs conversion or is not a playable native video. Choose a conversion mode or remove it from the queue.")
@@ -1421,7 +1437,22 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
                     pass
                 native = details is not None
             else:
-                native = _video_is_native(source, identity, ffprobe=ffprobe)
+                proof = job.get('_native_check') if no_conversions else None
+                native = False
+                if (isinstance(proof, tuple) and len(proof) == 3 and
+                        isinstance(proof[2], tuple) and len(proof[2]) == 5 and
+                        all(type(value) is int for value in proof[2]) and
+                        proof[0] == str(source) and
+                        proof[1] == json.dumps(identity['media_profile'], sort_keys=True) and
+                        (os.name != 'nt' or
+                         proof[2][3] <= time.time_ns() - _RECENT_OUTPUT_NS)):
+                    try:
+                        native = (source.resolve(strict=True) == source and
+                                  _receipt_stamp(source.stat()) == proof[2])
+                    except OSError:
+                        pass
+                if not native:
+                    native = _video_is_native(source, identity, ffprobe=ffprobe)
             encoder = ffmpeg or shutil.which('ffmpeg')
             if native:
                 if backend in ('bcm-mp4', 'native-mp4'):
