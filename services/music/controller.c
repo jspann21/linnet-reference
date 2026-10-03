@@ -355,7 +355,13 @@ bool ln_music_quiesce(bool save_settings){
     if(!persist())return false;
     /* No accepted history events exist before ready; shutdown must not start
      * a new load after closing the library. Crash recovery never calls here. */
-    if(!ln_music_history_ready())return ln_music_history_error()==0;
+    if(!ln_music_history_ready()){
+        /* Fresh installations have no optional history banks. No history
+         * events can be accepted before ready, so absence has nothing to
+         * flush and must not prevent Sync or normal shutdown. */
+        int error=ln_music_history_error();
+        return error==LN_HISTORY_OK||error==LN_HISTORY_MISSING;
+    }
     for(;;){
         int result=ln_music_history_flush();if(result)return result==1;
         if(ln_time_us()-started>=30000000u)return false;
