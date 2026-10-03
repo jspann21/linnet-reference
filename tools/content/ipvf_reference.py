@@ -141,18 +141,6 @@ _IMA_TRANSITIONS = tuple(
 )
 
 
-def _ima_step(predictor: int, index: int, code: int) -> tuple[int, int]:
-    if not 0 <= index <= 88:
-        raise ValueError("invalid IMA ADPCM step index")
-    delta, index = _IMA_TRANSITIONS[index][code & 0x0F]
-    predictor += delta
-    if predictor < -32768:
-        predictor = -32768
-    elif predictor > 32767:
-        predictor = 32767
-    return predictor, index
-
-
 def decode_ima_adpcm(data: bytes, frames: int) -> bytes:
     if frames <= 0:
         raise ValueError("invalid IMA ADPCM block length")
@@ -163,12 +151,19 @@ def decode_ima_adpcm(data: bytes, frames: int) -> bytes:
         predictor, index, reserved = struct.unpack_from("<hBB", data)
         if reserved or index > 88:
             raise ValueError("invalid IMA ADPCM block header")
-        output = bytearray(struct.pack("<hh", predictor, predictor))
+        output = bytearray(frames * AUDIO_FRAME_BYTES)
+        struct.pack_into("<hh", output, 0, predictor, predictor)
+        transitions = _IMA_TRANSITIONS
         for sample in range(1, frames):
             packed = data[4 + (sample - 1) // 2]
             code = packed >> 4 if (sample - 1) & 1 else packed & 0x0F
-            predictor, index = _ima_step(predictor, index, code)
-            output.extend(struct.pack("<hh", predictor, predictor))
+            delta, index = transitions[index][code]
+            predictor += delta
+            if predictor < -32768:
+                predictor = -32768
+            elif predictor > 32767:
+                predictor = 32767
+            struct.pack_into("<hh", output, sample * AUDIO_FRAME_BYTES, predictor, predictor)
         return bytes(output)
     if len(data) != 8 + frames - 1:
         raise ValueError("invalid IMA ADPCM block length")
@@ -176,11 +171,23 @@ def decode_ima_adpcm(data: bytes, frames: int) -> bytes:
         struct.unpack_from("<hBBhBB", data)
     if reserved_l or reserved_r or left_index > 88 or right_index > 88:
         raise ValueError("invalid IMA ADPCM block header")
-    output = bytearray(struct.pack("<hh", left, right))
-    for packed in data[8:]:
-        left, left_index = _ima_step(left, left_index, packed & 0x0F)
-        right, right_index = _ima_step(right, right_index, packed >> 4)
-        output.extend(struct.pack("<hh", left, right))
+    output = bytearray(frames * AUDIO_FRAME_BYTES)
+    struct.pack_into("<hh", output, 0, left, right)
+    transitions = _IMA_TRANSITIONS
+    for sample, packed in enumerate(data[8:], 1):
+        delta, left_index = transitions[left_index][packed & 0x0F]
+        left += delta
+        if left < -32768:
+            left = -32768
+        elif left > 32767:
+            left = 32767
+        delta, right_index = transitions[right_index][packed >> 4]
+        right += delta
+        if right < -32768:
+            right = -32768
+        elif right > 32767:
+            right = 32767
+        struct.pack_into("<hh", output, sample * AUDIO_FRAME_BYTES, left, right)
     return bytes(output)
 
 
