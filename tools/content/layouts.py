@@ -134,6 +134,36 @@ def place_classic_split_home(scenes,width,height):
                 node['flags']|=2
 
 
+def fit_monochrome_text(scenes,font,height):
+    """Reserve native font lines after the authoring rectangles are scaled."""
+    fh=font['height']
+    rows={'about':1,'themes':1,'music-sound':1,'sleep-timer':1,
+          'music-search':3,'shutdown':3}
+    for scene in scenes:
+        sid=scene['id'].rsplit('.',1)[-1]
+        texts=[n for n in scene['nodes'] if n['kind']==3 and not n['flags']&2]
+        listing=next((n for n in scene['nodes'] if n['kind'] in (6,7) and n['flags']&1),None)
+        for node in texts:
+            if node['flags']&64:
+                bottom=min(height-2,node['y']+node['h'])
+                node['h']=max(node['h'],rows.get(sid,2)*(fh+1)-1)
+                node['y']=bottom-node['h']
+                if listing:
+                    listing['h']=min(listing['h'],node['y']-3-listing['y'])
+            elif node['text'] in ('Search prefix','LINNET OS'):
+                node['h']=max(node['h'],fh)
+        if sid=='music-search' and listing:
+            prefix=next(n for n in texts if n['text']=='Search prefix')
+            header=next(n for n in scene['nodes'] if n['kind']==11)
+            prefix['y']=header['y']+header['h']+2
+            bottom=listing['y']+listing['h']
+            listing['y']=prefix['y']+prefix['h']+2
+            listing['h']=bottom-listing['y']
+        if listing:
+            for node in scene['nodes']:
+                if node['kind']==9:node['y']=listing['y'];node['h']=listing['h']
+
+
 def align_scrollbars(scene,theme):
     listing=next((n for n in scene['nodes'] if n['kind'] in (6,7,8) and n['flags']&1),None)
     if not listing:return
