@@ -1179,6 +1179,7 @@ class MediaWindow(QMainWindow):
         if self._library_source is not self.rows:
             self._library_source, self._library_cache, self._library_stats = self.rows, {}, {}
             self._library_title_cache = {}
+            self._library_unique_ids = {}
             self._group_cards_cache = {}
             self._library_search = None
         if self.page in self._library_cache:
@@ -1194,19 +1195,17 @@ class MediaWindow(QMainWindow):
         albums = len({(r.get('album'), r.get('album_artist') or r.get('artist')) for r in page_rows}) if self.page == 'Music' else 0
         self._library_stats[self.page] = (len(page_rows), sum(r['bytes'] for r in page_rows), albums)
         self._library_cache[self.page] = page_rows
+        self._library_unique_ids[self.page] = len({row['id'] for row in page_rows}) == len(page_rows)
         return list(self._library_cache[self.page])
 
     def render_library(self):
         if self.page not in (*media.KINDS, 'Trash'):
             return
         context = (self.page, self.view, (self.group['group_kind'], self.group['group_key']) if self.group else None)
-        selected_keys = set()
         active = self.views.currentWidget()
+        previous_rows, previous_ranges = None, []
         if getattr(self, '_selection_context', None) == context and active in (self.table, self.grid):
-            for first, last in self.selected_row_ranges():
-                for at in range(first, last + 1):
-                    row = self.model.rows[at]
-                    selected_keys.add(('group', row['group_kind'], row['group_key']) if 'group_key' in row else ('row', row['id']))
+            previous_rows, previous_ranges = self.model.rows, self.selected_row_ranges()
         self._selection_context = context
         rows = self.library_rows()
         grouped = self.page == 'Music' and self.view != 'Songs' and self.group is None
@@ -1328,25 +1327,35 @@ class MediaWindow(QMainWindow):
                           'Ctrl+click or Shift+click to select multiple files. Double-click for details.')
         self.selection_bar.hide()
         active = self.views.currentWidget()
-        if selected_keys and active in (self.table, self.grid):
+        if previous_ranges and active in (self.table, self.grid):
             selection = QItemSelection()
-            start = None
-            for index in range(len(self.model.rows) + 1):
-                if index < len(self.model.rows):
-                    row = self.model.rows[index]
-                    key = ('group', row['group_kind'], row['group_key']) if 'group_key' in row else ('row', row['id'])
-                    chosen = key in selected_keys
-                else:
-                    chosen = False
-                if chosen and start is None:
-                    start = index
-                elif not chosen and start is not None:
-                    selection.select(self.model.index(start, 0), self.model.index(index - 1, 0))
-                    start = None
+            unique = grouped or (self.page != 'Trash' and self._library_unique_ids[self.page])
+            if unique and previous_rows == self.model.rows:
+                # Model reset invalidates Qt ranges. Rebuild their endpoints
+                # directly when every row retains its position and identity.
+                for first, last in previous_ranges:
+                    selection.select(self.model.index(first, 0), self.model.index(last, 0))
+            else:
+                selected_keys = set()
+                for first, last in previous_ranges:
+                    for row in previous_rows[first:last + 1]:
+                        selected_keys.add(('group', row['group_kind'], row['group_key']) if 'group_key' in row else ('row', row['id']))
+                start = None
+                for index in range(len(self.model.rows) + 1):
+                    if index < len(self.model.rows):
+                        row = self.model.rows[index]
+                        key = ('group', row['group_kind'], row['group_key']) if 'group_key' in row else ('row', row['id'])
+                        chosen = key in selected_keys
+                    else:
+                        chosen = False
+                    if chosen and start is None:
+                        start = index
+                    elif not chosen and start is not None:
+                        selection.select(self.model.index(start, 0), self.model.index(index - 1, 0))
+                        start = None
             if not selection.isEmpty():
                 flags = QItemSelectionModel.Select | (QItemSelectionModel.Rows if active is self.table else QItemSelectionModel.NoUpdate)
                 active.selectionModel().select(selection, flags)
-                self.selection_changed()
 
     def selected_row_ranges(self):
         view = self.views.currentWidget()
