@@ -33,6 +33,15 @@ def state_write(path,state):
     temporary.replace(path)
 
 def install(mount, image, envelope, expected_original):
+    from tools.content.media_manager import refresh
+    from tools.content.publish import _exclusive
+    from tools.studio.installer import identity_for_mount
+    identity = identity_for_mount(mount)
+    with _exclusive(identity):
+        refresh(identity)
+        return _install(mount, image, envelope, expected_original)
+
+def _install(mount, image, envelope, expected_original):
     mount=mount.resolve(strict=True)
     from tools.content.publish import _plain
     los=envelope.read_bytes();identity=inspect(los)
@@ -122,6 +131,15 @@ def status(mount):
     return result
 
 def restore(mount):
+    from tools.content.media_manager import refresh
+    from tools.content.publish import _exclusive
+    from tools.studio.installer import identity_for_mount
+    identity = identity_for_mount(mount)
+    with _exclusive(identity):
+        refresh(identity)
+        return _restore(mount)
+
+def _restore(mount):
     mount=mount.resolve(strict=True);state=status(mount)
     from tools.content.publish import _plain
     _plain(mount/'.LINNET/RECOVERY/ORIGINAL.IPOD',mount)

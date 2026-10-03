@@ -65,12 +65,12 @@ def run_media(args, emit):
             spec=TARGETS[args.target]
             if not spec['capabilities'].get('video',True):
                 raise ValueError('video is disabled for the selected target')
-            if spec['media_video_backend'] == 'bcm-mp4':
+            if spec['media_video_backend'] in ('bcm-mp4', 'native-mp4'):
                 from tools.content.native_video import prepare
                 from tools.studio.targets import media_profile
                 profile = media_profile(args.target)
                 if args.output.suffix.lower() not in spec['media_video_extensions']:
-                    raise ValueError('native video output must use .mp4 or .m4v')
+                    raise ValueError('native video output must use ' + ', '.join(spec['media_video_extensions']))
                 if args.fps:
                     if args.fps > profile['native_video']['max_fps']:
                         raise ValueError('frame rate exceeds the target limit')
@@ -86,7 +86,7 @@ def run_media(args, emit):
                     max_record_sectors=spec['storage_max_read_sectors'],
                     ffmpeg=args.ffmpeg,ffprobe=args.ffprobe))
         elif args.action=='inspect':
-            if args.package.suffix.lower() in ('.mp4', '.m4v'):
+            if args.package.suffix.lower() in ('.mp4', '.m4v', '.mov'):
                 from tools.content.native_video import inspect_file
                 from tools.studio.targets import media_profile
                 if not args.target:

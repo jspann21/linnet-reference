@@ -2,7 +2,7 @@
 from pathlib import Path
 import os
 from .notes import inspect, MAX_FILE
-from .publish import _plain, _hash, inspect_target, _exclusive, _publish_library
+from .publish import _plain, _hash, inspect_target, _exclusive, _publish_library, _recover_pending_groups
 
 
 def publish_notes(package, *, disk_number, expected_disk_serial,
@@ -27,6 +27,7 @@ def publish_notes(package, *, disk_number, expected_disk_serial,
     if package.drive.casefold() == root.drive.casefold():
         raise ValueError('notes package must be staged on a different volume from the iPod')
     with _exclusive(identity):
+        _recover_pending_groups(root, identity)
         return _publish(package, candidate, identity, root, disk_number,
                         expected_disk_serial, expected_volume_serial, expected_drive)
 

@@ -75,7 +75,9 @@ install firmware, choose games, and arrange the screens you want on your iPod.
 
 The packaged Windows app includes its Python runtime and dependencies. Installing
 prebuilt firmware needs **no compiler, no Python setup, and no WSL**. Media
-conversion uses FFmpeg and FFprobe, selected in Settings.
+conversion uses FFmpeg and FFprobe. Extract a Windows build with both executables,
+then select their folder in Settings; the app checks that each can run. See the
+[setup and troubleshooting steps](docs/media-manager.md#set-up-ffmpeg-on-windows).
 
 [Explore Media Manager →](docs/media-manager.md)
 
@@ -107,7 +109,7 @@ firmware replacement stops playback and follows the update workflow.
 
 ### The click wheel has more to do.
 
-Three native games bring different kinds of play to iPod Photo and Video, with
+Twelve native games bring different kinds of play to iPod Photo and Video, with
 layouts made for their screens and controls made for the wheel.
 
 <table>
@@ -125,6 +127,8 @@ layouts made for their screens and controls made for the wheel.
 
 <sub>Actual iPod Video framebuffer captures through Linnet Link.</sub>
 
+The full selection is Comet Run, Pulse Path, Solitaire, Sudoku, Brick, Music
+Quiz, Vortex, Minesweeper, Falling Blocks, Reversi, Snake, and Word Search.
 Choose your games in Media Manager, save, eject, and restart Linnet.
 
 ## Themes

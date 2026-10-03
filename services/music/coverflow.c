@@ -125,6 +125,8 @@ bool ln_coverflow_move(int32_t delta){
 }
 const char *ln_coverflow_text(bool artist){
     enum ln_music_library_status status=ln_music_library_status();
+    if(status==LN_LIBRARY_ERROR&&ln_music_library_error()==LN_MUSIC_LIBRARY_RECOVERY_REQUIRED)
+        return artist?"":"Recover music in Media Manager";
     if(status==LN_LIBRARY_ERROR&&ln_music_library_error()==LN_FAT32_NOT_FOUND)
         return artist?"":"No albums";
     if(status==LN_LIBRARY_ERROR)return artist?"":"Music library unavailable";

@@ -1,9 +1,14 @@
+from pathlib import Path
+
 from PySide6.QtCore import (QItemSelection, QItemSelectionModel,
                            QStringListModel, Qt, QSize, QSignalBlocker)
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QGuiApplication
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QLabel,
     QLineEdit, QListView, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout,
-    QFrame, QStackedWidget, QStyledItemDelegate, QStyle)
+    QFrame, QStackedWidget, QStyledItemDelegate, QStyle, QFileDialog,
+    QPlainTextEdit, QMessageBox)
+
+from tools.content import playlists as playlist_content
 
 
 class SongLibraryModel(QStringListModel):
@@ -95,6 +100,9 @@ class TrackDelegate(QStyledItemDelegate):
         if self.compact:
             area = rect.adjusted(9, 0, -9, 0)
             painter.drawText(area, Qt.AlignVCenter, painter.fontMetrics().elidedText(index.data(), Qt.ElideRight, area.width()))
+            if option.state & QStyle.State_HasFocus:
+                painter.setPen(QColor('#16859c'))
+                painter.drawRect(rect.adjusted(1, 1, -2, -2))
             painter.restore(); return
         area = rect.adjusted(10, 0, -12, 0)
         title_width = int(area.width() * .56) if detail else area.width()
@@ -105,6 +113,9 @@ class TrackDelegate(QStyledItemDelegate):
         area = rect.adjusted(20 + title_width, 0, -12, 0)
         painter.drawText(area, Qt.AlignVCenter, painter.fontMetrics().elidedText(detail, Qt.ElideRight, area.width()))
         painter.setPen(QColor('#edf1f2')); painter.drawLine(rect.bottomLeft(), rect.bottomRight())
+        if option.state & QStyle.State_HasFocus:
+            painter.setPen(QColor('#16859c'))
+            painter.drawRect(rect.adjusted(1, 1, -2, -2))
         painter.restore()
 
 
@@ -113,17 +124,22 @@ class PlaylistEditor(QDialog):
         super().__init__(parent)
         self.state, self.slot = state, None
         self.setWindowTitle('Linnet · Playlists'); self.setObjectName('playlistEditor')
-        self.resize(1180, 740); self.setMinimumSize(1040, 640)
-        layout = QVBoxLayout(self); layout.setContentsMargins(24, 24, 24, 20); layout.setSpacing(18)
+        self.setMinimumSize(640, 420)
+        screen = parent.screen() if parent is not None else QGuiApplication.primaryScreen()
+        area = screen.availableGeometry() if screen else None
+        self.resize(max(640, min(1080, area.width() - 32)) if area else 1080,
+                    max(420, min(680, area.height() - 32)) if area else 680)
+        layout = QVBoxLayout(self); layout.setContentsMargins(12, 12, 12, 10); layout.setSpacing(8)
         header = QHBoxLayout(); layout.addLayout(header)
         heading = QVBoxLayout(); heading.setSpacing(5); header.addLayout(heading)
         self.label(heading, 'Playlists', 'dialogTitle')
         self.label(heading, 'Your iPod playlists, in your order.', 'muted')
         header.addStretch(); self.count = self.label(header, '', 'badge')
-        columns = QHBoxLayout(); columns.setSpacing(14); layout.addLayout(columns, 1)
-        left = self.panel(columns, 0, 206)
+        columns = QHBoxLayout(); columns.setSpacing(8); layout.addLayout(columns, 1)
+        left = self.panel(columns, 0, 165)
         self.label(left, 'ON YOUR IPOD', 'eyebrow')
         self.new_button = self.button(left, '+ New playlist', self.create)
+        self.import_button = self.button(left, 'Import M3U…', self.import_m3u)
         self.playlists = QListWidget(); self.playlists.setObjectName('playlistNames')
         self.playlists.setItemDelegate(TrackDelegate(self.playlists, compact=True))
         self.playlists.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -140,6 +156,9 @@ class PlaylistEditor(QDialog):
         self.up_button = self.button(actions, '↑ Up', lambda: self.move(-1))
         self.down_button = self.button(actions, '↓ Down', lambda: self.move(1))
         actions.addStretch(); self.remove_button = self.button(actions, 'Remove', self.remove)
+        edges = QHBoxLayout(); middle.addLayout(edges)
+        self.top_button = self.button(edges, 'Move to top', lambda: self.move_edge(True))
+        self.bottom_button = self.button(edges, 'Move to bottom', lambda: self.move_edge(False))
         right = self.panel(columns, 5)
         self.label(right, 'SONG LIBRARY', 'eyebrow')
         self.search = QLineEdit(); self.search.setPlaceholderText('Search songs, artists, albums')
@@ -157,6 +176,7 @@ class PlaylistEditor(QDialog):
         self.message = self.label(footer, '', 'muted'); self.message.setWordWrap(True)
         footer.setStretch(0, 1)
         self.button(footer, 'Cancel', self.reject)
+        self.export_button = self.button(footer, 'Export M3U…', self.export_m3u)
         self.button(footer, 'Save to iPod', self.accept_checked, 'primary')
         self.playlists.currentRowChanged.connect(self.select)
         self.name.textEdited.connect(self.rename)
@@ -175,7 +195,7 @@ class PlaylistEditor(QDialog):
         if width:
             frame.setFixedWidth(width)
         layout.addWidget(frame, stretch)
-        inner = QVBoxLayout(frame); inner.setContentsMargins(14, 16, 14, 14); inner.setSpacing(12)
+        inner = QVBoxLayout(frame); inner.setContentsMargins(8, 9, 8, 8); inner.setSpacing(6)
         return inner
 
     def track_list(self, virtual=False):
@@ -203,13 +223,18 @@ class PlaylistEditor(QDialog):
     def update_actions(self):
         active = self.slot is not None
         selected = self.members.selectedItems()
-        row = self.members.row(selected[0]) if len(selected) == 1 else -1
+        rows = [self.members.row(item) for item in selected]
         self.delete_button.setEnabled(active)
         self.remove_button.setEnabled(active and bool(selected))
-        self.up_button.setEnabled(active and len(selected) == 1 and row > 0)
-        self.down_button.setEnabled(active and len(selected) == 1 and 0 <= row < self.members.count() - 1)
+        row_set = set(rows)
+        self.up_button.setEnabled(active and any(row > 0 and row - 1 not in row_set for row in rows))
+        self.down_button.setEnabled(active and any(row + 1 < self.members.count() and row + 1 not in row_set for row in rows))
+        self.top_button.setEnabled(self.up_button.isEnabled())
+        self.bottom_button.setEnabled(self.down_button.isEnabled())
         self.add_tracks_button.setEnabled(active and next(self.song_model.selected_rows(self.songs.selectionModel().selection()), None) is not None)
         self.new_button.setEnabled(self.playlists.count() < 16)
+        self.import_button.setEnabled(self.playlists.count() < 16)
+        self.export_button.setEnabled(active)
 
     def render(self, selected=None):
         with QSignalBlocker(self.playlists):
@@ -309,18 +334,42 @@ class PlaylistEditor(QDialog):
 
     def move(self, direction):
         selected = self.members.selectedItems()
-        if self.slot is None or len(selected) != 1:
+        if self.slot is None or not selected:
             return
-        row = self.members.row(selected[0])
-        ids = self.state['lists'][self.slot]['ids']; target = row + direction
-        if 0 <= target < len(ids):
-            ids[row], ids[target] = ids[target], ids[row]
-            with QSignalBlocker(self.members):
-                member = self.members.takeItem(row)
-                self.members.insertItem(target, member)
-                self.members.setCurrentItem(member)
-            self.message.setText('Changes are saved when you choose Save to iPod.')
-            self.update_actions()
+        ids = self.state['lists'][self.slot]['ids']
+        chosen = [self.members.item(row).isSelected() for row in range(len(ids))]
+        positions = range(1, len(ids)) if direction < 0 else range(len(ids) - 2, -1, -1)
+        for row in positions:
+            next_row = row + direction
+            if chosen[row] and not chosen[next_row]:
+                ids[row], ids[next_row] = ids[next_row], ids[row]
+                chosen[row], chosen[next_row] = chosen[next_row], chosen[row]
+        self._rebuild_members(chosen)
+
+    def move_edge(self, top):
+        if self.slot is None or not self.members.selectedItems():
+            return
+        ids = self.state['lists'][self.slot]['ids']
+        chosen = [self.members.item(row).isSelected() for row in range(len(ids))]
+        picked = [identity for identity, selected in zip(ids, chosen) if selected]
+        rest = [identity for identity, selected in zip(ids, chosen) if not selected]
+        ids[:] = picked + rest if top else rest + picked
+        self._rebuild_members(([True] * len(picked) + [False] * len(rest)) if top else
+                              ([False] * len(rest) + [True] * len(picked)))
+
+    def _rebuild_members(self, chosen):
+        with QSignalBlocker(self.members):
+            self.members.clear()
+            for row, identity in enumerate(self.state['lists'][self.slot]['ids']):
+                item = self.member_item(identity)
+                self.members.addItem(item)
+                item.setSelected(chosen[row])
+        selected = self.members.selectedItems()
+        if selected:
+            self.members.setCurrentItem(selected[0], QItemSelectionModel.SelectionFlag.NoUpdate)
+            self.members.scrollToItem(selected[0])
+        self.message.setText('Changes are saved when you choose Save to iPod.')
+        self.update_actions()
 
     def filter(self, text):
         count = self.songs.filter(text)
@@ -329,6 +378,79 @@ class PlaylistEditor(QDialog):
         self.empty_songs.setText('No matching songs\n\nTry another title, artist, or album.' if text else
                                 'No prepared songs\n\nPrepare your music to add songs to playlists.')
         self.update_actions()
+
+    def _import_name(self, source):
+        stem = source.stem.strip().replace('\0', '') or 'Imported playlist'
+        name = ''
+        for character in stem:
+            if len((name + character).encode('utf-8')) > 31:
+                break
+            name += character
+        names = {entry['name'] for entry in self.state['lists']}
+        original, suffix = name, 2
+        while name in names:
+            ending = f' {suffix}'
+            name = original.encode('utf-8')[:31 - len(ending)].decode('utf-8', 'ignore') + ending
+            suffix += 1
+        return name
+
+    def import_m3u(self):
+        if self.playlists.count() >= 16:
+            self.message.setText('The iPod supports at most 16 playlists. Delete one before importing.'); return
+        filename, _ = QFileDialog.getOpenFileName(self, 'Import M3U playlist', '',
+                                                   'M3U playlists (*.m3u *.m3u8);;All files (*)')
+        if not filename:
+            return
+        source = Path(filename)
+        try:
+            matched, unmatched = playlist_content.preview_m3u(source, self.state['tracks'],
+                                                                 self.state.get('paths'))
+        except (OSError, UnicodeError, ValueError) as error:
+            QMessageBox.warning(self, 'Cannot import M3U', str(error)); return
+        review = QDialog(self); review.setWindowTitle('Review M3U import')
+        review.resize(570, 420); review.setMinimumSize(380, 300)
+        layout = QVBoxLayout(review)
+        summary = QLabel(f'{len(matched)} matched songs · {len(unmatched)} unmatched entries\n'
+                         'A playlist holds at most 1024 songs; the iPod holds 16 playlists.')
+        summary.setWordWrap(True); layout.addWidget(summary)
+        details = QPlainTextEdit(); details.setReadOnly(True)
+        details.setPlainText('\n'.join([f'MATCHED ({len(matched)}):'] +
+            [self.state['tracks'][identity] for identity in matched[:30]] +
+            ([f'… and {len(matched) - 30} more'] if len(matched) > 30 else []) +
+            ['', f'UNMATCHED ({len(unmatched)}):'] +
+            [f'Line {number}: {entry} ({reason})' for number, entry, reason in unmatched]))
+        layout.addWidget(details, 1)
+        buttons = QHBoxLayout(); layout.addLayout(buttons); buttons.addStretch()
+        self.button(buttons, 'Cancel', review.reject)
+        apply = self.button(buttons, 'Import matched songs', review.accept, 'primary')
+        apply.setEnabled(bool(matched) and len(matched) <= 1024)
+        if len(matched) > 1024:
+            summary.setText(summary.text() + '\nImport is blocked because it exceeds 1024 songs.')
+        if review.exec() != QDialog.Accepted:
+            return
+        for slot, playlist in enumerate(self.state['lists']):
+            if not playlist['name']:
+                playlist.update(name=self._import_name(source), ids=matched)
+                self.render(slot)
+                self.message.setText(f'Imported {len(matched)} songs; {len(unmatched)} unmatched entries were skipped after review.')
+                return
+
+    def export_m3u(self):
+        if self.slot is None:
+            return
+        playlist = self.state['lists'][self.slot]
+        filename, _ = QFileDialog.getSaveFileName(self, 'Export M3U playlist',
+                                                   playlist['name'] + '.m3u8',
+                                                   'M3U playlists (*.m3u8 *.m3u)')
+        if not filename:
+            return
+        try:
+            data = playlist_content.export_m3u(playlist['ids'], self.state['tracks'],
+                                                self.state.get('paths'))
+            Path(filename).write_bytes(data)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, 'Cannot export M3U', str(error)); return
+        self.message.setText(f'Exported {len(playlist["ids"])} songs to M3U.')
 
     def accept_checked(self):
         if self.slot is not None and self.name.text() != self.state['lists'][self.slot]['name']:

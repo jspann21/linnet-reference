@@ -7,11 +7,13 @@ from functools import lru_cache
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import threading
+import tomllib
 
 from PySide6.QtCore import (QAbstractTableModel, QItemSelection, QItemSelectionModel, QModelIndex, QObject, QRectF, QSize, QPointF, QUrl,
                            Qt, QTimer, Signal, Slot, QSettings, QBuffer, QIODevice, QLoggingCategory, QSignalBlocker)
@@ -26,6 +28,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox,
     QStyleOptionButton, QSizePolicy)
 
 from tools.content import apple_os, games, media_manager as media, media_library, media_status, media_trash
+from tools.content import publish
 from tools.content.media_manager import format_size as size
 from tools.content.music import COVER_NAMES, EXTENSIONS as MUSIC_EXTENSIONS
 from tools.studio import installer, screen_settings, startup_default, boot_upgrade
@@ -129,6 +132,13 @@ def music_group_key(row, field):
 
 def library_search_text(row):
     return ' '.join(str(row.get(field, '')) for field in ('title', 'artist', 'album', 'genre', 'path')).casefold()
+
+def linnet_version():
+    try:
+        config = Path(__file__).resolve().parents[2] / 'config' / 'system.toml'
+        return str(tomllib.loads(config.read_text(encoding='utf-8'))['system']['version'])
+    except (OSError, KeyError, ValueError, TypeError):
+        return 'unavailable'
 
 
 class StatusLabel(QLabel):
@@ -542,9 +552,9 @@ class LibraryPage:
     def build(self):
         window = self.window
         page = QWidget(); outer = box(page, margins=(30, 28, 26, 20), spacing=16)
-        top = box(horizontal=True)
         titles = box(spacing=5); window.heading_label = label('Music', 'title', True); window.subtitle = label('', 'subtitle', True)
-        titles.addWidget(window.heading_label); titles.addWidget(window.subtitle); top.addLayout(titles, 1)
+        titles.addWidget(window.heading_label); titles.addWidget(window.subtitle); outer.addLayout(titles)
+        top = box(horizontal=True)
         window.playlists_button = button('Playlists', window.open_playlists, None, 'music'); top.addWidget(window.playlists_button)
         window.add_button = button('Add media', window.add_media, 'primary', 'plus'); top.addWidget(window.add_button)
         outer.addLayout(top)
@@ -570,12 +580,15 @@ class LibraryPage:
         window.artist_filter = ComboBox(); window.artist_filter.addItem('All artists', ''); window.artist_filter.currentIndexChanged.connect(window.render_library)
         window.genre_filter.setAccessibleName('Filter by genre')
         window.artist_filter.setAccessibleName('Filter by artist')
-        filters.addWidget(window.genre_filter); filters.addWidget(window.artist_filter)
+        filters.addWidget(window.genre_filter, 1); filters.addWidget(window.artist_filter, 1)
         window.clear_button = button('Clear filters', window.clear_filters, 'quiet'); filters.addWidget(window.clear_button)
-        filters.addStretch(); window.result_count = label('', 'muted'); filters.addWidget(window.result_count)
-        window.sync_button = button('Sync video folder', window.sync_videos, None, 'refresh'); filters.addWidget(window.sync_button)
-        window.folder_button = button('Open iPod folder', window.open_media_folder, None, 'folder'); filters.addWidget(window.folder_button)
         outer.addLayout(filters)
+        library_actions = box(horizontal=True)
+        window.result_count = label('', 'muted'); library_actions.addWidget(window.result_count, 1)
+        window.sync_button = button('Sync video folder', window.sync_videos, None, 'refresh')
+        window.folder_button = button('Open iPod folder', window.open_media_folder, None, 'folder'); library_actions.addWidget(window.folder_button)
+        library_actions.addWidget(window.sync_button)
+        outer.addLayout(library_actions)
         window.notice = label('', 'notice', True); window.notice.hide(); outer.addWidget(window.notice)
         window.model = MediaModel(window)
         window.table = QTableView(); window.table.setModel(window.model); window.table.setShowGrid(False); window.table.setAlternatingRowColors(False)
@@ -637,6 +650,8 @@ class PreparationPage:
             state = label('Connect an iPod to check this library.', 'muted'); window.prep_labels[kind] = state; text.addWidget(state); row.addLayout(text, 1)
             if kind == 'Videos':
                 window.choose_videos_button = button('Choose videos', window.choose_videos); row.addWidget(window.choose_videos_button)
+                window.video_repair_button = button('Review catalog backups', window.review_video_catalog)
+                row.addWidget(window.video_repair_button)
             layout.addWidget(card)
         window.online_artwork = CheckBox('Find missing iTunes album covers online (MusicBrainz / Cover Art Archive)')
         window.online_artwork.setChecked(window.settings.value('onlineArtwork', True, type=bool))
@@ -669,6 +684,8 @@ class PreparationPage:
         apple_layout.addWidget(label('Choose folders already on your iPod. Update Apple OS after their files change.', 'muted', True))
         window.apple_status = label('Connect an iPod to check Apple OS availability.', 'muted', True)
         apple_layout.addWidget(window.apple_status)
+        window.apple_eligibility = label('', 'muted', True)
+        apple_layout.addWidget(window.apple_eligibility)
         apple_actions = box(horizontal=True)
         window.apple_choose = button('Choose folders…', window.choose_apple_folders, None, 'folder')
         window.apple_update = button('Update Apple OS', window.update_apple_os, None, 'refresh')
@@ -742,6 +759,9 @@ class GamesPage:
             layout.addWidget(card)
         window.games_status = label('Connect an iPod with games to check installed games.', 'muted', True)
         layout.addWidget(window.games_status)
+        window.games_recover = button('Replace damaged game settings', window.games_controller.recover_games)
+        window.games_recover.setToolTip('Choose a new game selection after a damaged settings file could not be read.')
+        layout.addWidget(window.games_recover, 0, Qt.AlignLeft)
         window.games_save = button('Update games on iPod', window.games_controller.save_games, 'primary')
         layout.addWidget(window.games_save, 0, Qt.AlignLeft)
         layout.addStretch()
@@ -820,6 +840,8 @@ class SettingsPage:
         layout.addSpacing(20); layout.addWidget(label('Conversion tools', 'section'))
         window.tools_label = label('', 'muted', True); layout.addWidget(window.tools_label)
         layout.addWidget(button('Choose FFmpeg folder', window.locate_tools, None, 'folder'), 0, Qt.AlignLeft)
+        layout.addWidget(label('Install FFmpeg and FFprobe on your computer, then choose the folder containing both programs. Video conversions need both tools; ordinary media browsing does not.', 'muted', True))
+        layout.addWidget(button('Help and About', window.show_help, 'quiet'), 0, Qt.AlignLeft)
         layout.addSpacing(20); layout.addWidget(label('Advanced preparation', 'section'))
         window.verify_audio = CheckBox('Read entire audio files when verifying (slower)'); layout.addWidget(window.verify_audio)
         window.rebuild = CheckBox('Rebuild content that is already prepared'); layout.addWidget(window.rebuild)
@@ -834,18 +856,41 @@ class GamesController:
     def games_changed(self, *_):
         window = self.window
         if window.games_loaded_for:
-            window.games_status.setText('Selection changed. Update games on iPod, then eject safely.')
+            window.game_dirty = {i for i, check in enumerate(window.game_checks) if check.isChecked()} != window.game_saved
+            window.save_choices_draft()
+            window.games_status.setText('Unsaved game selection. Update games on iPod, then eject safely.' if window.game_dirty else
+                                        'Game selection matches the iPod.')
+
+    def recover_games(self):
+        window = self.window
+        if not window.identity or window.busy or not games.available(window.identity) or not window.game_read_failed:
+            return
+        if not window.dialog('Replace damaged game settings',
+                             'The game selection could not be read. Select games below, then choose Update games on iPod to replace the damaged settings.',
+                             'Choose games'):
+            return
+        window.games_loaded_for = window.identity['root']
+        window.game_saved = None
+        window.game_dirty = True
+        window.game_read_failed = False
+        for check in window.game_checks:
+            with QSignalBlocker(check):
+                check.setChecked(True)
+        window.load_choices_draft('games')
+        window.games_status.setText('Choose games, then update the iPod to replace its damaged selection.')
+        window.save_choices_draft()
+        window.update_controls()
 
     def load_games(self):
         window = self.window
-        if (window.identity and games.available(window.identity) and not window.busy
+        if (window.identity and window.device_connected and games.available(window.identity) and not window.busy
                 and window.games_loaded_for != window.identity['root']):
             identity = window.identity
             window.work('games', lambda: games.read(identity), 'Reading installed games…')
 
     def save_games(self):
         window = self.window
-        if not window.identity or window.busy or not games.available(window.identity):
+        if not window.identity or not window.device_connected or window.busy or not games.available(window.identity):
             return
         selected = {index for index, check in enumerate(window.game_checks) if check.isChecked()}
         identity = window.identity
@@ -888,6 +933,8 @@ class ScreensController:
         selected = [window.screen_items.item(i).data(Qt.UserRole) for i in range(window.screen_items.count())
                     if window.screen_items.item(i).checkState() == Qt.Checked]
         window.screen_state[name] = selected
+        window.screen_dirty = window.screen_state != window.screen_saved
+        window.save_choices_draft()
         window.screen_status.setText('Unsaved changes. Save to iPod, then eject safely to apply on startup.'
                                    if all(window.screen_state.values()) else 'Select at least one item on each screen before saving.')
         window.update_controls()
@@ -912,13 +959,13 @@ class ScreensController:
 
     def load_screens(self):
         window = self.window
-        if window.identity and not window.busy and window.screen_loaded_for != window.identity['root']:
+        if window.identity and window.device_connected and not window.busy and window.screen_loaded_for != window.identity['root']:
             identity = window.identity
             window.work('screens', lambda: screen_settings.read(identity), 'Reading screen settings…')
 
     def save_screens(self):
         window = self.window
-        if not window.identity or window.busy:
+        if not window.identity or not window.device_connected or window.busy:
             return
         state = {name: list(rows) for name, rows in window.screen_state.items()}
         try:
@@ -934,7 +981,7 @@ class MediaWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle('Linnet · Media Manager')
         self.resize(1280, 860)
-        self.setMinimumSize(1050, 700)
+        self.setMinimumSize(780, 540)
         self.setWindowIcon(QIcon(boot_artwork((594, 180, 310, 445), 32, 32)))
         self.settings = QSettings('Linnet', 'MediaManager')
         self.identity, self.inventory, self.review = None, None, None
@@ -947,6 +994,15 @@ class MediaWindow(QMainWindow):
         self.stale_videos = 0
         self.queue_context = None
         self.discovery_errors = []
+        self.device_connected = False
+        self.publication_recovery_pending = False
+        self.publication_recovery_groups = []
+        self._recent_private_identifiers = set()
+        self.screen_saved = None
+        self.screen_dirty = False
+        self.game_saved = None
+        self.game_dirty = False
+        self.game_read_failed = False
         self.apple_info = None
         self._library_source, self._library_cache, self._library_stats = None, {}, {}
         self._library_search = None
@@ -962,6 +1018,8 @@ class MediaWindow(QMainWindow):
         self.tool_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='linnet-tools')
         self.tool_check_id = 0
         self.tools_ready = False
+        self.verified_ffmpeg = None
+        self.verified_ffprobe = None
         self.events = Events(self)
         self.events.done.connect(self.completed)
         self.events.progress.connect(self.show_progress)
@@ -982,7 +1040,7 @@ class MediaWindow(QMainWindow):
     def build(self):
         shell = QWidget(); self.setCentralWidget(shell)
         main = box(shell, horizontal=True, spacing=0)
-        sidebar = QWidget(); sidebar.setObjectName('sidebar'); sidebar.setFixedWidth(224)
+        sidebar = QWidget(); sidebar.setObjectName('sidebar'); sidebar.setFixedWidth(192)
         side = box(sidebar, margins=(18, 20, 18, 16), spacing=6)
         brand = box(horizontal=True, spacing=11)
         mark = label(); mark.setPixmap(boot_artwork((594, 180, 310, 445), 38, 56))
@@ -1012,8 +1070,14 @@ class MediaWindow(QMainWindow):
         self.choose_device_button = button('Find or switch iPod', self.discover, 'sidebarAction', 'refresh')
         layout.addWidget(self.choose_device_button)
         self.eject_button = button('Eject safely', self.eject, 'sidebarAction', 'eject'); layout.addWidget(self.eject_button)
+        self.pick_button = button('Choose iPod', self.discover, 'sidebarAction'); layout.addWidget(self.pick_button)
+        self.publication_recovery_button = button('Recover media indexes', self.recover_publication, 'sidebarAction')
+        layout.addWidget(self.publication_recovery_button)
         side.addWidget(device)
-        main.addWidget(sidebar)
+        sidebar_scroll = QScrollArea(); sidebar_scroll.setObjectName('sidebarScroll')
+        sidebar_scroll.setWidgetResizable(True); sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        sidebar_scroll.setFixedWidth(192); sidebar_scroll.setWidget(sidebar)
+        main.addWidget(sidebar_scroll)
         right = QWidget(); right.setObjectName('workspace'); body = box(right, spacing=0)
         self.stack = QStackedWidget(); body.addWidget(self.stack, 1)
         self.library = LibraryPage(self).build(); self.stack.addWidget(self.library)
@@ -1028,6 +1092,7 @@ class MediaWindow(QMainWindow):
         self.status = StatusLabel('Looking for your iPod…'); status_row.addWidget(self.status, 1)
         self.cancel_button = button('Stop', self.stop, 'quiet'); self.cancel_button.setToolTip('Stop after the current step finishes'); self.cancel_button.hide(); status_row.addWidget(self.cancel_button)
         self.refresh_button = button('Refresh', self.refresh, 'quiet', 'refresh'); status_row.addWidget(self.refresh_button)
+        self.diagnostics_button = button('Diagnostics', self.show_diagnostics, 'quiet'); status_row.addWidget(self.diagnostics_button)
         foot.addLayout(status_row); body.addWidget(activity)
         main.addWidget(right, 1)
         QShortcut(QKeySequence.Find, self, activated=self.focus_search)
@@ -1058,7 +1123,7 @@ class MediaWindow(QMainWindow):
                 self.group = None; self.clear_filters(render=False)
             self.stack.setCurrentWidget(self.library)
             self.render_library()
-            if page == 'Trash' and self.identity and not self.busy:
+            if page == 'Trash' and self.identity and self.device_connected and not self.busy:
                 identity = self.identity
                 self.work('trash', lambda: media_trash.removals(identity), 'Reading Trash…')
         elif page == 'Preparation':
@@ -1071,7 +1136,7 @@ class MediaWindow(QMainWindow):
             self.stack.setCurrentWidget(self.setup)
             if self.identity and self.review is not None:
                 self.render_setup()
-            elif self.identity and not self.busy:
+            elif self.identity and self.device_connected and not self.busy:
                 identity = self.identity
                 self.work('setup', lambda: installer.assess(identity), 'Checking installed software…')
         else:
@@ -1120,12 +1185,11 @@ class MediaWindow(QMainWindow):
             return list(self._library_cache[self.page])
         unique = {}
         for row in self.rows:
-            if row['kind'] == self.page and row['category'] in ('original', 'published'):
-                display = row
-                if self.page == 'Photos':
-                    display = dict(row)
-                    display['artwork'] = row.get('artwork') or row['path']
-                unique[row['path'].casefold()] = display
+            if row['kind'] == self.page and row['category'] in ('original', 'published', 'error'):
+                copy = dict(row)
+                if row['kind'] == 'Photos':
+                    copy['artwork'] = row.get('artwork') or row['path']
+                unique[str(Path(row['path'])).casefold()] = copy
         page_rows = list(unique.values())
         albums = len({(r.get('album'), r.get('album_artist') or r.get('artist')) for r in page_rows}) if self.page == 'Music' else 0
         self._library_stats[self.page] = (len(page_rows), sum(r['bytes'] for r in page_rows), albums)
@@ -1298,14 +1362,15 @@ class MediaWindow(QMainWindow):
 
     def selection_changed(self, *_):
         rows = self.selected()
-        self.selection_bar.setVisible(bool(rows))
+        self.selection_bar.setVisible(bool(rows) and self.device_connected)
         self.selection_text.setText(f'{len(rows):,} selected  ·  {size(sum(r["bytes"] for r in rows))}')
         self.restore_button.setVisible(self.page == 'Trash')
-        self.restore_button.setEnabled(not self.busy)
+        self.restore_button.setEnabled(self.device_connected and not self.busy)
         retail_photos = bool(rows) and all(r.get('retail_photo') for r in rows)
         self.remove_button.setText('Exclude from preparation' if retail_photos else
                                    'Delete permanently' if self.page == 'Trash' else 'Move to Trash')
-        self.remove_button.setEnabled(not self.busy and (retail_photos or all(r.get('removable', True) for r in rows)))
+        self.remove_button.setEnabled(self.device_connected and not self.busy and
+                                      (retail_photos or all(r.get('removable', True) for r in rows)))
         self.info_button.setEnabled(len(rows) == 1 and not self.busy)
 
     def clear_selection(self):
@@ -1377,6 +1442,9 @@ class MediaWindow(QMainWindow):
         for field in ('artist', 'album', 'genre', 'status'):
             if row.get(field):
                 layout.addWidget(label(f'{field.title()}   {row[field]}', 'muted', True))
+        if row.get('category') == 'error':
+            layout.addWidget(label(row.get('description') or 'This catalog needs repair before preparation.', 'notice', True))
+            layout.addWidget(label(row.get('error', ''), 'muted', True))
         layout.addWidget(label(size(row['bytes']), 'muted'))
         location = label(row['path'], 'muted', True); location.setTextInteractionFlags(Qt.TextSelectableByMouse); layout.addWidget(location)
         actions = box(horizontal=True); actions.addWidget(button('Show in folder', lambda: self.open_folder(row['path']), None, 'folder')); actions.addStretch(); actions.addWidget(button('Done', dialog.accept, 'primary')); layout.addLayout(actions)
@@ -1415,7 +1483,7 @@ class MediaWindow(QMainWindow):
         self.operation_id += 1
         context = OperationContext(self.operation_id, tag,
             dict(self.identity) if self.identity and tag != 'devices' else None,
-            self.stop_event if tag in ('prepare', 'remove', 'restore') else None)
+            self.stop_event if tag in ('prepare', 'remove', 'restore', 'scan', 'plan', 'devices') else None)
         self.active_operation = context
         self.busy = True
         self.stop_event.clear()
@@ -1492,12 +1560,29 @@ class MediaWindow(QMainWindow):
         self.progress.hide()
         self.cancel_button.hide()
         self.update_controls()
+        if outcome.cancel_requested and tag in ('scan', 'plan', 'devices'):
+            if tag == 'plan':
+                self.plan_context = None
+            elif tag == 'scan' and isinstance(result, dict) and result.get('publication_recovery_pending'):
+                self._complete_scan(result)
+                self.show_progress('An interrupted media update needs review before this iPod can be used.')
+                return
+            elif tag == 'devices' and self.publication_recovery_pending:
+                self.update_controls()
+            else:
+                self.transition_device(None)
+            self.show_progress('Stopped after the current check. Refresh when ready.')
+            return
         if outcome.status not in ('succeeded', 'partial', 'cancelled', 'failed'):
             self.show_error(f'Unknown background outcome: {outcome.status}')
             return
         if context.identity and not self.same_device(self.identity, context.identity):
+            self.record_diagnostic(tag, 'DeviceChanged', 'The selected iPod changed during the operation.', 'failed')
             self.show_error('The selected iPod changed while this operation was running. Refresh and try again.')
             return
+        if error:
+            self.record_diagnostic(tag, outcome.error_type or 'Error', error, outcome.status,
+                                   outcome.cancel_requested)
         if tag == 'queue':
             self._complete_queue(result, error)
             return
@@ -1511,12 +1596,14 @@ class MediaWindow(QMainWindow):
             'playlists': self._complete_playlists, 'save_playlists': self._complete_save_playlists,
             'apple_selection': self._complete_apple_selection, 'apple_update': self._complete_apple_update,
             'devices': self._complete_devices, 'scan': self._complete_scan,
+            'video_recovery_options': self._complete_video_recovery_options,
+            'recover_publication': self._complete_recover_publication,
             'trash': self._complete_trash, 'setup': self._complete_setup,
             'prepare': self._complete_prepare, 'eject': self._complete_eject,
             'device_details': self._complete_device_details,
         }
         for change in ('remove', 'restore', 'erase', 'sync', 'install', 'uninstall', 'skipped',
-                       'startup_default', 'boot_upgrade'):
+                       'startup_default', 'boot_upgrade', 'restore_video_catalog'):
             handlers[change] = self._complete_change
         handler = handlers.get(tag)
         if handler is None:
@@ -1566,19 +1653,35 @@ class MediaWindow(QMainWindow):
             self.plan_context = None
         if tag == 'screens':
             self.screen_state = screen_settings.defaults(self.identity)
+            self.screen_saved = None
             self.screens_controller.render_screen_items()
             self.screen_status.setText('Could not read settings. Showing defaults for this iPod; saving will replace its screen settings.')
+        if tag == 'games':
+            self.game_read_failed = 'game selection is damaged' in error.casefold()
+            self.games_status.setText('Game settings are damaged. Use Replace damaged game settings to choose a new selection.'
+                                      if self.game_read_failed else 'Could not read game settings. Refresh or choose the iPod again.')
+        if tag in ('scan', 'devices'):
+            self.transition_device(None)
+            self.device_name.setText('Connection needs checking')
+            self.device_info.setText('Connection needs checking · choose Refresh or Choose iPod')
+            self.update_controls()
         if tag in ('setup', 'devices', 'scan'):
             self.setup_progress.hide()
             self.setup_software.setText('Could not check iPod setup. Choose Refresh to try again.')
         self.show_error(error)
+        self.update_controls()
         if tag == 'save_playlists':
             self.edit_playlists(self.playlist_draft)
         return
 
     def _complete_screens(self, result):
-        self.screen_state = result; self.screen_loaded_for = self.identity['root']; self.screens_controller.render_screen_items()
-        self.screen_status.setText('Loaded from iPod. Changes apply after saving and restarting Linnet.'); self.update_controls(); return
+        self.screen_state = result; self.screen_saved = {name: list(rows) for name, rows in result.items()}
+        self.screen_loaded_for = self.identity['root']
+        self.load_choices_draft('screens')
+        self.screens_controller.render_screen_items()
+        self.screen_status.setText('Unsaved screen choices restored for this iPod. Save to apply them.' if self.screen_dirty else
+                                   'Loaded from iPod. Changes apply after saving and restarting Linnet.')
+        self.update_controls(); return
 
     def _complete_plan(self, result):
         context = self.plan_context
@@ -1594,6 +1697,10 @@ class MediaWindow(QMainWindow):
                    f"Computer free for preparation: {size(result['computer_free'])}",
                    f"Video jobs: {result['videos']:,}" +
                    (' · conversion output size is unknown' if result['conversion'] else '')]
+        if 'device_peak_bytes' in result:
+            preview.append(f"Estimated peak iPod space needed: {size(result['device_peak_bytes'])}")
+        if 'computer_peak_bytes' in result:
+            preview.append(f"Estimated peak computer space needed: {size(result['computer_peak_bytes'])}")
         if result['reusable']:
             preview.append('Likely reusable prepared libraries: ' + ', '.join(result['reusable']))
         if result['existing_unverified']:
@@ -1605,13 +1712,46 @@ class MediaWindow(QMainWindow):
         if len(result['previews']) > 5:
             preview.append(f"…and {len(result['previews']) - 5:,} more queued sources")
         preview.append('Sources, available space, and prepared outputs are checked again during preparation.')
-        if self.dialog('Review preparation plan', '\n'.join(preview), 'Start preparation'):
+        reconciliation = result.get('reconciliation', [])
+        if reconciliation:
+            preview.extend(('', f'{len(reconciliation)} changes to existing iPod content require approval:'))
+            root = Path(context['identity']['root'])
+            for action in reconciliation:
+                destination = Path(action['destination'])
+                try:
+                    shown = destination.relative_to(root).as_posix()
+                except ValueError:
+                    shown = destination.name
+                if action['action'] == 'replace':
+                    preview.append(f"Replace {action['kind']}: {shown} with {Path(action['source']).name} "
+                                   f"({size(action['old_bytes'])} → {size(action['new_bytes'])})")
+                elif action['action'] == 'retire-library':
+                    preview.append(f"Move empty {action['kind']} library to Trash: {shown}")
+                elif action['action'] == 'prune-video':
+                    preview.append(f"Remove missing video entry: {action.get('title') or shown}")
+            dialog = QDialog(self); dialog.setWindowTitle('Review preparation changes'); dialog.resize(720, 500)
+            layout = box(dialog, margins=(20, 20, 20, 20))
+            layout.addWidget(label('Review changes to existing content', 'section'))
+            details = QTextEdit(); details.setReadOnly(True)
+            details.setAccessibleName('Preparation plan and reconciliation actions')
+            details.setPlainText('\n'.join(preview)); layout.addWidget(details)
+            actions = box(horizontal=True); actions.addWidget(button('Cancel', dialog.reject)); actions.addStretch()
+            actions.addWidget(button('Approve changes and prepare', dialog.accept, 'primary'))
+            layout.addLayout(actions)
+            accepted = dialog.exec() == QDialog.Accepted
+        else:
+            accepted = self.dialog('Review preparation plan', '\n'.join(preview), 'Start preparation')
+        if accepted:
+            context['approval']['actions'] = reconciliation
             self.submitted, self.submitted_videos = context['pending'], context['submitted_videos']
             self.prep_results.hide()
             self.work('prepare', context['run'], 'Preparing your selected media…')
         return
 
     def _complete_save_screens(self, result):
+        self.screen_loaded_for = self.identity['root']
+        self.screen_saved = {name: list(rows) for name, rows in self.screen_state.items()}
+        self.screen_dirty = False; self.save_choices_draft()
         self.screen_status.setText('Saved to iPod. Eject safely to apply on startup.'); return
 
     def _complete_games(self, result):
@@ -1619,10 +1759,15 @@ class MediaWindow(QMainWindow):
             with QSignalBlocker(check):
                 check.setChecked(index in result)
         self.games_loaded_for = self.identity['root']
-        self.games_status.setText('Loaded from iPod. Uncheck a game to remove it from the Games menu.')
+        self.game_saved = set(result); self.game_read_failed = False
+        self.load_choices_draft('games')
+        self.games_status.setText('Unsaved game choices restored for this iPod. Update to apply them.' if self.game_dirty else
+                                  'Loaded from iPod. Uncheck a game to remove it from the Games menu.')
         self.update_controls(); return
 
     def _complete_save_games(self, result):
+        self.game_saved = {i for i, check in enumerate(self.game_checks) if check.isChecked()}
+        self.game_dirty = False; self.save_choices_draft()
         self.games_status.setText('Games updated. Eject safely and restart Linnet to apply.')
         self.update_controls(); return
 
@@ -1658,6 +1803,7 @@ class MediaWindow(QMainWindow):
             self.transition_device(None)
             self.device_name.setText('No iPod connected'); self.device_info.setText('Connect in Disk Mode')
             if errors:
+                self.record_diagnostic('devices', 'DiscoveryError', '; '.join(errors), 'failed')
                 self.show_error('Could not read a connected iPod: ' + '; '.join(errors))
             else:
                 self.show_progress('Connect your iPod, then choose Refresh.')
@@ -1678,9 +1824,11 @@ class MediaWindow(QMainWindow):
         else:
             identity = devices[0]
         if errors:
+            self.record_diagnostic('devices', 'DiscoveryError', '; '.join(errors), 'partial')
             self.notice.setText('Other connected iPods could not be read: ' + '; '.join(errors))
             self.notice.show()
         self.transition_device(identity)
+        self.device_connected = True
         self.refresh()
 
     @staticmethod
@@ -1691,10 +1839,31 @@ class MediaWindow(QMainWindow):
         return f"{name} · {identity['drive']} · {model} · {serial}"
 
     def _complete_scan(self, result):
+        if isinstance(result, dict) and result.get('publication_recovery_pending'):
+            self.identity = result['identity']
+            self.device_connected = False
+            self.publication_recovery_pending = True
+            self.publication_recovery_groups = result['groups']
+            self.inventory = self.review = self.apple_info = None
+            self.rows = []; self.readiness = {}
+            self.trash_rows = []
+            self.group = None
+            self._selection_context = None
+            self.clear_selection()
+            self._library_source = None
+            self.device_name.setText('Media index recovery needed')
+            self.device_info.setText('Review recovery before reading or ejecting this iPod')
+            self.notice.setText('An interrupted media index update was found. Choose Recover media indexes to review recovery.')
+            self.notice.show()
+            self.update_preparation(); self.render_library(); self.update_controls()
+            return
+        self.publication_recovery_pending = False
+        self.publication_recovery_groups = []
         cached_photos = {row['path']: (row['bytes'], row['mtime_ns'], row.get('artwork')) for row in self.rows
                          if row['kind'] in ('Photos', 'Music') and
                          (row.get('artwork') in self.covers.cache or row.get('artwork') in self.covers.pending)}
         self.identity, self.inventory, self.rows, self.readiness, self.apple_info, self.review = result
+        self.device_connected = True
         if cached_photos:
             current_photos = {row['path']: (row['bytes'], row['mtime_ns'], row.get('artwork')) for row in self.rows
                               if row['path'] in cached_photos}
@@ -1714,7 +1883,15 @@ class MediaWindow(QMainWindow):
         self.stale_videos = previous_videos - len(self.video_selection)
         self.validate_draft()
         self.save_draft()
-        if self.discovery_errors:
+        category_errors = [(kind, info.get('errors')) for kind, info in self.inventory.items()
+                           if isinstance(info, dict) and info.get('errors')]
+        if category_errors:
+            names = ', '.join(kind for kind, _ in category_errors)
+            self.notice.setText(f'{names} catalog needs repair. Open Preparation and choose Review catalog backups; healthy libraries remain available.')
+            self.notice.show()
+            for kind, errors in category_errors:
+                self.record_diagnostic('scan', 'CatalogError', f'{kind}: {errors}', 'partial')
+        elif self.discovery_errors:
             self.notice.setText('Other connected iPods could not be read: ' + '; '.join(self.discovery_errors))
             self.notice.show()
         else:
@@ -1734,10 +1911,59 @@ class MediaWindow(QMainWindow):
     def _complete_trash(self, result):
         self.trash_rows = result; self.render_library(); self.show_progress('Trash uses storage until files are permanently deleted.')
 
+    def _complete_video_recovery_options(self, review):
+        options = review.get('options', [])
+        if review.get('status') != 'damaged':
+            self.show_progress('The video catalog can be read now. Refresh to update the library.')
+            return
+        if not options:
+            self.dialog('Video catalog needs repair',
+                'No complete, validated on-device backup is available. Linnet kept the damaged catalog and prepared videos untouched. Recover the catalog from a trusted backup before preparing videos.',
+                'Close', cancel=False)
+            return
+        dialog = QDialog(self); dialog.setWindowTitle('Review video catalog backups'); dialog.resize(640, 460)
+        layout = box(dialog, margins=(20, 20, 20, 20))
+        layout.addWidget(label('Restore a verified video catalog', 'section'))
+        layout.addWidget(label('This replaces the damaged catalog with the selected on-device backup. The damaged bytes are saved for recovery. Videos added after that backup may need preparation again.', 'muted', True))
+        picker = ComboBox(); picker.setAccessibleName('Video catalog backup')
+        for option in options:
+            picker.addItem(f"{option['name']} · {option['entries']} entries", option)
+        layout.addWidget(picker)
+        details = QTextEdit(); details.setReadOnly(True); details.setAccessibleName('Backup video titles')
+        layout.addWidget(details)
+        def describe():
+            option = picker.currentData()
+            titles = option.get('titles', []) if option else []
+            details.setPlainText('\n'.join(str(title) for title in titles[:100]) +
+                (f'\n… {len(titles) - 100} more titles' if len(titles) > 100 else ''))
+        picker.currentIndexChanged.connect(describe); describe()
+        actions = box(horizontal=True)
+        actions.addWidget(button('Cancel', dialog.reject)); actions.addStretch()
+        actions.addWidget(button('Restore selected backup', dialog.accept, 'primary'))
+        layout.addLayout(actions)
+        if dialog.exec() == QDialog.Accepted:
+            option = picker.currentData()
+            identity = self.identity
+            if not identity or not self.device_connected:
+                self.show_error('The iPod changed. Review its video catalog again.')
+                return
+            self.work('restore_video_catalog', lambda: media_library.restore_video_catalog_backup(
+                identity, option['name'], option['sha256'], review['catalog_sha256']),
+                'Restoring the reviewed video catalog backup…')
+
     def _complete_setup(self, result):
         self.review = result; self.render_setup(); self.show_progress('Device setup is ready.')
 
     def _complete_prepare(self, result):
+        failures = result.get('errors', [])
+        if failures:
+            self.record_diagnostic('prepare', 'PreparationResult',
+                f'{len(failures)} preparation step(s) failed or were skipped.', 'partial',
+                bool(result.get('stopped')))
+            for failure in failures[:10]:
+                self.record_diagnostic('prepare', failure.get('status', 'StepError'),
+                    failure.get('message', 'Preparation step needs attention.'), 'partial',
+                    bool(result.get('stopped')))
         self.last_preparation = (result['identity'], result)
         self.update_controls()
         lines = [result.get('summary') or ('Preparation complete.' if result['complete'] else 'Preparation needs attention.')]
@@ -1767,6 +1993,13 @@ class MediaWindow(QMainWindow):
             self.prep_results.setPlainText(result['summary']); self.prep_results.show(); self.navigate('Preparation')
         self.refresh()
 
+    def _complete_recover_publication(self, result):
+        self.publication_recovery_pending = False
+        self.publication_recovery_groups = []
+        self.device_connected = True
+        self.show_progress('Media indexes recovered. Checking the collection again…')
+        self.refresh()
+
     def _complete_eject(self, result):
         self.transition_device(None)
         self.device_name.setText('Safely ejected'); self.device_info.setText('You can disconnect your iPod.'); self.capacity.setValue(0)
@@ -1792,8 +2025,27 @@ class MediaWindow(QMainWindow):
     def discover(self):
         self.work('devices', lambda: media.discover(detailed=True), 'Looking for your iPod…')
 
+    def review_video_catalog(self):
+        if self.busy or not self.identity or not self.device_connected:
+            return
+        identity = self.identity
+        self.work('video_recovery_options', lambda: media_library.video_catalog_recovery_options(identity),
+                  'Checking on-device video catalog backups…')
+
+    def recover_publication(self):
+        if self.busy or not self.identity or not self.publication_recovery_pending:
+            return
+        if not self.dialog('Recover interrupted media update',
+            'Interrupted index groups: ' + ', '.join(self.publication_recovery_groups) + '\n\n'
+            'Recovery checks the saved device record and restores a verified set before the library is read. Keep the iPod connected until it finishes.',
+            'Recover media indexes'):
+            return
+        identity = self.identity
+        self.work('recover_publication', lambda: publish.recover_pending_publications(
+            **media.target_args(identity)), 'Recovering media indexes…')
+
     def open_playlists(self):
-        if self.identity and not self.busy:
+        if self.identity and self.device_connected and not self.busy:
             from tools.content import playlists
             identity = self.identity
             self.work('playlists', lambda: playlists.read(identity), 'Reading iPod playlists…')
@@ -1809,24 +2061,85 @@ class MediaWindow(QMainWindow):
     def refresh(self):
         if self.busy:
             return
-        if not self.identity:
+        if not self.identity or not self.device_connected:
             self.discover(); return
         identity = self.identity
         dimension = 2048 if self.photo_detail.currentIndex() else 640
         verification = 'full' if self.verify_audio.isChecked() else 'metadata'
-        def scan():
-            result = media_status.inspect(identity, dimension, verification)
+        def inspect():
+            current = media.refresh(identity)
+            pending = publish.pending_publications(current)
+            if pending:
+                return dict(publication_recovery_pending=True, identity=current, groups=pending)
+            result = media_status.inspect(current, dimension, verification)
             for row in result[2]:
                 if row['category'] in ('original', 'published'):
                     row['_linnet_search_text'] = library_search_text(row)
             return result
-        self.work('scan', scan,
+        self.work('scan', inspect,
                   'Reading your collection and checking prepared media…')
 
     @staticmethod
     def same_device(first, second):
         return bool(first and second) and all(first.get(key) == second.get(key)
             for key in ('root', 'disk_serial', 'volume_serial', 'target_id'))
+
+    @staticmethod
+    def choices_key(identity):
+        fields = (identity['target_id'], identity['disk_serial'], identity['volume_serial'])
+        return 'device_choices/v1/' + hashlib.sha256('\0'.join(fields).encode('utf-8')).hexdigest()
+
+    def save_choices_draft(self):
+        if not self.identity:
+            return
+        key = self.choices_key(self.identity)
+        try:
+            draft = json.loads(self.settings.value(key, '{}'))
+            if not isinstance(draft, dict) or draft.get('version', 1) != 1:
+                draft = {}
+        except (TypeError, ValueError):
+            draft = {}
+        draft['version'] = 1
+        if self.screen_dirty:
+            draft['screens'] = {name: list(rows) for name, rows in self.screen_state.items()}
+        elif self.screen_loaded_for == self.identity['root']:
+            draft.pop('screens', None)
+        if self.game_dirty:
+            draft['games'] = [i for i, check in enumerate(self.game_checks) if check.isChecked()]
+        elif self.games_loaded_for == self.identity['root']:
+            draft.pop('games', None)
+        if len(draft) == 1:
+            self.settings.remove(key)
+        else:
+            self.settings.setValue(key, json.dumps(draft))
+        self.settings.sync()
+
+    def load_choices_draft(self, section):
+        if not self.identity:
+            return
+        try:
+            draft = json.loads(self.settings.value(self.choices_key(self.identity), '{}'))
+            if not isinstance(draft, dict) or draft.get('version') != 1:
+                return
+            if section == 'screens' and isinstance(draft.get('screens'), dict):
+                state = draft['screens']
+                if set(state) != set(screen_settings.SCREENS) or any(
+                    not isinstance(rows, list) or len(rows) != len(set(rows)) or
+                    any(type(item) is not int or not 0 <= item < len(screen_settings.SCREENS[name])
+                        for item in rows)
+                    for name, rows in state.items()):
+                    raise ValueError('Saved screen choices are invalid.')
+                self.screen_state = {name: list(rows) for name, rows in state.items()}
+                self.screen_dirty = self.screen_state != self.screen_saved
+            elif section == 'games' and isinstance(draft.get('games'), list):
+                chosen = draft['games']
+                games.encode(chosen)
+                for index, check in enumerate(self.game_checks):
+                    with QSignalBlocker(check):
+                        check.setChecked(index in chosen)
+                self.game_dirty = set(chosen) != self.game_saved
+        except (TypeError, ValueError, KeyError):
+            self.record_diagnostic('choices', 'InvalidDraft', 'Saved device choices could not be restored.', 'partial')
 
     @staticmethod
     def draft_key(identity):
@@ -1929,12 +2242,19 @@ class MediaWindow(QMainWindow):
             self.identity = identity
             return
         self.save_draft()
+        self.save_choices_draft()
+        if self.identity:
+            self._recent_private_identifiers.update(str(self.identity.get(field)) for field in
+                ('root', 'drive', 'disk_serial', 'volume_serial', 'volume_unique_id') if self.identity.get(field))
         if identity and self.last_preparation and not self.same_device(self.last_preparation[0], identity):
             self.last_preparation = None
             self.prep_results.clear()
             self.prep_results.hide()
         self.covers.invalidate()
         self.identity = identity
+        self.device_connected = bool(identity)
+        self.publication_recovery_pending = False
+        self.publication_recovery_groups = []
         self._selection_context = None
         self.inventory = self.review = self.apple_info = None
         with QSignalBlocker(self.boot_choice), QSignalBlocker(self.method_choice), QSignalBlocker(self.default_choice):
@@ -1954,6 +2274,8 @@ class MediaWindow(QMainWindow):
             self.pending, self.pending_keys, self.pending_for = [], set(), None
             self.draft_issues, self.stale_videos, self.queue_outcomes = {}, 0, {}
         self.screen_loaded_for = self.games_loaded_for = None
+        self.screen_saved = self.game_saved = None
+        self.screen_dirty = self.game_dirty = self.game_read_failed = False
         self.screen_state = screen_settings.defaults(identity)
         self.screens_controller.render_screen_items()
         self.screen_status.setText('Loading screen settings…' if identity else
@@ -1991,7 +2313,7 @@ class MediaWindow(QMainWindow):
                 picker.setCurrentIndex(max(0, picker.findData(old)))
 
     def update_controls(self):
-        ready = self.identity is not None and not self.busy
+        ready = self.identity is not None and self.device_connected and not self.busy
         self.choose_device_button.setEnabled(not self.busy)
         self.retry_button.setEnabled(ready)
         self.prep_details.setVisible(self.last_preparation is not None)
@@ -2000,6 +2322,12 @@ class MediaWindow(QMainWindow):
                                          for key in ('root', 'disk_serial', 'volume_serial', 'target_id')))
         games_ready = ready and games.available(self.identity)
         self.games_save.setEnabled(games_ready and self.games_loaded_for == self.identity['root'])
+        self.games_recover.setVisible(bool(self.identity and self.game_read_failed and games.available(self.identity)))
+        self.games_recover.setEnabled(ready and self.game_read_failed)
+        self.publication_recovery_button.setVisible(self.publication_recovery_pending)
+        self.publication_recovery_button.setEnabled(self.publication_recovery_pending and not self.busy)
+        self.video_repair_button.setVisible(bool((self.inventory or {}).get('Videos', {}).get('errors')))
+        self.video_repair_button.setEnabled(ready and bool((self.inventory or {}).get('Videos', {}).get('errors')))
         for check in self.game_checks:
             check.setEnabled(games_ready and self.games_loaded_for == self.identity['root'])
         if ready and not games_ready:
@@ -2021,6 +2349,7 @@ class MediaWindow(QMainWindow):
         self.apple_update.setEnabled(apple_ready and self.apple_info.get('can_update', False))
         self.choose_videos_button.setEnabled(ready and self.inventory is not None and self.identity.get('media_profile', {}).get('video_enabled', True))
         self.refresh_button.setEnabled(not self.busy)
+        self.pick_button.setEnabled(not self.busy)
         self.empty_action.setEnabled(not self.busy)
         self.refresh_button.setVisible(not self.busy)
         for kind, check in self.prep_checks.items():
@@ -2084,6 +2413,7 @@ class MediaWindow(QMainWindow):
             summary += f' {self.stale_videos:,} saved video choice(s) are no longer on this iPod.'
         self.prep_summary.setText(summary)
         if self.apple_info:
+            self.apple_eligibility.setText(self.apple_info.get('eligibility', ''))
             lines = [self.apple_info['status']]
             lines.extend(f"{entry['kind']}: {entry['count']:,} files · {entry['status']}"
                          for entry in self.apple_info['details']
@@ -2092,6 +2422,7 @@ class MediaWindow(QMainWindow):
                 lines.append(self.apple_info['issues'][0])
             self.apple_status.setText('\n'.join(lines))
         else:
+            self.apple_eligibility.setText('')
             self.apple_status.setText('Connect an iPod to check Apple OS availability.')
 
     def choose_apple_folders(self):
@@ -2162,7 +2493,7 @@ class MediaWindow(QMainWindow):
         if self.busy or not self.identity or not self.apple_info or not self.apple_info.get('can_update'):
             return
         identity = self.identity
-        ffprobe = self.ffprobe
+        ffprobe = self.verified_ffprobe
         self.work('apple_update', lambda: apple_os.update(identity, ffprobe=ffprobe,
                                                           progress=self.events.progress.emit),
                   'Updating Apple OS availability…')
@@ -2292,7 +2623,7 @@ class MediaWindow(QMainWindow):
         layout.addWidget(button('Apply video choices', accept, 'primary'), 0, Qt.AlignRight); dialog.exec()
 
     def prepare(self):
-        if self.busy or not self.inventory:
+        if self.busy or not self.device_connected or not self.inventory:
             return
         selected = [kind for kind, check in self.prep_checks.items() if check.isChecked() and check.isEnabled()]
         if not selected:
@@ -2311,20 +2642,23 @@ class MediaWindow(QMainWindow):
         dimension = 2048 if self.photo_detail.currentIndex() else 640
         online_artwork = self.online_artwork.isChecked()
         force, verification = self.rebuild.isChecked(), 'full' if self.verify_audio.isChecked() else 'metadata'
-        ffmpeg, ffprobe = (self.ffmpeg, self.ffprobe) if self.tools_ready else (None, None)
+        ffmpeg, ffprobe = self.verified_ffmpeg, self.verified_ffprobe
+        approval = {'actions': None}
         def run():
             return media.run(identity, selected, pending, photo_dimension=dimension, force=force,
                 music_verification=verification, ffmpeg=ffmpeg, ffprobe=ffprobe, video_selection=videos,
-                online_artwork=online_artwork,
+                online_artwork=online_artwork, approved_reconciliation=approval['actions'],
                 progress=self.events.progress.emit, progress_detail=self.events.conversion.emit,
                 progress_stage=self.events.stage.emit,
                 cancelled=self.stop_event.is_set)
         self.plan_context = dict(identity=identity, pending=pending,
-                                 submitted_videos=set(videos or ()) if 'Videos' in selected else set(), run=run)
+                                 submitted_videos=set(videos or ()) if 'Videos' in selected else set(),
+                                 approval=approval, run=run)
         def inspect_plan():
             result = media_status.plan(identity, all_pending, selected, videos,
                 current_inventory=self.inventory, photo_dimension=dimension,
-                music_verification=verification, force=force, online_artwork=online_artwork)
+                music_verification=verification, force=force, online_artwork=online_artwork,
+                ffprobe=ffprobe, ffmpeg=ffmpeg)
             if result['conversion'] and (not ffmpeg or not ffprobe):
                 raise ValueError('Video conversion needs FFmpeg and FFprobe. Choose their folder in Settings.')
             return result
@@ -2332,7 +2666,10 @@ class MediaWindow(QMainWindow):
 
     def remove_selected(self):
         rows = self.selected()
-        if self.busy or not self.identity or not rows:
+        if self.busy or not self.identity or not self.device_connected or not rows:
+            return
+        if any(not row.get('removable', True) for row in rows):
+            self.show_error('This item cannot be removed. Review its details for recovery guidance.')
             return
         identity = self.identity
         if all(row.get('retail_photo') for row in rows):
@@ -2352,7 +2689,7 @@ class MediaWindow(QMainWindow):
         if not self.confirm_trash(rows):
             return
         dimension = 2048 if self.photo_detail.currentIndex() else 640
-        ffmpeg, ffprobe = self.ffmpeg, self.ffprobe
+        ffmpeg, ffprobe = self.verified_ffmpeg, self.verified_ffprobe
         def remove():
             result = media_library.remove_items(identity, rows)
             needed = [kind for kind in result['requires_update'] if kind != 'Videos'
@@ -2369,11 +2706,11 @@ class MediaWindow(QMainWindow):
 
     def restore_selected(self):
         rows = self.selected()
-        if self.busy or self.page != 'Trash' or not rows:
+        if self.busy or not self.device_connected or self.page != 'Trash' or not rows:
             return
         identity = self.identity
         dimension = 2048 if self.photo_detail.currentIndex() else 640
-        ffmpeg, ffprobe = self.ffmpeg, self.ffprobe
+        ffmpeg, ffprobe = self.verified_ffmpeg, self.verified_ffprobe
         def restore():
             needed = set()
             for row in rows:
@@ -2390,7 +2727,7 @@ class MediaWindow(QMainWindow):
         self.work('restore', restore, 'Restoring your files…')
 
     def sync_videos(self):
-        if self.identity and not self.busy:
+        if self.identity and self.device_connected and not self.busy:
             identity = self.identity
             self.work('sync', lambda: media_library.organize_videos(identity), 'Syncing the video folder…')
 
@@ -2493,7 +2830,7 @@ class MediaWindow(QMainWindow):
             self.install_button.setText(('Reinstall ' if option.get('active') else 'Install ') + option['label'] if linnet else 'Set as default boot')
 
     def install_selected(self):
-        if not self.install_button.isEnabled():
+        if not self.device_connected or not self.install_button.isEnabled():
             return
         option, method, identity = self.boot_choice.currentData(), self.method_choice.currentData(), self.identity
         description = (f"Install or update {option['label']}?" + f"\n\nMethod: {method['label']}"
@@ -2582,7 +2919,7 @@ class MediaWindow(QMainWindow):
         self.tools_label.setText('Checking FFmpeg and FFprobe…')
         def check():
             errors = []
-            resolved = []
+            validated = {}
             for name, value in zip(('FFmpeg', 'FFprobe'), paths):
                 if not value:
                     errors.append(f'{name} is not configured.')
@@ -2596,25 +2933,38 @@ class MediaWindow(QMainWindow):
                                             timeout=5, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
                     if result.returncode:
                         raise OSError(f'version check exited with status {result.returncode}')
-                    resolved.append(str(path))
+                    validated[name] = str(path)
                 except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
                     errors.append(f'{name} at {value} could not run: {error}')
-            self.events.tools_checked.emit(request, dict(candidate=candidate, paths=resolved, errors=errors))
+            self.events.tools_checked.emit(request, dict(candidate=candidate, validated=validated, errors=errors))
         self.tool_pool.submit(check)
 
     @Slot(int, object)
     def tools_checked(self, request, result):
         if self.closed or request != self.tool_check_id:
             return
-        if result['errors']:
-            self.tools_label.setText(' '.join(result['errors']) + ' Choose a folder containing both tools.')
-            self.tools_ready = False
-            return
-        self.tools_ready = True
+        validated = result['validated']
         if result['candidate'] is not None:
-            self.ffmpeg, self.ffprobe = result['paths']
-            self.settings.setValue('ffmpeg', self.ffmpeg)
-            self.settings.setValue('ffprobe', self.ffprobe)
+            for name, setting in (('FFmpeg', 'ffmpeg'), ('FFprobe', 'ffprobe')):
+                if name in validated:
+                    setattr(self, setting, validated[name])
+                    setattr(self, 'verified_' + setting, validated[name])
+                    self.settings.setValue(setting, validated[name])
+            if validated:
+                self.tools_ready = bool(self.verified_ffmpeg and self.verified_ffprobe)
+                self.update_tools()
+                return
+        else:
+            self.verified_ffmpeg = validated.get('FFmpeg')
+            self.verified_ffprobe = validated.get('FFprobe')
+            self.tools_ready = bool(self.verified_ffmpeg and self.verified_ffprobe)
+        if result['errors']:
+            self.record_diagnostic('tools', 'ToolCheckError', '; '.join(result['errors']), 'failed')
+            available = (('FFprobe is ready. ' if self.verified_ffprobe else '') +
+                         ('FFmpeg is ready. ' if self.verified_ffmpeg else ''))
+            self.tools_label.setText(available + ' '.join(result['errors']) +
+                ' Choose a folder containing the missing tool.')
+            return
         self.tools_label.setText('FFmpeg and FFprobe are ready.')
 
     def show_preparation_details(self):
@@ -2649,7 +2999,7 @@ class MediaWindow(QMainWindow):
         dialog.exec()
 
     def review_skipped(self):
-        if self.busy or not self.identity:
+        if self.busy or not self.identity or not self.device_connected:
             return
         identity = self.identity
         self.work('review_skipped', lambda: (identity, media.list_skipped_files(identity)), 'Loading skipped files…')
@@ -2673,8 +3023,9 @@ class MediaWindow(QMainWindow):
         layout.addWidget(button('Include selected files again', restore, 'primary'), 0, Qt.AlignRight); dialog.exec()
 
     def eject(self):
-        if not self.identity or self.busy:
+        if not self.identity or not self.device_connected or self.busy:
             return
+        self.save_choices_draft()
         identity = self.identity
         def run():
             return media.eject_device(identity)
@@ -2695,6 +3046,75 @@ class MediaWindow(QMainWindow):
             self.cancel_button.setEnabled(False)
             self.show_progress('Finishing the current step before stopping…')
 
+    def record_diagnostic(self, operation, error_type, message, status='failed', cancel_requested=False):
+        """Keep bounded support context without source paths or device identifiers."""
+        cleaned = str(message)
+        cleaned = re.sub(r'(?i)\b[\w.+-]+@[\w.-]+\.[A-Z]{2,}\b', '[email]', cleaned)
+        cleaned = re.sub(r'(?i)https?://[^\r\n]+', '[url]', cleaned)
+        cleaned = re.sub(r'(?i)\b[A-Z]:[\\/][^\r\n]+', '[path]', cleaned)
+        cleaned = re.sub(r'\\\\[^\r\n]+', '[path]', cleaned)
+        cleaned = re.sub(r'/(?:Users|home)/[^\r\n]+', '[path]', cleaned)
+        cleaned = re.sub(r'(?<!\w)(?:\.{1,2}[\\/])?[\w .-]+[\\/][^\r\n]+', '[path]', cleaned)
+        cleaned = re.sub(r'(?i)\b[\w][\w .-]*\.[A-Z0-9]{1,6}\b', '[file]', cleaned)
+        identifiers = set(self._recent_private_identifiers)
+        if self.identity:
+            identifiers.update(str(self.identity.get(field)) for field in
+                ('root', 'drive', 'disk_serial', 'volume_serial', 'volume_unique_id') if self.identity.get(field))
+        for value in sorted(identifiers, key=len, reverse=True):
+            cleaned = re.sub(re.escape(value), '[redacted]', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\b[0-9A-F]{16,}\b', '[identifier]', cleaned, flags=re.IGNORECASE)
+        entry = dict(time=datetime.now().astimezone().isoformat(timespec='seconds'),
+                     operation=str(operation)[:40], type=str(error_type)[:60],
+                     status=status, cancel_requested=bool(cancel_requested),
+                     target=(self.identity or {}).get('target_id', ''), message=cleaned[:500])
+        try:
+            history = json.loads(self.settings.value('diagnostics/history/v1', '[]'))
+            if not isinstance(history, list):
+                history = []
+        except (TypeError, ValueError):
+            history = []
+        history.append(entry)
+        self.settings.setValue('diagnostics/history/v1', json.dumps(history[-50:]))
+        self.settings.sync()
+
+    def show_diagnostics(self):
+        try:
+            entries = json.loads(self.settings.value('diagnostics/history/v1', '[]'))
+            if not isinstance(entries, list):
+                entries = []
+        except (TypeError, ValueError):
+            entries = []
+        dialog = QDialog(self); dialog.setWindowTitle('Diagnostics'); dialog.resize(700, 440)
+        layout = box(dialog, margins=(20, 20, 20, 20))
+        layout.addWidget(label('Recent operation errors', 'section'))
+        layout.addWidget(label('The last 50 errors are saved on this computer. Device serials, paths, and email addresses are removed from this history.', 'muted', True))
+        details = QTextEdit(); details.setReadOnly(True)
+        details.setAccessibleName('Recent diagnostic events')
+        details.setPlainText('\n\n'.join(f"{e.get('time', '')} · {e.get('operation', '')} · {e.get('type', '')}\n{e.get('message', '')}"
+                                         for e in entries) if entries else 'No errors recorded in this session history.')
+        layout.addWidget(details)
+        actions = box(horizontal=True)
+        def export():
+            path, _ = QFileDialog.getSaveFileName(dialog, 'Export diagnostics', 'linnet-diagnostics.json', 'JSON files (*.json)')
+            if path:
+                try:
+                    Path(path).write_text(json.dumps(dict(version=1, errors=entries), indent=2) + '\n', encoding='utf-8')
+                except OSError as error:
+                    self.show_error(f'Could not export diagnostics: {error}')
+        actions.addWidget(button('Export support file', export)); actions.addStretch()
+        actions.addWidget(button('Close', dialog.accept, 'primary'))
+        layout.addLayout(actions); dialog.exec()
+
+    def show_help(self):
+        self.dialog('About Linnet Media Manager',
+                    f'Linnet system version: {linnet_version()}\n\n'
+                    'Linnet Media Manager helps prepare music, photos, videos, and notes for supported iPods.\n\n'
+                    'Connect your iPod in Disk Mode, choose Refresh or Choose iPod, and use Preparation to review changes. '
+                    'Use Eject safely when finished.\n\n'
+                    'For video conversion, install FFmpeg and FFprobe on this computer, then choose their folder in Settings. '
+                    'Diagnostics in the footer shows recent errors and exports a privacy-filtered support file.',
+                    'Close', cancel=False)
+
     def show_error(self, message):
         self.notice.setText(message); self.notice.show(); self.show_progress(message)
         if self.stack.currentWidget() != self.library:
@@ -2706,6 +3126,7 @@ class MediaWindow(QMainWindow):
         if self.busy:
             self.show_progress('Wait for the current operation to finish before closing.'); event.ignore(); return
         self.save_draft()
+        self.save_choices_draft()
         self.closed = True
         self.covers.closed = True
         self.covers.pool.shutdown(wait=False, cancel_futures=True)

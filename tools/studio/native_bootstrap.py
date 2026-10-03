@@ -504,6 +504,29 @@ def _prior_restore_hints(plan_path, expected_sha, disk, manifest, artifacts, cur
 
 
 def execute(mode, plan_path, expected_sha, disk_number):
+    """Own the media publisher mutex for direct raw apply and restore calls."""
+    from tools.content.publish import _exclusive
+    from tools.content.media_manager import discover, refresh
+    _manifest, artifacts, _original = load_plan(plan_path, expected_sha)
+    planned_device = _device(json.loads(artifacts["device.json"]))
+    storage = planned_device["storage"]
+    volume_id = storage.get("volume_id")
+    if not isinstance(volume_id, str) or not volume_id:
+        raise ValueError("native plan lacks a mounted volume identity for publisher exclusion")
+    with _exclusive({"volume_unique_id": volume_id}):
+        matches = [item for item in discover()
+                   if item["volume_unique_id"].casefold() == volume_id.casefold()]
+        if len(matches) != 1:
+            raise RuntimeError("native plan volume is not uniquely mounted")
+        observed = refresh(matches[0])
+        if (observed["disk_number"] != disk_number or
+                observed["disk_serial"] != storage["disk_serial"] or
+                observed["target_id"] != planned_device["target_id"]):
+            raise RuntimeError("native plan no longer matches the mounted iPod volume")
+        return _execute(mode, plan_path, expected_sha, disk_number)
+
+
+def _execute(mode, plan_path, expected_sha, disk_number):
     plan_path = Path(plan_path).resolve()
     receipt_path = plan_path.parent / (f"{mode}-receipt-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8] + ".json")
     receipt = dict(operation=mode, plan=str(plan_path), reviewed_plan_sha256=expected_sha,

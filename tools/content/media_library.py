@@ -15,7 +15,8 @@ from .host_state import cache_root, save_json
 from .inventory import collect_records_by_kind, skipped_paths, scan as scan_sources
 from .guard import guarded_path as _plain, guard_volume as _volume_guard, hash_file
 from .publish import _bounded, _exclusive, _write_verified, _finish_backups
-from .video_catalog import encode as _encode_catalog, read_file as _read_catalog_file
+from .video_catalog import (CATALOG_MAX_BYTES, decode as _decode_catalog, encode as _encode_catalog,
+                            read_file as _read_catalog_file)
 
 
 def _device_path(root, value):
@@ -45,6 +46,114 @@ def _catalog(root, *, with_paths=False):
     return (path, data, entries, resolved) if with_paths else (path, data, entries)
 
 
+def video_catalog_recovery_options(identity):
+    """Review complete verified backups without changing a damaged catalog."""
+    identity = manager.refresh(identity)
+    root = Path(identity['root']).resolve(strict=True)
+    catalog = root / '.LINNET' / 'VIDEOS' / 'INDEX.VID'
+    _plain(catalog, root)
+    if not catalog.is_file():
+        return dict(status='missing', options=[], explanation='No video catalog is present.')
+    try:
+        _catalog(root)
+    except (OSError, ValueError, UnicodeError, struct.error) as error:
+        issue = str(error)
+    else:
+        return dict(status='healthy', options=[], explanation='The video catalog is valid.')
+    info = catalog.stat()
+    if info.st_size > 16 * 1024 * 1024:
+        return dict(status='damaged', options=[], issue=issue,
+                    explanation='The damaged catalog exceeds the safe automatic backup limit.')
+    digest = hash_file(catalog, info.st_size)
+    backup_dir = catalog.parent / 'BACKUP'
+    _plain(backup_dir, root)
+    options = []
+    if backup_dir.is_dir():
+        for candidate in sorted(backup_dir.iterdir()):
+            if candidate.suffix.upper() != '.VID':
+                continue
+            _plain(candidate, root)
+            if not candidate.is_file():
+                continue
+            try:
+                data, entries = _read_catalog_file(candidate)
+                if not entries:
+                    continue
+                missing = [name for _, name, _ in entries if not _device_path(root, name).is_file()]
+                if missing:
+                    continue
+                options.append(dict(name=candidate.name, sha256=hashlib.sha256(data).hexdigest(),
+                                    bytes=len(data), entries=len(entries),
+                                    titles=[title for _, _, title in entries]))
+            except (OSError, ValueError, UnicodeError, struct.error):
+                continue
+    return dict(status='damaged', issue=issue, catalog_sha256=digest, catalog_bytes=info.st_size,
+                options=options,
+                explanation=('Choose a complete backup to restore its earlier video entries. '
+                             'Prepared video files are retained, including files absent from that backup.'
+                             if options else 'No complete on-device video catalog backup is available. '
+                             'The damaged catalog needs manual recovery; prepared video files remain untouched.'))
+
+
+def restore_video_catalog_backup(identity, name, sha256, catalog_sha256):
+    """Explicitly restore one reviewed snapshot, preserving the damaged bytes."""
+    identity = manager.refresh(identity)
+    with _exclusive(identity):
+        review = video_catalog_recovery_options(identity)
+        if (review['status'] != 'damaged' or review.get('catalog_sha256') != catalog_sha256 or
+                not any(item['name'] == name and item['sha256'] == sha256 for item in review['options'])):
+            raise ValueError('Video recovery choices changed; review them again.')
+        root = Path(identity['root']).resolve(strict=True)
+        catalog = root / '.LINNET' / 'VIDEOS' / 'INDEX.VID'
+        candidate = catalog.parent / 'BACKUP' / name
+        _plain(catalog, root); _plain(candidate, root)
+        data = _bounded(candidate, CATALOG_MAX_BYTES)
+        if hashlib.sha256(data).hexdigest() != sha256:
+            raise ValueError('Video backup changed; review recovery again.')
+        damaged = dict(bytes=review['catalog_bytes'], sha256=catalog_sha256)
+        if identity['free_bytes'] < damaged['bytes'] + len(data) + 1048576:
+            raise ValueError('Not enough device space to preserve the damaged video catalog.')
+        from .publish import _copy_verified
+        token = uuid.uuid4().hex[:8].upper()
+        backup = candidate.parent / ('D' + token[:7] + '.BAD')
+        recovery = candidate.parent / ('D' + token[:7] + '.JSON')
+        temporary = catalog.with_name('R' + token[:7] + '.TMP')
+        for path in (backup, recovery, temporary):
+            _plain(path, root)
+        guard = lambda: _volume_guard(identity)
+        guard()
+        _copy_verified(catalog, backup, damaged, root, guard)
+        record = dict(operation='restore-video-catalog-backup', damaged=backup.relative_to(root).as_posix(),
+                      damaged_sha256=catalog_sha256, candidate=candidate.relative_to(root).as_posix(),
+                      candidate_sha256=sha256, started=time.time())
+        guard()
+        _write_verified(recovery, json.dumps(record, separators=(',', ':')).encode('utf-8'),
+                        'Video recovery record verification failed')
+        owned = []
+        try:
+            guard()
+            _write_verified(temporary, data, 'Video recovery catalog verification failed', owned=owned)
+            guard()
+            if hash_file(catalog, damaged['bytes']) != catalog_sha256 or hash_file(candidate, len(data)) != sha256:
+                raise ValueError('Video catalog or backup changed during recovery.')
+            for _, path, _ in _decode_catalog(data):
+                guard()
+                if not _device_path(root, path).is_file():
+                    raise ValueError('A video in the selected backup disappeared; review recovery again.')
+            guard()
+            os.replace(temporary, catalog)
+            if catalog.read_bytes() != data:
+                raise OSError('Restored video catalog readback failed.')
+        finally:
+            if temporary in owned and temporary.exists():
+                guard(); _plain(temporary, root); temporary.unlink()
+        entries = next(item['entries'] for item in review['options'] if item['name'] == name)
+        return dict(summary=f'Restored a video catalog with {entries} entries from the selected backup.',
+                    entries=entries,
+                    damaged_backup=str(backup), recovery_record=str(recovery),
+                    consequence='Video entries newer than the selected backup may need preparation again; video files were retained.')
+
+
 def _row(category, kind, title, path, status, *, info=None, **extra):
     if info is None:
         try:
@@ -54,22 +163,46 @@ def _row(category, kind, title, path, status, *, info=None, **extra):
     return dict(id=category + ':' + str(extra.get('key', path)), category=category,
                 kind=kind, title=title, path=str(path), source='', status=status,
                 bytes=info.st_size if info else 0, mtime_ns=info.st_mtime_ns if info else None,
-                removable=category != 'cache', **extra)
+                removable=category != 'cache' and not _apple_managed(path), **extra)
+
+
+def _apple_managed(path):
+    """Apple database references are not reconciled by Linnet removal."""
+    parts = tuple(part.casefold() for part in Path(path).parts)
+    return any(parts[index:index + 2] in (('ipod_control', 'music'), ('ipod_c~1', 'music'))
+               for index in range(len(parts) - 1))
+
+
+def _catalog_error(kind, path, error):
+    return dict(id='error:' + kind, category='error', kind=kind,
+                title=kind + ' catalog needs repair', path=str(path), source='',
+                status='Catalog damaged', error=str(error), bytes=0, mtime_ns=None,
+                removable=False, description='Repair this catalog before preparing or removing this category.')
 
 
 def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tracks=None,
-               _validated_identity=False):
+               _validated_identity=False, category_errors=None):
     """Read file names, timestamps and the bounded catalog; never decode media."""
     if not _validated_identity:
         identity = manager.refresh(identity)
     root = Path(identity['root']).resolve(strict=True)
     if records_by_kind is None:
         records_by_kind = collect_records_by_kind(root)
-    _, _, entries, resolved_videos = _catalog(root, with_paths=True)
+    catalog_errors = []
+    if category_errors is None:
+        _, _, entries, resolved_videos = _catalog(root, with_paths=True)
+    else:
+        try:
+            _, _, entries, resolved_videos = _catalog(root, with_paths=True)
+        except (OSError, ValueError, UnicodeError, struct.error) as error:
+            entries, resolved_videos = [], []
+            category_errors.append(dict(kind='Videos', message=str(error),
+                                        path=str(root / '.LINNET' / 'VIDEOS' / 'INDEX.VID')))
+            catalog_errors.append(_catalog_error('Videos', root / '.LINNET' / 'VIDEOS' / 'INDEX.VID', error))
     published_paths = {str(path).casefold() for path in resolved_videos}
     source_video_extensions = manager.video_source_extensions(identity)
     native_video_extensions = manager.native_video_extensions(identity)
-    result = []
+    result = catalog_errors
     music_records = records_by_kind['Music']
     metadata = _music_metadata(root, music_records=music_records,
                                music_inodes=getattr(records_by_kind, 'inodes', None))
@@ -96,7 +229,8 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
                     artist=tags.get('artist', ''), album=tags.get('album', ''), genre=tags.get('genre', ''),
                     artwork=tags.get('artwork', ''), duration=tags.get('duration', 0), track=tags.get('track', 0),
                     album_artist=tags.get('album_artist', ''), disc=tags.get('disc', 0),
-                    description='Removing this source requires preparing its media type afterward.'))
+                    description=('Apple-managed media must be removed with Apple software.' if _apple_managed(path)
+                                 else 'Removing this source requires preparing its media type afterward.')))
     photos = retail_photos if retail_photos is not None else retail_images(root)
     for photo in photos:
         result.append(dict(id='retail-photo:' + str(photo['key']), category='original', kind='Photos',
@@ -117,7 +251,8 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
              else 'Ready on iPod' if path.is_file() else 'Missing published file'), key=key.hex(),
             artist=tags.get('artist', ''), album=tags.get('album', ''), genre=tags.get('genre', ''),
             artwork=tags.get('artwork', ''), duration=tags.get('duration', 0),
-            description='Remove this video from the playback catalog and move its file to Trash.'))
+            description=('Apple-managed media must be removed with Apple software.' if _apple_managed(path)
+                         else 'Remove this video from the playback catalog and move its file to Trash.')))
     cache = cache_root(identity)
     names = {}
     try:
@@ -312,6 +447,81 @@ def remove_items(identity, items):
         return _remove(identity, items)
 
 
+def _supporting_parts(kind, relative):
+    """Require a canonical ordinary-folder path with no Windows aliases."""
+    if kind not in manager.KINDS or not isinstance(relative, str):
+        raise ValueError('Unsupported supporting-file location.')
+    parts = relative.split('/')
+    if (len(parts) < 2 or parts[0] != kind or any(not part or part in ('.', '..') or
+            part.rstrip(' .') != part or any(ord(char) < 32 or char in '<>:"\\|?*' for char in part)
+            for part in parts) or
+            any(part.casefold() in ('.linnet', 'ipod_control', 'system volume information',
+                                    '.appledouble', '.trashes', '$recycle.bin', '.ds_store',
+                                    'desktop.ini', 'thumbs.db') or part.startswith('._')
+                for part in parts[1:])):
+        raise ValueError('Supporting file must be inside an ordinary media source folder.')
+    if Path(relative).suffix.lower() in manager.extensions(kind):
+        raise ValueError('Use normal media removal for a supported media file.')
+    return parts
+
+
+def remove_supporting_file(identity, kind, relative, *, expected_bytes, expected_mtime_ns,
+                           expected_sha256):
+    """Trash one reviewed supporting file in an ordinary source folder."""
+    parts = _supporting_parts(kind, relative)
+    if (type(expected_bytes) is not int or expected_bytes < 0 or
+            type(expected_mtime_ns) is not int or not isinstance(expected_sha256, str) or
+            len(expected_sha256) != 64 or any(c not in '0123456789abcdef' for c in expected_sha256)):
+        raise ValueError('A reviewed file size, timestamp, and SHA-256 are required.')
+    identity = manager.refresh(identity)
+    with _exclusive(identity):
+        root = Path(identity['root']).resolve(strict=True)
+        source = root.joinpath(*parts)
+        _plain(source, root)
+        _volume_guard(identity)
+        if not source.is_file():
+            raise ValueError('The reviewed supporting file is missing.')
+        info = source.stat()
+        if ((info.st_size, info.st_mtime_ns) != (expected_bytes, expected_mtime_ns) or
+                hash_file(source, expected_bytes) != expected_sha256):
+            raise ValueError('The supporting file changed; review it again.')
+        token = uuid.uuid4().hex
+        trash = root / '.LINNET' / 'TRASH' / token
+        destination = trash / relative
+        _plain(trash, root); _plain(destination, root)
+        receipt = cache_root(identity) / ('remove-' + token + '.json')
+        selected = [dict(category='supporting', kind=kind, title=source.name, path=str(source),
+                         bytes=expected_bytes, mtime_ns=expected_mtime_ns,
+                         sha256=expected_sha256)]
+        report = dict(operation='remove-supporting-file', started=time.time(), complete=False,
+                      receipt=str(receipt), trash=str(trash), selected=selected, dependencies=[],
+                      catalog_paths={}, requires_update=[kind], removed=[],
+                      moves=[dict(source=str(source), trash=str(destination))])
+        save_json(receipt, report)
+        from .media_trash import _save_device
+        try:
+            _volume_guard(identity); trash.mkdir(parents=True, exist_ok=False)
+            _save_device(identity, root, trash, report)
+            _volume_guard(identity); _plain(source, root); _plain(destination, root)
+            current = source.stat()
+            if ((current.st_size, current.st_mtime_ns) != (expected_bytes, expected_mtime_ns) or
+                    hash_file(source, expected_bytes) != expected_sha256):
+                raise ValueError('The supporting file changed during removal.')
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            _volume_guard(identity); source.rename(destination)
+            report['removed'].append(report['moves'][0])
+            report['complete'] = True
+            report['summary'] = f'Moved {relative} to recoverable iPod Trash.'
+            _save_device(identity, root, trash, report)
+            return report
+        except Exception as error:
+            report['error'] = str(error)
+            raise RuntimeError(f'Supporting file removal could not finish: {error}. Recovery details: {receipt}') from error
+        finally:
+            report['finished'] = time.time()
+            save_json(receipt, report)
+
+
 def organize_videos(identity):
     """Give managed videos readable names and reconcile files deleted in Explorer."""
     from .publish_video import video_filename, device_video_path
@@ -386,14 +596,21 @@ def organize_videos(identity):
         return dict(summary=f'{len(moves)} videos renamed · {len(entries) - len(updated)} missing entries cleared.', receipt='', **cleanup)
 
 
-def _removal_items(root):
+def _removal_items(root, *, allow_video_error=False):
     """Validate mutation IDs and file stamps without loading display metadata."""
     from .retail_media import images as retail_images
     records_by_kind = collect_records_by_kind(root)
-    _, _, entries, resolved_videos = _catalog(root, with_paths=True)
+    try:
+        _, _, entries, resolved_videos = _catalog(root, with_paths=True)
+    except (OSError, ValueError, UnicodeError, struct.error):
+        if not allow_video_error:
+            raise
+        entries, resolved_videos = [], []
     published_paths = {str(path).casefold() for path in resolved_videos}
     result = {}
     for kind in manager.KINDS:
+        if allow_video_error and kind == 'Videos':
+            continue
         allowed = manager.extensions(kind)
         for path, info in records_by_kind[kind]:
             if path.suffix.lower() not in allowed or (kind == 'Videos' and str(path).casefold() in published_paths):
@@ -419,14 +636,16 @@ def _removal_items(root):
 def _remove(identity, items):
     root = Path(identity['root']).resolve(strict=True)
     identity = manager.refresh(identity)
-    fresh = _removal_items(root)
+    allow_video_error = bool(items) and all(isinstance(item, dict) and
+        item.get('kind') in ('Music', 'Photos', 'Notes') for item in items)
+    fresh = _removal_items(root, allow_video_error=allow_video_error)
     selected = []
     selected_ids = set()
     for item in items:
         row = fresh.get(item['id'])
         if row is None or not row['removable']:
             raise ValueError('Selection changed or cannot be removed; refresh the library.')
-        if any(row.get(field) != item.get(field) for field in ('path', 'bytes', 'mtime_ns')):
+        if any(row.get(field) != item.get(field) for field in ('kind', 'category', 'path', 'bytes', 'mtime_ns')):
             raise ValueError('Selected file changed; refresh before removing: ' + row['title'])
         if row['id'] not in selected_ids:
             if isinstance(item.get('title'), str):
@@ -446,7 +665,44 @@ def _remove(identity, items):
         _plain(grid, root)
         if grid.exists():
             selected.append(_row('library','Photos','Prepared photo grid',grid,'Native thumbnails',info=grid.stat()))
-    catalog, before, entries = _catalog(root)
+    photo_dependencies = []
+    if any(row['kind'] == 'Photos' and row['category'] == 'library' for row in selected):
+        package = root / '.LINNET' / 'PHOTOS' / 'LIBRARY.PIM'
+        if package.is_file():
+            from .photos import inspect as inspect_photos
+            from .photo_grid import inspect_grid
+            from .publish_photos import _fallbacks, _verify_fallbacks
+            _volume_guard(identity)
+            package_report = inspect_photos(package, verify_payloads=False,
+                                            checkpoint=lambda: _volume_guard(identity))
+            if grid.is_file():
+                inspect_grid(grid, package=package, checkpoint=lambda: _volume_guard(identity))
+            for item in package_report.get('packs', []):
+                relative = item['device_path'].lstrip('/')
+                path = root / relative
+                _plain(path, root)
+                photo_dependencies.append(dict(relative=relative, bytes=item['bytes'],
+                                               sha256=item['sha256'], source=path, kind='pack'))
+            fallbacks = _fallbacks(package)
+            _verify_fallbacks(fallbacks, root, lambda: _volume_guard(identity))
+            selected_locations = {str(Path(row['path']).resolve()).casefold() for row in selected}
+            for item in fallbacks:
+                relative = item['path'].lstrip('/')
+                path = root / relative
+                _plain(path, root)
+                if str(path.resolve()).casefold() not in selected_locations:
+                    photo_dependencies.append(dict(relative=relative, bytes=item['bytes'],
+                                                   sha256=hash_file(path, item['bytes']), source=path,
+                                                   kind='jpeg'))
+    if (photo_dependencies and
+            sum(item['bytes'] for item in photo_dependencies) + 1048576 > identity.get('free_bytes', 0)):
+        raise ValueError('Not enough iPod space to preserve photo packs in Trash.')
+    try:
+        catalog, before, entries = _catalog(root)
+    except (OSError, ValueError, UnicodeError, struct.error):
+        if not allow_video_error:
+            raise
+        catalog, before, entries = root / '.LINNET' / 'VIDEOS' / 'INDEX.VID', None, []
     selected_keys = {row['key'] for row in selected if row['category'] == 'published'}
     paths = {}
     expected_by_path = {}
@@ -513,13 +769,27 @@ def _remove(identity, items):
     report = dict(operation='remove-media', started=time.time(), complete=False, receipt=str(receipt),
                   trash=str(trash), removed=[], requires_update=sorted({r['kind'] for r in selected if r['category'] == 'original'}),
                   catalog_paths={key.hex(): _device_path(root, path).relative_to(root).as_posix() for key, path, _ in entries},
-                  selected=selected, moves=[dict(source=str(p), trash=str(trash / p.relative_to(root))) for p in paths.values()])
+                  selected=selected, dependencies=[{k: item[k] for k in ('relative', 'bytes', 'sha256', 'kind')}
+                                                   for item in photo_dependencies],
+                  moves=[dict(source=str(p), trash=str(trash / p.relative_to(root))) for p in paths.values()])
     save_json(receipt, report)
+    from .media_trash import _save_device
+    def record():
+        _save_device(identity, root, trash, report)
+        save_json(receipt, report)
     temporary = None
     temporary_owned = False
     try:
         _volume_guard(identity)
         trash.mkdir(parents=True, exist_ok=False)
+        record()
+        if photo_dependencies:
+            from .publish import _copy_verified
+            for item in photo_dependencies:
+                destination = trash / item['relative']
+                _volume_guard(identity); _plain(item['source'], root); _plain(destination, root)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                _copy_verified(item['source'], destination, item, root, lambda: _volume_guard(identity))
         if music_before is not None:
             backup = trash / 'LIBRARY.PDB.before'
             _write_verified(backup, music_before, 'Music index backup verification failed')
@@ -546,7 +816,13 @@ def _remove(identity, items):
         if remaining != entries:
             backup = trash / 'INDEX.VID.before'
             _plain(backup, root)
-            _write_verified(backup, before, 'Video catalog backup verification failed')
+            backup_temporary = trash / ('I' + token[:7].upper() + '.TMP')
+            _plain(backup_temporary, root)
+            _write_verified(backup_temporary, before, 'Video catalog backup verification failed')
+            _volume_guard(identity)
+            os.replace(backup_temporary, backup)
+            if backup.read_bytes() != before:
+                raise OSError('Video catalog backup readback failed')
             report['catalog_backup'] = str(backup)
             save_json(receipt, report)
             temporary = catalog.with_name('I' + token[:7].upper() + '.TMP')
@@ -629,7 +905,7 @@ def _remove(identity, items):
         remaining_kinds = set()
         if report['requires_update']:
             manager.refresh(identity)
-            remaining_kinds = {row['kind'] for row in _removal_items(root).values()
+            remaining_kinds = {row['kind'] for row in _removal_items(root, allow_video_error=allow_video_error).values()
                                if row['category'] == 'original'}
         empty = [kind for kind in report['requires_update'] if kind not in remaining_kinds]
         report['empty_folders'] = empty
@@ -639,6 +915,7 @@ def _remove(identity, items):
             report['summary'] += '. Update ' + ', '.join(report['requires_update']) + ' to rebuild its library.'
         if empty:
             report['summary'] += ' Empty playback libraries were also moved to Trash.'
+        record()
         return report
     except Exception as error:
         report['error'] = str(error)
