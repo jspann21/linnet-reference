@@ -182,13 +182,21 @@ def _video_readiness(inventory, published, identity=None, state=None, verified=N
         return 'Needs update'
     # A computer import can have only its published package on the iPod. It
     # still needs a stored digest and a readback, even with no source row.
+    saved_outputs = {}
+    if ready:
+        for saved in video_files.values():
+            if not isinstance(saved, dict):
+                continue
+            outputs = saved.get('outputs')
+            if not isinstance(outputs, list):
+                continue
+            for output in outputs:
+                if (isinstance(output, (list, tuple)) and len(output) == 2 and
+                        isinstance(output[0], str) and root is not None):
+                    saved_outputs.setdefault(str(root / output[0]).casefold(), output)
     for row in ready:
-        matches = [output for saved in video_files.values() if isinstance(saved, dict)
-                   for output in (saved.get('outputs') if isinstance(saved.get('outputs'), list) else [])
-                   if isinstance(output, (list, tuple)) and len(output) == 2
-                   and isinstance(output[0], str) and root is not None
-                   and str(root / output[0]).casefold() == row['path'].casefold()]
-        if not matches or not media._outputs_match(root, [matches[0]], verified=verified):
+        output = saved_outputs.get(row['path'].casefold())
+        if output is None or not media._outputs_match(root, [output], verified=verified):
             return 'Needs update'
     # Scan and library rows already carry absolute device paths. Recheck each
     # source without following a link that appeared since traversal.
