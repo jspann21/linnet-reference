@@ -56,7 +56,7 @@ mailbox_bytes = 4096
 usb_vid = 1452
 usb_pid = 4705
 usb_identity_only = true
-sector_bytes = [512, 4096]
+sector_bytes = [512, 2048, 4096]
 board_names = []
 model_numbers = []
 regulatory_models = ["A1238"]
@@ -66,7 +66,7 @@ usb_vid = 4617
 usb_pid = 20555
 model = "LINNET IPOD CLASSIC USB Device"
 friendly_name = "LINNET IPOD CLASSIC"
-sector_bytes = [512, 4096]
+sector_bytes = [512, 2048, 4096]
 
 [installer]
 enabled = false
