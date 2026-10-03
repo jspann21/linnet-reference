@@ -572,19 +572,19 @@ int ln_storage_async_poll_deferred(uint32_t ticket,uint32_t *transferred){
     int result=ln_storage_async_poll(ticket,transferred);
     --deferred_runtime_poll_depth;return result;
 }
-static int storage_quiesce(bool chainload){
+static int storage_quiesce(bool image_handoff){
     if(locked||pending||ln_storage_busy())return 0;
     struct ln_block_info info;ln_block_snapshot(&info);
     if(!info.ready)return !info.quarantined&&!found;
     bool keep_awake=false;
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_BOOT)
-    if(chainload){
+    if(image_handoff){
         struct ln_ata_state media;ln_ata_state_snapshot(&media);
         /* The OS will mount the same rotating disk immediately after handoff. */
         keep_awake=media.media_kind==LN_ATA_MEDIA_ROTATING;
     }
 #else
-    (void)chainload;
+    (void)image_handoff;
 #endif
     uint32_t deadline=ln_time_us()+30000000u;int result;
     do{
@@ -595,7 +595,7 @@ static int storage_quiesce(bool chainload){
     return result==1;
 }
 int ln_storage_quiesce(void){return storage_quiesce(false);}
-int ln_storage_chainload_quiesce(void){return storage_quiesce(true);}
+int ln_storage_handoff_quiesce(void){return storage_quiesce(true);}
 int ln_storage_resume(void){return ln_block_resume();}
 #if !defined(LINNET_PROFILE_RELEASE)
 int ln_storage_maintenance_begin(void){
@@ -964,7 +964,7 @@ void ln_storage_boot(void){
     if(!ln_recovery_chainload(0,scratch+128,info.payload_size,info.load_address,info.entry_address,
        info.build_id,updater.image[slot].sha256,ln_recovery_generation()+1u))error=403;
 #else
-    if(!ln_storage_chainload_quiesce()||!ln_platform_audio_idle()){handoff[0]=0;error=403;return;}
+    if(!ln_storage_handoff_quiesce()||!ln_platform_audio_idle()){handoff[0]=0;error=403;return;}
     ln_core_watchdog_disarm();ln_platform_quiesce();
     if(!ln_platform_dma_idle()){handoff[0]=0;ln_core_watchdog_arm();error=403;return;}
     (void)ln_platform_enter(scratch+128,info.payload_size,info.load_address,info.entry_address);

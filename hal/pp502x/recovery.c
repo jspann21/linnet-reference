@@ -316,7 +316,7 @@ static int recovery_quiesce(void *context, bool chainload)
 {
     (void)context;
     #if defined(LINNET_STORAGE)
-    if (!(chainload?ln_storage_chainload_quiesce():ln_storage_quiesce())) return 0;
+    if (!(chainload?ln_storage_handoff_quiesce():ln_storage_quiesce())) return 0;
     #else
     (void)chainload;
     #endif
