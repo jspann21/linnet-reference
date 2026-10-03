@@ -611,6 +611,15 @@ bool ln_m25_coprocessor_control(uint32_t command){
 bool ln_m25_coprocessor_active(void){return vc.fs_canceling||(vc.phase!=IDLE&&vc.phase!=RESTORED&&vc.phase!=FAILED);}
 uint32_t ln_m25_coprocessor_deadline(uint32_t now){
     if(!ln_m25_coprocessor_active())return now+200000u;
+    /* Both bus power transitions only act when their 50 ms timer expires.
+     * The display wait path still wakes the executive every millisecond. */
+    if(vc.phase==POWER_OFF||vc.phase==POWER_ON){
+        if(vc.fs_canceling)return now;
+#if !defined(LINNET_PROFILE_RELEASE)
+        if(fault_mode)return now;
+#endif
+        return (int32_t)(vc.deadline-now)>0?vc.deadline:now;
+    }
     /* Poll an empty BCM request ring at the LCD wait cadence only after
      * startup, with no host work and a full PCM reserve. IRQs still wake us. */
     if(vc.phase!=PLAYER_SETTLE||!vc.normal||vc.command_index!=8u||vc.control||
