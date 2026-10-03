@@ -21,7 +21,7 @@ def mark_control_footer(scene, footer=None):
             place(hints[0], *footer)
         return
     if sid not in ('music', 'music-queue', 'music-sound', 'music-search',
-                   'video-settings', 'video-output'):
+                   'video-settings', 'video-output', 'files'):
         return
     for node in scene['nodes']:
         if node['kind'] == 3 and (sid != 'music-search' or node['text'] == 'Search controls'):
@@ -96,23 +96,27 @@ def apply_layout(scenes, theme):
                 if node['kind'] == 11:
                     place(node, 0, 212 if style == 'blueprint' else 0, 320, 28)
             continue
-        if sid in ('music', 'music-queue', 'music-sound', 'themes', 'sleep-timer', 'clock-edit', 'video-settings'):
-            footer = 34 if sid in ('sleep-timer', 'clock-edit') else 22
-            listing['h'] = ((h - footer - 8) // row) * row
+        if sid in ('music', 'music-queue', 'music-sound', 'themes', 'sleep-timer', 'clock-edit', 'video-settings', 'files'):
+            footer = 28 if sid in ('sleep-timer', 'clock-edit') else 14
+            field_row = 24 if style == 'graphite' else max(18, fh + 3)
+            step = field_row if sid == 'clock-edit' else row
+            listing['h'] = ((h - footer - 4) // step) * step
             for node in texts:
                 place(node, x, bottom - footer, w, footer)
                 node['flags'] = WRAP
         elif sid == 'games':
-            listing['h'] = ((h - 74) // row) * row
+            # Menu rows use the theme metric, unlike VirtualList rows.
+            step = 46 if style == 'blueprint' else theme['metrics']['row_height']
+            listing['h'] = ((h - 18) // step) * step
             for node in texts:
                 if node['text'] == 'Game description':
-                    place(node, x, bottom - 64, w, 38); node['flags'] = WRAP
+                    place(node, x, bottom - 14, w, 14); node['flags'] = 64
                 else:
-                    place(node, x, bottom - 22, w, 22); node['flags'] = 64
+                    node['flags'] |= 2
         elif sid == 'music-search':
             place(texts[0], x, y, w, 22)
-            place(listing, x, y + 30, w - 12, ((h - 60) // row) * row)
-            place(texts[1], x, bottom - 24, w, 24)
+            place(listing, x, y + 26, w - 12, ((h - 44) // row) * row)
+            place(texts[1], x, bottom - 14, w, 14)
             texts[1]['flags'] = WRAP
         elif sid in ('display', 'battery', 'shutdown'):
             place(listing, x, y, w, row * (3 if sid == 'shutdown' else 2 if sid == 'display' else 1))
@@ -157,15 +161,15 @@ def apply_layout(scenes, theme):
             ])
         elif sid == 'about':
             art = next(n for n in nodes if n['kind'] == 17)
-            ah = min(64, max(32, h // 3))
+            ah = min(40, max(32, h // 5))
             aw = ah * 68 // 104
             place(art, x + 4, y + 2, aw, ah)
-            place(texts[0], x + aw + 16, y + 7, w - aw - 20, 24)
-            place(texts[1], x + aw + 16, y + 34, w - aw - 20, 22)
+            place(texts[0], x + aw + 16, y + (ah - fh) // 2, w - aw - 20, fh + 2)
+            texts[1]['flags'] |= 2
             place(next(n for n in nodes if n['kind'] == 10), x + 4, y + ah + 7, w - 8, 7)
-            list_y = y + ah + 21
-            place(listing, x, list_y, w - 12, max(row, ((bottom - 20 - list_y) // row) * row))
-            place(texts[2], x + 4, bottom - 19, w - 8, 18)
+            list_y = y + ah + 18
+            place(listing, x, list_y, w - 12, max(row, ((bottom - 18 - list_y) // row) * row))
+            place(texts[2], x + 4, bottom - 14, w - 8, 14); texts[2]['flags'] = 64
             if bars: place(bars[0], x + w - 8, list_y, 8, listing['h'])
         elif sid == 'photos-grid':
             for node in texts:
@@ -189,7 +193,7 @@ def apply_layout(scenes, theme):
         for bar in bars:
             if listing:
                 place(bar, x + w - 4, listing['y'], 4, listing['h'])
-        mark_control_footer(scene, (x, bottom - 22, w, 22))
+        mark_control_footer(scene, (x, bottom - 14, w, 14))
         scene['count'] = len(nodes)
     return result
 
@@ -232,7 +236,7 @@ def apply_ipod_classic(scenes, theme):
             place(listing, 0, 24, 160, 216)
             if scroll:
                 scroll['flags'] |= 2
-        elif sid in ('music', 'music-queue', 'music-sound') and listing:
+        elif sid in ('music', 'music-queue', 'music-sound', 'files', 'video-settings') and listing:
             place(listing, 0, 24, 312 if scroll else 320, 189)
             if scroll:place(scroll, 312, 24, 8, 189)
             for n in texts:
@@ -272,6 +276,15 @@ def apply_ipod_classic(scenes, theme):
             place(scroll, 312, 24, 8, 189)
             for n in texts:
                 place(n, 8, 217, 304, fh); n['flags'] = 0
+        elif sid == 'games' and listing:
+            list_h = ((216 - fh - 8) // row) * row
+            place(listing, 0, 24, 312, list_h)
+            place(scroll, 312, 24, 8, list_h)
+            for n in texts:
+                if n['text'] == 'Game description':
+                    place(n, 8, 240 - fh - 4, 304, fh); n['flags'] = 64
+                else:
+                    n['flags'] |= 2
         elif sid == 'clock' and listing:
             clock = next(n for n in texts if n['text'] == 'System clock')
             source = next(n for n in texts if n['text'] == 'Clock source')
