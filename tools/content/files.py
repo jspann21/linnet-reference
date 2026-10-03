@@ -603,8 +603,10 @@ def compile_files(root, package, cache, *, width=0, height=0, text_columns=24, t
                     if directory:
                         folders.append((source, len(records)))
                     else:
-                        key = hashlib.sha256(source.relative_to(root).as_posix().encode('utf-8')).digest()
-                        preview = videos.get(key)
+                        preview = None
+                        if videos:
+                            key = hashlib.sha256(source.relative_to(root).as_posix().encode('utf-8')).digest()
+                            preview = videos.get(key)
                         if not preview and index in futures:
                             pending_previews.append((source, row, futures[index]))
                             if len(pending_previews) >= 64:
