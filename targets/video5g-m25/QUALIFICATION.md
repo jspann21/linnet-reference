@@ -31,7 +31,7 @@ do not establish reliable USB operation.
 
 Charging current/source transitions, dock output, release-image operation, and
 long-duration or large-library workloads remain open. The complete actionable
-list is [BRINGUP.md](BRINGUP.md); the native video boundary is in
+list is the [Linnet TODO](../../docs/roadmap.md); the native video boundary is in
 [NATIVE_VIDEO.md](NATIVE_VIDEO.md).
 
 Keep exact build identities, media inventories, device identifiers, images,

@@ -6,8 +6,8 @@ capacities and board revisions need their own identity and memory qualification.
 
 Native startup, Link, storage, audio, photos, games, and native video have been
 exercised. Intermittent Apple Disk Mode USB failures and remaining physical/release
-checks are tracked in [qualification](QUALIFICATION.md) and
-[bring-up work](BRINGUP.md).
+checks are recorded in [qualification](QUALIFICATION.md) and tracked in the
+[Linnet TODO](../../docs/roadmap.md).
 
 ## Source ownership
 

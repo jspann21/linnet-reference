@@ -28,7 +28,7 @@ reboot fallback when restoration failed.
 
 This does not establish all-file compatibility, long-duration A/V quality, or
 recovery from every external-bus stall. See [qualification](QUALIFICATION.md)
-and [remaining checks](BRINGUP.md).
+and the [Linnet TODO](../../docs/roadmap.md).
 
 ## References
 
