@@ -278,7 +278,7 @@ def preparation_option(kind, identity, photo_dimension=640, music_verification='
         art_version = ('art-native130-playback160-exact-np-bridge1' if target.get('presentation_profile') == 'color320' else
                        'art9' if target['media_art_side'] == 128 else
                        'art8' if target['lcd_format'] == 'gray2-horizontal' else 'art7')
-        return f"{music_verification}-aac-seek1-duration-search-prefix2-browse-id-names-album-owner2-title-order1-retail2-recent-album-gain-icc-srgb1-{art_version}-{identity['target_id']}"
+        return f"{music_verification}-aac-seek1-duration-search-prefix2-browse-id-names-album-owner2-title-order1-retail2-recent-album-gain-icc-srgb1-audio-compat1-{art_version}-{identity['target_id']}"
     if kind == 'Notes':
         from .notes import _display_recipe
         return f"target-wrap2-{_display_recipe(identity['target_id'])[2]}"

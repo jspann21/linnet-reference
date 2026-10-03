@@ -43,6 +43,51 @@ UNKNOWN_GAIN = -0x80000000
 CODECS = {"pcm_le": 1, "pcm_be": 2, "float_le": 3, "float_be": 4,
           "mp3": 16, "aac": 17, "alac": 18, "flac": 19,
           "vorbis": 20, "opus": 21, "wavpack": 22, "unknown": 255}
+PLAYBACK_RATES = {8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000}
+HIGH_PLAYBACK_RATES = PLAYBACK_RATES | {88200, 96000}
+CODEC_NAMES = {number: name for name, number in CODECS.items()}
+PLAYABLE_CODECS = frozenset(CODECS[key] for key in ('pcm_le', 'pcm_be', 'mp3', 'aac', 'alac', 'flac', 'vorbis'))
+
+
+def compatibility_issue(metadata: dict, target: str | None = None) -> str | None:
+    """Return a firmware playback limitation without decoding the source again."""
+    codec = metadata['codec']
+    name = CODEC_NAMES.get(codec, 'unknown')
+    if codec not in PLAYABLE_CODECS:
+        return f'{name} has no Linnet decoder; convert this unprotected file to AAC, MP3 or PCM WAV'
+    channels, rate, bits = metadata['channels'], metadata['rate'], metadata['bits']
+    if channels > 2:
+        return f'{channels} channels exceed stereo playback; downmix to mono or stereo'
+    rates = (HIGH_PLAYBACK_RATES if target is None or
+             TARGETS[target].get('audio_codec', 'wm8975') == 'wm8975' else PLAYBACK_RATES)
+    if rate not in rates:
+        return f'{rate} Hz is unavailable on this target; resample to 44100 or 48000 Hz'
+    if codec in (CODECS['pcm_le'], CODECS['pcm_be']):
+        container = metadata.get('container')
+        if container is None:
+            return 'PCM container needs verification before playback'
+        if container != ('wav' if codec == CODECS['pcm_le'] else 'aiff'):
+            return f'{container} is unavailable in firmware; convert to standard PCM WAV'
+    if codec == CODECS['flac']:
+        minimum, block, frame = (metadata.get(key) for key in
+                                 ('min_blocksize', 'max_blocksize', 'max_framesize'))
+        if minimum is None or block is None or frame is None:
+            return 'FLAC frame bounds need verification before playback'
+        if minimum < 16 or block < minimum or block > 4608 or frame > 65536:
+            return 'FLAC frame exceeds firmware buffers; convert to standard PCM WAV'
+        if bits and not 8 <= bits <= 24:
+            return f'{bits}-bit FLAC exceeds the decoder limit; convert to 16 or 24 bit audio'
+    if codec == CODECS['alac'] and bits and bits != 16:
+        return f'{bits}-bit ALAC exceeds the decoder limit; convert to 16 bit audio'
+    if codec == CODECS['alac'] and not metadata.get('alac_frame_ok'):
+        return 'ALAC frame size needs conversion or verification (4096 samples maximum)'
+    if codec == CODECS['aac'] and metadata.get('profile') not in ('LC', 'AAC LC'):
+        return f"AAC {metadata.get('profile') or 'profile'} needs conversion or verification as AAC LC"
+    if codec == CODECS['aac'] and metadata.get('container') == 'mp4' and not metadata.get('aac_config_ok'):
+        return 'AAC frame configuration needs conversion or verification (1024 samples required)'
+    if codec == CODECS['aac'] and metadata.get('container') == 'adts' and not metadata.get('adts_header_ok'):
+        return 'AAC ADTS frame header is unavailable in firmware; convert to standard AAC LC'
+    return None
 EXTENSIONS = {".wav", ".aif", ".aiff", ".aifc", ".mp3", ".m4a", ".m4b",
               ".aac", ".flac", ".flc", ".ogg", ".opus", ".ops", ".wv"}
 COVER_NAMES = ("cover.png", "cover.jpg", "folder.jpg", "Folder.jpg")
@@ -286,7 +331,8 @@ def _pcm(path: Path, cancelled=lambda: False) -> dict:
                     raise ValueError("invalid WAV format chunk")
                 raw = stream.read(length)
                 encoding, channels, rate, byte_rate, align, bits = struct.unpack_from("<HHIIHH", raw)
-                if encoding == 0xFFFE:
+                extensible = encoding == 0xFFFE
+                if extensible:
                     if length < 40 or raw[26:40] != bytes.fromhex("000000001000800000aa00389b71"):
                         raise ValueError("unsupported WAV extensible format")
                     encoding = struct.unpack_from("<H", raw, 24)[0]
@@ -299,7 +345,8 @@ def _pcm(path: Path, cancelled=lambda: False) -> dict:
                 if encoding == 3 and bits != 32:
                     raise ValueError("unsupported WAV float width")
                 result.update(codec=CODECS["pcm_le" if encoding == 1 else "float_le"],
-                              channels=channels, rate=rate, bits=bits, align=align)
+                              channels=channels, rate=rate, bits=bits, align=align,
+                              container='wav-extensible' if extensible else 'wav')
             elif aiff and kind == b"COMM":
                 if length < 18 or length > 65536 or "codec" in result:
                     raise ValueError("invalid AIFF common chunk")
@@ -314,7 +361,8 @@ def _pcm(path: Path, cancelled=lambda: False) -> dict:
                     raise ValueError("unsupported AIFF float width")
                 result.update(codec=CODECS[codec], channels=channels, frames=frames,
                               rate=_extended(raw[8:18]), aiff_rate_exact=True,
-                              bits=bits, align=channels * ((bits + 7) // 8))
+                              bits=bits, align=channels * ((bits + 7) // 8),
+                              container='aifc' if top[8:] == b'AIFC' else 'aiff')
             elif (wave and kind == b"data") or (aiff and kind == b"SSND"):
                 if have_data:
                     raise ValueError("multiple audio data chunks")
@@ -357,6 +405,29 @@ def _pcm(path: Path, cancelled=lambda: False) -> dict:
         if result["channels"] > 8 or result["rate"] > 384000:
             raise ValueError("audio channel/sample-rate bound")
         return result
+
+
+def _flac_bounds(path: Path) -> dict:
+    with path.open('rb') as stream:
+        header = stream.read(18)
+    if (len(header) != 18 or header[:4] != b'fLaC' or header[4] & 0x7f or
+            header[5:8] != b'\x00\x00\x22'):
+        raise ValueError('FLAC STREAMINFO is not at the start of the file')
+    return dict(min_blocksize=int.from_bytes(header[8:10], 'big'),
+                max_blocksize=int.from_bytes(header[10:12], 'big'),
+                max_framesize=int.from_bytes(header[15:18], 'big'))
+
+
+def _adts_header_ok(path: Path) -> bool:
+    with path.open('rb') as stream:
+        b = stream.read(7)
+    if len(b) != 7:
+        return False
+    channels = ((b[2] & 1) << 2) | (b[3] >> 6)
+    frame_bytes = ((b[3] & 3) << 11) | (b[4] << 3) | (b[5] >> 5)
+    return (b[0] == 255 and b[1] & 0xf6 == 0xf0 and b[1] & 1 == 1 and
+            b[2] >> 6 == 1 and (b[2] >> 2 & 15) < 13 and 1 <= channels <= 2 and
+            b[6] & 3 == 0 and 8 <= frame_bytes <= path.stat().st_size)
 
 
 def _decoded_frames(path: Path, executable: str, *, recover: bool = False,
@@ -508,7 +579,7 @@ def _probe(path: Path, executable: str, *, exact_frames: bool = True,
            cancelled=lambda: False) -> dict:
     # ffprobe is optional host metadata tooling, never a native decoder substitute.
     command = [executable, "-v", "error", "-show_entries",
-               "stream=codec_name,codec_type,sample_rate,channels,bits_per_raw_sample:format_tags:stream_tags",
+               "stream=codec_name,codec_type,profile,sample_rate,channels,bits_per_raw_sample:format_tags:stream_tags",
                "-of", "json"]
     if not exact_frames:
         command += ["-probesize", "262144", "-analyzeduration", "1000000"]
@@ -552,7 +623,17 @@ def _probe(path: Path, executable: str, *, exact_frames: bool = True,
     bits = _number(audio.get("bits_per_raw_sample"))
     if bits > 64:
         raise ValueError("compressed source bit-depth bound")
-    return dict(codec=codec, channels=channels, rate=rate, bits=bits,
+    mp4 = codec in (CODECS['aac'], CODECS['alac']) and path.suffix.lower() in ('.m4a', '.m4b')
+    verified = _quick_metadata(path, cancelled) if mp4 else None
+    config = ({key: verified[key] for key in ('container', 'profile', 'aac_config_ok', 'alac_frame_ok')
+               if key in verified} if verified and verified['codec'] == codec else
+              {'container': 'mp4'} if mp4 else {})
+    if codec == CODECS['aac'] and path.suffix.lower() == '.aac':
+        config.update(container='adts', adts_header_ok=_adts_header_ok(path))
+    profile = config.pop('profile', audio.get('profile'))
+    return dict(codec=codec, channels=channels, rate=rate, bits=bits, profile=profile,
+                **config,
+                **(_flac_bounds(path) if codec == CODECS['flac'] else {}),
                 frames=_decoded_frames(path, executable, codec=codec, cancelled=cancelled) if exact_frames else 0, data_offset=0,
                  data_bytes=path.stat().st_size, tags=tags)
 
@@ -653,6 +734,74 @@ class _CancellableReader:
         return self.stream.readinto(*args)
 
 
+def _mp4_audio_config(track, reader, codec: str) -> dict:
+    """Read bounded sample-entry fields that Mutagen does not expose."""
+    flag = 'aac_config_ok' if codec == 'aac' else 'alac_frame_ok'
+    unsupported = {flag: False}
+    atom = track[b'mdia', b'minf', b'stbl', b'stsd']
+    if atom.datalength > 4096:
+        return unsupported
+    ok, data = atom.read(reader)
+    if not ok or len(data) < 44 or struct.unpack_from('>I', data, 4)[0] != 1:
+        return unsupported
+    entry_size, entry_type = struct.unpack_from('>I4s', data, 8)
+    if entry_size != len(data) - 8 or entry_type != (b'mp4a' if codec == 'aac' else b'alac'):
+        return unsupported
+    extra = data[44:]
+    wanted = b'esds' if codec == 'aac' else b'alac'
+    body = None
+    while len(extra) >= 8:
+        size, kind = struct.unpack_from('>I4s', extra)
+        if size < 8 or size > len(extra):
+            return unsupported
+        if kind == wanted and body is None:
+            body = extra[8:size]
+        extra = extra[size:]
+    if body is None or extra:
+        return unsupported
+    if codec == 'alac':
+        frames = int.from_bytes(body[4:8], 'big') if len(body) >= 8 else 0
+        return {'alac_frame_ok': 0 < frames <= 4096}
+    if len(body) < 4 or body[:4] != b'\0\0\0\0':
+        return unsupported
+    data, at = body, 4
+    def descriptor(expected, at):
+        if at >= len(data) or data[at] != expected:
+            raise ValueError('unexpected MP4 audio descriptor')
+        at += 1
+        length = 0
+        for _ in range(4):
+            if at >= len(data):
+                raise ValueError('truncated MP4 audio descriptor')
+            byte = data[at]; at += 1
+            length = (length << 7) | (byte & 127)
+            if not byte & 128:
+                break
+        else:
+            raise ValueError('oversized MP4 audio descriptor')
+        if length > len(data) - at:
+            raise ValueError('truncated MP4 audio descriptor')
+        return at, at + length
+    try:
+        es, es_end = descriptor(3, at)
+        flags = data[es + 2]
+        at = es + 3 + (2 if flags & 128 else 0)
+        if flags & 64:
+            at += 1 + data[at]
+        if flags & 32:
+            at += 2
+        config, config_end = descriptor(4, at)
+        asc, end = descriptor(5, config + 13)
+        if config_end > es_end or end > config_end:
+            return unsupported
+        raw = data[asc:end]
+    except (IndexError, ValueError):
+        return unsupported
+    return {'aac_config_ok': (2 <= len(raw) <= 64 and raw[0] >> 3 == 2 and
+                              ((raw[0] & 7) << 1 | raw[1] >> 7) < 13 and
+                              1 <= (raw[1] >> 3 & 15) <= 2 and raw[1] & 7 == 0)}
+
+
 def _quick_metadata(path: Path, cancelled=lambda: False, *, include_cover=False) -> dict | None:
     """Use optional in-process tag readers for well identified containers."""
     try:
@@ -692,12 +841,16 @@ def _quick_metadata(path: Path, cancelled=lambda: False, *, include_cover=False)
             codec_name = {"mp4a.40.2": "aac", "alac": "alac"}.get(audio.info.codec)
             from mutagen.mp4 import Atoms
             atoms = Atoms(reader)
+            tracks = list(atoms[b'moov'].findall(b'trak'))
             audio_tracks = 0
-            for track in atoms[b'moov'].findall(b'trak'):
+            audio_track = None
+            for track in tracks:
                 ok, handler = track[b'mdia', b'hdlr'].read(reader)
                 if not ok:
                     return None
-                audio_tracks += handler[8:12] == b'soun'
+                if handler[8:12] == b'soun':
+                    audio_tracks += 1
+                    audio_track = track
             if audio_tracks != 1:
                 return None
         if codec_name is None:
@@ -723,7 +876,15 @@ def _quick_metadata(path: Path, cancelled=lambda: False, *, include_cover=False)
         for key in ("track", "disc"):
             if key + "number" in tags:
                 tags[key] = tags[key + "number"]
+        mp4_config = {}
+        if codec_name in ('aac', 'alac'):
+            flag = 'aac_config_ok' if codec_name == 'aac' else 'alac_frame_ok'
+            mp4_config = {'container': 'mp4', **(_mp4_audio_config(audio_track, reader, codec_name)
+                                              if len(tracks) == 1 else {flag: False})}
         result = dict(codec=CODECS[codec_name], channels=channels, rate=rate, bits=bits,
+                      **(_flac_bounds(path) if codec_name == 'flac' else {}),
+                      **({'profile': getattr(info, 'codec_description', None)} if codec_name == 'aac' else {}),
+                      **mp4_config,
                       frames=_quick_frames(path, info, codec_name, rate, cancelled, stream), data_offset=0,
                       data_bytes=path.stat().st_size, tags=tags)
         if include_cover and type(audio).__name__ == 'EasyMP3':
@@ -814,6 +975,8 @@ class _MetadataCache:
         suffix = Path(relative).suffix.lower()
         pcm = suffix in (".wav", ".aif", ".aiff", ".aifc")
         if pcm:
+            if value.get('container') not in ('wav', 'wav-extensible', 'aiff', 'aifc'):
+                return False
             # Older AIFF cache entries may contain a rounded fractional rate.
             if suffix != '.wav' and value.get('aiff_rate_exact') is not True:
                 return False
@@ -826,6 +989,18 @@ class _MetadataCache:
                 return False
         elif (value["codec"] < 16 or value["data_offset"] != 0 or
               value["data_bytes"] != stat.st_size or value["frames"] == 0):
+            return False
+        if value['codec'] == CODECS['aac'] and not isinstance(value.get('profile'), str):
+            return False
+        if value['codec'] == CODECS['aac'] and value.get('container') == 'mp4' and type(value.get('aac_config_ok')) is not bool:
+            return False
+        if value['codec'] == CODECS['aac'] and value.get('container') == 'adts' and type(value.get('adts_header_ok')) is not bool:
+            return False
+        if value['codec'] == CODECS['alac'] and type(value.get('alac_frame_ok')) is not bool:
+            return False
+        if value['codec'] == CODECS['flac'] and not all(
+                type(value.get(key)) is int and 0 <= value[key] <= 0xFFFFFF
+                for key in ('min_blocksize', 'max_blocksize', 'max_framesize')):
             return False
         tags = value.get("tags")
         return (isinstance(tags, dict) and all(isinstance(k, str) and isinstance(v, str)
@@ -1695,6 +1870,10 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     for number, path, resolved, before, metadata, cached, prefetched_cover in _metadata_rows(
             paths, source, ffprobe, device_root is not None, cache, bypass_cache,
             metadata_pool, progress, cancelled, prefetch_cover, needs_embedded):
+        issue = compatibility_issue(metadata, target)
+        if issue:
+            from . import SourceError
+            raise SourceError(f'{path}: {issue}', path)
         location = None
         if device_root is not None:
             location = _device_media_path(path, device_root, alias_cache, canonical=resolved)

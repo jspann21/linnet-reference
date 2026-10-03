@@ -332,6 +332,8 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
         path = Path(row['path'])
         if path.is_relative_to(root) and path.relative_to(root).as_posix().casefold() in excluded:
             row['status'] = 'Excluded from preparation'
+    if any(row['kind'] == 'Music' and row['status'].startswith('Needs conversion:') for row in rows):
+        readiness['Music'] = 'Needs conversion'
     from . import apple_os
     apple = apple_os.inspect(identity, records_by_kind=records)
     _remember_verified(identity, verified, verified_before)

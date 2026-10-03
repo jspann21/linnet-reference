@@ -206,10 +206,12 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
     result = catalog_errors
     music_records = records_by_kind['Music']
     metadata = _music_metadata(root, music_records=music_records,
-                               music_inodes=getattr(records_by_kind, 'inodes', None))
+                               music_inodes=getattr(records_by_kind, 'inodes', None),
+                               target=identity['target_id'])
     from .retail_media import metadata as retail_metadata, images as retail_images
     retail = retail_metadata(root, tracks_rows=retail_tracks)
-    source_metadata = _source_music_metadata(root, music_records, cache_root(identity), retail, metadata)
+    source_metadata = _source_music_metadata(root, music_records, cache_root(identity), retail, metadata,
+                                             identity['target_id'])
     for kind in manager.KINDS:
         allowed = manager.extensions(kind)
         records = records_by_kind[kind]
@@ -232,6 +234,7 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
                     tags['artwork'] = indexed['artwork']
                 result.append(_row('original', kind, tags.get('title') or path.name, path,
                     ('Not supported on this iPod' if kind == 'Videos' and path.suffix.lower() not in source_video_extensions
+                     else 'Needs conversion: ' + tags['compatibility_issue'] if tags.get('compatibility_issue')
                      else 'Indexed on iPod' if indexed else 'Source on iPod'), info=info,
                     removable=not managed,
                     artist=tags.get('artist', ''), album=tags.get('album', ''), genre=tags.get('genre', ''),
@@ -284,8 +287,8 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
     return result
 
 
-def _source_music_metadata(root, records, cache_root, retail=None, published=None):
-    from .music import _MetadataCache, _quick_metadata, _pcm, _number, _album_artist, EXTENSIONS
+def _source_music_metadata(root, records, cache_root, retail=None, published=None, target=None):
+    from .music import _MetadataCache, _quick_metadata, _pcm, _number, _album_artist, compatibility_issue, EXTENSIONS
     records = [(path, info) for path, info in records if path.suffix.lower() in EXTENSIONS]
     if not records:
         return {}
@@ -303,12 +306,13 @@ def _source_music_metadata(root, records, cache_root, retail=None, published=Non
                 key = str(path).casefold()
                 saved = (retail or {}).get(key, {})
                 value = cache.get(root, relative, before, prefetched=prefetched)
-                if value is None and saved:
+                needs_check = 'verification' in ((published or {}).get(key, {}).get('compatibility_issue') or '')
+                if value is None and saved and not needs_check:
                     result[key] = dict(saved,
                         album_artist=_album_artist({k: str(v) for k, v in saved.items()}, saved.get('artist', '')),
                         artwork=saved.get('artwork') or str(path))
                     continue
-                if value is None and key in (published or {}):
+                if value is None and key in (published or {}) and not needs_check:
                     # The verified on-device database already carries title,
                     # credits, duration and artwork. A new host cache should
                     # not reopen every audio file merely to show the library.
@@ -333,7 +337,8 @@ def _source_music_metadata(root, records, cache_root, retail=None, published=Non
                     album=tags.get('album', ''), genre=tags.get('genre', ''),
                     album_artist=_album_artist(tags, artist), track=_number(tags.get('track')),
                     disc=_number(tags.get('disc')), duration=value['frames'] / value['rate'],
-                    artwork=saved.get('artwork') or str(path))
+                    artwork=saved.get('artwork') or str(path),
+                    compatibility_issue=compatibility_issue(value, target))
             except (OSError, ValueError, TypeError, KeyError, struct.error):
                 continue
     finally:
@@ -341,9 +346,9 @@ def _source_music_metadata(root, records, cache_root, retail=None, published=Non
     return result
 
 
-def _music_metadata(root, *, music_records=None, music_inodes=None):
+def _music_metadata(root, *, music_records=None, music_inodes=None, target=None):
     """Read the prepared metadata once, without opening individual audio files."""
-    from .music import validate_database, MAX_DATABASE, TRACK
+    from .music import validate_database, compatibility_issue, MAX_DATABASE, TRACK
     database = root / '.LINNET' / 'LIBRARY.PDB'
     _plain(database, root)
     if not database.is_file():
@@ -439,11 +444,17 @@ def _music_metadata(root, *, music_records=None, music_inodes=None):
                 _plain(candidate, root)
                 artwork_paths[art] = str(candidate) if candidate.is_relative_to(root / '.LINNET' / 'ART') else ''
             artwork = artwork_paths.get(art, '')
-            frames, rate = struct.unpack_from('<QI', data, offset + index * width + 32)
+            record_at = offset + index * width
+            frames, rate = struct.unpack_from('<QI', data, record_at + 32)
+            channels, bits = struct.unpack_from('<HH', data, record_at + 44)
+            codec = struct.unpack_from('<I', data, record_at + 48)[0]
             track = struct.unpack_from('<I', data, offset + index * width + 80)[0]
             disc = struct.unpack_from('<I', data, offset + index * width + 84)[0]
             result[str(path).casefold()] = dict(title=title, artist=artist, album=album, genre=genre,
-                artwork=artwork, duration=frames / rate if rate else 0, track=track, disc=disc, album_artist=owners.get(index, artist))
+                artwork=artwork, duration=frames / rate if rate else 0, track=track, disc=disc,
+                album_artist=owners.get(index, artist),
+                compatibility_issue=compatibility_issue(dict(codec=codec, channels=channels,
+                                                              rate=rate, bits=bits), target))
         return result
     except (OSError, ValueError, UnicodeError, struct.error):
         return {}
