@@ -4,7 +4,7 @@ The device reads one 4 KiB page, validates its records, and opens the selected
 short name relative to its live parent handle. It never sorts or recursively
 indexes the disk. Original files are not renamed or rewritten.
 """
-from collections import deque
+from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
@@ -33,6 +33,69 @@ TEXT = {'.txt', '.text', '.md', '.rst', '.log', '.ini', '.cfg', '.toml', '.yaml'
         '.json', '.xml', '.csv', '.nfo', '.c', '.h', '.py', '.js', '.ts', '.tsx', '.css', '.html', '.htm'}
 PREVIEW_DECODE_PIXELS = 32_000_000
 _TEXT_CONTROL_SPACES = dict.fromkeys((*range(32), 127), ' ')
+_NEGATIVE_TEXT_PREVIEWS = OrderedDict()
+_NEGATIVE_TEXT_PREVIEWS_LOCK = threading.Lock()
+_NEGATIVE_TEXT_PREVIEW_LIMIT = 128
+_NEGATIVE_TEXT_PREVIEW_SECONDS = 300
+
+
+def _preview_source_stamp(info):
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _forget_negative_text_preview(key, cached):
+    with _NEGATIVE_TEXT_PREVIEWS_LOCK:
+        if _NEGATIVE_TEXT_PREVIEWS.get(key) == cached:
+            del _NEGATIVE_TEXT_PREVIEWS[key]
+
+
+def _negative_text_preview_hit(source, root, info, key, checkpoint):
+    with _NEGATIVE_TEXT_PREVIEWS_LOCK:
+        cached = _NEGATIVE_TEXT_PREVIEWS.get(key)
+        if cached is None:
+            return False
+        if time.monotonic() >= cached[2]:
+            del _NEGATIVE_TEXT_PREVIEWS[key]
+            return False
+    checkpoint()
+    _plain(source, root)
+    before = source.stat()
+    if ((before.st_size, before.st_mtime_ns) != (info.st_size, info.st_mtime_ns) or
+            _preview_source_stamp(before) != cached[0]):
+        _forget_negative_text_preview(key, cached)
+        return False
+    # FAT timestamps can repeat after a same-size edit. Verify source bytes
+    # before reusing a decision that no native text preview can be made.
+    try:
+        digest = _hash(source, before.st_size)
+    except (OSError, ValueError):
+        _forget_negative_text_preview(key, cached)
+        return False
+    checkpoint()
+    if _preview_source_stamp(source.stat()) != cached[0] or digest != cached[1]:
+        _forget_negative_text_preview(key, cached)
+        return False
+    with _NEGATIVE_TEXT_PREVIEWS_LOCK:
+        if _NEGATIVE_TEXT_PREVIEWS.get(key) == cached:
+            _NEGATIVE_TEXT_PREVIEWS.move_to_end(key)
+    return True
+
+
+def _remember_negative_text_preview(source, info, key, raw, before):
+    try:
+        after = source.stat()
+    except OSError:
+        return
+    if ((after.st_size, after.st_mtime_ns) != (info.st_size, info.st_mtime_ns) or
+            _preview_source_stamp(after) != _preview_source_stamp(before)):
+        return
+    value = (_preview_source_stamp(after), hashlib.sha256(raw).hexdigest(),
+             time.monotonic() + _NEGATIVE_TEXT_PREVIEW_SECONDS)
+    with _NEGATIVE_TEXT_PREVIEWS_LOCK:
+        _NEGATIVE_TEXT_PREVIEWS[key] = value
+        _NEGATIVE_TEXT_PREVIEWS.move_to_end(key)
+        if len(_NEGATIVE_TEXT_PREVIEWS) > _NEGATIVE_TEXT_PREVIEW_LIMIT:
+            _NEGATIVE_TEXT_PREVIEWS.popitem(last=False)
 
 
 class _PreviewDecodeBudget:
@@ -230,6 +293,10 @@ def _preview(source, cache, width, height, columns, recipe, checkpoint, info, ro
     key = hashlib.sha256(f'files-{format_key}:{source_key}:{info.st_size}:{info.st_mtime_ns}:{width}:{height}:{columns}:{recipe[2]}'.encode()).hexdigest()
     output = cache / (key + ('.FIM' if suffix in IMAGES else '.TXT'))
     if not output.exists():
+        negative_key = (os.path.normcase(os.path.abspath(source)),
+                        os.path.normcase(os.path.abspath(output)))
+        if suffix in TEXT and _negative_text_preview_hit(source, root, info, negative_key, checkpoint):
+            return None
         checkpoint()
         # Enumeration rejects links; recheck the complete path immediately
         # before reading source bytes. Cache hits only read the local cache.
@@ -266,6 +333,7 @@ def _preview(source, cache, width, height, columns, recipe, checkpoint, info, ro
         else:
             if info.st_size > 16 * 1024 * 1024:
                 return None  # Native bounded byte/text paging remains available.
+            before = source.stat()
             raw = source.read_bytes()
             encoding = 'utf-16' if raw[:2] in (b'\xff\xfe', b'\xfe\xff') else 'utf-8-sig'
             try:
@@ -273,6 +341,7 @@ def _preview(source, cache, width, height, columns, recipe, checkpoint, info, ro
             except UnicodeError:
                 text = raw.decode('cp1252', errors='replace')
             if '\0' in text:
+                _remember_negative_text_preview(source, info, negative_key, raw, before)
                 return None
             from .notes import _ascii, _display_lines
             text = _ascii(text)
@@ -291,6 +360,7 @@ def _preview(source, cache, width, height, columns, recipe, checkpoint, info, ro
                         checkpoint()
                         next_checkpoint = now + .05
                     if len(data) + columns > 4 * 1024 * 1024:
+                        _remember_negative_text_preview(source, info, negative_key, raw, before)
                         return None
                     data.extend(wrapped.encode('ascii').ljust(columns, b' '))
         checkpoint()
