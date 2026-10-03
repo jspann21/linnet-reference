@@ -1476,56 +1476,87 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
     video_host = 0
     video_conversion_required = False
     if 'Videos' in selected:
-        for job in jobs:
-            source = Path(job['source'])
-            backend = identity['media_profile']['video_backend']
-            details = None
-            if (backend in ('bcm-mp4', 'native-mp4') and
-                    source.suffix.lower() in native_video_extensions(identity)):
-                hint = job.get('_native_details') if no_conversions else None
-                if (isinstance(hint, dict) and type(hint.get('fast_start')) is bool and
-                        hint.get('file_bytes') == job['bytes'] and
-                        _native_check_reusable(job, source, identity['media_profile'])):
-                    details = hint
+        backend = identity['media_profile']['video_backend']
+        native_extensions = native_video_extensions(identity)
+
+        def inspect_host(job, stop):
+            from .native_video import inspect_file
+            try:
+                return inspect_file(job['source'], profile=identity['media_profile'],
+                                    ffprobe=ffprobe, cancelled=stop.is_set)
+            except (OSError, ValueError):
+                return None
+
+        def estimate_jobs(items, futures=None):
+            nonlocal video_bytes, video_host, video_conversion_required
+            for index, job in enumerate(items):
+                source = Path(job['source'])
+                details = None
+                if backend in ('bcm-mp4', 'native-mp4') and source.suffix.lower() in native_extensions:
+                    hint = job.get('_native_details') if no_conversions else None
+                    if (isinstance(hint, dict) and type(hint.get('fast_start')) is bool and
+                            hint.get('file_bytes') == job['bytes'] and
+                            _native_check_reusable(job, source, identity['media_profile'])):
+                        details = hint
+                    elif futures is not None:
+                        details = futures[index].result()
+                    else:
+                        from .native_video import inspect_file
+                        try:
+                            details = inspect_file(source, profile=identity['media_profile'], ffprobe=ffprobe)
+                        except (OSError, ValueError):
+                            pass
+                    native = details is not None
                 else:
-                    from .native_video import inspect_file
-                    try:
-                        details = inspect_file(source, profile=identity['media_profile'], ffprobe=ffprobe)
-                    except (OSError, ValueError):
-                        pass
-                native = details is not None
-            else:
-                native = (no_conversions and
-                          _native_check_reusable(job, source, identity['media_profile']))
-                if not native:
-                    native = _video_is_native(source, identity, ffprobe=ffprobe)
-            encoder = ffmpeg or shutil.which('ffmpeg')
-            if native:
-                if backend in ('bcm-mp4', 'native-mp4'):
-                    converts = (not details['fast_start'] or backend == 'bcm-mp4') and bool(encoder)
-                    video_conversion_required |= converts
-                    direct = no_conversions or not converts
-                else:
-                    direct = True
-                if direct and source.is_relative_to(root):
-                    continue
-                estimate = job['bytes'] if direct else min(0x7fffffff, job['bytes'] * 2)
-                scratch = 0
-            else:
-                video_conversion_required = True
-                duration = _video_duration(source, ffprobe)
-                if backend in ('bcm-mp4', 'native-mp4'):
-                    limit = identity['media_profile']['native_video']['max_video_kbps'] + 256
-                    estimate = min(0x7fffffff, max(job['bytes'] * 3,
-                        math.ceil(duration * limit * 1000 / 8 * 1.25)))
+                    native = (no_conversions and
+                              _native_check_reusable(job, source, identity['media_profile']))
+                    if not native:
+                        native = _video_is_native(source, identity, ffprobe=ffprobe)
+                encoder = ffmpeg or shutil.which('ffmpeg')
+                if native:
+                    if backend in ('bcm-mp4', 'native-mp4'):
+                        converts = (not details['fast_start'] or backend == 'bcm-mp4') and bool(encoder)
+                        video_conversion_required |= converts
+                        direct = no_conversions or not converts
+                    else:
+                        direct = True
+                    if direct and source.is_relative_to(root):
+                        continue
+                    estimate = job['bytes'] if direct else min(0x7fffffff, job['bytes'] * 2)
                     scratch = 0
                 else:
-                    profile = identity['media_profile']
-                    estimate = min(0x7fffffff,
-                        math.ceil(duration * profile['video_fps'] * profile['max_read_sectors'] * 512))
-                    scratch = math.ceil(duration * 44100 * 4) + 32 * 1024 * 1024
-            video_bytes += estimate
-            video_host += estimate * 2 + scratch
+                    video_conversion_required = True
+                    duration = _video_duration(source, ffprobe)
+                    if backend in ('bcm-mp4', 'native-mp4'):
+                        limit = identity['media_profile']['native_video']['max_video_kbps'] + 256
+                        estimate = min(0x7fffffff, max(job['bytes'] * 3,
+                            math.ceil(duration * limit * 1000 / 8 * 1.25)))
+                        scratch = 0
+                    else:
+                        profile = identity['media_profile']
+                        estimate = min(0x7fffffff,
+                            math.ceil(duration * profile['video_fps'] * profile['max_read_sectors'] * 512))
+                        scratch = math.ceil(duration * 44100 * 4) + 32 * 1024 * 1024
+                video_bytes += estimate
+                video_host += estimate * 2 + scratch
+
+        all_jobs = list(jobs)
+        host_checks = [not no_conversions and backend in ('bcm-mp4', 'native-mp4') and
+                       Path(job['source']).suffix.lower() in native_extensions and
+                       not Path(job['source']).is_relative_to(root) for job in all_jobs]
+        first_host = next((index for index, eligible in enumerate(host_checks) if eligible), len(all_jobs))
+        host_count = sum(host_checks)
+        if host_count > 1 and all(host_checks[first_host:]):
+            estimate_jobs(all_jobs[:first_host])
+            stop = threading.Event()
+            with ThreadPoolExecutor(max_workers=min(4, host_count)) as pool:
+                try:
+                    futures = [pool.submit(inspect_host, job, stop) for job in all_jobs[first_host:]]
+                    estimate_jobs(all_jobs[first_host:], futures)
+                finally:
+                    stop.set()
+        else:
+            estimate_jobs(all_jobs)
     files_entries = sum(counts.values()) + len(jobs)
     preview_sources = counts['Photos'] + counts['Notes'] + len(jobs)
     files_bytes = 4 * 1024 * 1024 + files_entries * 512 + preview_sources * 256 * 1024
