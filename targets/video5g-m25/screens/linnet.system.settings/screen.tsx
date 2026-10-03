@@ -1,0 +1,12 @@
+import { Screen, StatusBar, Menu, Scrollbar } from "@linnet/ui";
+export default function Scene() {
+  return (
+<Screen>
+  <StatusBar w={320} h={28} text="Settings" bg="theme.panel" deps={16} />
+  <Menu x={12} y={36} w={284} h={196} focus={true}
+    items={['Display','Themes','Clock','Battery','Auto Shutdown','Sleep Timer','Sync / USB Disk Mode','Update / Recovery','About Linnet','Back to Home','Shuffle: Off','Repeat: Off']}
+    targets={['linnet.system.display','linnet.system.themes','linnet.system.clock','linnet.system.battery','linnet.system.shutdown','linnet.system.sleep-timer','@sync','linnet.system.update','linnet.system.about','linnet.system.home','@shuffle','@repeat']} />
+  <Scrollbar x={306} y={36} w={4} h={196} count={12} fg="theme.accent" />
+</Screen>
+  );
+}

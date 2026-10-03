@@ -6,6 +6,7 @@ import struct
 import time
 import zlib
 from tools.inspect.image import inspect
+from tools.studio.targets import TARGETS
 from .campaign import connect, _run_directory, _save
 
 FIELDS = ('magic','generation','flags','selected','scene','events_accepted','events_processed',
@@ -174,17 +175,30 @@ def cycle(root, image_path, scenario_path, port, progress=None):
             record('backlight-levels',index=index+1,low=low,high=high,physical_visibility_verified=False)
 
         base=settled()
-        if not base['flags']&4:
+        cop_display=TARGETS[image_id['target_id']]['cop_display']
+        if cop_display and not base['flags']&4:
             raise RuntimeError('COP is unavailable; CPU fallback cannot exercise the COP queue')
         control(5,suite['animation_frames'])
-        animated=wait(lambda s:s['frames_completed']>=base['frames_completed']+suite['animation_frames'],15)
-        if not animated['flags']&4:
+        if cop_display:
+            animated=wait(lambda s:s['frames_completed']>=base['frames_completed']+suite['animation_frames'],15)
+        else:
+            # Native themes may have no animation effect: exercise actual
+            # presentation with changing selections, not timer ticks alone.
+            wait(lambda s:s['animation_frame']>=base['animation_frame']+suite['animation_frames'],15)
+            for index in range(suite['animation_frames']):
+                prior=settled(); inject([(1,1 if index%2==0 else -1)])
+                wait(lambda s:s['frames_completed']>prior['frames_completed'])
+            animated=settled()
+            if animated['frames_completed']<base['frames_completed']+suite['animation_frames']:
+                raise RuntimeError('native display did not complete every changed selection')
+        if cop_display and not animated['flags']&4:
             raise RuntimeError('COP was not active during the queue-wrap observation')
         settled(); animation_crc=capture('animation-final')
-        if animation_crc==selected_crc: raise RuntimeError('animation framebuffer did not change')
-        record('animation-and-cop-wrap',before=base,after=animated,completed_delta=animated['frames_completed']-base['frames_completed'])
-        base=settled(); control(4); reset=wait(lambda s:s['cop_resets']>base['cop_resets'] and s['flags']&4)
-        record('cop-queue-reset',before=base,after=reset)
+        if cop_display and animation_crc==selected_crc: raise RuntimeError('animation framebuffer did not change')
+        record('animation-and-cop-wrap' if cop_display else 'animation-and-display-completion',before=base,after=animated,completed_delta=animated['frames_completed']-base['frames_completed'])
+        if cop_display:
+            base=settled(); control(4); reset=wait(lambda s:s['cop_resets']>base['cop_resets'] and s['flags']&4)
+            record('cop-queue-reset',before=base,after=reset)
 
         for index in range(3):
             base=settled(); control(1,suite['sleep_ms'])

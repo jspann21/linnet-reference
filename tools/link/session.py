@@ -302,6 +302,15 @@ class Session:
             self.poisoned = True
             raise AmbiguousCommand('synthetic input acknowledgement mismatch; do not replay')
 
+    def video_open(self, generation: int, path: str) -> None:
+        encoded = path.encode('utf-8')
+        if not path.startswith('/') or b'\0' in encoded or len(encoded) > 254:
+            raise ValueError('video path must be absolute and at most 254 bytes')
+        reply = self.request(Command.VIDEO_OPEN, struct.pack('<I', generation) + encoded + b'\0')
+        if reply != struct.pack('<II', generation, 0):
+            self.poisoned = True
+            raise AmbiguousCommand('video open acknowledgement mismatch; do not replay')
+
     def platform_control(self, generation: int, action: int, value: int = 0) -> None:
         payload = struct.pack('<III', generation, action, value)
         reply = self.request(Command.PLATFORM_CONTROL, payload)
@@ -315,7 +324,7 @@ class Session:
             raise ProtocolError('invalid screenshot descriptor')
         capture, observed, width, height, format_id, size, crc = struct.unpack('<7I', descriptor)
         if (not capture or observed != generation or format_id != 1 or
-            not 1<=width<=220 or not 1<=height<=176 or size != width*height*2):
+            not 1<=width<=1024 or not 1<=height<=1024 or width*height>131072 or size != width*height*2):
             raise ProtocolError('invalid screenshot identity or dimensions')
         pixels = bytearray()
         for first in range(0,size,4*1008):
@@ -514,6 +523,23 @@ class Session:
             raise ValueError('settings payload exceeds480 bytes')
         self._storage_ack(Command.SETTINGS_PUT,generation,data,len(data))
 
+    def prepare_storage(self, generation: int, timeout: float = 120):
+        """Refresh the read-only FAT proof after media directory discovery.
+
+        Repeat only acknowledged admission checks; an ambiguous reply aborts.
+        No device data is written and no cached proof is bypassed.
+        """
+        deadline=time.monotonic()+timeout
+        while time.monotonic()<deadline:
+            state=self.storage_state()
+            if state[2] or state[8]:
+                raise DeviceError('storage cannot establish a write proof while faulted')
+            if state[4] and state[7]:return
+            if state[1]==6:
+                self._storage_ack(Command.STORAGE_PREPARE,generation)
+            time.sleep(.05)
+        raise TimeoutError('storage write proof did not become ready')
+
     def persistent_install(self, generation: int, image: bytes, publication_stage: int | None = None) -> dict:
         from tools.inspect.image import inspect
         from tools.studio.targets import TARGETS
@@ -522,6 +548,7 @@ class Session:
             raise ValueError('publication stage must be1..4')
         if len(image)>TARGETS[identity['target_id']]['os_capacity_bytes']:
             raise ValueError('persistent image exceeds target OS capacity')
+        self.prepare_storage(generation)
         storage=self.storage_state()
         update=self.update_status()
         if (storage[4]!=1 or update[1]!=1 or update[2]!=1 or update[7] or
@@ -556,6 +583,8 @@ class Session:
 
     def native_status(self) -> dict:
         reply=self.request(Command.NATIVE_STATUS,timeout=15)
+        if reply == struct.pack('<16I', 0x32424e4c, 11, 12, *([0] * 13)):
+            return dict(supported=False, phase=11, error=12)
         if len(reply)!=64 or reply[:4]!=b'LNPK':
             raise ProtocolError('invalid native updater status')
         words=struct.unpack('<8I',reply[:32])

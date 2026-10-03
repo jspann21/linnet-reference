@@ -5,6 +5,7 @@
 #define LN_VIDEO_RECORD(...) ((void)0)
 #endif
 #include "video.h"
+#include "catalog.h"
 #include <stddef.h>
 #include "services/storage/storage.h"
 #include "hal/api/audio.h"
@@ -73,43 +74,6 @@ static struct {
 #endif
     bool active,pending,stepping,stopping,ready,started,paused,finish,seeking,offered,completed,temporal,prefetching,startup_preview;
 } v;
-/* Video catalog rows are paged into two small caches. Drawing only reads retained
- * memory and requests missing pages; catalog_step owns asynchronous storage. */
-#define CATALOG_ROWS 4u
-#define CATALOG_HEADER_SIZE 12u
-#define CATALOG_ROW_SIZE 416u
-static struct {
-    uint8_t header[CATALOG_HEADER_SIZE],pages[2][CATALOG_ROWS*CATALOG_ROW_SIZE];
-    struct ln_fat32_file file;
-    uint32_t phase,count,revision,wanted,slot,first[2],rows[2],read_size;
-    bool pending,want_page;
-    char selected[256];
-} catalog;
-#define CATALOG_GENERATION 0x73000001u
-static void catalog_step(void);
-void ln_video_library_load(void){if(!catalog.phase){catalog.phase=1;++catalog.revision;}}
-uint32_t ln_video_library_count(void){return catalog.count?catalog.count:1u;}
-uint32_t ln_video_library_revision(void){return catalog.revision;}
-static const uint8_t *catalog_row(uint32_t row){
-    for(uint32_t slot=0;slot<2u;++slot)
-        if(row>=catalog.first[slot]&&row-catalog.first[slot]<catalog.rows[slot])
-            return catalog.pages[slot]+(row-catalog.first[slot])*CATALOG_ROW_SIZE;
-    catalog.wanted=(row/CATALOG_ROWS)*CATALOG_ROWS;catalog.want_page=true;return 0;
-}
-const char *ln_video_library_label(uint32_t row){
-    if(catalog.phase<4)return "Loading videos...";
-    if(!catalog.count)return catalog.phase==5?"Video library unavailable":"Add videos with Linnet Sync";
-    if(row>=catalog.count)return "";
-    const uint8_t*entry=catalog_row(row);
-    return entry?(const char*)entry+288u:"Loading videos...";
-}
-const char *ln_video_library_path(uint32_t row){
-    if((catalog.phase!=4&&catalog.phase!=6)||row>=catalog.count)return 0;
-    const uint8_t*entry=catalog_row(row);if(!entry)return 0;
-    const char*path=(const char*)entry+32u;uint32_t i=0;
-    while(path[i]&&i<255u){catalog.selected[i]=path[i];++i;}
-    catalog.selected[i]=0;return catalog.selected;
-}
 static uint32_t saved_resume[2];
 #if !defined(LINNET_PROFILE_RELEASE)
 static uint32_t armed_measurement;
@@ -135,51 +99,6 @@ bool ln_video_measurement_arm(uint32_t mode){
 }
 #endif
 static const uint8_t *record_source(void){return v.raw_write?v.raw_write:v.raw_view?v.raw_view:v.record.bytes;}
-static void catalog_step(void){
-    if(!catalog.phase||catalog.phase==5||v.active||v.pending)return;
-    int result;
-    if(catalog.pending){
-        uint32_t transferred=0;
-        result=ln_storage_media_poll_deferred(CATALOG_GENERATION,&catalog.file,&transferred);
-        if(!result)return;catalog.pending=false;
-        if(result<0){
-            catalog.phase=result==LN_FAT32_NOT_FOUND?4:5;++catalog.revision;return;
-        }
-        if(catalog.phase==1){
-            if(catalog.file.size<CATALOG_HEADER_SIZE||catalog.file.size>CATALOG_HEADER_SIZE+256u*CATALOG_ROW_SIZE){catalog.phase=5;++catalog.revision;return;}
-            catalog.phase=2;return;
-        }
-        if(catalog.phase==2){
-            const uint8_t*b=catalog.header;uint32_t count=ln_read_le32(b+4);
-            bool valid=transferred==CATALOG_HEADER_SIZE&&ln_read_le32(b)==0x5849564cu&&count<=256u&&ln_read_le32(b+8)==CATALOG_ROW_SIZE&&catalog.file.size==CATALOG_HEADER_SIZE+count*CATALOG_ROW_SIZE;
-            catalog.count=valid?count:0;catalog.phase=valid?4:5;
-            catalog.want_page=valid&&count;catalog.wanted=0;++catalog.revision;return;
-        }
-        bool valid=transferred==catalog.read_size;
-        uint32_t rows=catalog.read_size/CATALOG_ROW_SIZE;
-        for(uint32_t row=0;valid&&row<rows;++row){
-            const uint8_t*entry=catalog.pages[catalog.slot]+row*CATALOG_ROW_SIZE;const uint8_t*name=entry+32;
-            bool terminated=false;if(name[0]!='/')valid=false;for(uint32_t j=0;j<256u;++j)if(!name[j]){terminated=true;break;}if(!terminated||!entry[288]||entry[415])valid=false;
-        }
-        if(valid){catalog.rows[catalog.slot]=rows;catalog.phase=4;catalog.slot^=1u;}
-        else{catalog.count=0;catalog.phase=5;catalog.rows[0]=catalog.rows[1]=0;}
-        ++catalog.revision;return;
-    }
-    if(catalog.phase==4){
-        if(!catalog.want_page)return;
-        uint32_t first=catalog.wanted;catalog.want_page=false;
-        if(first>=catalog.count)return;
-        for(uint32_t slot=0;slot<2u;++slot)if(catalog.rows[slot]&&catalog.first[slot]==first)return;
-        catalog.first[catalog.slot]=first;catalog.rows[catalog.slot]=0;
-        uint32_t rows=catalog.count-first;if(rows>CATALOG_ROWS)rows=CATALOG_ROWS;
-        catalog.read_size=rows*CATALOG_ROW_SIZE;catalog.phase=6;
-    }
-    if(catalog.phase==2)result=ln_storage_media_read(&catalog.file,0,catalog.header,CATALOG_HEADER_SIZE,CATALOG_GENERATION);
-    else if(catalog.phase==6)result=ln_storage_media_read(&catalog.file,CATALOG_HEADER_SIZE+catalog.first[catalog.slot]*CATALOG_ROW_SIZE,catalog.pages[catalog.slot],catalog.read_size,CATALOG_GENERATION);
-    else result=ln_storage_media_open("/.LINNET/VIDEOS/INDEX.VID",CATALOG_GENERATION);
-    if(result>0)catalog.pending=true;
-    else if(result<0){catalog.count=0;catalog.phase=5;++catalog.revision;}
-}
 static void clear(void*p,uint32_t n){
 #if defined(__arm__)
     extern void ln_memory_clear(void *,uint32_t);ln_memory_clear(p,n);
@@ -565,7 +484,7 @@ static int decode_ipvf(void){
         if(result<=0)return result;v.at=1;v.decode_at=v.decode_pixel=0;}
     const uint8_t*payload=compressed?IPVF_LZ_SCRATCH:record_source()+16;uint16_t*out=frame_slot(v.building),*previous=frame_slot(v.previous);
     /* Rockbox completes one retained record in one decoder pass. IPVF's
-     * strict 77,440-byte frame bound already limits this work; yielding for
+     * target-native frame bound already limits this work; yielding for
      * every 2,048 pixels and every rectangle row inflated small updates into
      * dozens of runtime turns and prevented the audio cursor from advancing. */
     if(v.type==0u){
@@ -669,7 +588,7 @@ static int decode_ipvf(void){
  * stream state when switching videos. Index-page ownership is invalidated below. */
 void ln_video_init(void){clear(&v.file,sizeof v - offsetof(__typeof__(v),file));v.generation=0x71000000u;v.front=v.previous=v.building=v.index_page_at=NONE;LN_VIDEO_RECORD(v.min_audio=NONE);v.preroll=2u;}
 bool ln_video_open(const char*path){
-    if(v.active||v.pending||catalog.pending||!path||path[0]!='/')return false;uint32_t n=0;while(path[n]&&n<255)n++;if(!n||n==255)return false;
+    if(v.active||v.pending||ln_video_catalog_pending()||!path||path[0]!='/')return false;uint32_t n=0;while(path[n]&&n<255)n++;if(!n||n==255)return false;
     uint32_t gen=v.generation,revision=v.revision;ln_video_init();v.generation=gen;v.revision=revision+1;copy(v.path,path,n+1);
 #if !defined(LINNET_PROFILE_RELEASE)
     v.measurement=armed_measurement;armed_measurement=0;
@@ -681,7 +600,8 @@ bool ln_video_open(const char*path){
 }
 void ln_video_stop(void){if(v.active&&!v.stopping){v.stopping=true;++v.epoch;}}
 bool ln_video_active(void){return v.active;}
-bool ln_video_pending(void){return v.pending||catalog.pending;}
+bool ln_video_pending(void){return v.pending||ln_video_catalog_pending();}
+bool ln_video_controls(bool show){(void)show;return true;}
 bool ln_video_paused(void){return v.paused;}
 void ln_video_pause(bool pause){if(!v.active||v.stopping)return;v.paused=pause;if(v.started){if(pause)ln_audio_pause();else if(!ln_audio_start())fail(13);}++v.revision;}
 /* Seeking needs the same bounded cushion as startup on expensive scenes. */
@@ -829,7 +749,7 @@ static void step(void){
     }
 }
 void ln_video_step(void){
-    catalog_step();
+    ln_video_catalog_step(v.active||v.pending);
     if(v.stepping)return;v.stepping=true;uint32_t step_started=ln_time_us();
     for(uint32_t slices=0;slices<64u;slices++){
         uint32_t phase=v.phase,at=v.at,next=v.next,revision=v.revision,epoch=v.epoch;

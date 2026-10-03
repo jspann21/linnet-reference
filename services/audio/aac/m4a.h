@@ -15,11 +15,11 @@ struct ln_aac_m4a {
     uint8_t meta_buffer[256];
     /* Separate metadata/media windows avoid a seek for every STCO, STSZ and AU. */
     ln_aac_read_fn source_read;void *source_context;
-    uint64_t cache_offset[2],cache_request_offset;
-    uint32_t cache_bytes[2],cache_request_bytes;
+    uint64_t cache_offset[3],cache_request_offset;
+    uint32_t cache_bytes[3],cache_request_bytes;
     uint8_t *cache_request_buffer;
-    uint8_t cache_victim,cache_filling;bool cache_pending;
-    uint8_t read_cache[2][16384];
+    uint8_t cache_age[3],cache_filling;bool cache_pending;
+    uint8_t read_cache[3][16384];
 };
 void ln_aac_m4a_init(struct ln_aac_m4a *,ln_aac_read_fn,void *,uint64_t file_size);
 int ln_aac_m4a_open_step(struct ln_aac_m4a *);

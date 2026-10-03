@@ -5,6 +5,7 @@ image_target = 98
 board_id = "p98"
 model_alias = "a1099"
 soc = "pp5020"
+hal_family = "pp502x"
 cpu = "arm7tdmi"
 architecture = "armv4t"
 endianness = "little"
@@ -51,3 +52,8 @@ firmware_partition_types = [0]
 media_partition_types = [6, 11, 12, 14]
 firmware_entry_type = "soso"
 max_firmware_bytes = 268435456
+
+[resources]
+music_titles_address = 32636928
+music_titles_bytes = 851968
+coverflow_catalog_slots = 2048

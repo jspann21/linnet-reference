@@ -191,7 +191,8 @@ def _skipped_paths(state, kind):
 def preparation_option(kind, identity, photo_dimension=640, music_verification='metadata'):
     """Shared preparation version for compilation and library readiness."""
     if kind == 'Music':
-        art_version = 'art8' if identity['target_id'] == 'ipod4g-q21' else 'art7'
+        from tools.studio.targets import TARGETS
+        art_version = 'art8' if TARGETS[identity['target_id']]['lcd_format'] == 'gray2-horizontal' else 'art7'
         return f"{music_verification}-duration-search-names-album-owner2-title-order1-music-folder1-recent-album-gain-{art_version}-{identity['target_id']}"
     if kind == 'Notes':
         return 'theme-fonts1'
@@ -526,7 +527,7 @@ def video_jobs(root, pending=(), selection=None, skipped=(), identity=None):
         source = source.resolve(strict=True)
         if not source.is_relative_to(folder):
             raise ValueError(f"Selected video is outside this iPod's Videos folder: {source}")
-        if source.is_relative_to(folder / "IPVF") and source in published:
+        if (source.is_relative_to(folder / "IPVF") or source.is_relative_to(folder / "Native")) and source in published:
             continue
         include(source, source.relative_to(folder).as_posix())
     for kind, name in pending:
@@ -773,7 +774,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 progress(f"{kind}: no supported files; existing prepared library retained.")
                 continue
             option = preparation_option(kind, identity, photo_dimension, music_verification)
-            signature = (f"ipvf-videos-ipvf-{media_profile['video_fps']}-{media_profile['video_color']}-realtime:{item['fingerprint']}" if kind == "Videos"
+            signature = (f"videos-{sorted(native_video_extensions(identity))}-{media_profile['video_fps']}-{media_profile['video_color']}-realtime:{item['fingerprint']}" if kind == "Videos"
                          else f"{option}:{item['fingerprint']}")
             saved = state.get(kind, {})
             if not isinstance(saved, dict):
@@ -857,6 +858,54 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                             key = hashlib.sha256(relative.encode()).hexdigest()[:8].upper()
                             source_info = source.stat()
                             source_stamp = (source_info.st_size, source_info.st_mtime_ns)
+                            if ".mp4" in native_video_extensions(identity):
+                                from .native_video import inspect_file as inspect_native, prepare as prepare_native
+                                from .publish_video import index_video
+                                fingerprint = hashlib.sha256(f"native-mp4-v1:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
+                                label = video_title(relative)
+                                cached = video_state.get(relative, {})
+                                if (not force and isinstance(cached, dict) and cached.get("signature") == fingerprint
+                                        and catalog_contains(root, relative, label, path=False)
+                                        and _outputs_match(root, cached.get("outputs", []))):
+                                    output_paths.extend(name for name, digest in cached.get("outputs", []))
+                                    report["steps"].append(dict(kind=kind, file=relative, status="unchanged"))
+                                    continue
+                                compatible = False
+                                if source.suffix.lower() in (".mp4", ".m4v"):
+                                    try:
+                                        inspect_native(source, ffprobe=ffprobe)
+                                        compatible = True
+                                    except ValueError:
+                                        pass
+                                progress(f"Preparing native video {index+1}/{item['count']}: {relative}")
+                                if compatible and source.is_relative_to(root):
+                                    result = index_video(source, title=label, library_key=relative, ffprobe=ffprobe, **target_args(identity))
+                                    outputs = []
+                                else:
+                                    package = cache / "videos" / (key + "-" + fingerprint[:16] + ".mp4")
+                                    reusable = package.exists() and not force
+                                    if reusable:
+                                        try: inspect_native(package, ffprobe=ffprobe)
+                                        except (OSError, ValueError): reusable = False
+                                    if not reusable:
+                                        prepare_native(source, package, ffmpeg=ffmpeg, ffprobe=ffprobe, progress=progress, cancelled=cancelled)
+                                    checkpoint()
+                                    after = source.stat()
+                                    if (after.st_size, after.st_mtime_ns) != source_stamp:
+                                        raise ValueError("Video changed during preparation; scan again")
+                                    result = publish_video(package, title=label, library_key=relative, ffprobe=ffprobe, **target_args(identity))
+                                    output_name = Path(result['package']).relative_to(root).as_posix()
+                                    outputs = [(output_name, result["candidate_sha256"])]
+                                    output_paths.append(output_name)
+                                after = source.stat()
+                                if (after.st_size, after.st_mtime_ns) != source_stamp:
+                                    raise ValueError("Video changed during publication; scan again")
+                                published.append(result)
+                                video_state[relative] = dict(signature=fingerprint, outputs=outputs)
+                                _save(state_path, state)
+                                report["steps"].append(dict(kind=kind, file=relative, status="published", publication=result))
+                                record()
+                                continue
                             profile_key = (f"{media_profile['video_width']}x{media_profile['video_height']}-"
                                            f"{media_profile['video_fps']}-{media_profile['video_color']}-realtime")
                             fingerprint = hashlib.sha256(f"ipvf-{profile_key}:{source}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()

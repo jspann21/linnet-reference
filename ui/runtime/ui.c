@@ -560,7 +560,7 @@ static bool video_covers(const struct painter*p,const struct ln_ui_node*n,const 
     return source<target?target-source>=bytes:source-target>=LINNET_UI_WIDTH*LINNET_UI_HEIGHT*2u;
 }
 #include "ui/runtime/symbols.h"
-#include "ui/runtime/photo_chrome.h"
+#include "themes/ipod-photo/chrome.h"
 static void photo_stripes(struct painter*p,struct rect r,const uint16_t*stripes,uint32_t count){
     for(int32_t y=0;y<r.h;++y)fill(p,(struct rect){r.x,r.y+y,r.w,1},stripes[min(y,(int32_t)count-1)]);
 }

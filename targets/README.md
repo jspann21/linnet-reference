@@ -9,31 +9,42 @@ follow fixed paths, so adding a model does not require another build table.
 | Target | Hardware and display | Status |
 | --- | --- | --- |
 | `photo4g-p98` | iPod Photo A1099, PP5020, 220 × 176 color | Primary development target |
+| `video5g-m25` | iPod Video A1136 30 GB, PP5022 family, 320 × 240 color | Native Boot and development OS verified over USB Link |
 | `ipod4g-q21` | iPod 4G MP102, PP5020, 160 × 128 monochrome | Photos, video and theme selection disabled by the manifest |
 
-Both targets support installation through the Media Manager.
+All targets expose their installation profile through the same Media Manager. M25 is in hardware bringup; see its target README for verification status.
 
 ## Repository contract
 
 The portable firmware interfaces live in `hal/api/`. Kernel, service and UI
-code include only these headers. Each `hal/<soc>/` directory implements those
-interfaces and contains the SoC startup and linker files. Board-specific LCD and
-device hooks live in `targets/<target-id>/`.
+code include only these headers. Each `hal/<family>/` directory implements the shared SoC interfaces and startup.
+`hal_family` selects that implementation independently of the actual `soc`.
+Board wiring, display adapters, quirks and native presentation live in
+`targets/<target-id>/`. Codec drivers live in `hal/codecs/` and are selected by
+`audio_codec`; they never assume the board that happens to use them.
 
 ```text
 hal/
   api/                  portable firmware interfaces
-  <soc>/                SoC implementation, startup and linker script
+  pp502x/               common PP5020/PP5022 CPU, ATA, USB and input
+  pp5022/               PP5022-only PHY sequence
+  codecs/               selected audio codecs
 targets/
   <target-id>/
     target.toml         complete target description
-    device.c            board hooks
+    hardware.h          board policy constants and ROM restart address
+    device.c            board wiring and power hooks
     lcd.c               LCD controller driver
     lcd.h               optional private LCD declarations
-    display.c           optional target display adapter
+    display.c           target display adapter
+    screens/<app-id>/screen.tsx  optional complete native screen set
+    themes/<theme>/      optional target-native themes
+    presentation.toml   optional clock font and reference-layout adjustments
+    system.toml         optional target-specific default content
+    native_update.c     optional audited firmware maintenance implementation
 ```
 
-When `display.c` is absent, the build uses `hal/<soc>/display.c`. The loader also
+When `display.c` is absent, the build uses `hal/<family>/display.c`. The loader also
 resolves `startup.S`, `memory.ld` and `platform.c` by convention. Manifests do
 not contain source-file lists.
 
@@ -70,14 +81,30 @@ the display, a video frame larger than the storage read window, missing native
 sources, duplicate IDs and malformed profiles. These checks establish a coherent
 build description; they do not prove hardware behavior.
 
-TSX screens use a fixed 220 × 176 authoring coordinate space. The compiler
-scales that reference layout and theme metrics to the target LCD in either
-direction. Prepared photos and videos use their own target-native dimensions.
+Existing targets may use the shared 220 × 176 reference screens. A target with
+a `screens/` directory must provide every selected app at its actual LCD size,
+with `native` theme layouts. Missing screens fail compilation; there is no silent
+reference-screen fallback. M25 uses 29 native 320 × 240 screens and three local
+themes. Native font pixels are retained. Legacy layout adjustments belong in
+`presentation.toml`, not target-name branches in the compiler.
+
+`[resources]` declares title-cache placement and cover-flow catalog capacity.
+The loader checks these against recovery capture and mailbox reservations, and
+the linker checks the final SRAM/SDRAM bounds. Board policy in `hardware.h`
+selects bounded clock settling, ATA write/flush behavior, ROM restart markers
+and documented storage quirks. Services consume capabilities and policy rather
+than naming a board.
+
+The Photo COP LCD worker and blitter belong to the Photo target. Its legacy
+firmware maintenance writer is also target-local and retains its exact reviewed
+unit checks. Targets without an audited native writer reject those commands;
+ordinary A/B OS updates are shared. Never copy a specimen serial into another
+target or weaken those checks to make an unsupported writer run.
 New resolutions up to 1024 per side and 131,072 pixels are accepted, subject to
 memory and media read bounds. Inspect every new resolution in the simulator and
 on hardware for text fit and visual quality.
 
-For another PP5020 iPod, reuse `hal/pp5020/` and add the target's LCD and device
+For another PP5020 iPod, reuse `hal/pp502x/` and add the target's LCD and device
 files. Add a target `display.c` if its scanout arrangement differs from the SoC
 default. For another SoC, implement the headers in `hal/api/` under a new
 `hal/<soc>/` directory; portable kernel, service and UI includes stay unchanged.

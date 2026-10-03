@@ -1,5 +1,5 @@
 #include "hal/api/display.h"
-#include "hal/pp5020/display_internal.h"
+#include "hal/pp502x/display_internal.h"
 #include "hal/api/platform.h"
 #include "hal/api/core.h"
 #include "boot/include/linnet_boot.h"
@@ -31,98 +31,7 @@ static uint32_t max_present_us;
 
 static void barrier(void){__asm__ volatile("":::"memory");}
 
-static bool cop_probe(void)
-{
-    if(REG(0x11ffe0a0u)!=LINNET_DISPLAY_CAPABILITY){cop_error=1;return false;}
-    uint32_t nonce=MB(LN_DISPLAY_PROBE_ACK)+1u,start=ln_time_us();
-    MB(LN_DISPLAY_PROBE)=nonce;
-    for(uint32_t i=0;i<100000u;++i){
-        if(MB(LN_DISPLAY_PROBE_ACK)==nonce)return true;
-        if(ln_time_us()-start>=5000u)break;
-    }
-    cop_error=2;return false;
-}
-
-static bool pause_worker(bool pause)
-{
-    if(!cop_capable)return true;
-    MB(LN_DISPLAY_PAUSE)=pause?1u:0u;barrier();
-    uint32_t start=ln_time_us();
-    for(uint32_t i=0;i<100000u;++i){
-        if(MB(LN_DISPLAY_PAUSED)==(pause?1u:0u))return true;
-        if(ln_time_us()-start>=5000u)break;
-    }
-    return false;
-}
-
-bool ln_core_cop_pause(bool pause)
-{
-    cop_error=0;
-    if(!pause){
-        if(!clock_park_owned)return true;
-        MB(LN_DISPLAY_PAUSE)=0;REG(0x11ffe010u)=ln_time_us();barrier();
-        REG(0x60007004u)=0;
-        uint32_t start=ln_time_us();
-        for(uint32_t i=0;i<100000u;++i){
-            if(!MB(LN_DISPLAY_PAUSED)){clock_park_owned=false;return true;}
-            if(ln_time_us()-start>=5000u)break;
-        }
-        cop_error=6;return false;
-    }
-    if(clock_park_owned){cop_error=3;return false;}
-    if(REG(0x60007004u)&0x80000000u)return true;
-    if(!cop_probe())return false;
-    if(MB(LN_DISPLAY_ENABLED)!=1u){
-        if(!pause_worker(true)){cop_error=4;return false;}
-        MB(LN_DISPLAY_STATE)=0;MB(LN_DISPLAY_TAIL)=MB(LN_DISPLAY_HEAD);
-    }
-    MB(LN_DISPLAY_PAUSE)=2u;barrier();
-    uint32_t start=ln_time_us();
-    for(uint32_t i=0;i<100000u;++i){
-        if(MB(LN_DISPLAY_PAUSED)==2u&&(REG(0x60007004u)&0x80000000u)){
-            clock_park_owned=true;return true;
-        }
-        if(ln_time_us()-start>=5000u)break;
-    }
-    cop_error=5;return false;
-}
-
-static bool monitor_signature(uint32_t *branch)
-{
-    if(REG(0x11ffe0a0u)!=LINNET_DISPLAY_CAPABILITY||REG(0x11ffe018u)!=0x4c4e434fu)return false;
-    if(REG(0x40001040u)!=0xe5923000u||REG(0x40001044u)!=0xe580301cu||
-       REG(0x40001054u)!=0xe5904010u||REG(0x40001058u)!=0xe0434004u||
-       REG(0x4000105cu)!=0xe59f504cu||REG(0x40001060u)!=0xe1540005u||
-       REG(0x400010b0u)!=750000u||REG(0x400010b8u)!=1500000u)return false;
-    *branch=REG(0x40001064u);
-    return *branch==0x3afffff4u||*branch==0xbafffff4u;
-}
-
-bool ln_display_upgrade_monitor(void)
-{
-    uint32_t branch;
-    if(!monitor_signature(&branch)){cop_error=8;return false;}
-    if(branch==0xbafffff4u)return true;
-    if(REG(0x60007004u)&0x80000000u){cop_error=8;return false;}
-    if(!ln_core_cop_pause(true))return false;
-    bool patched=false;
-    if(MB(LN_DISPLAY_PAUSED)==2u&&(REG(0x60007004u)&0x80000000u)&&monitor_signature(&branch)){
-        REG(0x40001064u)=(branch&0x0fffffffu)|0xb0000000u;barrier();
-        patched=REG(0x40001064u)==0xbafffff4u;
-    }
-    bool resumed=ln_core_cop_pause(false);
-    if(!patched)cop_error=9;
-    return patched&&resumed;
-}
-
-uint32_t ln_display_cop_error(void){return cop_error;}
-void ln_display_cop_diagnostics(uint32_t output[8])
-{
-    if(!output)return;
-    output[0]=cop_error;output[1]=REG(0x11ffe0a0u);output[2]=REG(0x60007004u);
-    output[3]=MB(LN_DISPLAY_ENABLED);output[4]=MB(LN_DISPLAY_STATE);
-    output[5]=MB(LN_DISPLAY_PAUSE);output[6]=MB(LN_DISPLAY_PAUSED);output[7]=MB(LN_DISPLAY_PROBE_ACK);
-}
+#include "hal/pp502x/cop_control.inc"
 
 static uint32_t weighted_luma(uint16_t color)
 {
@@ -343,3 +252,7 @@ void ln_display_blit_diagnostics(uint32_t output[16])
 }
 int ln_recovery_presentation_stop(void){return ln_display_quiesce()?1:0;}
 #endif
+
+uint32_t ln_display_target_diagnostics(uint32_t selector,uint32_t out[32]){
+    (void)selector;(void)out;return 0;
+}

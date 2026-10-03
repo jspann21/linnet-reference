@@ -9,9 +9,13 @@
 #include "boot/include/linnet_boot.h"
 #define ROWS 25u
 #define THUMB_SIZE 56u
-#define TILES 64u
 #define WIDTH LINNET_PHOTO_WIDTH
 #define HEIGHT LINNET_PHOTO_HEIGHT
+/* Panning can straddle one extra tile on each axis. Keep a power-of-two
+ * cache for the hint hash, large enough to retain the entire native viewport. */
+#define VISIBLE_TILES (((WIDTH+62u)/32u)*((HEIGHT+62u)/32u))
+#define TILES (VISIBLE_TILES<=64u?64u:VISIBLE_TILES<=128u?128u:256u)
+_Static_assert(VISIBLE_TILES<=TILES,"photo viewport exceeds tile cache capacity");
 #define EMPTY_ALBUM_RESUME 65535u
 enum phase {OPEN,HEADER,VERIFY,IDLE,RECORD,TITLE,THUMB,LEVEL,TILE_RECORD,TILE_DATA,SOURCE,JPEG_OPEN,JPEG_LOAD,JPEG_DECODE,TILE_COMMIT};
 struct row {uint32_t index;bool valid,album,thumb;char title[192];union {struct ln_pimg_album a;struct ln_pimg_photo p;} data;struct ln_ui_asset asset;};
@@ -28,7 +32,7 @@ static struct {
     uint32_t phase,view,album,first,count,photo_index,window_first,window_count,epoch,working,generation,revision,navigation;
     uint32_t io_bytes,verify_at,verify_crc,job_index,job_slot,level_count,level,zoom,rotation,tile_index,tile_slot,tile_crc,age;
     uint32_t tile_records_first,tile_records_count,tile_group_count,tile_group_cursor;
-    uint32_t visible[64],visible_count,front,render_y,slide_at,jpeg_at,ready_tiles,resume_stage;
+    uint32_t visible[TILES],visible_count,front,render_y,slide_at,jpeg_at,ready_tiles,resume_stage;
     uint8_t verify_record[64];uint32_t v_photos,v_levels,v_tiles,v_album,v_photo,v_level,v_width,v_height,v_text_bytes,v_more,v_code,v_min,jpeg_crc;
     int16_t map_x[WIDTH],map_y[HEIGHT];int32_t pan_x,pan_y;
     bool active,ready,pending,io_open,job_album,view_loaded,frame_valid,frame_complete,rendering,redraw,slide,slide_armed,resume_pending,jpeg_mode,stepping,album_known,direct;

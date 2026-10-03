@@ -79,6 +79,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
           boot_selector="none"):
     target = target_id(target)
     spec = TARGETS[target]
+    if system_config is None and (ROOT / "targets" / target / "system.toml").is_file():
+        system_config = f"targets/{target}/system.toml"
     chain = toolchain()
     if profile == "release" and probe != "frame":
         raise ValueError("deliberate crash probes require dev or trace")
@@ -103,6 +105,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     target_header = [
         "#ifndef LINNET_TARGET_H",
         "#define LINNET_TARGET_H",
+        f'#include "targets/{target}/hardware.h"',
         f'#define LINNET_TARGET_ID "{target}"',
         f'#define LINNET_TARGET_NAME "{spec["name"]}"',
         f'#define LINNET_BOARD_ID "{spec["board_id"]}"',
@@ -113,10 +116,15 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         f'#define LINNET_TARGET_NUMBER {spec["image_target"]}u',
         f'#define LINNET_LCD_WIDTH {spec["lcd_width"]}u',
         f'#define LINNET_LCD_HEIGHT {spec["lcd_height"]}u',
+        f'#define LINNET_SOC_{spec["soc"].upper().replace("-","_")} 1',
         f'#define LINNET_LCD_FORMAT {LCD_FORMATS[spec["lcd_format"]]}u',
         f'#define LINNET_LCD_WIDTH_ASM {spec["lcd_width"]}',
         f'#define LINNET_LCD_HEIGHT_ASM {spec["lcd_height"]}',
         f'#define LINNET_UI_WIDTH {spec["lcd_width"]}u',
+        f'#define LINNET_IDLE_CLOCK_HZ {spec.get("idle_clock_hz",0)}u',
+        f'#define LINNET_MUSIC_TITLES_ADDRESS {spec["resources"]["music_titles_address"]}',
+        f'#define LINNET_MUSIC_TITLES_BYTES {spec["resources"]["music_titles_bytes"]}',
+        f'#define LINNET_COVERFLOW_CATALOG_SLOTS {spec["resources"]["coverflow_catalog_slots"]}u',
         f'#define LINNET_UI_HEIGHT {spec["lcd_height"]}u',
         f'#define LINNET_PHOTO_WIDTH {spec["media_photo_width"]}u',
         f'#define LINNET_PHOTO_HEIGHT {spec["media_photo_height"]}u',
@@ -126,6 +134,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         f'#define LINNET_VIDEO_COLOR_GRAY4 {int(spec["media_video_color"] == "gray4")}u',
         f'#define LINNET_STORAGE_MAX_READ_SECTORS {spec["storage_max_read_sectors"]}u',
         f'#define LINNET_COP_DISPLAY {int(spec["cop_display"])}u',
+        f'#define LINNET_COP_DISPLAY_SOURCE "targets/{target}/cop-display.inc"',
         f'#define LINNET_SDRAM_BYTES {spec["sdram_bytes"]}',
         f'#define LINNET_LOAD_ADDRESS {spec["load_address"]}',
         f'#define LINNET_ENTRY_ADDRESS {spec["entry_address"]}',
@@ -157,15 +166,17 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         header.write('#define LINNET_USB_SERIAL "' + device_serial + '"\n')
     prefix = f"linnet-{kind}-0.1.0-{target}-{profile}-{build_id[:12]}"
     target_sources = spec["sources"]
-    hal = ROOT / "hal" / spec["soc"]
+    hal = ROOT / "hal" / spec.get("hal_family", spec["soc"])
     sources = [ROOT / target_sources["startup"], hal / "entry.S",
                ROOT / target_sources["platform"], ROOT / target_sources["lcd"],
                ROOT / "kernel/main.c", ROOT / "kernel/memory.S"]
     sources += [ROOT / "boot/src/linnet_boot.c"]
     sources += [hal / name for name in ("core.c", "input.c", "power.c")]
-    sources += [ROOT / target_sources["display"], ROOT / target_sources["device"]]
+    sources += [ROOT / target_sources["display"], ROOT / target_sources["device"], ROOT / target_sources["codec"]]
+    if kind == "os" and "coprocessor" in target_sources:
+        sources += [ROOT / target_sources["coprocessor"]]
     if kind == "os" and spec.get("cop_display", False):
-        sources += [hal / name for name in ("video_blit.c", "video_blit.S")]
+        sources += [ROOT / "targets" / target / name for name in ("video_blit.c", "video_blit.S")]
     if kind == "os":
         sources += [ROOT / name for name in
                     ("kernel/executive.c", "kernel/runtime.c", "kernel/wheel_motion.c")]
@@ -187,7 +198,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     else:
         sources += [ROOT / "kernel/storage_link.c"]
         if kind == "os":
-            sources += [ROOT / "services/update/native.c"]
+            sources += [ROOT / target_sources["native_update"]]
     if kind == "os":
         sources += [ROOT/"ui/runtime/ui.c",generated/"linnet_ui.c",ROOT/"services/display/settings.c"]
     compiler_target = "arm-none-eabi" if spec["endianness"] == "little" else "armeb-none-eabi"
@@ -222,7 +233,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         flags += ['-DLINNET_COVERFLOW=1']
     if kind == 'os' and ui_report['features'].get('video', True):
         flags += ['-DLINNET_VIDEO=1']
-        sources += sorted((ROOT/'services/video').glob('*.c'))
+        sources += [p for p in sorted((ROOT/'services/video').glob('*.c')) if p.name != 'video.c']
+        sources += [ROOT/target_sources['video'] if 'video' in target_sources else ROOT/'services/video/video.c']
         sources += sorted((ROOT/'services/video').glob('*.S'))
     if kind == 'os':
         flags += ['-DLINNET_BATTERY_GUARD=1']
@@ -262,7 +274,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     if kind == 'os':
         memory_flags += ['-DLINNET_AUDIO=1']
         if ui_report['features'].get('cover_flow',False):memory_flags += ['-DLINNET_COVERFLOW=1']
-    run([chain['compiler']['path'], "-E", "-P", "-x", "c", "-I" + str(generated), f"-DLINNET_PROFILE_{profile.upper()}=1", f"-DLINNET_IMAGE_{kind.upper()}=1", *memory_flags, ROOT / target_sources["linker"], "-o", script])
+    run([chain['compiler']['path'], "-E", "-P", "-x", "c", "-I" + str(ROOT), "-I" + str(generated), f"-DLINNET_PROFILE_{profile.upper()}=1", f"-DLINNET_IMAGE_{kind.upper()}=1", *memory_flags, ROOT / target_sources["linker"], "-o", script])
     run([chain['linker']['path'], "-T", script, "--gc-sections", "-Map=" + str(mapfile), "-o", elf, *objects])
     raw = dest / (prefix + ".bin")
     run([chain['objcopy']['path'], "-O", "binary", elf, raw])

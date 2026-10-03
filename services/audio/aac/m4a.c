@@ -87,8 +87,17 @@ static int metadata_step(struct ln_aac_m4a *d){
     }
     d->meta_phase=0;return 0;
 }
+/* Three working regions (STCO, STSZ, and compressed audio) must coexist.
+ * Bounded ages implement LRU without a wrapping timestamp. */
+static void cache_touch(struct ln_aac_m4a *d,uint32_t slot)
+{
+    uint8_t age=d->cache_age[slot];
+    for(uint32_t i=0;i<3;i++)
+        if(i!=slot&&d->cache_bytes[i]&&d->cache_age[i]<age)++d->cache_age[i];
+    d->cache_age[slot]=0;
+}
 /* The outer decoder owns exactly one outstanding immutable read. Keep its
- * identity while a larger, bounded source read fills one of two windows. */
+ * identity while a larger, bounded source read fills one of three windows. */
 static int cached_read(void *context,uint64_t offset,uint8_t *buffer,uint32_t bytes)
 {
     struct ln_aac_m4a *d=context;uint64_t size=d->container.file_size;
@@ -97,22 +106,27 @@ static int cached_read(void *context,uint64_t offset,uint8_t *buffer,uint32_t by
     if(d->cache_pending){
         if(offset!=d->cache_request_offset||bytes!=d->cache_request_bytes||buffer!=d->cache_request_buffer)return -1;
     }else{
-        for(uint32_t i=0;i<2;i++){
+        for(uint32_t i=0;i<3;i++){
             if(offset>=d->cache_offset[i]&&offset-d->cache_offset[i]<=d->cache_bytes[i]&&
                bytes<=d->cache_bytes[i]-(uint32_t)(offset-d->cache_offset[i])){
                 uint32_t at=(uint32_t)(offset-d->cache_offset[i]);
                 for(uint32_t j=0;j<bytes;j++)buffer[j]=d->read_cache[i][at+j];
-                d->cache_victim=(uint8_t)(i^1u);return 1;
+                cache_touch(d,i);return 1;
             }
         }
-        slot=d->cache_victim;d->cache_filling=(uint8_t)slot;
+        slot=0;
+        for(uint32_t i=0;i<3;i++){
+            if(!d->cache_bytes[i]){slot=i;break;}
+            if(d->cache_age[i]>d->cache_age[slot])slot=i;
+        }
+        d->cache_filling=(uint8_t)slot;
         d->cache_offset[slot]=offset;d->cache_bytes[slot]=0;
         d->cache_request_offset=offset;d->cache_request_bytes=bytes;d->cache_request_buffer=buffer;
     }
     uint32_t fill=size-d->cache_offset[slot]>16384?16384:(uint32_t)(size-d->cache_offset[slot]);
     int result=d->source_read(d->source_context,d->cache_offset[slot],d->read_cache[slot],fill);
     d->cache_pending=result==0;if(result!=1)return result;
-    d->cache_bytes[slot]=fill;d->cache_victim=(uint8_t)(slot^1u);
+    d->cache_bytes[slot]=fill;d->cache_age[slot]=2;cache_touch(d,slot);
     for(uint32_t j=0;j<bytes;j++)buffer[j]=d->read_cache[slot][j];
     return 1;
 }

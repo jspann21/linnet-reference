@@ -11,14 +11,14 @@ from .video_catalog import encode as _encode_catalog, read_file as _read_catalog
 MAX_FILE=0x7fffffff
 
 
-def video_filename(title):
+def video_filename(title, extension=".ipvf"):
     """A Windows/FAT-safe name; collisions are resolved against the actual folder."""
     name = Path(str(title).replace('\\', '/')).stem
     name = ''.join(c if ord(c) >= 32 and c not in '<>:"/\\|?*' else '_' for c in name)
     name = name.encode('utf-16-le')[:320].decode('utf-16-le', errors='ignore').strip(' .') or 'Video'
     if PureWindowsPath(name).is_reserved():
         name = '_' + name
-    return name + '.ipvf'
+    return name + extension
 
 
 def _catalog_title(value):
@@ -45,6 +45,14 @@ def _target_profile(root):
 
 
 def _target_check(candidate, root):
+    from tools.inspect.retail_device import detect
+    from tools.studio.targets import TARGETS
+    spec = TARGETS[detect(root)["target_id"]]
+    native = ".mp4" in spec["media_video_extensions"]
+    if candidate.get("format") == "MP4":
+        if not native: raise ValueError("This iPod target does not support native MP4")
+        return
+    if native: raise ValueError("This iPod target requires native MP4 video")
     width, height, sectors = _target_profile(root)
     if (candidate.get("width"), candidate.get("height")) != (width, height):
         raise ValueError("video geometry does not match the selected iPod target")
@@ -53,7 +61,7 @@ def _target_check(candidate, root):
         raise ValueError("video record size exceeds the selected iPod target")
 
 def publish_video(package, *, disk_number, expected_disk_serial,
-                   expected_volume_serial, expected_drive=None, library_key=None, title=None):
+                   expected_volume_serial, expected_drive=None, library_key=None, title=None, ffprobe=None):
     """Validate all local bytes, preserve the previous package, publish last.
 
     A failure after replacement is an uncertain publication; inspect the host
@@ -64,9 +72,12 @@ def publish_video(package, *, disk_number, expected_disk_serial,
     _plain(package, Path(package.anchor))
     package = package.resolve(strict=True)
     digest = _hash(package)
-    candidate = inspect_file(package)
+    if package.suffix.lower() in ('.mp4', '.m4v'):
+        from .native_video import inspect_file as inspect_native
+        candidate = inspect_native(package, ffprobe=ffprobe)
+    else:
+        candidate = inspect_file(package); candidate['format'] = 'IPVF'
     candidate['sha256'] = digest
-    candidate['format'] = 'IPVF'
     candidate['bytes']=candidate['file_bytes']
     if _hash(package, candidate['bytes']) != digest:
         raise ValueError('video package changed during reference validation')
@@ -84,9 +95,11 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
     def guard():
         _volume_guard(identity)
     linnet, metadata = root/'.LINNET', root/'.LINNET'/'VIDEOS'
-    directory = root/'Videos'/'IPVF'
+    native = candidate.get('format') == 'MP4'
+    extension = '.mp4' if native else '.ipvf'
+    directory = root/'Videos'/('Native' if native else 'IPVF')
     key = hashlib.sha256(str(library_key if library_key is not None else package.stem).encode('utf-8')).digest()
-    filename = video_filename(title or package.stem)
+    filename = video_filename(title or package.stem, extension)
     active, backups = directory/filename, metadata/'BACKUP'
     catalog = metadata/'INDEX.VID'
     catalog_before = None
@@ -94,14 +107,16 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
     entries = []
     if catalog.exists():
         catalog_before, entries = _read_catalog_file(catalog)
+    if native:
+        entries = [entry for entry in entries if Path(entry[1]).suffix.lower() in ('.mp4', '.m4v')]
     existing = next((root / entry[1].lstrip('/') for entry in entries if entry[0] == key), None)
     if existing is not None and existing.is_file() and existing.parent == directory:
         active = existing.resolve()
     elif active.exists():
-        active = directory / (Path(filename).stem + ' [' + key.hex()[:8] + '].ipvf')
+        active = directory / (Path(filename).stem + ' [' + key.hex()[:8] + ']' + extension)
         if active.exists():
             raise ValueError('Video filename already exists; rename the source first')
-    path = '/VIDEOS/IPVF/' + key.hex()[:8].upper() + '.IPV'
+    path = ('/VIDEOS/NATIVE/' if native else '/VIDEOS/IPVF/') + key.hex()[:8].upper() + ('.MP4' if native else '.IPV')
     for entry in entries:
         if entry[1].casefold() == path.casefold() and entry[0] != key:
             raise ValueError('video library filename collision; use a different library key')
@@ -222,18 +237,22 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive, 
         raise RuntimeError(f"Video publication stopped in {receipt['phase']}: {exc}. Inspect {receipt_path}; do not replay automatically") from exc
 
 
-def index_ipvf(source, *, disk_number, expected_disk_serial,
-               expected_volume_serial, expected_drive=None, library_key=None, title=None):
-    """Validate an existing iPod IPVF and publish only its bounded 8.3 catalog path."""
+def index_video(source, *, disk_number, expected_disk_serial,
+               expected_volume_serial, expected_drive=None, library_key=None, title=None, ffprobe=None):
+    """Validate an existing iPod video and publish only its bounded 8.3 catalog path."""
     source = Path(os.path.abspath(source))
     identity = inspect_target(disk_number, expected_disk_serial, expected_volume_serial, expected_drive)
     root = Path(identity['root']).resolve(strict=True)
     _plain(source, root)
     source = source.resolve(strict=True)
-    if not source.is_relative_to(root) or source.suffix.lower() != '.ipvf':
+    if not source.is_relative_to(root) or source.suffix.lower() not in ('.ipvf', '.mp4', '.m4v'):
         raise ValueError('native IPVF source must already be on this iPod')
     before = source.stat()
-    candidate = inspect_file(source)
+    if source.suffix.lower() in ('.mp4', '.m4v'):
+        from .native_video import inspect_file as inspect_native
+        candidate = inspect_native(source, ffprobe=ffprobe)
+    else:
+        candidate = inspect_file(source)
     _target_check(candidate, root)
     after = source.stat()
     if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
@@ -245,7 +264,7 @@ def index_ipvf(source, *, disk_number, expected_disk_serial,
     backups = root/'.LINNET'/'VIDEOS'/'BACKUP'
     receipt_path = Path(os.environ.get('LOCALAPPDATA', source.parent))/'Linnet'/'Media'/('index-ipvf-'+uuid.uuid4().hex+'.json')
     receipt = dict(operation='index-ipvf', passed=False, phase='validated', identity=identity,
-                   source=str(source), device_path=path, frames=candidate['frames'], media_id=candidate['media_id'],
+                   source=str(source), device_path=path, frames=candidate['frames'], media_id=candidate.get('media_id'),
                    started_at=time.time(), receipt=str(receipt_path))
     receipt_path.parent.mkdir(parents=True, exist_ok=True)
     def record():
@@ -255,6 +274,8 @@ def index_ipvf(source, *, disk_number, expected_disk_serial,
         try:
             _volume_guard(identity); _plain(catalog, root); _plain(backups, root)
             previous, entries = _read_catalog_file(catalog) if catalog.exists() else (None, [])
+            if candidate.get('format') == 'MP4':
+                entries = [entry for entry in entries if Path(entry[1]).suffix.lower() in ('.mp4', '.m4v')]
             entries = [entry for entry in entries if entry[0] != key]
             if any(entry[1].casefold() == path.casefold() for entry in entries):
                 raise ValueError('IPVF path is already cataloged under a different library key')
@@ -280,3 +301,7 @@ def index_ipvf(source, *, disk_number, expected_disk_serial,
         except Exception as exc:
             receipt.update(error=str(exc), finished_at=time.time()); record()
             raise RuntimeError(f"IPVF indexing stopped in {receipt['phase']}: {exc}. Inspect {receipt_path}; do not replay automatically") from exc
+
+
+def index_ipvf(source, **kwargs):
+    return index_video(source, **kwargs)

@@ -154,7 +154,7 @@ def _cover_pixels(cover, target: str | None = None) -> bytes:
         if image.getexif().get(274, 1) != 1:
             image = ImageOps.exif_transpose(image)
         image = ImageOps.fit(_cover_rgb(image), (64, 64))
-        if target == "ipod4g-q21":
+        if target and TARGETS[target]["lcd_format"] == "gray2-horizontal":
             image = _mp102_cover(image)
         from .photos import _rgb565
         return _rgb565(image)

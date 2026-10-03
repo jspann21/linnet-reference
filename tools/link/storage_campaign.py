@@ -98,6 +98,7 @@ def cycle(root, image_path, scenario_path, port, progress=None):
     try:
         session,port_info,observed=connect(port=port);observed=check_identity(observed)
         generation=observed['generation'];serial=port_info['serial_number']
+        session.prepare_storage(generation)
         record('before',identity=observed,state=mounted())
         original=session.settings_get(generation);(directory/'settings-original.bin').write_bytes(original)
         n=suite['scratch_bytes']; seed=suite['seed']

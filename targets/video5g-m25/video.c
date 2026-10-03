@@ -1,0 +1,56 @@
+#include "services/video/video.h"
+#include "services/video/catalog.h"
+#include "targets/video5g-m25/coprocessor.h"
+#include "hal/api/display.h"
+#include "hal/api/platform.h"
+static struct {char path[256],title[128];uint32_t identity,position,revision,backend_revision,resume[2];bool active,resume_pending;} v;
+void ln_video_init(void){v.active=v.resume_pending=false;v.position=0;}
+bool ln_video_open(const char *path){
+    if(v.active||ln_m25_coprocessor_active()||ln_video_catalog_pending()||!path)return false;
+    uint32_t n=0,identity=2166136261u;while(path[n]&&n<255u){identity=(identity^(uint8_t)path[n])*16777619u;++n;}if(!n||n==255u)return false;
+    bool opened=ln_m25_coprocessor_open(path);
+    for(uint32_t i=0;i<=n;++i)v.path[i]=path[i];const char *name=path;
+    for(uint32_t i=0;i<n;++i)if(path[i]=='/')name=path+i+1u;
+    uint32_t i=0;while(name[i]&&i<127u){v.title[i]=name[i];++i;}v.title[i]=0;
+    v.identity=identity;v.position=0;v.resume_pending=v.resume[0]==identity&&v.resume[1]>0u;v.active=opened;++v.revision;return true;
+}
+void ln_video_step(void){
+    ln_video_catalog_step(ln_m25_coprocessor_active());
+    if(v.active&&ln_m25_coprocessor_active())v.position=ln_m25_coprocessor_position();
+    if(ln_m25_coprocessor_step()){ln_display_damage(0,0,LINNET_UI_WIDTH,LINNET_UI_HEIGHT);(void)ln_display_present();}
+    if(v.active){
+        if(v.resume_pending&&ln_m25_coprocessor_duration()){
+            if(ln_m25_coprocessor_seek(v.resume[1]))v.resume_pending=false;
+        }
+        if(!ln_m25_coprocessor_active()){
+            if(!ln_m25_coprocessor_error()&&v.position+100u>=ln_m25_coprocessor_duration())v.position=0;
+            v.resume[0]=v.identity;v.resume[1]=v.position;v.active=false;++v.revision;
+        }
+    }
+    uint32_t revision=ln_m25_coprocessor_revision();if(revision!=v.backend_revision){v.backend_revision=revision;++v.revision;}
+}
+void ln_video_stop(void){if(v.active){v.resume[0]=v.identity;v.resume[1]=v.position;v.resume_pending=false;ln_m25_coprocessor_stop();}}
+bool ln_video_active(void){return v.active;}
+bool ln_video_pending(void){return ln_video_catalog_pending();}
+void ln_video_pause(bool paused){if(v.active)ln_m25_coprocessor_pause(paused);}
+bool ln_video_controls(bool show){(void)show;ln_video_pause(!ln_video_paused());return false;}
+bool ln_video_paused(void){return v.active&&ln_m25_coprocessor_paused();}
+bool ln_video_seek(int32_t seconds){
+    if(!v.active)return false;int64_t position=(int64_t)v.position+(int64_t)seconds*1000;
+    if(position<0)position=0;if(position>0xffffffffu)position=0xffffffffu;v.resume_pending=false;
+    return ln_m25_coprocessor_seek((uint32_t)position);
+}
+uint32_t ln_video_progress(void){uint32_t duration=ln_m25_coprocessor_duration(),position=v.position>duration?duration:v.position;if(!duration)return 0;while(duration>0x3fffffu){duration>>=1;position>>=1;}return position*1000u/duration;}
+const char *ln_video_title(void){return v.title;}
+const char *ln_video_status(void){return ln_m25_coprocessor_error()?"Video unavailable":v.active?(ln_video_paused()?"Paused":"Playing"):"Stopped";}
+const struct ln_ui_asset *ln_video_asset(void){return 0;}
+uint32_t ln_video_revision(void){return v.revision;}
+void ln_video_presented(void){}
+void ln_video_resume_get(uint32_t out[2]){out[0]=v.active?v.identity:v.resume[0];out[1]=v.active?v.position:v.resume[1];}
+void ln_video_resume_set(const uint32_t in[2]){v.resume[0]=in[0];v.resume[1]=in[1];}
+uint32_t ln_video_deadline(uint32_t now){return ln_m25_coprocessor_active()?now:now+200000u;}
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_video_diagnostics(uint32_t out[32]){ln_m25_coprocessor_snapshot(out);out[24]=v.position;out[25]=ln_m25_coprocessor_duration();out[26]=v.active;}
+bool ln_video_measurement_arm(uint32_t mode){return mode==0u&&!v.active;}
+void ln_video_metadata(uint32_t page,uint8_t out[128]){for(uint32_t i=0;i<128u;++i)out[i]=page<2u?(uint8_t)v.path[page*128u+i]:page==2u?(uint8_t)v.title[i]:0u;}
+#endif

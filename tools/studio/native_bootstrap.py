@@ -234,10 +234,22 @@ def identify_disk(number, manifest):
 
 def read_at(device, offset, length):
     device.seek(offset)
-    data = device.read(length)
-    if len(data) != length:
-        raise OSError("short raw device read")
-    return data
+    # Full firmware verification can span over 80 MiB. Keep each raw USB disk
+    # request small and sector aligned, while still checking every byte once.
+    chunks = []
+    transferred = 0
+    while transferred < length:
+        count = min(65536, length - transferred)
+        try:
+            data = device.read(count)
+        except OSError as exc:
+            raise OSError(exc.errno, f"raw read failed at {offset + transferred}, "
+                          f"{transferred}/{length} bytes read: {exc}") from exc
+        if len(data) != count:
+            raise OSError(f"short raw read at {offset + transferred}: {len(data)}/{count} bytes")
+        chunks.append(data)
+        transferred += count
+    return b''.join(chunks)
 
 
 def _directory_records(directory):

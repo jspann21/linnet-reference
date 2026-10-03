@@ -17,6 +17,7 @@ void ln_video_stop(void);
 bool ln_video_active(void);
 bool ln_video_pending(void);
 void ln_video_pause(bool paused);
+bool ln_video_controls(bool show);
 bool ln_video_paused(void);
 bool ln_video_seek(int32_t seconds);
 uint32_t ln_video_progress(void); /* 0..1000 */

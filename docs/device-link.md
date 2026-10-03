@@ -241,6 +241,7 @@ never chosen by the wire. Commands are excluded from release builds.
 | 87 | UPDATE_FINISH | Generation / generation, zero after durable verification |
 | 88 | UPDATE_STATUS | Empty / 16 words described below |
 | 89 | STORAGE_FAULT | Generation, mode 1..5 / generation, mode |
+| 90 | STORAGE_PREPARE | Generation / generation, zero; admits read-only FAT ownership revalidation; poll STORAGE_STATE until prepared |
 | 91 | STORAGE_RECOVER | Generation / generation, zero; remount progresses asynchronously |
 | 92 | REBOOT_PERSISTENT | Generation / generation, zero; reset only after ACK retirement |
 | 93 | PUBLICATION_FAULT | Generation, stage 1..4 / generation, stage |
@@ -414,6 +415,51 @@ subscription is not implemented.
 
 ## Host integration and release exclusion
 
+### Windows loses the iPod during Disk Mode
+
+If Windows reports **Device Descriptor Request Failed / Code 43**, check the
+device's USB location as well as its name. A failed descriptor prevents normal
+enumeration; a remembered COM port or disk entry is not a reachable endpoint.
+An observed M25 failure occurred during a read-only firmware guard, before any
+write, after two full guards had passed. Bounded 64 KiB reads did not eliminate
+the failure. Its cause remains unresolved; do not diagnose corruption, a bad
+cable, or selective suspend from Code 43 alone.
+
+Stop the failed operation and retain its receipt. `device_write_attempted` and
+each write's `complete` field distinguish no write, completed write/readback,
+and uncertain writes. A completed directory readback does not mean the later
+full firmware guard passed. Never replay a write or skip its guard to make eject
+succeed. Use the normal guarded roundtrip once; extra full read-only passes are
+diagnostic stress, not a publication prerequisite.
+
+For repeated diagnosis, prepare the existing finite helper with
+`--usb-serial 000A27001596FB5F` and start it with `--allow-uac` once. Stop an
+older session first if it lacks that capability. The approved snapshot pins the
+serial and physical port. `device refresh-session trace-start`, `trace-stop`,
+`usb-restart` and `usb-cycle` reuse that approval; traces stop after 15 minutes and are capped
+at 128 MiB. Restart accepts only the matching iPod or its Code 43 descriptor-failure
+node on that port. End all device I/O before requesting restart, wait for the volume
+to remount, then re-discover its identity. This provides a recovery mechanism;
+it does not establish that the underlying intermittent fault is repaired. If
+restart and port cycle both leave descriptor reads failing, physically reset
+the iPod before another upload; an accepted Windows request is not recovery.
+
+After all I/O has ended, recovery options are an administrator restart of the
+**exact affected device node** (`pnputil /restart-device "<instance-id>"`) or
+disconnecting and reconnecting its USB cable. A port cycle is also possible with
+administrator access; do not reset the shared root hub. If enumeration still
+fails, isolate the connection with another known-good data cable and USB port,
+then compare cold/manual Disk Mode with the software handoff. These are
+diagnostic comparisons, not established fixes. Re-discover the serial, disk,
+volume and image identities after recovery; never reuse a stale disk number.
+Use Link A/B installation for ordinary OS updates to avoid unnecessary Disk Mode
+transitions. Leave system-wide power policy unchanged without evidence.
+
+Windows references: [enumeration failures](https://techcommunity.microsoft.com/blog/microsoftusbblog/why-is-my-usb-device-not-detected-or-comes-up-as-unknown-device/270686),
+[administrator port cycling](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/usbioctl/ni-usbioctl-ioctl_usb_hub_cycle_port).
+
+### Link transport
+
 `tools.link.session.Session` exposes identity, upload/verify, `boot_ram`,
 `reboot`, `reboot_persistent`, `crash_get`, platform input/capture, and storage
 operations. Its transport provides deadline-bound `read`, `write`, and `close`.
@@ -439,8 +485,10 @@ Firmware integration requirements:
 - Bus reset, reconfiguration, DTR edges, and disconnect change USB generation and
   invalidate the parser/session. MMIO waits are bounded; transfer faults disconnect.
 - Lab VID/PID is `1209:504a`, not an assigned production identity. USB serial comes
-  from the physical device. The descriptor requests 100 mA; the driver does not
-  enable high-current charging.
+  from the physical device. The development audio OS advertises 500 mA and
+  permits that budget only after configuration; suspend/detach disables USB
+  charging, and an awake unconfigured connection permits 100 mA. Boot advertises
+  100 mA. The USB stop path reduces the budget before handoff to another image.
 - Before replacing DMA-visible memory, require successful `ln_usb_stop`, controller
   reset completion, and idle endpoint registers. Boot keeps USB blocks powered;
   power-gate readback or a void disconnect does not prove DMA is idle. Cache a

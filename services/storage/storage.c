@@ -275,14 +275,22 @@ static void storage_step(bool defer_runtime){
     }
     if(phase==2){int result=sector_io(0,LN_FAT32_READ,0,mbr,epoch);if(!result)return;
         if(result<0||mbr[510]!=0x55||mbr[511]!=0xaa){error=2;phase=9;return;}
-        uint64_t start=0,count=0;uint32_t matches=0;
+        uint64_t start=0,count=0;uint32_t matches=0;bool tail_claimed=false;
         for(uint32_t i=0;i<4;++i){const uint8_t *p=mbr+446+i*16;uint32_t n=ln_read_le32(p+12),s=ln_read_le32(p+8);
             if(!n)continue;
             if(!s||(uint64_t)s+n>volume.config.disk_sectors){error=3;phase=9;return;}
             for(uint32_t j=0;j<i;++j){const uint8_t *q=mbr+446+j*16;uint32_t qn=ln_read_le32(q+12),qs=ln_read_le32(q+8);
                 if(qn&&(uint64_t)s<(uint64_t)qs+qn&&(uint64_t)qs<(uint64_t)s+n){error=3;phase=9;return;}}
+            if((uint64_t)s+n==volume.config.disk_sectors)tail_claimed=true;
             if(p[4]==0x0b||p[4]==0x0c){start=s;count=n;++matches;}
         }
+        /* M25's factory MBR omits the final physical sector while its FAT32
+         * BPB includes it. Admit that single tail sector only at disk end.
+         * No partition metadata is rewritten; BPB validation still applies. */
+(void)tail_claimed;
+#if LINNET_STORAGE_TAIL_SECTOR
+        if(matches==1&&!tail_claimed&&start+count+1u==volume.config.disk_sectors)++count;
+#endif
         if(matches!=1||!ln_block_set_window(start,count)||!ln_fat32_mount(&volume,start,count,next_generation())){error=4;phase=9;return;}phase=3;
     }
     if(phase==3){int result=storage_fat_poll();if(!result)return;if(result<0){error=(uint32_t)-result+100;phase=9;return;}LN_STORAGE_STAMP(FAT);opening=UINT32_MAX;phase=4;}
@@ -555,7 +563,7 @@ int ln_storage_disk_mode(void){
     ln_core_watchdog_disarm();ln_platform_quiesce();
     if(!ln_platform_dma_idle()){ln_core_watchdog_arm();return 0;}
     static const uint8_t marker[21]="diskmode\0\0hotstuff\0\0\1";
-    volatile uint8_t *destination=(volatile uint8_t *)(uintptr_t)0x40017f00;
+    volatile uint8_t *destination=(volatile uint8_t *)(uintptr_t)LINNET_DISK_MODE_MARKER;
     for(uint32_t i=0;i<21;++i)destination[i]=marker[i];
     *(volatile uint32_t *)(uintptr_t)0x60006004|=4u;
     for(;;)__asm__ volatile("nop");
@@ -569,7 +577,7 @@ int ln_storage_restart(void){
     extern bool ln_display_quiesce(void);if(!ln_display_quiesce())return 0;
 #endif
     ln_core_watchdog_disarm();ln_platform_quiesce();
-    volatile uint8_t *marker=(volatile uint8_t *)(uintptr_t)0x40017f00;
+    volatile uint8_t *marker=(volatile uint8_t *)(uintptr_t)LINNET_DISK_MODE_MARKER;
     for(uint32_t i=0;i<21;++i)marker[i]=0;
     *(volatile uint32_t *)(uintptr_t)0x60006004|=4u;
     for(;;)__asm__ volatile("nop");

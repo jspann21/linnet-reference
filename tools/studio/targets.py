@@ -15,9 +15,9 @@ REQUIRED_KEYS = {
     "media_photo_height", "media_video_width", "media_video_height",
     "media_video_fps", "media_video_color", "media_video_extensions",
     "cop_display", "entry_address", "load_address", "mailbox_address",
-    "mailbox_bytes", "retail", "installer",
+    "mailbox_bytes", "retail", "installer", "resources",
 }
-OPTIONAL_KEYS = {"ui"}
+OPTIONAL_KEYS = {"ui", "hal_family", "audio_codec", "idle_clock_hz"}
 CAPABILITIES = {"photos", "video", "files", "demo", "themes", "cover_flow"}
 LCD_FORMATS = {"rgb565-swapped": 1, "gray2-horizontal": 2, "rgb565": 3}
 
@@ -29,19 +29,33 @@ def _valid_ascii_list(value):
 
 def _target_sources(path, spec):
     """Resolve the conventional source layout for one target."""
-    soc_root = ROOT / "hal" / spec["soc"]
+    soc_root = ROOT / "hal" / spec.get("hal_family", spec["soc"])
     target_root = path.parent
+    if not re.fullmatch(r"[a-z][a-z0-9-]*", spec.get("hal_family", spec["soc"])):
+        raise RuntimeError(f"invalid HAL family: {path}")
+    codec = spec.get("audio_codec", "wm8975")
+    if codec not in {"wm8975", "wm8758"}:
+        raise RuntimeError(f"unsupported audio codec: {path}")
     display = target_root / "display.c"
     if not display.is_file():
         display = soc_root / "display.c"
     sources = {
+        "native_update": target_root / "native_update.c" if (target_root / "native_update.c").is_file() else ROOT / "services/update/native.c",
+        "hardware": target_root / "hardware.h",
         "startup": soc_root / "startup.S",
         "linker": soc_root / "memory.ld",
         "platform": soc_root / "platform.c",
         "lcd": target_root / "lcd.c",
         "display": display,
         "device": target_root / "device.c",
+        "codec": ROOT / "hal" / "codecs" / (codec + ".c"),
     }
+    video = target_root / "video.c"
+    if video.is_file():
+        sources["video"] = video
+    coprocessor = target_root / "coprocessor.c"
+    if coprocessor.is_file():
+        sources["coprocessor"] = coprocessor
     if any(not source.is_file() for source in sources.values()):
         missing = ", ".join(
             source.relative_to(ROOT).as_posix()
@@ -128,6 +142,17 @@ def _validate_identity(path, spec):
         raise RuntimeError(f"invalid target identity: {path}")
 
 
+def _validate_resources(path, spec):
+    r=spec["resources"]
+    if not isinstance(r,dict) or set(r)!={"music_titles_address","music_titles_bytes","coverflow_catalog_slots"}:
+        raise RuntimeError(f"invalid resource budget: {path}")
+    start,size,slots=(r[k] for k in ("music_titles_address","music_titles_bytes","coverflow_catalog_slots"))
+    if (any(type(v) is not int for v in (start,size,slots)) or start%32 or size<840896 or
+        not 16<=slots<=2048 or start < spec["recovery_snapshot_address"]+spec["recovery_snapshot_bytes"]+spec["lcd_width"]*spec["lcd_height"]*2 or
+        start+size>spec["mailbox_address"]-8192):
+        raise RuntimeError(f"resource budget overlaps recovery or exceeds limits: {path}")
+
+
 def _validate_profiles(path, spec):
     retail = spec["retail"]
     if (not isinstance(retail, dict) or
@@ -176,6 +201,8 @@ def load_targets():
                 not REQUIRED_KEYS <= set(spec) or
                 set(spec) - REQUIRED_KEYS - OPTIONAL_KEYS):
             raise RuntimeError(f"invalid target manifest: {path}")
+        if spec.get("idle_clock_hz",0) not in (0,30000000):
+            raise RuntimeError(f"unsupported idle clock: {path}")
         _validate_identity(path, spec)
         spec["target_define"] = "LINNET_TARGET_" + target.upper().replace("-", "_")
         number = spec["image_target"]
@@ -196,6 +223,7 @@ def load_targets():
                  spec["storage_max_read_sectors"] * 512 <
                  spec["media_video_width"] * spec["media_video_height"] * 2 + 16384)):
             raise RuntimeError(f"invalid target identity: {path}")
+        _validate_resources(path, spec)
         _validate_profiles(path, spec)
         _validate_ui(path, spec)
         names = [target, *spec.get("aliases", [])]

@@ -6,7 +6,7 @@
 #include "boot/include/linnet_boot.h"
 #include "boot/include/linnet_bytes.h"
 #include "hal/api/platform.h"
-#define CATALOG_SLOTS 2048u
+#define CATALOG_SLOTS LINNET_COVERFLOW_CATALOG_SLOTS
 #define CATALOG_RECORD 1024u
 #define PAGE 16u
 #define ART_RECORD 13312u
@@ -39,7 +39,7 @@ struct ln_coverflow_column {uint32_t step;uint8_t source,top,height,length;};
 extern const struct ln_coverflow_column ln_coverflow_columns[33][96];
 extern const uint8_t ln_coverflow_widths[33];
 extern const uint8_t ln_coverflow_ease[8][8];
-extern const uint8_t ln_coverflow_glow[220][140];
+extern const uint8_t ln_coverflow_glow[LINNET_UI_WIDTH][LINNET_UI_HEIGHT*140u/176u];
 static uint32_t crc_span(uint32_t crc,const uint8_t *data,uint32_t size){
     while(size--){crc^=*data++;crc=(crc>>4)^crc_table[crc&15u];crc=(crc>>4)^crc_table[crc&15u];}return crc;
 }
@@ -255,7 +255,7 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
         if(cached>=0)cache[cached].age=++age;
         int32_t distance=index*256-position,ad=distance<0?-distance:distance;
         int32_t pose=ad>=256?32:(ad+4)/8,width=ln_coverflow_widths[pose];
-        int32_t xcenter=110+(distance<0?-1:1)*(ad<=256?ad*69/256:69+(ad-256)*25/256);
+        int32_t xcenter=LINNET_UI_WIDTH/2+(distance<0?-1:1)*(ad<=256?ad*69/256:69+(ad-256)*25/256);
         for(int32_t x=0;x<width;x++){
             int32_t dx=xcenter-width/2+x;if(dx<c->clip_x||dx>=c->clip_x+c->clip_w)continue;
             const struct ln_coverflow_column *column=&ln_coverflow_columns[pose][distance<0?x:width-1-x];
@@ -308,7 +308,7 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
                 colors[k*4+d]=(uint16_t)(((r+bias)>>11)<<11|((g+bias)>>11)<<5|((b+bias)>>11));
             }
         }
-        int32_t bottom=c->clip_y+c->clip_h;if(bottom>140)bottom=140;
+        int32_t bottom=c->clip_y+c->clip_h;if(bottom>(int32_t)(LINNET_UI_HEIGHT*140u/176u))bottom=LINNET_UI_HEIGHT*140u/176u;
         for(int32_t x=c->clip_x;x<c->clip_x+c->clip_w;x++){
             int32_t spans[4]={c->clip_y,painted_top[x],painted_end[x],bottom};
             if(painted_end[x]<=painted_top[x]){spans[1]=bottom;spans[2]=bottom;}
