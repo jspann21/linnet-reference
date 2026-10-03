@@ -1221,11 +1221,8 @@ def _video_duration(source, ffprobe):
                                 timeout=60, check=True,
                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
         data = json.loads(result.stdout[:1024 * 1024])
-        values = [row.get('duration') for row in data.get('streams', [])
-                  if isinstance(row, dict)]
-        values.append(data.get('format', {}).get('duration'))
-        durations = [float(value) for value in values if value not in (None, 'N/A')]
-        duration = max((value for value in durations if math.isfinite(value) and value > 0), default=0)
+        from .native_video import _probe_duration
+        duration = _probe_duration(data)
         if duration:
             return duration
     except (OSError, ValueError, subprocess.SubprocessError, TypeError, AttributeError):
@@ -1479,19 +1476,35 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
         backend = identity['media_profile']['video_backend']
         native_extensions = native_video_extensions(identity)
 
-        def inspect_host(job, stop):
-            from .native_video import inspect_file
+        def checked_duration(source, probe):
+            seconds, before = probe.get('seconds'), probe.get('stamp')
+            if not seconds or before is None:
+                return None
             try:
-                return inspect_file(job['source'], profile=identity['media_profile'],
-                                    ffprobe=ffprobe, cancelled=stop.is_set)
+                after = _receipt_stamp(Path(source).stat())
             except (OSError, ValueError):
                 return None
+            if (before != after or
+                    (os.name == 'nt' and after[3] > time.time_ns() - _RECENT_OUTPUT_NS)):
+                return None
+            return seconds, after
+
+        def inspect_host(job, stop):
+            from .native_video import inspect_file
+            probe = {}
+            try:
+                details = inspect_file(job['source'], profile=identity['media_profile'],
+                                       ffprobe=ffprobe, cancelled=stop.is_set,
+                                       duration_probe=probe)
+            except (OSError, ValueError):
+                details = None
+            return details, checked_duration(job['source'], probe) if details is None else None
 
         def estimate_jobs(items, futures=None):
             nonlocal video_bytes, video_host, video_conversion_required
             for index, job in enumerate(items):
                 source = Path(job['source'])
-                details = None
+                details = duration_hint = None
                 if backend in ('bcm-mp4', 'native-mp4') and source.suffix.lower() in native_extensions:
                     hint = job.get('_native_details') if no_conversions else None
                     if (isinstance(hint, dict) and type(hint.get('fast_start')) is bool and
@@ -1499,13 +1512,17 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
                             _native_check_reusable(job, source, identity['media_profile'])):
                         details = hint
                     elif futures is not None:
-                        details = futures[index].result()
+                        details, duration_hint = futures[index].result()
                     else:
                         from .native_video import inspect_file
+                        probe = {}
                         try:
-                            details = inspect_file(source, profile=identity['media_profile'], ffprobe=ffprobe)
+                            details = inspect_file(source, profile=identity['media_profile'],
+                                                   ffprobe=ffprobe, duration_probe=probe)
                         except (OSError, ValueError):
                             pass
+                        if details is None:
+                            duration_hint = checked_duration(source, probe)
                     native = details is not None
                 else:
                     native = (no_conversions and
@@ -1526,7 +1543,16 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
                     scratch = 0
                 else:
                     video_conversion_required = True
-                    duration = _video_duration(source, ffprobe)
+                    duration = None
+                    if duration_hint is not None:
+                        seconds, stamp = duration_hint
+                        try:
+                            if _receipt_stamp(source.stat()) == stamp:
+                                duration = seconds
+                        except (OSError, ValueError):
+                            pass
+                    if duration is None:
+                        duration = _video_duration(source, ffprobe)
                     if backend in ('bcm-mp4', 'native-mp4'):
                         limit = identity['media_profile']['native_video']['max_video_kbps'] + 256
                         estimate = min(0x7fffffff, max(job['bytes'] * 3,

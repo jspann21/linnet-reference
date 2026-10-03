@@ -65,6 +65,15 @@ def _seconds(value):
     return result if math.isfinite(result) and 0 < result <= 86400 else None
 
 
+def _probe_duration(data):
+    """Use the same duration choice for a full native probe and space planning."""
+    values = [row.get('duration') for row in data.get('streams', [])
+              if isinstance(row, dict)]
+    values.append(data.get('format', {}).get('duration'))
+    durations = [float(value) for value in values if value not in (None, 'N/A')]
+    return max((value for value in durations if math.isfinite(value) and value > 0), default=0)
+
+
 def _conversion_updates(path, offset, pending, values, duration, progress, phase, total_frames):
     """Read FFmpeg's bounded key/value progress stream without blocking its writer."""
     try:
@@ -322,7 +331,9 @@ def _check_tables(path, size, sample_bytes=65536):
         atoms(0, size)
     return metadata_at is not None and media_at is not None and metadata_at < media_at
 
-def inspect_file(path, *, profile, ffprobe=None, cancelled=None):
+def inspect_file(path, *, profile, ffprobe=None, cancelled=None, duration_probe=None):
+    if duration_probe is not None:
+        duration_probe.clear()
     def checkpoint():
         if cancelled and cancelled():
             from .media_manager import Cancelled
@@ -332,7 +343,10 @@ def inspect_file(path, *, profile, ffprobe=None, cancelled=None):
         raise ValueError("This target does not support native MP4")
     limits = profile["native_video"]
     path = Path(path)
-    size = path.stat().st_size
+    info = path.stat()
+    size = info.st_size
+    if duration_probe is not None:
+        duration_probe['stamp'] = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
     if not 8 <= size <= 0x7fffffff:
         raise ValueError("Native video must fit the supported 2 GiB file range")
     checkpoint()
@@ -370,6 +384,11 @@ def inspect_file(path, *, profile, ffprobe=None, cancelled=None):
             raise ValueError("Native video probe metadata exceeds 8 MiB")
         output.seek(0)
         data = json.loads(output.read().decode('utf-8'))
+    if duration_probe is not None:
+        try:
+            duration_probe['seconds'] = _probe_duration(data)
+        except (ValueError, TypeError, AttributeError, OverflowError):
+            pass
     streams = data.get("streams", [])
     video = [s for s in streams if s.get("codec_type") == "video"]
     audio = [s for s in streams if s.get("codec_type") == "audio"]
