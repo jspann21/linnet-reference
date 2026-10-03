@@ -12,7 +12,6 @@ import secrets
 import socket
 import struct
 import subprocess
-import time
 import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -121,70 +120,6 @@ def prepare(plan_path, plan_sha256, volume_serial='3D9E4E60'):
 def start(prepared):
     """One normal Windows UAC consent starts an eight-hour restricted helper."""
     raise RuntimeError('Experimental helper disabled after Windows Defender blocked its verification command; do not bypass protection')
-    import ctypes
-    from ctypes import wintypes as w
-    state = json.loads(Path(prepared).read_text())
-    if status()['running']:
-        raise RuntimeError('A restart helper is already running')
-    for key in ('recipe', 'executable'):
-        if hashlib.sha256(Path(state[key]).read_bytes()).hexdigest() != state[key + '_sha256']:
-            raise ValueError('Prepared restart helper changed before launch')
-    if len(state['session_id']) != 32 or any(c not in '0123456789abcdef' for c in state['session_id']):
-        raise ValueError('Invalid prepared session ID')
-    quote = lambda value: "'" + str(value).replace("'", "''") + "'"
-    # Copy verified bytes into a fresh protected directory before execution.
-    # The elevated process never imports Python or workspace modules.
-    script = r'''
-$ErrorActionPreference='Stop'
-$env:PSModulePath=Join-Path ([Environment]::GetFolderPath('System')) 'WindowsPowerShell\v1.0\Modules'
-$exe=[IO.File]::ReadAllBytes(EXE)
-$recipe=[IO.File]::ReadAllBytes(RECIPE)
-function Hash($bytes) { $h=[Security.Cryptography.SHA256]::Create(); try { ([BitConverter]::ToString($h.ComputeHash($bytes))).Replace('-','').ToLowerInvariant() } finally { $h.Dispose() } }
-if ((Hash $exe) -cne EXEHASH -or (Hash $recipe) -cne RECIPEHASH) { throw 'Prepared helper hash mismatch' }
-$base=[Environment]::GetFolderPath('ProgramFiles')
-if ((Get-Item -LiteralPath $base).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Program Files reparse point rejected' }
-$dest=Join-Path $base SESSION
-if (Test-Path -LiteralPath $dest) { throw 'Protected helper session already exists' }
-[void][IO.Directory]::CreateDirectory($dest)
-$acl=New-Object Security.AccessControl.DirectorySecurity
-$acl.SetAccessRuleProtection($true,$false)
-$acl.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))
-foreach($sid in @('S-1-5-18','S-1-5-32-544')) {
- $rule=New-Object Security.AccessControl.FileSystemAccessRule([Security.Principal.SecurityIdentifier]::new($sid),'FullControl','ContainerInherit,ObjectInherit','None','Allow')
- $acl.AddAccessRule($rule)
-}
-Set-Acl -LiteralPath $dest -AclObject $acl
-$binary=Join-Path $dest 'restart-helper.exe'
-$config=Join-Path $dest 'recipe.json'
-[IO.File]::WriteAllBytes($binary,$exe)
-[IO.File]::WriteAllBytes($config,$recipe)
-$arguments='--recipe "'+$config+'" --recipe-sha256 '+RECIPEHASH+' --port '+PORT+' --token '+TOKEN
-Start-Process -FilePath $binary -ArgumentList $arguments -WorkingDirectory $dest -WindowStyle Hidden
-'''
-    replacements = dict(EXE=quote(state['executable']), RECIPE=quote(state['recipe']),
-                        EXEHASH=quote(state['executable_sha256']), RECIPEHASH=quote(state['recipe_sha256']),
-                        SESSION=quote('LinnetRestart-' + state['session_id']),
-                        PORT=quote(state['port']), TOKEN=quote(state['token']))
-    import re
-    script = re.sub(r'\b(?:EXEHASH|RECIPEHASH|SESSION|RECIPE|EXE|PORT|TOKEN)\b',
-                    lambda match: replacements[match[0]], script)
-    encoded = base64.b64encode(script.encode('utf-16-le')).decode()
-    powershell = str(Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/powershell.exe')
-    shell = ctypes.WinDLL('shell32', use_last_error=True)
-    shell.ShellExecuteW.argtypes = [w.HWND, w.LPCWSTR, w.LPCWSTR, w.LPCWSTR, w.LPCWSTR, ctypes.c_int]
-    shell.ShellExecuteW.restype = ctypes.c_void_p
-    _save(STATE, state)
-    result = shell.ShellExecuteW(None, 'runas', powershell,
-                                '-NoProfile -NonInteractive -EncodedCommand ' + encoded, None, 0)
-    if not result or result <= 32:
-        raise RuntimeError('Windows did not launch the restart helper (UAC may have been declined)')
-    deadline = time.monotonic() + 45
-    while time.monotonic() < deadline:
-        observed = status()
-        if observed['running']:
-            return observed
-        time.sleep(.25)
-    raise RuntimeError('Helper did not become ready; no disk operation requested')
 
 
 def refresh(plan_path, plan_sha256, disk_number, receipt_path):

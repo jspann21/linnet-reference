@@ -124,7 +124,7 @@ class Parser:
                             or length > MAX_PAYLOAD):
                         raise ProtocolError("invalid Linnet Link frame header")
                     self.expected = HEADER.size + length + 4
-                if len(self.buffer) == self.expected and self.expected > HEADER.size:
+                if len(self.buffer) == self.expected:
                     raw = self.buffer
                     if zlib.crc32(raw[:-4]) != struct.unpack_from("<I", raw, len(raw) - 4)[0]:
                         raise ProtocolError("Linnet Link CRC mismatch")

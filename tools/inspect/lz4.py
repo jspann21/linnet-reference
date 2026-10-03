@@ -3,48 +3,6 @@ import struct
 import sys
 
 
-def pack(data: bytes) -> bytes:
-    output=bytearray();positions={};anchor=cursor=0
-    def remember(at):
-        matches=positions.setdefault(data[at:at+4],[])
-        matches.append(at)
-        # Boot images contain many repeated instruction and zero-filled table
-        # prefixes. Keep a deeper, still-bounded window so the archive fits the
-        # Classic's fixed NOR slot without changing the on-device LZ4 format.
-        if len(matches)>4096:del matches[0]
-    def length(value):
-        while value>=255:output.append(255);value-=255
-        output.append(value)
-    while cursor+12<=len(data):
-        matches=positions.get(data[cursor:cursor+4],())
-        previous=None;size=3;limit=len(data)-5-cursor
-        for candidate in reversed(matches):
-            if cursor-candidate>65535:break
-            count=4
-            while count<limit and data[candidate+count]==data[cursor+count]:count+=1
-            if count>size:previous=candidate;size=count
-            if size==limit:break
-        remember(cursor)
-        if previous is None:
-            cursor+=1;continue
-        literals=cursor-anchor
-        match=size-4
-        output.append((min(literals,15)<<4)|min(match,15))
-        if literals>=15:length(literals-15)
-        output.extend(data[anchor:cursor]);output.extend(struct.pack('<H',cursor-previous))
-        if match>=15:length(match-15)
-        end=cursor+size
-        for at in range(cursor+1,end):
-            remember(at)
-        cursor=anchor=end
-    literals=len(data)-anchor;output.append(min(literals,15)<<4)
-    if literals>=15:length(literals-15)
-    output.extend(data[anchor:])
-    result=bytes(output)
-    if unpack(result,len(data))!=data:raise ValueError('Boot compression readback mismatch')
-    return result
-
-
 def pack_hc(data: bytes) -> bytes:
     """Compress a raw Boot block on any host and independently verify it."""
     try:
