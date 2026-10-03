@@ -3,6 +3,7 @@
 #include "services/storage/storage.h"
 #include "services/storage/block.h"
 #include "hal/api/platform.h"
+#include "hal/api/ata.h"
 #include "boot/include/linnet_boot.h"
 #include "boot/include/sha256.h"
 #include "linnet_build.h"
@@ -13,6 +14,13 @@ static uint8_t sector[4096] __attribute__((aligned(32)));
 static uint8_t expected[32],observed[32];
 static uint32_t phase,error,offset,writes,request_generation=0x40000000u,bytes_read;
 static uint32_t apply_started,package_size;
+static int serial_matches(const uint8_t expected[16],const char *actual){
+    for(uint32_t i=0;i<16u;++i){
+        if(expected[i]!=(uint8_t)actual[i])return 0;
+        if(!expected[i])return 1;
+    }
+    return !actual[16];
+}
 static void hash(const uint8_t *data,uint32_t n,uint8_t out[32]){
     struct ln_sha256 s;ln_sha256_init(&s);
     while(n){uint32_t chunk=n>4096u?4096u:n;ln_sha256_update(&s,data,chunk);data+=chunk;n-=chunk;ln_storage_progress(0);}
@@ -65,13 +73,14 @@ static int directory_valid(uint64_t candidate,uint32_t length){
 }
 static int validate(void){
     static const uint8_t original_sha[32]={0x0e,0x21,0xc2,0xbc,0x8c,0xba,0xbd,0xee,0xd6,0xe3,0xd6,0xa0,0x34,0xea,0xcc,0x8e,0x3c,0xa7,0xd6,0xfb,0x04,0xcd,0x2d,0x5d,0x1b,0x4c,0xfc,0x5f,0xd8,0x5d,0x96,0x11};
-    static const uint8_t serial[16]="JQ5081G3SAY",usb[33]=LINNET_USB_SERIAL;
+    static const uint8_t usb[33]=LINNET_USB_SERIAL;
+    struct ln_ata_info ata;ln_ata_snapshot(&ata);
     const uint8_t *p=package;uint64_t candidate=ln_read_le64(p+32);uint32_t n=ln_read_le32(p+44),span=ln_read_le32(p+40);
     if(ln_read_le32(p)!=0x4b504e4cu||ln_read_le32(p+4)||ln_read_le32(p+8)!=package_size||ln_read_le32(p+12)!=98||ln_read_le32(p+16)||
        ln_read_le32(p+20)!=41094144u||ln_read_le64(p+24)!=32256u||span!=package_size-2560u||n<32||n>span||
        ln_read_le64(p+48)!=49152u||ln_read_le64(p+56)!=21003776u||ln_read_le32(p+64)!=1549256u||
        ln_read_le32(p+68)>2||ln_read_le64(p+72)!=64021856256ull||
-       !ln_bytes_equal(p+80,serial,16)||!ln_bytes_equal(p+96,usb,16)||!ln_bytes_equal(p+208,original_sha,32)||
+       !serial_matches(p+80,ata.serial)||!ln_bytes_equal(p+96,usb,16)||!ln_bytes_equal(p+208,original_sha,32)||
        !ln_bytes_zero(p+464,44)||ln_crc32(p,508)!=ln_read_le32(p+508)||
        candidate%512||candidate<22553032u||candidate+ln_read_le32(package+40)>41126400u)return 0;
     if(!matches(p,package_size,expected)||!matches(p+512,package_size-512,p+432)||
