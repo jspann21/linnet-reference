@@ -2326,9 +2326,13 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                     reusable = False
             if not reusable:
                 if native_ipvf:
-                    inspect_file(source,expected_width=media_profile["video_width"],
-                                 expected_height=media_profile["video_height"],
-                                 max_record_sectors=media_profile["max_read_sectors"])
+                    # No-conversion planning already validated this exact
+                    # source. The copied temporary is checked again below.
+                    if not (no_conversions and _native_check_reusable(job, source, media_profile)):
+                        inspect_file(source,expected_width=media_profile["video_width"],
+                                     expected_height=media_profile["video_height"],
+                                     max_record_sectors=media_profile["max_read_sectors"])
+                    checkpoint()
                     package.parent.mkdir(parents=True, exist_ok=True)
                     temporary = package.with_name(package.name + "." + uuid.uuid4().hex + ".tmp")
                     with source.open("rb") as reader, temporary.open("xb") as writer:
