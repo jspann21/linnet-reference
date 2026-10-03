@@ -35,8 +35,23 @@ integrity checks, not signature authentication.
 
 **Fresh reinstall** uses the saved recovery record, replaces system files, and
 retains settings and prepared media. **Restore previous boot** restores the
-recorded predecessor while leaving media in place. Keep the matching backup and
-receipt; restoration cannot be inferred from files merely remaining on the disk.
+recorded predecessor while leaving Linnet files and media in place. **Remove
+Linnet OS** in **iPod setup** restores and verifies the saved previous startup
+software, then removes the `.LINNET` system directory, including Linnet settings
+and prepared libraries. The Music, Photos, Videos, and Notes folders remain.
+The previous startup software is Apple OS when the verified recovery record
+identifies Apple, or Rockbox when the iPod was installed using its loader. Media
+that was prepared only for Linnet may need an Apple library sync before it appears
+in Apple OS. Removal is unavailable without a verified recovery record.
+Restore or empty Media Manager Trash before removal, since it can contain
+original media files. If the iPod is connected through Linnet's native Disk
+Mode, restart into Apple iPod software and reconnect in Apple Disk Mode so the
+saved firmware backup can be matched to the original storage identity.
+If cleanup is interrupted, reconnect the same iPod and choose **Remove Linnet OS**
+again. Media Manager matches its host recovery copy to that iPod and resumes
+the removal.
+Keep the matching backup and receipt; restoration cannot be inferred from files
+merely remaining on the disk.
 An OS-only Link update does not replace Boot or add a newer startup chooser.
 
 From a configured source checkout, equivalent commands are:
@@ -45,6 +60,7 @@ From a configured source checkout, equivalent commands are:
 python linnet installer inspect --mount X:/
 python linnet installer install --mount X:/ --firmware path/to/firmware.zip
 python linnet installer restore --mount X:/
+python linnet installer uninstall --mount X:/
 ```
 
 Replace the drive and file placeholders with the inspected device and package.

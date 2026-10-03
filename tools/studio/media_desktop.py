@@ -760,6 +760,12 @@ class SetupPage:
         window.setup_device = label('Connect an iPod in Disk Mode.', 'muted', True); details.addWidget(window.setup_device)
         window.setup_software = label('', 'muted', True); details.addWidget(window.setup_software)
         window.install_detail = label('', 'notice', True); window.install_detail.hide(); details.addWidget(window.install_detail)
+        details.addSpacing(10)
+        details.addWidget(label('Remove Linnet OS', 'section'))
+        window.uninstall_detail = label('Connect an iPod to check removal options.', 'muted', True)
+        details.addWidget(window.uninstall_detail)
+        window.uninstall_button = button('Remove Linnet OS', window.uninstall_selected, 'danger')
+        details.addWidget(window.uninstall_button, 0, Qt.AlignLeft)
         window.setup_progress = QProgressBar(); window.setup_progress.setRange(0, 0)
         window.setup_progress.setTextVisible(False); window.setup_progress.hide(); details.addWidget(window.setup_progress)
         layout.addWidget(card)
@@ -991,6 +997,8 @@ class MediaWindow(QMainWindow):
         self.device_info = label('USB · Disk Mode', 'deviceInfo', True)
         self.capacity = QProgressBar(); self.capacity.setTextVisible(False); self.capacity.setRange(0, 100); self.capacity.setValue(0)
         layout.addWidget(self.device_name); layout.addWidget(self.device_info); layout.addWidget(self.capacity)
+        self.choose_device_button = button('Find or switch iPod', self.discover, 'sidebarAction', 'refresh')
+        layout.addWidget(self.choose_device_button)
         self.eject_button = button('Eject safely', self.eject, 'sidebarAction', 'eject'); layout.addWidget(self.eject_button)
         side.addWidget(device)
         main.addWidget(sidebar)
@@ -1494,7 +1502,7 @@ class MediaWindow(QMainWindow):
             'trash': self._complete_trash, 'setup': self._complete_setup,
             'prepare': self._complete_prepare, 'eject': self._complete_eject,
         }
-        for change in ('remove', 'restore', 'erase', 'sync', 'install', 'skipped'):
+        for change in ('remove', 'restore', 'erase', 'sync', 'install', 'uninstall', 'skipped'):
             handlers[change] = self._complete_change
         handler = handlers.get(tag)
         if handler is None:
@@ -1630,7 +1638,7 @@ class MediaWindow(QMainWindow):
         self.show_progress(result['summary']); self.refresh(); return
 
     def _complete_devices(self, result):
-        devices, errors = result['devices'], result['errors']
+        devices, errors = sorted(result['devices'], key=lambda item: item['drive']), result['errors']
         self.discovery_errors = errors
         if not devices:
             self.transition_device(None)
@@ -1642,9 +1650,13 @@ class MediaWindow(QMainWindow):
             return
         if len(devices) > 1:
             dialog = QDialog(self); dialog.setWindowTitle('Choose an iPod'); layout = box(dialog, margins=(24, 24, 24, 24))
+            layout.addWidget(label('Choose an iPod', 'section'))
+            layout.addWidget(label('Select by name, drive, model, and serial suffix.', 'muted'))
             picker = ComboBox()
             for device in devices:
-                picker.addItem(f"{device['drive']} · {device['target_name']}", device)
+                picker.addItem(self.device_title(device), device)
+                if self.same_device(self.identity, device):
+                    picker.setCurrentIndex(picker.count() - 1)
             layout.addWidget(picker); layout.addWidget(button('Use this iPod', dialog.accept, 'primary'))
             if dialog.exec() != QDialog.Accepted:
                 return
@@ -1656,6 +1668,13 @@ class MediaWindow(QMainWindow):
             self.notice.show()
         self.transition_device(identity)
         self.refresh()
+
+    @staticmethod
+    def device_title(identity):
+        name = (identity.get('volume_label') or 'Unnamed iPod').strip()
+        model = identity['target_name'].replace('Linnet for ', '')
+        serial = identity['disk_serial'][-6:]
+        return f"{name} · {identity['drive']} · {model} · {serial}"
 
     def _complete_scan(self, result):
         cached_photos = {row['path']: (row['bytes'], row['mtime_ns'], row.get('artwork')) for row in self.rows
@@ -1888,6 +1907,10 @@ class MediaWindow(QMainWindow):
         self.identity = identity
         self._selection_context = None
         self.inventory = self.review = self.apple_info = None
+        with QSignalBlocker(self.boot_choice), QSignalBlocker(self.method_choice):
+            self.boot_choice.clear()
+            self.method_choice.clear()
+        self.uninstall_detail.setText('Checking removal options…' if identity else 'Connect an iPod to check removal options.')
         self.rows = []
         self.trash_rows = []
         self.readiness = {}
@@ -1913,6 +1936,8 @@ class MediaWindow(QMainWindow):
         self._group_cards_cache = {}
         self._library_search = None
         self.capacity.setValue(0)
+        self.device_name.setText((identity.get('volume_label') or 'Unnamed iPod').strip() if identity else 'Connect your iPod')
+        self.device_info.setText(f"{identity['drive']} · Loading this iPod…" if identity else 'USB · Disk Mode')
         self.update_filters()
         self.update_preparation()
         self.render_library()
@@ -1920,8 +1945,8 @@ class MediaWindow(QMainWindow):
 
     def update_device(self):
         identity = self.identity
-        self.device_name.setText(identity['target_name'].replace('Linnet for ', ''))
-        self.device_info.setText(f"Connected · {identity['drive']}\n{size(identity['free_bytes'])} available")
+        self.device_name.setText((identity.get('volume_label') or 'Unnamed iPod').strip())
+        self.device_info.setText(f"{identity['drive']} · {identity['target_name'].replace('Linnet for ', '')} · {identity['disk_serial'][-6:]}\n{size(identity['free_bytes'])} available")
         total = identity.get('total_bytes') or shutil.disk_usage(identity['root']).total
         self.capacity.setValue(int(100 * (1 - identity['free_bytes'] / total)))
 
@@ -1936,6 +1961,7 @@ class MediaWindow(QMainWindow):
 
     def update_controls(self):
         ready = self.identity is not None and not self.busy
+        self.choose_device_button.setEnabled(not self.busy)
         self.retry_button.setEnabled(ready)
         self.prep_details.setVisible(self.last_preparation is not None)
         self.prep_details.setEnabled(ready and self.last_preparation is not None and
@@ -1976,7 +2002,7 @@ class MediaWindow(QMainWindow):
         if self.review is not None:
             return
         if self.identity:
-            self.setup_device.setText(f"{self.identity['target_name']} · {self.identity['drive']}")
+            self.setup_device.setText(self.device_title(self.identity))
             self.setup_software.setText('Checking iPod setup…' if loading else 'Choose Refresh to check installed software.')
         else:
             self.setup_device.setText('Looking for your iPod…' if loading else 'Connect an iPod in Disk Mode.')
@@ -2339,7 +2365,7 @@ class MediaWindow(QMainWindow):
 
     def render_setup(self):
         review = self.review
-        self.setup_device.setText(f"{review['identity']['target_name']} · {review['identity']['drive']}")
+        self.setup_device.setText(self.device_title(review['identity']))
         self.setup_software.setText('Linnet: ' + installer.build_description(review['linnet']))
         available_boot = review['boot_options']
         with QSignalBlocker(self.boot_choice):
@@ -2365,18 +2391,20 @@ class MediaWindow(QMainWindow):
                     self.method_choice.setCurrentIndex(self.method_choice.count() - 1)
         self.install_detail.setText(review['summary'])
         self.install_detail.setVisible(review['action'] not in ('install', 'replace', 'adopt') or review['linnet']['state'] in ('invalid', 'incomplete'))
+        self.uninstall_detail.setText(review['uninstall']['detail'] + (' Music, Photos, Videos, and Notes folders are kept.' if review['uninstall']['available'] else ''))
         self.update_install_action()
 
     def update_install_action(self):
         option = self.boot_choice.currentData(); method = self.method_choice.currentData()
-        enabled = not self.busy and self.identity is not None and bool(option and option.get('selectable'))
+        enabled = not self.busy and self.identity is not None and self.review is not None and bool(option and option.get('selectable'))
         linnet = option and option['kind'] == 'linnet'
         from_source = self.build_from_source.isChecked()
         resume = bool(self.review and self.review.get('action') == 'resume')
         self.build_from_source.setEnabled(not self.busy and not resume)
-        self.firmware_button.setEnabled(not self.busy and not from_source and not resume)
-        self.firmware_label.setVisible(not from_source)
-        self.firmware_button.setVisible(not from_source)
+        self.firmware_button.setEnabled(not self.busy and not resume)
+        self.firmware_label.setText(('Building from source. Choose a ZIP to use downloaded firmware.'
+                                     if from_source else self.firmware_path or
+                                     'Choose a downloaded Linnet firmware ZIP.'))
         self.boot_detail.setText(option.get('detail', '') if option else '')
         show_methods = bool(linnet and option.get('selectable') and method)
         for widget in (self.method_title, self.method_choice, self.method_detail, self.selector_note):
@@ -2391,7 +2419,10 @@ class MediaWindow(QMainWindow):
         self.method_choice.setEnabled(bool(linnet and method) and not self.busy)
         self.boot_choice.setEnabled(not self.busy and self.review is not None and self.boot_choice.count() > 0)
         self.install_button.setEnabled(enabled)
-        if option and not option.get('selectable'):
+        self.uninstall_button.setEnabled(not self.busy and bool(self.review and self.review['uninstall']['available']))
+        if option is None:
+            self.install_button.setText('No startup change available')
+        elif not option.get('selectable'):
             self.install_button.setText('Current startup software' if option.get('active') else
                                         'Choose on iPod at startup' if option.get('chooser_available') else
                                         'Startup change unavailable')
@@ -2419,13 +2450,30 @@ class MediaWindow(QMainWindow):
             from_source=from_source)) if option['kind'] == 'linnet' else lambda: installer.restore(identity, expected=option['id'])
         self.work('install', operation, 'Updating your iPod setup…')
 
+    def uninstall_selected(self):
+        if not self.uninstall_button.isEnabled():
+            return
+        identity = self.identity
+        previous = self.review['uninstall']['previous']
+        startup = 'rockbox' if previous == 'Rockbox' else 'apple'
+        message = (f"Restore {previous} as the default startup software and remove Linnet OS from "
+                   f"{self.device_title(identity)}?\n\n"
+                   "Linnet settings, prepared libraries, and system files in .LINNET will be deleted. "
+                   "Your Music, Photos, Videos, and Notes folders will remain. "
+                   "Apple OS may need a library sync to show media that was prepared only for Linnet.\n\n"
+                   "Keep the iPod connected until removal finishes, then eject it safely.")
+        if not self.dialog('Remove Linnet OS?', message, 'Restore and remove Linnet', danger=True):
+            return
+        self.work('uninstall', lambda: installer.uninstall(identity, progress=self.events.progress.emit,
+                                                         expected=startup), 'Removing Linnet OS…')
+
     def choose_firmware(self):
         path, _ = QFileDialog.getOpenFileName(self, 'Choose Linnet firmware', self.firmware_path,
                                             'Linnet firmware (*.zip)')
         if path:
             self.firmware_path = path
             self.settings.setValue('firmware_bundle', path)
-            self.firmware_label.setText(path)
+            self.build_from_source.setChecked(False)
             self.update_install_action()
 
     def firmware_source_changed(self, enabled):

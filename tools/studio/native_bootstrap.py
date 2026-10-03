@@ -30,9 +30,23 @@ def align(size, sector=SECTOR):
 
 
 def save_json(path, value):
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    temporary = path.with_suffix(path.suffix + ".tmp-" + uuid.uuid4().hex)
+    with temporary.open("x", encoding="utf-8", newline="\n") as writer:
+        writer.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
+        writer.flush()
+        os.fsync(writer.fileno())
+    if os.name == "nt":
+        import ctypes
+
+        move = ctypes.WinDLL("kernel32", use_last_error=True).MoveFileExW
+        move.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32)
+        move.restype = ctypes.c_int
+        if not move(os.path.abspath(temporary), os.path.abspath(path), 0x1 | 0x8):
+            raise ctypes.WinError(ctypes.get_last_error())
+    else:
+        temporary.replace(path)
+    with path.open("r+b") as saved:
+        os.fsync(saved.fileno())
 
 
 def _device(data):
@@ -329,6 +343,33 @@ def _rockbox_uninstalled_residue(observed, manifest, artifacts, original, direct
                 shift_bytes=delta)
 
 
+def _rockbox_residue_from_hint(observed, manifest, artifacts, original, directory, hint):
+    """Re-derive a prior Rockbox residue; a receipt never defines ignored bytes."""
+    if not isinstance(hint, dict) or manifest.get("sector_bytes", SECTOR) != SECTOR:
+        return None
+    shift = hint.get("shift_bytes")
+    if type(shift) is not int or shift <= 0 or shift % SECTOR or shift >= len(original):
+        return None
+    old = _directory_records(artifacts["directory-original.bin"])
+    candidate = _directory_records(artifacts["directory-candidate.bin"])
+    if len(old) < 2 or len(candidate) != len(old):
+        return None
+    reconstructed = bytearray(artifacts["directory-candidate.bin"])
+    struct.pack_into("<I", reconstructed, candidate[0]["offset"] + 16,
+                     align(candidate[0]["length"]))
+    for prior, entry in zip(old[1:], candidate[1:]):
+        moved = prior["dev_offset"] + shift
+        if moved > 0xffffffff:
+            return None
+        struct.pack_into("<I", reconstructed, entry["offset"] + 12, moved)
+    reconstructed = bytes(reconstructed)
+    if not all(value in (before, after) for value, before, after in
+               zip(directory, artifacts["directory-original.bin"], reconstructed)):
+        return None
+    derived = _rockbox_uninstalled_residue(observed, manifest, artifacts, original, reconstructed)
+    return derived if derived == hint else None
+
+
 def _validate_residue(observed, original, residue):
     required = {"kind", "start", "end", "source_start", "source_end",
                 "destination_start", "destination_end", "shift_bytes"}
@@ -352,7 +393,7 @@ def _validate_residue(observed, original, residue):
 
 
 def guard_device(device, manifest, artifacts, original, *, allow_rockbox_uninstalled=False,
-                 compatible_residue=None):
+                 compatible_residue=None, allow_interrupted_restore=False, rockbox_residue_hint=None):
     sector = manifest.get("sector_bytes", SECTOR)
     if read_at(device, 0, sector) != artifacts["mbr.bin"]:
         raise RuntimeError("device MBR changed")
@@ -362,19 +403,32 @@ def guard_device(device, manifest, artifacts, original, *, allow_rockbox_uninsta
     directory = observed[directory_offset:directory_offset + sector]
     allowed_directories = [artifacts["directory-original.bin"], artifacts["directory-candidate.bin"]]
     residue = compatible_residue
-    if directory not in allowed_directories:
-        residue = (_rockbox_uninstalled_residue(observed, manifest, artifacts, original, directory)
-                   if allow_rockbox_uninstalled and compatible_residue is None else None)
+    if residue is not None and allow_interrupted_restore:
+        residue = _rockbox_residue_from_hint(observed, manifest, artifacts, original,
+                                             directory, residue)
         if residue is None:
+            raise RuntimeError("compatible Rockbox residue changed after validation")
+    if residue is None and allow_interrupted_restore and rockbox_residue_hint is not None:
+        residue = _rockbox_residue_from_hint(observed, manifest, artifacts, original,
+                                             directory, rockbox_residue_hint)
+    interrupted_directory = False
+    if directory not in allowed_directories:
+        if residue is None and allow_rockbox_uninstalled:
+            residue = _rockbox_uninstalled_residue(observed, manifest, artifacts, original, directory)
+        interrupted_directory = (allow_interrupted_restore and residue is None and
+                                 all(byte in (before, after) for byte, before, after in
+                                     zip(directory, *allowed_directories)))
+        if residue is None and not interrupted_directory:
             raise RuntimeError("firmware directory differs from both reviewed states")
     stage, span = manifest["candidate_partition_offset"], manifest["candidate_write_bytes"]
     staged = observed[stage:stage + span]
-    if residue is None and staged not in (bytes(span), artifacts["candidate.bin"]):
+    if residue is None and not allow_interrupted_restore and staged not in (bytes(span), artifacts["candidate.bin"]):
         raise RuntimeError("staging region differs from both reviewed states")
-    if residue is None and directory == artifacts["directory-candidate.bin"] and staged != artifacts["candidate.bin"]:
+    if (residue is None and not allow_interrupted_restore and
+            directory == artifacts["directory-candidate.bin"] and staged != artifacts["candidate.bin"]):
         raise RuntimeError("published directory references absent candidate bytes")
     normalized = bytearray(observed)
-    normalized[stage:stage + span] = bytes(span)
+    normalized[stage:stage + span] = original[stage:stage + span]
     normalized[directory_offset:directory_offset + sector] = artifacts["directory-original.bin"]
     if residue is not None:
         normalized = _validate_residue(observed, original, residue)
@@ -386,9 +440,10 @@ def guard_device(device, manifest, artifacts, original, *, allow_rockbox_uninsta
         raise RuntimeError("original RetailOS payload is no longer intact")
     directory_state = ("candidate" if directory == artifacts["directory-candidate.bin"] else
                        "original" if directory == artifacts["directory-original.bin"] else
-                       "candidate-rockbox-uninstalled")
+                       "candidate-rockbox-uninstalled" if residue is not None else "interrupted")
     staging_state = ("candidate-rockbox-residue" if residue is not None else
-                     "candidate" if staged == artifacts["candidate.bin"] else "zero")
+                     "candidate" if staged == artifacts["candidate.bin"] else
+                     "zero" if staged == bytes(span) else "interrupted")
     result = dict(directory=directory_state, staging=staging_state, original_payload_intact=True)
     if residue is not None:
         result["compatible_residue"] = residue
@@ -413,6 +468,41 @@ def write_verified(device, offset, payload, receipt, receipt_path, phase, sector
     save_json(receipt_path, receipt)
 
 
+def _prior_restore_hints(plan_path, expected_sha, disk, manifest, artifacts, current_receipt):
+    """Find interrupted restore intents for this plan and storage identity."""
+    expected_write = (manifest["directory_disk_offset"],
+                      len(artifacts["directory-original.bin"]),
+                      sha(artifacts["directory-original.bin"]))
+    expected_residue_keys = {"kind", "start", "end", "source_start", "source_end",
+                             "destination_start", "destination_end", "shift_bytes"}
+    for path in plan_path.parent.glob("restore-receipt-*.json"):
+        try:
+            if path == current_receipt or path.is_symlink() or not path.is_file() or path.stat().st_size > 1048576:
+                continue
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            recorded = saved.get("device", {})
+            before = saved.get("before", {})
+            hint = before.get("compatible_residue")
+            recorded_sha = saved.get("reviewed_plan_sha256")
+            if (saved.get("operation") != "restore" or saved.get("plan") != str(plan_path) or
+                    not isinstance(recorded_sha, str) or recorded_sha.lower() != expected_sha.lower() or
+                    not saved.get("device_write_attempted") or
+                    recorded.get("SerialNumber", "").strip() != manifest["expected_storage_serial"] or
+                    recorded.get("Size") != manifest["expected_device_bytes"] or
+                    recorded.get("LogicalSectorSize") != manifest.get("sector_bytes", SECTOR) or
+                    recorded.get("SerialNumber", "").strip() != str(disk.get("SerialNumber", "")).strip() or
+                    before.get("original_payload_intact") is not True or
+                    before.get("directory") != "candidate-rockbox-uninstalled" or
+                    before.get("staging") != "candidate-rockbox-residue" or
+                    not isinstance(hint, dict) or set(hint) != expected_residue_keys or
+                    not any((entry.get("offset"), entry.get("bytes"), entry.get("sha256")) == expected_write
+                            for entry in saved.get("writes", ()) if isinstance(entry, dict))):
+                continue
+            yield hint
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+
+
 def execute(mode, plan_path, expected_sha, disk_number):
     plan_path = Path(plan_path).resolve()
     receipt_path = plan_path.parent / (f"{mode}-receipt-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8] + ".json")
@@ -427,9 +517,25 @@ def execute(mode, plan_path, expected_sha, disk_number):
         sector = manifest.get("sector_bytes", SECTOR)
         receipt["device"] = identify_disk(disk_number, manifest)
         with open(r"\\.\PhysicalDrive" + str(disk_number), "r+b", buffering=0) as device:
-            receipt["before"] = guard_device(
-                device, manifest, artifacts, original,
-                allow_rockbox_uninstalled=mode == "restore")
+            try:
+                receipt["before"] = guard_device(
+                    device, manifest, artifacts, original,
+                    allow_rockbox_uninstalled=mode == "restore",
+                    allow_interrupted_restore=mode == "restore")
+            except RuntimeError:
+                if mode != "restore":
+                    raise
+                for hint in _prior_restore_hints(plan_path, expected_sha, receipt["device"],
+                                                 manifest, artifacts, receipt_path):
+                    try:
+                        receipt["before"] = guard_device(
+                            device, manifest, artifacts, original,
+                            allow_interrupted_restore=True, rockbox_residue_hint=hint)
+                    except RuntimeError:
+                        continue
+                    break
+                else:
+                    raise
             if mode == "apply":
                 if receipt["before"]["staging"] != "candidate":
                     write_verified(device, manifest["candidate_disk_offset"], artifacts["candidate.bin"],
@@ -441,9 +547,14 @@ def execute(mode, plan_path, expected_sha, disk_number):
             elif receipt["before"]["directory"] != "original":
                 write_verified(device, manifest["directory_disk_offset"], artifacts["directory-original.bin"],
                                receipt, receipt_path, "restore-directory", sector)
+            # A retry may see a completed write in cache after the previous flush
+            # failed. Flush even when there is no new directory write.
+            device.flush()
+            os.fsync(device.fileno())
             receipt["after"] = guard_device(
                 device, manifest, artifacts, original,
-                compatible_residue=receipt["before"].get("compatible_residue"))
+                compatible_residue=receipt["before"].get("compatible_residue"),
+                allow_interrupted_restore=mode == "restore")
             expected = "candidate" if mode == "apply" else "original"
             if receipt["after"]["directory"] != expected:
                 raise RuntimeError("directory did not reach the requested state")
