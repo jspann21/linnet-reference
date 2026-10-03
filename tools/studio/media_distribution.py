@@ -33,7 +33,6 @@ def create(output):
         for name in ("config", "targets", "hal", "services", "ui", "assets", "themes", "sdk/assets"):
             command += ["--add-data", str(ROOT / name) + os.pathsep + name]
         command += ["--add-data", str(ROOT / "tools/studio/media_desktop.qss") + os.pathsep + "tools/studio",
-                    "--add-data", str(ROOT / "tools/link/windows_restart_broker.cs") + os.pathsep + "tools/link",
                     str(ROOT / "tools/studio/media_entry.py")]
         result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
                                 creationflags=subprocess.CREATE_NO_WINDOW)

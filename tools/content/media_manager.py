@@ -570,6 +570,15 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
     return list(planned.values())
 
 
+def _import_metadata_seed(local, ffprobe, should_stop):
+    try:
+        from .music import _read_metadata
+        metadata = _read_metadata(local, ffprobe, True, should_stop, include_cover=True)
+        return metadata, metadata.pop('_embedded_cover', None)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None  # The library compiler can retry if host parsing fails.
+
+
 def _prepare_import_aac(item, scratch, cache, ffprobe, cancelled, stopped):
     from .aac_index import import_suffix
 
@@ -594,13 +603,7 @@ def _prepare_import_aac(item, scratch, cache, ffprobe, cancelled, stopped):
             local.stat().st_size != before.st_size):
         raise ValueError(f"Source changed during preparation: {source}")
     suffix, unsupported = import_suffix(local, cache / 'aac-import', checkpoint=check)
-    metadata_seed = None
-    try:
-        from .music import _read_metadata
-        metadata = _read_metadata(local, ffprobe, True, should_stop, include_cover=True)
-        metadata_seed = (metadata, metadata.pop('_embedded_cover', None))
-    except (OSError, ValueError, subprocess.SubprocessError):
-        pass  # A cache miss lets normal library preparation retry.
+    metadata_seed = _import_metadata_seed(local, ffprobe, should_stop)
     check()
     return local, suffix, unsupported, metadata_seed, _receipt_stamp(before)
 
@@ -630,13 +633,7 @@ def _prepare_import_mp3(item, scratch, ffprobe, cancelled, stopped):
             raise ValueError(f"Source changed during preparation: {source}")
         from .mp3_index import import_suffix
         suffix = import_suffix(local, checkpoint=check)
-    metadata_seed = None
-    try:
-        from .music import _read_metadata
-        metadata = _read_metadata(local, ffprobe, True, should_stop, include_cover=True)
-        metadata_seed = (metadata, metadata.pop('_embedded_cover', None))
-    except (OSError, ValueError, subprocess.SubprocessError):
-        pass  # The compiler can retry from the copied file if host parsing fails.
+    metadata_seed = _import_metadata_seed(local, ffprobe, should_stop)
     if should_stop():
         raise Cancelled('Stopped while reading MP3 metadata on the computer.')
     if _receipt_stamp(source.stat()) != _receipt_stamp(before):
@@ -670,13 +667,7 @@ def _prepare_import_flac(item, scratch, cache, ffprobe, cancelled, stopped):
     outcome = prepare_file(local, cache / 'flac-import', ffprobe=ffprobe, checkpoint=check)
     if outcome and not same_original(source, local, checkpoint=check):
         raise ValueError(f"FLAC preparation changed original audio: {source}")
-    metadata_seed = None
-    try:
-        from .music import _read_metadata
-        metadata = _read_metadata(local, ffprobe, True, should_stop, include_cover=True)
-        metadata_seed = (metadata, metadata.pop('_embedded_cover', None))
-    except (OSError, ValueError, subprocess.SubprocessError):
-        pass
+    metadata_seed = _import_metadata_seed(local, ffprobe, should_stop)
     check()
     if _receipt_stamp(source.stat()) != _receipt_stamp(before):
         raise ValueError(f"Source changed during preparation: {source}")

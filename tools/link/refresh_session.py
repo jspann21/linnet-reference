@@ -2,7 +2,6 @@
 
 The approved bootstrap copies hash-pinned source/data into an administrator-only
 directory before starting the server. The pipe accepts no paths or payloads.
-This is independent of the disabled experimental restart broker.
 """
 import argparse
 import base64
