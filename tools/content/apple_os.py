@@ -191,11 +191,26 @@ def _files(root, folders, kind, extensions, records_by_kind=None):
         return []
     if records_by_kind is not None:
         selected_dirs = set(selected)
-        whole_kind = root / kind in selected_dirs
+        kind_root = root / kind
+        whole_kind = kind_root in selected_dirs
+        last_parent, relative_prefix, included = None, None, False
         for path, info in records_by_kind[kind]:
-            if path.suffix.lower() in extensions and ((whole_kind and path.is_relative_to(root / kind)) or
-                    any(parent in selected_dirs for parent in path.parents)):
-                found[path.relative_to(root).as_posix().casefold()] = (path, info)
+            if path.suffix.lower() not in extensions:
+                continue
+            parent = path.parent
+            parent_key = str(parent)
+            if parent == root or parent_key != last_parent:
+                included = ((whole_kind and path.is_relative_to(kind_root)) or
+                            any(folder in selected_dirs for folder in path.parents))
+                last_parent = parent_key if parent != root else None
+                relative_prefix = None
+            if included:
+                if relative_prefix is None:
+                    relative = path.relative_to(root).as_posix()
+                    relative_prefix = relative[:relative.rfind('/') + 1]
+                else:
+                    relative = relative_prefix + path.name
+                found[relative.casefold()] = (path, info)
         return [found[key] for key in sorted(found)]
     for folder in selected:
         for path, info in file_records(folder, allowed=extensions):
