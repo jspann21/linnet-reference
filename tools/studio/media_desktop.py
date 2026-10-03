@@ -933,6 +933,7 @@ class MediaWindow(QMainWindow):
         self.discovery_errors = []
         self.apple_info = None
         self._library_source, self._library_cache, self._library_stats = None, {}, {}
+        self._library_search = None
         self.video_selection, self.video_mode, self.stop_event = set(), 'all', threading.Event()
         self.page, self.view, self.group = 'Music', self.settings.value('music_view', 'Albums'), None
         if self.view not in ('Songs', 'Albums', 'Artists', 'Genres'):
@@ -1094,6 +1095,7 @@ class MediaWindow(QMainWindow):
         if self._library_source is not self.rows:
             self._library_source, self._library_cache, self._library_stats = self.rows, {}, {}
             self._group_cards_cache = {}
+            self._library_search = None
         if self.page in self._library_cache:
             return list(self._library_cache[self.page])
         unique = {}
@@ -1135,12 +1137,21 @@ class MediaWindow(QMainWindow):
         self.folder_button.setVisible(self.page != 'Trash')
         self.add_button.setVisible(self.page != 'Trash')
         self.search.setPlaceholderText('Search songs, artists, albums…' if music else f'Search {self.page.lower()}…')
-        words = self.search.text().casefold().split()
+        words = tuple(self.search.text().casefold().split())
         artist, genre = self.artist_filter.currentData(), self.genre_filter.currentData()
         if self.group:
             rows = list(self.group['members'])
         scope_count = len(rows)
-        if music and (artist or genre):
+        source = self.group['members'] if self.group else self._library_cache.get(self.page)
+        filters = (artist, genre) if music else (None, None)
+        previous = self._library_search
+        narrower = bool(words and source is not None and previous is not None
+                        and previous[0] is source and previous[1] == filters
+                        and len(words) >= len(previous[2])
+                        and all(word.startswith(old) for word, old in zip(words, previous[2])))
+        if narrower:
+            rows = previous[3]
+        elif music and (artist or genre):
             rows = [r for r in rows if (not artist or (r.get('artist') or 'Unknown artist') == artist)
                     and (not genre or (r.get('genre') or 'Unknown genre') == genre)]
         if words:
@@ -1154,6 +1165,10 @@ class MediaWindow(QMainWindow):
                 if first in text and (not remaining or all(word in text for word in remaining)):
                     matches.append(row)
             rows = matches
+            # Preserve source order separately from the model's in-place sort.
+            self._library_search = (source, filters, words, tuple(matches)) if source is not None else None
+        else:
+            self._library_search = None
         matched_count = len(rows)
         filtered = bool(words or (music and (artist or genre)))
         grouped = music and self.view != 'Songs' and self.group is None
@@ -1896,7 +1911,7 @@ class MediaWindow(QMainWindow):
         self.playlist_draft = None
         self._library_source, self._library_cache, self._library_stats = None, {}, {}
         self._group_cards_cache = {}
-        self._group_cards_cache = {}
+        self._library_search = None
         self.capacity.setValue(0)
         self.update_filters()
         self.update_preparation()
