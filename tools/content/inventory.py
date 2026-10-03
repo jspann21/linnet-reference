@@ -124,8 +124,19 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
             cover_names = {name.casefold() for name in COVER_NAMES}
         records = records_by_kind[kind]
         music_folders, cover_rows = set(), []
+        last_parent, relative_prefix = None, None
         for path, info in records:
-            relative = path.relative_to(root).as_posix() if fingerprint or excluded else None
+            relative = None
+            if fingerprint or excluded:
+                parent = str(path.parent)
+                if parent == last_parent:
+                    relative = relative_prefix + path.name
+                else:
+                    relative = path.relative_to(root).as_posix()
+                    slash = relative.rfind('/')
+                    # A root-level file has no reusable parent prefix.
+                    last_parent = parent if slash >= 0 else None
+                    relative_prefix = relative[:slash + 1] if slash >= 0 else None
             if excluded and relative.casefold() in excluded:
                 skipped_count += 1
                 continue
