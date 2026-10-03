@@ -34,13 +34,21 @@ static uint8_t games_data[12];
 static struct ln_fat32_file games_file;
 static bool about_loaded;
 static uint32_t about_phase,about_count,about_percent;
-static uint8_t about_data[1024];
+static uint8_t about_data[1024]
+#if defined(LINNET_COVERFLOW) && LINNET_TARGET_NUMBER==98u
+    __attribute__((section(".cover_high"),aligned(32)))
+#endif
+;
 static struct ln_fat32_file about_file;
 static char about_build[20];
 static char about_version[40];
 static bool about_ata_ready;
 static uint32_t about_ata_count;
-static char about_ata_rows[8][64];
+static char about_ata_rows[8][64]
+#if defined(LINNET_COVERFLOW) && LINNET_TARGET_NUMBER==98u
+    __attribute__((section(".cover_high"),aligned(32)))
+#endif
+;
 extern void ln_games_configure(uint16_t mask);
 bool ln_display_settings_boot_ready(void){return theme_loaded&&menus_loaded&&games_loaded&&about_loaded;}
 static bool step_busy;
