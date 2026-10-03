@@ -1070,7 +1070,6 @@ class MediaWindow(QMainWindow):
         self.choose_device_button = button('Find or switch iPod', self.discover, 'sidebarAction', 'refresh')
         layout.addWidget(self.choose_device_button)
         self.eject_button = button('Eject safely', self.eject, 'sidebarAction', 'eject'); layout.addWidget(self.eject_button)
-        self.pick_button = button('Choose iPod', self.discover, 'sidebarAction'); layout.addWidget(self.pick_button)
         self.publication_recovery_button = button('Recover media indexes', self.recover_publication, 'sidebarAction')
         layout.addWidget(self.publication_recovery_button)
         side.addWidget(device)
@@ -2349,7 +2348,6 @@ class MediaWindow(QMainWindow):
         self.apple_update.setEnabled(apple_ready and self.apple_info.get('can_update', False))
         self.choose_videos_button.setEnabled(ready and self.inventory is not None and self.identity.get('media_profile', {}).get('video_enabled', True))
         self.refresh_button.setEnabled(not self.busy)
-        self.pick_button.setEnabled(not self.busy)
         self.empty_action.setEnabled(not self.busy)
         self.refresh_button.setVisible(not self.busy)
         for kind, check in self.prep_checks.items():
