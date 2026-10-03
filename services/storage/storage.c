@@ -203,7 +203,13 @@ static int sector_read(void *context,uint64_t lba,uint8_t *buffer,uint32_t secto
     (void)context;
     if(!pending){
         uint32_t deadline=ln_time_us()+ln_block_request_timeout();
-        if(!ln_block_submit_direct_read(lba,sectors,buffer,generation,deadline,&request))return -1;
+        /* Small hard-disk batches retain sequential read-ahead. Flash and
+         * larger streams transfer directly without an intermediate copy. */
+        struct ln_ata_state device;ln_ata_state_snapshot(&device);
+        bool submitted=sectors<=8u&&device.media_kind==LN_ATA_MEDIA_ROTATING?
+            ln_block_submit_read(lba,sectors,buffer,generation,deadline,media_read_ahead,&request):
+            ln_block_submit_direct_read(lba,sectors,buffer,generation,deadline,&request);
+        if(!submitted)return -1;
         pending=true;request_generation=generation;request_sectors=sectors;return 0;
     }
     if(generation!=request_generation)return -1;

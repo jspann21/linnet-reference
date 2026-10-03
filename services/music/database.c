@@ -63,7 +63,10 @@ int ln_music_db_open_step(struct ln_music_db *d)
         copy(d->expected_hash,b+64,32);ln_sha256_init(&d->hash);d->cursor=128;d->phase=1;return 0;
     }
     if(d->phase==1){
-        uint32_t bytes=d->size-d->cursor;if(bytes>4096)bytes=4096;
+        /* Finish the header's page, then verify whole aligned pages so FAT
+         * can use direct sector batches instead of two partial-sector copies. */
+        uint32_t limit=4096u-(d->cursor&4095u);
+        uint32_t bytes=d->size-d->cursor;if(bytes>limit)bytes=limit;
         r=read_bytes(d,d->cursor,bytes);if(r!=1)return r;
         if(d->cursor<=d->pool_offset&&d->pool_offset-d->cursor<bytes&&b[d->pool_offset-d->cursor])return bad(d,LN_DB_FORMAT);
         if(bytes==d->size-d->cursor&&b[bytes-1])return bad(d,LN_DB_FORMAT);
