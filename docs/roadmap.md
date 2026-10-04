@@ -89,9 +89,9 @@ accessory-dependent features are expansion suggestions for other targets.
   computer and documented FFmpeg setup. Development builds and simulator output
   do not certify the release path. [Firmware packaging](../tools/studio/firmware_bundle.py),
   [desktop distribution](../tools/studio/media_distribution.py), [installer](../tools/studio/installer.py).
-  Partial: the local M25 release image, firmware ZIP, and Windows app ZIP built and
-  passed archive checks. A clean Windows computer and the supported-device release
-  campaign remain pending.
+  Partial: the local M25 release image and both ZIPs built; archive checks passed,
+  and the packaged Windows app launched locally. A clean Windows computer and the
+  supported-device release campaign remain pending.
 
 - [ ] **Add: first downloadable release after acceptance.** Packaging is implemented;
   the README still says downloads are unavailable. Publish versioned Windows and
