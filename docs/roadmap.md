@@ -110,6 +110,12 @@ accessory-dependent features are expansion suggestions for other targets.
   Q21 with the current installed development image played sampled MP3 and
   host-indexed AAC without reported underruns, silence, or audio faults;
   longer battery-powered playback and physical output checks remain open.
+  Current, individually bound development images were installed on Q21,
+  Classic, flash M25 and both rotating M25s after RAM checks. All five returned
+  healthy with ready libraries and sampled playback without reported faults.
+  The four updated after Q21 each processed 32 synthetic wheel events without
+  drops and completed one automatic sleep/wake cycle. Photo 4G was unavailable;
+  sustained and physical qualification remain open.
 
 - [ ] **Qualify: remaining recovery, parser, transaction, and memory-pressure cases.**
   Cover interrupted media/firmware publication, corrupt/truncated records, full
