@@ -208,7 +208,10 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
     metadata = _music_metadata(root, music_records=music_records,
                                music_inodes=getattr(records_by_kind, 'inodes', None),
                                target=identity['target_id'])
-    from .retail_media import metadata as retail_metadata, images as retail_images
+    from .retail_media import available_tracks, metadata as retail_metadata, images as retail_images
+    if retail_tracks is None:
+        retail_tracks = available_tracks(root, known_records=music_records,
+                                         known_inodes=getattr(records_by_kind, 'inodes', None))
     retail = retail_metadata(root, tracks_rows=retail_tracks)
     source_metadata = _source_music_metadata(root, music_records, cache_root(identity), retail, metadata,
                                              identity['target_id'])

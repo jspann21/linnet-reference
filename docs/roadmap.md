@@ -89,7 +89,9 @@ accessory-dependent features are expansion suggestions for other targets.
   computer and documented FFmpeg setup. Development builds and simulator output
   do not certify the release path. [Firmware packaging](../tools/studio/firmware_bundle.py),
   [desktop distribution](../tools/studio/media_distribution.py), [installer](../tools/studio/installer.py).
-  Blocker: a clean Windows computer and the supported-device release campaign are pending.
+  Partial: the local M25 release image, firmware ZIP, and Windows app ZIP built and
+  passed archive checks. A clean Windows computer and the supported-device release
+  campaign remain pending.
 
 - [ ] **Add: first downloadable release after acceptance.** Packaging is implemented;
   the README still says downloads are unavailable. Publish versioned Windows and
@@ -106,9 +108,9 @@ accessory-dependent features are expansion suggestions for other targets.
   Scan/metadata/conversion reuse is already implemented; establish its combined
   effect before proposing more cache changes. [Status](../tools/content/media_status.py),
   [preparation](../tools/content/media_manager.py), [desktop](../tools/studio/media_desktop.py).
-  Partial: a flash-device conversion run and post-preparation scan were measured;
-  verified converted-audio hashes now reuse unchanged host cache entries after a
-  physical warm-plan check. Rotating storage, full cold/warm operations, and UI
+  Partial: flash conversion and rotating-library reads were measured; verified
+  converted-audio hashes reuse unchanged host cache entries, and direct Apple music
+  browsing reuses scanned file records. Full cold/warm operations and UI
   responsiveness remain open.
 
 - [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed
