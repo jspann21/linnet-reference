@@ -134,11 +134,13 @@ accessory-dependent features are expansion suggestions for other targets.
   rename:
   the original grid/PIM hashes returned, the transaction marker cleared, and the
   device rebooted healthy. Other media publication cuts remain open. A second
-  rotating M25 accepted a candidate built with the first unit's embedded USB
-  serial and a persistent reboot; its port returned without a stable serial.
-  Link image preflight now checks the adjacent build report against the connected
-  device before upload. The second unit needs a physical reconnect, then a
-  correctly bound image and verification of its installed image and library.
+  rotating M25 accepted a candidate built with the first unit's USB serial and
+  returned without a stable Link serial. Read-only drive and build checks
+  identified it; recovery Boot restored its original serial. The correctly
+  bound image booted in RAM, installed persistently, and returned healthy with
+  its 12-track library and prepared storage. Link upload and install now require
+  device-bound build evidence at the Session boundary. USB-loss and other
+  interrupted-update cases remain open.
 
 - [ ] **Qualify: packaged release workflows.** Exercise navigation, playback,
   install/update, rollback, restore/uninstall and media preparation using release
@@ -307,8 +309,12 @@ accessory-dependent features are expansion suggestions for other targets.
   switching is enabled. Compare battery/external power, wake frequency, input
   response and actual current draw before changing the policy.
   [Runtime](../kernel/runtime.c), [manifest](../targets/ipod4g-q21/target.toml).
-  Blocker: no Q21 Link device is currently discovered; current draw requires an
-  external instrument.
+  Partial: a healthy Q21 on external USB power entered its 30 MHz idle clock
+  396 times over 26.5 seconds, accumulating 25.2 seconds there with no clock
+  failures. Two synthetic wheel moves completed input processing and a display
+  frame in about 19 ms each, with no input drops and the selection restored.
+  Battery operation, wake-source attribution, physical response, and current
+  draw remain; the latter requires an external instrument.
 
 - [ ] **Measure/Qualify: Classic native video startup and MPEG-4.** Measure decoder
   startup stages and buffer use before changing priming thresholds or frame

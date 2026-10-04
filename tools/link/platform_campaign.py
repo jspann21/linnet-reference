@@ -79,7 +79,7 @@ def cycle(root, image_path, scenario_path, port, progress=None):
             raise RuntimeError('connected target does not match platform image')
         if identity['build_id'] != image_id['build_id'] or identity['image_sha256'] != image_id['sha256']:
             previous=identity['generation']; receipt['device_write_attempted']=True; _save(receipt_path,receipt)
-            session.upload(image)
+            session.upload(image,image_path=image_path)
             if session.verify()!=hashlib.sha256(image).digest(): raise RuntimeError('platform image verification mismatch')
             session.boot_ram(); session.close(); session=None
             serial_number=device['serial_number']

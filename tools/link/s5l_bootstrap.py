@@ -83,7 +83,9 @@ def update(prepared):
         for stage in range(2):
             transfer=image if before['image_kind']=='boot' else bridge
             receipt.update(phase='uploading',previous_generation=before['generation'],stage=stage+1);record()
-            session.upload(transfer)
+            # The monitor package is bound to the reviewed device plan above;
+            # it has no ordinary OS build report.
+            session._upload_unchecked(transfer)
             digest=hashlib.sha256(transfer).digest()
             if session.verify()!=digest:raise RuntimeError('Device upload digest mismatch')
             receipt['phase']='handoff-requested';record()

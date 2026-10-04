@@ -281,7 +281,7 @@ def cycle(root, image_path, scenario_path, port=None, crash_image=None, progress
         previous = decode(session.status())['generation']
         receipt['device_write_attempted'] = True
         _save(receipt_path, receipt)
-        session.upload(payload)
+        session.upload(payload,image_path=image_path)
         verified = session.verify()
         if verified != hashlib.sha256(payload).digest():
             raise RuntimeError('device verified a different staged image')
@@ -303,11 +303,11 @@ def cycle(root, image_path, scenario_path, port=None, crash_image=None, progress
             raise RuntimeError(f'{name} crash build, boot generation or reason mismatch')
         return result
 
-    def fault_probe(name, payload, expected, reason):
+    def fault_probe(name, payload, expected, reason, source):
         receipt['phase'] = name
         _save(receipt_path, receipt)
         previous = decode(session.status())['generation']
-        session.upload(payload)
+        session.upload(payload,image_path=source)
         if session.verify() != hashlib.sha256(payload).digest():
             raise RuntimeError(f'{name} verification identity mismatch')
         try:
@@ -366,10 +366,10 @@ def cycle(root, image_path, scenario_path, port=None, crash_image=None, progress
         record('crash-after-healthy-recovered', identity=recovered, crash=crash)
         if not crash_bytes:
             raise RuntimeError('before-healthy crash image is required; supply --crash-image')
-        fault_probe('crash-before-healthy', crash_bytes, crash_id, 1)
+        fault_probe('crash-before-healthy', crash_bytes, crash_id, 1, crash_image)
         if not hang_bytes:
             raise RuntimeError('watchdog hang image is required; supply --hang-image')
-        fault_probe('watchdog-hang-before-healthy', hang_bytes, hang_id, 9)
+        fault_probe('watchdog-hang-before-healthy', hang_bytes, hang_id, 9, hang_image)
         receipt['phase'] = 'reboot-modes'
         current = boot_bytes(image, image_id)
         previous = current['generation']

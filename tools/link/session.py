@@ -244,7 +244,25 @@ class Session:
                     saturated_counters=[name for name, value in counters.items()
                                         if value == 0xffffffff])
 
-    def upload(self, image: bytes) -> dict:
+    def _verify_image_source(self, image: bytes, image_path) -> None:
+        from tools.inspect.image import inspect, verify_device_report
+        from .identity import decode
+        from .transport import SerialTransport
+
+        if image_path is None or not isinstance(self.transport, SerialTransport):
+            raise ValueError('Link image transfer requires a device-bound image path')
+        port = self.transport.serial.port
+        endpoints = [item for item in SerialTransport.discover() if item['port'].casefold() == port.casefold()]
+        if len(endpoints) != 1 or not endpoints[0]['serial_number']:
+            raise ValueError('Link image transfer requires one stable USB serial identity')
+        verify_device_report(image_path, inspect(image), endpoints[0]['serial_number'],
+                             decode(self.hello())['target_id'])
+
+    def upload(self, image: bytes, *, image_path=None) -> dict:
+        self._verify_image_source(image, image_path)
+        return self._upload_unchecked(image)
+
+    def _upload_unchecked(self, image: bytes) -> dict:
         if not image or len(image) > 16 * 1024 * 1024:
             raise ValueError("image must contain 1..16 MiB")
         crc = zlib.crc32(image)
@@ -586,9 +604,11 @@ class Session:
             time.sleep(.05)
         raise TimeoutError('storage write proof did not become ready')
 
-    def persistent_install(self, generation: int, image: bytes, publication_stage: int | None = None) -> dict:
+    def persistent_install(self, generation: int, image: bytes, publication_stage: int | None = None,
+                           *, image_path=None) -> dict:
         from tools.inspect.image import inspect
         from tools.studio.targets import TARGETS
+        self._verify_image_source(image, image_path)
         identity=inspect(image)
         if publication_stage is not None and publication_stage not in range(1,5):
             raise ValueError('publication stage must be1..4')

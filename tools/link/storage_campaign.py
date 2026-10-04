@@ -276,7 +276,7 @@ def update_cycle(root, image_path, crash_path, port, progress=None):
         (directory/'settings-original.bin').write_bytes(original)
         record('before',identity=observed,update=list(before))
         receipt['device_write_attempted']=True;_save(path,receipt)
-        session.persistent_install(observed['generation'],good)
+        session.persistent_install(observed['generation'],good,image_path=image_path)
         offered=session.update_status()
         if offered[6]!=(before[5]^1) or offered[5]!=before[5]:raise RuntimeError('candidate publication changed confirmed slot')
         record('good-candidate-published',update=list(offered));restart();reconnect('os',good_sha)
@@ -286,7 +286,7 @@ def update_cycle(root, image_path, crash_path, port, progress=None):
         if confirmed[5]!=offered[6] or confirmed[6]!=255 or confirmed[7]:raise RuntimeError('healthy candidate was not confirmed')
         record('good-candidate-confirmed',identity=observed,update=list(confirmed))
         attempt_baseline(confirmed)
-        session.persistent_install(observed['generation'],bad)
+        session.persistent_install(observed['generation'],bad,image_path=crash_path)
         bad_offer=session.update_status();record('crash-candidate-published',update=list(bad_offer))
         restart();reconnect('boot');rollback=ready()
         crash=decode_crash(session.crash_get())
@@ -319,7 +319,7 @@ def update_cycle(root, image_path, crash_path, port, progress=None):
         for stage in range(1,5):
             before_cut=attempt_baseline(ready())
             interrupted=False
-            try:session.persistent_install(observed['generation'],good,publication_stage=stage)
+            try:session.persistent_install(observed['generation'],good,publication_stage=stage,image_path=image_path)
             except AmbiguousUpdateFinish:interrupted=True
             if not interrupted:raise RuntimeError('candidate publication cut did not interrupt acknowledgement')
             session.close();session=None;reconnect('os',good_sha);after_cut=reset_ready(before_cut)

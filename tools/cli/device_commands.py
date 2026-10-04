@@ -322,7 +322,7 @@ def run_device(args, emit):
                 elif args.action=="install":
                     payload=args.image.read_bytes()
                     verify_device_report(args.image,inspect(payload),connected_device['serial_number'],identity['target_id'])
-                    emit(session.persistent_install(identity['generation'],payload))
+                    emit(session.persistent_install(identity['generation'],payload,image_path=args.image))
                 elif args.action == "reboot":
                     if args.mode=="persistent":session.reboot_persistent(identity['generation'])
                     else:session.reboot({"os":"normal", "boot":"recovery", "disk":"disk"}[args.mode])
@@ -332,7 +332,7 @@ def run_device(args, emit):
                     payload = args.image.read_bytes()
                     requested = inspect(payload)
                     verify_device_report(args.image,requested,connected_device['serial_number'],identity['target_id'])
-                    session.upload(payload)
+                    session.upload(payload,image_path=args.image)
                     if session.verify() != hashlib.sha256(payload).digest():
                         raise RuntimeError("staged image hash mismatch")
                     session.boot_ram()
