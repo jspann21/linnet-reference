@@ -173,9 +173,10 @@ more than 1,024 songs match. Files above 2 MiB or 10,000 entries are rejected.
 M3U text. If a track is missing from the prepared library, export reports it
 instead of writing an incomplete playlist.
 
-On Photo and Video, **Games** lets you choose from twelve games: Comet Run,
+On Photo, Video, and Classic, **Games** lets you choose from Comet Run,
 Pulse Path, Solitaire, Sudoku, Brick, Music Quiz, Vortex, Minesweeper, Falling
-Blocks, Reversi, Snake, and Word Search. **Screens** configures supported menus.
+Blocks, Reversi, Snake, and Word Search. Scrub is available on Video and Classic.
+**Screens** configures supported menus.
 See the [device menu hierarchy](navigation.md) for the default organization and
 controls. Save changes, eject, and restart to apply them. Game availability
 follows the target manifest; it is not enabled on every color iPod. If game

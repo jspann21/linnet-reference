@@ -3,8 +3,13 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "ui/runtime/ui.h"
-#define LN_GAME_COUNT 12u
+#define LN_GAME_COUNT 13u
 #define LN_GAME_MASK ((uint16_t)((1u<<LN_GAME_COUNT)-1u))
+#if LINNET_GAME_PRESENTATION_PHOTO220
+#define LN_GAME_SUPPORTED_MASK ((uint16_t)(LN_GAME_MASK&~(1u<<12)))
+#else
+#define LN_GAME_SUPPORTED_MASK LN_GAME_MASK
+#endif
 uint32_t ln_games_count(void);
 const char *ln_games_label(uint32_t row);
 const char *ln_games_description(uint32_t row);

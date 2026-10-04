@@ -282,7 +282,8 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
         uint32_t saved=UINT32_MAX;
         if(theme_available&&length){
             uint32_t version=length>=8u?ln_read_le32(payload+4):UINT32_MAX;
-            uint32_t suffix=version==0u?1u:version==1u?5u:version==2u?7u:version==3u?25u:0u;
+            uint32_t suffix=version==0u?1u:version==1u?5u:version==2u?7u:version==3u?25u:
+                version==4u?27u:0u;
             uint32_t id_length=length>=8u+suffix?length-8u-suffix:0u;
             if(length<9u||length>sizeof payload||(version==0u&&length>89u)||!suffix||length<8u+suffix||
                ln_read_le32(payload)!=0x534d4854u||payload[8u+id_length]||
@@ -294,8 +295,8 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
                     if(at==id_length&&!id[at]){saved=i;break;}
                 }
             }
-            if(theme_available&&(version==1u||version==2u||version==3u)){
-                uint32_t stored=version==1u?2u:version==2u?3u:LN_GAME_COUNT;
+            if(theme_available&&(version==1u||version==2u||version==3u||version==4u)){
+                uint32_t stored=version==1u?2u:version==2u?3u:version==3u?12u:13u;
                 uint32_t scores=length-stored*2u;
                 for(uint32_t i=0;i<stored;++i){game_best[i]=ln_read_le16(payload+scores+i*2u);ln_games_best_set(i,game_best[i]);}
             }
@@ -321,7 +322,7 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
     if(id[count]){theme_available=false;theme_dirty=false;++revision;return;}
     ln_write_le32(payload,0x534d4854u);
 #if LINNET_HAS_GAMES
-    ln_write_le32(payload+4,3u);
+    ln_write_le32(payload+4,4u);
 #else
     ln_write_le32(payload+4,0u);
 #endif

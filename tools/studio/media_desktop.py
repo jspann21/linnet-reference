@@ -849,9 +849,9 @@ class GamesController:
         window.game_saved = None
         window.game_dirty = True
         window.game_read_failed = False
-        for check in window.game_checks:
+        for index, check in enumerate(window.game_checks):
             with QSignalBlocker(check):
-                check.setChecked(True)
+                check.setChecked(index in games.supported(window.identity))
         window.load_choices_draft('games')
         window.games_status.setText('Choose games, then update the iPod to replace its damaged selection.')
         window.save_choices_draft()
@@ -2342,8 +2342,14 @@ class MediaWindow(QMainWindow):
         self.publication_recovery_button.setEnabled(self.publication_recovery_pending and not self.busy)
         self.video_repair_button.setVisible(bool((self.inventory or {}).get('Videos', {}).get('errors')))
         self.video_repair_button.setEnabled(ready and bool((self.inventory or {}).get('Videos', {}).get('errors')))
-        for check in self.game_checks:
-            check.setEnabled(games_ready and self.games_loaded_for == self.identity['root'])
+        supported_games = (games.supported(self.identity)
+                           if self.identity and games.available(self.identity) else set())
+        for index, check in enumerate(self.game_checks):
+            if index not in supported_games and check.isChecked():
+                with QSignalBlocker(check):
+                    check.setChecked(False)
+            check.setEnabled(games_ready and self.games_loaded_for == self.identity['root']
+                             and index in supported_games)
         if ready and not games_ready:
             self.games_status.setText('Games are unavailable on this iPod.')
         supported = media.supported_kinds(self.identity) if ready else ()

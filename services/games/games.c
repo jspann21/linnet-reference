@@ -16,11 +16,11 @@
 #endif
 
 enum { COMET, PULSE, SOLITAIRE, SUDOKU, BRICK, MUSIC_QUIZ, VORTEX, MINESWEEPER,
-       FALLING, REVERSI, SNAKE, WORD_SEARCH, GAME_COUNT };
+       FALLING, REVERSI, SNAKE, WORD_SEARCH, SCRUB, GAME_COUNT };
 typedef char ln_game_count_matches[(GAME_COUNT==LN_GAME_COUNT)?1:-1];
 enum { PLAY=1u, PAUSED, LOST, WATCH, MISTAKE, WON, ARCADE_READY, SOL_CONFIRM,
-       SUDOKU_LEVEL, SUDOKU_PICK, SUDOKU_MENU, SUDOKU_CONFIRM };
-static uint16_t installed=LN_GAME_MASK;
+       SUDOKU_LEVEL, SUDOKU_PICK, SUDOKU_MENU, SUDOKU_CONFIRM, SCR_INTRO, SCR_CLEAR };
+static uint16_t installed=LN_GAME_SUPPORTED_MASK;
 static uint8_t game,games_phase,paused_phase,hearts,focus,sequence[24],entered,level,flash;
 static uint16_t ship=160,energy,score,best[LN_GAME_COUNT];
 static uint32_t random_state=0x9e3779b9u,last_tick,spawn_at,flash_until,invulnerable_until,hud_revision,energy_carry;
@@ -35,12 +35,13 @@ static int16_t burst_x,burst_y;
 static bool burst_shield;
 static struct {int16_t x,y;uint8_t size,live;uint32_t fraction;} rock[12];
 static const char *const names[LN_GAME_COUNT]={"Comet Run","Pulse Path","Solitaire","Sudoku","Brick","Music Quiz",
-    "Vortex","Minesweeper","Falling Blocks","Reversi","Snake","Word Search"};
+    "Vortex","Minesweeper","Falling Blocks","Reversi","Snake","Word Search","Scrub"};
 static const char *const descriptions[LN_GAME_COUNT]={"Thread through the meteor field.","Remember the lights. Find the path.",
     "Build four suits from Ace to King.","Classic 9 by 9 number puzzle.",
     "Break six handcrafted walls.","Name songs from your music library.","Orbit the core and clear each wave.",
     "Clear safe tiles at three difficulties.","Build lines with seven classic pieces.",
-    "Outflank a thoughtful opponent.","Turn, boost, and grow.","Find every hidden word."};
+    "Outflank a thoughtful opponent.","Turn, boost, and grow.","Find every hidden word.",
+    "Pin one echo. Move the rest of time."};
 static uint32_t random_next(void);
 
 /* Draw-one Klondike. Piles use their last element as the top card. A tableau
@@ -159,6 +160,9 @@ static bool sol_move(void){
 }
 
 #include "services/games/sudoku.h"
+#if LINNET_GAME_PRESENTATION_COLOR320
+#include "services/games/modules/scrub.h"
+#endif
 
 static uint32_t random_next(void){random_state^=random_state<<13;random_state^=random_state>>17;random_state^=random_state<<5;return random_state;}
 static void number(char **out,uint32_t value){char reverse[10];uint32_t n=0;do{reverse[n++]=(char)('0'+value%10u);value/=10u;}while(value);while(n)*(*out)++=reverse[--n];}
@@ -173,11 +177,20 @@ const char *ln_games_description(uint32_t row){
     }
     return "Choose games in Linnet Media.";
 }
-void ln_games_configure(uint16_t mask){installed=mask&LN_GAME_MASK;}
+void ln_games_configure(uint16_t mask){installed=mask&LN_GAME_SUPPORTED_MASK;}
 void ln_games_best_set(uint32_t index,uint16_t value){if(index<LN_GAME_COUNT)best[index]=value;}
-bool ln_games_playing(void){if(game>=BRICK)return ex_phase==EX_PLAY;return game!=SOLITAIRE&&(games_phase==PLAY||games_phase==WATCH||games_phase==MISTAKE);}
+bool ln_games_playing(void){
+#if LINNET_GAME_PRESENTATION_COLOR320
+    if(game==SCRUB)return games_phase==PLAY;
+#endif
+    if(game>=BRICK)return ex_phase==EX_PLAY;
+    return game!=SOLITAIRE&&(games_phase==PLAY||games_phase==WATCH||games_phase==MISTAKE);
+}
 uint32_t ln_games_hud_revision(void){return hud_revision;}
 uint32_t ln_games_deadline(uint32_t now){
+#if LINNET_GAME_PRESENTATION_COLOR320
+    if(game==SCRUB)return UINT32_MAX;
+#endif
     if(game>=BRICK)return extra_deadline(now);
     if(game==SUDOKU&&(games_phase==PLAY||games_phase==SUDOKU_PICK))return now+(1000000u-sud_clock_remainder);
     if(!ln_games_playing())return UINT32_MAX;
@@ -198,6 +211,9 @@ void ln_games_start(uint32_t row){
     random_state^=last_tick+0x6d2b79f5u;games_phase=paused_phase=PLAY;score=0;hearts=3u;focus=0u;sound_pending=1u;
     resume_pending=false;
     hit_until=shield_notice_until=burst_until=0;shield_failed=false;previous_best=best[game];
+#if LINNET_GAME_PRESENTATION_COLOR320
+    if(game==SCRUB){scr_start();last_tick=0;return;}
+#endif
     if(game>=BRICK){extra_start();last_tick=0;return;}
     if(game==COMET){ship=160u;energy=100u;energy_carry=0;spawn_at=last_tick+600000u;invulnerable_until=last_tick+1200000u;for(uint32_t i=0;i<12u;++i)rock[i].live=0;}
     else if(game==PULSE){level=0u;new_pulse();}
@@ -213,6 +229,9 @@ static void finish(bool won){games_phase=won?WON:LOST;sound_pending=4u;if(score>
 #endif
     }}
 int ln_games_input(uint32_t kind,int32_t value){
+#if LINNET_GAME_PRESENTATION_COLOR320
+    if(game==SCRUB)return scr_input(kind,value);
+#endif
     if(game>=BRICK){if(kind==1u)return extra_wheel(value);if(kind!=2u)return 0;uint32_t pressed=(uint32_t)value&~buttons;buttons=(uint32_t)value;return extra_button(pressed);}
     if(kind==1u){if(!value)return 3;
         if(game==SUDOKU){
@@ -337,6 +356,9 @@ int ln_games_input(uint32_t kind,int32_t value){
 }
 bool ln_games_tick(uint32_t now){
     if(!games_phase){last_tick=now;return false;}
+#if LINNET_GAME_PRESENTATION_COLOR320
+    if(game==SCRUB)return false;
+#endif
     if(game>=BRICK)return extra_tick(now);
     if(game==SUDOKU)return sud_tick(now);
     if(game==SOLITAIRE)return false;
@@ -408,6 +430,9 @@ static void box(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,int32_t
     for(int32_t yy=top;yy<bottom;++yy)for(int32_t xx=left;xx<right;++xx)c->pixels[yy*LINNET_UI_WIDTH+xx]=ink;
 }
 #include "services/games/drawing.h"
+#if LINNET_GAME_PRESENTATION_COLOR320
+#include "services/games/presentations/games_scrub.h"
+#endif
 #if LINNET_GAME_PRESENTATION_PHOTO220
 #include "services/games/presentations/photo220/games_graphics.h"
 #elif LINNET_GAME_PRESENTATION_COLOR320
@@ -490,6 +515,9 @@ static void sol_card(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,ui
 #include "services/games/presentations/color320/games_sudoku.h"
 #include "services/games/presentations/games_extra_draw.h"
 void ln_games_draw(const struct ln_ui_canvas_context *c){
+#if LINNET_GAME_PRESENTATION_COLOR320
+    if(game==SCRUB){scr_draw(c);return;}
+#endif
     if(game>=BRICK){extra_draw(c);return;}
     if(game==SUDOKU){sud_draw_320(c);return;}
     if(game==SOLITAIRE){sol_draw_scene(c);return;}
@@ -530,6 +558,6 @@ void ln_games_audio_step(void){
     ln_audio_finish();if(!ln_audio_start())ln_games_audio_stop();
 }
 #else
-void ln_games_audio_step(void){}
+void ln_games_audio_step(void){(void)sound_pending;}
 void ln_games_audio_stop(void){sound_pending=0;}
 #endif

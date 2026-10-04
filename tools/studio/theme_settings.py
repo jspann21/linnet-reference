@@ -12,9 +12,11 @@ def _theme_record(path):
     data, generation, payload = _read_record(path)
     if payload:
         header = struct.unpack_from('<4sI', payload) if len(payload) >= 8 else None
-        suffix = 1 if header == (b'THMS', 0) else 5 if header == (b'THMS', 1) else 0
+        scores = {0: 0, 1: 2, 2: 3, 3: 12, 4: 13}
+        suffix = 1 + scores[header[1]] * 2 if header and header[0] == b'THMS' and header[1] in scores else 0
         theme_id = payload[8:-suffix] if suffix else b''
-        if (not suffix or not 8 + suffix <= len(payload) <= 96
+        if (not suffix or not 8 + suffix <= len(payload) <= 128
+                or (header[1] == 0 and len(payload) > 89)
                 or payload[-suffix] != 0
                 or (theme_id and not re.fullmatch(
                     rb'[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+', theme_id))):

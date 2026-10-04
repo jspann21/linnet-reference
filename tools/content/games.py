@@ -20,7 +20,8 @@ GAMES = (("Comet Run", "Steer through a rising meteor storm."),
          ("Falling Blocks", "Build clean lines with seven classic pieces."),
          ("Reversi", "Outflank a thoughtful computer opponent."),
          ("Snake", "Turn, boost, and grow through a polished grid."),
-         ("Word Search", "Find hidden words across three curated boards."))
+         ("Word Search", "Find hidden words across three curated boards."),
+         ("Scrub", "Pin one echo, then scrub time to align all three."))
 
 
 def encode(selected):
@@ -48,6 +49,12 @@ def available(identity):
     return target_spec(identity['target_id'])['capabilities'].get('games', False)
 
 
+def supported(identity):
+    spec = target_spec(identity['target_id'])
+    count = len(GAMES) - (spec.get('game_presentation') == 'photo220')
+    return set(range(count)) if spec['capabilities'].get('games', False) else set()
+
+
 def _path(identity):
     if not available(identity):
         raise ValueError("Games are unavailable on this iPod.")
@@ -62,10 +69,12 @@ def _path(identity):
 def read(identity):
     identity = media.refresh(identity)
     _, path = _path(identity)
-    return decode(path.read_bytes()) if path.exists() else set(range(len(GAMES)))
+    return (decode(path.read_bytes()) if path.exists() else set(range(len(GAMES)))) & supported(identity)
 
 
 def save(identity, selected):
+    if set(selected) - supported(identity):
+        raise ValueError("This game is unavailable on this iPod.")
     data = encode(selected)
     identity = media.refresh(identity)
     root, path = _path(identity)
