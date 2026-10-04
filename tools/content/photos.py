@@ -42,6 +42,96 @@ def _crc(data):
     return zlib.crc32(data) & 0xffffffff
 
 
+def fallback_jpeg_header_compatible(data):
+    """Accept only the marker and component layout understood by device JPEG fallback."""
+    if len(data) > 262144 or data[:2] != b'\xff\xd8':
+        return False
+    at, markers, components, quant_ids, adobe = 2, 0, None, None, None
+    quant, huffman = set(), set()
+    while at < len(data):
+        if data[at] != 0xff:
+            return False
+        start = at
+        while at < len(data) and data[at] == 0xff:
+            at += 1
+        markers += at - start
+        if markers > 4096 or at + 2 >= len(data):
+            return False
+        marker = data[at]
+        at += 1
+        size = int.from_bytes(data[at:at+2], 'big')
+        if size < 2 or at + size > len(data):
+            return False
+        payload = data[at+2:at+size]
+        at += size
+        if marker == 0xdb:
+            if len(payload) > 260 or len(payload) % 65:
+                return False
+            for pos in range(0, len(payload), 65):
+                spec = payload[pos]
+                if spec >= 4 or spec in quant or 0 in payload[pos+1:pos+65]:
+                    return False
+                quant.add(spec)
+        elif marker == 0xc4:
+            if len(payload) > 2184:
+                return False
+            pos = 0
+            while pos < len(payload):
+                if len(payload) - pos < 17:
+                    return False
+                spec = payload[pos]
+                key = (spec >> 4, spec & 15)
+                counts = payload[pos+1:pos+17]
+                total = sum(counts)
+                if key[0] > 1 or key[1] >= 4 or key in huffman or not 1 <= total <= 256 or pos+17+total > len(payload):
+                    return False
+                code = 0
+                for depth, count in enumerate(counts, 1):
+                    code += count
+                    if code > 1 << depth or (count and code == 1 << depth):
+                        return False
+                    code <<= 1
+                symbols = payload[pos+17:pos+17+total]
+                if any(value > 11 if key[0] == 0 else
+                       (value & 15) > 10 or ((value & 15) == 0 and value not in (0, 240))
+                       for value in symbols):
+                    return False
+                huffman.add(key)
+                pos += 17 + total
+        elif marker == 0xdd:
+            if len(payload) != 2:
+                return False
+        elif marker == 0xc0:
+            count = payload[5] if len(payload) >= 6 else 0
+            if components or payload[:1] != b'\x08' or count not in (1, 3) or len(payload) != 6 + count*3:
+                return False
+            components = [payload[6+i*3] for i in range(count)]
+            quant_ids = [payload[8+i*3] for i in range(count)]
+            if len(set(components)) != count or (count == 3 and components != [1, 2, 3]):
+                return False
+            if any(not 1 <= payload[7+i*3] >> 4 <= 2 or
+                   not 1 <= (payload[7+i*3] & 15) <= 2 or
+                   (i and payload[7+i*3] != 0x11) or payload[8+i*3] >= 4
+                   for i in range(count)):
+                return False
+            if count == 1 and payload[7] != 0x11:
+                return False
+        elif marker == 0xee and payload.startswith(b'Adobe') and len(payload) >= 12:
+            adobe = payload[11]
+        elif marker == 0xda:
+            return (components is not None and len(payload) == 4 + 2*len(components) and
+                    payload[0] == len(components) and
+                    [payload[1+i*2] for i in range(len(components))] == components and
+                    all(q in quant for q in quant_ids) and
+                    all((0, payload[2+i*2] >> 4) in huffman and
+                        (1, payload[2+i*2] & 15) in huffman for i in range(len(components))) and
+                    payload[-3:] == b'\x00\x3f\x00' and
+                    (len(components) == 1 or adobe in (None, 1)))
+        elif marker != 0xfe and not 0xe0 <= marker <= 0xef:
+            return False
+    return False
+
+
 def _record(data):
     return data + struct.pack('<I', _crc(data))
 
@@ -340,13 +430,16 @@ def _render_photo(path, fallback, max_dimension, viewport_width, viewport_height
             if getattr(original, 'n_frames', 1) != 1:
                 raise ValueError(f'animated/multiframe image is unsupported: {path.name}')
             if fallback:
-                fallback_bytes = path.stat().st_size
+                with path.open('rb') as source:
+                    source_bytes = source.read(262145)
+                fallback_bytes = len(source_bytes)
                 if (original.format != 'JPEG' or original.mode not in ('RGB', 'L') or
                     original.info.get('progressive') or original.info.get('progression') or
-                    fallback_bytes > 262144 or max(width, height) > 2048 or width * height > 4_000_000):
+                    fallback_bytes > 262144 or max(width, height) > 2048 or width * height > 4_000_000 or
+                    not fallback_jpeg_header_compatible(source_bytes)):
                     raise ValueError('fallback JPEG exceeds baseline format/size bounds')
                 orientation = source_orientation
-                fallback_crc = _crc(path.read_bytes())
+                fallback_crc = _crc(source_bytes)
             drafted = not fallback and original.format == 'JPEG'
             if drafted:
                 side = 2 * max(max_dimension, viewport_width, viewport_height,

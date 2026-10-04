@@ -281,11 +281,13 @@ accessory-dependent features are expansion suggestions for other targets.
   a large flash catalog from 15.7 to 2.5 seconds during AAC playback, with no
   reported audio underruns or faults. Classic and Photo 4G first frames fell
   from 2.34/2.12 to 0.68/0.64 seconds. Legacy grids still use full validation.
-  JPEG fallback, empty folders, broader changed content, and audio qualification
-  remain open. Classic saved focus 80 through a graceful persistent reboot. With
-  its tile pack temporarily absent, that photo reported unavailable while another
-  photo rendered; the exact pack was restored and the original photo rendered
-  without error. On Photo 4G, 25 successive prepared photos became usable in
+  Empty folders, broader changed content, and audio qualification remain open.
+  Classic saved focus 80 through a graceful persistent reboot. Media Manager now
+  includes eligible on-device original JPEG paths in its prepared catalog: 16 of
+  617 Classic photos qualified, with all originals unchanged. With one tile pack
+  temporarily absent, Classic decoded a referenced JPEG into a valid frame
+  without error; after the exact pack was restored, prepared rendering resumed.
+  On Photo 4G, 25 successive prepared photos became usable in
   0.30–0.49 seconds each during music, with zero reported audio underruns,
   silence frames, or faults. Focus 33 survived a graceful reboot. JPEG fallback,
   empty folders, and broader changed-content recovery remain. Detailed

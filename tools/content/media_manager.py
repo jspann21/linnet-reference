@@ -286,7 +286,7 @@ def preparation_option(kind, identity, photo_dimension=640, music_verification='
     if kind == 'Photos':
         profile = identity['media_profile']
         layout = '-pack32-sequential8' if identity['target_id'] in ('video5g-m25', 'classic6g-n25') else ''
-        return f"lpic-hc-photos-native-grid{layout}-{identity['target_id']}-{photo_dimension}-{profile['photo_width']}x{profile['photo_height']}"
+        return f"lpic-hc-photos-native-grid{layout}-jpeg-fallback2-{identity['target_id']}-{photo_dimension}-{profile['photo_width']}x{profile['photo_height']}"
     return 'default'
 
 
@@ -2347,8 +2347,33 @@ def _video_outputs_from_publication(root, identity, output_paths, proofs):
 
 def _prepare_photos(root, cache, identity, media_profile, skipped, retail_photos, *,
                     dimension, checkpoint, progress, begin_publication):
-    from .photos import compile_photos
+    from .photos import FAT_PATH, compile_photos, fallback_jpeg_header_compatible
     from .publish_photos import publish_photos
+    from .music import _device_media_path
+    from PIL import Image
+
+    fallbacks = {}
+    for path, info in _file_records(root / 'Photos', allowed={'.jpg'}):
+        checkpoint()
+        if info.st_size > 262144 or path.relative_to(root).as_posix().casefold() in skipped:
+            continue
+        try:
+            with Image.open(path) as image:
+                width, height = image.size
+                eligible = (image.format == 'JPEG' and image.mode in ('RGB', 'L') and
+                            not image.info.get('progressive') and not image.info.get('progression') and
+                            max(width, height) <= 2048 and width * height <= 4_000_000)
+            if not eligible:
+                continue
+            with path.open('rb') as source:
+                if not fallback_jpeg_header_compatible(source.read(262145)):
+                    continue
+            device_path = _device_media_path(path, root)
+            if len(device_path) <= 127 and FAT_PATH.fullmatch(device_path):
+                fallbacks[path.relative_to(root / 'Photos').as_posix()] = device_path
+        except (OSError, ValueError, SyntaxError, Image.DecompressionBombError):
+            pass  # The photo compiler reports unreadable originals separately.
+
     package = cache / "photos.pimg"
     photo_progress = _throttled_progress(checkpoint, progress,
         lambda event: f'Preparing photos {event["current"]+1}/{event["total"]}: {Path(event["file"]).name}')
@@ -2357,6 +2382,7 @@ def _prepare_photos(root, cache, identity, media_profile, skipped, retail_photos
                    viewport_width=media_profile["photo_width"],
                    viewport_height=media_profile["photo_height"],
                    cache_dir=cache / "photo-cache", progress=photo_progress, checkpoint=checkpoint,
+                   fallback_paths=fallbacks,
                    excluded={Path(value).relative_to("Photos").as_posix() for value in skipped},
                    additional_sources={Path(item['relative']).relative_to('Photos').as_posix():
                                        (item['preview'], item['title']) for item in retail_photos})
