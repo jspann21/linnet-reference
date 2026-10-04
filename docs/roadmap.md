@@ -157,7 +157,10 @@ accessory-dependent features are expansion suggestions for other targets.
   3.80 seconds and matched exactly. A separate rotating-disk 230-second AAC
   sample took 1.43 seconds to hash, 0.27 seconds to convert, and 0.03 seconds
   to hash local PCM. Both originals kept their size and timestamp.
-  Full conversion/catalog baselines and UI responsiveness remain open.
+  Photo 4G inspected 3,253 rows in 996.31/1.00 seconds on first/repeated
+  passes; empty planning took 1.12/0.57 seconds. The device returned from
+  Disk Mode healthy with its 2,894-track library intact. The slow first pass
+  needs profiling; full conversion and UI responsiveness remain open.
 
 - [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed
   M4A seeking are implemented. Measure prepared M4A separately from unindexed M4A
@@ -194,7 +197,11 @@ accessory-dependent features are expansion suggestions for other targets.
   remain open. Classic saved focus 80 through a graceful persistent reboot. With
   its tile pack temporarily absent, that photo reported unavailable while another
   photo rendered; the exact pack was restored and the original photo rendered
-  without error. Detailed measurements and identities stay local.
+  without error. On Photo 4G, 25 successive prepared photos became usable in
+  0.30–0.49 seconds each during music, with zero reported audio underruns,
+  silence frames, or faults. Focus 33 survived a graceful reboot. JPEG fallback,
+  empty folders, and broader changed-content recovery remain. Detailed
+  measurements and identities stay local.
 
 - [ ] **Measure/Improve: competing media work during playback.** Profile artwork,
   photos, metadata/history and next-track preparation at track boundaries. Measure
