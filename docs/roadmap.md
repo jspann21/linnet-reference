@@ -149,8 +149,10 @@ accessory-dependent features are expansion suggestions for other targets.
   [player](../services/music/player.c), [M25](../targets/video5g-m25/coprocessor.c),
   [Classic](../services/video/native/player.c).
   Partial: photo navigation and an AAC-to-PCM track boundary stayed active on flash
-  hardware without reported underruns or missed joins; artwork, history, and backend
-  throughput remain.
+  hardware without reported underruns or missed joins. A rotating M25 video
+  startup comparison isolated a longer media-open stage that shortened on the
+  next start with the disk active; a short clip completed with seeks and no
+  reported audio faults. Artwork, history, backend throughput, and A/V sync remain.
 
 - [ ] **Measure/Improve: deferred 75 ms search goal at 100,000 tracks.** Search,
   retained pages and lower-bound caching are implemented. Measure first result,
