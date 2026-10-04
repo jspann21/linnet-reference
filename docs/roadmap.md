@@ -256,6 +256,11 @@ accessory-dependent features are expansion suggestions for other targets.
   two unchanged Music updates reused the library without error. A 75-file host
   PCM conversion batch published with originals unchanged. Empty-cache and UI
   responsiveness baselines remain open; detailed timings stay local.
+  A rotating M25 library with Music Ready and 2,237 rows inspected in 22.78
+  seconds after mounting and 0.70 seconds on repeat inspection of the same mount;
+  17.01 seconds of the first pass checked published outputs. Unchanged Music plans
+  took 0.59–0.92 seconds with no copies, conversion, or reconciliation. It returned
+  to a healthy OS image.
 
 - [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed
   M4A seeking are implemented. Measure prepared M4A separately from unindexed M4A
