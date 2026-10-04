@@ -161,7 +161,11 @@ accessory-dependent features are expansion suggestions for other targets.
   hardware without reported underruns or missed joins. A rotating M25 video
   startup comparison isolated a longer media-open stage that shortened on the
   next start with the disk active; a short clip completed with seeks and no
-  reported audio faults. Artwork, history, backend throughput, and A/V sync remain.
+  reported audio faults. Artwork, history, remaining backend throughput, and
+  A/V sync remain.
+  A 60-second rotating M25 video run streamed 900 frames to EOF with no failed
+  MP4 table reads or reported audio underruns/faults; physical A/V sync and the
+  other backend remain open.
 
 - [ ] **Measure/Improve: deferred 75 ms search goal at 100,000 tracks.** Search,
   retained pages and lower-bound caching are implemented. Measure first result,
