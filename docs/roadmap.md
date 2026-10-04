@@ -83,8 +83,10 @@ accessory-dependent features are expansion suggestions for other targets.
   connected devices completed a bounded Link sleep/wake cycle with matching
   counters and healthy images; current and dock output need external measurement.
   Five-minute music runs on Photo 4G and Classic reported no underruns or audio
-  faults. A rotating M25 22.05-to-44.1 kHz transition counted a non-gapless join
-  as designed, and the following track reported one underrun. A larger prime
+  faults. A host PCM track on Classic reached EOF while prepared photos rendered
+  18 times, with zero reported underruns, silence frames, or faults. A rotating M25
+  22.05-to-44.1 kHz transition counted a non-gapless join as designed, and the
+  following track reported one underrun. A larger prime
   reserve limited to drained rate changes ran the same natural transition and
   over 35 seconds of the following track with no reported underruns or inserted
   silence frames. Later unattended queue progression reported one underrun;
@@ -250,6 +252,10 @@ accessory-dependent features are expansion suggestions for other targets.
   in 5.62 seconds and planned in 0.72 seconds, with no copies or reconciliation
   and Music reusable; the guarded return preserved the library. Broader
   conversion/UI baselines remain.
+  Fresh-mount and repeat Classic inspections showed Music Ready in a 1,094-row view;
+  two unchanged Music updates reused the library without error. A 75-file host
+  PCM conversion batch published with originals unchanged. Empty-cache and UI
+  responsiveness baselines remain open; detailed timings stay local.
 
 - [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed
   M4A seeking are implemented. Measure prepared M4A separately from unindexed M4A
