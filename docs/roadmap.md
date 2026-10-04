@@ -198,6 +198,10 @@ accessory-dependent features are expansion suggestions for other targets.
   scan-plus-database pass took 0.19 seconds.
   The guarded Disk Mode roundtrip returned to its healthy OS. A faster persistent
   directory cache still needs a reliable way to detect new nested files.
+  On separate fresh mounts, scanning the Photo 4G Music tree serially took
+  12.59 seconds; splitting its subdirectories across eight host workers took
+  17.08 seconds. The warm serial pass took 0.07 seconds. Parallel directory
+  scanning was not adopted; both guarded returns reached the healthy OS.
 
 - [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed
   M4A seeking are implemented. Measure prepared M4A separately from unindexed M4A
