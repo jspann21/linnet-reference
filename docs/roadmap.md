@@ -71,7 +71,10 @@ accessory-dependent features are expansion suggestions for other targets.
   underrun/error counters. Implementations and sample playback already exist.
   [Target scope](../targets/README.md#qualification-record), [power API](../hal/api/power.h),
   [storage policy](storage.md).
-  Blocker: current checks lack a current meter, dock setup, and sustained battery/playback runs.
+  Partial: a rotating M25 completed a 12-track queue observed for five minutes;
+  counters ended at 11 gapless joins with zero missed joins, underruns, or audio
+  faults. An automated sleep/wake cycle also completed. Current, dock, battery
+  runtime, long audio/video, and A/V sync measurements remain open.
 
 - [ ] **Qualify: remaining recovery, parser, transaction, and memory-pressure cases.**
   Cover interrupted media/firmware publication, corrupt/truncated records, full
