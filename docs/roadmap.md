@@ -118,8 +118,12 @@ accessory-dependent features are expansion suggestions for other targets.
   browsing reuses scanned file records. Repeated original-copy plans now hash the
   host source against a verified device digest without rereading device content;
   focused equal/changed checks passed. Discovery, inspection, and empty planning
-  were timed on first and repeated passes on rotating and flash devices.
-  Full preparation, publication, and UI responsiveness remain open.
+  were timed on first and repeated passes on rotating and flash devices. Incremental
+  Music/Files runs completed on rotating (12 tracks) and flash (426 tracks)
+  devices. The rotating run published an updated Files index; the flash run and
+  unchanged repeats reused both libraries. Source file stamps and sampled hashes
+  matched, and subsequent playback reported no faults. Conversion, large catalog,
+  and UI responsiveness baselines remain open.
 
 - [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed
   M4A seeking are implemented. Measure prepared M4A separately from unindexed M4A
