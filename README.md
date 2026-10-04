@@ -109,7 +109,7 @@ firmware replacement stops playback and follows the update workflow.
 
 ### The click wheel has more to do.
 
-Twelve native games bring different kinds of play to iPod Photo and Video, with
+Eighteen native games bring different kinds of play to iPod Photo and Video, with
 layouts made for their screens and controls made for the wheel.
 
 <table>
@@ -128,7 +128,8 @@ layouts made for their screens and controls made for the wheel.
 <sub>Actual iPod Video framebuffer captures through Linnet Link.</sub>
 
 The full selection is Comet Run, Pulse Path, Solitaire, Sudoku, Brick, Music
-Quiz, Vortex, Minesweeper, Falling Blocks, Reversi, Snake, and Word Search.
+Quiz, Vortex, Minesweeper, Falling Blocks, Reversi, Snake, Word Search, Scrub,
+Dial Heist, Mixtape, Signal, Clockwork City, and Pocket Pinball.
 Choose your games in Media Manager, save, eject, and restart Linnet.
 
 ## Themes
