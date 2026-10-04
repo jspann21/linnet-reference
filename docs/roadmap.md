@@ -91,8 +91,12 @@ accessory-dependent features are expansion suggestions for other targets.
   publication cuts on rotating M25 preserved the healthy image and settings;
   stage 1 kept the old slot and stages 2–4 confirmed the new slot. Explicit
   begin/chunk rejections were inspected; a partial upload was cleared by guarded
-  reboot before retry. Other history interruption cases, media publication cuts,
-  crash rollback, and USB device loss remain open.
+  reboot before retry. Other history interruption cases, crash rollback, and USB
+  device loss remain open. On flash M25, photo grid-only publication recovered
+  after an injected exception and after the publisher process exited just after
+  rename:
+  the original grid/PIM hashes returned, the transaction marker cleared, and the
+  device rebooted healthy. Other media publication cuts remain open.
 
 - [ ] **Qualify: packaged release workflows.** Exercise navigation, playback,
   install/update, rollback, restore/uninstall and media preparation using release
