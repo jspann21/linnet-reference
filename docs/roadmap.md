@@ -109,7 +109,9 @@ accessory-dependent features are expansion suggestions for other targets.
   display ownership returned and the OS stayed healthy.
   Q21 with the current installed development image played sampled MP3 and
   host-indexed AAC without reported underruns, silence, or audio faults;
-  longer battery-powered playback and physical output checks remain open.
+  a 347-second indexed AAC track then reached EOF at 15,309,824/15,309,824
+  frames with zero reported player/audio underruns, silence frames, or faults.
+  Longer battery-powered playback and physical output checks remain open.
   Current, individually bound development images were installed on Q21,
   Classic, flash M25 and both rotating M25s after RAM checks. All five returned
   healthy with ready libraries and sampled playback without reported faults.
