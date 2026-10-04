@@ -89,6 +89,18 @@ accessory-dependent features are expansion suggestions for other targets.
   A/V sync and longer battery-powered sessions remain open. A separate
   forward/backward seek run reached EOF with zero reported audio faults,
   underruns, or silence frames.
+  In a five-device playback pass, flash M25, Photo 4G, and Classic reported zero
+  audio underruns; rotating M25 with a 12-track Repeat All queue passed 80 joins
+  with zero missed joins or faults. The other rotating M25 exposed a standby
+  disk wake at a same-rate join after a clean 22.05-to-44.1 kHz rate change.
+  A RAM build now wakes rotating media near that join: with the disk observed
+  in standby beforehand, the join and next 25 seconds reported zero underruns,
+  silence frames, or faults. The shorter wake window completed all 12 tracks on
+  the other rotating M25 with 11 clean joins and zero audio faults; the disk
+  returned to standby at EOF. The final build also crossed the previously
+  failing join and 20 seconds of the next track with clear audio counters;
+  its disk had already spun up during prefetch. Longer battery and dock
+  measurements remain open.
 
 - [ ] **Qualify: remaining recovery, parser, transaction, and memory-pressure cases.**
   Cover interrupted media/firmware publication, corrupt/truncated records, full
@@ -223,6 +235,8 @@ accessory-dependent features are expansion suggestions for other targets.
   measurements and identities stay local. The installed Photo 4G catalog has
   343 photos but no original-JPEG fallback references, so that path cannot be
   qualified with its current media; it returned to the healthy OS unchanged.
+  Classic navigated 26 prepared photos forward and 25 back during music;
+  first frames took 0.02–0.27 seconds and audio counters stayed clear.
 
 - [ ] **Measure/Improve: competing media work during playback.** Profile artwork,
   photos, metadata/history and next-track preparation at track boundaries. Measure
@@ -240,6 +254,9 @@ accessory-dependent features are expansion suggestions for other targets.
   A 60-second rotating M25 video run streamed 900 frames to EOF with no failed
   MP4 table reads or reported audio underruns/faults; physical A/V sync and the
   other backend remain open.
+  The rotating M25 same-rate join after disk standby exposed one underrun in
+  the installed and earlier RAM images. A bounded pre-join wake cleared it in
+  a physical standby-to-join run; broader media contention remains open.
 
 - [ ] **Measure/Improve: deferred 75 ms search goal at 100,000 tracks.** Search,
   retained pages and lower-bound caching are implemented. Measure first result,

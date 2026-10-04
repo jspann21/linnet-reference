@@ -47,6 +47,8 @@ bool ln_storage_mounted(void);
 void ln_storage_video_browse(bool active, bool activity);
 /* A streaming owner can defer standby across reads satisfied from RAM. */
 void ln_storage_media_realtime(bool active);
+/* Keep rotating media awake and start a bounded wake before a music join. */
+void ln_storage_music_boundary(bool active);
 uint32_t ln_storage_disk_sector_bytes(void);
 bool ln_storage_startup_complete(void);
 bool ln_storage_prepared(void);

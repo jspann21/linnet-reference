@@ -37,9 +37,9 @@ static uint32_t phase,error,found,opening,epoch=1,request,request_generation,req
 static bool pending,locked,media_realtime;
 static uint32_t partition_scale;
 static uint32_t media_owner;
-#define VIDEO_WAKE_GENERATION 0x76000001u
-static uint32_t video_browse_until,video_wake_ticket;
-static bool video_browse,video_wake_requested;
+#define MEDIA_WAKE_GENERATION 0x76000001u
+static uint32_t video_browse_until,media_wake_ticket;
+static bool video_browse,video_wake_requested,music_boundary,music_wake_requested;
 static uint32_t fixed_owner,fixed_started;
 static uint32_t media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
 static bool media_canceled,media_opening;
@@ -230,11 +230,11 @@ void ln_storage_progress(void *context){
             ln_platform_hardware_reset();
         }
     }else{progress_clock=now;progress_stalls=0;}
-    if(video_wake_ticket){
+    if(media_wake_ticket){
         struct ln_block_completion completion;
-        if(ln_block_take(VIDEO_WAKE_GENERATION,&completion))video_wake_ticket=0;
+        if(ln_block_take(MEDIA_WAKE_GENERATION,&completion))media_wake_ticket=0;
     }
-    ln_block_allow_idle(phase==6&&!locked&&!pending&&!media_realtime&&
+    ln_block_allow_idle(phase==6&&!locked&&!pending&&!media_realtime&&!music_boundary&&
         (!video_browse||(int32_t)(now-video_browse_until)>=0));
     ln_block_step(now);
 #if defined(LINNET_IMAGE_OS)
@@ -258,7 +258,7 @@ void ln_storage_progress(void *context){
     ln_core_watchdog_feed();
 #endif
 }
-void ln_storage_init(void){phase=1;partition_scale=1;error=found=opening=0;pending=locked=media_realtime=false;media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
+void ln_storage_init(void){phase=1;partition_scale=1;error=found=opening=0;pending=locked=media_realtime=music_boundary=music_wake_requested=false;media_wake_ticket=0;media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
 #if !defined(LINNET_PROFILE_RELEASE)
     uint32_t timing_flags=(poll_timing.depth[0]||poll_timing.depth[1])?1u<<29:0u;
     if(poll_timing.epoch==UINT32_MAX)timing_flags|=1u<<31;
@@ -352,6 +352,17 @@ void ln_storage_step_deferred(void){storage_step(true);}
 bool ln_storage_busy(void){return locked||background_running||(phase>=1&&phase<6)||phase==7||phase==10;}
 bool ln_storage_mounted(void){return phase==6&&volume.mounted;}
 void ln_storage_media_realtime(bool active){media_realtime=active;}
+void ln_storage_music_boundary(bool active){
+    if(!active||!ln_storage_mounted()){
+        music_boundary=music_wake_requested=false;return;
+    }
+    struct ln_ata_state device;ln_ata_state_snapshot(&device);
+    music_boundary=device.media_kind==LN_ATA_MEDIA_ROTATING;
+    if(!music_boundary||music_wake_requested||media_wake_ticket||device.busy)return;
+    if(device.powered&&!device.sleeping&&!device.initializing){music_wake_requested=true;return;}
+    if(ln_block_submit(LN_BLOCK_WAKE,0,0,0,MEDIA_WAKE_GENERATION,
+                       ln_time_us()+30000000u,&media_wake_ticket))music_wake_requested=true;
+}
 void ln_storage_video_browse(bool active,bool activity){
     uint32_t now=ln_time_us();
     if(!active){video_browse=false;video_wake_requested=false;return;}
@@ -359,10 +370,10 @@ void ln_storage_video_browse(bool active,bool activity){
         video_wake_requested=false;
     if(!video_browse||activity)video_browse_until=now+60000000u;
     video_browse=true;
-    if(video_wake_requested||video_wake_ticket||!ln_storage_mounted())return;
+    if(video_wake_requested||media_wake_ticket||!ln_storage_mounted())return;
     struct ln_ata_state device;ln_ata_state_snapshot(&device);
     if(device.powered&&!device.sleeping&&!device.busy&&!device.initializing){video_wake_requested=true;return;}
-    if(ln_block_submit(LN_BLOCK_WAKE,0,0,0,VIDEO_WAKE_GENERATION,now+30000000u,&video_wake_ticket))
+    if(ln_block_submit(LN_BLOCK_WAKE,0,0,0,MEDIA_WAKE_GENERATION,now+30000000u,&media_wake_ticket))
         video_wake_requested=true;
 }
 uint32_t ln_storage_disk_sector_bytes(void){return partition_scale*512u;}

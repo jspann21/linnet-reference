@@ -742,7 +742,8 @@ static void music_step(void){
         if(next_armed||next_ready||prefetching||resolver_kind==2)expected=true;
         else {uint32_t cursor;expected=next_queue_cursor(&cursor);}
     }
-    ln_player_expect_next(expected&&!sleep_holds_next()&&!sleep_due);
+    bool allow_next=expected&&!sleep_holds_next()&&!sleep_due;
+    ln_player_expect_next(allow_next);
     ln_player_snapshot(&before);ln_player_step();ln_player_snapshot(&p);ln_audio_snapshot(&audio);
     /* A muted seek can discard thousands of MPEG frames without producing
      * PCM. Advance cached decoder work in this turn, bounded so input and
@@ -803,6 +804,16 @@ static void music_step(void){
     }
     bool urgent=ln_player_prefetch_urgent();
     uint32_t read_runway=ln_player_background_frames(audio.rate);
+#if defined(LINNET_PHOTOS) || defined(LINNET_SOC_PP5022)
+    uint64_t track_frames=p.frames?p.frames:current.track.frames;
+    uint64_t position=ln_player_position();
+#endif
+#if defined(LINNET_SOC_PP5022)
+    uint64_t wake_window=track_frames>>2,maximum=(uint64_t)audio.rate*30u;
+    if(wake_window>maximum)wake_window=maximum;
+    ln_storage_music_boundary(active&&have_current&&allow_next&&p.phase==LN_PLAYER_PLAY&&audio.playing&&
+        track_frames&&(position>=track_frames||track_frames-position<=wake_window));
+#endif
 #if !defined(LINNET_PROFILE_RELEASE)
     if(urgent)budget_count(&budget_urgent_windows);
     if(audio.playing&&audio.queued<read_runway)budget_count(&budget_low_pcm_windows);
@@ -813,8 +824,6 @@ static void music_step(void){
     /* Release speculative-read priority before the audible tail, not only
      * after decode reaches EOF. Otherwise a photo/zoom can leave too little
      * runway to resolve the following short track's metadata. */
-    uint64_t track_frames=p.frames?p.frames:current.track.frames;
-    uint64_t position=ln_player_position();
     bool transition_soon=track_frames&&(position>=track_frames||
         track_frames-position<=(uint64_t)audio.rate*3u);
     photo_priority=active&&have_current&&!selecting&&!have_waiting&&!manual_next_pending&&
