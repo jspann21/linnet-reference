@@ -175,7 +175,10 @@ instead of writing an incomplete playlist.
 
 On Photo, Video, and Classic, **Games** lets you choose from Comet Run,
 Pulse Path, Solitaire, Sudoku, Brick, Music Quiz, Vortex, Minesweeper, Falling
-Blocks, Reversi, Snake, and Word Search. Scrub is available on Video and Classic.
+Blocks, Reversi, Snake, Word Search, Scrub, Dial Heist, Mixtape, Signal,
+Clockwork City, and Pocket Pinball. Each game has its own on-device controls and
+best score. The Photo uses artwork drawn for its 220 × 176 display; Video and
+Classic use artwork drawn for 320 × 240.
 **Screens** configures supported menus.
 See the [device menu hierarchy](navigation.md) for the default organization and
 controls. Save changes, eject, and restart to apply them. Game availability

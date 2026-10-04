@@ -12,7 +12,7 @@ def _theme_record(path):
     data, generation, payload = _read_record(path)
     if payload:
         header = struct.unpack_from('<4sI', payload) if len(payload) >= 8 else None
-        scores = {0: 0, 1: 2, 2: 3, 3: 12, 4: 13}
+        scores = {0: 0, 1: 2, 2: 3, 3: 12, 4: 13, 5: 18}
         suffix = 1 + scores[header[1]] * 2 if header and header[0] == b'THMS' and header[1] in scores else 0
         theme_id = payload[8:-suffix] if suffix else b''
         if (not suffix or not 8 + suffix <= len(payload) <= 128

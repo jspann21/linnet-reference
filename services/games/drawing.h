@@ -17,15 +17,15 @@ static void arcade_type(const struct ln_ui_canvas_context *c,int32_t x,int32_t y
     }
 }
 static void arcade_text(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,const char *s,uint16_t ink,bool small){arcade_type(c,x,y,s,ink,small,1u);}
-static void arcade_center(const struct ln_ui_canvas_context *c,int32_t center,int32_t y,const char *s,uint16_t ink,bool small,uint32_t size){
+static __attribute__((noinline)) void arcade_center(const struct ln_ui_canvas_context *c,int32_t center,int32_t y,const char *s,uint16_t ink,bool small,uint32_t size){
     const struct ln_ui_font *f=size>1u?&ln_ui_clock_font:small?&ln_ui_hint_font:&ln_ui_font;int32_t width=0;
     for(const char *p=s;*p;++p){uint32_t ch=(uint8_t)*p;if(ch>=f->first&&ch-f->first<f->count)width+=(int32_t)(f->advances?f->advances[ch-f->first]:f->advance);}
     arcade_type(c,center-width/2,y,s,ink,small,size);
 }
-static void arcade_panel(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,int32_t w,int32_t h,uint16_t ink){
+static __attribute__((noinline)) void arcade_panel(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,int32_t w,int32_t h,uint16_t ink){
     box(c,x+3,y,w-6,h,ink);box(c,x,y+3,w,h-6,ink);box(c,x+1,y+1,w-2,h-2,ink);
 }
-static void arcade_disc(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,int32_t r,uint16_t ink){
+static __attribute__((noinline)) void arcade_disc(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,int32_t r,uint16_t ink){
     for(int32_t dy=-r;dy<=r;++dy){int32_t dx=r;while(dx*dx+dy*dy>r*r)--dx;box(c,x-dx,y+dy,dx*2+1,1,ink);}
 }
 static void arcade_shade(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,int32_t w,int32_t h,uint16_t top,uint16_t bottom){

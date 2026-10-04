@@ -16,11 +16,13 @@
 #endif
 
 enum { COMET, PULSE, SOLITAIRE, SUDOKU, BRICK, MUSIC_QUIZ, VORTEX, MINESWEEPER,
-       FALLING, REVERSI, SNAKE, WORD_SEARCH, SCRUB, GAME_COUNT };
+       FALLING, REVERSI, SNAKE, WORD_SEARCH, SCRUB, DIAL_HEIST, MIXTAPE, SIGNAL,
+       CLOCKWORK_CITY, POCKET_PINBALL, GAME_COUNT };
 typedef char ln_game_count_matches[(GAME_COUNT==LN_GAME_COUNT)?1:-1];
 enum { PLAY=1u, PAUSED, LOST, WATCH, MISTAKE, WON, ARCADE_READY, SOL_CONFIRM,
-       SUDOKU_LEVEL, SUDOKU_PICK, SUDOKU_MENU, SUDOKU_CONFIRM, SCR_INTRO, SCR_CLEAR };
-static uint16_t installed=LN_GAME_SUPPORTED_MASK;
+       SUDOKU_LEVEL, SUDOKU_PICK, SUDOKU_MENU, SUDOKU_CONFIRM, SCR_INTRO, SCR_CLEAR,
+       CW_INTRO, CW_CLEAR };
+static uint32_t installed=LN_GAME_SUPPORTED_MASK;
 static uint8_t game,games_phase,paused_phase,hearts,focus,sequence[24],entered,level,flash;
 static uint16_t ship=160,energy,score,best[LN_GAME_COUNT];
 static uint32_t random_state=0x9e3779b9u,last_tick,spawn_at,flash_until,invulnerable_until,hud_revision,energy_carry;
@@ -35,13 +37,16 @@ static int16_t burst_x,burst_y;
 static bool burst_shield;
 static struct {int16_t x,y;uint8_t size,live;uint32_t fraction;} rock[12];
 static const char *const names[LN_GAME_COUNT]={"Comet Run","Pulse Path","Solitaire","Sudoku","Brick","Music Quiz",
-    "Vortex","Minesweeper","Falling Blocks","Reversi","Snake","Word Search","Scrub"};
+    "Vortex","Minesweeper","Falling Blocks","Reversi","Snake","Word Search","Scrub",
+    "Dial Heist","Mixtape","Signal","Clockwork City","Pocket Pinball"};
 static const char *const descriptions[LN_GAME_COUNT]={"Thread through the meteor field.","Remember the lights. Find the path.",
     "Build four suits from Ace to King.","Classic 9 by 9 number puzzle.",
     "Break six handcrafted walls.","Name songs from your music library.","Orbit the core and clear each wave.",
     "Clear safe tiles at three difficulties.","Build lines with seven classic pieces.",
     "Outflank a thoughtful opponent.","Turn, boost, and grow.","Find every hidden word.",
-    "Pin one echo. Move the rest of time."};
+    "Pin one echo. Move the rest of time.","Crack three tumblers before patrol arrives.",
+    "Place loops on a rotating eight-beat map.","Tune and decode hidden transmissions.",
+    "Rotate street rings to open a route.","Tilt the table and kick for a high score."};
 static uint32_t random_next(void);
 
 /* Draw-one Klondike. Piles use their last element as the top card. A tableau
@@ -53,13 +58,16 @@ static uint16_t sol_moves;
 static uint8_t sol_menu,sol_history_head,sol_history_count;
 static const char *sol_message;
 static struct sol_snapshot {
-    uint8_t stock[52],waste[52],tableau[7][52],stock_count,waste_count,count[7],hidden[7],foundation[4],cursor,depth;
+    uint8_t cards[52],stock_count,waste_count,count[7],hidden[7],foundation[4],cursor,depth;
     uint16_t moves;
 } sol_history[16];
 static void sol_remember(void){
     struct sol_snapshot *s=&sol_history[sol_history_head];
-    for(uint8_t i=0;i<52u;++i){s->stock[i]=sol_stock[i];s->waste[i]=sol_waste[i];
-        for(uint8_t col=0;col<7u;++col)s->tableau[col][i]=sol_tableau[col][i];}
+    uint8_t at=0u;
+    for(uint8_t i=0;i<sol_stock_count;++i)s->cards[at++]=sol_stock[i];
+    for(uint8_t i=0;i<sol_waste_count;++i)s->cards[at++]=sol_waste[i];
+    for(uint8_t col=0;col<7u;++col)
+        for(uint8_t i=0;i<sol_count[col];++i)s->cards[at++]=sol_tableau[col][i];
     for(uint8_t i=0;i<7u;++i){s->count[i]=sol_count[i];s->hidden[i]=sol_hidden[i];}
     for(uint8_t i=0;i<4u;++i)s->foundation[i]=sol_foundation[i];
     s->stock_count=sol_stock_count;s->waste_count=sol_waste_count;s->cursor=sol_cursor;s->depth=sol_depth;s->moves=sol_moves;
@@ -69,8 +77,11 @@ static void sol_undo(void){
     if(!sol_history_count){sol_message="No moves to undo yet.";sound_pending=3u;return;}
     sol_history_head=(sol_history_head+15u)&15u;--sol_history_count;
     const struct sol_snapshot *s=&sol_history[sol_history_head];
-    for(uint8_t i=0;i<52u;++i){sol_stock[i]=s->stock[i];sol_waste[i]=s->waste[i];
-        for(uint8_t col=0;col<7u;++col)sol_tableau[col][i]=s->tableau[col][i];}
+    uint8_t at=0u;
+    for(uint8_t i=0;i<s->stock_count;++i)sol_stock[i]=s->cards[at++];
+    for(uint8_t i=0;i<s->waste_count;++i)sol_waste[i]=s->cards[at++];
+    for(uint8_t col=0;col<7u;++col)
+        for(uint8_t i=0;i<s->count[col];++i)sol_tableau[col][i]=s->cards[at++];
     for(uint8_t i=0;i<7u;++i){sol_count[i]=s->count[i];sol_hidden[i]=s->hidden[i];}
     for(uint8_t i=0;i<4u;++i)sol_foundation[i]=s->foundation[i];
     sol_stock_count=s->stock_count;sol_waste_count=s->waste_count;sol_cursor=s->cursor;sol_depth=s->depth;sol_moves=s->moves;
@@ -160,14 +171,61 @@ static bool sol_move(void){
 }
 
 #include "services/games/sudoku.h"
-#if LINNET_GAME_PRESENTATION_COLOR320
 #include "services/games/modules/scrub.h"
-#endif
 
 static uint32_t random_next(void){random_state^=random_state<<13;random_state^=random_state>>17;random_state^=random_state<<5;return random_state;}
 static void number(char **out,uint32_t value){char reverse[10];uint32_t n=0;do{reverse[n++]=(char)('0'+value%10u);value/=10u;}while(value);while(n)*(*out)++=reverse[--n];}
 static void append(char **out,const char *text){while(*text)*(*out)++=*text++;}
 #include "services/games/games_extra.h"
+static void cw_record(uint8_t index,uint16_t value){
+    if(value<=best[index])return;
+    best[index]=value;
+#if defined(LINNET_STORAGE)
+    ln_display_game_best_set(index,value);
+#endif
+}
+#include "services/games/modules/dial_heist.h"
+#include "services/games/modules/mixtape.h"
+#include "services/games/modules/signal.h"
+#include "services/games/modules/clockwork_city.h"
+#include "services/games/modules/pocket_pinball.h"
+static void cw_start(void){
+    if(game==DIAL_HEIST)dh_start();else if(game==MIXTAPE)mt_start();
+    else if(game==SIGNAL)sg_start();else if(game==CLOCKWORK_CITY)cc_start();
+    else pp_start();
+}
+static int cw_input(uint32_t kind,int32_t value){
+    if(kind==1u){
+        if(game==DIAL_HEIST)return dh_wheel(value);
+        if(game==MIXTAPE)return mt_wheel(value);
+        if(game==SIGNAL)return sg_wheel(value);
+        if(game==CLOCKWORK_CITY)return cc_wheel(value);
+        return pp_wheel(value);
+    }
+    if(kind!=2u)return 0;
+    uint32_t pressed=(uint32_t)value&~buttons;buttons=(uint32_t)value;
+    if(!pressed)return 3;
+    if(pressed&1u)return 2;
+    if(game==DIAL_HEIST)return dh_button(pressed);
+    if(game==MIXTAPE)return mt_button(pressed);
+    if(game==SIGNAL)return sg_button(pressed);
+    if(game==CLOCKWORK_CITY)return cc_button(pressed);
+    return pp_button(pressed);
+}
+static uint32_t cw_deadline(uint32_t now){
+    if(game==DIAL_HEIST)return dh_deadline(now);
+    if(game==MIXTAPE)return mt_deadline(now);
+    if(game==SIGNAL)return sg_deadline(now);
+    if(game==CLOCKWORK_CITY)return cc_deadline(now);
+    return pp_deadline(now);
+}
+static bool cw_tick(uint32_t now){
+    if(game==DIAL_HEIST)return dh_tick(now);
+    if(game==MIXTAPE)return mt_tick(now);
+    if(game==SIGNAL)return sg_tick(now);
+    if(game==CLOCKWORK_CITY)return cc_tick(now);
+    return pp_tick(now);
+}
 uint32_t ln_games_count(void){uint32_t count=0;for(uint32_t i=0;i<LN_GAME_COUNT;++i)if(installed&(1u<<i))++count;return count;}
 const char *ln_games_label(uint32_t row){for(uint32_t i=0;i<LN_GAME_COUNT;++i)if(installed&(1u<<i)){if(!row)return names[i];--row;}return 0;}
 const char *ln_games_description(uint32_t row){
@@ -177,20 +235,18 @@ const char *ln_games_description(uint32_t row){
     }
     return "Choose games in Linnet Media.";
 }
-void ln_games_configure(uint16_t mask){installed=mask&LN_GAME_SUPPORTED_MASK;}
+void ln_games_configure(uint32_t mask){installed=mask&LN_GAME_SUPPORTED_MASK;}
 void ln_games_best_set(uint32_t index,uint16_t value){if(index<LN_GAME_COUNT)best[index]=value;}
 bool ln_games_playing(void){
-#if LINNET_GAME_PRESENTATION_COLOR320
+    if(game>=DIAL_HEIST)return games_phase==PLAY;
     if(game==SCRUB)return games_phase==PLAY;
-#endif
     if(game>=BRICK)return ex_phase==EX_PLAY;
     return game!=SOLITAIRE&&(games_phase==PLAY||games_phase==WATCH||games_phase==MISTAKE);
 }
 uint32_t ln_games_hud_revision(void){return hud_revision;}
 uint32_t ln_games_deadline(uint32_t now){
-#if LINNET_GAME_PRESENTATION_COLOR320
+    if(game>=DIAL_HEIST)return cw_deadline(now);
     if(game==SCRUB)return UINT32_MAX;
-#endif
     if(game>=BRICK)return extra_deadline(now);
     if(game==SUDOKU&&(games_phase==PLAY||games_phase==SUDOKU_PICK))return now+(1000000u-sud_clock_remainder);
     if(!ln_games_playing())return UINT32_MAX;
@@ -211,9 +267,8 @@ void ln_games_start(uint32_t row){
     random_state^=last_tick+0x6d2b79f5u;games_phase=paused_phase=PLAY;score=0;hearts=3u;focus=0u;sound_pending=1u;
     resume_pending=false;
     hit_until=shield_notice_until=burst_until=0;shield_failed=false;previous_best=best[game];
-#if LINNET_GAME_PRESENTATION_COLOR320
+    if(game>=DIAL_HEIST){cw_start();last_tick=0;++hud_revision;return;}
     if(game==SCRUB){scr_start();last_tick=0;return;}
-#endif
     if(game>=BRICK){extra_start();last_tick=0;return;}
     if(game==COMET){ship=160u;energy=100u;energy_carry=0;spawn_at=last_tick+600000u;invulnerable_until=last_tick+1200000u;for(uint32_t i=0;i<12u;++i)rock[i].live=0;}
     else if(game==PULSE){level=0u;new_pulse();}
@@ -229,9 +284,8 @@ static void finish(bool won){games_phase=won?WON:LOST;sound_pending=4u;if(score>
 #endif
     }}
 int ln_games_input(uint32_t kind,int32_t value){
-#if LINNET_GAME_PRESENTATION_COLOR320
+    if(game>=DIAL_HEIST)return cw_input(kind,value);
     if(game==SCRUB)return scr_input(kind,value);
-#endif
     if(game>=BRICK){if(kind==1u)return extra_wheel(value);if(kind!=2u)return 0;uint32_t pressed=(uint32_t)value&~buttons;buttons=(uint32_t)value;return extra_button(pressed);}
     if(kind==1u){if(!value)return 3;
         if(game==SUDOKU){
@@ -356,9 +410,8 @@ int ln_games_input(uint32_t kind,int32_t value){
 }
 bool ln_games_tick(uint32_t now){
     if(!games_phase){last_tick=now;return false;}
-#if LINNET_GAME_PRESENTATION_COLOR320
+    if(game>=DIAL_HEIST)return cw_tick(now);
     if(game==SCRUB)return false;
-#endif
     if(game>=BRICK)return extra_tick(now);
     if(game==SUDOKU)return sud_tick(now);
     if(game==SOLITAIRE)return false;
@@ -422,7 +475,7 @@ bool ln_games_tick(uint32_t now){
     return true;
 }
 const char *ln_games_text(const char *key){(void)key;return "";}
-static void box(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,int32_t w,int32_t h,uint16_t ink){
+static __attribute__((noinline)) void box(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,int32_t w,int32_t h,uint16_t ink){
     int32_t left=x>c->clip_x?x:c->clip_x,top=y>c->clip_y?y:c->clip_y;
     int32_t right=x+w<c->clip_x+c->clip_w?x+w:c->clip_x+c->clip_w;
     int32_t bottom=y+h<c->clip_y+c->clip_h?y+h:c->clip_y+c->clip_h;
@@ -430,8 +483,9 @@ static void box(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,int32_t
     for(int32_t yy=top;yy<bottom;++yy)for(int32_t xx=left;xx<right;++xx)c->pixels[yy*LINNET_UI_WIDTH+xx]=ink;
 }
 #include "services/games/drawing.h"
-#if LINNET_GAME_PRESENTATION_COLOR320
 #include "services/games/presentations/games_scrub.h"
+#if LINNET_GAME_PRESENTATION_COLOR320
+#include "services/games/presentations/collection_ui.h"
 #endif
 #if LINNET_GAME_PRESENTATION_PHOTO220
 #include "services/games/presentations/photo220/games_graphics.h"
@@ -516,6 +570,7 @@ static void sol_card(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,ui
 #include "services/games/presentations/games_extra_draw.h"
 void ln_games_draw(const struct ln_ui_canvas_context *c){
 #if LINNET_GAME_PRESENTATION_COLOR320
+    if(game>=DIAL_HEIST){cw_draw(c);return;}
     if(game==SCRUB){scr_draw(c);return;}
 #endif
     if(game>=BRICK){extra_draw(c);return;}
