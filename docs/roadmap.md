@@ -83,7 +83,10 @@ accessory-dependent features are expansion suggestions for other targets.
   its boundary and broader sustained playback remain open. Classic native
   video reached EOF, including a 105-second run and a forward/backward seek run,
   with zero dropped frames and zero reported audio faults. Physical A/V sync
-  remains unmeasured.
+  remains unmeasured. Photo 4G played a 7,202-frame prepared video to EOF with
+  zero reported dropped frames, audio underruns, silence frames, or faults;
+  eight frames were over one frame interval late and none over two. Physical
+  A/V sync and longer battery-powered sessions remain open.
 
 - [ ] **Qualify: remaining recovery, parser, transaction, and memory-pressure cases.**
   Cover interrupted media/firmware publication, corrupt/truncated records, full
