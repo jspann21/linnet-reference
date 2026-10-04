@@ -21,26 +21,37 @@ GAMES = (("Comet Run", "Steer through a rising meteor storm."),
          ("Reversi", "Outflank a thoughtful computer opponent."),
          ("Snake", "Turn, boost, and grow through a polished grid."),
          ("Word Search", "Find hidden words across three curated boards."),
-         ("Scrub", "Pin one echo, then scrub time to align all three."))
+         ("Scrub", "Pin one echo, then scrub time to align all three."),
+         ("Dial Heist", "Find the tumblers before the patrol clock runs out."),
+         ("Mixtape", "Place loops on a rotating eight-beat map."),
+         ("Signal", "Tune the dial and hold each broadcast to decode it."),
+         ("Clockwork City", "Rotate street rings to open the courier route."),
+         ("Pocket Pinball", "Tilt the table and kick the ball through targets."))
 
 
 def encode(selected):
     if not isinstance(selected, (set, list, tuple)) or any(type(i) is not int or not 0 <= i < len(GAMES) for i in selected):
         raise ValueError("Select known games only.")
     mask = sum(1 << i for i in set(selected))
-    header = b'GAME' + bytes((3, mask & 255, mask >> 8, 0))
+    header = b'GAME' + bytes((4, mask & 255, (mask >> 8) & 255, (mask >> 16) & 255))
     return header + struct.pack('<I', zlib.crc32(header))
 
 
-def decode(data):
-    if (len(data) != 12 or data[:4] != b'GAME' or data[4] not in (1, 2, 3)
+def decode(data, identity=None):
+    if (len(data) != 12 or data[:4] != b'GAME' or data[4] not in (1, 2, 3, 4)
             or (data[4] < 3 and (data[5] & ~(7 if data[4] == 1 else 15) or data[6]))
-            or (data[4] == 3 and ((data[5] | data[6] << 8) & ~((1 << len(GAMES)) - 1))) or data[7]
+            or (data[4] == 3 and (data[6] & ~31 or data[7]))
+            or (data[4] == 4 and data[7] & ~((1 << max(0, len(GAMES) - 16)) - 1))
+            or (data[4] < 4 and data[7])
             or struct.unpack_from('<I', data, 8)[0] != zlib.crc32(data[:8])):
         raise ValueError("Game selection is damaged. Save a new selection to replace it.")
-    mask = data[5] | (data[6] << 8 if data[4] == 3 else 0)
+    mask = data[5] | (data[6] << 8 if data[4] >= 3 else 0) | (data[7] << 16 if data[4] == 4 else 0)
     selected = {i for i in range(len(GAMES)) if mask & (1 << i)}
-    if (data[4] == 1 and selected == {0, 1, 2}) or (data[4] == 2 and selected == {0, 1, 2, 3}):
+    if ((data[4] == 1 and selected == {0, 1, 2})
+            or (data[4] == 2 and selected == {0, 1, 2, 3})
+            or (data[4] == 3 and selected == set(range(13)))
+            or (data[4] == 3 and selected == set(range(12)) and identity is not None
+                and target_spec(identity['target_id']).get('game_presentation') == 'photo220')):
         selected = set(range(len(GAMES)))
     return selected
 
@@ -51,7 +62,7 @@ def available(identity):
 
 def supported(identity):
     spec = target_spec(identity['target_id'])
-    count = len(GAMES) - (spec.get('game_presentation') == 'photo220')
+    count = len(GAMES)
     return set(range(count)) if spec['capabilities'].get('games', False) else set()
 
 
@@ -69,7 +80,7 @@ def _path(identity):
 def read(identity):
     identity = media.refresh(identity)
     _, path = _path(identity)
-    return (decode(path.read_bytes()) if path.exists() else set(range(len(GAMES)))) & supported(identity)
+    return (decode(path.read_bytes(), identity) if path.exists() else set(range(len(GAMES)))) & supported(identity)
 
 
 def save(identity, selected):

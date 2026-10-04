@@ -1125,10 +1125,12 @@ void ln_runtime_step(void){
     bool render_ready=!sleeping&&!ln_display_busy();
 #endif
 #if LINNET_AUDIO_RENDER_RESERVE && defined(LINNET_AUDIO)
-    if(render_ready){
+    if(render_ready&&ln_player_busy()){
         struct ln_audio_status audio;ln_audio_snapshot(&audio);
-        /* Drawing and PIO share the decoder's CPU. Keep a PCM reserve
-         * before starting another frame, including during sustained wheel input. */
+        /* Drawing and PIO share the music decoder's CPU. Keep a PCM reserve
+         * before starting another frame, including during sustained wheel input.
+         * Video owns the audio HAL separately and must be allowed to render
+         * its offered frame while its PCM queue drains. */
         if(audio.playing&&!audio.paused&&audio.queued<LINNET_AUDIO_RING_FRAMES/2u){
             struct ln_player_status player;ln_player_snapshot(&player);
             if(player.phase!=LN_PLAYER_DRAIN)render_ready=false;

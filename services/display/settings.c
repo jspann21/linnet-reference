@@ -49,7 +49,7 @@ static char about_ata_rows[8][64]
     __attribute__((section(".cover_high"),aligned(32)))
 #endif
 ;
-extern void ln_games_configure(uint16_t mask);
+extern void ln_games_configure(uint32_t mask);
 bool ln_display_settings_boot_ready(void){return theme_loaded&&menus_loaded&&games_loaded&&about_loaded;}
 static bool step_busy;
 static char battery_label[25];
@@ -283,7 +283,7 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
         if(theme_available&&length){
             uint32_t version=length>=8u?ln_read_le32(payload+4):UINT32_MAX;
             uint32_t suffix=version==0u?1u:version==1u?5u:version==2u?7u:version==3u?25u:
-                version==4u?27u:0u;
+                version==4u?27u:version==5u?37u:0u;
             uint32_t id_length=length>=8u+suffix?length-8u-suffix:0u;
             if(length<9u||length>sizeof payload||(version==0u&&length>89u)||!suffix||length<8u+suffix||
                ln_read_le32(payload)!=0x534d4854u||payload[8u+id_length]||
@@ -295,8 +295,8 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
                     if(at==id_length&&!id[at]){saved=i;break;}
                 }
             }
-            if(theme_available&&(version==1u||version==2u||version==3u||version==4u)){
-                uint32_t stored=version==1u?2u:version==2u?3u:version==3u?12u:13u;
+            if(theme_available&&(version>=1u&&version<=5u)){
+                uint32_t stored=version==1u?2u:version==2u?3u:version==3u?12u:version==4u?13u:18u;
                 uint32_t scores=length-stored*2u;
                 for(uint32_t i=0;i<stored;++i){game_best[i]=ln_read_le16(payload+scores+i*2u);ln_games_best_set(i,game_best[i]);}
             }
@@ -322,7 +322,7 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
     if(id[count]){theme_available=false;theme_dirty=false;++revision;return;}
     ln_write_le32(payload,0x534d4854u);
 #if LINNET_HAS_GAMES
-    ln_write_le32(payload+4,4u);
+    ln_write_le32(payload+4,5u);
 #else
     ln_write_le32(payload+4,0u);
 #endif
@@ -359,12 +359,20 @@ static void games_step(void){
     if(games_phase==2){result=ln_storage_media_read(&games_file,0,games_data,sizeof games_data,generation);if(!result)return;if(result<0){games_loaded=true;return;}games_phase=3;return;}
     result=ln_storage_media_poll_deferred(generation,0,&transferred);if(!result)return;
     if(result>0&&transferred==sizeof games_data&&ln_read_le32(games_data)==0x454d4147u&&
-       (games_data[4]==1u||games_data[4]==2u||games_data[4]==3u)&&
-       !(games_data[5]&~(games_data[4]==1u?7u:255u))&&
-       (games_data[4]==3u?!(games_data[6]&~(LN_GAME_MASK>>8)):!games_data[6])&&!games_data[7]&&
+       games_data[4]>=1u&&games_data[4]<=4u&&
+       (games_data[4]!=1u||!(games_data[5]&~7u))&&
+       (games_data[4]>=3u||!games_data[6])&&
+       (games_data[4]!=3u||!(games_data[6]&~31u))&&
+       (games_data[4]==4u?!(games_data[7]&~(LN_GAME_MASK>>16)):!games_data[7])&&
        ln_read_le32(games_data+8)==ln_crc32(games_data,8u))
-        {uint16_t mask=games_data[5];if(games_data[4]==3u)mask|=(uint16_t)games_data[6]<<8;
-         else if((games_data[4]==1u&&mask==7u)||(games_data[4]==2u&&mask==15u))mask=LN_GAME_MASK;
+        {uint32_t mask=games_data[5];if(games_data[4]>=3u)mask|=(uint32_t)games_data[6]<<8;
+         if(games_data[4]==4u)mask|=(uint32_t)games_data[7]<<16;
+          else if((games_data[4]==1u&&mask==7u)||(games_data[4]==2u&&mask==15u)||
+                  (games_data[4]==3u&&mask==8191u)
+#if LINNET_GAME_PRESENTATION_PHOTO220
+                  ||(games_data[4]==3u&&mask==4095u)
+#endif
+                  )mask=LN_GAME_MASK;
          ln_games_configure(mask);}
     games_loaded=true;++revision;
 }

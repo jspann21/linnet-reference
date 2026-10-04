@@ -18,12 +18,14 @@ static void scr_draw(const struct ln_ui_canvas_context *c){
     box(c,0,small?30:41,w,1,edge);
     if(small){
         arcade_text(c,10,4,"SCRUB",white,false);
+        scr_label_number(c,76,5,"P ",score,muted);
         scr_label_number(c,157,5,"",scr_level+1u,gold);
         arcade_text(c,170,5,"/12",muted,true);
         arcade_center(c,w/2,20,"PIN ONE ECHO. MOVE TIME.",cyan,true,1u);
     }else{
         arcade_text(c,15,5,"SCRUB",white,false);
-        scr_label_number(c,119,7,"BEST ",best[SCRUB],muted);
+        scr_label_number(c,88,7,"RUN ",score,muted);
+        scr_label_number(c,151,7,"BEST ",best[SCRUB],muted);
         scr_label_number(c,w-93,7,"CHAPTER ",scr_level+1u,gold);
         arcade_center(c,w/2,28,"PIN ONE ECHO. MOVE THE REST OF TIME.",cyan,true,1u);
     }
@@ -68,7 +70,8 @@ static void scr_draw(const struct ln_ui_canvas_context *c){
                     "WHEEL TIME   </> ECHO   SELECT MOVE PIN",white,true);
     }else{
         arcade_text(c,7,162,scr_anchor==3u?"WHEEL TIME  </> LANE  SEL PIN":
-                    "WHEEL TIME  </> LANE  SEL OFF",white,true);
+                    scr_anchor==scr_focus?"WHEEL TIME  </> LANE  SEL FREE":
+                    "WHEEL TIME  </> LANE  SEL MOVE",white,true);
         scr_label_number(c,192,162,"T",scr_time,gold);
     }
     if(games_phase==PLAY)return;
@@ -89,10 +92,10 @@ static void scr_draw(const struct ln_ui_canvas_context *c){
         arcade_center(c,w/2,oy+(small?56:82),"Select: restart chapter",muted,true,1u);
     }else{
         char progress[24],*p=progress;
+        char result[32];arcade_score_line(result,games_phase==SCR_CLEAR);
         number(&p,scr_level+1u);append(&p," / ");number(&p,SCR_LEVELS);*p=0;
         arcade_center(c,w/2,oy+(small?41:63),progress,white,false,1u);
-        arcade_center(c,w/2,oy+(small?59:87),
-                      games_phase==WON?"All timelines aligned.":"All three echoes aligned.",cyan,true,1u);
+        arcade_center(c,w/2,oy+(small?59:87),result,cyan,true,1u);
     }
     arcade_panel(c,ox+17,oy+oh-(small?27:36),ow-34,small?19:25,gold);
     arcade_center(c,w/2,oy+oh-(small?24:31),
