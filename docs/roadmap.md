@@ -101,7 +101,10 @@ accessory-dependent features are expansion suggestions for other targets.
   returned to standby at EOF. The final build also crossed the previously
   failing join and 20 seconds of the next track with clear audio counters;
   its disk had already spun up during prefetch. Longer battery and dock
-  measurements remain open.
+  measurements remain open. Installed on that rotating M25, the same build
+  booted healthy with its 2,222-track library and crossed a natural gapless
+  join plus 30 seconds with zero reported underruns, silence, missed joins,
+  or faults.
 
 - [ ] **Qualify: remaining recovery, parser, transaction, and memory-pressure cases.**
   Cover interrupted media/firmware publication, corrupt/truncated records, full
@@ -128,7 +131,11 @@ accessory-dependent features are expansion suggestions for other targets.
   after an injected exception and after the publisher process exited just after
   rename:
   the original grid/PIM hashes returned, the transaction marker cleared, and the
-  device rebooted healthy. Other media publication cuts remain open.
+  device rebooted healthy. Other media publication cuts remain open. A second
+  rotating M25 accepted the same candidate and persistent reboot, but its USB
+  port returned without a stable serial. The identity guard prevents verifying
+  its installed image or library; it needs an identity-safe physical reconnect
+  before further device work.
 
 - [ ] **Qualify: packaged release workflows.** Exercise navigation, playback,
   install/update, rollback, restore/uninstall and media preparation using release
