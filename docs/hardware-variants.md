@@ -1,5 +1,8 @@
 # Hardware variants
 
+Observed configurations: [2026-10-03 hardware inventory](device-hardware-inventory.md).
+The configurations below are historical; the current inventory records subsequent storage replacements.
+
 Updated 2026-09-29. Scope: Linnet's four current target families. **Tested** means
 physical evidence for the stated unit/path; **implemented** means code exists but
 that variant still needs a physical check. A tested family does not qualify every
