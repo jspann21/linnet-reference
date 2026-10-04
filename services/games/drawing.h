@@ -17,6 +17,13 @@ static void arcade_type(const struct ln_ui_canvas_context *c,int32_t x,int32_t y
     }
 }
 static void arcade_text(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,const char *s,uint16_t ink,bool small){arcade_type(c,x,y,s,ink,small,1u);}
+static void arcade_score_line(char out[32],bool round){
+    char *p=out;
+    if(round){append(&p,"ROUND +");number(&p,cw_award);append(&p,"  ");}
+    append(&p,"SCORE ");number(&p,score);
+    if(!round){append(&p,"  BEST ");number(&p,best[game]);}
+    *p=0;
+}
 static __attribute__((noinline)) void arcade_center(const struct ln_ui_canvas_context *c,int32_t center,int32_t y,const char *s,uint16_t ink,bool small,uint32_t size){
     const struct ln_ui_font *f=size>1u?&ln_ui_clock_font:small?&ln_ui_hint_font:&ln_ui_font;int32_t width=0;
     for(const char *p=s;*p;++p){uint32_t ch=(uint8_t)*p;if(ch>=f->first&&ch-f->first<f->count)width+=(int32_t)(f->advances?f->advances[ch-f->first]:f->advance);}

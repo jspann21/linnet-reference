@@ -27,9 +27,12 @@ static void cw_header(const struct ln_ui_canvas_context *c,const char *title,
     box(c,0,0,320,240,0x0825u);box(c,0,0,320,40,0x10a9u);
     box(c,0,39,320,1,0x2a2fu);
     arcade_text(c,13,5,title,0xf7deu,false);
-    char line[20],*p=line;append(&p,"STAGE ");number(&p,stage);append(&p,"/");number(&p,total);*p=0;
-    arcade_text(c,250,7,line,accent,true);
-    arcade_center(c,160,27,subtitle,accent,true,1u);
+    char line[20],*p=line;append(&p,game==POCKET_PINBALL?"BALL ":"STAGE ");
+    number(&p,stage);append(&p,"/");number(&p,total);*p=0;
+    arcade_text(c,game==POCKET_PINBALL?252:250,7,line,accent,true);
+    if(games_phase==PLAY){char line[32];arcade_score_line(line,false);
+        arcade_center(c,160,27,line,accent,true,1u);}
+    else arcade_center(c,160,27,subtitle,accent,true,1u);
 }
 static void cw_footer(const struct ln_ui_canvas_context *c,const char *hint){
     box(c,0,211,320,1,0x2a2fu);box(c,0,212,320,28,0x10a9u);

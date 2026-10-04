@@ -16,7 +16,7 @@ static void dh_load(uint8_t lock){
     dh_lock=lock;dh_stage=dh_dial=dh_misses=0u;
     dh_seconds=(uint8_t)(45u-lock*2u);dh_at=0u;games_phase=PLAY;++hud_revision;
 }
-static void dh_start(void){score=0u;dh_load(0u);games_phase=CW_INTRO;}
+static void dh_start(void){score=cw_award=0u;dh_load(0u);games_phase=CW_INTRO;}
 static int dh_wheel(int32_t value){
     if(!value||games_phase!=PLAY)return 3;
     uint8_t before=dh_distance();
@@ -27,7 +27,8 @@ static int dh_wheel(int32_t value){
 static int dh_button(uint32_t pressed){
     if(games_phase==CW_INTRO){if(pressed&16u)dh_load(0u);return 1;}
     if(games_phase==CW_CLEAR){if(pressed&16u)dh_load((uint8_t)(dh_lock+1u));return 1;}
-    if(games_phase==WON||games_phase==LOST){if(pressed&16u)dh_start();return 1;}
+    if(games_phase==WON){if(pressed&16u)dh_start();return 1;}
+    if(games_phase==LOST){if(pressed&16u)dh_load(dh_lock);return 1;}
     if(games_phase==PAUSED){
         if(pressed&2u){games_phase=PLAY;dh_at=0u;++hud_revision;}
         else if(pressed&16u)dh_load(dh_lock);
@@ -40,8 +41,9 @@ static int dh_button(uint32_t pressed){
         if(dh_distance()<=1u){
             sound_pending=2u;++dh_stage;
             if(dh_stage==3u){
-                score=(uint16_t)(dh_lock+1u);cw_record(DIAL_HEIST,score);
-                games_phase=score==DH_LOCKS?WON:CW_CLEAR;sound_pending=4u;
+                cw_add_score((uint16_t)(600u+dh_seconds*8u-dh_misses*80u));
+                cw_record(DIAL_HEIST,score);
+                games_phase=dh_lock+1u==DH_LOCKS?WON:CW_CLEAR;sound_pending=4u;
             }
         }else{
             ++dh_misses;sound_pending=3u;

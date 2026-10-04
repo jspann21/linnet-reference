@@ -1,17 +1,18 @@
 /* Pocket Pinball: bounded fixed-point physics at twenty updates per second. */
 static const uint8_t pp_peg_x[10]={82,155,238,111,207,64,159,247,121,198};
-static const uint8_t pp_peg_y[10]={104,94,108,135,139,168,158,171,193,193};
+static const uint8_t pp_peg_y[10]={115,119,115,135,139,168,158,171,193,193};
 static int16_t pp_x,pp_y,pp_vx,pp_vy;
 static int8_t pp_tilt;
 static int8_t pp_half_x,pp_half_y;
-static uint8_t pp_lives,pp_kicks,pp_cooldown,pp_targets,pp_gravity_phase;
+static uint8_t pp_lives,pp_kicks,pp_cooldown,pp_targets,pp_gravity_phase,pp_banks;
+static uint8_t pp_flash,pp_flash_target;
 static uint32_t pp_at;
 static void pp_ball(void){
-    pp_x=273*16;pp_y=181*16;pp_vx=-18;pp_vy=-48;
-    pp_kicks=3u;pp_cooldown=pp_gravity_phase=0u;pp_half_x=pp_half_y=0;
+    pp_x=273*16;pp_y=181*16;pp_vx=-12;pp_vy=-100;
+    pp_kicks=3u;pp_tilt=0;pp_cooldown=pp_gravity_phase=0u;pp_half_x=pp_half_y=0;
 }
 static void pp_start(void){
-    score=0u;pp_lives=3u;pp_tilt=0;pp_targets=0u;pp_at=0u;
+    score=cw_award=0u;pp_lives=3u;pp_targets=pp_banks=pp_flash=0u;pp_at=0u;
     pp_ball();games_phase=CW_INTRO;++hud_revision;
 }
 static int pp_wheel(int32_t value){
@@ -23,19 +24,20 @@ static int pp_wheel(int32_t value){
 }
 static int pp_button(uint32_t pressed){
     if(games_phase==CW_INTRO){if(pressed&16u){games_phase=PLAY;pp_at=0u;++hud_revision;}return 1;}
+    if(games_phase==PP_SERVE){if(pressed&16u){games_phase=PLAY;pp_at=0u;++hud_revision;}return 1;}
     if(games_phase==LOST){if(pressed&16u)pp_start();return 1;}
     if(games_phase==PAUSED){
         if(pressed&2u){games_phase=PLAY;pp_at=0u;++hud_revision;}
-        else if(pressed&16u)pp_start();
+        else if(pressed&16u){cw_record(POCKET_PINBALL,score);pp_start();}
         return 1;
     }
     if(pressed&2u){games_phase=PAUSED;++hud_revision;return 1;}
     if(pressed&4u)return pp_wheel(1);
     if(pressed&8u)return pp_wheel(-1);
     if(pressed&16u&&pp_kicks){
-        --pp_kicks;pp_vy=(int16_t)(pp_vy-52);
-        if(pp_vy> -52)pp_vy= -52;
-        if(pp_vy< -68)pp_vy= -68;
+        --pp_kicks;pp_vy=(int16_t)(pp_vy-64);
+        if(pp_vy> -64)pp_vy= -64;
+        if(pp_vy< -96)pp_vy= -96;
         sound_pending=2u;++hud_revision;return 1;
     }
     return 3;
@@ -59,13 +61,21 @@ static void pp_step(void){
     if(pp_x>298*16){pp_x=298*16;pp_vx=(int16_t)(pp_vx>0?-pp_vx:pp_vx);}
     if(pp_y<52*16){pp_y=52*16;pp_vy=(int16_t)(pp_vy<0?-pp_vy/2:pp_vy);}
     int32_t x=pp_x/16,y=pp_y/16;
-    if(y<=72&&pp_vy<0){
+    if(pp_flash)--pp_flash;
+    if(y>=130&&pp_targets==7u)pp_targets=0u;
+    if(y>=65&&y<=99&&pp_vy<0){
         for(uint8_t i=0;i<3u;++i){
             int32_t tx=80+(int32_t)i*80;
-            if(x>=tx-13&&x<=tx+13&&!(pp_targets&(1u<<i))){
-                pp_targets|=(uint8_t)(1u<<i);score=(uint16_t)(score>65485u?65535u:score+50u);
-                sound_pending=4u;
-                if(pp_targets==7u){pp_targets=0u;score=(uint16_t)(score>65335u?65535u:score+200u);}
+            int32_t dx=x-tx,dy=y-82;
+            if(dx*dx+dy*dy<=289&&!(pp_targets&(1u<<i))){
+                pp_targets|=(uint8_t)(1u<<i);cw_add_score(50u);
+                pp_flash=10u;pp_flash_target=i;sound_pending=4u;
+                pp_vy=(int16_t)(pp_vy< -36?32:24);
+                if(pp_targets==7u){
+                    if(pp_banks<9u)++pp_banks;
+                    cw_add_score((uint16_t)(200u+pp_banks*50u));
+                }
+                break;
             }
         }
     }
@@ -96,8 +106,9 @@ static void pp_step(void){
     }
     if(pp_y>205*16){
         if(pp_lives)--pp_lives;
-        if(!pp_lives){games_phase=LOST;cw_record(POCKET_PINBALL,score);sound_pending=3u;}
-        else {pp_ball();sound_pending=3u;}
+        cw_record(POCKET_PINBALL,score);
+        if(!pp_lives){games_phase=LOST;sound_pending=3u;}
+        else {pp_ball();games_phase=PP_SERVE;sound_pending=3u;}
     }
 }
 static bool pp_tick(uint32_t now){

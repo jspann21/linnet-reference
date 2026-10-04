@@ -21,10 +21,11 @@ enum { COMET, PULSE, SOLITAIRE, SUDOKU, BRICK, MUSIC_QUIZ, VORTEX, MINESWEEPER,
 typedef char ln_game_count_matches[(GAME_COUNT==LN_GAME_COUNT)?1:-1];
 enum { PLAY=1u, PAUSED, LOST, WATCH, MISTAKE, WON, ARCADE_READY, SOL_CONFIRM,
        SUDOKU_LEVEL, SUDOKU_PICK, SUDOKU_MENU, SUDOKU_CONFIRM, SCR_INTRO, SCR_CLEAR,
-       CW_INTRO, CW_CLEAR };
+       CW_INTRO, CW_CLEAR, PP_SERVE };
 static uint32_t installed=LN_GAME_SUPPORTED_MASK;
 static uint8_t game,games_phase,paused_phase,hearts,focus,sequence[24],entered,level,flash;
 static uint16_t ship=160,energy,score,best[LN_GAME_COUNT];
+static uint16_t cw_award;
 static uint32_t random_state=0x9e3779b9u,last_tick,spawn_at,flash_until,invulnerable_until,hud_revision,energy_carry;
 static uint32_t buttons;
 static uint8_t sound_pending;
@@ -171,11 +172,15 @@ static bool sol_move(void){
 }
 
 #include "services/games/sudoku.h"
+static void cw_add_score(uint16_t points){
+    cw_award=points;
+    score=(uint16_t)(points>UINT16_MAX-score?UINT16_MAX:score+points);
+}
 #include "services/games/modules/scrub.h"
 
 static uint32_t random_next(void){random_state^=random_state<<13;random_state^=random_state>>17;random_state^=random_state<<5;return random_state;}
-static void number(char **out,uint32_t value){char reverse[10];uint32_t n=0;do{reverse[n++]=(char)('0'+value%10u);value/=10u;}while(value);while(n)*(*out)++=reverse[--n];}
-static void append(char **out,const char *text){while(*text)*(*out)++=*text++;}
+static __attribute__((noinline)) void number(char **out,uint32_t value){char reverse[10];uint32_t n=0;do{reverse[n++]=(char)('0'+value%10u);value/=10u;}while(value);while(n)*(*out)++=reverse[--n];}
+static __attribute__((noinline)) void append(char **out,const char *text){while(*text)*(*out)++=*text++;}
 #include "services/games/games_extra.h"
 static void cw_record(uint8_t index,uint16_t value){
     if(value<=best[index])return;
@@ -205,7 +210,7 @@ static int cw_input(uint32_t kind,int32_t value){
     if(kind!=2u)return 0;
     uint32_t pressed=(uint32_t)value&~buttons;buttons=(uint32_t)value;
     if(!pressed)return 3;
-    if(pressed&1u)return 2;
+    if(pressed&1u){if(game==POCKET_PINBALL)cw_record(POCKET_PINBALL,score);return 2;}
     if(game==DIAL_HEIST)return dh_button(pressed);
     if(game==MIXTAPE)return mt_button(pressed);
     if(game==SIGNAL)return sg_button(pressed);
@@ -601,11 +606,13 @@ void ln_games_audio_step(void){
     int16_t pcm[512];uint32_t phase_value=0;
     uint32_t step=cue>=5u&&cue<=8u?0x04000000u+(cue-5u)*0x01000000u:
         cue==3u?0x03000000u:cue==4u?0x02000000u:cue==2u?0x08000000u:0x06000000u;
-    for(uint32_t chunk=0;chunk<4u;++chunk){
+    for(uint32_t chunk=0;chunk<(cue==9u?16u:4u);++chunk){
+        if(cue==9u)step=0x04000000u+(uint32_t)mt_goal[mt_bar][chunk/4u]*0x01000000u;
         for(uint32_t i=0;i<256u;++i){
             uint32_t at=chunk*256u+i,wave=(phase_value>>23)&511u;
             int32_t triangle=(int32_t)(wave<256u?wave:511u-wave)-128;
-            int16_t sample=(int16_t)((triangle*(int32_t)(1024u-at)*38)>>10);
+            uint32_t envelope=cue==9u?1024u-(at&1023u):1024u-at;
+            int16_t sample=(int16_t)((triangle*(int32_t)envelope*38)>>10);
             pcm[i*2u]=pcm[i*2u+1u]=sample;phase_value+=step;
         }
         if(ln_audio_submit(pcm,256u)!=256u){ln_games_audio_stop();return;}

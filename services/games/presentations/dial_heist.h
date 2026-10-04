@@ -1,5 +1,6 @@
 static void dh_draw(const struct ln_ui_canvas_context *c){
     const uint16_t gold=0xfed0u,white=0xf7deu,muted=0x8cb4u;
+    char result[32];arcade_score_line(result,games_phase==CW_CLEAR);
     cw_header(c,"DIAL HEIST","CRACK THE LOCK BEFORE THE PATROL",(uint8_t)(dh_lock+1u),DH_LOCKS,gold);
     arcade_disc(c,128,125,77,0x2a2fu);arcade_disc(c,128,125,73,0x10a9u);
     arcade_disc(c,128,125,57,0x318eu);arcade_disc(c,128,125,53,0x0825u);
@@ -22,7 +23,8 @@ static void dh_draw(const struct ln_ui_canvas_context *c){
     arcade_text(c,222,185,"SIGNAL",muted,true);
     cw_meter(c,222,199,86,(uint8_t)(16u-dh_distance()),16u,gold);
     cw_text_number(c,13,194,"PATROL ",dh_seconds,gold);
-    for(uint8_t i=0;i<3u;++i)box(c,135+i*17,199,12,5,i<dh_misses?0xf969u:0x39edu);
+    arcade_text(c,135,185,"TRIES",muted,true);
+    for(uint8_t i=0;i<3u;++i)box(c,135+i*17,199,12,5,i<3u-dh_misses?gold:0xf969u);
     cw_footer(c,"WHEEL DIAL   </> FINE   SELECT SET   PLAY PAUSE");
     if(games_phase==CW_INTRO)
         cw_overlay(c,"HOW TO PLAY","Turn the wheel to scan the dial.",
@@ -32,11 +34,12 @@ static void dh_draw(const struct ln_ui_canvas_context *c){
                    "Select restarts this lock.","PLAY / RESUME",gold);
     else if(games_phase==CW_CLEAR)
         cw_overlay(c,"LOCK OPEN","All three tumblers aligned.","A new lock is waiting.",
-                   "", "SELECT / NEXT",gold);
+                   result, "SELECT / NEXT",gold);
     else if(games_phase==WON)
         cw_overlay(c,"HEIST COMPLETE","Every lock is open.","Best run saved.",
-                   "", "SELECT / PLAY AGAIN",gold);
+                   result, "SELECT / PLAY AGAIN",gold);
     else if(games_phase==LOST)
-        cw_overlay(c,"PATROL ARRIVED","The lock held this time.","Try a new approach.",
-                   "", "SELECT / RETRY",gold);
+        cw_overlay(c,dh_misses>=3u?"LOCK JAMMED":"PATROL ARRIVED",
+                   dh_misses>=3u?"Three failed sets.":"Time ran out.",
+                   "Retry this lock.",result,"SELECT / RETRY",gold);
 }
