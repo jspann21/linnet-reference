@@ -173,7 +173,13 @@ accessory-dependent features are expansion suggestions for other targets.
   before rejecting a changed small grid. Checking uncached outputs smallest
   first reduced a fresh-mount pass with an empty verification cache to 36.42
   seconds, with the same 3,253 rows and readiness results.
-  Full cold-cache comparison, conversion, and UI responsiveness remain open.
+  A separate empty-cache pass verified 15 ready outputs on rotating M25 in
+  3.63 seconds (0.52 warm) and 63 on flash M25 in 3.12 seconds (0.54 warm).
+  Readiness and row counts matched on both passes. A 2,222-track rotating
+  library scanned in 5.41/0.54 seconds, and Classic's 1,018 rows in
+  1.40/0.54 seconds; those catalogs needed conversion, so they did not
+  exercise ready-output hashing. All four returned to healthy OS images.
+  Large ready-catalog cold comparison, conversion, and UI responsiveness remain open.
 
 - [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed
   M4A seeking are implemented. Measure prepared M4A separately from unindexed M4A
@@ -214,7 +220,9 @@ accessory-dependent features are expansion suggestions for other targets.
   0.30–0.49 seconds each during music, with zero reported audio underruns,
   silence frames, or faults. Focus 33 survived a graceful reboot. JPEG fallback,
   empty folders, and broader changed-content recovery remain. Detailed
-  measurements and identities stay local.
+  measurements and identities stay local. The installed Photo 4G catalog has
+  343 photos but no original-JPEG fallback references, so that path cannot be
+  qualified with its current media; it returned to the healthy OS unchanged.
 
 - [ ] **Measure/Improve: competing media work during playback.** Profile artwork,
   photos, metadata/history and next-track preparation at track boundaries. Measure
