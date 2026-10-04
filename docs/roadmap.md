@@ -60,6 +60,9 @@ accessory-dependent features are expansion suggestions for other targets.
   Apple-library AACs remained unchanged; their converted files published into
   a ready 2,222-track library. A separate untagged Apple MP3 conversion retained
   its database metadata and artwork, excluded its original, and kept that count.
+  Classic host-converted 76 flagged AAC originals to PCM, preserved their hashes,
+  and published a ready 394-track library; two UI playback selections reported
+  zero audio underruns, silence frames, or faults.
 
 - [ ] **Qualify: power, charging, dock audio, and sustained playback.** Measure
   charging current/source changes, battery runtime, sleep/wake, shutdown/startup,
