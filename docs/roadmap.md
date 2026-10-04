@@ -278,6 +278,8 @@ accessory-dependent features are expansion suggestions for other targets.
   Resume during a pending paused seek; both had zero reported audio faults.
   On Q21, a host-indexed AAC resumed after four forward/backward seeks in
   0.80–1.05 seconds with zero reported underruns, silence frames, or faults.
+  A playable Classic M4A resumed after four forward/backward seeks in
+  0.44–0.52 seconds with zero reported underruns, silence frames, or faults.
   Playable unindexed M4A, raw ADTS, longer files, rejected indexes, and broader
   continuity remain.
 
