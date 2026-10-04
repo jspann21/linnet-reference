@@ -90,9 +90,10 @@ accessory-dependent features are expansion suggestions for other targets.
   forward/backward seek run reached EOF with zero reported audio faults,
   underruns, or silence frames.
   In a five-device playback pass, flash M25, Photo 4G, and Classic reported zero
-  audio underruns; rotating M25 with a 12-track Repeat All queue passed 80 joins
-  with zero missed joins or faults. The other rotating M25 exposed a standby
-  disk wake at a same-rate join after a clean 22.05-to-44.1 kHz rate change.
+  audio underruns or silence frames after more than 54 minutes each; rotating
+  M25 with a 12-track Repeat All queue passed 80 joins with zero missed joins
+  or faults. The other rotating M25 exposed a standby disk wake at a same-rate
+  join after a clean 22.05-to-44.1 kHz rate change.
   A RAM build now wakes rotating media near that join: with the disk observed
   in standby beforehand, the join and next 25 seconds reported zero underruns,
   silence frames, or faults. The shorter wake window completed all 12 tracks on
@@ -192,6 +193,11 @@ accessory-dependent features are expansion suggestions for other targets.
   1.40/0.54 seconds; those catalogs needed conversion, so they did not
   exercise ready-output hashing. All four returned to healthy OS images.
   Large ready-catalog cold comparison, conversion, and UI responsiveness remain open.
+  A read-only Photo 4G cold library snapshot profile took 22.68 seconds,
+  dominated by USB directory enumeration and Apple database opens. A warm
+  scan-plus-database pass took 0.19 seconds.
+  The guarded Disk Mode roundtrip returned to its healthy OS. A faster persistent
+  directory cache still needs a reliable way to detect new nested files.
 
 - [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed
   M4A seeking are implemented. Measure prepared M4A separately from unindexed M4A
