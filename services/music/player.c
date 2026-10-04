@@ -484,9 +484,14 @@ bool ln_player_toggle_pause(void){
 }
 bool ln_player_seek(uint64_t frame){
     if(skip_requested||event_pending)return false;
-    if(state.phase!=LN_PLAYER_PLAY&&state.phase!=LN_PLAYER_PAUSE&&state.phase!=LN_PLAYER_DRAIN)return false;
-    if(state.frames&&frame>state.frames)return false;if(!ln_audio_halt()){fail(20);return false;}
-    if(!seek_requested)seek_paused=state.phase==LN_PLAYER_PAUSE||pause_requested;
+    uint32_t phase=state.phase;
+    if(phase-LN_PLAYER_PRIME>LN_PLAYER_DRAIN-LN_PLAYER_PRIME)return false;
+    bool priming=phase==LN_PLAYER_PRIME;
+    if(state.frames&&frame>state.frames)return false;
+    if(!seek_requested&&!priming){
+        if(!ln_audio_halt()){fail(20);return false;}
+        seek_paused=phase==LN_PLAYER_PAUSE||pause_requested;
+    }
     seek_target=frame;seek_requested=true;next_expected=eof_waiting=false;if(io_owner)ln_storage_media_cancel(io_owner->generation);return true;
 }
 static bool drain_canceled(void){

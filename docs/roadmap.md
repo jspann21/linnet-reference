@@ -167,8 +167,19 @@ accessory-dependent features are expansion suggestions for other targets.
   [M4A](../services/audio/aac/m4a.c), [ADTS](../services/audio/aac/aac.c).
   Partial: an indexed 325-second M4A on flash M25 resumed after forward/backward
   seeks in 0.80/0.86 seconds with no reported underruns. The 78 unindexed M4As
-  on this device were incompatible and host-converted; playable unindexed M4A,
-  raw ADTS, longer-file and rapid-retarget cases remain open.
+  on this device were incompatible and host-converted. On rotating M25, an
+  indexed 230-second M4A resumed after four forward/backward seeks in
+  0.97–3.30 seconds without reported underruns or faults. All six sampled
+  unindexed M4As failed firmware open with an unsupported-format error;
+  host inspection flagged a sampled file for conversion because its AAC frame
+  configuration is unsupported. A RAM build accepted a seek retarget
+  during priming 16 ms after the first seek, resumed at the newer position in
+  1.66 seconds, and preserved pause through a separate retarget; both runs
+  reported zero underruns, silence frames, and audio faults. A final build also
+  resumed a seek-to-start retarget at 90 seconds in 1.39 seconds and honored
+  Resume during a pending paused seek; both had zero reported audio faults.
+  Playable unindexed M4A, raw ADTS, longer files, rejected indexes, and broader
+  continuity remain.
 
 - [ ] **Qualify: large photo catalogs and saved navigation.** Grid preloading,
   JPEG fallback, saved focus and empty-album resume are implemented. Exercise large

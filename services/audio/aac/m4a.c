@@ -258,7 +258,9 @@ emit_pcm:
 }
 bool ln_aac_m4a_seek(struct ln_aac_m4a *d,uint64_t frame)
 {
-    if(!d||!d->opened||d->pending||d->container.pending||d->core.pending||frame>d->total_frames)return false;
+    if(!d||d->pending||d->container.pending||d->core.pending)return false;
+    if(!d->opened)goto retarget;
+    if(frame>d->total_frames)return false;
     uint64_t raw=frame+(d->tag_seen?d->tag_lead:d->container.lead_trim);
     if(d->index_offset&&!d->error&&!d->container.error&&raw>=1024u&&
        (frame<d->frame||frame-d->frame>16384u||d->core.overlap_invalid)){
@@ -273,5 +275,6 @@ bool ln_aac_m4a_seek(struct ln_aac_m4a *d,uint64_t frame)
     ln_aac_read_fn read=d->source_read;void *context=d->source_context;uint64_t size=d->container.file_size;
     bool rejected=d->index_rejected;
     ln_aac_m4a_init(d,read,context,size);d->index_rejected=rejected;
+retarget:
     d->seek_target=frame;d->seeking=frame!=0;return true;
 }
