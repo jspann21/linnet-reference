@@ -71,7 +71,9 @@ accessory-dependent features are expansion suggestions for other targets.
   reported underruns or faults; Repeat Off was restored afterward. Current,
   dock, battery runtime, broader long audio/video, and A/V sync measurements
   remain open. A 325-second indexed AAC track reached EOF on flash M25 with zero
-  reported player/audio underruns, silence frames, or audio faults.
+  reported player/audio underruns, silence frames, or audio faults. All five
+  connected devices completed a bounded Link sleep/wake cycle with matching
+  counters and healthy images; current and dock output need external measurement.
 
 - [ ] **Qualify: remaining recovery, parser, transaction, and memory-pressure cases.**
   Cover interrupted media/firmware publication, corrupt/truncated records, full
@@ -207,11 +209,14 @@ accessory-dependent features are expansion suggestions for other targets.
   input/captures do not establish physical wheel or LCD quality.
   [Input](../kernel/runtime.c), [UI](../ui/runtime/ui.c),
   [qualification scope](../targets/video5g-m25/QUALIFICATION.md).
+  Blocker: wheel feel, readability, and panel artifacts require direct observation.
 
 - [ ] **Measure: Q21 idle wake sources and clock-switch break-even.** Idle clock
   switching is enabled. Compare battery/external power, wake frequency, input
   response and actual current draw before changing the policy.
   [Runtime](../kernel/runtime.c), [manifest](../targets/ipod4g-q21/target.toml).
+  Blocker: no Q21 Link device is currently discovered; current draw requires an
+  external instrument.
 
 - [ ] **Measure/Qualify: Classic native video startup and MPEG-4.** Measure decoder
   startup stages and buffer use before changing priming thresholds or frame
