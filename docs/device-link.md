@@ -151,6 +151,6 @@ Reconnect/reset the affected iPod, then rediscover its identity. The finite
 refresh helper also supports reviewed tracing and device restart actions; inspect
 `refresh-session --help`. Do not reset a shared USB hub.
 
-Intermittent Apple Disk Mode enumeration failures remain an open M25 issue.
-A successful later roundtrip does not establish that the fault is fixed.
-See [M25 qualification](../targets/video5g-m25/QUALIFICATION.md).
+Earlier M25 Apple Disk Mode descriptor losses were reported with a cable that
+has since been replaced, with no reported recurrence. If the fault returns,
+retain the receipt and reopen qualification; see [M25 qualification](../targets/video5g-m25/QUALIFICATION.md).

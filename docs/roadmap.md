@@ -54,16 +54,6 @@ accessory-dependent features are expansion suggestions for other targets.
   host-prepared PCM while retaining originals and metadata. Focused imports and a
   physical device run verified library preparation and converted-track playback.
 
-- [ ] **Qualify: M25 USB reliability and initial enumeration recovery.** Isolate
-  the recorded intermittent Windows descriptor loss in Apple Disk Mode. Compare
-  cable/port, cold/manual entry and software handoff; inject the initial recovery
-  trigger and verify reconnect, identity, and continued operations. Successful
-  roundtrips alone do not close the intermittent fault. This may have been due to
-  a faulty cable and may now be resolved.
-  [Qualification](../targets/video5g-m25/QUALIFICATION.md), [Disk Mode](../hal/pp502x/disk_mode.c).
-  Partial: native Disk Mode handoff and guarded return worked during media preparation.
-  Blocker: intermittent Apple-mode loss still needs cable/port and cold-entry comparison.
-
 - [ ] **Qualify: power, charging, dock audio, and sustained playback.** Measure
   charging current/source changes, battery runtime, sleep/wake, shutdown/startup,
   and dock output per hardware/storage configuration. Run long audio/video

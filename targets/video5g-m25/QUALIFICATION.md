@@ -25,9 +25,11 @@ These results are sample coverage, not exhaustive codec or physical acceptance.
 
 ## Remaining qualification
 
-Intermittent Windows USB descriptor loss during **Apple Disk Mode** remains
-unresolved. Passing guarded roundtrips included hidden re-enumerations, so they
-do not establish reliable USB operation.
+Earlier Windows USB descriptor loss during **Apple Disk Mode** was reported with
+a cable that has since been replaced. The user reports no recurrence; three
+additional native Disk Mode roundtrips returned to the same healthy OS. Direct
+Apple-mode cold/manual entry comparison and recovery injection were not
+performed.
 
 Charging current/source transitions, dock output, release-image operation, and
 long-duration or large-library workloads remain open. The complete actionable
