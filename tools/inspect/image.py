@@ -1,5 +1,7 @@
 """Strict host reader for the Linnet OS envelope; no device writes."""
 import hashlib
+import json
+from pathlib import Path
 import struct
 import zlib
 from tools.studio.targets import TARGET_IDS_BY_NUMBER as TARGETS, TARGET_NUMBERS, TARGETS as TARGET_SPECS
@@ -41,6 +43,27 @@ def inspect(data):
                 build_id=data[36:68].hex(), payload_bytes=length,
                 load_address=load, entry_address=entry,
                 sha256=hashlib.sha256(data).hexdigest())
+
+def verify_device_report(path, image, serial, target):
+    """Bind a development image to its build report and the Link device."""
+    report_path = Path(path).with_suffix('.json')
+    try:
+        with report_path.open('rb') as source:
+            raw = source.read(8 * 1024 * 1024 + 1)
+    except OSError as exc:
+        raise ValueError('firmware image needs its adjacent build report') from exc
+    if len(raw) > 8 * 1024 * 1024:
+        raise ValueError('firmware build report exceeds its bound')
+    report = json.loads(raw)
+    expected_serial = '' if image['profile'] == 'release' else serial
+    if (image['target_id'] != target or
+            not isinstance(report, dict) or
+            report.get('device_serial') != expected_serial or
+            report.get('kind') != 'os' or
+            any(report.get(key) != image[key] for key in ('target_id', 'profile', 'build_id')) or
+            not isinstance(report.get('image'), dict) or
+            report['image'].get('sha256') != image['sha256']):
+        raise ValueError('firmware build report does not match this Link device and image')
 
 def verify_release(data, symbols):
     identity = inspect(data)

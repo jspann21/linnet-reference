@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import sys
 
-from tools.inspect.image import inspect
+from tools.inspect.image import inspect, verify_device_report
 from tools.cli.arguments import _record_arguments
 from tools.link.music import ACTIONS as MUSIC_ACTIONS
 from tools.studio.build import ROOT
@@ -320,7 +320,9 @@ def run_device(args, emit):
                     session.storage_recover(identity['generation'])
                     emit(dict(accepted=True,note='Storage remount proceeds asynchronously; inspect storage-info.'))
                 elif args.action=="install":
-                    emit(session.persistent_install(identity['generation'],args.image.read_bytes()))
+                    payload=args.image.read_bytes()
+                    verify_device_report(args.image,inspect(payload),connected_device['serial_number'],identity['target_id'])
+                    emit(session.persistent_install(identity['generation'],payload))
                 elif args.action == "reboot":
                     if args.mode=="persistent":session.reboot_persistent(identity['generation'])
                     else:session.reboot({"os":"normal", "boot":"recovery", "disk":"disk"}[args.mode])
@@ -329,6 +331,7 @@ def run_device(args, emit):
                     import hashlib
                     payload = args.image.read_bytes()
                     requested = inspect(payload)
+                    verify_device_report(args.image,requested,connected_device['serial_number'],identity['target_id'])
                     session.upload(payload)
                     if session.verify() != hashlib.sha256(payload).digest():
                         raise RuntimeError("staged image hash mismatch")

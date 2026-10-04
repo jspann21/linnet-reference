@@ -5,7 +5,7 @@ import json
 import random
 import struct
 import time
-from tools.inspect.image import inspect
+from tools.inspect.image import inspect, verify_device_report
 from .campaign import connect, _run_directory, _save
 from .identity import decode
 from .protocol import Command
@@ -99,6 +99,7 @@ def cycle(root, image_path, scenario_path, port, progress=None):
         raise TimeoutError('storage did not become prepared before deadline')
     try:
         session,port_info,observed=connect(port=port);observed=check_identity(observed)
+        verify_device_report(image_path,identity,port_info['serial_number'],observed['target_id'])
         generation=observed['generation'];serial=port_info['serial_number']
         session.prepare_storage(generation)
         record('before',identity=observed,state=mounted())
@@ -268,6 +269,8 @@ def update_cycle(root, image_path, crash_path, port, progress=None):
         finally:session.close();session=None
     try:
         session,endpoint,observed=connect(port=port);serial=endpoint['serial_number']
+        verify_device_report(image_path,identity,serial,observed['target_id'])
+        verify_device_report(crash_path,crash_identity,serial,observed['target_id'])
         observed=_wait_healthy_os(session,observed,identity)
         before=attempt_baseline(ready());original=session.settings_get(observed['generation'])
         (directory/'settings-original.bin').write_bytes(original)

@@ -5,7 +5,7 @@ import json
 import struct
 import time
 import zlib
-from tools.inspect.image import inspect
+from tools.inspect.image import inspect, verify_device_report
 from tools.studio.targets import TARGETS
 from .campaign import connect, _run_directory, _save
 from .session import DeviceError
@@ -73,6 +73,7 @@ def cycle(root, image_path, scenario_path, port, progress=None):
         if progress: progress(dict(run_id=run_id,**event))
     try:
         session,device,identity = connect(port=port)
+        verify_device_report(image_path,image_id,device['serial_number'],identity['target_id'])
         receipt['device']=device; receipt['before']=identity
         if identity['target_id'] != image_id['target_id']:
             raise RuntimeError('connected target does not match platform image')

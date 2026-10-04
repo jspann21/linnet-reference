@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import struct
 import time
-from tools.inspect.image import inspect
+from tools.inspect.image import inspect, verify_device_report
 from .identity import decode, decode_crash, CAP_UPLOAD, CAP_RAM_BOOT, CAP_CRASH
 from .protocol import Command
 from .session import Session, AmbiguousCommand
@@ -323,6 +323,8 @@ def cycle(root, image_path, scenario_path, port=None, crash_image=None, progress
     started = time.monotonic()
     try:
         session, device, before = connect(port=port, serial_number=evidence['serial_number'] if evidence else None)
+        for path, image_identity in ((image_path,image_id),(crash_image,crash_id),(hang_image,hang_id)):
+            if path:verify_device_report(path,image_identity,device['serial_number'],before['target_id'])
         serial_number = device['serial_number']
         receipt['device'] = device
         receipt['before'] = before

@@ -132,10 +132,11 @@ accessory-dependent features are expansion suggestions for other targets.
   rename:
   the original grid/PIM hashes returned, the transaction marker cleared, and the
   device rebooted healthy. Other media publication cuts remain open. A second
-  rotating M25 accepted the same candidate and persistent reboot, but its USB
-  port returned without a stable serial. The identity guard prevents verifying
-  its installed image or library; it needs an identity-safe physical reconnect
-  before further device work.
+  rotating M25 accepted a candidate built with the first unit's embedded USB
+  serial and a persistent reboot; its port returned without a stable serial.
+  Link image preflight now checks the adjacent build report against the connected
+  device before upload. The second unit needs a physical reconnect, then a
+  correctly bound image and verification of its installed image and library.
 
 - [ ] **Qualify: packaged release workflows.** Exercise navigation, playback,
   install/update, rollback, restore/uninstall and media preparation using release
