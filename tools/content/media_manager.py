@@ -505,7 +505,7 @@ def _same_file_bytes(left, right, size):
 
 def additions(root, pending, *, snapshots=None, verify_existing=True, unverified=None,
               replacements=None, convert_audio=False, target=None, ffprobe=None,
-              cancelled=lambda: False, reused_audio=None):
+              cancelled=lambda: False, reused_audio=None, verified=None):
     """Resolve selected files/folders to concrete destinations without writing."""
     root = Path(root).resolve(strict=True)
     planned = {}
@@ -594,8 +594,9 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                                 prepared['bits'] == 16 and prepared['channels'] == 2 and
                                 prepared['rate'] == 44100 and not compatibility_issue(prepared, target) and
                                 prepared['frames'] >= converted_frames - max(2205, converted_frames // 100) and
-                                prepared['tags'].get('source_sha256') == _hash(path) and
-                                prepared['tags'].get('pcm_sha256') == _wave_pcm_hash(destination, prepared)):
+                                _verified_audio_hash(path, root, prepared['tags'].get('source_sha256'), verified) and
+                                _verified_audio_hash(destination, root, prepared['tags'].get('pcm_sha256'),
+                                                     verified, prepared)):
                             if on_device and reused_audio is not None:
                                 reused_audio.append((path, destination))
                             continue
@@ -770,6 +771,25 @@ def _wave_pcm_hash(path, metadata):
             digest.update(chunk)
             remaining -= len(chunk)
     return digest.hexdigest()
+
+
+def _verified_audio_hash(path, root, expected, verified, metadata=None):
+    if not isinstance(expected, str) or not re.fullmatch('[0-9a-f]{64}', expected):
+        return False
+    before = path.stat()
+    stamp = (before.st_size, before.st_mtime_ns, before.st_ctime_ns, before.st_ino)
+    recent = os.name == 'nt' and before.st_mtime_ns > time.time_ns() - _RECENT_OUTPUT_NS
+    relative = path.relative_to(root).as_posix() if path.is_relative_to(root) else None
+    key = (relative, 'pcm:' + expected if metadata else expected) if relative else None
+    if key and verified is not None and not recent and verified.get(key) == stamp:
+        return True
+    actual = _wave_pcm_hash(path, metadata) if metadata else _hash(path)
+    after = path.stat()
+    if stamp != (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino):
+        raise ValueError(f'Audio changed during verification: {path}')
+    if actual == expected and key and verified is not None and not recent:
+        verified[key] = stamp
+    return actual == expected
 
 
 def _wave_metadata(output, tags):
@@ -2664,10 +2684,12 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         excluded_sources = {str(Path(value).resolve()).casefold() for value in (excluded_sources or ())}
         videos = [job for job in videos if str(Path(job["source"]).resolve()).casefold() not in excluded_sources]
         reused_audio = []
+        verified_before = verified_outputs.copy()
         plan = additions(root, [item for item in pending if item[0] in selected and item[0] != "Videos"],
                          replacements=replacements, convert_audio=convert_audio,
                          target=identity['target_id'], ffprobe=ffprobe, cancelled=cancelled,
-                         reused_audio=reused_audio)
+                         reused_audio=reused_audio, verified=verified_outputs)
+        _remember_verified(identity, verified_outputs, verified_before)
         device_conversions = [source for source, _ in reused_audio] + [Path(item['source']) for item in plan
             if 'converted_bytes' in item and Path(item['source']).is_relative_to(root / 'Music')]
         projected_skipped = {kind: paths.copy() for kind, paths in skipped.items()}

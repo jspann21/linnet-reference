@@ -107,7 +107,9 @@ accessory-dependent features are expansion suggestions for other targets.
   effect before proposing more cache changes. [Status](../tools/content/media_status.py),
   [preparation](../tools/content/media_manager.py), [desktop](../tools/studio/media_desktop.py).
   Partial: a flash-device conversion run and post-preparation scan were measured;
-  rotating storage, cold/warm comparison, and UI responsiveness remain open.
+  verified converted-audio hashes now reuse unchanged host cache entries after a
+  physical warm-plan check. Rotating storage, full cold/warm operations, and UI
+  responsiveness remain open.
 
 - [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed
   M4A seeking are implemented. Measure prepared M4A separately from unindexed M4A
@@ -115,6 +117,8 @@ accessory-dependent features are expansion suggestions for other targets.
   long files, rapid retargets, rejected indexes and audio continuity; optimize the
   measured fallback bottleneck. [Host indexes](../tools/content/aac_index.py),
   [M4A](../services/audio/aac/m4a.c), [ADTS](../services/audio/aac/aac.c).
+  Partial: prepared M4A seeks resumed on flash hardware without reported underruns;
+  unindexed M4A, raw ADTS, long-file and rapid-retarget cases remain open.
 
 - [ ] **Qualify: large photo catalogs and saved navigation.** Grid preloading,
   JPEG fallback, saved focus and empty-album resume are implemented. Exercise large
@@ -131,8 +135,9 @@ accessory-dependent features are expansion suggestions for other targets.
   does not add underruns or missed joins. [Controller](../services/music/controller.c),
   [player](../services/music/player.c), [M25](../targets/video5g-m25/coprocessor.c),
   [Classic](../services/video/native/player.c).
-  Partial: photo navigation during playback kept audio active without reported
-  underruns; artwork, history, track boundaries, and backend throughput remain.
+  Partial: photo navigation and an AAC-to-PCM track boundary stayed active on flash
+  hardware without reported underruns or missed joins; artwork, history, and backend
+  throughput remain.
 
 - [ ] **Measure/Improve: deferred 75 ms search goal at 100,000 tracks.** Search,
   retained pages and lower-bound caching are implemented. Measure first result,

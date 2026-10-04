@@ -364,10 +364,15 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
     unverified = []
     replacements = []
     reused_audio = []
+    verified = _verified_outputs(identity['disk_serial'], identity['volume_serial'],
+                                 identity['partition_offset'], identity['volume_unique_id'],
+                                 cache_disk_serial=identity.get('media_cache_disk_serial'))
+    verified_before = verified.copy()
     copies = media.additions(root, [p for p in included if p[0] != 'Videos'], snapshots=snapshots,
                              verify_existing=True, unverified=unverified, replacements=replacements,
                              convert_audio=convert_audio, target=identity['target_id'], ffprobe=ffprobe,
-                             cancelled=cancelled, reused_audio=reused_audio)
+                             cancelled=cancelled, reused_audio=reused_audio, verified=verified)
+    _remember_verified(identity, verified, verified_before)
     device_conversions = [source for source, _ in reused_audio] + [Path(item['source']) for item in copies
         if 'converted_bytes' in item and Path(item['source']).is_relative_to(root / 'Music')]
     for source in device_conversions:
