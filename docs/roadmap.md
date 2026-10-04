@@ -296,6 +296,9 @@ accessory-dependent features are expansion suggestions for other targets.
   The rotating M25 same-rate join after disk standby exposed one underrun in
   the installed and earlier RAM images. A bounded pre-join wake cleared it in
   a physical standby-to-join run; broader media contention remains open.
+  On Q21, 64 synthetic wheel events in Music completed during indexed AAC
+  playback with no input drops or reported audio underruns, silence, or faults;
+  broader media contention and physical input remain open.
 
 - [ ] **Measure/Improve: deferred 75 ms search goal at 100,000 tracks.** Search,
   retained pages and lower-bound caching are implemented. Measure first result,
