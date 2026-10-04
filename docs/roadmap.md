@@ -83,8 +83,10 @@ accessory-dependent features are expansion suggestions for other targets.
   a separate forced restore failure recorded a recovery crash and rebooted to
   the same healthy image. Three guarded native USB roundtrips also passed.
   A full track boundary increased the CRC-checked history play count across a
-  guarded reboot. Other history interruption cases, publication cuts, firmware
-  rollback, and USB device loss remain open.
+  guarded reboot. Four settings publication cuts exposed only intact old/new
+  records; the original was restored and verified after a final reboot (one cut
+  needed a retry after an explicit write rejection). Other history interruption
+  cases, media/firmware publication cuts, rollback, and USB device loss remain open.
 
 - [ ] **Qualify: packaged release workflows.** Exercise navigation, playback,
   install/update, rollback, restore/uninstall and media preparation using release
