@@ -235,8 +235,9 @@ def _publish_pair(package, candidate, references, grid, grid_candidate, identity
     target = identity.get('native_target_id') or _identify(identity)['target_id']
     if target != grid_candidate['target']:
         raise ValueError('native photo grid target differs from the iPod')
-    previous, needed = {}, 0
-    for name, item, staged in (('GRID.PGR', grid_candidate, grid), ('LIBRARY.PIM', candidate, package)):
+    outputs = (('GRID.PGR', grid_candidate, grid), ('LIBRARY.PIM', candidate, package))
+    previous, needed, changed, reused = {}, 0, [], []
+    for name, item, staged in outputs:
         _volume_guard(identity)
         active = root/'.LINNET'/'PHOTOS'/name
         _plain(active, root)
@@ -248,13 +249,15 @@ def _publish_pair(package, candidate, references, grid, grid_candidate, identity
             hint = dict(bytes=info.st_size, sha256=_hash(active, info.st_size),
                         stamp=(info.st_size,info.st_mtime_ns,info.st_ctime_ns,info.st_ino))
         previous[name] = hint
-        # The transaction stages both new outputs and both old copies even
-        # when one fixed-name output already carries the requested bytes.
-        needed += item['bytes'] + (hint['bytes'] if hint else 0) + 3*65536+1024*1024
+        if hint and hint['sha256'] == item['sha256']:
+            reused.append((active, item))
+        else:
+            changed.append((f'.LINNET/PHOTOS/{name}', staged, item))
+            needed += item['bytes'] + (hint['bytes'] if hint else 0) + 3*65536+1024*1024
     refreshed = inspect_target(number, serial, volume, drive)
     _same_target(identity, refreshed)
     if refreshed['free_bytes'] < needed:
-        raise ValueError('insufficient free space for both photo outputs and device recovery copies')
+        raise ValueError('insufficient free space for changed photo outputs and device recovery copies')
     receipt_path = package.parent/('publish-photos-'+uuid.uuid4().hex+'.json')
     receipt = dict(operation='publish-photos', passed=False, phase='preflight-complete',
                    identity=identity, candidate_sha256=candidate['sha256'],
@@ -273,18 +276,28 @@ def _publish_pair(package, candidate, references, grid, grid_candidate, identity
         _verify_fallbacks(references, root, lambda: _volume_guard(identity))
         _verify_pack_proofs(pack_results, identity, root)
         _same_target(identity, inspect_target(number, serial, volume, drive))
-        receipt['phase'] = 'replacing-related-indexes'; record()
         def verify_related():
             _verify_fallbacks(references, root, lambda: _volume_guard(identity))
             _verify_pack_proofs(pack_results, identity, root)
-        _publish_group(root, identity, 'PHOTOS', [
-            ('.LINNET/PHOTOS/GRID.PGR', grid, grid_candidate),
-            ('.LINNET/PHOTOS/LIBRARY.PIM', package, candidate),
-        ], verify_related)
-        grid_receipt = dict(operation='publish-photos', passed=True, phase='published', identity=identity,
+            for active, item in reused:
+                _volume_guard(identity)
+                _plain(active, root)
+                if _hash(active, item['bytes']) != item['sha256']:
+                    raise RuntimeError(f'reused photo output changed: {active}')
+        if changed:
+            receipt['phase'] = 'replacing-related-indexes'; record()
+            _publish_group(root, identity, 'PHOTOS', changed, verify_related)
+        else:
+            verify_related()
+        reused_names = {active.name for active, _ in reused}
+        grid_phase = 'reused' if 'GRID.PGR' in reused_names else 'published'
+        package_phase = 'reused' if 'LIBRARY.PIM' in reused_names else 'published'
+        grid_receipt = dict(operation='publish-photos', passed=True,
+                            phase=grid_phase, identity=identity,
                             candidate_sha256=grid_candidate['sha256'], candidate_bytes=grid_candidate['bytes'],
                             package=str(root/'.LINNET'/'PHOTOS'/'GRID.PGR'), receipt=str(receipt_path))
-        receipt.update(passed=True, phase='published', package=str(root/'.LINNET'/'PHOTOS'/'LIBRARY.PIM'),
+        receipt.update(passed=True, phase=package_phase,
+                       package=str(root/'.LINNET'/'PHOTOS'/'LIBRARY.PIM'),
                        grid=grid_receipt, photos=candidate['photos'], albums=candidate['albums'],
                        finished_at=time.time())
         record()

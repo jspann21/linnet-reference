@@ -129,7 +129,9 @@ accessory-dependent features are expansion suggestions for other targets.
   devices. The rotating run published an updated Files index; the flash run and
   unchanged repeats reused both libraries. Source file stamps and sampled hashes
   matched, and subsequent playback reported no faults. Conversion, large catalog,
-  and UI responsiveness baselines remain open.
+  and UI responsiveness baselines remain open. A guarded flash photo grid update
+  reused the identical PIM: index replacement took 1.19 seconds; a fully unchanged
+  repeat took 0.56 seconds. Device hashes, recovery state and reboot passed.
 
 - [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed
   M4A seeking are implemented. Measure prepared M4A separately from unindexed M4A
