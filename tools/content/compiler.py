@@ -146,6 +146,7 @@ def resolve_features(config, target_manifest=None):
     features['cover_flow']=feature_enabled(features,'cover_flow') and capabilities['cover_flow']
     for name,available in capabilities.items():
         if not available:features[name]=False
+    features['video_settings']=feature_enabled(features,'video') and target_manifest.get('media_video_backend')=='bcm-mp4'
     return features
 
 

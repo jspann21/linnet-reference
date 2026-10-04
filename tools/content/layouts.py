@@ -424,7 +424,8 @@ def gate_features(scenes,features):
         'files':{'linnet.system.files'},
         'demo':{'local.example.notes'},
         'photos':{'linnet.system.photos','linnet.system.photos-grid','linnet.system.photos-viewer','linnet.system.photos-options'},
-        'video':{'linnet.system.videos','linnet.system.video-player','linnet.system.video-controls','linnet.system.video-settings','linnet.system.video-output'},
+        'video':{'linnet.system.videos','linnet.system.video-player','linnet.system.video-controls'},
+        'video_settings':{'linnet.system.video-settings','linnet.system.video-output'},
         'themes':{'linnet.system.themes'},
     }
     disabled={sid for feature,ids in groups.items() if not feature_enabled(features,feature) for sid in ids}

@@ -86,7 +86,9 @@ accessory-dependent features are expansion suggestions for other targets.
   remains unmeasured. Photo 4G played a 7,202-frame prepared video to EOF with
   zero reported dropped frames, audio underruns, silence frames, or faults;
   eight frames were over one frame interval late and none over two. Physical
-  A/V sync and longer battery-powered sessions remain open.
+  A/V sync and longer battery-powered sessions remain open. A separate
+  forward/backward seek run reached EOF with zero reported audio faults,
+  underruns, or silence frames.
 
 - [ ] **Qualify: remaining recovery, parser, transaction, and memory-pressure cases.**
   Cover interrupted media/firmware publication, corrupt/truncated records, full
@@ -381,12 +383,16 @@ accessory-dependent features are expansion suggestions for other targets.
   [search input](../services/music/search.c).
 
 - [ ] **Qualify/Add: accessories and TV output.** Physically qualify M25's TV
-  commands. Photo IPVF exposes TV choices without functioning output selection;
-  Classic reports TV unavailable. Implement or hide unsupported controls. Scope
+  commands. Implement or hide unsupported output controls. Scope
   dock/car/remote protocols, optional radio accessories and voice recording
   separately; general accessory/recording services are absent. Dock line out exists.
   [M25 TV](../targets/video5g-m25/coprocessor.c), [Photo](../services/video/ipvf/player.c),
   [Classic](../services/video/native/player.c), [audio API](../hal/api/audio.h).
+  Partial: Photo 4G and Classic now hide video output settings their backends
+  cannot apply, while M25 retains its TV controls. Target builds passed; both
+  revised UIs booted from RAM on hardware with their libraries intact. Photo 4G
+  video playback reported no audio faults or underruns. M25 TV output and the
+  accessory/recording scope still need hardware acceptance or implementation.
 
 - [ ] **Qualify/Improve: wider hardware and Apple-library interoperability.** Qualify
   additional board/RAM/storage variants and guarded Classic installation before

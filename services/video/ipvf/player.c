@@ -76,7 +76,6 @@ static struct {
 #endif
     bool active,pending,stepping,stopping,ready,started,paused,finish,seeking,offered,completed,temporal,prefetching,startup_preview;
 } v;
-static uint8_t video_options=8u;
 static bool video_headphone_known,video_headphones;
 static uint32_t saved_resume[2];
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -624,22 +623,11 @@ bool ln_video_seek(int32_t seconds){
     if(frame<0)frame=0;if(frame>=v.count)frame=v.count-1;v.target=(uint32_t)frame;seek_preroll();
     v.active=true;v.completed=false;v.seeking=true;++v.epoch;return true;
 }
-uint8_t ln_video_options(void){return video_options;}
-void ln_video_options_set(uint8_t options){video_options=options&31u;}
-const char *ln_video_option_label(uint32_t row){
-    if(row==0)return (video_options&3u)==2u?"TV Out: On":(video_options&3u)==1u?"TV Out: Ask":"TV Out: Off";
-    if(row==1)return video_options&4u?"TV Signal: PAL":"TV Signal: NTSC";
-    if(row==2)return video_options&8u?"Widescreen: On":"Widescreen: Off";
-    if(row==3)return video_options&16u?"TV Connection: S-Video":"TV Connection: Composite";
-    return "";
-}
-bool ln_video_option_adjust(uint32_t row,int32_t direction){
-    if(v.active||!direction||row>3u)return false;
-    if(row==0){uint8_t mode=video_options&3u;mode=(uint8_t)(direction<0?(mode?mode-1u:2u):(mode==2u?0u:mode+1u));video_options=(uint8_t)((video_options&~3u)|mode);}
-    else video_options^=(uint8_t)(1u<<(row+1u));
-    return true;
-}
-bool ln_video_output_prompt(void){return (video_options&3u)==1u;}
+uint8_t ln_video_options(void){return 8u;}
+void ln_video_options_set(uint8_t options){(void)options;}
+const char *ln_video_option_label(uint32_t row){(void)row;return "";}
+bool ln_video_option_adjust(uint32_t row,int32_t direction){(void)row;(void)direction;return false;}
+bool ln_video_output_prompt(void){return false;}
 void ln_video_output_once(bool television){(void)television;}
 void ln_video_headphones(bool connected){
     if(v.active&&video_headphone_known&&video_headphones&&!connected)ln_video_pause(true);

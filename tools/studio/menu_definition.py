@@ -53,7 +53,7 @@ GROUPS = (
         Item('update', 'Firmware Info', 'linnet.system.update'),
         Item('about', 'About Linnet', 'linnet.system.about'),
         Item('home', 'Back to Home', 'linnet.system.home'),
-        Item('video_settings', 'Video Settings', 'linnet.system.video-settings', 'video'),
+        Item('video_settings', 'Video Settings', 'linnet.system.video-settings', 'video_settings'),
         Item('sound', 'Sound', 'linnet.system.music-sound'),
     ), (11, 0, 10, 2, 4, 6, 7, 8), (6,)),
     ('Extras', (
