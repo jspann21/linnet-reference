@@ -151,7 +151,13 @@ accessory-dependent features are expansion suggestions for other targets.
   reused the identical PIM: index replacement took 1.19 seconds; a fully unchanged
   repeat took 0.56 seconds. Device hashes, recovery state and reboot passed.
   Classic inspected 1,018 rows in 10.92/0.52 seconds on first/repeated passes;
-  empty Music planning took 0.56/0.55 seconds. UI responsiveness remains open.
+  empty Music planning took 0.56/0.55 seconds. A read-only flash sample
+  converted a 312-second AAC original to PCM in 0.34 seconds after a 0.70-second
+  source hash; comparing the new local PCM with the existing device WAV took
+  3.80 seconds and matched exactly. A separate rotating-disk 230-second AAC
+  sample took 1.43 seconds to hash, 0.27 seconds to convert, and 0.03 seconds
+  to hash local PCM. Both originals kept their size and timestamp.
+  Full conversion/catalog baselines and UI responsiveness remain open.
 
 - [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed
   M4A seeking are implemented. Measure prepared M4A separately from unindexed M4A
