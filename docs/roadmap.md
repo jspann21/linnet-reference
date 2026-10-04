@@ -53,6 +53,8 @@ accessory-dependent features are expansion suggestions for other targets.
   actionable reasons; queued and existing incompatible files can be converted to
   host-prepared PCM while retaining originals and metadata. Focused imports and a
   physical device run verified library preparation and converted-track playback.
+  On flash M25, 78 incompatible M4As were skipped with separate prepared WAVs;
+  a sampled WAV played with zero reported underruns or audio faults.
 
 - [ ] **Qualify: power, charging, dock audio, and sustained playback.** Measure
   charging current/source changes, battery runtime, sleep/wake, shutdown/startup,
@@ -131,8 +133,10 @@ accessory-dependent features are expansion suggestions for other targets.
   long files, rapid retargets, rejected indexes and audio continuity; optimize the
   measured fallback bottleneck. [Host indexes](../tools/content/aac_index.py),
   [M4A](../services/audio/aac/m4a.c), [ADTS](../services/audio/aac/aac.c).
-  Partial: prepared M4A seeks resumed on flash hardware without reported underruns;
-  unindexed M4A, raw ADTS, long-file and rapid-retarget cases remain open.
+  Partial: an indexed 325-second M4A on flash M25 resumed after forward/backward
+  seeks in 0.80/0.86 seconds with no reported underruns. The 78 unindexed M4As
+  on this device were incompatible and host-converted; playable unindexed M4A,
+  raw ADTS, longer-file and rapid-retarget cases remain open.
 
 - [ ] **Qualify: large photo catalogs and saved navigation.** Grid preloading,
   JPEG fallback, saved focus and empty-album resume are implemented. Exercise large
@@ -167,8 +171,10 @@ accessory-dependent features are expansion suggestions for other targets.
   and initialization improvements already exist; find the remaining bottleneck
   using current release images on cold/warm boots. [Boot](../boot/src/linnet_boot.c),
   [entry](../kernel/main.c), [runtime](../kernel/runtime.c).
-  Partial: a physical development timeline isolated image validation and first-frame
-  stages; release-image cold/warm comparison remains open.
+  Partial: physical development timelines captured all five connected devices.
+  Two boots per M25 storage type measured about 10.15 seconds to first frame
+  on flash and 14.08 seconds on rotating storage; image validation and storage
+  stages were captured separately. Release-image cold/warm comparison remains open.
 
 - [ ] **Qualify: physical wheel response and display quality.** Accelerated scrolling
   is implemented. Check long lists, overshoot, selection stability, readability,
@@ -195,6 +201,10 @@ accessory-dependent features are expansion suggestions for other targets.
   avoidance already exists; verify alternating buffers, theme acknowledgement and
   physical tearing before narrowing transfers. [Display](../targets/classic6g-n25/display.c),
   [panel](../targets/classic6g-n25/panel.c).
+  Partial: 40 injected alternating list moves on Classic hardware reported zero
+  input drops and restored the original selection; 41 renders averaged 7.5 ms
+  and 41 publications averaged 0.76 ms. Buffer, theme, and physical tearing
+  acceptance remain open.
 
 - [ ] **Qualify: Classic Apple handoff after the portable HAL refactor.** The
   retail-payload decode API is implemented. Verify its Classic AES/handoff path
