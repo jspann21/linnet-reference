@@ -390,7 +390,7 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
                              cancelled=cancelled, reused_audio=reused_audio, verified=verified)
     _remember_verified(identity, verified, verified_before)
     device_conversions = [source for source, _ in reused_audio] + [Path(item['source']) for item in copies
-        if 'converted_bytes' in item and Path(item['source']).is_relative_to(root / 'Music')]
+        if 'converted_bytes' in item and Path(item['source']).is_relative_to(root)]
     for source in device_conversions:
         skipped['Music'].add(source.relative_to(root).as_posix().casefold())
     for _, destination in reused_audio:

@@ -391,7 +391,7 @@ def restore_skipped_files(identity, items):
     return [relative for kind, key, relative in requested_order if (kind, key) in restored_keys]
 
 
-def _music_import_name(name):
+def _music_import_name(name, preserved_suffix=None):
     # Non-ASCII FAT aliases cannot be opened by the firmware. Keep readable
     # names, transliterating accents and punctuation before Windows makes aliases.
     if name.isascii():
@@ -407,7 +407,7 @@ def _music_import_name(name):
             # A readable ASCII prefix also gives names in other scripts a usable alias.
             result = "Music - " + name
     if len(result) > 127 and len(result.encode('utf-16-le')) > 510:
-        suffix = Path(result).suffix
+        suffix = preserved_suffix or Path(result).suffix
         marker = '-' + hashlib.sha256(name.encode('utf-8')).hexdigest()[:12]
         budget = 255 - len((marker + suffix).encode('utf-16-le')) // 2
         if budget < 1:
@@ -557,8 +557,10 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
         _plain(source, Path(source.anchor))
         source = source.resolve(strict=True)
         on_device = source.is_relative_to(root)
+        music_source = next((folder for folder in (root / 'Music', root / 'iPod_Control' / 'Music')
+                             if source.is_relative_to(folder)), None)
         if on_device and not (kind == 'Music' and convert_audio and source.is_file() and
-                              source.is_relative_to(root / 'Music')):
+                              music_source is not None and not source.name.casefold().endswith('.linnet.wav')):
             raise ValueError(f"{source.name} is already on this iPod. Use its existing {kind} folder.")
         is_folder = source.is_dir()
         records = _planning_records(source, snapshots)
@@ -570,7 +572,7 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                 raise ValueError(f"{path.name} is not a supported {kind.lower()} source.")
             if info.st_size > 0xFFFFFFFF:
                 raise ValueError(f"{path.name} exceeds the iPod's FAT32 file size limit (4 GiB minus 1 byte).")
-            relative = (path.relative_to(root / 'Music') if on_device else
+            relative = (path.relative_to(music_source) if on_device else
                         Path(source.name) / path.relative_to(source) if is_folder else Path(source.name))
             if kind == "Music":
                 relative = Path(*(_music_import_name(part) for part in relative.parts))
@@ -578,7 +580,7 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
             converted_frames = None
             issue = None
             if target and kind == 'Music' and path.suffix.lower() in extensions('Music'):
-                from .music import CODECS, _pcm, _quick_metadata, _probe, _read_metadata, compatibility_issue
+                from .music import CODECS, _decoded_frames, _pcm, _quick_metadata, _probe, _read_metadata, compatibility_issue
                 try:
                     if path.suffix.lower() in ('.wav', '.aif', '.aiff', '.aifc'):
                         try:
@@ -596,15 +598,26 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                         metadata = _probe(path, ffprobe, exact_frames=False,
                                           cancelled=cancelled, allow_unknown=True)
                     issue = compatibility_issue(metadata, target)
-                    if issue and convert_audio and not metadata['frames']:
-                        metadata = (_probe(path, ffprobe, exact_frames=True, cancelled=cancelled,
-                                           allow_unknown=True) if metadata['codec'] == CODECS['unknown'] else
-                                    _read_metadata(path, ffprobe, True, cancelled))
+                    if (issue or on_device) and convert_audio:
+                        if metadata['codec'] == CODECS['unknown']:
+                            if not ffprobe:
+                                raise ValueError('FFprobe is needed to size audio conversion')
+                            metadata = _probe(path, ffprobe, exact_frames=True, cancelled=cancelled,
+                                              allow_unknown=True)
+                            issue = compatibility_issue(metadata, target)
+                        elif metadata['codec'] == CODECS['mp3']:
+                            if not ffprobe:
+                                raise ValueError('FFprobe is needed to size MP3 conversion')
+                            metadata['frames'] = _decoded_frames(path, ffprobe, codec=metadata['codec'],
+                                                                  cancelled=cancelled)
+                        elif not metadata['frames']:
+                            metadata = _read_metadata(path, ffprobe, True, cancelled)
                 except (OSError, ValueError, struct.error, subprocess.SubprocessError) as error:
                     metadata = None
                     issue = f'Cannot inspect audio: {error}'
-                if issue and convert_audio and metadata is not None:
-                    relative = (relative.with_name(_music_import_name(relative.name + '.linnet.wav'))
+                if (issue or on_device) and convert_audio and metadata is not None:
+                    relative = (relative.with_name(_music_import_name(
+                        relative.name + '.linnet.wav', preserved_suffix='.linnet.wav'))
                                 if on_device else relative.with_suffix('.wav'))
                     converted_frames = math.ceil(metadata['frames'] * 44100 / metadata['rate'])
                     converted_bytes = (math.ceil(converted_frames * 4 * 1.1)
@@ -684,7 +697,7 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
     reserved = {str(value).casefold() for source, destination in (reused_audio or ())
                 for value in (source, destination)}
     reserved.update(str(item['source']).casefold() for item in planned.values()
-                    if 'converted_bytes' in item and Path(item['source']).is_relative_to(root / 'Music'))
+                    if 'converted_bytes' in item and Path(item['source']).is_relative_to(root))
     if reserved.intersection(planned):
         raise ValueError('Queued sources overlap an iPod conversion. Remove one before preparing.')
     return list(planned.values())
@@ -927,6 +940,13 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
     seek_state = (_optional_state(seek_state_path) if any(
         item['kind'] == 'Music' and Path(item['destination']).suffix.lower() in ('.m4a', '.m4b', '.flac', '.flc')
         for item in plan) else {})
+    device_keys = {str(Path(item['source'])).casefold() for item in plan if 'converted_bytes' in item and
+                   Path(item['source']).is_relative_to(root)}
+    retail_rows, retail_artwork = {}, None
+    if device_keys:
+        from .retail_media import available_tracks
+        tracks = available_tracks(root)
+        retail_rows = {key: tracks[key] for key in device_keys if key in tracks}
     while start < len(plan):
         batch = []
         batch_bytes = 0
@@ -1022,8 +1042,26 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                         copy_source = scratch / 'audio.wav'
                         progress(f'Converting on computer: {source.name}')
                         seed = _import_metadata_seed(source, ffprobe, cancelled)
+                        saved = retail_rows.get(str(source).casefold())
+                        if saved:
+                            metadata, cover = seed or ({'tags': {}}, None)
+                            metadata['tags'] = {**{key: str(value) for key, value in saved.items()
+                                                   if key in ('title', 'artist', 'album', 'album_artist',
+                                                              'genre', 'composer', 'date', 'year', 'track',
+                                                              'disc', 'compilation') and value},
+                                                **{key: value for key, value in metadata['tags'].items() if value}}
+                            if cover is None:
+                                if retail_artwork is None:
+                                    from .retail_media import metadata as retail_metadata
+                                    retail_artwork = retail_metadata(root, tracks_rows=retail_rows)
+                                artwork = retail_artwork.get(str(source).casefold(), {}).get('artwork')
+                                if artwork:
+                                    art_path = Path(artwork)
+                                    if art_path.is_file() and 0 < art_path.stat().st_size <= 32 * 1024 * 1024:
+                                        cover = art_path.read_bytes()
+                            seed = metadata, cover
                         conversion_source, source_sha256 = source, None
-                        if source.is_relative_to(root / 'Music'):
+                        if source.is_relative_to(root):
                             conversion_source = scratch / ('source' + source.suffix)
                             digest = hashlib.sha256()
                             with source.open('rb') as reader, conversion_source.open('xb') as frozen:
@@ -1686,7 +1724,7 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
     converted_sizes = [item['converted_bytes'] for item in copies if 'converted_bytes' in item]
     audio_scratch = min(sum(converted_sizes), max(64 * 1024 * 1024, max(converted_sizes, default=0)))
     staged_sizes = [item['bytes'] for item in copies if 'converted_bytes' in item and
-                    Path(item['source']).is_relative_to(root / 'Music')]
+                    Path(item['source']).is_relative_to(root)]
     audio_scratch += max(staged_sizes, default=0)
     # Audio index, artwork and transaction files grow with the track count.
     music_bytes = 0
@@ -2736,7 +2774,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                          reused_audio=reused_audio, verified=verified_outputs)
         _remember_verified(identity, verified_outputs, verified_before)
         device_conversions = [source for source, _ in reused_audio] + [Path(item['source']) for item in plan
-            if 'converted_bytes' in item and Path(item['source']).is_relative_to(root / 'Music')]
+            if 'converted_bytes' in item and Path(item['source']).is_relative_to(root)]
         projected_skipped = {kind: paths.copy() for kind, paths in skipped.items()}
         for source in device_conversions:
             projected_skipped['Music'].add(source.relative_to(root).as_posix().casefold())
@@ -2845,7 +2883,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                     skipped[kind].remove(key)
                     changed = True
                 source = Path(copied['source'])
-                if 'converted_bytes' in copied and source.is_relative_to(root / 'Music'):
+                if 'converted_bytes' in copied and source.is_relative_to(root):
                     source_key = source.relative_to(root).as_posix().casefold()
                     if source_key not in skipped['Music']:
                         skipped['Music'].add(source_key)

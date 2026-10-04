@@ -617,6 +617,8 @@ def build_library_page(window):
     window.selection_text = label(); selection.addWidget(window.selection_text, 1)
     selection.addWidget(button('Clear', window.clear_selection, 'quiet'))
     window.info_button = button('Details', window.inspect_selection); selection.addWidget(window.info_button)
+    window.prepare_pcm_button = button('Prepare as PCM', window.queue_selected_pcm)
+    selection.addWidget(window.prepare_pcm_button)
     window.restore_button = button('Restore', window.restore_selected, None, 'back'); selection.addWidget(window.restore_button)
     window.remove_button = button('Move to Trash', window.remove_selected, 'danger', 'trash'); selection.addWidget(window.remove_button)
     outer.addWidget(window.selection_bar); window.selection_bar.hide()
@@ -1366,6 +1368,13 @@ class MediaWindow(QMainWindow):
         self.remove_button.setEnabled(self.device_connected and not self.busy and
                                       (retail_photos or all(r.get('removable', True) for r in rows)))
         self.info_button.setEnabled(len(rows) == 1 and not self.busy)
+        music_roots = (Path(self.identity['root']) / 'Music',
+                       Path(self.identity['root']) / 'iPod_Control' / 'Music') if self.identity else ()
+        self.prepare_pcm_button.setVisible(self.page == 'Music' and bool(rows))
+        self.prepare_pcm_button.setEnabled(self.device_connected and not self.busy and bool(rows) and
+            all(row['kind'] == 'Music' and row['category'] == 'original' and
+                not row['path'].casefold().endswith('.linnet.wav') and
+                any(Path(row['path']).is_relative_to(root) for root in music_roots) for row in rows))
 
     def clear_selection(self):
         self.table.clearSelection(); self.grid.clearSelection(); self.selection_bar.hide()
@@ -2526,7 +2535,8 @@ class MediaWindow(QMainWindow):
     def queue_existing_audio(self):
         if self.busy or not self.identity:
             return
-        music_root = Path(self.identity['root']) / 'Music'
+        music_roots = (Path(self.identity['root']) / 'Music',
+                       Path(self.identity['root']) / 'iPod_Control' / 'Music')
         additions = []
         for row in self.rows:
             if (row['kind'] != 'Music' or row['category'] != 'original' or
@@ -2534,7 +2544,7 @@ class MediaWindow(QMainWindow):
                 continue
             path = Path(row['path'])
             key = ('Music', os.path.normcase(str(path)))
-            if path.is_relative_to(music_root) and key not in self.pending_keys:
+            if any(path.is_relative_to(root) for root in music_roots) and key not in self.pending_keys:
                 additions.append(('Music', str(path)))
                 self.pending_keys.add(key)
         self.pending.extend(additions)
@@ -2545,6 +2555,29 @@ class MediaWindow(QMainWindow):
         self.update_preparation()
         self.navigate('Preparation')
         self.show_progress(f'{len(additions):,} incompatible iPod tracks queued for host conversion.')
+
+    def queue_selected_pcm(self):
+        if self.busy or not self.identity:
+            return
+        music_roots = (Path(self.identity['root']) / 'Music',
+                       Path(self.identity['root']) / 'iPod_Control' / 'Music')
+        rows = self.selected()
+        if not rows or any(row['kind'] != 'Music' or row['category'] != 'original' or
+                           row['path'].casefold().endswith('.linnet.wav') or
+                           not any(Path(row['path']).is_relative_to(root) for root in music_roots)
+                           for row in rows):
+            return
+        additions = [('Music', row['path']) for row in rows
+                     if ('Music', os.path.normcase(row['path'])) not in self.pending_keys]
+        self.pending.extend(additions)
+        self.pending_keys.update((kind, os.path.normcase(path)) for kind, path in additions)
+        self.convert_audio.setChecked(True)
+        self.prep_checks['Music'].setChecked(True)
+        self.validate_draft()
+        self.save_draft()
+        self.update_preparation()
+        self.navigate('Preparation')
+        self.show_progress(f'{len(additions):,} iPod tracks queued for PCM preparation on the computer.')
 
     def add_media(self):
         if self.busy or not self.identity:

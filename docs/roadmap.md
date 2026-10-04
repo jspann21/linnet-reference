@@ -55,6 +55,11 @@ accessory-dependent features are expansion suggestions for other targets.
   physical device run verified library preparation and converted-track playback.
   On flash M25, 78 incompatible M4As were skipped with separate prepared WAVs;
   a sampled WAV played with zero reported underruns or audio faults.
+  Selected compatible iPod music can also be prepared as PCM on the host.
+  On a rotating M25, the original of a troublesome AAC and six incompatible
+  Apple-library AACs remained unchanged; their converted files published into
+  a ready 2,222-track library. A separate untagged Apple MP3 conversion retained
+  its database metadata and artwork, excluded its original, and kept that count.
 
 - [ ] **Qualify: power, charging, dock audio, and sustained playback.** Measure
   charging current/source changes, battery runtime, sleep/wake, shutdown/startup,
@@ -111,6 +116,11 @@ accessory-dependent features are expansion suggestions for other targets.
   host-indexed AAC without reported underruns, silence, or audio faults;
   a 347-second indexed AAC track then reached EOF at 15,309,824/15,309,824
   frames with zero reported player/audio underruns, silence frames, or faults.
+  A separate 230-second AAC on the second rotating M25 reproduced about 55
+  underruns and inserted silence during isolated playback. Keeping its disk
+  awake did not clear the fault. The host-prepared PCM copy reached EOF with
+  zero reported player/audio underruns, silence frames, or faults across 60
+  checks. Other high-load tracks and physical output still need qualification.
   Longer battery-powered playback and physical output checks remain open.
   Current, individually bound development images were installed on Q21,
   Classic, flash M25 and both rotating M25s after RAM checks. All five returned
