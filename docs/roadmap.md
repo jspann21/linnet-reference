@@ -80,8 +80,11 @@ accessory-dependent features are expansion suggestions for other targets.
   and focused manual campaigns; close with explicit coverage and successful recovery.
   [Publisher](../tools/content/publish.py), [state](../services/state/store.c),
   [Video recovery](../targets/video5g-m25/coprocessor.c), [update](../services/update/update.c).
-  Partial: verified media copies and index publication completed on device;
-  injected interruption, device-loss, and external-bus cases remain open.
+  Partial: verified media copies and index publication completed on device. A
+  Photo hardware storage campaign passed scratch readback, settings restore,
+  file growth, and five injected fault recoveries. History durability,
+  publication cuts, firmware rollback, host USB roundtrip/device loss, and
+  external-bus cases remain open.
 
 - [ ] **Qualify: packaged release workflows.** Exercise navigation, playback,
   install/update, rollback, restore/uninstall and media preparation using release
