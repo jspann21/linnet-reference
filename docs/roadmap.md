@@ -169,6 +169,10 @@ accessory-dependent features are expansion suggestions for other targets.
   and source stamps before hashing large packages. A separate fresh mount still
   took 36.29 seconds, mainly in source scanning, while video readiness returned
   Needs update without package reads; its next warm pass took 1.50 seconds.
+  Another fresh pass took 198.72 seconds after hashing a large photo package
+  before rejecting a changed small grid. Checking uncached outputs smallest
+  first reduced a fresh-mount pass with an empty verification cache to 36.42
+  seconds, with the same 3,253 rows and readiness results.
   Full cold-cache comparison, conversion, and UI responsiveness remain open.
 
 - [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed

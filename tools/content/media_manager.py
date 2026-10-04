@@ -1219,7 +1219,7 @@ def _outputs_match(root, outputs, *, verified=None, progress=None):
     """Treat malformed/stale host cache entries as misses, with bounded paths."""
     if not isinstance(outputs, list) or not outputs:
         return False
-    parallel = verified is not None and len(outputs) >= 64
+    prepass = verified is not None and (len(outputs) >= 64 or progress is None)
     pending = []
     cached_count = 0
     last_cached = None
@@ -1230,7 +1230,7 @@ def _outputs_match(root, outputs, *, verified=None, progress=None):
         name, digest = item
         if not isinstance(name, str) or not isinstance(digest, str):
             return False
-        if parallel and progress and time.monotonic() - last_prepass >= 0.2:
+        if prepass and progress and time.monotonic() - last_prepass >= 0.2:
             # A long stat/path pass still needs to service Stop and volume checks.
             progress(dict(current=0, total=len(outputs), file=name,
                           bytes=0, file_bytes=1))
@@ -1258,13 +1258,13 @@ def _outputs_match(root, outputs, *, verified=None, progress=None):
                     progress(dict(current=index, total=len(outputs), file=name,
                                   bytes=current, file_bytes=total))
             if verified is not None and not recent and verified.get(key) == stamp:
-                if parallel:
+                if prepass:
                     cached_count += 1
                     last_cached = (name, info.st_size)
                 else:
                     notify(info.st_size, info.st_size)
                 continue
-            if parallel:
+            if prepass:
                 pending.append((path, digest, stamp, key, recent, name))
                 continue
             if _hash(path, progress=notify if progress else None) != digest:
@@ -1280,6 +1280,8 @@ def _outputs_match(root, outputs, *, verified=None, progress=None):
         progress(dict(current=cached_count - 1, total=len(outputs),
                       file=last_cached[0], bytes=last_cached[1], file_bytes=last_cached[1]))
     if pending:
+        if progress is None:
+            pending.sort(key=lambda entry: entry[2][0])
         stop = threading.Event()
         def stop_check(_current, _total):
             if stop.is_set():
@@ -1302,7 +1304,7 @@ def _outputs_match(root, outputs, *, verified=None, progress=None):
                               bytes=size if completed else 0,
                               file_bytes=size if completed else max(1, size)))
 
-        if len(pending) < 8:
+        if len(pending) < 8 or len(outputs) < 64:
             for index, entry in enumerate(pending):
                 current = cached_count + index
                 try:
