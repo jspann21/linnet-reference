@@ -161,9 +161,11 @@ accessory-dependent features are expansion suggestions for other targets.
   a large flash catalog from 15.7 to 2.5 seconds during AAC playback, with no
   reported audio underruns or faults. Classic and Photo 4G first frames fell
   from 2.34/2.12 to 0.68/0.64 seconds. Legacy grids still use full validation.
-  JPEG fallback, empty folders, changed/missing content, and broader audio
-  qualification remain open. Classic saved focus 80 through a graceful persistent
-  reboot with a healthy catalog; detailed measurements and identities stay local.
+  JPEG fallback, empty folders, broader changed content, and audio qualification
+  remain open. Classic saved focus 80 through a graceful persistent reboot. With
+  its tile pack temporarily absent, that photo reported unavailable while another
+  photo rendered; the exact pack was restored and the original photo rendered
+  without error. Detailed measurements and identities stay local.
 
 - [ ] **Measure/Improve: competing media work during playback.** Profile artwork,
   photos, metadata/history and next-track preparation at track boundaries. Measure
