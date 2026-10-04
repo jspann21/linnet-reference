@@ -65,8 +65,9 @@ accessory-dependent features are expansion suggestions for other targets.
   counters ended at 11 gapless joins with zero missed joins, underruns, or audio
   faults. A 60-second M25 video clip finished after forward/backward seeks with
   zero reported audio underruns or faults; an automated sleep/wake cycle also
-  completed. Current, dock, battery runtime, long audio/video, and A/V sync
-  measurements remain open.
+  completed. A separate seven-minute Repeat All run crossed 15 joins with zero
+  reported underruns or faults; Repeat Off was restored afterward. Current,
+  dock, battery runtime, long audio/video, and A/V sync measurements remain open.
 
 - [ ] **Qualify: remaining recovery, parser, transaction, and memory-pressure cases.**
   Cover interrupted media/firmware publication, corrupt/truncated records, full
@@ -77,9 +78,12 @@ accessory-dependent features are expansion suggestions for other targets.
   [Video recovery](../targets/video5g-m25/coprocessor.c), [update](../services/update/update.c).
   Partial: verified media copies and index publication completed on device. A
   Photo hardware storage campaign passed scratch readback, settings restore,
-  file growth, and five injected fault recoveries. History durability,
-  publication cuts, firmware rollback, host USB roundtrip/device loss, and
-  external-bus cases remain open.
+  file growth, and five injected fault recoveries. On rotating M25, a guarded
+  external-bus stall restored the display and a subsequent video played to EOF;
+  a separate forced restore failure recorded a recovery crash and rebooted to
+  the same healthy image. Three guarded native USB roundtrips also passed.
+  History durability, publication cuts, firmware rollback, and USB device-loss
+  cases remain open.
 
 - [ ] **Qualify: packaged release workflows.** Exercise navigation, playback,
   install/update, rollback, restore/uninstall and media preparation using release
