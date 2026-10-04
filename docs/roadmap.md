@@ -107,6 +107,9 @@ accessory-dependent features are expansion suggestions for other targets.
   or faults. Flash M25 played a 60-second native video to EOF after forward
   and backward seeks with zero reported audio underruns, silence, or faults;
   display ownership returned and the OS stayed healthy.
+  Q21 with the current installed development image played sampled MP3 and
+  host-indexed AAC without reported underruns, silence, or audio faults;
+  longer battery-powered playback and physical output checks remain open.
 
 - [ ] **Qualify: remaining recovery, parser, transaction, and memory-pressure cases.**
   Cover interrupted media/firmware publication, corrupt/truncated records, full
@@ -141,6 +144,12 @@ accessory-dependent features are expansion suggestions for other targets.
   its 12-track library and prepared storage. Link upload and install now require
   device-bound build evidence at the Session boundary. USB-loss and other
   interrupted-update cases remain open.
+  After a Q21 Music refresh, the first guarded eject did not remove the volume;
+  a read-only filesystem check found no errors, and a second identity-checked
+  eject returned to a healthy OS and prepared library. Windows still marked
+  the volume dirty on its next mount despite another clean read-only check;
+  the cause remains unconfirmed. A later guarded eject succeeded on the first
+  attempt and returned to the same healthy library.
 
 - [ ] **Qualify: packaged release workflows.** Exercise navigation, playback,
   install/update, rollback, restore/uninstall and media preparation using release
@@ -214,6 +223,12 @@ accessory-dependent features are expansion suggestions for other targets.
   12.59 seconds; splitting its subdirectories across eight host workers took
   17.08 seconds. The warm serial pass took 0.07 seconds. Parallel directory
   scanning was not adopted; both guarded returns reached the healthy OS.
+  Q21 inspected 3,043 rows in 286.88 seconds cold and 0.54 seconds warm.
+  Its first Music refresh took 55.6 minutes, host-prepared 2,034 AAC indexes,
+  and published a ready 3,042-track library. A fresh repeat mount inspected
+  in 5.62 seconds and planned in 0.72 seconds, with no copies or reconciliation
+  and Music reusable; the guarded return preserved the library. Broader
+  conversion/UI baselines remain.
 
 - [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed
   M4A seeking are implemented. Measure prepared M4A separately from unindexed M4A
@@ -234,6 +249,8 @@ accessory-dependent features are expansion suggestions for other targets.
   reported zero underruns, silence frames, and audio faults. A final build also
   resumed a seek-to-start retarget at 90 seconds in 1.39 seconds and honored
   Resume during a pending paused seek; both had zero reported audio faults.
+  On Q21, a host-indexed AAC resumed after four forward/backward seeks in
+  0.80–1.05 seconds with zero reported underruns, silence frames, or faults.
   Playable unindexed M4A, raw ADTS, longer files, rejected indexes, and broader
   continuity remain.
 
