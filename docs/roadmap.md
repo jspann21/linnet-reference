@@ -104,7 +104,9 @@ accessory-dependent features are expansion suggestions for other targets.
   measurements remain open. Installed on that rotating M25, the same build
   booted healthy with its 2,222-track library and crossed a natural gapless
   join plus 30 seconds with zero reported underruns, silence, missed joins,
-  or faults.
+  or faults. Flash M25 played a 60-second native video to EOF after forward
+  and backward seeks with zero reported audio underruns, silence, or faults;
+  display ownership returned and the OS stayed healthy.
 
 - [ ] **Qualify: remaining recovery, parser, transaction, and memory-pressure cases.**
   Cover interrupted media/firmware publication, corrupt/truncated records, full
