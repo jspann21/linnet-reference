@@ -147,8 +147,12 @@ accessory-dependent features are expansion suggestions for other targets.
   catalogs, uncached navigation during audio, fallback decoding, empty folders,
   and restart with changed/missing content. Measure first usable frame and audio
   reserve. [Photos](../services/photos/photos.c), [saved state](../services/display/settings.c).
-  Partial: physical catalog and photo navigation continued during PCM playback
-  without reported underruns; fallback, empty-folder, and restart cases remain.
+  Partial: host-prepared per-photo descriptor checksums cut first-frame time on
+  a large flash catalog from 15.7 to 2.5 seconds during AAC playback, with no
+  reported audio underruns or faults. Classic and Photo 4G first frames fell
+  from 2.34/2.12 to 0.68/0.64 seconds. Legacy grids still use full validation.
+  JPEG fallback, empty folders, changed/missing content, and broader audio
+  qualification remain open; detailed measurements and identities stay local.
 
 - [ ] **Measure/Improve: competing media work during playback.** Profile artwork,
   photos, metadata/history and next-track preparation at track boundaries. Measure

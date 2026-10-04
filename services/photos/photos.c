@@ -25,7 +25,7 @@ _Static_assert(ROWS*THUMB_WIDTH*THUMB_HEIGHT*2u<=262144u,"native grid cache exce
 #define TILES (GRID_TILES==64u?128u:GRID_TILES)
 _Static_assert(VISIBLE_TILES<=TILES,"photo viewport exceeds tile cache capacity");
 #define EMPTY_ALBUM_RESUME 65535u
-enum phase {OPEN,HEADER,VERIFY,IDLE,RECORD,TITLE,THUMB,LEVEL,TILE_RECORD,PACK_OPEN,TILE_DATA,SOURCE,JPEG_OPEN,JPEG_LOAD,JPEG_DECODE,TILE_COMMIT,FILE_HEADER,FILE_PIXELS,GRID_OPEN,GRID_HEADER,GRID_VERIFY,GRID_THUMB_COMMIT,TXN_GUARD};
+enum phase {OPEN,HEADER,VERIFY,IDLE,RECORD,TITLE,THUMB,PHOTO_CHECK_LEVELS,PHOTO_CHECK_TILES,LEVEL,TILE_RECORD,PACK_OPEN,TILE_DATA,SOURCE,JPEG_OPEN,JPEG_LOAD,JPEG_DECODE,TILE_COMMIT,FILE_HEADER,FILE_PIXELS,GRID_OPEN,GRID_HEADER,GRID_VERIFY,GRID_THUMB_COMMIT,TXN_GUARD};
 struct row {uint32_t index;bool valid,album,thumb,title_ready;char title[192];union {struct ln_pimg_album a;struct ln_pimg_photo p;} data;struct ln_ui_asset asset;};
 struct tile {uint32_t index,age;bool valid;};
 struct level_cache {uint32_t index,count;bool valid;};
@@ -50,7 +50,7 @@ static struct {
     uint8_t metadata[131072],pim_header[512],resume[16],tile_records[512],tile_hints[TILES];char title[192],album_title[192],source[128];
     uint32_t phase,view,album,first,count,photo_index,window_first,window_count,epoch,working,generation,revision,navigation;
     int32_t prefetch_direction;
-    uint32_t io_bytes,verify_at,verify_crc,v_payload_at,job_index,job_slot,level_count,level,zoom,rotation,tile_index,tile_slot,tile_crc,age;
+    uint32_t io_bytes,verify_at,verify_crc,v_payload_at,photo_check_at,photo_check_end,photo_check_crc,job_index,job_slot,level_count,level,zoom,rotation,tile_index,tile_slot,tile_crc,age;
     uint32_t tile_records_first,tile_records_count,tile_group_count,tile_group_cursor,tile_group_at,tile_group_bytes,thumb_group_count,thumb_group_cursor;
     uint32_t visible[TILES],visible_count,front,render_y,slide_at,jpeg_at,ready_tiles,resume_stage,file_offset,file_payload_at;
     uint8_t verify_record[64];uint32_t v_photos,v_levels,v_tiles,v_album,v_photo,v_level,v_width,v_height,v_text_bytes,v_more,v_code,v_min,jpeg_crc;
@@ -554,7 +554,7 @@ static bool plan_grid_rows(uint32_t first,uint32_t visible,bool apply){
  * never submits I/O; the selected phase retains the normal admission gate. */
 static bool plan_content(bool apply){
     if(file_mode)return false;
-    if(!p.pim_verified&&(p.view==LN_PHOTOS_VIEWER||!p.metadata_valid)){
+    if(!p.pim_verified&&((p.view==LN_PHOTOS_VIEWER&&!p.grid.photo_crc_bytes)||!p.metadata_valid)){
         if(apply)verify_begin(p.view!=LN_PHOTOS_VIEWER&&p.grid_available);return true;
     }
     if(p.view==LN_PHOTOS_VIEWER){
@@ -563,7 +563,8 @@ static bool plan_content(bool apply){
         if(!row){begin_row(p.photo_index,false);return true;}
         if(!row->title_ready){p.job_slot=p.photo_index%ROWS;p.phase=TITLE;return true;}
         if(p.photo_index<p.first||p.photo_index-p.first>=p.count){fail(18);return true;}
-        p.photo=row->data.p;text(p.title,row->title);p.level_count=0;p.phase=LEVEL;return true;
+        p.photo=row->data.p;text(p.title,row->title);p.level_count=0;
+        p.phase=!p.pim_verified&&p.grid.photo_crc_bytes?PHOTO_CHECK_LEVELS:LEVEL;return true;
     }
     if(apply)p.prefetch_job=false;
     if(plan_grid_rows(p.window_first,p.window_count,apply))return true;
@@ -702,8 +703,8 @@ static void photo_step(void){
     if(p.phase==GRID_HEADER){r=read_at(&p.grid_file,0,photo_scratch,1024u);if(!r)return;
         p.grid_available=r>0&&ln_pgrid_header(photo_scratch,p.grid_file.size,p.pim_header,&p.header,
             LINNET_TARGET_NUMBER,THUMB_WIDTH,THUMB_HEIGHT,&p.grid);
-        if(!p.active&&(!p.grid_available||p.grid.prefix_bytes+p.grid.string_bytes>sizeof p.metadata)){grid_fallback();return;}
-        verify_begin(p.grid_available&&p.grid.prefix_bytes+p.grid.string_bytes<=sizeof p.metadata);return;}
+        if(!p.active&&(!p.grid_available||p.grid.prefix_bytes+p.grid.string_bytes+p.grid.photo_crc_bytes>sizeof p.metadata)){grid_fallback();return;}
+        verify_begin(p.grid_available&&p.grid.prefix_bytes+p.grid.string_bytes+p.grid.photo_crc_bytes<=sizeof p.metadata);return;}
     if(p.phase==GRID_VERIFY){
         uint32_t left=p.grid.data_at-1024u-p.grid_at;
         if(left){
@@ -715,13 +716,14 @@ static void photo_step(void){
             }
             uint32_t n=p.verify_cached;if(n>4096u)n=4096u;
             const uint8_t*bytes=photo_scratch+p.verify_cursor;
-            uint32_t cursor=0,end=p.grid.prefix_bytes+p.grid.string_bytes;
+            uint32_t cursor=0,end=p.grid.prefix_bytes+p.grid.string_bytes,table_end=end+p.grid.photo_crc_bytes;
             while(cursor<n){uint32_t at=p.grid_at+cursor,take=n-cursor;bool valid;
                 if(at<p.grid.prefix_bytes){if(take>p.grid.prefix_bytes-at)take=p.grid.prefix_bytes-at;valid=verify_bytes(512u+at,bytes+cursor,take);}
                 else if(at<end){if(take>end-at)take=end-at;valid=verify_bytes(p.header.string_at+at-p.grid.prefix_bytes,bytes+cursor,take);}
+                else if(at<table_end){if(take>table_end-at)take=table_end-at;valid=true;}
                 else valid=ln_bytes_zero(bytes+cursor,take);
                 if(!valid){grid_fallback();return;}
-                if(at<end)copy(p.metadata+at,bytes+cursor,take);cursor+=take;
+                if(at<table_end)copy(p.metadata+at,bytes+cursor,take);cursor+=take;
             }
             p.verify_crc=ln_pimg_crc_update(p.verify_crc,bytes,n);p.grid_at+=n;p.verify_cursor+=n;p.verify_cached-=n;return;
         }
@@ -822,6 +824,30 @@ static void photo_step(void){
         for(uint32_t i=0;i<p.thumb_group_count;++i){uint32_t slot=(p.job_index+i)%ROWS;
             copy(photo_buffers.pixels.thumbs[slot],photo_scratch+i*p.grid.stride,p.grid.stride-4u);p.rows[slot].thumb=true;}
         p.phase=IDLE;++p.revision;return;
+    }
+    if(p.phase==PHOTO_CHECK_LEVELS){
+        uint32_t bytes=p.photo.levels*24u;
+        r=read_at(&p.file,p.header.level_at+p.photo.first*24u,photo_scratch,bytes);if(!r)return;
+        if(r<0){image_fail(9);return;}
+        p.photo_check_crc=ln_pimg_crc_update(UINT32_MAX,photo_scratch,bytes);
+        uint32_t first=ln_read_le32(photo_scratch+12u);
+        const uint8_t*last=photo_scratch+(p.photo.levels-1u)*24u;
+        uint32_t final=ln_read_le32(last+12u),count=ln_read_le32(last+16u);
+        if(final<first||final>=p.header.tiles||count>p.header.tiles-final){image_fail(9);return;}
+        p.photo_check_at=p.header.tile_at+first*12u;
+        p.photo_check_end=p.header.tile_at+(final+count)*12u;p.phase=PHOTO_CHECK_TILES;return;
+    }
+    if(p.phase==PHOTO_CHECK_TILES){
+        if(p.photo_check_at<p.photo_check_end){
+            uint32_t bytes=p.photo_check_end-p.photo_check_at;if(bytes>8184u)bytes=8184u;
+            r=read_at(&p.file,p.photo_check_at,photo_scratch,bytes);if(!r)return;
+            if(r<0){image_fail(10);return;}
+            p.photo_check_crc=ln_pimg_crc_update(p.photo_check_crc,photo_scratch,bytes);
+            p.photo_check_at+=bytes;return;
+        }
+        uint32_t at=p.grid.prefix_bytes+p.grid.string_bytes+p.photo_index*4u;
+        if((p.photo_check_crc^UINT32_MAX)!=ln_read_le32(p.metadata+at)){image_fail(10);return;}
+        p.phase=LEVEL;return;
     }
     if(p.phase==LEVEL){
         /* Descriptors are contiguous; retain the same request until it drains. */

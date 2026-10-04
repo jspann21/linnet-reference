@@ -41,16 +41,17 @@ __attribute__((minsize)) bool ln_pimg_header(const uint8_t*b,uint32_t size,struc
 static bool string_range(const struct ln_pimg_header*h,uint32_t at,uint32_t bytes,uint32_t max){return bytes<=max&&at<h->string_bytes&&bytes<h->string_bytes-at;}
 __attribute__((minsize)) bool ln_pgrid_header(const uint8_t*b,uint32_t size,const uint8_t*binding,const struct ln_pimg_header*pim,uint32_t target,uint32_t width,uint32_t height,struct ln_pgrid_header*h){
     if(size<1024u||size>0x7fffffffu||b[0]!='L'||b[1]!='P'||b[2]!='G'||b[3]!='R'||
-       ln_read_le16(b+4)!=1u||ln_read_le16(b+6)!=1024u||ln_read_le32(b+8)!=size||
+       (ln_read_le16(b+4)!=1u&&ln_read_le16(b+4)!=2u)||ln_read_le16(b+6)!=1024u||ln_read_le32(b+8)!=size||
        ln_read_le32(b+12)!=target||ln_read_le16(b+16)!=width||ln_read_le16(b+18)!=height||
        ln_read_le32(b+20)!=pim->photos||ln_read_le32(b+40)!=pim->size||
        !ln_bytes_zero(b+44,464u)||ln_crc32(b,508u)!=ln_read_le32(b+508u))return false;
     for(uint32_t i=0;i<512u;++i)if(b[512u+i]!=binding[i])return false;
     uint32_t prefix=pim->level_at-512u,strings=pim->data_at-pim->string_at;
-    uint32_t data=(1024u+prefix+strings+511u)&~511u,stride=width*height*2u+4u;
+    uint32_t checksums=ln_read_le16(b+4)==2u?pim->photos*4u:0u;
+    uint32_t data=(1024u+prefix+strings+checksums+511u)&~511u,stride=width*height*2u+4u;
     if(ln_read_le32(b+24)!=prefix||ln_read_le32(b+28)!=strings||ln_read_le32(b+32)!=data||
        data>size||pim->photos>(size-data)/stride||data+pim->photos*stride!=size)return false;
-    *h=(struct ln_pgrid_header){prefix,strings,data,ln_read_le32(b+36),stride};return true;
+    *h=(struct ln_pgrid_header){prefix,strings,checksums,data,ln_read_le32(b+36),stride};return true;
 }
 __attribute__((minsize)) bool ln_pimg_album(const struct ln_pimg_header*h,const uint8_t*b,uint32_t index,struct ln_pimg_album*a){
     if(index>=h->albums||ln_crc32(b,28)!=ln_read_le32(b+28)||!ln_bytes_zero(b+20,8))return false;
