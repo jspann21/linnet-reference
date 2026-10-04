@@ -69,7 +69,9 @@ accessory-dependent features are expansion suggestions for other targets.
   zero reported audio underruns or faults; an automated sleep/wake cycle also
   completed. A separate seven-minute Repeat All run crossed 15 joins with zero
   reported underruns or faults; Repeat Off was restored afterward. Current,
-  dock, battery runtime, long audio/video, and A/V sync measurements remain open.
+  dock, battery runtime, broader long audio/video, and A/V sync measurements
+  remain open. A 325-second indexed AAC track reached EOF on flash M25 with zero
+  reported player/audio underruns, silence frames, or audio faults.
 
 - [ ] **Qualify: remaining recovery, parser, transaction, and memory-pressure cases.**
   Cover interrupted media/firmware publication, corrupt/truncated records, full
@@ -132,10 +134,12 @@ accessory-dependent features are expansion suggestions for other targets.
   Music/Files runs completed on rotating (12 tracks) and flash (426 tracks)
   devices. The rotating run published an updated Files index; the flash run and
   unchanged repeats reused both libraries. Source file stamps and sampled hashes
-  matched, and subsequent playback reported no faults. Conversion, large catalog,
-  and UI responsiveness baselines remain open. A guarded flash photo grid update
+  matched, and subsequent playback reported no faults. Conversion and large catalog
+  baselines remain open. A guarded flash photo grid update
   reused the identical PIM: index replacement took 1.19 seconds; a fully unchanged
   repeat took 0.56 seconds. Device hashes, recovery state and reboot passed.
+  Classic inspected 1,018 rows in 10.92/0.52 seconds on first/repeated passes;
+  empty Music planning took 0.56/0.55 seconds. UI responsiveness remains open.
 
 - [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed
   M4A seeking are implemented. Measure prepared M4A separately from unindexed M4A
@@ -158,7 +162,8 @@ accessory-dependent features are expansion suggestions for other targets.
   reported audio underruns or faults. Classic and Photo 4G first frames fell
   from 2.34/2.12 to 0.68/0.64 seconds. Legacy grids still use full validation.
   JPEG fallback, empty folders, changed/missing content, and broader audio
-  qualification remain open; detailed measurements and identities stay local.
+  qualification remain open. Classic saved focus 80 through a graceful persistent
+  reboot with a healthy catalog; detailed measurements and identities stay local.
 
 - [ ] **Measure/Improve: competing media work during playback.** Profile artwork,
   photos, metadata/history and next-track preparation at track boundaries. Measure
