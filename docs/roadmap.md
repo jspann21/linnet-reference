@@ -112,8 +112,9 @@ accessory-dependent features are expansion suggestions for other targets.
   converted-audio hashes reuse unchanged host cache entries, and direct Apple music
   browsing reuses scanned file records. Repeated original-copy plans now hash the
   host source against a verified device digest without rereading device content;
-  focused equal/changed checks passed. Full cold/warm operations and UI
-  responsiveness remain open.
+  focused equal/changed checks passed. Discovery, inspection, and empty planning
+  were timed on first and repeated passes on a 2,222-track rotating device.
+  Full preparation, publication, flash comparison, and UI responsiveness remain open.
 
 - [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed
   M4A seeking are implemented. Measure prepared M4A separately from unindexed M4A
