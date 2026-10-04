@@ -110,7 +110,9 @@ accessory-dependent features are expansion suggestions for other targets.
   [preparation](../tools/content/media_manager.py), [desktop](../tools/studio/media_desktop.py).
   Partial: flash conversion and rotating-library reads were measured; verified
   converted-audio hashes reuse unchanged host cache entries, and direct Apple music
-  browsing reuses scanned file records. Full cold/warm operations and UI
+  browsing reuses scanned file records. Repeated original-copy plans now hash the
+  host source against a verified device digest without rereading device content;
+  focused equal/changed checks passed. Full cold/warm operations and UI
   responsiveness remain open.
 
 - [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed

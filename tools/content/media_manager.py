@@ -476,7 +476,7 @@ def _planning_records(source, snapshots):
     return records
 
 
-def _same_file_bytes(left, right, size):
+def _same_file_bytes(left, right, size, digest=None, stable_right=None):
     paths = (left, right)
     before = [path.stat() for path in paths]
     if any(not stat.S_ISREG(info.st_mode) or info.st_size != size for info in before):
@@ -492,15 +492,51 @@ def _same_file_bytes(left, right, size):
             if a != b:
                 equal = False
                 break
+            if digest is not None:
+                digest.update(a)
             remaining -= count
             chunk_size = 1024 * 1024
         if equal and (source.read(1) or destination.read(1)):
             raise ValueError('file changed while comparing existing media')
     after = [path.stat() for path in paths]
-    if any((a.st_size, a.st_mtime_ns, a.st_ino) != (b.st_size, b.st_mtime_ns, b.st_ino)
+    if any((a.st_size, a.st_mtime_ns, a.st_ctime_ns, a.st_ino) !=
+           (b.st_size, b.st_mtime_ns, b.st_ctime_ns, b.st_ino)
            for a, b in zip(before, after)):
         raise ValueError('file changed while comparing existing media')
+    if stable_right is not None:
+        stable_right.append(after[1])
     return equal
+
+
+def _same_existing_file(source, destination, size, root, verified, known, info):
+    relative = destination.relative_to(root).as_posix()
+    stamp = (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino)
+    recent = os.name == 'nt' and info.st_mtime_ns > time.time_ns() - _RECENT_OUTPUT_NS
+    if not recent and stamp in known.get(relative, {}):
+        before = source.stat()
+        if not stat.S_ISREG(before.st_mode) or before.st_size != size:
+            raise ValueError('file changed while comparing existing media')
+        digest = _hash(source)
+        after = source.stat()
+        if (before.st_size, before.st_mtime_ns, before.st_ctime_ns, before.st_ino) != (
+                after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino):
+            raise ValueError('file changed while comparing existing media')
+        current = destination.stat()
+        if stamp != (current.st_size, current.st_mtime_ns, current.st_ctime_ns, current.st_ino):
+            raise ValueError('file changed while comparing existing media')
+        valid = {value for value in known[relative][stamp]
+                 if verified.get((relative, value)) == stamp}
+        if valid:
+            return digest in valid
+    digest, stable_right = hashlib.sha256(), []
+    same = _same_file_bytes(source, destination, size, digest, stable_right)
+    current = stable_right[0]
+    if same and not recent and stamp == (
+            current.st_size, current.st_mtime_ns, current.st_ctime_ns, current.st_ino):
+        value = digest.hexdigest()
+        verified[(relative, value)] = stamp
+        known.setdefault(relative, {}).setdefault(stamp, set()).add(value)
+    return same
 
 
 def additions(root, pending, *, snapshots=None, verify_existing=True, unverified=None,
@@ -509,6 +545,11 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
     """Resolve selected files/folders to concrete destinations without writing."""
     root = Path(root).resolve(strict=True)
     planned = {}
+    known = {}
+    if verified is not None:
+        for (relative, digest), stamp in verified.items():
+            if isinstance(relative, str) and isinstance(digest, str) and re.fullmatch('[0-9a-f]{64}', digest):
+                known.setdefault(relative, {}).setdefault(stamp, set()).add(digest)
     for kind, selected in pending:
         if kind not in KINDS:
             raise ValueError("Unknown media folder")
@@ -612,7 +653,9 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                         different = True
                     elif unverified is not None:
                         unverified.append(kind)
-                elif not different and (old.st_size != info.st_size or not _same_file_bytes(path, destination, info.st_size)):
+                elif not different and (old.st_size != info.st_size or not (
+                        _same_existing_file(path, destination, info.st_size, root, verified, known, old)
+                        if verified is not None else _same_file_bytes(path, destination, info.st_size))):
                     equivalent = False
                     if kind == 'Music' and path.suffix.lower() in ('.m4a', '.m4b'):
                         from .aac_index import same_original
