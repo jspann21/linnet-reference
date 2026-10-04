@@ -82,8 +82,9 @@ accessory-dependent features are expansion suggestions for other targets.
   external-bus stall restored the display and a subsequent video played to EOF;
   a separate forced restore failure recorded a recovery crash and rebooted to
   the same healthy image. Three guarded native USB roundtrips also passed.
-  History durability, publication cuts, firmware rollback, and USB device-loss
-  cases remain open.
+  A full track boundary increased the CRC-checked history play count across a
+  guarded reboot. Other history interruption cases, publication cuts, firmware
+  rollback, and USB device loss remain open.
 
 - [ ] **Qualify: packaged release workflows.** Exercise navigation, playback,
   install/update, rollback, restore/uninstall and media preparation using release
