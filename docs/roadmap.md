@@ -74,6 +74,16 @@ accessory-dependent features are expansion suggestions for other targets.
   reported player/audio underruns, silence frames, or audio faults. All five
   connected devices completed a bounded Link sleep/wake cycle with matching
   counters and healthy images; current and dock output need external measurement.
+  Five-minute music runs on Photo 4G and Classic reported no underruns or audio
+  faults. A rotating M25 22.05-to-44.1 kHz transition counted a non-gapless join
+  as designed, and the following track reported one underrun. A larger prime
+  reserve limited to drained rate changes ran the same natural transition and
+  over 35 seconds of the following track with no reported underruns or inserted
+  silence frames. Later unattended queue progression reported one underrun;
+  its boundary and broader sustained playback remain open. Classic native
+  video reached EOF, including a 105-second run and a forward/backward seek run,
+  with zero dropped frames and zero reported audio faults. Physical A/V sync
+  remains unmeasured.
 
 - [ ] **Qualify: remaining recovery, parser, transaction, and memory-pressure cases.**
   Cover interrupted media/firmware publication, corrupt/truncated records, full
@@ -224,7 +234,11 @@ accessory-dependent features are expansion suggestions for other targets.
   different BCM backend. [Player](../services/video/native/player.c),
   [decoder](../services/video/native/decoder.c), [video scope](video-format.md).
   Partial: two MPEG-4 clips completed on Classic hardware without errors or
-  dropped frames; startup counters were captured. Buffer and broader A/V acceptance remain.
+  dropped frames; startup counters were captured. A 105-second native clip also
+  reached EOF at 1,573/1,573 frames, and a 59-second clip reached EOF after
+  forward/backward seeks; both reported zero drops and audio faults. Startup
+  reported first frame in about 0.21 seconds with 12,288–14,336 audio frames
+  ready across these runs. Buffer use, broader A/V and physical sync acceptance remain.
 
 - [ ] **Measure: Classic small-update display costs.** Measure framebuffer
   preservation and panel transfer for status/list updates. Full-repaint copy
@@ -233,8 +247,11 @@ accessory-dependent features are expansion suggestions for other targets.
   [panel](../targets/classic6g-n25/panel.c).
   Partial: 40 injected alternating list moves on Classic hardware reported zero
   input drops and restored the original selection; 41 renders averaged 7.5 ms
-  and 41 publications averaged 0.76 ms. Buffer, theme, and physical tearing
-  acceptance remain open.
+  and 41 publications averaged 0.76 ms. Missing optional theme records were
+  provisioned under device identity guards. A theme change published after a
+  completed frame and survived a graceful reboot. The original theme was restored
+  and verified after another reboot. Alternating-buffer and physical tearing
+  checks remain.
 
 - [ ] **Qualify: Classic Apple handoff after the portable HAL refactor.** The
   retail-payload decode API is implemented. Verify its Classic AES/handoff path

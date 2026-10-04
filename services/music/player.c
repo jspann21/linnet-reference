@@ -608,14 +608,20 @@ static void player_advance(void){
     else if(s->phase!=SLOT_EOF&&audio.free_frames>=PLAYER_DECODE_FRAMES){
         int r=slot_step(s);if(interrupted())return;if(r<0){fail(13);return;}if(s->buffered&&!submit_slot(s))return;
     }
-    /* Start after the background reserve is available. Next-track I/O still
-     * waits for its larger runway; priming need not pay that cost up front. */
-    if(state.phase==LN_PLAYER_PRIME&&(s->submitted>=ln_player_background_frames(s->rate)||s->phase==SLOT_EOF)){
-        if(submitted==consumed){stop_player(false);return;}
-        /* A paused seek fills a fresh ring while muted. Resume starts DMA;
-         * priming must not briefly expose audio before returning to pause. */
-        if(seek_paused){seek_paused=false;state.phase=LN_PLAYER_PAUSE;return;}
-        if(!ln_audio_start()){fail(15);return;}state.phase=LN_PLAYER_PLAY;
+    if(state.phase==LN_PLAYER_PRIME){
+        uint32_t prime_frames=ln_player_background_frames(s->rate);
+#if defined(LINNET_SOC_PP5022)
+        /* A drained rate change needs more runway for its first cold disk read. */
+        if(join_pending&&!join_gapless&&s->rate!=slots[audible].rate)
+            prime_frames=prefetch_frames(s->rate);
+#endif
+        if(s->submitted>=prime_frames||s->phase==SLOT_EOF){
+            if(submitted==consumed){stop_player(false);return;}
+            /* A paused seek fills a fresh ring while muted. Resume starts DMA;
+             * priming must not briefly expose audio before returning to pause. */
+            if(seek_paused){seek_paused=false;state.phase=LN_PLAYER_PAUSE;return;}
+            if(!ln_audio_start()){fail(15);return;}state.phase=LN_PLAYER_PLAY;
+        }
     }
     if(s->phase!=SLOT_EOF){eof_waiting=false;return;}
     ln_audio_snapshot(&audio);
