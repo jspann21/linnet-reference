@@ -87,8 +87,12 @@ accessory-dependent features are expansion suggestions for other targets.
   A full track boundary increased the CRC-checked history play count across a
   guarded reboot. Four settings publication cuts exposed only intact old/new
   records; the original was restored and verified after a final reboot (one cut
-  needed a retry after an explicit write rejection). Other history interruption
-  cases, media/firmware publication cuts, rollback, and USB device loss remain open.
+  needed a retry after an explicit write rejection). Four firmware candidate
+  publication cuts on rotating M25 preserved the healthy image and settings;
+  stage 1 kept the old slot and stages 2–4 confirmed the new slot. Explicit
+  begin/chunk rejections were inspected; a partial upload was cleared by guarded
+  reboot before retry. Other history interruption cases, media publication cuts,
+  crash rollback, and USB device loss remain open.
 
 - [ ] **Qualify: packaged release workflows.** Exercise navigation, playback,
   install/update, rollback, restore/uninstall and media preparation using release
