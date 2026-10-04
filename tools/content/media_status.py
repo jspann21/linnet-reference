@@ -189,12 +189,21 @@ def _video_readiness(inventory, published, identity, state=None, verified=None):
                 if (isinstance(output, (list, tuple)) and len(output) == 2 and
                         isinstance(output[0], str)):
                     saved_outputs.setdefault(str(root / output[0]).casefold(), output)
-    for row in ready:
-        output = saved_outputs.get(row['path'].casefold())
-        if output is None or not media._outputs_match(root, [output], verified=verified):
-            return 'Needs update'
-    # Scan and library rows already carry absolute device paths. Recheck each
-    # source without following a link that appeared since traversal.
+    if any(row['path'].casefold() not in saved_outputs for row in ready):
+        return 'Needs update'
+    # Check cheap source stamps before hashing large published packages.
+    # Scan and library rows already carry absolute device paths.
+    def stamp(source):
+        try:
+            info = source.lstat()
+        except OSError:
+            return None
+        if (not stat.S_ISREG(info.st_mode) or
+                getattr(info, 'st_file_attributes', 0) & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)):
+            return None
+        return [info.st_size, info.st_mtime_ns]
+
+    sources = []
     for value in compatible_files:
         source = Path(value)
         if str(source).casefold() in generated:
@@ -203,19 +212,26 @@ def _video_readiness(inventory, published, identity, state=None, verified=None):
         saved = video_files.get(relative, {})
         if not isinstance(saved, dict):
             return 'Needs update'
-        try:
-            info = source.lstat()
-        except OSError:
-            return 'Needs update'
-        if not stat.S_ISREG(info.st_mode) or getattr(info, 'st_file_attributes', 0) & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400):
-            return 'Needs update'
         outputs = saved.get('outputs', [])
-        if (saved.get('source_stamp') != [info.st_size, info.st_mtime_ns] or
-                not media._outputs_match(root, outputs, verified=verified)):
+        current = stamp(source)
+        if current is None or saved.get('source_stamp') != current:
+            return 'Needs update'
+        if not isinstance(outputs, list):
             return 'Needs update'
         if str(source).casefold() in cataloged and not any(
-                str(root / name).casefold() == str(source).casefold()
-                for name, _ in outputs):
+                isinstance(output, (list, tuple)) and len(output) == 2 and
+                isinstance(output[0], str) and
+                str(root / output[0]).casefold() == str(source).casefold()
+                for output in outputs):
+            return 'Needs update'
+        sources.append((source, outputs, current))
+    for row in ready:
+        if not media._outputs_match(root, [saved_outputs[row['path'].casefold()]], verified=verified):
+            return 'Needs update'
+    for source, outputs, current in sources:
+        if stamp(source) != current:
+            return 'Needs update'
+        if not media._outputs_match(root, outputs, verified=verified):
             return 'Needs update'
     if ready:
         return 'Ready'

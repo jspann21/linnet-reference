@@ -160,7 +160,11 @@ accessory-dependent features are expansion suggestions for other targets.
   Photo 4G inspected 3,253 rows in 996.31/1.00 seconds on first/repeated
   passes; empty planning took 1.12/0.57 seconds. The device returned from
   Disk Mode healthy with its 2,894-track library intact. The slow first pass
-  needs profiling; full conversion and UI responsiveness remain open.
+  included avoidable video verification: readiness now checks missing digests
+  and source stamps before hashing large packages. A separate fresh mount still
+  took 36.29 seconds, mainly in source scanning, while video readiness returned
+  Needs update without package reads; its next warm pass took 1.50 seconds.
+  Full cold-cache comparison, conversion, and UI responsiveness remain open.
 
 - [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed
   M4A seeking are implemented. Measure prepared M4A separately from unindexed M4A
