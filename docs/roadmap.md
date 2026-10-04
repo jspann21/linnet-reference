@@ -364,6 +364,10 @@ accessory-dependent features are expansion suggestions for other targets.
   Add saved interval, repeat/shuffle and optional music-playlist choices; verify
   slide changes preserve audio reserve. [Slideshow](../services/photos/photos.c),
   [controls](../services/music/ui.c).
+  Partial: Photo 4G and Classic each advanced six observed prepared slides during
+  music; flash M25 advanced five. All three kept zero reported audio underruns,
+  silence frames, or faults and ample queued audio. Saved focus was restored;
+  flash M25 retained it across a graceful reboot. Adjustable settings remain open.
 
 - [ ] **Improve: stock Sound Check compatibility.** ReplayGain works and some
   targets label it Sound Check, but the host reads ReplayGain tags rather than
