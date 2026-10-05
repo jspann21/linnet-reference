@@ -42,10 +42,10 @@ static bool ln_pp_disk_text(const char *s, uint32_t count, uint32_t left,
 }
 
 static uint16_t ln_pp_disk_screen_pixel(uint32_t width, uint32_t height,
-                                        uint32_t x, uint32_t y, bool mono)
+                                        uint32_t x, uint32_t y, bool symbol_visible)
 {
     uint32_t sx = x * 160u / width, sy = y * 128u / height;
-    uint16_t ink = 0x2104u, alert = mono ? ink : 0xc800u;
+    uint16_t ink = 0x2104u;
     uint16_t color = 0xffffu;
     if (sy < 28u) color = 0xe71cu;
     if (sy == 27u || sy == 127u) color = 0x9cd3u;
@@ -53,9 +53,10 @@ static uint16_t ln_pp_disk_screen_pixel(uint32_t width, uint32_t height,
 
     int32_t dx = (int32_t)sx - 80, dy = (int32_t)sy - 68;
     int32_t distance = dx * dx + dy * dy;
-    /* The familiar prohibited-disconnect symbol. */
-    if (distance >= 22 * 22 && distance <= 32 * 32) color = alert;
-    if (distance < 29 * 29 && dx + dy >= -6 && dx + dy <= 6) color = alert;
+    if (symbol_visible) {
+        if (distance >= 27 * 27 && distance <= 30 * 30) color = ink;
+        if (distance < 29 * 29 && dx + dy >= -3 && dx + dy <= 3) color = ink;
+    }
     if (ln_pp_disk_text("DO NOT DISCONNECT", 17u, 29u, 107u, 1u, sx, sy))
         color = ink;
     return color;

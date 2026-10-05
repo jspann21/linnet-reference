@@ -18,7 +18,7 @@ static uint32_t trace[8];
 #define LCD_RECORD(index, value) ((void)0)
 #define LCD_RECORD_FAILURE() ((void)0)
 #endif
-static bool draw(uint16_t color,const char (*lines)[24],bool disk_screen);
+static bool draw(uint16_t color,const char (*lines)[24],bool disk_screen,bool symbol_visible);
 
 static bool delay_us(uint32_t delay)
 {
@@ -144,7 +144,7 @@ bool ln_q21_lcd_reinitialize(void)
 bool ln_q21_lcd_diagnostic(void)
 {
     static const char lines[7][24]={"LINNET DISPLAY TEST","4G MONO 160 X 128","0123456789","ABCDEFGHIJKLMNO","PQRSTUVWXYZ","EDGE TO EDGE"};
-    return draw(0xffffu,lines,false);
+    return draw(0xffffu,lines,false,false);
 }
 
 bool ln_q21_lcd_begin_row(uint32_t y)
@@ -212,7 +212,7 @@ static uint8_t text_pixel(const char (*lines)[24],uint32_t x,uint32_t y)
     return (mask&(16u>>bit))?3u:0u;
 }
 
-static bool draw(uint16_t color,const char (*lines)[24],bool disk_screen)
+static bool draw(uint16_t color,const char (*lines)[24],bool disk_screen,bool symbol_visible)
 {
     uint32_t started=ln_time_us(),blocks=0;LCD_RECORD(1, 0);
     if(!ln_q21_lcd_init())return false;
@@ -224,7 +224,7 @@ static bool draw(uint16_t color,const char (*lines)[24],bool disk_screen)
             for(uint32_t p=0;p<8u;++p){
                 uint8_t value;
                 if(disk_screen){
-                    uint16_t pixel=ln_pp_disk_screen_pixel(LINNET_LCD_WIDTH,LINNET_LCD_HEIGHT,x+p,y,true);
+                    uint16_t pixel=ln_pp_disk_screen_pixel(LINNET_LCD_WIDTH,LINNET_LCD_HEIGHT,x+p,y,symbol_visible);
                     value=pixel==0xffffu?0u:pixel==0xe71cu?1u:
                         pixel==0x9cd3u||pixel==0x738eu?2u:3u;
                 }else value=lines?text_pixel(lines,x+p,y):solid;
@@ -239,18 +239,18 @@ failed:
     finish(started,0,blocks);ready=false;return false;
 }
 
-bool ln_lcd_fill(uint16_t color){return draw(color,0,false);}
-bool ln_target_disk_screen(bool symbol_visible){(void)symbol_visible;return draw(0xffffu,0,true);}
+bool ln_lcd_fill(uint16_t color){return draw(color,0,false,false);}
+bool ln_target_disk_screen(bool symbol_visible){return draw(0xffffu,0,true,symbol_visible);}
 #if defined(LINNET_IMAGE_BOOT)
 bool ln_lcd_boot(void)
 {
     static const char lines[7][24]={"LINNET","MP102","STARTING"};
-    return draw(0xffffu,lines,false);
+    return draw(0xffffu,lines,false,false);
 }
 bool ln_lcd_boot_apple(void)
 {
     static const char lines[7][24]={"APPLE IPOD SOFTWARE","","STARTING"};
-    return draw(0xffffu,lines,false);
+    return draw(0xffffu,lines,false,false);
 }
 bool ln_lcd_boot_menu(uint32_t available,uint32_t selected,bool starting)
 {
@@ -277,7 +277,7 @@ bool ln_lcd_boot_menu(uint32_t available,uint32_t selected,bool starting)
             ++row;
         }
     }
-    return draw(0xffffu,lines,false);
+    return draw(0xffffu,lines,false,false);
 }
 #endif
 bool ln_lcd_fault(uint32_t reason,const uint8_t build_id[32])
@@ -287,7 +287,7 @@ bool ln_lcd_fault(uint32_t reason,const uint8_t build_id[32])
         "RESTARTING","MENU+CENTER: RESET","CENTER+PLAY: DISK"};
     for(uint32_t i=0;i<8u;++i)lines[1][5u+i]=hex[(reason>>(28u-i*4u))&15u];
     for(uint32_t i=0;i<8u;++i){lines[2][6u+i*2u]=hex[build_id[i]>>4];lines[2][7u+i*2u]=hex[build_id[i]&15u];}
-    return draw(0xffffu,lines,false);
+    return draw(0xffffu,lines,false,false);
 }
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_lcd_diagnostics(uint32_t output[8])

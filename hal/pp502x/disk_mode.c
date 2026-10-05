@@ -307,7 +307,7 @@ _Noreturn void ln_pp_disk_mode(const char *serial,uint32_t sector_bytes,bool wri
     device_serial=storage_serial;
     if(!ln_pp_usb_storage_init(storage_serial))ln_platform_hardware_reset();
     uint32_t connection=ln_usb_generation();
-#if LINNET_TARGET_NUMBER == 25 || LINNET_TARGET_NUMBER == 98
+#if LINNET_TARGET_NUMBER == 25 || LINNET_TARGET_NUMBER == 98 || defined(LINNET_TARGET_IPOD4G_Q21)
     uint32_t blink_started=ln_time_us();
     uint32_t idle_started=blink_started;
     bool symbol_visible=true;
@@ -322,18 +322,18 @@ _Noreturn void ln_pp_disk_mode(const char *serial,uint32_t sector_bytes,bool wri
             if(!drain())ln_platform_hardware_reset();
             if(ln_pp_usb_storage_reset_pending() && !ln_pp_usb_storage_reset_complete())ln_platform_hardware_reset();
             connection=ln_usb_generation();state=CBW;position=0;
-#if LINNET_TARGET_NUMBER == 25 || LINNET_TARGET_NUMBER == 98
+#if LINNET_TARGET_NUMBER == 25 || LINNET_TARGET_NUMBER == 98 || defined(LINNET_TARGET_IPOD4G_Q21)
             idle_started=ln_time_us();
 #endif
         }
         if((state==RECEIVE || state==DISCARD || state==INVALID) && ln_time_us()-activity>15000000u) {
             (void)drain();ln_platform_hardware_reset();
         }
-#if LINNET_TARGET_NUMBER == 25 || LINNET_TARGET_NUMBER == 98
+#if LINNET_TARGET_NUMBER == 25 || LINNET_TARGET_NUMBER == 98 || defined(LINNET_TARGET_IPOD4G_Q21)
         bool was_idle=state==CBW && position==0;
 #endif
         if(ln_usb_connected())step();
-#if LINNET_TARGET_NUMBER == 25 || LINNET_TARGET_NUMBER == 98
+#if LINNET_TARGET_NUMBER == 25 || LINNET_TARGET_NUMBER == 98 || defined(LINNET_TARGET_IPOD4G_Q21)
         /* Count quiet time from completed transport work, including the CSW,
          * rather than from command receipt (which may precede a long read). */
         uint32_t now=ln_time_us();
