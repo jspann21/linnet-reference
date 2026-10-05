@@ -633,18 +633,21 @@ def build_preparation_page(window):
     window.preparation_scroll = scroll
     outer.addWidget(scroll, 1)
     window.heading(layout, 'Prepare your media', 'Turn your files into an iPod-ready collection. Your originals stay on the device.')
-    window.prep_checks, window.prep_labels = {}, {}
+    window.prep_unavailable = label('', 'notice', True)
+    window.prep_unavailable.hide(); layout.addWidget(window.prep_unavailable)
+    window.prep_checks, window.prep_labels, window.prep_cards = {}, {}, {}
     descriptions = {'Music': 'Build the song library and album artwork', 'Photos': 'Create thumbnails and zoomable photos', 'Videos': 'Validate existing videos and prepare them for this iPod', 'Notes': 'Prepare text and Markdown for the reader'}
     for kind in ('Music', 'Photos', 'Videos', 'Notes'):
         card = QFrame(); card.setObjectName('card'); row = box(card, horizontal=True, margins=(20, 18, 20, 18), spacing=15)
+        window.prep_cards[kind] = card
         check = CheckBox(kind); check.setChecked(True); check.setMinimumWidth(110); window.prep_checks[kind] = check; row.addWidget(check)
         text = box(spacing=5); text.addWidget(label(descriptions[kind], 'cardTitle'))
         state = label('Connect an iPod to check this library.', 'muted'); window.prep_labels[kind] = state; text.addWidget(state); row.addLayout(text, 1)
         if kind == 'Videos':
             window.choose_videos_button = button('Choose videos', window.choose_videos); row.addWidget(window.choose_videos_button)
             window.video_repair_button = button('Review catalog backups', window.review_video_catalog)
-            row.addWidget(window.video_repair_button)
         layout.addWidget(card)
+    layout.addWidget(window.video_repair_button, 0, Qt.AlignLeft)
     window.online_artwork = CheckBox('Find missing iTunes album covers online (MusicBrainz / Cover Art Archive)')
     window.online_artwork.setChecked(window.settings.value('onlineArtwork', True, type=bool))
     window.online_artwork.toggled.connect(lambda enabled: window.settings.setValue('onlineArtwork', enabled))
@@ -730,9 +733,11 @@ def build_screens_page(window):
 
 def build_games_page(window):
     page, layout = window.scroll_page()
-    window.heading(layout, 'Games', 'Choose the games that appear on your iPod.')
+    window.heading(layout, 'Games', 'Game availability depends on your iPod model.')
     window.games_loaded_for = None
-    window.game_checks = []
+    window.games_unavailable = label('Games aren’t available on this iPod.', 'notice', True)
+    window.games_unavailable.hide(); layout.addWidget(window.games_unavailable)
+    window.game_checks, window.game_cards = [], []
     for index, (title, description) in enumerate(games.GAMES):
         card = QFrame(); card.setObjectName('card')
         row = box(card, horizontal=True, margins=(20, 18, 20, 18), spacing=15)
@@ -740,6 +745,7 @@ def build_games_page(window):
         check.toggled.connect(window.games_controller.games_changed)
         window.game_checks.append(check); row.addWidget(check)
         row.addWidget(label(description, 'muted', True), 1)
+        window.game_cards.append(card)
         layout.addWidget(card)
     window.games_status = label('Connect an iPod with games to check installed games.', 'muted', True)
     layout.addWidget(window.games_status)
@@ -2343,6 +2349,13 @@ class MediaWindow(QMainWindow):
         self.prep_details.setVisible(self.last_preparation is not None)
         self.prep_details.setEnabled(ready and self.last_preparation is not None and
                                     self.same_device(self.identity, self.last_preparation[0]))
+        games_available = bool(self.identity and games.available(self.identity))
+        games_unavailable = bool(self.identity and not games_available)
+        self.games_unavailable.setVisible(games_unavailable)
+        self.games_status.setVisible(not games_unavailable)
+        self.games_save.setVisible(games_available)
+        for card in self.game_cards:
+            card.setVisible(games_available)
         games_ready = ready and games.available(self.identity)
         self.games_save.setEnabled(games_ready and self.games_loaded_for == self.identity['root'])
         self.games_recover.setVisible(bool(self.identity and self.game_read_failed and games.available(self.identity)))
@@ -2415,6 +2428,12 @@ class MediaWindow(QMainWindow):
 
     def update_preparation(self):
         supported = media.supported_kinds(self.identity) if self.identity else ()
+        unavailable = [kind for kind in self.prep_cards if self.identity and kind not in supported]
+        self.prep_unavailable.setText(f"{' and '.join(unavailable).capitalize()} aren't available on this iPod."
+                                      if unavailable else '')
+        self.prep_unavailable.setVisible(bool(unavailable))
+        for kind, card in self.prep_cards.items():
+            card.setVisible(kind not in unavailable)
         for kind, text in self.prep_labels.items():
             info = (self.inventory or {}).get(kind)
             if self.identity and kind not in supported:
