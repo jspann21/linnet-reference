@@ -834,6 +834,8 @@ static void query_step(void)
                 if(request(LN_DB_GROUP,library.query_result&~LN_MUSIC_SEARCH_GROUP))library.stage=5;
                 return;
             }
+            const char *title=ln_music_library_title(library.query_result);
+            if(title){text_copy(library.group_name,title);query_complete(library.query_result);return;}
             if(request(LN_DB_TRACK,library.query_result))library.stage=2;
         }else if(library.stage==5){
             library.group=library.db.group;

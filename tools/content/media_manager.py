@@ -1279,9 +1279,8 @@ def _outputs_match(root, outputs, *, verified=None, progress=None):
             return False
         path = root / relative
         try:
-            _plain(path, root)
-            info = path.stat()
-            if not stat.S_ISREG(info.st_mode):
+            info = _plain(path, root)
+            if info is None or not stat.S_ISREG(info.st_mode):
                 return False
             stamp = (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino)
             # The cache is already scoped to this disk, volume and partition.

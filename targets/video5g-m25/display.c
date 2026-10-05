@@ -25,27 +25,35 @@ static uint16_t draw[LINNET_DISPLAY_PIXELS] __attribute__((aligned(32)));
 static const uint16_t *presented=draw;
 static bool initialized,dirty,direct,queued;
 static uint32_t queued_started,queue_high_water=1u;
-static uint32_t phase,cursor,wait_started,poll_at,error,submitted,completed,failures,resets,generation,pairs;
+static uint32_t dirty_first,dirty_end,queued_first,queued_end;
+static uint32_t phase,cursor,transfer_end,wait_started,poll_at,error,submitted,completed,failures,resets,generation,pairs;
 static uint32_t started __attribute__((unused)); /* Timing is read only by diagnostics. */
 #if !defined(LINNET_PROFILE_RELEASE)
 static uint32_t max_present_us;
 static uint32_t transfer_us,transfer_calls,transfer_max_us,last_present_us;
 #endif
+static void damage_full(void){dirty_first=0;dirty_end=LINNET_DISPLAY_PIXELS;dirty=true;}
 bool ln_display_init(void){
     initialized=false;cop_capable=cop_probe();
     if(!pause_worker(true)){error=1;return false;}
     MB(LN_DISPLAY_ENABLED)=0;MB(LN_DISPLAY_STATE)=0;
     if(!pause_worker(false)){error=2;return false;}
     if(!ln_m25_lcd_init()){error=3;return false;}
-    ++generation;phase=0;queued=false;dirty=true;direct=false;initialized=true;error=0;return true;
+    ++generation;phase=0;queued=false;damage_full();direct=false;initialized=true;error=0;return true;
 }
 uint32_t ln_display_init_error(void){return error;}
 uint16_t *ln_display_framebuffer(void){return direct?0:draw;}
 uint16_t *ln_display_direct_framebuffer(void){
-    if(!initialized||phase||direct)return 0;direct=true;dirty=true;return draw;
+    if(!initialized||phase||direct)return 0;direct=true;damage_full();return draw;
 }
 bool ln_display_damage(int32_t x,int32_t y,int32_t width,int32_t height){
     if(!initialized||width<=0||height<=0||x>=320||y>=240||x<=-width||y<=-height)return false;
+    if(y<0){height+=y;y=0;}if(height>240-y)height=240-y;
+    /* BCM retains untouched pixels. A full-width row span keeps transfers
+     * contiguous and aligned while omitting undamaged rows. */
+    uint32_t first=(uint32_t)y*LINNET_UI_WIDTH,end=(uint32_t)(y+height)*LINNET_UI_WIDTH;
+    if(!dirty||first<dirty_first)dirty_first=first;
+    if(!dirty||end>dirty_end)dirty_end=end;
     dirty=true;return true;
 }
 bool ln_display_can_render(void){
@@ -69,10 +77,10 @@ bool ln_display_present(void){
      * submitted frame. No second full-frame copy is needed. */
     presented=draw;
     direct=false;dirty=false;++submitted;
-    if(phase==3u){queued=true;queued_started=ln_time_us();queue_high_water=2u;return true;}
-    cursor=0;phase=1;started=wait_started=poll_at=ln_time_us();return true;
+    if(phase==3u){queued=true;queued_first=dirty_first;queued_end=dirty_end;queued_started=ln_time_us();queue_high_water=2u;return true;}
+    cursor=dirty_first;transfer_end=dirty_end;phase=1;started=wait_started=poll_at=ln_time_us();return true;
 }
-static bool fail(uint32_t code){error=code;++failures;phase=0;queued=false;dirty=true;return false;}
+static bool fail(uint32_t code){error=code;++failures;phase=0;queued=false;damage_full();return false;}
 bool ln_display_service(uint32_t max_pairs){
 #if defined(LINNET_IMAGE_OS)
     if(ln_m25_coprocessor_owned())return true;
@@ -98,7 +106,7 @@ bool ln_display_service(uint32_t max_pairs){
 #endif
             phase=0;++completed;
             if(!queued)return true;
-            queued=false;cursor=0;started=queued_started;
+            queued=false;cursor=queued_first;transfer_end=queued_end;started=queued_started;
         }
         phase=2;
     }
@@ -112,7 +120,7 @@ bool ln_display_service(uint32_t max_pairs){
     }
 #endif
     uint32_t count=max_pairs*2u;
-    if(count>LINNET_DISPLAY_PIXELS-cursor)count=LINNET_DISPLAY_PIXELS-cursor;
+    if(count>transfer_end-cursor)count=transfer_end-cursor;
 #if !defined(LINNET_PROFILE_RELEASE)
     uint32_t transfer_started=ln_time_us();
 #endif
@@ -122,7 +130,7 @@ bool ln_display_service(uint32_t max_pairs){
     if(elapsed>transfer_max_us)transfer_max_us=elapsed;
 #endif
     cursor+=count;pairs+=count/2u;
-    if(cursor==LINNET_DISPLAY_PIXELS){if(!ln_m25_lcd_commit())return fail(7);phase=3;wait_started=ln_time_us();poll_at=wait_started+1000u;}
+    if(cursor==transfer_end){if(!ln_m25_lcd_commit())return fail(7);phase=3;wait_started=ln_time_us();poll_at=wait_started+1000u;}
     return true;
 }
 bool ln_display_wait_deadline(uint32_t *deadline){
@@ -159,7 +167,7 @@ bool ln_display_quiesce(void){
     return !phase;
 }
 bool ln_display_reset(void){
-    if(!ln_display_quiesce())return false;++resets;dirty=true;direct=false;return ln_m25_lcd_init();
+    if(!ln_display_quiesce())return false;++resets;damage_full();direct=false;return ln_m25_lcd_init();
 }
 bool ln_display_diagnostic(uint32_t pattern){
 #if defined(LINNET_IMAGE_OS)
@@ -182,7 +190,7 @@ bool ln_display_diagnostic(uint32_t pattern){
         return ln_m25_coprocessor_begin(pattern-0x4d250002u);
     }
 #endif
-    if(pattern||!ln_display_quiesce())return false;dirty=true;return ln_lcd_fill(0x07e0u);
+    if(pattern||!ln_display_quiesce())return false;damage_full();return ln_lcd_fill(0x07e0u);
 }
 void ln_display_presentation_snapshot(struct ln_display_presentation *out){
     if(out)*out=(struct ln_display_presentation){submitted,completed,failures,resets,generation};

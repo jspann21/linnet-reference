@@ -114,8 +114,8 @@ def _empty_history_bank(epoch: bytes) -> bytes:
     return bytes(bank)
 
 
-def _plain(path: Path, boundary: Path) -> None:
-    """Reject symlinks/junctions before resolving any publication path."""
+def _plain(path: Path, boundary: Path) -> os.stat_result | None:
+    """Reject symlinks/junctions and return the final component's metadata."""
     try:
         relative = path.relative_to(boundary)
     except ValueError as exc:
@@ -127,9 +127,11 @@ def _plain(path: Path, boundary: Path) -> None:
         try:
             info = cursor.lstat()
         except FileNotFoundError:
+            info = None
             continue
         if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
             raise ValueError(f"reparse/symlink path rejected: {cursor}")
+    return info
 
 
 def _bounded(path: Path, maximum: int) -> bytes:
@@ -177,8 +179,9 @@ def _pool_string(database: bytes, pool: int, offset: int) -> str:
 
 def _existing_stat(local: Path, root: Path, size: int, mtime_ns: int | None = None):
     """Check referenced media without reading its audio payload."""
-    _plain(local, root)
-    info = local.stat()
+    info = _plain(local, root)
+    if info is None:
+        info = local.stat()
     if not stat.S_ISREG(info.st_mode) or info.st_size != size:
         raise ValueError(f"existing iPod media type/size changed: {local}")
     if mtime_ns is not None and info.st_mtime_ns != mtime_ns:
