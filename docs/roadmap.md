@@ -133,6 +133,16 @@ accessory-dependent features are expansion suggestions for other targets.
   The four updated after Q21 each processed 32 synthetic wheel events without
   drops and completed one automatic sleep/wake cycle. Photo 4G was unavailable;
   sustained and physical qualification remain open.
+  A1059 booted and installed a device-bound development image, then refreshed
+  its 570-track Music library under guarded Disk Mode and returned healthy.
+  Playback during 32 synthetic wheel moves reported no underruns, silence,
+  audio faults, or input drops; a bounded sleep/wake cycle passed. A newer image
+  with the subsequent Q21 theme change booted and played in RAM, but its
+  persistent upload timed out mid-chunk. Recovery Boot retained the prior
+  confirmed slot with no active upload or candidate; a persistent reboot
+  restored that healthy image and ready library. Intermittent Link read timeouts
+  deferred the newer install. Physical output, current, and final-image
+  qualification remain open.
 
 - [ ] **Qualify: remaining recovery, parser, transaction, and memory-pressure cases.**
   Cover interrupted media/firmware publication, corrupt/truncated records, full
@@ -261,6 +271,9 @@ accessory-dependent features are expansion suggestions for other targets.
   17.01 seconds of the first pass checked published outputs. Unchanged Music plans
   took 0.59–0.92 seconds with no copies, conversion, or reconciliation. It returned
   to a healthy OS image.
+  A1059's 570-track Music refresh completed without original-file copies or
+  audio conversion. The first host preparation had 570 metadata cache misses;
+  the repeat inspection and empty plan each took under a second with Music Ready.
 
 - [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed
   M4A seeking are implemented. Measure prepared M4A separately from unindexed M4A
