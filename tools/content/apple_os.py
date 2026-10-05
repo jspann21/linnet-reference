@@ -36,6 +36,10 @@ SELECTABLE_ROOTS = ROOTS[:3]
 APPLE_MUSIC_PREFIX = ':iPod_Control:Music:..:..:Music:'
 
 
+def selectable_roots(identity):
+    return ('Music',) if identity.get('target_id') == 'ipod4g-q21' else SELECTABLE_ROOTS
+
+
 @lru_cache(maxsize=1)
 def _qualified_specimens():
     """Load exact Apple OS specimens; a missing or invalid record enables none."""
@@ -72,7 +76,9 @@ def _qualified_device(identity):
                  if (identity.get('target_id') == row['target_id'] and
                      identity.get('disk_serial') == row['disk_serial'] and
                      identity.get('volume_serial') == row['volume_serial'] and
-                     identity.get('sector_bytes') == row['sector_bytes'])), None)
+                     identity.get('sector_bytes') == row['sector_bytes'] and
+                     (row['target_id'] != 'ipod4g-q21' or
+                      identity.get('model_number') == row['model']))), None)
 
 
 def _eligibility(identity):
@@ -88,6 +94,8 @@ def _eligibility(identity):
                   'sector size for its model.')
     else:
         reason = 'This exact iPod unit is qualified for Apple OS updates.'
+    if identity.get('target_id') == 'ipod4g-q21':
+        return reason + ' Music requires MP3 files under /Music with short FAT paths. Compatible text files in /Notes are available automatically.'
     return (reason + ' Music requires MP3 files under /Music with short FAT paths; videos require '
             'compatible MP4, M4V or MOV files under /Videos with short FAT paths. Photos must be '
             'selected under /Photos, and an existing Apple photo library must match its Linnet receipt.')
@@ -112,12 +120,12 @@ def _load(identity):
             'configured': False, 'published': None}
 
 
-def _valid_folder(root, value):
+def _valid_folder(root, value, allowed=SELECTABLE_ROOTS):
     if not isinstance(value, str) or not value or '\\' in value:
         raise ValueError('Invalid Apple OS folder selection')
     relative = Path(value)
     if (relative.is_absolute() or relative.drive or '..' in relative.parts or
-            not relative.parts or relative.parts[0] not in SELECTABLE_ROOTS or
+            not relative.parts or relative.parts[0] not in allowed or
             relative.as_posix() != value):
         raise ValueError('Apple OS folder is outside the media folders')
     folder = root / relative
@@ -127,20 +135,20 @@ def _valid_folder(root, value):
     return folder
 
 
-def _normalize(root, folders):
+def _normalize(root, folders, allowed=SELECTABLE_ROOTS):
     values = sorted(set(folders), key=lambda x: (x.casefold(), x))
     result = []
     for value in values:
-        _valid_folder(root, value)
+        _valid_folder(root, value, allowed)
         if not any(value.casefold() == parent.casefold() or
                    value.casefold().startswith(parent.casefold() + '/') for parent in result):
             result.append(value)
     return result
 
 
-def _walk_folders(root):
+def _walk_folders(root, kinds=ROOTS):
     result = []
-    for kind in ROOTS:
+    for kind in kinds:
         start = root / kind
         if not start.is_dir():
             continue
@@ -163,9 +171,9 @@ def _walk_folders(root):
     return result
 
 
-def _folder_rows(root, records_by_kind):
+def _folder_rows(root, records_by_kind, kinds=ROOTS):
     paths = set()
-    for kind in ROOTS:
+    for kind in kinds:
         kind_root = root / kind
         if kind_root.is_dir():
             paths.add(kind)
@@ -185,7 +193,7 @@ def _folder_rows(root, records_by_kind):
                 paths.add(relative)
                 parent = parent.parent
     return [{'path': value, 'kind': value.split('/')[0]}
-            for value in sorted(paths, key=lambda x: (ROOTS.index(x.split('/')[0]),
+            for value in sorted(paths, key=lambda x: (kinds.index(x.split('/')[0]),
                                                       len(Path(x).parts), x.casefold()))]
 
 
@@ -315,28 +323,30 @@ def _video_probe(path, ffprobe):
             'artist': str(tags.get('artist') or 'Unknown Artist')}
 
 
-def inspect(identity, *, records_by_kind=None):
+def inspect(identity, *, records_by_kind=None, retail_tracks=None):
     """Return folder choices and readiness without writing the device."""
     root = Path(identity['root']).resolve(strict=True)
+    allowed = selectable_roots(identity)
+    folder_kinds = (*allowed, 'Notes')
     if not supported(identity):
         database = root / 'iPod_Control/iTunes/iTunesDB'
         if database.is_file():
             try:
                 from .retail_media import tracks
-                count = len(tracks(root))
+                count = len(retail_tracks) if retail_tracks else len(tracks(root))
                 library = f'Apple music database lists {count:,} track' + ('' if count == 1 else 's') + '. '
             except (OSError, ValueError, UnicodeError, struct.error):
                 library = 'Apple music database could not be read. '
         else:
             library = 'No Apple music database found. '
         return {'supported': False, 'folders': [], 'selected': [],
-                'status': library + _eligibility(identity), 'eligibility': _eligibility(identity),
+                'status': library.strip(), 'eligibility': _eligibility(identity),
                 'details': []}
-    folders = (_folder_rows(root, records_by_kind) if records_by_kind is not None else
-               _walk_folders(root))
+    folders = (_folder_rows(root, records_by_kind, folder_kinds) if records_by_kind is not None else
+               _walk_folders(root, folder_kinds))
     state = _load(identity)
     selected = [value for value in state.get('folders', [])
-                if isinstance(value, str) and (root / value).is_dir()]
+                if isinstance(value, str) and value.split('/')[0] in allowed and (root / value).is_dir()]
     # Adopt an existing validated Apple music library once.
     adopted = False
     adopted_tracks = None
@@ -344,7 +354,7 @@ def inspect(identity, *, records_by_kind=None):
             and (root / 'Music').is_dir()):
         try:
             from .retail_media import available_tracks
-            adopted_tracks = set(available_tracks(root))
+            adopted_tracks = set(retail_tracks if retail_tracks is not None else available_tracks(root))
             prefix = str(root / 'Music').casefold() + os.sep
             if any(path.startswith(prefix) for path in adopted_tracks):
                 selected = ['Music']
@@ -355,7 +365,7 @@ def inspect(identity, *, records_by_kind=None):
     published = state.get('published') if isinstance(state.get('published'), dict) else {}
     db = root / 'iPod_Control/iTunes/iTunesDB'
     source_stamp = _signature(root, music)
-    digest = _hash(db) if db.is_file() else None
+    digest = _hash(db) if (selected or published) and db.is_file() else None
     adopted_ready = False
     if adopted and adopted_tracks is not None and digest:
         local_paths = {str(path.resolve()).casefold() for path, _ in music}
@@ -413,7 +423,8 @@ def inspect(identity, *, records_by_kind=None):
     details = [{'kind': 'Music', 'count': len(music), 'status': music_status}]
     photos = _files(root, selected, 'Photos', media.extensions('Photos'), records_by_kind)
     photo_db = root / 'Photos/Photo Database'
-    photo_digest = _hash(photo_db) if photo_db.is_file() else None
+    photo_digest = (_hash(photo_db) if (photos or published.get('photo_count', 0)) and
+                    photo_db.is_file() else None)
     if photos:
         if photo_digest and published.get('photo_database_sha256') not in (None, photo_digest):
             photo_status = 'Apple photo library changed outside Linnet'
@@ -475,7 +486,8 @@ def inspect(identity, *, records_by_kind=None):
         status = 'Choose folders to make available in Apple OS'
     return {'supported': True, 'folders': folders, 'selected': selected,
             'status': status, 'details': details, 'issues': issues,
-             'can_update': can_update, 'eligibility': _eligibility(identity)}
+             'can_update': can_update, 'eligibility': _eligibility(identity),
+             'selectable_roots': allowed}
 
 
 def save_selection(identity, folders):
@@ -483,7 +495,7 @@ def save_selection(identity, folders):
     if not supported(identity):
         raise ValueError(_eligibility(identity))
     root = Path(identity['root']).resolve(strict=True)
-    selected = _normalize(root, folders)
+    selected = _normalize(root, folders, selectable_roots(identity))
     state = _load(identity)
     state['folders'] = selected
     state['configured'] = True
@@ -802,7 +814,7 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
         raise ValueError(_eligibility(identity))
     root = Path(identity['root']).resolve(strict=True)
     state = _load(identity)
-    selected = _normalize(root, state.get('folders', []))
+    selected = _normalize(root, state.get('folders', []), selectable_roots(identity))
     files = _files(root, selected, 'Music', media.extensions('Music'))
     videos = _files(root, selected, 'Videos', media.extensions('Videos'))
     cache = cache_root(identity)

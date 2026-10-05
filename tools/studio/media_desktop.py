@@ -2466,7 +2466,12 @@ class MediaWindow(QMainWindow):
         dialog.resize(620, 640)
         layout = box(dialog, margins=(24, 24, 24, 24), spacing=12)
         layout.addWidget(label('Available in Apple OS', 'section'))
-        layout.addWidget(label('Select music, photo and video folders on your iPod. Their original names and locations stay in place. Apple reads compatible text files in Notes automatically.', 'muted', True))
+        selectable = self.apple_info['selectable_roots']
+        description = ('Select music folders on your iPod. Their original names and locations stay in place. '
+                       'Apple reads compatible text files in Notes automatically.' if selectable == ('Music',) else
+                       'Select music, photo and video folders on your iPod. Their original names and locations stay in place. '
+                       'Apple reads compatible text files in Notes automatically.')
+        layout.addWidget(label(description, 'muted', True))
         tree = QTreeWidget(); tree.setHeaderLabels(['FOLDER', 'APPLE OS'])
         tree.setColumnWidth(0, 420)
         items = {}
@@ -2478,7 +2483,7 @@ class MediaWindow(QMainWindow):
             item = QTreeWidgetItem(parent or tree, [path.rpartition('/')[2], ''])
             item.setData(0, Qt.UserRole, path)
             items[path] = item
-            if kind in ('Music', 'Photos', 'Videos'):
+            if kind in selectable:
                 item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
                 checked = any(path.casefold() == name.casefold() or
                               path.casefold().startswith(name.casefold() + '/') for name in selected)
@@ -2488,13 +2493,13 @@ class MediaWindow(QMainWindow):
                 item.setText(1, 'Visible in Apple Notes')
                 item.setToolTip(1, 'Apple reads compatible text files in the Notes folder automatically.')
         for path, item in reversed(list(items.items())):
-            if path.split('/')[0] not in ('Music', 'Photos', 'Videos') or not item.childCount():
+            if path.split('/')[0] not in selectable or not item.childCount():
                 continue
             states = {item.child(index).checkState(0) for index in range(item.childCount())}
             item.setCheckState(0, states.pop() if len(states) == 1 else Qt.PartiallyChecked)
         tree.expandToDepth(0); layout.addWidget(tree, 1)
         def changed(item, column):
-            if column != 0 or item.data(0, Qt.UserRole).split('/')[0] not in ('Music', 'Photos', 'Videos'):
+            if column != 0 or item.data(0, Qt.UserRole).split('/')[0] not in selectable:
                 return
             with QSignalBlocker(tree):
                 if item.checkState(0) != Qt.PartiallyChecked:
@@ -2516,7 +2521,7 @@ class MediaWindow(QMainWindow):
         if dialog.exec() != QDialog.Accepted:
             return
         folders = [path for path, item in items.items()
-                   if path.split('/')[0] in ('Music', 'Photos', 'Videos') and item.checkState(0) == Qt.Checked and
+                   if path.split('/')[0] in selectable and item.checkState(0) == Qt.Checked and
                    (not path.rpartition('/')[0] or
                     items[path.rpartition('/')[0]].checkState(0) != Qt.Checked)]
         identity = self.identity

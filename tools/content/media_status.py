@@ -272,7 +272,7 @@ def _library_snapshot(identity):
         if row.get('category') == 'error' and row.get('kind') in inventory:
             inventory[row['kind']].setdefault('errors', []).append(
                 str(row.get('error') or row.get('status') or 'Catalog damaged'))
-    return state, skipped, records, inventory, rows
+    return state, skipped, records, inventory, rows, retail_tracks
 
 
 def inspect(identity, photo_dimension=640, verification="metadata"):
@@ -287,9 +287,9 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
         snapshot_future = pool.submit(_library_snapshot, identity)
         refreshed = refresh_future.result()
         boot_future = pool.submit(installer.assess, refreshed, _validated_identity=True)
-        state, skipped, records, inventory, rows = snapshot_future.result()
+        state, skipped, records, inventory, rows, retail_tracks = snapshot_future.result()
         if identity.get('media_cache_disk_serial') != refreshed.get('media_cache_disk_serial'):
-            state, skipped, records, inventory, rows = _library_snapshot(refreshed)
+            state, skipped, records, inventory, rows, retail_tracks = _library_snapshot(refreshed)
         identity = refreshed
         verified = _verified_outputs(identity['disk_serial'], identity['volume_serial'],
                                      identity['partition_offset'], identity['volume_unique_id'],
@@ -351,7 +351,7 @@ def inspect(identity, photo_dimension=640, verification="metadata"):
     if any(row['kind'] == 'Music' and row['status'].startswith('Needs conversion:') for row in rows):
         readiness['Music'] = 'Needs conversion'
     from . import apple_os
-    apple = apple_os.inspect(identity, records_by_kind=records)
+    apple = apple_os.inspect(identity, records_by_kind=records, retail_tracks=retail_tracks)
     _remember_verified(identity, verified, verified_before)
     return identity, inventory, rows, readiness, apple, boot_review
 
