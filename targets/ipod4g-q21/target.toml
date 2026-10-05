@@ -40,7 +40,7 @@ mailbox_address = 33550336
 mailbox_bytes = 4096
 
 [ui]
-allowed_themes = ["linnet.theme.ipod4g-mono", "linnet.theme.classic-split"]
+allowed_themes = ["linnet.theme.ipod4g-mono"]
 default_theme = "linnet.theme.ipod4g-mono"
 
 [retail]

@@ -178,7 +178,7 @@ qualified.
 | **iPod Photo · A1099** | 220 × 176 color | `photo4g-p98` | Primary development hardware. Music, photos, prepared IPVF video, games, and Link. [Target details](targets/photo4g-p98/README.md). |
 | **iPod Video · A1136, 30 GB** | 320 × 240 color | `video5g-m25` | The MA146 / 32 MiB board: native startup, Link, stereo audio, photos, games, native H.264/MPEG-4 video, and Disk Mode exercised. [Qualification and remaining checks](targets/video5g-m25/QUALIFICATION.md). |
 | **iPod classic · A1238 / N25** | 320 × 240 color | `classic6g-n25` | Native Boot, OS, Link, Disk Mode, and H.264 VGA playback verified. MPEG-4 qualification continues; automatic installation is disabled. |
-| **iPod 4G monochrome · MP102 / Q21** | 160 × 128 monochrome | `ipod4g-q21` | Native startup and return to the preserved Apple OS verified. Two monochrome themes are enabled in the manifest; photos, video, Cover Flow, and games are disabled. |
+| **iPod 4G monochrome · A1059 / MP102 / Q21** | 160 × 128 monochrome | `ipod4g-q21` | Native startup and return to the preserved Apple OS verified. The iPod Mono theme is enabled; photos, video, Cover Flow, and games are disabled. |
 
 Linnet is in active development. Feature coverage and hardware qualification vary
 by target; see the [roadmap](docs/roadmap.md) and linked target notes.

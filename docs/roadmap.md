@@ -30,7 +30,7 @@ separate from the carried-over acceptance work.
 | Desktop and recovery | Per-device import queue, incremental preparation/caches, progress/Stop, space planning, recoverable Trash, index recovery, video catalog restore, diagnostics export, firmware ZIP install, startup choice, restore/uninstall, and safe eject | [Desktop](../tools/studio/media_desktop.py), [preparation](../tools/content/media_manager.py), [installer](../tools/studio/installer.py) |
 
 Availability follows the target and system configuration. Q21 disables photos,
-video, Cover Flow, and games; its manifest enables two monochrome themes. Classic
+video, Cover Flow, and games; its manifest enables the iPod Mono theme. Classic
 has native video but disables automatic installation and currently does not enable
 games. Existing Apple-library reading and the narrowly qualified Apple database
 writer are implemented; broad iTunes interoperability remains incomplete.
