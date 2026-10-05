@@ -14,3 +14,10 @@ disk_serial = "000A27001596FB5F"
 volume_serial = "5FC88A5C"
 sector_bytes = 512
 model = "MA146"
+
+[[specimen]]
+target_id = "ipod4g-q21"
+disk_serial = "000A2700142199DC"
+volume_serial = "769C912A"
+sector_bytes = 512
+model = "PE435A"
