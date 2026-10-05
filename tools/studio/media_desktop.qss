@@ -42,6 +42,9 @@ QComboBox QAbstractItemView::item { min-height: 28px; padding: 3px 8px; border: 
 QTableView { background: transparent; border: none; gridline-color: transparent; selection-background-color: #ddf4f8; selection-color: #193d46; outline: none; }
 QTableView::item { border-bottom: 1px solid #e9eef0; padding: 7px 12px; }
 QTableView::item:hover { background: #edf7f9; }
+QTreeWidget#appleFolders { background: white; color: #202629; border: 1px solid #dce3e5; selection-background-color: #ddf4f8; selection-color: #193d46; outline: none; }
+QTreeWidget#appleFolders::item { min-height: 26px; padding: 2px 5px; }
+QTreeWidget#appleFolders::item:hover { background: #edf7f9; }
 QHeaderView { background: #f7f9fa; border: none; }
 QHeaderView::section { background: #f7f9fa; color: #63757b; border: none; border-bottom: 1px solid #dfe7e9; padding: 10px 12px; font-size: 10px; font-weight: 600; text-align: left; }
 QListView { background: transparent; border: none; outline: none; }

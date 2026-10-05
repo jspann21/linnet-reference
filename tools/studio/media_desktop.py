@@ -2472,8 +2472,10 @@ class MediaWindow(QMainWindow):
                        'Select music, photo and video folders on your iPod. Their original names and locations stay in place. '
                        'Apple reads compatible text files in Notes automatically.')
         layout.addWidget(label(description, 'muted', True))
-        tree = QTreeWidget(); tree.setHeaderLabels(['FOLDER', 'APPLE OS'])
-        tree.setColumnWidth(0, 420)
+        tree = QTreeWidget(); tree.setObjectName('appleFolders')
+        tree.setHeaderLabels(['FOLDER', 'APPLE OS'])
+        tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         items = {}
         selected = self.apple_info['selected']
         for row in self.apple_info['folders']:
