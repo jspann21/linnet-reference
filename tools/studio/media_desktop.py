@@ -2447,7 +2447,9 @@ class MediaWindow(QMainWindow):
             summary += f' {self.stale_videos:,} saved video choice(s) are no longer on this iPod.'
         self.prep_summary.setText(summary)
         if self.apple_info:
-            self.apple_eligibility.setText(self.apple_info.get('eligibility', ''))
+            eligibility = '' if self.apple_info['supported'] else self.apple_info.get('eligibility', '')
+            self.apple_eligibility.setText(eligibility)
+            self.apple_eligibility.setVisible(bool(eligibility))
             lines = [self.apple_info['status']]
             lines.extend(f"{entry['kind']}: {entry['count']:,} files · {entry['status']}"
                          for entry in self.apple_info['details']
@@ -2457,6 +2459,7 @@ class MediaWindow(QMainWindow):
             self.apple_status.setText('\n'.join(lines))
         else:
             self.apple_eligibility.setText('')
+            self.apple_eligibility.setVisible(False)
             self.apple_status.setText('Connect an iPod to check Apple OS availability.')
 
     def choose_apple_folders(self):
