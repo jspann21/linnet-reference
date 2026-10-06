@@ -141,12 +141,27 @@ def _restored(marker):
 
 
 def _same_volume(before, after):
-    # Windows assigns a different USBSTOR/volume identity in Apple Disk Mode.
-    # Match immutable board identity and the existing filesystem/partition instead.
-    keys = ('target_id', 'linnet_usb_serial', 'disk_bytes', 'partition_offset',
-            'partition_bytes', 'sector_bytes', 'volume_serial')
+    # Apple Disk Mode can hide the firmware prefix exposed by native Disk Mode.
+    # Both the disk size and media offset then shrink by exactly that prefix;
+    # board identity, filesystem identity, media size and the trailing extent stay.
+    keys = ('target_id', 'linnet_usb_serial', 'partition_bytes', 'sector_bytes',
+            'volume_serial', 'filesystem')
+    error = 'The reconnected Classic or its filesystem differs from the reviewed iPod'
     if any(before.get(key) is None or before[key] != after.get(key) for key in keys):
-        raise ValueError('The reconnected Classic or its filesystem differs from the reviewed iPod')
+        raise ValueError(error)
+    for identity in (before, after):
+        fields = ('disk_bytes', 'partition_offset', 'partition_bytes', 'sector_bytes')
+        if (any(type(identity.get(key)) is not int or identity[key] <= 0 for key in fields) or
+                any(identity[key] % identity['sector_bytes'] for key in fields[:-1]) or
+                identity['partition_offset'] + identity['partition_bytes'] > identity['disk_bytes']):
+            raise ValueError(error)
+    hidden_bytes = before['disk_bytes'] - after['disk_bytes']
+    offset_change = before['partition_offset'] - after['partition_offset']
+    if hidden_bytes == offset_change == 0:
+        return
+    if (before.get('native_target_id') != nor.TARGET or after.get('native_target_id') == nor.TARGET or
+            hidden_bytes <= 0 or hidden_bytes != offset_change):
+        raise ValueError(error)
 
 
 def find(identity):

@@ -651,6 +651,8 @@ def _uninstall_option(marker, linnet, root, native, pending=None, boot_layout=No
         return dict(available=True, previous=previous,
                     detail=(f"Finish removing Linnet after the interrupted cleanup. The verified {previous} startup backup is saved on this computer."
                             if pending else
+                            "Apple boot flash has already been restored and verified. Finish removing Linnet’s files from this iPod."
+                            if classic and marker["phase"] == "restored" else
                             "Restore and verify this Classic’s original Apple boot flash, reconnect in Apple Disk Mode, then remove Linnet’s files. Keep the iPod connected through the restart."
                             if classic and marker["phase"] != "restored" else
                             f"Restore {previous} as the default startup software, then remove Linnet’s files from this iPod."))
