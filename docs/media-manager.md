@@ -77,9 +77,25 @@ identifies Apple, or Rockbox when the iPod was installed using its loader. Media
 that was prepared only for Linnet may need an Apple library sync before it appears
 in Apple OS. Removal is unavailable without a verified recovery record.
 Restore or empty Media Manager Trash before removal, since it can contain
-original media files. If the iPod is connected through Linnet's native Disk
-Mode, restart into Apple iPod software and reconnect in Apple Disk Mode so the
-saved firmware backup can be matched to the original storage identity.
+original media files. Photo, monochrome, and Video iPods connected through
+Linnet's native Disk Mode must restart into Apple iPod software and reconnect
+in Apple Disk Mode so the saved firmware backup can be matched to the original
+storage identity.
+
+Classic A1238/N25 installations use a separate NOR flash bootloader. Media
+Manager recognizes their completed bootstrap records and verified original NOR
+backups, including older developer installations in the source checkout. OS
+updates preserve portable recovery copies under `.LINNET/RECOVERY/NOR` and on
+the computer. Reinstalling the OS cannot recreate a missing original NOR backup.
+For Classic removal, connect in Linnet Disk Mode with a Developer build that
+provides Linnet Link. Media Manager saves recovery, ejects the disk, enters the
+SRAM monitor, authenticates the backup with the device, and compares the entire
+flash against the saved snapshots. It restores only the original boot slot,
+verifies the complete NOR, and restarts into Apple software before removing
+Linnet files. Keep the iPod connected through these restarts. If Apple Disk Mode
+does not reconnect automatically, reconnect it and choose **Remove Linnet OS**
+again to finish cleanup. User builds need a Developer build before this Link
+recovery sequence; the original NOR backup remains the source of restoration.
 If cleanup is interrupted, reconnect the same iPod and choose **Remove Linnet OS**
 again. Media Manager matches its host recovery copy to that iPod and resumes
 the removal.

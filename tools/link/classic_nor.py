@@ -20,10 +20,20 @@ ARCHIVE_SECTOR=ARCHIVE&~0xfff
 def _sha(data):return hashlib.sha256(data).hexdigest()
 
 
+def _read_file(path, maximum, *, exact=None):
+    path = Path(path)
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > maximum:
+        raise ValueError('Invalid or oversized NOR recovery artifact')
+    data = path.read_bytes()
+    if len(data) > maximum or exact is not None and len(data) != exact:
+        raise ValueError('NOR recovery artifact size differs')
+    return data
+
+
 def _backup(path, serial):
-    path=Path(path).resolve();data=path.read_bytes()
-    receipt=json.loads(path.with_suffix(path.suffix+'.json').read_text())
-    if (len(data)!=1048576 or receipt.get('target_id')!=TARGET or receipt.get('serial')!=serial or
+    path=Path(path);data=_read_file(path,1048576,exact=1048576)
+    receipt=json.loads(_read_file(path.with_suffix(path.suffix+'.json'),65536))
+    if (not isinstance(receipt,dict) or len(data)!=1048576 or receipt.get('target_id')!=TARGET or receipt.get('serial')!=serial or
         receipt.get('verified') is not True or receipt.get('sha256')!=_sha(data)):
         raise ValueError('Expected a verified complete NOR backup for this device')
     if data[START:START+8]!=b'87021.0\x01' or struct.unpack_from('<II',data,START+8)!=(0,129024):
@@ -61,6 +71,9 @@ def preserve_apple(device_plan, backup, mount):
     from tools.studio.apple_firmware import publish
     result=publish(root,TARGET,payload,_sha(payload))
     result.update(serial=device['serial'],source_nor_sha256=_sha(original))
+    from tools.studio import classic_recovery
+    if classic_recovery.find(mounted):
+        result['recovery'] = classic_recovery.preserve(mounted)
     return result
 
 
@@ -173,30 +186,17 @@ def prepare(device_plan, backup, output, boot_image=None):
 
 
 def install(prepared, expected_plan_sha, *, progress=print):
-    prepared=Path(prepared).resolve();raw=prepared.read_bytes()
-    if _sha(raw)!=expected_plan_sha:raise ValueError('NOR plan hash mismatch')
-    plan=json.loads(raw);original=_backup(plan['original_path'],plan['serial'])
-    before=Path(plan['base_path']).read_bytes() if 'base_path' in plan else original
-    if (len(before)!=len(original) or _sha(before)!=plan.get('base_sha256',_sha(original)) or
-        before[:START]!=original[:START] or before[END:]!=original[END:]):
-        raise ValueError('NOR transaction base differs from its verified snapshot')
-    image=Path(plan['image_path']).read_bytes()
-    if (plan.get('target_id')!=TARGET or plan.get('boot_offset')!=START or plan.get('boot_limit')!=END or
-        plan.get('original_sha256')!=_sha(original) or plan.get('image_sha256')!=_sha(image) or
-        not image or len(image)%4096 or START+len(image)>END or image[:8]!=b'87021.0\x02'):
-        raise ValueError('Invalid NOR transaction artifacts')
+    prepared=Path(prepared).resolve()
+    plan, original, before, image, expected, pages = load_prepared(prepared, expected_plan_sha)
     size=struct.unpack_from('<I',image,12)[0]
-    if struct.unpack_from('<I',image,8)[0]!=0 or not size or size%16 or size>0x10000 or 2048+size>len(image):
-        raise ValueError('Invalid NOR image entry or size')
-    expected=before[:START]+image+before[START+len(image):]
-    if _sha(expected)!=plan['result_sha256']:raise ValueError('Result image hash mismatch')
-    pages=[offset for offset in range(START,START+len(image),4096) if before[offset:offset+4096]!=expected[offset:offset+4096]]
-    pages=[offset for offset in pages if offset not in (START,ARCHIVE_SECTOR)]+([ARCHIVE_SECTOR] if ARCHIVE_SECTOR in pages else [])+([START] if START in pages else [])
-    if pages!=plan['pages']:raise ValueError('NOR sector plan mismatch')
+    from tools.studio.classic_recovery import save_install
+    # Retain recovery independently of disposable build output before any flash write.
+    recovery = save_install(plan, original, expected, installed=False)
     receipt=dict(target_id=TARGET,serial=plan['serial'],build_id=plan['build_id'],phase='validating',
-                 persistent_writes=False,completed=[])
+                 persistent_writes=False,completed=[],recovery=str(recovery))
     receipt_path=prepared.with_suffix('.receipt.json')
-    def record():receipt_path.write_text(json.dumps(receipt,indent=2)+'\n')
+    from tools.studio.installer import _save
+    def record():_save(receipt_path,receipt,durable=True)
     session=None;record()
     try:
         session,identity=_connect(plan)
@@ -215,14 +215,8 @@ def install(prepared, expected_plan_sha, *, progress=print):
         for offset in pages:
             desired=expected[offset:offset+4096]
             if current[offset:offset+4096]!=desired:
-                for index in range(8):
-                    result=session.request(Command.BOOTSTRAP_CONTROL,struct.pack('<II',51,index)+desired[index*512:(index+1)*512])
-                    if len(result)!=12 or struct.unpack('<III',result)!=(0x4252504c,51,(1<<(index+1))-1):
-                        raise RuntimeError('NOR sector staging failed')
                 receipt.update(persistent_writes=True,pending_sector=offset);record()
-                result=_operation(session,52,offset,hashlib.sha256(current[offset:offset+4096]).digest()+hashlib.sha256(desired).digest(),36)
-                if struct.unpack_from('<I',result)[0] or result[4:]!=hashlib.sha256(desired).digest():
-                    raise RuntimeError('NOR sector readback failed')
+                _replace_sector(session, offset, current[offset:offset+4096], desired)
             receipt['completed'].append(offset);receipt.pop('pending_sector',None);record()
             progress(f'Verified boot sector {offset:#07x}')
         receipt['phase']='verifying';record();actual=_read(session)
@@ -232,8 +226,107 @@ def install(prepared, expected_plan_sha, *, progress=print):
         session.close();session=None;time.sleep(1)
         session,identity=_connect(plan)
         if identity['build_id']!=plan['build_id']:raise RuntimeError('Persistent boot returned a different build')
-        receipt.update(phase='persistent-link-verified',identity=identity);record();return receipt
+        receipt.update(phase='persistent-link-verified',identity=identity);record()
+        save_install(plan, original, expected, installed=True)
+        return receipt
     except Exception as error:
         receipt['error']=str(error);record();raise
+    finally:
+        if session is not None:session.close()
+
+
+def load_prepared(prepared, expected_plan_sha):
+    """Reconstruct a NOR installation from its bounded, hash-checked artifacts."""
+    prepared=Path(prepared);raw=_read_file(prepared,65536)
+    if _sha(raw)!=expected_plan_sha:raise ValueError('NOR plan hash mismatch')
+    plan=json.loads(raw);original=_backup(plan['original_path'],plan['serial'])
+    before=_read_file(plan['base_path'],1048576,exact=1048576) if 'base_path' in plan else original
+    if (len(before)!=len(original) or _sha(before)!=plan.get('base_sha256',_sha(original)) or
+        before[:START]!=original[:START] or before[END:]!=original[END:]):
+        raise ValueError('NOR transaction base differs from its verified snapshot')
+    image=_read_file(plan['image_path'],END-START)
+    if (plan.get('target_id')!=TARGET or plan.get('boot_offset')!=START or plan.get('boot_limit')!=END or
+        plan.get('original_sha256')!=_sha(original) or plan.get('image_sha256')!=_sha(image) or
+        not image or len(image)%4096 or START+len(image)>END or image[:8]!=b'87021.0\x02'):
+        raise ValueError('Invalid NOR transaction artifacts')
+    size=struct.unpack_from('<I',image,12)[0]
+    if struct.unpack_from('<I',image,8)[0]!=0 or not size or size%16 or size>0x10000 or 2048+size>len(image):
+        raise ValueError('Invalid NOR image entry or size')
+    expected=before[:START]+image+before[START+len(image):]
+    if _sha(expected)!=plan['result_sha256']:raise ValueError('Result image hash mismatch')
+    pages=[offset for offset in range(START,START+len(image),4096) if before[offset:offset+4096]!=expected[offset:offset+4096]]
+    pages=[offset for offset in pages if offset not in (START,ARCHIVE_SECTOR)]+([ARCHIVE_SECTOR] if ARCHIVE_SECTOR in pages else [])+([START] if START in pages else [])
+    if pages!=plan['pages']:raise ValueError('NOR sector plan mismatch')
+    return plan, original, before, image, expected, pages
+
+
+def _replace_sector(session, offset, before, desired):
+    for index in range(8):
+        result=session.request(Command.BOOTSTRAP_CONTROL,struct.pack('<II',51,index)+desired[index*512:(index+1)*512])
+        if len(result)!=12 or struct.unpack('<III',result)!=(0x4252504c,51,(1<<(index+1))-1):
+            raise RuntimeError('NOR sector staging failed')
+    result=_operation(session,52,offset,hashlib.sha256(before).digest()+hashlib.sha256(desired).digest(),36)
+    if struct.unpack_from('<I',result)[0] or result[4:]!=hashlib.sha256(desired).digest():
+        raise RuntimeError('NOR sector readback failed')
+
+
+def restore(recovery, expected_sha, receipt_path, *, progress=print, mount_identity=None):
+    """Restore the original flash using the serial-bound SRAM monitor, then reboot."""
+    from tools.studio.classic_recovery import load
+    from tools.studio.installer import _save
+
+    record, original, installed = load(recovery, expected_sha)
+    receipt_path=Path(receipt_path)
+    if receipt_path.exists():
+        previous = json.loads(_read_file(receipt_path, 65536))
+        if (previous.get('operation') != 'restore-classic-nor' or
+                previous.get('serial') != record['serial'] or
+                previous.get('recovery_sha256') != expected_sha):
+            raise ValueError('The restore receipt belongs to a different NOR recovery')
+        if previous.get('passed') is True and previous.get('result_sha256') == _sha(original):
+            return previous
+        if mount_identity is None:
+            mount_identity = previous.get('mount_identity')
+    receipt=dict(operation='restore-classic-nor',target_id=TARGET,serial=record['serial'],
+                 recovery=str(Path(recovery).resolve()),recovery_sha256=expected_sha,
+                 original_sha256=_sha(original),installed_sha256=_sha(installed),
+                 passed=False,persistent_writes=False,completed=[],phase='validating')
+    if mount_identity is not None:
+        receipt['mount_identity'] = mount_identity
+    def record_receipt():_save(receipt_path,receipt,durable=True)
+    session=None;record_receipt()
+    try:
+        session,identity=_connect(record)
+        receipt['identity']=identity
+        if _sign(session,original[START:START+64])!=original[START+64:START+80]:
+            raise ValueError('Original NOR authentication does not match this device')
+        _validate_base(session,installed,original)
+        progress('Reading and checking the complete Classic boot flash…')
+        current=_read(session)
+        # Exact complete snapshots allow an explicit retry after completed sectors;
+        # unexpected bytes (including a partially programmed sector) stop all writes.
+        for offset in range(0,len(current),4096):
+            actual=current[offset:offset+4096]
+            if actual not in (original[offset:offset+4096],installed[offset:offset+4096]):
+                raise ValueError(f'Unexpected flash contents at {offset:#x}; no writes made')
+        pages=[offset for offset in range(START,END,4096) if current[offset:offset+4096]!=original[offset:offset+4096]]
+        # Publish Apple's authenticated entry sector only after restoring its body.
+        pages=[offset for offset in pages if offset!=START]+([START] if START in pages else [])
+        receipt.update(phase='programming',pages=pages);record_receipt()
+        for offset in pages:
+            receipt.update(persistent_writes=True,pending_sector=offset);record_receipt()
+            _replace_sector(session,offset,current[offset:offset+4096],original[offset:offset+4096])
+            receipt['completed'].append(offset);receipt.pop('pending_sector',None);record_receipt()
+            progress(f'Restored and verified Apple boot sector {offset:#07x}')
+        receipt['phase']='verifying';record_receipt()
+        actual=_read(session)
+        if actual!=original:raise RuntimeError('Complete NOR readback differs from the original Apple backup')
+        receipt.update(passed=True,result_sha256=_sha(actual),phase='restored');record_receipt()
+        progress('Original Apple boot flash verified. Restarting the iPod…')
+        _operation(session,53,0x52454254,size=0)
+        receipt['phase']='reboot-requested';record_receipt()
+        return receipt
+    except Exception as error:
+        receipt['error']=str(error);record_receipt();raise
     finally:
         if session is not None:session.close()

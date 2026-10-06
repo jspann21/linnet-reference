@@ -268,6 +268,7 @@ def installed_state(root, target_id):
             raise ValueError("confirmed image differs from boot metadata")
         return dict(state="installed", present=len(present), required=len(CORE_FILES),
                     build_id=build_id, profile=confirmed["profile"], build="user" if confirmed["profile"] == "release" else "dev", images=images,
+                    next_profile=next((item["profile"] for item in images if item["slot"] == selected[0][53]), confirmed["profile"]),
                     candidate_pending=selected[0][53] != 255 or bool(selected[3]))
     except (ValueError, OSError, KeyError, struct.error) as error:
         return dict(state="invalid", present=len(present), required=len(CORE_FILES), detail=str(error))
@@ -456,6 +457,13 @@ def assess(identity, *, _validated_identity=False):
                                   strategy="rockbox-file", phase=phase, recovered_from="BOOTSTRAP.JSON")
             except (ValueError, OSError):
                 pass
+    recovery_error = None
+    if install_spec["boot_layout"] == "s5l-nor" and marker is None:
+        from tools.studio.classic_recovery import find as classic_recovery
+        try:
+            marker = classic_recovery(identity)
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            recovery_error = str(error)
     external_rockbox = bool(rockbox["compatible"] and _newer_rockbox_install(root, rockbox_file, marker))
     rockbox["bootloader_recorded"] = _rockbox_bootloader_record(root)
     rockbox["loader_available"] = bool(
@@ -559,7 +567,7 @@ def assess(identity, *, _validated_identity=False):
                 default_installation_method=default_method,
                 uninstall=_uninstall_option(marker, linnet, root,
                                             identity.get("native_target_id") == target_id,
-                                            pending_uninstall),
+                                            pending_uninstall, install_spec["boot_layout"], recovery_error),
                 recovery=marker, resume=resume, action=action, strategy=strategy, summary=summary,
                 preservation=dict(formats_disk=False, repartitions_disk=False, deletes_media=False,
                                   overwrites_existing_linnet_files=native, archives_previous_linnet=not native,
@@ -611,11 +619,18 @@ def _pending_uninstall(identity, root):
     return max(matches, default=None, key=lambda item: item[0])[1:] if matches else None
 
 
-def _uninstall_option(marker, linnet, root, native, pending=None):
+def _uninstall_option(marker, linnet, root, native, pending=None, boot_layout=None, recovery_error=None):
     if marker and marker.get("phase") in ("installed", "restored") or pending:
-        if native:
+        classic = bool(marker and marker.get("strategy") == "native-nor")
+        if native and not classic:
             return dict(available=False, previous=None,
                         detail="Restart into Apple iPod software, reconnect in Apple Disk Mode, then refresh to remove Linnet OS. The saved boot backup is bound to the original Apple storage identity.")
+        if classic and not native and marker["phase"] != "restored":
+            return dict(available=False, previous=None,
+                        detail="This Classic uses Linnet’s NOR bootloader. Start Linnet, open Disk Mode, and reconnect to restore the verified original Apple boot flash before removal.")
+        if classic and native and linnet.get("next_profile", linnet.get("profile")) == "release":
+            return dict(available=False, previous=None,
+                        detail="This Classic’s NOR backup is verified. Removal needs Linnet Link: install a Developer build, start it, then reconnect in Linnet Disk Mode.")
         if (root / "LNETPEND").exists() or (root / "LNETPEND").is_symlink():
             return dict(available=False, previous=None,
                         detail="An unfinished Linnet reinstall archive (LNETPEND) is on this iPod. Resolve that archive before removing Linnet OS so its saved media is not lost.")
@@ -636,8 +651,14 @@ def _uninstall_option(marker, linnet, root, native, pending=None):
         return dict(available=True, previous=previous,
                     detail=(f"Finish removing Linnet after the interrupted cleanup. The verified {previous} startup backup is saved on this computer."
                             if pending else
+                            "Restore and verify this Classic’s original Apple boot flash, reconnect in Apple Disk Mode, then remove Linnet’s files. Keep the iPod connected through the restart."
+                            if classic and marker["phase"] != "restored" else
                             f"Restore {previous} as the default startup software, then remove Linnet’s files from this iPod."))
     if linnet.get("state") != "absent":
+        if boot_layout == "s5l-nor":
+            return dict(available=False, previous=None,
+                        detail=("The Classic’s NOR bootloader needs its verified original flash backup and installation record. "
+                                "An OS reinstall does not recreate them." + (" " + recovery_error if recovery_error else "")))
         return dict(available=False, previous=None,
                     detail="Linnet files were found, but no verified installer recovery record is available. Removal is disabled to protect the iPod’s startup software.")
     return dict(available=False, previous=None, detail="Linnet is not installed on this iPod.")
@@ -1517,6 +1538,11 @@ def restore(identity, expected=None):
     from tools.content.publish import _exclusive
     reviewed = assess(identity)
     strategy = (reviewed.get("recovery") or {}).get("strategy")
+    if strategy == "native-nor":
+        if expected not in (None, "apple"):
+            raise ValueError("Classic NOR recovery restores Apple iPod software")
+        from tools.studio.classic_recovery import restore as restore_classic
+        return restore_classic(reviewed["identity"])
     if strategy == "rockbox-file":
         with _exclusive(reviewed["identity"]):
             return _restore(identity, expected, strategy)
@@ -1644,7 +1670,8 @@ def uninstall(identity, progress=lambda _message: None, expected=None):
     from tools.content.media_manager import refresh
 
     identity = refresh(identity)
-    if identity.get("native_target_id") == identity.get("target_id"):
+    if (identity.get("native_target_id") == identity.get("target_id") and
+            TARGETS[identity["target_id"]]["installer"]["boot_layout"] != "s5l-nor"):
         raise ValueError("Reconnect in Apple Disk Mode before removing Linnet OS so the saved firmware backup matches the original storage identity.")
     pending = _pending_uninstall(identity, Path(identity["root"]).resolve(strict=True))
     if pending:
@@ -1673,6 +1700,12 @@ def uninstall(identity, progress=lambda _message: None, expected=None):
         for name in directories + files:
             path = Path(base) / name
             guarded_path(path, root)
+    if (reviewed["recovery"] or {}).get("strategy") == "native-nor" and reviewed["recovery"]["phase"] != "restored":
+        from tools.studio.classic_recovery import restore as restore_classic
+        boot = restore_classic(reviewed["identity"], progress=progress)
+        result = uninstall(boot["identity"], progress=progress, expected=previous)
+        result["reconnected_identity"] = boot["identity"]
+        return result
     media_folders = {name: (root / name).exists() for name in ("Music", "Photos", "Videos", "Notes")}
     receipt_path = cache_root(reviewed["identity"]) / ("uninstall-" + uuid.uuid4().hex + ".json")
     receipt_path.parent.mkdir(parents=True, exist_ok=True)

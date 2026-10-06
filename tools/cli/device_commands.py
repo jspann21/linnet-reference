@@ -128,6 +128,10 @@ def register_device(commands):
     sram_nor_install = sram_actions.add_parser("install-nor", help="Install the verified monitor in the original NOR boot slot and reboot")
     sram_nor_install.add_argument("--prepared", type=Path, required=True)
     sram_nor_install.add_argument("--plan-sha256", required=True)
+    sram_nor_restore = sram_actions.add_parser("restore-nor", help="Restore verified original Classic flash from its SRAM monitor")
+    sram_nor_restore.add_argument("--recovery", type=Path, required=True, help="Portable NOR.JSON recovery record")
+    sram_nor_restore.add_argument("--recovery-sha256", required=True)
+    sram_nor_restore.add_argument("--receipt", type=Path, required=True, help="Host restore receipt; reuse it to resume an interrupted restore")
     sram_diagnose = sram_actions.add_parser("diagnose", help="Read Classic board and disk diagnostics through Linnet Link")
     sram_diagnose.add_argument("--prepared", type=Path, required=True)
     sram_diagnose.add_argument("--display", action="store_true", help="Initialize the supported panel and send color bars")
@@ -254,6 +258,10 @@ def run_device(args, emit):
         elif args.sram_action == "install-nor":
             from tools.link.classic_nor import install
             emit(install(args.prepared, args.plan_sha256, progress=lambda message: print(message, file=sys.stderr)))
+        elif args.sram_action == "restore-nor":
+            from tools.link.classic_nor import restore
+            emit(restore(args.recovery, args.recovery_sha256, args.receipt,
+                         progress=lambda message: print(message, file=sys.stderr)))
         elif args.sram_action == "diagnose":
             from tools.link.s5l_bootstrap import diagnose
             emit(diagnose(args.prepared, display=args.display))

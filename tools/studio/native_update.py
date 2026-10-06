@@ -68,11 +68,17 @@ def publish(identity, image_path):
         root = Path(current['root']).resolve(strict=True)
         directory = root / '.LINNET'
         _plain(directory, root)
+        if spec['installer']['boot_layout'] == 's5l-nor':
+            from tools.studio import classic_recovery
+            if classic_recovery.find(current):
+                classic_recovery.preserve(current)
         state = installed_state(root, identity['target_id'])
         if state['state'] in ('absent','incomplete'):
             if spec['installer']['boot_layout'] != 's5l-nor':
                 raise ValueError('disk-backed native updates require an existing confirmed installation')
             _provision(root,image,spec['os_capacity_bytes'],lambda:_volume_guard(current))
+            if classic_recovery.find(current):
+                classic_recovery.preserve(current)
             refresh(current)
             verified=installed_state(root,identity['target_id'])
             if verified.get('build_id')!=info['build_id'] or verified['state']!='installed':

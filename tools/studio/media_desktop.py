@@ -2010,6 +2010,8 @@ class MediaWindow(QMainWindow):
         self.update_preparation(); self.refresh()
 
     def _complete_change(self, result):
+        if result.get('reconnected_identity'):
+            self.transition_device(result['reconnected_identity'])
         self.show_progress(result.get('summary', 'Changes saved.'))
         if result.get('needs_preparation'):
             self.prep_results.setPlainText(result['summary']); self.prep_results.show(); self.navigate('Preparation')
