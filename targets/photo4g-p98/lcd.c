@@ -237,6 +237,7 @@ static bool ln_lcd_draw(uint16_t color, const char (*fault_rows)[33], const uint
     while (rows_left != 0u) {
         uint32_t rows = rows_left > 148u ? 148u : rows_left;
         uint32_t bytes = rows * LINNET_LCD_WIDTH * 2u;
+        if (!ln_lcd_wait(&LINNET_LCD_PORT, 0x80000000u, false, started, &budget)) goto failed;
         LINNET_LCD_CONTROL = 0x10000080u;
         LINNET_LCD_CONFIG = 0xc0010000u | (bytes - 1u);
         LINNET_LCD_CONTROL = 0x34000000u;
@@ -322,8 +323,14 @@ failed:
 
 bool ln_lcd_fill(uint16_t color){return ln_lcd_draw(color,0,0,0,0);}
 bool ln_target_disk_screen(bool symbol_visible){
+    /* Disk Mode enables the cache after its first frame. Keep the uncached
+     * write pacing here: cached redraws drift on the original A1099 panel. */
+    bool cached = (LINNET_REG(0x6000c000u) & 1u) != 0u;
+    if (cached && !ln_core_cache_disable()) return false;
     ln_disk_symbol_visible = symbol_visible;
-    return ln_lcd_draw(0,0,ln_disk_runs,ln_disk_palette,0);
+    bool drawn = ln_lcd_draw(0,0,ln_disk_runs,ln_disk_palette,0);
+    if (cached && !ln_core_cache_enable()) ln_platform_hardware_reset();
+    return drawn;
 }
 #if defined(LINNET_IMAGE_BOOT)
 bool ln_lcd_boot(void){return ln_lcd_draw(0,0,ln_boot_runs,ln_boot_palette,0);}

@@ -12,8 +12,9 @@ map and [open work](docs/roadmap.md) for known limitations.
 - **Apps or themes:** use the [SDK guide](sdk/README.md) and its templates.
 - **Media or installation:** read [Media Manager](docs/media-manager.md),
   [storage compatibility](docs/storage.md) and [device workflows](docs/device-link.md).
-- **Documentation:** update the relevant guide and link it from the README when
-  it introduces a new contributor workflow.
+- **Documentation:** update the guide that owns the topic and list new guides in
+  the [documentation index](docs/README.md). Link new starting points from the
+  project README when needed. Prefer links to repeating the same reference data.
 
 ## Check your changes
 
@@ -46,4 +47,7 @@ license and provenance files when changing vendored code.
 
 Keep project documentation about current behavior, usable instructions and open
 work. Session transcripts, machine-specific paths and build-by-build histories
-belong outside the public guides.
+belong outside the public guides. Update hardware tables in place when a tested
+configuration changes; keep dates, serials, and raw measurements in local records.
+Move completed roadmap work into the relevant reference instead of appending a
+history of intermediate results.

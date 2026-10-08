@@ -181,7 +181,8 @@ qualified.
 | **iPod 4G monochrome · A1059 / MP102 / Q21** | 160 × 128 monochrome | `ipod4g-q21` | Native startup and return to the preserved Apple OS verified. The iPod Mono theme is enabled; photos, video, Cover Flow, and games are disabled. |
 
 Linnet is in active development. Feature coverage and hardware qualification vary
-by target; see the [roadmap](docs/roadmap.md) and linked target notes.
+by target; see the [tested configurations and variant limits](docs/hardware.md),
+[roadmap](docs/roadmap.md), and linked target notes.
 To bring another model into the project, start with the [porting guide](targets/README.md).
 
 ## Get started
@@ -197,7 +198,7 @@ When release packages are available:
 1. Download the **Windows Media Manager ZIP** and the **firmware ZIP for your target** from [Releases](https://github.com/jspann21/linnet/releases).
 2. Extract the entire Media Manager ZIP and open **Linnet Media.exe**.
 3. Connect the iPod in **Disk Mode** and select **Find iPod**.
-4. Open **iPod setup → Choose firmware ZIP**, select your firmware, and review the installation options for the detected device. Classic uses a separate [bootstrap workflow](docs/bootstrap-tooling.md).
+4. Open **iPod setup → Choose firmware ZIP** and select the whole firmware ZIP **without extracting it**. Media Manager selects the required files for your installation. Review the options for the detected device. Classic uses a separate [bootstrap workflow](docs/bootstrap-tooling.md).
 5. Install, safely eject, and restart into Linnet.
 
 The native installer preserves the existing media and Apple firmware and saves
@@ -308,9 +309,18 @@ Repeat `release bundle` for each supported target. Firmware ZIPs include verifie
 release OS and Boot images, including both startup-selector variants. Build the
 Media Manager package on Windows; its ZIP includes the runtime and dependencies.
 
+GitHub's **Build downloads** workflow builds the Windows app and all four firmware
+bundles on pushes to `main`, pull requests, and manual runs. Version tags (`v*`)
+also prepare a draft GitHub Release with the downloads, matching source, and
+checksums. See [builds and releases](docs/releases.md) for download contents and
+publishing instructions.
+
 </details>
 
 ## Explore the project
+
+The [documentation index](docs/README.md) lists all user guides and developer
+references.
 
 | I want to… | Start here |
 | --- | --- |
@@ -319,6 +329,7 @@ Media Manager package on Windows; its ZIP includes the runtime and dependencies.
 | Talk to a running iPod | [Linnet Link](docs/device-link.md) |
 | Understand the firmware | [Architecture and source map](docs/architecture.md) · [Binary formats](docs/formats.md) |
 | Work on media formats | [Music](docs/music-format.md) · [Photos](docs/photo-format.md) · [Video](docs/video-format.md) |
+| Check a device or storage variant | [Hardware support](docs/hardware.md) |
 | Add another iPod | [Hardware porting guide](targets/README.md) |
 | Contribute or find open work | [Contributing](CONTRIBUTING.md) · [Roadmap](docs/roadmap.md) |
 | Understand generated files and recovery artifacts | [Local artifacts](docs/local-artifacts.md) |

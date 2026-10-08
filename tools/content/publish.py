@@ -413,7 +413,8 @@ if ([string]$volume.FileSystem -ne 'FAT32' -or $logical.VolumeSerialNumber.ToUpp
 
 def _same_target(before: dict, after: dict) -> None:
     for key in ("disk_number", "disk_serial", "disk_unique_id", "disk_bytes", "partition_number", "partition_offset",
-                "partition_bytes", "sector_bytes", "drive", "root", "volume_unique_id", "volume_serial", "filesystem", "pnp_id"):
+                "partition_bytes", "sector_bytes", "drive", "root", "volume_unique_id", "volume_serial", "filesystem", "pnp_id",
+                "native_target_id", "usb_pnp_id"):
         if before.get(key) != after.get(key):
             raise RuntimeError(f"iPod identity changed during publication: {key}")
 

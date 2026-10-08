@@ -27,9 +27,10 @@ def create(output):
         command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed",
                    "--onedir", "--name", "Linnet Media", "--paths", str(ROOT),
                    "--distpath", str(work / "dist"), "--workpath", str(work / "build"),
-                   "--specpath", str(work), "--collect-all", "lz4",
-                   "--copy-metadata", "mutagen", "--copy-metadata", "Pillow",
-                   "--copy-metadata", "pyserial", "--copy-metadata", "PySide6"]
+                   "--specpath", str(work), "--collect-all", "lz4"]
+        for package in ("mutagen", "Pillow", "pyserial", "lz4", "PySide6",
+                        "PySide6_Essentials", "PySide6_Addons", "shiboken6"):
+            command += ["--copy-metadata", package]
         for name in ("config", "targets", "hal", "services", "ui", "assets", "themes", "sdk/assets"):
             command += ["--add-data", str(ROOT / name) + os.pathsep + name]
         command += ["--add-data", str(ROOT / "tools/studio/media_desktop.qss") + os.pathsep + "tools/studio",
@@ -49,6 +50,18 @@ def create(output):
         shutil.copy2(aac_executable(), work / 'dist/Linnet Media/_internal/aac-index.exe')
         from tools.content.mp3_index import executable as mp3_executable
         shutil.copy2(mp3_executable(), work / 'dist/Linnet Media/_internal/mp3-index.exe')
+        app = work / "dist/Linnet Media"
+        shutil.copy2(ROOT / "docs/releases.md", app / "README.md")
+        # Retain codec notices beside the native AAC/MP3 preparation helpers.
+        # The matching complete source is distributed as a separate release asset.
+        for path in (ROOT / "third_party").rglob("*"):
+            if path.is_file() and (path.name.startswith(("LICENSE", "COPYING", "NOTICE", "PROVENANCE"))
+                                   or "licenses" in path.parts or path.name.startswith("README")):
+                destination = app / "notices" / path.relative_to(ROOT)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, destination)
+        if (ROOT / "LICENSE").is_file():
+            shutil.copy2(ROOT / "LICENSE", app / "LICENSE")
         archive = work / "media.zip"
         with zipfile.ZipFile(archive, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
             for path in sorted((work / "dist").rglob("*")):

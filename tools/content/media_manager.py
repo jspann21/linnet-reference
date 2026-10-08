@@ -147,8 +147,18 @@ def _identify(identity, detected=None):
     if (detected["device_id"] != identity["disk_serial"] or
             storage["disk_number"] != identity["disk_number"] or
             storage["disk_bytes"] != identity["disk_bytes"] or
-            storage["partition_offset"] != identity["partition_offset"]):
+            storage["partition_offset"] != identity["partition_offset"] or
+            storage["partition_bytes"] != identity["partition_bytes"] or
+            storage["sector_bytes"] != identity["sector_bytes"] or
+            storage["filesystem"] != identity["filesystem"] or
+            storage["pnp_id"] != identity["pnp_id"] or
+            storage["volume_id"].casefold() != identity["volume_unique_id"].casefold()):
         raise RuntimeError("USB and mounted storage identities disagree")
+    native_target = identity.get("native_target_id")
+    if (bool(native_target) != (detected.get("identity_source") == "linnet-usb") or
+            native_target and (native_target != detected["target_id"] or
+                               storage["usb_pnp_id"] != identity["usb_pnp_id"])):
+        raise RuntimeError("USB and mounted storage target identities disagree")
     spec = TARGETS[detected["target_id"]]
     retail = dict(detected["retail_os"])
     if identity.get("native_target_id"):

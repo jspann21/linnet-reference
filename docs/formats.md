@@ -19,6 +19,7 @@ same version field or that every reserved field is a version.
 | `UPDT`, `HAND`, `RLBK` | Persistent image slots, retained handoff, and failed-candidate information | [Update owner](../services/update/update.c) |
 | `LNPK` | Fixed, reviewed native maintenance package; not arbitrary raw-sector access | [Package builder](../tools/studio/native_package.py), [Photo writer](../targets/photo4g-p98/native_update.c) |
 | `SETT`, `THMS` | User settings and stable theme selection | [Display settings](../services/display/settings.c), [storage owner](../services/storage/storage.c) |
+| `MENUS.BIN` | Saved menu order and shortcuts | [Host menu settings](../tools/studio/screen_settings.py), [device menus](navigation.md#saved-customization) |
 | `HIST`, `HPGE` | Redundant paged playback history | [History records](../services/music/history_record.h), [page owner](../services/music/history_pages.c) |
 | `MSET`, `QUEU`, `PROF` | Music queue and sound state | [Music settings](../services/music/settings.c), [queue](../services/music/queue.c), [profile](../services/music/profile.c) |
 
@@ -31,8 +32,10 @@ payload checksum, and full-image hash have distinct meanings.
 | Format | Guide or implementation |
 | --- | --- |
 | `PODB` music index | [Music library](music-format.md) |
+| RGB565 artwork, `LCF2` / `LCFN` Cover Flow | [Album artwork](artwork.md) |
 | `LPIC` prepared photos | [Prepared photos](photo-format.md) |
 | `IPVF` and native MP4 video | [Video formats](video-format.md) |
+| `FILS` directory index and `FIMG` previews | [Files formats](files.md#on-disk-formats) |
 | `NOTE` notes and `LDSP` DSP profiles | [Notes compiler](../tools/content/notes.py), [DSP compiler](../tools/content/dsp.py) |
 | `FONT`, `LNUI`, `APPL`, `THME`, `CNTN` | [UI compiler](ui-compiler.md); these are host artifacts |
 | `LINK` USB frames and diagnostic records | [Linnet Link](device-link.md#protocol-reference) |

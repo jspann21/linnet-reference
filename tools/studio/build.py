@@ -64,7 +64,7 @@ def toolchain():
 def source_paths(*, with_sizes=False):
     """Prune generated trees before descent; sort only source inputs."""
     excluded = {".git", "out", "__pycache__", ".venv",
-                ".ruff_cache", ".pytest_cache", ".mypy_cache"}
+                ".ruff_cache", ".pytest_cache", ".mypy_cache", ".codex-remote-attachments"}
     paths = []
     def fail(error):
         raise error

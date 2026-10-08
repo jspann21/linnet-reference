@@ -15,7 +15,6 @@ import os
 from operator import sub
 import struct
 import subprocess
-import tempfile
 import zlib
 from fractions import Fraction
 from functools import lru_cache
@@ -99,6 +98,16 @@ class OfficialLZ4:
     """Official raw-block LZ4/LZ4HC encoder loaded from the host library."""
 
     def __init__(self) -> None:
+        # The Windows wheel includes liblz4 without exposing a separate DLL.
+        try:
+            import lz4
+            from lz4.block import compress
+        except ImportError:
+            self.block_compress = None
+        else:
+            self.block_compress = compress
+            self.block_version = lz4.library_version_string()
+            return
         name = ctypes.util.find_library("lz4")
         if not name:
             raise RuntimeError("official liblz4 was not found")
@@ -119,12 +128,18 @@ class OfficialLZ4:
 
     @property
     def version(self) -> str:
+        if self.block_compress is not None:
+            return self.block_version
         value = self.lib.LZ4_versionString()
         return value.decode("ascii") if value else "unknown"
 
     def compress(self, source: bytes, level: int = 0) -> bytes:
         if not source or len(source) > 0x7FFFFFFF:
             raise ValueError("invalid LZ4 input size")
+        if self.block_compress is not None:
+            return self.block_compress(source, store_size=False,
+                                       mode="high_compression" if level else "default",
+                                       compression=level)
         bound = self.lib.LZ4_compressBound(len(source))
         destination = ctypes.create_string_buffer(bound)
         source_buffer = ctypes.create_string_buffer(source, len(source))
@@ -1036,7 +1051,7 @@ def ffmpeg_frames(
     if color_depth not in COLOR_FILTERS:
         raise ValueError(f"unknown color depth: {color_depth}")
     filters = [
-        f"fps={rate.numerator}/{rate.denominator},"
+        f"fps={rate.numerator}/{rate.denominator}:start_time=0,"
         f"scale={W}:{H}:force_original_aspect_ratio=decrease:"
         f"flags=lanczos,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black"
     ]
@@ -1092,18 +1107,19 @@ def ffmpeg_frames(
             raise RuntimeError(f"video ffmpeg exited with status {rc}")
 
 
-def decode_audio(source: Path, destination: Path, ffmpeg: str) -> None:
+def decode_audio(source: Path, ffmpeg: str) -> subprocess.Popen:
     cmd = [
         ffmpeg,
         "-nostdin",
         "-v",
         "error",
-        "-y",
         "-i",
         str(source),
         "-map",
         "0:a:0",
         "-vn",
+        "-af",
+        "aresample=async=1:first_pts=0",
         "-ac",
         str(AUDIO_CHANNELS),
         "-ar",
@@ -1112,15 +1128,15 @@ def decode_audio(source: Path, destination: Path, ffmpeg: str) -> None:
         "pcm_s16le",
         "-f",
         "s16le",
-        str(destination),
+        "-",
     ]
-    rc = subprocess.run(cmd, check=False, creationflags=NO_WINDOW).returncode
-    if rc:
-        raise RuntimeError("ffmpeg could not decode the first audio stream")
+    return subprocess.Popen(cmd, stdout=subprocess.PIPE, creationflags=NO_WINDOW)
 
 
 def read_audio_slice(audio: BinaryIO, size: int) -> tuple[bytes, int]:
     data = audio.read(size)
+    if len(data) % AUDIO_FRAME_BYTES:
+        raise RuntimeError("ffmpeg produced a partial PCM sample frame")
     missing = size - len(data)
     if missing:
         data += bytes(missing)
@@ -1135,7 +1151,7 @@ def compress_lz4(data: bytes, mode: str = DEFAULT_LZ4_MODE) -> bytes:
         )
     host_lz4 = official_lz4()
     if mode == "balanced":
-        return (host_lz4.compress(data, 12)
+        return (host_lz4.compress(data, 9)
                 if host_lz4 is not None else lz4_compress(data))
     if mode == "builtin":
         return lz4_compress(data)
@@ -1318,15 +1334,15 @@ def choose_video_record(
         prediction = translate_frame(prev, dx, dy)
         residual_raw = xor_frames(prediction, cur)
         residual = compress_lz4(residual_raw, lz4_mode)
-        motion_payload = struct.pack(
-            "<bbI", dx, dy, rockbox_crc32(residual)
-        ) + residual
+        motion_kind = TYPE_MOTION_LZ4 if dx or dy else TYPE_XOR_LZ4
+        motion_payload = (struct.pack("<bb", dx, dy) if dx or dy else b"") + \
+            struct.pack("<I", rockbox_crc32(residual)) + residual
         motion_sectors = record_sectors(len(motion_payload), audio_size)
         if ((video_mode in ("balanced", "motion") or (dx, dy) != (0, 0)) and
                 len(motion_payload) < FRAME_BYTES and
                 motion_sectors + minimum_saving <=
                 selected_sectors):
-            selected = TYPE_MOTION_LZ4, 0, motion_payload, FRAME_BYTES
+            selected = motion_kind, 0, motion_payload, FRAME_BYTES
             selected_raw = residual_raw
             selected_sectors = motion_sectors
 
@@ -1341,7 +1357,20 @@ def choose_video_record(
                 temporal_sectors < selected_sectors):
             selected = TYPE_XOR_LZ4, 0, temporal_payload, FRAME_BYTES
 
-    return _realtime_record(selected, selected_raw) if realtime else selected
+    if realtime:
+        selected = _realtime_record(selected, selected_raw)
+        # Stationary backgrounds can predict better than a translated frame.
+        # Require a useful disk saving before paying the full-frame XOR cost.
+        if (selected[0] in (TYPE_KEY, TYPE_RECTS, TYPE_KEY_LZ4, TYPE_RECTS_LZ4) and
+                record_sectors(4, audio_size) + 4 <= record_sectors(len(selected[2]), audio_size)):
+            residual_raw = xor_frames(prev, cur)
+            residual = compress_lz4(residual_raw, lz4_mode)
+            if len(residual) + 4 < FRAME_BYTES:
+                candidate = _realtime_record((TYPE_XOR_LZ4, 0,
+                    struct.pack("<I", rockbox_crc32(residual)) + residual, FRAME_BYTES), residual_raw)
+                if record_sectors(len(candidate[2]), audio_size) + 4 <= record_sectors(len(selected[2]), audio_size):
+                    selected = candidate
+    return selected
 
 
 def encode(
@@ -1369,7 +1398,7 @@ def encode(
         raise ValueError("temporal mode is supported only at <=30 fps")
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(output.name + ".tmp")
-    audio_temp: Path | None = None
+    audio_process: subprocess.Popen | None = None
     audio_file: BinaryIO | None = None
     counts = {
         TYPE_KEY: 0, TYPE_RECTS: 0, TYPE_REPEAT: 0,
@@ -1392,17 +1421,9 @@ def encode(
     n = 0
 
     try:
-        fd, name = tempfile.mkstemp(
-            prefix=output.name + ".", suffix=".pcm", dir=output.parent
-        )
-        os.close(fd)
-        audio_temp = Path(name)
         if source_has_audio is not False:
-            decode_audio(source, audio_temp, ffmpeg)
-        audio_size = audio_temp.stat().st_size
-        if audio_size % AUDIO_FRAME_BYTES:
-            raise RuntimeError("ffmpeg produced a partial PCM sample frame")
-        audio_file = audio_temp.open("rb")
+            audio_process = decode_audio(source, ffmpeg)
+            audio_file = audio_process.stdout
 
         with temporary.open("wb+") as f:
             f.write(bytes(DATA_OFFSET))
@@ -1412,7 +1433,12 @@ def encode(
                 audio_end = audio_boundary(n + 1, fps)
                 audio_frames = audio_end - audio_start
                 audio_bytes = audio_frames * AUDIO_FRAME_BYTES
-                audio_pcm, missing = read_audio_slice(audio_file, audio_bytes)
+                if audio_file is None:
+                    audio_pcm, missing = bytes(audio_bytes), audio_bytes
+                else:
+                    audio_pcm, missing = read_audio_slice(audio_file, audio_bytes)
+                    if missing and audio_process.wait():
+                        raise RuntimeError("ffmpeg could not decode the first audio stream")
                 audio_payload, ima_left_index, ima_right_index, audio_kind = (
                     encode_adaptive_ima(
                         audio_pcm, audio_frames,
@@ -1474,6 +1500,8 @@ def encode(
 
             if n == 0:
                 raise RuntimeError("ffmpeg produced no frames")
+            if audio_process is not None and audio_process.poll():
+                raise RuntimeError("ffmpeg could not decode the first audio stream")
             assert pending is not None
             assert pending_frame is not None
             record_offset = f.tell()
@@ -1532,8 +1560,10 @@ def encode(
     finally:
         if audio_file is not None:
             audio_file.close()
-        if audio_temp is not None:
-            audio_temp.unlink(missing_ok=True)
+        if audio_process is not None:
+            if audio_process.poll() is None:
+                audio_process.kill()
+            audio_process.wait()
 
     raw = n * FRAME_BYTES
     ratio = video_payload_total / raw if raw else 0

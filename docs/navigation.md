@@ -130,17 +130,17 @@ Less frequently used music categories appear under More in the saved order.
 Optional Home shortcuts such as Notes, Games, and Cover Flow remain available;
 the default Home menu groups them by purpose.
 
-Menu item IDs remain stable. The version-three `MENUS.BIN` writer keeps the
-80-byte envelope and checksum. Firmware and Media Manager accept versions one
-through three. Recognized older default menus adopt the new hierarchy, including
-defaults filtered for target capabilities. Custom orders and selected shortcuts
-are retained. Settings and USB Disk Mode remain required navigation anchors;
-Sound, Shuffle, and Repeat remain reachable in Settings.
+Files and Extras are enabled in stock firmware. Defaults adapt to target
+capabilities; links to disabled utilities are omitted. Recognized older default
+menus adopt the current hierarchy. Customized menus retain their saved order
+and shortcuts; add Files through Screens if it is missing.
 
-Files and Extras are both enabled in stock firmware. The native scene table allows
-64 scenes; stock Photo and Video use 33. Optional links to disabled utilities are
-omitted during compilation. Recognized default Home menus gain Files automatically;
-customized Home menus retain their saved shortcuts and can add Files in Screens.
+Settings and USB Disk Mode remain required navigation anchors. Sound, Shuffle,
+and Repeat remain reachable in Settings.
+
+Menu item IDs are stable. The version-three `MENUS.BIN` writer uses an 80-byte
+envelope and checksum; firmware and Media Manager accept versions one through
+three. See [binary contracts](formats.md) for the format owner.
 
 The structure draws on Apple's [iPod classic User Guide](https://cdsassets.apple.com/live/6GJYWVAV/user/ma1195_ipod_classic_160gb_user_guide.pdf),
 especially its Home ordering, Extras grouping, and Menu-to-parent navigation.

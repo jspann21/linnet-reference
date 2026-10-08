@@ -6,13 +6,14 @@ iPod's marketing name alone.
 
 ## Current targets
 
-See the [hardware table](../README.md#confirmed-hardware) for user-facing support.
+See [hardware support](../docs/hardware.md) for tested configurations, feature
+scope, and variant limits.
 
 | Target | Hardware | Installation scope |
 | --- | --- | --- |
 | [Photo P98](photo4g-p98/README.md) | A1099, PP5020, 32 MiB, 220 × 176 | Native directory installer and A/B OS updates |
-| [Video M25](video5g-m25/README.md) | A1136 MA146, 30 GB / 32 MiB, 320 × 240 | Native directory installer and A/B updates; other revisions need qualification |
-| [Monochrome Q21](ipod4g-q21/target.toml) | MP102, PP5020, 32 MiB, 160 × 128 | Native directory installer; no photo/video/theme switching |
+| [Video M25](video5g-m25/README.md) | A1136, PP5022, 32 / 64 MiB, 320 × 240 | Native directory installer and A/B updates; qualification follows the board/storage configuration |
+| [Monochrome Q21](ipod4g-q21/target.toml) | A1059 / MP102, PP5020, 32 MiB, 160 × 128 | Native directory installer; iPod Mono interface, no photo/video playback |
 | [Classic N25](classic6g-n25/target.toml) | A1238, S5L8702, 64 MiB, 320 × 240 | Separate NOR bootstrap; automatic installer disabled |
 
 ## Qualification record
@@ -22,9 +23,9 @@ board/RAM/storage configuration, checked behavior, recovery requirements, and
 remaining limits. Keep serials, firmware backups, and detailed receipts local.
 
 M25's [qualification record](video5g-m25/QUALIFICATION.md) distinguishes device
-counters from physical observations. For other targets, the table above and
-target notes state the current scope; do not extend it to every accepted USB
-identity or storage variant. Apple database qualification is separately gated.
+counters from physical observations. For other targets, the hardware reference
+states the current scope; do not extend it to every accepted USB identity or
+storage variant. Apple database qualification is separately gated.
 
 ## Inspect or scaffold a target
 

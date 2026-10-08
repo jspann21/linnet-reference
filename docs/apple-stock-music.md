@@ -15,6 +15,12 @@ support does not enable Apple database writes. The qualification loader and
 admission checks are in [apple_os.py](../tools/content/apple_os.py); device
 identifiers and validation receipts are not documentation examples.
 
+Qualified specimens include Video MA146, Classic MB147, and monochrome
+MP102/PE435A. The monochrome workflow offers Music only; compatible files under
+`/Notes` are read directly by Apple OS. A matching model alone does not enable
+updates on another device or a reformatted volume. Media Manager checks the
+current identity against the qualification records.
+
 The managed writer stages and verifies updates, preserves existing Apple entries
 and playlists, and retains backups. Selected folder contents remain in their
 original locations. Apple OS support is narrower than Linnet's media support.

@@ -43,7 +43,7 @@ INSTALLATION_METHODS = {
         detail="Linnet starts normally; hold MENU during power-on to choose Linnet or the preserved Apple software.",
         strategy="native-directory", boot_selector="none", requires_admin=True),
     "native-selector": dict(
-        label="Linnet, Apple software, and Rockbox",
+        label="Keep existing Rockbox available at startup",
         detail="Hold MENU during power-on to choose Linnet, Apple software, or the verified Rockbox image.",
         strategy="native-directory", boot_selector="rockbox", requires_admin=True),
 }
@@ -1395,6 +1395,24 @@ def _native_worker(job):
                     linnet_usb_serial=detected["linnet_usb_serial"])
     _same_device(expected, observed)
     current = assess(expected)
+    if job["mode"] != "restore":
+        # Recheck admission after UAC, before restoring old startup files or
+        # writing any new files. The caller's earlier review is not sufficient.
+        install_spec = TARGETS[expected["target_id"]]["installer"]
+        if not install_spec["enabled"] or install_spec["boot_layout"] != "ipod-directory":
+            raise ValueError("this device does not support firmware-directory installation")
+        method_id = job.get("installation_method")
+        method = INSTALLATION_METHODS.get(method_id)
+        strategy = "rockbox-file" if job["mode"] == "rockbox-reinstall" else "native-directory"
+        if (not method or method["strategy"] != strategy or
+                job["artifacts"].get("installation_method") != method_id):
+            raise ValueError("installer firmware and installation method disagree")
+        if job["reviewed_action"] != "resume":
+            available = next((item for item in current["installation_methods"]
+                              if item["id"] == method_id), None)
+            if not available or not available["enabled"]:
+                raise RuntimeError("the selected installation method is no longer compatible with this iPod")
+        _validate_artifacts(expected, job["artifacts"])
     if job["mode"] == "restore":
         marker = current.get("recovery")
         if (not marker or marker.get("strategy") != "native-directory" or
@@ -1420,7 +1438,6 @@ def _native_worker(job):
                 context.get("build") != job["artifacts"].get("build") or
                 saved_artifacts != job["artifacts"]):
             raise RuntimeError("saved native installation changed before resume")
-        _validate_artifacts(expected, job["artifacts"])
     elif current["action"] != job["reviewed_action"]:
         raise RuntimeError("installation state changed before the worker acquired exclusivity")
     if job["mode"] == "restore":

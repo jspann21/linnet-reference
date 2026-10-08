@@ -1,548 +1,158 @@
-# Linnet TODO
+# Roadmap
 
-Single backlog for Linnet OS, Media Manager, performance, and hardware acceptance.
-Reviewed October 3, 2026 against source at `24b45d1`, Git history, target manifests,
-and recorded qualification notes. The initial audit did not repeat physical checks;
-subsequent results are noted under their items.
+This backlog contains unfinished work only. Current features and completed
+hardware checks belong in the [guides](README.md) and
+[hardware reference](hardware.md).
 
-The older 110-item optimization checklist at `5f228fb` had **104 items marked
-complete and six open**. Those six are retained below with their remaining
-measurement or qualification requirements; the separate optimization list is retired.
-Current code retains the implemented scan reuse, caches, cancellation,
-publication/recovery, build isolation, and portable HAL work. Keep completed items
-checked and visible. The former roadmap's eight entries mostly require measurement
-or acceptance; AAC seek indexing is already implemented.
+P1 covers release readiness, P2 covers remaining performance work and feature
+proposals, and P3 covers optional expansion. Priorities are not release dates.
+An acceptance item names the specific check still missing; it does not mean the
+underlying feature needs to be implemented.
 
-`Add` identifies a feature gap. `Improve` identifies a limitation in an existing
-feature. `Measure` and `Qualify` require evidence before closing. Priorities are
-proposed: P1 covers reliable daily use and release readiness, P2 covers performance
-and useful parity, and P3 covers optional expansion. New product suggestions are
-separate from the carried-over acceptance work.
+## P1 — Release readiness
 
-## Current coverage
+- [ ] **Battery runtime, charge current, and dock output.** Measure actual current
+  and charging-source transitions, battery-powered runtime and repeated
+  sleep/wake, and physical dock audio for release hardware/storage configurations.
+  [Power API](../hal/api/power.h), [storage policy](storage.md).
 
-| Area | Already implemented | Source |
-| --- | --- | --- |
-| Music and browsing | PCM/WAV/AIFF, MP3, AAC/M4A, ALAC, FLAC, Vorbis; artist/album/genre/composer/album-artist/year/folder browsing, search, artwork, and enabled Cover Flow | [Decoder](../services/music/decoder.c), [browser](../services/music/browser.c), [compiler](../tools/content/music.py) |
-| Playback and playlists | Song shuffle; repeat off/all/one; gapless transitions; Play Next; queue editing; device playlist create/rename/delete; save queue as playlist; desktop playlist editor and M3U import/export | [Controller](../services/music/controller.c), [queue](../services/music/queue.c), [browser](../services/music/browser.c), [editor](../tools/studio/playlist_editor.py) |
-| State and sound | Favorites, play counts, recent/most played, bookmarks, queue/position restoration, EQ, track/album ReplayGain, volume limit, clicker, balance, channels, crossfeed, and supported dock line out | [History](../services/music/history.c), [controller](../services/music/controller.c), [profile](../services/music/profile.c) |
-| Media and utilities | Photo albums/grid, zoom/pan/rotation/slideshow and saved navigation; prepared/native video, pause, seek and saved position; Files, Notes, clock/date editing, sleep timer, and eighteen games on Photo/Video | [Photos](../services/photos/photos.c), [video paths](video-format.md), [runtime](../kernel/runtime.c), [games](../services/games/games.c) |
-| Desktop and recovery | Per-device import queue, incremental preparation/caches, progress/Stop, space planning, recoverable Trash, index recovery, video catalog restore, diagnostics export, firmware ZIP install, startup choice, restore/uninstall, and safe eject | [Desktop](../tools/studio/media_desktop.py), [preparation](../tools/content/media_manager.py), [installer](../tools/studio/installer.py) |
+- [ ] **Physical video A/V sync.** Observe sound and picture together during
+  extended playback and after seeks on Photo, Video, and Classic. Include
+  battery-powered sessions. [Video backends](video-format.md).
 
-Availability follows the target and system configuration. Q21 disables photos,
-video, Cover Flow, and games; its manifest enables the iPod Mono theme. Classic
-has native video but disables automatic installation and currently does not enable
-games. Existing Apple-library reading and the narrowly qualified Apple database
-writer are implemented; broad iTunes interoperability remains incomplete.
+- [ ] **Remaining interruption and resource-limit cases.** Check USB loss during
+  publication, interruption points beyond the exercised settings/candidate and
+  photo-grid cuts, interrupted history writes, full disks, malformed/truncated
+  records, and memory pressure. Check Video bus faults beyond the documented
+  clock-loss recovery path. Use the existing
+  [device checks](device-link.md#existing-device-checks) and
+  [M25 qualification record](../targets/video5g-m25/QUALIFICATION.md) to identify
+  gaps instead of repeating completed campaigns.
 
-The stock comparison uses Apple's [iPod classic 160 GB guide](https://cdsassets.apple.com/live/6GJYWVAV/user/ma1195_ipod_classic_160gb_user_guide.pdf)
-for music/display behavior and [120 GB guide](https://cdsassets.apple.com/live/6GJYWVAV/user/ma630_ipod_classic_120gb_en.pdf)
-for utilities/accessories. Features vary by generation; Classic-only and
-accessory-dependent features are expansion suggestions for other targets.
+- [ ] **Clean-machine and release-device acceptance.** Run the packaged Windows
+  app on a clean computer with the documented FFmpeg setup. Exercise navigation,
+  playback, media preparation, install/update, rollback, restore, and uninstall
+  with release images on the devices selected for release.
+  [Firmware bundles](../tools/studio/firmware_bundle.py),
+  [Windows distribution](../tools/studio/media_distribution.py).
 
-## P1 — Daily use and release readiness
+- [ ] **First downloadable release.** Publish accepted Windows and firmware ZIPs
+  with checksums, installation/recovery notes, and qualified hardware scope.
+  Update [Get started](../README.md#get-started) with the downloads.
 
-- [x] **Improve: music compatibility reporting and optional conversion.** Host
-  metadata accepts Opus/WavPack and some channel counts/rates that firmware cannot
-  play. Report compatibility for the detected target before preparation, with
-  actionable skipped-file reasons. Offer optional conversion of incompatible,
-  unprotected audio while preserving originals. Close when such files cannot
-  silently appear ready to play. [Host codecs](../tools/content/music.py),
-  [device codecs](../services/music/decoder.c), [planner](../tools/content/media_status.py).
-  Complete: host compilation and Media Manager report target playback limits and
-  actionable reasons; queued and existing incompatible files can be converted to
-  host-prepared PCM while retaining originals and metadata. Focused imports and a
-  physical device run verified library preparation and converted-track playback.
-  On flash M25, 78 incompatible M4As were skipped with separate prepared WAVs;
-  a sampled WAV played with zero reported underruns or audio faults.
-  Selected compatible iPod music can also be prepared as PCM on the host.
-  On a rotating M25, the original of a troublesome AAC and six incompatible
-  Apple-library AACs remained unchanged; their converted files published into
-  a ready 2,222-track library. A separate untagged Apple MP3 conversion retained
-  its database metadata and artwork, excluded its original, and kept that count.
-  Classic host-converted 76 flagged AAC originals to PCM, preserved their hashes,
-  and published a ready 394-track library; two UI playback selections reported
-  zero audio underruns, silence frames, or faults.
+### Open issues
 
-- [ ] **Qualify: power, charging, dock audio, and sustained playback.** Measure
-  charging current/source changes, battery runtime, sleep/wake, shutdown/startup,
-  and dock output per hardware/storage configuration. Run long audio/video
-  sessions, repeated seeks, and A/V sync checks; record physical results and
-  underrun/error counters. Implementations and sample playback already exist.
-  [Target scope](../targets/README.md#qualification-record), [power API](../hal/api/power.h),
-  [storage policy](storage.md).
-  Partial: a rotating M25 completed a 12-track queue observed for five minutes;
-  counters ended at 11 gapless joins with zero missed joins, underruns, or audio
-  faults. A 60-second M25 video clip finished after forward/backward seeks with
-  zero reported audio underruns or faults; an automated sleep/wake cycle also
-  completed. A separate seven-minute Repeat All run crossed 15 joins with zero
-  reported underruns or faults; Repeat Off was restored afterward. Current,
-  dock, battery runtime, broader long audio/video, and A/V sync measurements
-  remain open. A 325-second indexed AAC track reached EOF on flash M25 with zero
-  reported player/audio underruns, silence frames, or audio faults. All five
-  connected devices completed a bounded Link sleep/wake cycle with matching
-  counters and healthy images; current and dock output need external measurement.
-  Five-minute music runs on Photo 4G and Classic reported no underruns or audio
-  faults. A host PCM track on Classic reached EOF while prepared photos rendered
-  18 times, with zero reported underruns, silence frames, or faults. A rotating M25
-  22.05-to-44.1 kHz transition counted a non-gapless join as designed, and the
-  following track reported one underrun. A larger prime
-  reserve limited to drained rate changes ran the same natural transition and
-  over 35 seconds of the following track with no reported underruns or inserted
-  silence frames. Later unattended queue progression reported one underrun;
-  its boundary and broader sustained playback remain open. Classic native
-  video reached EOF, including a 105-second run and a forward/backward seek run,
-  with zero dropped frames and zero reported audio faults. Physical A/V sync
-  remains unmeasured. Photo 4G played a 7,202-frame prepared video to EOF with
-  zero reported dropped frames, audio underruns, silence frames, or faults;
-  eight frames were over one frame interval late and none over two. Physical
-  A/V sync and longer battery-powered sessions remain open. A separate
-  forward/backward seek run reached EOF with zero reported audio faults,
-  underruns, or silence frames.
-  In a five-device playback pass, flash M25, Photo 4G, and Classic reported zero
-  audio underruns or silence frames after more than 54 minutes each; rotating
-  M25 with a 12-track Repeat All queue passed 80 joins with zero missed joins
-  or faults. The other rotating M25 exposed a standby disk wake at a same-rate
-  join after a clean 22.05-to-44.1 kHz rate change.
-  A RAM build now wakes rotating media near that join: with the disk observed
-  in standby beforehand, the join and next 25 seconds reported zero underruns,
-  silence frames, or faults. The shorter wake window completed all 12 tracks on
-  the other rotating M25 with 11 clean joins and zero audio faults; the disk
-  returned to standby at EOF. The final build also crossed the previously
-  failing join and 20 seconds of the next track with clear audio counters;
-  its disk had already spun up during prefetch. Longer battery and dock
-  measurements remain open. Installed on that rotating M25, the same build
-  booted healthy with its 2,222-track library and crossed a natural gapless
-  join plus 30 seconds with zero reported underruns, silence, missed joins,
-  or faults. Flash M25 played a 60-second native video to EOF after forward
-  and backward seeks with zero reported audio underruns, silence, or faults;
-  display ownership returned and the OS stayed healthy.
-  Q21 with the current installed development image played sampled MP3 and
-  host-indexed AAC without reported underruns, silence, or audio faults;
-  a 347-second indexed AAC track then reached EOF at 15,309,824/15,309,824
-  frames with zero reported player/audio underruns, silence frames, or faults.
-  A separate 230-second AAC on the second rotating M25 reproduced about 55
-  underruns and inserted silence during isolated playback. Keeping its disk
-  awake did not clear the fault. The host-prepared PCM copy reached EOF with
-  zero reported player/audio underruns, silence frames, or faults across 60
-  checks. Other high-load tracks and physical output still need qualification.
-  Longer battery-powered playback and physical output checks remain open.
-  Current, individually bound development images were installed on Q21,
-  Classic, flash M25 and both rotating M25s after RAM checks. All five returned
-  healthy with ready libraries and sampled playback without reported faults.
-  The four updated after Q21 each processed 32 synthetic wheel events without
-  drops and completed one automatic sleep/wake cycle. Photo 4G was unavailable;
-  sustained and physical qualification remain open.
-  A1059 booted and installed a device-bound development image, then refreshed
-  its 570-track Music library under guarded Disk Mode and returned healthy.
-  Playback during 32 synthetic wheel moves reported no underruns, silence,
-  audio faults, or input drops; a bounded sleep/wake cycle passed. A newer image
-  with the subsequent Q21 theme change booted and played in RAM, but its
-  persistent upload timed out mid-chunk. Recovery Boot retained the prior
-  confirmed slot with no active upload or candidate; a persistent reboot
-  restored that healthy image and ready library. Intermittent Link read timeouts
-  deferred the newer install. Physical output, current, and final-image
-  qualification remain open.
+| Issue | Remaining work |
+| --- | --- |
+| High-load AAC underruns on rotating M25 | Identify and fix the decoder or scheduling limit for affected tracks. Host-prepared PCM is an available [workaround](music-format.md#playback-compatibility). |
+| Intermittent Q21 eject and Windows dirty-volume state | Determine why eject can require a retry and Windows can report a dirty volume despite clean read-only filesystem checks. Verify the fix across repeated mount/eject cycles. |
+| Intermittent Q21 Link timeouts | Determine the cause of read/upload timeouts and verify reliable persistent transfer and interruption recovery on A1059 and MP102. |
 
-- [ ] **Qualify: remaining recovery, parser, transaction, and memory-pressure cases.**
-  Cover interrupted media/firmware publication, corrupt/truncated records, full
-  disks, device loss, settings/history durability, and native Video external-bus
-  stalls beyond the exercised clock-loss fault. Use existing fault controls/checks
-  and focused manual campaigns; close with explicit coverage and successful recovery.
-  [Publisher](../tools/content/publish.py), [state](../services/state/store.c),
-  [Video recovery](../targets/video5g-m25/coprocessor.c), [update](../services/update/update.c).
-  Partial: verified media copies and index publication completed on device. A
-  Photo hardware storage campaign passed scratch readback, settings restore,
-  file growth, and five injected fault recoveries. On rotating M25, a guarded
-  external-bus stall restored the display and a subsequent video played to EOF;
-  a separate forced restore failure recorded a recovery crash and rebooted to
-  the same healthy image. Three guarded native USB roundtrips also passed.
-  A full track boundary increased the CRC-checked history play count across a
-  guarded reboot. Four settings publication cuts exposed only intact old/new
-  records; the original was restored and verified after a final reboot (one cut
-  needed a retry after an explicit write rejection). Four firmware candidate
-  publication cuts on rotating M25 preserved the healthy image and settings;
-  stage 1 kept the old slot and stages 2–4 confirmed the new slot. Explicit
-  begin/chunk rejections were inspected; a partial upload was cleared by guarded
-  reboot before retry. Other history interruption cases, crash rollback, and USB
-  device loss remain open. On flash M25, photo grid-only publication recovered
-  after an injected exception and after the publisher process exited just after
-  rename:
-  the original grid/PIM hashes returned, the transaction marker cleared, and the
-  device rebooted healthy. Other media publication cuts remain open. A second
-  rotating M25 accepted a candidate built with the first unit's USB serial and
-  returned without a stable Link serial. Read-only drive and build checks
-  identified it; recovery Boot restored its original serial. The correctly
-  bound image booted in RAM, installed persistently, and returned healthy with
-  its 12-track library and prepared storage. Link upload and install now require
-  device-bound build evidence at the Session boundary. USB-loss and other
-  interrupted-update cases remain open.
-  After a Q21 Music refresh, the first guarded eject did not remove the volume;
-  a read-only filesystem check found no errors, and a second identity-checked
-  eject returned to a healthy OS and prepared library. Windows still marked
-  the volume dirty on its next mount despite another clean read-only check;
-  the cause remains unconfirmed. A later guarded eject succeeded on the first
-  attempt and returned to the same healthy library.
+## P2 — Remaining measurements and device checks
 
-- [ ] **Qualify: packaged release workflows.** Exercise navigation, playback,
-  install/update, rollback, restore/uninstall and media preparation using release
-  images and the packaged Windows app on supported devices. Include a clean
-  computer and documented FFmpeg setup. Development builds and simulator output
-  do not certify the release path. [Firmware packaging](../tools/studio/firmware_bundle.py),
-  [desktop distribution](../tools/studio/media_distribution.py), [installer](../tools/studio/installer.py).
-  Partial: the local M25 release image and both ZIPs built; archive checks passed,
-  and the packaged Windows app launched locally. A clean Windows computer and the
-  supported-device release campaign remain pending.
+- [ ] **Large-library cold verification and batch conversion.** Measure large,
+  ready catalogs with empty verification caches, batch conversion throughput,
+  and desktop responsiveness during preparation on rotating and flash storage.
+  [Readiness](../tools/content/media_status.py),
+  [preparation](../tools/content/media_manager.py).
 
-- [ ] **Add: first downloadable release after acceptance.** Packaging is implemented;
-  the README still says downloads are unavailable. Publish versioned Windows and
-  qualified firmware ZIPs with checksums and installation/recovery notes, then
-  update Get started. [Release status](../README.md#get-started),
-  [distribution](../tools/studio/media_distribution.py).
-  Blocker: release qualification and a publishing destination are pending.
+- [ ] **Unindexed AAC and seek edge cases.** Measure playable unindexed M4A,
+  raw ADTS, long files, and rejected-index fallback, including continuity after
+  seeking. Optimize only a demonstrated bottleneck.
+  [M4A reader](../services/audio/aac/m4a.c), [ADTS reader](../services/audio/aac/aac.c).
 
-## P2 — Existing performance and hardware work
+- [ ] **Photo recovery with changed content.** Exercise empty albums and restart
+  with changed or missing content. Qualify original-JPEG fallback on Photo and
+  Video, including uncached reads during audio.
+  [Photo viewer](../services/photos/photos.c).
 
-- [ ] **Measure: whole-operation Media Manager baselines.** Compare cold/warm
-  discovery, planning, preparation, conversion, verification and publication on
-  rotating and flash storage, including large catalogs and UI responsiveness.
-  Scan/metadata/conversion reuse is already implemented; establish its combined
-  effect before proposing more cache changes. [Status](../tools/content/media_status.py),
-  [preparation](../tools/content/media_manager.py), [desktop](../tools/studio/media_desktop.py).
-  Partial: flash conversion and rotating-library reads were measured; verified
-  converted-audio hashes reuse unchanged host cache entries, and direct Apple music
-  browsing reuses scanned file records. Repeated original-copy plans now hash the
-  host source against a verified device digest without rereading device content;
-  focused equal/changed checks passed. Discovery, inspection, and empty planning
-  were timed on first and repeated passes on rotating and flash devices. Incremental
-  Music/Files runs completed on rotating (12 tracks) and flash (426 tracks)
-  devices. The rotating run published an updated Files index; the flash run and
-  unchanged repeats reused both libraries. Source file stamps and sampled hashes
-  matched, and subsequent playback reported no faults. Conversion and large catalog
-  baselines remain open. A guarded flash photo grid update
-  reused the identical PIM: index replacement took 1.19 seconds; a fully unchanged
-  repeat took 0.56 seconds. Device hashes, recovery state and reboot passed.
-  Classic inspected 1,018 rows in 10.92/0.52 seconds on first/repeated passes;
-  empty Music planning took 0.56/0.55 seconds. A read-only flash sample
-  converted a 312-second AAC original to PCM in 0.34 seconds after a 0.70-second
-  source hash; comparing the new local PCM with the existing device WAV took
-  3.80 seconds and matched exactly. A separate rotating-disk 230-second AAC
-  sample took 1.43 seconds to hash, 0.27 seconds to convert, and 0.03 seconds
-  to hash local PCM. Both originals kept their size and timestamp.
-  Photo 4G inspected 3,253 rows in 996.31/1.00 seconds on first/repeated
-  passes; empty planning took 1.12/0.57 seconds. The device returned from
-  Disk Mode healthy with its 2,894-track library intact. The slow first pass
-  included avoidable video verification: readiness now checks missing digests
-  and source stamps before hashing large packages. A separate fresh mount still
-  took 36.29 seconds, mainly in source scanning, while video readiness returned
-  Needs update without package reads; its next warm pass took 1.50 seconds.
-  Another fresh pass took 198.72 seconds after hashing a large photo package
-  before rejecting a changed small grid. Checking uncached outputs smallest
-  first reduced a fresh-mount pass with an empty verification cache to 36.42
-  seconds, with the same 3,253 rows and readiness results.
-  A separate empty-cache pass verified 15 ready outputs on rotating M25 in
-  3.63 seconds (0.52 warm) and 63 on flash M25 in 3.12 seconds (0.54 warm).
-  Readiness and row counts matched on both passes. A 2,222-track rotating
-  library scanned in 5.41/0.54 seconds, and Classic's 1,018 rows in
-  1.40/0.54 seconds; those catalogs needed conversion, so they did not
-  exercise ready-output hashing. All four returned to healthy OS images.
-  Large ready-catalog cold comparison, conversion, and UI responsiveness remain open.
-  A read-only Photo 4G cold library snapshot profile took 22.68 seconds,
-  dominated by USB directory enumeration and Apple database opens. A warm
-  scan-plus-database pass took 0.19 seconds.
-  The guarded Disk Mode roundtrip returned to its healthy OS. A faster persistent
-  directory cache still needs a reliable way to detect new nested files.
-  On separate fresh mounts, scanning the Photo 4G Music tree serially took
-  12.59 seconds; splitting its subdirectories across eight host workers took
-  17.08 seconds. The warm serial pass took 0.07 seconds. Parallel directory
-  scanning was not adopted; both guarded returns reached the healthy OS.
-  Q21 inspected 3,043 rows in 286.88 seconds cold and 0.54 seconds warm.
-  Its first Music refresh took 55.6 minutes, host-prepared 2,034 AAC indexes,
-  and published a ready 3,042-track library. A fresh repeat mount inspected
-  in 5.62 seconds and planned in 0.72 seconds, with no copies or reconciliation
-  and Music reusable; the guarded return preserved the library. Broader
-  conversion/UI baselines remain.
-  Fresh-mount and repeat Classic inspections showed Music Ready in a 1,094-row view;
-  two unchanged Music updates reused the library without error. A 75-file host
-  PCM conversion batch published with originals unchanged. Empty-cache and UI
-  responsiveness baselines remain open; detailed timings stay local.
-  A rotating M25 library with Music Ready and 2,237 rows inspected in 22.78
-  seconds after mounting and 0.70 seconds on repeat inspection of the same mount;
-  17.01 seconds of the first pass checked published outputs. Unchanged Music plans
-  took 0.59–0.92 seconds with no copies, conversion, or reconciliation. It returned
-  to a healthy OS image.
-  A1059's 570-track Music refresh completed without original-file copies or
-  audio conversion. The first host preparation had 570 metadata cache misses;
-  the repeat inspection and empty plan each took under a second with Music Ready.
+- [ ] **Concurrent history, artwork, and prefetch at track boundaries.** Attribute
+  controller time and audio reserve when these operations overlap at a join,
+  especially on rotating storage. Tune only if measurements identify starvation
+  or a missed deadline. [Music controller](../services/music/controller.c),
+  [player](../services/music/player.c).
 
-- [ ] **Measure/Improve: remaining AAC seek latency.** Host checkpoints and indexed
-  M4A seeking are implemented. Measure prepared M4A separately from unindexed M4A
-  and raw ADTS, whose backward/restart paths can decode from the beginning. Check
-  long files, rapid retargets, rejected indexes and audio continuity; optimize the
-  measured fallback bottleneck. [Host indexes](../tools/content/aac_index.py),
-  [M4A](../services/audio/aac/m4a.c), [ADTS](../services/audio/aac/aac.c).
-  Partial: an indexed 325-second M4A on flash M25 resumed after forward/backward
-  seeks in 0.80/0.86 seconds with no reported underruns. The 78 unindexed M4As
-  on this device were incompatible and host-converted. On rotating M25, an
-  indexed 230-second M4A resumed after four forward/backward seeks in
-  0.97–3.30 seconds without reported underruns or faults. All six sampled
-  unindexed M4As failed firmware open with an unsupported-format error;
-  host inspection flagged a sampled file for conversion because its AAC frame
-  configuration is unsupported. A RAM build accepted a seek retarget
-  during priming 16 ms after the first seek, resumed at the newer position in
-  1.66 seconds, and preserved pause through a separate retarget; both runs
-  reported zero underruns, silence frames, and audio faults. A final build also
-  resumed a seek-to-start retarget at 90 seconds in 1.39 seconds and honored
-  Resume during a pending paused seek; both had zero reported audio faults.
-  On Q21, a host-indexed AAC resumed after four forward/backward seeks in
-  0.80–1.05 seconds with zero reported underruns, silence frames, or faults.
-  A playable Classic M4A resumed after four forward/backward seeks in
-  0.44–0.52 seconds with zero reported underruns, silence frames, or faults.
-  Playable unindexed M4A, raw ADTS, longer files, rejected indexes, and broader
-  continuity remain.
+- [ ] **Search latency at 100,000 tracks.** Evaluate the proposed 75 ms goal per
+  storage configuration. Measure first result, visible window, render, and
+  display completion on cold/warm storage and during playback.
+  [Search](../services/music/search.c), [database](../services/music/database.c).
 
-- [ ] **Qualify: large photo catalogs and saved navigation.** Grid preloading,
-  JPEG fallback, saved focus and empty-album resume are implemented. Exercise large
-  catalogs, uncached navigation during audio, fallback decoding, empty folders,
-  and restart with changed/missing content. Measure first usable frame and audio
-  reserve. [Photos](../services/photos/photos.c), [saved state](../services/display/settings.c).
-  Partial: host-prepared per-photo descriptor checksums cut first-frame time on
-  a large flash catalog from 15.7 to 2.5 seconds during AAC playback, with no
-  reported audio underruns or faults. Classic and Photo 4G first frames fell
-  from 2.34/2.12 to 0.68/0.64 seconds. Legacy grids still use full validation.
-  Empty folders, broader changed content, and audio qualification remain open.
-  Classic saved focus 80 through a graceful persistent reboot. Media Manager now
-  includes eligible on-device original JPEG paths in its prepared catalog: 16 of
-  617 Classic photos qualified, with all originals unchanged. With one tile pack
-  temporarily absent, Classic decoded a referenced JPEG into a valid frame
-  without error; after the exact pack was restored, prepared rendering resumed.
-  On Photo 4G, 25 successive prepared photos became usable in
-  0.30–0.49 seconds each during music, with zero reported audio underruns,
-  silence frames, or faults. Focus 33 survived a graceful reboot. JPEG fallback,
-  empty folders, and broader changed-content recovery remain. Detailed
-  measurements and identities stay local. The installed Photo 4G catalog has
-  343 photos but no original-JPEG fallback references, so that path cannot be
-  qualified with its current media; it returned to the healthy OS unchanged.
-  Classic navigated 26 prepared photos forward and 25 back during music;
-  first frames took 0.02–0.27 seconds and audio counters stayed clear.
+- [ ] **Release-image startup timings.** Compare cold/warm release boots,
+  separating mount, image validation, copy/BSS, resource/display initialization,
+  and first usable frame. [Boot](../boot/src/linnet_boot.c),
+  [runtime](../kernel/runtime.c).
 
-- [ ] **Measure/Improve: competing media work during playback.** Profile artwork,
-  photos, metadata/history and next-track preparation at track boundaries. Measure
-  video storage/display throughput and audio scheduling per backend. Existing
-  budgets, read-ahead, PCM reserves and gapless joins are in place; verify tuning
-  does not add underruns or missed joins. [Controller](../services/music/controller.c),
-  [player](../services/music/player.c), [M25](../targets/video5g-m25/coprocessor.c),
-  [Classic](../services/video/native/player.c).
-  Partial: photo navigation and an AAC-to-PCM track boundary stayed active on flash
-  hardware without reported underruns or missed joins. A rotating M25 video
-  startup comparison isolated a longer media-open stage that shortened on the
-  next start with the disk active; a short clip completed with seeks and no
-  reported audio faults. Artwork, history, remaining backend throughput, and
-  A/V sync remain.
-  A 60-second rotating M25 video run streamed 900 frames to EOF with no failed
-  MP4 table reads or reported audio underruns/faults; physical A/V sync and the
-  other backend remain open.
-  The rotating M25 same-rate join after disk standby exposed one underrun in
-  the installed and earlier RAM images. A bounded pre-join wake cleared it in
-  a physical standby-to-join run; broader media contention remains open.
-  On Q21, 64 synthetic wheel events in Music completed during indexed AAC
-  playback with no input drops or reported audio underruns, silence, or faults;
-  broader media contention and physical input remain open.
+- [ ] **Long-list wheel feel and theme/panel edge cases.** Observe overshoot,
+  selection stability, clipping, brightness, and theme artifacts on physical
+  panels beyond the controls and readability checks already recorded in
+  [hardware qualification](hardware.md#variant-handling-and-physical-coverage).
 
-- [ ] **Measure/Improve: deferred 75 ms search goal at 100,000 tracks.** Search,
-  retained pages and lower-bound caching are implemented. Measure first result,
-  full visible window, render and display completion separately on cold/warm
-  storage, including playback. Decide feasibility per configuration.
-  [Search counters](../services/music/search.c), [database](../services/music/database.c),
-  [render timing](../kernel/runtime_render_timing.h).
+- [ ] **Q21 idle power tradeoff.** Attribute idle wake sources and measure actual
+  current and physical input response on battery versus external power before
+  adjusting clock-switch thresholds. [Q21 manifest](../targets/ipod4g-q21/target.toml),
+  [runtime](../kernel/runtime.c).
 
-- [ ] **Measure/Improve: remaining startup delay.** Separate mount, validation,
-  copy/BSS, resource/display initialization and first usable frame. Boot handoff
-  and initialization improvements already exist; find the remaining bottleneck
-  using current release images on cold/warm boots. [Boot](../boot/src/linnet_boot.c),
-  [entry](../kernel/main.c), [runtime](../kernel/runtime.c).
-  Partial: physical development timelines captured all five connected devices.
-  Two boots per M25 storage type measured about 10.15 seconds to first frame
-  on flash and 14.08 seconds on rotating storage; image validation and storage
-  stages were captured separately. Release-image cold/warm comparison remains open.
+- [ ] **Classic decoder buffer use.** Compare cache/frame-buffer use for H.264
+  and MPEG-4 before changing buffer counts or priming thresholds.
+  [Native player](../services/video/native/player.c),
+  [decoder](../services/video/native/decoder.c).
 
-- [ ] **Qualify: physical wheel response and display quality.** Accelerated scrolling
-  is implemented. Check long lists, overshoot, selection stability, readability,
-  clipping, brightness, theme switching and artifacts on real panels. Synthetic
-  input/captures do not establish physical wheel or LCD quality.
-  [Input](../kernel/runtime.c), [UI](../ui/runtime/ui.c),
-  [qualification scope](../targets/video5g-m25/QUALIFICATION.md).
-  Blocker: wheel feel, readability, and panel artifacts require direct observation.
-
-- [ ] **Measure: Q21 idle wake sources and clock-switch break-even.** Idle clock
-  switching is enabled. Compare battery/external power, wake frequency, input
-  response and actual current draw before changing the policy.
-  [Runtime](../kernel/runtime.c), [manifest](../targets/ipod4g-q21/target.toml).
-  Partial: a healthy Q21 on external USB power entered its 30 MHz idle clock
-  396 times over 26.5 seconds, accumulating 25.2 seconds there with no clock
-  failures. Two synthetic wheel moves completed input processing and a display
-  frame in about 19 ms each, with no input drops and the selection restored.
-  Battery operation, wake-source attribution, physical response, and current
-  draw remain; the latter requires an external instrument.
-
-- [ ] **Measure/Qualify: Classic native video startup and MPEG-4.** Measure decoder
-  startup stages and buffer use before changing priming thresholds or frame
-  buffers. H.264 playback is recorded; MPEG-4 acceptance remains open. M25 uses a
-  different BCM backend. [Player](../services/video/native/player.c),
-  [decoder](../services/video/native/decoder.c), [video scope](video-format.md).
-  Partial: two MPEG-4 clips completed on Classic hardware without errors or
-  dropped frames; startup counters were captured. A 105-second native clip also
-  reached EOF at 1,573/1,573 frames, and a 59-second clip reached EOF after
-  forward/backward seeks; both reported zero drops and audio faults. Startup
-  reported first frame in about 0.21 seconds with 12,288–14,336 audio frames
-  ready across these runs. Buffer use, broader A/V and physical sync acceptance remain.
-
-- [ ] **Measure: Classic small-update display costs.** Measure framebuffer
-  preservation and panel transfer for status/list updates. Full-repaint copy
-  avoidance already exists; verify alternating buffers, theme acknowledgement and
-  physical tearing before narrowing transfers. [Display](../targets/classic6g-n25/display.c),
+- [ ] **Classic alternating buffers and physical tearing.** Check framebuffer
+  preservation across alternating draw/present buffers and inspect the panel
+  for tearing during small updates. [Display](../targets/classic6g-n25/display.c),
   [panel](../targets/classic6g-n25/panel.c).
-  Partial: 40 injected alternating list moves on Classic hardware reported zero
-  input drops and restored the original selection; 41 renders averaged 7.5 ms
-  and 41 publications averaged 0.76 ms. Missing optional theme records were
-  provisioned under device identity guards. A theme change published after a
-  completed frame and survived a graceful reboot. The original theme was restored
-  and verified after another reboot. Alternating-buffer and physical tearing
-  checks remain.
 
-- [ ] **Qualify: Classic Apple handoff after the portable HAL refactor.** The
-  retail-payload decode API is implemented. Verify its Classic AES/handoff path
-  on matching hardware before closing the original optimization item.
-  [API](../hal/api/platform.h), [Classic implementation](../hal/s5l8702/platform.c),
-  [caller](../services/storage/storage.c).
+- [ ] **Classic startup-selector return to Apple.** Physically verify the
+  retail-payload AES/decode and handoff through the portable HAL. NOR restoration
+  during uninstall exercises a separate path.
+  [Platform implementation](../hal/s5l8702/platform.c),
+  [storage caller](../services/storage/storage.c).
 
-## P2 — New product suggestions from the audit
+## P2 — Feature proposals
 
-- [ ] **Add: dedicated podcasts and audiobooks.** M4B import, bookmarks, 10-second
-  jumps and queue resume exist. Add media-kind/series/episode/chapter metadata,
-  dedicated browsing, played/unplayed state, automatic per-item resume, exclusion
-  from Shuffle Songs and spoken-audio speed control. History stores per-track
-  resume positions, but ordinary selection does not restore them.
-  [Compiler](../tools/content/music.py), [schema](../services/music/database.h),
-  [controller](../services/music/controller.c), [history](../services/music/history_record.h).
+These additions are proposed work, not promises for the first release.
 
-- [ ] **Add: lyrics.** Extract embedded/sidecar text on the host, publish bounded
-  per-track data and expose a readable Now Playing view. Lyrics are absent from
-  the track schema and playback options. [Schema](../services/music/database.h),
-  [options](../services/music/controller.c).
+| Proposal | Remaining addition |
+| --- | --- |
+| Podcasts and audiobooks | Series/episode/chapter metadata, dedicated browsing, played state, automatic per-item resume, exclusion from Shuffle Songs, and spoken-audio speed control. |
+| Lyrics | Host-prepared embedded/sidecar lyrics and a bounded Now Playing view. |
+| Star ratings and desktop history access | 0–5 ratings, device rating controls, and desktop access to listening history, preserving stable track IDs. |
+| Album shuffle | Random album order with disc/track order retained within each album, including repeat and resume. |
+| Device settings | Saved wheel-adjustable brightness, device-side menu customization, and Reset Settings with explicit treatment of history. |
+| Slideshow settings | Saved interval, repeat/shuffle, and optional music-playlist choices. |
+| Sound Check compatibility | Import Apple `iTunNORM` values or consistently label normalization as ReplayGain. Consider host loudness analysis for untagged music. |
+| Metadata and artwork editing | Single/batch tag overrides and cover replacement, with explicit file-tag write policy, asset invalidation, and track-identity preservation. |
+| Smart playlists and larger saved lists | Host-evaluated playlist rules and a bounded design beyond 16 saved lists / 1,024 entries each. |
+| Saved sync policies | Persistent folder/playlist selections that determine future syncs. |
+| Desktop playback preview | Audio/video playback within Media Manager. |
+| Video categories | Movie, show/season/episode, and music-video metadata, editing, and browsing. |
 
-- [ ] **Add: star ratings and desktop listening-history access.** Favorites and
-  play counts exist. Add 0–5 ratings to mutable history, device controls and
-  desktop display/editing; preserve state during preparation using stable IDs.
-  [History](../services/music/history_record.h), [desktop library](../tools/content/media_library.py).
+Implementation entry points: [music compiler](../tools/content/music.py),
+[music schema](../services/music/database.h), [queue](../services/music/queue.h),
+[history](../services/music/history_record.h),
+[desktop](../tools/studio/media_desktop.py), and
+[video catalog](../tools/content/video_catalog.py).
 
-- [ ] **Add: album shuffle.** The queue has a boolean song-shuffle mode. Randomize
-  album order while retaining track/disc order within albums, including repeat,
-  resume and large virtual queues. [Queue](../services/music/queue.h),
-  [controls](../services/music/controller.c).
+## P3 — Broader support
 
-- [ ] **Add: persistent user brightness and device settings controls.** Brightness
-  currently changes through a development control; Display exposes timeout/themes.
-  Add saved wheel-adjustable brightness on suitable targets, device-side menu
-  customization and Reset Settings. Desktop menu editing already exists. Reset
-  should preserve media and make listening-history treatment explicit.
-  [Runtime](../kernel/runtime.c), [settings](../services/display/settings.c),
-  [desktop menus](../tools/studio/screen_settings.py).
+| Area | Remaining work |
+| --- | --- |
+| Utilities | Alarms with measured wake behavior, world clocks, stopwatch/laps, host-prepared contacts and calendar events, and a persisted combination screen lock. |
+| Languages | Broader glyph coverage, translated menus, and matching input/search rules. |
+| Accessories and TV output | Physically qualify M25 TV commands. Scope dock/car/remote protocols, radio accessories, and recording separately. |
+| Hardware variants | Qualify the additional boards, storage, panels, and NOR chips listed in [hardware support](hardware.md), and Classic installation before enabling its automatic installer. |
+| Classic games | Physical layout, input, and playback acceptance on Classic hardware. |
+| Apple interoperability | Expand exact-device database qualification and music/path support; consider desktop iTunes-library/playlist migration. |
+| Optional expansion | Assess local recommendations, proprietary stock features, protected purchases/Audible, and commercial iPod games separately. Consider macOS/Linux packaging and CD ripping. |
 
-- [ ] **Improve: slideshow settings.** Slideshows use a fixed five-second delay.
-  Add saved interval, repeat/shuffle and optional music-playlist choices; verify
-  slide changes preserve audio reserve. [Slideshow](../services/photos/photos.c),
-  [controls](../services/music/ui.c).
-  Partial: Photo 4G and Classic each advanced six observed prepared slides during
-  music; flash M25 advanced five. All three kept zero reported audio underruns,
-  silence frames, or faults and ample queued audio. Saved focus was restored;
-  flash M25 retained it across a graceful reboot. Adjustable settings remain open.
+## Maintaining the roadmap
 
-- [ ] **Improve: stock Sound Check compatibility.** ReplayGain works and some
-  targets label it Sound Check, but the host reads ReplayGain tags rather than
-  Apple `iTunNORM` values. Import Apple normalization data or consistently label
-  the control ReplayGain. Offer optional host loudness analysis for untagged music.
-  [Extraction](../tools/content/music.py), [labels/application](../services/music/controller.c).
+Remove completed work. If only part of an item remains, rename it and describe
+that specific gap; do not leave the whole feature unchecked or append a history
+of results. Record current behavior in the owning guide and completed device
+checks in the hardware reference. Keep exact workloads, timings, build identities,
+and receipts in [local artifacts](local-artifacts.md).
 
-- [ ] **Add: desktop metadata/artwork editing.** Media details are read-only.
-  Add single/batch tag overrides and cover replacement, define optional file-tag
-  writes explicitly, invalidate affected prepared assets and retain track identity.
-  [Details](../tools/studio/media_desktop.py), [metadata](../tools/content/music.py),
-  [artwork](../tools/content/album_art.py).
-
-- [ ] **Add: smart playlists and expand saved-playlist limits.** Static playlists,
-  M3U exchange and built-in activity views exist. Add host-evaluated rules using
-  tags/ratings/history, and a bounded design beyond 16 saved lists / 1,024 entries
-  each. Ordinary virtual music queues already support 100,000 tracks.
-  [Editor](../tools/studio/playlist_editor.py), [saved format](../tools/content/playlists.py),
-  [collections](../services/music/collections.h), [queue](../services/music/queue.h).
-
-- [ ] **Add: saved sync policies and desktop playback preview.** Per-device queues,
-  change detection and reconciliation exist. Add saved folder/playlist selections
-  and an explicit sync preview of additions, replacements, removals and space.
-  Add audio/video playback preview; existing details/artwork previews are not a
-  media player. [Desktop](../tools/studio/media_desktop.py),
-  [plan/reconciliation](../tools/content/media_status.py).
-
-- [ ] **Add: video library categories.** The catalog is a flat title/path list.
-  Add movie, show/season/episode and music-video metadata, host editing and device
-  browsing while preserving prepared entries and resume state.
-  [Host catalog](../tools/content/video_catalog.py), [device catalog](../services/video/catalog.c).
-
-## P3 — Optional parity and broader support
-
-- [ ] **Add: alarms, world clocks and a stopwatch.** Clock/date editing and sleep
-  timer exist. Add persisted utility settings, lap recording and measured alarm
-  wake behavior, accounting for the target's audible outputs.
-  [Clock](../services/display/clock.c), [power API](../hal/api/power.h),
-  [Extras](../ui/system/extras/screen.tsx).
-
-- [ ] **Add: contacts, calendar events and a combination screen lock.** Prepare
-  bounded vCard/iCalendar data on the host and add device viewers. The HAL calendar
-  represents RTC time, not events. Hold-switch handling exists; a combination-lock
-  UI and saved combination do not. [Extras](../ui/system/extras/screen.tsx),
-  [clock API](../hal/api/power.h), [settings](../services/display/settings.c).
-
-- [ ] **Add: broader glyph coverage and translated menus.** Metadata is UTF-8,
-  but current fonts are ASCII and device search input is English. Add bounded
-  glyph coverage, matching input/search rules and language selection; exercise
-  accented and non-Latin libraries on every supported display.
-  [Font baker](../tools/content/font.py), [renderer](../ui/runtime/ui.c),
-  [search input](../services/music/search.c).
-
-- [ ] **Qualify/Add: accessories and TV output.** Physically qualify M25's TV
-  commands. Implement or hide unsupported output controls. Scope
-  dock/car/remote protocols, optional radio accessories and voice recording
-  separately; general accessory/recording services are absent. Dock line out exists.
-  [M25 TV](../targets/video5g-m25/coprocessor.c), [Photo](../services/video/ipvf/player.c),
-  [Classic](../services/video/native/player.c), [audio API](../hal/api/audio.h).
-  Partial: Photo 4G and Classic now hide video output settings their backends
-  cannot apply, while M25 retains its TV controls. Target builds passed; both
-  revised UIs booted from RAM on hardware with their libraries intact. Photo 4G
-  video playback reported no audio faults or underruns. M25 TV output and the
-  accessory/recording scope still need hardware acceptance or implementation.
-
-- [ ] **Qualify/Improve: wider hardware and Apple-library interoperability.** Qualify
-  additional board/RAM/storage variants and guarded Classic installation before
-  enabling its automatic installer. Enable Classic games after layout/input/playback
-  acceptance. Expand Apple database support beyond two exact qualified volumes and
-  current music/path restrictions; add optional desktop iTunes-library/playlist
-  migration. Existing Apple media reading and playlist preservation already work.
-  [Targets](../targets/README.md), [Classic policy](../targets/classic6g-n25/target.toml),
-  [Apple boundary](apple-stock-music.md), [reader](../tools/content/retail_media.py).
-
-- [ ] **Decide: proprietary stock features and broader desktop scope.** Native
-  Genius, protected purchases/Audible formats and commercial iPod games are absent;
-  they require separate feasibility work. Consider local playlist recommendations.
-  macOS/Linux packaging and CD ripping are optional companion expansion.
-  [Audio](../services/music/decoder.c), [distribution](../tools/studio/media_distribution.py).
-
-## Closing items
-
-Keep completed items checked and visible with a short evidence note. Record partial
-work separately from remaining acceptance. Update target evidence notes when
-qualification passes; keep outstanding tasks here. Keep workloads,
-timings, build identities and receipts in [local artifacts](local-artifacts.md).
-Use existing checks and manual verification; add new tests only when requested.
-Measurement items close with comparable evidence or a documented decision that
-further optimization is unnecessary. Physical acceptance requires physical evidence.
+Close a measurement item when its question is answered, including when the
+result shows no optimization is needed. Physical acceptance requires physical
+evidence; an implementation or a successful build does not supply it.

@@ -11,9 +11,29 @@ from tools.inspect.image import inspect, verify_release
 from tools.studio.targets import ROOT, target_id
 
 
-FILES = {"os.los", "os.json"} | {
-    f"boot-{selector}.{extension}"
-    for selector in ("none", "rockbox") for extension in ("los", "json", "ipod")}
+OS_NAME = "firmware/linnet-os"
+BOOT_NAMES = {"none": "firmware/linnet-boot-standard",
+              "rockbox": "firmware/linnet-boot-multiboot"}
+FILES = {OS_NAME + ".los", OS_NAME + ".json", "README.txt"} | {
+    f"{name}.{extension}"
+    for name in BOOT_NAMES.values() for extension in ("los", "json", "ipod")}
+PACKAGE_README = """Linnet firmware
+
+Select this entire ZIP in Linnet Media Manager:
+iPod setup > Choose firmware ZIP
+
+Do not extract the ZIP or choose individual files. Media Manager verifies your
+iPod model and selects the required Linnet bootloader for your installation.
+
+The firmware folder contains Linnet OS and two Linnet bootloader variants:
+- standard: Linnet with Apple software fallback.
+- multiboot: also allows starting a compatible, existing Rockbox installation.
+Both bootloaders are Linnet software. This package does not install Rockbox.
+
+The iPod Classic requires the separate native Boot bootstrap procedure before
+using its firmware package. See https://github.com/jspann21/linnet for setup
+instructions and hardware compatibility.
+"""
 MAX_BYTES = 64 * 1024 * 1024
 
 
@@ -23,10 +43,10 @@ def create(target, output, jobs=2):
     output = Path(output).resolve()
     if output.exists():
         raise ValueError("firmware bundle output already exists")
-    payloads = {}
+    payloads = {"README.txt": PACKAGE_README.encode("utf-8")}
     for kind, selector in (("os", "none"), ("boot", "none"), ("boot", "rockbox")):
         report = build("release", target, verify=True, kind=kind, boot_selector=selector, jobs=jobs)
-        name = "os" if kind == "os" else "boot-" + selector
+        name = OS_NAME if kind == "os" else BOOT_NAMES[selector]
         payloads[name + ".los"] = (ROOT / report["artifacts"]["los"]).read_bytes()
         if kind == "boot":
             payloads[name + ".ipod"] = (ROOT / report["artifacts"]["ipod"]).read_bytes()
@@ -89,25 +109,28 @@ def load(path, identity, installation_method):
             if inspect(data)["target_id"] != identity["target_id"]:
                 raise ValueError("firmware image target mismatch")
     selector = INSTALLATION_METHODS[method]["boot_selector"]
+    boot_name = BOOT_NAMES[selector]
     parent = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".cache")) / "Linnet/Firmware"
     parent.mkdir(parents=True, exist_ok=True)
     # Keep each selection private to its installation, including concurrent runs.
     with tempfile.TemporaryDirectory(prefix="verify-", dir=parent) as temporary:
         staging = Path(temporary)
         for name, data in payloads.items():
+            (staging / name).parent.mkdir(parents=True, exist_ok=True)
             (staging / name).write_bytes(data)
         def artifacts(directory):
-            return dict(os_image=str(directory / "os.los"), os_report=str(directory / "os.json"),
-                        boot_image=str(directory / f"boot-{selector}.los"),
-                        boot_report=str(directory / f"boot-{selector}.json"),
-                        boot_wrapper=str(directory / f"boot-{selector}.ipod"),
+            return dict(os_image=str(directory / (OS_NAME + ".los")), os_report=str(directory / (OS_NAME + ".json")),
+                        boot_image=str(directory / (boot_name + ".los")),
+                        boot_report=str(directory / (boot_name + ".json")),
+                        boot_wrapper=str(directory / (boot_name + ".ipod")),
                         build="user", os_profile="release",
-                        os_build_id=inspect(payloads["os.los"])["build_id"],
-                        boot_build_id=inspect(payloads[f"boot-{selector}.los"])["build_id"],
+                        os_build_id=inspect(payloads[OS_NAME + ".los"])["build_id"],
+                        boot_build_id=inspect(payloads[boot_name + ".los"])["build_id"],
                         installation_method=method, boot_selector=selector)
         _validate_artifacts(identity, artifacts(staging))
         destination = parent / uuid.uuid4().hex
         destination.mkdir()
         for name in FILES:
+            (destination / name).parent.mkdir(parents=True, exist_ok=True)
             (staging / name).replace(destination / name)
     return artifacts(destination)

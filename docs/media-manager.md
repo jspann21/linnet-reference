@@ -35,7 +35,7 @@ check, but video conversion remains unavailable until both tools pass.
 ## Install or restore firmware
 
 1. Connect the iPod in Disk Mode and choose **Find or switch iPod**.
-2. Open **iPod setup**, choose a firmware ZIP or build from source, and review the detected installation.
+2. Open **iPod setup → Choose firmware ZIP** and select the whole ZIP **without extracting it**. Media Manager selects the required files. Source checkouts also offer a development build option.
 3. Choose the Linnet version and available installation method, install, then **Eject safely**.
 
 On a supported native Boot installation, **Default startup** chooses which
@@ -46,8 +46,12 @@ startup selector** first; that guarded update keeps the saved Apple firmware
 and recovery plan. Finish an interrupted update with **Resume startup selector
 update** before making other setup changes.
 
-The installer checks hardware identity, geometry, checksums, and image
-compatibility. Automatic native installation is enabled for Photo P98,
+Firmware installation requires a recognized target, matching USB and mounted
+storage identities, and a writable FAT32 iPod volume. Unknown devices and firmware
+for another target are rejected. The installer rechecks the connected device and
+installation method before writing; the elevated worker also revalidates the
+firmware after administrator approval. Selecting a ZIP cannot override these
+checks. Automatic native installation is enabled for Photo P98,
 monochrome Q21, and Video M25. Classic N25 requires its separate
 [bootstrap procedure](bootstrap-tooling.md); building a Classic ZIP does not
 enable automatic installation.
@@ -212,12 +216,14 @@ are read directly by Apple OS.
 This is a separate update to Apple's library, not Linnet adopting iTunesDB as its
 own index. Existing Apple tracks and playlists are preserved by the managed
 writer. It is enabled only for explicitly qualified **FAT32** device/volume
-combinations. The current allowlist contains one **iPod Video MA146** specimen
-and one **iPod classic MB147** specimen. Eligibility checks the target, disk
-serial, volume serial, and sector size together; matching the model alone does
-not qualify another iPod or a reformatted volume. Other devices can still use
-Linnet media preparation when their target supports it, but **Update Apple OS**
-remains unavailable until that exact device and volume are qualified.
+combinations. Qualified models and media restrictions are listed in
+[Apple OS library updates](apple-stock-music.md#supported-boundary).
+The monochrome Q21 workflow offers Music only. Eligibility checks the target,
+disk serial, volume serial, sector size, and any required model identity together;
+matching the model alone does not qualify another iPod or a reformatted volume.
+Other devices can still use Linnet media preparation when their target supports
+it, but **Update Apple OS** remains unavailable until that exact device and
+volume are qualified.
 An iPod can contain Apple firmware while its Apple music library is empty.
 Preparing Music, Photos, or Videos for Linnet does not add them to Apple's
 databases; select compatible folders and complete **Update Apple OS** on a

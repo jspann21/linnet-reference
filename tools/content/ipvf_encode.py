@@ -287,8 +287,8 @@ def _worker(request):
     creator.configure_geometry(data.get("width", 220), data.get("height", 176),
                                data.get("max_record_sectors", 192))
     print("IPVF_METADATA:" + json.dumps({"total_frames": math.ceil(duration * fps)}), flush=True)
-    # Full PCM and the bounded encoded file coexist; decoded video is streamed.
-    needed = math.ceil(max(duration, format_duration or duration) * 44100 * 4) + min(
+    # Both decoded streams are piped; only the bounded encoded file is staged.
+    needed = min(
         creator.DEVICE_FILE_SIZE_MAX,
         math.ceil(duration * fps * creator.MAX_RECORD_SECTORS * 512)) + 32 * 1024**2
     if shutil.disk_usage(output.parent).free < needed:

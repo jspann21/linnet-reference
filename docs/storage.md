@@ -5,7 +5,7 @@ The block API addresses 512-byte units; the FAT32 reader accepts power-of-two
 BPB sector sizes from 512 through 4096 and normalizes their geometry. This does
 not mean every drive or adapter with those sector sizes is hardware-qualified.
 
-See [confirmed hardware](../README.md#confirmed-hardware) for device scope.
+See [hardware support](hardware.md) for tested configurations and variant limits.
 Installer plans are tied to the inspected disk and firmware backup; they cannot
 be reused on another disk or layout.
 

@@ -8,6 +8,20 @@ Use [Media Manager](media-manager.md) for everyday imports. The compiler indexes
 audio and can stage unchanged copies; it does not transcode audio. A codec ID
 describes the source encoding, not a guarantee that a target can play it.
 
+## Playback compatibility
+
+The firmware provides decoders for integer PCM in WAV/AIFF, MP3, AAC in M4A or
+ADTS, ALAC, FLAC, and Vorbis. Channel count, sample rate, profile, and frame
+limits still apply. Host metadata readers also recognize formats such as Opus
+and WavPack that have no native decoder.
+
+Media Manager checks compatibility for the selected target and reports skipped
+files with a reason. It can prepare PCM copies of incompatible unprotected
+audio or selected music while retaining originals and metadata. This conversion
+is separate from PODB compilation. Exact limits live in the
+[host compatibility check](../tools/content/music.py) and
+[native decoder](../services/music/decoder.c).
+
 ## Structure
 
 The database contains a header followed by track, group, membership, search,
@@ -29,7 +43,7 @@ SHA-256 cover the database; readers also check section bounds, references, strin
 starts, and reserved fields. These checks detect corruption, not authenticity.
 Rebuild an incompatible catalog with Media Manager.
 
-## Identity, paths, and artwork
+## Identity and paths
 
 Track IDs derive from source-relative paths. Editing tags preserves identity;
 moving a file changes it. Albums use album-artist ownership while track artist
@@ -43,25 +57,16 @@ Neither a valid database nor fast verification proves the source audio is intact
 Host-decoded sample counts supply duration where container headers do not.
 Native decoder timing takes precedence during playback.
 
-Artwork is prepared for the selected target: 64 × 64 on Photo and monochrome
-4G. Video and Classic use one RGB565 bundle with a 160 × 160 cover and an exact
-112 × 112 Now Playing rendition; Classic also includes its 126 × 126 rendition.
-The host normalizes orientation and color profiles, resizes from the source,
-and rounds to the display's RGB565 colors. Encoding 2 identifies these bundles;
-the older encoding 1 square covers remain readable.
+## Artwork
 
-Cover Flow uses a separate host-prepared catalog. Video and Classic's `LCFN`
-tiles contain a native 130 × 130 cover and its reflection, with 256 RGB565
-palette entries. The mapped catalog associates each album's representative
-cover with its playback identity and CRC. A validated resident Cover Flow cover
-can appear immediately when that track starts while the full playback bundle
-loads. Full bundle cache hits also publish in the request turn. The 5G retains
-its full-width home menu; Classic's existing home pane uses the 160 px cover.
+PODB references target-specific RGB565 covers under `/.LINNET/ART/`.
+Video and Classic bundle exact Now Playing renditions with the larger cover;
+Photo and monochrome 4G use 64 × 64 covers. Cover Flow has a separate catalog
+bound to the music database and, on Video/Classic, mapped playback identities.
 
-Host extraction and caches are separate from device decoding; see the
-[music compiler](../tools/content/music.py), [Cover Flow preparation](../tools/content/coverflow.py),
-and [artwork loader](../services/music/artwork.c). Cold disk reads can still delay
-an uncached cover; resident previews avoid a loading label while it arrives.
+See [album artwork and Cover Flow](artwork.md) for sizes, encodings, preparation,
+resident previews, and validation. Keep the artwork files and Cover Flow catalog
+consistent with the published PODB generation.
 
 ## Inspect and publish
 

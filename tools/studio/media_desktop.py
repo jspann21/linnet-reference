@@ -778,6 +778,7 @@ def build_setup_page(window):
     window.firmware_path = str(window.settings.value('firmware_bundle', ''))
     window.firmware_label = label(window.firmware_path or 'Choose a downloaded Linnet firmware ZIP.', 'muted', True)
     layout.addWidget(window.firmware_label)
+    layout.addWidget(label('Select the whole ZIP without extracting it. Linnet chooses the required files for your installation.', 'muted', True))
     window.firmware_button = button('Choose firmware ZIP', window.choose_firmware, None, 'folder')
     layout.addWidget(window.firmware_button, 0, Qt.AlignLeft)
     window.build_from_source = CheckBox('Build from source (development)')
