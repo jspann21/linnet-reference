@@ -11,6 +11,7 @@ import unicodedata
 import os
 import tempfile
 from . import SourceError
+from .host_state import file_stamp
 
 MAX_NOTES = 256
 TITLE = 64
@@ -169,12 +170,15 @@ def compile_notes(source, output, *, target, excluded=None, progress=None, check
         _plain(path, source)
         if path.is_symlink() or not path.resolve().is_relative_to(source):
             raise ValueError(f'Note links cannot escape or alias the source: {path}')
-        if path.stat().st_size > 1024 * 1024:
+        before = path.stat()
+        if before.st_size > 1024 * 1024:
             raise SourceError(f'Note is too large: {path}', path)
         with path.open('rb') as reader:
             raw = reader.read(1024 * 1024 + 1)
         if len(raw) > 1024 * 1024:
             raise SourceError(f'Note is too large: {path}', path)
+        if len(raw) != before.st_size or file_stamp(before) != file_stamp(path.stat()):
+            raise SourceError(f'Note changed while preparing: {path}', path)
         try:
             original = raw.decode('utf-16' if raw.startswith((b'\xff\xfe', b'\xfe\xff')) else 'utf-8-sig')
         except UnicodeError as exc:
