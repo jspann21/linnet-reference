@@ -337,6 +337,8 @@ def _check_tables(path, size, sample_bytes=65536, *, checkpoint=lambda: None):
                                         or not int.from_bytes(pair[4:], "big")):
                                     raise ValueError("Invalid MP4 decode timestamps")
                         if kind == b"ctts":
+                            if entries * 8 != limit - body - 8:
+                                raise ValueError("Invalid MP4 composition timestamp table size")
                             source.seek(body+8)
                             for _ in range(entries):
                                 checkpoint()
