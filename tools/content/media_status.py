@@ -12,6 +12,10 @@ from .host_state import cache_directory, cache_root, load_json_object, save_json
 from .inventory import collect_records_by_kind as records_by_kind, skipped_paths, scan as scan_sources
 
 
+def _recent_verification(timestamp, now):
+    return type(timestamp) in (int, float) and now - 3600 <= timestamp <= now
+
+
 def _verification_name(name):
     """Validate device-relative file names stored in the verification cache."""
     path = Path(name)
@@ -30,7 +34,7 @@ class _VerifiedFiles(dict):
 
     def refresh(self):
         now = time.time()
-        if not 0 <= now - self.owner['verified_at'] <= 3600:
+        if not _recent_verification(self.owner['verified_at'], now):
             super().clear()
             self.owner['verified_at'] = now
 
@@ -68,8 +72,7 @@ def _verification_cache(disk_serial, volume_serial, partition_offset, volume_uni
         verified_at = saved.get('verified_at')
         if (saved.get('partition_offset') != partition_offset or
                 saved.get('volume_unique_id', '').casefold() != volume_unique_id.casefold() or
-                type(verified_at) not in (int, float) or
-                not 0 <= cache['verified_at'] - verified_at <= 3600):
+                not _recent_verification(verified_at, cache['verified_at'])):
             return cache
         rows = saved.get('files', [])
         if not isinstance(rows, list) or len(rows) > 4096:
@@ -95,7 +98,7 @@ def _verified_outputs(disk_serial, volume_serial, partition_offset, volume_uniqu
     now = time.time()
     # Expire memory entries too, including after a clock rollback. Preserving
     # the loaded timestamp prevents refreshes from extending persisted hashes.
-    if not 0 <= now - cache['verified_at'] <= 3600:
+    if not _recent_verification(cache['verified_at'], now):
         cache['files'].clear()
         cache['verified_at'] = now
     return cache['files']
@@ -121,8 +124,7 @@ def _remember_verified(identity, verified, before):
             old_time = previous.get('verified_at')
             if (previous.get('partition_offset') == identity['partition_offset'] and
                     previous.get('volume_unique_id', '').casefold() == identity['volume_unique_id'].casefold() and
-                    type(old_time) in (int, float) and
-                    0 <= now - old_time <= 3600):
+                    _recent_verification(old_time, now)):
                 verified_at = min(verified_at, old_time)
         except (OSError, ValueError, TypeError, AttributeError):
             pass
