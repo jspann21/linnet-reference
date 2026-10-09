@@ -15,6 +15,8 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 import uuid
 
+from .host_state import load_json_object
+
 USER_AGENT = 'Linnet/0.1 (https://github.com/jspann21/linnet)'
 _lock = threading.Lock()
 _last_request = 0.0
@@ -151,11 +153,11 @@ def fetch(root, *, progress=lambda text: None, checkpoint=lambda: None, retry_mi
     for number, (base, rows) in enumerate(groups.items(), 1):
         checkpoint()
         state_path = base.with_suffix('.json')
-        try:
-            previous = json.loads(state_path.read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            previous = {}
-        if not retry_missing and previous.get('matcher') == 1 and previous.get('status') == 'unmatched' and time.time() - previous.get('checked', 0) < 7 * 86400:
+        previous = load_json_object(state_path)
+        checked, now = previous.get('checked'), time.time()
+        if (not retry_missing and previous.get('matcher') == 1 and
+                previous.get('status') == 'unmatched' and type(checked) in (int, float) and
+                now - 7 * 86400 < checked <= now):
             result['unmatched'] += 1
             continue
         owner, album = _identity(rows[0])
