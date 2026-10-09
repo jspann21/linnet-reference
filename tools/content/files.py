@@ -298,11 +298,19 @@ def _preview(source, cache, width, height, columns, recipe, checkpoint, info, ro
     suffix = source.suffix.lower()
     if suffix not in IMAGES | TEXT or (suffix in IMAGES and not width):
         return None
+    checkpoint()
+    current = source.stat()
+    if (current.st_size, current.st_mtime_ns) != (info.st_size, info.st_mtime_ns):
+        raise ValueError(f'File changed while preparing its preview: {source}')
+    # Windows directory enumeration supplies size and write time, but not the
+    # file ID needed to distinguish a replacement with identical timestamps.
+    info = current
     # Cache-key work uses file metadata; unchanged images/text are not decoded
     # again during each preparation. Output hashes still guard publication.
     format_key = 'lfim' if compressed else 'fimg'
     source_key = f'{cache_scope}:{source.relative_to(root).as_posix()}' if cache_scope else str(source)
-    key = hashlib.sha256(f'files-{format_key}:{source_key}:{info.st_size}:{info.st_mtime_ns}:{width}:{height}:{columns}:{recipe[2]}'.encode()).hexdigest()
+    source_stamp = _preview_source_stamp(info)
+    key = hashlib.sha256(f'files-{format_key}:{source_key}:{source_stamp}:{width}:{height}:{columns}:{recipe[2]}'.encode()).hexdigest()
     output = cache / (key + ('.FIM' if suffix in IMAGES else '.TXT'))
     if not output.exists():
         negative_key = (os.path.normcase(os.path.abspath(source)),
@@ -345,7 +353,7 @@ def _preview(source, cache, width, height, columns, recipe, checkpoint, info, ro
         else:
             if info.st_size > MAX_TEXT_SOURCE_BYTES:
                 return None  # Native bounded byte/text paging remains available.
-            before = source.stat()
+            before = info
             with source.open('rb') as reader:
                 raw = reader.read(MAX_TEXT_SOURCE_BYTES + 1)
             if len(raw) > MAX_TEXT_SOURCE_BYTES:
@@ -398,7 +406,7 @@ def _preview(source, cache, width, height, columns, recipe, checkpoint, info, ro
                     data.extend(wrapped.encode('ascii').ljust(columns, b' '))
         checkpoint()
         after = source.stat()
-        if after.st_size != info.st_size or after.st_mtime_ns != info.st_mtime_ns:
+        if _preview_source_stamp(after) != source_stamp:
             raise ValueError(f'File changed while preparing its preview: {source}')
         _cache_bytes(output, data)
     digest = _hash(output)
