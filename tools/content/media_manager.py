@@ -486,7 +486,8 @@ def _planning_records(source, snapshots):
     return records
 
 
-def _same_file_bytes(left, right, size, digest=None, stable_right=None):
+def _same_file_bytes(left, right, size, digest=None, stable_right=None, *, checkpoint=lambda: None):
+    checkpoint()
     paths = (left, right)
     before = [path.stat() for path in paths]
     if any(not stat.S_ISREG(info.st_mode) or info.st_size != size for info in before):
@@ -495,6 +496,7 @@ def _same_file_bytes(left, right, size, digest=None, stable_right=None):
     with left.open('rb') as source, right.open('rb') as destination:
         remaining, chunk_size = size, 16 * 1024
         while remaining:
+            checkpoint()
             count = min(remaining, chunk_size)
             a, b = source.read(count), destination.read(count)
             if len(a) != count or len(b) != count:
@@ -508,6 +510,7 @@ def _same_file_bytes(left, right, size, digest=None, stable_right=None):
             chunk_size = 1024 * 1024
         if equal and (source.read(1) or destination.read(1)):
             raise ValueError('file changed while comparing existing media')
+    checkpoint()
     after = [path.stat() for path in paths]
     if any((a.st_size, a.st_mtime_ns, a.st_ctime_ns, a.st_ino) !=
            (b.st_size, b.st_mtime_ns, b.st_ctime_ns, b.st_ino)
@@ -518,7 +521,8 @@ def _same_file_bytes(left, right, size, digest=None, stable_right=None):
     return equal
 
 
-def _same_existing_file(source, destination, size, root, verified, known, info):
+def _same_existing_file(source, destination, size, root, verified, known, info, *, checkpoint=lambda: None):
+    checkpoint()
     relative = destination.relative_to(root).as_posix()
     stamp = (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino)
     recent = os.name == 'nt' and info.st_mtime_ns > time.time_ns() - _RECENT_OUTPUT_NS
@@ -526,7 +530,7 @@ def _same_existing_file(source, destination, size, root, verified, known, info):
         before = source.stat()
         if not stat.S_ISREG(before.st_mode) or before.st_size != size:
             raise ValueError('file changed while comparing existing media')
-        digest = _hash(source)
+        digest = _hash(source, progress=lambda _current, _total: checkpoint())
         after = source.stat()
         if (before.st_size, before.st_mtime_ns, before.st_ctime_ns, before.st_ino) != (
                 after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino):
@@ -539,7 +543,7 @@ def _same_existing_file(source, destination, size, root, verified, known, info):
         if valid:
             return digest in valid
     digest, stable_right = hashlib.sha256(), []
-    same = _same_file_bytes(source, destination, size, digest, stable_right)
+    same = _same_file_bytes(source, destination, size, digest, stable_right, checkpoint=checkpoint)
     current = stable_right[0]
     if same and not recent and stamp == (
             current.st_size, current.st_mtime_ns, current.st_ctime_ns, current.st_ino):
@@ -556,6 +560,11 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
     root = Path(root).resolve(strict=True)
     planned = {}
     known = {}
+
+    def check():
+        if cancelled():
+            raise Cancelled('Stopped while checking queued media.')
+
     if verified is not None:
         for (relative, digest), stamp in verified.items():
             if isinstance(relative, str) and isinstance(digest, str) and re.fullmatch('[0-9a-f]{64}', digest):
@@ -575,8 +584,7 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
         is_folder = source.is_dir()
         records = _planning_records(source, snapshots)
         for path, info in records:
-            if cancelled():
-                raise Cancelled('Stopped while checking queued media.')
+            check()
             # Preserve supporting files (cover art, playlists) inside selected folders.
             if not is_folder and path.suffix.lower() not in extensions(kind):
                 raise ValueError(f"{path.name} is not a supported {kind.lower()} source.")
@@ -658,9 +666,9 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                                 prepared['bits'] == 16 and prepared['channels'] == 2 and
                                 prepared['rate'] == 44100 and not compatibility_issue(prepared, target) and
                                 prepared['frames'] >= converted_frames - max(2205, converted_frames // 100) and
-                                _verified_audio_hash(path, root, prepared['tags'].get('source_sha256'), verified) and
+                                _verified_audio_hash(path, root, prepared['tags'].get('source_sha256'), verified, checkpoint=check) and
                                 _verified_audio_hash(destination, root, prepared['tags'].get('pcm_sha256'),
-                                                     verified, prepared)):
+                                                     verified, prepared, checkpoint=check)):
                             if on_device and reused_audio is not None:
                                 reused_audio.append((path, destination))
                             continue
@@ -677,18 +685,18 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                     elif unverified is not None:
                         unverified.append(kind)
                 elif not different and (old.st_size != info.st_size or not (
-                        _same_existing_file(path, destination, info.st_size, root, verified, known, old)
-                        if verified is not None else _same_file_bytes(path, destination, info.st_size))):
+                        _same_existing_file(path, destination, info.st_size, root, verified, known, old, checkpoint=check)
+                        if verified is not None else _same_file_bytes(path, destination, info.st_size, checkpoint=check))):
                     equivalent = False
                     if kind == 'Music' and path.suffix.lower() in ('.m4a', '.m4b'):
                         from .aac_index import same_original
-                        equivalent = same_original(path, destination)
+                        equivalent = same_original(path, destination, checkpoint=check)
                     elif kind == 'Music' and path.suffix.lower() in ('.flac', '.flc'):
                         from .flac_index import same_original
-                        equivalent = same_original(path, destination)
+                        equivalent = same_original(path, destination, checkpoint=check)
                     elif kind == 'Music' and path.suffix.lower() == '.mp3':
                         from .mp3_index import same_original
-                        equivalent = same_original(path, destination)
+                        equivalent = same_original(path, destination, checkpoint=check)
                     different = not equivalent
                 if not different:
                     continue
@@ -698,7 +706,8 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                     destination=str(destination), old_bytes=old.st_size,
                     old_mtime_ns=old.st_mtime_ns, new_bytes=info.st_size,
                     new_mtime_ns=info.st_mtime_ns,
-                    old_sha256=_hash(destination), new_sha256=_hash(path)))
+                    old_sha256=_hash(destination, progress=lambda _current, _total: check()),
+                    new_sha256=_hash(path, progress=lambda _current, _total: check())))
             planned[key] = dict(kind=kind, source=str(path), destination=str(destination),
                                 bytes=info.st_size, mtime_ns=info.st_mtime_ns,
                                 **({'compatibility_issue': issue} if issue else {}),
@@ -825,21 +834,24 @@ def _prepare_import_flac(item, scratch, cache, ffprobe, cancelled, stopped):
     return local, metadata_seed, outcome is not None, _receipt_stamp(before)
 
 
-def _wave_pcm_hash(path, metadata):
+def _wave_pcm_hash(path, metadata, *, checkpoint=lambda: None):
     digest = hashlib.sha256()
     with path.open('rb') as wave:
         wave.seek(metadata['data_offset'])
         remaining = metadata['data_bytes']
         while remaining:
+            checkpoint()
             chunk = wave.read(min(1024 * 1024, remaining))
             if not chunk:
                 raise ValueError('Converted WAV data changed while checking it')
             digest.update(chunk)
             remaining -= len(chunk)
+    checkpoint()
     return digest.hexdigest()
 
 
-def _verified_audio_hash(path, root, expected, verified, metadata=None):
+def _verified_audio_hash(path, root, expected, verified, metadata=None, *, checkpoint=lambda: None):
+    checkpoint()
     if not isinstance(expected, str) or not re.fullmatch('[0-9a-f]{64}', expected):
         return False
     before = path.stat()
@@ -849,7 +861,8 @@ def _verified_audio_hash(path, root, expected, verified, metadata=None):
     key = (relative, 'pcm:' + expected if metadata else expected) if relative else None
     if key and verified is not None and not recent and verified.get(key) == stamp:
         return True
-    actual = _wave_pcm_hash(path, metadata) if metadata else _hash(path)
+    actual = (_wave_pcm_hash(path, metadata, checkpoint=checkpoint) if metadata else
+              _hash(path, progress=lambda _current, _total: checkpoint()))
     after = path.stat()
     if stamp != (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino):
         raise ValueError(f'Audio changed during verification: {path}')
@@ -1546,6 +1559,11 @@ def video_jobs(root, pending=(), selection=None, skipped=(), *, identity, snapsh
     """Resolve selected conversions and this device's supported on-disk videos."""
     root = Path(root).resolve(strict=True)
     folder = root / "Videos"
+
+    def check():
+        if cancelled and cancelled():
+            raise Cancelled('Stopped while checking queued videos.')
+
     allowed = video_source_extensions(identity)
     native_extensions = native_video_extensions(identity)
     scan_allowed = native_extensions if selection is not None else allowed
@@ -1589,6 +1607,7 @@ def video_jobs(root, pending=(), selection=None, skipped=(), *, identity, snapsh
     queued_relatives = set()
 
     def include(source, relative):
+        check()
         _plain(source, Path(source.anchor))
         source = source.resolve(strict=True)
         if not source.is_file() or source.suffix.lower() not in allowed:
@@ -1620,6 +1639,7 @@ def video_jobs(root, pending=(), selection=None, skipped=(), *, identity, snapsh
         records = _planning_records(source, snapshots)
         for path, info in (records if not is_folder else
                         ((path, info) for path, info in records if path.suffix.lower() in allowed)):
+            check()
             relative = (Path(source.name) / path.relative_to(source)).as_posix() if is_folder else source.name
             if relative.casefold() in queued_relatives:
                 raise ValueError(f"Two queued videos have the same library name: {relative}.")
@@ -1630,14 +1650,15 @@ def video_jobs(root, pending=(), selection=None, skipped=(), *, identity, snapsh
                 if not existing.is_file():
                     raise ValueError(f"A different video already exists: {relative}. Rename the new file first.")
                 old = existing.stat()
-                if old.st_size != info.st_size or not _same_file_bytes(path, existing, info.st_size):
+                if old.st_size != info.st_size or not _same_file_bytes(path, existing, info.st_size, checkpoint=check):
                     if replacements is None:
                         raise ValueError(f"A different video already exists: {relative}. Review its replacement before preparing.")
                     replacements.append(dict(action='replace', kind='Videos', source=str(path),
                         destination=str(existing), old_bytes=old.st_size,
                         old_mtime_ns=old.st_mtime_ns, new_bytes=info.st_size,
                         new_mtime_ns=info.st_mtime_ns,
-                        old_sha256=_hash(existing), new_sha256=_hash(path)))
+                        old_sha256=_hash(existing, progress=lambda _current, _total: check()),
+                        new_sha256=_hash(path, progress=lambda _current, _total: check())))
                     jobs.pop(relative.casefold(), None)
                 else:
                     path = existing
