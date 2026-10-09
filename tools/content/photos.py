@@ -208,15 +208,16 @@ class _PhotoCache:
             if self.hash_path.stat().st_size <= 16 * 1024 * 1024:
                 saved = json.loads(self.hash_path.read_text(encoding='utf-8'))
                 rows = saved.get('files', [])
-                age = self.hashes_at - saved.get('verified_at', -1)
+                verified_at = saved.get('verified_at')
                 if (saved.get('version') == 1 and saved.get('scope') == self.source_scope and
-                        0 <= age <= 3600 and isinstance(rows, list) and len(rows) <= MAX_PHOTOS):
+                        type(verified_at) in (int, float) and self.hashes_at - 3600 <= verified_at <= self.hashes_at and
+                        isinstance(rows, list) and len(rows) <= MAX_PHOTOS):
                     for row in rows:
                         if (isinstance(row, list) and len(row) == 6 and isinstance(row[0], str) and
                                 all(type(value) is int for value in row[1:5]) and
                                 isinstance(row[5], str) and re.fullmatch(r'[0-9a-f]{64}', row[5])):
                             self.hashes[row[0]] = (tuple(row[1:5]), row[5])
-                    self.hashes_at = saved['verified_at']
+                    self.hashes_at = verified_at
         except (OSError, ValueError, TypeError, AttributeError):
             pass
 
