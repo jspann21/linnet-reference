@@ -139,6 +139,9 @@ def main(arguments=None):
             value = media.discover(detailed=True)
         elif options['action'] == 'scan':
             identity = options['identity']
+            media._volume_guard(identity)
+            from tools.content.retail_media import check_tracks_access
+            check_tracks_access(identity['root'])
             pending = publish.pending_publications(identity)
             value = (dict(publication_recovery_pending=True, identity=media.refresh(identity), groups=pending)
                      if pending else media_status.inspect(identity, options['photo_dimension'], options['verification']))
