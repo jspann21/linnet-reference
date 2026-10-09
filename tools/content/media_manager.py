@@ -933,8 +933,10 @@ def _convert_audio(source, output, ffmpeg, checkpoint, max_bytes, expected_frame
     metadata = _pcm(output)
     if metadata['frames'] < expected_frames - max(2205, expected_frames // 100):
         raise ValueError('Audio conversion ended before the source duration.')
-    _wave_metadata(output, {**(tags or {}), 'source_sha256': source_sha256 or _hash(source),
-                            'pcm_sha256': _wave_pcm_hash(output, metadata)})
+    source_sha256 = source_sha256 or _hash(source, progress=lambda _current, _total: checkpoint())
+    pcm_sha256 = _wave_pcm_hash(output, metadata, checkpoint=checkpoint)
+    _wave_metadata(output, {**(tags or {}), 'source_sha256': source_sha256,
+                            'pcm_sha256': pcm_sha256})
     if cover:
         from mutagen.id3 import APIC
         from mutagen.wave import WAVE
@@ -1147,7 +1149,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
             progress(f"Verifying addition {start + offset + 1}/{len(plan)}: {destination.name}")
             _plain(temporary, root)
             before_readback = _receipt_stamp(temporary.stat())
-            if _hash(temporary, prepared_bytes) != digest:
+            if _hash(temporary, prepared_bytes, progress=lambda _current, _total: checkpoint()) != digest:
                 raise OSError(f"Copy verification failed: {destination}")
             after_readback = _receipt_stamp(temporary.stat())
             if before_readback != after_readback:
@@ -1176,7 +1178,8 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
             info = destination.stat()
             if _receipt_stamp(info) != verified_stamps[temporary]:
                 before_recheck = _receipt_stamp(info)
-                if info.st_size != prepared_bytes or _hash(destination, prepared_bytes) != digest:
+                if info.st_size != prepared_bytes or _hash(
+                        destination, prepared_bytes, progress=lambda _current, _total: checkpoint()) != digest:
                     raise OSError(f"Copied file changed after readback: {destination}")
                 info = destination.stat()
                 if _receipt_stamp(info) != before_recheck:
