@@ -145,6 +145,7 @@ def _ascii(text):
 
 def compile_notes(source, output, *, target, excluded=None, progress=None, checkpoint=lambda: None):
     from .publish import _plain
+    checkpoint()
     original_source = Path(os.path.abspath(source))
     _plain(original_source, Path(original_source.anchor))
     source, output = Path(source).resolve(), Path(output).resolve()
@@ -155,11 +156,13 @@ def compile_notes(source, output, *, target, excluded=None, progress=None, check
     excluded = {Path(value).as_posix().casefold() for value in (excluded or ())}
     files = []
     for path in source.rglob('*'):
+        checkpoint()
         if (path.suffix.lower() in EXTENSIONS and
                 path.relative_to(source).as_posix().casefold() not in excluded and path.is_file()):
             files.append(path)
             if len(files) > MAX_NOTES:
                 raise ValueError(f'Notes supports at most {MAX_NOTES} documents; found more than {MAX_NOTES}')
+    checkpoint()
     files.sort(key=lambda p: p.as_posix().casefold())
     titles, records, changed = bytearray(), bytearray(), []
     widths, pixel_limit, recipe = _display_recipe(target)

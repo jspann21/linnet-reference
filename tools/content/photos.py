@@ -545,6 +545,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
     """
     from PIL import __version__ as pillow_version
     check = checkpoint or (lambda: None)
+    check()
     packed_target = target in ('video5g-m25', 'classic6g-n25')
     source, output = Path(source).resolve(), Path(output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -584,6 +585,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
     excluded = {Path(value).as_posix().casefold() for value in (excluded or ())}
     paths = []
     for path in source.rglob('*'):
+        check()
         relative = path.relative_to(source).as_posix().casefold()
         if path.suffix.lower() in EXTENSIONS and relative not in excluded and path.is_file():
             if path.is_symlink() or not path.resolve().is_relative_to(source):
@@ -594,10 +596,12 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
     names = {path: path.relative_to(source).as_posix() for path in paths}
     titles = {}
     for name, (preview, title) in (additional_sources or {}).items():
+        check()
         if name.casefold() not in excluded:
             path = Path(preview)
             paths.append(path)
             names[path], titles[path] = name, title
+    check()
     if len(paths) > MAX_PHOTOS:
         raise ValueError('photo count exceeds 65535')
     if not paths:
