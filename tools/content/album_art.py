@@ -120,10 +120,21 @@ def _match(rows, checkpoint):
     query = 'releasegroup:' + quote(title) + ' AND (' + ' OR '.join('artist:' + quote(n) for n in names) + ')'
     url = 'https://musicbrainz.org/ws/2/release-group/?' + urlencode(dict(query=query, fmt='json', limit=20))
     response = json.loads(_request(url, checkpoint))
+    candidates = response.get('release-groups') if isinstance(response, dict) else None
+    if not isinstance(candidates, list):
+        raise ValueError('Invalid album artwork search response')
     matches = []
-    for candidate in response.get('release-groups', []):
-        credits = {_normal(name) for c in candidate.get('artist-credit', []) if isinstance(c, dict)
-                   for name in (c.get('name', ''), c.get('artist', {}).get('name', '')) if name}
+    for candidate in candidates:
+        if not isinstance(candidate, dict) or not isinstance(candidate.get('artist-credit', []), list):
+            raise ValueError('Invalid album artwork search response')
+        credits = set()
+        for credit in candidate.get('artist-credit', []):
+            if not isinstance(credit, dict):
+                continue
+            artist = credit.get('artist', {})
+            if not isinstance(artist, dict):
+                raise ValueError('Invalid album artwork search response')
+            credits.update(_normal(name) for name in (credit.get('name', ''), artist.get('name', '')) if name)
         if (_normal(candidate.get('title', '')) == _normal(title) and
                 credits.intersection(map(_normal, names))):
             matches.append(candidate)
@@ -166,6 +177,8 @@ def fetch(root, *, progress=lambda text: None, checkpoint=lambda: None, retry_mi
             match = _match(rows, checkpoint)
             source = ''
             if match:
+                if not isinstance(match.get('id'), str):
+                    raise ValueError('Invalid album artwork release-group identifier')
                 identifier = str(uuid.UUID(match['id']))
                 source = f'https://coverartarchive.org/release-group/{identifier}/front-500'
                 try:
