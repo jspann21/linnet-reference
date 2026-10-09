@@ -1957,7 +1957,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                     if staged:
                         staged.close()
         after = path.stat()
-        if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        if file_stamp(before) != file_stamp(after):
             temporary.unlink(missing_ok=True)
             raise ValueError("audio source changed during compilation")
         if cache and not cached:

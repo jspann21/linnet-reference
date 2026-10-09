@@ -11,7 +11,7 @@ import time
 import uuid
 
 from . import media_manager as manager
-from .host_state import cache_root, save_json
+from .host_state import cache_root, file_stamp, save_json
 from .inventory import collect_records_by_kind, skipped_paths, scan as scan_sources
 from .guard import guarded_path as _plain, guard_volume as _volume_guard, hash_file
 from .publish import _bounded, _exclusive, _write_verified, _finish_backups
@@ -331,7 +331,7 @@ def _source_music_metadata(root, records, cache_root, retail=None, published=Non
                     value = (_pcm(path) if path.suffix.lower() in ('.wav', '.aif', '.aiff', '.aifc')
                              else _quick_metadata(path))
                     after = path.stat()
-                    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                    if file_stamp(before) != file_stamp(after):
                         continue
                     if value is not None:
                         cache.put(root, relative, before, value)
