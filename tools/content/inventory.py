@@ -34,7 +34,9 @@ def source_folders(root, kind):
     return [folder for folder in folders if folder.is_dir()]
 
 
-def file_records(folder, *, allowed=None, inodes=None):
+def file_records(folder, *, allowed=None, inodes=None, checkpoint=None):
+    if checkpoint:
+        checkpoint()
     if not folder.exists():
         return []
     _plain(folder, Path(folder.anchor))
@@ -43,8 +45,12 @@ def file_records(folder, *, allowed=None, inodes=None):
     found = []
     directories = [folder]
     while directories:
+        if checkpoint:
+            checkpoint()
         with os.scandir(directories.pop()) as entries:
             for entry in entries:
+                if checkpoint:
+                    checkpoint()
                 info = entry.stat(follow_symlinks=False)
                 path = Path(entry.path)
                 if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
@@ -55,20 +61,28 @@ def file_records(folder, *, allowed=None, inodes=None):
                     found.append((path, info))
                     if inodes is not None:
                         inodes[path] = entry.inode()
+    if checkpoint:
+        checkpoint()
     return sorted(found, key=lambda item: (str(item[0]).casefold(), str(item[0])))
 
 
-def collect_records_by_kind(root, kinds=KINDS, *, include_inodes=True):
+def collect_records_by_kind(root, kinds=KINDS, *, include_inodes=True, checkpoint=None):
+    if checkpoint:
+        checkpoint()
     kinds = tuple(kinds)
     inode_folders = set(source_folders(root, 'Music')) if include_inodes and 'Music' in kinds else set()
     folders, result = {}, _RecordInventory()
     for kind in kinds:
+        if checkpoint:
+            checkpoint()
         if kind not in KINDS:
             raise ValueError("Unknown media folder")
         result[kind] = []
         for folder in source_folders(root, kind):
             if folder not in folders:
-                folders[folder] = file_records(folder, inodes=result.inodes if folder in inode_folders else None)
+                folders[folder] = file_records(
+                    folder, inodes=result.inodes if folder in inode_folders else None,
+                    checkpoint=checkpoint)
             result[kind].extend(folders[folder])
     return result
 
@@ -102,16 +116,21 @@ def skipped_paths(state, kind):
 
 
 def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos=None,
-         fingerprint_kinds=None, retail_tracks=None):
+         fingerprint_kinds=None, retail_tracks=None, checkpoint=None):
+    if checkpoint:
+        checkpoint()
     root = Path(root).resolve(strict=True)
     kinds = tuple(kinds)
     if records_by_kind is None:
-        records_by_kind = collect_records_by_kind(root, kinds, include_inodes=False)
+        records_by_kind = collect_records_by_kind(
+            root, kinds, include_inodes=False, checkpoint=checkpoint)
     skipped = skipped or {}
     fingerprint_kinds = set(KINDS if fingerprint_kinds is None else fingerprint_kinds)
     inodes = getattr(records_by_kind, 'inodes', {})
     result = {}
     for kind in kinds:
+        if checkpoint:
+            checkpoint()
         if kind not in KINDS:
             raise ValueError("Unknown media folder")
         excluded = {Path(value).as_posix().casefold() for value in skipped.get(kind, ())}
@@ -134,6 +153,8 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
         music_folders, cover_rows = set(), []
         last_parent, relative_prefix = None, None
         for path, info in records:
+            if checkpoint:
+                checkpoint()
             relative = None
             if fingerprint or excluded:
                 parent = str(path.parent)
@@ -174,7 +195,7 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
                 # Artwork affects Music only when playable audio exists. Video
                 # readiness uses source/output stamps without artwork scans.
                 artwork_folder = root / 'iPod_Control' / 'Artwork'
-                for path, info in file_records(artwork_folder):
+                for path, info in file_records(artwork_folder, checkpoint=checkpoint):
                     rows.append((path.relative_to(root).as_posix(), *source_stamp(path, info)))
                 from .album_art import signature as artwork_signature
                 from .retail_media import available_tracks
@@ -184,6 +205,8 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
             from .retail_media import images
             photos = retail_photos if retail_photos is not None else images(root)
             for photo in photos:
+                if checkpoint:
+                    checkpoint()
                 if photo['relative'].casefold() in excluded:
                     skipped_count += 1
                     continue
@@ -195,4 +218,6 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
                             ignored=ignored, files=supported,
                             skipped=skipped_count,
                             fingerprint=hashlib.sha256(json.dumps(rows).encode()).hexdigest() if fingerprint else None)
+    if checkpoint:
+        checkpoint()
     return result

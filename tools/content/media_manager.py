@@ -2848,8 +2848,9 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         if any('converted_bytes' in item for item in plan) and not ffmpeg:
             raise ValueError('Audio conversion needs FFmpeg on the computer.')
         planned = True
-        current_inventory = scan(root, tuple(kind for kind in selected if kind != "Videos"),
-                                 skipped=projected_skipped) if any(kind != "Videos" for kind in selected) else {}
+        source_kinds = tuple(kind for kind in selected if kind != "Videos")
+        current_inventory = (scan(root, source_kinds, skipped=projected_skipped,
+                                  checkpoint=checkpoint) if source_kinds else {})
         reconciliation = reconciliation_actions(identity, selected, plan,
             replacements=replacements, current_inventory=current_inventory, skipped=projected_skipped)
         report['reconciliation'] = reconciliation
@@ -2988,7 +2989,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             from .retail_media import images
             retail_photos = images(root)
         inventory = scan(root, selected, skipped=skipped, retail_photos=retail_photos,
-                         fingerprint_kinds=(kind for kind in selected if kind != "Videos"))
+                         fingerprint_kinds=(kind for kind in selected if kind != "Videos"),
+                         checkpoint=checkpoint)
         if "Videos" in selected:
             inventory["Videos"] = _video_inventory(videos)
         for kind in KINDS:
@@ -3045,7 +3047,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 if prepared:
                     # Seek atoms change source sizes and timestamps. Publish
                     # the fingerprint of the prepared files.
-                    item = scan(root, ('Music',), skipped=skipped, fingerprint_kinds=('Music',))['Music']
+                    item = scan(root, ('Music',), skipped=skipped, fingerprint_kinds=('Music',),
+                                checkpoint=checkpoint)['Music']
                     inventory[kind] = item
                     signature = f"{option}:{item['fingerprint']}"
             progress(f"Preparing {kind.lower()} ({item['count']:,} files)…")
@@ -3089,7 +3092,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 checkpoint()
                 # Do not mark a changed source tree up to date.
                 current = (_video_inventory(videos) if kind == "Videos" else
-                           scan(root, (kind,), skipped=skipped)[kind])
+                           scan(root, (kind,), skipped=skipped, checkpoint=checkpoint)[kind])
                 if current["fingerprint"] != item["fingerprint"]:
                     raise ValueError(f"{kind} changed during processing. Scan again before updating.")
                 if kind == 'Photos':
