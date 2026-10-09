@@ -230,10 +230,20 @@ def setup():
     parent = ROOT / "out/apple-tools"
     output = parent / _fingerprint()
     receipt = output / "files.json"
-    if receipt.is_file():
-        files = json.loads(receipt.read_text(encoding="utf-8"))
-        if all((output / name).is_file() and _digest(output / name) == digest
-               for name, digest in files.items()):
+    if output.exists() or output.is_symlink():
+        try:
+            files = json.loads(receipt.read_text(encoding="utf-8"))
+            required = {f"managed-apple-{kind}.exe" for kind in KINDS} | {
+                "libgpod.dll", "libgdk_pixbuf-2.0-0.dll",
+                "libgpod-source.tar.gz", "licenses/libgpod-COPYING"}
+            valid = (isinstance(files, dict) and required <= files.keys() and
+                     all(isinstance(digest, str) and not Path(name).is_absolute() and
+                         not Path(name).drive and ".." not in Path(name).parts and
+                         (output / name).is_file() and _digest(output / name) == digest
+                         for name, digest in files.items()))
+        except (OSError, ValueError):
+            valid = False
+        if valid:
             return output
         raise RuntimeError("Cached Apple tools were modified; remove that out/apple-tools folder and run setup again.")
     parent.mkdir(parents=True, exist_ok=True)
