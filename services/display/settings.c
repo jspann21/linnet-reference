@@ -163,20 +163,18 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
     if(ln_storage_busy()||!ln_storage_mounted()||!ln_storage_settings(false,raw,&bytes))return 0;
     if(bytes>480)return malformed_record();
     if(!bytes){*offset=*length=0;loaded=true;return 1;}
-    uint32_t out_offset=0,out_length=0,saved_choice=choice,saved_capacity=1200;bool saved_clock_12=false;uint8_t saved_video_options=8u;
-    uint8_t saved_photo[16]={0};uint32_t saved_video[2]={0};
     if(bytes<36||ln_read_le32(raw)!=0x54544553u||ln_read_le32(raw+bytes-4)!=ln_crc32(raw,bytes-4))return malformed_record();
     uint32_t n=(uint32_t)raw[4]|((uint32_t)raw[5]<<8),f=raw[14];
     if(n!=bytes-36||((raw[7]>>1)&3u)>2u||raw[6]>BACKLIGHT_OFF||(raw[15]&15u)>8u||(raw[15]>>4)>8u||(f&7u)>5||((f>>5)&3u)>2||(f&128u))return malformed_record();
-    saved_choice=raw[6];saved_clock_12=(raw[7]&1u)!=0;
-    saved_video_options=(uint8_t)(((raw[7]>>1)&3u)|(((raw[7]>>3)&1u)<<2)|(((raw[7]>>4)&1u?0u:1u)<<3)|(((raw[7]>>5)&1u)<<4));
+    uint32_t saved_choice=raw[6];bool saved_clock_12=(raw[7]&1u)!=0;
+    uint8_t saved_video_options=(uint8_t)(((raw[7]>>1)&3u)|(((raw[7]>>3)&1u)<<2)|(((raw[7]>>4)&1u?0u:1u)<<3)|(((raw[7]>>5)&1u)<<4));
+    uint8_t saved_photo[16];
     ln_write_le32(saved_photo,ln_read_le32(raw+8));ln_write_le32(saved_photo+4,(uint32_t)raw[12]|((uint32_t)raw[13]<<8));
     ln_write_le32(saved_photo+8,(f&7u)|(((f>>3)&3u)<<8)|(((f>>5)&3u)<<16));ln_write_le32(saved_photo+12,ln_read_le32(raw+16));
-    saved_video[0]=ln_read_le32(raw+20);saved_video[1]=ln_read_le32(raw+24);
+    uint32_t saved_video[2]={ln_read_le32(raw+20),ln_read_le32(raw+24)};
     if(!valid_photo(saved_photo))return malformed_record();
-    saved_capacity=ln_read_le32(raw+28);
+    uint32_t saved_capacity=ln_read_le32(raw+28);
     if(saved_capacity<50u||saved_capacity>10000u||saved_capacity%50u)return malformed_record();
-    out_offset=32;out_length=bytes-36;
     /* Commit only after the complete envelope has passed validation. */
     if(!loaded){
         if(!dirty&&(choice!=saved_choice||battery_capacity!=saved_capacity||clock_12!=saved_clock_12||shutdown_choice[0]!=(raw[15]&15u)||shutdown_choice[1]!=(raw[15]>>4))){
@@ -186,7 +184,7 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
         for(uint32_t i=0;i<16;++i)photo_resume[i]=saved_photo[i];
         video_resume[0]=saved_video[0];video_resume[1]=saved_video[1];video_options=saved_video_options;
     }
-    *offset=out_offset;*length=out_length;loaded=true;return 1;
+    *offset=32;*length=bytes-36;loaded=true;return 1;
 }
 static int write_record(uint8_t raw[480],const uint8_t *data,uint32_t length,bool existing){
     if(length>444||!valid_photo(photo_resume)||battery_capacity<50u||battery_capacity>10000u||battery_capacity%50u)return 0;
