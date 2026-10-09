@@ -67,5 +67,5 @@ def create(output):
             for path in sorted((work / "dist").rglob("*")):
                 if path.is_file():
                     bundle.write(path, path.relative_to(work / "dist").as_posix())
-        archive.replace(output)
+        archive.rename(output)
     return dict(archive=str(output), executable="Linnet Media/Linnet Media.exe")
