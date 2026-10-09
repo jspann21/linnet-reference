@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
+import stat
 import struct
 import subprocess
 import tempfile
@@ -197,6 +198,20 @@ def _folder_rows(root, records_by_kind, kinds=ROOTS):
                                                       len(Path(x).parts), x.casefold()))]
 
 
+def _source_info(path, info):
+    if os.name == 'nt' and not info.st_ino:
+        # Windows directory records omit the file ID needed to recognize a
+        # replacement that preserves size and modification time.
+        current = path.lstat()
+        if (not stat.S_ISREG(current.st_mode) or
+                getattr(current, 'st_file_attributes', 0) & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400) or
+                (current.st_size, current.st_mtime_ns, current.st_ctime_ns) !=
+                (info.st_size, info.st_mtime_ns, info.st_ctime_ns)):
+            raise ValueError(f'Media changed while reading Apple OS sources: {path}')
+        return current
+    return info
+
+
 def _files(root, folders, kind, extensions, records_by_kind=None):
     found = {}
     selected = [_valid_folder(root, value) for value in folders
@@ -225,15 +240,15 @@ def _files(root, folders, kind, extensions, records_by_kind=None):
                 else:
                     relative = relative_prefix + path.name
                 found[relative.casefold()] = (path, info)
-        return [found[key] for key in sorted(found)]
-    for folder in selected:
-        for path, info in file_records(folder, allowed=extensions):
-            found[path.relative_to(root).as_posix().casefold()] = (path, info)
-    return [found[key] for key in sorted(found)]
+    else:
+        for folder in selected:
+            for path, info in file_records(folder, allowed=extensions):
+                found[path.relative_to(root).as_posix().casefold()] = (path, info)
+    return [(path, _source_info(path, info)) for _, (path, info) in sorted(found.items())]
 
 
 def _signature(root, files):
-    rows = [(path.relative_to(root).as_posix(), info.st_size, info.st_mtime_ns)
+    rows = [(path.relative_to(root).as_posix(), *file_stamp(info))
             for path, info in files]
     return hashlib.sha256(json.dumps(rows, ensure_ascii=False).encode()).hexdigest()
 
@@ -572,7 +587,9 @@ def _update_photos(identity, state, selected, cache, progress):
                 raise ValueError(f'Photo is too large for Apple OS preparation: {path.relative_to(root)}')
             original = source / ('original' + path.suffix.lower())
             shutil.copy2(path, original)
-            if (original.stat().st_size, original.stat().st_mtime_ns) != (info.st_size, info.st_mtime_ns):
+            copied = original.stat()
+            if ((copied.st_size, copied.st_mtime_ns) != (info.st_size, info.st_mtime_ns) or
+                    file_stamp(path.stat()) != file_stamp(info)):
                 raise ValueError(f'Photo changed during preparation: {path.relative_to(root)}')
             destination = source / f'{index:06}.png'
             with Image.open(original) as image:
@@ -904,7 +921,7 @@ def update(identity, *, ffprobe=None, progress=lambda text: None):
         save_json(recovery, record)
         for path, original in (*files, *videos):
             current = path.stat()
-            if (current.st_size, current.st_mtime_ns) != (original.st_size, original.st_mtime_ns):
+            if file_stamp(current) != file_stamp(original):
                 raise ValueError(f'Media changed during Apple OS preparation: {path.relative_to(root)}')
         with _exclusive(identity):
             _revalidate_device(identity, source_db)
