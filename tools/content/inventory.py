@@ -109,6 +109,7 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
         records_by_kind = collect_records_by_kind(root, kinds, include_inodes=False)
     skipped = skipped or {}
     fingerprint_kinds = set(KINDS if fingerprint_kinds is None else fingerprint_kinds)
+    inodes = getattr(records_by_kind, 'inodes', {})
     result = {}
     for kind in kinds:
         if kind not in KINDS:
@@ -123,6 +124,15 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
             from .music import COVER_NAMES
             cover_names = {name.casefold() for name in COVER_NAMES}
         records = records_by_kind[kind]
+        def source_stamp(path, info):
+            if kind == 'Music':
+                # Replacements can retain size and modification time. Windows
+                # directory stats omit file IDs; reuse traversal IDs when known.
+                inode = inodes.get(path) or info.st_ino
+                if not inode:
+                    inode = path.stat().st_ino
+                return info.st_size, info.st_mtime_ns, info.st_ctime_ns, inode
+            return info.st_size, info.st_mtime_ns
         music_folders, cover_rows = set(), []
         last_parent, relative_prefix = None, None
         for path, info in records:
@@ -144,11 +154,11 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
             # Music and Videos share iPod_Control/Music. A cover matters only
             # when its folder also contains a playable audio source.
             if fingerprint and supported_file:
-                rows.append((relative, info.st_size, info.st_mtime_ns))
+                rows.append((relative, *source_stamp(path, info)))
                 if cover_names is not None:
                     music_folders.add(path.parent)
             elif fingerprint and cover_names is not None and path.name.casefold() in cover_names:
-                cover_rows.append((path.parent, (relative, info.st_size, info.st_mtime_ns)))
+                cover_rows.append((path.parent, (relative, *source_stamp(path, info))))
             if supported_file:
                 supported.append(str(path))
                 supported_bytes += info.st_size
@@ -161,13 +171,13 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
             _plain(database, root)
             if database.is_file():
                 info = database.stat()
-                rows.append(('iTunesDB', info.st_size, info.st_mtime_ns))
+                rows.append(('iTunesDB', *source_stamp(database, info)))
             if kind == 'Music' and supported:
                 # Artwork affects Music only when playable audio exists. Video
                 # readiness uses source/output stamps without artwork scans.
                 artwork_folder = root / 'iPod_Control' / 'Artwork'
                 for path, info in file_records(artwork_folder):
-                    rows.append((path.relative_to(root).as_posix(), info.st_size, info.st_mtime_ns))
+                    rows.append((path.relative_to(root).as_posix(), *source_stamp(path, info)))
                 from .album_art import signature as artwork_signature
                 from .retail_media import available_tracks
                 tracks = available_tracks(root) if retail_tracks is None else retail_tracks
