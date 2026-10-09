@@ -125,8 +125,10 @@ def set_default(identity, choice):
         temporary = destination.with_name(destination.name + '.tmp-' + uuid.uuid4().hex)
         _plain(temporary, root)
         _volume_guard(current)
+        temporary_owned = False
         try:
             with temporary.open('xb') as writer:
+                temporary_owned = True
                 writer.write(data)
                 writer.flush()
                 os.fsync(writer.fileno())
@@ -135,7 +137,11 @@ def set_default(identity, choice):
             _volume_guard(current)
             os.replace(temporary, destination)
         finally:
-            temporary.unlink(missing_ok=True)
+            if temporary_owned and temporary.exists():
+                _volume_guard(current)
+                _plain(temporary, root)
+                temporary.unlink()
+        _volume_guard(current)
         if destination.read_bytes() != data or _decode(root, current['target_id']) != choice:
             raise OSError('Startup setting failed readback verification')
         return dict(default=choice, requires_safe_eject=True)
