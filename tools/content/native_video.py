@@ -451,6 +451,8 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None,
     unknown. The destination is replaced only after complete validation.
     """
     source, output = Path(source), Path(output)
+    if source.resolve() == output.resolve():
+        raise ValueError("Native video output must differ from the source video")
     if source.suffix.lower() in (".ipvf", ".ipv"):
         raise ValueError("IPVF is not supported by this target")
     def checkpoint():
