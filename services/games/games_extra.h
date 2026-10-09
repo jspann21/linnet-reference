@@ -48,7 +48,7 @@ static int extra_wheel(int32_t value){
         uint8_t next=(uint8_t)(vx_angle+(uint32_t)value*3u);changed=next!=vx_angle;vx_angle=next;
     }else if(game==FALLING&&ex_phase==EX_PLAY){
         int8_t x=(int8_t)(fb_x+(value>0?1:-1));
-        if(!fb_hit(x,fb_y,fb_rot)){fb_x=(uint8_t)x;changed=true;if(fb_lock_at&&fb_lock_resets++<8u)fb_lock_at=ex_tick_at+350000u;}
+        if(!fb_hit(x,fb_y,fb_rot)){fb_x=x;changed=true;if(fb_lock_at&&fb_lock_resets++<8u)fb_lock_at=ex_tick_at+350000u;}
     }else if(game==MINESWEEPER&&ex_phase==EX_PLAY){
         uint8_t next=(uint8_t)((ms_cursor+(value>0?1:ms_w*ms_h-1u))%(ms_w*ms_h));changed=next!=ms_cursor;ms_cursor=next;
     }else if(game==REVERSI&&ex_phase==EX_PLAY&&rv_turn==1u){
