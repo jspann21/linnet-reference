@@ -1571,7 +1571,8 @@ class MediaWindow(QMainWindow):
         self.progress.hide()
         self.cancel_button.hide()
         self.update_controls()
-        if outcome.cancel_requested and tag in ('scan', 'plan', 'devices') and outcome.status != 'failed':
+        cancel_requested = outcome.cancel_requested or bool(context.cancel_event and context.cancel_event.is_set())
+        if cancel_requested and tag in ('scan', 'plan', 'devices') and outcome.status != 'failed':
             if tag == 'plan':
                 self.plan_context = None
             elif tag == 'scan' and isinstance(result, dict) and result.get('publication_recovery_pending'):
@@ -1595,7 +1596,7 @@ class MediaWindow(QMainWindow):
             return
         if error:
             self.record_diagnostic(tag, outcome.error_type or 'Error', error, outcome.status,
-                                   outcome.cancel_requested)
+                                   cancel_requested)
         if tag == 'queue':
             self._complete_queue(result, error)
             return
