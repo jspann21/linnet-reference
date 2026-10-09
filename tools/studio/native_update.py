@@ -56,7 +56,8 @@ def publish(identity, image_path):
     if len(report_bytes) > 1024 * 1024:
         raise ValueError('native update build report exceeds size limit')
     report = json.loads(report_bytes.decode('utf-8'))
-    if (identity.get('native_target_id') != identity['target_id'] or
+    if (not isinstance(report, dict) or
+            identity.get('native_target_id') != identity['target_id'] or
             spec['installer']['boot_layout'] not in ('s5l-nor', 'ipod-directory') or
             info['target_id'] != identity['target_id'] or report.get('kind') != 'os' or
             report.get('image') != info or

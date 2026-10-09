@@ -757,7 +757,8 @@ def _validate_artifacts(identity, artifacts):
             raise ValueError("installer build report exceeds its bound")
         report = json.loads(report_path.read_text(encoding="utf-8"))
         expected_serial = "" if build == "user" else identity["linnet_usb_serial"]
-        if (report.get("kind") != kind or report.get("profile") != expected_profile or
+        if (not isinstance(report, dict) or not isinstance(report.get("image"), dict) or
+                report.get("kind") != kind or report.get("profile") != expected_profile or
                 report.get("probe") != "frame" or
                 report.get("target_id") != identity["target_id"] or
                 report.get("device_serial") != expected_serial or
@@ -770,8 +771,10 @@ def _validate_artifacts(identity, artifacts):
             raise ValueError("installer Boot report does not preserve the Apple firmware fallback")
         if kind == "boot" and report.get("startup_default_format") != 1:
             raise ValueError("installer Boot image does not support startup defaults")
-        if build == "user" and (report.get("release_exclusion") or {}).get("passed") is not True:
-            raise ValueError("user installer artifacts require release exclusion verification")
+        if build == "user":
+            exclusion = report.get("release_exclusion")
+            if not isinstance(exclusion, dict) or exclusion.get("passed") is not True:
+                raise ValueError("user installer artifacts require release exclusion verification")
 
 
 def _same_device(expected, observed):
