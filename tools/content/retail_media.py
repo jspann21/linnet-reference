@@ -18,6 +18,20 @@ from .publish import _bounded, _plain
 from .host_state import cache_volume_scope, save_json
 
 
+class LibraryBusy(RuntimeError):
+    def __init__(self):
+        super().__init__('The iTunes library is unavailable or changing. Let any iTunes sync finish, then refresh the iPod.')
+
+
+def _check_database_stamp(path, stamp):
+    try:
+        info = path.stat()
+    except FileNotFoundError as error:
+        raise LibraryBusy() from error
+    if (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino) != stamp:
+        raise LibraryBusy()
+
+
 def _u32(data, offset):
     return struct.unpack_from('<I', data, offset)[0]
 
@@ -109,10 +123,18 @@ def tracks(root, *, known_records=None, known_inodes=None):
 
 
 def available_tracks(root, *, known_records=None, known_inodes=None):
-    """Apple metadata is optional when its database cannot be read."""
+    """Missing or damaged Apple metadata is optional; active sync must finish."""
     try:
         return tracks(root, known_records=known_records, known_inodes=known_inodes)
-    except (OSError, ValueError, UnicodeError, struct.error):
+    except PermissionError as error:
+        # Python's Windows CRT file reader can discard the sharing/lock code
+        # and report only EACCES. Do not silently begin scanning audio files.
+        raise LibraryBusy() from error
+    except OSError as error:
+        if getattr(error, 'winerror', None) in (32, 33):
+            raise LibraryBusy() from error
+        return {}
+    except (ValueError, UnicodeError, struct.error):
         return {}
 
 
@@ -229,14 +251,23 @@ def _tracks(root_name, size, mtime, ctime, inode):
 
 def _parse_tracks(root_name, stamp, known_records=None, known_inodes=None):
     root = Path(root_name)
+    database = root / 'iPod_Control/iTunes/iTunesDB'
     known_paths, known_signature = _known_paths(root, known_records, known_inodes)
     cached = _cached_tracks(root, stamp, known_paths, known_signature)
     if cached is not None:
         rows, cached_signature, created = cached
+        _check_database_stamp(database, stamp)
         if known_signature is not None and cached_signature != known_signature:
             _remember_tracks(root, stamp, rows, known_signature, created=created)
+        _check_database_stamp(database, stamp)
         return rows
-    data = _bounded(root / 'iPod_Control/iTunes/iTunesDB', 128 * 1024 * 1024)
+    _check_database_stamp(database, stamp)
+    try:
+        data = _bounded(database, 128 * 1024 * 1024)
+    except (OSError, ValueError):
+        _check_database_stamp(database, stamp)
+        raise
+    _check_database_stamp(database, stamp)
     at, end, count = _list(data, b'mhbd', b'mhlt')
     result = {}
     parent_checks = {}
@@ -273,10 +304,8 @@ def _parse_tracks(root_name, stamp, known_records=None, known_inodes=None):
         _plain(path, root)
         info = path.lstat()
         if not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino, info.st_ctime_ns) != before:
-            raise ValueError('iTunes media directory changed during scan')
-    info = (root / 'iPod_Control/iTunes/iTunesDB').stat()
-    if (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino) != stamp:
-        raise ValueError('iTunes database changed during scan')
+            raise LibraryBusy()
+    _check_database_stamp(database, stamp)
     _remember_tracks(root, stamp, result, known_signature)
     return result
 
