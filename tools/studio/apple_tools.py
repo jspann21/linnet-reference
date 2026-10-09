@@ -257,7 +257,10 @@ def setup():
         (prepared / "files.json").write_text(json.dumps(files, indent=2) + "\n", encoding="utf-8")
         try:
             prepared.rename(output)
-        except FileExistsError:
+        except OSError:
+            # Windows can report a competing directory publication as access denied.
+            if not output.exists() and not output.is_symlink():
+                raise
             return setup()
     return output
 
