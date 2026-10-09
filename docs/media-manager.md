@@ -267,8 +267,8 @@ complete backup is available, the app keeps the damaged catalog and prepared
 videos in place for manual recovery.
 
 Caches and receipts live under `%LOCALAPPDATA%/Linnet/Media`. Fast music
-verification checks sizes and modification times; full verification reads media
-hashes. Cached readiness is not proof of unchanged file contents.
+verification checks file identity, size, and timestamps; full verification also
+reads media hashes. Cached readiness is not proof of unchanged file contents.
 
 Use the skipped-file controls to retry repaired sources. Preserve installation
 backups and device receipts independently of disposable caches; see
