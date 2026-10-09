@@ -32,6 +32,19 @@ def _check_database_stamp(path, stamp):
         raise LibraryBusy()
 
 
+def _database_bytes(path, maximum, stamp):
+    _check_database_stamp(path, stamp)
+    try:
+        data = _bounded(path, maximum)
+    except (OSError, ValueError) as error:
+        if isinstance(error, PermissionError) or getattr(error, 'winerror', None) in (32, 33):
+            raise LibraryBusy() from error
+        _check_database_stamp(path, stamp)
+        raise
+    _check_database_stamp(path, stamp)
+    return data
+
+
 def _u32(data, offset):
     return struct.unpack_from('<I', data, offset)[0]
 
@@ -261,13 +274,7 @@ def _parse_tracks(root_name, stamp, known_records=None, known_inodes=None):
             _remember_tracks(root, stamp, rows, known_signature, created=created)
         _check_database_stamp(database, stamp)
         return rows
-    _check_database_stamp(database, stamp)
-    try:
-        data = _bounded(database, 128 * 1024 * 1024)
-    except (OSError, ValueError):
-        _check_database_stamp(database, stamp)
-        raise
-    _check_database_stamp(database, stamp)
+    data = _database_bytes(database, 128 * 1024 * 1024, stamp)
     at, end, count = _list(data, b'mhbd', b'mhlt')
     result = {}
     parent_checks = {}
@@ -376,7 +383,9 @@ def images(root, *, artwork=False, dbids=None, render=True):
     _plain(database, root)
     if not database.is_file():
         return []
-    data = _bounded(database, 64 * 1024 * 1024)
+    info = database.stat()
+    database_stamp = (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino)
+    data = _database_bytes(database, 64 * 1024 * 1024, database_stamp)
     at, end, count = _list(data, b'mhfd', b'mhli')
     formats = {1009: (42, 30), 1015: (130, 88), 1024: (320, 240), 1036: (50, 41),
                1017: (56, 56), 1016: (140, 140), 1028: (100, 100), 1029: (200, 200)}
@@ -463,7 +472,8 @@ def images(root, *, artwork=False, dbids=None, render=True):
             after = path.stat()
             if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
                     after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
-                raise ValueError('iTunes thumbnail changed during scan')
+                raise LibraryBusy()
+    _check_database_stamp(database, database_stamp)
     return [result[order] for order in sorted(result)]
 
 

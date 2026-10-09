@@ -171,8 +171,8 @@ completed, skipped, and failed work. During device search or library scanning,
 **Stop** interrupts the reader and its storage queries, discards partial results,
 and releases the window for another action. If iTunes is syncing the iPod, stop
 reading and let the sync finish before choosing **Refresh**. The app does not
-restart a stopped scan automatically. If the iTunes music database is locked or
-changes during reading, the scan stops with a message to finish syncing and
+restart a stopped scan automatically. If an iTunes music, photo, or artwork
+database is locked or changes during reading, the scan stops with a message to finish syncing and
 refresh. Preparation planning finishes its current check before stopping. If a
 completed scan finds an interrupted media-index
 update, the app keeps the blocked recovery state so it can be reviewed before
