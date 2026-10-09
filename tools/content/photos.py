@@ -630,7 +630,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                 raise Cancelled('Stopped while preparing photos on the computer.')
 
         def prepare(path, name, title, fallback):
-            before = path.stat() if cache is not None else None
+            before = path.stat()
             key, reused_hash = (cache.key(path, name, title, fallback, worker_check, before)
                                 if cache is not None else (None, False))
             if cache is not None:
@@ -698,10 +698,9 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                                 future.result()
                             continue
                     pending.popleft()
-                    if cache is not None:
-                        after_render = path.stat()
-                        if _source_stamp(before) != _source_stamp(after_render):
-                            raise SourceError(f'Photo changed while preparing: {path}', path)
+                    after_render = path.stat()
+                    if _source_stamp(before) != _source_stamp(after_render):
+                        raise SourceError(f'Photo changed while preparing: {path}', path)
                     if reused:
                         cache_reused += 1
                     else:
