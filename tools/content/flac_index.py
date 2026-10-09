@@ -236,6 +236,7 @@ def prepare_file(path, cache, *, ffprobe, checkpoint=lambda: None, recovery=None
     from .guard import hash_file
     path, cache = Path(path), Path(cache)
     checkpoint()
+    before = path.stat()
     layout = _layout(path)
     if not layout or layout[3] < layout[2] * 30:
         return False
@@ -245,8 +246,7 @@ def prepare_file(path, cache, *, ffprobe, checkpoint=lambda: None, recovery=None
         return False
     if not has_table and not ffprobe:
         return None  # Retry when the host gains FFprobe.
-    before = path.stat()
-    key = hashlib.sha256(f'{path}:{before.st_size}:{before.st_mtime_ns}'.encode()).hexdigest()
+    key = hashlib.sha256(f'{path}:{file_stamp(before)}'.encode()).hexdigest()
     cache.mkdir(parents=True, exist_ok=True)
     unsupported = cache / (key + '.unsupported')
     if not has_table and unsupported.exists():
@@ -259,7 +259,7 @@ def prepare_file(path, cache, *, ffprobe, checkpoint=lambda: None, recovery=None
                 checkpoint(); writer.write(chunk); source_hash.update(chunk)
             if recovery is not None:
                 writer.flush(); os.fsync(writer.fileno())
-        if path.stat().st_size != before.st_size or path.stat().st_mtime_ns != before.st_mtime_ns:
+        if file_stamp(before) != file_stamp(path.stat()):
             raise OSError('FLAC source changed during preparation')
         if has_table:
             block = b''
@@ -301,7 +301,7 @@ def prepare_file(path, cache, *, ffprobe, checkpoint=lambda: None, recovery=None
                     prepared[3] != total or not prepared[4]):
                 raise OSError('FLAC seek table has invalid geometry')
             after = path.stat()
-            if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+            if file_stamp(before) != file_stamp(after):
                 raise OSError('FLAC source changed during preparation')
             if recovery is not None:
                 backup = cache / (uuid.uuid4().hex + '.flac-original')
@@ -313,6 +313,8 @@ def prepare_file(path, cache, *, ffprobe, checkpoint=lambda: None, recovery=None
                 if journal is not None:
                     journal()
                 local.replace(backup)
+            if file_stamp(before) != file_stamp(path.stat()):
+                raise OSError('FLAC source changed during preparation')
             temporary.replace(path)
         finally:
             if owned:
