@@ -1977,7 +1977,7 @@ def _video_inventory(jobs):
     rows = []
     for job in jobs:
         info = Path(job["source"]).stat()
-        rows.append((job["relative"], job["source"], info.st_size, info.st_mtime_ns))
+        rows.append((job["relative"], job["source"], *_receipt_stamp(info)))
     return dict(count=len(rows), files=[job["source"] for job in jobs],
                 fingerprint=hashlib.sha256(json.dumps(rows).encode()).hexdigest())
 
@@ -2484,7 +2484,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
         try:
             key = hashlib.sha256(relative.encode()).hexdigest()[:8].upper()
             source_info = source.stat()
-            source_stamp = (source_info.st_size, source_info.st_mtime_ns)
+            source_stamp = _receipt_stamp(source_info)
             label = job.get('catalog_title')
             if not label and source.is_relative_to(root):
                 if retail_titles is None:
@@ -2497,7 +2497,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                 from .publish_video import device_video_path, index_video
                 native_version = 5 if media_profile["video_backend"] == "native-mp4" else 4
                 native_mode = (':chunked' if not no_conversions and (ffmpeg or shutil.which('ffmpeg')) else ':copy') if media_profile['video_backend'] == 'bcm-mp4' else ''
-                fingerprint = hashlib.sha256(f"native-mp4-v{native_version}{native_mode}:{json.dumps(media_profile, sort_keys=True)}:{source_key}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
+                fingerprint = hashlib.sha256(f"native-mp4-v{native_version}{native_mode}:{json.dumps(media_profile, sort_keys=True)}:{source_key}:{source_stamp}".encode()).hexdigest()
                 cached = video_state.get(relative, {})
                 if not isinstance(cached, dict):
                     cached = {}
@@ -2513,6 +2513,8 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                     except (OSError, ValueError):
                         pass
                 if cached_output_ready:
+                    if _receipt_stamp(source.stat()) != source_stamp:
+                        raise ValueError("Video changed while checking its prepared copy; scan again")
                     if catalog_contains(root, relative, label, path=False,
                                         snapshot=catalog_snapshot):
                         output_paths.extend(name for name, digest in outputs)
@@ -2592,7 +2594,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                                                if progress_detail else None)
                     checkpoint()
                     after = source.stat()
-                    if (after.st_size, after.st_mtime_ns) != source_stamp:
+                    if _receipt_stamp(after) != source_stamp:
                         raise ValueError("Video changed during preparation; scan again")
                     emit_stage('Publishing Videos', unit,
                                (index + 0.5) / len(videos), can_stop=False)
@@ -2610,7 +2612,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                     outputs = [(output_name, result["candidate_sha256"])]
                     output_paths.append(output_name)
                 after = source.stat()
-                if (after.st_size, after.st_mtime_ns) != source_stamp:
+                if _receipt_stamp(after) != source_stamp:
                     raise ValueError("Video changed during publication; scan again")
                 published.append(result)
                 catalog_snapshot.clear()
@@ -2622,7 +2624,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                 continue
             profile_key = (f"{media_profile['video_width']}x{media_profile['video_height']}-"
                            f"{media_profile['video_fps']}-{media_profile['video_color']}-realtime")
-            fingerprint = hashlib.sha256(f"ipvf-{profile_key}:{source_key}:{source_stamp[0]}:{source_stamp[1]}".encode()).hexdigest()
+            fingerprint = hashlib.sha256(f"ipvf-{profile_key}:{source_key}:{source_stamp}".encode()).hexdigest()
             cached = video_state.get(relative, {})
             if not isinstance(cached, dict):
                 cached = {}
@@ -2639,6 +2641,8 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                           source.relative_to(root).as_posix().casefold()) or
                          output_name.casefold().startswith("videos/ipvf/"))
                     and _outputs_match(root, cached.get("outputs", []), verified=verified_outputs)):
+                if _receipt_stamp(source.stat()) != source_stamp:
+                    raise ValueError("Video changed while checking its prepared copy; scan again")
                 if not index_in_place:
                     output_paths.append(output_name)
                 progress(f"Video {index+1}/{item['count']} already ready: {relative}")
@@ -2653,6 +2657,8 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                 mark_publication()
                 file_publication_started = True
                 result = index_video(source, title=label, library_key=relative, **target_args(identity))
+                if _receipt_stamp(source.stat()) != source_stamp:
+                    raise ValueError("Video changed during publication; scan again before updating")
                 published.append(result)
                 catalog_snapshot.clear()
                 video_state[relative] = dict(signature=fingerprint,
@@ -2706,7 +2712,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                                     video_index=index+1, video_total=item['count']))) if progress_detail else None)
             checkpoint()
             after = source.stat()
-            if (after.st_size, after.st_mtime_ns) != source_stamp:
+            if _receipt_stamp(after) != source_stamp:
                 raise ValueError("Video changed during preparation; scan again before updating")
             progress(f"Publishing video {index+1}/{item['count']}: {relative}")
             emit_stage('Publishing Videos', unit,
@@ -2725,7 +2731,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
             published.append(result)
             output_paths.append(output_name)
             after = source.stat()
-            if (after.st_size, after.st_mtime_ns) != source_stamp:
+            if _receipt_stamp(after) != source_stamp:
                 raise ValueError("Video changed during publication; scan again before updating")
             video_state[relative] = dict(signature=fingerprint, source_stamp=source_stamp,
                 outputs=[(output_name, result["candidate_sha256"])])

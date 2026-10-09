@@ -8,7 +8,7 @@ import time
 
 from . import media_manager as media
 from . import media_library
-from .host_state import cache_directory, cache_root, load_json_object, save_json
+from .host_state import cache_directory, cache_root, file_stamp, load_json_object, save_json
 from .inventory import collect_records_by_kind as records_by_kind, skipped_paths, scan as scan_sources
 
 
@@ -203,7 +203,7 @@ def _video_readiness(inventory, published, identity, state=None, verified=None):
         if (not stat.S_ISREG(info.st_mode) or
                 getattr(info, 'st_file_attributes', 0) & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)):
             return None
-        return [info.st_size, info.st_mtime_ns]
+        return list(file_stamp(info))
 
     sources = []
     for value in compatible_files:
