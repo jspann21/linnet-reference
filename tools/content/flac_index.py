@@ -4,11 +4,14 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import struct
 import subprocess
 import tempfile
 import time
 import uuid
+
+from .host_state import file_stamp
 
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 MAX_METADATA = 16 * 1024 * 1024
@@ -26,6 +29,8 @@ def _layout(path):
         while at + 4 <= size and at < MAX_METADATA:
             reader.seek(at)
             header = reader.read(4)
+            if len(header) != 4:
+                return None
             kind, length = header[0] & 127, int.from_bytes(header[1:], 'big')
             if at + 4 + length > size:
                 return None
@@ -33,6 +38,8 @@ def _layout(path):
                 if kind != 0 or length != 34:
                     return None
                 stream = reader.read(34)
+                if len(stream) != 34:
+                    return None
                 rate = int.from_bytes(stream[10:13], 'big') >> 4
                 total = ((stream[13] & 15) << 32) | int.from_bytes(stream[14:18], 'big')
                 if not rate or not total:
@@ -57,6 +64,8 @@ def _rebalance(path, layout):
         while at < audio_at:
             reader.seek(at)
             header = reader.read(4)
+            if len(header) != 4:
+                return None
             length = int.from_bytes(header[1:], 'big')
             if header[0] & 127 == 3:
                 if table is not None or length > MAX_SEEK_TABLE or length % 18:
@@ -103,6 +112,10 @@ def same_original(source, destination, *, checkpoint=lambda: None):
     """Recognize this metadata-only augmentation during repeat imports."""
     source, destination = Path(source), Path(destination)
     checkpoint()
+    paths = (source, destination)
+    before = [path.stat() for path in paths]
+    if any(not stat.S_ISREG(info.st_mode) for info in before):
+        raise ValueError('file changed while comparing existing FLAC')
     original, prepared = _layout(source), _layout(destination)
     if not original or not prepared or not prepared[4]:
         return False
@@ -112,25 +125,26 @@ def same_original(source, destination, *, checkpoint=lambda: None):
     if original[4]:
         change = _rebalance(source, original)
         if (not change or prepared[0] != audio_at or
-                source.stat().st_size != destination.stat().st_size):
+                before[0].st_size != before[1].st_size):
             return False
     else:
         if prepared[1] != audio_at:
             return False
         added = prepared[0] - audio_at
         if (added < 22 or added > 4 + 64 * 18 or
-                source.stat().st_size + added != destination.stat().st_size):
+                before[0].st_size + added != before[1].st_size):
             return False
+    equal = True
     with source.open('rb') as left, destination.open('rb') as right:
         checkpoint()
         metadata = bytearray(left.read(audio_at))
         if len(metadata) != audio_at:
             return False
         if original[4]:
-            offset, before, after = change
-            if metadata[offset:offset + len(before)] != before:
+            offset, original_table, prepared_table = change
+            if metadata[offset:offset + len(original_table)] != original_table:
                 return False
-            metadata[offset:offset + len(before)] = after
+            metadata[offset:offset + len(original_table)] = prepared_table
         else:
             if not metadata[last_header] & 128:
                 return False
@@ -142,14 +156,22 @@ def same_original(source, destination, *, checkpoint=lambda: None):
             if (len(block) != added or block[0] != 0x83 or
                     int.from_bytes(block[1:4], 'big') != added - 4 or (added - 4) % 18):
                 return False
-        remaining = source.stat().st_size - audio_at
+        remaining = before[0].st_size - audio_at
         while remaining:
             checkpoint()
             size = min(remaining, 1024 * 1024)
-            if left.read(size) != right.read(size):
-                return False
+            a, b = left.read(size), right.read(size)
+            if len(a) != size or len(b) != size:
+                raise ValueError('file changed while comparing existing FLAC')
+            if a != b:
+                equal = False
+                break
             remaining -= size
-    return True
+        if equal and (left.read(1) or right.read(1)):
+            raise ValueError('file changed while comparing existing FLAC')
+    if any(file_stamp(info) != file_stamp(path.stat()) for path, info in zip(paths, before)):
+        raise ValueError('file changed while comparing existing FLAC')
+    return equal
 
 
 def _points(path, probe, audio_at, rate, total, checkpoint):
