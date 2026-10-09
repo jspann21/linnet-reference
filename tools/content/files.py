@@ -32,6 +32,7 @@ IMAGES = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tif', '.tiff', '.webp', '.h
 TEXT = {'.txt', '.text', '.md', '.rst', '.log', '.ini', '.cfg', '.toml', '.yaml', '.yml',
         '.json', '.xml', '.csv', '.nfo', '.c', '.h', '.py', '.js', '.ts', '.tsx', '.css', '.html', '.htm'}
 PREVIEW_DECODE_PIXELS = 32_000_000
+MAX_TEXT_SOURCE_BYTES = 16 * 1024 * 1024
 _TEXT_CONTROL_SPACES = dict.fromkeys((*range(32), 127), ' ')
 _NEGATIVE_TEXT_PREVIEWS = OrderedDict()
 _NEGATIVE_TEXT_PREVIEWS_LOCK = threading.Lock()
@@ -327,10 +328,13 @@ def _preview(source, cache, width, height, columns, recipe, checkpoint, info, ro
             struct.pack_into('<I', header, 508, zlib.crc32(header[:508]))
             data[:512] = header
         else:
-            if info.st_size > 16 * 1024 * 1024:
+            if info.st_size > MAX_TEXT_SOURCE_BYTES:
                 return None  # Native bounded byte/text paging remains available.
             before = source.stat()
-            raw = source.read_bytes()
+            with source.open('rb') as reader:
+                raw = reader.read(MAX_TEXT_SOURCE_BYTES + 1)
+            if len(raw) > MAX_TEXT_SOURCE_BYTES:
+                raise ValueError(f'File changed while preparing its preview: {source}')
             encoding = 'utf-16' if raw[:2] in (b'\xff\xfe', b'\xfe\xff') else 'utf-8-sig'
             try:
                 text = raw.decode(encoding)
