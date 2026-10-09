@@ -59,13 +59,15 @@ def executable():
     return destination
 
 
-def original_size(path, size=None):
+def original_size(path, size=None, *, checkpoint=lambda: None):
     """Return the original prefix length only for a valid trailing seek atom."""
+    checkpoint()
     if size is None:
         size = path.stat().st_size
     with path.open('rb') as reader:
         at = 0
         for _ in range(4096):
+            checkpoint()
             if size - at < 8:
                 return None
             reader.seek(at)
@@ -83,6 +85,7 @@ def original_size(path, size=None):
                 return None
             if kind == b'lnsk' and header == 8 and at + length == size:
                 h = reader.read(64)
+                checkpoint()
                 if (len(h) != 64 or h[:4] != b'LNS1' or struct.unpack_from('<I', h, 4)[0] != 16
                         or struct.unpack_from('<Q', h, 16)[0] != at or any(h[36:60])
                         or zlib.crc32(h[:60]) != struct.unpack_from('<I', h, 60)[0]):
@@ -101,7 +104,7 @@ def same_original(source, destination, *, checkpoint=lambda: None):
     before = [path.stat() for path in paths]
     if any(not stat.S_ISREG(info.st_mode) for info in before):
         raise ValueError('file changed while comparing existing AAC')
-    size = original_size(destination, before[1].st_size)
+    size = original_size(destination, before[1].st_size, checkpoint=checkpoint)
     if size is None or before[0].st_size != size:
         return False
     equal = True
@@ -232,7 +235,7 @@ def import_suffix(path, cache, *, checkpoint=lambda: None):
     path, cache = Path(path), Path(cache)
     checkpoint()
     before = path.stat()
-    if original_size(path, before.st_size) is not None:
+    if original_size(path, before.st_size, checkpoint=checkpoint) is not None:
         return None, False
     cache.mkdir(parents=True, exist_ok=True)
     tool = executable()
@@ -278,7 +281,7 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
     unsupported = cache / (key + '.unsupported')
     if unsupported.exists():
         return False
-    if original_size(path, before.st_size) is not None:
+    if original_size(path, before.st_size, checkpoint=checkpoint) is not None:
         return False
     cache.mkdir(parents=True, exist_ok=True)
     tool = executable()
@@ -336,7 +339,7 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
             checkpoint()
             verified_before = path.stat()
             if (hash_file(path, before.st_size + len(suffix)) != digest.hexdigest()
-                    or original_size(path) != before.st_size):
+                    or original_size(path, checkpoint=checkpoint) != before.st_size):
                 raise OSError('AAC prepared copy did not verify')
             verified_after = path.stat()
             if ((verified_before.st_dev, verified_before.st_ino, verified_before.st_size,
@@ -361,7 +364,7 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
             after = path.stat()
             if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
                 raise OSError('AAC source changed during preparation')
-            if original_size(temporary) != before.st_size:
+            if original_size(temporary, checkpoint=checkpoint) != before.st_size:
                 raise ValueError('AAC seek index has invalid geometry')
             if recovery is not None:
                 backup = cache / (uuid.uuid4().hex + '.aac-original')

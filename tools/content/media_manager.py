@@ -1159,7 +1159,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                     valid = original_size(temporary, prepared_bytes, checkpoint=checkpoint) == item['bytes']
                 else:
                     from .aac_index import original_size
-                    valid = original_size(temporary, prepared_bytes) == item['bytes']
+                    valid = original_size(temporary, prepared_bytes, checkpoint=checkpoint) == item['bytes']
                 if not valid:
                     raise ValueError(f"Prepared audio seek data is invalid: {destination}")
         for item, temporary, _, digest, prepared_bytes, unsupported_aac, metadata_seed, flac_seek_checked in copied:
