@@ -68,8 +68,8 @@ def create(target, output, jobs=2):
             for name, data in sorted(payloads.items()):
                 bundle.writestr(name, data)
         # Exercise the consumer's checks before publishing a bundle.
-        load(temporary, dict(target_id=target), "native-preserve")
-        load(temporary, dict(target_id=target), "native-selector")
+        load(temporary, dict(target_id=target), "native-preserve", verify_only=True)
+        load(temporary, dict(target_id=target), "native-selector", verify_only=True)
         temporary.rename(output)
     finally:
         temporary.unlink(missing_ok=True)
@@ -77,7 +77,8 @@ def create(target, output, jobs=2):
                 sha256=hashlib.sha256(output.read_bytes()).hexdigest())
 
 
-def load(path, identity, installation_method):
+def load(path, identity, installation_method, *, verify_only=False):
+    """Validate a bundle, retaining installation files unless only checking it."""
     from tools.studio.installer import INSTALLATION_METHODS, _validate_artifacts
     method = "native-preserve" if installation_method == "native-volume" else installation_method
     if method not in INSTALLATION_METHODS:
@@ -128,6 +129,8 @@ def load(path, identity, installation_method):
                         boot_build_id=inspect(payloads[boot_name + ".los"])["build_id"],
                         installation_method=method, boot_selector=selector)
         _validate_artifacts(identity, artifacts(staging))
+        if verify_only:
+            return None
         destination = parent / uuid.uuid4().hex
         destination.mkdir()
         for name in FILES:
