@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from collections import deque
 from contextlib import contextmanager
 
@@ -189,7 +190,9 @@ def encode_ipvf(source, destination, *, title=None, cancelled=None,
         conversion.emit()
         options = ({"creationflags": subprocess.CREATE_NO_WINDOW}
                    if os.name == "nt" else {"start_new_session": True})
-        command = [sys.executable, "-X", "utf8", "-u", "-m", "tools.content.ipvf_encode", str(request)]
+        command = ([sys.executable, "--encode-ipvf", str(request)]
+                   if getattr(sys, "frozen", False) else
+                   [sys.executable, "-X", "utf8", "-u", "-m", "tools.content.ipvf_encode", str(request)])
         with log_path.open("wb") as log, log_path.open("rb") as updates:
             process = subprocess.Popen(command, cwd=Path(__file__).resolve().parents[2],
                                        stdout=log, stderr=log, **options)
@@ -308,5 +311,17 @@ def _worker(request):
     print(f"IPVF_PROGRESS:{struct.unpack_from('<I', header, 16)[0]}", flush=True)
 
 
+def main(arguments=None):
+    arguments = sys.argv[1:] if arguments is None else arguments
+    if len(arguments) != 1:
+        return 2
+    try:
+        _worker(arguments[0])
+    except Exception:
+        traceback.print_exc()
+        return 1
+    return 0
+
+
 if __name__ == "__main__":
-    _worker(sys.argv[1])
+    raise SystemExit(main())

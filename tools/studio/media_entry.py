@@ -6,6 +6,9 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == '--media-read':
         from tools.studio.media_reader import main
         raise SystemExit(main(sys.argv[2:]))
+    if len(sys.argv) > 1 and sys.argv[1] == '--encode-ipvf':
+        from tools.content.ipvf_encode import main
+        raise SystemExit(main(sys.argv[2:]))
     if len(sys.argv) > 1:
         from tools.studio.installer import main
         raise SystemExit(main())
