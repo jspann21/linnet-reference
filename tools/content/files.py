@@ -22,7 +22,7 @@ import zlib
 from types import SimpleNamespace
 
 from .publish import _plain, _hash
-from .host_state import cache_volume_scope, file_stamp as _preview_source_stamp
+from .host_state import cache_volume_scope, file_stamp as _preview_source_stamp, save_json
 
 RECORD = 256
 MAX_RECORDS = 1_000_000
@@ -278,6 +278,21 @@ def _alias(value):
     return value.encode('ascii')
 
 
+def _cache_bytes(output, data):
+    temporary = output.with_name(uuid.uuid4().hex + '.tmp')
+    owned = False
+    try:
+        with temporary.open('xb') as writer:
+            owned = True
+            writer.write(data)
+            writer.flush()
+            os.fsync(writer.fileno())
+        os.replace(temporary, output)
+    finally:
+        if owned:
+            temporary.unlink(missing_ok=True)
+
+
 def _preview(source, cache, width, height, columns, recipe, checkpoint, info, root, compressed,
              image_budget=None, cache_scope=None):
     suffix = source.suffix.lower()
@@ -385,12 +400,7 @@ def _preview(source, cache, width, height, columns, recipe, checkpoint, info, ro
         after = source.stat()
         if after.st_size != info.st_size or after.st_mtime_ns != info.st_mtime_ns:
             raise ValueError(f'File changed while preparing its preview: {source}')
-        temporary = output.with_suffix(output.suffix + '.tmp')
-        with temporary.open('wb') as writer:
-            writer.write(data)
-            writer.flush()
-            os.fsync(writer.fileno())
-        os.replace(temporary, output)
+        _cache_bytes(output, data)
     digest = _hash(output)
     relative = f'.LINNET/FILES/PREVIEW/{digest[:2].upper()}/{digest[2:10].upper()}{output.suffix}'
     return dict(source=str(output), path=relative, bytes=output.stat().st_size,
@@ -480,12 +490,7 @@ def _pack_previews(previews, cache, checkpoint):
             except (OSError, ValueError):
                 valid = False
             if not valid:
-                temporary = output.with_suffix('.tmp')
-                with temporary.open('wb') as writer:
-                    writer.write(payload)
-                    writer.flush()
-                    os.fsync(writer.fileno())
-                os.replace(temporary, output)
+                _cache_bytes(output, payload)
             add_pack(digest, len(payload), list(members))
             payload.clear()
             members.clear()
@@ -508,9 +513,7 @@ def _pack_previews(previews, cache, checkpoint):
             payload.extend(data)
             payload.extend(bytes(padded - size))
         finish()
-    temporary = manifest.with_suffix('.tmp')
-    temporary.write_text(json.dumps(layout, separators=(',', ':')), encoding='utf-8')
-    os.replace(temporary, manifest)
+    save_json(manifest, layout)
     return packs, locations
 
 
