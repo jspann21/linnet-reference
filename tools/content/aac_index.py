@@ -3,6 +3,7 @@ from functools import lru_cache
 import hashlib
 import os
 from pathlib import Path
+import stat
 import struct
 import subprocess
 import sys
@@ -10,6 +11,8 @@ import tempfile
 import time
 import uuid
 import zlib
+
+from .host_state import file_stamp
 
 ROOT = Path(__file__).resolve().parents[2]
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
@@ -67,6 +70,8 @@ def original_size(path, size=None):
                 return None
             reader.seek(at)
             head = reader.read(8)
+            if len(head) != 8:
+                return None
             length, kind = struct.unpack('>I4s', head)
             header = 8
             if length == 1:
@@ -88,19 +93,34 @@ def original_size(path, size=None):
     return None
 
 
-def same_original(source, destination):
+def same_original(source, destination, *, checkpoint=lambda: None):
+    source, destination = Path(source), Path(destination)
     if not destination.is_file():
         return False
-    size = original_size(destination)
-    if size is None or source.stat().st_size != size:
+    paths = (source, destination)
+    before = [path.stat() for path in paths]
+    if any(not stat.S_ISREG(info.st_mode) for info in before):
+        raise ValueError('file changed while comparing existing AAC')
+    size = original_size(destination, before[1].st_size)
+    if size is None or before[0].st_size != size:
         return False
+    equal = True
     with source.open('rb') as left, destination.open('rb') as right:
         while size:
+            checkpoint()
             count = min(size, 1024 * 1024)
-            if left.read(count) != right.read(count):
-                return False
+            a, b = left.read(count), right.read(count)
+            if len(a) != count or len(b) != count:
+                raise ValueError('file changed while comparing existing AAC')
+            if a != b:
+                equal = False
+                break
             size -= count
-    return True
+        if equal and left.read(1):
+            raise ValueError('file changed while comparing existing AAC')
+    if any(file_stamp(info) != file_stamp(path.stat()) for path, info in zip(paths, before)):
+        raise ValueError('file changed while comparing existing AAC')
+    return equal
 
 
 def _matches_prefix(path, size, expected_hash):
