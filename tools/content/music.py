@@ -449,7 +449,7 @@ def _decoded_frames(path: Path, executable: str, *, recover: bool = False,
     indexed_bytes = None
     if codec == CODECS["mp3"]:
         from .mp3_index import original_size
-        indexed_bytes = original_size(path)
+        indexed_bytes = original_size(path, checkpoint=lambda: _check_cancel(cancelled))
     if indexed_bytes is not None:
         with path.open('rb') as reader:
             reader.seek(-64, os.SEEK_END)

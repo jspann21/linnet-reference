@@ -61,8 +61,9 @@ def executable():
     return destination
 
 
-def original_size(path, size=None):
+def original_size(path, size=None, *, checkpoint=lambda: None):
     """Recognize the exact Linnet trailer and return its source prefix length."""
+    checkpoint()
     path = Path(path)
     size = path.stat().st_size if size is None else size
     if size < 16 + 2 * RECORD_BYTES + 64:
@@ -85,10 +86,12 @@ def original_size(path, size=None):
         if reader.read(16) != SENTINEL:
             return None
         for index in range(count):
+            checkpoint()
             record = reader.read(RECORD_BYTES)
             if (len(record) != RECORD_BYTES or
                     zlib.crc32(record[:556]) != struct.unpack_from('<I', record, 556)[0]):
                 return None
+        checkpoint()
     return original
 
 
@@ -98,7 +101,7 @@ def same_original(source, destination, *, checkpoint=lambda: None):
         return False
     paths = (source, destination)
     before = [path.stat() for path in paths]
-    size = original_size(destination, before[1].st_size)
+    size = original_size(destination, before[1].st_size, checkpoint=checkpoint)
     if size is None or before[0].st_size != size:
         return False
     if any(not stat.S_ISREG(info.st_mode) for info in before):
@@ -130,7 +133,7 @@ def import_suffix(source, *, checkpoint=lambda: None):
     source = Path(source)
     before = source.stat()
     if (before.st_size < 8 * 1024 * 1024 or before.st_size > 0xffffffff - 10000000 or
-            original_size(source, before.st_size) is not None):
+            original_size(source, before.st_size, checkpoint=checkpoint) is not None):
         return b''
     with source.open('rb') as reader:
         reader.seek(-128, 2)

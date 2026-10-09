@@ -1156,7 +1156,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
             if prepared_bytes != item['bytes'] and not flac_seek_checked and 'converted_bytes' not in item:
                 if destination.suffix.lower() == '.mp3':
                     from .mp3_index import original_size
-                    valid = original_size(temporary, prepared_bytes) == item['bytes']
+                    valid = original_size(temporary, prepared_bytes, checkpoint=checkpoint) == item['bytes']
                 else:
                     from .aac_index import original_size
                     valid = original_size(temporary, prepared_bytes) == item['bytes']
