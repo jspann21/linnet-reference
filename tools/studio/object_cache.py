@@ -44,7 +44,9 @@ def _dependencies(path):
     result, word, index = [], [], 6
     while index < len(data):
         char = data[index]
-        if char == '\\' and index + 1 < len(data) and data[index + 1] in (' ', '\\', '#'):
+        if index + 1 < len(data) and (
+                char == '\\' and data[index + 1] in (' ', '\\', '#') or
+                char == '$' and data[index + 1] == '$'):
             word.append(data[index + 1])
             index += 2
             continue
