@@ -321,7 +321,7 @@ def index_video(source, *, disk_number, expected_disk_serial,
         candidate = inspect_file(source)
     _target_check(candidate, root, profile)
     after = source.stat()
-    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+    if file_stamp(before) != file_stamp(after):
         raise ValueError('Video changed during validation')
     path = device_video_path(source, root)
     key = hashlib.sha256(str(library_key or source.relative_to(root)).replace('\\', '/').encode('utf-8')).digest()

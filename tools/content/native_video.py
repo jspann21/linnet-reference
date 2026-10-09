@@ -11,6 +11,8 @@ import time
 import uuid
 from fractions import Fraction
 
+from .host_state import file_stamp
+
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
@@ -364,7 +366,7 @@ def inspect_file(path, *, profile, ffprobe=None, cancelled=None, duration_probe=
     info = path.stat()
     size = info.st_size
     if duration_probe is not None:
-        duration_probe['stamp'] = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        duration_probe['stamp'] = file_stamp(info)
     if not 8 <= size <= 0x7fffffff:
         raise ValueError("Native video must fit the supported 2 GiB file range")
     checkpoint()
@@ -454,6 +456,8 @@ def inspect_file(path, *, profile, ffprobe=None, cancelled=None, duration_probe=
     extension = ".mov" if brand == "qt" else ".mp4"
     if extension not in profile["video_extensions"]:
         raise ValueError("This video container is unsupported by the selected iPod target")
+    if file_stamp(info) != file_stamp(path.stat()):
+        raise OSError('Native video changed during validation')
     return dict(format="MP4", extension=extension, width=width, height=height, frames=frames,
                 codec=v["codec_name"], file_bytes=size, bytes=size, fast_start=fast_start,
                 duration_seconds=_seconds(v.get("duration")) or _seconds(data.get("format", {}).get("duration")))
@@ -478,6 +482,7 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None,
             from .media_manager import Cancelled
             raise Cancelled("Native video preparation cancelled")
     checkpoint()
+    source_stamp = file_stamp(source.stat())
     updates = _Progress(source, progress, progress_detail)
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(output.stem + "." + uuid.uuid4().hex + ".mp4")
@@ -648,7 +653,10 @@ def prepare(source, output, *, profile, ffmpeg=None, ffprobe=None,
         candidate = inspect_file(temporary, profile=profile, ffprobe=ffprobe, cancelled=cancelled)
         checkpoint()
         updates.emit("validate", complete=True)
-        checkpoint(); os.replace(temporary, output)
+        checkpoint()
+        if file_stamp(source.stat()) != source_stamp:
+            raise OSError('Native video source changed during preparation')
+        os.replace(temporary, output)
         return candidate
     finally:
         if temporary.exists():
