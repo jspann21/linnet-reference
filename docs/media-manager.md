@@ -165,13 +165,16 @@ search. Enter opens a group or file details. **Show in folder** opens a file's
 location. Queue removal leaves source files intact.
 
 Queue choices are retained per device. Completed work is reused after an
-interruption; unfinished or missing sources remain visible. Stop takes effect at
-a safe operation boundary. The preparation report records completed, skipped,
-and failed work. During a scan, device search, or preparation planning, **Stop**
-waits for the current read-only check to return; the window remains busy until
-that check finishes. Ordinary results are discarded. If a scan finds an
-interrupted media-index update, the app keeps the blocked recovery state so it
-can be reviewed before another device action.
+interruption; unfinished or missing sources remain visible. During preparation,
+**Stop** takes effect at a safe operation boundary. The preparation report records
+completed, skipped, and failed work. During device search or library scanning,
+**Stop** interrupts the reader and its storage queries, discards partial results,
+and releases the window for another action. If iTunes is syncing the iPod, stop
+reading and let the sync finish before choosing **Refresh**. The app does not
+restart a stopped scan automatically. Preparation planning finishes its current
+check before stopping. If a completed scan finds an interrupted media-index
+update, the app keeps the blocked recovery state so it can be reviewed before
+another device action.
 
 ## Playlists, games, and screens
 

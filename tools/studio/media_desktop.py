@@ -31,7 +31,7 @@ from tools.content import apple_os, games, media_manager as media, media_library
 from tools.content import publish
 from tools.content.media_manager import format_size as size
 from tools.content.music import COVER_NAMES, EXTENSIONS as MUSIC_EXTENSIONS
-from tools.studio import installer, screen_settings, startup_default, boot_upgrade
+from tools.studio import installer, screen_settings, startup_default, boot_upgrade, media_reader
 
 
 UI_FONT = 'Century Gothic'
@@ -1501,7 +1501,8 @@ class MediaWindow(QMainWindow):
         self.progress.show()
         self.cancel_button.setEnabled(True)
         self.cancel_button.setText('Stop')
-        self.cancel_button.setToolTip('Stop after the current step finishes')
+        self.cancel_button.setToolTip('Stop reading the iPod' if tag in ('scan', 'devices') else
+                                      'Stop after the current step finishes')
         self.cancel_button.setVisible(context.can_cancel)
         self.show_progress(message)
         self.update_controls()
@@ -1514,7 +1515,7 @@ class MediaWindow(QMainWindow):
                 outcome = OperationOutcome(context,
                     status='cancelled' if type(error).__name__ == 'Cancelled' else 'failed',
                     error=str(error) or type(error).__name__,
-                    error_type=type(error).__name__,
+                    error_type=getattr(error, 'error_type', type(error).__name__),
                     cancel_requested=bool(context.cancel_event and context.cancel_event.is_set()))
             self.events.done.emit(outcome)
         self.pool.submit(run)
@@ -1570,7 +1571,7 @@ class MediaWindow(QMainWindow):
         self.progress.hide()
         self.cancel_button.hide()
         self.update_controls()
-        if outcome.cancel_requested and tag in ('scan', 'plan', 'devices'):
+        if outcome.cancel_requested and tag in ('scan', 'plan', 'devices') and outcome.status != 'failed':
             if tag == 'plan':
                 self.plan_context = None
             elif tag == 'scan' and isinstance(result, dict) and result.get('publication_recovery_pending'):
@@ -1581,7 +1582,9 @@ class MediaWindow(QMainWindow):
                 self.update_controls()
             else:
                 self.transition_device(None)
-            self.show_progress('Stopped after the current check. Refresh when ready.')
+            self.show_progress('Stopped reading the iPod. If iTunes is syncing, let it finish before refreshing.'
+                               if tag in ('scan', 'devices') else
+                               'Stopped after the current check. Refresh when ready.')
             return
         if outcome.status not in ('succeeded', 'partial', 'cancelled', 'failed'):
             self.show_error(f'Unknown background outcome: {outcome.status}')
@@ -2048,7 +2051,8 @@ class MediaWindow(QMainWindow):
 
 
     def discover(self):
-        self.work('devices', lambda: media.discover(detailed=True), 'Looking for your iPod…')
+        self.work('devices', lambda: media_reader.read('devices', cancelled=self.stop_event.is_set),
+                  'Looking for your iPod…')
 
     def review_video_catalog(self):
         if self.busy or not self.identity or not self.device_connected:
@@ -2092,14 +2096,14 @@ class MediaWindow(QMainWindow):
         dimension = 2048 if self.photo_detail.currentIndex() else 640
         verification = 'full' if self.verify_audio.isChecked() else 'metadata'
         def inspect():
-            pending = publish.pending_publications(identity)
-            if pending:
-                current = media.refresh(identity)
-                return dict(publication_recovery_pending=True, identity=current, groups=pending)
-            result = media_status.inspect(identity, dimension, verification)
-            for row in result[2]:
-                if row['category'] in ('original', 'published'):
-                    row['_linnet_search_text'] = library_search_text(row)
+            result = media_reader.read('scan', identity=identity, photo_dimension=dimension,
+                                       verification=verification, cancelled=self.stop_event.is_set)
+            if not isinstance(result, dict):
+                for row in result[2]:
+                    if self.stop_event.is_set():
+                        raise media.Cancelled()
+                    if row['category'] in ('original', 'published'):
+                        row['_linnet_search_text'] = library_search_text(row)
             return result
         self.work('scan', inspect,
                   'Reading your collection and checking prepared media…')
@@ -3155,7 +3159,8 @@ class MediaWindow(QMainWindow):
         if context and context.cancel_event:
             context.cancel_event.set()
             self.cancel_button.setEnabled(False)
-            self.show_progress('Finishing the current step before stopping…')
+            self.show_progress('Stopping iPod reading…' if context.tag in ('scan', 'devices') else
+                               'Finishing the current step before stopping…')
 
     def record_diagnostic(self, operation, error_type, message, status='failed', cancel_requested=False):
         """Keep bounded support context without source paths or device identifiers."""
