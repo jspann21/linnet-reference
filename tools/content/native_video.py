@@ -261,7 +261,8 @@ def _check_mpeg4_config(data, width, height):
     bits.expect(1, 0)  # no scalability
 
 
-def _check_tables(path, size, sample_bytes=65536):
+def _check_tables(path, size, sample_bytes=65536, *, checkpoint=lambda: None):
+    checkpoint()
     count = 0
     metadata_at = media_at = None
     with path.open("rb") as source:
@@ -270,6 +271,7 @@ def _check_tables(path, size, sample_bytes=65536):
             if depth > 7:
                 raise ValueError("MP4 nesting exceeds device limits")
             while start < end:
+                checkpoint()
                 source.seek(start); header = source.read(16)
                 if len(header) < 8:
                     raise ValueError("Truncated MP4 atom")
@@ -301,6 +303,7 @@ def _check_tables(path, size, sample_bytes=65536):
                             source.seek(body+12)
                             remaining = samples
                             while remaining:
+                                checkpoint()
                                 batch = min(remaining, 16384)
                                 values = source.read(batch * 4)
                                 if len(values) != batch * 4: raise ValueError("Truncated sample sizes")
@@ -316,6 +319,7 @@ def _check_tables(path, size, sample_bytes=65536):
                             if entries*12 != limit-body-8: raise ValueError("Truncated chunk map")
                             source.seek(body+8);previous=0;processed=0
                             while processed<entries:
+                                checkpoint()
                                 batch=min(entries-processed,4096)
                                 values=source.read(batch*12)
                                 if len(values)!=batch*12: raise ValueError("Truncated chunk map")
@@ -325,10 +329,12 @@ def _check_tables(path, size, sample_bytes=65536):
                         if kind == b"ctts":
                             source.seek(body+8)
                             for _ in range(entries):
+                                checkpoint()
                                 pair=source.read(8)
                                 if len(pair)!=8 or int.from_bytes(pair[4:], "big"): raise ValueError("Reordered timestamps are unsupported")
                 start = limit
         atoms(0, size)
+    checkpoint()
     return metadata_at is not None and media_at is not None and metadata_at < media_at
 
 def inspect_file(path, *, profile, ffprobe=None, cancelled=None, duration_probe=None):
@@ -350,7 +356,7 @@ def inspect_file(path, *, profile, ffprobe=None, cancelled=None, duration_probe=
     if not 8 <= size <= 0x7fffffff:
         raise ValueError("Native video must fit the supported 2 GiB file range")
     checkpoint()
-    fast_start = _check_tables(path, size, limits.get("sample_bytes", 65536))
+    fast_start = _check_tables(path, size, limits.get("sample_bytes", 65536), checkpoint=checkpoint)
     checkpoint()
     probe = ffprobe or shutil.which("ffprobe")
     if not probe:
