@@ -254,7 +254,7 @@ def import_suffix(path, cache, *, checkpoint=lambda: None):
         if not suffix:
             raise ValueError('AAC preparation produced no seek data')
     after = path.stat()
-    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+    if file_stamp(before) != file_stamp(after):
         raise OSError('AAC source changed during preparation')
     return (suffix, False) if before.st_size + len(suffix) <= 0xffffffff else (None, True)
 
@@ -262,7 +262,7 @@ def import_suffix(path, cache, *, checkpoint=lambda: None):
 def mark_unsupported(path, cache):
     path, cache = Path(path), Path(cache)
     before = path.stat()
-    key = hashlib.sha256(f'{path}:{before.st_size}:{before.st_mtime_ns}'.encode()).hexdigest()
+    key = hashlib.sha256(f'{path}:{file_stamp(before)}'.encode()).hexdigest()
     try:
         cache.mkdir(parents=True, exist_ok=True)
         (cache / (key + '.unsupported')).touch()
@@ -277,7 +277,7 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
     path, cache = Path(path), Path(cache)
     checkpoint()
     before = path.stat()
-    key = hashlib.sha256(f'{path}:{before.st_size}:{before.st_mtime_ns}'.encode()).hexdigest()
+    key = hashlib.sha256(f'{path}:{file_stamp(before)}'.encode()).hexdigest()
     unsupported = cache / (key + '.unsupported')
     if unsupported.exists():
         return False
@@ -288,7 +288,7 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
     if _possibly_alac(path, checkpoint):
         checkpoint()
         probe = _run_tool(tool, (path,), checkpoint, 30, allow_timeout=True)
-        if (before.st_size, before.st_mtime_ns) != (path.stat().st_size, path.stat().st_mtime_ns):
+        if file_stamp(before) != file_stamp(path.stat()):
             raise OSError('AAC source changed during preparation')
         if probe == 4:
             unsupported.touch(); return False
@@ -310,7 +310,7 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
             return False
         digest = source_hash.copy(); digest.update(suffix)
         after = path.stat()
-        if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        if file_stamp(before) != file_stamp(after):
             raise OSError('AAC source changed during preparation')
         if recovery is not None and journal is not None:
             if local_copy is not None:
@@ -332,6 +332,13 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
                 prepared_bytes=before.st_size + len(suffix), prepared_sha256=digest.hexdigest()))
             journal()
             with path.open('r+b') as writer:
+                opened = os.fstat(writer.fileno())
+                # Windows stat() and fstat() can disagree on ctime; their
+                # explicit birth times still describe the same file creation.
+                if (file_stamp(before)[:4] != file_stamp(opened)[:4] or
+                        getattr(before, 'st_birthtime_ns', before.st_ctime_ns) !=
+                        getattr(opened, 'st_birthtime_ns', opened.st_ctime_ns)):
+                    raise OSError('AAC source changed during preparation')
                 writer.seek(0, os.SEEK_END)
                 if writer.tell() != before.st_size:
                     raise OSError('AAC source changed during preparation')
@@ -362,7 +369,7 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
             if hash_file(temporary, before.st_size + len(suffix)) != digest.hexdigest():
                 raise OSError('AAC prepared copy did not verify')
             after = path.stat()
-            if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+            if file_stamp(before) != file_stamp(after):
                 raise OSError('AAC source changed during preparation')
             if original_size(temporary, checkpoint=checkpoint) != before.st_size:
                 raise ValueError('AAC seek index has invalid geometry')
@@ -376,6 +383,8 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
                 if journal is not None:
                     journal()
                 local.replace(backup)
+            if file_stamp(before) != file_stamp(path.stat()):
+                raise OSError('AAC source changed during preparation')
             temporary.replace(path)
         finally:
             if owned:
