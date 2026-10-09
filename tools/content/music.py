@@ -1092,10 +1092,12 @@ class _MetadataCache:
             # maintenance until preparation actually needs embedded covers.
             try:
                 self.connection.execute("CREATE TABLE IF NOT EXISTS embedded_sources "
-                    "(path TEXT PRIMARY KEY, size INTEGER, mtime INTEGER, checked REAL, digest BLOB)")
+                    "(path TEXT PRIMARY KEY, size INTEGER, mtime INTEGER, checked REAL, digest BLOB, stamp TEXT)")
+                if 'stamp' not in {row[1] for row in self.connection.execute('PRAGMA table_info(embedded_sources)')}:
+                    self.connection.execute('ALTER TABLE embedded_sources ADD COLUMN stamp TEXT')
                 self.connection.execute("CREATE TABLE IF NOT EXISTS embedded_images "
                     "(digest BLOB PRIMARY KEY, value BLOB)")
-                self.connection.execute("DELETE FROM embedded_sources WHERE checked < ? OR checked > ?",
+                self.connection.execute("DELETE FROM embedded_sources WHERE stamp IS NULL OR checked < ? OR checked > ?",
                                         (now - 3600, now))
                 self.connection.execute("DELETE FROM embedded_images WHERE digest NOT IN "
                                         "(SELECT digest FROM embedded_sources)")
@@ -1116,13 +1118,13 @@ class _MetadataCache:
         try:
             placeholders = ",".join("?" for _ in keys)
             rows = list(self.connection.execute(
-                "SELECT s.path,s.size,s.mtime,s.checked,s.digest,length(i.value) "
+                "SELECT s.path,s.size,s.mtime,s.checked,s.digest,length(i.value),s.stamp "
                 "FROM embedded_sources s JOIN embedded_images i ON i.digest=s.digest "
                 f"WHERE s.path IN ({placeholders}) AND length(i.value)<=?",
                 (*keys, 32 * 1024 * 1024)))
             chosen = {}
             held = 0
-            for _, _, _, _, digest, size in rows:
+            for _, _, _, _, digest, size, _ in rows:
                 if digest not in chosen and isinstance(size, int) and size >= 0 and \
                         held + size <= _EMBEDDED_PREFETCH_BYTES:
                     chosen[digest] = size
@@ -1140,9 +1142,9 @@ class _MetadataCache:
                     if isinstance(image, bytes) and len(image) == chosen[digest]:
                         images[digest] = image
             result = dict.fromkeys(keys)
-            for key, size, mtime, checked, digest, _ in rows:
+            for key, size, mtime, checked, digest, _, stamp in rows:
                 value = images.get(digest, _EMBEDDED_FALLBACK)
-                result[key] = ((size, mtime, value, digest, checked)
+                result[key] = ((size, mtime, value, digest, checked, stamp)
                                if value is not _EMBEDDED_FALLBACK else _EMBEDDED_FALLBACK)
             return result
         except sqlite3.Error:
@@ -1160,14 +1162,15 @@ class _MetadataCache:
                     saved = prefetched.get(self._embedded_source_key(path), _EMBEDDED_FALLBACK)
                 if saved is _EMBEDDED_FALLBACK:
                     row = self.connection.execute(
-                        "SELECT i.value,i.digest,s.checked FROM embedded_sources s "
+                        "SELECT i.value,i.digest,s.checked,s.stamp FROM embedded_sources s "
                         "JOIN embedded_images i ON i.digest=s.digest "
                         "WHERE s.path=? AND s.size=? AND s.mtime=? AND length(i.value)<=?",
                         (self._embedded_source_key(path), before.st_size, before.st_mtime_ns,
                          32 * 1024 * 1024)).fetchone()
                 else:
                     row = saved[2:] if saved and saved[:2] == (before.st_size, before.st_mtime_ns) else None
-                if (row and type(row[2]) in (int, float) and 0 <= now - row[2] <= 3600 and
+                if (row and row[3] == json.dumps(file_stamp(before)) and
+                        type(row[2]) in (int, float) and 0 <= now - row[2] <= 3600 and
                         isinstance(row[0], bytes) and hashlib.sha256(row[0]).digest() == row[1]):
                     return True, row[0] or None
             except OverflowError:
@@ -1179,7 +1182,7 @@ class _MetadataCache:
     def embedded_cover_store(self, path, before, cover):
         now = time.time()
         after = path.stat()
-        if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+        if file_stamp(before) != file_stamp(after):
             raise ValueError("audio source changed during artwork extraction")
         if self.connection is not None:
             try:
@@ -1192,9 +1195,9 @@ class _MetadataCache:
                         "ON CONFLICT(digest) DO UPDATE SET value=excluded.value "
                         "WHERE embedded_images.value IS NOT excluded.value", (digest, value))
                     self.artwork_bytes += len(value) - (exists[0] or 0) if exists else len(value)
-                    self.connection.execute("INSERT OR REPLACE INTO embedded_sources VALUES (?,?,?,?,?)",
+                    self.connection.execute("INSERT OR REPLACE INTO embedded_sources VALUES (?,?,?,?,?,?)",
                         (self._embedded_source_key(path), before.st_size, before.st_mtime_ns,
-                         now, digest))
+                         now, digest, json.dumps(file_stamp(before))))
                     self._written()
             except OverflowError:
                 pass
