@@ -326,6 +326,16 @@ def _check_tables(path, size, sample_bytes=65536, *, checkpoint=lambda: None):
                                 for first,samples_per_chunk,description in struct.iter_unpack(">III",values):
                                     if first<=previous or (processed==0 and first!=1) or not 0<samples_per_chunk<=65536 or description!=1: raise ValueError("Unsupported chunk map")
                                     previous=first;processed+=1
+                        if kind == b"stts":
+                            if entries * 8 != limit - body - 8:
+                                raise ValueError("Invalid MP4 decode timestamp table size")
+                            source.seek(body + 8)
+                            for _ in range(entries):
+                                checkpoint()
+                                pair = source.read(8)
+                                if (len(pair) != 8 or not int.from_bytes(pair[:4], "big")
+                                        or not int.from_bytes(pair[4:], "big")):
+                                    raise ValueError("Invalid MP4 decode timestamps")
                         if kind == b"ctts":
                             source.seek(body+8)
                             for _ in range(entries):
