@@ -286,6 +286,7 @@ bool ln_music_sound_back(uint32_t *row){
 }
 const char *ln_music_sound_label(uint32_t row){
     uint32_t index=ln_music_sound_action(row);
+    if(index==UINT32_MAX)return "";
     if(index==LN_SOUND_CUSTOM_EQ)return "Custom EQ";
     if(index==LN_SOUND_MORE)return "Advanced";
     if(index==LN_SOUND_CLICKER)return ln_display_click_label();

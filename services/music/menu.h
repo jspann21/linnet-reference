@@ -42,7 +42,11 @@ enum { LN_SOUND_CLICKER=13, LN_SOUND_CUSTOM_EQ, LN_SOUND_MORE };
 static inline uint32_t ln_sound_menu_action(uint32_t view,uint32_t row,bool extended,bool clicker){
     static const uint8_t root[]={0,1,6,LN_SOUND_CLICKER,LN_SOUND_CUSTOM_EQ,LN_SOUND_MORE};
     static const uint8_t advanced[]={3,4,2,5,7};
-    if(view==LN_SOUND_ROOT){if(!clicker&&row>=3u)++row;return row<sizeof(root)?root[row]:UINT32_MAX;}
+    if(view==LN_SOUND_ROOT){
+        if(row>=sizeof(root)-(clicker?0u:1u))return UINT32_MAX;
+        if(!clicker&&row>=3u)++row;
+        return root[row];
+    }
     if(view==LN_SOUND_ADVANCED)return row<(extended?5u:4u)?advanced[row]:UINT32_MAX;
     if(view==LN_SOUND_EQ)return row<(extended?5u:2u)?row+(extended?8u:7u):UINT32_MAX;
     return UINT32_MAX;
