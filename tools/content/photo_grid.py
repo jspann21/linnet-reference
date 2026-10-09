@@ -16,8 +16,10 @@ DEVICE_PATH = '/.LINNET/PHOTOS/GRID.PGR'
 
 
 def _pim_header(header):
+    if len(header) != 512:
+        raise ValueError('invalid grid LPIC binding header')
     version, header_bytes = struct.unpack_from('<HH', header, 4)
-    if (len(header) != 512 or header[:4] != b'LPIC' or
+    if (header[:4] != b'LPIC' or
             version not in (0, 1) or header_bytes != 512 or
             any(header[72 + (384 if version else 0):508]) or
             _crc(header[:508]) != struct.unpack_from('<I', header, 508)[0]):
