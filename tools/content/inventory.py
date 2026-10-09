@@ -125,14 +125,12 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
             cover_names = {name.casefold() for name in COVER_NAMES}
         records = records_by_kind[kind]
         def source_stamp(path, info):
-            if kind == 'Music':
-                # Replacements can retain size and modification time. Windows
-                # directory stats omit file IDs; reuse traversal IDs when known.
-                inode = inodes.get(path) or info.st_ino
-                if not inode:
-                    inode = path.stat().st_ino
-                return info.st_size, info.st_mtime_ns, info.st_ctime_ns, inode
-            return info.st_size, info.st_mtime_ns
+            # Replacements can retain size and modification time. Windows
+            # directory stats omit file IDs; reuse traversal IDs when known.
+            inode = inodes.get(path) or info.st_ino
+            if not inode:
+                inode = path.stat().st_ino
+            return info.st_size, info.st_mtime_ns, info.st_ctime_ns, inode
         music_folders, cover_rows = set(), []
         last_parent, relative_prefix = None, None
         for path, info in records:
