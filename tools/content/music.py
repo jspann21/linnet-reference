@@ -28,7 +28,7 @@ import time
 import zlib
 
 from tools.studio.targets import TARGETS
-from .host_state import cache_volume_scope
+from .host_state import cache_volume_scope, file_stamp
 
 HEADER = 128
 TRACK = 132
@@ -1058,6 +1058,8 @@ class _MetadataCache:
             if row is None:
                 return None
             value = json.loads(row[0])
+            if not isinstance(value, dict) or value.pop('_source_stamp', None) != list(file_stamp(stat)):
+                return None
             return value if self._valid(value, relative, stat) else None
         except (ValueError, TypeError, OverflowError):
             return None
@@ -1071,7 +1073,7 @@ class _MetadataCache:
         try:
             self.connection.execute("INSERT OR REPLACE INTO metadata VALUES (?,?,?,?,?,?)",
                 (self._source_key(source), relative, stat.st_size, stat.st_mtime_ns, "existing",
-                 json.dumps(metadata)))
+                 json.dumps(dict(metadata, _source_stamp=file_stamp(stat)))))
             # The cache is disposable; amortize durable writes across tracks.
             # close() also commits the final partial group on cancellation.
             self._written()

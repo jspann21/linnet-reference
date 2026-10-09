@@ -23,7 +23,7 @@ from fractions import Fraction
 from functools import lru_cache
 
 from . import media_manager as media
-from .host_state import cache_root, cache_volume_scope, save_json
+from .host_state import cache_root, cache_volume_scope, file_stamp, save_json
 from .inventory import file_records
 from .music import _device_media_path
 from .guard import guarded_path as _plain, guard_volume as _volume_guard, hash_file as _hash
@@ -759,7 +759,9 @@ def _metadata(identity, files):
     for path, info in files:
         relative = path.relative_to(root).as_posix()
         cached = rows.get((relative.casefold(), info.st_size, info.st_mtime_ns))
-        if cached is None:
+        current = path.lstat()
+        if (not isinstance(cached, dict) or
+                cached.get('_source_stamp') != list(file_stamp(current))):
             raise ValueError(f'Prepare Music for Linnet first: {relative}')
         details = cached
         if details.get('rate', 0) <= 0 or details.get('frames', 0) <= 0:

@@ -308,6 +308,13 @@ def _source_music_metadata(root, records, cache_root, retail=None, published=Non
                 relative = relatives[index % 128]
                 key = str(path).casefold()
                 saved = (retail or {}).get(key, {})
+                if os.name == 'nt' and not before.st_ino:
+                    # DirEntry.stat() omits the Windows file identity. Cache
+                    # hits must distinguish replacements with equal timestamps.
+                    current = path.lstat()
+                    if (before.st_size, before.st_mtime_ns) != (current.st_size, current.st_mtime_ns):
+                        continue
+                    before = current
                 value = cache.get(root, relative, before, prefetched=prefetched)
                 needs_check = 'verification' in ((published or {}).get(key, {}).get('compatibility_issue') or '')
                 if value is None and saved and not needs_check:

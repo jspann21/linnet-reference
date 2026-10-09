@@ -50,7 +50,9 @@ for entry in sorted((entry for entry in items if not entry['directory']), key=la
     record = cached.get(key)
     current = (Path('F:/Music') / entry['path']).stat()
     if (record is None or record[0] != entry['size'] or
-            current.st_size != entry['size'] or current.st_mtime_ns != record[1]):
+            current.st_size != entry['size'] or current.st_mtime_ns != record[1] or
+            record[2].get('_source_stamp') != [current.st_dev, current.st_ino, current.st_size,
+                                             current.st_mtime_ns, current.st_ctime_ns]):
         raise ValueError(f'Missing or mismatched cached MP3 metadata: {entry["path"]}')
     details = record[2]
     rate, frames = details['rate'], details['frames']
