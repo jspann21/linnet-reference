@@ -50,14 +50,15 @@ def save_json(path, value):
 
 
 def _device(data):
-    if (data.get("read_only") is not True or
+    if (not isinstance(data, dict) or data.get("read_only") is not True or
             not isinstance(data.get("target_id"), str) or
             not isinstance(data.get("linnet_usb_serial"), str)):
         raise ValueError("invalid read-only device configuration")
     storage = data.get("storage", {})
     required = ("disk_number", "disk_serial", "disk_bytes", "sector_bytes",
                 "partition_offset", "partition_bytes", "model", "bus_type")
-    if any(key not in storage for key in required) or storage["sector_bytes"] not in (512, 2048, 4096):
+    if (not isinstance(storage, dict) or any(key not in storage for key in required) or
+            type(storage["sector_bytes"]) is not int or storage["sector_bytes"] not in (512, 2048, 4096)):
         raise ValueError("device configuration lacks supported storage geometry")
     return data
 
@@ -180,10 +181,11 @@ def plan(firmware_path, mbr_path, device_path, boot_path, output):
     report_path = boot_path.with_suffix(".json")
     report_bytes = report_path.read_bytes()
     report = json.loads(report_bytes)
-    if ((report.get("kind"), report.get("probe"), report.get("device_serial"),
+    if (not isinstance(report, dict) or not isinstance(report.get("image"), dict) or
+            (report.get("kind"), report.get("probe"), report.get("device_serial"),
          report.get("target_id"), report.get("build_id")) !=
             ("boot", "frame", "" if details["image"]["profile"] == "release" else device["linnet_usb_serial"], device["target_id"], details["image"]["build_id"]) or
-            report.get("image", {}).get("sha256") != sha(image)):
+            report["image"].get("sha256") != sha(image)):
         raise ValueError("matching storage Boot build report is required")
     if output.exists() and any(output.iterdir()):
         raise ValueError("plan output directory must be empty")
@@ -217,10 +219,12 @@ def load_plan(path, expected_sha):
     if len(expected_sha) != 64 or sha(raw) != expected_sha.lower():
         raise ValueError("reviewed plan SHA-256 does not match")
     manifest = json.loads(raw)
-    if manifest.get("operation") != "ipod-native-osos-redirect":
+    if not isinstance(manifest, dict) or manifest.get("operation") != "ipod-native-osos-redirect":
         raise ValueError("unsupported native installation plan")
-    if set(manifest.get("artifacts", {})) != ARTIFACTS:
+    if not isinstance(manifest.get("artifacts"), dict) or set(manifest["artifacts"]) != ARTIFACTS:
         raise ValueError("unexpected plan artifact set")
+    if not isinstance(manifest.get("firmware_backup"), str):
+        raise ValueError("native installation plan lacks a firmware backup path")
     artifacts = {}
     for name in ARTIFACTS:
         data = (path.parent / name).read_bytes()
@@ -231,7 +235,7 @@ def load_plan(path, expected_sha):
     firmware = Path(manifest["firmware_backup"]).read_bytes()
     details, candidate, original, patched = derive(
         firmware, artifacts["mbr.bin"], artifacts["boot.los"], device)
-    if (manifest["firmware_backup_sha256"] != sha(firmware) or
+    if (manifest.get("firmware_backup_sha256") != sha(firmware) or
             any(manifest.get(key) != value for key, value in details.items()) or
             (candidate, original, patched) != (artifacts["candidate.bin"], artifacts["directory-original.bin"],
                                                artifacts["directory-candidate.bin"])):
