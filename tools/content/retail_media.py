@@ -15,7 +15,7 @@ import time
 import uuid
 
 from .publish import _bounded, _plain
-from .host_state import cache_volume_scope, save_json
+from .host_state import cache_volume_scope, file_stamp, save_json
 
 
 class LibraryBusy(RuntimeError):
@@ -461,7 +461,7 @@ def images(root, *, artwork=False, dbids=None, render=True):
                     file_info[path] = info
                 if length < width * height * 2 or offset + length > info.st_size:
                     raise ValueError('iTunes thumbnail extends beyond its file')
-                stamp = f'{key}-{info.st_size}-{info.st_mtime_ns}'
+                stamp = hashlib.sha256(json.dumps((key, file_stamp(info))).encode()).hexdigest()
                 preview = cache / (stamp + '.png')
                 if render and preview not in queued and not preview.is_file():
                     from PIL import Image
