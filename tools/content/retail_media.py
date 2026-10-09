@@ -45,6 +45,24 @@ def _database_bytes(path, maximum, stamp):
     return data
 
 
+def check_tracks_access(root):
+    """Avoid scanning every media file when Apple's music database is locked."""
+    root = Path(root)
+    path = root / 'iPod_Control/iTunes/iTunesDB'
+    try:
+        _plain(path, root)
+        if path.is_file():
+            with path.open('rb') as reader:
+                reader.read(1)
+    except OSError as error:
+        if isinstance(error, PermissionError) or getattr(error, 'winerror', None) in (32, 33):
+            raise LibraryBusy() from error
+    except ValueError:
+        # Unusable optional metadata follows the existing fallback path. The
+        # guard rejects redirected paths before opening any source bytes.
+        pass
+
+
 def _u32(data, offset):
     return struct.unpack_from('<I', data, offset)[0]
 

@@ -249,6 +249,8 @@ def _preparation_state(identity):
 
 def _library_snapshot(identity):
     root = Path(identity['root'])
+    from .retail_media import available_tracks, images, check_tracks_access
+    check_tracks_access(root)
     state = _preparation_state(identity)
     skipped = {kind: skipped_paths(state, kind) for kind in media.KINDS}
     # Inventory and visible rows share one traversal, including excluded files.
@@ -261,7 +263,6 @@ def _library_snapshot(identity):
         # Let the existing metadata readers handle inaccessible databases.
         music_inodes = True
     records = records_by_kind(root, include_inodes=music_inodes)
-    from .retail_media import available_tracks, images
     retail_tracks = available_tracks(root, known_records=records['Music'], known_inodes=records.inodes)
     retail_photos = images(root)
     inventory = scan_sources(root, skipped=skipped, records_by_kind=records, retail_photos=retail_photos,
