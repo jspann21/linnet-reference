@@ -1509,7 +1509,9 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
                 stop_metadata.set()
         report["database"] = str(output / "LIBRARY.PDB")
         (prepared / "music-manifest.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        _check_cancel(cancelled)
         validate_stage(prepared, device_root=device_root)
+        _check_cancel(cancelled)
         try:
             if output.exists():
                 output.rename(backup)
@@ -1684,8 +1686,10 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
     paths = []
     directories = list(include_roots or [source])
     while directories:
+        _check_cancel(cancelled)
         with os.scandir(directories.pop()) as entries:
             for entry in entries:
+                _check_cancel(cancelled)
                 if entry.is_dir(follow_symlinks=False):
                     # Match pathlib's traversal: never recurse into symlinks.
                     if not entry.is_symlink():
@@ -1940,7 +1944,12 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             with path.open("rb") as original:
                 staged = temporary.open("wb") if stage_audio else None
                 try:
-                    while chunk := original.read(1024 * 1024):
+                    while True:
+                        _check_cancel(cancelled)
+                        chunk = original.read(1024 * 1024)
+                        _check_cancel(cancelled)
+                        if not chunk:
+                            break
                         hasher.update(chunk)
                         if staged:
                             staged.write(chunk)
