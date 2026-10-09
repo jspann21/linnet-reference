@@ -31,22 +31,28 @@ def align(size, sector=SECTOR):
 
 def save_json(path, value):
     temporary = path.with_suffix(path.suffix + ".tmp-" + uuid.uuid4().hex)
-    with temporary.open("x", encoding="utf-8", newline="\n") as writer:
-        writer.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
-        writer.flush()
-        os.fsync(writer.fileno())
-    if os.name == "nt":
-        import ctypes
+    owned = False
+    try:
+        with temporary.open("x", encoding="utf-8", newline="\n") as writer:
+            owned = True
+            writer.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
+            writer.flush()
+            os.fsync(writer.fileno())
+        if os.name == "nt":
+            import ctypes
 
-        move = ctypes.WinDLL("kernel32", use_last_error=True).MoveFileExW
-        move.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32)
-        move.restype = ctypes.c_int
-        if not move(os.path.abspath(temporary), os.path.abspath(path), 0x1 | 0x8):
-            raise ctypes.WinError(ctypes.get_last_error())
-    else:
-        temporary.replace(path)
-    with path.open("r+b") as saved:
-        os.fsync(saved.fileno())
+            move = ctypes.WinDLL("kernel32", use_last_error=True).MoveFileExW
+            move.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32)
+            move.restype = ctypes.c_int
+            if not move(os.path.abspath(temporary), os.path.abspath(path), 0x1 | 0x8):
+                raise ctypes.WinError(ctypes.get_last_error())
+        else:
+            temporary.replace(path)
+        with path.open("r+b") as saved:
+            os.fsync(saved.fileno())
+    finally:
+        if owned:
+            temporary.unlink(missing_ok=True)
 
 
 def _device(data):
