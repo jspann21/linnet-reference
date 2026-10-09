@@ -80,7 +80,11 @@ def _path(identity):
 def read(identity):
     identity = media.refresh(identity)
     _, path = _path(identity)
-    return (decode(path.read_bytes(), identity) if path.exists() else set(range(len(GAMES)))) & supported(identity)
+    selected = set(range(len(GAMES)))
+    if path.exists():
+        with path.open('rb') as reader:
+            selected = decode(reader.read(13), identity)
+    return selected & supported(identity)
 
 
 def save(identity, selected):
