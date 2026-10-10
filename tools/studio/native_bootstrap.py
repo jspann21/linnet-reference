@@ -152,10 +152,13 @@ def derive(firmware, mbr, image, device):
         raise ValueError("Boot payload exceeds the one MiB bootstrap bound")
     span = max(65536, align(len(payload), sector))
     first = align(max(entry["payload_offset"] + entry["payload_bytes"] for entry in parsed["entries"]), sector)
+    if first + span > len(firmware):
+        raise ValueError("firmware partition has no bounded staging extent after its images")
+    # Keep existing plans stable by preferring their first all-zero extent.
+    # Unreferenced trailing sectors need not be erased: the full backup pins
+    # their original bytes, which guard_device verifies before publication.
     stage = next((offset for offset in range(first, len(firmware) - span + 1, sector)
-                  if not any(firmware[offset:offset + span])), None)
-    if stage is None:
-        raise ValueError("firmware partition has no bounded all-zero staging extent")
+                  if not any(firmware[offset:offset + span])), first)
     candidate = payload + bytes(span - len(payload))
     patched = bytearray(parsed["directory"])
     entry_offset = parsed["original"]["directory_entry_offset"]
@@ -432,7 +435,8 @@ def guard_device(device, manifest, artifacts, original, *, allow_rockbox_uninsta
             raise RuntimeError("firmware directory differs from both reviewed states")
     stage, span = manifest["candidate_partition_offset"], manifest["candidate_write_bytes"]
     staged = observed[stage:stage + span]
-    if residue is None and not allow_interrupted_restore and staged not in (bytes(span), artifacts["candidate.bin"]):
+    original_stage = original[stage:stage + span]
+    if residue is None and not allow_interrupted_restore and staged not in (original_stage, artifacts["candidate.bin"]):
         raise RuntimeError("staging region differs from both reviewed states")
     if (residue is None and not allow_interrupted_restore and
             directory == artifacts["directory-candidate.bin"] and staged != artifacts["candidate.bin"]):
@@ -453,7 +457,8 @@ def guard_device(device, manifest, artifacts, original, *, allow_rockbox_uninsta
                        "candidate-rockbox-uninstalled" if residue is not None else "interrupted")
     staging_state = ("candidate-rockbox-residue" if residue is not None else
                      "candidate" if staged == artifacts["candidate.bin"] else
-                     "zero" if staged == bytes(span) else "interrupted")
+                     "zero" if staged == original_stage == bytes(span) else
+                     "original" if staged == original_stage else "interrupted")
     result = dict(directory=directory_state, staging=staging_state, original_payload_intact=True)
     if residue is not None:
         result["compatible_residue"] = residue

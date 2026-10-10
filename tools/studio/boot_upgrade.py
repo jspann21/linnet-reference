@@ -291,7 +291,7 @@ def worker(job):
         expected_serial=marker['device_id'], new_serial=expected['disk_serial'])
     _manifest, _artifacts, _firmware, before = _guard_plan(
         rebound_path, rebound_sha, expected['disk_number'])
-    if before.get('compatible_residue') or before['staging'] not in ('zero', 'candidate'):
+    if before.get('compatible_residue') or before['staging'] not in ('zero', 'original', 'candidate'):
         raise ValueError('Installed Boot contains an unsupported firmware residue')
     simulated = bytearray(old_firmware)
     if before['staging'] == 'candidate':

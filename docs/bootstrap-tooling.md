@@ -16,6 +16,14 @@ PortalPlayer directory planning exposes `plan`, `apply`, and `restore` through
 preparing a plan. The older mounted-volume route is owned by
 [bootstrap.py](../tools/studio/bootstrap.py).
 
+Directory plans stage Boot in aligned space after every referenced firmware
+image. They prefer an all-zero extent, but can use nonzero trailing space when
+no zero-filled extent fits. Before writing, the installer verifies those bytes
+against the full saved firmware backup; it verifies the staged Boot before
+publishing the directory. Restoring the original directory leaves the staged
+bytes unreferenced and keeps every original firmware image intact. The legacy
+native maintenance package still requires all-zero staging space.
+
 Classic `install-nor` retains its original and installed flash snapshots under
 `%LOCALAPPDATA%/Linnet/Installer`, independently of build output. `preserve-apple`
 and native OS publication copy the completed record onto the iPod for portable
