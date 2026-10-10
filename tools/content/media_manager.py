@@ -1543,23 +1543,50 @@ def _native_check_reusable(job, source, profile):
         return False
 
 
-def _video_duration(source, ffprobe):
+def _video_duration(source, ffprobe, *, cancelled=None):
+    def check():
+        if cancelled and cancelled():
+            raise Cancelled('Stopped while checking video duration.')
+
+    check()
     probe = ffprobe or shutil.which('ffprobe')
     if not probe:
         raise ValueError('FFprobe is required to estimate video conversion space.')
     command = [str(probe), '-v', 'error', '-show_entries',
                'stream=duration:format=duration', '-of', 'json', str(source)]
     try:
-        result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True,
-                                timeout=60, check=True,
-                                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-        data = json.loads(result.stdout[:1024 * 1024])
+        with tempfile.TemporaryFile() as output:
+            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output,
+                                       stderr=subprocess.DEVNULL,
+                                       creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+            started = time.monotonic()
+            try:
+                while process.poll() is None:
+                    check()
+                    remaining = 60 - (time.monotonic() - started)
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(command, 60)
+                    try:
+                        process.wait(timeout=min(.1, remaining))
+                    except subprocess.TimeoutExpired:
+                        pass
+                check()
+                if process.returncode:
+                    raise subprocess.CalledProcessError(process.returncode, command)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+            output.seek(0)
+            data = json.loads(output.read(1024 * 1024))
+        check()
         from .native_video import _probe_duration
         duration = _probe_duration(data)
         if duration:
             return duration
     except (OSError, ValueError, subprocess.SubprocessError, TypeError, AttributeError):
         pass
+    check()
     raise ValueError(f'Could not determine video duration for space planning: {source.name}')
 
 
@@ -1749,19 +1776,27 @@ def video_jobs(root, pending=(), selection=None, skipped=(), *, identity, snapsh
 
 def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimension=640,
                       current_inventory=None, ffprobe=None, ffmpeg=None,
-                      no_conversions=False, force=False, skipped=None):
+                      no_conversions=False, force=False, skipped=None,
+                      cancelled=lambda: False):
     """Bound peak free-space needs before the first device copy.
 
     Estimates include originals, prepared outputs, host scratch, existing
     publication backups, and the staged index recovery groups. Publishers
     still make their own exact checks immediately before individual writes.
     """
+    def check():
+        if cancelled():
+            raise Cancelled('Stopped while estimating preparation space.')
+
+    check()
     root = Path(identity['root'])
     cache = Path(cache)
     inventory = (current_inventory if current_inventory is not None else
-                 scan(root, tuple(k for k in selected if k != 'Videos'), skipped=skipped))
+                 scan(root, tuple(k for k in selected if k != 'Videos'), skipped=skipped,
+                      checkpoint=check))
     counts = {kind: inventory.get(kind, {}).get('count', 0) for kind in KINDS}
     for copy in copies:
+        check()
         if Path(copy['source']).suffix.lower() in extensions(copy['kind']):
             counts[copy['kind']] += 1
     original_bytes = sum(item.get('converted_bytes', item['bytes']) for item in copies)
@@ -1785,6 +1820,7 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
     if 'Music' in selected:
         seek_state = {} if force else _optional_state(cache / 'seek-checked.json')
         for value in inventory.get('Music', {}).get('files', []):
+            check()
             path = Path(value)
             if not path.is_relative_to(root) or path.suffix.lower() not in ('.m4a', '.m4b', '.flac', '.flc'):
                 continue
@@ -1794,6 +1830,7 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
                 audio_backup += info.st_size
                 largest_audio = max(largest_audio, info.st_size)
         for copy in copies:
+            check()
             if copy['kind'] == 'Music' and Path(copy['source']).suffix.lower() in ('.m4a', '.m4b', '.flac', '.flc'):
                 audio_backup += copy['bytes']
                 largest_audio = max(largest_audio, copy['bytes'])
@@ -1822,7 +1859,7 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
             probe = {}
             try:
                 details = inspect_file(job['source'], profile=identity['media_profile'],
-                                       ffprobe=ffprobe, cancelled=stop.is_set,
+                                       ffprobe=ffprobe, cancelled=lambda: stop.is_set() or cancelled(),
                                        duration_probe=probe)
             except (OSError, ValueError):
                 details = None
@@ -1831,6 +1868,7 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
         def estimate_jobs(items, futures=None):
             nonlocal video_bytes, video_host, video_conversion_required
             for index, job in enumerate(items):
+                check()
                 source = Path(job['source'])
                 details = duration_hint = None
                 if backend in ('bcm-mp4', 'native-mp4') and source.suffix.lower() in native_extensions:
@@ -1846,7 +1884,8 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
                         probe = {}
                         try:
                             details = inspect_file(source, profile=identity['media_profile'],
-                                                   ffprobe=ffprobe, duration_probe=probe)
+                                                   ffprobe=ffprobe, cancelled=cancelled,
+                                                   duration_probe=probe)
                         except (OSError, ValueError):
                             pass
                         if details is None:
@@ -1856,7 +1895,8 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
                     native = (no_conversions and
                               _native_check_reusable(job, source, identity['media_profile']))
                     if not native:
-                        native = _video_is_native(source, identity, ffprobe=ffprobe)
+                        native = _video_is_native(source, identity, ffprobe=ffprobe,
+                                                  cancelled=cancelled)
                 encoder = ffmpeg or shutil.which('ffmpeg')
                 if native:
                     if backend in ('bcm-mp4', 'native-mp4'):
@@ -1880,7 +1920,7 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
                         except (OSError, ValueError):
                             pass
                     if duration is None:
-                        duration = _video_duration(source, ffprobe)
+                        duration = _video_duration(source, ffprobe, cancelled=cancelled)
                     if backend in ('bcm-mp4', 'native-mp4'):
                         limit = identity['media_profile']['native_video']['max_video_kbps'] + 256
                         estimate = min(0x7fffffff, max(job['bytes'] * 3,
@@ -1927,6 +1967,7 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
         fixed += ['.LINNET/VIDEOS/INDEX.VID']
     fixed += ['.LINNET/FILES/INDEX.FIL']
     for name in fixed:
+        check()
         path = root / name
         _plain(path, root)
         if path.is_file():
@@ -1940,7 +1981,9 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
                    files_bytes * 2 + audio_backup * 2 + 16 * 1024 * 1024)
     parent = cache
     while not parent.exists():
+        check()
         parent = parent.parent
+    check()
     return dict(device_peak_bytes=device_needed, computer_peak_bytes=host_needed,
                 device_free_bytes=shutil.disk_usage(root).free,
                 computer_free_bytes=shutil.disk_usage(parent).free,
@@ -1948,20 +1991,25 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
 
 
 def reconciliation_actions(identity, selected, copies, *, replacements=(),
-                           current_inventory=None, skipped=None):
+                           current_inventory=None, skipped=None, checkpoint=None):
     """Describe removals that require explicit review before preparation."""
+    if checkpoint:
+        checkpoint()
     root = Path(identity['root'])
     actions = list(replacements)
     if current_inventory is None:
         if skipped is None:
             state = _optional_state(cache_root(identity) / 'state.json')
             skipped = {kind: _skipped_paths(state, kind) for kind in KINDS}
-        inventory = scan(root, tuple(k for k in selected if k != 'Videos'), skipped=skipped)
+        inventory = scan(root, tuple(k for k in selected if k != 'Videos'), skipped=skipped,
+                         checkpoint=checkpoint)
     else:
         inventory = current_inventory
     for kind, name in (('Music', '.LINNET/LIBRARY.PDB'),
                        ('Photos', '.LINNET/PHOTOS/LIBRARY.PIM'),
                        ('Notes', '.LINNET/NOTES/LIBRARY.NNT')):
+        if checkpoint:
+            checkpoint()
         if kind not in selected:
             continue
         count = inventory.get(kind, {}).get('count', 0)
@@ -1977,10 +2025,14 @@ def reconciliation_actions(identity, selected, copies, *, replacements=(),
         from .media_library import _catalog, _device_path
         _, _, entries = _catalog(root)
         for key, name, title in entries:
+            if checkpoint:
+                checkpoint()
             path = _device_path(root, name)
             if not path.is_file():
                 actions.append(dict(action='prune-video', kind='Videos',
                                     destination=str(path), key=key.hex(), title=title))
+    if checkpoint:
+        checkpoint()
     return sorted(actions, key=lambda row: (row['kind'], row['action'], row['destination'].casefold()))
 
 
@@ -2863,7 +2915,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         current_inventory = (scan(root, source_kinds, skipped=projected_skipped,
                                   checkpoint=checkpoint) if source_kinds else {})
         reconciliation = reconciliation_actions(identity, selected, plan,
-            replacements=replacements, current_inventory=current_inventory, skipped=projected_skipped)
+            replacements=replacements, current_inventory=current_inventory,
+            skipped=projected_skipped, checkpoint=checkpoint)
         report['reconciliation'] = reconciliation
         if ((reconciliation and approved_reconciliation is None) or
                 (approved_reconciliation is not None and approved_reconciliation != reconciliation)):
@@ -2883,7 +2936,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         space = preparation_space(identity, plan, videos, selected, cache,
             photo_dimension=photo_dimension, ffprobe=ffprobe, ffmpeg=ffmpeg,
             no_conversions=video_selection is not None and not video_selection,
-            force=force, current_inventory=current_inventory, skipped=projected_skipped)
+            force=force, current_inventory=current_inventory, skipped=projected_skipped,
+            cancelled=cancelled)
         report['space'] = space
         if space['device_peak_bytes'] > min(identity['free_bytes'], space['device_free_bytes']):
             raise ValueError('Not enough iPod space for originals, prepared media, and recovery copies.')

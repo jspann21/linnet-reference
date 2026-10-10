@@ -1502,6 +1502,7 @@ class MediaWindow(QMainWindow):
         self.cancel_button.setEnabled(True)
         self.cancel_button.setText('Stop')
         self.cancel_button.setToolTip('Stop reading the iPod' if tag in ('scan', 'devices') else
+                                      'Stop checking the preparation plan' if tag == 'plan' else
                                       'Stop after the current step finishes')
         self.cancel_button.setVisible(context.can_cancel)
         self.show_progress(message)
@@ -1585,7 +1586,7 @@ class MediaWindow(QMainWindow):
                 self.transition_device(None)
             self.show_progress('Stopped reading the iPod. If iTunes is syncing, let it finish before refreshing.'
                                if tag in ('scan', 'devices') else
-                               'Stopped after the current check. Refresh when ready.')
+                               'Stopped checking the preparation plan. Refresh when ready.')
             return
         if outcome.status not in ('succeeded', 'partial', 'cancelled', 'failed'):
             self.show_error(f'Unknown background outcome: {outcome.status}')
@@ -3161,6 +3162,7 @@ class MediaWindow(QMainWindow):
             context.cancel_event.set()
             self.cancel_button.setEnabled(False)
             self.show_progress('Stopping iPod reading…' if context.tag in ('scan', 'devices') else
+                               'Stopping preparation checks…' if context.tag == 'plan' else
                                'Finishing the current step before stopping…')
 
     def record_diagnostic(self, operation, error_type, message, status='failed', cancel_requested=False):

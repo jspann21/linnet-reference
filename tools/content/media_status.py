@@ -363,7 +363,13 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
          photo_dimension=640, music_verification='metadata', force=False,
          online_artwork=False, ffprobe=None, ffmpeg=None, convert_audio=False,
          cancelled=lambda: False):
+    def check():
+        if cancelled():
+            raise media.Cancelled('Stopped while checking the preparation plan.')
+
+    check()
     identity = media.refresh(identity)
+    check()
     unsupported = [kind for kind in selected if kind not in media.supported_kinds(identity)]
     if unsupported:
         raise ValueError(f"{', '.join(unsupported)} playback is unavailable on this iPod model.")
@@ -400,7 +406,8 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
         skipped['Music'].discard(destination.relative_to(root).as_posix().casefold())
     if device_conversions and current_inventory is not None:
         current_inventory = {**current_inventory, **media.scan(
-            root, tuple(kind for kind in selected if kind != 'Videos'), skipped=skipped)}
+            root, tuple(kind for kind in selected if kind != 'Videos'), skipped=skipped,
+            checkpoint=check)}
     audio_conversions = sum('converted_bytes' in item for item in copies)
     audio_unplayable = sum('compatibility_issue' in item and 'converted_bytes' not in item for item in copies)
     audio_issues = [dict(source=item['source'], reason=item['compatibility_issue']) for item in copies
@@ -408,12 +415,14 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
     if audio_conversions and not ffmpeg:
         raise ValueError('Audio conversion needs FFmpeg on the computer. Choose its folder in Settings.')
     jobs = media.video_jobs(root, included, videos, skipped=skipped['Videos'], identity=identity,
-                            snapshots=snapshots, ffprobe=ffprobe,
+                            snapshots=snapshots, ffprobe=ffprobe, cancelled=cancelled,
                             replacements=replacements) if 'Videos' in selected else []
     reconciliation = media.reconciliation_actions(identity, selected, copies,
-        replacements=replacements, current_inventory=current_inventory, skipped=skipped)
+        replacements=replacements, current_inventory=current_inventory,
+        skipped=skipped, checkpoint=check)
     previews = {}
     for kind, name in included:
+        check()
         source = Path(name).absolute().resolve(strict=True)
         records = snapshots[source]
         allowed = media.video_source_extensions(identity) if kind == 'Videos' else media.extensions(kind)
@@ -428,7 +437,8 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
                            if action['kind'] == 'Notes' and
                            Path(action['destination']).relative_to(root).as_posix().casefold()
                            not in skipped['Notes']}
-        total = scan_sources(root, ('Notes',), skipped=skipped)['Notes']['count'] + sum(
+        total = scan_sources(root, ('Notes',), skipped=skipped,
+                             checkpoint=check)['Notes']['count'] + sum(
             p['kind'] == 'Notes' and Path(p['source']).suffix.lower() in media.extensions('Notes')
             and p['destination'].casefold() not in replacing_notes for p in copies)
         if total > 256:
@@ -437,7 +447,7 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
     space = media.preparation_space(identity, copies, jobs, selected, cache,
         photo_dimension=photo_dimension, current_inventory=current_inventory,
         ffprobe=ffprobe, ffmpeg=ffmpeg, no_conversions=videos is not None and not videos,
-        force=force, skipped=skipped)
+        force=force, skipped=skipped, cancelled=cancelled)
     if space['device_peak_bytes'] > min(identity['free_bytes'], space['device_free_bytes']):
         raise ValueError('Not enough iPod space for originals, prepared media, and recovery copies.')
     if space['computer_peak_bytes'] > space['computer_free_bytes']:
@@ -457,6 +467,7 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
             if (saved.get('signature') == f"{option}:{item.get('fingerprint')}" and
                     isinstance(saved.get('outputs'), list) and saved['outputs']):
                 reusable.append(kind)
+    check()
     return dict(copies=len(copies), bytes=needed, videos=len(jobs), audio_conversions=audio_conversions,
                 audio_unplayable=audio_unplayable, audio_issues=audio_issues,
                 free=space['device_free_bytes'], previews=previews,
