@@ -477,10 +477,13 @@ def _normalize_music_paths(root, checkpoint, renamed):
                 directories.append(path)
 
 
-def _planning_records(source, snapshots):
+def _planning_records(source, snapshots, *, checkpoint):
+    checkpoint()
     if snapshots is not None and source in snapshots:
         return snapshots[source]
-    records = _file_records(source) if source.is_dir() else [(source, source.stat())]
+    records = (_file_records(source, checkpoint=checkpoint) if source.is_dir() else
+               [(source, source.stat())])
+    checkpoint()
     if snapshots is not None:
         snapshots[source] = records
     return records
@@ -565,11 +568,13 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
         if cancelled():
             raise Cancelled('Stopped while checking queued media.')
 
+    check()
     if verified is not None:
         for (relative, digest), stamp in verified.items():
             if isinstance(relative, str) and isinstance(digest, str) and re.fullmatch('[0-9a-f]{64}', digest):
                 known.setdefault(relative, {}).setdefault(stamp, set()).add(digest)
     for kind, selected in pending:
+        check()
         if kind not in KINDS:
             raise ValueError("Unknown media folder")
         source = Path(selected).absolute()
@@ -582,7 +587,7 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                               music_source is not None and not source.name.casefold().endswith('.linnet.wav')):
             raise ValueError(f"{source.name} is already on this iPod. Use its existing {kind} folder.")
         is_folder = source.is_dir()
-        records = _planning_records(source, snapshots)
+        records = _planning_records(source, snapshots, checkpoint=check)
         for path, info in records:
             check()
             # Preserve supporting files (cover art, playlists) inside selected folders.
@@ -719,6 +724,7 @@ def additions(root, pending, *, snapshots=None, verify_existing=True, unverified
                     if 'converted_bytes' in item and Path(item['source']).is_relative_to(root))
     if reserved.intersection(planned):
         raise ValueError('Queued sources overlap an iPod conversion. Remove one before preparing.')
+    check()
     return list(planned.values())
 
 
@@ -1567,6 +1573,7 @@ def video_jobs(root, pending=(), selection=None, skipped=(), *, identity, snapsh
         if cancelled and cancelled():
             raise Cancelled('Stopped while checking queued videos.')
 
+    check()
     allowed = video_source_extensions(identity)
     native_extensions = native_video_extensions(identity)
     scan_allowed = native_extensions if selection is not None else allowed
@@ -1590,9 +1597,10 @@ def video_jobs(root, pending=(), selection=None, skipped=(), *, identity, snapsh
     except (OSError, ValueError, UnicodeError, TypeError, AttributeError, IndexError):
         pass
     available = [str(path) for source in source_folders(root, "Videos")
-                 for path, _ in _file_records(source, allowed=scan_allowed)
+                 for path, _ in _file_records(source, allowed=scan_allowed, checkpoint=check)
                  if str(path).casefold() not in generated and
                  (not excluded or path.relative_to(root).as_posix().casefold() not in excluded)]
+    check()
     from .video_catalog import read_file
     catalog = root / ".LINNET" / "VIDEOS" / "INDEX.VID"
     _plain(catalog, root)
@@ -1623,6 +1631,7 @@ def video_jobs(root, pending=(), selection=None, skipped=(), *, identity, snapsh
                          catalog_title=published.get(source))
 
     for name in chosen:
+        check()
         source = Path(name).absolute()
         _plain(source, root)
         source = source.resolve(strict=True)
@@ -1631,6 +1640,7 @@ def video_jobs(root, pending=(), selection=None, skipped=(), *, identity, snapsh
         include(source, source.relative_to(folder).as_posix() if source.is_relative_to(folder)
                 else source.relative_to(root).as_posix())
     for kind, name in pending:
+        check()
         if kind != "Videos":
             continue
         source = Path(name).absolute()
@@ -1639,7 +1649,7 @@ def video_jobs(root, pending=(), selection=None, skipped=(), *, identity, snapsh
         if source.is_relative_to(root):
             raise ValueError("Use Choose videos and select this file under Videos on this iPod.")
         is_folder = source.is_dir()
-        records = _planning_records(source, snapshots)
+        records = _planning_records(source, snapshots, checkpoint=check)
         for path, info in (records if not is_folder else
                         ((path, info) for path, info in records if path.suffix.lower() in allowed)):
             check()
@@ -1668,6 +1678,7 @@ def video_jobs(root, pending=(), selection=None, skipped=(), *, identity, snapsh
             include(path, relative)
     if len(jobs) > 256:
         raise ValueError("Choose at most 256 videos per update.")
+    check()
     if selection is not None and not selection:
         if (identity['media_profile']['video_backend'] in ('bcm-mp4', 'native-mp4')
                 and not (ffprobe or shutil.which('ffprobe')) and jobs):
