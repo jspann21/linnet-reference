@@ -180,6 +180,7 @@ def _known_paths(root, records, inodes):
     if records is None:
         return None, None
     paths, stamps = {}, []
+    parents = {}
     for path, info in records:
         key = str(path).casefold()
         paths[key] = None if key in paths else path
@@ -187,7 +188,13 @@ def _known_paths(root, records, inodes):
         if not inode:
             stamps = None
         if stamps is not None:
-            stamps.append((path.relative_to(root).as_posix().casefold(), inode,
+            parent = path.parent
+            relative = parents.get(parent)
+            if relative is None:
+                relative = parent.relative_to(root).as_posix()
+                relative = relative + '/' if relative != '.' else ''
+                parents[parent] = relative
+            stamps.append(((relative + path.name).casefold(), inode,
                            info.st_size, info.st_mtime_ns, info.st_ctime_ns))
     digest = (hashlib.sha256(json.dumps(sorted(stamps), separators=(',', ':')).encode()).hexdigest()
               if stamps is not None else None)
@@ -416,6 +423,7 @@ def images(root, *, artwork=False, dbids=None, render=True):
     result = {}
     paths = {}
     file_info = {}
+    file_stamps = {}
     pending, queued = deque(), set()
     selected = []
     for order in range(count):
@@ -463,11 +471,11 @@ def images(root, *, artwork=False, dbids=None, render=True):
                     except FileNotFoundError:
                         continue
                     file_info[path] = info
+                    file_stamps[path] = (path.relative_to(root).as_posix().casefold(), file_stamp(info))
                 if length < width * height * 2 or offset + length > info.st_size:
                     raise ValueError('iTunes thumbnail extends beyond its file')
                 stamp = hashlib.sha256(json.dumps((
-                    'rgb565-crop-v1', path.relative_to(root).as_posix().casefold(),
-                    file_stamp(info), offset, length, width, height, x, y, iw, ih,
+                    'rgb565-crop-v1', *file_stamps[path], offset, length, width, height, x, y, iw, ih,
                 )).encode()).hexdigest()
                 preview = cache / (stamp + '.png')
                 if render and preview not in queued and not preview.is_file():
