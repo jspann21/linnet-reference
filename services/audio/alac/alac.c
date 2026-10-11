@@ -117,29 +117,31 @@ static int body(struct ln_alac *a)
 {
     uint8_t *b=a->buffer;uint32_t n=a->body_bytes,t=a->atom_type;
     if(t==TAG('s','t','s','d')){
-        if(n<52||ln_read_be32(b)||ln_read_be32(b+4)!=1||!once(a,1))return bad(a,LN_ALAC_FORMAT);
+        if(n!=44||ln_read_be32(b)||ln_read_be32(b+4)!=1||!once(a,1))return bad(a,LN_ALAC_FORMAT);
         uint32_t entry=ln_read_be32(b+8);
         uint32_t type=ln_read_be32(b+12);
-        if(entry!=n-8||entry<44||be16(b+22)!=1||be16(b+24))return bad(a,LN_ALAC_UNSUPPORTED);
+        if(entry!=a->atom_end-a->cursor-8||entry<44||be16(b+22)!=1||be16(b+24))return bad(a,LN_ALAC_UNSUPPORTED);
         if(type==TAG('a','l','a','c'))a->codec=18;
         else if(type==TAG('m','p','4','a')&&a->allow_aac)a->codec=17;
         else return bad(a,LN_ALAC_UNSUPPORTED);
-        uint32_t at=44;
-        while(at+8<=n){uint32_t size=ln_read_be32(b+at);if(size<8||size>n-at)return bad(a,LN_ALAC_FORMAT);
-            if(ln_read_be32(b+at+4)==TAG('a','l','a','c')&&a->codec==18){
-                if(size!=36||ln_read_be32(b+at+8)||a->rate)return bad(a,LN_ALAC_FORMAT);
-                uint8_t *c=b+at+12;
-                a->core.setinfo_max_samples_per_frame=ln_read_be32(c);a->core.setinfo_7a=c[4];a->core.setinfo_sample_size=c[5];
-                a->core.setinfo_rice_historymult=c[6];a->core.setinfo_rice_initialhistory=c[7];a->core.setinfo_rice_kmodifier=c[8];a->core.setinfo_7f=c[9];
-                a->rate=ln_read_be32(c+20);a->channels=c[9];
-                if(c[4]||c[5]!=16||!a->channels||a->channels>2||a->rate<8000||a->rate>96000||!ln_read_be32(c)||ln_read_be32(c)>4096||c[8]>14)return bad(a,LN_ALAC_UNSUPPORTED);
-                if(be16(b+32)!=a->channels||be16(b+34)!=16)return bad(a,LN_ALAC_FORMAT);
-            }else if(ln_read_be32(b+at+4)==TAG('e','s','d','s')&&a->codec==17){
-                if(size<12||ln_read_be32(b+at+8)||!descriptors(a,b+at+12,size-12,0)||!asc_info(a))return bad(a,LN_ALAC_UNSUPPORTED);
-                a->core.setinfo_max_samples_per_frame=1024;
-            }at+=size;
-        }
-        if(at!=n||!a->rate)return bad(a,LN_ALAC_FORMAT);
+        a->channels=be16(b+32);
+        if(a->codec==18&&be16(b+34)!=16)return bad(a,LN_ALAC_FORMAT);
+        /* Walk sample-entry children with the bounded atom reader. iTunes can
+         * attach large purchase metadata; only codec configuration needs RAM. */
+        if(a->depth>=7)return bad(a,LN_ALAC_UNSUPPORTED);
+        a->depth++;a->ends[a->depth]=a->atom_end;a->parents[a->depth]=type;
+        a->cursor+=44;a->phase=0;return 0;
+    }else if(t==TAG('a','l','a','c')&&parent(a,TAG('a','l','a','c'))){
+        if(n!=28||ln_read_be32(b)||a->rate)return bad(a,LN_ALAC_FORMAT);
+        uint8_t *c=b+4;
+        if(a->channels!=c[9])return bad(a,LN_ALAC_FORMAT);
+        a->core.setinfo_max_samples_per_frame=ln_read_be32(c);a->core.setinfo_7a=c[4];a->core.setinfo_sample_size=c[5];
+        a->core.setinfo_rice_historymult=c[6];a->core.setinfo_rice_initialhistory=c[7];a->core.setinfo_rice_kmodifier=c[8];a->core.setinfo_7f=c[9];
+        a->rate=ln_read_be32(c+20);
+        if(c[4]||c[5]!=16||!a->channels||a->channels>2||a->rate<8000||a->rate>96000||!ln_read_be32(c)||ln_read_be32(c)>4096||c[8]>14)return bad(a,LN_ALAC_UNSUPPORTED);
+    }else if(t==TAG('e','s','d','s')&&parent(a,TAG('m','p','4','a'))){
+        if(n<4||ln_read_be32(b)||a->rate||!descriptors(a,b+4,n-4,0)||!asc_info(a))return bad(a,LN_ALAC_UNSUPPORTED);
+        a->core.setinfo_max_samples_per_frame=1024;
     }else if(t==TAG('s','t','s','z')){
         if(n!=12||ln_read_be32(b)||!once(a,2))return bad(a,LN_ALAC_FORMAT);
         a->default_size=ln_read_be32(b+4);a->packets=ln_read_be32(b+8);a->sizes_offset=a->cursor+12;
@@ -151,12 +153,19 @@ static int body(struct ln_alac *a)
     }else if(t==TAG('s','t','s','c')){
         if(n<20||ln_read_be32(b)||!once(a,8))return bad(a,LN_ALAC_FORMAT);
         a->chunk_count=ln_read_be32(b+4);
-        if(!a->chunk_count||a->chunk_count>256||n!=8+12*a->chunk_count)return bad(a,LN_ALAC_UNSUPPORTED);
+        if(!a->chunk_count||a->chunk_count>1024||n!=8+12*a->chunk_count)return bad(a,LN_ALAC_UNSUPPORTED);
         for(uint32_t i=0;i<a->chunk_count;i++){
             uint8_t *c=b+8+i*12;a->map[i].first=ln_read_be32(c);a->map[i].count=ln_read_be32(c+4);
             if(!a->map[i].first||!a->map[i].count||a->map[i].count>1000000||ln_read_be32(c+8)!=1||(!i&&a->map[i].first!=1)||(i&&a->map[i].first<=a->map[i-1].first))return bad(a,LN_ALAC_UNSUPPORTED);
         }
     }else if(t==TAG('s','t','t','s')){
+        if(a->codec==17){
+            if(n!=8||ln_read_be32(b)||!once(a,16))return bad(a,LN_ALAC_FORMAT);
+            uint32_t runs=ln_read_be32(b+4);
+            if(!runs||runs>1000000||a->atom_end-a->cursor!=8u+(uint64_t)runs*8u)return bad(a,LN_ALAC_UNSUPPORTED);
+            a->times[0].delta=a->times[1].delta=1024;a->time_regular=true;
+            a->cursor+=8;a->phase=2;return 0;
+        }
         if(n<16||ln_read_be32(b)||!once(a,16))return bad(a,LN_ALAC_FORMAT);
         a->time_count=ln_read_be32(b+4);
         if(!a->time_count||a->time_count>128||n!=8+8*a->time_count)return bad(a,LN_ALAC_UNSUPPORTED);
@@ -173,6 +182,13 @@ static int body(struct ln_alac *a)
         /* sample timescale is compared to the ALAC rate after all atoms. */
         a->skip=ln_read_be32(b+12);
     }else if(t==TAG('h','d','l','r')){
+        if(a->track_probe){
+            if(n<12||ln_read_be32(b))return bad(a,LN_ALAC_FORMAT);
+            bool audio=ln_read_be32(b+8)==TAG('s','o','u','n');
+            if(audio&&++a->tracks>1)return bad(a,LN_ALAC_UNSUPPORTED);
+            a->depth=a->track_depth;a->cursor=audio?a->track_start:a->ends[a->depth];
+            a->track_probe=false;a->phase=0;return 0;
+        }
         if(n<12||ln_read_be32(b)||ln_read_be32(b+8)!=TAG('s','o','u','n')||!once(a,64))return bad(a,LN_ALAC_UNSUPPORTED);
     }else if(t==TAG('e','l','s','t')){
         if(n!=20||ln_read_be32(b)||ln_read_be32(b+4)!=1||(ln_read_be32(b+12)&0x80000000u)||ln_read_be32(b+16)!=0x10000||!once(a,256))return bad(a,LN_ALAC_UNSUPPORTED);
@@ -183,9 +199,34 @@ static int body(struct ln_alac *a)
     }
     a->cursor=a->atom_end;a->phase=0;return 0;
 }
+static int aac_times(struct ln_alac *a)
+{
+    /* AAC-LC emits 1024 samples per packet. Reduce its timing table as it is
+     * read, preserving a final short packet and tolerating rounded timestamps
+     * only when their complete timeline differs by less than one packet. */
+    uint32_t bytes=a->atom_end-a->cursor>4096?4096:(uint32_t)(a->atom_end-a->cursor);
+    int r=read_bytes(a,a->cursor,bytes);if(r!=1)return r;
+    for(uint32_t i=0;i<bytes;i+=8){
+        uint32_t count=ln_read_be32(a->buffer+i),delta=ln_read_be32(a->buffer+i+4);
+        if(!count||count>1000000-a->times[0].count||!delta||delta>4096)return bad(a,LN_ALAC_UNSUPPORTED);
+        if(a->times[1].delta!=1024)a->time_regular=false;
+        a->times[0].count+=count;a->total_frames+=(uint64_t)count*delta;
+        a->times[1].count=count;a->times[1].delta=delta;
+    }
+    a->cursor+=bytes;if(a->cursor<a->atom_end)return 0;
+    a->time_count=1;
+    if(a->time_regular&&a->times[1].count==1&&a->times[1].delta<1024){
+        if(a->times[0].count==1)a->times[0]=a->times[1];
+        else {a->times[0].count--;a->time_count=2;}
+    }else{
+        uint64_t nominal=(uint64_t)a->times[0].count*1024u,actual=a->total_frames;
+        if((nominal>actual?nominal-actual:actual-nominal)>=1024)return bad(a,LN_ALAC_UNSUPPORTED);
+    }
+    a->phase=0;return 0;
+}
 static int finish_open(struct ln_alac *a)
 {
-    if((a->seen&255u)!=255||a->tracks!=1||a->skip!=a->rate||!a->mdat_end)return bad(a,LN_ALAC_UNSUPPORTED);
+    if((a->seen&255u)!=255||a->tracks!=1||a->skip!=a->rate||!a->media_count)return bad(a,LN_ALAC_UNSUPPORTED);
     uint64_t packets=0,frames=0;
     for(uint32_t i=0;i<a->time_count;i++){
         if(a->times[i].delta>a->core.setinfo_max_samples_per_frame)return bad(a,LN_ALAC_FORMAT);
@@ -203,35 +244,59 @@ static int finish_open(struct ln_alac *a)
     if(a->seen&256u){
         if(!a->movie_scale)return bad(a,LN_ALAC_FORMAT);
         uint64_t movie=(uint64_t)a->edit_duration*a->rate,media=(frames-a->lead_trim)*a->movie_scale;
-        if((movie>media?movie-media:media-movie)>=a->rate)return bad(a,LN_ALAC_UNSUPPORTED);
+        if((movie>media?movie-media:media-movie)>=a->rate){
+            if(a->codec!=17||movie>media||media-movie>=1024u*(uint64_t)a->movie_scale)return bad(a,LN_ALAC_UNSUPPORTED);
+            a->tail_trim=divide_small((uint32_t)(media-movie),a->movie_scale,0);
+            if(a->tail_trim>=frames-a->lead_trim)return bad(a,LN_ALAC_FORMAT);
+        }
     }
     a->total_frames=frames;a->skip=0;a->opened=true;return 1;
 }
 int ln_alac_open_step(struct ln_alac *a)
 {
     if(!a||!a->read)return LN_ALAC_ARGUMENT;if(a->error)return a->error;if(a->opened)return 1;
+    if(a->phase==2)return aac_times(a);
     if(a->phase){int result=read_bytes(a,a->cursor,a->body_bytes);return result==1?body(a):result;}
-    while(a->cursor==a->ends[a->depth]){if(!a->depth)return finish_open(a);a->depth--;}
+    while(a->cursor==a->ends[a->depth]){
+        if(a->track_probe&&a->depth==a->track_depth)return bad(a,LN_ALAC_FORMAT);
+        if(!a->depth)return finish_open(a);a->depth--;
+    }
     uint64_t remain=a->ends[a->depth]-a->cursor;
     if(a->cursor>a->ends[a->depth]||remain<8)return bad(a,LN_ALAC_FORMAT);
     int result=read_bytes(a,a->cursor,remain>=16?16:8);if(result!=1)return result;
     if(++a->atoms>4096)return bad(a,LN_ALAC_UNSUPPORTED);
     uint32_t head=8,t=ln_read_be32(a->buffer+4);uint64_t size=ln_read_be32(a->buffer);
     if(size==1){if(remain<16)return bad(a,LN_ALAC_FORMAT);size=ln_read_be64(a->buffer+8);head=16;}
-    else if(!size)size=remain;
+    else if(!size){size=remain;if(!a->depth)a->extends_to_eof=true;}
     if(size<head||size>remain)return bad(a,LN_ALAC_FORMAT);
     a->atom_start=a->cursor;a->atom_end=a->cursor+size;a->atom_type=t;
     if(t==TAG('m','o','o','f')||t==TAG('s','e','n','c'))return bad(a,LN_ALAC_UNSUPPORTED);
-    bool container=t==TAG('m','o','o','v')||t==TAG('t','r','a','k')||t==TAG('m','d','i','a')||t==TAG('m','i','n','f')||t==TAG('s','t','b','l')||t==TAG('e','d','t','s')||t==TAG('d','i','n','f');
+    bool sample_entry=parent(a,TAG('m','p','4','a'))||parent(a,TAG('a','l','a','c'));
+    bool container=!sample_entry&&(!a->track_probe||t==TAG('m','d','i','a'))&&
+        (t==TAG('m','o','o','v')||t==TAG('t','r','a','k')||t==TAG('m','d','i','a')||t==TAG('m','i','n','f')||t==TAG('s','t','b','l')||t==TAG('e','d','t','s')||t==TAG('d','i','n','f'));
     if(container){
         if(a->depth>=7)return bad(a,LN_ALAC_UNSUPPORTED);
-        if(t==TAG('t','r','a','k')&&++a->tracks>1)return bad(a,LN_ALAC_UNSUPPORTED);
-        a->depth++;a->ends[a->depth]=a->atom_end;a->parents[a->depth]=t;a->cursor+=head;return 0;
+        a->depth++;a->ends[a->depth]=a->atom_end;a->parents[a->depth]=t;a->cursor+=head;
+        if(t==TAG('t','r','a','k')){a->track_probe=true;a->track_start=a->cursor;a->track_depth=a->depth;}
+        return 0;
     }
-    if(t==TAG('m','d','a','t')){if(a->depth||a->mdat_end)return bad(a,LN_ALAC_UNSUPPORTED);a->mdat_start=a->cursor+head;a->mdat_end=a->atom_end;}
+    if(t==TAG('m','d','a','t')){
+        if(a->depth||a->media_count==8)return bad(a,LN_ALAC_UNSUPPORTED);
+        a->media_start[a->media_count]=a->cursor+head;a->media_end[a->media_count++]=a->atom_end;
+    }
     uint64_t bytes=size-head;uint32_t take=0;
-    if(parent(a,TAG('s','t','b','l'))){
-        if(t==TAG('s','t','s','d')||t==TAG('s','t','s','c')||t==TAG('s','t','t','s')){if(bytes>4096)return bad(a,LN_ALAC_UNSUPPORTED);take=(uint32_t)bytes;}
+    if(a->track_probe){
+        if(parent(a,TAG('m','d','i','a'))&&t==TAG('h','d','l','r'))take=12;
+    }else if(sample_entry){
+        if((a->codec==17&&t==TAG('e','s','d','s'))||(a->codec==18&&t==TAG('a','l','a','c'))){
+            if(bytes>4096)return bad(a,LN_ALAC_UNSUPPORTED);take=(uint32_t)bytes;
+            if(!take)return bad(a,LN_ALAC_FORMAT);
+        }
+    }else if(parent(a,TAG('s','t','b','l'))){
+        if(t==TAG('s','t','s','d'))take=44;
+        else if(t==TAG('s','t','t','s')&&a->codec==17)take=8;
+        else if(t==TAG('s','t','s','c')){if(bytes>8+12*1024)return bad(a,LN_ALAC_UNSUPPORTED);take=(uint32_t)bytes;}
+        else if(t==TAG('s','t','t','s')){if(bytes>4096)return bad(a,LN_ALAC_UNSUPPORTED);take=(uint32_t)bytes;}
         else if(t==TAG('s','t','s','z'))take=12;
         else if(t==TAG('s','t','c','o')||t==TAG('c','o','6','4'))take=8;
     }else if(parent(a,TAG('m','d','i','a'))&&(t==TAG('m','d','h','d')||t==TAG('h','d','l','r'))){take=t==TAG('m','d','h','d')?24:12;}
@@ -242,12 +307,22 @@ int ln_alac_open_step(struct ln_alac *a)
 }
 static void nothing(void){}
 int ln_m4a_open_step(struct ln_alac *a){return ln_alac_open_step(a);}
+static bool media_extent(struct ln_alac *a,uint64_t offset)
+{
+    for(uint32_t i=0;i<a->media_count;i++)if(offset>=a->media_start[i]&&offset<a->media_end[i]){
+        a->mdat_start=a->media_start[i];a->mdat_end=a->media_end[i];return true;
+    }
+    return false;
+}
 static uint32_t packet_frames(struct ln_alac *a,uint32_t packet)
 {
     for(uint32_t i=0;i<a->time_count;i++){if(packet<a->times[i].count)return a->times[i].delta;packet-=a->times[i].count;}return 0;
 }
 static bool locate(struct ln_alac *a)
 {
+    if(a->chunk_packets&&a->packet>=a->chunk_first&&a->packet-a->chunk_first<a->chunk_packets){
+        a->chunk_ordinal=a->packet-a->chunk_first;return true;
+    }
     uint32_t first=0;
     for(uint32_t i=0;i<a->chunk_count;i++){
         uint32_t end=i+1<a->chunk_count?a->map[i+1].first:a->chunks+1;
@@ -273,7 +348,7 @@ int ln_m4a_read_packet(struct ln_alac *a)
     if(a->decode_phase==1){
         int result=read_bytes(a,a->chunks_offset+(uint64_t)a->chunk_index*a->chunk_width,a->chunk_width);if(result!=1)return result;
         a->packet_offset=a->chunk_width==4?ln_read_be32(a->buffer):ln_read_be64(a->buffer);
-        if(a->packet_offset<a->mdat_start||a->packet_offset>=a->mdat_end)return bad(a,LN_ALAC_FORMAT);
+        if(!media_extent(a,a->packet_offset))return bad(a,LN_ALAC_FORMAT);
         a->decode_phase=2;
     }
     if(a->decode_phase==2){
@@ -333,7 +408,7 @@ bool ln_alac_seek(struct ln_alac *a,uint64_t frame)
     a->packet=packet;a->skip=(uint32_t)remaining;a->frame=frame;a->pcm_count=a->pcm_cursor=0;a->decode_phase=0;a->read_total=0;return true;
 }
 bool ln_m4a_seek_indexed(struct ln_alac *a,uint32_t packet,uint64_t offset){
-    if(!a||a->codec!=17||packet>=a->packets||offset<a->mdat_start||offset>=a->mdat_end||
+    if(!a||a->codec!=17||packet>=a->packets||!media_extent(a,offset)||
        !ln_alac_seek(a,(uint64_t)packet*1024u)||a->packet!=packet||!locate(a))return false;
     a->next_valid=true;a->next_packet=packet;a->next_chunk=a->chunk_index;a->next_offset=offset;
     return true;

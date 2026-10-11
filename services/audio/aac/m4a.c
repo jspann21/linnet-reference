@@ -171,7 +171,7 @@ int ln_aac_m4a_open_step(struct ln_aac_m4a *d)
     r=ln_aac_raw_init(&d->core,d->container.asc,d->container.asc_bytes);if(r!=1)return fail(d,r);
     if(d->core.rate!=d->container.rate||d->core.channels!=d->container.channels)return fail(d,LN_AAC_FORMAT);
     d->rate=d->core.rate;d->channels=d->core.channels;
-    d->total_frames=d->container.total_frames-d->container.lead_trim;d->lead_remaining=d->container.lead_trim;
+    d->total_frames=d->container.total_frames-d->container.lead_trim-d->container.tail_trim;d->lead_remaining=d->container.lead_trim;
     if(d->tag_seen){
         uint64_t trims=(uint64_t)d->tag_lead+d->tag_tail;
         if(trims>d->container.total_frames||d->tag_frames!=d->container.total_frames-trims||

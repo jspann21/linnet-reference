@@ -629,16 +629,19 @@ def _probe(path: Path, executable: str, *, exact_frames: bool = True,
         raise ValueError("compressed source bit-depth bound")
     mp4 = codec in (CODECS['aac'], CODECS['alac']) and path.suffix.lower() in ('.m4a', '.m4b')
     verified = _quick_metadata(path, cancelled) if mp4 else None
-    config = ({key: verified[key] for key in ('container', 'profile', 'aac_config_ok', 'alac_frame_ok')
+    config = ({key: verified[key] for key in ('container', 'profile', 'aac_config_ok', 'alac_frame_ok', 'mp4_config_version')
                if key in verified} if verified and verified['codec'] == codec else
               {'container': 'mp4'} if mp4 else {})
     if codec == CODECS['aac'] and path.suffix.lower() == '.aac':
         config.update(container='adts', adts_header_ok=_adts_header_ok(path))
     profile = config.pop('profile', audio.get('profile'))
+    frames = _decoded_frames(path, executable, codec=codec, cancelled=cancelled) if exact_frames else 0
+    if verified:
+        frames = verified['frames']
     return dict(codec=codec, channels=channels, rate=rate, bits=bits, profile=profile,
                 **config,
                 **(_flac_bounds(path) if codec == CODECS['flac'] else {}),
-                frames=_decoded_frames(path, executable, codec=codec, cancelled=cancelled) if exact_frames else 0, data_offset=0,
+                frames=frames, data_offset=0,
                  data_bytes=path.stat().st_size, tags=tags)
 
 
@@ -743,29 +746,54 @@ def _mp4_audio_config(track, reader, codec: str) -> dict:
     flag = 'aac_config_ok' if codec == 'aac' else 'alac_frame_ok'
     unsupported = {flag: False}
     atom = track[b'mdia', b'minf', b'stbl', b'stsd']
-    if atom.datalength > 4096:
+    if atom.datalength < 52:
         return unsupported
-    ok, data = atom.read(reader)
-    if not ok or len(data) < 44 or struct.unpack_from('>I', data, 4)[0] != 1:
+    start = atom.offset + atom.length - atom.datalength
+    reader.seek(start)
+    data = reader.read(44)
+    if len(data) != 44 or struct.unpack_from('>II', data) != (0, 1):
         return unsupported
     entry_size, entry_type = struct.unpack_from('>I4s', data, 8)
-    if entry_size != len(data) - 8 or entry_type != (b'mp4a' if codec == 'aac' else b'alac'):
+    if (entry_size != atom.datalength - 8 or
+            entry_type != (b'mp4a' if codec == 'aac' else b'alac') or
+            struct.unpack_from('>HH', data, 22) != (1, 0)):
         return unsupported
-    extra = data[44:]
     wanted = b'esds' if codec == 'aac' else b'alac'
     body = None
-    while len(extra) >= 8:
-        size, kind = struct.unpack_from('>I4s', extra)
-        if size < 8 or size > len(extra):
+    at, end = start + 44, start + atom.datalength
+    for _ in range(4096):
+        if at == end:
+            break
+        reader.seek(at)
+        header = reader.read(min(16, end - at))
+        if len(header) < 8:
             return unsupported
-        if kind == wanted and body is None:
-            body = extra[8:size]
-        extra = extra[size:]
-    if body is None or extra:
+        size, kind = struct.unpack_from('>I4s', header)
+        head = 16 if size == 1 else 8
+        if size == 1:
+            if len(header) < 16:
+                return unsupported
+            size = struct.unpack_from('>Q', header, 8)[0]
+        elif size == 0:
+            size = end - at
+        if size < head or size > end - at:
+            return unsupported
+        if kind == wanted:
+            if body is not None or size - head > 4096:
+                return unsupported
+            reader.seek(at + head)
+            body = reader.read(size - head)
+            if len(body) != size - head:
+                return unsupported
+        at += size
+    if body is None or at != end:
         return unsupported
     if codec == 'alac':
         frames = int.from_bytes(body[4:8], 'big') if len(body) >= 8 else 0
-        return {'alac_frame_ok': 0 < frames <= 4096}
+        return {'alac_frame_ok': (len(body) == 28 and body[:4] == bytes(4) and
+                                 0 < frames <= 4096 and body[8] == 0 and body[9] == 16 and
+                                 body[12] <= 14 and 1 <= body[13] <= 2 and
+                                 struct.unpack_from('>HH', data, 32) == (body[13], 16))}
     if len(body) < 4 or body[:4] != b'\0\0\0\0':
         return unsupported
     data, at = body, 4
@@ -795,6 +823,8 @@ def _mp4_audio_config(track, reader, codec: str) -> dict:
         if flags & 32:
             at += 2
         config, config_end = descriptor(4, at)
+        if config_end - config < 13 or data[config] != 0x40 or data[config + 1] >> 2 & 63 != 5:
+            return unsupported
         asc, end = descriptor(5, config + 13)
         if config_end > es_end or end > config_end:
             return unsupported
@@ -804,6 +834,91 @@ def _mp4_audio_config(track, reader, codec: str) -> dict:
     return {'aac_config_ok': (2 <= len(raw) <= 64 and raw[0] >> 3 == 2 and
                               ((raw[0] & 7) << 1 | raw[1] >> 7) < 13 and
                               1 <= (raw[1] >> 3 & 15) <= 2 and raw[1] & 7 == 0)}
+
+
+def _mp4_frames(track, reader, codec, tags, atoms, rate):
+    """Use the decoder's sample timeline, including Apple gapless trimming."""
+    atom = track[b'mdia', b'minf', b'stbl', b'stts']
+    limit = 1_000_000 if codec == 'aac' else 128
+    if not 16 <= atom.datalength <= 8 + limit * 8:
+        raise ValueError('MP4 sample timing exceeds decoder bounds')
+    reader.seek(atom.offset + atom.length - atom.datalength)
+    header = reader.read(8)
+    runs = (atom.datalength - 8) // 8
+    if len(header) != 8 or struct.unpack('>II', header) != (0, runs) or atom.datalength % 8:
+        raise ValueError('Invalid MP4 sample timing')
+    frames = packets = 0
+    regular, last = True, (0, 1024)
+    for start in range(0, runs, 512):
+        size = min(512, runs - start) * 8
+        data = reader.read(size)
+        if len(data) != size:
+            raise ValueError('Truncated MP4 sample timing')
+        for count, delta in struct.iter_unpack('>II', data):
+            if not count or packets + count > 1_000_000 or not 0 < delta <= 4096:
+                raise ValueError('MP4 sample timing exceeds decoder bounds')
+            regular &= last[1] == 1024
+            packets += count
+            frames += count * delta
+            last = count, delta
+    if codec == 'aac' and not (regular and last[0] == 1 and last[1] < 1024):
+        nominal = packets * 1024
+        if abs(nominal - frames) >= 1024:
+            raise ValueError('AAC sample timing disagrees with its packets')
+        frames = nominal
+    lead = tail = 0
+    try:
+        atom = track[b'edts',]
+    except KeyError:
+        atom = None
+    if atom is not None:
+        if atom.datalength > 4096:
+            raise ValueError('Unsupported MP4 edit list')
+        ok, data = atom.read(reader)
+        if not ok:
+            raise ValueError('Unsupported MP4 edit list')
+        from mutagen.mp4 import Atoms
+        edits = io.BytesIO(data)
+        children = Atoms(edits).atoms
+        if sum(child.length for child in children) != len(data):
+            raise ValueError('Invalid MP4 edit list')
+        entries = [child for child in children if child.name == b'elst']
+        if len(entries) > 1:
+            raise ValueError('Unsupported MP4 edit list')
+        if entries:
+            if entries[0].datalength != 20:
+                raise ValueError('Unsupported MP4 edit list')
+            ok, edit = entries[0].read(edits)
+            if not ok or struct.unpack_from('>II', edit) != (0, 1) or int.from_bytes(edit[16:20], 'big') != 65536:
+                raise ValueError('Unsupported MP4 edit list')
+            lead = int.from_bytes(edit[12:16], 'big', signed=True)
+            movie = atoms[b'moov', b'mvhd']
+            reader.seek(movie.offset + movie.length - movie.datalength)
+            header = reader.read(20) if movie.datalength >= 20 else b''
+            if len(header) != 20 or header[:4] != bytes(4):
+                raise ValueError('Unsupported MP4 movie timing')
+            scale = int.from_bytes(header[12:16], 'big')
+            if not 0 < scale <= 1_000_000:
+                raise ValueError('Unsupported MP4 movie timescale')
+            difference = (frames - lead) * scale - int.from_bytes(edit[8:12], 'big') * rate
+            if abs(difference) >= rate:
+                if codec != 'aac' or not 0 < difference < 1024 * scale:
+                    raise ValueError('MP4 edit duration disagrees with sample timing')
+                tail = difference // scale
+    if not 0 <= lead < frames or not 0 <= tail < frames - lead or (codec == 'alac' and lead):
+        raise ValueError('Invalid MP4 lead trim')
+    gapless = tags.get('----:com.apple.iTunes:iTunSMPB') if codec == 'aac' else None
+    if gapless is not None:
+        if len(gapless) != 1 or len(gapless[0]) > 248 or getattr(gapless[0], 'dataformat', 1) != 1:
+            raise ValueError('Invalid Apple gapless metadata')
+        fields = [field for field in bytes(gapless[0]).split(b' ') if field][:4]
+        if len(fields) != 4 or any(re.fullmatch(rb'[0-9a-fA-F]{1,16}', field) is None for field in fields):
+            raise ValueError('Invalid Apple gapless metadata')
+        reserved, delay, padding, total = (int(field, 16) for field in fields)
+        if reserved or max(delay, padding) > 0xffffffff or not total or total + delay + padding != frames or (lead and lead != delay):
+            raise ValueError('Apple gapless metadata disagrees with sample timing')
+        return total
+    return frames - lead - tail
 
 
 def _quick_metadata(path: Path, cancelled=lambda: False, *, include_cover=False,
@@ -843,7 +958,7 @@ def _quick_metadata(path: Path, cancelled=lambda: False, *, include_cover=False,
         codec_name = {"MP3": "mp3", "EasyMP3": "mp3", "FLAC": "flac", "OggVorbis": "vorbis",
                       "OggOpus": "opus", "WavPack": "wavpack"}.get(type(audio).__name__)
         if type(audio).__name__ == "MP4":
-            codec_name = {"mp4a.40.2": "aac", "alac": "alac"}.get(audio.info.codec)
+            codec_name = {"mp4a.40.2": "aac", "mp4a": "aac", "alac": "alac"}.get(audio.info.codec)
             from mutagen.mp4 import Atoms
             atoms = Atoms(reader)
             tracks = list(atoms[b'moov'].findall(b'trak'))
@@ -868,8 +983,6 @@ def _quick_metadata(path: Path, cancelled=lambda: False, *, include_cover=False,
         bits = int(getattr(info, "bits_per_sample", 0))
         if not 1 <= rate <= 384000 or not 1 <= channels <= 8 or not 0 <= bits <= 64:
             return None
-        tags = {str(k).lower(): str(v[0]) if isinstance(v, list) and v else str(v)
-                for k, v in (audio.tags or {}).items()}
         if type(audio).__name__ == 'MP4':
             raw = audio.tags or {}
             tags = {key: str(raw[atom][0]) for atom, key in {
@@ -880,19 +993,24 @@ def _quick_metadata(path: Path, cancelled=lambda: False, *, include_cover=False,
             for atom, key in (('trkn', 'track'), ('disk', 'disc')):
                 if raw.get(atom):
                     tags[key] = str(raw[atom][0][0])
+        else:
+            tags = {str(k).lower(): str(v[0]) if isinstance(v, list) and v else str(v)
+                    for k, v in (audio.tags or {}).items()}
         for key in ("track", "disc"):
             if key + "number" in tags:
                 tags[key] = tags[key + "number"]
         mp4_config = {}
         if codec_name in ('aac', 'alac'):
-            flag = 'aac_config_ok' if codec_name == 'aac' else 'alac_frame_ok'
-            mp4_config = {'container': 'mp4', **(_mp4_audio_config(audio_track, reader, codec_name)
-                                              if len(tracks) == 1 else {flag: False})}
+            mp4_config = {'container': 'mp4', 'mp4_config_version': 2,
+                          **_mp4_audio_config(audio_track, reader, codec_name)}
         result = dict(codec=CODECS[codec_name], channels=channels, rate=rate, bits=bits,
                       **(_flac_bounds(path) if codec_name == 'flac' else {}),
-                      **({'profile': getattr(info, 'codec_description', None)} if codec_name == 'aac' else {}),
+                      **({'profile': 'AAC LC' if mp4_config.get('aac_config_ok') else
+                          getattr(info, 'codec_description', None)} if codec_name == 'aac' else {}),
                       **mp4_config,
-                      frames=_quick_frames(path, info, codec_name, rate, cancelled, stream), data_offset=0,
+                      frames=(_mp4_frames(audio_track, reader, codec_name, audio.tags or {}, atoms, rate)
+                              if codec_name in ('aac', 'alac') else
+                              _quick_frames(path, info, codec_name, rate, cancelled, stream)), data_offset=0,
                       data_bytes=path.stat().st_size, tags=tags)
         if include_cover and type(audio).__name__ == 'EasyMP3':
             result['_embedded_cover'] = mp3_cover
@@ -1000,6 +1118,8 @@ class _MetadataCache:
         if value['codec'] == CODECS['aac'] and not isinstance(value.get('profile'), str):
             return False
         if value['codec'] == CODECS['aac'] and value.get('container') == 'mp4' and type(value.get('aac_config_ok')) is not bool:
+            return False
+        if value['codec'] in (CODECS['aac'], CODECS['alac']) and value.get('container') == 'mp4' and value.get('mp4_config_version') != 2:
             return False
         if value['codec'] == CODECS['aac'] and value.get('container') == 'adts' and type(value.get('adts_header_ok')) is not bool:
             return False

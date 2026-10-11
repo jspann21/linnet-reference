@@ -31,6 +31,14 @@ _RETAIL_ADOPTION = None
 _RECENT_OUTPUT_NS = 5_000_000_000
 
 
+def _seek_stamp(path, info):
+    stamp = [info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino]
+    if path.suffix.lower() in ('.m4a', '.m4b'):
+        from .aac_index import PREPARATION_VERSION
+        stamp.append(PREPARATION_VERSION)
+    return stamp
+
+
 def _save_seek_state(path, state):
     try:
         _save(path, state)
@@ -284,12 +292,13 @@ def refresh(identity):
 def preparation_option(kind, identity, photo_dimension=640, music_verification='metadata'):
     """Shared preparation version for compilation and library readiness."""
     if kind == 'Music':
+        from .aac_index import PREPARATION_VERSION
         from tools.studio.targets import TARGETS
         target = TARGETS[identity['target_id']]
         art_version = ('art-native130-playback160-exact-np-bridge1' if target.get('presentation_profile') == 'color320' else
                        'art9' if target['media_art_side'] == 128 else
                        'art8' if target['lcd_format'] == 'gray2-horizontal' else 'art7')
-        return f"{music_verification}-aac-seek1-duration-search-prefix2-browse-id-names-album-owner2-title-order1-retail2-recent-album-gain-icc-srgb1-audio-compat1-{art_version}-{identity['target_id']}"
+        return f"{music_verification}-aac-seek{PREPARATION_VERSION}-duration-search-prefix2-browse-id-names-album-owner2-title-order1-retail2-recent-album-gain-icc-srgb1-audio-compat1-{art_version}-{identity['target_id']}"
     if kind == 'Notes':
         from .notes import _display_recipe
         return f"target-wrap2-{_display_recipe(identity['target_id'])[2]}"
@@ -432,6 +441,7 @@ def _normalize_music_paths(root, checkpoint, renamed):
     from .music import _device_media_path, UnsupportedMediaPath
     resolved_root = Path(root).resolve(strict=True)
     alias_cache = {}
+    changed = False
     directories = source_folders(root, "Music")
     while directories:
         folder = directories.pop()
@@ -470,11 +480,13 @@ def _normalize_music_paths(root, checkpoint, renamed):
                 _plain(destination, root)
                 checkpoint()
                 path.rename(destination)
+                changed = True
                 renamed(path, destination)
                 path = destination
                 _device_media_path(path, resolved_root, alias_cache)
             if directory:
                 directories.append(path)
+    return changed
 
 
 def _planning_records(source, snapshots, *, checkpoint):
@@ -1195,7 +1207,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
                 mark_unsupported(destination, cache / 'aac-seek')
             if item['kind'] == 'Music' and destination.suffix.lower() in ('.m4a', '.m4b'):
                 key = destination.relative_to(root).as_posix().casefold()
-                seek_state[key] = [info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino]
+                seek_state[key] = _seek_stamp(destination, info)
                 seek_state_changed = True
                 if metadata_seed is not None:
                     music_seeds.append((destination, info, *metadata_seed))
@@ -1206,7 +1218,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
             elif item['kind'] == 'Music' and destination.suffix.lower() in ('.flac', '.flc'):
                 if flac_seek_checked:
                     key = destination.relative_to(root).as_posix().casefold()
-                    seek_state[key] = [info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino]
+                    seek_state[key] = _seek_stamp(destination, info)
                     seek_state_changed = True
                 if metadata_seed is not None:
                     music_seeds.append((destination, info, *metadata_seed))
@@ -1825,7 +1837,7 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
             if not path.is_relative_to(root) or path.suffix.lower() not in ('.m4a', '.m4b', '.flac', '.flc'):
                 continue
             info = path.stat()
-            stamp = [info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino]
+            stamp = _seek_stamp(path, info)
             if seek_state.get(path.relative_to(root).as_posix().casefold()) != stamp:
                 audio_backup += info.st_size
                 largest_audio = max(largest_audio, info.st_size)
@@ -2235,6 +2247,7 @@ def run(identity, selected, pending=(), **options):
 def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
                    aac_recovery, flac_recovery, record, stage_progress=lambda fraction: None,
                    force=False, cancelled=lambda: False, audio_journal=None):
+    from . import SourceError
     from .aac_index import prepare_file as prepare_aac
     from .flac_index import prepare_file as prepare_flac
     supported = ('.m4a', '.m4b', '.flac', '.flc')
@@ -2271,7 +2284,7 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
         key = path.relative_to(root).as_posix().casefold()
         seen.add(key)
         before = path.stat()
-        stamp = [before.st_size, before.st_mtime_ns, before.st_ctime_ns, before.st_ino]
+        stamp = _seek_stamp(path, before)
         if seek_state.get(key) == stamp:
             completed[kind] += 1
             stage_progress((completed['aac'] + completed['flac']) / len(pending))
@@ -2300,11 +2313,19 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
             def retain_verified(info):
                 nonlocal verified_stamp
                 verified_stamp = _receipt_stamp(info)
-            outcome = prepare_aac(path, cache / 'aac-seek', checkpoint=checkpoint,
-                                  recovery=aac_recovery,
-                                  journal=(lambda: audio_journal('AAC', aac_recovery[-1])) if audio_journal else record,
-                                  local_copy=seed_local if not force else None,
-                                  verified_copy=retain_verified if not force else None)
+            try:
+                outcome = prepare_aac(path, cache / 'aac-seek', checkpoint=checkpoint,
+                                      recovery=aac_recovery,
+                                      journal=(lambda: audio_journal('AAC', aac_recovery[-1])) if audio_journal else record,
+                                      local_copy=seed_local if not force else None,
+                                      verified_copy=retain_verified if not force else None)
+            except SourceError as error:
+                report['errors'].append(dict(kind='Music', source=str(path),
+                                             file=path.relative_to(root).as_posix(), message=str(error)))
+                skipped.add(key)
+                prepared = True  # Recompute the inventory without this source.
+                completed[kind] += 1
+                continue
             if outcome:
                 prepared = True
                 report['steps'].append(dict(prepared_aac=str(path.relative_to(root))))
@@ -2332,7 +2353,7 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
                     seed_bytes = 0
             if not outcome and _receipt_stamp(before) != _receipt_stamp(after):
                 raise ValueError(f'Audio source changed during seek check: {path}')
-            seek_state[key] = [after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino]
+            seek_state[key] = _seek_stamp(path, after)
             pending_checks += 1
             if pending_checks >= 128:
                 _save_seek_state(seek_state_path, seek_state)
@@ -2878,11 +2899,18 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
     aac_recovery = report['aac_preparations'] = []
     flac_recovery = report['flac_preparations'] = []
     aac_committed = aac_publication_started = False
+    apple_database = root / 'iPod_Control/iTunes/iTunesDB'
+    apple_stamp, next_apple_check = None, 0.0
 
     def checkpoint():
+        nonlocal next_apple_check
         if cancelled():
             raise Cancelled("Stopped between steps. Completed copies and publications have been retained.")
         _volume_guard(identity)
+        if apple_stamp is not None and time.monotonic() >= next_apple_check:
+            from .retail_media import _check_database_stamp
+            _check_database_stamp(apple_database, apple_stamp)
+            next_apple_check = time.monotonic() + 0.25
 
     def record():
         _save(receipt, report)
@@ -2892,6 +2920,10 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
 
     record()
     try:
+        _plain(apple_database, root)
+        if apple_database.is_file():
+            info = apple_database.stat()
+            apple_stamp = (info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino)
         if video_selection is not None:
             video_selection = [value for value in video_selection
                                if Path(value).resolve().relative_to(root).as_posix().casefold()
@@ -3050,7 +3082,6 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 progress(f"Renamed for music playback: {old.name} → {new.name}")
                 report["steps"].append(dict(renamed=str(old), destination=str(new)))
                 record()
-            _normalize_music_paths(root, checkpoint, renamed_music)
             if online_artwork:
                 from .album_art import fetch
                 report['steps'].append(dict(kind='Music', artwork_lookup=fetch(root, progress=progress,
@@ -3112,14 +3143,16 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                         report["steps"].append(dict(kind=kind, status="unchanged"))
                         continue
             if kind == 'Music':
+                # Unchanged source fingerprints and verified outputs already
+                # prove these paths were accepted by the previous compiler.
+                renamed = _normalize_music_paths(root, checkpoint, renamed_music)
                 prepared, probe_deferred = _prepare_audio(root, cache, skipped['Music'], probe,
                                                           checkpoint, progress, report, aac_recovery, flac_recovery, record,
                                                           stage_progress=lambda fraction: emit_stage('Preparing audio seeks', unit, fraction),
                                                           force=force, cancelled=cancelled,
                                                           audio_journal=journal_audio)
-                if prepared:
-                    # Seek atoms change source sizes and timestamps. Publish
-                    # the fingerprint of the prepared files.
+                if prepared or renamed:
+                    # Renames and seek atoms change the source fingerprint.
                     item = scan(root, ('Music',), skipped=skipped, fingerprint_kinds=('Music',),
                                 checkpoint=checkpoint)['Music']
                     inventory[kind] = item

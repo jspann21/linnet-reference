@@ -33,7 +33,9 @@ int ENTRY {
     ln_aac_m4a_init(&decoder,read_at,source,(uint64_t)size);
     int r;do{r=ln_aac_m4a_open_step(&decoder);}while(!r);
     if(argc==2&&r==LN_AAC_IO)return 3;
-    if(r!=1||decoder.index_offset)return 4;
+    /* A size-zero top-level box owns the rest of the file. Preserve it and
+     * use normal seeking: an appended sibling would be hidden inside it. */
+    if(r!=1||decoder.index_offset||decoder.container.extends_to_eof)return 4;
     if(argc==2){fclose(source);return 0;}
     struct ln_alac *a=&decoder.container;
     uint32_t count=(a->packets+15u)/16u,bytes=72u+count*32u;

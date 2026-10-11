@@ -13,9 +13,11 @@ import uuid
 import zlib
 
 from .host_state import file_stamp
+from . import SourceError
 
 ROOT = Path(__file__).resolve().parents[2]
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+PREPARATION_VERSION = 3
 
 
 @lru_cache(maxsize=1)
@@ -246,7 +248,9 @@ def import_suffix(path, cache, *, checkpoint=lambda: None):
     with tempfile.TemporaryDirectory(prefix='aac-import-', dir=cache) as scratch:
         index = Path(scratch) / 'index.bin'
         result = _run_tool(tool, (path, index), checkpoint, 600)
-        if result in (4, 6, 7, 8):
+        if result in (6, 8):
+            raise SourceError(f'{path}: AAC audio packets could not be decoded. Replace or repair the source file.', path)
+        if result in (4, 7):
             return None, True
         if result:
             raise RuntimeError(f'AAC preparation failed ({result})')
@@ -262,7 +266,7 @@ def import_suffix(path, cache, *, checkpoint=lambda: None):
 def mark_unsupported(path, cache):
     path, cache = Path(path), Path(cache)
     before = path.stat()
-    key = hashlib.sha256(f'{path}:{file_stamp(before)}'.encode()).hexdigest()
+    key = hashlib.sha256(f'{PREPARATION_VERSION}:{path}:{file_stamp(before)}'.encode()).hexdigest()
     try:
         cache.mkdir(parents=True, exist_ok=True)
         (cache / (key + '.unsupported')).touch()
@@ -277,7 +281,7 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
     path, cache = Path(path), Path(cache)
     checkpoint()
     before = path.stat()
-    key = hashlib.sha256(f'{path}:{file_stamp(before)}'.encode()).hexdigest()
+    key = hashlib.sha256(f'{PREPARATION_VERSION}:{path}:{file_stamp(before)}'.encode()).hexdigest()
     unsupported = cache / (key + '.unsupported')
     if unsupported.exists():
         return False
@@ -301,7 +305,9 @@ def prepare_file(path, cache, *, checkpoint=lambda: None, recovery=None, journal
             if recovery is not None:
                 writer.flush(); os.fsync(writer.fileno())
         result = _run_tool(tool, (local, index), checkpoint, 600)
-        if result in (4, 6, 7, 8):
+        if result in (6, 8):
+            raise SourceError(f'{path}: AAC audio packets could not be decoded. Replace or repair the source file.', path)
+        if result in (4, 7):
             unsupported.touch(); return False
         if result:
             raise RuntimeError(f'AAC preparation failed ({result})')
