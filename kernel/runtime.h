@@ -20,6 +20,7 @@ void ln_runtime_render_timing(uint32_t words[16]);
 void ln_runtime_exec_diagnostics(uint32_t words[24]);
 #endif
 void ln_runtime_idle(void);
+int ln_runtime_can_inject(uint32_t first_sequence,uint32_t count);
 int ln_runtime_inject(uint32_t kind,int32_t value,uint32_t sequence);
 uint32_t ln_runtime_state(uint32_t *output,uint32_t capacity_words);
 int ln_runtime_control(uint32_t command,uint32_t argument);

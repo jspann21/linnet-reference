@@ -802,8 +802,11 @@ bool ln_runtime_init(void){
     LN_BOOT_STAMP(LN_BT_OS_RUNTIME_END);
     ready=true;return true;
 }
+int ln_runtime_can_inject(uint32_t first_sequence,uint32_t count){
+    return ready&&first_sequence>last_injection&&count&&count<=LINNET_EVENT_CAPACITY-executive.used;
+}
 int ln_runtime_inject(uint32_t kind,int32_t value,uint32_t sequence){
-    if(!ready||!sequence||sequence<=last_injection||kind<1||kind>4||
+    if(!ln_runtime_can_inject(sequence,1)||kind<1||kind>4||
        (kind==1&&(value < -64||value>64))||(kind==2&&(value<0||value>31))||
        (kind>=3&&(value<0||value>1)))return 0;
     ln_event event={kind,ln_time_us(),generation(),value};

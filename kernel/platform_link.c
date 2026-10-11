@@ -85,14 +85,19 @@ int ln_platform_link_dispatch(const ln_link_frame *request, ln_link_frame *respo
         if (request->length < 8 || ln_read_le32(request->payload) != generation) return 1;
         uint32_t count=ln_read_le32(request->payload+4);
         if (!count || count>32 || request->length != 8+count*12) return 1;
-        /* Validate every event's shape before applying any synthetic state. */
+        /* Main-loop dispatch cannot interleave queue consumers/producers here.
+         * Admit the whole batch before queuing a press without its release. */
+        if (!ln_runtime_can_inject(ln_read_le32(request->payload+8),count)) return 1;
+        uint32_t previous=0;
         for (uint32_t i=0;i<count;++i) {
             const uint8_t *event=request->payload+8+i*12;
+            uint32_t sequence=ln_read_le32(event);
             uint32_t kind=ln_read_le32(event+4); int32_t value=(int32_t)ln_read_le32(event+8);
-            if (!ln_read_le32(event) || kind<1 || kind>4 ||
+            if (sequence<=previous || kind<1 || kind>4 ||
                 (kind==1 && (value < -64 || value > 64)) ||
                 (kind==2 && (value<0 || value>31)) ||
                 (kind>=3 && (value<0 || value>1))) return 1;
+            previous=sequence;
         }
         for (uint32_t i=0;i<count;++i) {
             const uint8_t *event=request->payload+8+i*12;
