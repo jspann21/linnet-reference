@@ -24,7 +24,7 @@ import unicodedata
 import uuid
 
 from .guard import guarded_path as _plain, hash_file as _hash, require_same_target as _same_target, guard_volume as _volume_guard, inspect_target
-from .host_state import cache_directory as _cache_directory, cache_root, cache_data_directory, cache_volume_scope, file_stamp as _receipt_stamp, load_json_object as _optional_state, save_json as _save
+from .host_state import cache_directory as _cache_directory, cache_root, cache_data_directory, cache_volume_scope, media_state_root, file_stamp as _receipt_stamp, load_json_object as _optional_state, save_json as _save
 from .inventory import KINDS, VIDEO_EXTENSIONS, extensions, source_folders, file_records as _file_records, skipped_paths as _skipped_paths, scan
 
 _RETAIL_ADOPTION = None
@@ -211,32 +211,35 @@ def _retail_cache_serial(identity):
     global _RETAIL_ADOPTION
     from tools.inspect.retail_device import _sysinfo
     root = Path(identity["root"])
+    base = media_state_root()
+    fields = ("volume_serial", "target_id", "disk_bytes", "partition_offset", "partition_bytes")
+    key = (str(base), *(identity.get(field) for field in (
+        'root', 'volume_unique_id', 'linnet_usb_serial', 'disk_serial', 'disk_number',
+        'disk_unique_id', 'partition_number', 'sector_bytes', *fields)))
+    cached = _RETAIL_ADOPTION
+    if cached is not None and cached[0] == key:
+        serial, receipt, stamp = cached[1:]
+        try:
+            info = _plain(receipt, base)
+            if info is not None and _receipt_stamp(info) == stamp:
+                return serial
+        except (OSError, ValueError):
+            pass
+    serial_hint = ""
     try:
         _plain(root / "iPod_Control" / "Device" / "SysInfo", root)
-        serial = _sysinfo(root).get("pszSerialNumber", "").upper()
-        if not re.fullmatch(r"[A-Z0-9]{6,16}", serial):
-            return None
-        candidate = _cache_directory(serial, identity["volume_serial"])
-        if not candidate.is_dir():
-            return None
-        key = (serial, str(candidate), *(identity.get(field) for field in (
-            'root', 'volume_serial', 'volume_unique_id', 'target_id', 'disk_number',
-            'disk_unique_id', 'disk_bytes', 'partition_number', 'partition_offset',
-            'partition_bytes', 'sector_bytes')))
-        cached = _RETAIL_ADOPTION
-        if cached is not None and cached[0] == key:
-            receipt, stamp = cached[1:]
-            try:
-                if not receipt.is_symlink() and _receipt_stamp(receipt.stat()) == stamp:
-                    return serial
-            except OSError:
-                pass
-        for receipt in candidate.glob("session-*.json"):
-            if receipt.is_symlink():
+        serial_hint = _sysinfo(root).get("pszSerialNumber", "").upper()
+    except (OSError, ValueError, UnicodeError):
+        pass
+    try:
+        # SysInfo can be empty. Preparation receipts also bind both USB modes
+        # to the same hardware serial, volume serial and partition geometry.
+        for receipt in base.glob("*/session-*.json"):
+            if not re.fullmatch(r"[0-9a-f]{24}", receipt.parent.name):
                 continue
             try:
-                info = receipt.stat()
-                if info.st_size > 1048576:
+                info = _plain(receipt, base)
+                if info is None or not stat.S_ISREG(info.st_mode) or info.st_size > 1048576:
                     continue
                 record = json.loads(receipt.read_text(encoding="utf-8"))
             except (OSError, ValueError, UnicodeError):
@@ -244,9 +247,16 @@ def _retail_cache_serial(identity):
             saved = record.get("identity", {}) if isinstance(record, dict) else {}
             if not isinstance(saved, dict):
                 continue
-            if all(saved.get(field) == identity[field] for field in
-                   ("volume_serial", "target_id", "disk_bytes", "partition_offset", "partition_bytes")) and saved.get("disk_serial") == serial:
-                _RETAIL_ADOPTION = (key, receipt, _receipt_stamp(info))
+            serial = saved.get("media_cache_disk_serial") or saved.get("disk_serial")
+            if not isinstance(serial, str) or not re.fullmatch(r"[A-Z0-9]{6,16}", serial):
+                continue
+            saved_usb = saved.get("linnet_usb_serial")
+            same_device = (saved_usb == identity.get("linnet_usb_serial")
+                           if saved_usb else serial == serial_hint)
+            if (same_device and
+                    receipt.parent == _cache_directory(serial, identity["volume_serial"]) and
+                    all(saved.get(field) == identity[field] for field in fields)):
+                _RETAIL_ADOPTION = (key, serial, receipt, _receipt_stamp(info))
                 return serial
     except (OSError, ValueError, UnicodeError, KeyError, TypeError):
         pass
