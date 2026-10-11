@@ -3,9 +3,9 @@
 #include "services/storage/storage.h"
 #include "services/audio/dsp.h"
 #include "hal/api/audio.h"
+#include "hal/api/ata.h"
 #include "hal/api/platform.h"
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
-#include "hal/api/ata.h"
 #define PLAYER_COMPRESSED_CACHE_BYTES 0x300000u
 #define PLAYER_COMPRESSED_CACHE(window) ((uint8_t *)(uintptr_t)(LINNET_STAGE_ADDRESS+0x100000u+(window)*PLAYER_COMPRESSED_CACHE_BYTES))
 _Static_assert(0x100000u+2u*PLAYER_COMPRESSED_CACHE_BYTES+
@@ -65,6 +65,17 @@ static bool next_expected,eof_waiting;
 static uint32_t eof_deadline;
 uint32_t ln_player_background_frames(uint32_t rate){
     uint32_t frames=rate/4u*3u;
+    if(frames<8192u)frames=8192u;
+    if(frames>LINNET_AUDIO_RING_FRAMES-2048u)frames=LINNET_AUDIO_RING_FRAMES-2048u;
+    return frames;
+}
+static uint32_t startup_frames(uint32_t rate){
+    struct ln_ata_info media;ln_ata_snapshot(&media);
+    if(media.media_kind!=LN_ATA_MEDIA_SOLID_STATE)return ln_player_background_frames(rate);
+    /* Flash does not need the disk-seek runway before its first audible PCM.
+     * Keep the larger background threshold so decoding still fills ahead of
+     * artwork, browsing and next-track work after playback starts. */
+    uint32_t frames=rate/4u;
     if(frames<8192u)frames=8192u;
     if(frames>LINNET_AUDIO_RING_FRAMES-2048u)frames=LINNET_AUDIO_RING_FRAMES-2048u;
     return frames;
@@ -614,7 +625,7 @@ static void player_advance(void){
         int r=slot_step(s);if(interrupted())return;if(r<0){fail(13);return;}if(s->buffered&&!submit_slot(s))return;
     }
     if(state.phase==LN_PLAYER_PRIME){
-        uint32_t prime_frames=ln_player_background_frames(s->rate);
+        uint32_t prime_frames=startup_frames(s->rate);
 #if defined(LINNET_SOC_PP5022)
         /* A drained rate change needs more runway for its first cold disk read. */
         if(join_pending&&!join_gapless&&s->rate!=slots[audible].rate)
