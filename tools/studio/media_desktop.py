@@ -1493,7 +1493,7 @@ class MediaWindow(QMainWindow):
         self.operation_id += 1
         context = OperationContext(self.operation_id, tag,
             dict(self.identity) if self.identity and tag != 'devices' else None,
-            self.stop_event if tag in ('prepare', 'remove', 'restore', 'scan', 'plan', 'devices') else None)
+            self.stop_event if tag in ('prepare', 'remove', 'restore', 'scan', 'plan', 'devices', 'apple_update') else None)
         self.active_operation = context
         self.busy = True
         self.stop_event.clear()
@@ -1594,6 +1594,11 @@ class MediaWindow(QMainWindow):
         if context.identity and not self.same_device(self.identity, context.identity):
             self.record_diagnostic(tag, 'DeviceChanged', 'The selected iPod changed during the operation.', 'failed')
             self.show_error('The selected iPod changed while this operation was running. Refresh and try again.')
+            return
+        if tag == 'apple_update' and outcome.status == 'cancelled':
+            message = 'Apple OS update stopped. Checking the current library…'
+            self.prep_results.setPlainText(message); self.prep_results.show()
+            self.show_progress(message); self.refresh()
             return
         if error:
             self.record_diagnostic(tag, outcome.error_type or 'Error', error, outcome.status,
@@ -2498,11 +2503,12 @@ class MediaWindow(QMainWindow):
         layout = box(dialog, margins=(24, 24, 24, 24), spacing=12)
         layout.addWidget(label('Available in Apple OS', 'section'))
         selectable = self.apple_info['selectable_roots']
-        description = ('Select music folders on your iPod. Their original names and locations stay in place. '
-                       'Apple reads compatible text files in Notes automatically.' if selectable == ('Music',) else
-                       'Select music, photo and video folders on your iPod. Their original names and locations stay in place. '
+        names = [{'Music': 'music', 'Photos': 'photo', 'Videos': 'video'}[kind] for kind in selectable]
+        kinds = names[0] if len(names) == 1 else ', '.join(names[:-1]) + ' and ' + names[-1]
+        description = (f'Select {kinds} folders on your iPod. Their original names and locations stay in place. '
                        'Apple reads compatible text files in Notes automatically.')
         layout.addWidget(label(description, 'muted', True))
+        layout.addWidget(label('Selecting a folder includes its subfolders. Choose individual subfolders for a narrower selection.', 'muted', True))
         tree = QTreeWidget(); tree.setObjectName('appleFolders')
         tree.setHeaderLabels(['FOLDER', 'APPLE OS'])
         tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -2529,7 +2535,29 @@ class MediaWindow(QMainWindow):
             if path.split('/')[0] not in selectable or not item.childCount():
                 continue
             states = {item.child(index).checkState(0) for index in range(item.childCount())}
-            item.setCheckState(0, states.pop() if len(states) == 1 else Qt.PartiallyChecked)
+            # Child choices never imply selecting the parent: it may contain
+            # direct media files or acquire additional subfolders later.
+            if item.checkState(0) != Qt.Checked:
+                item.setCheckState(0, Qt.PartiallyChecked if states != {Qt.Unchecked} else Qt.Unchecked)
+        def inherited_choices():
+            for path, item in items.items():
+                if path.split('/')[0] not in selectable:
+                    continue
+                parent, ancestor = item.parent(), None
+                while parent:
+                    if parent.checkState(0) == Qt.Checked:
+                        ancestor = parent
+                    parent = parent.parent()
+                if ancestor:
+                    name = ancestor.data(0, Qt.UserRole)
+                    item.setFlags(item.flags() & ~Qt.ItemIsUserCheckable)
+                    item.setText(1, f'Included by {name}')
+                    item.setToolTip(0, f'Clear {name} first to choose individual subfolders.')
+                else:
+                    item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                    item.setText(1, 'Choose for Apple OS')
+                    item.setToolTip(0, 'Includes this folder and all its subfolders.')
+        inherited_choices()
         tree.expandToDepth(0); layout.addWidget(tree, 1)
         def changed(item, column):
             if column != 0 or item.data(0, Qt.UserRole).split('/')[0] not in selectable:
@@ -2544,8 +2572,10 @@ class MediaWindow(QMainWindow):
                 parent = item.parent()
                 while parent and parent.data(0, Qt.UserRole):
                     states = {parent.child(index).checkState(0) for index in range(parent.childCount())}
-                    parent.setCheckState(0, states.pop() if len(states) == 1 else Qt.PartiallyChecked)
+                    if parent.checkState(0) != Qt.Checked or states != {Qt.Checked}:
+                        parent.setCheckState(0, Qt.PartiallyChecked if states != {Qt.Unchecked} else Qt.Unchecked)
                     parent = parent.parent()
+                inherited_choices()
         tree.itemChanged.connect(changed)
         actions = box(horizontal=True)
         actions.addStretch(); actions.addWidget(button('Cancel', dialog.reject, 'quiet'))
@@ -2567,7 +2597,8 @@ class MediaWindow(QMainWindow):
         identity = self.identity
         ffprobe = self.verified_ffprobe
         self.work('apple_update', lambda: apple_os.update(identity, ffprobe=ffprobe,
-                                                          progress=self.events.progress.emit),
+                                                          progress=self.events.progress.emit,
+                                                          cancelled=self.stop_event.is_set),
                   'Updating Apple OS availability…')
 
     def queue_existing_audio(self):

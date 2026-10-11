@@ -89,7 +89,7 @@ def _port_libgpod(source):
     for path in (source / "src").glob("*.c"):
         text = path.read_text(encoding="utf-8")
         text = re.sub(r"\bstruct stat\b", "GStatBuf", text)
-        for name in ("fopen", "stat", "unlink"):
+        for name in ("fopen", "stat", "unlink", "rename"):
             text = re.sub(r"\b" + name + r"\s*\(", "g_" + name + " (", text)
         text = text.replace("g_memmove (", "memmove (")
         # The casts match Debian's GCC 14 compatibility fix.
@@ -97,6 +97,24 @@ def _port_libgpod(source):
                             "return (GdkPixbuf *)g_object_ref (G_OBJECT (pixbuf));")
         text = text.replace("pixbuf = g_object_ref (G_OBJECT (thumb_pixbuf->pixbuf));",
                             "pixbuf = (GdkPixbuf *)g_object_ref (G_OBJECT (thumb_pixbuf->pixbuf));")
+        if path.name == "ithumb-writer.c":
+            # UCRT opens an append stream at position zero until it is explicitly
+            # sought/written. libgpod mistakes that for an empty existing ithmb
+            # and deletes it, or assigns newly appended thumbnails offset zero.
+            text = text.replace(
+                "\twriter->cur_offset = ftell (writer->f);",
+                "\tif (_fseeki64 (writer->f, 0, SEEK_END) != 0) return FALSE;\n"
+                "\twriter->cur_offset = _ftelli64 (writer->f);\n"
+                "\tif (writer->cur_offset < 0) return FALSE;")
+            # Repacking thumbnails uses binary bytes and UTF-8 host paths.
+            # Existing FAT32 thumbnail files may exceed Windows' 32-bit off_t.
+            text = text.replace("off_t cur_offset;", "gint64 cur_offset;")
+            text = text.replace("lseek (fd,", "_lseeki64 (fd,")
+            text = text.replace("ftruncate (fd, offset) == -1", "_chsize_s (fd, offset) != 0")
+            text = text.replace("open (filename, O_RDWR, 0)",
+                                "g_open (filename, O_RDWR | O_BINARY, 0)")
+        if path.name == "itdb_artwork.c":
+            text = text.replace('g_fopen (filename, "r")', 'g_fopen (filename, "rb")')
         if path.name == "itdb_device.c":
             text = text.replace(
                 "    if (GetDiskFreeSpaceEx(device->mountpoint, &u_free, &u_capacity, NULL) == 0) {",

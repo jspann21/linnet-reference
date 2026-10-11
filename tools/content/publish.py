@@ -31,6 +31,7 @@ import zlib
 from typing import Callable
 
 from .music import ART, MAX_DATABASE, TRACK, validate_database
+from .host_state import file_stamp
 
 CHUNK = 1024 * 1024
 HISTORY_PAGE_BYTES = 4096
@@ -746,6 +747,7 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
     # Playlist banks may be initialized even when the database is reused.
     needed = 2 * 147456
     unchanged_assets = set()
+    verified_outputs = {}
     for item in inventory["files"]:
         destination = (root if item["kind"] == "music" else linnet) / item["path"]
         _plain(destination, root)
@@ -765,8 +767,18 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
                 if destination.exists():
                     needed += destination.stat().st_size + 65536
         elif destination.exists():
+            immutable_cover = re.fullmatch(r'ART/[0-9A-F]{8}\.RGB', item['path']) is not None
+            before = destination.stat() if immutable_cover else None
             if _hash(destination, item["bytes"]) != item["sha256"]:
                 raise ValueError(f"existing media differs; refusing overwrite: {item['path']}")
+            if immutable_cover:
+                after = destination.stat()
+                if file_stamp(before) != file_stamp(after):
+                    raise RuntimeError(f"existing artwork changed during verification: {destination}")
+                # Reuse this complete read within this publication, with full
+                # path-stamp checks before the database can reference it.
+                verified_outputs[destination.relative_to(root).as_posix()] = (
+                    item['sha256'], file_stamp(after))
         else:
             needed += item["bytes"] + 65536  # conservative FAT cluster allowance
     active = linnet / "LIBRARY.PDB"
@@ -824,7 +836,6 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
     # Receipt stays on the host; it records uncertainty without writing extra
     # mutable state beside the device's immutable database.
     receipt_path = stage / ("publish-" + uuid.uuid4().hex + ".json")
-    verified_outputs = {}
     group_outputs = []
 
     def record() -> None:
@@ -843,6 +854,14 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
             local = stage / item["path"]
             _plain(local, stage)
             destination = (root if item['kind'] == 'music' else linnet) / item['path']
+            proof = verified_outputs.get(destination.relative_to(root).as_posix())
+            if proof is not None:
+                guard()
+                _plain(destination, root)
+                if proof != (item['sha256'], file_stamp(destination.stat())):
+                    raise RuntimeError(f"existing artwork changed during publication: {destination}")
+                receipt['reused'] += 1
+                continue
             if re.fullmatch(r'ART/[0-9A-F]{8}\.RGB', item['path']) and not destination.exists():
                 art_batch.append((local, destination, item))
                 if len(art_batch) >= 16:

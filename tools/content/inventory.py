@@ -213,7 +213,8 @@ def scan(root, kinds=KINDS, skipped=None, *, records_by_kind=None, retail_photos
                 supported.append(str(root / photo['relative']))
                 supported_bytes += photo['bytes']
                 if fingerprint:
-                    rows.append((photo['relative'], photo['bytes'], photo['mtime_ns'], photo['preview']))
+                    rows.append((photo['relative'], photo['bytes'], photo['mtime_ns'],
+                                 photo['preview'], photo['title']))
         result[kind] = dict(count=len(supported), bytes=supported_bytes,
                             ignored=ignored, files=supported,
                             skipped=skipped_count,

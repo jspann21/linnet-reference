@@ -34,20 +34,44 @@ static unsigned long long number(const char *value) {
 
 int main(int argc, char **argv) {
     managed_arguments(&argc, &argv);
-    if (argc != 5) {
-        fprintf(stderr, "usage: managed_music staging-mount manifest.tsv model guid\n");
+    if (argc != 5 && argc != 6) {
+        fprintf(stderr, "usage: managed_music staging-mount manifest.tsv model guid [owned-paths.txt]\n");
         return 2;
+    }
+    /* A shared path alone does not establish ownership. Older callers without
+       a saved ownership list preserve every unselected Apple track. */
+    GHashTable *owned = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    if (argc == 6) {
+        FILE *ownership = g_fopen(argv[5], "rb");
+        if (!ownership) {
+            perror(argv[5]);
+            return 2;
+        }
+        GString *line = g_string_new(NULL);
+        while (managed_read_line(ownership, line)) {
+            if (!line->len) continue;
+            if (line->len > 55 || strpbrk(line->str, "\r\t\\") ||
+                !(g_str_has_prefix(line->str, managed_prefix) ||
+                  g_str_has_prefix(line->str, managed_video_prefix))) {
+                fprintf(stderr, "Invalid saved Apple media ownership path\n");
+                return 2;
+            }
+            g_hash_table_add(owned, g_strdup(line->str));
+        }
+        g_string_free(line, TRUE);
+        fclose(ownership);
     }
     gchar *database = g_build_filename(argv[1], "iPod_Control", "iTunes", "iTunesDB", NULL);
     GError *error = NULL;
-    Itdb_iTunesDB *db = g_file_test(database, G_FILE_TEST_EXISTS) ? itdb_parse(argv[1], &error) : itdb_new();
+    gboolean existing_database = g_file_test(database, G_FILE_TEST_EXISTS);
+    Itdb_iTunesDB *db = existing_database ? itdb_parse(argv[1], &error) : itdb_new();
     g_free(database);
     if (!db) {
         fprintf(stderr, "Could not read the Apple database: %s\n", error ? error->message : "unknown");
         if (error) g_error_free(error);
         return 1;
     }
-    itdb_set_mountpoint(db, argv[1]);
+    if (!existing_database) itdb_set_mountpoint(db, argv[1]);
     itdb_device_set_sysinfo(db->device, "ModelNumStr", argv[3]);
     itdb_device_set_sysinfo(db->device, "FirewireGuid", argv[4]);
     Itdb_Playlist *master = db->playlists ? itdb_playlist_mpl(db) : NULL;
@@ -58,8 +82,18 @@ int main(int argc, char **argv) {
     }
     GHashTable *existing = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     GHashTable *retained = g_hash_table_new(g_direct_hash, g_direct_equal);
+    GHashTable *artwork = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free, NULL);
     for (GList *item = db->tracks; item; item = item->next) {
         Itdb_Track *track = item->data;
+        if (track->artwork_count && !itdb_track_has_thumbnails(track)) {
+            fprintf(stderr, "Existing Apple album artwork could not be read; update stopped\n");
+            return 1;
+        }
+        if (itdb_track_has_thumbnails(track)) {
+            guint64 *id = g_new(guint64, 1);
+            *id = track->dbid;
+            g_hash_table_add(artwork, id);
+        }
         if (track->ipod_path && (g_str_has_prefix(track->ipod_path, managed_prefix) ||
                                  g_str_has_prefix(track->ipod_path, managed_video_prefix)))
             g_hash_table_insert(existing, g_strdup(track->ipod_path), track);
@@ -143,29 +177,50 @@ int main(int argc, char **argv) {
     }
     g_string_free(buffer, TRUE);
     fclose(input);
-    /* Unselected entries leave Apple OS, while all other tracks, ratings and
-       playlist memberships remain attached to their original track objects. */
+    /* Only recorded Linnet-owned entries leave Apple OS when unselected.
+       All other tracks and their metadata and playlists remain intact. */
     for (GList *item = db->tracks; item;) {
         Itdb_Track *track = item->data;
         item = item->next;
-        if (track->ipod_path && (g_str_has_prefix(track->ipod_path, managed_prefix) ||
-                                 g_str_has_prefix(track->ipod_path, managed_video_prefix)) &&
+        if (track->ipod_path && g_hash_table_contains(owned, track->ipod_path) &&
             !g_hash_table_contains(retained, track)) {
             for (GList *playlist = db->playlists; playlist; playlist = playlist->next) {
                 Itdb_Playlist *current = playlist->data;
                 while (g_list_find(current->members, track))
                     itdb_playlist_remove_track(current, track);
             }
+            g_hash_table_remove(artwork, &track->dbid);
             itdb_track_remove(track);
         }
     }
     g_hash_table_destroy(existing);
     g_hash_table_destroy(retained);
+    g_hash_table_destroy(owned);
     error = NULL;
     gboolean ok = itdb_write(db, &error);
     if (!ok) fprintf(stderr, "Apple database write failed: %s\n", error ? error->message : "unknown");
     if (error) g_error_free(error);
     itdb_free(db);
+    /* libgpod can report a successful DB write after an artwork write failure.
+       Reparse and require retained artwork associations before publication. */
+    if (ok && g_hash_table_size(artwork)) {
+        error = NULL;
+        Itdb_iTunesDB *verified = itdb_parse(argv[1], &error);
+        if (verified) {
+            for (GList *item = verified->tracks; item; item = item->next) {
+                Itdb_Track *track = item->data;
+                if (itdb_track_has_thumbnails(track))
+                    g_hash_table_remove(artwork, &track->dbid);
+            }
+            itdb_free(verified);
+        }
+        if (error) g_error_free(error);
+        if (g_hash_table_size(artwork)) {
+            fprintf(stderr, "Apple database writer did not preserve existing album artwork\n");
+            ok = FALSE;
+        }
+    }
+    g_hash_table_destroy(artwork);
     fprintf(stderr, "updated %u managed media entries\n", count);
     return ok ? 0 : 1;
 }

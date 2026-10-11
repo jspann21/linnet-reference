@@ -408,7 +408,9 @@ def images(root, *, artwork=False, dbids=None, render=True):
     formats = {1009: (42, 30), 1015: (130, 88), 1024: (320, 240), 1036: (50, 41),
                1017: (56, 56), 1016: (140, 140), 1028: (100, 100), 1029: (200, 200)}
     base = Path(os.environ.get('LOCALAPPDATA', Path.home() / '.cache')) / 'Linnet/Media/retail'
-    cache = base / hashlib.sha256(cache_volume_scope(root).encode() + data).hexdigest()
+    # An Apple database rewrite may change one title or just serialization.
+    # Keep unchanged thumbnail pixels reusable independently of that database.
+    cache = base / ('images-v2-' + hashlib.sha256(cache_volume_scope(root).encode()).hexdigest())
     result = {}
     paths = {}
     file_info = {}
@@ -461,7 +463,10 @@ def images(root, *, artwork=False, dbids=None, render=True):
                     file_info[path] = info
                 if length < width * height * 2 or offset + length > info.st_size:
                     raise ValueError('iTunes thumbnail extends beyond its file')
-                stamp = hashlib.sha256(json.dumps((key, file_stamp(info))).encode()).hexdigest()
+                stamp = hashlib.sha256(json.dumps((
+                    'rgb565-crop-v1', path.relative_to(root).as_posix().casefold(),
+                    file_stamp(info), offset, length, width, height, x, y, iw, ih,
+                )).encode()).hexdigest()
                 preview = cache / (stamp + '.png')
                 if render and preview not in queued and not preview.is_file():
                     from PIL import Image
