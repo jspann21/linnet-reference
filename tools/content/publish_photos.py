@@ -258,7 +258,8 @@ def _publish_pair(package, candidate, references, grid, grid_candidate, identity
     _same_target(identity, refreshed)
     if refreshed['free_bytes'] < needed:
         raise ValueError('insufficient free space for changed photo outputs and device recovery copies')
-    receipt_path = package.parent/('publish-photos-'+uuid.uuid4().hex+'.json')
+    from .host_state import receipt_directory
+    receipt_path = receipt_directory(identity)/('publish-photos-'+uuid.uuid4().hex+'.json')
     receipt = dict(operation='publish-photos', passed=False, phase='preflight-complete',
                    identity=identity, candidate_sha256=candidate['sha256'],
                    candidate_bytes=candidate['bytes'], previous=previous['LIBRARY.PIM'],

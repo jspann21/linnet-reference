@@ -50,7 +50,8 @@ def _base_identity(artist, album):
     if not artist or not album:
         return None
     key = hashlib.sha256((_normal(artist) + '\0' + _normal(album)).encode()).hexdigest()
-    return Path(os.environ.get('LOCALAPPDATA', Path.home() / '.cache')) / 'Linnet/Media/album-art' / key
+    from .host_cache import cache_base
+    return cache_base() / 'album-art' / key
 
 
 def cached(row):

@@ -80,6 +80,11 @@ def _write_receipt(path, receipt):
         os.fsync(writer.fileno())
 
 
+def _host_receipts(identity):
+    from .host_state import receipt_directory
+    return receipt_directory(identity)
+
+
 def _write_verified(path, data, error, *, owned=None):
     with path.open('xb') as writer:
         if owned is not None:
@@ -835,7 +840,7 @@ def _publish_music(stage, identity, disk_number, expected_disk_serial,
                    durability="file fsync and readback; FAT rename is not a power-loss journal")
     # Receipt stays on the host; it records uncertainty without writing extra
     # mutable state beside the device's immutable database.
-    receipt_path = stage / ("publish-" + uuid.uuid4().hex + ".json")
+    receipt_path = _host_receipts(identity) / ("publish-" + uuid.uuid4().hex + ".json")
     group_outputs = []
 
     def record() -> None:
@@ -1000,10 +1005,11 @@ def _publish_library(package, candidate, identity, root, number, serial, volume,
     needed = 0 if reuse else candidate['bytes'] + (previous['bytes'] if previous and not backup_on_host else 0) + 3*65536 + 1024*1024
     if identity['free_bytes'] < needed:
         raise ValueError(f'insufficient free space for new {label} package and retained backup')
-    if previous and not reuse and backup_on_host and shutil.disk_usage(package.parent).free < previous['bytes'] + 1024*1024:
+    host_root = _host_receipts(identity).parent
+    if previous and not reuse and backup_on_host and shutil.disk_usage(host_root).free < previous['bytes'] + 1024*1024:
         raise ValueError(f'insufficient computer space for previous {label} package')
     _same_target(identity, inspect_target(number, serial, volume, drive))
-    receipt_path = package.parent/('publish-'+kind+'-'+uuid.uuid4().hex+'.json')
+    receipt_path = _host_receipts(identity)/('publish-'+kind+'-'+uuid.uuid4().hex+'.json')
     receipt = dict(operation='publish-'+kind, passed=False, phase='preflight-complete',
                    identity=identity, candidate_sha256=candidate['sha256'], candidate_bytes=candidate['bytes'],
                    previous=previous, started_at=time.time(),
@@ -1044,13 +1050,13 @@ def _publish_library(package, candidate, identity, root, number, serial, volume,
         if previous:
             receipt['phase'] = 'backing-up-previous'
             record()
-            backup = ((package.parent/'recovery')/(uuid.uuid4().hex+'-'+previous['sha256'][:8].upper()+Path(filename).suffix)
+            backup = ((host_root/'recovery')/(uuid.uuid4().hex+'-'+previous['sha256'][:8].upper()+Path(filename).suffix)
                       if backup_on_host else backups/(previous['sha256'][:8].upper()+Path(filename).suffix))
-            _plain(backup.parent, package.parent if backup_on_host else root)
+            _plain(backup.parent, host_root if backup_on_host else root)
             backup.parent.mkdir(exist_ok=True)
             _plain(active, root)
             _copy_verified(active, backup, previous, root, guard,
-                           destination_root=package.parent if backup_on_host else None)
+                           destination_root=host_root if backup_on_host else None)
             receipt['backup'] = str(backup)
         temporary = directory/('P'+uuid.uuid4().hex[:7].upper()+'.TMP')
         receipt.update(phase='copying-candidate', temporary=str(temporary))
@@ -1085,7 +1091,7 @@ def _publish_library(package, candidate, identity, root, number, serial, volume,
             receipt['backups_retained'] = [str(backup)] if previous else []
         else:
             _finish_backups(receipt, [backup] if previous else [], root, guard,
-                            host_root=package.parent if backup_on_host else None)
+                            host_root=host_root if backup_on_host else None)
         receipt.update(passed=True, phase='published', finished_at=time.time(), package=str(active),
                        **summary)
         record()

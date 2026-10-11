@@ -170,7 +170,8 @@ def available_tracks(root, *, known_records=None, known_inodes=None):
 
 
 def _tracks_cache_path(root):
-    base = Path(os.environ.get('LOCALAPPDATA', Path.home() / '.cache')) / 'Linnet/Media/retail'
+    from .host_cache import cache_base
+    base = cache_base() / 'retail'
     key = hashlib.sha256(cache_volume_scope(root).encode()).hexdigest()[:24]
     return base / ('tracks-' + key + '.json')
 
@@ -407,7 +408,8 @@ def images(root, *, artwork=False, dbids=None, render=True):
     at, end, count = _list(data, b'mhfd', b'mhli')
     formats = {1009: (42, 30), 1015: (130, 88), 1024: (320, 240), 1036: (50, 41),
                1017: (56, 56), 1016: (140, 140), 1028: (100, 100), 1029: (200, 200)}
-    base = Path(os.environ.get('LOCALAPPDATA', Path.home() / '.cache')) / 'Linnet/Media/retail'
+    from .host_cache import cache_base
+    base = cache_base() / 'retail'
     # An Apple database rewrite may change one title or just serialization.
     # Keep unchanged thumbnail pixels reusable independently of that database.
     cache = base / ('images-v2-' + hashlib.sha256(cache_volume_scope(root).encode()).hexdigest())

@@ -11,15 +11,39 @@ def file_stamp(info):
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
+def storage_root():
+    return Path(os.environ.get("LOCALAPPDATA", Path.home() / ".cache")) / "Linnet"
+
+
+def media_state_root():
+    # Receipts and recovery journals contain absolute paths. Keep them stable.
+    return storage_root() / 'Media'
+
+
+def cache_data_directory(directory):
+    """Route regenerable data separately from saved state and recovery files."""
+    from .host_cache import cache_base
+    directory = Path(directory)
+    if directory.is_relative_to(media_state_root()):
+        return cache_base() / directory.relative_to(media_state_root())
+    return directory
+
+
 def cache_directory(disk_serial, volume_serial):
-    base = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".cache")) / "Linnet" / "Media"
     key = hashlib.sha256((disk_serial + volume_serial).encode()).hexdigest()[:24]
-    return base / key
+    return media_state_root() / key
 
 
 def cache_root(identity):
     return cache_directory(identity.get("media_cache_disk_serial") or identity["disk_serial"],
                            identity["volume_serial"])
+
+
+def receipt_directory(identity):
+    from .host_cache import _plain
+    directory = _plain(cache_root(identity) / 'receipts')
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
 
 
 def cache_volume_scope(root):

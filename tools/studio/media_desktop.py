@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox,
     QStyleOptionButton, QSizePolicy)
 
 from tools.content import apple_os, games, media_manager as media, media_library, media_status, media_trash
-from tools.content import publish
+from tools.content import publish, host_cache
 from tools.content.media_manager import format_size as size
 from tools.content.music import COVER_NAMES, EXTENSIONS as MUSIC_EXTENSIONS
 from tools.studio import installer, screen_settings, startup_default, boot_upgrade, media_reader
@@ -818,6 +818,29 @@ def build_settings_page(window):
     window.photo_detail = ComboBox(); window.photo_detail.addItems(['Standard · 640 px', 'High detail · 2048 px']); window.photo_detail.setCurrentIndex(int(window.settings.value('photo_detail', 0)))
     window.photo_detail.currentIndexChanged.connect(lambda value: window.settings.setValue('photo_detail', value)); layout.addWidget(window.photo_detail)
     layout.addWidget(label('High detail uses more storage and takes longer to prepare.', 'muted'))
+    layout.addSpacing(20); layout.addWidget(label('Computer storage', 'section'))
+    window.cache_size = label('Open Settings to measure reusable cache files.', 'muted', True)
+    layout.addWidget(window.cache_size)
+    window.cache_location = label('', 'muted', True)
+    window.cache_location.setTextInteractionFlags(Qt.TextSelectableByMouse)
+    layout.addWidget(window.cache_location)
+    window.cache_open = button('Open cache folder', window.open_computer_folder, None, 'folder')
+    window.cache_refresh = button('Refresh size', window.refresh_cache)
+    window.cache_change = button('Change location…', window.change_cache_location)
+    window.cache_clear = button('Clear cache…', window.clear_computer_cache)
+    window.cache_buttons = (window.cache_open, window.cache_refresh, window.cache_change, window.cache_clear)
+    for pair in (window.cache_buttons[:2], window.cache_buttons[2:]):
+        actions = box(horizontal=True, spacing=8)
+        for item in pair:
+            actions.addWidget(item)
+        actions.addStretch(); layout.addLayout(actions)
+    window.cache_protected = label('Startup backups, recovery copies and saved selections are protected. Clearing the cache never removes them.', 'muted', True)
+    layout.addWidget(window.cache_protected)
+    actions = box(horizontal=True, spacing=8)
+    window.backups_open = button('Open startup backups', lambda: window.open_computer_folder(host_cache.storage_root() / 'Installer'))
+    window.recovery_open = button('Open recovery and saved state', lambda: window.open_computer_folder(host_cache.media_state_root()))
+    actions.addWidget(window.backups_open); actions.addWidget(window.recovery_open); actions.addStretch()
+    layout.addLayout(actions)
     layout.addSpacing(20); layout.addWidget(label('Conversion tools', 'section'))
     window.tools_label = label('', 'muted', True); layout.addWidget(window.tools_label)
     layout.addWidget(button('Choose FFmpeg folder', window.locate_tools, None, 'folder'), 0, Qt.AlignLeft)
@@ -996,6 +1019,8 @@ class MediaWindow(QMainWindow):
             self.view = 'Albums'
         self.busy = False
         self.closed = False
+        self.cache_info = None
+        self.cache_library_dirty = False
         self.operation_id = 0
         self.active_operation = None
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='linnet-media')
@@ -1123,6 +1148,70 @@ class MediaWindow(QMainWindow):
                 self.work('setup', lambda: installer.assess(identity), 'Checking installed software…')
         else:
             self.stack.setCurrentWidget(self.preferences)
+            self.refresh_cache()
+        self.update_controls()
+        if (self.cache_library_dirty and page != 'Settings' and self.identity and
+                self.device_connected and not self.busy):
+            self.refresh()
+
+    def refresh_cache(self):
+        if not self.busy:
+            self.work('cache_size', host_cache.overview, 'Measuring computer cache and protected storage…')
+
+    def open_computer_folder(self, path=None):
+        if self.busy:
+            return
+        try:
+            path = host_cache._plain(path) if path else host_cache.cache_base()
+            path.mkdir(parents=True, exist_ok=True)
+            self.open_folder(path)
+        except (OSError, ValueError) as error:
+            self.show_error(str(error))
+
+    def clear_computer_cache(self):
+        if self.busy or not self.cache_info:
+            return
+        if self.dialog('Clear computer cache',
+                       f'Clear reusable media files (last measured: {size(self.cache_info["bytes"])}). '
+                       'Thumbnails, metadata and conversions will be recreated when needed. '
+                       'The next preparation may take longer.\n\n'
+                       'Startup backups, recovery copies, saved selections and iPod files are kept.',
+                       'Clear cache', danger=True):
+            self.covers.invalidate()
+            self.work('cache_clear', host_cache.clear, 'Clearing reusable computer cache files…')
+
+    def change_cache_location(self):
+        if self.busy:
+            return
+        initial = self.cache_info['location'] if self.cache_info else str(host_cache.default_base())
+        folder = QFileDialog.getExistingDirectory(self, 'Choose an empty folder for the media cache', str(Path(initial).parent))
+        if not folder or Path(folder) == Path(initial):
+            return
+        if not self.dialog('Move computer cache',
+                           f'Move reusable cache files to:\n{folder}\n\n'
+                           'Copies are verified before the location changes. Startup backups, recovery copies '
+                           'and saved selections keep their existing locations.', 'Move cache'):
+            return
+        roots = [self.identity['root']] if self.identity else []
+        self.covers.invalidate()
+        self.work('cache_move', lambda: host_cache.relocate(folder, device_roots=roots,
+                  progress=self.events.progress.emit), 'Moving and verifying reusable cache files…')
+
+    def _complete_cache(self, result):
+        self.cache_info = result
+        self.cache_size.setText(f'{size(result["bytes"])} reusable cache · {result["files"]:,} files')
+        self.cache_location.setText(result['location'])
+        self.cache_protected.setText(
+            f'Protected: {size(result["startup_bytes"])} startup backups · '
+            f'{size(result["retained_bytes"])} recovery, saved state and other retained files.\n'
+            'Clearing or moving the cache never removes these files.')
+        if result['errors']:
+            self.cache_size.setText(self.cache_size.text() + '\nSome files could not be measured or changed; they were kept.')
+        self.cache_size.setToolTip('\n'.join(result['errors'][:10]))
+        if 'freed_bytes' in result:
+            self.show_progress(f'Cleared {size(result["freed_bytes"])} of reusable cache. Protected files were kept.')
+        else:
+            self.show_progress('Computer storage checked. Startup backups and recovery data are protected.')
         self.update_controls()
 
     def change_view(self, view):
@@ -1492,7 +1581,7 @@ class MediaWindow(QMainWindow):
             return
         self.operation_id += 1
         context = OperationContext(self.operation_id, tag,
-            dict(self.identity) if self.identity and tag != 'devices' else None,
+            dict(self.identity) if self.identity and tag != 'devices' and not tag.startswith('cache_') else None,
             self.stop_event if tag in ('prepare', 'remove', 'restore', 'scan', 'plan', 'devices', 'apple_update') else None)
         self.active_operation = context
         self.busy = True
@@ -1509,7 +1598,10 @@ class MediaWindow(QMainWindow):
         self.update_controls()
         def run():
             try:
-                value = operation()
+                with host_cache.activity():
+                    if not tag.startswith('cache_'):
+                        host_cache.organize(progress=self.events.progress.emit)
+                    value = operation()
                 outcome = OperationOutcome(context, value, status=operation_status(value),
                     cancel_requested=bool(context.cancel_event and context.cancel_event.is_set()))
             except Exception as error:
@@ -1610,6 +1702,7 @@ class MediaWindow(QMainWindow):
             self._complete_error(tag, error)
             return
         handlers = {
+            'cache_size': self._complete_cache, 'cache_clear': self._complete_cache, 'cache_move': self._complete_cache,
             'screens': self._complete_screens, 'plan': self._complete_plan,
             'save_screens': self._complete_save_screens, 'games': self._complete_games,
             'save_games': self._complete_save_games, 'review_skipped': self._complete_review_skipped,
@@ -1630,6 +1723,17 @@ class MediaWindow(QMainWindow):
             self.show_error(f'Unknown background operation: {tag}')
             return
         handler(result)
+        if tag in ('cache_clear', 'cache_move'):
+            self.covers.invalidate()
+            self._library_source, self._library_cache, self._library_stats = None, {}, {}
+            self._library_search = None
+            self.cache_library_dirty = True
+            if self.page != 'Settings' and self.identity and self.device_connected:
+                QTimer.singleShot(0, self.refresh)
+        elif not tag.startswith('cache_') and self.page == 'Settings' and self.cache_info is None:
+            QTimer.singleShot(0, self.refresh_cache)
+        if tag == 'scan':
+            self.cache_library_dirty = False
         if tag not in ('screens', 'plan', 'save_screens', 'games', 'save_games',
                        'review_skipped', 'playlists', 'save_playlists',
                        'apple_selection', 'apple_update'):
@@ -2358,6 +2462,9 @@ class MediaWindow(QMainWindow):
 
     def update_controls(self):
         ready = self.identity is not None and self.device_connected and not self.busy
+        for item in (*self.cache_buttons, self.backups_open, self.recovery_open):
+            item.setEnabled(not self.busy)
+        self.cache_clear.setEnabled(not self.busy and bool(self.cache_info and self.cache_info['files']))
         self.choose_device_button.setEnabled(not self.busy)
         self.retry_button.setEnabled(ready)
         self.prep_details.setVisible(self.last_preparation is not None)

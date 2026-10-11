@@ -25,7 +25,9 @@ def main():
     try:
         if args.command in ('music', 'video', 'photos'):
             from tools.cli.media_commands import run_media
-            return run_media(args, emit)
+            from tools.content.host_cache import activity
+            with activity():
+                return run_media(args, emit)
         if args.command == 'device':
             from tools.cli.device_commands import run_device
             return run_device(args, emit)

@@ -8,7 +8,7 @@ import time
 
 from . import media_manager as media
 from . import media_library
-from .host_state import cache_directory, cache_root, file_stamp, load_json_object, save_json
+from .host_state import cache_directory, cache_root, cache_data_directory, file_stamp, load_json_object, save_json
 from .inventory import collect_records_by_kind as records_by_kind, skipped_paths, scan as scan_sources
 
 
@@ -62,7 +62,7 @@ def _verification_cache(disk_serial, volume_serial, partition_offset, volume_uni
     # only for this exact disk, volume and partition; changed stamps are read.
     # Native Disk Mode can reuse a verified Apple cache directory. Keep the
     # live disk identity in the memory key while reading the same file we save.
-    path = cache_directory(cache_disk_serial or disk_serial, volume_serial) / 'verified-outputs.json'
+    path = cache_data_directory(cache_directory(cache_disk_serial or disk_serial, volume_serial)) / 'verified-outputs.json'
     cache = dict(verified_at=time.time())
     cache['files'] = _VerifiedFiles(cache)
     try:
@@ -110,7 +110,7 @@ def _remember_verified(identity, verified, before):
         return
     if not verified:
         return
-    path = cache_root(identity) / 'verified-outputs.json'
+    path = cache_data_directory(cache_root(identity)) / 'verified-outputs.json'
     try:
         # Keep the newest verified stamps when a large library exceeds the
         # cache bound. Older outputs will simply be hashed on the next launch.

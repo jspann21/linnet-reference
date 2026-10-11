@@ -718,7 +718,8 @@ def publish_files(package, candidate, *, disk_number, expected_disk_serial,
             if _hash(active, candidate['bytes']) != candidate['sha256']:
                 raise RuntimeError('Active Files index changed during publication')
             guard()
-            receipt_path = package.parent / ('publish-files-' + uuid.uuid4().hex + '.json')
+            from .host_state import receipt_directory
+            receipt_path = receipt_directory(identity) / ('publish-files-' + uuid.uuid4().hex + '.json')
             receipt = dict(operation='publish-files', passed=True, phase='reused',
                            identity=identity, candidate_sha256=candidate['sha256'],
                            candidate_bytes=candidate['bytes'], package=str(active),

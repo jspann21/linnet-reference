@@ -24,7 +24,7 @@ import unicodedata
 import uuid
 
 from .guard import guarded_path as _plain, hash_file as _hash, require_same_target as _same_target, guard_volume as _volume_guard, inspect_target
-from .host_state import cache_directory as _cache_directory, cache_root, cache_volume_scope, file_stamp as _receipt_stamp, load_json_object as _optional_state, save_json as _save
+from .host_state import cache_directory as _cache_directory, cache_root, cache_data_directory, cache_volume_scope, file_stamp as _receipt_stamp, load_json_object as _optional_state, save_json as _save
 from .inventory import KINDS, VIDEO_EXTENSIONS, extensions, source_folders, file_records as _file_records, skipped_paths as _skipped_paths, scan
 
 _RETAIL_ADOPTION = None
@@ -967,7 +967,7 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
     # expensive. Keep every handle until its flush, and publish only verified files.
     start = 0
     remaining_original = sum(item.get('converted_bytes', item['bytes']) for item in plan)
-    seek_state_path = cache / 'seek-checked.json'
+    seek_state_path = cache_data_directory(cache) / 'seek-checked.json'
     seek_state = (_optional_state(seek_state_path) if any(
         item['kind'] == 'Music' and Path(item['destination']).suffix.lower() in ('.m4a', '.m4b', '.flac', '.flc')
         for item in plan) else {})
@@ -1228,7 +1228,7 @@ def _seed_imported_music(root, cache, rows):
     import sqlite3
     from .music import _MetadataCache
     try:
-        saved = _MetadataCache(cache / 'music-metadata.sqlite3')
+        saved = _MetadataCache(cache_data_directory(cache) / 'music-metadata.sqlite3')
     except (OSError, sqlite3.Error):
         return
     try:
@@ -1818,7 +1818,7 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
     audio_backup = 0
     largest_audio = 0
     if 'Music' in selected:
-        seek_state = {} if force else _optional_state(cache / 'seek-checked.json')
+        seek_state = {} if force else _optional_state(cache_data_directory(cache) / 'seek-checked.json')
         for value in inventory.get('Music', {}).get('files', []):
             check()
             path = Path(value)
@@ -1979,14 +1979,16 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
     device_needed = original_bytes + prepared + previous * 2 + largest_audio + 16 * 1024 * 1024
     host_needed = (music_bytes * 2 + photo_bytes * 2 + notes_bytes * 2 + video_host + audio_scratch +
                    files_bytes * 2 + audio_backup * 2 + 16 * 1024 * 1024)
-    parent = cache
-    while not parent.exists():
-        check()
-        parent = parent.parent
+    host_free = []
+    for parent in dict.fromkeys((cache, cache_data_directory(cache))):
+        while not parent.exists():
+            check()
+            parent = parent.parent
+        host_free.append(shutil.disk_usage(parent).free)
     check()
     return dict(device_peak_bytes=device_needed, computer_peak_bytes=host_needed,
                 device_free_bytes=shutil.disk_usage(root).free,
-                computer_free_bytes=shutil.disk_usage(parent).free,
+                computer_free_bytes=min(host_free),
                 video_conversion_required=video_conversion_required)
 
 
@@ -2253,7 +2255,7 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
     totals = {'aac': sum(suffix in ('.m4a', '.m4b') for _, suffix in pending),
               'flac': sum(suffix in ('.flac', '.flc') for _, suffix in pending)}
     completed = {'aac': 0, 'flac': 0}
-    seek_state_path = cache / 'seek-checked.json'
+    seek_state_path = cache_data_directory(cache) / 'seek-checked.json'
     seek_state = {} if force else _optional_state(seek_state_path)
     seen = set()
     pending_checks = 0
@@ -2355,6 +2357,7 @@ def _prepare_music(root, cache, identity, skipped, *, ffprobe, verification, for
                    cancelled, checkpoint, progress, report, begin_publication):
     from .music import compile_music
     from .publish import publish_music
+    cache = cache_data_directory(cache)
     stage = cache / "music"
     music_progress = _throttled_progress(checkpoint, progress,
         lambda event: f'{"Using saved metadata" if event.get("cached") else "Reading metadata"} '
@@ -2470,6 +2473,7 @@ def _prepare_photos(root, cache, identity, media_profile, skipped, retail_photos
         except (OSError, ValueError, SyntaxError, Image.DecompressionBombError):
             pass  # The photo compiler reports unreadable originals separately.
 
+    cache = cache_data_directory(cache)
     package = cache / "photos.pimg"
     photo_progress = _throttled_progress(checkpoint, progress,
         lambda event: f'Preparing photos {event["current"]+1}/{event["total"]}: {Path(event["file"]).name}')
@@ -2494,7 +2498,7 @@ def _prepare_notes(root, cache, identity, skipped, *, checkpoint, progress,
                    report, begin_publication):
     from .notes import compile_notes
     from .publish_notes import publish_notes
-    package = cache / "notes.pnot"
+    package = cache_data_directory(cache) / "notes.pnot"
     note_progress = _throttled_progress(checkpoint, progress,
         lambda event: f'Preparing notes {event["current"]+1}/{event["total"]}: {Path(event["file"]).name}')
     preparation = compile_notes(root / "Notes", package, target=identity['target_id'],
@@ -2513,6 +2517,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                     ffmpeg, ffprobe, force, cancelled, checkpoint, progress, emit_stage, unit,
                     record, report, verified_outputs, owned_temporaries, progress_detail,
                     mark_publication, no_conversions=False):
+    cache = cache_data_directory(cache)
     kind = "Videos"
     published = []
     video_proofs = {}
@@ -2847,16 +2852,19 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
     root = Path(identity["root"])
     media_profile = identity["media_profile"]
     cache = cache_root(identity)
-    if cache.drive.casefold() == root.drive.casefold():
+    data_cache = cache_data_directory(cache)
+    if any(path.drive.casefold() == root.drive.casefold() for path in (cache, data_cache)):
         raise ValueError("The preparation cache must be on the computer, not the iPod.")
     cache.mkdir(parents=True, exist_ok=True)
+    data_cache.mkdir(parents=True, exist_ok=True)
     state_path = cache / "state.json"
     state = _optional_state(state_path)
     if not isinstance(state.get("skipped_files", {}), dict):
         state["skipped_files"] = {}
     skipped = {kind: _skipped_paths(state, kind) for kind in KINDS}
     report = dict(started=time.time(), identity=identity, steps=[], errors=[], complete=False,
-                  stopped=False, cache_directory=str(cache), cleanup=dict(removed=[], retained=[]))
+                  stopped=False, cache_directory=str(cache), reusable_cache_directory=str(data_cache),
+                  cleanup=dict(removed=[], retained=[]))
     plan, videos, planned = [], [], False
     owned_temporaries = []
     from .media_status import _remember_verified, _verified_outputs
@@ -3210,7 +3218,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         files_dir = root / '.LINNET' / 'FILES'
         _plain(files_dir, root)
         files_dir.mkdir(parents=True, exist_ok=True)
-        files_package = cache / 'files.fil'
+        files_package = data_cache / 'files.fil'
         next_files_guard = 0.0
         def files_checkpoint():
             nonlocal next_files_guard
@@ -3218,7 +3226,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             if cancelled() or now >= next_files_guard:
                 checkpoint()
                 next_files_guard = time.monotonic() + 0.05
-        files_report = compile_files(root, files_package, cache / 'file-previews',
+        files_report = compile_files(root, files_package, data_cache / 'file-previews',
             target=identity['target_id'],
             width=media_profile['photo_width'] if 'Photos' in supported_kinds(identity) else 0,
             height=media_profile['photo_height'] if 'Photos' in supported_kinds(identity) else 0,
@@ -3277,7 +3285,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         # Audit scratch locations without deleting files that could belong to another run.
         publications = []
         publication_name = re.compile(r'publish-.*\.json', re.DOTALL | (re.IGNORECASE if os.name == 'nt' else 0)).fullmatch
-        for path in cache.rglob('*'):
+        for path in (path for base in dict.fromkeys((cache, data_cache)) for path in base.rglob('*')):
             name = path.name.casefold()
             if publication_name(path.name):
                 publications.append(path)
@@ -3331,7 +3339,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
         elif report["errors"] and not failed:
             summary.append("Update could not finish. Open report for the error.")
         report["summary"] = " ".join(summary)
-        progress(f"Computer cache for faster retries (separate from the published iPod files): {cache}")
+        progress(f"Computer cache for faster retries (separate from the published iPod files): {data_cache}")
         if report["summary"]:
             progress(report["summary"])
         report["finished"] = time.time()

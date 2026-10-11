@@ -160,7 +160,8 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
     if identity['free_bytes'] < needed:
         raise ValueError('insufficient free space for new video package and retained backup')
     _same_target(identity, inspect_target(number, serial, volume, drive))
-    receipt_path = package.parent/('publish-videos-'+uuid.uuid4().hex+'.json')
+    from .host_state import receipt_directory
+    receipt_path = receipt_directory(identity)/('publish-videos-'+uuid.uuid4().hex+'.json')
     receipt = dict(operation='publish-videos', passed=False, phase='preflight-complete',
                    identity=identity, candidate_sha256=candidate['sha256'], candidate_bytes=candidate['bytes'],
                    previous=previous, started_at=time.time(),
@@ -328,7 +329,8 @@ def index_video(source, *, disk_number, expected_disk_serial,
     label = _catalog_title(title or source.stem)
     catalog = root/'.LINNET'/'VIDEOS'/'INDEX.VID'
     backups = root/'.LINNET'/'VIDEOS'/'BACKUP'
-    receipt_path = Path(os.environ.get('LOCALAPPDATA', source.parent))/'Linnet'/'Media'/('index-video-'+uuid.uuid4().hex+'.json')
+    from .host_state import receipt_directory
+    receipt_path = receipt_directory(identity)/('index-video-'+uuid.uuid4().hex+'.json')
     receipt = dict(operation='index-video', passed=False, phase='validated', identity=identity,
                    source=str(source), device_path=path, frames=candidate['frames'], media_id=candidate.get('media_id'),
                    started_at=time.time(), receipt=str(receipt_path))

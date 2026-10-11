@@ -213,7 +213,8 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
         retail_tracks = available_tracks(root, known_records=music_records,
                                          known_inodes=getattr(records_by_kind, 'inodes', None))
     retail = retail_metadata(root, tracks_rows=retail_tracks)
-    source_metadata = _source_music_metadata(root, music_records, cache_root(identity), retail, metadata,
+    from .host_state import cache_data_directory
+    source_metadata = _source_music_metadata(root, music_records, cache_data_directory(cache_root(identity)), retail, metadata,
                                              identity['target_id'])
     for kind in manager.KINDS:
         allowed = manager.extensions(kind)
@@ -275,13 +276,13 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
             names[hashlib.sha256(relative.encode()).hexdigest()[:8].upper()] = relative
     except (OSError, ValueError, AttributeError, TypeError):
         pass
-    video_dir = cache / 'videos'
+    video_dir = cache_data_directory(cache) / 'videos'
     if video_dir.exists():
         _plain(video_dir, Path(video_dir.anchor))
         for path in sorted(video_dir.iterdir()):
             if path.suffix.lower() not in {'.ipvf', '.mp4', '.m4v', '.mov'}:
                 continue
-            _plain(path, cache)
+            _plain(path, video_dir)
             if not path.is_file():
                 continue
             title = names.get(path.name.split('-')[0], path.name)

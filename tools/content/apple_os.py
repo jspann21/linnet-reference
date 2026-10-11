@@ -25,7 +25,7 @@ from types import SimpleNamespace
 
 from . import media_manager as media
 from .apple_process import checkpoint as _checkpoint, run as _run_process
-from .host_state import cache_root, file_stamp, save_json
+from .host_state import cache_root, cache_data_directory, file_stamp, save_json
 from .inventory import file_records
 from .music import _device_media_path
 from .guard import guarded_path as _plain, guard_volume as _volume_guard, hash_file as _hash
@@ -640,7 +640,7 @@ def _run_writer(arguments, *, timeout=120, cancelled=lambda: False):
 
 def _writer(cache, kind='music'):
     from tools.studio.apple_tools import writer
-    return writer(kind, cache)
+    return writer(kind, cache_data_directory(cache))
 
 
 def _revalidate_device(identity, *paths):
@@ -699,7 +699,7 @@ def _outputs_ready(identity, outputs, *, cache_name, prefixes, required,
     if not isinstance(outputs, list) or not outputs or len(outputs) > 10000:
         return False
     root = Path(identity['root']).resolve(strict=True)
-    cache_path = _apple_cache(identity) / cache_name
+    cache_path = cache_data_directory(_apple_cache(identity)) / cache_name
     scope = [str(root), identity.get('volume_unique_id'), identity.get('target_id')]
     cached = {}
     try:
@@ -1013,11 +1013,13 @@ def _update_photos(identity, state, selected, cache, progress, *, cancelled=lamb
         return
     source_bytes = max((info.st_size for _, info in photos), default=0)
     work_bytes = max(64 * 1024 * 1024, len(photos) * 256 * 1024) if photos else 1024 * 1024
-    if source_bytes + work_bytes > shutil.disk_usage(cache).free:
+    data_cache = cache_data_directory(cache)
+    data_cache.mkdir(parents=True, exist_ok=True)
+    if source_bytes + work_bytes > min(shutil.disk_usage(cache).free, shutil.disk_usage(data_cache).free):
         raise ValueError('Not enough computer space to prepare these Apple photos.')
     progress(f'Preparing {len(photos):,} photos for Apple OS…')
     writer = _writer(cache, 'photos')
-    with tempfile.TemporaryDirectory(prefix='linnet-apple-photos-', dir=cache) as directory:
+    with tempfile.TemporaryDirectory(prefix='linnet-apple-photos-', dir=data_cache) as directory:
         stage = Path(directory)
         from .apple_library import stage_sysinfo
         stage_sysinfo(root, stage, device['model'], '0x' + device['apple_guid'])
@@ -1025,7 +1027,7 @@ def _update_photos(identity, state, selected, cache, progress, *, cancelled=lamb
         source.mkdir()
         from .apple_photo_cache import NormalizedPhotos
         lines = []
-        with NormalizedPhotos(cache, cancelled=cancelled) as normalized:
+        with NormalizedPhotos(cache_data_directory(cache), cancelled=cancelled) as normalized:
             for index, (path, info) in enumerate(photos, 1):
                 _publication_checkpoint(cancelled)
                 if index % 32 == 1 or index == len(photos):
@@ -1210,7 +1212,7 @@ def _metadata(identity, files, *, ffprobe=None, cancelled=lambda: False,
     from .music import _MetadataCache, _read_metadata, CODECS
     _checkpoint(cancelled)
     root = Path(identity['root']).resolve(strict=True)
-    database = cache_root(identity) / 'music-metadata.sqlite3'
+    database = cache_data_directory(cache_root(identity)) / 'music-metadata.sqlite3'
     result = []
     aliases = {}
     probe = ffprobe or shutil.which('ffprobe')
@@ -1266,7 +1268,7 @@ def _video_rows(identity, files, ffprobe, *, cancelled=lambda: False,
     root = Path(identity['root']).resolve(strict=True)
     rows, issues = [], []
     aliases = {}
-    cache_path = _apple_cache(identity) / 'apple-video-probes.json'
+    cache_path = cache_data_directory(_apple_cache(identity)) / 'apple-video-probes.json'
     cached = {}
     try:
         if cache_path.stat().st_size <= 4 * 1024 * 1024:
@@ -1415,12 +1417,14 @@ def update(identity, *, ffprobe=None, progress=lambda text: None, cancelled=lamb
     removable_owned = [path for path in prior_owned if path not in held_set]
     writer = _writer(cache)
     progress(f'Preparing Apple OS library for {len(playable_music):,} songs and {len(video_rows):,} videos…')
-    with tempfile.TemporaryDirectory(prefix='linnet-apple-', dir=cache) as directory:
+    data_cache = cache_data_directory(cache)
+    data_cache.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='linnet-apple-', dir=data_cache) as directory:
         stage = Path(directory)
         stage_db = stage / 'iPod_Control/iTunes/iTunesDB'
         inputs = apple_library.snapshot(root, stage, device['model'],
                                         '0x' + device['apple_guid'], cancelled=cancelled,
-                                        artwork_cache=cache / 'artwork-sources',
+                                        artwork_cache=cache_data_directory(cache) / 'artwork-sources',
                                         cache_binding=_apple_binding(identity))
         manifest_path = stage / 'manifest.tsv'
         with manifest_path.open('w', encoding='ascii', newline='\n') as output:
