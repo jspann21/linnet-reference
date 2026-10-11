@@ -100,7 +100,13 @@ class Session:
         deadline = time.monotonic() + duration
         try:
             sent = [self._send(command, payload, deadline) for command, payload in requests]
-            return [self._ack(frame, deadline) for frame in sent]
+            replies = [self._ack(frame, deadline) for frame in sent]
+            if self.pending or self.parser.buffer:
+                raise ProtocolError('unsolicited bytes after the final acknowledgement')
+            return replies
+        except (KeyboardInterrupt, SystemExit):
+            self.poisoned = True
+            raise
         except (ProtocolError, DeviceError, OSError, TimeoutError) as exc:
             self.poisoned = True
             if isinstance(exc, DeviceError) and len(requests) == 1:
@@ -323,8 +329,19 @@ class Session:
         return dict(zip(names, struct.unpack('<12I', payload)))
 
     def platform_input(self, generation: int, events: list[tuple[int, int, int]]) -> None:
+        if type(generation) is not int or not 0 <= generation <= 0xffffffff:
+            raise ValueError('invalid synthetic input boot generation')
         if not 1 <= len(events) <= 32:
             raise ValueError('synthetic input request requires 1..32 events')
+        previous = 0
+        for sequence, kind, value in events:
+            if (any(type(item) is not int for item in (sequence, kind, value)) or
+                    not previous < sequence <= 0xffffffff or kind not in (1, 2, 3, 4) or
+                    (kind == 1 and not -64 <= value <= 64) or
+                    (kind == 2 and not 0 <= value <= 31) or
+                    (kind >= 3 and value not in (0, 1))):
+                raise ValueError('invalid synthetic event or non-increasing input sequence')
+            previous = sequence
         payload = struct.pack('<II', generation, len(events))
         payload += b''.join(struct.pack('<IIi', sequence, kind, value) for sequence, kind, value in events)
         reply = self.request(Command.INJECT_INPUT, payload)
