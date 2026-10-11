@@ -38,6 +38,10 @@ def connect(port=None, serial_number=None, deadline_seconds=15):
                 errors = errors[-4:]
                 if session:
                     session.close()
+            except BaseException:
+                if session:
+                    session.close()
+                raise
         time.sleep(min(0.2, max(0, deadline-time.monotonic())))
     raise TimeoutError("no responding Linnet endpoint before deadline" + (": " + '; '.join(errors) if errors else ""))
 
@@ -45,6 +49,57 @@ def _save(path, value):
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(value, indent=2) + '\n')
     temporary.replace(path)
+
+
+def wait_ready(serial_number, *, expected=None, generation=None, library=False, timeout=60):
+    """Wait using read-only requests; never replay the action that caused a transition."""
+    if not serial_number or not 0 < timeout <= 600:
+        raise ValueError('readiness requires a USB serial and a timeout in (0, 600] seconds')
+    if expected and expected['profile'] == 'release':
+        raise ValueError('release images do not expose Linnet Link readiness')
+    started = time.monotonic()
+    deadline = started + timeout
+    session = None
+    last = 'no responding endpoint'
+    try:
+        while time.monotonic() < deadline:
+            try:
+                if session is None:
+                    session, device, _ = connect(serial_number=serial_number,
+                        deadline_seconds=min(5, deadline-time.monotonic()))
+                session.timeout = min(2, max(.001, deadline-time.monotonic()))
+                identity = decode(session.status())
+                media = None
+                if library and identity['image_kind'] == 'os' and identity['healthy']:
+                    from .music import command
+                    media = command(session, identity, 'library-state')['state']
+                    if decode(session.status()) != identity:
+                        raise RuntimeError('identity changed while reading library readiness')
+            except (ValueError, RuntimeError, OSError) as exc:
+                last = str(exc)
+                if session is not None:
+                    session.close()
+                    session = None
+            else:
+                if expected and identity['target_id'] != expected['target_id']:
+                    raise ValueError('device target differs from the expected image')
+                matches = not expected or (identity['profile'] == expected['profile'] and
+                    identity['build_id'] == expected['build_id'] and identity['image_sha256'] == expected['sha256'])
+                matches = matches and (generation is None or identity['generation'] == generation)
+                last = f"{identity['image_kind']} {identity['build_id'][:12]}, generation {identity['generation']}, healthy={identity['healthy']}"
+                if media is not None:
+                    last += f", library phase={media['phase']}, error={media['error']}"
+                    if matches and media['error']:
+                        raise RuntimeError(f'OS is running but library initialization failed: {last}')
+                if (time.monotonic() < deadline and matches and identity['image_kind'] == 'os' and
+                        identity['healthy'] and (not library or (media and media['phase'] == 3))):
+                    return dict(ready=True, device=device, identity=identity, library=media,
+                                elapsed_seconds=round(time.monotonic()-started, 3))
+            time.sleep(min(.1, max(0, deadline-time.monotonic())))
+    finally:
+        if session is not None:
+            session.close()
+    raise TimeoutError(f'OS readiness was not confirmed within {timeout:g} seconds; last observation: {last}')
 
 
 def wait_upload_ready(session, device, identity, timeout=180):

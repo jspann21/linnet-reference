@@ -372,9 +372,9 @@ throw ('Eject requested once, but storage removal or media unavailability was no
             # opening and read-only HELLO on fresh sessions; the single eject
             # request above is outside this loop and is never replayed.
             session, device, identity = connect(serial_number=link_serial,
-                                                deadline_seconds=20)
+                                                deadline_seconds=60)
         except (OSError, RuntimeError) as exc:
-            raise RuntimeError("Storage ejection confirmed, but Linnet Link did not reconnect; Apple Disk Mode requires a physical Menu+Select restart") from exc
+            raise RuntimeError("Storage ejection confirmed, but Linnet Link did not reconnect within 60 seconds; rediscover the device before another action") from exc
         try:
             report["identity"] = identity
             report["link_serial"] = device["serial_number"]

@@ -9,25 +9,62 @@ from tools.link.music import ACTIONS as MUSIC_ACTIONS
 from tools.studio.build import ROOT
 
 
+DIAGNOSTICS = {
+    'power-state': 'power_state',
+    'storage-performance': 'storage_performance',
+    'storage-schedule': 'storage_schedule_diagnostics',
+    'render-timing': 'runtime_render_timing',
+    'ata-capabilities': 'ata_capabilities',
+    'executive-state': 'executive_workload',
+}
+
+
+def _link_arguments(parser, required=True):
+    selector = parser.add_mutually_exclusive_group(required=required)
+    selector.add_argument('--port', help='Currently enumerated Linnet Link port')
+    selector.add_argument('--serial', help='Stable Linnet USB serial from device info')
+
+
+def _readiness_arguments(parser):
+    parser.add_argument('--library', action='store_true', help='Also wait for the music library to be ready')
+    parser.add_argument('--timeout', type=float, default=60, help='Readiness deadline in seconds (maximum 600)')
+
+
 def register_device(commands):
     device = commands.add_parser("device").add_subparsers(dest="action", required=True)
     retail = device.add_parser("detect-retail", help="Identify a mounted RetailOS iPod and its Linnet target")
     retail.add_argument("--mount", type=Path, required=True)
     retail.add_argument("--output", type=Path)
     info = device.add_parser("info")
-    info.add_argument("--port")
+    _link_arguments(info, required=False)
+    wait = device.add_parser('wait-ready', help='Rediscover by USB serial and verify OS health and optional image/library')
+    wait.add_argument('--serial', required=True)
+    wait.add_argument('--image', type=Path)
+    _readiness_arguments(wait)
+    screenshot = device.add_parser('screenshot', help='Save a CRC-verified native framebuffer as PNG')
+    _link_arguments(screenshot)
+    screenshot.add_argument('--output', type=Path, required=True)
+    from tools.link.platform import BUTTONS
+    input_command = device.add_parser('input', help='Send one wheel event or button press/release and wait for presentation')
+    _link_arguments(input_command)
+    event = input_command.add_mutually_exclusive_group(required=True)
+    event.add_argument('--button', choices=BUTTONS)
+    event.add_argument('--wheel', type=int, choices=range(-64, 65), metavar='-64..64')
     for action, help_text in (
             ('media-info', None),
             ('ui-state', None),
             ('startup-timing', 'Read retained development startup stage timings'),
             ('video-startup-timing', 'Read video startup latency and dropped display frames'),
-            ('boot-timeline', 'Read native Boot and OS initialization timings')):
+            ('boot-timeline', 'Read native Boot and OS initialization timings'),
+            ('platform-state', 'Read input, display and runtime counters'),
+            ('crash-info', 'Read the retained crash record without clearing it'),
+            *((name, f'Read {name.replace("-", " ")} diagnostics') for name in DIAGNOSTICS)):
         options = {'help': help_text} if help_text else {}
         entry = device.add_parser(action, **options)
-        entry.add_argument('--port', required=True)
+        _link_arguments(entry)
     for action in MUSIC_ACTIONS:
         entry=device.add_parser(action)
-        entry.add_argument('--port',required=True)
+        _link_arguments(entry)
         if action in ('player-open','video-open'):entry.add_argument('--path',required=True)
         if action=='player-seek':entry.add_argument('--sample',type=int,required=True)
     history=device.add_parser("prepare-update-history",help="Add optional rollback history records to an identified Disk Mode installation")
@@ -37,7 +74,7 @@ def register_device(commands):
     native.add_argument("--package-sha256",required=True)
     native.add_argument("--port",required=True)
     native_status=device.add_parser("native-status")
-    native_status.add_argument("--port",required=True)
+    _link_arguments(native_status)
     storage_cycle=device.add_parser("storage-cycle")
     storage_cycle.add_argument("--image",type=Path,required=True)
     storage_cycle.add_argument("--scenario",type=Path,required=True)
@@ -54,7 +91,7 @@ def register_device(commands):
     sync_cycle.add_argument("--plan-sha256",required=True)
     for action in ("storage-info","storage-recover","storage-fault","install"):
         entry=device.add_parser(action)
-        entry.add_argument("--port",required=True)
+        _link_arguments(entry)
         if action=="storage-fault":entry.add_argument("--mode",type=int,choices=range(1,6),required=True)
         if action=="install":entry.add_argument("--image",type=Path,required=True)
     eject = device.add_parser("eject", help="Safely eject an explicitly identified Windows USB iPod disk")
@@ -100,11 +137,13 @@ def register_device(commands):
     platform.add_argument("--port", required=True)
     reboot = device.add_parser("reboot")
     reboot.add_argument("--mode", choices=("os", "boot", "disk", "persistent"), required=True)
-    reboot.add_argument("--port", required=True)
+    _link_arguments(reboot)
     ram = device.add_parser("boot")
     ram.add_argument("--mode", choices=("ram",), default="ram")
     ram.add_argument("--image", type=Path, required=True)
-    ram.add_argument("--port", required=True)
+    _link_arguments(ram)
+    ram.add_argument('--wait', action='store_true', help='Verify the running image and new boot generation after acceptance')
+    _readiness_arguments(ram)
     sram = device.add_parser("sram-bootstrap", help="Build and load the Classic's temporary Linnet Link monitor")
     sram_actions = sram.add_subparsers(dest="sram_action", required=True)
     sram_build = sram_actions.add_parser("build")
@@ -153,7 +192,11 @@ def register_device(commands):
 
 
 def run_device(args, emit):
-    if args.action == "detect-retail":
+    if args.action == 'wait-ready':
+        from tools.link.campaign import wait_ready
+        expected = inspect(args.image.read_bytes()) if args.image else None
+        emit(wait_ready(args.serial, expected=expected, library=args.library, timeout=args.timeout))
+    elif args.action == "detect-retail":
         from tools.inspect.retail_device import detect
         result = detect(args.mount)
         if args.output:
@@ -280,11 +323,19 @@ def run_device(args, emit):
             emit(status(args.mount))
     else:
         from tools.link.transport import SerialTransport
-        if args.port:
+        if args.port or args.serial:
             from tools.link.campaign import connect
             if args.action == 'boot':
+                if args.library and not args.wait:
+                    raise ValueError('--library requires --wait for RAM boot')
+                if not 0 < args.timeout <= 600:
+                    raise ValueError('readiness timeout must be in (0, 600] seconds')
+                payload = args.image.read_bytes()
+                requested = inspect(payload)
+                if args.wait and requested['profile'] == 'release':
+                    raise ValueError('release images do not expose Linnet Link readiness')
                 print('Waiting for the device startup endpoint before upload.', file=sys.stderr)
-            session, connected_device, identity = connect(port=args.port,
+            session, connected_device, identity = connect(port=args.port, serial_number=args.serial,
                 deadline_seconds=180 if args.action == 'boot' else 15)
             try:
                 if args.action == 'boot' and not identity.get('healthy'):
@@ -297,7 +348,27 @@ def run_device(args, emit):
                     if any(confirmed[key] != identity[key] for key in ("target_id", "build_id", "generation")):
                         raise RuntimeError("device identity changed during mutation preflight")
                 if args.action == "info":
-                    emit(dict(port=args.port, identity=identity, status=decode(session.status())))
+                    emit(dict(device=connected_device, port=connected_device['port'], identity=identity, status=decode(session.status())))
+                elif args.action in DIAGNOSTICS:
+                    emit(dict(identity=identity,state=getattr(session,DIAGNOSTICS[args.action])()))
+                elif args.action == 'platform-state':
+                    from tools.link.platform import state
+                    emit(dict(identity=identity,state=state(session,identity['generation'])))
+                elif args.action == 'crash-info':
+                    from tools.link.identity import decode_crash
+                    raw=session.crash_get()
+                    emit(dict(identity=identity,crash=decode_crash(raw) if raw else None))
+                elif args.action == 'input':
+                    from tools.link.platform import BUTTONS, send_input
+                    events = [(1,args.wheel)] if args.wheel is not None else [(2,BUTTONS[args.button])]
+                    if args.button and args.button != 'release':
+                        events.append((2,0))
+                    emit(dict(identity=identity,**send_input(session,identity,events)))
+                elif args.action == 'screenshot':
+                    from tools.link.platform import png
+                    descriptor,pixels=session.capture_screen(identity['generation'])
+                    args.output.write_bytes(png(pixels,descriptor['width'],descriptor['height']))
+                    emit(dict(identity=identity,capture=descriptor,output=str(args.output.resolve())))
                 elif args.action == "startup-timing":
                     emit(dict(identity=identity,timing=session.startup_timing(identity['generation'])))
                 elif args.action == "video-startup-timing":
@@ -310,12 +381,8 @@ def run_device(args, emit):
                 elif args.action=="media-info":
                     emit(dict(identity=identity,media=session.media_info()))
                 elif args.action=="ui-state":
-                    import struct
-                    from tools.link.protocol import Command
-                    raw=session.request(Command.UI_STATE)
-                    if len(raw)!=64 or raw[:8]!=b'UIST\0\0\0\0':raise RuntimeError('Invalid native UI report')
-                    names=('magic','reserved','scene','selected','scene_epoch','transitions','paints','painted_pixels','visible_items','dirty','action','arena_used','arena_high','arena_generation','generation','scenes')
-                    emit(dict(identity=identity,ui=dict(zip(names,struct.unpack('<16I',raw)))))
+                    from tools.link.platform import ui_state
+                    emit(dict(identity=identity,ui=ui_state(session,identity['generation'])))
                 elif args.action=="native-status":
                     emit(dict(identity=identity,native=session.native_status()))
                 elif args.action=="storage-info":
@@ -337,16 +404,28 @@ def run_device(args, emit):
                     emit(dict(accepted=True, mode=args.mode, previous_identity=identity))
                 elif args.action == "boot":
                     import hashlib
-                    payload = args.image.read_bytes()
-                    requested = inspect(payload)
                     verify_device_report(args.image,requested,connected_device['serial_number'],identity['target_id'])
+                    print(f'Uploading {len(payload):,} bytes to RAM.', file=sys.stderr)
                     session.upload(payload,image_path=args.image)
+                    print('Verifying the staged image.', file=sys.stderr)
                     if session.verify() != hashlib.sha256(payload).digest():
                         raise RuntimeError("staged image hash mismatch")
                     session.boot_ram()
-                    emit(dict(accepted=True, image=requested, previous_identity=identity))
+                    result=dict(accepted=True, image=requested, previous_identity=identity)
+                    if args.wait:
+                        from tools.link.campaign import wait_ready
+                        print('RAM boot accepted; waiting for the requested image and readiness.', file=sys.stderr)
+                        session.close()
+                        session=None
+                        try:
+                            result['verification']=wait_ready(connected_device['serial_number'], expected=requested,
+                                generation=(identity['generation']+1)&0xffffffff, library=args.library, timeout=args.timeout)
+                        except (ValueError,RuntimeError,OSError) as exc:
+                            raise RuntimeError(f'RAM boot was accepted but verification failed: {exc}; inspect state before another boot') from exc
+                    emit(result)
             finally:
-                session.close()
+                if session is not None:
+                    session.close()
         else:
-            emit(dict(ports=SerialTransport.discover(), note="Select the known Linnet Link port with --port to handshake."))
+            emit(dict(ports=SerialTransport.discover(), note="Select Linnet Link with --serial or its current --port to handshake."))
     return 0

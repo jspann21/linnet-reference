@@ -11,26 +11,37 @@ after a mode change.
 
 ## Everyday USB operations
 
-Discover with `python linnet device info`, then handshake the listed Linnet port:
+Discover with `python linnet device info`, then handshake the listed Linnet USB serial:
 
 ```console
-python linnet device info --port PORT
+python linnet device info --serial DEVICE_SERIAL
 ```
 
+Everyday Link commands accept either `--serial DEVICE_SERIAL` or `--port PORT`.
+Prefer the serial when Windows may assign a different port after reboot.
 Prefix the following commands with `python linnet device`:
 
 | Operation | Command | Result |
 | --- | --- | --- |
-| Temporary image | `boot --port PORT --image path/to/os.los` | Runs in RAM; does not replace the installed image. |
+| Temporary image | `boot --serial DEVICE_SERIAL --image path/to/os.los --wait --library` | Runs in RAM; verifies the exact image, new boot generation, OS health and music library readiness. |
 | Persistent update | `install --port PORT --image path/to/os.los` | Publishes an A/B candidate; requires stopped media and prepared storage. Does not reboot. |
 | Boot installed OS | `reboot --port PORT --mode persistent` | OS saves state, stops media, drains storage, and reboots. |
 | Restart RAM image | `reboot --port PORT --mode os` | Restarts the retained RAM candidate. |
 | Recovery Boot | `reboot --port PORT --mode boot` | Enters recovery when available. |
 | Native Disk Mode | `reboot --port PORT --mode disk` | Enters USB mass storage; rejected while storage is busy. On-device Sync saves and stops first. |
 
-An acknowledgement means accepted, not completed. Rediscover and verify the
-expected image and health after a transition. A release image will not expose Link.
-Recovery Boot also needs prepared, idle storage before persistent reboot.
+Without `--wait`, boot reports acceptance. After any other transition, verify with:
+
+```console
+python linnet device wait-ready --serial DEVICE_SERIAL --image path/to/os.los --library --timeout 60
+```
+
+`--image` requires the exact running build and SHA-256; omit it to accept any
+healthy development OS on that serial. `--library` additionally requires phase 3,
+error 0. Readiness waits only repeat read-only discovery and status requests.
+The timeout defaults to 60 seconds, with a 600-second maximum. A release image
+will not expose Link. Recovery Boot needs prepared, idle storage before persistent
+reboot. RAM boot and install require the image's adjacent device-bound build report.
 
 ## Disk Mode and refresh sessions
 
@@ -45,6 +56,8 @@ python linnet device eject --disk-number DISK_NUMBER --expected-serial STORAGE_S
 
 The placeholders must come from the current discovery. Storage and Link serials
 can have different representations. Native eject flushes and returns to Linnet.
+`--wait-link` allows up to 60 seconds for a handshake; use `wait-ready` afterward
+when the running image, health or library matters.
 
 Older installations using **Apple Disk Mode** may require a plan-bound directory
 refresh before eject. Prepare that return path before switching modes:
@@ -64,35 +77,45 @@ plan, and receipts; see [local artifacts](local-artifacts.md).
 
 ## Diagnostics, input, and screenshots
 
-| CLI command, followed by `--port PORT` | Use |
+| CLI command, followed by `--serial DEVICE_SERIAL` (or `--port PORT`) | Use |
 | --- | --- |
 | `ui-state` | Scene, selection, lifecycle, and paint state |
 | `library-state`, `player-state` | Library readiness and playback state |
 | `player-timing-state` | Decoder and PCM timing |
 | `photos-state`, `video-state` | Media state and counters |
 | `startup-timing`, `video-startup-timing` | Startup milestones |
+| `boot-timeline` | Retained Boot and OS stage timings |
 | `media-info` | Storage identity, power, and error state without waking the drive |
+| `platform-state`, `executive-state` | Input, display, queue and service counters |
+| `storage-performance`, `storage-schedule` | Storage latency, workload and scheduling |
+| `render-timing`, `ata-capabilities`, `power-state` | Rendering costs, cached controller capabilities and power samples |
+| `crash-info` | Retained crash record, or null if absent; leaves the record intact |
 
-[Session](../tools/link/session.py) provides input, capture, logs, and bounded
-storage APIs. Mutations use the current boot generation. Input events have their
-own increasing sequence; reopening a connection does not reset it.
+Platform and media diagnostics require the development OS. Boot exposes identity,
+update and recovery services, including `crash-info`. Compare performance
+counters on the same image, boot generation and counter epoch; saturated counters
+are unusable, and overlapping timings must not be added.
 
-For a short Play press on an already-open session `s`, using its current
-`generation`:
+Send input and capture its result without maintaining a Python script:
 
-```python
-n = s.platform_state()[26]
-s.platform_input(generation, [(n + 1, 2, 2), (n + 2, 2, 0)])
+```console
+python linnet device input --serial DEVICE_SERIAL --wheel 1
+python linnet device input --serial DEVICE_SERIAL --button select
+python linnet device screenshot --serial DEVICE_SERIAL --output out/screen.png
 ```
 
-Link button masks come from [kernel/shell.h](../kernel/shell.h): Menu 1, Play 2,
-Next 4, Previous 8, Select 16; zero releases buttons. These are synthetic events.
-Wait for processed input and completed display frames before checking a result.
+`input` reads the current boot generation and last input sequence, sends once,
+and waits up to five seconds for processed events and completed UI presentation.
+Buttons are `menu`, `play`, `next`, `previous`, `select`, or `release`; a press
+includes its release. Wheel values range from -64 to 64. These are synthetic
+events; physical controls still need observation. Do not repeat Play while priming.
 
-`capture_screen(generation)` returns the frozen native framebuffer after
-transfer and CRC checks. It proves framebuffer contents, not the physical LCD.
-HELLO readiness also does not imply library readiness: wait for library phase 3,
-error 0. Do not repeat Play while the player is priming.
+Screenshots freeze the native framebuffer and verify transfer offsets and CRC
+before writing the PNG. They prove framebuffer contents, not the physical LCD.
+[Session](../tools/link/session.py) also provides bounded storage APIs and raw
+diagnostic records. `READ_LOG` is binary LCD/USB/recovery diagnostics, not a text log
+stream. Advanced input uses increasing event sequences; reconnecting does not
+reset them. Button masks are defined in [kernel/shell.h](../kernel/shell.h).
 
 ## Updates and uncertain results
 
@@ -100,9 +123,11 @@ Storage APIs operate on fixed files, not arbitrary paths or sectors. Uploads are
 bounded and contiguous; the host verifies image identity and target compatibility.
 Hashes provide integrity checks, not signature authentication.
 
-A missing, corrupt, or mismatched acknowledgement poisons the session and may
+A missing, corrupt, extra or mismatched acknowledgement poisons the session and may
 raise `AmbiguousCommand`. Close it, rediscover, and inspect state before deciding
 what to do. Never automatically replay input, reboot, crash-clear, or a write.
+An interrupted transaction also poisons its session. A rejected input batch on
+older firmware may already have applied a prefix; inspect before another action.
 Offset-based upload resume is not implemented.
 
 Legacy native Boot maintenance accepts a fixed reviewed package on explicitly

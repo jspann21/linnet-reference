@@ -2,40 +2,12 @@
 from datetime import datetime, timezone
 import hashlib
 import json
-import struct
 import time
-import zlib
 from tools.inspect.image import inspect, verify_device_report
 from tools.studio.targets import TARGETS
 from .campaign import connect, _run_directory, _save
 from .session import DeviceError
-
-FIELDS = ('magic','generation','flags','selected','scene','events_accepted','events_processed',
-          'event_drops','max_latency_us','queue_high','deadline_high','arena_high','frames_submitted',
-          'frames_completed','lcd_max_us','cop_head','cop_tail','cop_resets','sleep_count','wake_count',
-          'idle_us','idle_entries','physical_buttons','physical_hold','physical_headphones',
-          'synthetic_flags','last_injection','animation_frame','clock_hz','battery_mv','charge_flags','irq_max_us')
-MAGIC = int.from_bytes(b'PLAT','little')
-
-
-def _state(session, generation):
-    result = dict(zip(FIELDS, session.platform_state()))
-    if result['magic'] != MAGIC or result['generation'] != generation:
-        raise RuntimeError('platform state protocol or boot generation changed')
-    return result
-
-
-def _png(pixels, width, height):
-    rows = bytearray()
-    for y in range(height):
-        rows.append(0)
-        for x in range(width):
-            value = struct.unpack_from('<H', pixels, (y*width+x)*2)[0]
-            rows.extend(((value>>11)*255//31, ((value>>5)&63)*255//63, (value&31)*255//31))
-    def chunk(kind, payload):
-        return struct.pack('>I',len(payload))+kind+payload+struct.pack('>I',zlib.crc32(kind+payload))
-    return (b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',width,height,8,2,0,0,0))+
-            chunk(b'IDAT',zlib.compress(rows))+chunk(b'IEND',b''))
+from .platform import state as _state, png as _png
 
 
 def cycle(root, image_path, scenario_path, port, progress=None):
