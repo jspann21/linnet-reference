@@ -58,9 +58,16 @@ def file_records(folder, *, allowed=None, inodes=None, checkpoint=None):
                 if stat.S_ISDIR(info.st_mode):
                     directories.append(path)
                 elif stat.S_ISREG(info.st_mode) and (allowed is None or path.suffix.lower() in allowed):
-                    found.append((path, info))
                     if inodes is not None:
-                        inodes[path] = entry.inode()
+                        # Windows directory stats omit file IDs. Fetch the
+                        # complete stat once so metadata readers can reuse it.
+                        if os.name == 'nt':
+                            info = path.lstat()
+                            if (not stat.S_ISREG(info.st_mode) or
+                                    getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+                                raise ValueError(f"Linked or changed file is unsupported: {path}")
+                        inodes[path] = info.st_ino
+                    found.append((path, info))
     if checkpoint:
         checkpoint()
     return sorted(found, key=lambda item: (str(item[0]).casefold(), str(item[0])))

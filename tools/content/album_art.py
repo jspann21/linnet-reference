@@ -41,21 +41,21 @@ def _identity(row):
     return artist, row.get('album', '')
 
 
-def _base(row):
+def _base(row, *, cache=None):
     artist, album = _identity(row)
-    return _base_identity(artist, album)
+    return _base_identity(artist, album, cache=cache)
 
 
-def _base_identity(artist, album):
+def _base_identity(artist, album, *, cache=None):
     if not artist or not album:
         return None
     key = hashlib.sha256((_normal(artist) + '\0' + _normal(album)).encode()).hexdigest()
     from .host_cache import cache_base
-    return cache_base() / 'album-art' / key
+    return (cache if cache is not None else cache_base()) / 'album-art' / key
 
 
-def cached(row):
-    base = _base(row)
+def cached(row, *, cache=None):
+    base = _base(row, cache=cache)
     path = base.with_suffix('.png') if base else None
     return str(path) if path and path.is_file() else ''
 
@@ -64,7 +64,9 @@ def signature(rows):
     # One library may contain many tracks per album. Check each cached cover
     # only once instead of issuing a host filesystem lookup for every track.
     identities = {_identity(row) for row in rows}
-    bases = {_base_identity(*identity) for identity in identities}
+    from .host_cache import cache_base
+    cache = cache_base() if any(artist and album for artist, album in identities) else None
+    bases = {_base_identity(*identity, cache=cache) for identity in identities}
     stamps = []
     for base in bases:
         if base is None:

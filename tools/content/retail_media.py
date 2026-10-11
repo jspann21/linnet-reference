@@ -504,6 +504,7 @@ def images(root, *, artwork=False, dbids=None, render=True):
 
 def metadata(root, *, tracks_rows=None):
     from .album_art import _identity, cached
+    from .host_cache import cache_base
     rows = available_tracks(root) if tracks_rows is None else tracks_rows
     if not rows:
         return {}
@@ -513,11 +514,15 @@ def metadata(root, *, tracks_rows=None):
     except (OSError, ValueError, UnicodeError, struct.error):
         covers = {}
     cached_covers = {}
+    cache = None
     def artwork(row):
+        nonlocal cache
         if row['dbid'] in covers:
             return covers[row['dbid']]
         album = _identity(row)
         if album not in cached_covers:
-            cached_covers[album] = cached(row)
+            if cache is None and all(album):
+                cache = cache_base()
+            cached_covers[album] = cached(row, cache=cache)
         return cached_covers[album]
     return {path: dict(row, artwork=artwork(row)) for path, row in rows.items()}
