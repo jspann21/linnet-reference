@@ -162,7 +162,7 @@ def _roots(*, errors=None):
     return list(dict.fromkeys(roots))
 
 
-def _inventory(root, errors):
+def _inventory(root, errors, *, include_identity=True):
     root = _plain(root)
     pending = [root]
     while pending:
@@ -171,10 +171,10 @@ def _inventory(root, errors):
             _plain(folder)
             with os.scandir(folder) as entries:
                 for entry in entries:
-                    # Windows DirEntry.stat omits the identity needed to detect
-                    # file replacements before deletion or relocation.
+                    # Size-only scans reuse directory metadata. Mutations need
+                    # complete file identities to detect replacements later.
                     path = Path(entry.path)
-                    info = path.lstat()
+                    info = path.lstat() if include_identity else entry.stat(follow_symlinks=False)
                     if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
                         errors.append(f'Link retained: {entry.path}')
                     elif stat.S_ISDIR(info.st_mode):
@@ -191,14 +191,14 @@ def overview():
     with activity():
         errors, reusable, retained, startup, files = [], 0, 0, 0, 0
         for root in _roots(errors=errors):
-            for path, info in _inventory(root, errors):
+            for path, info in _inventory(root, errors, include_identity=False):
                 if _disposable(path.relative_to(root)):
                     reusable += info.st_size
                     files += 1
                 elif path.name != _MARKER:
                     retained += info.st_size
         installer = storage_root() / 'Installer'
-        for _, info in _inventory(installer, errors):
+        for _, info in _inventory(installer, errors, include_identity=False):
             startup += info.st_size
         return dict(location=str(cache_base()), bytes=reusable, files=files,
                     retained_bytes=retained, startup_bytes=startup,
