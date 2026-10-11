@@ -20,7 +20,8 @@ def connect(port=None, serial_number=None, deadline_seconds=15):
         candidates = [p for p in inventory
                       if (not port or p['port'] == port)
                       and (not serial_number or p['serial_number'] == serial_number)
-                      and (port or serial_number or 'Linnet' in (p['description'] or ''))]
+                      and (port or serial_number or (p.get('vid'), p.get('pid')) == (0x1209, 0x504a)
+                           or 'Linnet' in (p['description'] or ''))]
         if serial_number and len(candidates) > 1:
             raise RuntimeError("multiple USB endpoints have the requested serial identity")
         if not port and not serial_number and len(candidates) > 1:
