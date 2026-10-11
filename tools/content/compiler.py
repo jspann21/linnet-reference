@@ -579,19 +579,22 @@ def generate_c(doc, packed_fonts=None):
             '{'+','.join(str(round(256*(1-(step+1)/frames)**3*(1+.6*(step+1)/frames))) if step<frames else '0'
                          for step in range(8))+'}' for frames in range(1,9))+'};')
         gw,gh=doc['width'],doc['height']*140//176
-        glow=[round(63*max(0,1-((x-(gw-1)/2)/(gw*116/220))**2-((y-gh*62/140)/(gh*84/140))**2)**2)*4+((0,2),(3,1))[y&1][x&1] for x in range(gw) for y in range(gh)]
+        x_falloff=[((x-(gw-1)/2)/(gw*116/220))**2 for x in range(gw)]
+        y_falloff=[((y-gh*62/140)/(gh*84/140))**2 for y in range(gh)]
+        glow=[round(63*max(0,1-x_falloff[x]-y_falloff[y])**2)*4+((0,2),(3,1))[y&1][x&1] for x in range(gw) for y in range(gh)]
         scanline=doc.get('coverflow_scanline',False)
         texture_side,texture_height=(130,174) if scanline else (96,128)
         if scanline:
             for name,count,source in (('preview_x',130,24),('preview_y',174,32)):
                 out.append(f'const uint8_t ln_coverflow_{name}[{count}]={{'+','.join(str(i*source//count) for i in range(count))+'};')
-            pairs=[[],[]];indices=[]
+            pairs=[[],[]];indices=[];palette_indices=[{},{}]
             for y in range(gh):
-                row=[];palette=pairs[y&1]
+                row=[];palette=pairs[y&1];lookup=palette_indices[y&1]
                 for x in range(0,gw,2):
                     pair=(glow[x*gh+y],glow[(x+1)*gh+y])
-                    if pair not in palette:palette.append(pair)
-                    row.append(palette.index(pair))
+                    if pair not in lookup:
+                        lookup[pair]=len(palette);palette.append(pair)
+                    row.append(lookup[pair])
                 indices.append('{'+','.join(map(str,row))+'}')
             assert all(len(palette)<=192 for palette in pairs)
             out.append(f'const uint8_t ln_coverflow_glow_pairs[{gh}][{gw//2}]={{'+','.join(indices)+'};')
