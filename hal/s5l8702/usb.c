@@ -287,6 +287,7 @@ bool ln_usb_poll(void){
 }
 bool ln_usb_connected(void){return running&&configuration&&(storage_mode||(line_state&1))&&!failure;}
 bool ln_usb_rx_pending(void){return rx_size>rx_offset;}
+void ln_usb_rx_hint(uint32_t remaining){(void)remaining;} /* Already uses negotiated 512-byte packets. */
 uint32_t ln_usb_generation(void){return generation;}
 void ln_usb_irq_enable(void){} /* The executive services the bounded USB poller. */
 size_t ln_usb_read(uint8_t *data,size_t size){

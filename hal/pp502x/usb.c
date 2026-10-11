@@ -61,7 +61,7 @@ _Static_assert(sizeof(ln_usb_qh) == 64, "USB queue-head size");
 
 static struct {
     uint32_t generation, started[6];
-    uint16_t requested[6], rx_size, rx_offset;
+    uint16_t requested[6], rx_size, rx_offset, rx_hint;
     uint8_t active[6], running, configured, control_stage, stopped, stop_attempted;
     uint8_t storage_mode, storage_reset;
     uint8_t pending_address, pending_configuration, notify_pending;
@@ -254,7 +254,7 @@ static bool configure(uint8_t value) {
         LINNET_USB_QH[4].capability = LINNET_USB_QH[5].capability = (bulk_packet() << 16) | 0x20000000u;
     ln_usb.configured = value;
     if (value) ln_usb.ever_configured = 1;
-    ln_usb.rx_size = ln_usb.rx_offset = 0;
+    ln_usb.rx_size = ln_usb.rx_offset = ln_usb.rx_hint = 0;
     ln_usb.line_state = 0;
     ln_usb.notify_pending = 0;
     ln_usb.storage_reset = 0;
@@ -398,6 +398,7 @@ static bool setup_request(const uint8_t setup[8]) {
                 diagnostic_save(1);
             if (!flush_pipes(0x00040004u)) return false;
             ln_usb.rx_size = ln_usb.rx_offset = 0;
+            ln_usb.rx_hint = 0;
             ++ln_usb.generation;
         }
         ln_usb.line_state = value;
@@ -508,7 +509,7 @@ static bool controller_start(void) {
     endpoints();
     ln_usb.control_stage = LINNET_USB_IDLE;
     ln_usb.pending_address = ln_usb.pending_configuration = 0xffu;
-    ln_usb.rx_size = ln_usb.rx_offset = 0;
+    ln_usb.rx_size = ln_usb.rx_offset = ln_usb.rx_hint = 0;
     ln_usb.line_state = 0; ln_usb.notify_pending = 0;
     ln_usb.line[0] = 0; ln_usb.line[1] = 0xc2; ln_usb.line[2] = 1;
     ln_usb.line[3] = ln_usb.line[4] = ln_usb.line[5] = 0; ln_usb.line[6] = 8;
@@ -585,7 +586,7 @@ bool ln_usb_poll(void) {
         LINNET_USB_SETUP = LINNET_USB_SETUP;
         if (!wait_mask(&LINNET_USB_PRIME, 0xffffffffu, false, 20000u)) goto failed;
         if (!flush_pipes(0xffffffffu)) goto failed;
-        ln_usb.configured = 0; ln_usb.rx_size = ln_usb.rx_offset = 0;
+        ln_usb.configured = 0; ln_usb.rx_size = ln_usb.rx_offset = ln_usb.rx_hint = 0;
         ln_usb.control_stage = LINNET_USB_IDLE;
         ln_usb.pending_address = ln_usb.pending_configuration = 0xffu;
         ln_usb.line_state = 0; ln_usb.notify_pending = 0;
@@ -630,12 +631,13 @@ bool ln_usb_poll(void) {
         }
     }
     if (ln_usb_connected() && !ln_usb.storage_reset) {
-        /* Receive one negotiated bulk packet per dTD. Link's exact 64-byte
-         * writes (notably UPLOAD_BEGIN) need not append a ZLP; a 512-byte dTD
-         * would wait for more data while the host waits for its command ACK.
-         * High-speed Disk Mode instead receives complete 512-byte packets. */
+        /* Start each Link frame with one packet: exact 64-byte commands need
+         * no ZLP. Once its header is validated, receive whole packets within
+         * the known remainder without waiting beyond that frame's boundary. */
+        uint32_t receive_size=bulk_packet();
+        if(!ln_usb.storage_mode && ln_usb.rx_hint>receive_size)receive_size=ln_usb.rx_hint;
         if (!ln_usb.active[4] && !ln_usb.rx_size && !storage_rx_bytes &&
-            !prime(4, LINNET_USB_RX, (uint16_t)bulk_packet())) goto failed;
+            !prime(4, LINNET_USB_RX, (uint16_t)receive_size)) goto failed;
         if (!ln_usb.storage_mode && ln_usb.notify_pending && !ln_usb.active[3]) {
             const uint8_t note[10] = {0xa1,0x20,0,0,0,0,2,0,3,0};
             for (unsigned i = 0; i < 10; ++i) LINNET_USB_NOTIFY[i] = note[i];
@@ -665,6 +667,11 @@ failed:
 }
 
 bool ln_usb_rx_pending(void) { return ln_usb.rx_size != ln_usb.rx_offset; }
+
+void ln_usb_rx_hint(uint32_t remaining) {
+    if(remaining>LINNET_USB_PACKET)remaining=LINNET_USB_PACKET;
+    ln_usb.rx_hint=(uint16_t)(remaining&~(LINNET_USB_FULL_SPEED_PACKET-1u));
+}
 
 size_t ln_usb_read(uint8_t *output, size_t capacity) {
     if (!output || !ln_usb_connected()) return 0;

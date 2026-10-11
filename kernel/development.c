@@ -186,6 +186,7 @@ void ln_development_poll(void) {
             ln_recovery_return(11);
         }
         if (parsed != 1) continue;
+        ln_usb_rx_hint(0);
 #if defined(LINNET_IMAGE_OS)
         LN_BOOT_STAMP(LN_BT_OS_REQUEST);
 #endif
@@ -239,6 +240,7 @@ void ln_development_poll(void) {
         }
         ln_recovery_feed();
     }
+    ln_usb_rx_hint(parser.expected-parser.used);
 #if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_OS)
     /* Reading retires the receive buffer. Reprime before the executive sleeps,
      * including when a packet ended partway through a Link frame. */

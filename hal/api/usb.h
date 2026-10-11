@@ -22,6 +22,9 @@ void ln_usb_diagnostics(uint32_t output[8]);
 /* Partial transfers permitted; zero means backpressure or disconnected.
  * read/write consume at most 512 bytes. Poll between calls. */
 size_t ln_usb_read(uint8_t *output, size_t capacity);
+/* Optional receive sizing hint for the current validated frame remainder.
+ * Zero restores one-packet reception. Never changes an active DMA transfer. */
+void ln_usb_rx_hint(uint32_t remaining);
 size_t ln_usb_write(const uint8_t *input, size_t length);
 /* Deadline is absolute ln_time_us(), at most 2 seconds in the future.
  * True proves DMA completion of accepted TX bytes, including any final ZLP. */
