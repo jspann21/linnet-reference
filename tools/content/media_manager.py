@@ -202,12 +202,12 @@ def _identify(identity, detected=None):
                              f"{detected['retail_usb']['vid']:04X}:{detected['retail_usb']['pid']:04X}"),
                 media_profile=media_profile(detected["target_id"]))
     if identity.get("native_target_id"):
-        result["media_cache_disk_serial"] = _retail_cache_serial(result)
+        result["media_cache_disk_serial"], result["media_cache_volume_scope"] = _retail_cache_identity(result)
     return result
 
 
-def _retail_cache_serial(identity):
-    """Reuse a verified cache from this volume's former Apple Disk Mode identity."""
+def _retail_cache_identity(identity):
+    """Reuse the proven disk and volume cache keys across USB storage modes."""
     global _RETAIL_ADOPTION
     from tools.inspect.retail_device import _sysinfo
     root = Path(identity["root"])
@@ -218,11 +218,11 @@ def _retail_cache_serial(identity):
         'disk_unique_id', 'partition_number', 'sector_bytes', *fields)))
     cached = _RETAIL_ADOPTION
     if cached is not None and cached[0] == key:
-        serial, receipt, stamp = cached[1:]
+        serial, scope, receipt, stamp = cached[1:]
         try:
             info = _plain(receipt, base)
             if info is not None and _receipt_stamp(info) == stamp:
-                return serial
+                return serial, scope
         except (OSError, ValueError):
             pass
     serial_hint = ""
@@ -256,11 +256,13 @@ def _retail_cache_serial(identity):
             if (same_device and
                     receipt.parent == _cache_directory(serial, identity["volume_serial"]) and
                     all(saved.get(field) == identity[field] for field in fields)):
-                _RETAIL_ADOPTION = (key, serial, receipt, _receipt_stamp(info))
-                return serial
+                scope = saved.get('media_cache_volume_scope') or saved.get('volume_unique_id')
+                scope = scope if isinstance(scope, str) and scope else None
+                _RETAIL_ADOPTION = (key, serial, scope, receipt, _receipt_stamp(info))
+                return serial, scope
     except (OSError, ValueError, UnicodeError, KeyError, TypeError):
         pass
-    return None
+    return None, None
 
 
 def supported_kinds(identity):
@@ -982,6 +984,7 @@ def _convert_audio(source, output, ffmpeg, checkpoint, max_bytes, expected_frame
 
 def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress,
                     *, cache, cancelled, ffmpeg=None, ffprobe=None,
+                    cache_scope=None,
                     stage_progress=lambda current, total, phase: None,
                     completed_batch=lambda items: None):
     # Queue a bounded set of writes before flushing and reading them back. On
@@ -1240,17 +1243,18 @@ def _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, p
         if seek_state_changed:
             _save_seek_state(seek_state_path, seek_state)
         if music_seeds:
-            _seed_imported_music(root, cache, music_seeds)
+            _seed_imported_music(root, cache, music_seeds, cache_scope=cache_scope)
         start += len(batch)
         stage_progress(start, len(plan), 'Copying originals')
 
 
-def _seed_imported_music(root, cache, rows):
+def _seed_imported_music(root, cache, rows, *, cache_scope=None):
     """Reuse host-read tags and artwork after the verified iPod copy is published."""
     import sqlite3
     from .music import _MetadataCache
     try:
-        saved = _MetadataCache(cache_data_directory(cache) / 'music-metadata.sqlite3')
+        saved = _MetadataCache(cache_data_directory(cache) / 'music-metadata.sqlite3',
+                               source_root=root, source_scope=cache_scope)
     except (OSError, sqlite3.Error):
         return
     try:
@@ -2256,7 +2260,7 @@ def run(identity, selected, pending=(), **options):
 
 def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
                    aac_recovery, flac_recovery, record, stage_progress=lambda fraction: None,
-                   force=False, cancelled=lambda: False, audio_journal=None):
+                   force=False, cancelled=lambda: False, audio_journal=None, cache_scope=None):
     from . import SourceError
     from .aac_index import prepare_file as prepare_aac
     from .flac_index import prepare_file as prepare_flac
@@ -2358,7 +2362,7 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
                 music_seeds.append((path, after, *metadata_seed))
                 seed_bytes += len(metadata_seed[1] or b'')
                 if len(music_seeds) >= 128 or seed_bytes >= 32 * 1024 * 1024:
-                    _seed_imported_music(root, cache, music_seeds)
+                    _seed_imported_music(root, cache, music_seeds, cache_scope=cache_scope)
                     music_seeds.clear()
                     seed_bytes = 0
             if not outcome and _receipt_stamp(before) != _receipt_stamp(after):
@@ -2373,7 +2377,7 @@ def _prepare_audio(root, cache, skipped, ffprobe, checkpoint, progress, report,
             recent.pop(0)
         completed[kind] += 1
     if music_seeds:
-        _seed_imported_music(root, cache, music_seeds)
+        _seed_imported_music(root, cache, music_seeds, cache_scope=cache_scope)
     seek_state = {key: value for key, value in seek_state.items() if key in seen}
     _save_seek_state(seek_state_path, seek_state)
     stage_progress(1)
@@ -2395,6 +2399,7 @@ def _prepare_music(root, cache, identity, skipped, *, ffprobe, verification, for
                       f'{event["current"]+1}/{event["total"]}: {Path(event["file"]).name}')
     preparation = compile_music(root, stage, ffprobe=ffprobe or shutil.which("ffprobe"), device_root=root,
                   verification=verification, cache_path=cache / "music-metadata.sqlite3",
+                  cache_scope=identity.get('media_cache_volume_scope'),
                   bypass_cache=force, progress=music_progress, include_roots=source_folders(root, "Music"),
                   excluded=skipped, target=identity["target_id"], cancelled=cancelled)
     report["steps"].append(dict(kind="Music", metadata=preparation.get("cache"), integrity=verification))
@@ -3076,6 +3081,7 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                 _save(state_path, state)
         _copy_additions(plan, root, report, owned_temporaries, checkpoint, record, progress,
                         cache=cache, cancelled=cancelled, ffmpeg=ffmpeg, ffprobe=ffprobe,
+                        cache_scope=identity.get('media_cache_volume_scope'),
                         completed_batch=include_copied,
                         stage_progress=lambda current, total, name:
                             emit_stage(name, 0, current / total if total else 1))
@@ -3160,7 +3166,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
                                                           checkpoint, progress, report, aac_recovery, flac_recovery, record,
                                                           stage_progress=lambda fraction: emit_stage('Preparing audio seeks', unit, fraction),
                                                           force=force, cancelled=cancelled,
-                                                          audio_journal=journal_audio)
+                                                          audio_journal=journal_audio,
+                                                          cache_scope=identity.get('media_cache_volume_scope'))
                 if prepared or renamed:
                     # Renames and seek atoms change the source fingerprint.
                     item = scan(root, ('Music',), skipped=skipped, fingerprint_kinds=('Music',),

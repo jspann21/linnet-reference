@@ -1032,9 +1032,12 @@ _EMBEDDED_FALLBACK = object()
 
 class _MetadataCache:
     """Disposable acceleration only; unreadable caches never block an import."""
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, source_root=None, source_scope=None):
         self.connection = None
-        self.source_keys = {}
+        # A guarded receipt can bind Apple's and native USB's volume names.
+        # Each cache hit still requires the complete current file stamp.
+        self.source_keys = ({str(source_root): source_scope}
+                            if source_root is not None and source_scope else {})
         self.pending_writes = 0
         self.coverflow_writes = 0
         self.render_writes = 0
@@ -1563,6 +1566,7 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
                   target: str | None = None,
                   device_root: Path | None = None, progress: Callable[[dict], None] | None = None,
                   verification: str | None = None, cache_path: Path | None = None,
+                  cache_scope: str | None = None,
                   bypass_cache: bool = False,
                   include_roots: list[Path] | tuple[Path, ...] | None = None,
                   excluded: set[str] | tuple[str, ...] | None = None,
@@ -1609,7 +1613,7 @@ def compile_music(source: Path, output: Path, *, ffprobe: str | None = None,
             if any(cache_file == folder or folder in cache_file.parents or cache_file in folder.parents
                    for folder in (source, output, Path(device_root).resolve())):
                 raise ValueError("metadata cache must be outside the iPod, source and staged output")
-            cache = _MetadataCache(cache_file)
+            cache = _MetadataCache(cache_file, source_root=source, source_scope=cache_scope)
         if output.exists():
             # Preserve unrelated staged content without copying obsolete music.
             managed = {"MUSIC", "ART", "COVERS.CFL", "BROWSE.BIN", "LIBRARY.PDB", "LIBRARY.TMP", "music-manifest.json"}

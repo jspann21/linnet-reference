@@ -215,7 +215,7 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
     retail = retail_metadata(root, tracks_rows=retail_tracks)
     from .host_state import cache_data_directory
     source_metadata = _source_music_metadata(root, music_records, cache_data_directory(cache_root(identity)), retail, metadata,
-                                             identity['target_id'])
+                                             identity['target_id'], cache_scope=identity.get('media_cache_volume_scope'))
     for kind in manager.KINDS:
         allowed = manager.extensions(kind)
         records = records_by_kind[kind]
@@ -291,12 +291,12 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
     return result
 
 
-def _source_music_metadata(root, records, cache_root, retail=None, published=None, target=None):
+def _source_music_metadata(root, records, cache_root, retail=None, published=None, target=None, *, cache_scope=None):
     from .music import _MetadataCache, _quick_metadata, _pcm, _number, _album_artist, compatibility_issue, EXTENSIONS
     records = [(path, info) for path, info in records if path.suffix.lower() in EXTENSIONS]
     if not records:
         return {}
-    cache = _MetadataCache(cache_root / 'music-metadata.sqlite3')
+    cache = _MetadataCache(cache_root / 'music-metadata.sqlite3', source_root=root, source_scope=cache_scope)
     result = {}
     prefetched = {}
     relatives = []

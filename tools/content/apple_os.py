@@ -1216,7 +1216,8 @@ def _metadata(identity, files, *, ffprobe=None, cancelled=lambda: False,
     result = []
     aliases = {}
     probe = ffprobe or shutil.which('ffprobe')
-    with closing(_MetadataCache(database)) as cache:
+    with closing(_MetadataCache(database, source_root=root,
+                                source_scope=identity.get('media_cache_volume_scope'))) as cache:
         for index, (path, info) in enumerate(files):
             _checkpoint(cancelled)
             if index % 128 == 0:
