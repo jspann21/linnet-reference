@@ -1818,8 +1818,9 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             for entry in entries:
                 _check_cancel(cancelled)
                 if entry.is_dir(follow_symlinks=False):
-                    # Match pathlib's traversal: never recurse into symlinks.
-                    if not entry.is_symlink():
+                    # Never recurse into symlinks or Windows directory junctions.
+                    if not entry.is_symlink() and (os.name != 'nt' or
+                            entry.stat(follow_symlinks=False).st_reparse_tag != stat.IO_REPARSE_TAG_MOUNT_POINT):
                         directories.append(entry.path)
                 elif Path(entry.name).suffix.lower() in EXTENSIONS and entry.is_file():
                     path = Path(entry.path)
