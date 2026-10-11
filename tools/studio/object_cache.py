@@ -11,6 +11,7 @@ import json
 import os
 from functools import lru_cache
 from pathlib import Path
+import stat
 import tempfile
 
 
@@ -219,8 +220,29 @@ def compile_object(command, root, generated, compiler_sha256, name_inventory, ca
 def trim(cache_root):
     """Remove oldest disposable versions only after an invocation has linked."""
     try:
-        entries = [(path, path.stat()) for path in cache_root.glob('*/*/*.bin')]
+        root_info = cache_root.lstat()
+        if (not stat.S_ISDIR(root_info.st_mode) or
+                getattr(root_info, 'st_file_attributes', 0) & 0x400):
+            return
+        entries, directories = [], [(cache_root, 0)]
+        while directories:
+            folder, depth = directories.pop()
+            with os.scandir(folder) as children:
+                for child in children:
+                    if depth == 2 and not os.path.normcase(child.name).endswith('.bin'):
+                        continue
+                    # Windows enumeration already supplies size and mtime.
+                    # Stay at the cache's fixed depth and never follow links.
+                    info = child.stat(follow_symlinks=False)
+                    if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+                        continue
+                    if depth < 2 and stat.S_ISDIR(info.st_mode):
+                        directories.append((child.path, depth + 1))
+                    elif depth == 2 and stat.S_ISREG(info.st_mode):
+                        entries.append((Path(child.path), info))
         total = sum(info.st_size for _, info in entries)
+        if total <= MAX_CACHE_BYTES:
+            return
         for path, info in sorted(entries, key=lambda item: item[1].st_mtime_ns):
             if total <= MAX_CACHE_BYTES:
                 break
