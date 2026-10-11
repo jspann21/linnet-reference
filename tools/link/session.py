@@ -61,19 +61,24 @@ class Session:
         self.image_size = 0
         self.handoff_until = 0.0
 
-    def _send(self, command: Command, payload: bytes, deadline: float) -> Frame:
+    def _send(self, requests: list[tuple[Command, bytes]], deadline: float) -> list[Frame]:
         if self.poisoned:
             raise AmbiguousCommand("session requires reconnect and state inspection")
-        if self.sequence == 0xFFFFFFFF:
+        if self.sequence > 0xFFFFFFFF - len(requests):
             raise ProtocolError("sequence exhausted; open a new session")
-        self.sequence += 1
-        frame = Frame(command, self.sequence, payload)
-        packet = frame.encode()
+        sent, packets = [], []
+        for command, payload in requests:
+            self.sequence += 1
+            frame = Frame(command, self.sequence, payload)
+            packets.append(frame.encode())
+            sent.append(frame)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError("command deadline expired before write")
-        self.transport.write(packet, remaining)
-        return frame
+        # The existing four-frame window shares one transport write; each frame
+        # retains its own CRC, sequence and acknowledgement retirement.
+        self.transport.write(b''.join(packets), remaining)
+        return sent
 
     def _ack(self, sent: Frame, deadline: float) -> bytes:
         while not self.pending:
@@ -99,7 +104,7 @@ class Session:
             raise ValueError("transaction timeout must be in (0, 660] seconds")
         deadline = time.monotonic() + duration
         try:
-            sent = [self._send(command, payload, deadline) for command, payload in requests]
+            sent = self._send(requests, deadline)
             replies = [self._ack(frame, deadline) for frame in sent]
             if self.pending or self.parser.buffer:
                 raise ProtocolError('unsolicited bytes after the final acknowledgement')
