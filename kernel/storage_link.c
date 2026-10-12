@@ -24,9 +24,8 @@
 #include "services/video/mp4.h"
 #endif
 #endif
-static uint8_t ln_storage_reply[1024];
 static uint8_t ln_storage_restart_pending;
-int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r){
+int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r,uint8_t *ln_storage_reply){
     if(q->command<80||q->command>103||q->flags||!q->sequence||q->length>1024||(q->length&&!q->payload))return 0;
     uint32_t generation=ln_recovery_generation();
     r->command=q->command;r->sequence=q->sequence;r->flags=3;r->payload=ln_storage_reply;r->length=8;

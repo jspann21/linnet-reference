@@ -23,6 +23,9 @@ extern _Noreturn void ln_panic(uint32_t reason, uint32_t pc, uint32_t status);
 static struct ln_loader loader;
 static ln_link_backend backend;
 static ln_link_dispatcher dispatcher;
+/* One command owns reply until encoding and transmission finish. Runtime
+ * progress polls USB DMA without recursively dispatching another command. */
+_Static_assert(sizeof dispatcher.reply >= LINNET_LINK_MAX_PAYLOAD, "Link reply capacity");
 int ln_development_stage_busy(void){return dispatcher.staging;}
 static ln_link_parser parser;
 static uint32_t usb_generation;
@@ -213,13 +216,13 @@ void ln_development_poll(void) {
         }
 #endif
 #if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_OS)
-        handled = ln_platform_link_dispatch(&request, &response);
+        handled = ln_platform_link_dispatch(&request, &response, dispatcher.reply);
 #if defined(LINNET_AUDIO)
-        if(!handled)handled=ln_audio_link_dispatch(&request,&response);
+        if(!handled)handled=ln_audio_link_dispatch(&request,&response,dispatcher.reply);
 #endif
 #endif
 #if defined(LINNET_STORAGE)
-        if (!handled) handled = ln_storage_link_dispatch(&request, &response);
+        if (!handled) handled = ln_storage_link_dispatch(&request, &response, dispatcher.reply);
 #endif
         if (!handled && !ln_link_dispatch(&dispatcher, &request, &response)) continue;
         size_t size = ln_link_encode(&response, transmit_bytes, sizeof transmit_bytes);

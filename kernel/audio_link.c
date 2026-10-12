@@ -17,9 +17,8 @@
 #if defined(LINNET_VIDEO)
 #include "services/video/video.h"
 #endif
-static uint8_t reply[128];
 static int16_t pcm[508];
-int ln_audio_link_dispatch(const ln_link_frame *q,ln_link_frame *r){
+int ln_audio_link_dispatch(const ln_link_frame *q,ln_link_frame *r,uint8_t *reply){
     if(q->command<112||q->command>124)return 0;
 #if !defined(LINNET_PHOTOS)
     if(q->command==121)return 0;

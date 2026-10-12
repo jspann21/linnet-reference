@@ -14,7 +14,6 @@
 static uint16_t ln_platform_capture[LINNET_UI_WIDTH * LINNET_UI_HEIGHT]
     __attribute__((section(".dev_capture"), aligned(32)));
 static uint32_t ln_platform_capture_id, ln_platform_capture_generation;
-static uint8_t ln_platform_reply[LINNET_LINK_MAX_PAYLOAD];
 
 /* IEEE CRC32, reflected polynomial; one lookup per serialized byte. */
 static const uint32_t ln_platform_crc_table[256] = {
@@ -52,7 +51,7 @@ static const uint32_t ln_platform_crc_table[256] = {
     0xb3667a2eu, 0xc4614ab8u, 0x5d681b02u, 0x2a6f2b94u, 0xb40bbe37u, 0xc30c8ea1u, 0x5a05df1bu, 0x2d02ef8du,
 };
 
-int ln_platform_link_dispatch(const ln_link_frame *request, ln_link_frame *response) {
+int ln_platform_link_dispatch(const ln_link_frame *request, ln_link_frame *response,uint8_t *ln_platform_reply) {
     if (request->command < 64 || request->command > 71) return 0;
     if (request->flags || !request->sequence || request->length > LINNET_LINK_MAX_PAYLOAD ||
         (request->length && !request->payload)) return 0;
