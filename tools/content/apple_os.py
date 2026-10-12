@@ -453,7 +453,7 @@ def inspect(identity, *, records_by_kind=None, retail_tracks=None):
             try:
                 from .retail_media import tracks
                 count = len(retail_tracks) if retail_tracks is not None else len(tracks(root))
-                library = f'Apple music database lists {count:,} track' + ('' if count == 1 else 's') + '. '
+                library = f'Apple library lists {count:,} item' + ('' if count == 1 else 's') + '. '
             except (OSError, ValueError, UnicodeError, struct.error):
                 library = 'Apple music database could not be read. '
         else:
@@ -474,6 +474,15 @@ def inspect(identity, *, records_by_kind=None, retail_tracks=None):
             retail_tracks = {}
             library_issue = 'The existing Apple library could not be read. Review it before updating.'
     library_count = len(retail_tracks)
+    from .retail_media import media_kind
+    library_counts = dict(Music=0, Videos=0, Other=0)
+    for track in retail_tracks.values():
+        library_counts[media_kind(track)] += 1
+    library_status = ' · '.join(
+        f'{library_counts[kind]:,} {singular if library_counts[kind] == 1 else plural}'
+        for kind, singular, plural in (('Music', 'audio track', 'audio tracks'),
+                                      ('Videos', 'video', 'videos'), ('Other', 'other item', 'other items'))
+        if library_counts[kind]) + ' listed in Apple OS'
     state = _load(identity)
     selected = [value for value in state.get('folders', [])
                 if isinstance(value, str) and value.split('/')[0] in allowed and (root / value).is_dir()]
@@ -535,7 +544,7 @@ def inspect(identity, *, records_by_kind=None, retail_tracks=None):
     details = [{'kind': 'Music', 'count': len(music), 'status': music_status}]
     if library_count:
         details.insert(0, {'kind': 'Apple library', 'count': library_count,
-                           'status': 'Already listed in Apple OS'})
+                           'status': library_status})
     photos = _files(root, selected, 'Photos', media.extensions('Photos'), records_by_kind)
     photo_db = root / 'Photos/Photo Database'
     photo_digest = (_hash(photo_db) if (photos or published.get('photo_count', 0)) and
@@ -606,7 +615,7 @@ def inspect(identity, *, records_by_kind=None, retail_tracks=None):
     elif selected:
         status = 'Ready in Apple OS'
     elif library_count:
-        status = f'{library_count:,} tracks already in Apple OS'
+        status = library_status
     else:
         status = 'Choose folders to make available in Apple OS'
     return {'supported': True, 'folders': folders, 'selected': selected,

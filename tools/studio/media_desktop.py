@@ -642,7 +642,7 @@ def build_preparation_page(window):
         window.prep_cards[kind] = card
         check = CheckBox(kind); check.setChecked(True); check.setMinimumWidth(110); window.prep_checks[kind] = check; row.addWidget(check)
         text = box(spacing=5); text.addWidget(label(descriptions[kind], 'cardTitle'))
-        state = label('Connect an iPod to check this library.', 'muted'); window.prep_labels[kind] = state; text.addWidget(state); row.addLayout(text, 1)
+        state = label('Connect an iPod to check this library.', 'muted', True); window.prep_labels[kind] = state; text.addWidget(state); row.addLayout(text, 1)
         if kind == 'Videos':
             window.choose_videos_button = button('Choose videos', window.choose_videos); row.addWidget(window.choose_videos_button)
             window.video_repair_button = button('Review catalog backups', window.review_video_catalog)
@@ -1541,9 +1541,10 @@ class MediaWindow(QMainWindow):
         for field in ('artist', 'album', 'genre', 'status'):
             if row.get(field):
                 layout.addWidget(label(f'{field.title()}   {row[field]}', 'muted', True))
-        if row.get('category') == 'error':
+        if row.get('category') == 'error' or row.get('apple_only'):
             layout.addWidget(label(row.get('description') or 'This catalog needs repair before preparation.', 'notice', True))
-            layout.addWidget(label(row.get('error', ''), 'muted', True))
+            if row.get('error'):
+                layout.addWidget(label(row['error'], 'muted', True))
         layout.addWidget(label(size(row['bytes']), 'muted'))
         location = label(row['path'], 'muted', True); location.setTextInteractionFlags(Qt.TextSelectableByMouse); layout.addWidget(location)
         actions = box(horizontal=True); actions.addWidget(button('Show in folder', lambda: self.open_folder(row['path']), None, 'folder')); actions.addStretch(); actions.addWidget(button('Done', dialog.accept, 'primary')); layout.addLayout(actions)
@@ -2565,10 +2566,21 @@ class MediaWindow(QMainWindow):
                 scope = ('All existing videos included' if self.video_mode == 'all' else
                          f'{len(self.video_selection)} selected for conversion' if self.video_mode == 'selected' else
                          'No conversions selected')
-                text.setText(f"{info['count']:,} files · {self.readiness.get(kind, 'Not checked')} · " +
+                text.setText(f"{info['count']:,} {'file' if info['count'] == 1 else 'files'} · {self.readiness.get(kind, 'Not checked')} · " +
                              scope)
             else:
-                text.setText(f"{info['count']:,} files · {self.readiness.get(kind, 'Not checked')}")
+                summary = f"{info['count']:,} {'file' if info['count'] == 1 else 'files'} · {self.readiness.get(kind, 'Not checked')}"
+                if kind == 'Music':
+                    differences = []
+                    if info.get('apple_only'):
+                        count = info['apple_only']
+                        differences.append(f"{count:,} Apple-only {'track' if count == 1 else 'tracks'} excluded")
+                    if info.get('not_in_apple'):
+                        count = info['not_in_apple']
+                        differences.append(f"{count:,} {'file' if count == 1 else 'files'} not listed in Apple OS")
+                    if differences:
+                        summary += '\n' + ' · '.join(differences)
+                text.setText(summary)
         self.queue_model.reset([dict(title=Path(path).name, kind=kind, path=path,
                                      status=self.queue_status(kind, path))
                                 for kind, path in self.pending],
@@ -2592,8 +2604,9 @@ class MediaWindow(QMainWindow):
             self.apple_eligibility.setVisible(bool(eligibility))
             lines = [self.apple_info['status']]
             for entry in self.apple_info['details']:
-                if (entry['kind'] == 'Apple library' and
-                        self.apple_info['status'] == f"{entry['count']:,} tracks already in Apple OS"):
+                if entry['kind'] == 'Apple library':
+                    if entry['status'] != self.apple_info['status']:
+                        lines.append(entry['status'])
                     continue
                 if entry['count'] or entry['status'] == 'Needs update':
                     lines.append(f"{entry['kind']}: {entry['count']:,} files · {entry['status']}")

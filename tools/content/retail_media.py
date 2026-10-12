@@ -169,6 +169,19 @@ def available_tracks(root, *, known_records=None, known_inodes=None):
         return {}
 
 
+def media_kind(track):
+    """Classify Apple's movie, music-video and TV-show bitfields separately."""
+    media_type = track.get('media_type', 1)
+    if media_type & ((1 << 1) | (1 << 5) | (1 << 6)):
+        return 'Videos'
+    if media_type & ((1 << 22) | (1 << 23)):
+        return 'Other'
+    # Older databases omit media_type; these extensions still identify video.
+    if Path(track.get('path', '')).suffix.lower() in ('.m4v', '.mov'):
+        return 'Videos'
+    return 'Music'
+
+
 def _tracks_cache_path(root):
     from .host_cache import cache_base
     base = cache_base() / 'retail'

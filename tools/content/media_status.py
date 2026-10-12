@@ -271,6 +271,9 @@ def _library_snapshot(identity):
     rows = media_library.list_items(identity, records_by_kind=records, retail_photos=retail_photos,
                                     retail_tracks=retail_tracks, category_errors=category_errors,
                                     _validated_identity=True)
+    inventory['Music']['apple_only'] = sum(row.get('apple_only', False) for row in rows)
+    inventory['Music']['not_in_apple'] = (sum(path.casefold() not in retail_tracks
+                                            for path in inventory['Music']['files']) if retail_tracks else 0)
     for row in rows:
         if row.get('category') == 'error' and row.get('kind') in inventory:
             inventory[row['kind']].setdefault('errors', []).append(

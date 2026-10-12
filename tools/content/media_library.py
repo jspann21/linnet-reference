@@ -208,7 +208,7 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
     metadata = _music_metadata(root, music_records=music_records,
                                music_inodes=getattr(records_by_kind, 'inodes', None),
                                target=identity['target_id'])
-    from .retail_media import available_tracks, metadata as retail_metadata, images as retail_images
+    from .retail_media import available_tracks, media_kind, metadata as retail_metadata, images as retail_images
     if retail_tracks is None:
         retail_tracks = available_tracks(root, known_records=music_records,
                                          known_inodes=getattr(records_by_kind, 'inodes', None))
@@ -225,10 +225,14 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
         for path, info in records:
             if kind == 'Videos' and str(path).casefold() in published_paths:
                 continue
-            if path.suffix.lower() in allowed:
-                key = str(path).casefold()
+            key = str(path).casefold()
+            apple_track = retail_tracks.get(key)
+            apple_only = (kind == 'Music' and path.suffix.lower() not in allowed and
+                          apple_track is not None and media_kind(apple_track) == 'Music')
+            if path.suffix.lower() in allowed or apple_only:
                 indexed = metadata.get(key, {}) if kind == 'Music' else {}
-                tags = dict(indexed, **source_metadata.get(key, {})) if kind == 'Music' else retail.get(key, {})
+                tags = (dict(indexed, **source_metadata.get(key, {})) if kind == 'Music' and not apple_only
+                        else retail.get(key, {}))
                 parent = str(path.parent)
                 if parent != last_parent:
                     parent_managed = _apple_managed(path)
@@ -237,14 +241,16 @@ def list_items(identity, *, records_by_kind=None, retail_photos=None, retail_tra
                 if indexed.get('artwork') and tags.get('artwork') == str(path):
                     tags['artwork'] = indexed['artwork']
                 result.append(_row('original', kind, tags.get('title') or path.name, path,
-                    ('Not supported on this iPod' if kind == 'Videos' and path.suffix.lower() not in source_video_extensions
+                    ('Apple OS only · ' + path.suffix.lower() + ' audio' if apple_only
+                     else 'Not supported on this iPod' if kind == 'Videos' and path.suffix.lower() not in source_video_extensions
                      else 'Needs conversion: ' + tags['compatibility_issue'] if tags.get('compatibility_issue')
                      else 'Indexed on iPod' if indexed else 'Source on iPod'), info=info,
-                    removable=not managed,
+                    removable=not managed, apple_only=apple_only,
                     artist=tags.get('artist', ''), album=tags.get('album', ''), genre=tags.get('genre', ''),
                     artwork=tags.get('artwork', ''), duration=tags.get('duration', 0), track=tags.get('track', 0),
                     album_artist=tags.get('album_artist', ''), disc=tags.get('disc', 0),
-                    description=('Apple-managed media must be removed with Apple software.' if managed
+                    description=("This Apple audio format isn't supported by Linnet. Use Apple OS or add an unprotected AAC, MP3 or WAV copy."
+                                 if apple_only else 'Apple-managed media must be removed with Apple software.' if managed
                                  else 'Removing this source requires preparing its media type afterward.')))
     photos = retail_photos if retail_photos is not None else retail_images(root)
     for photo in photos:
