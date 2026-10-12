@@ -11,10 +11,66 @@ static int zeroes(const uint8_t *p, size_t length)
 #define LN_CRC_ATTR
 #define LN_CRC_TABLE_ATTR
 #define LN_CRC_NAME crc32_sdram
+#if defined(LINNET_OS_CRC_IRAM)
+/* Keep the complete byte implementation as fallback without duplicating
+ * the three slicing tables now retained in internal memory. */
+#define LN_CRC_NO_SLICE4
+#endif
 #include "crc32.inc"
+#if defined(LINNET_OS_CRC_IRAM)
+#undef LN_CRC_NO_SLICE4
+#endif
 #undef LN_CRC_ATTR
 #undef LN_CRC_TABLE_ATTR
 #undef LN_CRC_NAME
+#if defined(LINNET_OS_CRC_IRAM)
+#include "linnet_target.h"
+#define LN_CRC_ATTR __attribute__((section(".audio_icode.crc.text"),noinline))
+#define LN_CRC_TABLE_ATTR __attribute__((section(".audio_icode.crc.rodata"),aligned(4)))
+#define LN_CRC_NAME crc32_os_iram
+#include "crc32.inc"
+#undef LN_CRC_NAME
+#undef LN_CRC_TABLE_ATTR
+#undef LN_CRC_ATTR
+static volatile uint32_t os_crc_iram_ready;
+#if !defined(LINNET_PROFILE_RELEASE)
+static uint32_t os_crc_iram_prepares,os_crc_iram_failures;
+#endif
+int ln_crc32_os_iram_init(void){
+    extern const uint32_t __audio_icode_load[],__audio_icode_begin[],__audio_icode_end[];
+    uintptr_t begin=(uintptr_t)__audio_icode_begin,end=(uintptr_t)__audio_icode_end;
+    uintptr_t load=(uintptr_t)__audio_icode_load;
+    os_crc_iram_ready=0;
+    __asm__ volatile("" ::: "memory");
+    if(begin<0x40003000u||end<=begin||end>0x40005000u||((begin|end|load)&3u)||
+       load>=LINNET_OS_CAPACITY||end-begin>LINNET_OS_CAPACITY-load)goto failed;
+    volatile uint32_t *destination=(volatile uint32_t*)begin;
+    uint32_t words=(uint32_t)((end-begin)/4u);
+    for(uint32_t i=0;i<words;++i)destination[i]=__audio_icode_load[i];
+    for(uint32_t i=0;i<words;++i)if(destination[i]!=__audio_icode_load[i])goto failed;
+    __asm__ volatile("" ::: "memory");
+    os_crc_iram_ready=1;
+#if !defined(LINNET_PROFILE_RELEASE)
+    if(os_crc_iram_prepares!=UINT32_MAX)++os_crc_iram_prepares;
+#endif
+    return 1;
+failed:
+#if !defined(LINNET_PROFILE_RELEASE)
+    if(os_crc_iram_failures!=UINT32_MAX)++os_crc_iram_failures;
+#endif
+    return 0;
+}
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_crc32_os_iram_diagnostics(uint32_t words[8]){
+    extern const uint32_t __audio_icode_load[],__audio_icode_begin[],__audio_icode_end[];
+    uint32_t values[8]={0x52495243u,os_crc_iram_ready,(uint32_t)(uintptr_t)__audio_icode_begin,
+        (uint32_t)(uintptr_t)__audio_icode_end,(uint32_t)(uintptr_t)__audio_icode_load,
+        (uint32_t)((uintptr_t)__audio_icode_end-(uintptr_t)__audio_icode_begin),
+        os_crc_iram_prepares,os_crc_iram_failures};
+    for(uint32_t i=0;i<8u;i++)words[i]=values[i];
+}
+#endif
+#endif
 #if defined(LINNET_IMAGE_BOOT) && defined(LINNET_PLATFORM_CORE) && defined(LINNET_STORAGE)
 #include "sha256.h"
 #define LN_CRC_ATTR __attribute__((section(".boot_hash.text"),noinline))
@@ -32,11 +88,17 @@ uint32_t ln_crc32_progress(const uint8_t *bytes, size_t length,
 #if defined(LINNET_IMAGE_BOOT) && defined(LINNET_PLATFORM_CORE) && defined(LINNET_STORAGE)
     if (ln_sha256_boot_iram_active()) return crc32_iram(UINT32_MAX,bytes,length,progress,context)^UINT32_MAX;
 #endif
+#if defined(LINNET_OS_CRC_IRAM)
+    if(os_crc_iram_ready)return crc32_os_iram(UINT32_MAX,bytes,length,progress,context)^UINT32_MAX;
+#endif
     return crc32_sdram(UINT32_MAX,bytes,length,progress,context)^UINT32_MAX;
 }
 
 uint32_t ln_crc32_update(uint32_t crc, const uint8_t *bytes, size_t length)
 {
+#if defined(LINNET_OS_CRC_IRAM)
+    if(os_crc_iram_ready)return crc32_os_iram(crc,bytes,length,NULL,NULL);
+#endif
     return crc32_sdram(crc, bytes, length, NULL, NULL);
 }
 

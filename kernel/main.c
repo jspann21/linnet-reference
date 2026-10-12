@@ -120,6 +120,13 @@ _Noreturn void ln_main(void)
 {
 #if !defined(LINNET_PROFILE_RELEASE)
     uint32_t c_entry=ln_time_us();
+#endif
+#if defined(LINNET_OS_CRC_IRAM)
+    /* Startup copied the linked IRAM image. Verify it before recovery's first
+     * snapshot checksum and before interrupts or other CRC users are active. */
+    (void)ln_crc32_os_iram_init();
+#endif
+#if !defined(LINNET_PROFILE_RELEASE)
 #if defined(LINNET_IMAGE_BOOT)
     if (!ln_recovery_init(1)) ln_panic(15,0,0);
     ln_recovery_timeline_begin(1,c_entry);

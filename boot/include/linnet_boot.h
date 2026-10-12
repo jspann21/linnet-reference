@@ -44,6 +44,15 @@ uint32_t ln_crc32(const uint8_t *bytes, size_t length);
 uint32_t ln_crc32_update(uint32_t crc, const uint8_t *bytes, size_t length);
 uint32_t ln_crc32_progress(const uint8_t *bytes, size_t length,
     void (*progress)(void *context), void *context);
+#if defined(LINNET_IMAGE_OS) && defined(LINNET_PLATFORM_CORE) && defined(LINNET_AUDIO) && defined(LINNET_TARGET_VIDEO5G_M25)
+#define LINNET_OS_CRC_IRAM 1
+/* Early C entry and post-quiesce handoff only. Ordinary CRC calls dispatch
+ * without rewriting code; a failed copy leaves the full SDRAM fallback active. */
+int ln_crc32_os_iram_init(void);
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_crc32_os_iram_diagnostics(uint32_t words[8]);
+#endif
+#endif
 enum ln_image_result ln_image_validate(const uint8_t *image, size_t length,
     const struct ln_image_policy *policy, struct ln_image_info *info);
 enum ln_image_result ln_image_validate_progress(const uint8_t *image, size_t length,
