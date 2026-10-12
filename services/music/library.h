@@ -36,6 +36,11 @@ enum ln_music_library_status ln_music_library_status(void);
 int ln_music_library_error(void);
 uint32_t ln_music_library_count(void);
 const char *ln_music_library_title(uint32_t track_index);
+/* Verified resident metadata only: never starts I/O or consumes the shared
+ * query slot. Missing cache entries retain the ordinary asynchronous path.
+ * Returned name pointers remain valid until library reload/cancel. */
+bool ln_music_library_cached_group(uint32_t group,struct ln_music_group *out,const char **name);
+bool ln_music_library_cached_member(uint32_t group,uint32_t ordinal,uint32_t *track);
 uint32_t ln_music_library_group_count(void);
 uint32_t ln_music_library_revision(void);
 uint32_t ln_music_library_verified_bytes(void);

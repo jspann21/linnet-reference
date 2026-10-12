@@ -58,13 +58,23 @@ static bool activity_filter(uint64_t id,bool add){
 }
 static void changed(void){b.revision++;}
 static void invalidate(void){++b.epoch;for(uint32_t i=0;i<LN_MUSIC_BROWSER_ROWS*2;i++)b.rows[i].valid=false;changed();}
+static uint32_t ordinal(uint32_t n);
 static struct row *row(uint32_t n){
-    if(b.here.view==TRACKS&&!b.here.kind&&n<b.here.count){
-        const char *title=ln_music_library_title(b.here.reverse?b.here.count-1u-n:n);
-        if(title){struct row *r=&b.rows[n%(LN_MUSIC_BROWSER_ROWS*2)];
-            if(!r->valid||r->ordinal!=n){*r=(struct row){.ordinal=n,.index=b.here.reverse?b.here.count-1u-n:n,.valid=true};copy(r->label,title);}return r;}
+    struct row *r=&b.rows[n%(LN_MUSIC_BROWSER_ROWS*2)];
+    if(r->valid&&r->ordinal==n)return r;
+    if(n>=b.here.count)return 0;
+    uint32_t at=ordinal(n),index=at,count=0;const char *label=0;
+    if(b.here.view==GROUPS||b.here.view==ARTIST_ALBUMS||b.here.view==ALBUM_ARTISTS){
+        if(b.here.view==ARTIST_ALBUMS&&!at)return 0;
+        index=b.here.view==GROUPS?b.here.lower+at:activity_data.tracks[b.here.view==ARTIST_ALBUMS?at-1u:at];
+        struct ln_music_group g;if(ln_music_library_cached_group(index,&g,&label))count=g.count;
+    }else if(b.here.view==TRACKS){
+        if(!b.here.kind||ln_music_library_cached_member(b.here.group,at,&index))label=ln_music_library_title(index);
+    }else if(b.here.view==LOCAL_TRACKS||b.here.view==ACTIVITY){
+        index=b.here.view==LOCAL_TRACKS?b.mapped[at]:activity_data.tracks[at];label=ln_music_library_title(index);
     }
-    struct row *r=&b.rows[n%(LN_MUSIC_BROWSER_ROWS*2)];return r->valid&&r->ordinal==n?r:0;}
+    if(!label)return 0;
+    *r=(struct row){.ordinal=n,.index=index,.count=count,.valid=true};copy(r->label,label);return r;}
 static void navigate(void){b.navigation++;b.first=b.here.first;invalidate();b.selection_ready=true;b.restored_selection=b.here.selected;}
 static uint32_t ordinal(uint32_t n){return b.here.reverse?(b.here.view==ARTIST_ALBUMS?(n?b.here.count-n:0):b.here.count-1-n):n;}
 static bool list_view(void){return b.here.view==GROUPS||b.here.view==TRACKS||b.here.view==ACTIVITY||b.here.view==LOCAL_TRACKS||b.here.view==ARTIST_ALBUMS||b.here.view==ALBUM_ARTISTS;}

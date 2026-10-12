@@ -61,6 +61,12 @@ Filesystem validation and write barriers remain active during media work.
 | UI | Immutable compiled scenes, baked fonts, runtime state, and bounded rendering. Target/profile layouts use the appropriate display geometry. |
 | Settings | Validated records and redundant publication; rendering does not write storage. |
 
+Music verification also captures song titles and, on targets with resident
+metadata, group names under the existing title-cache budget. Extra group names
+require room for the whole string pool and the host-built browse index. Browser
+labels and group members that are resident can be resolved before drawing;
+larger libraries retain the asynchronous lookup path.
+
 The simulator executes the same native renderer and compiled UI definitions.
 It checks layouts and pixels, not physical timing, audio, USB, or power.
 

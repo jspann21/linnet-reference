@@ -17,6 +17,10 @@ static struct {
 } titles __attribute__((section(".music_titles"),aligned(32)));
 static uint32_t title_count,title_used,title_length,title_source;
 static bool title_reading;
+static bool group_names_enabled;
+#if defined(LINNET_MUSIC_METADATA_BYTES)
+static bool group_names_decided;
+#endif
 static uint8_t title_previous;
 static char title_pending[256];
 #if defined(LINNET_MUSIC_METADATA_BYTES)
@@ -325,12 +329,50 @@ static void title_capture(uint32_t offset,const uint8_t *data,uint32_t bytes){
         if(field>=offset+bytes)break;
         if(field>=offset&&field+4u<=offset+bytes){uint32_t value=ln_read_le32(data+field-offset);if(value<d->pool_bytes)title_push(i,value);}
     }
+    /* Queue labels under the existing heap bound; targets without a resident
+     * group table retain the entire title budget for their original consumer. */
+#if defined(LINNET_MUSIC_METADATA_BYTES)
+    uint32_t groups=d->groups;if(groups>TITLE_TRACKS-limit)groups=TITLE_TRACKS-limit;
+    first=offset>d->group_offset?(offset-d->group_offset)/32u:0u;
+    for(uint32_t i=first;i<groups;i++){
+        uint32_t field=d->group_offset+i*32u+4u;
+        if(field>=offset+bytes)break;
+        if(field>=offset&&field+4u<=offset+bytes){uint32_t value=ln_read_le32(data+field-offset);if(value<d->pool_bytes)title_push(limit+i,value);}
+    }
+#endif
     if(offset+bytes<=d->pool_offset)return;
+#if defined(LINNET_MUSIC_METADATA_BYTES)
+    if(!group_names_decided){
+        group_names_decided=true;
+        uint32_t table=d->groups*32u;
+        if(d->group_offset>=metadata_offset&&d->group_offset-metadata_offset<=metadata_bytes&&
+           table<=metadata_bytes-(d->group_offset-metadata_offset)){
+            uint64_t artists=0,albums=0,links=0;
+            const uint8_t *p=metadata+d->group_offset-metadata_offset;
+            for(uint32_t i=0;i<d->groups;i++,p+=32u){
+                uint32_t kind=ln_read_le32(p);
+                if(kind==1u){artists++;links+=ln_read_le32(p+16);}
+                else if(kind==2u)albums++;
+            }
+            /* The compiler gives each track one album. An artist therefore
+             * has at most one relation per member, plus its owned albums.
+             * Reserve the browse footer, fences and worst-case prefix table,
+             * as well as the entire pool, before admitting extra strings. */
+            uint64_t prefixes=d->searches<65536u?(uint64_t)d->searches+1u:65537u;
+            uint64_t browse=140u+artists*12u+(links+albums)*4u+albums*4u+
+                prefixes*8u+((uint64_t)d->searches+63u)/64u*36u+(uint64_t)d->tracks*12u;
+            group_names_enabled=d->pool_bytes<=TITLE_BYTES&&
+                (browse<=sizeof titles.heap||browse<=TITLE_BYTES-d->pool_bytes);
+        }
+    }
+#endif
     uint32_t at=offset<d->pool_offset?d->pool_offset-offset:0;
     uint8_t previous=title_previous;title_previous=data[bytes-1u];
     while(at<bytes&&title_count){
         uint32_t source=offset+at-d->pool_offset;
         if(!title_reading){
+            while(title_count&&!group_names_enabled&&titles.heap[0]>=limit)(void)title_pop();
+            if(!title_count)break;
             title_source=titles.offsets[titles.heap[0]]&~TITLE_PENDING;
             if(title_source>source){uint32_t skip=title_source-source;if(skip>=bytes-at)return;at+=skip;}
             else if(title_source<source){(void)title_pop();continue;}
@@ -352,6 +394,37 @@ static void title_capture(uint32_t offset,const uint8_t *data,uint32_t bytes){
 const char *ln_music_library_title(uint32_t index){
     if(!ready()||index>=library.db.tracks||index>=TITLE_TRACKS||titles.offsets[index]&TITLE_PENDING)return 0;
     return titles.text+titles.offsets[index];
+}
+static const uint8_t *resident_metadata(uint32_t offset,uint32_t bytes){
+#if defined(LINNET_MUSIC_METADATA_BYTES)
+    if(ready()&&offset>=metadata_offset&&offset-metadata_offset<=metadata_bytes&&
+       bytes<=metadata_bytes-(offset-metadata_offset))return metadata+(offset-metadata_offset);
+#else
+    (void)offset;(void)bytes;
+#endif
+    return 0;
+}
+bool ln_music_library_cached_group(uint32_t index,struct ln_music_group *out,const char **name){
+    if(!out||!ready()||index>=library.db.groups)return false;
+    const uint8_t *p=resident_metadata(library.db.group_offset+index*32u,32u);if(!p)return false;
+    struct ln_music_group g={.kind=ln_read_le32(p),.name=ln_read_le32(p+4),.parent=ln_read_le32(p+8),
+        .first=ln_read_le32(p+12),.count=ln_read_le32(p+16),.id=ln_read_le64(p+24)};
+    if(g.kind<1u||g.kind>8u||g.name>=library.db.pool_bytes||g.first>library.db.members||
+       g.count>library.db.members-g.first||ln_read_le32(p+20)||
+       (g.kind==2u?(g.parent>=library.db.groups||g.parent==index):g.parent!=UINT32_MAX))return false;
+    if(name){
+        uint32_t base=library.db.tracks<TITLE_TRACKS?library.db.tracks:TITLE_TRACKS;
+        if(index>=TITLE_TRACKS-base||titles.offsets[base+index]&TITLE_PENDING)return false;
+        *name=titles.text+titles.offsets[base+index];
+    }
+    *out=g;return true;
+}
+bool ln_music_library_cached_member(uint32_t group,uint32_t ordinal,uint32_t *out){
+    struct ln_music_group g;
+    if(!out||!ln_music_library_cached_group(group,&g,0)||ordinal>=g.count)return false;
+    const uint8_t *p=resident_metadata(library.db.member_offset+(g.first+ordinal)*4u,4u);
+    if(!p)return false;uint32_t index=ln_read_le32(p);if(index>=library.db.tracks)return false;
+    *out=index;return true;
 }
 
 static bool superseded_job(void){
@@ -406,6 +479,10 @@ static void start(void)
 #endif
     uint32_t revision=library.revision+1u;
     title_count=title_used=title_length=0;title_reading=false;
+    group_names_enabled=false;
+#if defined(LINNET_MUSIC_METADATA_BYTES)
+    group_names_decided=false;
+#endif
     for(uint32_t i=0;i<TITLE_TRACKS;i++)titles.offsets[i]=TITLE_PENDING;
     bool paused=library.paused;
     clear(&library,sizeof(library));library.status=LN_LIBRARY_OPENING;
