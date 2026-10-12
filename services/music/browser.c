@@ -199,6 +199,19 @@ static void resolve_id(uint64_t id){
         uint32_t position=b.positions[i];if(b.mapped[position]==UINT32_MAX){b.mapped[position]=b.scan;b.resolve_count++;}
     }
 }
+static bool queue_cached(void){
+    if(b.status!=LN_BROWSER_QUEUE_LOADING||b.queue.source!=LN_QUEUE_GROUP||
+       b.job!=NONE||ln_music_library_status()!=LN_LIBRARY_READY)return false;
+    uint32_t started=ln_time_us();
+    for(uint32_t step=0;step<64u&&b.next<b.queue.count&&
+        (uint32_t)(ln_time_us()-started)<250u;++step){
+        uint32_t ordinal=b.queue.source_group&LN_QUEUE_REVERSE?b.queue.count-1u-b.next:b.next,track;
+        if(!ln_music_library_cached_member(b.queue.source_group&~LN_QUEUE_REVERSE,ordinal,&track))return false;
+        b.queue.tracks[b.next++]=track;
+    }
+    if(b.next==b.queue.count){b.queue.source=0;b.status=LN_BROWSER_QUEUE_READY;changed();}
+    return true;
+}
 static void queue_begin(uint32_t count,uint32_t cursor,uint32_t source,uint32_t group,uint32_t action){
     b.queue=(struct ln_music_browser_queue){.count=count,.cursor=cursor,.source=source,.source_group=group,.action=action};
     if(!count||!ln_music_library_identity(b.queue.library_hash)){ln_music_browser_notice("No tracks to add");return;}
@@ -206,6 +219,7 @@ static void queue_begin(uint32_t count,uint32_t cursor,uint32_t source,uint32_t 
     if(count>LINNET_QUEUE_CAPACITY||(!action&&source&&count>64&&!ln_collections_writable())){b.status=LN_BROWSER_QUEUE_READY;return;}
     b.next=0;b.status=LN_BROWSER_QUEUE_LOADING;b.notice="Preparing...";
     if(source==LN_QUEUE_ALL){for(uint32_t i=0;i<count;i++)b.queue.tracks[i]=group&LN_QUEUE_REVERSE?count-1-i:i;b.queue.source=0;b.status=LN_BROWSER_QUEUE_READY;}
+    else (void)queue_cached();
     changed();
 }
 bool ln_music_browser_shuffle_all(void){
@@ -538,7 +552,7 @@ void ln_music_browser_step(void){
                 if(b.resolve_count==b.draft.count||b.scan==ln_music_library_count()){resolve_complete();break;}
             }while(b.scan_id_at<b.scan_id_count&&(uint32_t)(ln_time_us()-started)<250u);}
         else if(ln_music_library_track_ids(b.scan))b.job=RESOLVE_IDS;
-    }else if(b.status==LN_BROWSER_QUEUE_LOADING){if(ln_music_library_group_member(b.queue.source_group,b.queue.source_group&LN_QUEUE_REVERSE?b.queue.count-1-b.next:b.next))b.job=MEMBER;
+    }else if(b.status==LN_BROWSER_QUEUE_LOADING){if(queue_cached())return;if(ln_music_library_group_member(b.queue.source_group,b.queue.source_group&LN_QUEUE_REVERSE?b.queue.count-1-b.next:b.next))b.job=MEMBER;
     }else if(b.recent_open){if(ln_music_library_group(b.here.lower))b.job=RECENT_GROUP;
     }else if(b.range){if(b.lo==b.hi){if(b.range==1){b.here.lower=b.lo;b.range=2;b.hi=ln_music_library_group_count();}else{b.here.count=b.lo-b.here.lower;b.range=0;if(b.here.kind==8&&b.here.count)b.recent_open=true;changed();}return;}
         b.mid=b.lo+(b.hi-b.lo)/2;if(ln_music_library_group_record(b.mid))b.job=RANGE;
