@@ -21,6 +21,23 @@ static bool bytes_zero(const uint8_t *p,uint32_t bytes){
     }
     return ln_bytes_zero(p,bytes);
 }
+/* Host-generated linear advancement by 4028 verified zero bytes, reflected
+ * IEEE CRC32 polynomial 0xedb88320. The prefix retains the ordinary raw seed. */
+static uint32_t empty_page_crc(const uint8_t *p){
+    static const uint32_t zero_tail[32]={
+        0x3a37d26eu,0x746fa4dcu,0xe8df49b8u,0x0acf9531u,
+        0x159f2a62u,0x2b3e54c4u,0x567ca988u,0xacf95310u,
+        0x8283a061u,0xde764683u,0x679d8b47u,0xcf3b168eu,
+        0x45072b5du,0x8a0e56bau,0xcf6dab35u,0x45aa502bu,
+        0x8b54a056u,0xcdd846edu,0x40c18b9bu,0x81831736u,
+        0xd877282du,0x6b9f561bu,0xd73eac36u,0x750c5e2du,
+        0xea18bc5au,0x0f407ef5u,0x1e80fdeau,0x3d01fbd4u,
+        0x7a03f7a8u,0xf407ef50u,0x337ed8e1u,0x66fdb1c2u,
+    };
+    uint32_t raw=ln_crc32_update(UINT32_MAX,p,64),shifted=0;
+    for(uint32_t bit=0;raw;raw>>=1,++bit)if(raw&1u)shifted^=zero_tail[bit];
+    return shifted^UINT32_MAX;
+}
 #else
 #define bytes_equal ln_bytes_equal
 #define bytes_zero ln_bytes_zero
@@ -35,11 +52,23 @@ static bool valid_record(const struct ln_music_journal_record *r){return r&&!(r-
 static void record(const uint8_t *p,struct ln_music_journal_record *r){r->id=ln_read_le64(p);r->flags=ln_read_le32(p+8);r->play_count=ln_read_le32(p+12);r->bookmark_frame=ln_read_le64(p+16);r->resume_frame=ln_read_le64(p+24);}
 static bool valid(const uint8_t *p,uint32_t index,const uint8_t epoch[16]){
     if(!p||ln_read_le32(p)!=0x45475048u||ln_read_le32(p+4)!=0x00400000u||ln_read_le32(p+8)!=index||ln_read_le32(p+16)>125||
-       !bytes_equal(p+40,epoch,16)||!bytes_zero(p+56,8)||ln_read_le32(p+4092)!=crc(p))return false;
+       !bytes_equal(p+40,epoch,16)||!bytes_zero(p+56,8)
+#if !defined(LINNET_TARGET_VIDEO5G_M25)
+       ||ln_read_le32(p+4092)!=crc(p)
+#endif
+       )return false;
     uint32_t n=ln_read_le32(p+16);
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    if(!n){
+        if(!bytes_zero(p+64,4028)||ln_read_le32(p+4092)!=empty_page_crc(p))return false;
+    }else if(ln_read_le32(p+4092)!=crc(p))return false;
+#endif
     for(uint32_t i=0;i<128;i++)if(((p[24+i/8]>>(i&7))&1u)!=(i<n))return false;
     for(uint32_t i=0;i<n;i++){struct ln_music_journal_record r;record(p+64+i*32,&r);if(!valid_record(&r))return false;
         for(uint32_t j=0;j<i;j++)if(ln_read_le64(p+64+j*32)==r.id)return false;}
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    if(!n)return true; /* The entire empty tail was already proved zero. */
+#endif
     return bytes_zero(p+64+n*32,4092-64-n*32);
 }
 int ln_history_page_load(struct ln_history_page *s,const uint8_t *a,const uint8_t *b,uint32_t index,const uint8_t epoch[16]){
