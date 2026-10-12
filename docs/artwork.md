@@ -50,6 +50,21 @@ come from the target's memory allocation; they are not album-count limits.
 Warm resident navigation avoids artwork reads, while uncached navigation still
 depends on storage latency and the audio work budget.
 
+Video preparation can append independently compressed LZ4 blocks containing
+the exact native tiles to `COVERS.CFL`. The native records remain intact. Firmware
+validates the appended header, payload CRC, contiguous block index, and each
+decoded tile's CRC. When the complete compressed set fits, every cover remains
+resident and navigation decodes from RAM. Seven visible cards are pinned through
+each draw; spare cache space can also retain seven decoded RGB565 tiles.
+
+The additional memory comes from unused extended library metadata memory or,
+on a 32 MiB solid-state Video, the unused audio read-window area in STAGE. The
+AAC decoder, video packet caches, and PCM buffers retain their existing regions.
+Library reload drains readers before reclaiming either lease. Firmware upload
+drains artwork and inhibits further STAGE use until reboot. Libraries that do
+not fit retain the bounded native cache. New appended files require compatible
+Video firmware; older native files remain accepted.
+
 ## Checking artwork changes
 
 Use the existing host validators, image verification, simulator, and

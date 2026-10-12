@@ -7,6 +7,13 @@ void ln_coverflow_step(bool allow_read);
 /* Request cancellation and return true only after all catalog-buffer I/O has
  * drained. The caller keeps the library DRAINING until the lease is released. */
 bool ln_coverflow_release_catalog(void);
+#if defined(LINNET_COVERFLOW_PACKED)
+/* Drain and abandon artwork that shares STAGE; retain inhibition through any
+ * subsequent upload/verify/update progress callbacks until the next boot. */
+bool ln_coverflow_stage_claim(void);
+/* Bounded synchronous admission for upload BEGIN and persistent verification. */
+bool ln_coverflow_stage_prepare(void);
+#endif
 bool ln_coverflow_move(int32_t delta);
 uint32_t ln_coverflow_count(void);
 bool ln_coverflow_active(void);

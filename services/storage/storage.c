@@ -13,6 +13,9 @@
 #define LN_STORAGE_STAMP(name) LN_BOOT_STAMP(LN_BT_OS_##name)
 #endif
 #include "services/update/update.h"
+#if defined(LINNET_COVERFLOW_PACKED)
+#include "services/music/coverflow.h"
+#endif
 #include "linnet_build.h"
 #if defined(LINNET_IMAGE_OS)
 #include "kernel/runtime.h"
@@ -1037,8 +1040,13 @@ int ln_storage_update(uint32_t action,const uint8_t *data,uint32_t length,uint32
     if(ln_storage_busy()||!ln_storage_prepared()||!open_stores())return 0;
     if(action==1)return data&&ln_update_begin(&updater,length,data);
     if(action==2)return ln_update_write(&updater,offset,data,length);
-    if(action==3)return ln_update_finish(&updater,
+    if(action==3){
+#if defined(LINNET_COVERFLOW_PACKED)
+        if(!ln_coverflow_stage_prepare())return 0;
+#endif
+        return ln_update_finish(&updater,
         (uint8_t *)(uintptr_t)LINNET_STAGE_ADDRESS,LINNET_STAGE_CAPACITY);
+    }
     return 0;
 }
 void ln_storage_update_snapshot(uint32_t words[16]){

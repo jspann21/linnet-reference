@@ -11,6 +11,46 @@ ART_RECORD = 13312
 NATIVE_SIDE = 130
 NATIVE_HEIGHT = 174
 NATIVE_RECORD = 23552
+PACKED_HEADER = 512
+PACKED_CAPACITY = (630 + 466) * ART_RECORD + 0x800000 - 0x38000 - (65536 + 1152) * 4
+PACKED_NATIVE_SLOTS = 630 * ART_RECORD // NATIVE_RECORD + 466 * ART_RECORD // NATIVE_RECORD
+PACKED_INPUT_MAX = NATIVE_RECORD + NATIVE_RECORD // 255 + 16
+
+
+def _packed_art(records, cache=None):
+    from lz4.block import compress
+    if len(records) <= PACKED_NATIVE_SLOTS:
+        return None
+    chunks = []
+    total = len(records) * 8
+    if total > PACKED_CAPACITY:
+        return None
+    for record in records:
+        key = hashlib.sha256(b'LCFN-lz4-1\0' + record).digest()
+        saved = cache.coverflow_get(key, None) if cache is not None else None
+        chunk = saved if saved is not None else compress(record, mode='high_compression', compression=12, store_size=False)
+        if len(chunk) > PACKED_INPUT_MAX:
+            raise ValueError('Packed artwork exceeds the decoder input bound')
+        if saved is None and cache is not None:
+            cache.coverflow_put(key, chunk)
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > PACKED_CAPACITY:
+            return None
+    at = len(chunks) * 8
+    table = bytearray()
+    for chunk in chunks:
+        table.extend(struct.pack('<II', at, len(chunk)))
+        at += len(chunk)
+    header = bytearray(PACKED_HEADER)
+    struct.pack_into('<4sIII', header, 0, b'LCZ1', len(chunks), NATIVE_RECORD, at)
+    struct.pack_into('<I', header, 16, 1)  # LZ4 blocks, exact native tile bytes
+    crc = zlib.crc32(table)
+    for chunk in chunks:
+        crc = zlib.crc32(chunk, crc)
+    struct.pack_into('<I', header, 24, crc)
+    struct.pack_into('<I', header, 508, zlib.crc32(header[:508]))
+    return bytes(header), bytes(table), chunks
 
 
 def _layout(header):
@@ -61,7 +101,12 @@ def validate(path: Path, database: bytes) -> None:
                 zlib.crc32(header[:508]) != struct.unpack_from('<I', header, 508)[0]):
             raise ValueError('Invalid Cover Flow header or library identity')
         count, arts = struct.unpack_from('<I', header, 4)[0], struct.unpack_from('<I', header, 52)[0]
-        if count > 100000 or arts > count or path.stat().st_size != 1024 + count * CATALOG + arts * art_record:
+        raw_end = 1024 + count * CATALOG + arts * art_record
+        packed_at, packed_bytes = struct.unpack_from('<II', header, 72)
+        if (count > 100000 or arts > count or
+                (packed_at and (not mapped or packed_at != raw_end or packed_bytes < PACKED_HEADER + arts * 8)) or
+                (not packed_at and packed_bytes) or path.stat().st_size != raw_end + packed_bytes or
+                path.stat().st_size > 0xffffffff):
             raise ValueError('Invalid Cover Flow size')
         groups, groups_at = struct.unpack_from('<I', database, 20)[0], struct.unpack_from('<I', database, 36)[0]
         expected = [i for i in range(groups) if struct.unpack_from('<I', database, groups_at + i * 32)[0] == 2]
@@ -73,10 +118,39 @@ def validate(path: Path, database: bytes) -> None:
                     struct.unpack_from('<I', record, 248)[0] >= arts or record[127] or record[239 if mapped else 247] or
                     zlib.crc32(record[256:], zlib.crc32(record[:252])) != struct.unpack_from('<I', record, 252)[0]):
                 raise ValueError('Invalid Cover Flow catalog record')
+        hashes = []
         for _ in range(arts):
             record = reader.read(art_record)
             if len(record) != art_record or zlib.crc32(record[:end]) != struct.unpack_from('<I', record, end)[0]:
                 raise ValueError('Invalid Cover Flow artwork')
+            if packed_at:
+                hashes.append(hashlib.sha256(record).digest())
+        if packed_at:
+            packed_header = reader.read(PACKED_HEADER)
+            payload_bytes = packed_bytes - PACKED_HEADER
+            if (packed_header[:4] != b'LCZ1' or struct.unpack_from('<III', packed_header, 4) != (arts, NATIVE_RECORD, payload_bytes) or
+                    struct.unpack_from('<I', packed_header, 16)[0] != 1 or zlib.crc32(packed_header[:508]) != struct.unpack_from('<I', packed_header, 508)[0]):
+                raise ValueError('Invalid packed artwork header')
+            table = reader.read(arts * 8)
+            if len(table) != arts * 8:
+                raise ValueError('Truncated packed artwork index')
+            at, crc = len(table), zlib.crc32(table)
+            for i in range(arts):
+                offset, size = struct.unpack_from('<II', table, i * 8)
+                if offset != at or not 0 < size <= PACKED_INPUT_MAX or size > payload_bytes - at:
+                    raise ValueError('Invalid packed artwork extent')
+                chunk = reader.read(size)
+                from lz4.block import decompress, LZ4BlockError
+                try:
+                    raw = decompress(chunk, uncompressed_size=NATIVE_RECORD)
+                except LZ4BlockError as error:
+                    raise ValueError('Invalid packed artwork stream') from error
+                if len(raw) != NATIVE_RECORD or hashlib.sha256(raw).digest() != hashes[i]:
+                    raise ValueError('Packed artwork differs from its native tile')
+                crc = zlib.crc32(chunk, crc)
+                at += size
+            if at != payload_bytes or crc != struct.unpack_from('<I', packed_header, 24)[0]:
+                raise ValueError('Invalid packed artwork checksum')
 
 
 def remove_tracks(source: Path, before: bytes, after: bytes, output: Path) -> None:
@@ -120,13 +194,27 @@ def remove_tracks(source: Path, before: bytes, after: bytes, output: Path) -> No
             header[16:48] = after[64:96]
             struct.pack_into('<I', header, 4, len(records))
             struct.pack_into('<I', header, 52, len(art_ids))
+            artwork = []
+            for art in art_ids:
+                reader.seek(1024 + count * CATALOG + art * art_record)
+                artwork.append(reader.read(art_record))
+            packed_parts = _packed_art(artwork) if struct.unpack_from('<I', header, 72)[0] else None
+            struct.pack_into('<II', header, 72, 0, 0)
+            if packed_parts:
+                packed_header, table, chunks = packed_parts
+                struct.pack_into('<II', header, 72, 1024 + len(records)*CATALOG + len(artwork)*art_record,
+                                 PACKED_HEADER + len(table) + sum(map(len, chunks)))
             struct.pack_into('<I', header, 508, zlib.crc32(header[:508]))
             writer.write(header)
             for row in records:
                 writer.write(row)
-            for art in art_ids:
-                reader.seek(1024 + count * CATALOG + art * art_record)
-                writer.write(reader.read(art_record))
+            for record in artwork:
+                writer.write(record)
+            if packed_parts:
+                writer.write(packed_header)
+                writer.write(table)
+                for chunk in chunks:
+                    writer.write(chunk)
         validate(output, after)
     except BaseException:
         if created:
@@ -135,7 +223,7 @@ def remove_tracks(source: Path, before: bytes, after: bytes, output: Path) -> No
 
 
 def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, Image.Image] | None = None,
-            cache=None, bypass_cache: bool = False, row_major: bool = False) -> None:
+            cache=None, bypass_cache: bool = False, row_major: bool = False, packed: bool = False) -> None:
     from .music import validate_database, TRACK
     from .publish import _bounded
     validate_database(database)
@@ -242,14 +330,27 @@ def prepare(database: bytes, root: Path, output: Path, *, originals: dict[int, I
         struct.pack_into('<I', header, 68, 1)
     struct.pack_into('<256H', header, 512, *[(r >> 3) << 11 | (g >> 2) << 5 | (b >> 3) for r, g, b in colors])
     struct.pack_into('<I', header, 64, zlib.crc32(header[512:]))
+    native_records = [_row_major_art(record, side, height) if row_major else record for record in artwork]
+    packed_parts = _packed_art(native_records, cache if not bypass_cache else None) if packed and row_major else None
+    if packed_parts:
+        packed_header, packed_table, chunks = packed_parts
+        struct.pack_into('<II', header, 72, 1024 + len(catalog)*CATALOG + len(artwork)*art_record,
+                         PACKED_HEADER + len(packed_table) + sum(map(len, chunks)))
+    if 1024 + len(catalog)*CATALOG + len(artwork)*art_record + struct.unpack_from('<I', header, 76)[0] > 0xffffffff:
+        raise ValueError('Cover Flow exceeds the FAT32 file-size bound')
     struct.pack_into('<I', header, 508, zlib.crc32(header[:508]))
     temporary = output.with_suffix('.TMP')
     with temporary.open('wb') as writer:
         writer.write(header)
         for record in catalog:
             writer.write(record)
-        for record in artwork:
-            writer.write(_row_major_art(record, side, height) if row_major else record)
+        for record in native_records:
+            writer.write(record)
+        if packed_parts:
+            writer.write(packed_header)
+            writer.write(packed_table)
+            for chunk in chunks:
+                writer.write(chunk)
     validate(temporary, database)
     temporary.replace(output)
 

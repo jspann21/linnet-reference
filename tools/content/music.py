@@ -1337,7 +1337,9 @@ class _MetadataCache:
             return None
         try:
             row = self.connection.execute("SELECT value, digest FROM coverflow WHERE key=?", (key,)).fetchone()
-            if row and isinstance(row[0], bytes) and len(row[0]) == value_bytes and hashlib.sha256(row[0]).digest() == row[1]:
+            if (row and isinstance(row[0], bytes) and
+                    (len(row[0]) == value_bytes if value_bytes is not None else 0 < len(row[0]) <= 23660) and
+                    hashlib.sha256(row[0]).digest() == row[1]):
                 return row[0]
         except sqlite3.Error:
             self._disable()
@@ -2247,6 +2249,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         from .coverflow import prepare
         prepare(database, output, output / 'COVERS.CFL', originals=coverflow_originals,
                 cache=cache, bypass_cache=bypass_cache,
+                packed=target == 'video5g-m25',
                 row_major=TARGETS[target].get('presentation_profile') == 'color320')
     report = dict(format="PODB", integrity="sha256" if verification == "full" else "metadata", tracks=len(records), groups=len(groups),
                   artwork=len(artwork_records), bytes=len(database), sha256=hashlib.sha256(database).hexdigest(),

@@ -440,6 +440,17 @@ uint8_t *ln_music_library_catalog_memory(uint32_t *bytes){
     if(first>=end){*bytes=0;return 0;}
     *bytes=(uint32_t)(end-first);return (uint8_t*)first;
 }
+uint8_t *ln_music_library_art_memory(uint32_t *bytes){
+#if defined(LINNET_MUSIC_METADATA_BYTES)
+    if(bytes&&ready()&&metadata!=metadata_local&&metadata_bytes<=metadata_capacity){
+        uint32_t at=(metadata_bytes+31u)&~31u;
+        if(at<metadata_capacity){*bytes=metadata_capacity-at;return metadata+at;}
+    }
+#else
+    (void)bytes;
+#endif
+    return 0;
+}
 
 static bool superseded_job(void){
     return (library.job==JOB_WINDOW&&!window_enabled)||

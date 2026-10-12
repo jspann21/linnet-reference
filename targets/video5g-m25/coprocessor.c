@@ -15,6 +15,8 @@
 extern void ln_memory_copy(void *,const void *,uint32_t);
 /* Native playback exclusively owns the existing media staging arena. */
 #define audio_decoder (*(struct ln_aac *)(uintptr_t)LINNET_STAGE_ADDRESS)
+_Static_assert(sizeof(struct ln_aac)<=0x20000u,"BCM AAC workspace overlaps packet cache");
+_Static_assert(0x20000u+2u*49152u<=0x38000u,"BCM packet cache overlaps packed artwork");
 #define AUDIO_PRIME_FRAMES 32768u
 #define AUDIO_BUFFER_FRAMES 49152u
 #define REG(a) (*(volatile uint32_t *)(uintptr_t)(a))

@@ -24,6 +24,9 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
     } cards[7];
     uint32_t card_count=0;
     int32_t center=(position+128)/256;
+#if defined(LINNET_COVERFLOW_PACKED)
+    packed_frame_begin(center);
+#endif
     for(int32_t layer=0;layer<=3;layer++)for(int32_t side=1;side>=-1;side-=2){
         if(!layer&&side==1)continue;
         int32_t index=center+layer*side;if(index<0||(uint32_t)index>=count)continue;
@@ -34,8 +37,12 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
         card->x=160+(distance<0?-1:1)*(ad<=256?ad*69/256:69+(ad-256)*25/256)*320/220-card->width/2;
         const uint8_t *r=row((uint32_t)index),*packed=0;
         const uint16_t *pixels=0;
-        if(r){uint32_t art=ln_read_le32(r+248);if(art_ready(art))packed=art_record(art);
-            int32_t slot=find_art(art);if(slot<0&&layer<2)slot=decode_art(art);
+        if(r){uint32_t art=ln_read_le32(r+248);packed=retained_art(art);
+            int32_t slot=find_art(art);
+#if defined(LINNET_COVERFLOW_PACKED)
+            if(packed_mode&&!packed_pixels)slot=-1;
+#endif
+            if(!packed_mode&&slot<0&&layer<2)slot=decode_art(art);
             if(slot>=0){pixels=cache_pixels[slot];cache[slot].age=++age;}}
         card->pixels=(const uint8_t *)pixels;card->indices=packed?packed+512:r?r+256:0;
         card->decoded=pixels!=0;
@@ -163,7 +170,11 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
             }
         }
     }
+#if defined(LINNET_COVERFLOW_PACKED)
+    packed_drawing=false;
+#endif
 #if !defined(LINNET_PROFILE_RELEASE)
-    ++render_calls;render_us+=ln_time_us()-began;
+    uint32_t elapsed=ln_time_us()-began;
+    ++render_calls;render_us+=elapsed;if(elapsed>render_max_us)render_max_us=elapsed;
 #endif
 }

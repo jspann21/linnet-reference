@@ -387,6 +387,10 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
             add_sources([ROOT/'kernel/audio_link.c'], "development audio")
     if kind == 'os' and ui_report['features'].get('cover_flow', False):
         flags += ['-DLINNET_COVERFLOW=1']
+        if target == 'video5g-m25':
+            flags += ['-DLINNET_COVERFLOW_PACKED=1']
+            add_sources([ROOT/'services/video/ipvf/lz4_arm.S'], 'packed artwork LZ4 decoder')
+            add_sources([ROOT/'services/video/ipvf/lz4.c'], 'packed artwork LZ4 copy', ['-O2'])
     if kind == 'os' and ui_report['features'].get('video', True):
         flags += ['-DLINNET_VIDEO=1']
         video_backend = spec['media_video_backend']
@@ -396,6 +400,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         add_sources([ROOT/target_sources['video']], "target video player", player_flags)
         if video_backend == 'ipvf':
             add_sources(sorted((ROOT/'services/video/ipvf').glob('*.S')), "IPVF assembly")
+            add_sources([ROOT/'services/video/ipvf/lz4.c'], 'IPVF LZ4 copy', ['-O2'])
         if video_backend in ('native-mp4', 'bcm-mp4'):
             flags += ['-DLINNET_VIDEO_MP4=1']
             add_sources([ROOT/'services/video/mp4.c'], "MP4 service")

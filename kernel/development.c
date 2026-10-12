@@ -38,6 +38,9 @@ static int (*loader_read)(void *, uint16_t, uint8_t *, uint32_t *);
 #if defined(LINNET_AUDIO)
 #include "services/music/player.h"
 #endif
+#if defined(LINNET_COVERFLOW_PACKED)
+#include "services/music/coverflow.h"
+#endif
 #if defined(LINNET_VIDEO) || defined(LINNET_AUDIO)
 static int (*loader_begin)(void *, uint32_t);
 static int (*loader_write)(void *, uint32_t, const uint8_t *, uint32_t);
@@ -48,6 +51,10 @@ static int stage_begin(void *context,uint32_t size) {
 #endif
 #if defined(LINNET_AUDIO)
     if(ln_player_busy())return 0;
+#endif
+#if defined(LINNET_COVERFLOW_PACKED)
+    if(size<LINNET_IMAGE_HEADER_SIZE+4u||size>LINNET_STAGE_CAPACITY)return 0;
+    if(!ln_coverflow_stage_prepare())return 0;
 #endif
     return loader_begin(context,size);
 }

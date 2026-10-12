@@ -44,6 +44,11 @@ void ln_player_stop(void);
 void ln_player_stop_for_restart(void);
 void ln_player_step(void);
 bool ln_player_busy(void);
+#if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
+/* Solid-state media never enables compressed audio windows. Cover Flow may
+ * use their idle region after M25 video buffers and before the PCM tail. */
+uint8_t *ln_player_art_memory(uint32_t *bytes);
+#endif
 uint32_t ln_player_deadline(uint32_t now);
 void ln_player_snapshot(struct ln_player_status *out);
 /* Background reads get three quarters of a second of PCM where ring size

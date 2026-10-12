@@ -142,6 +142,18 @@ static bool cache_metadata(const struct player_slot *s,uint32_t at){
     return m->mdat_end>m->mdat_start&&
         ((uint64_t)at<m->mdat_start||(uint64_t)at>=m->mdat_end);
 }
+uint8_t *ln_player_art_memory(uint32_t *bytes){
+    if(!bytes)return 0;
+    struct ln_ata_state disk;ln_ata_state_snapshot(&disk);
+    if(!disk.initialized||disk.media_kind!=LN_ATA_MEDIA_SOLID_STATE)return 0;
+    uint32_t extra_bytes;if(ln_platform_extended_memory(&extra_bytes))return 0;
+    /* Only rotating media enables these compressed windows. Preserve any
+     * already admitted cache owner if classification ever changes. */
+    for(uint32_t i=0;i<2u;i++)if(slots[i].cache_enabled||slots[i].cache_pending)return 0;
+    uint32_t end=LINNET_STAGE_CAPACITY-(LINNET_AUDIO_RING_FRAMES+1152u)*4u;
+    if(end<=0x38000u)return 0;
+    *bytes=end-0x38000u;return (uint8_t*)(uintptr_t)(LINNET_STAGE_ADDRESS+0x38000u);
+}
 static bool cache_begin(struct player_slot *s,uint32_t window,uint32_t at,bool initial,uint32_t minimum){
     if(at>=s->media.size)return false;
     uint64_t available=s->media.size-at;

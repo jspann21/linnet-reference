@@ -68,7 +68,13 @@ labels and group members that are resident can be resolved before drawing;
 larger libraries retain the asynchronous lookup path.
 Cover Flow can use the unoccupied title-cache tail for additional complete
 album records and previews. Library reload and cancellation drain its reader
-before reusing that memory. Full artwork still uses its bounded working cache.
+before reusing that memory. Video can retain all native artwork as lossless LZ4
+blocks when the set fits its artwork banks and an unused memory lease. A 64 MiB
+device can lend the unused extended metadata tail; a 32 MiB solid-state device
+can lend inactive audio read windows, excluding decoder and PCM storage. Upload
+admission drains and releases that STAGE lease before writing firmware, and
+prevents artwork from reclaiming it until reboot. Visible cards are pinned during
+draws; larger libraries retain the bounded native working cache.
 
 The simulator executes the same native renderer and compiled UI definitions.
 It checks layouts and pixels, not physical timing, audio, USB, or power.
