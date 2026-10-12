@@ -1089,6 +1089,14 @@ void ln_runtime_step(void){
         ln_music_queue_view_window(ln_ui_first_visible(shell));
         if(ln_music_queue_view_prepare()){ln_ui_refresh_content(shell);dirty=true;}
     }
+    if(scene_is(LN_UI_SCENE_MUSIC_SEARCH)){
+        if(search_navigation!=ln_music_search_navigation()){
+            search_navigation=ln_music_search_navigation();shell->selected=0;shell->selections[shell->scene]=0;
+            ln_ui_refresh(shell);dirty=true;
+        }
+        ln_music_search_window(ln_ui_first_visible(shell));
+        if(ln_music_search_prepare(ln_ui_visible_capacity(shell))){ln_ui_refresh_content(shell);dirty=true;}
+    }
 #endif
 #if defined(LINNET_NATIVE_UI)
 #if defined(LINNET_AUDIO)
@@ -1207,6 +1215,9 @@ void ln_runtime_step(void){
             if(scene_is(LN_UI_SCENE_MUSIC_QUEUE)){
                 music_queue_drawn_revision=ln_music_queue_view_revision();
                 music_queue_drawn_notice=ln_music_notice();
+            }
+            if(scene_is(LN_UI_SCENE_MUSIC_SEARCH)){
+                search_revision=ln_music_search_revision();search_library_status=ln_music_library_status();
             }
 #endif
 #if !defined(LINNET_PROFILE_RELEASE)

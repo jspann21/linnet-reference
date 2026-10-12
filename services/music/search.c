@@ -1,8 +1,8 @@
 #include "search.h"
 #include "library.h"
 #include "browser.h"
-#if !defined(LINNET_PROFILE_RELEASE)
 #include "hal/api/platform.h"
+#if !defined(LINNET_PROFILE_RELEASE)
 static uint32_t query_started_us,first_ready_us,window_ready_us;
 #endif
 static const char alphabet[]="abcdefghijklmnopqrstuvwxyz0123456789 -'.";
@@ -13,10 +13,14 @@ static uint32_t length,first,known,total,revision,navigation,epoch,admitted_epoc
 static uint32_t group_index,group_count,search_first,search_row,selected_ordinal,restore_row;
 static bool restore_selection;
 static bool opened,closing,results,pending,complete,track_ready,in_group,pending_group,window_ready,library_waiting;
+static uint8_t result_identity[32],group_identity[32];
+static uint32_t group_kind;
+static bool result_identity_valid,group_identity_valid;
 static struct cached_row *row_slot(uint32_t ordinal){return &rows[ordinal%(LN_MUSIC_SEARCH_ROWS*2u)];}
 static bool row_ready(uint32_t ordinal){struct cached_row *r=row_slot(ordinal);return r->valid&&r->ordinal==ordinal;}
 static void reset_results(uint32_t start){
     first=start;known=total=0;complete=window_ready=false;restore_selection=false;
+    if(!in_group)result_identity_valid=ln_music_library_identity(result_identity);
 #if !defined(LINNET_PROFILE_RELEASE)
     query_started_us=results&&length?ln_time_us():0;
     first_ready_us=window_ready_us=0;
@@ -33,6 +37,31 @@ void ln_music_search_resume(void){
     if(opened)return;
     opened=true;closing=false;track_ready=false;++epoch;++revision;
     ln_music_browser_suspend(true);
+}
+bool ln_music_search_prepare(uint32_t visible_rows){
+    if(!opened||closing||!results||!length||!in_group||!group_identity_valid||
+       ln_music_library_status()!=LN_LIBRARY_READY)return false;
+    uint8_t identity[32];if(!ln_music_library_identity(identity))return false;
+    for(uint32_t i=0;i<32u;++i)if(identity[i]!=group_identity[i])return false;
+    struct ln_music_group group;
+    if(!ln_music_library_cached_group(group_index,&group,0)||
+       group.kind!=group_kind||group.count!=group_count)return false;
+    bool filled=!complete||total!=group_count||known!=group_count;
+    complete=true;total=known=group_count;
+    if(visible_rows>LN_MUSIC_SEARCH_ROWS)visible_rows=LN_MUSIC_SEARCH_ROWS;
+    uint32_t started=ln_time_us();
+    for(uint32_t i=0;i<visible_rows&&first+i<group_count&&
+        (uint32_t)(ln_time_us()-started)<250u;++i){
+        uint32_t ordinal=first+i,track;
+        if(row_ready(ordinal)||!ln_music_library_cached_member(group_index,ordinal,&track))continue;
+        const char *title=ln_music_library_title(track);if(!title)continue;
+        struct cached_row *cached=row_slot(ordinal);
+        cached->value=(struct ln_music_library_search_row){.index=track};
+        uint32_t n=0;while(n<255u&&title[n]){cached->value.title[n]=title[n];++n;}
+        cached->value.title[n]=0;cached->ordinal=ordinal;cached->valid=true;filled=true;
+    }
+    if(filled)++revision;
+    return filled;
 }
 void ln_music_search_step(void){
     if(!opened&&!closing)return;
@@ -135,6 +164,8 @@ bool ln_music_search_select(uint32_t row){
         if(result->kind){
             search_first=first;search_row=row;
             group_index=result->index&~LN_MUSIC_SEARCH_GROUP;group_count=result->count;in_group=true;
+            group_kind=result->kind;group_identity_valid=result_identity_valid;
+            for(uint32_t n=0;n<32u;++n)group_identity[n]=result_identity[n];
             uint32_t i=0;do{group_title[i]=result->title[i];}while(result->title[i++]&&i<256u);
             reset_results(0);++navigation;return true;
         }

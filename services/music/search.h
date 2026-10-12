@@ -12,6 +12,9 @@ void ln_music_search_close(void);
 /* Resume the retained result page when shell navigation revisits search. */
 void ln_music_search_resume(void);
 void ln_music_search_step(void);
+/* Resolve a visible artist/album viewport from verified resident metadata only.
+ * Missing members/titles retain the asynchronous query and its normal drain. */
+bool ln_music_search_prepare(uint32_t visible_rows);
 bool ln_music_search_busy(void);
 bool ln_music_search_query_pending(void);
 #if !defined(LINNET_PROFILE_RELEASE)
