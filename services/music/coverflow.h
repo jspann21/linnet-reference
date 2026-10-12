@@ -27,6 +27,8 @@ void ln_coverflow_history_release(uint32_t epoch);
 /* Accepted storage recovery must revoke the loan before mount-local epochs
  * can be reused. No memory or storage contents are changed by this reset. */
 void ln_coverflow_history_reset(void);
+/* Revoke temporary decoded covers without touching an admitted DMA buffer. */
+void ln_coverflow_preview_reset(void);
 #endif
 #endif
 bool ln_coverflow_move(int32_t delta);

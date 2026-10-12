@@ -646,6 +646,7 @@ int ln_storage_recover(void){
 #endif
 #if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
     ln_coverflow_history_reset();
+    ln_coverflow_preview_reset();
 #endif
     ln_fat32_abandon(&volume);phase=1;found=opening=error=0;stores_ready=false;
     next_generation();return 1;
