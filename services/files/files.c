@@ -424,7 +424,15 @@ void ln_files_step(struct ln_ui_state*s){
             if(f.view==TEXT&&!f.prepared_text&&f.offset==0)for(uint32_t i=0;i<bytes;++i)if(!f.io[i]||(f.io[i]<32u&&f.io[i]!=9u&&f.io[i]!=10u&&f.io[i]!=13u)){f.view=HEX;break;}changed();}
     }
     if(!f.active&&!f.warming)return;
-    if(f.validate){for(uint32_t step=0;step<4u&&f.validate;++step){uint32_t row=f.count;
+    if(f.validate){
+        uint32_t limit=4u;
+#if defined(LINNET_SOC_PP5022) && defined(LINNET_COVERFLOW)
+        /* Validate a resident page within one short executive slice whenever
+         * possible. Preserve every CRC check and yield before the next row. */
+        limit=ROWS;
+#endif
+        uint32_t started=ln_time_us();
+        for(uint32_t step=0;step<limit&&f.validate&&(uint32_t)(ln_time_us()-started)<250u;++step){uint32_t row=f.count;
         if(!record_valid(record(row))){f.validate=0;live_folder();break;}
         ++f.count;--f.validate;if(!f.validate){f.done=true;f.more=f.folder.page*ROWS+f.count<f.folder.count;pages_save();changed();}}}
     else if(f.phase==LIVE&&f.sector_loaded){for(uint32_t i=0;i<16u&&f.phase==LIVE&&f.sector_loaded;++i)live_entry();}
