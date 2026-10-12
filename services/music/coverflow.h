@@ -30,6 +30,10 @@ void ln_coverflow_render_diagnostics(uint32_t words[16]);
 const char *ln_coverflow_text(bool artist);
 /* Retained, verified native square, matched by playback path and CRC; no I/O. */
 const uint16_t *ln_coverflow_playback_preview(const char *path,uint32_t crc);
+#if defined(LINNET_SOC_PP5022)
+/* Unoccupied artwork-array/lease tail; revoked allocations get a new epoch. */
+uint8_t *ln_coverflow_files_memory(uint32_t *bytes,uint32_t *epoch);
+#endif
 void ln_coverflow_draw(const struct ln_ui_canvas_context *c);
 #endif
 #endif

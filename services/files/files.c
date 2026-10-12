@@ -12,6 +12,7 @@
 #include "hal/api/ata.h"
 #include "services/storage/block.h"
 #include "services/music/library.h"
+#include "services/music/coverflow.h"
 #if defined(LINNET_VIDEO)
 #include "services/video/video.h"
 #include "services/video/catalog.h"
@@ -67,9 +68,13 @@ static void pages_sync(void){
     uint32_t bytes=0,epoch=0;
     uint8_t *memory=ln_music_library_files_memory(&bytes,&epoch);
 #if defined(LINNET_VIDEO)
-    if(!memory)memory=ln_video_catalog_files_memory(&bytes,&epoch);
+    uint32_t video_bytes=0,video_epoch=0;uint8_t *video=ln_video_catalog_files_memory(&video_bytes,&video_epoch);
+    if(video&&video_bytes>bytes){memory=video;bytes=video_bytes;epoch=video_epoch;}
 #endif
+    uint32_t art_bytes=0,art_epoch=0;uint8_t *art=ln_coverflow_files_memory(&art_bytes,&art_epoch);
+    if(art&&art_bytes>bytes){memory=art;bytes=art_bytes;epoch=art_epoch;}
     uint32_t count=bytes/sizeof(struct cached_page);
+    if(count>512u)count=512u;
     if((uint8_t*)pages.extra==memory&&pages.extra_count==count&&pages.extra_epoch==epoch)return;
     /* Forget a revoked pointer without touching bytes returned to its owner.
      * All scans/copies below are RAM-only and cannot reenter the catalog. */

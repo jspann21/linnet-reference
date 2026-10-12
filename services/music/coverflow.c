@@ -122,6 +122,48 @@ extern const uint8_t ln_coverflow_glow[LINNET_UI_WIDTH][LINNET_UI_HEIGHT*140u/17
 #endif
 static bool identity(void){uint8_t hash[32];if(!ln_music_library_identity(hash))return false;
     for(uint32_t i=0;i<32;i++)if(hash[i]!=header[16+i])return false;return true;}
+#if defined(LINNET_SOC_PP5022)
+static uint32_t files_epoch=1u;
+static void files_revoke(void){if(++files_epoch==0)++files_epoch;}
+static void files_tail(uint8_t *memory,uint32_t capacity,uint32_t used,uint8_t **best,uint32_t *bytes){
+    if(used>capacity)return;
+    uintptr_t first=((uintptr_t)memory+used+31u)&~(uintptr_t)31u,end=(uintptr_t)memory+capacity;
+    if(first<end&&end-first>*bytes){*best=(uint8_t*)first;*bytes=(uint32_t)(end-first);}
+}
+uint8_t *ln_coverflow_files_memory(uint32_t *bytes,uint32_t *epoch){
+    if(!bytes||!epoch)return 0;*bytes=*epoch=0;
+    struct ln_fat32_file root;
+    if(phase!=READY||failed||pending||canceling||!packed_checked||!identity()||
+       !ln_storage_media_root(&root)||root.epoch!=file.epoch)return 0;
+    uint8_t *best=0;
+#if defined(LINNET_COVERFLOW_PACKED)
+    if(packed_mode){
+        uint32_t remaining=packed_bytes-512u;
+        uint32_t low=remaining<sizeof art_low?remaining:sizeof art_low;remaining-=low;
+        uint32_t high=remaining<sizeof art_high?remaining:sizeof art_high;remaining-=high;
+        files_tail(art_low,sizeof art_low,low,&best,bytes);
+        files_tail(art_high,sizeof art_high,high,&best,bytes);
+        if(packed_extra){
+            uint32_t used=(remaining+31u)&~31u;
+            if(packed_pixels)used+=7u*TEXTURE_WIDTH*TEXTURE_HEIGHT*sizeof(uint16_t);
+            files_tail(packed_extra,packed_extra_bytes,used,&best,bytes);
+        }
+    }else
+#endif
+    {
+        /* A raw request can reach only slots belonging to declared artwork.
+         * Slot remainders and unused arrays stay outside every DMA extent. */
+        uint32_t reachable=arts<ART_CAPACITY?arts:ART_CAPACITY;
+        uint32_t low=reachable<ART_LOW_SLOTS?reachable:ART_LOW_SLOTS;
+        files_tail(art_low,sizeof art_low,low*TILE_RECORD,&best,bytes);
+        files_tail(art_high,sizeof art_high,(reachable-low)*TILE_RECORD,&best,bytes);
+    }
+    if(best)*epoch=files_epoch;
+    return best;
+}
+#else
+#define files_revoke() ((void)0)
+#endif
 static uint8_t *catalog_record(uint32_t index){
     uint32_t slot=index%catalog_capacity;
     return slot<CATALOG_SLOTS?catalog[slot]:catalog_extra+(slot-CATALOG_SLOTS)*CATALOG_RECORD;
@@ -146,6 +188,7 @@ static int32_t find_art(uint32_t id){for(uint32_t i=0;i<(packed_mode?7u:SLOTS);i
 static bool close_to_selection(uint32_t art);
 static bool selected_full(void){uint8_t *r=row(selected);return r&&art_ready(ln_read_le32(r+248));}
 static void invalidate(void){
+    files_revoke();
     /* The library may already be reusing its tail for a new verification.
      * Drop the lease without clearing memory owned by that new generation. */
     catalog_extra=0;catalog_extra_tags=0;catalog_capacity=CATALOG_SLOTS;
@@ -176,6 +219,7 @@ bool ln_coverflow_stage_claim(void){
         if(!canceling){ln_storage_media_cancel(generation);canceling=true;}
         return false;
     }
+    files_revoke();
     packed_mode=false;packed_checked=true;packed_extra=0;packed_extra_bytes=0;packed_uses_stage=false;packed_pixels=0;
     for(uint32_t i=0;i<SLOTS+1u;i++)cache[i].id=0;
     for(uint32_t i=0;i<ART_SLOTS;i++)art_tags[i]=0;
