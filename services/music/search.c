@@ -16,6 +16,8 @@ static bool opened,closing,results,pending,complete,track_ready,in_group,pending
 static uint8_t result_identity[32],group_identity[32];
 static uint32_t group_kind;
 static bool result_identity_valid,group_identity_valid;
+#if LINNET_TARGET_NUMBER == 25u
+/* The native M25 targets have room for a retained parent window. */
 static struct {
     struct ln_music_library_search_row rows[LN_MUSIC_SEARCH_ROWS];
     uint32_t first,count,known,total;
@@ -24,8 +26,10 @@ static struct {
 } parent;
 static bool restore_cached;
 static uint32_t restore_first;
+#endif
 static struct cached_row *row_slot(uint32_t ordinal){return &rows[ordinal%(LN_MUSIC_SEARCH_ROWS*2u)];}
 static bool row_ready(uint32_t ordinal){struct cached_row *r=row_slot(ordinal);return r->valid&&r->ordinal==ordinal;}
+#if LINNET_TARGET_NUMBER == 25u
 static bool parent_matches(void){
     if(!parent.valid||library_waiting||ln_music_library_status()!=LN_LIBRARY_READY)return false;
     uint8_t identity[32];if(!ln_music_library_identity(identity))return false;
@@ -50,9 +54,14 @@ static void parent_capture(uint32_t selected){
     for(uint32_t i=0;i<=LN_MUSIC_SEARCH_PREFIX;++i)parent.prefix[i]=prefix[i];
     parent.valid=true;
 }
+
+#endif
 static void reset_results(uint32_t start){
-    first=start;known=total=0;complete=window_ready=false;restore_selection=restore_cached=false;
-    if(!in_group){parent.valid=false;result_identity_valid=ln_music_library_identity(result_identity);}
+    first=start;known=total=0;complete=window_ready=false;restore_selection=false;
+#if LINNET_TARGET_NUMBER == 25u
+    restore_cached=false;if(!in_group)parent.valid=false;
+#endif
+    if(!in_group)result_identity_valid=ln_music_library_identity(result_identity);
 #if !defined(LINNET_PROFILE_RELEASE)
     query_started_us=results&&length?ln_time_us():0;
     first_ready_us=window_ready_us=0;
@@ -194,7 +203,9 @@ bool ln_music_search_select(uint32_t row){
     if(row<known&&row_ready(row)){
         const struct ln_music_library_search_row *result=&row_slot(row)->value;
         if(result->kind){
+#if LINNET_TARGET_NUMBER == 25u
             parent_capture(row);
+#endif
             search_first=first;search_row=row;
             group_index=result->index&~LN_MUSIC_SEARCH_GROUP;group_count=result->count;in_group=true;
             group_kind=result->kind;group_identity_valid=result_identity_valid;
@@ -208,8 +219,12 @@ bool ln_music_search_select(uint32_t row){
 }
 bool ln_music_search_back(void){
     if(in_group){
-        bool retained=parent_matches();in_group=false;reset_results(search_first);
+#if LINNET_TARGET_NUMBER == 25u
+        bool retained=parent_matches();
+#endif
+        in_group=false;reset_results(search_first);
         restore_row=search_row;known=restore_row+1u;restore_selection=true;
+#if LINNET_TARGET_NUMBER == 25u
         if(retained){
             first=parent.first;known=parent.known;total=parent.total;complete=parent.complete;window_ready=true;
             for(uint32_t i=0;i<parent.count;++i){struct cached_row *cached=row_slot(first+i);
@@ -220,6 +235,7 @@ bool ln_music_search_back(void){
             first_ready_us=window_ready_us=ln_time_us();
 #endif
         }
+#endif
         ++navigation;return true;
     }
     if(results){results=false;reset_results(0);++navigation;return true;}
@@ -234,8 +250,12 @@ bool ln_music_search_take_selection(uint32_t *row){
     *row=restore_row;restore_selection=false;return true;
 }
 bool ln_music_search_take_viewport(uint32_t *row,uint32_t *first){
+#if LINNET_TARGET_NUMBER == 25u
     if(!row||!first||!restore_selection||!restore_cached)return false;
     *row=restore_row;*first=restore_first;restore_selection=restore_cached=false;return true;
+#else
+    (void)row;(void)first;return false;
+#endif
 }
 bool ln_music_search_take_queue(struct ln_music_browser_queue *queue){
     if(!queue||!track_ready)return false;
