@@ -23,6 +23,7 @@ _Static_assert(0x20000u+2u*49152u<=0x38000u,"BCM packet cache overlaps packed ar
 #define HALF(a) (*(volatile uint16_t *)(uintptr_t)(a))
 #if !defined(LINNET_PROFILE_RELEASE)
 static uint32_t fault_mode,fault_deadline;
+static uint32_t rom_check_us,rom_check_max_us,rom_check_calls;
 #endif
 enum { IDLE,OPEN,READ,HASH,ACQUIRE,POWER_OFF,POWER_ON,BUS_READY,BUS_SETUP,
        BUS_LATCH,UPLOAD,VALIDATE_BEGIN,VALIDATE_WAIT,EXECUTE,READY_WAIT,
@@ -601,8 +602,10 @@ bool ln_m25_coprocessor_begin(uint32_t operation){
     for(uint32_t i=0;i<256u;++i)vc.reply[i]=0;
     for(uint32_t i=0;i<32u;++i)vc.host_channel[i]=vc.host_request[i]=0;
     if(++vc.generation<0x7a000000u||vc.generation>=0x7b000000u)vc.generation=0x7a000000u;
-    /* Idle scheduling can space service calls by 64 ms. Keep each NOR read
-     * small, but allow a full validation at that cadence. */
+    /* Every open validates the full selected NOR extent in bounded slices. */
+#if !defined(LINNET_PROFILE_RELEASE)
+    rom_check_us=rom_check_max_us=rom_check_calls=0;
+#endif
     phase(ROM_CHECK,30000000u);return true;
 }
 bool ln_m25_coprocessor_control(uint32_t command){
@@ -704,9 +707,16 @@ bool ln_m25_coprocessor_step(void){
     if(vc.phase==IDLE||vc.phase==FAILED||vc.phase==RESTORED)return false;
     if(vc.phase==ROM_CHECK){
         if(expired()){recover(16);return false;}
+#if !defined(LINNET_PROFILE_RELEASE)
+        uint32_t started=ln_time_us();
+#endif
         n=vc.rom_bytes-vc.rom_checked;if(n>512u)n=512u;
         for(uint32_t i=0;i<n;++i)vc.rom_sum+=vc.rom[vc.rom_checked+i];
         vc.rom_checked+=n;
+#if !defined(LINNET_PROFILE_RELEASE)
+        uint32_t elapsed=ln_time_us()-started;rom_check_us+=elapsed;++rom_check_calls;
+        if(elapsed>rom_check_max_us)rom_check_max_us=elapsed;
+#endif
         if(vc.rom_checked==vc.rom_bytes){
             if(vc.rom_sum!=vc.rom_expected)recover(17);
             else if(vc.image_valid)phase(vc.operation==2u?MEDIA_OPEN:ACQUIRE,
@@ -1041,7 +1051,11 @@ uint32_t ln_m25_coprocessor_channel(uint32_t slot,uint32_t out[32]){
     if(slot>=16u&&slot<24u&&out){for(uint32_t i=0;i<32u;++i)out[i]=vc.reply[(slot-16u)*32u+i];return 32u;}
     if(slot==8u&&out){for(uint32_t i=0;i<32u;++i)out[i]=vc.reply[i];return 32u;}
     if(slot==9u&&out){for(uint32_t i=0;i<32u;++i)out[i]=vc.host_request[i];return 32u;}
-    if(slot==10u&&out){for(uint32_t i=0;i<32u;++i)out[i]=0;out[0]=vc.fs_count;out[1]=vc.fs_opcode;out[2]=vc.fs_phase;out[3]=vc.fs_bytes;out[4]=vc.fs_requested;out[5]=vc.fs_tx_at;out[6]=vc.fs_tx_bytes;out[7]=vc.command_index;out[8]=vc.reply_bytes;out[9]=vc.reply_parsed;return 32u;}
+    if(slot==10u&&out){for(uint32_t i=0;i<32u;++i)out[i]=0;out[0]=vc.fs_count;out[1]=vc.fs_opcode;out[2]=vc.fs_phase;out[3]=vc.fs_bytes;out[4]=vc.fs_requested;out[5]=vc.fs_tx_at;out[6]=vc.fs_tx_bytes;out[7]=vc.command_index;out[8]=vc.reply_bytes;out[9]=vc.reply_parsed;
+#if !defined(LINNET_PROFILE_RELEASE)
+        out[10]=rom_check_us;out[11]=rom_check_max_us;out[12]=rom_check_calls;out[13]=vc.rom_bytes;
+#endif
+        return 32u;}
     if(slot==11u&&out){for(uint32_t i=0;i<32u;++i)out[i]=vc.host_channel[i];return 32u;}
     if(slot==12u&&out){for(uint32_t i=0;i<32u;++i)out[i]=0;out[0]=vc.stream_phase;out[1]=vc.stream_address;out[2]=vc.stream_capacity;out[3]=vc.movie.codec;out[4]=vc.movie.width;out[5]=vc.movie.height;out[6]=vc.movie.timescale;out[7]=vc.movie.config_bytes;out[8]=vc.movie.nal_bytes;out[9]=vc.packet.bytes;out[10]=vc.movie.error;out[11]=vc.stream_frames;return 32u;}
     if(slot>=8u||!out)return 0;
