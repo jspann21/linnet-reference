@@ -27,6 +27,9 @@ void ln_music_browser_suspend(bool suspend);
 void ln_music_browser_set_visible(bool visible);
 bool ln_music_browser_window_needed(void);
 bool ln_music_browser_query_idle(void);
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_COVERFLOW_PACKED)
+bool ln_music_browser_history_scan_visible(void);
+#endif
 bool ln_music_browser_take_search(void);
 bool ln_music_browser_take_coverflow(void);
 void ln_music_browser_step(void);

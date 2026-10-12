@@ -19,6 +19,11 @@ bool ln_coverflow_stage_prepare(void);
 uint8_t *ln_coverflow_metadata_reserve(uint32_t bytes,uint32_t *epoch);
 uint8_t *ln_coverflow_metadata_memory(uint32_t epoch);
 void ln_coverflow_metadata_release(uint32_t epoch);
+/* Revocable RAM-only history windows; DMA must stay in the caller's static
+ * buffers. Admission preserves the complete 512-page Files allocation. */
+uint8_t *ln_coverflow_history_reserve(uint32_t bytes,uint32_t *epoch);
+uint8_t *ln_coverflow_history_memory(uint32_t epoch);
+void ln_coverflow_history_release(uint32_t epoch);
 #endif
 #endif
 bool ln_coverflow_move(int32_t delta);

@@ -13,6 +13,9 @@
 #include "services/music/search.h"
 #include "services/music/queue_view.h"
 #include "services/storage/storage.h"
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+#include "services/music/history_pages.h"
+#endif
 #if defined(LINNET_PHOTOS)
 #include "services/photos/photos.h"
 #endif
@@ -1079,6 +1082,10 @@ static void music_step(void){
         (!changing||!ln_music_history_ready()||ln_music_history_busy());
     bool history_read=stopped||(!audio.playing&&p.phase==LN_PLAYER_PRIME)||urgent||
         (audio.playing&&audio.queued>=read_runway&&!photo_priority);
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+    bool history_scan=ln_music_browser_history_scan_visible();
+    ln_paged_history_scan_policy(history_scan,stopped&&!changing&&!photo_priority);
+#endif
     ln_music_history_service(history_read,history_headroom,audio.playing);
     ln_music_volume_sync();
     /* Durability work is deferred until playback is stopped/paused and the

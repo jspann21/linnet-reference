@@ -6,6 +6,12 @@ const struct ln_history_page *ln_paged_history_page(uint32_t index);
 /* Pure readiness query; never requests a page or changes cache age. */
 bool ln_paged_history_page_waiting(uint32_t index);
 #endif
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_COVERFLOW_PACKED)
+void ln_paged_history_scan_policy(bool active,bool bulk_allowed);
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_paged_history_window_diagnostics(uint32_t words[8]);
+#endif
+#endif
 void ln_paged_history_pin_current(bool present,uint64_t id);
 void ln_paged_history_step(bool may_read,bool may_write);
 bool ln_paged_history_ready(void);

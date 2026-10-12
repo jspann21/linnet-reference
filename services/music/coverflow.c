@@ -78,6 +78,13 @@ static bool packed_uses_stage,packed_stage_inhibited;
 #if LINNET_TARGET_NUMBER==25u
 static uint8_t *metadata_lease;
 static uint32_t metadata_lease_bytes,metadata_lease_epoch=1u;
+static uint8_t *history_lease;
+static uint32_t history_lease_bytes,history_lease_epoch=1u;
+static void history_revoke(void){
+    if(!history_lease)return;
+    history_lease=0;history_lease_bytes=0;
+    if(++history_lease_epoch==0)++history_lease_epoch;
+}
 #endif
 #else
 #define packed_mode false
@@ -135,6 +142,10 @@ static void files_revoke(void){if(++files_epoch==0)++files_epoch;}
 static void files_tail(uint8_t *memory,uint32_t capacity,uint32_t used,uint8_t **best,uint32_t *bytes){
     if(used>capacity)return;
     uintptr_t first=((uintptr_t)memory+used+31u)&~(uintptr_t)31u,end=(uintptr_t)memory+capacity;
+#if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
+    uintptr_t loan=(uintptr_t)history_lease;
+    if(history_lease&&loan>=first&&loan<end&&history_lease_bytes<=end-loan)end=loan;
+#endif
     if(first<end&&end-first>*bytes){*best=(uint8_t*)first;*bytes=(uint32_t)(end-first);}
 }
 uint8_t *ln_coverflow_files_memory(uint32_t *bytes,uint32_t *epoch){
@@ -191,6 +202,29 @@ void ln_coverflow_metadata_release(uint32_t epoch){
     files_revoke();metadata_lease=0;metadata_lease_bytes=0;
     if(++metadata_lease_epoch==0)++metadata_lease_epoch;
 }
+uint8_t *ln_coverflow_history_reserve(uint32_t bytes,uint32_t *epoch){
+    if(!epoch)return 0;*epoch=0;
+    if(!bytes||bytes>UINT32_MAX-31u||history_lease||packed_stage_inhibited)return 0;
+    uint32_t capacity=0,files_generation=0;
+    uint8_t *memory=ln_coverflow_files_memory(&capacity,&files_generation);
+    uint32_t rounded=(bytes+31u)&~31u,floor=ln_files_cache_maximum_bytes();
+    if(!memory||!files_generation||capacity<floor||rounded>capacity-floor)return 0;
+    uintptr_t end=((uintptr_t)memory+capacity)&~(uintptr_t)31u;
+    if(end<(uintptr_t)memory||rounded>end-(uintptr_t)memory)return 0;
+    history_lease=(uint8_t*)(end-rounded);history_lease_bytes=rounded;
+    uint32_t remaining=0,after_generation=0;
+    uint8_t *after=ln_coverflow_files_memory(&remaining,&after_generation);
+    /* A different winning region would displace warm Files pages. Admission
+     * is RAM-only, so withdraw this tentative reservation before returning. */
+    if(after!=memory||remaining<floor||after_generation!=files_generation){history_revoke();return 0;}
+    *epoch=history_lease_epoch;return history_lease;
+}
+uint8_t *ln_coverflow_history_memory(uint32_t epoch){
+    return epoch&&epoch==history_lease_epoch?history_lease:0;
+}
+void ln_coverflow_history_release(uint32_t epoch){
+    if(epoch==history_lease_epoch)history_revoke();
+}
 #endif
 static uint8_t *catalog_record(uint32_t index){
     uint32_t slot=index%catalog_capacity;
@@ -216,6 +250,9 @@ static int32_t find_art(uint32_t id){for(uint32_t i=0;i<(packed_mode?7u:SLOTS);i
 static bool close_to_selection(uint32_t art);
 static bool selected_full(void){uint8_t *r=row(selected);return r&&art_ready(ln_read_le32(r+248));}
 static void invalidate(void){
+#if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
+    history_revoke();
+#endif
     files_revoke();
     /* The library may already be reusing its tail for a new verification.
      * Drop the lease without clearing memory owned by that new generation. */
@@ -246,6 +283,7 @@ bool ln_coverflow_stage_claim(void){
      * retained until reboot, even if a transfer is abandoned after BEGIN. */
     packed_stage_inhibited=true;
 #if LINNET_TARGET_NUMBER==25u
+    history_revoke();
     ln_coverflow_metadata_release(metadata_lease_epoch);
 #endif
     if(!packed_uses_stage)return true;
@@ -322,7 +360,12 @@ const char *ln_coverflow_text(bool artist){
 }
 bool ln_coverflow_select(void){uint8_t *r=row(selected);return r&&identity()&&
     ln_music_browser_open_album(ln_read_le32(r),ln_read_le32(r+4),(const char*)r+8);}
-static void fail(void){failed=true;phase=CLOSED;io_due=NONE;++revision;}
+static void fail(void){
+#if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
+    history_revoke();
+#endif
+    failed=true;phase=CLOSED;io_due=NONE;++revision;
+}
 static void request_catalog(uint32_t index){
     loading=(index/PAGE)*PAGE;length=count-loading;if(length>PAGE)length=PAGE;
     uint32_t slot=loading%catalog_capacity,available=slot<CATALOG_SLOTS?CATALOG_SLOTS-slot:catalog_capacity-slot;

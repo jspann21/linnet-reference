@@ -138,6 +138,12 @@ void ln_music_browser_suspend(bool value){b.suspended=value;}
 void ln_music_browser_set_visible(bool value){b.visible_now=value;}
 bool ln_music_browser_window_needed(void){return false;}
 bool ln_music_browser_query_idle(void){return b.job==NONE;}
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+bool ln_music_browser_history_scan_visible(void){
+    return b.visible_now&&!b.suspended&&b.here.view==ACTIVITY&&b.activity_scanning&&
+        b.activity_page<LN_HISTORY_PAGE_COUNT&&b.activity_kind!=11u&&!ln_music_history_error();
+}
+#endif
 bool ln_music_browser_take_coverflow(void){bool result=b.coverflow;b.coverflow=false;return result;}
 bool ln_music_browser_take_search(void){bool result=b.search;b.search=false;return result;}
 void ln_music_browser_publish(void){}

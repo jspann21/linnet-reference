@@ -1,6 +1,9 @@
 #include "boot/include/linnet_bytes.h"
 #include "kernel/storage_link.h"
 #include "services/storage/storage.h"
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+#include "services/music/history_pages.h"
+#endif
 #include "services/storage/block.h"
 #if defined(LINNET_FILES)
 #include "services/files/files.h"
@@ -81,6 +84,9 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r,uint8_t *ln_s
 #endif
 #if defined(LINNET_AUDIO)
         else if(q->length==4u&&ln_read_le32(q->payload)==17u){ln_music_budget_diagnostics(words);count=12u;}
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+        else if(q->length==4u&&ln_read_le32(q->payload)==20u){ln_paged_history_window_diagnostics(words);count=8u;}
+#endif
 #endif
 #if defined(LINNET_VIDEO_MP4)
         else if(q->length==4u&&ln_read_le32(q->payload)==16u){ln_mp4_table_diagnostics(words);count=12u;}

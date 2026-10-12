@@ -3,6 +3,11 @@
 #include "history.h"
 #include "services/storage/storage.h"
 #include "hal/api/platform.h"
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+#include "coverflow.h"
+extern void ln_memory_copy(void *,const void *,uint32_t);
+#define BULK_BANK_BYTES (32u*4096u)
+#endif
 enum {SUPER_A,SUPER_B,IDLE,PAGE_A,PAGE_B,PUBLISH,FLUSH,CHECK,ACK,FAILED};
 static struct {
     struct ln_history_page cache[4];uint32_t age[4],clock,revision;
@@ -11,10 +16,60 @@ static struct {
     uint32_t seen[32],bookmark_pages[32],favorite_pages[32],played_pages[32],seen_count,bookmarks;
     uint32_t phase,index,probe,slot;int error;bool loaded,wanted,scanning;
     uint32_t ticket,io_bytes;int io_error;
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+    uint32_t bulk_epoch,bulk_at;
+    bool bulk,bulk_active,bulk_allowed;
+#if !defined(LINNET_PROFILE_RELEASE)
+    uint32_t bulk_windows,bulk_copy_bytes,bulk_aborts;
+#endif
+#endif
     uint64_t id,full_id,pinned_id;bool full,pinned;
     struct {uint64_t id;uint32_t slot,index;bool valid;} proofs[4];uint32_t proof_cursor;
 } h;
-static void fail(int error){h.error=error;h.phase=FAILED;}
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+static uint8_t *bulk_memory(void){return ln_coverflow_history_memory(h.bulk_epoch);}
+static void bulk_release(void){
+    ln_coverflow_history_release(h.bulk_epoch);h.bulk_epoch=0;
+    if(h.bulk)h.window_valid=false;
+    h.bulk=false;h.bulk_at=0;
+}
+static bool bulk_cleanup(void){
+    if(!h.bulk_epoch||h.ticket)return false;
+    bool lost=bulk_memory()==0,reading=h.bulk&&(h.phase==PAGE_A||h.phase==PAGE_B);
+    if(reading&&(!h.bulk_allowed||lost)){
+        bool abandon=!h.bulk_allowed;
+        bulk_release();h.phase=IDLE;
+        if(abandon&&h.scanning)h.wanted=h.scanning=false;
+#if !defined(LINNET_PROFILE_RELEASE)
+        ++h.bulk_aborts;
+#endif
+        return true;
+    }
+    if(lost||!h.bulk_active){
+        bulk_release();
+        if(!h.bulk_active&&h.scanning&&h.phase==IDLE)h.wanted=h.scanning=false;
+    }
+    return false;
+}
+void ln_paged_history_scan_policy(bool active,bool allowed){
+    h.bulk_active=active;h.bulk_allowed=active&&allowed;
+    (void)bulk_cleanup();
+}
+#if !defined(LINNET_PROFILE_RELEASE)
+void ln_paged_history_window_diagnostics(uint32_t words[8]){
+    words[0]=0x4b4c4248u;words[1]=h.bulk_epoch;words[2]=h.window_count;
+    words[3]=(uint32_t)h.bulk|((uint32_t)h.bulk_active<<1)|((uint32_t)h.bulk_allowed<<2)|
+        ((uint32_t)h.window_valid<<3)|((uint32_t)(h.ticket!=0)<<4)|((uint32_t)(bulk_memory()!=0)<<5);
+    words[4]=h.bulk_windows;words[5]=h.bulk_copy_bytes;words[6]=h.bulk_aborts;words[7]=h.bulk_at;
+}
+#endif
+#endif
+static void fail(int error){
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+    bulk_release();
+#endif
+    h.error=error;h.phase=FAILED;
+}
 bool ln_paged_history_ready(void){return h.loaded;}
 int ln_paged_history_error(void){return h.error;}
 bool ln_paged_history_dirty(void){for(uint32_t i=0;i<4;i++)if(h.cache[i].ready&&(h.cache[i].staged||h.cache[i].revision!=h.cache[i].durable_revision))return true;return false;}
@@ -105,7 +160,16 @@ static void resolve(void){
 }
 static void load_window(void){
     uint32_t offset=(h.index-h.window_first)*4096;
-        int result=ln_history_page_load(&h.cache[h.slot],h.a+offset,h.b+offset,h.index,h.epoch);
+        const uint8_t *a=h.a,*b=h.b;
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+        if(h.bulk){
+            uint8_t *memory=bulk_memory();
+            if(!memory){bulk_release();h.phase=IDLE;return;}
+            a=memory+offset;b=memory+BULK_BANK_BYTES+offset;
+        }else
+#endif
+        {a+=offset;b+=offset;}
+        int result=ln_history_page_load(&h.cache[h.slot],a,b,h.index,h.epoch);
         if(result<0){fail(result==-2?LN_HISTORY_CONFLICT:LN_HISTORY_BOTH_CORRUPT);return;}
         uint32_t mask=1u<<(h.index&31);if(!(h.seen[h.index/32]&mask)){
             const struct ln_history_page *p=&h.cache[h.slot];
@@ -117,6 +181,12 @@ static void load_window(void){
 }
 static void start_io(uint32_t operation,uint32_t file,uint32_t offset,uint8_t *buffer,int error){
     uint32_t bytes=(h.phase==PAGE_A||h.phase==PAGE_B)?h.window_count*4096u:4096u;
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+    if(h.bulk&&(h.phase==PAGE_A||h.phase==PAGE_B)){
+        bytes-=h.bulk_at;offset+=h.bulk_at;
+        if(bytes>16384u)bytes=16384u;
+    }
+#endif
     int result=operation==LN_FAT32_FLUSH?ln_storage_async_flush(&h.ticket):
         operation==LN_FAT32_WRITE?ln_storage_async_write(file,offset,buffer,bytes,&h.ticket):
         ln_storage_async_read(file,offset,buffer,bytes,&h.ticket);
@@ -179,6 +249,9 @@ void ln_paged_history_step(bool may_read,bool may_write){
         if(!result)return;
         h.ticket=0;if(result<0||bytes!=h.io_bytes){fail(h.io_error);return;}completed=true;
     }
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+    if(bulk_cleanup())return;
+#endif
     if(h.error)return;
     if(!completed){
         if((!may_read&&!may_write)||ln_storage_busy()||!ln_storage_mounted())return;
@@ -204,6 +277,21 @@ void ln_paged_history_step(bool may_read,bool may_write){
                 h.cache[h.slot].ready=false;for(uint32_t i=0;i<4;i++)if(h.proofs[i].slot==h.slot)h.proofs[i].valid=false;
                 if(h.window_valid&&h.index>=h.window_first&&h.index-h.window_first<h.window_count){load_window();return;}
                 h.window_valid=false;h.window_first=h.index;h.window_count=h.scanning?4u:1u;
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+                h.bulk=false;h.bulk_at=0;
+                /* Preserve the first four-page admission and all playback
+                 * lookups. Extend only still-unverified, visible idle scans. */
+                if(h.scanning&&h.index>=4u&&h.bulk_allowed&&
+                   !(h.seen[h.index/32]&(1u<<(h.index&31)))){
+                    uint32_t pages=LN_HISTORY_PAGE_COUNT-h.index;if(pages>32u)pages=32u;
+                    for(uint32_t n=1;n<pages;n++)if(h.seen[(h.index+n)/32]&(1u<<((h.index+n)&31))){pages=n;break;}
+                    if(pages>4u){
+                        uint8_t *memory=bulk_memory();
+                        if(!memory){h.bulk_epoch=0;memory=ln_coverflow_history_reserve(2u*BULK_BANK_BYTES,&h.bulk_epoch);}
+                        if(memory){h.bulk=true;h.window_count=pages;}
+                    }
+                }
+#endif
                 if(h.window_count>LN_HISTORY_PAGE_COUNT-h.index)h.window_count=LN_HISTORY_PAGE_COUNT-h.index;
                 h.window_revision=h.revision;h.phase=PAGE_A;return;
             }
@@ -218,11 +306,42 @@ void ln_paged_history_step(bool may_read,bool may_write){
         if(h.slot==4)return;
         if(!ln_storage_prepared()){if(ln_storage_prepare_writes()<0)fail(LN_HISTORY_READ_ONLY);return;}
         h.window_valid=false;
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+        h.bulk=false;h.bulk_at=0;
+#endif
         if(!ln_history_page_encode(&h.cache[h.slot],h.a)){fail(LN_HISTORY_ENCODE);return;}h.phase=PUBLISH;return;
     case PAGE_A:
-        if(!completed){start_io(LN_FAT32_READ,LN_STORAGE_MUSIC0,(h.index+1)*4096,h.a,LN_HISTORY_READ_A);return;}h.phase=PAGE_B;return;
+        if(!completed){start_io(LN_FAT32_READ,LN_STORAGE_MUSIC0,(h.index+1)*4096,h.a,LN_HISTORY_READ_A);return;}
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+        if(h.bulk){
+            uint8_t *memory=bulk_memory();
+            if(!memory){(void)bulk_cleanup();return;}
+            ln_memory_copy(memory+h.bulk_at,h.a,h.io_bytes);h.bulk_at+=h.io_bytes;
+#if !defined(LINNET_PROFILE_RELEASE)
+            h.bulk_copy_bytes+=h.io_bytes;
+#endif
+            if(h.bulk_at<h.window_count*4096u)return;
+            h.bulk_at=0;
+        }
+#endif
+        h.phase=PAGE_B;return;
     case PAGE_B:{
         if(!completed){start_io(LN_FAT32_READ,LN_STORAGE_MUSIC1,(h.index+1)*4096,h.b,LN_HISTORY_READ_B);return;}
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+        if(h.bulk){
+            uint8_t *memory=bulk_memory();
+            if(!memory){(void)bulk_cleanup();return;}
+            ln_memory_copy(memory+BULK_BANK_BYTES+h.bulk_at,h.b,h.io_bytes);h.bulk_at+=h.io_bytes;
+#if !defined(LINNET_PROFILE_RELEASE)
+            h.bulk_copy_bytes+=h.io_bytes;
+#endif
+            if(h.bulk_at<h.window_count*4096u)return;
+            h.bulk_at=0;
+#if !defined(LINNET_PROFILE_RELEASE)
+            ++h.bulk_windows;
+#endif
+        }
+#endif
         h.window_valid=h.window_revision==h.revision;load_window();return;
     }
     case PUBLISH:
