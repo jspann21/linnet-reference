@@ -77,6 +77,27 @@ static struct row *row(uint32_t n){
     *r=(struct row){.ordinal=n,.index=index,.count=count,.valid=true};copy(r->label,label);return r;}
 static void navigate(void){b.navigation++;b.first=b.here.first;invalidate();b.selection_ready=true;b.restored_selection=b.here.selected;}
 static uint32_t ordinal(uint32_t n){return b.here.reverse?(b.here.view==ARTIST_ALBUMS?(n?b.here.count-n:0):b.here.count-1-n):n;}
+static void jump_label(const char *label){
+    unsigned char letter=(unsigned char)label[0];if(letter>='a'&&letter<='z')letter-=32;if(letter<'A'||letter>'Z')letter='#';
+    if(b.jump_binary){unsigned char key=(unsigned char)label[0];if(key>='A'&&key<='Z')key+=32;unsigned char target=(unsigned char)(b.jump_letter+32);if(letter==b.jump_letter)b.jump_found=b.jump_at;bool before=b.here.reverse?key>target:key<target;if(before)b.jump_lo=b.jump_at+1;else b.jump_hi=b.jump_at;}
+    else if(letter==b.jump_letter){b.jumping=false;b.here.selected=b.jump_at;navigate();}else b.jump_at++;
+}
+static bool jump_cached(void){
+    if(ln_music_library_status()!=LN_LIBRARY_READY)return false;
+    uint32_t started=ln_time_us();
+    for(uint32_t step=0;step<64u&&b.jumping;++step){
+        if(b.jump_binary){if(b.jump_lo==b.jump_hi){b.jumping=false;if(b.jump_found!=UINT32_MAX){b.here.selected=b.jump_found;navigate();}else ln_music_browser_notice("No matching letter");return true;}b.jump_at=b.jump_lo+(b.jump_hi-b.jump_lo)/2;}
+        else if(b.jump_at>=b.here.count){b.jumping=false;ln_music_browser_notice("No matching letter");return true;}
+        uint32_t at=ordinal(b.jump_at);
+        if(b.here.view==ARTIST_ALBUMS&&!at){++b.jump_at;continue;}
+        /* row() uses only verified resident labels and members. A miss keeps
+         * the existing async lookup, including its cancellation epoch. */
+        struct row *r=row(b.jump_at);if(!r)return false;
+        jump_label(r->label);
+        if((uint32_t)(ln_time_us()-started)>=250u)return true;
+    }
+    return true;
+}
 static bool list_view(void){return b.here.view==GROUPS||b.here.view==TRACKS||b.here.view==ACTIVITY||b.here.view==LOCAL_TRACKS||b.here.view==ARTIST_ALBUMS||b.here.view==ALBUM_ARTISTS;}
 static bool push(void){if(b.depth==8)return false;b.parents[b.depth++]=b.here;return true;}
 static void enter(enum view view,const char *title){b.here=(struct location){.view=view};copy(b.here.title,title);navigate();}
@@ -228,7 +249,7 @@ bool ln_music_browser_select(uint32_t n){
     b.notice=0;b.saved_message=false;b.here.selected=n;
     if(b.here.view==BROWSE_OPTIONS){if(n<2){struct location *parent=&b.parents[b.depth-1];if(parent->reverse!=(n!=0)&&parent->count)parent->selected=parent->view==ARTIST_ALBUMS?(parent->selected?parent->count-parent->selected:0):parent->count-1-parent->selected;parent->reverse=n!=0;return ln_music_browser_back();}if(n==2){enter(LETTERS,"Jump to letter");return true;}return false;}
     if(b.here.view==LETTERS){if(n>26)return false;char letter=n?(char)('A'+n-1):'#';ln_music_browser_back();b.jump_letter=letter;b.jumping=true;b.jump_lo=0;b.jump_hi=b.here.count;b.jump_at=0;b.jump_found=UINT32_MAX;
-        b.jump_binary=n&&(b.here.view==GROUPS||b.here.view==ALBUM_ARTISTS||(b.here.view==TRACKS&&!b.here.kind)||(b.here.view==ACTIVITY&&(b.activity_kind==9||b.activity_kind==10)));changed();return true;}
+        b.jump_binary=n&&(b.here.view==GROUPS||b.here.view==ALBUM_ARTISTS||(b.here.view==TRACKS&&!b.here.kind)||(b.here.view==ACTIVITY&&(b.activity_kind==9||b.activity_kind==10)));(void)jump_cached();changed();return true;}
     if(b.here.view==CATEGORIES||b.here.view==MORE){n=ln_music_menu_category(b.here.view==MORE,n);if(n==LN_MUSIC_COVER_FLOW){b.coverflow=true;return true;}if(n==LN_MUSIC_MORE){if(!push())return false;enter(MORE,"More Music");return true;}if(n>=15)return false;if(n==14){if(!push())return false;enter(ALBUM_ARTISTS,"Album Artists");catalog_begin(true);return true;}if(n>=9&&n<=12){if(!push())return false;enter(ACTIVITY,categories[n]);b.activity_kind=n;b.activity_count=b.activity_scan=b.activity_page=b.scan_id_count=b.scan_id_at=0;for(uint32_t i=0;i<sizeof activity_data.filter;i++)activity_data.filter[i]=0;b.activity_scanning=true;b.activity_indexed=b.activity_waiting=b.activity_overflow=false;
         b.activity_id_index_tried=false;
         return true;}if(n==13){if(!push())return false;groups(8);copy(b.here.title,"Recently Added");return true;}if(n==8){b.search=true;return true;}if(!push())return false;
@@ -325,9 +346,7 @@ void ln_music_browser_step(void){
             b.activity_scan+=id_count;changed();
         }
         else if(job==JUMP_GROUP||job==JUMP_TITLE){
-            const char *label=job==JUMP_GROUP?name:title.title;unsigned char letter=(unsigned char)label[0];if(letter>='a'&&letter<='z')letter-=32;if(letter<'A'||letter>'Z')letter='#';
-            if(b.jump_binary){unsigned char key=(unsigned char)label[0];if(key>='A'&&key<='Z')key+=32;unsigned char target=(unsigned char)(b.jump_letter+32);if(letter==b.jump_letter)b.jump_found=b.jump_at;bool before=b.here.reverse?key>target:key<target;if(before)b.jump_lo=b.jump_at+1;else b.jump_hi=b.jump_at;}
-            else if(letter==b.jump_letter){b.jumping=false;b.here.selected=b.jump_at;navigate();}else b.jump_at++;
+            jump_label(job==JUMP_GROUP?name:title.title);
         }
         else if(job==CATALOG_RANGE){if(g.kind<2)b.lo=b.mid+1;else b.hi=b.mid;}
         else if(job==CATALOG_ARTIST){
@@ -383,6 +402,7 @@ void ln_music_browser_step(void){
             }if(ln_music_library_group_record(b.catalog_at))b.job=CATALOG_GROUP;
         }else if(b.catalog==3&&ln_music_library_group_members(b.catalog_group,b.catalog_member))b.job=CATALOG_MEMBER;
     }else if(b.jumping){
+        if(jump_cached())return;
         if(b.jump_binary){if(b.jump_lo==b.jump_hi){b.jumping=false;if(b.jump_found!=UINT32_MAX){b.here.selected=b.jump_found;navigate();}else ln_music_browser_notice("No matching letter");return;}b.jump_at=b.jump_lo+(b.jump_hi-b.jump_lo)/2;}
         else if(b.jump_at>=b.here.count){b.jumping=false;ln_music_browser_notice("No matching letter");return;}
         uint32_t at=ordinal(b.jump_at);

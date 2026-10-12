@@ -67,6 +67,9 @@ metadata, group names under the existing title-cache budget. Extra group names
 require room for the whole string pool and the host-built browse index. Browser
 labels and group members that are resident can be resolved before drawing;
 larger libraries retain the asynchronous lookup path.
+Jump to letter also consumes ready labels before its first frame, within a
+250-microsecond slice. Missing labels retain the existing asynchronous lookup;
+long scans yield between slices and preserve reverse-order and cancellation rules.
 Cover Flow can use the unoccupied title-cache tail for additional complete
 album records and previews. Library reload and cancellation drain its reader
 before reusing that memory. Video can retain all native artwork as lossless LZ4
