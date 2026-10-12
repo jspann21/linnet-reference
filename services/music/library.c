@@ -174,6 +174,10 @@ static void browse_search_bounds(void){
     uint32_t end=key+256u;
     if(library.db.prefix[1]){key|=(uint8_t)library.db.prefix[1];end=key+1u;}
     uint32_t lo=browse_prefix_lower(key),hi=browse_prefix_lower(end);
+    /* The host stores the first ordinal of every two-byte key. Short
+     * prefixes already have an exact lower bound; still validate the final
+     * candidate reference, string and prefix through the normal DB query. */
+    if(library.db.search_prefix_length<=2u){library.db.low=library.db.high=lo;return;}
     if(browse_fence_count){
         uint32_t first=0,last=browse_fence_count;
         while(first<last){uint32_t mid=first+(last-first)/2u;
