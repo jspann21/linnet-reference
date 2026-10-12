@@ -26,6 +26,8 @@ static struct {
 } parent;
 static bool restore_cached;
 static uint32_t restore_first;
+static uint32_t find_deadline,find_epoch;
+static bool find_deferred;
 #endif
 static struct cached_row *row_slot(uint32_t ordinal){return &rows[ordinal%(LN_MUSIC_SEARCH_ROWS*2u)];}
 static bool row_ready(uint32_t ordinal){struct cached_row *r=row_slot(ordinal);return r->valid&&r->ordinal==ordinal;}
@@ -59,7 +61,7 @@ static void parent_capture(uint32_t selected){
 static void reset_results(uint32_t start){
     first=start;known=total=0;complete=window_ready=false;restore_selection=false;
 #if LINNET_TARGET_NUMBER == 25u
-    restore_cached=false;if(!in_group)parent.valid=false;
+    restore_cached=false;find_deferred=false;if(!in_group)parent.valid=false;
 #endif
     if(!in_group)result_identity_valid=ln_music_library_identity(result_identity);
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -74,6 +76,17 @@ void ln_music_search_open(void){
     ln_music_browser_suspend(true);reset_results(0);++navigation;
 }
 void ln_music_search_close(void){opened=false;closing=true;track_ready=false;++epoch;++revision;}
+#if LINNET_TARGET_NUMBER == 25u
+void ln_music_search_cancel_frame_defer(void){find_deferred=false;}
+bool ln_music_search_frame_deferred(uint32_t now,uint32_t *deadline){
+    if(!find_deferred||!deadline)return false;
+    if(!opened||closing||!results||!length||in_group||epoch!=find_epoch||window_ready||
+       ln_music_library_status()!=LN_LIBRARY_READY||(int32_t)(now-find_deadline)>=0){
+        find_deferred=false;return false;
+    }
+    *deadline=find_deadline;return true;
+}
+#endif
 void ln_music_search_resume(void){
     if(opened)return;
     opened=true;closing=false;track_ready=false;++epoch;++revision;
@@ -187,7 +200,14 @@ const char *ln_music_search_hint(void){return results?(in_group?"Right: Actions 
 const char *ln_music_search_title(void){return in_group?group_title:results?"Search results":"Search music";}
 uint32_t ln_music_search_revision(void){return revision;}
 uint32_t ln_music_search_navigation(void){return navigation;}
-void ln_music_search_right(void){if(opened&&length&&!results){results=true;reset_results(0);++navigation;}}
+void ln_music_search_right(void){if(opened&&length&&!results){
+    results=true;reset_results(0);++navigation;
+#if LINNET_TARGET_NUMBER == 25u
+    /* Coalesce explicit Find into its ready result frame. This one-shot cap
+     * never extends on progress and does not alter query scheduling. */
+    find_deadline=ln_time_us()+50000u;find_epoch=epoch;find_deferred=true;
+#endif
+}}
 void ln_music_search_left(void){
     if(!opened)return;
     if(results){(void)ln_music_search_back();return;}

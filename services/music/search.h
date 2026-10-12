@@ -17,6 +17,11 @@ void ln_music_search_step(void);
 bool ln_music_search_prepare(uint32_t visible_rows);
 bool ln_music_search_busy(void);
 bool ln_music_search_query_pending(void);
+#if LINNET_TARGET_NUMBER == 25u
+/* A bounded explicit-Find frame hold; runtime must honor it in render and idle. */
+bool ln_music_search_frame_deferred(uint32_t now,uint32_t *deadline);
+void ln_music_search_cancel_frame_defer(void);
+#endif
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_music_search_diagnostics(uint32_t out[16]);
 #endif

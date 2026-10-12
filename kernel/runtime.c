@@ -247,6 +247,15 @@ static void search_reconcile(bool fallback_selection){
         shell->selected=row;ln_ui_refresh(shell);dirty=true;
     }
 }
+#if LINNET_TARGET_NUMBER == 25u
+static bool search_frame_deferred(uint32_t now,uint32_t *deadline){
+    if(!scene_is(LN_UI_SCENE_MUSIC_SEARCH)||sleeping||animation_left||
+       (shell->dirty&2u)||shell->drawn_theme!=ln_ui_theme_index()){
+        ln_music_search_cancel_frame_defer();return false;
+    }
+    return ln_music_search_frame_deferred(now,deadline);
+}
+#endif
 #endif
 #if defined(LINNET_PHOTOS)
 static bool photo_scene(void){
@@ -357,6 +366,12 @@ static void clock_save_step(void){
 }
 #endif
 static void apply(uint32_t kind,int32_t value){
+#if defined(LINNET_AUDIO) && LINNET_TARGET_NUMBER == 25u
+    /* A new interaction cancels the hold. Release edges leave Find armed. */
+    if((kind==LN_INPUT_WHEEL&&value)||
+       (kind==LN_INPUT_BUTTON&&((uint32_t)value&~shell->buttons))||kind>=3u)
+        ln_music_search_cancel_frame_defer();
+#endif
 #if defined(LINNET_HARDWARE_CLICKER)
     bool changing_click=kind==LN_INPUT_BUTTON&&!shell->hold&&
         scene_is(LN_UI_SCENE_MUSIC_SOUND)&&ln_music_sound_action(shell->selected)==13u&&
@@ -1166,6 +1181,10 @@ void ln_runtime_step(void){
 #else
     bool render_ready=!sleeping&&!ln_display_busy();
 #endif
+#if defined(LINNET_AUDIO) && LINNET_TARGET_NUMBER == 25u
+    uint32_t search_frame_due;
+    if(dirty&&search_frame_deferred(ln_time_us(),&search_frame_due))render_ready=false;
+#endif
 #if LINNET_AUDIO_RENDER_RESERVE && defined(LINNET_AUDIO)
     if(render_ready&&ln_player_busy()){
         struct ln_audio_status audio;ln_audio_snapshot(&audio);
@@ -1222,6 +1241,9 @@ void ln_runtime_step(void){
             }
             if(scene_is(LN_UI_SCENE_MUSIC_SEARCH)){
                 search_revision=ln_music_search_revision();search_library_status=ln_music_library_status();
+#if LINNET_TARGET_NUMBER == 25u
+                ln_music_search_cancel_frame_defer();
+#endif
             }
 #endif
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -1269,11 +1291,16 @@ void ln_runtime_idle(void){
 #if LINNET_DISPLAY_PIPELINE
     display_wait=ln_display_wait_deadline(&display_due);
 #endif
-    if(dirty&&!display_wait)return;
+    bool search_wait=false;uint32_t search_due=now;
+#if defined(LINNET_AUDIO) && LINNET_TARGET_NUMBER == 25u
+    search_wait=dirty&&search_frame_deferred(now,&search_due);
+#endif
+    if(dirty&&!display_wait&&!search_wait)return;
     struct ln_display_metrics display;ln_display_get_metrics(&display);
     /* CPU fallback must service its bounded worker; a live COP owns the LCD. */
     if(ln_display_busy()&&!display.cop_active&&!display_wait)return;
     uint32_t next=now+200000u;
+    if(search_wait&&(int32_t)(search_due-next)<0)next=search_due;
 #if defined(LINNET_HARDWARE_CLICKER)
     uint32_t click_due;
     if(ln_platform_click_deadline(&click_due)&&(int32_t)(click_due-next)<0)next=click_due;
