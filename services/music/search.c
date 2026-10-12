@@ -16,11 +16,43 @@ static bool opened,closing,results,pending,complete,track_ready,in_group,pending
 static uint8_t result_identity[32],group_identity[32];
 static uint32_t group_kind;
 static bool result_identity_valid,group_identity_valid;
+static struct {
+    struct ln_music_library_search_row rows[LN_MUSIC_SEARCH_ROWS];
+    uint32_t first,count,known,total;
+    uint8_t identity[32];char prefix[LN_MUSIC_SEARCH_PREFIX+1];
+    bool valid,complete;
+} parent;
+static bool restore_cached;
+static uint32_t restore_first;
 static struct cached_row *row_slot(uint32_t ordinal){return &rows[ordinal%(LN_MUSIC_SEARCH_ROWS*2u)];}
 static bool row_ready(uint32_t ordinal){struct cached_row *r=row_slot(ordinal);return r->valid&&r->ordinal==ordinal;}
+static bool parent_matches(void){
+    if(!parent.valid||library_waiting||ln_music_library_status()!=LN_LIBRARY_READY)return false;
+    uint8_t identity[32];if(!ln_music_library_identity(identity))return false;
+    for(uint32_t i=0;i<32u;++i)if(identity[i]!=parent.identity[i])return false;
+    for(uint32_t i=0;i<=LN_MUSIC_SEARCH_PREFIX;++i)if(prefix[i]!=parent.prefix[i])return false;
+    return true;
+}
+static void parent_capture(uint32_t selected){
+    parent.valid=false;
+    if(in_group||!result_identity_valid||library_waiting||ln_music_library_status()!=LN_LIBRARY_READY)return;
+    uint8_t identity[32];if(!ln_music_library_identity(identity))return;
+    for(uint32_t i=0;i<32u;++i)if(identity[i]!=result_identity[i])return;
+    uint32_t limit=first+LN_MUSIC_SEARCH_ROWS;if(complete&&limit>total)limit=total;
+    if(selected<first||selected>=limit)return;
+    uint32_t started=ln_time_us();
+    for(uint32_t row=first;row<limit;++row){
+        if((uint32_t)(ln_time_us()-started)>=250u||!row_ready(row))return;
+        parent.rows[row-first]=row_slot(row)->value;
+    }
+    parent.first=first;parent.count=limit-first;parent.known=known;parent.total=total;parent.complete=complete;
+    for(uint32_t i=0;i<32u;++i)parent.identity[i]=identity[i];
+    for(uint32_t i=0;i<=LN_MUSIC_SEARCH_PREFIX;++i)parent.prefix[i]=prefix[i];
+    parent.valid=true;
+}
 static void reset_results(uint32_t start){
-    first=start;known=total=0;complete=window_ready=false;restore_selection=false;
-    if(!in_group)result_identity_valid=ln_music_library_identity(result_identity);
+    first=start;known=total=0;complete=window_ready=false;restore_selection=restore_cached=false;
+    if(!in_group){parent.valid=false;result_identity_valid=ln_music_library_identity(result_identity);}
 #if !defined(LINNET_PROFILE_RELEASE)
     query_started_us=results&&length?ln_time_us():0;
     first_ready_us=window_ready_us=0;
@@ -162,6 +194,7 @@ bool ln_music_search_select(uint32_t row){
     if(row<known&&row_ready(row)){
         const struct ln_music_library_search_row *result=&row_slot(row)->value;
         if(result->kind){
+            parent_capture(row);
             search_first=first;search_row=row;
             group_index=result->index&~LN_MUSIC_SEARCH_GROUP;group_count=result->count;in_group=true;
             group_kind=result->kind;group_identity_valid=result_identity_valid;
@@ -174,7 +207,21 @@ bool ln_music_search_select(uint32_t row){
     return false;
 }
 bool ln_music_search_back(void){
-    if(in_group){in_group=false;reset_results(search_first);restore_row=search_row;known=restore_row+1u;restore_selection=true;++navigation;return true;}
+    if(in_group){
+        bool retained=parent_matches();in_group=false;reset_results(search_first);
+        restore_row=search_row;known=restore_row+1u;restore_selection=true;
+        if(retained){
+            first=parent.first;known=parent.known;total=parent.total;complete=parent.complete;window_ready=true;
+            for(uint32_t i=0;i<parent.count;++i){struct cached_row *cached=row_slot(first+i);
+                cached->value=parent.rows[i];cached->ordinal=first+i;cached->valid=true;
+            }
+            restore_first=first;restore_cached=true;
+#if !defined(LINNET_PROFILE_RELEASE)
+            first_ready_us=window_ready_us=ln_time_us();
+#endif
+        }
+        ++navigation;return true;
+    }
     if(results){results=false;reset_results(0);++navigation;return true;}
     ln_music_search_close();return false;
 }
@@ -185,6 +232,10 @@ void ln_music_search_window(uint32_t first_visible){
 bool ln_music_search_take_selection(uint32_t *row){
     if(!row||!restore_selection)return false;
     *row=restore_row;restore_selection=false;return true;
+}
+bool ln_music_search_take_viewport(uint32_t *row,uint32_t *first){
+    if(!row||!first||!restore_selection||!restore_cached)return false;
+    *row=restore_row;*first=restore_first;restore_selection=restore_cached=false;return true;
 }
 bool ln_music_search_take_queue(struct ln_music_browser_queue *queue){
     if(!queue||!track_ready)return false;

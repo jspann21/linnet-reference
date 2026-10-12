@@ -37,6 +37,9 @@ bool ln_music_search_back(void);
 void ln_music_search_window(uint32_t first);
 /* Restore the parent highlight once its asynchronous row has arrived. */
 bool ln_music_search_take_selection(uint32_t *row);
+/* A fully retained parent page restores its highlight and viewport together,
+ * before the shell binds or paints the returned search results. */
+bool ln_music_search_take_viewport(uint32_t *row,uint32_t *first);
 /* Group playback uses the full source and selected ordinal, independent of pages. */
 bool ln_music_search_take_queue(struct ln_music_browser_queue *queue);
 #endif

@@ -230,6 +230,23 @@ static void browser_navigation(void){
     music_window_epoch=shell->scene_epoch;music_window_selection=shell->selected;
     music_window_navigation=navigation;
 }
+static void search_reconcile(bool fallback_selection){
+    if(!scene_is(LN_UI_SCENE_MUSIC_SEARCH))return;
+    if(!ln_music_search_active())ln_music_search_resume();
+    if(search_navigation!=ln_music_search_navigation()){
+        search_navigation=ln_music_search_navigation();shell->selected=0;shell->selections[shell->scene]=0;
+        ln_ui_refresh(shell);dirty=true;
+    }
+    uint32_t row,first;
+    if(ln_music_search_take_viewport(&row,&first)){
+        shell->selected=row;shell->selections[shell->scene]=row;shell->first_visible[shell->scene]=first;
+        ln_ui_refresh(shell);dirty=true;
+    }
+    ln_music_search_window(ln_ui_first_visible(shell));
+    if(fallback_selection&&ln_music_search_take_selection(&row)){
+        shell->selected=row;ln_ui_refresh(shell);dirty=true;
+    }
+}
 #endif
 #if defined(LINNET_PHOTOS)
 static bool photo_scene(void){
@@ -534,7 +551,7 @@ static void apply(uint32_t kind,int32_t value){
             if(pressed&LN_BUTTON_MENU){if(!ln_music_search_back())(void)ln_ui_show(shell,"linnet.system.music");}
             else if(pressed&LN_BUTTON_NEXT){if(ln_music_search_actions(shell->selected)){(void)ln_ui_show(shell,"linnet.system.music");browser_navigation();}else ln_music_search_right();}
             else if(pressed&LN_BUTTON_PREV)ln_music_search_left();
-            else (void)ln_music_search_select(shell->selected);
+            else {ln_music_search_window(ln_ui_first_visible(shell));(void)ln_music_search_select(shell->selected);}
             ln_ui_refresh(shell);dirty=true;handled=true;
         }else if((pressed&LN_BUTTON_MENU)&&scene_is(LN_UI_SCENE_MUSIC_OPTIONS)){
             if(ln_ui_show(shell,"linnet.system.now-playing"))dirty=true;handled=true;
@@ -932,17 +949,7 @@ void ln_runtime_step(void){
         ln_music_queue_view_visible_rows(rows);
         ln_music_queue_view_window(ln_ui_first_visible(shell));
     }
-    if(scene_is(LN_UI_SCENE_MUSIC_SEARCH)&&!ln_music_search_active())ln_music_search_resume();
-    if(scene_is(LN_UI_SCENE_MUSIC_SEARCH)&&search_navigation!=ln_music_search_navigation()){
-        search_navigation=ln_music_search_navigation();shell->selected=0;shell->selections[shell->scene]=0;ln_ui_refresh(shell);dirty=true;
-    }
-    if(scene_is(LN_UI_SCENE_MUSIC_SEARCH)){
-        ln_music_search_window(ln_ui_first_visible(shell));
-        uint32_t restored_selection;
-        if(ln_music_search_take_selection(&restored_selection)){
-            shell->selected=restored_selection;ln_ui_refresh(shell);dirty=true;
-        }
-    }
+    search_reconcile(true);
 #if defined(LINNET_VIDEO)
     /* Video has its own presentation revision. Keep music caches untouched so
      * the first callback after leaving video reconciles every deferred change. */
@@ -1090,11 +1097,7 @@ void ln_runtime_step(void){
         if(ln_music_queue_view_prepare()){ln_ui_refresh_content(shell);dirty=true;}
     }
     if(scene_is(LN_UI_SCENE_MUSIC_SEARCH)){
-        if(search_navigation!=ln_music_search_navigation()){
-            search_navigation=ln_music_search_navigation();shell->selected=0;shell->selections[shell->scene]=0;
-            ln_ui_refresh(shell);dirty=true;
-        }
-        ln_music_search_window(ln_ui_first_visible(shell));
+        search_reconcile(false);
         if(ln_music_search_prepare(ln_ui_visible_capacity(shell))){ln_ui_refresh_content(shell);dirty=true;}
     }
 #endif
