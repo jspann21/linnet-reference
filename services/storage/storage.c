@@ -17,6 +17,9 @@
 #include "services/music/coverflow.h"
 #endif
 #include "linnet_build.h"
+#if defined(LINNET_AUDIO) && defined(LINNET_TARGET_VIDEO5G_M25)
+#include "services/music/library.h"
+#endif
 #if defined(LINNET_IMAGE_OS)
 #include "kernel/runtime.h"
 #endif
@@ -638,6 +641,9 @@ void ln_storage_maintenance_end(bool success){
 #endif
 int ln_storage_recover(void){
     if(locked||pending||ln_storage_busy()||!ln_block_recover(ln_time_us()))return 0;
+#if defined(LINNET_AUDIO) && defined(LINNET_TARGET_VIDEO5G_M25)
+    ln_music_library_verification_reset();
+#endif
 #if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
     ln_coverflow_history_reset();
 #endif

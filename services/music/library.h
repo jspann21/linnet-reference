@@ -34,6 +34,11 @@ void ln_music_library_cancel(void);
 void ln_music_library_pause(bool pause);
 enum ln_music_library_status ln_music_library_status(void);
 int ln_music_library_error(void);
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+/* Drop startup lookahead before reuse or storage recovery. Admitted reads
+ * retain their buffers and must drain before any buffer is repurposed. */
+void ln_music_library_verification_reset(void);
+#endif
 #if defined(LINNET_TARGET_VIDEO5G_M25) && !defined(LINNET_PROFILE_RELEASE)
 /* Latched payload verification and browse readiness timestamps, modulo 32 bits;
  * a flags bit proves each timestamp exists. Reads are admitted payload reads. */

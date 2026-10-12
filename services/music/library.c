@@ -97,12 +97,19 @@ struct library {
     enum job job,query;
     uint8_t stage,guard_stage;
     int error;
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    uint32_t verify_window_first,verify_window_bytes;
+    bool verify_window_valid,io_harvest;
+#endif
 #if defined(LINNET_TARGET_VIDEO5G_M25) && !defined(LINNET_PROFILE_RELEASE)
     uint32_t verify_flags,verify_start_us,verify_hash_us,verify_ready_us;
     uint32_t verify_reads,verify_bytes,verify_io_start_us,verify_io_max_us;
 #endif
 };
 static struct library library;
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+void ln_music_library_verification_reset(void){library.verify_window_valid=false;}
+#endif
 #if defined(LINNET_TARGET_VIDEO5G_M25) && !defined(LINNET_PROFILE_RELEASE)
 void ln_music_library_verification_diagnostics(uint32_t words[8]){
     words[0]=0x57424456u;words[1]=library.verify_flags;
@@ -344,6 +351,9 @@ static uint32_t next_generation(void){if(++generation>=0x20000000u)generation=0x
 static void changed(void){library.revision++;}
 static void fail(int error)
 {
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    ln_music_library_verification_reset();
+#endif
 #if defined(LINNET_TARGET_VIDEO5G_M25) && !defined(LINNET_PROFILE_RELEASE)
     library.verify_flags|=8u;
 #endif
@@ -589,15 +599,42 @@ static void start(void)
     library.revision=revision;library.paused=paused;library.generation=next_generation();
 }
 void ln_music_library_init(void){start();}
-static int read_database_raw(void *context,uint64_t offset,uint8_t *buffer,uint32_t bytes)
+static void capture_database_chunk(uint32_t offset,const uint8_t *buffer,uint32_t bytes)
 {
-    (void)context;
-    if(offset>UINT32_MAX||!bytes||bytes>4096u)return LN_DB_ARGUMENT;
+    if(library.status!=LN_LIBRARY_VERIFYING)return;
+#if defined(LINNET_TARGET_VIDEO5G_M25) && !defined(LINNET_PROFILE_RELEASE)
+    if(library.db.phase==1)library.verify_bytes+=bytes;
+#endif
+#if defined(LINNET_MUSIC_METADATA_BYTES)
+    /* Reuse verification I/O, publishing only after the database hash passes.
+     * The independent title and LRU caches cover any nonresident data. */
+    if(library.file.size<=metadata_capacity){metadata_offset=0;metadata_bytes=library.file.size;}
+    else if(library.db.phase==1){
+        metadata_offset=library.db.group_offset;
+        metadata_bytes=library.file.size-metadata_offset;
+        if(metadata_bytes>metadata_capacity)metadata_bytes=metadata_capacity;
+    }
+    uint32_t first=offset,end=first+bytes;
+    if(first<metadata_offset)first=metadata_offset;
+    if(end>metadata_offset+metadata_bytes)end=metadata_offset+metadata_bytes;
+    if(first<end)ln_memory_copy(metadata+(first-metadata_offset),buffer+(first-offset),end-first);
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+    if(library.db.phase==1)metadata_tail_capture(offset,buffer,bytes,library.file.size);
+#endif
+#endif
+    title_capture((uint32_t)offset,buffer,bytes);
+}
+static int read_database_io(uint64_t offset,uint8_t *buffer,uint32_t bytes,bool harvest)
+{
+    if(offset>library.file.size||!bytes||bytes>(harvest?4096u:16384u)||bytes>library.file.size-offset)return LN_DB_ARGUMENT;
     if(library.io_active){
         if(library.io_offset!=(uint32_t)offset||library.io_size!=bytes||library.io_buffer!=buffer)return LN_DB_ARGUMENT;
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+        if(library.io_harvest!=harvest)return LN_DB_ARGUMENT;
+#endif
         uint32_t transferred=0;
         int result=0;
-        /* A metadata page is at most 4 KiB. Group ready FAT/cache transitions
+        /* A metadata request is at most 16 KiB. Group ready FAT/cache transitions
          * without recursive runtime work between each sector; yield as soon
          * as hardware really waits. Cancellation retains its ordinary drain. */
         for(uint32_t step=0;step<4u;++step){
@@ -614,30 +651,9 @@ static int read_database_raw(void *context,uint64_t offset,uint8_t *buffer,uint3
             if(library.status==LN_LIBRARY_VERIFYING&&library.db.phase==1){
                 uint32_t elapsed=ln_time_us()-library.verify_io_start_us;
                 if(elapsed>library.verify_io_max_us)library.verify_io_max_us=elapsed;
-                library.verify_bytes+=bytes;
             }
 #endif
-#if defined(LINNET_MUSIC_METADATA_BYTES)
-            /* Reuse verification I/O, publishing only after the database hash
-             * passes. Large libraries retain the browse tables first, while
-             * the independent title and LRU caches cover the remaining data. */
-            if(library.status==LN_LIBRARY_VERIFYING){
-                if(library.file.size<=metadata_capacity){metadata_offset=0;metadata_bytes=library.file.size;}
-                else if(library.db.phase==1){
-                    metadata_offset=library.db.group_offset;
-                    metadata_bytes=library.file.size-metadata_offset;
-                    if(metadata_bytes>metadata_capacity)metadata_bytes=metadata_capacity;
-                }
-                uint32_t first=(uint32_t)offset,end=first+bytes;
-                if(first<metadata_offset)first=metadata_offset;
-                if(end>metadata_offset+metadata_bytes)end=metadata_offset+metadata_bytes;
-                if(first<end)ln_memory_copy(metadata+(first-metadata_offset),buffer+(first-(uint32_t)offset),end-first);
-#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
-                if(library.db.phase==1)metadata_tail_capture((uint32_t)offset,buffer,bytes,library.file.size);
-#endif
-            }
-#endif
-            if(library.status==LN_LIBRARY_VERIFYING)title_capture((uint32_t)offset,buffer,bytes);
+            if(harvest)capture_database_chunk((uint32_t)offset,buffer,bytes);
             return 1;
         }
         return LN_DB_IO;
@@ -645,6 +661,9 @@ static int read_database_raw(void *context,uint64_t offset,uint8_t *buffer,uint3
     if(library.paused)return 0;
     int result=ln_storage_media_read(&library.file,(uint32_t)offset,buffer,bytes,library.generation);
     if(result!=1)return result;
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    library.io_harvest=harvest;
+#endif
     library.io_active=true;library.io_offset=(uint32_t)offset;library.io_size=bytes;library.io_buffer=buffer;
 #if defined(LINNET_TARGET_VIDEO5G_M25) && !defined(LINNET_PROFILE_RELEASE)
     if(library.status==LN_LIBRARY_VERIFYING&&library.db.phase==1){
@@ -653,9 +672,43 @@ static int read_database_raw(void *context,uint64_t offset,uint8_t *buffer,uint3
 #endif
     return 0;
 }
+static int read_database_raw(void *context,uint64_t offset,uint8_t *buffer,uint32_t bytes)
+{
+    (void)context;return read_database_io(offset,buffer,bytes,true);
+}
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+static int read_verification_window(uint64_t offset,uint8_t *buffer,uint32_t bytes){
+    if(offset>library.file.size||!bytes||bytes>4096u||bytes>library.file.size-offset)return LN_DB_ARGUMENT;
+    /* Pause cached hashing/capture work too. An already admitted request may
+     * finish and return its one logical chunk, matching the ordinary reader. */
+    if(library.paused&&!library.io_active)return 0;
+    uint32_t first=(uint32_t)offset&~16383u;
+    if(!library.verify_window_valid||library.verify_window_first!=first){
+        library.verify_window_valid=false;
+        uint32_t count=library.file.size-first;if(count>16384u)count=16384u;
+        int result=read_database_io(first,(uint8_t *)pages,count,false);
+        if(result!=1)return result;
+        library.verify_window_first=first;library.verify_window_bytes=count;
+        library.verify_window_valid=true;
+    }
+    uint32_t within=(uint32_t)offset-first;
+    if(within>library.verify_window_bytes||bytes>library.verify_window_bytes-within)return LN_DB_ARGUMENT;
+    /* Page tags remain invalid. The parser still hashes and captures only its
+     * original <=4 KiB chunk, in order, after exact physical read completion. */
+    ln_memory_copy(buffer,(const uint8_t *)pages+within,bytes);
+    capture_database_chunk((uint32_t)offset,buffer,bytes);
+    return 1;
+}
+#endif
 static int read_database(void *context,uint64_t offset,uint8_t *buffer,uint32_t bytes)
 {
-    if(!ready())return read_database_raw(context,offset,buffer,bytes);
+    if(!ready()){
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+        if(library.status==LN_LIBRARY_VERIFYING&&library.db.phase==1)
+            return read_verification_window(offset,buffer,bytes);
+#endif
+        return read_database_raw(context,offset,buffer,bytes);
+    }
     if(offset>library.file.size||!bytes||bytes>4096u||bytes>library.file.size-offset)return LN_DB_ARGUMENT;
 #if defined(LINNET_MUSIC_METADATA_BYTES)
     const uint8_t *resident=resident_metadata((uint32_t)offset,bytes);
@@ -702,6 +755,9 @@ static int read_database(void *context,uint64_t offset,uint8_t *buffer,uint32_t 
 }
 static void stop(bool reopen)
 {
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    ln_music_library_verification_reset();
+#endif
 #if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
     metadata_tail_ready=false;
 #endif
@@ -1118,6 +1174,9 @@ static void library_step_once(void)
 #endif
         if(result<0)fail(result);
         else if(result==1){
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+            ln_music_library_verification_reset();
+#endif
 #if LINNET_MUSIC_BROWSE_INDEX
             if(!browse_load())return;
 #endif
