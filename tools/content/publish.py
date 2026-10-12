@@ -120,8 +120,13 @@ def _empty_history_bank(epoch: bytes) -> bytes:
     return bytes(bank)
 
 
-def _plain(path: Path, boundary: Path) -> os.stat_result | None:
-    """Reject symlinks/junctions and return the final component's metadata."""
+def _plain(path: Path, boundary: Path, *, parents=None) -> os.stat_result | None:
+    """Reject links and return leaf metadata.
+
+    Optional parents belong to one read-only batch and root. Each leaf is still
+    checked; _recheck_parents must finish the batch before accepting its result.
+    Never share this map with a write guard or a later operation.
+    """
     try:
         relative = path.relative_to(boundary)
     except ValueError as exc:
@@ -130,6 +135,8 @@ def _plain(path: Path, boundary: Path) -> os.stat_result | None:
     for component in (None, *relative.parts):
         if component is not None:
             cursor /= component
+        if parents is not None and cursor != path and cursor in parents:
+            continue
         try:
             info = cursor.lstat()
         except FileNotFoundError:
@@ -137,7 +144,17 @@ def _plain(path: Path, boundary: Path) -> os.stat_result | None:
             continue
         if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
             raise ValueError(f"reparse/symlink path rejected: {cursor}")
+        if parents is not None and cursor != path and stat.S_ISDIR(info.st_mode):
+            parents[cursor] = file_stamp(info)
     return info
+
+
+def _recheck_parents(parents, boundary):
+    """Finish a bounded read-only batch before trusting its shared directories."""
+    for path, before in parents.items():
+        info = _plain(path, boundary)
+        if info is None or not stat.S_ISDIR(info.st_mode) or file_stamp(info) != before:
+            raise ValueError(f"media directory changed during validation: {path}")
 
 
 def _bounded(path: Path, maximum: int) -> bytes:
@@ -183,9 +200,9 @@ def _pool_string(database: bytes, pool: int, offset: int) -> str:
     return database[start:database.index(0, start)].decode("utf-8")
 
 
-def _existing_stat(local: Path, root: Path, size: int, mtime_ns: int | None = None):
+def _existing_stat(local: Path, root: Path, size: int, mtime_ns: int | None = None, *, parents=None):
     """Check referenced media without reading its audio payload."""
-    info = _plain(local, root)
+    info = _plain(local, root, parents=parents)
     if info is None:
         info = local.stat()
     if not stat.S_ISREG(info.st_mode) or info.st_size != size:
@@ -223,6 +240,7 @@ def validate_stage(stage: Path, *, device_root: Path | None = None,
     sources = set()
     external = []
     external_paths = set()
+    external_parents = {}
     if device_root is not None:
         _plain(Path(os.path.abspath(device_root)), Path(Path(os.path.abspath(device_root)).anchor))
         device_root = Path(device_root).resolve(strict=True)
@@ -267,7 +285,8 @@ def validate_stage(stage: Path, *, device_root: Path | None = None,
                 raise ValueError("This library references existing iPod files; connect the iPod and supply device_root")
             local = device_root / path.lstrip("/")
             snapshot = _existing_stat(local, device_root, size,
-                                      entry["mtime_ns"] if integrity == "metadata" else None)
+                                      entry["mtime_ns"] if integrity == "metadata" else None,
+                                      parents=external_parents if integrity == "metadata" else None)
             if integrity == "sha256" and _hash(local, size) != sha:
                 raise ValueError(f"existing iPod media hash mismatch: {path}")
             if path in external_paths:
@@ -286,6 +305,8 @@ def validate_stage(stage: Path, *, device_root: Path | None = None,
         if _hash(local, size) != sha:
             raise ValueError(f"staged media hash mismatch: {relative}")
         files[relative] = dict(path=relative, bytes=size, sha256=sha, kind="music")
+    if external_parents:
+        _recheck_parents(external_parents, device_root)
     def check_artwork(index):
         offset = art_offset + index * ART
         identity, path_offset, width, height, encoding, count, crc, reserved = struct.unpack_from("<QIHHIIII", database, offset)

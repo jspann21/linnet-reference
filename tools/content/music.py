@@ -1504,11 +1504,11 @@ def _short_names_in(folder: Path, aliases: dict[Path, str]) -> None:
 
 
 def _device_media_path(path: Path, root: Path, alias_cache: dict[Path, str] | None = None,
-                       *, canonical: Path | None = None) -> str:
+                       *, canonical: Path | None = None, parents=None) -> str:
     """Resolve one file against the compiler's already-resolved device root."""
     from .publish import _plain
     path = Path(path).absolute()
-    _plain(path, root)
+    _plain(path, root, parents=parents)
     path = Path(canonical) if canonical is not None else path.resolve(strict=True)
     path.relative_to(root)
     if os.name == "nt" and alias_cache is not None:
@@ -1524,7 +1524,7 @@ def _device_media_path(path: Path, root: Path, alias_cache: dict[Path, str] | No
             actual.append(alias_cache[cursor])
         short_path = root.joinpath(*actual)
         if short_path != path:
-            _plain(short_path, root)
+            _plain(short_path, root, parents=parents)
             if short_path.resolve(strict=True) != path:
                 raise ValueError(f"FAT short name changed during compilation: {path}")
         path = short_path
@@ -2032,6 +2032,7 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
         return index
 
     alias_cache: dict[Path, str] = {}
+    media_parents = {}
     cache_hits = 0
     from .media_manager import _music_import_name
     for number, path, resolved, before, metadata, cached, prefetched_cover in _metadata_rows(
@@ -2043,7 +2044,8 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
             raise SourceError(f'{path}: {issue}', path)
         location = None
         if device_root is not None:
-            location = _device_media_path(path, device_root, alias_cache, canonical=resolved)
+            location = _device_media_path(path, device_root, alias_cache, canonical=resolved,
+                                          parents=media_parents)
         stage_audio = device_root is None
         hash_audio = verification == "full" or stage_audio
         relative = path.relative_to(source).as_posix()
@@ -2140,6 +2142,9 @@ def _compile_music_stage(source: Path, output: Path, *, metadata_pool, ffprobe: 
                             codec=metadata["codec"], integrity="sha256" if hash_audio else "metadata", bytes=before.st_size,
                             mtime_ns=before.st_mtime_ns,
                             sha256=hasher.hexdigest() if hash_audio else "0" * 64))
+    if media_parents:
+        from .publish import _recheck_parents
+        _recheck_parents(media_parents, device_root)
     # All Tracks reads record ordinals directly. Sort once on the host and
     # remap every existing group reference before constructing playlists/search.
     order = sorted(range(len(entries)), key=lambda i: (
