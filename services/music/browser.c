@@ -82,12 +82,17 @@ static void jump_label(const char *label){
     if(b.jump_binary){unsigned char key=(unsigned char)label[0];if(key>='A'&&key<='Z')key+=32;unsigned char target=(unsigned char)(b.jump_letter+32);if(letter==b.jump_letter)b.jump_found=b.jump_at;bool before=b.here.reverse?key>target:key<target;if(before)b.jump_lo=b.jump_at+1;else b.jump_hi=b.jump_at;}
     else if(letter==b.jump_letter){b.jumping=false;b.here.selected=b.jump_at;navigate();}else b.jump_at++;
 }
+static void jump_missing(void){
+    /* The ordinary progress frame clamps selection to its only row. */
+    b.jumping=false;b.here.selected=0;b.first=b.here.first=0;navigate();
+    ln_music_browser_notice("No matching letter");
+}
 static bool jump_cached(void){
     if(ln_music_library_status()!=LN_LIBRARY_READY)return false;
     uint32_t started=ln_time_us();
     for(uint32_t step=0;step<64u&&b.jumping;++step){
-        if(b.jump_binary){if(b.jump_lo==b.jump_hi){b.jumping=false;if(b.jump_found!=UINT32_MAX){b.here.selected=b.jump_found;navigate();}else ln_music_browser_notice("No matching letter");return true;}b.jump_at=b.jump_lo+(b.jump_hi-b.jump_lo)/2;}
-        else if(b.jump_at>=b.here.count){b.jumping=false;ln_music_browser_notice("No matching letter");return true;}
+        if(b.jump_binary){if(b.jump_lo==b.jump_hi){if(b.jump_found!=UINT32_MAX){b.jumping=false;b.here.selected=b.jump_found;navigate();}else jump_missing();return true;}b.jump_at=b.jump_lo+(b.jump_hi-b.jump_lo)/2;}
+        else if(b.jump_at>=b.here.count){jump_missing();return true;}
         uint32_t at=ordinal(b.jump_at);
         if(b.here.view==ARTIST_ALBUMS&&!at){++b.jump_at;continue;}
         /* row() uses only verified resident labels and members. A miss keeps
@@ -406,8 +411,8 @@ void ln_music_browser_step(void){
         }else if(b.catalog==3&&ln_music_library_group_members(b.catalog_group,b.catalog_member))b.job=CATALOG_MEMBER;
     }else if(b.jumping){
         if(jump_cached())return;
-        if(b.jump_binary){if(b.jump_lo==b.jump_hi){b.jumping=false;if(b.jump_found!=UINT32_MAX){b.here.selected=b.jump_found;navigate();}else ln_music_browser_notice("No matching letter");return;}b.jump_at=b.jump_lo+(b.jump_hi-b.jump_lo)/2;}
-        else if(b.jump_at>=b.here.count){b.jumping=false;ln_music_browser_notice("No matching letter");return;}
+        if(b.jump_binary){if(b.jump_lo==b.jump_hi){if(b.jump_found!=UINT32_MAX){b.jumping=false;b.here.selected=b.jump_found;navigate();}else jump_missing();return;}b.jump_at=b.jump_lo+(b.jump_hi-b.jump_lo)/2;}
+        else if(b.jump_at>=b.here.count){jump_missing();return;}
         uint32_t at=ordinal(b.jump_at);
         if(b.here.view==ARTIST_ALBUMS&&!at){b.jump_at++;return;}
         if(b.here.view==GROUPS||b.here.view==ARTIST_ALBUMS||b.here.view==ALBUM_ARTISTS){uint32_t group=b.here.view==GROUPS?b.here.lower+at:activity_data.tracks[b.here.view==ARTIST_ALBUMS?at-1:at];if(ln_music_library_group(group))b.job=JUMP_GROUP;}
