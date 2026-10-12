@@ -8,6 +8,14 @@
 #include "hal/api/audio.h"
 #include "hal/api/platform.h"
 #include "kernel/runtime.h"
+#if defined(LINNET_SOC_PP5022) && defined(LINNET_COVERFLOW)
+#include "hal/api/ata.h"
+#include "services/storage/block.h"
+#include "services/music/library.h"
+#if defined(LINNET_VIDEO)
+#include "services/video/video.h"
+#endif
+#endif
 #if defined(LINNET_PHOTOS)
 #include "services/photos/photos.h"
 #endif
@@ -30,8 +38,10 @@ static struct {
     uint32_t phase,view,depth,count,records,validate,offset,bytes,selected,lfn_sequence,lfn_checksum;
     uint32_t revision,drawn,target_page,request_bytes,preview_base,preview_size;
     uint32_t checkpoint_cluster[16],checkpoint_page[16],restore_row,prepared_kind;
+    uint32_t prepared_epoch;
     bool active,pending,discard,done,sector_loaded,more,replaying;
     bool restoring,back_pending,prepared_text,info_only,returning;
+    bool warming,warm_eligible;
     const char *message;
 } f
 #if defined(LINNET_COVERFLOW)
@@ -117,6 +127,24 @@ static bool scene(const struct ln_ui_state*s){return s&&s->scene<ln_ui_scene_cou
 static bool allowed(void){struct ln_player_status p;struct ln_audio_status a;ln_player_snapshot(&p);ln_audio_snapshot(&a);
     return p.phase==LN_PLAYER_IDLE||p.phase==LN_PLAYER_ERROR||p.phase==LN_PLAYER_PAUSE||
         (a.playing&&!a.paused&&a.queued>=ln_player_background_frames(a.rate)&&!ln_player_prefetch_urgent());}
+#if defined(LINNET_SOC_PP5022) && defined(LINNET_COVERFLOW)
+static bool warm_allowed(const struct ln_ui_state*s){
+    if(!s||s->scene!=LN_UI_SCENE_HOME||ln_storage_busy()||ln_player_busy()||
+       ln_music_library_status()!=LN_LIBRARY_READY)return false;
+#if defined(LINNET_VIDEO)
+    if(ln_video_active()||ln_video_pending())return false;
+#endif
+#if defined(LINNET_PHOTOS)
+    if(ln_photos_active()||ln_photos_pending())return false;
+#endif
+    struct ln_ata_state disk;ln_ata_state_snapshot(&disk);
+    struct ln_block_info block;ln_block_snapshot(&block);
+    return disk.powered&&disk.initialized&&!disk.initializing&&!disk.busy&&
+        !disk.sleeping&&!disk.failed&&!block.power_transition;
+}
+#else
+static bool warm_allowed(const struct ln_ui_state*s){(void)s;return false;}
+#endif
 static void changed(void){++f.revision;}
 static void fail(const char*message){f.message=message;f.phase=READY;f.done=true;changed();}
 static void reset_selection(struct ln_ui_state*s,uint32_t row){
@@ -237,10 +265,21 @@ static void open_chosen(struct ln_ui_state*s){
      * retain a byte viewer rather than attempting to execute their contents. */
     f.view=TEXT;preview();
 }
-void ln_files_close(void){if(!initialized)return;FILES_DIAG(timing.measuring=false);f.active=false;f.back_pending=false;if(f.pending){f.discard=true;ln_storage_media_cancel(GENERATION);}else f.phase=READY;}
+void ln_files_close(void){
+    if(!initialized)return;FILES_DIAG(timing.measuring=false);
+    /* A canceled hidden first-page load must not masquerade as a live folder
+     * on the next open. Its I/O buffer still belongs to the drain below. */
+    if(f.warming&&!f.done){
+        f.folder=(struct folder){0};f.count=f.validate=0;
+        f.done=f.more=f.restoring=f.replaying=false;f.message=0;
+    }
+    f.active=f.warming=f.warm_eligible=false;f.back_pending=false;
+    if(f.pending){f.discard=true;ln_storage_media_cancel(GENERATION);}else f.phase=READY;
+}
 bool ln_files_pending(void){return initialized&&(f.pending||(f.active&&(f.phase!=READY||f.validate)));}
 uint32_t ln_files_deadline(uint32_t now){
-    if(!initialized||!f.active||f.pending)return now+200000u;
+    if(!initialized||(!f.active&&!f.warming)||f.pending)return now+200000u;
+    if(f.warming&&!f.warm_eligible&&!f.validate)return now+200000u;
     if(f.validate||(f.phase==LIVE&&f.sector_loaded)||(f.phase!=READY&&allowed()))return now;
     return now+200000u;
 }
@@ -284,7 +323,25 @@ void ln_files_step(struct ln_ui_state*s){
         f.folder=(struct folder){0};f.depth=0;f.view=DIRECTORY;f.count=f.validate=0;
         f.done=f.more=f.returning=f.replaying=f.restoring=false;f.message=0;pages_clear();
         for(uint32_t i=0;i<16u;++i)f.checkpoint_cluster[i]=0;
-        f.active=false;
+        f.active=f.warming=f.warm_eligible=false;
+    }
+    f.warm_eligible=false;
+    if(scene(s)&&f.warming){f.warming=false;f.active=true;}
+    else if(!scene(s)&&!f.active&&!f.pending){
+        if(f.warming)f.warm_eligible=warm_allowed(s);
+        else if(ln_storage_media_root(&root)&&f.prepared_epoch!=root.epoch&&warm_allowed(s)){
+            f.warm_eligible=true;
+            f.prepared_epoch=root.epoch;
+            /* Retained foreground navigation is already prepared. Never
+             * replace the user's chosen folder with a background root. */
+            if(!f.folder.file.epoch){
+                f.folder=(struct folder){.file=root};f.view=DIRECTORY;
+                f.depth=f.count=f.validate=0;f.done=f.more=f.restoring=f.replaying=false;
+                f.message=0;
+                text(f.folder.title,"Files",sizeof f.folder.title);
+                f.phase=CATALOG_OPEN;f.warming=true;FILES_DIAG(begin_timing());
+            }
+        }
     }
     if(!scene(s)){if(f.active)ln_files_close();}
     else if(!f.active&&!f.pending){
@@ -303,7 +360,7 @@ void ln_files_step(struct ln_ui_state*s){
     }
     if(f.pending){uint32_t bytes=0;struct ln_fat32_file opened;int r=ln_storage_media_poll_deferred(GENERATION,&opened,&bytes);if(!r)return;f.pending=false;
         FILES_DIAG(timing.bytes+=bytes);
-        if(f.discard||!f.active){f.discard=false;f.phase=READY;if(f.back_pending){f.back_pending=false;go_back(s);}return;}
+        if(f.discard||(!f.active&&!f.warming)){f.discard=false;f.phase=READY;if(f.back_pending){f.back_pending=false;go_back(s);}return;}
         if(r<0){if(f.phase<=CATALOG_PAGE){live_folder();}else if(f.phase==ENTRY_OPEN){live_folder();reset_selection(s,0);}else fail("Read failed - reopen Files");}
         else if(f.phase==CATALOG_OPEN){f.catalog=opened;f.phase=CATALOG_HEADER;}
         else if(f.phase==CATALOG_HEADER){
@@ -339,12 +396,20 @@ void ln_files_step(struct ln_ui_state*s){
         }else if(f.phase==PREVIEW){f.bytes=bytes;f.phase=READY;
             if(f.view==TEXT&&!f.prepared_text&&f.offset==0)for(uint32_t i=0;i<bytes;++i)if(!f.io[i]||(f.io[i]<32u&&f.io[i]!=9u&&f.io[i]!=10u&&f.io[i]!=13u)){f.view=HEX;break;}changed();}
     }
-    if(!f.active)return;
+    if(!f.active&&!f.warming)return;
     if(f.validate){for(uint32_t step=0;step<4u&&f.validate;++step){uint32_t row=f.count;
         if(!record_valid(record(row))){f.validate=0;live_folder();break;}
         ++f.count;--f.validate;if(!f.validate){f.done=true;f.more=f.folder.page*ROWS+f.count<f.folder.count;pages_save();changed();}}}
     else if(f.phase==LIVE&&f.sector_loaded){for(uint32_t i=0;i<16u&&f.phase==LIVE&&f.sector_loaded;++i)live_entry();}
-    if(!f.pending&&f.phase!=READY&&allowed()){
+    /* Check after validation too: a bad page must not admit even the first
+     * live-directory read as hidden preparation. */
+    if(f.warming&&(f.phase==LIVE||f.message)){
+        f.folder=(struct folder){0};f.warming=f.warm_eligible=false;f.phase=READY;
+        f.count=f.validate=0;f.done=f.more=f.restoring=f.replaying=false;f.message=0;
+        FILES_DIAG(timing.measuring=false);return;
+    }
+    if(f.warming&&!f.pending)f.warm_eligible=warm_allowed(s);
+    if(!f.pending&&f.phase!=READY&&!ln_storage_busy()&&allowed()&&(!f.warming||f.warm_eligible)){
         int r=0;
         if(f.phase==CATALOG_OPEN)r=ln_storage_media_open("/.LINNET/FILES/INDEX.FIL",GENERATION);
         else if(f.phase==CATALOG_HEADER)r=ln_storage_media_read(&f.catalog,0,f.io,512,GENERATION);
@@ -365,6 +430,7 @@ void ln_files_step(struct ln_ui_state*s){
     if(f.restoring&&f.phase==READY&&!f.validate&&scene(s)){f.restoring=false;s->selected=f.restore_row;ln_ui_refresh(s);}
     if(scene(s)&&f.drawn!=f.revision){f.drawn=f.revision;ln_ui_refresh(s);}
     FILES_DIAG(if(timing.measuring&&f.phase==READY&&!f.pending&&!f.validate){timing.last_us=ln_time_us()-timing.started;++timing.loads;timing.measuring=false;});
+    if(f.warming&&f.phase==READY&&!f.pending&&!f.validate)f.warming=f.warm_eligible=false;
 }
 bool ln_files_input(struct ln_ui_state*s,uint32_t kind,int32_t value){
     if(!initialized||!scene(s)||s->hold||kind!=2u)return false;

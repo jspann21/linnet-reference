@@ -93,6 +93,11 @@ Each cache hit checks the current mount epoch. Remounts, malformed-page fallback
 and explicit Live refresh invalidate the retained pages. Ready pages publish
 their selection and content together, avoiding a duplicate redraw; asynchronous
 loads still restore selection after the row count becomes known.
+On M25, the first Files page also prepares while Home is visible and the disk
+is already awake. Hidden preparation pauses for playback or other storage owners
+and never scans live directories when a host index is missing or corrupt. Pending
+reads drain before cancellation reuses their buffers. Entering Files binds the
+prepared page before the transition's first frame.
 
 The simulator executes the same native renderer and compiled UI definitions.
 It checks layouts and pixels, not physical timing, audio, USB, or power.

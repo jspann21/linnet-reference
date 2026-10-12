@@ -583,6 +583,11 @@ static void apply(uint32_t kind,int32_t value){
 #endif
 #if defined(LINNET_NATIVE_UI)
     if(before!=shell->scene){
+#if defined(LINNET_FILES)
+        /* Bind an already prepared Files page before this transition paints.
+         * The common storage gate keeps this safe in validation callbacks. */
+        if(scene_is(LN_UI_SCENE_FILES))ln_files_step(shell);
+#endif
         if(before<ln_ui_scene_count&&ln_ui_scenes[before].id&&
            scene_is(LN_UI_SCENE_GAME_PLAY)==false){ln_games_audio_stop();}
 #if defined(LINNET_AUDIO)
