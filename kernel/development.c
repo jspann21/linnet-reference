@@ -47,7 +47,7 @@ static int (*loader_write)(void *, uint32_t, const uint8_t *, uint32_t);
 /* Playback owns STAGE until its outstanding work has drained. */
 static int stage_begin(void *context,uint32_t size) {
 #if defined(LINNET_VIDEO)
-    if(ln_video_active()||ln_video_pending())return 0;
+    if(ln_video_active()||ln_video_playback_pending())return 0;
 #endif
 #if defined(LINNET_AUDIO)
     if(ln_player_busy())return 0;
@@ -60,7 +60,7 @@ static int stage_begin(void *context,uint32_t size) {
 }
 static int stage_write(void *context,uint32_t offset,const uint8_t *data,uint32_t size) {
 #if defined(LINNET_VIDEO)
-    if(ln_video_active()||ln_video_pending())return 0;
+    if(ln_video_active()||ln_video_playback_pending())return 0;
 #endif
 #if defined(LINNET_AUDIO)
     if(ln_player_busy())return 0;

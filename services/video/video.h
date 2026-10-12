@@ -18,6 +18,9 @@ void ln_video_step(void);
 void ln_video_stop(void);
 bool ln_video_active(void);
 bool ln_video_pending(void);
+/* Playback I/O owns video navigation; catalog prefetch remains independently
+ * pending for shutdown/drain without intercepting unrelated button events. */
+bool ln_video_playback_pending(void);
 void ln_video_pause(bool paused);
 bool ln_video_controls(bool show);
 bool ln_video_paused(void);

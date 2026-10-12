@@ -585,7 +585,7 @@ void ln_coverflow_step(bool allow_read){
             static const int8_t ahead[]={0,1,-1,2,-2,3,-3};
             bool decoded=false;
             for(uint32_t d=0;d<sizeof(ahead);d++){
-                if(d>=3u&&(!visible||(uint32_t)(now-moved_at)<120000u))break;
+                if(d>=3u&&((!visible&&!packed_mode)||(uint32_t)(now-moved_at)<120000u))break;
                 int32_t index=(int32_t)selected+ahead[d]*direction;
                 if(index<0||(uint32_t)index>=count)continue;
                 uint8_t *r=row((uint32_t)index);if(!r){request_catalog((uint32_t)index);break;}
@@ -593,11 +593,11 @@ void ln_coverflow_step(bool allow_read){
                 if(!packed_checked)continue;
                 if(!art_ready(art)){request_art(art,false);break;}
 #if LINNET_COVERFLOW_SCANLINE
-                uint32_t decode_limit=position==(int32_t)(selected*256u)?6u:3u;
+                uint32_t decode_limit=packed_mode?7u:position==(int32_t)(selected*256u)?6u:3u;
 #else
                 uint32_t decode_limit=7u;
 #endif
-                if(visible&&d<decode_limit&&find_art(art)<0){
+                if((visible||packed_mode)&&d<decode_limit&&find_art(art)<0){
                     (void)decode_art(art);
 #if !LINNET_COVERFLOW_SCANLINE
                     ++revision;

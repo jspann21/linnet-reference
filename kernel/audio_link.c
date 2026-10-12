@@ -32,7 +32,7 @@ int ln_audio_link_dispatch(const ln_link_frame *q,ln_link_frame *r){
     r->command=q->command;r->sequence=q->sequence;r->flags=LINNET_LINK_ACK|LINNET_LINK_ERROR;
     r->payload=reply;r->length=8;ln_write_le32(reply,generation);ln_write_le32(reply+4,0);
 #if defined(LINNET_VIDEO)
-    if((ln_video_active()||ln_video_pending())&&q->command>=113&&q->command<=118&&q->command!=116)return 1;
+    if((ln_video_active()||ln_video_playback_pending())&&q->command>=113&&q->command<=118&&q->command!=116)return 1;
 #endif
     struct ln_audio_status a;ln_audio_snapshot(&a);
     if(q->command==124){
