@@ -622,9 +622,11 @@ uint32_t ln_m25_coprocessor_deadline(uint32_t now){
 #endif
         return (int32_t)(vc.deadline-now)>0?vc.deadline:now;
     }
-    /* Poll an empty BCM request ring at the LCD wait cadence only after
-     * startup, with no host work and a full PCM reserve. IRQs still wake us. */
-    if(vc.phase!=PLAYER_SETTLE||!vc.normal||vc.command_index!=8u||vc.control||
+    /* A quiet pre-play settle window needs the same bounded ring polling as
+     * playback. Pending data, controls and low PCM still run immediately;
+     * the fixed settle deadline continues to govern the play command. */
+    if(vc.phase!=PLAYER_SETTLE||!vc.normal||
+       (vc.command_index!=8u&&vc.command_index!=6u)||vc.control||
        vc.restore||vc.fs_canceling||vc.fs_phase||vc.read_active||vc.seek_pending||vc.seek_stage||
        vc.want_paused!=vc.paused||!vc.stream_waiting)return now;
 #if !defined(LINNET_PROFILE_RELEASE)
