@@ -638,6 +638,9 @@ void ln_storage_maintenance_end(bool success){
 #endif
 int ln_storage_recover(void){
     if(locked||pending||ln_storage_busy()||!ln_block_recover(ln_time_us()))return 0;
+#if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
+    ln_coverflow_history_reset();
+#endif
     ln_fat32_abandon(&volume);phase=1;found=opening=error=0;stores_ready=false;
     next_generation();return 1;
 }

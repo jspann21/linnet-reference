@@ -79,10 +79,10 @@ static bool packed_uses_stage,packed_stage_inhibited;
 static uint8_t *metadata_lease;
 static uint32_t metadata_lease_bytes,metadata_lease_epoch=1u;
 static uint8_t *history_lease;
-static uint32_t history_lease_bytes,history_lease_epoch=1u;
+static uint32_t history_lease_bytes,history_lease_epoch=1u,history_mount_epoch;
 static void history_revoke(void){
     if(!history_lease)return;
-    history_lease=0;history_lease_bytes=0;
+    history_lease=0;history_lease_bytes=history_mount_epoch=0;
     if(++history_lease_epoch==0)++history_lease_epoch;
 }
 #endif
@@ -211,7 +211,7 @@ uint8_t *ln_coverflow_history_reserve(uint32_t bytes,uint32_t *epoch){
     if(!memory||!files_generation||capacity<floor||rounded>capacity-floor)return 0;
     uintptr_t end=((uintptr_t)memory+capacity)&~(uintptr_t)31u;
     if(end<(uintptr_t)memory||rounded>end-(uintptr_t)memory)return 0;
-    history_lease=(uint8_t*)(end-rounded);history_lease_bytes=rounded;
+    history_lease=(uint8_t*)(end-rounded);history_lease_bytes=rounded;history_mount_epoch=file.epoch;
     uint32_t remaining=0,after_generation=0;
     uint8_t *after=ln_coverflow_files_memory(&remaining,&after_generation);
     /* A different winning region would displace warm Files pages. Admission
@@ -220,11 +220,14 @@ uint8_t *ln_coverflow_history_reserve(uint32_t bytes,uint32_t *epoch){
     *epoch=history_lease_epoch;return history_lease;
 }
 uint8_t *ln_coverflow_history_memory(uint32_t epoch){
-    return epoch&&epoch==history_lease_epoch?history_lease:0;
+    struct ln_fat32_file root;
+    return epoch&&epoch==history_lease_epoch&&history_lease&&
+        ln_storage_media_root(&root)&&root.epoch==history_mount_epoch?history_lease:0;
 }
 void ln_coverflow_history_release(uint32_t epoch){
     if(epoch==history_lease_epoch)history_revoke();
 }
+void ln_coverflow_history_reset(void){history_revoke();}
 #endif
 static uint8_t *catalog_record(uint32_t index){
     uint32_t slot=index%catalog_capacity;

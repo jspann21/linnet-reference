@@ -24,6 +24,9 @@ void ln_coverflow_metadata_release(uint32_t epoch);
 uint8_t *ln_coverflow_history_reserve(uint32_t bytes,uint32_t *epoch);
 uint8_t *ln_coverflow_history_memory(uint32_t epoch);
 void ln_coverflow_history_release(uint32_t epoch);
+/* Accepted storage recovery must revoke the loan before mount-local epochs
+ * can be reused. No memory or storage contents are changed by this reset. */
+void ln_coverflow_history_reset(void);
 #endif
 #endif
 bool ln_coverflow_move(int32_t delta);
