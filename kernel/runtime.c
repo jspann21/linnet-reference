@@ -126,6 +126,8 @@ static void backlight_activity(void){
 #if defined(LINNET_AUDIO)
 static uint32_t sleep_timer_revision;
 static uint32_t music_revision,music_phase,music_generation,music_progress_at,music_navigation;
+static uint32_t music_queue_drawn_revision;
+static const char *music_queue_drawn_notice;
 static uint32_t music_window_epoch=UINT32_MAX,music_window_selection=UINT32_MAX,music_window_navigation=UINT32_MAX;
 static uint32_t search_navigation,search_revision,search_library_status;
 static bool playback_from_search,music_window_pending;
@@ -954,10 +956,17 @@ void ln_runtime_step(void){
         ln_ui_refresh_content(shell);dirty=true;
     }
     search_revision=current_search_revision;search_library_status=current_library_status;
+    /* Queue rows and their notice have their own presentation dependencies.
+     * History saves and playback position changes do not change this screen. */
+    if(scene_is(LN_UI_SCENE_MUSIC_QUEUE)&&
+       (music_queue_drawn_revision!=ln_music_queue_view_revision()||
+        music_queue_drawn_notice!=ln_music_notice())){
+        ln_ui_refresh(shell);dirty=true;
+    }
     uint32_t revision=ln_music_library_revision()+ln_music_art_revision()+ln_music_browser_revision()+ln_music_revision()+ln_music_search_revision()+ln_music_queue_view_revision();
     if(revision!=music_revision||music.phase!=music_phase||music.generation!=music_generation){
         if(scene_is(LN_UI_SCENE_MUSIC)){ln_ui_refresh_content(shell);dirty=true;}
-        else if(scene_is(LN_UI_SCENE_NOW_PLAYING)||scene_is(LN_UI_SCENE_MUSIC_OPTIONS)||scene_is(LN_UI_SCENE_MUSIC_SOUND)||scene_is(LN_UI_SCENE_MUSIC_QUEUE)||scene_is(LN_UI_SCENE_MUSIC_QUEUE_ACTIONS)){ln_ui_refresh(shell);dirty=true;}
+        else if(scene_is(LN_UI_SCENE_NOW_PLAYING)||scene_is(LN_UI_SCENE_MUSIC_OPTIONS)||scene_is(LN_UI_SCENE_MUSIC_SOUND)||scene_is(LN_UI_SCENE_MUSIC_QUEUE_ACTIONS)){ln_ui_refresh(shell);dirty=true;}
         music_revision=revision;music_phase=music.phase;music_generation=music.generation;
     }
     /* Elapsed time stays valid after long periods away from playback. */
@@ -1194,6 +1203,12 @@ void ln_runtime_step(void){
 #endif
             if(!render_pixels)render_pixels=ln_display_framebuffer();
             ln_shell_render(shell,render_pixels);dirty=false;
+#if defined(LINNET_AUDIO)
+            if(scene_is(LN_UI_SCENE_MUSIC_QUEUE)){
+                music_queue_drawn_revision=ln_music_queue_view_revision();
+                music_queue_drawn_notice=ln_music_notice();
+            }
+#endif
 #if !defined(LINNET_PROFILE_RELEASE)
             rnd_rendered(&render_span);
 #endif
