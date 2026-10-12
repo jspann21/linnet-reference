@@ -871,6 +871,15 @@ static void music_step(void){
      * Hardware waits and PCM pressure always return control to the executive. */
     uint32_t metadata_started=ln_time_us();
     for(uint32_t n=0;n<48u&&ln_music_library_can_continue();n++){
+#if LINNET_TARGET_NUMBER==25u
+        /* A history wait cannot advance inside this library-only pump. Keep
+         * every runnable library intent, including playback prefetch, eligible. */
+        if(ln_music_browser_query_idle()&&ln_music_browser_waiting()&&
+           !ln_music_search_busy()&&!ln_music_queue_view_busy()){
+            uint32_t now=ln_time_us();
+            if(ln_music_library_deadline(now)!=now)break;
+        }
+#endif
         if((uint32_t)(ln_time_us()-metadata_started)>=1000u){
 #if !defined(LINNET_PROFILE_RELEASE)
             budget_count(&budget_metadata_hits);
