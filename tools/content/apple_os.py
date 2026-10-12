@@ -600,7 +600,7 @@ def inspect(identity, *, records_by_kind=None, retail_tracks=None):
     elif photo_conflict:
         status = 'Needs attention'
     elif any(value == 'Needs update' for value in (music_status, photo_status, video_status)):
-        status = 'Needs Apple OS update'
+        status = 'Apple library needs updating'
     elif issues or note_issues:
         status = 'Needs attention'
     elif selected:

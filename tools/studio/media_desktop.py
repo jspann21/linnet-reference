@@ -678,14 +678,14 @@ def build_preparation_page(window):
     apple_card = QFrame(); apple_card.setObjectName('card')
     apple_layout = box(apple_card, margins=(20, 18, 20, 18), spacing=9)
     apple_layout.addWidget(label('Available in Apple OS', 'cardTitle'))
-    apple_layout.addWidget(label('Choose folders already on your iPod. Update Apple OS after their files change.', 'muted', True))
+    apple_layout.addWidget(label('Use media from your own iPod folders in Apple OS too. Choose folders outside the Apple-managed library, then update the Apple library whenever their files change.', 'muted', True))
     window.apple_status = label('Connect an iPod to check Apple OS availability.', 'muted', True)
     apple_layout.addWidget(window.apple_status)
     window.apple_eligibility = label('', 'muted', True)
     apple_layout.addWidget(window.apple_eligibility)
     apple_actions = box(horizontal=True)
     window.apple_choose = button('Choose folders…', window.choose_apple_folders, None, 'folder')
-    window.apple_update = button('Update Apple OS', window.update_apple_os, None, 'refresh')
+    window.apple_update = button('Update Apple library', window.update_apple_os, None, 'refresh')
     apple_actions.addWidget(window.apple_choose); apple_actions.addWidget(window.apple_update); apple_actions.addStretch()
     apple_layout.addLayout(apple_actions); layout.addWidget(apple_card)
     layout.addStretch()
@@ -1688,7 +1688,7 @@ class MediaWindow(QMainWindow):
             self.show_error('The selected iPod changed while this operation was running. Refresh and try again.')
             return
         if tag == 'apple_update' and outcome.status == 'cancelled':
-            message = 'Apple OS update stopped. Checking the current library…'
+            message = 'Apple library update stopped. Checking the current library…'
             self.prep_results.setPlainText(message); self.prep_results.show()
             self.show_progress(message); self.refresh()
             return
@@ -2512,9 +2512,9 @@ class MediaWindow(QMainWindow):
         self.prepare_button.setEnabled(ready and self.inventory is not None)
         apple_ready = ready and self.apple_info is not None and self.apple_info['supported']
         self.apple_choose.setEnabled(apple_ready)
-        self.apple_update.setText('Retry Apple OS' if apple_ready and
+        self.apple_update.setText('Retry Apple library update' if apple_ready and
                                   self.apple_info.get('can_update') and
-                                  self.apple_info['status'] == 'Needs attention' else 'Update Apple OS')
+                                  self.apple_info['status'] == 'Needs attention' else 'Update Apple library')
         self.apple_update.setEnabled(apple_ready and self.apple_info.get('can_update', False))
         self.choose_videos_button.setEnabled(ready and self.inventory is not None and self.identity.get('media_profile', {}).get('video_enabled', True))
         self.refresh_button.setEnabled(not self.busy)
@@ -2591,9 +2591,12 @@ class MediaWindow(QMainWindow):
             self.apple_eligibility.setText(eligibility)
             self.apple_eligibility.setVisible(bool(eligibility))
             lines = [self.apple_info['status']]
-            lines.extend(f"{entry['kind']}: {entry['count']:,} files · {entry['status']}"
-                         for entry in self.apple_info['details']
-                         if entry['count'] or entry['kind'] == 'Notes')
+            for entry in self.apple_info['details']:
+                if (entry['kind'] == 'Apple library' and
+                        self.apple_info['status'] == f"{entry['count']:,} tracks already in Apple OS"):
+                    continue
+                if entry['count'] or entry['status'] == 'Needs update':
+                    lines.append(f"{entry['kind']}: {entry['count']:,} files · {entry['status']}")
             if self.apple_info.get('issues'):
                 lines.append(self.apple_info['issues'][0])
             self.apple_status.setText('\n'.join(lines))
@@ -2612,8 +2615,8 @@ class MediaWindow(QMainWindow):
         selectable = self.apple_info['selectable_roots']
         names = [{'Music': 'music', 'Photos': 'photo', 'Videos': 'video'}[kind] for kind in selectable]
         kinds = names[0] if len(names) == 1 else ', '.join(names[:-1]) + ' and ' + names[-1]
-        description = (f'Select {kinds} folders on your iPod. Their original names and locations stay in place. '
-                       'Apple reads compatible text files in Notes automatically.')
+        description = (f'Select {kinds} folders on this iPod, outside the Apple-managed library. '
+                       'Update the Apple library to use their media in Apple OS too. Files stay in their original locations.')
         layout.addWidget(label(description, 'muted', True))
         layout.addWidget(label('Selecting a folder includes its subfolders. Choose individual subfolders for a narrower selection.', 'muted', True))
         tree = QTreeWidget(); tree.setObjectName('appleFolders')
@@ -2706,7 +2709,7 @@ class MediaWindow(QMainWindow):
         self.work('apple_update', lambda: apple_os.update(identity, ffprobe=ffprobe,
                                                           progress=self.events.progress.emit,
                                                           cancelled=self.stop_event.is_set),
-                  'Updating Apple OS availability…')
+                  'Updating the Apple library…')
 
     def queue_existing_audio(self):
         if self.busy or not self.identity:
