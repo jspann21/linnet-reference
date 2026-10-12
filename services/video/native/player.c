@@ -309,6 +309,7 @@ void ln_video_step(void){ln_video_catalog_step(v.active||v.io);if(!v.active||v.s
 void ln_video_stop(void){if(v.active){v.resume[0]=v.identity;v.resume[1]=clock_ms();v.stop=true;}}
 bool ln_video_active(void){return v.active;}
 bool ln_video_pending(void){return v.io||ln_video_catalog_pending();}
+bool ln_video_playback_pending(void){return v.io;}
 void ln_video_pause(bool pause){if(!v.active||v.paused==pause)return;
     if(pause){v.paused_at=ln_time_us();if(v.started&&(!v.audio||v.tail))
             (void)wall_position(v.paused_at,v.tail?v.tail_position:v.base);

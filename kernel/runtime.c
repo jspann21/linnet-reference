@@ -267,14 +267,14 @@ static bool video_path_set(const char *path){
     for(uint32_t i=0;i<=n;++i)video_path[i]=path[i];video_selected_path=video_path;return true;
 }
 static bool video_start(const char *path){
-    if(!shell||!path||path[0]!='/'||ln_video_active()||ln_video_pending())return false;
+    if(!shell||!path||path[0]!='/'||ln_video_active()||ln_video_playback_pending())return false;
     if(!video_path_set(path))return false;
     ln_music_stop();ln_photos_close();video_requested=true;
     (void)ln_ui_show(shell,"linnet.system.video-player");dirty=true;return true;
 }
 bool ln_runtime_video_open(const char *path){video_from_files=false;return video_start(path);}
 bool ln_runtime_video_open_file(const struct ln_fat32_file*file,const char*title){
-    if(!shell||!file||!title||ln_video_active()||ln_video_pending())return false;
+    if(!shell||!file||!title||ln_video_active()||ln_video_playback_pending())return false;
     char path[192];uint32_t n=0;path[n++]='/';
     static const char hex[]="0123456789ABCDEF";
     for(uint32_t i=8;i;--i)path[n++]=hex[(file->cluster>>((i-1u)*4u))&15u];path[n++]='/';
@@ -363,7 +363,7 @@ static void apply(uint32_t kind,int32_t value){
     if(!handled)handled=ln_files_input(shell,kind,value);
 #endif
 #if defined(LINNET_VIDEO)
-    if(scene_is(LN_UI_SCENE_VIDEOS)&&!shell->hold&&
+    if(scene_is(LN_UI_SCENE_VIDEOS)&&!ln_video_library_empty()&&!shell->hold&&
        ((kind==LN_INPUT_WHEEL&&value)||
         (kind==LN_INPUT_BUTTON&&((uint32_t)value&~shell->buttons))))
         ln_storage_video_browse(true,true);
@@ -395,7 +395,7 @@ static void apply(uint32_t kind,int32_t value){
             }
         }else if(kind==LN_INPUT_WHEEL&&video_scene()){wheel_changed=ln_music_volume(value);handled=true;}
     }
-    if((video_requested||ln_video_active()||ln_video_pending())&&!video_scene()&&!scene_is(LN_UI_SCENE_VIDEOS)){
+    if((video_requested||ln_video_active()||ln_video_playback_pending())&&!video_scene()&&!scene_is(LN_UI_SCENE_VIDEOS)){
         video_requested=false;video_save();ln_video_stop();if(kind==LN_INPUT_BUTTON){shell->buttons=(uint32_t)value;handled=true;}
     }
 #endif
@@ -973,7 +973,7 @@ void ln_runtime_step(void){
         if(ln_video_active()){video_save();ln_video_stop();}
     }
     if(scene_is(LN_UI_SCENE_VIDEOS))ln_video_library_load();
-    ln_storage_video_browse(scene_is(LN_UI_SCENE_VIDEOS),false);
+    ln_storage_video_browse(scene_is(LN_UI_SCENE_VIDEOS)&&!ln_video_library_empty(),false);
     uint32_t library_revision=ln_video_library_revision();
     if(library_revision!=video_library_revision){video_library_revision=library_revision;if(scene_is(LN_UI_SCENE_VIDEOS)){ln_ui_refresh(shell);dirty=true;}}
     if(video_requested&&!ln_player_busy()&&!ln_photos_pending()&&!ln_storage_busy()){

@@ -9,6 +9,8 @@ void ln_video_init(void);
 void ln_video_library_load(void);
 uint32_t ln_video_library_count(void);
 uint32_t ln_video_library_revision(void);
+/* False while metadata is unknown; a resolved empty/error list needs no wake. */
+bool ln_video_library_empty(void);
 const char *ln_video_library_label(uint32_t row);
 const char *ln_video_library_path(uint32_t row);
 bool ln_video_open(const char *path);
@@ -18,6 +20,9 @@ void ln_video_step(void);
 void ln_video_stop(void);
 bool ln_video_active(void);
 bool ln_video_pending(void);
+/* Playback I/O owns video navigation; catalog prefetch remains independently
+ * pending for shutdown/drain without intercepting unrelated button events. */
+bool ln_video_playback_pending(void);
 void ln_video_pause(bool paused);
 bool ln_video_controls(bool show);
 bool ln_video_paused(void);

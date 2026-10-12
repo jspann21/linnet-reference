@@ -375,8 +375,8 @@ _Noreturn void ln_main(void)
         LN_TIMING_BEGIN(music_started);
         extern void ln_music_step(void);
 #if defined(LINNET_VIDEO)
-        extern bool ln_video_active(void);extern bool ln_video_pending(void);
-        if(!ln_video_active()&&!ln_video_pending())
+        extern bool ln_video_active(void);extern bool ln_video_playback_pending(void);
+        if(!ln_video_active()&&!ln_video_playback_pending())
 #endif
         ln_music_step();
 #if defined(LINNET_VIDEO)

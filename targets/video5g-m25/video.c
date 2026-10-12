@@ -44,6 +44,7 @@ void ln_video_step(void){
 void ln_video_stop(void){if(v.active){v.resume[0]=v.identity;v.resume[1]=v.position;v.resume_pending=false;ln_m25_coprocessor_stop();}}
 bool ln_video_active(void){return v.active;}
 bool ln_video_pending(void){return ln_video_catalog_pending();}
+bool ln_video_playback_pending(void){return false;}
 void ln_video_pause(bool paused){if(v.active)ln_m25_coprocessor_pause(paused);}
 bool ln_video_controls(bool show){(void)show;ln_video_pause(!ln_video_paused());return false;}
 bool ln_video_paused(void){return v.active&&ln_m25_coprocessor_paused();}
