@@ -66,6 +66,9 @@ metadata, group names under the existing title-cache budget. Extra group names
 require room for the whole string pool and the host-built browse index. Browser
 labels and group members that are resident can be resolved before drawing;
 larger libraries retain the asynchronous lookup path.
+Cover Flow can use the unoccupied title-cache tail for additional complete
+album records and previews. Library reload and cancellation drain its reader
+before reusing that memory. Full artwork still uses its bounded working cache.
 
 The simulator executes the same native renderer and compiled UI definitions.
 It checks layouts and pixels, not physical timing, audio, USB, or power.

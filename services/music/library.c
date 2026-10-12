@@ -4,6 +4,9 @@
 #include "hal/api/platform.h"
 #include "boot/include/linnet_bytes.h"
 #include "boot/include/linnet_boot.h"
+#if defined(LINNET_COVERFLOW)
+#include "coverflow.h"
+#endif
 extern void ln_memory_copy(void *,const void *,uint32_t);
 
 #define LIBRARY_PAGES 24u
@@ -425,6 +428,17 @@ bool ln_music_library_cached_member(uint32_t group,uint32_t ordinal,uint32_t *ou
     const uint8_t *p=resident_metadata(library.db.member_offset+(g.first+ordinal)*4u,4u);
     if(!p)return false;uint32_t index=ln_read_le32(p);if(index>=library.db.tracks)return false;
     *out=index;return true;
+}
+uint8_t *ln_music_library_catalog_memory(uint32_t *bytes){
+    if(!bytes||!ready())return 0;
+    uintptr_t first=(uintptr_t)titles.text+title_used,end=(uintptr_t)titles.text+TITLE_BYTES;
+#if LINNET_MUSIC_BROWSE_INDEX
+    uintptr_t browse=(uintptr_t)browse_buffer;
+    if(browse>=first&&browse<end)first=browse+browse_size;
+#endif
+    first=(first+31u)&~(uintptr_t)31u;
+    if(first>=end){*bytes=0;return 0;}
+    *bytes=(uint32_t)(end-first);return (uint8_t*)first;
 }
 
 static bool superseded_job(void){
@@ -945,6 +959,11 @@ static void library_step_once(void)
             if(!ln_storage_media_poll(library.generation,0,0))return;
             library.io_active=false;library.io_buffer=0;
         }
+#if defined(LINNET_COVERFLOW)
+        /* A catalog reader can own the unused title tail. Its normal outer
+         * step must drain that read before verification reuses the buffer. */
+        if(!ln_coverflow_release_catalog())return;
+#endif
         if(library.reopen)start();
         else{library.status=library.error?LN_LIBRARY_ERROR:LN_LIBRARY_CLOSED;library.job=JOB_NONE;changed();}
         return;

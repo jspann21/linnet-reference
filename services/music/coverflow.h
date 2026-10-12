@@ -4,6 +4,9 @@
 #if defined(LINNET_COVERFLOW)
 void ln_coverflow_visible(bool visible);
 void ln_coverflow_step(bool allow_read);
+/* Request cancellation and return true only after all catalog-buffer I/O has
+ * drained. The caller keeps the library DRAINING until the lease is released. */
+bool ln_coverflow_release_catalog(void);
 bool ln_coverflow_move(int32_t delta);
 uint32_t ln_coverflow_count(void);
 bool ln_coverflow_active(void);

@@ -53,6 +53,8 @@ static uint8_t catalog[CATALOG_SLOTS][CATALOG_RECORD] __attribute__((section(".c
 static uint8_t catalog[CATALOG_SLOTS][CATALOG_RECORD] __attribute__((section(".media_workspace"),aligned(32)));
 #endif
 static uint32_t tags[CATALOG_SLOTS];
+static uint8_t *catalog_extra;
+static uint32_t *catalog_extra_tags,catalog_capacity=CATALOG_SLOTS;
 static struct ln_fat32_file file;
 static uint8_t header[1024] __attribute__((aligned(32)))
 #if defined(LINNET_COVERFLOW_HEADER_SECTION)
@@ -87,16 +89,45 @@ extern const uint8_t ln_coverflow_glow[LINNET_UI_WIDTH][LINNET_UI_HEIGHT*140u/17
 #endif
 static bool identity(void){uint8_t hash[32];if(!ln_music_library_identity(hash))return false;
     for(uint32_t i=0;i<32;i++)if(hash[i]!=header[16+i])return false;return true;}
-static uint8_t *row(uint32_t index){return index<count&&tags[index%CATALOG_SLOTS]==index+1u?catalog[index%CATALOG_SLOTS]:0;}
+static uint8_t *catalog_record(uint32_t index){
+    uint32_t slot=index%catalog_capacity;
+    return slot<CATALOG_SLOTS?catalog[slot]:catalog_extra+(slot-CATALOG_SLOTS)*CATALOG_RECORD;
+}
+static uint32_t *catalog_tag(uint32_t index){
+    uint32_t slot=index%catalog_capacity;
+    return slot<CATALOG_SLOTS?tags+slot:catalog_extra_tags+slot-CATALOG_SLOTS;
+}
+static uint8_t *row(uint32_t index){
+    if(catalog_extra&&!identity())return 0;
+    return index<count&&*catalog_tag(index)==index+1u?catalog_record(index):0;
+}
+static void catalog_extend(void){
+    uint32_t bytes=0;uint8_t *memory=ln_music_library_catalog_memory(&bytes);
+    uint32_t extra=bytes/(CATALOG_RECORD+sizeof(uint32_t));extra=extra/PAGE*PAGE;
+    if(!memory||!extra)return;
+    catalog_extra_tags=(uint32_t*)memory;catalog_extra=memory+extra*sizeof(uint32_t);
+    for(uint32_t i=0;i<extra;i++)catalog_extra_tags[i]=0;
+    catalog_capacity=CATALOG_SLOTS+extra;
+}
 static int32_t find_art(uint32_t id){for(uint32_t i=0;i<SLOTS;i++)if(cache[i].id==id+1u)return (int32_t)i;return -1;}
 static bool close_to_selection(uint32_t art);
 static bool selected_full(void){uint8_t *r=row(selected);return r&&art_ready(ln_read_le32(r+248));}
 static void invalidate(void){
+    /* The library may already be reusing its tail for a new verification.
+     * Drop the lease without clearing memory owned by that new generation. */
+    catalog_extra=0;catalog_extra_tags=0;catalog_capacity=CATALOG_SLOTS;
     for(uint32_t i=0;i<CATALOG_SLOTS;i++)tags[i]=0;
     for(uint32_t i=0;i<SLOTS;i++)cache[i].id=0;
     for(uint32_t i=0;i<ART_SLOTS;i++)art_tags[i]=0;
     art_warm=art_loaded=art_base=art_end=art_remaining=0;art_bulk=false;
     count=arts=selected=warm=catalog_loaded=0;position=0;phase=CLOSED;++revision;
+}
+bool ln_coverflow_release_catalog(void){
+    if(pending){
+        if(!canceling){ln_storage_media_cancel(generation);canceling=true;}
+        return false;
+    }
+    invalidate();failed=false;canceling=false;io_due=ln_time_us();return true;
 }
 static void rewind_art_warm(void){
     if(!art_bulk||loading<art_base||loading>=art_end)return;
@@ -116,7 +147,7 @@ bool ln_coverflow_move(int32_t delta){
     uint32_t target=n<0?0u:(uint32_t)n>=count?count-1u:(uint32_t)n;if(target==selected)return false;
     int32_t moving=target>selected?1:-1;
     direction=moving;
-    if(target/CATALOG_SLOTS!=selected/CATALOG_SLOTS)warm=(target/CATALOG_SLOTS)*CATALOG_SLOTS;
+    if(target/catalog_capacity!=selected/catalog_capacity)warm=(target/catalog_capacity)*catalog_capacity;
     selected=target;
     if(phase==ART&&!canceling){
         bool needed=false;
@@ -152,7 +183,9 @@ bool ln_coverflow_select(void){uint8_t *r=row(selected);return r&&identity()&&
 static void fail(void){failed=true;phase=CLOSED;io_due=NONE;++revision;}
 static void request_catalog(uint32_t index){
     loading=(index/PAGE)*PAGE;length=count-loading;if(length>PAGE)length=PAGE;
-    for(uint32_t i=0;i<length;i++)tags[(loading+i)%CATALOG_SLOTS]=0;
+    uint32_t slot=loading%catalog_capacity,available=slot<CATALOG_SLOTS?CATALOG_SLOTS-slot:catalog_capacity-slot;
+    if(length>available)length=available;
+    for(uint32_t i=0;i<length;i++)*catalog_tag(loading+i)=0;
     length*=CATALOG_RECORD;phase=CATALOG;
 }
 static bool close_to_selection(uint32_t art){
@@ -247,9 +280,9 @@ const uint16_t *ln_coverflow_playback_preview(const char *path,uint32_t crc){
         slot=decode_art(ln_read_le32(r+248));
     /* Songs, queue changes and resume can request any retained album. Only
      * published catalog rows may bind its exact playback path and checksum. */
-    for(uint32_t i=0;slot<0&&i<CATALOG_SLOTS;i++){
-        if(!tags[i]||tags[i]>count)continue;
-        r=catalog[i];
+    for(uint32_t i=0;slot<0&&i<catalog_capacity;i++){
+        uint32_t tag=*catalog_tag(i);if(!tag||tag>count)continue;
+        r=row(tag-1u);if(!r)continue;
         if(ln_read_le32(r+240)==hash&&ln_read_le32(r+244)==crc)
             slot=decode_art(ln_read_le32(r+248));
     }
@@ -312,16 +345,16 @@ void ln_coverflow_step(bool allow_read){
                ln_crc32(header,508)!=ln_read_le32(header+508)||ln_crc32(header+512,512)!=ln_read_le32(header+64)||
                file.size!=1024u+count*CATALOG_RECORD+arts*TILE_RECORD||!identity()){
                 count=0;fail();return;}
-            phase=READY;++revision;
+            catalog_extend();phase=READY;++revision;
         }else if(phase==CATALOG){
             if(transferred!=length){fail();return;}
             for(uint32_t i=0;i<length/CATALOG_RECORD;i++){
-                uint32_t index=loading+i;uint8_t *r=catalog[index%CATALOG_SLOTS];
+                uint32_t index=loading+i;uint8_t *r=catalog_record(index);
                 uint32_t crc=ln_crc32_update(ln_crc32_update(0xffffffffu,r,252),r+256,768);
                 if((~crc)!=ln_read_le32(r+252)||r[127]||r[LINNET_COVERFLOW_SCANLINE?239u:247u]||ln_read_le32(r+248)>=arts||
                    ln_read_le32(r)>=ln_music_library_group_count()||!ln_read_le32(r+4)||ln_read_le32(r+4)>ln_music_library_count()){
                     fail();return;}
-                tags[index%CATALOG_SLOTS]=index+1u;++catalog_loaded;
+                *catalog_tag(index)=index+1u;++catalog_loaded;
             }
             if(selected>=loading&&selected<loading+length/CATALOG_RECORD){
                 if(moved_in_visit)
@@ -376,10 +409,10 @@ void ln_coverflow_step(bool allow_read){
             if(decoded){io_due=now+1000u;return;}
         }
         if(phase==READY){
-            uint32_t base=count<=CATALOG_SLOTS?0u:(selected>128u?((selected-128u)/PAGE)*PAGE:0u);
-            uint32_t end=count<=CATALOG_SLOTS?count:selected+128u;if(end>count)end=count;
+            uint32_t base=count<=catalog_capacity?0u:(selected>128u?((selected-128u)/PAGE)*PAGE:0u);
+            uint32_t end=count<=catalog_capacity?count:selected+128u;if(end>count)end=count;
             if(warm<base||warm>=end)warm=base;
-            for(uint32_t n=0;warm<end&&n<CATALOG_SLOTS/PAGE;n++){
+            for(uint32_t n=0;warm<end&&n<catalog_capacity/PAGE;n++){
                 uint32_t index=warm;warm+=PAGE;
                 if(!row(index)){request_catalog(index);break;}
             }
@@ -402,7 +435,7 @@ void ln_coverflow_step(bool allow_read){
     int result;
     if(phase==CLOSED||phase==OPEN){phase=OPEN;result=ln_storage_media_open("/.LINNET/COVERS.CFL",generation);}
     else if(phase==HEADER)result=ln_storage_media_read(&file,0,header,1024,generation);
-    else if(phase==CATALOG)result=ln_storage_media_read(&file,1024+loading*CATALOG_RECORD,catalog[loading%CATALOG_SLOTS],length,generation);
+    else if(phase==CATALOG)result=ln_storage_media_read(&file,1024+loading*CATALOG_RECORD,catalog_record(loading),length,generation);
     else result=ln_storage_media_read(&file,1024+count*CATALOG_RECORD+loading*TILE_RECORD,art_record(loading),length,generation);
     if(result>0){pending=true;if(phase==ART){++full_reads;read_bytes+=length;}else if(phase==CATALOG)read_bytes+=length;}
     else if(result<0){fail();return;}
