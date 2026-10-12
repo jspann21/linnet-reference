@@ -711,7 +711,15 @@ bool ln_m25_coprocessor_step(void){
         uint32_t started=ln_time_us();
 #endif
         n=vc.rom_bytes-vc.rom_checked;if(n>512u)n=512u;
-        for(uint32_t i=0;i<n;++i)vc.rom_sum+=vc.rom[vc.rom_checked+i];
+        /* Directory admission and each slice preserve word alignment. The
+         * restore uploader already reads this NOR mapping as 32-bit words;
+         * sum every byte lane while retaining the full fresh checksum scan. */
+        const volatile uint32_t *words=(const volatile uint32_t *)(vc.rom+vc.rom_checked);
+        uint32_t sum=vc.rom_sum;
+        for(uint32_t i=0;i<n/4u;++i){uint32_t word=words[i];
+            sum+=(word&255u)+((word>>8)&255u)+((word>>16)&255u)+(word>>24);
+        }
+        vc.rom_sum=sum;
         vc.rom_checked+=n;
 #if !defined(LINNET_PROFILE_RELEASE)
         uint32_t elapsed=ln_time_us()-started;rom_check_us+=elapsed;++rom_check_calls;
