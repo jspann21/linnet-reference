@@ -62,7 +62,12 @@ static void step(bool may_read,bool may_write)
 }
 void ln_music_history_step(bool may_write){ln_music_history_service(may_write,may_write,false);}
 uint32_t ln_music_history_deadline(uint32_t now)
-{return ln_paged_history_deadline(now,history.may_read,history.may_write);}
+{
+#if LINNET_TARGET_NUMBER==25u
+    if((!history.initialized||history.error)&&!ln_paged_history_io_pending())return now+200000u;
+#endif
+    return ln_paged_history_deadline(now,history.may_read,history.may_write);
+}
 void ln_music_history_service(bool may_read,bool may_write,bool playback)
 {
     (void)playback;
