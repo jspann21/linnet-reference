@@ -62,6 +62,9 @@ static struct {
     uint32_t age,extra_count,extra_epoch;
 } pages __attribute__((section(".cover_high"),aligned(32)));
 _Static_assert(sizeof pages<=9000u,"Files page cache exceeds the artwork-bank allowance");
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+uint32_t ln_files_cache_maximum_bytes(void){return 512u*sizeof(struct cached_page);}
+#endif
 static struct cached_page *page_at(uint32_t i){return i<2u?&pages.page[i]:pages.extra+(i-2u);}
 static uint32_t page_count(void){return 2u+pages.extra_count;}
 static void pages_sync(void){

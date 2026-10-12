@@ -9,6 +9,9 @@
 #if defined(LINNET_COVERFLOW_PACKED)
 #include "services/music/player.h"
 #include "hal/api/recovery.h"
+#if LINNET_TARGET_NUMBER==25u
+#include "services/files/files.h"
+#endif
 extern int ln_video_lz_decode_block(const uint8_t *,uint32_t,uint8_t *,uint32_t);
 #endif
 #define CATALOG_SLOTS LINNET_COVERFLOW_CATALOG_SLOTS
@@ -72,6 +75,10 @@ static uint32_t packed_frame_art[7];
 static uint8_t *packed_extra;
 static uint32_t packed_extra_bytes;
 static bool packed_uses_stage,packed_stage_inhibited;
+#if LINNET_TARGET_NUMBER==25u
+static uint8_t *metadata_lease;
+static uint32_t metadata_lease_bytes,metadata_lease_epoch=1u;
+#endif
 #else
 #define packed_mode false
 #define packed_checked true
@@ -164,6 +171,27 @@ uint8_t *ln_coverflow_files_memory(uint32_t *bytes,uint32_t *epoch){
 #else
 #define files_revoke() ((void)0)
 #endif
+#if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
+uint8_t *ln_coverflow_metadata_reserve(uint32_t bytes,uint32_t *epoch){
+    if(!epoch)return 0;*epoch=0;
+    if(!bytes||bytes>UINT32_MAX-31u||metadata_lease||phase!=CLOSED||pending||canceling||packed_stage_inhibited)return 0;
+    uint32_t capacity=0;uint8_t *memory=ln_player_art_memory(&capacity);
+    uint32_t rounded=(bytes+31u)&~31u;
+    uintptr_t end=((uintptr_t)memory+capacity)&~(uintptr_t)31u;
+    if(!memory||end<(uintptr_t)memory||rounded>end-(uintptr_t)memory)return 0;
+    /* Revoke every old Files advertisement before the library writes here. */
+    files_revoke();metadata_lease=(uint8_t*)(end-rounded);metadata_lease_bytes=rounded;
+    *epoch=metadata_lease_epoch;return metadata_lease;
+}
+uint8_t *ln_coverflow_metadata_memory(uint32_t epoch){
+    return epoch&&epoch==metadata_lease_epoch?metadata_lease:0;
+}
+void ln_coverflow_metadata_release(uint32_t epoch){
+    if(!metadata_lease||epoch!=metadata_lease_epoch)return;
+    files_revoke();metadata_lease=0;metadata_lease_bytes=0;
+    if(++metadata_lease_epoch==0)++metadata_lease_epoch;
+}
+#endif
 static uint8_t *catalog_record(uint32_t index){
     uint32_t slot=index%catalog_capacity;
     return slot<CATALOG_SLOTS?catalog[slot]:catalog_extra+(slot-CATALOG_SLOTS)*CATALOG_RECORD;
@@ -207,6 +235,9 @@ bool ln_coverflow_release_catalog(void){
         if(!canceling){ln_storage_media_cancel(generation);canceling=true;}
         return false;
     }
+#if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
+    ln_coverflow_metadata_release(metadata_lease_epoch);
+#endif
     invalidate();failed=false;canceling=false;io_due=ln_time_us();return true;
 }
 #if defined(LINNET_COVERFLOW_PACKED)
@@ -214,6 +245,9 @@ bool ln_coverflow_stage_claim(void){
     /* Upload/verification can span many executive turns. This inhibition is
      * retained until reboot, even if a transfer is abandoned after BEGIN. */
     packed_stage_inhibited=true;
+#if LINNET_TARGET_NUMBER==25u
+    ln_coverflow_metadata_release(metadata_lease_epoch);
+#endif
     if(!packed_uses_stage)return true;
     if(pending){
         if(!canceling){ln_storage_media_cancel(generation);canceling=true;}
@@ -520,18 +554,8 @@ void ln_coverflow_step(bool allow_read){
             uint64_t raw_end=1024ull+(uint64_t)count*CATALOG_RECORD+(uint64_t)arts*TILE_RECORD;
 #if defined(LINNET_COVERFLOW_PACKED)
             packed_at=ln_read_le32(header+72);packed_bytes=ln_read_le32(header+76);
-            packed_extra_bytes=0;packed_extra=ln_music_library_art_memory(&packed_extra_bytes);
-            packed_uses_stage=false;
-            if(!packed_extra&&!packed_stage_inhibited){
-                packed_extra=ln_player_art_memory(&packed_extra_bytes);packed_uses_stage=packed_extra!=0;
-            }
-            if(packed_bytes>=512u&&packed_bytes-512u<=sizeof art_low+sizeof art_high){
-                packed_extra=0;packed_extra_bytes=0;packed_uses_stage=false;
-            }
             bool geometry=(!packed_at&&!packed_bytes&&file.size==raw_end)||
                 (packed_at&&packed_at==raw_end&&packed_bytes>=512ull+(uint64_t)arts*8u&&file.size==raw_end+packed_bytes);
-            packed_checked=!packed_at||packed_bytes-512u>sizeof art_low+sizeof art_high+packed_extra_bytes;
-            if(packed_checked){packed_extra=0;packed_extra_bytes=0;packed_uses_stage=false;}
 #else
             bool geometry=file.size==raw_end;
 #endif
@@ -542,6 +566,38 @@ void ln_coverflow_step(bool allow_read){
                ln_crc32(header,508)!=ln_read_le32(header+508)||ln_crc32(header+512,512)!=ln_read_le32(header+64)||
                !geometry||!identity()){
                 count=0;fail();return;}
+#if defined(LINNET_COVERFLOW_PACKED)
+            /* Commit ownership only after the complete header is validated. */
+            packed_extra_bytes=0;packed_extra=ln_music_library_art_memory(&packed_extra_bytes);
+            packed_uses_stage=false;
+            if(!packed_extra&&!packed_stage_inhibited){
+                packed_extra=ln_player_art_memory(&packed_extra_bytes);packed_uses_stage=packed_extra!=0;
+            }
+#if LINNET_TARGET_NUMBER==25u
+            if(packed_uses_stage&&metadata_lease&&packed_at){
+                uint32_t payload=packed_bytes-512u,banks=sizeof art_low+sizeof art_high;
+                if(payload>banks&&payload-banks<=packed_extra_bytes){
+                    uint32_t used=(payload-banks+31u)&~31u;
+                    uint32_t frames=7u*TEXTURE_WIDTH*TEXTURE_HEIGHT*sizeof(uint16_t);
+                    if(used>packed_extra_bytes||frames>packed_extra_bytes-used)frames=0;
+                    uintptr_t base=(uintptr_t)packed_extra,pin=(uintptr_t)metadata_lease;
+                    uint32_t capacity=pin>=base&&pin-base<=packed_extra_bytes?(uint32_t)(pin-base):0;
+                    uint32_t files=ln_files_cache_maximum_bytes();
+                    /* Preserve packed eligibility, all previously allocated
+                     * RGB frames, and the existing maximum Files cache. */
+                    if(metadata_lease_bytes<=packed_extra_bytes&&used<=capacity&&
+                       frames<=capacity-used&&files<=capacity-used-frames)
+                        packed_extra_bytes=capacity;
+                    else ln_coverflow_metadata_release(metadata_lease_epoch);
+                }
+            }
+#endif
+            if(packed_bytes>=512u&&packed_bytes-512u<=sizeof art_low+sizeof art_high){
+                packed_extra=0;packed_extra_bytes=0;packed_uses_stage=false;
+            }
+            packed_checked=!packed_at||packed_bytes-512u>sizeof art_low+sizeof art_high+packed_extra_bytes;
+            if(packed_checked){packed_extra=0;packed_extra_bytes=0;packed_uses_stage=false;}
+#endif
             catalog_extend();phase=READY;++revision;
         }else if(phase==CATALOG){
             if(transferred!=length){fail();return;}
@@ -592,6 +648,9 @@ void ln_coverflow_step(bool allow_read){
     if(failed){io_due=NONE;return;}
     enum ln_music_library_status status=ln_music_library_status();
     if(status==LN_LIBRARY_ERROR||(status==LN_LIBRARY_READY&&!ln_music_library_count())){
+#if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
+        ln_coverflow_metadata_release(metadata_lease_epoch);
+#endif
         if(phase!=CLOSED||count)invalidate();
         io_due=NONE;return;
     }

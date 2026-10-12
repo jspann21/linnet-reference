@@ -11,6 +11,10 @@ uint32_t ln_files_count(void);
 const char *ln_files_title(void);
 const char *ln_files_label(uint32_t row);
 const char *ln_files_hint(void);
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+/* Geometry only; keep the full existing Files cache when partitioning RAM. */
+uint32_t ln_files_cache_maximum_bytes(void);
+#endif
 bool ln_files_navigates(uint32_t row);
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_files_diagnostics(uint32_t words[16]);

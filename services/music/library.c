@@ -31,6 +31,36 @@ static uint8_t metadata_local[LINNET_MUSIC_METADATA_BYTES] __attribute__((sectio
 static uint8_t *metadata=metadata_local;
 static uint32_t metadata_capacity=sizeof metadata_local;
 static uint32_t metadata_offset,metadata_bytes;
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+static uint32_t metadata_tail_offset,metadata_tail_bytes,metadata_tail_captured,metadata_tail_epoch;
+static bool metadata_tail_decided,metadata_tail_ready;
+static void metadata_tail_reset(void){
+    ln_coverflow_metadata_release(metadata_tail_epoch);
+    metadata_tail_offset=metadata_tail_bytes=metadata_tail_captured=metadata_tail_epoch=0;
+    metadata_tail_decided=metadata_tail_ready=false;
+}
+static void metadata_tail_capture(uint32_t offset,const uint8_t *buffer,uint32_t bytes,uint32_t file_size){
+    if(!metadata_tail_decided){
+        metadata_tail_decided=true;
+        if(!metadata_bytes||metadata_offset+metadata_bytes>=file_size)return;
+        uint32_t overlap=metadata_bytes<4096u?metadata_bytes:4096u;
+        metadata_tail_offset=metadata_offset+metadata_bytes-overlap;
+        metadata_tail_bytes=file_size-metadata_tail_offset;
+        if(!ln_coverflow_metadata_reserve(metadata_tail_bytes,&metadata_tail_epoch))return;
+    }
+    uint8_t *memory=ln_coverflow_metadata_memory(metadata_tail_epoch);
+    if(!memory)return;
+    uint32_t first=offset,end=offset+bytes;
+    if(first<metadata_tail_offset)first=metadata_tail_offset;
+    if(end>file_size)end=file_size;
+    if(first>=end)return;
+    if(first!=metadata_tail_offset+metadata_tail_captured){
+        ln_coverflow_metadata_release(metadata_tail_epoch);return;
+    }
+    ln_memory_copy(memory+metadata_tail_captured,buffer+first-offset,end-first);
+    metadata_tail_captured+=end-first;
+}
+#endif
 #if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
 void ln_music_library_memory_diagnostics(uint32_t out[4]){
     out[0]=(uint32_t)(uintptr_t)metadata;out[1]=metadata_capacity;
@@ -303,6 +333,9 @@ static uint32_t next_generation(void){if(++generation>=0x20000000u)generation=0x
 static void changed(void){library.revision++;}
 static void fail(int error)
 {
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+    metadata_tail_ready=false;
+#endif
     library.error=error;library.job=JOB_NONE;library.reopen=false;
     library.status=library.io_active?LN_LIBRARY_DRAINING:LN_LIBRARY_ERROR;
     if(library.io_active)ln_storage_media_cancel(library.generation);
@@ -406,6 +439,15 @@ static const uint8_t *resident_metadata(uint32_t offset,uint32_t bytes){
 #if defined(LINNET_MUSIC_METADATA_BYTES)
     if(ready()&&offset>=metadata_offset&&offset-metadata_offset<=metadata_bytes&&
        bytes<=metadata_bytes-(offset-metadata_offset))return metadata+(offset-metadata_offset);
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+    if(ready()&&metadata_tail_ready&&offset>=metadata_tail_offset&&
+       offset-metadata_tail_offset<=metadata_tail_bytes&&bytes<=metadata_tail_bytes-(offset-metadata_tail_offset)){
+        struct ln_fat32_file root;
+        uint8_t *memory=ln_coverflow_metadata_memory(metadata_tail_epoch);
+        if(memory&&ln_storage_media_root(&root)&&root.epoch==library.file.epoch)
+            return memory+offset-metadata_tail_offset;
+    }
+#endif
 #else
     (void)offset;(void)bytes;
 #endif
@@ -505,6 +547,9 @@ uint32_t ln_music_library_deadline(uint32_t now){
 }
 static void start(void)
 {
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+    metadata_tail_reset();
+#endif
 #if LINNET_MUSIC_BROWSE_INDEX
     browse_phase=browse_at=browse_size=browse_file_size=browse_base_size=0;
     browse_valid=false;browse_buffer=0;
@@ -566,6 +611,9 @@ static int read_database_raw(void *context,uint64_t offset,uint8_t *buffer,uint3
                 if(first<metadata_offset)first=metadata_offset;
                 if(end>metadata_offset+metadata_bytes)end=metadata_offset+metadata_bytes;
                 if(first<end)ln_memory_copy(metadata+(first-metadata_offset),buffer+(first-(uint32_t)offset),end-first);
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+                if(library.db.phase==1)metadata_tail_capture((uint32_t)offset,buffer,bytes,library.file.size);
+#endif
             }
 #endif
             if(library.status==LN_LIBRARY_VERIFYING)title_capture((uint32_t)offset,buffer,bytes);
@@ -584,9 +632,9 @@ static int read_database(void *context,uint64_t offset,uint8_t *buffer,uint32_t 
     if(!ready())return read_database_raw(context,offset,buffer,bytes);
     if(offset>library.file.size||!bytes||bytes>4096u||bytes>library.file.size-offset)return LN_DB_ARGUMENT;
 #if defined(LINNET_MUSIC_METADATA_BYTES)
-    if(offset>=metadata_offset&&offset-metadata_offset<=metadata_bytes&&
-       bytes<=metadata_bytes-(uint32_t)(offset-metadata_offset)){
-        ln_memory_copy(buffer,metadata+((uint32_t)offset-metadata_offset),bytes);
+    const uint8_t *resident=resident_metadata((uint32_t)offset,bytes);
+    if(resident){
+        ln_memory_copy(buffer,resident,bytes);
         return 1;
     }
 #endif
@@ -628,6 +676,9 @@ static int read_database(void *context,uint64_t offset,uint8_t *buffer,uint32_t 
 }
 static void stop(bool reopen)
 {
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+    metadata_tail_ready=false;
+#endif
     library.reopen=reopen;library.status=LN_LIBRARY_DRAINING;
     library.error=0;
     library.selection_ready=library.query_ready=false;
@@ -1033,6 +1084,10 @@ static void library_step_once(void)
         else if(result==1){
 #if LINNET_MUSIC_BROWSE_INDEX
             if(!browse_load())return;
+#endif
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
+            metadata_tail_ready=metadata_tail_bytes&&metadata_tail_captured==metadata_tail_bytes&&
+                ln_coverflow_metadata_memory(metadata_tail_epoch)!=0;
 #endif
             library.status=LN_LIBRARY_READY;changed();
         }

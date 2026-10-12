@@ -13,6 +13,13 @@ bool ln_coverflow_release_catalog(void);
 bool ln_coverflow_stage_claim(void);
 /* Bounded synchronous admission for upload BEGIN and persistent verification. */
 bool ln_coverflow_stage_prepare(void);
+#if LINNET_TARGET_NUMBER==25u
+/* Separate high-STAGE lease; validity is independent of disk power and the
+ * artwork phase. Only the library's verified database may publish its data. */
+uint8_t *ln_coverflow_metadata_reserve(uint32_t bytes,uint32_t *epoch);
+uint8_t *ln_coverflow_metadata_memory(uint32_t epoch);
+void ln_coverflow_metadata_release(uint32_t epoch);
+#endif
 #endif
 bool ln_coverflow_move(int32_t delta);
 uint32_t ln_coverflow_count(void);
