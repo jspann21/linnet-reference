@@ -140,8 +140,8 @@ class Session:
     def info(self) -> bytes:
         return self.request(Command.INFO)
 
-    def status(self) -> bytes:
-        return self.request(Command.STATUS)
+    def status(self, *, timeout=None) -> bytes:
+        return self.request(Command.STATUS,timeout=timeout)
 
     def startup_timing(self, generation=None) -> dict:
         """Read retained startup ticks; missing stages are never reported as zero time."""
@@ -395,8 +395,8 @@ class Session:
         return dict(capture_id=capture,generation=generation,width=width,height=height,
                     format='rgb565-le',crc32=f'{crc:08x}'),bytes(pixels)
 
-    def storage_state(self) -> tuple[int, ...]:
-        reply = self.request(Command.STORAGE_STATE, timeout=15)
+    def storage_state(self, *, timeout=15) -> tuple[int, ...]:
+        reply = self.request(Command.STORAGE_STATE, timeout=timeout)
         if len(reply) != 96 or reply[:4] != b'STOR':
             raise ProtocolError('invalid storage state')
         return struct.unpack('<24I', reply)
@@ -635,8 +635,15 @@ class Session:
         if command not in (Command.UPDATE_CHUNK, Command.UPDATE_FINISH):
             raise ValueError('update admission is limited to CHUNK and FINISH')
         deadline = None
+        def admission_timeout():
+            remaining = deadline-time.monotonic()
+            if remaining <= 0:
+                raise DeviceError('persistent update admission deadline expired')
+            return remaining
         try:
             while True:
+                if deadline is not None:
+                    admission_timeout()
                 try:
                     return self._storage_ack(command,generation,payload,end,timeout=timeout)
                 except DeviceError as rejection:
@@ -653,24 +660,24 @@ class Session:
                             raise DeviceError('persistent update admission deadline expired') from rejection
                         self.poisoned = False
                         from .identity import decode
-                        observed = decode(self.status())
+                        observed = decode(self.status(timeout=admission_timeout()))
                         if any(observed[key] != running[key] for key in
                                ('target_id','build_id','image_sha256','generation')):
                             raise DeviceError('persistent update identity changed') from rejection
-                        update = self.update_status()
+                        update = self.update_status(timeout=admission_timeout())
                         if (update[2] != 1 or update[11] != 1 or
                                 update[12] != (confirmed_slot^1) or update[13] != expected_offset or
                                 update[5] != confirmed_slot or update[6] != 255 or
                                 update[7] or update[14] or update[15]):
                             raise DeviceError('rejected update cannot prove untouched work') from rejection
-                        storage = self.storage_state()
+                        storage = self.storage_state(timeout=admission_timeout())
                         if storage[2] or storage[8]:
                             raise DeviceError('persistent update storage fault') from rejection
                         if storage[4] == 1 and storage[7] == 1 and not storage[9] and update[1] == 1:
                             break
                         if storage[1] == 6 and not storage[9] and not storage[4]:
                             # Refresh only the read-only FAT ownership proof.
-                            self._storage_ack(Command.STORAGE_PREPARE,generation)
+                            self._storage_ack(Command.STORAGE_PREPARE,generation,timeout=admission_timeout())
                         time.sleep(.05)
                     # The pending hint is not the complete firmware busy gate.
                     # A race can reject again; the next loop must re-prove it.
@@ -717,8 +724,8 @@ class Session:
             raise AmbiguousUpdateFinish(str(exc)) from exc
         return dict(candidate_published=True,image=identity,sha256=digest.hex(),bytes=len(image))
 
-    def update_status(self) -> tuple[int, ...]:
-        reply = self.request(Command.UPDATE_STATUS, timeout=15)
+    def update_status(self, *, timeout=15) -> tuple[int, ...]:
+        reply = self.request(Command.UPDATE_STATUS, timeout=timeout)
         if len(reply) != 64 or reply[:4] != b'USTA':
             raise ProtocolError('invalid persistent update status')
         return struct.unpack('<16I',reply)
