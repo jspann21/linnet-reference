@@ -949,11 +949,6 @@ static void query_step(void)
             library.query_result=library.db.search_track;library.group_name[0]=0;
             if(library.query_result==UINT32_MAX){query_complete(UINT32_MAX);return;}
             if(library.query_result&LN_MUSIC_SEARCH_GROUP){
-                const char *name;
-                if(ln_music_library_cached_group(library.query_result&~LN_MUSIC_SEARCH_GROUP,&library.group,&name)){
-                    if(library.group.kind!=1&&library.group.kind!=2){fail(LN_DB_FORMAT);return;}
-                    text_copy(library.group_name,name);query_complete(library.query_result);return;
-                }
                 if(request(LN_DB_GROUP,library.query_result&~LN_MUSIC_SEARCH_GROUP))library.stage=5;
                 return;
             }
