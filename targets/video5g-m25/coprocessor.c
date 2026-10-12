@@ -176,6 +176,24 @@ static int video_read(void *context,uint64_t at,void *buffer,uint32_t bytes){
     cache->offset[slot]=offset;cache->bytes[slot]=count;cache->filling=slot;cache->pending=true;
     return 0;
 }
+static void seed_audio_cache(void){
+    /* Both parsers validate the same file independently. Preserve completed
+     * metadata windows before the first video packet can evict them; audio
+     * owns a separate cache and never borrows the video cache's buffers. */
+    if(vc.read_active||vc.read_io||vc.cache[0].pending||vc.cache[1].pending)return;
+    for(uint32_t i=0;i<3u;++i){
+        uint32_t bytes=vc.cache[0].bytes[i];uint64_t offset=vc.cache[0].offset[i];
+        if(vc.cache[1].bytes[i]||bytes>16384u||offset>vc.video_file.size||
+           bytes>vc.video_file.size-offset)return;
+    }
+    uint8_t *source=(uint8_t *)(uintptr_t)(LINNET_STAGE_ADDRESS+0x20000u);
+    uint8_t *destination=source+49152u;
+    for(uint32_t i=0;i<3u;++i)
+        if(vc.cache[0].bytes[i])ln_memory_copy(destination+i*16384u,source+i*16384u,vc.cache[0].bytes[i]);
+    /* Publish only after every copy completes. No parser, storage poll or
+     * progress callback can observe a partially seeded destination. */
+    vc.cache[1]=vc.cache[0];
+}
 /* Track timestamps can exceed 32 bits even when playback time fits in ms. */
 static uint64_t divide_ticks(uint64_t ticks,uint32_t rate){
     uint64_t quotient=0,remainder=0;
@@ -795,7 +813,7 @@ bool ln_m25_coprocessor_step(void){
             else if(result>0){
                 if(vc.movie.config_bytes>256u||vc.movie.width>640u||vc.movie.height>480u||
                    (vc.movie.nal_bytes&&(vc.movie.config[1]!=66u||vc.movie.config[3]>13u||vc.movie.width>320u||vc.movie.height>240u)))recover(42);
-                else phase(MEDIA_PACKET,30000000u);
+                else {seed_audio_cache();phase(MEDIA_PACKET,30000000u);}
             }
         }else if(vc.phase==MEDIA_PACKET){
             result=ln_mp4_next(&vc.movie,&vc.packet);
