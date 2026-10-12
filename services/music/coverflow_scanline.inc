@@ -4,6 +4,10 @@ struct ln_coverflow_scanline {uint16_t offset;uint8_t left,width,runs;};
 extern const struct ln_coverflow_scanline ln_coverflow_rows[33][190];
 extern const uint8_t ln_coverflow_samples[];
 extern const uint8_t ln_coverflow_sources[33][COVER_WIDTH];
+#if defined(LINNET_SOC_PP5022)
+extern const uint16_t ln_coverflow_settled_offsets[16][190];
+extern const uint16_t ln_coverflow_settled_spans[];
+#endif
 #if defined(LINNET_SOC_S5L8702)
 extern const uint8_t ln_coverflow_mirror_sources[33][COVER_WIDTH];
 #endif
@@ -24,6 +28,14 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
     } cards[7];
     uint32_t card_count=0;
     int32_t center=(position+128)/256;
+#if defined(LINNET_SOC_PP5022)
+    int16_t card_map[7];
+    for(uint32_t n=0;n<7;n++)card_map[n]=-1;
+    bool settled=count&&position>=0&&!(position&255)&&center>=0&&(uint32_t)center<count;
+    uint32_t settled_case=0;
+    if(settled){uint32_t left=(uint32_t)center,right=count-1u-left;
+        settled_case=(left<3u?left:3u)*4u+(right<3u?right:3u);}
+#endif
 #if defined(LINNET_COVERFLOW_PACKED)
     packed_frame_begin(center);
 #endif
@@ -31,6 +43,9 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
         if(!layer&&side==1)continue;
         int32_t index=center+layer*side;if(index<0||(uint32_t)index>=count)continue;
         struct card *card=&cards[card_count++];
+#if defined(LINNET_SOC_PP5022)
+        card_map[index-center+3]=(int16_t)(card_count-1u);
+#endif
         int32_t distance=index*256-position,ad=distance<0?-distance:distance;
         card->pose=ad>=256?32u:(uint32_t)(ad+4)/8u;
         card->width=ln_coverflow_widths[card->pose];card->mirror=distance>=0;
@@ -85,6 +100,18 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
         struct span {int16_t left,right,card;} spans[15];
         spans[0]=(struct span){c->clip_x,c->clip_x+c->clip_w,-1};
         uint32_t spans_count=1;
+#if defined(LINNET_SOC_PP5022)
+        if(settled){
+            const uint16_t *recipe=ln_coverflow_settled_spans+ln_coverflow_settled_offsets[settled_case][y];
+            int32_t left=0,clip_end=c->clip_x+c->clip_w;spans_count=0;
+            do {
+                uint32_t token=*recipe++,label=token&7u;int32_t right=(int32_t)(token>>3);
+                int32_t lo=left>c->clip_x?left:c->clip_x,hi=right<clip_end?right:clip_end;
+                if(lo<hi)spans[spans_count++]=(struct span){lo,hi,label==7u?-1:card_map[label]};
+                left=right;
+            }while(left<320);
+        }else
+#endif
         for(uint32_t n=0;n<card_count;n++){
             const struct card *card=&cards[n];const struct ln_coverflow_scanline *line=&ln_coverflow_rows[card->pose][y];
             if(!line->width)continue;

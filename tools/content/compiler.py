@@ -566,6 +566,46 @@ def geometry_flags(node, theme, font):
     return flags | (1 << 31) | (height << 6) | (columns << 13) | (rows << 16) | (width << 20)
 
 
+def _coverflow_settled_spans(widths, rows, canvas_width):
+    """Bake first-owner visibility for every settled library edge case."""
+    offsets, tokens, shared = [], [], {}
+    for left_depth in range(4):
+        for right_depth in range(4):
+            case = []
+            for y in range(len(rows[0])):
+                owners = [7] * canvas_width
+                for delta in (0, 1, -1, 2, -2, 3, -3):
+                    if not -left_depth <= delta <= right_depth:
+                        continue
+                    pose = 0 if delta == 0 else 32
+                    width = widths[pose]
+                    line_left, line_width = rows[pose][y]
+                    distance = abs(delta) * 256
+                    shift = distance * 69 // 256 if distance <= 256 else 69 + (distance - 256) * 25 // 256
+                    # C applies signed division after scaling: divide the
+                    # positive magnitude first, then restore its sign.
+                    x = canvas_width // 2 + (-1 if delta < 0 else 1) * (shift * canvas_width // 220) - width // 2
+                    left = x + (line_left if delta < 0 else width - line_left - line_width)
+                    for column in range(max(0, left), min(canvas_width, left + line_width)):
+                        if owners[column] == 7:
+                            owners[column] = delta + 3
+                spans = []
+                for column in range(1, canvas_width + 1):
+                    if column == canvas_width or owners[column] != owners[column - 1]:
+                        spans.append((column << 3) | owners[column - 1])
+                assert 1 <= len(spans) <= 15 and spans[-1] >> 3 == canvas_width
+                assert all((token & 7) == 7 or -left_depth <= (token & 7) - 3 <= right_depth for token in spans)
+                key = tuple(spans)
+                if key not in shared:
+                    shared[key] = len(tokens)
+                    tokens.extend(spans)
+                case.append(shared[key])
+            offsets.append(case)
+    if len(tokens) > 65535:
+        raise ValueError('Cover Flow settled span offsets exceed the 16-bit table bound')
+    return offsets, tokens
+
+
 def generate_c(doc, packed_fonts=None):
     if packed_fonts is None:
         packed_fonts=[crop_font(font) for font in doc['fonts']]
@@ -603,7 +643,7 @@ def generate_c(doc, packed_fonts=None):
             out.append(f'const uint8_t ln_coverflow_glow[{gw}][{gh}]={{'+','.join('{'+','.join(map(str,glow[x*gh:(x+1)*gh]))+'}' for x in range(gw))+'};')
         out.append('const uint8_t ln_coverflow_widths[33]={'+','.join(map(str,widths))+'};')
         if not scanline:out.append(f'const struct ln_coverflow_column ln_coverflow_columns[33][{cover_size}]={{')
-        scanlines,samples,sources,mirrors=[],[],[],[]
+        scanlines,samples,sources,mirrors,row_geometry=[],[],[],[],[]
         for pose,width in enumerate(widths):
             tilt=pose*8
             columns=[];geometry=[]
@@ -616,11 +656,12 @@ def generate_c(doc, packed_fonts=None):
                 sources.append('{'+','.join(str(c[1]) for c in geometry)+'}')
                 mirrors.append('{'+','.join(str(texture_side-1-geometry[width-1-x][1])
                                             for x in range(width))+'}')
-                rows=[]
+                rows=[];spans=[]
                 for y in range(gh):
                     visible=[x for x,c in enumerate(geometry) if c[2]<=y<c[2]+c[4]]
                     left=visible[0] if visible else 0
                     assert not visible or visible==list(range(left,left+len(visible)))
+                    spans.append((left,len(visible)))
                     start=len(samples)
                     for x in visible:
                         sy=((geometry[x][0]>>1)+(y-geometry[x][2])*geometry[x][0])>>16
@@ -628,6 +669,7 @@ def generate_c(doc, packed_fonts=None):
                         else:samples[-2]=x+1
                     rows.append('{'+f'{start},{left},{len(visible)},{(len(samples)-start)//2}'+'}')
                 scanlines.append('{'+','.join(rows)+'}')
+                row_geometry.append(spans)
         if scanline:
             if len(samples)>65535:
                 raise ValueError('Cover Flow scanline offsets exceed the 16-bit table bound')
@@ -637,6 +679,11 @@ def generate_c(doc, packed_fonts=None):
             out.append('#endif')
             out.append(f'const struct ln_coverflow_scanline ln_coverflow_rows[33][{gh}]={{'+','.join(scanlines)+'};')
             out.append('const uint8_t ln_coverflow_samples[]={'+','.join(map(str,samples))+'};')
+            settled_offsets,settled_tokens=_coverflow_settled_spans(widths,row_geometry,gw)
+            out.append('#if defined(LINNET_SOC_PP5022)')
+            out.append(f'const uint16_t ln_coverflow_settled_offsets[16][{gh}]={{'+','.join('{'+','.join(map(str,row))+'}' for row in settled_offsets)+'};')
+            out.append('const uint16_t ln_coverflow_settled_spans[]={'+','.join(map(str,settled_tokens))+'};')
+            out.append('#endif')
         else:out.append('};')
         out.append('#endif')
     def array(type_,name,values):

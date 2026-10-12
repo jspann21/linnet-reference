@@ -81,6 +81,9 @@ Once lossless artwork is resident, Cover Flow prepares its first visible decoded
 cards in bounded background steps rather than waiting for the first open. A
 ready view also acknowledges its revision before the first transition paints,
 avoiding a duplicate settled frame while preserving ongoing animation deadlines. A
+settled M25 frame uses host-prepared visible spans for all library edge cases,
+so card overlap is resolved during compilation. Fractional animation keeps the
+dynamic splitter; both paths clip spans before writing the framebuffer. A
 resident video list also fills during an already awake, idle disk window, using
 at most 32 rows per read and stopping before any published page. Background
 catalog reads do not own playback navigation or block firmware upload. Shutdown
