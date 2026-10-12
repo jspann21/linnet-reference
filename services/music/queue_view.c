@@ -1,5 +1,6 @@
 #include "queue_view.h"
 #include "library.h"
+#include "hal/api/platform.h"
 static struct {
     struct ln_queue queue;
     char labels[LN_QUEUE_VIEW_ROWS][259];
@@ -75,23 +76,39 @@ const char *ln_music_queue_view_label(uint32_t row){
     if(row<view.first||row-view.first>=LN_QUEUE_VIEW_ROWS||!view.valid[row-view.first])return "Loading...";
     return view.labels[row-view.first];
 }
-static void publish(uint32_t row,const char *title){
+static void publish(uint32_t row,const char *title,bool notify){
     if(row<view.first||row-view.first>=LN_QUEUE_VIEW_ROWS)return;
     uint32_t slot=row-view.first;char *out=view.labels[slot];
     out[0]=row==view.queue.cursor?'>':' ';out[1]=' ';
     uint32_t i=0;while(i<255u&&title[i]){out[i+2]=title[i];i++;}out[i+2]=0;
     view.valid[slot]=true;
     /* Publish one complete viewport; speculative lookahead never repaints. */
-    if(slot>=view.visible_rows)return;
+    if(!notify||slot>=view.visible_rows)return;
     for(uint32_t n=0;n<view.visible_rows&&view.first+n<view.queue.count;n++)
         if(!view.valid[n])return;
     ++view.revision;
+}
+bool ln_music_queue_view_prepare(void){
+    if(!view.opened||ln_music_library_status()!=LN_LIBRARY_READY)return false;
+    uint8_t identity[32];if(!ln_music_library_identity(identity))return false;
+    for(uint32_t i=0;i<32u;++i)if(identity[i]!=view.queue.library_identity[i])return false;
+    bool filled=false;uint32_t started=ln_time_us();
+    for(uint32_t i=0;i<view.visible_rows&&view.first+i<view.queue.count;++i){
+        if(view.valid[i])continue;uint32_t track;
+        if(!ln_queue_track_at(&view.queue,view.first+i,&track))continue;
+        if(view.queue.source==LN_QUEUE_GROUP&&
+           !ln_music_library_cached_member(view.queue.source_group&~LN_QUEUE_REVERSE,track,&track))continue;
+        const char *title=ln_music_library_title(track);
+        if(title){publish(view.first+i,title,false);filled=true;}
+        if((uint32_t)(ln_time_us()-started)>=250u)break;
+    }
+    return filled;
 }
 void ln_music_queue_view_step(bool allow_query){
     if(ln_music_library_status()!=LN_LIBRARY_READY){
         view.pending=false;view.was_ready=false;
         if(view.opened)for(uint32_t i=0;i<LN_QUEUE_VIEW_ROWS&&view.first+i<view.queue.count;i++)
-            if(!view.valid[i])publish(view.first+i,"Library unavailable");
+            if(!view.valid[i])publish(view.first+i,"Library unavailable",true);
         return;
     }
     if(!view.was_ready){view.was_ready=true;if(view.opened)invalidate();}
@@ -100,15 +117,15 @@ void ln_music_queue_view_step(bool allow_query){
         if(!ln_music_library_take_view_row(&row))return;
         view.pending=false;
         if(view.opened&&view.job_epoch==view.epoch)
-            publish(view.job_row,row.index==UINT32_MAX?"Unavailable track":row.title);
+            publish(view.job_row,row.index==UINT32_MAX?"Unavailable track":row.title,true);
     }
     if(!view.opened||!allow_query)return;
     uint8_t identity[32];bool matched=ln_music_library_identity(identity);
     for(uint32_t i=0;i<32&&matched;i++)if(identity[i]!=view.queue.library_identity[i])matched=false;
     for(uint32_t i=0;i<LN_QUEUE_VIEW_ROWS&&view.first+i<view.queue.count;i++){
         if(view.valid[i])continue;uint32_t ordinal;
-        if(!matched){publish(view.first+i,"Library changed");return;}
-        if(!ln_queue_track_at(&view.queue,view.first+i,&ordinal)){publish(view.first+i,"Invalid queue entry");return;}
+        if(!matched){publish(view.first+i,"Library changed",true);return;}
+        if(!ln_queue_track_at(&view.queue,view.first+i,&ordinal)){publish(view.first+i,"Invalid queue entry",true);return;}
         if(ln_music_library_view_row(view.queue.source,view.queue.source_group,ordinal)){
             view.pending=true;view.job_epoch=view.epoch;view.job_row=view.first+i;
         }

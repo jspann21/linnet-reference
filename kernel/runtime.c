@@ -1073,6 +1073,13 @@ void ln_runtime_step(void){
     /* Accelerated and synthetic wheel bursts can update selection many times
      * per callback. Bind only the final page that this frame will display. */
     if(music_window_pending){music_window_pending=false;browser_navigation();}
+    if(scene_is(LN_UI_SCENE_MUSIC_QUEUE)){
+        /* Input bursts settle the viewport before its first frame. Preparing
+         * resident labels never takes the asynchronous query owner's slot. */
+        ln_music_queue_view_visible_rows(ln_ui_visible_capacity(shell));
+        ln_music_queue_view_window(ln_ui_first_visible(shell));
+        if(ln_music_queue_view_prepare()){ln_ui_refresh_content(shell);dirty=true;}
+    }
 #endif
 #if defined(LINNET_NATIVE_UI)
 #if defined(LINNET_AUDIO)
