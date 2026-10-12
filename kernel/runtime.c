@@ -583,6 +583,12 @@ static void apply(uint32_t kind,int32_t value){
 #endif
 #if defined(LINNET_NATIVE_UI)
     if(before!=shell->scene){
+#if defined(LINNET_AUDIO) && defined(LINNET_COVERFLOW)
+        /* A ready Cover Flow revision belongs to this transition's frame.
+         * Preserve the animation deadline when revisiting a moving view. */
+        ln_coverflow_visible(scene_is(LN_UI_SCENE_COVER_FLOW));
+        if(scene_is(LN_UI_SCENE_COVER_FLOW))shell->dirty|=ln_coverflow_tick(ln_time_us());
+#endif
 #if defined(LINNET_FILES)
         /* Bind an already prepared Files page before this transition paints.
          * The common storage gate keeps this safe in validation callbacks. */
