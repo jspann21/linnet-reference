@@ -88,7 +88,7 @@ static void jump_missing(void){
     ln_music_browser_notice("No matching letter");
 }
 static bool jump_cached(void){
-    if(ln_music_library_status()!=LN_LIBRARY_READY)return false;
+    if(b.resolving||ln_music_library_status()!=LN_LIBRARY_READY)return false;
     uint32_t started=ln_time_us();
     for(uint32_t step=0;step<64u&&b.jumping;++step){
         if(b.jump_binary){if(b.jump_lo==b.jump_hi){if(b.jump_found!=UINT32_MAX){b.jumping=false;b.here.selected=b.jump_found;navigate();}else jump_missing();return true;}b.jump_at=b.jump_lo+(b.jump_hi-b.jump_lo)/2;}
@@ -409,7 +409,7 @@ void ln_music_browser_step(void){
                 b.catalog=0;invalidate();return;
             }if(ln_music_library_group_record(b.catalog_at))b.job=CATALOG_GROUP;
         }else if(b.catalog==3&&ln_music_library_group_members(b.catalog_group,b.catalog_member))b.job=CATALOG_MEMBER;
-    }else if(b.jumping){
+    }else if(b.jumping&&!b.resolving){
         if(jump_cached())return;
         if(b.jump_binary){if(b.jump_lo==b.jump_hi){if(b.jump_found!=UINT32_MAX){b.jumping=false;b.here.selected=b.jump_found;navigate();}else jump_missing();return;}b.jump_at=b.jump_lo+(b.jump_hi-b.jump_lo)/2;}
         else if(b.jump_at>=b.here.count){jump_missing();return;}
