@@ -97,8 +97,19 @@ struct library {
     enum job job,query;
     uint8_t stage,guard_stage;
     int error;
+#if defined(LINNET_TARGET_VIDEO5G_M25) && !defined(LINNET_PROFILE_RELEASE)
+    uint32_t verify_flags,verify_start_us,verify_hash_us,verify_ready_us;
+    uint32_t verify_reads,verify_bytes,verify_io_start_us,verify_io_max_us;
+#endif
 };
 static struct library library;
+#if defined(LINNET_TARGET_VIDEO5G_M25) && !defined(LINNET_PROFILE_RELEASE)
+void ln_music_library_verification_diagnostics(uint32_t words[8]){
+    words[0]=0x57424456u;words[1]=library.verify_flags;
+    words[2]=library.verify_start_us;words[3]=library.verify_hash_us;words[4]=library.verify_ready_us;
+    words[5]=library.verify_reads;words[6]=library.verify_bytes;words[7]=library.verify_io_max_us;
+}
+#endif
 static uint32_t next_generation(void);
 #if LINNET_MUSIC_BROWSE_INDEX
 /* Verification's title heap is no longer needed once the PODB is verified. */
@@ -333,6 +344,9 @@ static uint32_t next_generation(void){if(++generation>=0x20000000u)generation=0x
 static void changed(void){library.revision++;}
 static void fail(int error)
 {
+#if defined(LINNET_TARGET_VIDEO5G_M25) && !defined(LINNET_PROFILE_RELEASE)
+    library.verify_flags|=8u;
+#endif
 #if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
     metadata_tail_ready=false;
 #endif
@@ -596,6 +610,13 @@ static int read_database_raw(void *context,uint64_t offset,uint8_t *buffer,uint3
         library.io_active=false;library.io_buffer=0;
         library.generation=next_generation();
         if(result==1&&transferred==bytes){
+#if defined(LINNET_TARGET_VIDEO5G_M25) && !defined(LINNET_PROFILE_RELEASE)
+            if(library.status==LN_LIBRARY_VERIFYING&&library.db.phase==1){
+                uint32_t elapsed=ln_time_us()-library.verify_io_start_us;
+                if(elapsed>library.verify_io_max_us)library.verify_io_max_us=elapsed;
+                library.verify_bytes+=bytes;
+            }
+#endif
 #if defined(LINNET_MUSIC_METADATA_BYTES)
             /* Reuse verification I/O, publishing only after the database hash
              * passes. Large libraries retain the browse tables first, while
@@ -625,6 +646,11 @@ static int read_database_raw(void *context,uint64_t offset,uint8_t *buffer,uint3
     int result=ln_storage_media_read(&library.file,(uint32_t)offset,buffer,bytes,library.generation);
     if(result!=1)return result;
     library.io_active=true;library.io_offset=(uint32_t)offset;library.io_size=bytes;library.io_buffer=buffer;
+#if defined(LINNET_TARGET_VIDEO5G_M25) && !defined(LINNET_PROFILE_RELEASE)
+    if(library.status==LN_LIBRARY_VERIFYING&&library.db.phase==1){
+        ++library.verify_reads;library.verify_io_start_us=ln_time_us();
+    }
+#endif
     return 0;
 }
 static int read_database(void *context,uint64_t offset,uint8_t *buffer,uint32_t bytes)
@@ -1079,7 +1105,17 @@ static void library_step_once(void)
         library.status=LN_LIBRARY_VERIFYING;changed();return;
     }
     if(library.status==LN_LIBRARY_VERIFYING){
+#if defined(LINNET_TARGET_VIDEO5G_M25) && !defined(LINNET_PROFILE_RELEASE)
+        if(library.db.phase==1&&!(library.verify_flags&1u)){
+            library.verify_flags|=1u;library.verify_start_us=ln_time_us();
+        }
+#endif
         int result=ln_music_db_open_step(&library.db);
+#if defined(LINNET_TARGET_VIDEO5G_M25) && !defined(LINNET_PROFILE_RELEASE)
+        if(library.db.verified&&!(library.verify_flags&2u)){
+            library.verify_flags|=2u;library.verify_hash_us=ln_time_us();
+        }
+#endif
         if(result<0)fail(result);
         else if(result==1){
 #if LINNET_MUSIC_BROWSE_INDEX
@@ -1090,6 +1126,9 @@ static void library_step_once(void)
                 ln_coverflow_metadata_memory(metadata_tail_epoch)!=0;
 #endif
             library.status=LN_LIBRARY_READY;changed();
+#if defined(LINNET_TARGET_VIDEO5G_M25) && !defined(LINNET_PROFILE_RELEASE)
+            library.verify_flags|=4u;library.verify_ready_us=ln_time_us();
+#endif
         }
         return;
     }

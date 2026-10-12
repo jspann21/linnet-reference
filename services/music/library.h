@@ -34,6 +34,11 @@ void ln_music_library_cancel(void);
 void ln_music_library_pause(bool pause);
 enum ln_music_library_status ln_music_library_status(void);
 int ln_music_library_error(void);
+#if defined(LINNET_TARGET_VIDEO5G_M25) && !defined(LINNET_PROFILE_RELEASE)
+/* Latched payload verification and browse readiness timestamps, modulo 32 bits;
+ * a flags bit proves each timestamp exists. Reads are admitted payload reads. */
+void ln_music_library_verification_diagnostics(uint32_t words[8]);
+#endif
 uint32_t ln_music_library_count(void);
 const char *ln_music_library_title(uint32_t track_index);
 /* Verified resident metadata only: never starts I/O or consumes the shared

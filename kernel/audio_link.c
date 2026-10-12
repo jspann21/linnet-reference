@@ -81,6 +81,13 @@ int ln_audio_link_dispatch(const ln_link_frame *q,ln_link_frame *r,uint8_t *repl
             for(uint32_t i=0;i<16u;i++)ln_write_le32(reply+i*4u,words[i]);
             r->length=64;r->flags=LINNET_LINK_ACK;return 1;
         }
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+        if(q->length==4u&&ln_read_le32(q->payload)==2u){
+            uint32_t words[8];ln_music_library_verification_diagnostics(words);
+            for(uint32_t i=0;i<8u;i++)ln_write_le32(reply+i*4u,words[i]);
+            r->length=32;r->flags=LINNET_LINK_ACK;return 1;
+        }
+#endif
 #endif
         if(q->length)return 1;
         uint32_t words[8]={0x5342494cu,0,ln_music_library_status(),(uint32_t)ln_music_library_error(),
