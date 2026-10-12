@@ -2,7 +2,7 @@
 #include "journal_pages.h"
 #include "boot/include/linnet_boot.h"
 static uint32_t crc(const uint8_t *p){return ln_crc32(p,4092);}
-#if LINNET_TARGET_NUMBER==25u
+#if defined(LINNET_TARGET_VIDEO5G_M25)
 /* Completed page buffers can be compared a word at a time. memcpy preserves
  * aliasing rules; unaligned inputs and every trailing byte retain byte checks. */
 static bool bytes_equal(const uint8_t *a,const uint8_t *b,uint32_t bytes){
