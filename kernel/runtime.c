@@ -250,7 +250,7 @@ static void search_reconcile(bool fallback_selection){
 #if LINNET_TARGET_NUMBER == 25u
 static bool search_frame_deferred(uint32_t now,uint32_t *deadline){
     if(!scene_is(LN_UI_SCENE_MUSIC_SEARCH)||sleeping||animation_left||
-       (shell->dirty&2u)||shell->drawn_theme!=ln_ui_theme_index()){
+       (shell->dirty&6u)||shell->drawn_theme!=ln_ui_theme_index()){
         ln_music_search_cancel_frame_defer();return false;
     }
     return ln_music_search_frame_deferred(now,deadline);
@@ -369,7 +369,9 @@ static void apply(uint32_t kind,int32_t value){
 #if defined(LINNET_AUDIO) && LINNET_TARGET_NUMBER == 25u
     /* A new interaction cancels the hold. Release edges leave Find armed. */
     if((kind==LN_INPUT_WHEEL&&value)||
-       (kind==LN_INPUT_BUTTON&&((uint32_t)value&~shell->buttons))||kind>=3u)
+       (kind==LN_INPUT_BUTTON&&((uint32_t)value&~shell->buttons))||
+       (kind==LN_INPUT_HOLD&&((value!=0)!=(shell->hold!=0)))||
+       (kind==LN_INPUT_HEADPHONE&&((value!=0)!=(shell->headphones!=0))))
         ln_music_search_cancel_frame_defer();
 #endif
 #if defined(LINNET_HARDWARE_CLICKER)
