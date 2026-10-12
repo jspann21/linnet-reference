@@ -67,6 +67,10 @@ metadata, group names under the existing title-cache budget. Extra group names
 require room for the whole string pool and the host-built browse index. Browser
 labels and group members that are resident can be resolved before drawing;
 larger libraries retain the asynchronous lookup path.
+On M25, verification can retain the remaining raw group metadata in an unused
+STAGE tail. That cache publishes only after the complete database hash and
+browse index pass, and firmware upload revokes it before reusing STAGE.
+Resident search labels and metadata then resolve without waking storage.
 Jump to letter also consumes ready labels before its first frame, within a
 250-microsecond slice. Missing labels retain the existing asynchronous lookup;
 long scans yield between slices and preserve reverse-order and cancellation rules.
@@ -112,6 +116,17 @@ is already awake. Hidden preparation pauses for playback or other storage owners
 and never scans live directories when a host index is missing or corrupt. Pending
 reads drain before cancellation reuses their buffers. Entering Files binds the
 prepared page before the transition's first frame.
+
+Visible M25 activity scans can borrow spare artwork memory for up to 32 pages
+from each history bank while playback is stopped. Admission preserves the full
+512-page Files allocation; the first history window and ordinary record lookups
+keep their existing small reads. DMA stays in the static 16 KiB scratch buffers,
+and only completed reads copy into the borrowed windows. View changes, firmware
+upload, and storage recovery revoke the loan; admitted DMA drains before its
+scratch buffers are reused. Playback prohibits further grouped read admissions.
+Every history page still passes its normal bank,
+CRC, and record checks. Empty pages first prove their zero tail before using
+precomputed CRC advancement constants.
 
 The simulator executes the same native renderer and compiled UI definitions.
 It checks layouts and pixels, not physical timing, audio, USB, or power.
