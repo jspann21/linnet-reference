@@ -130,6 +130,13 @@ An interrupted transaction also poisons its session. A rejected input batch on
 older firmware may already have applied a prefix; inspect before another action.
 Offset-based upload resume is not implemented.
 
+Persistent OS updates can re-admit an explicitly rejected CHUNK or FINISH within
+15 seconds. The client first requires a matched single ERROR with no extra bytes,
+then checks the original running identity and a clean, active updater at the
+unchanged offset and expected slot. It refreshes the read-only storage proof when
+needed. An advanced offset, failed proof, write fault, or uncertain acknowledgement
+stops the transaction. BEGIN is never replayed.
+
 Legacy native Boot maintenance accepts a fixed reviewed package on explicitly
 admitted hardware. It is separate from ordinary A/B OS updates; use the
 [bootstrap map](bootstrap-tooling.md) and matching recovery artifacts.

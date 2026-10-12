@@ -17,7 +17,9 @@ class AmbiguousUpdateFinish(AmbiguousCommand):
 
 
 class DeviceError(RuntimeError):
-    pass
+    def __init__(self, message, *, acknowledged_command=None):
+        super().__init__(message)
+        self.acknowledged_command = acknowledged_command
 
 
 class Session:
@@ -93,7 +95,8 @@ class Session:
         if reply.sequence != sent.sequence or reply.command != sent.command or not reply.flags & ACK:
             raise ProtocolError("unexpected command or acknowledgement sequence")
         if reply.flags & ERROR:
-            raise DeviceError(f"device rejected {Command(sent.command).name}: {reply.payload.hex()}")
+            raise DeviceError(f"device rejected {Command(sent.command).name}: {reply.payload.hex()}",
+                              acknowledged_command=sent.command)
         return reply.payload
 
     def _batch(self, requests: list[tuple[Command, bytes]], timeout=None) -> list[bytes]:
@@ -626,12 +629,65 @@ class Session:
             time.sleep(.05)
         raise TimeoutError('storage write proof did not become ready')
 
+    def _persistent_update_ack(self, command, generation, payload, end, *,
+                               running, confirmed_slot, expected_offset, timeout=45):
+        """Re-admit only explicitly rejected, provably untouched update work."""
+        if command not in (Command.UPDATE_CHUNK, Command.UPDATE_FINISH):
+            raise ValueError('update admission is limited to CHUNK and FINISH')
+        deadline = None
+        try:
+            while True:
+                try:
+                    return self._storage_ack(command,generation,payload,end,timeout=timeout)
+                except DeviceError as rejection:
+                    # Generic rejection remains poisoned. This private path can
+                    # inspect only a matched single ERROR at a clean boundary.
+                    if (rejection.acknowledged_command != command or
+                            self.pending or self.parser.buffer):
+                        raise
+                    if deadline is None:
+                        deadline = time.monotonic()+15
+                    time.sleep(min(.05,max(0,deadline-time.monotonic())))
+                    while True:
+                        if time.monotonic() >= deadline:
+                            raise DeviceError('persistent update admission deadline expired') from rejection
+                        self.poisoned = False
+                        from .identity import decode
+                        observed = decode(self.status())
+                        if any(observed[key] != running[key] for key in
+                               ('target_id','build_id','image_sha256','generation')):
+                            raise DeviceError('persistent update identity changed') from rejection
+                        update = self.update_status()
+                        if (update[2] != 1 or update[11] != 1 or
+                                update[12] != (confirmed_slot^1) or update[13] != expected_offset or
+                                update[5] != confirmed_slot or update[6] != 255 or
+                                update[7] or update[14] or update[15]):
+                            raise DeviceError('rejected update cannot prove untouched work') from rejection
+                        storage = self.storage_state()
+                        if storage[2] or storage[8]:
+                            raise DeviceError('persistent update storage fault') from rejection
+                        if storage[4] == 1 and storage[7] == 1 and not storage[9] and update[1] == 1:
+                            break
+                        if storage[1] == 6 and not storage[9] and not storage[4]:
+                            # Refresh only the read-only FAT ownership proof.
+                            self._storage_ack(Command.STORAGE_PREPARE,generation)
+                        time.sleep(.05)
+                    # The pending hint is not the complete firmware busy gate.
+                    # A race can reject again; the next loop must re-prove it.
+        except BaseException:
+            self.poisoned = True
+            raise
+
     def persistent_install(self, generation: int, image: bytes, publication_stage: int | None = None,
                            *, image_path=None) -> dict:
         from tools.inspect.image import inspect
         from tools.studio.targets import TARGETS
         self._verify_image_source(image, image_path)
         identity=inspect(image)
+        from .identity import decode
+        running=decode(self.status())
+        if running['generation'] != generation:
+            raise DeviceError('persistent update generation changed before admission')
         if publication_stage is not None and publication_stage not in range(1,5):
             raise ValueError('publication stage must be1..4')
         if len(image)>TARGETS[identity['target_id']]['os_capacity_bytes']:
@@ -646,14 +702,17 @@ class Session:
         self._storage_ack(Command.UPDATE_BEGIN,generation,struct.pack('<I',len(image))+digest)
         for offset in range(0,len(image),1008):
             chunk=image[offset:offset+1008]
-            self._storage_ack(Command.UPDATE_CHUNK,generation,struct.pack('<I',offset)+chunk,offset+len(chunk))
+            self._persistent_update_ack(Command.UPDATE_CHUNK,generation,struct.pack('<I',offset)+chunk,
+                                        offset+len(chunk),running=running,confirmed_slot=update[5],
+                                        expected_offset=offset)
         if publication_stage is not None:
             self.publication_fault(generation,publication_stage)
         try:
             # A publication cut deliberately resets before acknowledging. Keep
             # its observation bounded; ordinary image validation retains 10 min.
-            self._storage_ack(Command.UPDATE_FINISH,generation,
-                              timeout=60 if publication_stage is not None else 600)
+            self._persistent_update_ack(Command.UPDATE_FINISH,generation,b'',0,running=running,
+                                        confirmed_slot=update[5],expected_offset=len(image),
+                                        timeout=60 if publication_stage is not None else 600)
         except AmbiguousCommand as exc:
             raise AmbiguousUpdateFinish(str(exc)) from exc
         return dict(candidate_published=True,image=identity,sha256=digest.hex(),bytes=len(image))
