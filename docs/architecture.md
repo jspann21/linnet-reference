@@ -58,7 +58,7 @@ Filesystem validation and write barriers remain active during media work.
 | Music | Native decoders feed a PCM ring and DMA; metadata and next-track preparation share a bounded work budget. |
 | Photos | Host-prepared RGB565 tiles, paged metadata, and fixed caches; bounded JPEG fallback where available. |
 | Video | IPVF on Photo, BCM2722 video on M25, and the native MP4 backend on Classic. Preparation and limits follow the target. |
-| Files | Host-sorted directory pages and prepared previews; M25 retains two validated pages and their live folder handles for repeat navigation. |
+| Files | Host-sorted directory pages and prepared previews; M25 retains validated pages and their live folder handles for repeat navigation. |
 | UI | Immutable compiled scenes, baked fonts, runtime state, and bounded rendering. Target/profile layouts use the appropriate display geometry. |
 | Settings | Validated records and redundant publication; rendering does not write storage. |
 
@@ -91,8 +91,14 @@ still drains them. Prefetch checks ATA and block power transitions before each
 admission and never wakes a sleeping disk on its own.
 Resolved empty video lists also suppress the playback wake reservation.
 
-Files keeps its two-page cache in the unused M25 artwork-bank tail when Cover
-Flow is enabled. A page enters the cache only after its record checks complete;
+Files keeps two guaranteed cache pages in the unused M25 artwork-bank tail when
+Cover Flow is enabled. A fully loaded resident video catalog can lend its aligned
+unused tail for more pages. On a verified 64 MiB M25, the original metadata
+reservation can lend a larger cache while the music database uses extended RAM.
+Every borrowed-memory access checks its owner's ready state and mount epoch;
+revocation drops the pointer without touching returned bytes. Files DMA stays in
+its private page buffer and only completed pages copy into the cache.
+A page enters the cache only after its record checks complete;
 folder handles also bind the live parent cluster and catalog record identity.
 Each cache hit checks the current mount epoch. Remounts, malformed-page fallback,
 and explicit Live refresh invalidate the retained pages. Ready pages publish

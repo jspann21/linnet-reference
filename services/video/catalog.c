@@ -191,3 +191,20 @@ void ln_video_catalog_step(bool busy){
     else if(result<0){catalog.count=0;catalog.phase=5;++catalog.revision;}
 }
 bool ln_video_catalog_pending(void){return catalog.pending;}
+uint8_t *ln_video_catalog_files_memory(uint32_t *bytes,uint32_t *epoch){
+    if(!bytes||!epoch)return 0;*bytes=*epoch=0;
+#if defined(LINNET_SOC_PP5022) && !CATALOG_PAGED
+    if(catalog.phase!=4u||catalog.pending)return 0;
+    uint32_t pages=(catalog.count+CATALOG_ROWS-1u)/CATALOG_ROWS;
+    uint64_t complete=pages==64u?UINT64_MAX:(1ull<<pages)-1ull;
+    if(catalog.loaded!=complete)return 0;
+    struct ln_fat32_file root;
+    if(!ln_storage_media_root(&root)||catalog.file.epoch!=root.epoch)return 0;
+    uintptr_t first=((uintptr_t)catalog.pages+catalog.count*CATALOG_ROW_SIZE+31u)&~(uintptr_t)31u;
+    uintptr_t end=(uintptr_t)catalog.pages+sizeof catalog.pages;
+    if(first>=end)return 0;
+    *bytes=(uint32_t)(end-first);*epoch=root.epoch;return (uint8_t*)first;
+#else
+    return 0;
+#endif
+}

@@ -14,6 +14,7 @@
 #include "services/music/library.h"
 #if defined(LINNET_VIDEO)
 #include "services/video/video.h"
+#include "services/video/catalog.h"
 #endif
 #endif
 #if defined(LINNET_PHOTOS)
@@ -54,51 +55,72 @@ static bool initialized;
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_COVERFLOW)
 /* Retain validated host pages and the live handles used to reach them. This
  * bounded reservation fits the unused tail of the existing artwork bank. */
+struct cached_page {struct folder folder;uint32_t rows,age;bool valid;uint8_t data[ROWS*RECORD];};
 static struct {
-    struct {struct folder folder;uint32_t rows,age;bool valid;uint8_t data[ROWS*RECORD];} page[2];
-    uint32_t age;
+    struct cached_page page[2],*extra;
+    uint32_t age,extra_count,extra_epoch;
 } pages __attribute__((section(".cover_high"),aligned(32)));
 _Static_assert(sizeof pages<=9000u,"Files page cache exceeds the artwork-bank allowance");
-static void pages_clear(void){for(uint32_t i=0;i<2u;++i)pages.page[i].valid=false;pages.age=0;}
+static struct cached_page *page_at(uint32_t i){return i<2u?&pages.page[i]:pages.extra+(i-2u);}
+static uint32_t page_count(void){return 2u+pages.extra_count;}
+static void pages_sync(void){
+    uint32_t bytes=0,epoch=0;
+    uint8_t *memory=ln_music_library_files_memory(&bytes,&epoch);
+#if defined(LINNET_VIDEO)
+    if(!memory)memory=ln_video_catalog_files_memory(&bytes,&epoch);
+#endif
+    uint32_t count=bytes/sizeof(struct cached_page);
+    if((uint8_t*)pages.extra==memory&&pages.extra_count==count&&pages.extra_epoch==epoch)return;
+    /* Forget a revoked pointer without touching bytes returned to its owner.
+     * All scans/copies below are RAM-only and cannot reenter the catalog. */
+    pages.extra=(struct cached_page*)memory;pages.extra_count=count;pages.extra_epoch=epoch;
+    for(uint32_t i=0;i<count;++i)pages.extra[i].valid=false;
+}
+static void pages_clear(void){pages_sync();for(uint32_t i=0;i<page_count();++i)page_at(i)->valid=false;pages.age=0;}
 static uint32_t pages_age(void){
-    if(++pages.age==0){for(uint32_t i=0;i<2u;++i)pages.page[i].age=0;pages.age=1;}
+    pages_sync();
+    if(++pages.age==0){for(uint32_t i=0;i<page_count();++i)page_at(i)->age=0;pages.age=1;}
     return pages.age;
 }
 static void pages_save(void){
     if(!f.folder.indexed||!f.done||f.validate||f.pending||f.message)return;
+    pages_sync();
     uint32_t slot=0;
-    for(uint32_t i=0;i<2u;++i){
-        if(pages.page[i].valid&&pages.page[i].folder.file.epoch==f.folder.file.epoch&&
-           pages.page[i].folder.record==f.folder.record&&pages.page[i].folder.page==f.folder.page){slot=i;break;}
-        if(!pages.page[i].valid){slot=i;break;}
-        if(pages.page[i].age<pages.page[slot].age)slot=i;
+    for(uint32_t i=0;i<page_count();++i){
+        struct cached_page *p=page_at(i);
+        if(p->valid&&p->folder.file.epoch==f.folder.file.epoch&&
+           p->folder.record==f.folder.record&&p->folder.page==f.folder.page){slot=i;break;}
+        if(!p->valid){slot=i;break;}
+        if(p->age<page_at(slot)->age)slot=i;
     }
-    pages.page[slot].valid=false;pages.page[slot].folder=f.folder;pages.page[slot].rows=f.count;
-    __builtin_memcpy(pages.page[slot].data,f.rows.catalog,f.count*RECORD);
-    pages.page[slot].age=pages_age();pages.page[slot].valid=true;
+    struct cached_page *p=page_at(slot);p->valid=false;p->folder=f.folder;p->rows=f.count;
+    __builtin_memcpy(p->data,f.rows.catalog,f.count*RECORD);
+    p->age=pages_age();p->valid=true;
 }
 static bool pages_load(void){
     if(!f.folder.indexed)return false;
     struct ln_fat32_file root;
     if(!ln_storage_media_root(&root)||root.epoch!=f.folder.file.epoch){pages_clear();return false;}
-    for(uint32_t i=0;i<2u;++i)if(pages.page[i].valid&&
-       pages.page[i].folder.file.epoch==f.folder.file.epoch&&pages.page[i].folder.record==f.folder.record&&
-       pages.page[i].folder.page==f.folder.page&&pages.page[i].folder.first==f.folder.first&&
-       pages.page[i].folder.count==f.folder.count&&pages.page[i].folder.file.cluster==f.folder.file.cluster){
-        f.count=pages.page[i].rows;__builtin_memcpy(f.rows.catalog,pages.page[i].data,f.count*RECORD);
+    pages_sync();
+    for(uint32_t i=0;i<page_count();++i){struct cached_page *p=page_at(i);if(p->valid&&
+       p->folder.file.epoch==f.folder.file.epoch&&p->folder.record==f.folder.record&&
+       p->folder.page==f.folder.page&&p->folder.first==f.folder.first&&
+       p->folder.count==f.folder.count&&p->folder.file.cluster==f.folder.file.cluster){
+        f.count=p->rows;__builtin_memcpy(f.rows.catalog,p->data,f.count*RECORD);
         f.done=true;f.more=f.folder.page*ROWS+f.count<f.folder.count;f.phase=READY;
-        pages.page[i].age=pages_age();return true;
-    }
+        p->age=pages_age();return true;
+    }}
     return false;
 }
 static bool pages_folder(uint32_t record,struct ln_fat32_file*out){
     struct ln_fat32_file root;
     if(!ln_storage_media_root(&root)||root.epoch!=f.folder.file.epoch){pages_clear();return false;}
-    for(uint32_t i=0;i<2u;++i)if(pages.page[i].valid&&
-       pages.page[i].folder.file.epoch==root.epoch&&pages.page[i].folder.record==record&&
-       pages.page[i].folder.parent==f.folder.file.cluster){
-        *out=pages.page[i].folder.file;return true;
-    }
+    pages_sync();
+    for(uint32_t i=0;i<page_count();++i){struct cached_page *p=page_at(i);if(p->valid&&
+       p->folder.file.epoch==root.epoch&&p->folder.record==record&&
+       p->folder.parent==f.folder.file.cluster){
+        *out=p->folder.file;return true;
+    }}
     return false;
 }
 #else

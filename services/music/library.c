@@ -451,6 +451,18 @@ uint8_t *ln_music_library_art_memory(uint32_t *bytes){
 #endif
     return 0;
 }
+uint8_t *ln_music_library_files_memory(uint32_t *bytes,uint32_t *epoch){
+    if(!bytes||!epoch)return 0;*bytes=*epoch=0;
+#if defined(LINNET_SOC_PP5022) && defined(LINNET_MUSIC_METADATA_BYTES) && defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+    if(ready()&&metadata!=metadata_local){
+        struct ln_fat32_file root;
+        if(ln_storage_media_root(&root)&&library.file.epoch==root.epoch){
+            *bytes=sizeof metadata_local;*epoch=root.epoch;return metadata_local;
+        }
+    }
+#endif
+    return 0;
+}
 
 static bool superseded_job(void){
     return (library.job==JOB_WINDOW&&!window_enabled)||

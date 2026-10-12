@@ -47,6 +47,10 @@ bool ln_music_library_cached_member(uint32_t group,uint32_t ordinal,uint32_t *tr
 uint8_t *ln_music_library_catalog_memory(uint32_t *bytes);
 /* Same Cover Flow lease and release contract for unused extended metadata RAM. */
 uint8_t *ln_music_library_art_memory(uint32_t *bytes);
+/* Files can use the original metadata reservation only while M25 verified
+ * metadata lives in extended RAM. Recheck on every access; reload or remount
+ * revokes it before the original buffer can become database storage again. */
+uint8_t *ln_music_library_files_memory(uint32_t *bytes,uint32_t *epoch);
 uint32_t ln_music_library_group_count(void);
 uint32_t ln_music_library_revision(void);
 uint32_t ln_music_library_verified_bytes(void);
