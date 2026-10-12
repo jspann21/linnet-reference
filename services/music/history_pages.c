@@ -6,7 +6,12 @@
 enum {SUPER_A,SUPER_B,IDLE,PAGE_A,PAGE_B,PUBLISH,FLUSH,CHECK,ACK,FAILED};
 static struct {
     struct ln_history_page cache[4];uint32_t age[4],clock,revision;
-    uint8_t a[16384],b[16384],epoch[16];
+    uint8_t a[16384];
+#if LINNET_TARGET_NUMBER==25u
+    /* Keep the banks aligned while avoiding identical 16 KiB spacing. */
+    uint8_t bank_spacing[32];
+#endif
+    uint8_t b[16384],epoch[16];
     uint32_t window_first,window_count,window_revision;bool window_valid;
     uint32_t seen[32],bookmark_pages[32],favorite_pages[32],played_pages[32],seen_count,bookmarks;
     uint32_t phase,index,probe,slot;int error;bool loaded,wanted,scanning;
