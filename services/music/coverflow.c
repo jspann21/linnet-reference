@@ -61,7 +61,8 @@ static uint8_t header[1024] __attribute__((aligned(32)))
 ;
 static uint8_t art_low[ART_LOW*ART_RECORD] __attribute__((section(".cover_low"),aligned(32)));
 static uint8_t art_high[ART_HIGH*ART_RECORD] __attribute__((section(".cover_high"),aligned(32)));
-static uint32_t art_tags[ART_SLOTS],art_warm,art_loaded;
+static uint32_t art_tags[ART_SLOTS],art_warm,art_loaded,art_base,art_end,art_remaining;
+static bool art_bulk;
 #define ART_LOW_SLOTS (sizeof art_low/TILE_RECORD)
 #define ART_CAPACITY (ART_LOW_SLOTS+sizeof art_high/TILE_RECORD)
 #if LINNET_COVERFLOW_SCANLINE
@@ -94,7 +95,14 @@ static void invalidate(void){
     for(uint32_t i=0;i<CATALOG_SLOTS;i++)tags[i]=0;
     for(uint32_t i=0;i<SLOTS;i++)cache[i].id=0;
     for(uint32_t i=0;i<ART_SLOTS;i++)art_tags[i]=0;
-    art_warm=art_loaded=0;count=arts=selected=warm=catalog_loaded=0;position=0;phase=CLOSED;++revision;
+    art_warm=art_loaded=art_base=art_end=art_remaining=0;art_bulk=false;
+    count=arts=selected=warm=catalog_loaded=0;position=0;phase=CLOSED;++revision;
+}
+static void rewind_art_warm(void){
+    if(!art_bulk||loading<art_base||loading>=art_end)return;
+    uint32_t n=length/TILE_RECORD;
+    if(n>art_end-art_base-art_remaining)n=art_end-art_base-art_remaining;
+    art_remaining+=n;art_warm=loading;
 }
 void ln_coverflow_visible(bool value){
     if(value&&!visible){moved_in_visit=false;io_due=ln_time_us();}
@@ -115,7 +123,7 @@ bool ln_coverflow_move(int32_t delta){
         for(uint32_t i=0;i<length/TILE_RECORD;i++)if(close_to_selection(loading+i)){needed=true;break;}
         if(!needed){
             if(pending){ln_storage_media_cancel(generation);canceling=true;}
-            else {if(loading<art_warm)art_warm=loading;phase=READY;}
+            else {rewind_art_warm();phase=READY;}
         }
     }
     int32_t distance=(int32_t)(selected*256u)-position;
@@ -151,6 +159,35 @@ static bool close_to_selection(uint32_t art){
     for(int32_t d=-3;d<=3;d++){int32_t n=(int32_t)selected+d;if(n<0)continue;
         uint8_t *r=row((uint32_t)n);if(r&&ln_read_le32(r+248)==art)return true;}
     return false;
+}
+static bool warm_protected(uint32_t art){
+    uint32_t tag=art_tags[art%ART_CAPACITY];
+    return tag&&tag!=art+1u&&close_to_selection(tag-1u);
+}
+static void art_warm_window(void){
+    uint32_t base=0,end=arts<ART_CAPACITY?arts:ART_CAPACITY,anchor=0;
+    if(arts>ART_CAPACITY){
+        bool found=false;
+        /* New image IDs follow album order; shared covers can point backward.
+         * Nearby novel artwork keeps late albums in their own cache region. */
+        for(int32_t d=-3;d<=3;d++){
+            int32_t index=(int32_t)selected+d;if(index<0)continue;
+            uint8_t *r=row((uint32_t)index);if(!r)continue;
+            uint32_t id=ln_read_le32(r+248);if(!found||id>anchor)anchor=id;found=true;
+        }
+        if(!found)return;
+        base=anchor>ART_CAPACITY/2u?anchor-ART_CAPACITY/2u:0u;
+        if(base>arts-ART_CAPACITY)base=arts-ART_CAPACITY;
+        end=base+ART_CAPACITY;
+    }
+    if(base==art_base&&end==art_end)return;
+    art_base=base;art_end=end;art_remaining=end-base;
+    /* Start near the selection, then wrap once through the bounded region. */
+    art_warm=direction<0&&anchor>base+64u?anchor-64u:anchor;
+    if(art_warm<base||art_warm>=end)art_warm=base;
+}
+static void advance_art_warm(uint32_t n){
+    art_remaining-=n;art_warm+=n;if(art_warm==art_end)art_warm=art_base;
 }
 static uint32_t decode_priority(uint32_t art){
 #if LINNET_COVERFLOW_SCANLINE
@@ -223,9 +260,11 @@ const uint16_t *ln_coverflow_playback_preview(const char *path,uint32_t crc){
     return 0;
 }
 static void request_art(uint32_t id,bool bulk){
-    loading=id;length=1u;
+    loading=id;length=1u;art_bulk=bulk;
     uint32_t slot=id%ART_CAPACITY,available=slot<ART_LOW_SLOTS?ART_LOW_SLOTS-slot:ART_CAPACITY-slot;
-    if(bulk)while((length+1u)*TILE_RECORD<=ART_PAGE*ART_RECORD&&length<available&&loading+length<arts&&!art_ready(loading+length))++length;
+    if(bulk)while((length+1u)*TILE_RECORD<=ART_PAGE*ART_RECORD&&length<available&&
+        length<art_remaining&&loading+length<art_end&&!art_ready(loading+length)&&
+        !warm_protected(loading+length))++length;
     for(uint32_t i=0;i<length;i++)art_tags[(loading+i)%ART_CAPACITY]=0;
     length*=TILE_RECORD;phase=ART;
 }
@@ -255,7 +294,7 @@ void ln_coverflow_step(bool allow_read){
         if(!result){io_due=ln_time_us()+1000u;return;}pending=false;
         if(result<0){
             if(canceling&&result==LN_FAT32_STALE){
-                canceling=false;if(loading<art_warm)art_warm=loading;
+                canceling=false;rewind_art_warm();
                 phase=READY;io_due=ln_time_us();return;
             }
             fail();return;
@@ -346,16 +385,16 @@ void ln_coverflow_step(bool allow_read){
             }
         }
         if(phase==READY){
-            uint32_t limit=arts<ART_CAPACITY?arts:ART_CAPACITY;
-            while(art_warm<limit&&art_ready(art_warm))++art_warm;
-            if(art_warm<limit&&(!visible||(uint32_t)(now-moved_at)>=300000u)){
-                request_art(art_warm,true);art_warm=loading+length/TILE_RECORD;
+            art_warm_window();
+            while(art_remaining&&(art_ready(art_warm)||warm_protected(art_warm)))advance_art_warm(1u);
+            if(art_remaining&&(!visible||(uint32_t)(now-moved_at)>=300000u)){
+                request_art(art_warm,true);advance_art_warm(length/TILE_RECORD);
             }
         }
         if(phase==READY){
             uint32_t elapsed=now-moved_at;
             io_due=visible&&count&&elapsed<120000u?moved_at+120000u:
-                visible&&art_warm<arts&&art_warm<ART_CAPACITY&&elapsed<300000u?
+                visible&&art_remaining&&elapsed<300000u?
                 moved_at+300000u:NONE;
             return;
         }
@@ -389,7 +428,7 @@ uint32_t ln_coverflow_tick(uint32_t now){
 #if LINNET_COVERFLOW_SCANLINE
 static uint32_t render_calls,render_us;
 void ln_coverflow_render_diagnostics(uint32_t words[16]){
-    uint32_t values[16]={0x52464c43u,render_calls,render_us,arts,art_warm};
+    uint32_t values[16]={0x52464c43u,render_calls,render_us,arts,art_warm,art_remaining,art_base,art_end};
     for(uint32_t i=0;i<16;i++)words[i]=values[i];
 }
 #endif
