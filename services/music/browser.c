@@ -350,7 +350,6 @@ bool ln_music_browser_back(void){
     if(b.here.view==ALBUM_ARTISTS&&rebuild_owners)catalog_begin(true);
     if(b.here.view==ACTIVITY){b.here.count=b.activity_count;if(b.activity_dirty){b.activity_dirty=false;b.activity_count=b.activity_scan=b.activity_page=b.scan_id_count=b.scan_id_at=0;if(b.activity_kind!=11u)for(uint32_t i=0;i<sizeof activity_data.filter;i++)activity_data.filter[i]=0;b.activity_scanning=true;b.activity_indexed=b.activity_waiting=false;
         b.activity_id_index_tried=false;
-        (void)recent_cached();
     }}
     if(b.here.view==LOCAL_TRACKS){uint32_t selected=b.here.selected,slot=b.here.slot,first=b.here.first;bool reverse=b.here.reverse;resolve_begin(slot);b.here.reverse=reverse;b.here.selected=selected;b.here.first=b.first=first;b.restored_selection=selected;}
     return true;
