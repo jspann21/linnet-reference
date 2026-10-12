@@ -58,6 +58,49 @@ static uint32_t ln_recovery_crc(const uint8_t *bytes, uint32_t length)
     return ln_crc32_progress(bytes, length, ln_crc_progress, 0);
 }
 
+#if defined(LINNET_IMAGE_OS) && defined(LINNET_AUDIO) && defined(LINNET_TARGET_VIDEO5G_M25) && !defined(LINNET_PROFILE_RELEASE)
+/* Handoff runs with cache disabled. Keep this bounded instance beside audio
+ * IRAM code through normal linker allocation; ordinary CRC users retain the
+ * SDRAM implementation and its slicing tables. */
+#define LN_CRC_ATTR __attribute__((section(".audio_icode.recovery.text"),noinline))
+#define LN_CRC_TABLE_ATTR __attribute__((section(".audio_icode.recovery.rodata"),aligned(4)))
+#define LN_CRC_NAME ln_candidate_crc_iram
+#define LN_CRC_NO_SLICE4
+#include "boot/src/crc32.inc"
+#undef LN_CRC_NO_SLICE4
+#undef LN_CRC_NAME
+#undef LN_CRC_TABLE_ATTR
+#undef LN_CRC_ATTR
+
+static int ln_candidate_crc_prepare(void)
+{
+    extern const uint32_t __audio_icode_load[],__audio_icode_begin[],__audio_icode_end[];
+    uintptr_t begin=(uintptr_t)__audio_icode_begin,end=(uintptr_t)__audio_icode_end;
+    uintptr_t load=(uintptr_t)__audio_icode_load;
+    if(begin<0x40003000u||end<=begin||end>0x40005000u||((begin|end|load)&3u)||
+       load>=LINNET_OS_CAPACITY||end-begin>LINNET_OS_CAPACITY-load)return 0;
+    volatile uint32_t *destination=(volatile uint32_t *)begin;
+    uint32_t words=(uint32_t)((end-begin)/4u);
+    for(uint32_t i=0;i<words;++i)destination[i]=__audio_icode_load[i];
+    for(uint32_t i=0;i<words;++i)if(destination[i]!=__audio_icode_load[i])return 0;
+    __asm__ volatile("" ::: "memory");
+    return 1;
+}
+#endif
+
+static uint32_t ln_candidate_crc(const uint8_t *bytes,uint32_t length)
+{
+#if defined(LINNET_IMAGE_OS) && defined(LINNET_AUDIO) && defined(LINNET_TARGET_VIDEO5G_M25) && !defined(LINNET_PROFILE_RELEASE)
+    /* Only called after successful quiescence: audio/COP owners are stopped,
+     * cache is disabled, and this path proceeds to the nonreturning copy. */
+    if(ln_candidate_crc_prepare()){
+        ln_recovery_feed();
+        return ln_candidate_crc_iram(UINT32_MAX,bytes,length,ln_crc_progress,0)^UINT32_MAX;
+    }
+#endif
+    return ln_recovery_crc(bytes,length);
+}
+
 static void ln_trace_phase(uint32_t phase, uint32_t failure, uint32_t status)
 {
     if (ln_control->trace_magic != 0x4c4e5452u) {
@@ -428,7 +471,7 @@ int ln_recovery_chainload(void *context, const uint8_t *payload, uint32_t size,
     ln_control->startup[3]=size;
     ln_control->startup[0]=LN_STARTUP_TIMING_MAGIC;
     ln_startup_stamp(0);
-    ln_control->candidate_crc = ln_recovery_crc(payload, size);
+    ln_control->candidate_crc = ln_candidate_crc(payload, size);
     ln_startup_stamp(1);
     ln_control->candidate_healthy = 0;
     ln_control->returned = 0;
