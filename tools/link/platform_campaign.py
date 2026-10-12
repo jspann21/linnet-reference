@@ -7,7 +7,7 @@ from tools.inspect.image import inspect, verify_device_report
 from tools.studio.targets import TARGETS
 from .campaign import connect, _run_directory, _save
 from .session import DeviceError
-from .platform import state as _state, png as _png
+from .platform import state as _state, ui_state as _ui_state, png as _png
 
 
 def cycle(root, image_path, scenario_path, port, progress=None):
@@ -92,7 +92,20 @@ def cycle(root, image_path, scenario_path, port, progress=None):
                 time.sleep(.02)
             raise TimeoutError('platform state did not reach expected condition')
         def settled():
-            return wait(lambda s:s['frames_submitted']==s['frames_completed'] and s['events_accepted']==s['events_processed'])
+            deadline=time.monotonic()+5
+            while time.monotonic()<deadline:
+                before=_state(session,generation)
+                if (before['frames_submitted']==before['frames_completed'] and
+                        before['events_accepted']==before['events_processed'] and
+                        not _ui_state(session,generation)['dirty']):
+                    # Reset/control ACKs precede presentation. Return a fresh
+                    # drained sample after the clean UI, never its older metrics.
+                    after=_state(session,generation)
+                    if (after['frames_submitted']==after['frames_completed']==before['frames_submitted'] and
+                            after['events_accepted']==after['events_processed']==before['events_processed']):
+                        return after
+                time.sleep(.02)
+            raise TimeoutError('platform presentation did not settle')
         # HELLO can become healthy before FAT discovery and the first idle turn.
         # A navigation event queued during that work measures startup latency,
         # not the platform's steady-state input path.
@@ -216,6 +229,7 @@ def cycle(root, image_path, scenario_path, port, progress=None):
         time.sleep(suite['idle_observe_ms']/1000)
         idle=_state(session,generation)
         if idle['frames_submitted']!=base['frames_submitted'] or idle['events_processed']!=base['events_processed']:
+            record('idle-observation-work',before=base,after=idle,observation_ms=suite['idle_observe_ms'])
             raise RuntimeError('idle observation performed redraw or event work')
         # S5L8702 still services USB and clickwheel through bounded foreground
         # pollers between its 1 ms IRQ waits, so roughly 40% measured IRQ-wait
