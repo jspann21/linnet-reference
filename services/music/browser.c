@@ -373,6 +373,14 @@ bool ln_music_browser_waiting(void){
            ln_music_history_record_ready(b.favorite_id))return false;
         return true;
     }
+#if LINNET_TARGET_NUMBER==25u
+    if(b.here.view==ACTIVITY&&b.activity_scanning&&b.activity_page<LN_HISTORY_PAGE_COUNT&&
+       !ln_music_history_error()&&
+       ((b.activity_kind==9&&ln_paged_history_favorite_page(b.activity_page))||
+        (b.activity_kind==10&&ln_paged_history_bookmark_page(b.activity_page))||
+        (b.activity_kind==12&&ln_paged_history_played_page(b.activity_page)))&&
+       ln_paged_history_page_waiting(b.activity_page))return true;
+#endif
     return b.suspended||(!b.visible_now&&!b.exporting&&!b.expanding&&
                          b.status!=LN_BROWSER_QUEUE_LOADING);
 }

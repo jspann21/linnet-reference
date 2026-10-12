@@ -546,6 +546,11 @@ int ln_storage_flush(void){
     if(!ln_storage_mounted()||locked)return 0;
     locked=true;if(!ln_fat32_sync(&volume,next_generation())){locked=false;return 0;}return finish();
 }
+#if LINNET_TARGET_NUMBER==25u
+bool ln_storage_async_read_available(void){
+    return !ln_storage_busy()&&!pending&&!media_owner&&!fixed_owner&&ln_storage_mounted();
+}
+#endif
 static int async_fixed(uint32_t file,uint32_t offset,void *buffer,uint32_t length,
                        uint32_t *ticket,uint32_t operation){
     if(!ticket||(operation!=LN_FAT32_FLUSH&&

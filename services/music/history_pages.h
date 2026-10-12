@@ -2,6 +2,10 @@
 #define LINNET_MUSIC_HISTORY_PAGES_H
 #include "journal_pages.h"
 const struct ln_history_page *ln_paged_history_page(uint32_t index);
+#if LINNET_TARGET_NUMBER==25u
+/* Pure readiness query; never requests a page or changes cache age. */
+bool ln_paged_history_page_waiting(uint32_t index);
+#endif
 void ln_paged_history_pin_current(bool present,uint64_t id);
 void ln_paged_history_step(bool may_read,bool may_write);
 bool ln_paged_history_ready(void);

@@ -82,6 +82,13 @@ const struct ln_history_page *ln_paged_history_page(uint32_t index){
     if(!h.wanted&&h.phase==IDLE){h.wanted=h.scanning=true;h.index=index;h.probe=0;}
     return 0;
 }
+#if LINNET_TARGET_NUMBER==25u
+bool ln_paged_history_page_waiting(uint32_t index){
+    if(h.error||index>=LN_HISTORY_PAGE_COUNT)return false;
+    for(uint32_t i=0;i<4;i++)if(h.cache[i].ready&&h.cache[i].index==index)return false;
+    return h.ticket||h.wanted||h.phase!=IDLE;
+}
+#endif
 static void resolve(void){
     if(h.scanning){h.scanning=h.wanted=false;return;}
     struct ln_history_page *p=&h.cache[h.slot];
@@ -120,10 +127,28 @@ uint32_t ln_paged_history_deadline(uint32_t now,bool may_read,bool may_write){
     if(h.ticket)return now+200000u;
     uint32_t idle=now+200000u;
     if(h.error||ln_storage_busy()||!ln_storage_mounted())return idle;
-    if(h.phase==SUPER_A||h.phase==SUPER_B||h.phase==PAGE_A||h.phase==PAGE_B)
+    if(h.phase==SUPER_A||h.phase==SUPER_B||h.phase==PAGE_A||h.phase==PAGE_B){
+#if LINNET_TARGET_NUMBER==25u
+        if(may_read&&ln_storage_async_read_available())return now;
+#endif
         return may_read?now+1000u:idle;
+    }
     if(h.phase>=PUBLISH&&h.phase<=ACK)return may_write?now+1000u:idle;
     if(h.phase!=IDLE)return idle;
+#if LINNET_TARGET_NUMBER==25u
+    /* Match step's read-before-write priority. RAM windows can advance even
+     * while another asynchronous media owner prevents a new fixed read. */
+    if(may_read&&h.wanted){
+        for(uint32_t i=0;i<4;i++){
+            if(h.cache[i].ready&&h.cache[i].index==h.index)return now;
+            if(!h.cache[i].ready||(!pinned_slot(i)&&!h.cache[i].staged&&
+               h.cache[i].revision==h.cache[i].durable_revision)){
+                if(h.window_valid&&h.index>=h.window_first&&h.index-h.window_first<h.window_count)return now;
+                if(ln_storage_async_read_available())return now;
+            }
+        }
+    }
+#endif
     if(may_write&&ln_paged_history_dirty())return now+1000u;
     if(!may_read)return idle;
     if(h.pinned&&!h.wanted&&location(h.pinned_id)<0)return now+1000u;

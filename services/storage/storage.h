@@ -41,6 +41,10 @@ void ln_storage_step(void);
 /* Executive-only entry: full runtime must run after the bounded storage step. */
 void ln_storage_step_deferred(void);
 bool ln_storage_busy(void);
+#if LINNET_TARGET_NUMBER==25u
+/* Advisory only: fixed reads still validate and acquire their owner on admission. */
+bool ln_storage_async_read_available(void);
+#endif
 bool ln_storage_mounted(void);
 /* Wake the disk when the video library opens, then defer standby for at most
  * one minute after entering or navigating the list. Leaving releases the hint. */
