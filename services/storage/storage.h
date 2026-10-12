@@ -81,6 +81,8 @@ int ln_storage_async_flush(uint32_t *ticket);
 int ln_storage_async_poll(uint32_t ticket,uint32_t *transferred);
 /* Bounded executive poll; service runtime after returning to the caller. */
 int ln_storage_async_poll_deferred(uint32_t ticket,uint32_t *transferred);
+/* Pure admission check; it also remains true after a successful quiesce. */
+bool ln_storage_quiesce_ready(void);
 int ln_storage_quiesce(void);
 int ln_storage_handoff_quiesce(void);
 int ln_storage_resume(void);

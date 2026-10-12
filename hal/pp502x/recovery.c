@@ -507,17 +507,26 @@ _Noreturn void ln_recovery_return(uint32_t reason)
     for (;;) __asm__ volatile("nop");
 }
 
+static int ln_recovery_storage_ready(void)
+{
+#if defined(LINNET_STORAGE)
+    return ln_storage_quiesce_ready();
+#else
+    return 1;
+#endif
+}
 int ln_recovery_can_reboot(uint16_t command)
 {
-    if (command == 33u) return ln_snapshot_valid();
-    if (command == 34u) return ln_storage_mounted() && !ln_storage_busy();
+    if (command == 33u) return ln_snapshot_valid() && ln_recovery_storage_ready();
+    if (command == 34u) return ln_storage_mounted() && !ln_storage_busy() && ln_recovery_storage_ready();
     if (command != 32u || ln_control->magic != LINNET_RECOVERY_MAGIC) return 0;
     uint32_t address = ln_control->candidate_address, size = ln_control->candidate_size;
     return ln_control->candidate_healthy == 1u && size >= 32u && !(address & 3u) &&
         address >= LINNET_STAGE_ADDRESS && address < LINNET_STAGE_ADDRESS + LINNET_STAGE_CAPACITY &&
         size <= LINNET_STAGE_ADDRESS + LINNET_STAGE_CAPACITY - address &&
         ln_control->candidate_entry <= size - 4u && !(ln_control->candidate_entry & 3u) &&
-        ln_recovery_crc((const uint8_t *)(uintptr_t)address, size) == ln_control->candidate_crc;
+        ln_recovery_crc((const uint8_t *)(uintptr_t)address, size) == ln_control->candidate_crc &&
+        ln_recovery_storage_ready();
 }
 
 int ln_recovery_reboot(void *context, uint16_t command)

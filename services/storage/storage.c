@@ -595,8 +595,9 @@ int ln_storage_async_poll_deferred(uint32_t ticket,uint32_t *transferred){
     int result=ln_storage_async_poll(ticket,transferred);
     --deferred_runtime_poll_depth;return result;
 }
+bool ln_storage_quiesce_ready(void){return !locked&&!pending&&!ln_storage_busy();}
 static int storage_quiesce(bool image_handoff){
-    if(locked||pending||ln_storage_busy())return 0;
+    if(!ln_storage_quiesce_ready())return 0;
     struct ln_block_info info;ln_block_snapshot(&info);
     if(!info.ready)return !info.quarantined&&!found;
     bool keep_awake=false;
@@ -610,11 +611,15 @@ static int storage_quiesce(bool image_handoff){
     (void)image_handoff;
 #endif
     uint32_t deadline=ln_time_us()+30000000u;int result;
+    /* No FAT owner needs executive service after the admission check. Avoid
+     * admitting a new Photos/media read while closing the block queue. */
+    ++deferred_runtime_poll_depth;
     do{
         ln_storage_progress(0);
         result=keep_awake?ln_block_quiesce_keep_awake(ln_time_us(),deadline):
                           ln_block_quiesce(ln_time_us(),deadline);
     }while(!result);
+    --deferred_runtime_poll_depth;
     return result==1;
 }
 int ln_storage_quiesce(void){return storage_quiesce(false);}
