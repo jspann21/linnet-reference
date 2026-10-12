@@ -49,7 +49,17 @@ def connect(port=None, serial_number=None, deadline_seconds=15):
 def _save(path, value):
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(value, indent=2) + '\n')
-    temporary.replace(path)
+    for attempt in range(8):
+        try:
+            temporary.replace(path)
+            return
+        except PermissionError as exc:
+            # Windows readers and scanners can briefly hold the old receipt
+            # without delete sharing. Retry only this local atomic rename;
+            # no device command or temporary-file write is repeated.
+            if getattr(exc, 'winerror', None) not in (5, 32, 33) or attempt == 7:
+                raise
+            time.sleep(.025 * (attempt + 1))
 
 
 def wait_ready(serial_number, *, expected=None, generation=None, library=False, timeout=60):
