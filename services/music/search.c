@@ -102,7 +102,13 @@ bool ln_music_search_prepare(uint32_t visible_rows){
        group.kind!=group_kind||group.count!=group_count)return false;
     bool filled=!complete||total!=group_count||known!=group_count;
     complete=true;total=known=group_count;
+#if LINNET_TARGET_NUMBER==25u
+    /* The existing retained window includes the next viewport. Resolve its
+     * cached members here instead of opening asynchronous jobs for lookahead. */
+    visible_rows=LN_MUSIC_SEARCH_ROWS;
+#else
     if(visible_rows>LN_MUSIC_SEARCH_ROWS)visible_rows=LN_MUSIC_SEARCH_ROWS;
+#endif
     uint32_t started=ln_time_us();
     for(uint32_t i=0;i<visible_rows&&first+i<group_count&&
         (uint32_t)(ln_time_us()-started)<250u;++i){
@@ -114,6 +120,16 @@ bool ln_music_search_prepare(uint32_t visible_rows){
         uint32_t n=0;while(n<255u&&title[n]){cached->value.title[n]=title[n];++n;}
         cached->value.title[n]=0;cached->ordinal=ordinal;cached->valid=true;filled=true;
     }
+#if LINNET_TARGET_NUMBER==25u
+    bool ready=true;
+    for(uint32_t i=0;i<LN_MUSIC_SEARCH_ROWS&&first+i<group_count;i++)
+        if(!row_ready(first+i)){ready=false;break;}
+    if(ready&&!window_ready){window_ready=true;filled=true;}
+#if !defined(LINNET_PROFILE_RELEASE)
+    if(!first_ready_us&&first<group_count&&row_ready(first))first_ready_us=ln_time_us();
+    if(window_ready&&!window_ready_us)window_ready_us=ln_time_us();
+#endif
+#endif
     if(filled)++revision;
     return filled;
 }
