@@ -748,7 +748,11 @@ static void music_step(void){
     }
     bool allow_next=expected&&!sleep_holds_next()&&!sleep_due;
     ln_player_expect_next(allow_next);
-    ln_player_snapshot(&before);ln_player_step();ln_player_snapshot(&p);ln_audio_snapshot(&audio);
+    ln_player_snapshot(&before);
+#if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW)
+    uint32_t refill_started=ln_time_us();
+#endif
+    ln_player_step();ln_player_snapshot(&p);ln_audio_snapshot(&audio);
     /* A muted seek can discard thousands of MPEG frames without producing
      * PCM. Advance cached decoder work in this turn, bounded so input and
      * display service still run promptly. A pending disk request resumes in
@@ -778,7 +782,13 @@ static void music_step(void){
     }
 #if defined(LINNET_COVERFLOW)
     for(uint32_t budget=0;budget<3&&ln_coverflow_active()&&audio.playing&&!audio.paused&&
-        audio.queued<LINNET_AUDIO_RING_FRAMES/2u;++budget){
+        audio.queued<LINNET_AUDIO_RING_FRAMES/2u
+#if LINNET_TARGET_NUMBER==25u
+        /* Include the mandatory advance. One indivisible decoder step may
+         * cross this admission limit; return to input/power before another. */
+        &&(uint32_t)(ln_time_us()-refill_started)<16000u
+#endif
+        ;++budget){
         ln_player_step();ln_player_snapshot(&p);ln_audio_snapshot(&audio);
     }
 #endif
