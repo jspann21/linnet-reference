@@ -1,6 +1,6 @@
 /* Host-baked scanlines retain all 33 poses. Each run stores its exclusive
  * column end and source row, so projection and row offsets stay out of pixel loops. */
-struct ln_coverflow_scanline {uint16_t offset;uint8_t left,width,runs;};
+struct ln_coverflow_scanline {uint16_t offset;uint8_t left,width,runs,span_end;};
 extern const struct ln_coverflow_scanline ln_coverflow_rows[33][190];
 extern const uint8_t ln_coverflow_samples[];
 #if defined(LINNET_SOC_PP5022)
@@ -102,10 +102,21 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
         glow_palette_valid=true;
     }
     int32_t bottom=c->clip_y+c->clip_h;if(bottom>190)bottom=190;
+#if defined(LINNET_SOC_PP5022)
+    struct span {int16_t left,right,card;} spans[15];
+    uint32_t spans_count=0;
+    int32_t span_next=c->clip_y;
+#endif
     for(int32_t y=c->clip_y;y<bottom;y++){
+#if defined(LINNET_SOC_PP5022)
+        if(y>=span_next){
+            span_next=ln_coverflow_rows[0][y].span_end;
+#else
         struct span {int16_t left,right,card;} spans[15];
+        uint32_t spans_count;
+#endif
         spans[0]=(struct span){c->clip_x,c->clip_x+c->clip_w,-1};
-        uint32_t spans_count=1;
+        spans_count=1;
 #if defined(LINNET_SOC_PP5022)
         if(settled){
             const uint16_t *recipe=ln_coverflow_settled_spans+ln_coverflow_settled_offsets[settled_case][y];
@@ -133,6 +144,9 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
                 if(hi<old.right)spans[++j]=(struct span){hi,old.right,-1};
             }
         }
+#if defined(LINNET_SOC_PP5022)
+        }
+#endif
         for(uint32_t n=0;n<spans_count;n++){
             const struct span *span=&spans[n];uint16_t *dest=c->pixels+y*320+span->left;
             if(span->card<0){

@@ -670,8 +670,8 @@ def generate_c(doc, packed_fonts=None):
                         sy=((geometry[x][0]>>1)+(y-geometry[x][2])*geometry[x][0])>>16
                         if x==left or samples[-1]!=sy:samples.extend((x+1,sy))
                         else:samples[-2]=x+1
-                    rows.append('{'+f'{start},{left},{len(visible)},{(len(samples)-start)//2}'+'}')
-                scanlines.append('{'+','.join(rows)+'}')
+                    rows.append((start,left,len(visible),(len(samples)-start)//2))
+                scanlines.append(rows)
                 row_geometry.append(spans)
         if scanline:
             if len(samples)>65535:
@@ -697,7 +697,21 @@ def generate_c(doc, packed_fonts=None):
             out.append(f'const uint8_t ln_coverflow_mirror_sources[33][{cover_size}]={{'+','.join(mirrors)+'};')
             out.append('#endif')
             out.append('#endif')
+            span_ends=[gh]*gh;next_end=gh
+            for y in range(gh-1,-1,-1):
+                if y+1<gh and any(rows[y]!=rows[y+1] for rows in row_geometry):
+                    next_end=y+1
+                span_ends[y]=next_end
+            out.append('#if defined(LINNET_SOC_PP5022)')
+            out.append(f'_Static_assert({gh}u <= UINT8_MAX, "Cover Flow span bound");')
+            out.append('#define LN_COVERFLOW_SPAN_END(value) (value)')
+            out.append('#else')
+            out.append('#define LN_COVERFLOW_SPAN_END(value) 0')
+            out.append('#endif')
+            scanlines=['{'+','.join('{'+','.join(map(str,row))+f',LN_COVERFLOW_SPAN_END({span_ends[y]})'+'}'
+                                  for y,row in enumerate(rows))+'}' for rows in scanlines]
             out.append(f'const struct ln_coverflow_scanline ln_coverflow_rows[33][{gh}]={{'+','.join(scanlines)+'};')
+            out.append('#undef LN_COVERFLOW_SPAN_END')
             out.append('const uint8_t ln_coverflow_samples[]={'+','.join(map(str,samples))+'};')
             settled_offsets,settled_tokens=_coverflow_settled_spans(widths,row_geometry,gw)
             out.append('#if defined(LINNET_SOC_PP5022)')
