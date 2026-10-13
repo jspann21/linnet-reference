@@ -88,6 +88,12 @@ static void publish(uint32_t row,const char *title,bool notify){
         if(!view.valid[n])return;
     ++view.revision;
 }
+static const char *cached_title(uint32_t ordinal){
+    if(view.queue.source>LN_QUEUE_GROUP)return 0;
+    if(view.queue.source==LN_QUEUE_GROUP&&
+       !ln_music_library_cached_member(view.queue.source_group&~LN_QUEUE_REVERSE,ordinal,&ordinal))return 0;
+    return ln_music_library_title(ordinal);
+}
 bool ln_music_queue_view_prepare(void){
     if(!view.opened||view.queue.source>LN_QUEUE_GROUP||ln_music_library_status()!=LN_LIBRARY_READY)return false;
     uint8_t identity[32];if(!ln_music_library_identity(identity))return false;
@@ -128,6 +134,8 @@ void ln_music_queue_view_step(bool allow_query){
         for(uint32_t n=0;n<32&&matched;n++)if(identity[n]!=view.queue.library_identity[n])matched=false;
         if(!matched){publish(view.first+i,"Library changed",true);return;}
         if(!ln_queue_track_at(&view.queue,view.first+i,&ordinal)){publish(view.first+i,"Invalid queue entry",true);return;}
+        const char *title=cached_title(ordinal);
+        if(title){publish(view.first+i,title,true);return;}
         if(ln_music_library_view_row(view.queue.source,view.queue.source_group,ordinal)){
             view.pending=true;view.job_epoch=view.epoch;view.job_row=view.first+i;
         }
