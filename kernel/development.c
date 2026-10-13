@@ -4,6 +4,10 @@
 #include "hal/api/usb.h"
 #include "hal/api/recovery.h"
 #include "linnet_build.h"
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS) && !defined(LINNET_PROFILE_RELEASE)
+#include "hal/api/power.h"
+#define LN_POWER_REPLY_TRACE 1
+#endif
 #if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_APPLE_FALLBACK
 #include "hal/api/input.h"
 #include "boot/include/linnet_bytes.h"
@@ -230,6 +234,9 @@ void ln_development_poll(void) {
         uint32_t deadline = ln_time_us()+2000000u;
         size_t sent=0;
         uint32_t budget=2000000u;
+#if defined(LN_POWER_REPLY_TRACE)
+        uint32_t power_wait_begin=ln_time_us();
+#endif
         while (sent<size && budget-- && (int32_t)(deadline-ln_time_us())>0) {
             if (!ln_usb_poll() || usb_generation != ln_usb_generation()) break;
             size_t step = ln_usb_write(transmit_bytes+sent,size-sent);
@@ -240,6 +247,9 @@ void ln_development_poll(void) {
             ln_usb_disconnect();
             ln_recovery_return(13);
         }
+#if defined(LN_POWER_REPLY_TRACE)
+        ln_power_sampler_link_wait(response.command,power_wait_begin);
+#endif
 #if defined(LINNET_STORAGE)
         if(response.flags==LINNET_LINK_ACK)ln_storage_link_ack_sent(response.command);
 #endif

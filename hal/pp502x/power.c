@@ -29,9 +29,12 @@ static struct {
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS) && !defined(LINNET_PROFILE_RELEASE)
 #define LN_SAMPLE_DIAGNOSTICS 1
 static struct {uint32_t reason,stage,age,active_late,idle_late;} ln_sample_diagnostics;
+static struct ln_adc_trace {uint32_t started,command_age,pointer_age,link_us,link_command,cancels;}
+    ln_adc_current,ln_adc_failed;
 static void ln_sample_failure(uint32_t reason){
     ln_sample_diagnostics.reason=reason;ln_sample_diagnostics.stage=ln_sampler.stage;
     ln_sample_diagnostics.age=ln_time_us()-ln_sampler.started_us;
+    ln_adc_failed=ln_adc_current;
 }
 void ln_power_sampler_diagnostics(uint32_t words[16]){
     uint32_t now=ln_time_us();
@@ -39,6 +42,19 @@ void ln_power_sampler_diagnostics(uint32_t words[16]){
         now,ln_sampler.started_us,ln_power.next_sample_us,ln_power.samples,ln_power.failures,
         ln_power.bus_resets,ln_sample_diagnostics.reason,ln_sample_diagnostics.stage,
         ln_sample_diagnostics.age,ln_sample_diagnostics.active_late,ln_sample_diagnostics.idle_late,ln_power.flags};
+    for(uint32_t i=0;i<16u;i++)words[i]=values[i];
+}
+void ln_power_sampler_link_wait(uint32_t command,uint32_t began){
+    if(!ln_sampler.age_valid||ln_sampler.age_phase!=LN_SAMPLE_AGE_ADC||
+       (int32_t)(began-ln_sampler.started_us)<0)return;
+    uint32_t elapsed=ln_time_us()-began;
+    if(elapsed>ln_adc_current.link_us){ln_adc_current.link_us=elapsed;ln_adc_current.link_command=command;}
+}
+void ln_power_sampler_trace(uint32_t words[16]){
+    uint32_t values[16]={0x47415450u,ln_time_us(),ln_adc_current.started,ln_adc_current.command_age,
+        ln_adc_current.pointer_age,ln_adc_current.link_us,ln_adc_current.link_command,ln_adc_current.cancels,
+        ln_adc_failed.started,ln_adc_failed.command_age,ln_adc_failed.pointer_age,ln_adc_failed.link_us,
+        ln_adc_failed.link_command,ln_adc_failed.cancels,ln_sample_diagnostics.reason,ln_sample_diagnostics.age};
     for(uint32_t i=0;i<16u;i++)words[i]=values[i];
 }
 #endif
@@ -129,6 +145,10 @@ static void ln_sample_fail(uint32_t reason){ln_sample_failure(reason);ln_sample_
 static void ln_sample_cancel(void)
 {
     if(ln_sampler.stage!=LN_SAMPLE_IDLE){
+#if defined(LN_SAMPLE_DIAGNOSTICS)
+        if(ln_sampler.age_valid&&ln_sampler.age_phase==LN_SAMPLE_AGE_ADC&&ln_adc_current.cancels!=UINT32_MAX)
+            ++ln_adc_current.cancels;
+#endif
         uint32_t prompt=ln_time_us()+LN_SAMPLE_STEP_DELAY_US;
         ln_sampler.stage=LN_SAMPLE_IDLE;ln_sampler.attempts=0;
         /* Never move an already-due or earlier sampling deadline later. */
@@ -337,6 +357,9 @@ bool ln_power_poll(uint32_t now, struct ln_power_state *out)
             ln_sampler.started_us=ln_time_us();
             ln_sampler.age_valid=1;
             ln_sampler.age_phase=LN_SAMPLE_AGE_ADC;
+#if defined(LN_SAMPLE_DIAGNOSTICS)
+            ln_adc_current=(struct ln_adc_trace){.started=ln_sampler.started_us};
+#endif
         }
         if(ln_sampler.age_phase==LN_SAMPLE_AGE_RTC){
             /* The ADC result is already published; discard any partial RTC
@@ -359,12 +382,20 @@ bool ln_power_poll(uint32_t now, struct ln_power_state *out)
     case LN_SAMPLE_ADC_COMMAND:
         bytes[0]=0x2fu;bytes[1]=5u;
         transfer=ln_sample_transfer(bytes,2u,false,true);
-        if(transfer==LN_SAMPLE_TRANSFER_OK)ln_sampler.stage=LN_SAMPLE_ADC_POINTER;
+        if(transfer==LN_SAMPLE_TRANSFER_OK){ln_sampler.stage=LN_SAMPLE_ADC_POINTER;
+#if defined(LN_SAMPLE_DIAGNOSTICS)
+            ln_adc_current.command_age=ln_time_us()-ln_sampler.started_us;ln_adc_current.pointer_age=0;
+#endif
+        }
         break;
     case LN_SAMPLE_ADC_POINTER:
         bytes[0]=0x30u;
         transfer=ln_sample_transfer(bytes,1u,false,false);
-        if(transfer==LN_SAMPLE_TRANSFER_OK)ln_sampler.stage=LN_SAMPLE_ADC_READ;
+        if(transfer==LN_SAMPLE_TRANSFER_OK){ln_sampler.stage=LN_SAMPLE_ADC_READ;
+#if defined(LN_SAMPLE_DIAGNOSTICS)
+            ln_adc_current.pointer_age=ln_time_us()-ln_sampler.started_us;
+#endif
+        }
         break;
     case LN_SAMPLE_ADC_READ:
         transfer=ln_sample_transfer(ln_sampler.data,2u,true,true);
