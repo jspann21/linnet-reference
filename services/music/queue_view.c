@@ -4,7 +4,9 @@
 static struct {
     struct ln_queue queue;
     char labels[LN_QUEUE_VIEW_ROWS][259];
-    bool valid[LN_QUEUE_VIEW_ROWS],opened,pending,was_ready;
+    /* Zero is invalid; other values bound the complete label in byte pairs. */
+    uint8_t valid[LN_QUEUE_VIEW_ROWS];
+    bool opened,pending,was_ready;
     uint32_t queue_revision,first,epoch,revision,job_epoch,job_row,visible_rows;
 } view;
 static void invalidate(void){
@@ -56,8 +58,9 @@ void ln_music_queue_view_window(uint32_t first){
             uint32_t i=first>old?n:LN_QUEUE_VIEW_ROWS-1u-n,row=first+i;
             if(row>=old&&row-old<LN_QUEUE_VIEW_ROWS){
                 uint32_t source=row-old;
-                __builtin_memcpy(view.labels[i],view.labels[source],sizeof view.labels[i]);
-                view.valid[i]=view.valid[source];
+                uint32_t units=view.valid[source];
+                if(units)__builtin_memcpy(view.labels[i],view.labels[source],units*2u);
+                view.valid[i]=(uint8_t)units;
             }else view.valid[i]=false;
         }
         view.first=first;++view.revision;
@@ -81,7 +84,7 @@ static void publish(uint32_t row,const char *title,bool notify){
     uint32_t slot=row-view.first;char *out=view.labels[slot];
     out[0]=row==view.queue.cursor?'>':' ';out[1]=' ';
     uint32_t i=0;while(i<255u&&title[i]){out[i+2]=title[i];i++;}out[i+2]=0;
-    view.valid[slot]=true;
+    view.valid[slot]=(uint8_t)((i+4u)>>1);
     /* Publish one complete viewport; speculative lookahead never repaints. */
     if(!notify||slot>=view.visible_rows)return;
     for(uint32_t n=0;n<view.visible_rows&&view.first+n<view.queue.count;n++)
