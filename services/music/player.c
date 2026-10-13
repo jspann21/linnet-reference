@@ -65,7 +65,8 @@ static bool next_expected,eof_waiting;
 static uint32_t eof_deadline;
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
 bool ln_player_startup_disk(void){
-    return state.phase==LN_PLAYER_PRIME&&!seek_paused&&slots[feed].phase!=SLOT_EOF;
+    return state.phase>=LN_PLAYER_OPEN&&state.phase<=LN_PLAYER_PRIME&&
+        !seek_paused&&slots[feed].phase!=SLOT_EOF;
 }
 #endif
 uint32_t ln_player_background_frames(uint32_t rate){
@@ -720,7 +721,7 @@ uint32_t ln_player_deadline(uint32_t now){
     if(io_owner&&(io_owner==&slots[feed]||interrupted()))return now+200000u;
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
     /* Full muted PCM cannot advance until storage's power transition completes. */
-    if(!interrupted()&&!pause_requested&&ln_player_startup_disk()&&ln_audio_capacity()<PLAYER_DECODE_FRAMES&&
+    if(state.phase==LN_PLAYER_PRIME&&!interrupted()&&!pause_requested&&ln_player_startup_disk()&&ln_audio_capacity()<PLAYER_DECODE_FRAMES&&
        ln_storage_music_disk_ready()==0)return now+200000u;
 #endif
     if(state.phase==LN_PLAYER_OPEN||state.phase==LN_PLAYER_HEADER||state.phase==LN_PLAYER_PRIME||io_owner)return now;
