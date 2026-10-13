@@ -53,12 +53,13 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
         const uint8_t *r=row((uint32_t)index),*packed=0;
         const uint16_t *pixels=0;
         if(r){uint32_t art=ln_read_le32(r+248);packed=retained_art(art);
+            pixels=raw_rgb_pixels(art);
             int32_t slot=find_art(art);
 #if defined(LINNET_COVERFLOW_PACKED)
             if(packed_mode&&!packed_pixels)slot=-1;
 #endif
-            if(!packed_mode&&slot<0&&layer<2)slot=decode_art(art);
-            if(slot>=0){pixels=cache_slot_pixels((uint32_t)slot);cache[slot].age=++age;}}
+            if(!pixels&&!packed_mode&&slot<0&&layer<2)slot=decode_art(art);
+            if(!pixels&&slot>=0){pixels=cache_slot_pixels((uint32_t)slot);cache[slot].age=++age;}}
         card->pixels=(const uint8_t *)pixels;card->indices=packed?packed+512:r?r+256:0;
         card->decoded=pixels!=0;
         card->preview=!packed;

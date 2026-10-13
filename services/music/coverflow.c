@@ -155,6 +155,38 @@ extern const uint8_t ln_coverflow_glow[LINNET_UI_WIDTH][LINNET_UI_HEIGHT*140u/17
 #endif
 static bool identity(void){uint8_t hash[32];if(!ln_music_library_identity(hash))return false;
     for(uint32_t i=0;i<32;i++)if(hash[i]!=header[16+i])return false;return true;}
+#if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
+/* Small raw libraries leave this entire declared array outside every raw DMA
+ * extent. Keep direct RGB records here, with validity in unused artwork tags. */
+static uint8_t *raw_rgb;
+static uint32_t raw_rgb_bytes;
+_Static_assert(ART_CAPACITY<ART_SLOTS,"Raw RGB validity tag capacity");
+static void raw_rgb_revoke(void){raw_rgb=0;raw_rgb_bytes=0;}
+static void raw_rgb_admit(void){
+    raw_rgb_revoke();
+    uint32_t extended=0;
+    if(packed_at||packed_stage_inhibited||!arts||arts>ART_LOW_SLOTS||
+       arts>ART_SLOTS-ART_CAPACITY||arts>sizeof art_high/EXTRA_RGB_STRIDE||
+       !ln_platform_extended_memory(&extended)||!extended)return;
+    uint32_t low=sizeof art_low-arts*TILE_RECORD;
+    /* Preserve the winning Files region after both current 32-page history
+     * windows, even when the high RGB reservation is withdrawn. */
+    if(low<2u*32u*4096u||low-2u*32u*4096u<=sizeof art_high)return;
+    raw_rgb=art_high;raw_rgb_bytes=arts*EXTRA_RGB_STRIDE;
+    for(uint32_t i=0;i<arts;i++)art_tags[ART_CAPACITY+i]=0;
+}
+static const uint16_t *raw_rgb_pixels(uint32_t id){
+    struct ln_fat32_file root;
+    if(!raw_rgb||id>=arts||!art_ready(id)||art_tags[ART_CAPACITY+id]!=id+1u||
+       !identity()||!ln_storage_media_root(&root)||root.epoch!=file.epoch)return 0;
+    return (const uint16_t*)(raw_rgb+id*EXTRA_RGB_STRIDE);
+}
+#else
+#define raw_rgb_revoke() ((void)0)
+#define raw_rgb_admit() ((void)0)
+#define raw_rgb_pixels(id) ((const uint16_t*)0)
+#define raw_rgb_bytes 0u
+#endif
 #if defined(LINNET_SOC_PP5022)
 static uint32_t files_epoch=1u;
 static void files_revoke(void){if(++files_epoch==0)++files_epoch;}
@@ -193,7 +225,7 @@ uint8_t *ln_coverflow_files_memory(uint32_t *bytes,uint32_t *epoch){
         uint32_t reachable=arts<ART_CAPACITY?arts:ART_CAPACITY;
         uint32_t low=reachable<ART_LOW_SLOTS?reachable:ART_LOW_SLOTS;
         files_tail(art_low,sizeof art_low,low*TILE_RECORD,&best,bytes);
-        files_tail(art_high,sizeof art_high,(reachable-low)*TILE_RECORD,&best,bytes);
+        files_tail(art_high,sizeof art_high,(reachable-low)*TILE_RECORD+raw_rgb_bytes,&best,bytes);
     }
     if(best)*epoch=files_epoch;
     return best;
@@ -336,6 +368,7 @@ static void accept_early_art(bool allow_read){
 }
 #endif
 static void invalidate(void){
+    raw_rgb_revoke();
 #if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
     history_revoke();
     ln_coverflow_preview_reset();early_reads=0;
@@ -373,6 +406,7 @@ bool ln_coverflow_stage_claim(void){
      * retained until reboot, even if a transfer is abandoned after BEGIN. */
     packed_stage_inhibited=true;
 #if LINNET_TARGET_NUMBER==25u
+    raw_rgb_revoke();
     ln_coverflow_preview_reset();
     history_revoke();
     ln_coverflow_metadata_release(metadata_lease_epoch);
@@ -455,6 +489,7 @@ const char *ln_coverflow_text(bool artist){
 bool ln_coverflow_select(void){uint8_t *r=row(selected);return r&&identity()&&
     ln_music_browser_open_album(ln_read_le32(r),ln_read_le32(r+4),(const char*)r+8);}
 static void fail(void){
+    raw_rgb_revoke();
 #if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
     history_revoke();
     ln_coverflow_preview_reset();
@@ -629,6 +664,31 @@ static int32_t decode_packed(uint32_t id){
     cache[victim].id=id+1u;cache[victim].age=++age;return (int32_t)victim;
 }
 #endif
+#if LINNET_TARGET_NUMBER==25u
+__attribute__((noinline))
+#endif
+static void expand_art(const uint8_t *packed,uint16_t *pixels){
+    union {uint16_t colors[256];uint32_t words[128];} palette;
+    const uint32_t *words=(const uint32_t*)packed;
+    for(uint32_t i=0;i<128u;i++)palette.words[i]=words[i];
+    words+=128;
+    for(uint32_t i=0;i<TEXTURE_WIDTH*TEXTURE_HEIGHT;i+=4){
+        uint32_t indices=*words++;
+        pixels[i]=palette.colors[indices&255u];
+        pixels[i+1]=palette.colors[(indices>>8)&255u];
+        pixels[i+2]=palette.colors[(indices>>16)&255u];
+        pixels[i+3]=palette.colors[indices>>24];
+    }
+}
+#if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
+static void raw_rgb_prepare(uint32_t id){
+    struct ln_fat32_file root;
+    if(!raw_rgb||id>=arts||!art_ready(id)||!identity()||
+       !ln_storage_media_root(&root)||root.epoch!=file.epoch)return;
+    expand_art(art_record(id),(uint16_t*)(raw_rgb+id*EXTRA_RGB_STRIDE));
+    art_tags[ART_CAPACITY+id]=id+1u;
+}
+#endif
 static int32_t decode_art(uint32_t id){
 #if defined(LINNET_COVERFLOW_PACKED)
     if(packed_mode)return decode_packed(id);
@@ -643,18 +703,7 @@ static int32_t decode_art(uint32_t id){
             priority=rank;oldest=cache[i].age;victim=i;
         }
     }
-    const uint8_t *packed=art_record(id);
-    union {uint16_t colors[256];uint32_t words[128];} palette;
-    const uint32_t *words=(const uint32_t*)packed;
-    for(uint32_t i=0;i<128u;i++)palette.words[i]=words[i];
-    words+=128;
-    for(uint32_t i=0;i<TEXTURE_WIDTH*TEXTURE_HEIGHT;i+=4){
-        uint32_t indices=*words++;
-        cache_pixels[victim][i]=palette.colors[indices&255u];
-        cache_pixels[victim][i+1]=palette.colors[(indices>>8)&255u];
-        cache_pixels[victim][i+2]=palette.colors[(indices>>16)&255u];
-        cache_pixels[victim][i+3]=palette.colors[indices>>24];
-    }
+    expand_art(art_record(id),cache_pixels[victim]);
     cache[victim].id=id+1u;cache[victim].age=++age;
     return (int32_t)victim;
 }
@@ -684,15 +733,17 @@ const uint16_t *ln_coverflow_playback_preview(const char *path,uint32_t crc){
     const char *tail=path+sizeof prefix-1u+8u;
     if(tail[0]!='.'||tail[1]!='R'||tail[2]!='G'||tail[3]!='B'||tail[4])return 0;
     uint8_t *r=row(selected);int32_t slot=-1;
-    if(r&&ln_read_le32(r+240)==hash&&ln_read_le32(r+244)==crc)
-        slot=decode_art(ln_read_le32(r+248));
+    if(r&&ln_read_le32(r+240)==hash&&ln_read_le32(r+244)==crc){
+        uint32_t id=ln_read_le32(r+248);const uint16_t *pixels=raw_rgb_pixels(id);
+        if(pixels)return pixels;slot=decode_art(id);}
     /* Songs, queue changes and resume can request any retained album. Only
      * published catalog rows may bind its exact playback path and checksum. */
     for(uint32_t i=0;slot<0&&i<catalog_capacity;i++){
         uint32_t tag=*catalog_tag(i);if(!tag||tag>count)continue;
         r=row(tag-1u);if(!r)continue;
-        if(ln_read_le32(r+240)==hash&&ln_read_le32(r+244)==crc)
-            slot=decode_art(ln_read_le32(r+248));
+        if(ln_read_le32(r+240)==hash&&ln_read_le32(r+244)==crc){
+            uint32_t id=ln_read_le32(r+248);const uint16_t *pixels=raw_rgb_pixels(id);
+            if(pixels)return pixels;slot=decode_art(id);}
     }
     if(slot>=0){cache[slot].age=++age;
 #if defined(LINNET_COVERFLOW_PACKED)
@@ -802,7 +853,7 @@ void ln_coverflow_step(bool allow_read){
             packed_checked=!packed_at||packed_bytes-512u>sizeof art_low+sizeof art_high+packed_extra_bytes;
             if(packed_checked){packed_extra=0;packed_extra_bytes=0;packed_uses_stage=false;}
 #endif
-            catalog_extend();phase=READY;++revision;
+            raw_rgb_admit();catalog_extend();phase=READY;++revision;
         }else if(phase==CATALOG){
             if(transferred!=length){fail();return;}
             for(uint32_t i=0;i<length/CATALOG_RECORD;i++){
@@ -984,7 +1035,14 @@ void ln_coverflow_step(bool allow_read){
 #else
                 uint32_t decode_limit=7u;
 #endif
-                if((visible||packed_mode)&&d<decode_limit&&find_art(art)<0){
+                bool ready=find_art(art)>=0;
+#if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
+                if(raw_rgb)ready=raw_rgb_pixels(art)!=0;
+#endif
+                if((visible||packed_mode)&&d<decode_limit&&!ready){
+#if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
+                    if(raw_rgb)raw_rgb_prepare(art);else
+#endif
                     (void)decode_art(art);
 #if !LINNET_COVERFLOW_SCANLINE
                     ++revision;
@@ -1087,8 +1145,10 @@ void ln_coverflow_render_diagnostics(uint32_t words[16]){
     values[8]=packed_mode;values[9]=packed_bytes;values[10]=packed_decode_max_us;values[11]=catalog_capacity;
 #if LINNET_TARGET_NUMBER==25u
     values[13]=(packed_started?1u:0u)|(early_index_ready?2u:0u)|(packed_first_done?4u:0u)|(early_slots<<8);
-    values[13]|=(packed_mode?packed_cache_slots():SLOTS)<<16;
+    values[13]|=(packed_mode?packed_cache_slots():raw_rgb?arts:SLOTS)<<16;
     values[14]=packed_offset;values[15]=early_reads;
+    if(raw_rgb){values[14]=raw_rgb_bytes;values[15]=0;
+        for(uint32_t i=0;i<arts;i++)if(art_tags[ART_CAPACITY+i]==i+1u)++values[15];}
 #endif
 #endif
     values[12]=render_max_us;
