@@ -18,6 +18,11 @@ selected keyframe's timestamp rather than promising exact-frame access.
 The player prioritizes audio and drains its final block at EOF. Stopping video
 restores the display runtime before returning to the UI.
 
+Completed BCM file-service responses copy in fragments of up to 512 bytes per
+service call. Ring reads stay limited to 128 bytes. Space is checked for the
+complete response, and its producer pointer publishes only after all fragments
+are copied. The existing pre-play settle and audio reserve remain in place.
+
 ## Verified boundary
 
 On the qualified 30 GB MA146 board, H.264 and MPEG-4 samples exercised playback,

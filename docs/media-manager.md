@@ -152,6 +152,8 @@ disk. Media Manager sorts directories, resolves FAT names, prepares native-size
 image previews, and wraps text for the target's fonts on the computer. It connects
 source videos to their existing prepared copies. Unchanged image/text conversions
 reuse the host cache; previews are copied before the directory index is published.
+Packed Video artwork includes a separately checked block index so compatible
+firmware can prepare visible covers while the remaining set loads.
 The device reads bounded pages as you browse. Right in Files shows the live folder
 when files have changed since preparation. See [Files](files.md) for controls,
 supported opening behavior, and limits.

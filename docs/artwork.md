@@ -45,7 +45,7 @@ and waits for pending reads before reusing their storage. A retained full-cover
 cache hit can publish immediately when buffer ownership permits it. A track
 without artwork does not retain the previous track's cover.
 
-Native Cover Flow keeps six decoded tiles plus a packed tile cache. Cache sizes
+Native Cover Flow starts with six decoded tiles plus a packed tile cache. Cache sizes
 come from the target's memory allocation; they are not album-count limits.
 Warm resident navigation avoids artwork reads, while uncached navigation still
 depends on storage latency and the audio work budget.
@@ -55,7 +55,20 @@ the exact native tiles to `COVERS.CFL`. The native records remain intact. Firmwa
 validates the appended header, payload CRC, contiguous block index, and each
 decoded tile's CRC. When the complete compressed set fits, every cover remains
 resident and navigation decodes from RAM. Seven visible cards are pinned through
-each draw; spare cache space can also retain seven decoded RGB565 tiles.
+each draw. M25 can retain ten decoded RGB565 tiles when the existing spare-memory
+lease is available; three use texture workspace freed by sharing raw decode
+scratch. Playback and compressed-input buffers remain separate.
+
+New packed preparation also seals the block index with its own checksum. M25
+can validate that index and show individually checked covers from the completed
+prefix before the full set finishes loading. Full payload validation remains
+mandatory, and final publication reuses the verified index without rescanning
+it. Older unsealed preparation retains its compatible path.
+
+A small raw-only library on a qualified 64 MiB M25 can retain every decoded
+cover in an otherwise unused artwork array. Admission keeps the Files cache and
+history loan in their original winning region. Covers expand during existing
+bounded preparation steps; revisits reuse their RGB pixels without added reads.
 
 The additional memory comes from unused extended library metadata memory or,
 on a 32 MiB solid-state Video, the unused audio read-window area in STAGE. The

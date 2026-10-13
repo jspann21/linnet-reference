@@ -33,6 +33,13 @@ A candidate is confirmed after memory, services, storage, UI, and audio readines
 An unsuccessful candidate falls back to the confirmed image; corrupt state
 enters recovery. RAM boot is temporary and does not install an image.
 
+M25 OS checksum work uses shared code and tables in internal memory after a
+complete copy and readback check. Its byte fallback reads the immutable SDRAM
+load copy, including before initialization or after failed verification. Both
+paths retain complete checksum coverage and progress boundaries.
+Development screenshot checksums share the same immutable byte table while
+retaining their existing single-pass pixel copy and checksum order.
+
 Native installation preserves the original Apple firmware for the MENU startup
 chooser. The loader checks its target, length, hash, and configuration before
 handoff. Boot installation is separate from an A/B OS update and uses its own
@@ -53,6 +60,12 @@ The executive schedules bounded work around audio, input, and watchdog deadlines
 Storage retains buffer ownership until completion or drained cancellation.
 Filesystem validation and write barriers remain active during media work.
 
+M25 overlaps a bounded wake of known storage with muted file and header preparation.
+Audible startup and resume wait for fresh disk readiness, including any power
+transition; paused preparation and decoded EOF retain their memory-only path.
+The reservation ends after preparation, restoring the normal storage idle policy. A
+full muted PCM ring yields to storage deadlines while wake completes.
+
 | Service | Runtime approach |
 | --- | --- |
 | Music | Native decoders feed a PCM ring and DMA; metadata and next-track preparation share a bounded work budget. |
@@ -71,18 +84,48 @@ On M25, verification can retain the remaining raw group metadata in an unused
 STAGE tail. That cache publishes only after the complete database hash and
 browse index pass, and firmware upload revokes it before reusing STAGE.
 Resident search labels and metadata then resolve without waking storage.
+Search group navigation on M25 prepares its retained twelve-row window
+from resident members before drawing. It validates the group once per bounded
+preparation slice and reuses those bounds for each member. Partial cached work
+continues in another slice before admitting a metadata query; cache misses retain
+the asynchronous path and playback keeps its existing work budget.
 Jump to letter also consumes ready labels before its first frame, within a
 250-microsecond slice. Missing labels retain the existing asynchronous lookup;
 long scans yield between slices and preserve reverse-order and cancellation rules.
+M25 database verification reads through a bounded 16 KiB window in the existing
+page cache. Logical hash and metadata-capture slices retain their original order
+and bounds; the window reduces physical reads without skipping verification.
 Cover Flow can use the unoccupied title-cache tail for additional complete
 album records and previews. Library reload and cancellation drain its reader
-before reusing that memory. Video can retain all native artwork as lossless LZ4
+before reusing that memory. M25 stops its background catalog scan when every
+record is validated and resident; larger catalogs retain paged warming.
+Video can retain all native artwork as lossless LZ4
 blocks when the set fits its artwork banks and an unused memory lease. A 64 MiB
 device can lend the unused extended metadata tail; a 32 MiB solid-state device
 can lend inactive audio read windows, excluding decoder and PCM storage. Upload
 admission drains and releases that STAGE lease before writing firmware, and
 prevents artwork from reclaiming it until reboot. Visible cards are pinned during
 draws; larger libraries retain the bounded native working cache.
+
+Host-prepared packed artwork includes a separate index checksum. M25 validates
+that index in bounded steps and can decode visible covers from a completed
+prefix while the remaining artwork warms. Each early cover still passes
+its own checksum; complete payload and index validation precede publication of
+the resident set. Older artwork retains its compatible preparation path.
+Packed blocks within one resident bank decode directly from that bank; blocks
+crossing a bank boundary use the existing input scratch buffer.
+When decoded RGB storage is available, M25 retains ten covers, using three
+additional slots in texture workspace freed by a shared raw decode buffer.
+Playback scratch, compressed input, Files and history allocations stay disjoint.
+The completed sealed-index proof remains valid while later reads fill the
+remaining payload. Final publication reuses that proof and still checks the
+complete payload checksum and saved index geometry.
+
+Small raw-only libraries on a qualified 64 MiB M25 can retain decoded covers
+directly by artwork ID in the unused high artwork array. Admission preserves
+the winning low-bank Files region after the existing history loan. Normal
+bounded visible preparation expands validated tiles; lookups check library
+identity and mount epoch. Upload, reload and failure revoke the cache.
 
 Once lossless artwork is resident, Cover Flow prepares its first visible decoded
 cards in bounded background steps rather than waiting for the first open. A
@@ -97,6 +140,12 @@ catalog reads do not own playback navigation or block firmware upload. Shutdown
 still drains them. Prefetch checks ATA and block power transitions before each
 admission and never wakes a sleeping disk on its own.
 Resolved empty video lists also suppress the playback wake reservation.
+M25 native video startup can reuse validated AAC bytes already read during the
+media scan, transferring them into an empty playback cache after ownership and
+bounds checks. This removes a duplicate read without adding a buffer.
+Completed BCM file-service responses copy up to 512 bytes per service call;
+ring reads retain their 128-byte limit. The complete response must fit before
+copying, and its producer pointer publishes only after every fragment is copied.
 
 Files keeps two guaranteed cache pages in the unused M25 artwork-bank tail when
 Cover Flow is enabled. A fully loaded resident video catalog can lend its aligned
