@@ -78,7 +78,8 @@ static void step(bool read,bool write){
         if(offset==LN_COLLECTION_BYTES){snapshot_crc=running_crc^UINT32_MAX;ln_write_le32(io+12,snapshot_crc);offset=BODY;phase=2;}
         return;
     }
-    uint32_t size=phase==5?0:phase==3?BODY:4096u;
+    /* End the first body write on a chunk boundary; the header stays separate. */
+    uint32_t size=phase==5?0:phase==3?BODY:4096u-offset%4096u;
     if(size>LN_COLLECTION_BYTES-offset)size=LN_COLLECTION_BYTES-offset;
     if(pending){uint32_t transferred=0;int result=ln_storage_async_poll_deferred(ticket,&transferred);if(!result)return;pending=false;
         if(result!=1||transferred!=size){failed=true;return;}

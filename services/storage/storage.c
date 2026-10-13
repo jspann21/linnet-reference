@@ -189,10 +189,20 @@ void ln_state_publication_step(uint32_t stage){
 /* Explicitly reserved in memory.ld; copied Boot/OS code shares this layout. */
 #define handoff ((volatile uint32_t *)ln_platform_uncached_address(LINNET_MAILBOX_ADDRESS+0x100u))
 static uint32_t next_generation(void){if(++epoch==0)++epoch;return epoch;}
+static __attribute__((noinline)) int sector_complete(uint32_t generation){
+    if(generation!=request_generation)return -1;
+    struct ln_block_completion completion;
+    if(!ln_block_take(generation,&completion))return 0;
+    pending=false;
+    return completion.request_id==request&&completion.status==LN_ATA_OK&&
+        completion.sectors_done==request_sectors?1:-1;
+}
 static int sector_io(void *context,enum ln_fat32_io operation,uint64_t lba,uint8_t *sector,uint32_t generation){
     (void)context;
     if(!pending){
-        enum ln_block_op op=operation==LN_FAT32_READ?LN_BLOCK_READ:operation==LN_FAT32_WRITE?LN_BLOCK_WRITE:LN_BLOCK_FLUSH;
+        _Static_assert((int)LN_FAT32_READ==(int)LN_BLOCK_READ&&
+            (int)LN_FAT32_WRITE==(int)LN_BLOCK_WRITE&&(int)LN_FAT32_FLUSH==(int)LN_BLOCK_FLUSH,"FAT/block operation mapping");
+        enum ln_block_op op=(enum ln_block_op)operation;
         uint32_t deadline=ln_time_us()+ln_block_request_timeout();
         bool admitted=op==LN_BLOCK_READ?
             ln_block_submit_read(lba,1,sector,generation,deadline,media_read_ahead,&request):
@@ -201,32 +211,24 @@ static int sector_io(void *context,enum ln_fat32_io operation,uint64_t lba,uint8
         pending=true;request_generation=generation;
         request_sectors=operation==LN_FAT32_FLUSH?0u:1u;return 0;
     }
-    if(generation!=request_generation)return -1;
-    struct ln_block_completion completion;
-    if(!ln_block_take(generation,&completion))return 0;
-    pending=false;
-    return completion.request_id==request&&completion.status==LN_ATA_OK&&
-        completion.sectors_done==request_sectors?1:-1;
+    return sector_complete(generation);
 }
-static int sector_read(void *context,uint64_t lba,uint8_t *buffer,uint32_t sectors,uint32_t generation){
+static int sectors_io(void *context,enum ln_fat32_io operation,uint64_t lba,uint8_t *buffer,uint32_t sectors,uint32_t generation){
     (void)context;
     if(!pending){
         uint32_t deadline=ln_time_us()+ln_block_request_timeout();
         /* Small hard-disk batches retain sequential read-ahead. Flash and
          * larger streams transfer directly without an intermediate copy. */
         struct ln_ata_state device;ln_ata_state_snapshot(&device);
-        bool submitted=sectors<=8u&&device.media_kind==LN_ATA_MEDIA_ROTATING?
+        bool submitted=operation==LN_FAT32_WRITE?
+            ln_block_submit(LN_BLOCK_WRITE,lba,sectors,buffer,generation,deadline,&request):
+            sectors<=8u&&device.media_kind==LN_ATA_MEDIA_ROTATING?
             ln_block_submit_read(lba,sectors,buffer,generation,deadline,media_read_ahead,&request):
             ln_block_submit_direct_read(lba,sectors,buffer,generation,deadline,&request);
         if(!submitted)return -1;
         pending=true;request_generation=generation;request_sectors=sectors;return 0;
     }
-    if(generation!=request_generation)return -1;
-    struct ln_block_completion completion;
-    if(!ln_block_take(generation,&completion))return 0;
-    pending=false;
-    return completion.request_id==request&&completion.status==LN_ATA_OK&&
-        completion.sectors_done==request_sectors?1:-1;
+    return sector_complete(generation);
 }
 void ln_storage_progress(void *context){
     (void)context;uint32_t now=ln_time_us();
@@ -303,7 +305,7 @@ static void storage_step(bool defer_runtime){
         if(info.initializing)return;
         if(!info.ready){error=1;phase=9;return;}
         LN_STORAGE_STAMP(BLOCK);
-        struct ln_fat32_config config={.io=sector_io,.read_sectors=sector_read,
+        struct ln_fat32_config config={.io=sector_io,.sectors_io=sectors_io,
             .context=0,.disk_sectors=info.sectors,.writable=true};
         ln_fat32_init(&volume,&config);phase=2;
     }

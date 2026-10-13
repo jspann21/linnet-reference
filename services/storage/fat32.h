@@ -31,9 +31,10 @@ enum ln_fat32_io { LN_FAT32_READ=1, LN_FAT32_WRITE=2, LN_FAT32_FLUSH=3 };
 struct ln_fat32_config {
     int (*io)(void *context, enum ln_fat32_io operation, uint64_t lba,
               uint8_t *sector, uint32_t generation);
-    /* Optional read-only contiguous transfer. It follows the same polling and
-     * buffer-ownership contract as io, but completes exactly sectors sectors. */
-    int (*read_sectors)(void *context, uint64_t lba, uint8_t *buffer,
+    /* Optional contiguous READ/WRITE transfer, with the same polling and
+     * buffer ownership as io; completion covers exactly sectors sectors.
+     * Writes are bounded to eight sectors. */
+    int (*sectors_io)(void *context, enum ln_fat32_io operation, uint64_t lba, uint8_t *buffer,
                         uint32_t sectors, uint32_t generation);
     void *context;
     uint64_t disk_sectors;

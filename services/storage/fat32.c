@@ -9,6 +9,7 @@ enum { MOUNT=1, HEADER, HEADER_MIRROR, OPEN_NAME, DIRECTORY, DIRECTORY_NEXT,
        MUT_READY, MUT_PUBLISH_READ, MUT_PUBLISH_WRITE, MUT_PUBLISH_FLUSH,
        MUT_FREE_READ, MUT_FREE_WRITE, MUT_RECLAIM_FLUSH, MUT_CLEAN, MUT_CLEAN_FLUSH, LIST_SECTOR, LIST_NEXT, IDLE=0 };
 enum { OP_MOUNT=1, OP_OPEN, OP_READ, OP_WRITE, OP_SYNC, OP_SET, OP_CREATE, OP_GROW, OP_LIST };
+_Static_assert(OP_READ-LN_FAT32_READ==OP_WRITE-LN_FAT32_WRITE,"FAT transfer operation mapping");
 #define EOC 0x0ffffff8u
 #define MAX_CHAIN 65536u
 static bool cluster_valid(const struct ln_fat32*f,uint32_t c){return c>=2&&c<f->clusters+2u;}
@@ -648,13 +649,14 @@ set_chain_cached:
         f->io_lba=cluster_sector(f,f->cluster)+f->within/512u;
         index=f->within%512u;bytes=512u-index;
         if(bytes>f->length-f->transferred)bytes=f->length-f->transferred;
-        if(f->operation==OP_READ&&!index&&bytes==512u&&f->config.read_sectors){
+        if(!index&&bytes==512u&&f->config.sectors_io){
             uint32_t sectors=(f->length-f->transferred)/512u;
             uint32_t cluster_sectors=(512u*f->sectors_per_cluster-f->within)/512u;
             if(sectors>cluster_sectors)sectors=cluster_sectors;
-            if(sectors>192u)sectors=192u;
+            uint32_t limit=f->operation==OP_READ?192u:8u;
+            if(sectors>limit)sectors=limit;
             if(sectors){
-                result=f->config.read_sectors(f->config.context,f->io_lba,
+                result=f->config.sectors_io(f->config.context,(enum ln_fat32_io)(f->operation-(OP_READ-LN_FAT32_READ)),f->io_lba,
                     f->buffer+f->transferred,sectors,f->generation);
                 if(result!=1)break;
                 bytes=sectors*512u;f->transferred+=bytes;f->within+=bytes;return 0;
