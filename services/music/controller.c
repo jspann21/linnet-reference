@@ -22,6 +22,9 @@
 #include "services/state/store.h"
 #include "hal/api/audio.h"
 #include "hal/api/platform.h"
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+#include "kernel/runtime.h"
+#endif
 static struct ln_queue queue;
 /* Selection and resume decoding finish synchronously before yielding; neither
  * retains its candidate after publishing the active queue. */
@@ -779,6 +782,9 @@ static void music_step(void){
 #if defined(LINNET_COVERFLOW)
     for(uint32_t budget=0;budget<3&&ln_coverflow_active()&&audio.playing&&!audio.paused&&
         audio.queued<LINNET_AUDIO_RING_FRAMES/2u;++budget){
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+        ln_runtime_power_checkpoint();
+#endif
         ln_player_step();ln_player_snapshot(&p);ln_audio_snapshot(&audio);
     }
 #endif

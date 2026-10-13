@@ -101,6 +101,19 @@ static uint32_t shutdown_deadline;
 static bool shutdown_tracking;
 #define LINNET_SHUTDOWN_HOLD_US 2000000u
 static bool sleeping, dirty, ready;
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+void ln_runtime_power_checkpoint(void){
+    if(!ready)return;
+    uint32_t now=ln_time_us();
+    if((int32_t)(now-ln_power_next_deadline())<0)return;
+    bool changed=ln_power_poll(now,&power);
+#if defined(LINNET_NATIVE_UI)
+    if(changed&&ln_ui_status_refresh(shell))dirty=true;
+#else
+    (void)changed;
+#endif
+}
+#endif
 #if LINNET_IDLE_CLOCK_HZ
 static uint32_t idle_clock_failures;
 #if !defined(LINNET_PROFILE_RELEASE)

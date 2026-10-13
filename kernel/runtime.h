@@ -10,6 +10,11 @@ struct ln_fat32_file;
 bool ln_runtime_video_open_file(const struct ln_fat32_file *,const char *title);
 bool ln_runtime_first_frame_ready(void);
 void ln_runtime_step(void);
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+/* Foreground checkpoint only; preserves runtime power/status ownership without
+ * dispatching input, storage, music, or shutdown while a decoder is unwinding. */
+void ln_runtime_power_checkpoint(void);
+#endif
 /* Called after the reboot ACK drains; cleanup runs in the outer executive. */
 void ln_runtime_restart(void);
 /* Main loop only: media/storage callbacks must unwind before shutdown. */
