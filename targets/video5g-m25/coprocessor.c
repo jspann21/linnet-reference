@@ -107,7 +107,7 @@ static bool ring_valid(uint32_t lo,uint32_t hi,uint32_t at){
     return !(lo&15u)&&!(hi&15u)&&!(at&15u)&&hi>lo&&at>=lo&&at<hi&&vc.header[3]<=0xffffffffu-hi;
 }
 static bool ring_transfer(bool write,uint32_t lo,uint32_t hi,uint32_t *at,uint32_t *words,uint32_t bytes){
-    if(!ring_valid(lo,hi,*at)||(bytes&15u)||bytes>128u||bytes>hi-lo-16u)return false;
+    if(!ring_valid(lo,hi,*at)||(bytes&15u)||bytes>(write?512u:128u)||bytes>hi-lo-16u)return false;
     uint32_t first=hi-*at;if(first>bytes)first=bytes;
     if(write?!ln_m25_bcm_write(vc.header[3]+*at,words,first/4u):!ln_m25_bcm_read(vc.header[3]+*at,words,first/4u))return false;
     *at+=first;if(*at==hi)*at=lo;
@@ -505,7 +505,8 @@ static bool file_service(void){
         uint32_t used=wr>=rd?wr-rd:hi-rd+wr-lo;
         if(vc.fs_tx_bytes>hi-lo-16u-used)return true;
         if(!vc.fs_tx_at)vc.fs_wr=wr;
-        n=vc.fs_tx_bytes-vc.fs_tx_at;if(n>128u)n=128u;
+        /* Copy one bounded fragment; publish the producer only at completion. */
+        n=vc.fs_tx_bytes-vc.fs_tx_at;if(n>512u)n=512u;
         if(!ring_transfer(true,lo,hi,&vc.fs_wr,vc.fs_packet+vc.fs_tx_at/4u,n))return false;
         vc.fs_tx_at+=n;
         if(vc.fs_tx_at==vc.fs_tx_bytes){
