@@ -56,7 +56,7 @@ void ln_music_queue_view_window(uint32_t first){
             uint32_t i=first>old?n:LN_QUEUE_VIEW_ROWS-1u-n,row=first+i;
             if(row>=old&&row-old<LN_QUEUE_VIEW_ROWS){
                 uint32_t source=row-old;
-                for(uint32_t c=0;c<sizeof(view.labels[i]);c++)view.labels[i][c]=view.labels[source][c];
+                __builtin_memcpy(view.labels[i],view.labels[source],sizeof view.labels[i]);
                 view.valid[i]=view.valid[source];
             }else view.valid[i]=false;
         }
@@ -120,10 +120,12 @@ void ln_music_queue_view_step(bool allow_query){
             publish(view.job_row,row.index==UINT32_MAX?"Unavailable track":row.title,true);
     }
     if(!view.opened||!allow_query)return;
-    uint8_t identity[32];bool matched=ln_music_library_identity(identity);
-    for(uint32_t i=0;i<32&&matched;i++)if(identity[i]!=view.queue.library_identity[i])matched=false;
     for(uint32_t i=0;i<LN_QUEUE_VIEW_ROWS&&view.first+i<view.queue.count;i++){
         if(view.valid[i])continue;uint32_t ordinal;
+        /* Completed rows need no query admission. Validate the library before
+         * resolving the first missing row, after draining pending/reload work. */
+        uint8_t identity[32];bool matched=ln_music_library_identity(identity);
+        for(uint32_t n=0;n<32&&matched;n++)if(identity[n]!=view.queue.library_identity[n])matched=false;
         if(!matched){publish(view.first+i,"Library changed",true);return;}
         if(!ln_queue_track_at(&view.queue,view.first+i,&ordinal)){publish(view.first+i,"Invalid queue entry",true);return;}
         if(ln_music_library_view_row(view.queue.source,view.queue.source_group,ordinal)){
