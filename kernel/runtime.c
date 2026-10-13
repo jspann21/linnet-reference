@@ -1279,6 +1279,18 @@ void ln_runtime_step(void){
             if(presented){--animation_left;animation_at=now+33333u;}
         }
     }
+#if LINNET_TARGET_NUMBER==25u
+    /* A long media/render span must not defer every ADC stage to another
+     * complete frame. Offer one due-gated transfer after the frame as well. */
+    now=ln_time_us();
+    if(ready&&(int32_t)(now-ln_power_next_deadline())>=0){
+        bool changed=ln_power_poll(now,&power);
+#if defined(LINNET_BATTERY_GUARD)
+        if(ln_battery_shutdown_due(&battery_guard,&power,ln_time_us())&&!ln_storage_busy())shutdown(false);
+#endif
+        if(changed&&ln_ui_status_refresh(shell))dirty=true;
+    }
+#endif
 #if defined(LINNET_AUDIO) && !defined(LINNET_PROFILE_RELEASE)
     ln_player_timing_runtime(ln_time_us()-timing_started);
 #endif

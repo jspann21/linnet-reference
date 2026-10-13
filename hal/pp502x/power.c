@@ -93,7 +93,8 @@ static bool ln_bus_transfer(uint8_t address, uint8_t *bytes, uint32_t count, boo
     if (read) for (uint32_t i = 0; i < count; ++i) bytes[i] = LINNET_MMIO8(0x7000c00cu + i * 4u);
     return true;
 }
-/* Periodic sampling owns at most one bounded bus transfer per runtime step.
+/* Periodic sampling owns at most one bounded bus transfer per poll call.
+ * M25 offers two separated, due-gated opportunities per runtime invocation.
  * Failed transfers retain their retry count across steps instead of monopolizing
  * the executive for all three attempts. Foreground I2C APIs keep their existing
  * synchronous contract. */
