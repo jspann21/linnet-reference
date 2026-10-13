@@ -159,6 +159,11 @@ void ln_music_search_step(void){
     }
     if(closing){ln_music_browser_suspend(false);closing=false;return;}
     if(!results||!length||!ln_music_browser_query_idle())return;
+#if LINNET_TARGET_NUMBER==25u
+    /* Finish a budget-limited resident window in another bounded turn before
+     * admitting a query. No cached progress keeps the asynchronous fallback. */
+    if(!window_ready&&ln_music_search_prepare(LN_MUSIC_SEARCH_ROWS)&&!window_ready)return;
+#endif
     uint32_t limit=first+LN_MUSIC_SEARCH_ROWS,ordinal=first;
     if(complete&&limit>total)limit=total;
     while(ordinal<limit&&row_ready(ordinal))++ordinal;
