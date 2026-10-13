@@ -644,6 +644,7 @@ def generate_c(doc, packed_fonts=None):
         out.append('const uint8_t ln_coverflow_widths[33]={'+','.join(map(str,widths))+'};')
         if not scanline:out.append(f'const struct ln_coverflow_column ln_coverflow_columns[33][{cover_size}]={{')
         scanlines,samples,sources,mirrors,row_geometry=[],[],[],[],[]
+        source_rows,mirror_rows=[],[]
         for pose,width in enumerate(widths):
             tilt=pose*8
             columns=[];geometry=[]
@@ -653,9 +654,11 @@ def generate_c(doc, packed_fonts=None):
                 columns.append('{'+','.join(map(str,values))+'}');geometry.append(values)
             if not scanline:out.append('{'+','.join(columns)+'},')
             else:
-                sources.append('{'+','.join(str(c[1]) for c in geometry)+'}')
-                mirrors.append('{'+','.join(str(texture_side-1-geometry[width-1-x][1])
-                                            for x in range(width))+'}')
+                source_row=bytes(c[1] for c in geometry)
+                mirror_row=bytes(texture_side-1-geometry[width-1-x][1] for x in range(width))
+                source_rows.append(source_row);mirror_rows.append(mirror_row)
+                sources.append('{'+','.join(map(str,source_row))+'}')
+                mirrors.append('{'+','.join(map(str,mirror_row))+'}')
                 rows=[];spans=[]
                 for y in range(gh):
                     visible=[x for x,c in enumerate(geometry) if c[2]<=y<c[2]+c[4]]
@@ -673,9 +676,26 @@ def generate_c(doc, packed_fonts=None):
         if scanline:
             if len(samples)>65535:
                 raise ValueError('Cover Flow scanline offsets exceed the 16-bit table bound')
+            source_map=bytearray();source_offsets=[];source_lookup={}
+            for rows in (source_rows,mirror_rows):
+                offsets=[]
+                for width,row in zip(widths,rows):
+                    assert len(row)==width and all(value<texture_side for value in row)
+                    if row not in source_lookup:
+                        source_lookup[row]=len(source_map);source_map.extend(row)
+                    offset=source_lookup[row]
+                    assert offset<=65535 and offset+width<=len(source_map)
+                    offsets.append(offset)
+                source_offsets.append(offsets)
+            assert len(source_map)<=65536
+            out.append('#if defined(LINNET_SOC_PP5022)')
+            out.append('const uint8_t ln_coverflow_source_map[]={'+','.join(map(str,source_map))+'};')
+            out.append('const uint16_t ln_coverflow_source_offsets[2][33]={'+','.join('{'+','.join(map(str,row))+'}' for row in source_offsets)+'};')
+            out.append('#else')
             out.append(f'const uint8_t ln_coverflow_sources[33][{cover_size}]={{'+','.join(sources)+'};')
             out.append('#if defined(LINNET_SOC_S5L8702)')
             out.append(f'const uint8_t ln_coverflow_mirror_sources[33][{cover_size}]={{'+','.join(mirrors)+'};')
+            out.append('#endif')
             out.append('#endif')
             out.append(f'const struct ln_coverflow_scanline ln_coverflow_rows[33][{gh}]={{'+','.join(scanlines)+'};')
             out.append('const uint8_t ln_coverflow_samples[]={'+','.join(map(str,samples))+'};')

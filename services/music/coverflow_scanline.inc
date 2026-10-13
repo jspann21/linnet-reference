@@ -3,10 +3,13 @@
 struct ln_coverflow_scanline {uint16_t offset;uint8_t left,width,runs;};
 extern const struct ln_coverflow_scanline ln_coverflow_rows[33][190];
 extern const uint8_t ln_coverflow_samples[];
-extern const uint8_t ln_coverflow_sources[33][COVER_WIDTH];
 #if defined(LINNET_SOC_PP5022)
+extern const uint8_t ln_coverflow_source_map[];
+extern const uint16_t ln_coverflow_source_offsets[2][33];
 extern const uint16_t ln_coverflow_settled_offsets[16][190];
 extern const uint16_t ln_coverflow_settled_spans[];
+#else
+extern const uint8_t ln_coverflow_sources[33][COVER_WIDTH];
 #endif
 #if defined(LINNET_SOC_S5L8702)
 extern const uint8_t ln_coverflow_mirror_sources[33][COVER_WIDTH];
@@ -20,7 +23,7 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
     uint32_t began=ln_time_us();
 #endif
     struct card {int32_t x,width;uint32_t pose;bool mirror,preview,decoded;
-#if defined(LINNET_SOC_S5L8702)
+#if defined(LINNET_SOC_S5L8702) || defined(LINNET_SOC_PP5022)
         const uint16_t *palette;const uint8_t *pixels,*indices,*sources;
 #else
         const uint16_t *palette;const uint8_t *pixels,*indices;uint8_t sources[COVER_WIDTH];
@@ -64,7 +67,9 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
         card->decoded=pixels!=0;
         card->preview=!packed;
         card->palette=packed?(const uint16_t*)packed:r?(const uint16_t*)(header+512):0;
-#if defined(LINNET_SOC_S5L8702)
+#if defined(LINNET_SOC_PP5022)
+        card->sources=ln_coverflow_source_map+ln_coverflow_source_offsets[card->mirror?1:0][card->pose];
+#elif defined(LINNET_SOC_S5L8702)
         card->sources=card->mirror?ln_coverflow_mirror_sources[card->pose]:ln_coverflow_sources[card->pose];
 #else
         for(int32_t x=0;x<card->width;x++){
@@ -149,6 +154,7 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
                 if(x<span->right)*(uint16_t *)output=(uint16_t)palette[*mask];
             }else{
                 const struct card *card=&cards[span->card];
+                const uint8_t *sources=card->sources;
                 const struct ln_coverflow_scanline *line=&ln_coverflow_rows[card->pose][y];
                 int32_t x=span->left-card->x,end=span->right-card->x;
                 const uint8_t *samples=ln_coverflow_samples+line->offset;
@@ -175,23 +181,23 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
                         }else{
 #if defined(LINNET_SOC_PP5022)
                             for(;x+3<limit;x+=4){
-                                dest[0]=source[card->sources[x]];
-                                dest[1]=source[card->sources[x+1]];
-                                dest[2]=source[card->sources[x+2]];
-                                dest[3]=source[card->sources[x+3]];
+                                dest[0]=source[sources[x]];
+                                dest[1]=source[sources[x+1]];
+                                dest[2]=source[sources[x+2]];
+                                dest[3]=source[sources[x+3]];
                                 dest+=4;
                             }
 #endif
-                            for(;x<limit;x++)*dest++=source[card->sources[x]];
+                            for(;x<limit;x++)*dest++=source[sources[x]];
                         }
                     }else if(!card->palette){
                         uint16_t pixel=sy<TEXTURE_WIDTH?0x18e4u:0;
                         for(;x<limit;x++)*dest++=pixel;
                     }else if(card->preview){
                         sy=ln_coverflow_preview_y[sy];
-                        for(;x<limit;x++)*dest++=card->palette[card->indices[ln_coverflow_preview_x[card->sources[x]]*32u+sy]];
+                        for(;x<limit;x++)*dest++=card->palette[card->indices[ln_coverflow_preview_x[sources[x]]*32u+sy]];
                     }else{
-                        for(;x<limit;x++)*dest++=card->palette[card->indices[sy*TEXTURE_WIDTH+card->sources[x]]];
+                        for(;x<limit;x++)*dest++=card->palette[card->indices[sy*TEXTURE_WIDTH+sources[x]]];
                     }
                     if(card->mirror){u-=length;--run;}else{u+=length;++run;}
                 }
