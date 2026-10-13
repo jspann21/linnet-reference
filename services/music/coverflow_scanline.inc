@@ -58,7 +58,7 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
             if(packed_mode&&!packed_pixels)slot=-1;
 #endif
             if(!packed_mode&&slot<0&&layer<2)slot=decode_art(art);
-            if(slot>=0){pixels=cache_pixels[slot];cache[slot].age=++age;}}
+            if(slot>=0){pixels=cache_slot_pixels((uint32_t)slot);cache[slot].age=++age;}}
         card->pixels=(const uint8_t *)pixels;card->indices=packed?packed+512:r?r+256:0;
         card->decoded=pixels!=0;
         card->preview=!packed;

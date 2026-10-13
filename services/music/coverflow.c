@@ -65,7 +65,15 @@ static uint16_t (*packed_pixels)[TEXTURE_WIDTH*TEXTURE_HEIGHT];
 #else
 #define cache_pixels textures.pixels
 #endif
-static struct {uint32_t id,age;} cache[SLOTS+1u];
+#if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
+#define CACHE_SLOTS 10u
+#define EXTRA_RGB_STRIDE ((TEXTURE_WIDTH*TEXTURE_HEIGHT*sizeof(uint16_t)+31u)&~31u)
+_Static_assert(TILE_RECORD%32u==0u,"RGB overlay alignment");
+_Static_assert(TILE_RECORD+3u*EXTRA_RGB_STRIDE<=__builtin_offsetof(__typeof__(textures),packed.playback),"RGB overlay overlaps playback scratch");
+#else
+#define CACHE_SLOTS (SLOTS+1u)
+#endif
+static struct {uint32_t id,age;} cache[CACHE_SLOTS];
 #if defined(LINNET_COVERFLOW_PACKED)
 _Static_assert(sizeof textures.packed<=sizeof textures.pixels,"Packed textures exceed the existing budget");
 static uint8_t packed_header[512] __attribute__((aligned(32)));
@@ -260,7 +268,18 @@ static void catalog_extend(void){
     for(uint32_t i=0;i<extra;i++)catalog_extra_tags[i]=0;
     catalog_capacity=CATALOG_SLOTS+extra;
 }
-static int32_t find_art(uint32_t id){for(uint32_t i=0;i<(packed_mode?7u:SLOTS);i++)if(cache[i].id==id+1u)return (int32_t)i;return -1;}
+#if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
+static uint32_t packed_cache_slots(void){return packed_pixels?CACHE_SLOTS:7u;}
+static uint16_t *cache_slot_pixels(uint32_t slot){
+    if(packed_mode&&packed_pixels&&slot>=7u)
+        return (uint16_t*)((uint8_t*)&textures+TILE_RECORD+(slot-7u)*EXTRA_RGB_STRIDE);
+    return cache_pixels[slot];
+}
+#else
+#define packed_cache_slots() 7u
+#define cache_slot_pixels(slot) cache_pixels[slot]
+#endif
+static int32_t find_art(uint32_t id){for(uint32_t i=0;i<(packed_mode?packed_cache_slots():SLOTS);i++)if(cache[i].id==id+1u)return (int32_t)i;return -1;}
 static bool close_to_selection(uint32_t art);
 static bool selected_full(void){
     uint8_t *r=row(selected);if(!r)return false;uint32_t id=ln_read_le32(r+248);
@@ -326,7 +345,7 @@ static void invalidate(void){
      * Drop the lease without clearing memory owned by that new generation. */
     catalog_extra=0;catalog_extra_tags=0;catalog_capacity=CATALOG_SLOTS;
     for(uint32_t i=0;i<CATALOG_SLOTS;i++)tags[i]=0;
-    for(uint32_t i=0;i<SLOTS+1u;i++)cache[i].id=0;
+    for(uint32_t i=0;i<CACHE_SLOTS;i++)cache[i].id=0;
     for(uint32_t i=0;i<ART_SLOTS;i++)art_tags[i]=0;
     art_warm=art_loaded=art_base=art_end=art_remaining=0;art_bulk=false;
     count=arts=selected=warm=catalog_loaded=0;position=0;phase=CLOSED;++revision;
@@ -368,7 +387,7 @@ bool ln_coverflow_stage_claim(void){
 #if LINNET_TARGET_NUMBER==25u
     packed_started=packed_first_done=early_index_ready=false;early_slots=0;
 #endif
-    for(uint32_t i=0;i<SLOTS+1u;i++)cache[i].id=0;
+    for(uint32_t i=0;i<CACHE_SLOTS;i++)cache[i].id=0;
     for(uint32_t i=0;i<ART_SLOTS;i++)art_tags[i]=0;
     art_warm=art_loaded=art_base=art_end=art_remaining=0;art_bulk=false;
     phase=count?READY:CLOSED;io_due=ln_time_us();++revision;return true;
@@ -567,7 +586,7 @@ static int32_t decode_packed(uint32_t id){
     int32_t found=find_art(id);if(found>=0){cache[found].age=++age;return found;}
     if(id>=arts)return -1;
     uint32_t victim=NONE,oldest=NONE,priority=3u;
-    for(uint32_t i=0;i<7u;i++){
+    for(uint32_t i=0;i<packed_cache_slots();i++){
         if(!cache[i].id){victim=i;break;}
         /* Every card keeps its pointer through the whole native draw. Pin all
          * seven frame IDs before decoding any newly exposed outer card. */
@@ -590,16 +609,22 @@ static int32_t decode_packed(uint32_t id){
     }
     const uint8_t *input=textures.packed.input;
 #endif
-    uint32_t began=ln_time_us();uint8_t *tile=textures.packed.tiles[victim];
+    uint32_t began=ln_time_us();uint8_t *tile;
+#if LINNET_TARGET_NUMBER==25u
+    tile=textures.packed.tiles[packed_pixels?0u:victim];
+#else
+    tile=textures.packed.tiles[victim];
+#endif
     int result=ln_video_lz_decode_block(input,bytes,tile,TILE_RECORD);
     uint32_t elapsed=ln_time_us()-began;if(elapsed>packed_decode_max_us)packed_decode_max_us=elapsed;
     uint32_t end=512u+TEXTURE_WIDTH*TEXTURE_HEIGHT;
     if(result!=1||ln_crc32(tile,end)!=ln_read_le32(tile+end)){fail();return -1;}
     if(packed_pixels){
+        uint16_t *pixels=cache_slot_pixels(victim);
         const uint16_t *palette=(const uint16_t*)tile;const uint32_t *indices=(const uint32_t*)(tile+512u);
         for(uint32_t i=0;i<TEXTURE_WIDTH*TEXTURE_HEIGHT;i+=4u){uint32_t p=*indices++;
-            packed_pixels[victim][i]=palette[p&255u];packed_pixels[victim][i+1u]=palette[(p>>8)&255u];
-            packed_pixels[victim][i+2u]=palette[(p>>16)&255u];packed_pixels[victim][i+3u]=palette[p>>24];}
+            pixels[i]=palette[p&255u];pixels[i+1u]=palette[(p>>8)&255u];
+            pixels[i+2u]=palette[(p>>16)&255u];pixels[i+3u]=palette[p>>24];}
     }
     cache[victim].id=id+1u;cache[victim].age=++age;return (int32_t)victim;
 }
@@ -635,7 +660,13 @@ static int32_t decode_art(uint32_t id){
 }
 static const uint8_t *retained_art(uint32_t id){
 #if defined(LINNET_COVERFLOW_PACKED)
-    if(packed_mode){int32_t slot=decode_packed(id);return slot<0?0:textures.packed.tiles[slot];}
+    if(packed_mode){int32_t slot=decode_packed(id);
+#if LINNET_TARGET_NUMBER==25u
+        /* RGB cards retain independent buffers. The shared raw decode scratch
+         * must never escape while the renderer gathers all seven cards. */
+        if(packed_pixels)return 0;
+#endif
+        return slot<0?0:textures.packed.tiles[slot];}
 #endif
     return art_ready(id)?art_record(id):0;
 }
@@ -669,7 +700,7 @@ const uint16_t *ln_coverflow_playback_preview(const char *path,uint32_t crc){
             for(uint32_t i=0;i<TEXTURE_WIDTH*TEXTURE_HEIGHT;i++)textures.packed.playback[i]=palette[tile[512u+i]];
             return textures.packed.playback;}
 #endif
-        return cache_pixels[slot];}
+        return cache_slot_pixels((uint32_t)slot);}
 #else
     (void)path;(void)crc;
 #endif
@@ -913,11 +944,11 @@ void ln_coverflow_step(bool allow_read){
             if(packed_pixels)for(uint32_t i=0;i<3u;i++)
                 if((early_slots&(1u<<i))&&cache[i].id)
                     __builtin_memcpy(packed_pixels[i],textures.pixels[i],sizeof textures.pixels[i]);
-            for(uint32_t i=0;i<3u;i++)if((early_slots&(1u<<i))&&cache[i].id)
+            for(uint32_t i=0;!packed_pixels&&i<3u;i++)if((early_slots&(1u<<i))&&cache[i].id)
                 __builtin_memcpy(textures.packed.tiles[i],(uint8_t*)textures.pixels+EARLY_RAW_AT+i*TILE_RECORD,TILE_RECORD);
-            for(uint32_t i=0;i<SLOTS+1u;i++)if(i>=3u||!(early_slots&(1u<<i)))cache[i].id=0;
+            for(uint32_t i=0;i<CACHE_SLOTS;i++)if(i>=3u||!(early_slots&(1u<<i)))cache[i].id=0;
 #else
-            for(uint32_t i=0;i<SLOTS+1u;i++)cache[i].id=0;
+            for(uint32_t i=0;i<CACHE_SLOTS;i++)cache[i].id=0;
 #endif
             packed_mode=packed_checked=true;art_loaded=arts;art_warm=arts;art_remaining=0;
             phase=READY;++revision;
@@ -977,7 +1008,7 @@ void ln_coverflow_step(bool allow_read){
         if(phase==READY&&!packed_checked){
 #if defined(LINNET_COVERFLOW_PACKED)
             for(uint32_t i=0;i<ART_SLOTS;i++)art_tags[i]=0;
-            for(uint32_t i=0;i<SLOTS+1u;i++){
+            for(uint32_t i=0;i<CACHE_SLOTS;i++){
 #if LINNET_TARGET_NUMBER==25u
                 if(i<3u&&early_reads&&cache[i].id)continue;
 #endif
@@ -1056,6 +1087,7 @@ void ln_coverflow_render_diagnostics(uint32_t words[16]){
     values[8]=packed_mode;values[9]=packed_bytes;values[10]=packed_decode_max_us;values[11]=catalog_capacity;
 #if LINNET_TARGET_NUMBER==25u
     values[13]=(packed_started?1u:0u)|(early_index_ready?2u:0u)|(packed_first_done?4u:0u)|(early_slots<<8);
+    values[13]|=(packed_mode?packed_cache_slots():SLOTS)<<16;
     values[14]=packed_offset;values[15]=early_reads;
 #endif
 #endif
