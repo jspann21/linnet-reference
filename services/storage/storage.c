@@ -369,13 +369,19 @@ void ln_storage_step_deferred(void){storage_step(true);}
 bool ln_storage_busy(void){return locked||background_running||(phase>=1&&phase<6)||phase==7||phase==10;}
 bool ln_storage_mounted(void){return phase==6&&volume.mounted;}
 void ln_storage_media_realtime(bool active){media_realtime=active;}
-void ln_storage_music_boundary(bool active){
-    if(!active||!ln_storage_mounted()){
+void ln_storage_music_boundary(uint32_t intents){
+    if(!intents||!ln_storage_mounted()){
         music_boundary=music_wake_requested=false;return;
     }
     struct ln_ata_state device;ln_ata_state_snapshot(&device);
-    music_boundary=device.media_kind==LN_ATA_MEDIA_ROTATING;
-    if(!music_boundary||music_wake_requested||media_wake_ticket||device.busy)return;
+    music_boundary=device.media_kind==LN_ATA_MEDIA_ROTATING&&
+        (intents&(LN_STORAGE_MUSIC_BOUNDARY|LN_STORAGE_MUSIC_PREPARE));
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+    music_boundary=music_boundary||(device.media_kind==LN_ATA_MEDIA_SOLID_STATE&&
+        (intents&LN_STORAGE_MUSIC_PREPARE));
+#endif
+    if(!music_boundary){music_wake_requested=false;return;}
+    if(music_wake_requested||media_wake_ticket||device.busy)return;
     if(device.powered&&!device.sleeping&&!device.initializing
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
        &&ln_storage_music_disk_ready()==1
@@ -387,7 +393,7 @@ void ln_storage_music_boundary(bool active){
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
 int ln_storage_music_disk_ready(void){
     struct ln_ata_state device;ln_ata_state_snapshot(&device);
-    if(device.media_kind!=LN_ATA_MEDIA_ROTATING)return 1;
+    if(device.media_kind==LN_ATA_MEDIA_UNKNOWN)return 1;
     struct ln_block_info block;ln_block_snapshot(&block);
     if(!ln_storage_mounted()||device.failed||block.quarantined)return -1;
     if(device.initialized&&device.powered&&!device.sleeping&&!device.initializing&&!block.power_transition)return 1;

@@ -504,7 +504,7 @@ bool ln_player_pause(bool pause){
     if(!pause&&state.phase==LN_PLAYER_PLAY&&pause_requested){pause_requested=false;return true;}
     if(!pause&&state.phase==LN_PLAYER_PAUSE){
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
-        /* Preserve muted PCM and position while a rotating disk wakes. */
+        /* Preserve muted PCM and position while storage wakes. */
         if(ln_storage_music_disk_ready()!=1){seek_paused=false;state.phase=LN_PLAYER_PRIME;return true;}
 #endif
         if(!ln_audio_start())return false;eof_waiting=false;state.phase=LN_PLAYER_PLAY;return true;

@@ -815,12 +815,12 @@ static void music_step(void){
 #if defined(LINNET_SOC_PP5022)
     uint64_t wake_window=track_frames>>2,maximum=(uint64_t)audio.rate*30u;
     if(wake_window>maximum)wake_window=maximum;
-    ln_storage_music_boundary(
+    ln_storage_music_boundary((active&&have_current&&allow_next&&p.phase==LN_PLAYER_PLAY&&audio.playing&&
+        track_frames&&(position>=track_frames||track_frames-position<=wake_window)?LN_STORAGE_MUSIC_BOUNDARY:0u)
 #if LINNET_TARGET_NUMBER==25u
-        ln_player_startup_disk()||
+        |(ln_player_startup_disk()?LN_STORAGE_MUSIC_PREPARE:0u)
 #endif
-        (active&&have_current&&allow_next&&p.phase==LN_PLAYER_PLAY&&audio.playing&&
-        track_frames&&(position>=track_frames||track_frames-position<=wake_window)));
+        );
 #endif
 #if !defined(LINNET_PROFILE_RELEASE)
     if(urgent)budget_count(&budget_urgent_windows);

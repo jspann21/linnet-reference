@@ -51,10 +51,11 @@ bool ln_storage_mounted(void);
 void ln_storage_video_browse(bool active, bool activity);
 /* A streaming owner can defer standby across reads satisfied from RAM. */
 void ln_storage_media_realtime(bool active);
-/* Keep rotating media awake and start a bounded wake before a music join. */
-void ln_storage_music_boundary(bool active);
+/* Preparation wakes known media; the join hint applies only to rotating media. */
+enum {LN_STORAGE_MUSIC_BOUNDARY=1u,LN_STORAGE_MUSIC_PREPARE=2u};
+void ln_storage_music_boundary(uint32_t intents);
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
-/* Pure startup readiness: 1 ready/nonrotating, 0 power wait, -1 unavailable. */
+/* Pure startup readiness: 1 ready/unknown, 0 power wait, -1 unavailable. */
 int ln_storage_music_disk_ready(void);
 #endif
 uint32_t ln_storage_disk_sector_bytes(void);
