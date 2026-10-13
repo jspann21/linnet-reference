@@ -10,7 +10,8 @@
 enum view { CATEGORIES,GROUPS,TRACKS,PLAYLISTS,LOCAL_TRACKS,ACTIONS,DESTINATION,NAME,CONFIRM,ACTIVITY,ARTIST_ALBUMS,ALBUM_ARTISTS,BROWSE_OPTIONS,LETTERS,MORE };
 enum job { NONE,RANGE,GROUP,TITLE,MEMBER,RECORD,RESOLVE_IDS,EXPAND,ACTIVITY_IDS,FAVORITE_RECORD,BOOKMARK_RECORD,RECENT_GROUP,CATALOG_GROUP,CATALOG_MEMBER,CATALOG_ARTIST,CATALOG_RANGE,JUMP_GROUP,JUMP_TITLE,RECENT_IDS };
 struct location {enum view view;uint32_t kind,group,count,lower,selected,slot,first;bool reverse,from_coverflow;char title[256];};
-struct row {uint32_t ordinal,index,count;bool valid;char label[256];};
+/* No published list ordinal reaches UINT32_MAX; it marks an invalid cache row. */
+struct row {uint32_t ordinal,index,count;char label[256];};
 /* Lists are bounded by published counts; each filter is cleared when its job starts. */
 static struct {
     uint8_t filter[65536];uint32_t tracks[LINNET_QUEUE_SOURCE_MAX];
@@ -58,7 +59,7 @@ static bool activity_filter(uint64_t id,bool add){
     for(uint32_t i=0;i<3;i++){uint32_t bit=(x+i*y)&524287u;if(add)activity_data.filter[bit/8]|=(uint8_t)(1u<<(bit&7));else if(!(activity_data.filter[bit/8]&(1u<<(bit&7))))hit=false;}return hit;
 }
 static void changed(void){b.revision++;}
-static void invalidate(void){++b.epoch;for(uint32_t i=0;i<LN_MUSIC_BROWSER_ROWS*2;i++)b.rows[i].valid=false;changed();}
+static void invalidate(void){++b.epoch;for(uint32_t i=0;i<LN_MUSIC_BROWSER_ROWS*2;i++)b.rows[i].ordinal=UINT32_MAX;changed();}
 static bool activity_empty(void){
     return !ln_music_history_error()&&
         ((b.activity_kind==10&&ln_paged_history_bookmark_count()==0)||
@@ -91,8 +92,9 @@ static bool recent_cached(void){
 }
 static uint32_t ordinal(uint32_t n);
 static struct row *row(uint32_t n){
+    if(n==UINT32_MAX)return 0;
     struct row *r=&b.rows[n%(LN_MUSIC_BROWSER_ROWS*2)];
-    if(r->valid&&r->ordinal==n)return r;
+    if(r->ordinal==n)return r;
     if(n>=b.here.count)return 0;
     uint32_t at=ordinal(n),index=at,count=0;const char *label=0;
     if(b.here.view==GROUPS||b.here.view==ARTIST_ALBUMS||b.here.view==ALBUM_ARTISTS){
@@ -105,7 +107,7 @@ static struct row *row(uint32_t n){
         index=b.here.view==LOCAL_TRACKS?b.mapped[at]:activity_data.tracks[at];label=ln_music_library_title(index);
     }
     if(!label)return 0;
-    *r=(struct row){.ordinal=n,.index=index,.count=count,.valid=true};copy(r->label,label);return r;}
+    *r=(struct row){.ordinal=n,.index=index,.count=count};copy(r->label,label);return r;}
 static void navigate(void){b.navigation++;b.first=b.here.first;invalidate();b.selection_ready=true;b.restored_selection=b.here.selected;}
 static uint32_t ordinal(uint32_t n){return b.here.reverse?(b.here.view==ARTIST_ALBUMS?(n?b.here.count-n:0):b.here.count-1-n):n;}
 static void jump_label(const char *label){
@@ -442,7 +444,7 @@ void ln_music_browser_step(void){
         else if(job==BOOKMARK_RECORD){b.favorite_id=track.id;b.bookmark_waiting=true;}
         else if(job==FAVORITE_RECORD){b.favorite_id=track.id;b.favorite_waiting=true;}
         else if(job==RECORD){b.draft.ids[b.draft.count++]=track.id;b.export_at++;b.action_kind=0;if(b.export_at==b.export_queue.count){b.exporting=false;changed();}}
-        else {struct row *r=&b.rows[b.job_row%(LN_MUSIC_BROWSER_ROWS*2)];*r=(struct row){.ordinal=b.job_row,.valid=true};
+        else {struct row *r=&b.rows[b.job_row%(LN_MUSIC_BROWSER_ROWS*2)];*r=(struct row){.ordinal=b.job_row};
             if(job==TITLE){r->index=title.index;copy(r->label,title.title);}else{r->index=b.here.view==ARTIST_ALBUMS?activity_data.tracks[ordinal(b.job_row)-1]:b.here.view==ALBUM_ARTISTS?activity_data.tracks[ordinal(b.job_row)]:b.here.lower+ordinal(b.job_row);r->count=g.count;copy(r->label,name);}changed();}
     }
     if(b.bookmark_waiting){
@@ -583,7 +585,7 @@ void ln_music_browser_step(void){
     }else if(list_view()){
         for(uint32_t i=b.first;i<b.here.count&&i<b.first+b.visible*2;i++){if(row(i))continue;b.job_row=i;
             uint32_t at=ordinal(i);
-            if(b.here.view==ARTIST_ALBUMS&&!at){struct row *r=&b.rows[i%(LN_MUSIC_BROWSER_ROWS*2)];*r=(struct row){.ordinal=i,.index=b.here.group,.count=b.here.slot,.valid=true};copy(r->label,"All Songs");changed();continue;}
+            if(b.here.view==ARTIST_ALBUMS&&!at){struct row *r=&b.rows[i%(LN_MUSIC_BROWSER_ROWS*2)];*r=(struct row){.ordinal=i,.index=b.here.group,.count=b.here.slot};copy(r->label,"All Songs");changed();continue;}
             if(b.here.view==GROUPS||b.here.view==ARTIST_ALBUMS||b.here.view==ALBUM_ARTISTS){uint32_t group=b.here.view==GROUPS?b.here.lower+at:activity_data.tracks[b.here.view==ARTIST_ALBUMS?at-1:at];if(ln_music_library_group(group))b.job=GROUP;}
             else if(ln_music_library_view_row((b.here.view==LOCAL_TRACKS||b.here.view==ACTIVITY)?0:b.here.kind?2:1,b.here.group,b.here.view==LOCAL_TRACKS?b.mapped[at]:b.here.view==ACTIVITY?activity_data.tracks[at]:at))b.job=TITLE;break;}
     }

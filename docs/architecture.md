@@ -97,6 +97,16 @@ Completed Search windows skip repeated row preparation and readiness scans.
 Result, viewport, and library changes invalidate that readiness; admitted queries
 still drain before closing or returning. Group-title queries also resolve verified
 resident members through the ordinary query owner before parsing database records.
+Completed Play Queue windows also skip repeated library-identity work after
+pending queries and reloads drain. Scrolling retains complete cached labels with
+bounded bulk copies; traversal order preserves rows when the windows overlap.
+Music browser rows retain their full label capacity and use an invalid ordinal
+to mark an empty cache slot. Navigation and library changes invalidate all rows,
+and asynchronous results still require the current navigation epoch.
+Favorites and Bookmarks that a fully verified history summary proves empty can
+show their final empty state on entry. Most Played uses the same proof when no
+play counts exist. Unverified or nonempty history keeps its bounded scan; recent
+history, pending reads, and error handling retain their normal paths.
 Jump to letter also consumes ready labels before its first frame, within a
 250-microsecond slice. Missing labels retain the existing asynchronous lookup;
 long scans yield between slices and preserve reverse-order and cancellation rules.
