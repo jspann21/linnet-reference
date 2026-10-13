@@ -96,15 +96,21 @@ static const char *cached_title(uint32_t ordinal){
 }
 bool ln_music_queue_view_prepare(void){
     if(!view.opened||view.queue.source>LN_QUEUE_GROUP||ln_music_library_status()!=LN_LIBRARY_READY)return false;
-    uint8_t identity[32];if(!ln_music_library_identity(identity))return false;
-    for(uint32_t i=0;i<32u;++i)if(identity[i]!=view.queue.library_identity[i])return false;
+    union {uint8_t identity[32];struct ln_music_group group;} local;
+    if(!ln_music_library_identity(local.identity))return false;
+    for(uint32_t i=0;i<32u;++i)if(local.identity[i]!=view.queue.library_identity[i])return false;
     bool filled=false;uint32_t started=ln_time_us();
+    local.group.count=0;
     for(uint32_t i=0;i<view.visible_rows&&view.first+i<view.queue.count&&
         (uint32_t)(ln_time_us()-started)<250u;++i){
         if(view.valid[i])continue;uint32_t track;
         if(!ln_queue_track_at(&view.queue,view.first+i,&track))continue;
-        if(view.queue.source==LN_QUEUE_GROUP&&
-           !ln_music_library_cached_member(view.queue.source_group&~LN_QUEUE_REVERSE,track,&track))continue;
+        if(view.queue.source==LN_QUEUE_GROUP){
+            if(!local.group.count&&
+               !ln_music_library_cached_group(view.queue.source_group&~LN_QUEUE_REVERSE,&local.group,0))continue;
+            if(track>=local.group.count||
+               !ln_music_library_cached_member_at(local.group.first+track,&track))continue;
+        }
         const char *title=ln_music_library_title(track);
         if(title){publish(view.first+i,title,false);filled=true;}
     }
