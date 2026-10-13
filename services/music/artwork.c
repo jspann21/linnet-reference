@@ -27,7 +27,7 @@ static void preview(void){
     if(visible||preview_visible)return;
     const uint16_t *source=ln_coverflow_playback_preview(requested,requested_crc);
     if(!source)return;
-    for(uint32_t i=0;i<130u*130u;i++)preview_pixels[i]=source[i];
+    __builtin_memcpy(preview_pixels,source,sizeof preview_pixels);
     preview_visible=true;++revision;
 }
 #endif
