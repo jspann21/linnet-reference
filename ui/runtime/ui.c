@@ -433,9 +433,7 @@ static void text_scaled(struct painter*p,int32_t x,int32_t y,const char*s,uint16
     }
 }
 static void text(struct painter*p,int32_t x,int32_t y,const char*s,uint16_t c){text_scaled(p,x,y,s,c,1u);}
-static void fitted_text(struct painter*p,int32_t x,int32_t y,const char*s,uint16_t fg,int32_t width){
-    if(!s||width<=0)return;
-    if(text_fits(s,width)){text(p,x,y,s,fg);return;}
+static inline __attribute__((always_inline)) void clipped_text(struct painter*p,int32_t x,int32_t y,const char*s,uint16_t fg,int32_t width){
     char clipped[128];uint32_t length=0;int32_t used=0,ellipsis=text_width("...");
     while(length<124u&&s[length]){
         uint32_t bytes,ch=text_character(s+length,1024u-length,&bytes);
@@ -443,6 +441,11 @@ static void fitted_text(struct painter*p,int32_t x,int32_t y,const char*s,uint16
         used+=(int32_t)advance(ch);for(uint32_t i=0;i<bytes;++i){clipped[length]=s[length];++length;}
     }
     if(ellipsis<=width){clipped[length++]='.';clipped[length++]='.';clipped[length++]='.';}clipped[length]=0;text(p,x,y,clipped,fg);
+}
+static void fitted_text(struct painter*p,int32_t x,int32_t y,const char*s,uint16_t fg,int32_t width){
+    if(!s||width<=0)return;
+    if(text_fits(s,width)){text(p,x,y,s,fg);return;}
+    clipped_text(p,x,y,s,fg,width);
 }
 static const struct ln_ui_state *scroll_owner;
 static uint32_t scroll_key,scroll_started;
@@ -463,7 +466,7 @@ static void text_block(struct painter*p,const struct ln_ui_node*n,const char*s,u
         int32_t w=text_width(s),x=n->x;
         if(n->flags&8u)x+=max(0,(n->w-w)/2);else if(n->flags&16u)x+=max(0,n->w-w);
         int32_t available=n->x+n->w-x;
-        if(available>0){if(w<=available)text(p,x,n->y,s,fg);else fitted_text(p,x,n->y,s,fg,available);}return;
+        if(available>0){if(w<=available)text(p,x,n->y,s,fg);else clipped_text(p,x,n->y,s,fg,available);}return;
     }
     uint32_t at=0;int32_t y=n->y;
     while(s[at]&&at<512u&&y+(int32_t)ln_ui_font.height<=n->y+n->h){
