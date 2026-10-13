@@ -80,7 +80,7 @@ static bool packed_uses_stage,packed_stage_inhibited;
 static uint32_t early_reads,early_id,early_resume,early_epoch,preview_epoch=1u;
 static uint32_t early_ids[3];
 static bool packed_started,packed_first_done,early_index_ready;
-static uint32_t early_slots;
+static uint32_t early_slots,packed_index_crc;
 #define EARLY_RAW_AT 135744u
 _Static_assert(EARLY_RAW_AT>=3u*sizeof textures.pixels[0],"Early raw tiles overlap RGB previews");
 _Static_assert(EARLY_RAW_AT%32u==0u,"Early raw tile alignment");
@@ -809,7 +809,7 @@ void ln_coverflow_step(bool allow_read){
             if(packed_offset==packed_bytes-512u){
                 if((~packed_crc)!=ln_read_le32(packed_header+24)){fail();return;}
 #if LINNET_TARGET_NUMBER==25u
-                if((ln_read_le32(packed_header+20)&PACKED_INDEX_CRC)&&ln_crc32(art_low,arts*8u)!=ln_read_le32(packed_header+28)){fail();return;}
+                packed_index_crc=UINT32_MAX;
 #endif
                 packed_index=0;packed_previous=arts*8u;phase=PACKED_CHECK;
             }
@@ -817,12 +817,12 @@ void ln_coverflow_step(bool allow_read){
             else if(!packed_first_done){
                 packed_first_done=true;
                 if((ln_read_le32(packed_header+20)&PACKED_INDEX_CRC)&&packed_offset>=arts*8u){
-                    if(ln_crc32(art_low,arts*8u)!=ln_read_le32(packed_header+28)){fail();return;}
+                    packed_index_crc=UINT32_MAX;
                     packed_index=0;packed_previous=arts*8u;phase=EARLY_INDEX;
                 }else phase=READY;
             }
             else if(!early_index_ready&&(ln_read_le32(packed_header+20)&PACKED_INDEX_CRC)&&packed_offset>=arts*8u){
-                if(ln_crc32(art_low,arts*8u)!=ln_read_le32(packed_header+28)){fail();return;}
+                packed_index_crc=UINT32_MAX;
                 packed_index=0;packed_previous=arts*8u;phase=EARLY_INDEX;
             }
 #endif
@@ -851,7 +851,7 @@ void ln_coverflow_step(bool allow_read){
 #if defined(LINNET_COVERFLOW_PACKED)
 #if LINNET_TARGET_NUMBER==25u
     if(phase==EARLY_INDEX){
-        uint32_t end=packed_index+32u;if(end>arts)end=arts;
+        uint32_t first=packed_index,end=packed_index+32u;if(end>arts)end=arts;
         for(;packed_index<end;packed_index++){
             const uint8_t *entry=art_low+packed_index*8u;
             uint32_t offset=ln_read_le32(entry),size=ln_read_le32(entry+4);
@@ -859,13 +859,17 @@ void ln_coverflow_step(bool allow_read){
                size>packed_bytes-512u-offset){fail();return;}
             packed_previous+=size;
         }
+        packed_index_crc=ln_crc32_update(packed_index_crc,art_low+first*8u,(packed_index-first)*8u);
         if(packed_index<arts){io_due=now+1000u;return;}
-        if(packed_previous!=packed_bytes-512u){fail();return;}
+        if(packed_previous!=packed_bytes-512u||(~packed_index_crc)!=ln_read_le32(packed_header+28)){fail();return;}
         early_index_ready=true;phase=READY;
     }
 #endif
     if(phase==PACKED_CHECK){
         uint32_t end=packed_index+32u;if(end>arts)end=arts;
+#if LINNET_TARGET_NUMBER==25u
+        uint32_t first=packed_index;
+#endif
         for(;packed_index<end;packed_index++){
             const uint8_t *entry=art_low+packed_index*8u;
             uint32_t offset=ln_read_le32(entry),size=ln_read_le32(entry+4);
@@ -873,8 +877,15 @@ void ln_coverflow_step(bool allow_read){
                size>packed_bytes-512u-offset){fail();return;}
             packed_previous+=size;
         }
+#if LINNET_TARGET_NUMBER==25u
+        if(ln_read_le32(packed_header+20)&PACKED_INDEX_CRC)
+            packed_index_crc=ln_crc32_update(packed_index_crc,art_low+first*8u,(packed_index-first)*8u);
+#endif
         if(packed_index==arts){
             if(packed_previous!=packed_bytes-512u){fail();return;}
+#if LINNET_TARGET_NUMBER==25u
+            if((ln_read_le32(packed_header+20)&PACKED_INDEX_CRC)&&(~packed_index_crc)!=ln_read_le32(packed_header+28)){fail();return;}
+#endif
             /* Use a contiguous unoccupied lease tail for all seven decoded
              * cards. The compressed payload remains immutable underneath. */
             uint32_t used=packed_bytes-512u,base=sizeof art_low+sizeof art_high;
