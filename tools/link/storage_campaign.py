@@ -210,10 +210,17 @@ def update_cycle(root, image_path, crash_path, port, progress=None):
     def record(name,**details):
         event=dict(name=name,**details);receipt['steps'].append(event);_save(path,receipt)
         if progress:progress(dict(run_id=run_id,**event))
-    def ready():
+    def ready(allow_boot_optional_lookup=False):
         deadline=time.monotonic()+120
         settled=None
         while time.monotonic()<deadline:
+            boot_healthy=False
+            if allow_boot_optional_lookup and observed['image_kind']=='boot':
+                current=decode(session.status())
+                if any(current[key]!=observed[key] for key in
+                       ('target_id','profile','image_kind','build_id','image_sha256','generation')):
+                    raise RuntimeError('Boot identity changed during rollback readiness wait')
+                boot_healthy=current.get('healthy') is True and current.get('health_flags')==31
             state=session.storage_state()
             if state[4] and state[7] and not state[8] and not state[9]:
                 # Healthy startup can precede the asynchronous music scan.
@@ -226,11 +233,24 @@ def update_cycle(root, image_path, crash_path, port, progress=None):
                             session.storage_schedule_diagnostics()['last_state']):
                         settled=None;time.sleep(.05);continue
                 update=session.update_status()
-                if update[1] and update[2] and not update[7] and not update[11] and not update[14] and not update[15]:
+                # Older Boot leaves NOT_FOUND from an optional selector probe
+                # latched after successful operations. Admit that diagnostic
+                # only for inspecting a crash rollback and its explicit reboot;
+                # OS writes and every other readiness check remain strict.
+                optional_lookup=(allow_boot_optional_lookup and observed['image_kind']=='boot' and
+                    boot_healthy and
+                    state[1]==6 and state[2]==305 and update[15]==305 and
+                    not any(state[index] for index in (12,13,14)))
+                if (update[1] and update[2] and not update[7] and not update[11] and not update[14] and
+                        ((not state[2] and not update[15]) or optional_lookup)):
                     # Health flags precede persistent confirmation and the
                     # remaining startup readers. Require settled storage too.
                     if settled is None:settled=time.monotonic()
-                    if time.monotonic()-settled>=1:return update
+                    if time.monotonic()-settled>=1:
+                        if optional_lookup:
+                            record('boot-optional-lookup-diagnostic',identity=current,
+                                   storage=list(state),update=list(update))
+                        return update
                     time.sleep(.05);continue
             settled=None
             time.sleep(.05)
@@ -260,10 +280,10 @@ def update_cycle(root, image_path, crash_path, port, progress=None):
                 return
             session.close();session=None;time.sleep(.1)
         raise TimeoutError('expected persistent identity did not reconnect: '+str(observed))
-    def restart():
+    def restart(allow_boot_optional_lookup=False):
         nonlocal session
         # A timeout is inspected through reconnect, never resent.
-        attempt_baseline(ready())
+        attempt_baseline(ready(allow_boot_optional_lookup))
         try:session.reboot_persistent(observed['generation'])
         except AmbiguousCommand:record('restart-ack-uncertain')
         finally:session.close();session=None
@@ -288,13 +308,14 @@ def update_cycle(root, image_path, crash_path, port, progress=None):
         attempt_baseline(confirmed)
         session.persistent_install(observed['generation'],bad,image_path=crash_path)
         bad_offer=session.update_status();record('crash-candidate-published',update=list(bad_offer))
-        restart();reconnect('boot');rollback=ready()
+        restart();reconnect('boot');rollback=ready(allow_boot_optional_lookup=True)
         crash=decode_crash(session.crash_get())
-        if crash['build_id']!=crash_identity['build_id'] or rollback[5]!=confirmed[5] or rollback[6]!=255 or rollback[7]:
+        if (crash['build_id']!=crash_identity['build_id'] or rollback[5]!=confirmed[5] or
+                rollback[6]!=255 or rollback[7] or rollback[8]<=confirmed[8]):
             raise RuntimeError('crash candidate rollback identity/state mismatch')
         record('crash-rollback-observed',crash=crash,identity=observed,update=list(rollback))
         # Fresh explicit recovery action, after inspecting the crashed candidate.
-        restart();reconnect('os',good_sha);ready()
+        restart(allow_boot_optional_lookup=True);reconnect('os',good_sha);ready()
         record('last-known-good-boot',identity=observed)
         for stage in range(1,5):
             before_cut=attempt_baseline(ready())

@@ -152,6 +152,13 @@ Use each command's `--help` for required images, scenarios, and identities.
 Receipts go under `out/runs`. Injected software faults do not qualify electrical
 failures; physical controls, sound, current, and panel quality need observation.
 
+During crash rollback, `update-cycle` records an older Boot's latched optional
+selector-file `NOT_FOUND` diagnostic when storage is prepared, drained and
+unquarantined, with no failed, retried or canceled requests. It still requires
+the expected crash identity, retained confirmed slot and a newer boot attempt
+before explicitly restarting the confirmed OS. OS write admission requires
+clean storage and updater diagnostics.
+
 ## Protocol reference
 
 Frames contain a 20-byte little-endian `LINK` header, at most 1,024 payload bytes,
