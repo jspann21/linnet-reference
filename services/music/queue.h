@@ -30,6 +30,11 @@ struct ln_queue {
  * select_occurrence, shuffle/repeat preserve duplicate source occurrences.
  * Virtual shuffle uses a seeded coprime affine permutation (not uniform shuffle). */
 bool ln_queue_track_at(const struct ln_queue *,uint32_t playback_ordinal,uint32_t *track_or_source_ordinal);
+/* Prepare virtual exclusions once, then resolve against the same unchanged,
+ * valid queue snapshot. ranks has room for32 entries and is caller-owned. */
+bool ln_queue_exclusion_ranks(const struct ln_queue *,uint32_t ranks[32]);
+bool ln_queue_track_at_ranks(const struct ln_queue *,uint32_t playback_ordinal,
+                           const uint32_t ranks[32],uint32_t *source_ordinal);
 bool ln_queue_select_at(struct ln_queue *,uint32_t playback_ordinal);
 bool ln_queue_set_source(struct ln_queue *,uint32_t source,uint32_t group,uint32_t count,uint32_t ordinal);
 void ln_queue_init(struct ln_queue *queue,uint32_t seed);

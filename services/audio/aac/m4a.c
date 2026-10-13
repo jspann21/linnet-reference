@@ -1,4 +1,5 @@
 #include "m4a.h"
+#include <stddef.h>
 #include "boot/include/linnet_bytes.h"
 #include "boot/include/linnet_boot.h"
 #if defined(__arm__)
@@ -148,10 +149,17 @@ static int cached_read(void *context,uint64_t offset,uint8_t *buffer,uint32_t by
 }
 void ln_aac_m4a_init(struct ln_aac_m4a *d,ln_aac_read_fn read,void *context,uint64_t size)
 {
+    /* The container initializer clears its own complete region below. Keep
+     * the AAC core and facade state fresh without clearing that region twice. */
+    const uint32_t prefix=offsetof(struct ln_aac_m4a,container);
+    const uint32_t tail=prefix+sizeof(d->container);
 #if defined(__arm__)
-    ln_memory_clear(d,sizeof(*d));
+    ln_memory_clear(d,prefix);
+    ln_memory_clear((uint8_t *)d+tail,sizeof(*d)-tail);
 #else
-    uint8_t *b=(uint8_t *)d;for(uint32_t i=0;i<sizeof(*d);i++)b[i]=0;
+    uint8_t *b=(uint8_t *)d;
+    for(uint32_t i=0;i<prefix;i++)b[i]=0;
+    for(uint32_t i=tail;i<sizeof(*d);i++)b[i]=0;
 #endif
     d->source_read=read;d->source_context=context;
     ln_m4a_init(&d->container,cached_read,d,size);

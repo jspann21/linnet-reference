@@ -37,6 +37,24 @@ bool ln_queue_track_at(const struct ln_queue*q,uint32_t at,uint32_t*out){
     *out=source_ordinal(q,q->shuffled?mod((uint64_t)at*q->stride+q->offset,q->source_count):at);return true;
 }
 bool ln_queue_select_at(struct ln_queue*q,uint32_t at){if(!q||at>=q->count)return false;q->cursor=at;q->position_samples=0;return true;}
+bool ln_queue_exclusion_ranks(const struct ln_queue*q,uint32_t ranks[32]){
+    if(!q||!ranks||q->source<LN_QUEUE_ALL||q->source>LN_QUEUE_GROUP||
+       !q->source_count||q->source_count>LINNET_QUEUE_SOURCE_MAX||q->excluded_count>32u||
+       q->excluded_count>q->source_count||q->count!=q->source_count-q->excluded_count||
+       !q->stride||q->stride>q->source_count||q->inverse>q->source_count||q->offset>=q->source_count)return false;
+    for(uint32_t i=0;i<q->excluded_count;i++){
+        if(q->excluded[i]>=q->source_count)return false;
+        uint32_t r=raw_rank(q,q->excluded[i]),j=i;
+        while(j&&ranks[j-1]>r){ranks[j]=ranks[j-1];j--;}ranks[j]=r;
+    }
+    return true;
+}
+bool ln_queue_track_at_ranks(const struct ln_queue*q,uint32_t at,const uint32_t ranks[32],uint32_t*out){
+    if(!q||!out||!ranks||q->source<LN_QUEUE_ALL||q->source>LN_QUEUE_GROUP||
+       !q->source_count||q->excluded_count>32u||at>=q->count)return false;
+    for(uint32_t i=0;i<q->excluded_count;i++)if(ranks[i]<=at)at++;
+    *out=source_ordinal(q,q->shuffled?mod((uint64_t)at*q->stride+q->offset,q->source_count):at);return true;
+}
 bool ln_queue_current(const struct ln_queue*q,uint32_t*out){return q&&ln_queue_track_at(q,q->cursor,out);}
 bool ln_queue_add(struct ln_queue *q,uint32_t track)
 {if(!q||q->source||q->count>=LINNET_QUEUE_CAPACITY)return false;q->tracks[q->count]=track;q->order[q->count]=q->count;++q->count;return true;}

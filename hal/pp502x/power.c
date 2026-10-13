@@ -158,7 +158,7 @@ static void ln_sample_fail(uint32_t reason){ln_sample_failure(reason);ln_sample_
 #else
 #define ln_sample_fail(reason) ln_sample_adc_failed()
 #endif
-/* Any foreground bus owner cancels an unfinished pointer/data sequence first.
+/* Foreground PMU access cancels an unfinished pointer/data sequence first.
  * A completed battery publication remains valid; partial ADC/RTC bytes are
  * never published. The aggregate age and logical phase survive cancellation.
  * An RTC restart begins at its pointer, so an ADC success cannot renew the
@@ -177,12 +177,25 @@ static void ln_sample_cancel(void)
         if((int32_t)(prompt-ln_power.next_sample_us)<0)ln_power.next_sample_us=prompt;
     }
 }
+static void ln_sample_foreground(uint8_t address)
+{
+    (void)address;
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+    /* The codec has its own register pointer. Successful traffic to 0x1a
+     * cannot replace the PMU's pointer; failed transfers still cancel below. */
+    if(address==0x1au)return;
+#endif
+    ln_sample_cancel();
+}
 bool ln_power_i2c_read(uint8_t address, uint8_t reg, uint8_t *out, uint32_t length)
 {
     if (!out || !length || length > 4u || address > 0x7fu) return false;
-    ln_sample_cancel();
+    ln_sample_foreground(address);
     for (uint32_t attempt = 0; attempt < 3u; ++attempt) {
         if (ln_bus_transfer(address, &reg, 1u, false) && ln_bus_transfer(address, out, length, true)) return true;
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+        ln_sample_cancel();
+#endif
         ln_bus_reset();
     }
     return false;
@@ -190,10 +203,13 @@ bool ln_power_i2c_read(uint8_t address, uint8_t reg, uint8_t *out, uint32_t leng
 bool ln_power_i2c_write(uint8_t address, uint8_t reg, uint8_t value)
 {
     if (address > 0x7fu) return false;
-    ln_sample_cancel();
+    ln_sample_foreground(address);
     uint8_t bytes[2] = {reg, value};
     for (uint32_t attempt = 0; attempt < 3u; ++attempt) {
         if (ln_bus_transfer(address, bytes, 2u, false)) return true;
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+        ln_sample_cancel();
+#endif
         ln_bus_reset();
     }
     return false;

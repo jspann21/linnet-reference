@@ -2,6 +2,10 @@
 #include "library.h"
 #include "hal/api/platform.h"
 static struct {
+    /* Only this private immutable virtual snapshot uses tracks[0..31] for
+     * sorted exclusion ranks and order[0] as their validity flag. Every whole
+     * snapshot assignment below clears that flag; explicit queues keep both
+     * arrays as queue content. Never mutate a virtual permutation in place. */
     struct ln_queue queue;
     char labels[LN_QUEUE_VIEW_ROWS][259];
     /* Zero is invalid; other values bound the complete label in byte pairs. */
@@ -28,6 +32,7 @@ void ln_music_queue_view_update(const struct ln_queue *queue,uint32_t queue_revi
     if(!queue||!view.opened||view.queue_revision==queue_revision)return;
     bool retained=same_labels(&view.queue,queue);
     view.queue=*queue;view.queue_revision=queue_revision;
+    if(view.queue.source)view.queue.order[0]=0;
     if(view.first>=queue->count)view.first=queue->count?queue->count-1u:0;
     if(!retained){invalidate();return;}
     bool changed=false;
@@ -40,6 +45,7 @@ void ln_music_queue_view_update(const struct ln_queue *queue,uint32_t queue_revi
 void ln_music_queue_view_open(const struct ln_queue *queue,uint32_t queue_revision){
     if(!queue)return;
     view.opened=true;view.queue=*queue;view.queue_revision=queue_revision;
+    if(view.queue.source)view.queue.order[0]=0;
     if(!view.visible_rows)view.visible_rows=6u;
     view.was_ready=ln_music_library_status()==LN_LIBRARY_READY;
     view.first=queue->count?(queue->cursor/6u)*6u:0;invalidate();
@@ -97,6 +103,13 @@ static const char *cached_title(uint32_t ordinal){
        !ln_music_library_cached_member(view.queue.source_group&~LN_QUEUE_REVERSE,ordinal,&ordinal))return 0;
     return ln_music_library_title(ordinal);
 }
+static bool excluded_track_at(uint32_t at,uint32_t *track){
+    if(!view.queue.order[0]){
+        if(!ln_queue_exclusion_ranks(&view.queue,view.queue.tracks))return false;
+        view.queue.order[0]=1u;
+    }
+    return ln_queue_track_at_ranks(&view.queue,at,view.queue.tracks,track);
+}
 bool ln_music_queue_view_prepare(void){
     if(!view.opened||view.queue.source>LN_QUEUE_GROUP||ln_music_library_status()!=LN_LIBRARY_READY)return false;
     union {uint8_t identity[32];struct ln_music_group group;} local;
@@ -107,7 +120,8 @@ bool ln_music_queue_view_prepare(void){
     for(uint32_t i=0;i<view.visible_rows&&view.first+i<view.queue.count&&
         (uint32_t)(ln_time_us()-started)<250u;++i){
         if(view.valid[i])continue;uint32_t track;
-        if(!ln_queue_track_at(&view.queue,view.first+i,&track))continue;
+        if(!(view.queue.source&&view.queue.excluded_count?
+             excluded_track_at(view.first+i,&track):ln_queue_track_at(&view.queue,view.first+i,&track)))continue;
         if(view.queue.source==LN_QUEUE_GROUP){
             if(!local.group.count&&
                !ln_music_library_cached_group(view.queue.source_group&~LN_QUEUE_REVERSE,&local.group,0))continue;
@@ -142,7 +156,8 @@ void ln_music_queue_view_step(bool allow_query){
         uint8_t identity[32];bool matched=ln_music_library_identity(identity);
         for(uint32_t n=0;n<32&&matched;n++)if(identity[n]!=view.queue.library_identity[n])matched=false;
         if(!matched){publish(view.first+i,"Library changed",true);return;}
-        if(!ln_queue_track_at(&view.queue,view.first+i,&ordinal)){publish(view.first+i,"Invalid queue entry",true);return;}
+        if(!(view.queue.source&&view.queue.excluded_count?
+             excluded_track_at(view.first+i,&ordinal):ln_queue_track_at(&view.queue,view.first+i,&ordinal))){publish(view.first+i,"Invalid queue entry",true);return;}
         const char *title=cached_title(ordinal);
         if(title){publish(view.first+i,title,true);return;}
         if(ln_music_library_view_row(view.queue.source,view.queue.source_group,ordinal)){
