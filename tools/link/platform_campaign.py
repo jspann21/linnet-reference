@@ -225,12 +225,24 @@ def cycle(root, image_path, scenario_path, port, progress=None):
                     retries+=1;time.sleep(.05)
             awake=wait(lambda s:s['sleep_count']>base['sleep_count'] and s['wake_count']>base['wake_count'] and not s['flags']&2,5)
             record('sleep-auto-wake',index=index+1,before=base,after=awake,admission_retries=retries,physical_wake_verified=False)
-        control(2); control(7); base=settled()
-        time.sleep(suite['idle_observe_ms']/1000)
-        idle=_state(session,generation)
-        if idle['frames_submitted']!=base['frames_submitted'] or idle['events_processed']!=base['events_processed']:
+        control(2); control(7)
+        for observation in range(4):
+            base=settled()
+            time.sleep(suite['idle_observe_ms']/1000)
+            idle=_state(session,generation)
+            if idle['events_processed']!=base['events_processed']:
+                record('idle-observation-work',before=base,after=idle,observation_ms=suite['idle_observe_ms'])
+                raise RuntimeError('idle observation performed event work')
+            if idle['frames_submitted']==base['frames_submitted']:
+                break
+            # A real charging-status change after auto-wake redraws Home.
+            # Keep that evidence and require a fresh, fully quiet window;
+            # an unchanged status never excuses an unsolicited redraw.
+            if observation<3 and idle['charge_flags']!=base['charge_flags']:
+                record('idle-charging-status-change',before=base,after=idle,observation_ms=suite['idle_observe_ms'])
+                continue
             record('idle-observation-work',before=base,after=idle,observation_ms=suite['idle_observe_ms'])
-            raise RuntimeError('idle observation performed redraw or event work')
+            raise RuntimeError('idle observation performed redraw work')
         # S5L8702 still services USB and clickwheel through bounded foreground
         # pollers between its 1 ms IRQ waits, so roughly 40% measured IRQ-wait
         # time is normal even when the executive has no runnable work.
