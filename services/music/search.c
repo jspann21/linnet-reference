@@ -93,7 +93,7 @@ void ln_music_search_resume(void){
     ln_music_browser_suspend(true);
 }
 bool ln_music_search_prepare(uint32_t visible_rows){
-    if(!opened||closing||!results||!length||!in_group||!group_identity_valid||
+    if(!opened||closing||!results||!length||!in_group||!group_identity_valid||window_ready||
        ln_music_library_status()!=LN_LIBRARY_READY)return false;
     uint8_t identity[32];if(!ln_music_library_identity(identity))return false;
     for(uint32_t i=0;i<32u;++i)if(identity[i]!=group_identity[i])return false;
@@ -163,7 +163,8 @@ void ln_music_search_step(void){
         }
     }
     if(closing){ln_music_browser_suspend(false);closing=false;return;}
-    if(!results||!length||!ln_music_browser_query_idle())return;
+    /* Viewport/result changes and library reload clear this published window. */
+    if(window_ready||!results||!length||!ln_music_browser_query_idle())return;
 #if LINNET_TARGET_NUMBER==25u
     /* Finish a budget-limited resident window in another bounded turn before
      * admitting a query. No cached progress keeps the asynchronous fallback. */
