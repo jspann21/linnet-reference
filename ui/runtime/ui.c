@@ -220,7 +220,27 @@ static uint32_t album_score(uint32_t bucket,uint32_t count){
     uint32_t r=bucket>>8,g=(bucket>>4)&15u,b=bucket&15u;
     uint32_t hi=(uint32_t)max((int32_t)r,max((int32_t)g,(int32_t)b));
     uint32_t lo=(uint32_t)min((int32_t)r,min((int32_t)g,(int32_t)b));
-    uint32_t saturation=divide((hi-lo)*15u,hi);
+    /* Four-bit extrema have only 256 pairs. Precompute the exact integer
+     * quotient, including black, instead of dividing each occupied bucket. */
+    static const uint8_t saturation_by_extrema[256]={
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        15,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        15,7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        15,10,5,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        15,11,7,3,0,0,0,0,0,0,0,0,0,0,0,0,
+        15,12,9,6,3,0,0,0,0,0,0,0,0,0,0,0,
+        15,12,10,7,5,2,0,0,0,0,0,0,0,0,0,0,
+        15,12,10,8,6,4,2,0,0,0,0,0,0,0,0,0,
+        15,13,11,9,7,5,3,1,0,0,0,0,0,0,0,0,
+        15,13,11,10,8,6,5,3,1,0,0,0,0,0,0,0,
+        15,13,12,10,9,7,6,4,3,1,0,0,0,0,0,0,
+        15,13,12,10,9,8,6,5,4,2,1,0,0,0,0,0,
+        15,13,12,11,10,8,7,6,5,3,2,1,0,0,0,0,
+        15,13,12,11,10,9,8,6,5,4,3,2,1,0,0,0,
+        15,13,12,11,10,9,8,7,6,5,4,3,2,1,0,0,
+        15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0,
+    };
+    uint32_t saturation=saturation_by_extrema[(hi<<4)|lo];
     return count*(saturation+8u)/8u;
 }
 static uint16_t album_lerp(uint16_t from,uint16_t to,uint32_t t){
