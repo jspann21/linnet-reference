@@ -1567,14 +1567,18 @@ void ln_ui_render(struct ln_ui_state*s,uint16_t*pixels,ln_ui_damage_fn damage){i
     }
     else if((s->dirty&4u)&&(layout()==LN_UI_LAYOUT_AURORA||layout()==LN_UI_LAYOUT_GRAPHITE||layout()==LN_UI_LAYOUT_SUNSET||s->scene==LN_UI_SCENE_CLOCK))paint(s,pixels,screen,damage);
     else {
-        if((s->dirty&16u)&&!content_damage(s,pixels,damage))paint(s,pixels,screen,damage);
+        bool content_handled=false;
+        if(s->dirty&16u){content_handled=content_damage(s,pixels,damage);if(!content_handled)paint(s,pixels,screen,damage);}
         if(c)for(uint32_t i=0;i<c->count&&i<1024u;++i){const struct ln_ui_node*n=&c->nodes[i];
             bool scrollbar_changed=n->kind!=LN_UI_SCROLLBAR;
             if(!scrollbar_changed&&c->focus_node<c->count){const struct ln_ui_node*f=&c->nodes[c->focus_node];
                 if(f->kind==LN_UI_MENU||f->kind==LN_UI_VIRTUAL_LIST||f->kind==LN_UI_GRID)
                     scrollbar_changed=s->drawn_first!=list_first(s,f,s->selected,true);
             }
-            bool selected=(s->dirty&2u)&&(i==c->focus_node||(n->kind==LN_UI_SCROLLBAR?scrollbar_changed:(n->deps&3u)));bool status=(s->dirty&4u)&&(n->kind==LN_UI_STATUS_BAR||(n->deps&16u));bool animation=(s->dirty&8u)&&(n->deps&4u);if(selected&&!status&&!animation&&i==c->focus_node){if(scroll_selection(s,pixels,n,damage))continue;if(selection_damage(s,pixels,n,damage)){cached_selection=render_dirty==2u;continue;}}if(selected||status||animation)paint(s,pixels,bounds(n),damage);}
+            bool selected=(s->dirty&2u)&&(i==c->focus_node||(n->kind==LN_UI_SCROLLBAR?scrollbar_changed:(n->deps&3u)));bool status=(s->dirty&4u)&&(n->kind==LN_UI_STATUS_BAR||(n->deps&16u));bool animation=(s->dirty&8u)&&(n->deps&4u);
+            /* Content damage already composites the updated list and scrollbar. */
+            if(content_handled&&(i==c->focus_node||n->kind==LN_UI_SCROLLBAR))selected=false;
+            if(selected&&!status&&!animation&&i==c->focus_node){if(scroll_selection(s,pixels,n,damage))continue;if(selection_damage(s,pixels,n,damage)){cached_selection=render_dirty==2u;continue;}}if(selected||status||animation)paint(s,pixels,bounds(n),damage);}
     }
     if(classic_layout()&&s->scene==LN_UI_SCENE_HOME&&!(s->dirty&1u)&&
        (s->selected!=s->drawn_selected||(s->dirty&64u)))paint(s,pixels,classic_pane(c),damage);
