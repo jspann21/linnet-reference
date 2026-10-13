@@ -1,12 +1,7 @@
 .syntax unified
 .cpu arm7tdmi
 .arm
-#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS) && defined(LINNET_PLATFORM_CORE) && defined(LINNET_AUDIO)
-.section .audio_icode.lz4.text,"ax",%progbits
-.p2align 2
-#else
 .section .text.ln_video_lz_decode_block,"ax",%progbits
-#endif
 .global ln_video_lz_decode_block
 .type ln_video_lz_decode_block,%function
 /* r4=input, r5=input end, r6=output, r7=output end, r8=history base.

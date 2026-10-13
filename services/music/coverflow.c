@@ -522,9 +522,6 @@ static const uint8_t *packed_input(uint32_t offset,uint32_t bytes){
     return textures.packed.input;
 }
 static bool decode_early_packed(bool allow_read){
-#if defined(LINNET_OS_CRC_IRAM)
-    if(!ln_crc32_os_iram_ready())return false;
-#endif
     if(!early_index_ready||early_reads>=3u||!visible||!allow_read||ln_player_busy()||
        packed_stage_inhibited||packed_checked||packed_mode||packed_pixels||!identity())return false;
     struct ln_fat32_file root;
@@ -567,9 +564,6 @@ static bool packed_frame_uses(uint32_t id){
     return false;
 }
 static int32_t decode_packed(uint32_t id){
-#if defined(LINNET_OS_CRC_IRAM)
-    if(!ln_crc32_os_iram_ready()){fail();return -1;}
-#endif
     int32_t found=find_art(id);if(found>=0){cache[found].age=++age;return found;}
     if(id>=arts)return -1;
     uint32_t victim=NONE,oldest=NONE,priority=3u;
@@ -775,11 +769,6 @@ void ln_coverflow_step(bool allow_read){
                 packed_extra=0;packed_extra_bytes=0;packed_uses_stage=false;
             }
             packed_checked=!packed_at||packed_bytes-512u>sizeof art_low+sizeof art_high+packed_extra_bytes;
-#if defined(LINNET_OS_CRC_IRAM)
-            /* Decoder code shares the fully verified internal-memory image.
-             * Failed preparation keeps the existing bounded native cache. */
-            if(!ln_crc32_os_iram_ready())packed_checked=true;
-#endif
             if(packed_checked){packed_extra=0;packed_extra_bytes=0;packed_uses_stage=false;}
 #endif
             catalog_extend();phase=READY;++revision;

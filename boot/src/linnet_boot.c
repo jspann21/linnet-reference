@@ -33,7 +33,6 @@ static int zeroes(const uint8_t *p, size_t length)
 #undef LN_CRC_TABLE_ATTR
 #undef LN_CRC_ATTR
 static volatile uint32_t os_crc_iram_ready;
-int ln_crc32_os_iram_ready(void){return os_crc_iram_ready!=0;}
 #if !defined(LINNET_PROFILE_RELEASE)
 static uint32_t os_crc_iram_prepares,os_crc_iram_failures;
 #endif
