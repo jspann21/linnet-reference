@@ -44,11 +44,13 @@ static void ln_sample_failure(uint32_t reason){
 }
 void ln_power_sampler_diagnostics(uint32_t words[16]){
     uint32_t now=ln_time_us();
-    uint32_t values[16]={0x53554d50u,ln_sampler.stage,ln_sampler.age_phase,ln_sampler.age_valid,
-        now,ln_sampler.started_us,ln_power.next_sample_us,ln_power.samples,ln_power.failures,
-        ln_power.bus_resets,ln_sample_diagnostics.reason,ln_sample_diagnostics.stage,
-        ln_sample_diagnostics.age,ln_sample_diagnostics.active_late,ln_sample_diagnostics.idle_late,ln_power.flags};
-    for(uint32_t i=0;i<16u;i++)words[i]=values[i];
+    words[0]=0x53554d50u;words[1]=ln_sampler.stage;words[2]=ln_sampler.age_phase;
+    words[3]=ln_sampler.age_valid;words[4]=now;words[5]=ln_sampler.started_us;
+    words[6]=ln_power.next_sample_us;words[7]=ln_power.samples;words[8]=ln_power.failures;
+    words[9]=ln_power.bus_resets;words[10]=ln_sample_diagnostics.reason;
+    words[11]=ln_sample_diagnostics.stage;words[12]=ln_sample_diagnostics.age;
+    words[13]=ln_sample_diagnostics.active_late;words[14]=ln_sample_diagnostics.idle_late;
+    words[15]=ln_power.flags;
 }
 void ln_power_sampler_trace(uint32_t words[16]){
     struct ln_core_status core;ln_core_snapshot(&core);
@@ -68,12 +70,13 @@ void ln_power_idle_observe(uint32_t requested,uint32_t actual,uint32_t power_del
     if(actual>ln_adc_idle_current.actual)ln_adc_idle_current.actual=actual;
 }
 void ln_power_sampler_idle_trace(uint32_t words[16]){
-    uint32_t values[16]={0x4c444950u,ln_time_us(),ln_adc_current.started,
-        ln_adc_idle_current.requested,ln_adc_idle_current.actual,ln_adc_idle_current.power_delta,
-        ln_adc_failed.started,ln_adc_idle_failed.requested,ln_adc_idle_failed.actual,
-        ln_adc_idle_failed.power_delta,ln_sample_diagnostics.reason,ln_sample_diagnostics.age,
-        ln_sampler.stage,ln_sampler.age_phase,ln_sampler.age_valid,ln_power.failures};
-    for(uint32_t i=0;i<16u;i++)words[i]=values[i];
+    words[0]=0x4c444950u;words[1]=ln_time_us();words[2]=ln_adc_current.started;
+    words[3]=ln_adc_idle_current.requested;words[4]=ln_adc_idle_current.actual;
+    words[5]=ln_adc_idle_current.power_delta;words[6]=ln_adc_failed.started;
+    words[7]=ln_adc_idle_failed.requested;words[8]=ln_adc_idle_failed.actual;
+    words[9]=ln_adc_idle_failed.power_delta;words[10]=ln_sample_diagnostics.reason;
+    words[11]=ln_sample_diagnostics.age;words[12]=ln_sampler.stage;
+    words[13]=ln_sampler.age_phase;words[14]=ln_sampler.age_valid;words[15]=ln_power.failures;
 }
 #endif
 uint8_t ln_power_sources(void)

@@ -195,9 +195,12 @@ uint32_t ln_core_take_wakes(void)
 void ln_core_wake_at(uint32_t deadline_us)
 {
     uint32_t flags=ln_core_irq_save(),now=ln_time_us();
-    /* An earlier armed (or pending) timer retains ownership of its wake. */
-    if((LINNET_MMIO(0x60005000u)&0x80000000u)&&
-       (int32_t)(ln_armed_deadline-deadline_us)<=0){ln_core_irq_restore(flags);return;}
+    /* Preserve a pending interrupt; only a live future timer owns a wake. */
+    if((LINNET_MMIO(0x60004000u)&1u)||
+       ((LINNET_MMIO(0x60005000u)&0x80000000u)&&
+       (LINNET_MMIO(0x60004020u)&1u)&&
+       (int32_t)(ln_armed_deadline-now)>0&&
+       (int32_t)(ln_armed_deadline-deadline_us)<=0)){ln_core_irq_restore(flags);return;}
     int32_t delta=(int32_t)(deadline_us-now);
     if(delta<1)delta=1;
     if(delta>200000)delta=200000;
@@ -213,7 +216,7 @@ void ln_core_idle_until(uint32_t deadline_us)
     uint32_t flags = ln_core_irq_save(), now = ln_time_us();
     int32_t delta = (int32_t)(deadline_us - now);
     if (delta <= 0 || ln_wakes || LINNET_MMIO(0x60004000u) || LINNET_MMIO(0x60004100u)) {
-        ln_core_irq_restore(flags); return;
+        goto awake;
     }
     /* Keep watchdog progress available; this is a maximum sleep, not a poll. */
     if (delta > 200000) delta = 200000;
@@ -221,6 +224,10 @@ void ln_core_idle_until(uint32_t deadline_us)
     uint32_t power_delta=ln_power_next_deadline()-now;
 #endif
     ln_core_wake_at(now+(uint32_t)delta);
+    /* Arming may consume the last part of a short wait. Do not halt with
+     * a due deadline or an interrupt already awaiting dispatch. */
+    if((int32_t)(deadline_us-ln_time_us())<=0||
+       LINNET_MMIO(0x60004000u))goto awake;
     uint32_t control = LINNET_MMIO(0x60007000u);
     LINNET_MMIO(0x60007000u) = 0x80000000u;
     __asm__ volatile("nop\n\tnop\n\tnop" ::: "memory");
@@ -231,6 +238,7 @@ void ln_core_idle_until(uint32_t deadline_us)
     ln_power_idle_observe((uint32_t)delta,elapsed,power_delta);
 #endif
     ++ln_status.idle_count;
+awake:
     ln_core_irq_restore(flags);
 }
 
