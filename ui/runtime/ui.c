@@ -353,7 +353,25 @@ uint32_t ln_ui_palette_tick(struct ln_ui_state*s,uint32_t now){
     return now+25000u;
 }
 typedef uint32_t ln_fill_word __attribute__((may_alias));
-static void fill(struct painter*p,struct rect r,uint16_t c){r=intersect(r,p->clip);if(r.w<=0||r.h<=0)return;for(int32_t y=r.y;y<r.y+r.h;++y){uint16_t *dest=p->pixels+(uint32_t)y*LINNET_UI_WIDTH+(uint32_t)r.x;int32_t left=r.w;uint32_t word=(uint32_t)c|((uint32_t)c<<16);if(left>0&&((uintptr_t)dest&3u)){*dest++=c;--left;}while(left>=2){*(ln_fill_word*)dest=word;dest+=2;left-=2;}if(left>0)*dest=c;}}
+static void fill(struct painter*p,struct rect r,uint16_t c){
+    r=intersect(r,p->clip);if(r.w<=0||r.h<=0)return;
+    for(int32_t y=r.y;y<r.y+r.h;++y){
+        uint16_t *dest=p->pixels+(uint32_t)y*LINNET_UI_WIDTH+(uint32_t)r.x;
+        int32_t left=r.w;uint32_t word=(uint32_t)c|((uint32_t)c<<16);
+        if(left>0&&((uintptr_t)dest&3u)){*dest++=c;--left;}
+        if(left>=2){
+            /* Eight aligned word stores amortize wide-row loop overhead. */
+            while(left>=16){
+                ln_fill_word *out=(ln_fill_word*)dest;
+                out[0]=word;out[1]=word;out[2]=word;out[3]=word;
+                out[4]=word;out[5]=word;out[6]=word;out[7]=word;
+                dest+=16;left-=16;
+            }
+            while(left>=2){*(ln_fill_word*)dest=word;dest+=2;left-=2;}
+        }
+        if(left>0)*dest=c;
+    }
+}
 static void border(struct painter*p,struct rect r,uint16_t c){fill(p,(struct rect){r.x,r.y,r.w,1},c);fill(p,(struct rect){r.x,r.y+r.h-1,r.w,1},c);fill(p,(struct rect){r.x,r.y,1,r.h},c);fill(p,(struct rect){r.x+r.w-1,r.y,1,r.h},c);}
 /* Consume one bounded UTF-8 character. Bad sequences consume only their lead
  * byte, so a following ASCII character is never lost. */
