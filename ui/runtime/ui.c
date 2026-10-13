@@ -189,6 +189,16 @@ static uint16_t mix(uint16_t a,uint16_t b,uint32_t alpha){
     uint32_t g=blend_div255(bg*255u+(ag-bg)*alpha+127u);
     return(uint16_t)(((rb>>13)&0xf800u)|(g<<5)|((rb>>8)&31u));
 }
+/* Text keeps its ink color for the whole run. Inline the exact blend so each
+ * partial-alpha pixel reuses those channels without a generic mix call. */
+static inline __attribute__((always_inline)) uint16_t text_mix(uint32_t ar,uint32_t ag,uint16_t b,uint32_t alpha){
+    uint32_t br=((b&0xf800u)<<5)|(b&31u);
+    uint32_t rb=br*255u+(ar-br)*alpha+0x007f007fu;
+    rb+=0x00010001u+((rb>>8)&0x00ff00ffu);
+    uint32_t bg=(b>>5)&63u;
+    uint32_t g=blend_div255(bg*255u+(ag-bg)*alpha+127u);
+    return(uint16_t)(((rb>>13)&0xf800u)|(g<<5)|((rb>>8)&31u));
+}
 /* Album palette: bounded histogram and artwork-revision cache. Inspired by
  * RockboxPhoto's dominant/accent extraction and 250 ms transition approach.
  * https://github.com/jspann21/rockbox-ipod-photo/blob/main/apps/gui/skin_engine/skin_albumart_color.c
@@ -432,6 +442,8 @@ static bool text_fits(const char*s,int32_t width){
 }
 static void text_scaled(struct painter*p,int32_t x,int32_t y,const char*s,uint16_t c,uint32_t scale){
     if(!s||!ln_ui_font.alpha||!ln_ui_font.advance||!ln_ui_font.width||!ln_ui_font.height)return;
+    uint32_t ink_rb=((c&0xf800u)<<5)|(c&31u),ink_g=(c>>5)&63u;
+    bool monochrome=(ln_ui_themes[active_theme].flags&LN_UI_THEME_MONOCHROME)!=0;
     int32_t start=x;uint32_t limit=0;
     while(limit<1024u&&*s){uint32_t bytes,ch=text_character(s,1024u-limit,&bytes);s+=bytes;limit+=bytes;if(ch=='\n'){x=start;y+=((int32_t)ln_ui_font.height+2)*(int32_t)scale;continue;}
         if(ch<ln_ui_font.first||ch-ln_ui_font.first>=ln_ui_font.count)ch='?';
@@ -441,11 +453,14 @@ static void text_scaled(struct painter*p,int32_t x,int32_t y,const char*s,uint16
             if(ln_ui_font.glyphs){const struct ln_ui_glyph*g=&ln_ui_font.glyphs[glyph];gx+=(int32_t)(g->x*scale);gy+=(int32_t)(g->y*scale);w=g->w;h=g->h;offset=g->offset;}
             const uint8_t*a=ln_ui_font.alpha+offset;
             struct rect r=intersect((struct rect){gx,gy,(int32_t)(w*scale),(int32_t)(h*scale)},p->clip);
-            bool monochrome=(ln_ui_themes[active_theme].flags&LN_UI_THEME_MONOCHROME)!=0;
-            if(scale==1u)for(int32_t yy=r.y;yy<r.y+r.h;++yy){
+            if(scale==1u&&monochrome)for(int32_t yy=r.y;yy<r.y+r.h;++yy){
                 uint16_t *dest=p->pixels+(uint32_t)yy*LINNET_UI_WIDTH+(uint32_t)r.x;
                 const uint8_t *source=a+(uint32_t)(yy-gy)*w+(uint32_t)(r.x-gx);
-                for(int32_t left=r.w;left>0;--left){uint32_t alpha=*source++;if(monochrome)alpha=alpha>=128u?255u:0u;if(alpha)*dest=alpha==255u?c:mix(c,*dest,alpha);++dest;}
+                for(int32_t left=r.w;left>0;--left){if(*source++>=128u)*dest=c;++dest;}
+            }else if(scale==1u)for(int32_t yy=r.y;yy<r.y+r.h;++yy){
+                uint16_t *dest=p->pixels+(uint32_t)yy*LINNET_UI_WIDTH+(uint32_t)r.x;
+                const uint8_t *source=a+(uint32_t)(yy-gy)*w+(uint32_t)(r.x-gx);
+                for(int32_t left=r.w;left>0;--left){uint32_t alpha=*source++;if(alpha)*dest=alpha==255u?c:text_mix(ink_rb,ink_g,*dest,alpha);++dest;}
             }else {uint32_t shift=scale-1u;
                 for(int32_t yy=r.y;yy<r.y+r.h;++yy){
                     uint16_t *dest=p->pixels+(uint32_t)yy*LINNET_UI_WIDTH+(uint32_t)r.x;
