@@ -16,6 +16,11 @@ static uint16_t ln_platform_capture[LINNET_UI_WIDTH * LINNET_UI_HEIGHT]
 static uint32_t ln_platform_capture_id, ln_platform_capture_generation;
 
 /* IEEE CRC32, reflected polynomial; one lookup per serialized byte. */
+#if defined(LINNET_OS_CRC_IRAM)
+/* Share the immutable load copy; snapshot ordering remains byte-for-byte. */
+extern const uint32_t __os_crc_byte_load[];
+#define ln_platform_crc_table __os_crc_byte_load
+#else
 static const uint32_t ln_platform_crc_table[256] = {
     0x00000000u, 0x77073096u, 0xee0e612cu, 0x990951bau, 0x076dc419u, 0x706af48fu, 0xe963a535u, 0x9e6495a3u,
     0x0edb8832u, 0x79dcb8a4u, 0xe0d5e91eu, 0x97d2d988u, 0x09b64c2bu, 0x7eb17cbdu, 0xe7b82d07u, 0x90bf1d91u,
@@ -50,6 +55,7 @@ static const uint32_t ln_platform_crc_table[256] = {
     0xbdbdf21cu, 0xcabac28au, 0x53b39330u, 0x24b4a3a6u, 0xbad03605u, 0xcdd70693u, 0x54de5729u, 0x23d967bfu,
     0xb3667a2eu, 0xc4614ab8u, 0x5d681b02u, 0x2a6f2b94u, 0xb40bbe37u, 0xc30c8ea1u, 0x5a05df1bu, 0x2d02ef8du,
 };
+#endif
 
 int ln_platform_link_dispatch(const ln_link_frame *request, ln_link_frame *response,uint8_t *ln_platform_reply) {
     if (request->command < 64 || request->command > 71) return 0;

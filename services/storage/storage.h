@@ -53,6 +53,10 @@ void ln_storage_video_browse(bool active, bool activity);
 void ln_storage_media_realtime(bool active);
 /* Keep rotating media awake and start a bounded wake before a music join. */
 void ln_storage_music_boundary(bool active);
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+/* Pure startup readiness: 1 ready/nonrotating, 0 power wait, -1 unavailable. */
+int ln_storage_music_disk_ready(void);
+#endif
 uint32_t ln_storage_disk_sector_bytes(void);
 bool ln_storage_startup_complete(void);
 bool ln_storage_prepared(void);

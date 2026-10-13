@@ -63,6 +63,11 @@ static bool audio_ready,join_pending,join_gapless,event_pending,finish_sent,step
 static uint64_t seek_target;
 static bool next_expected,eof_waiting;
 static uint32_t eof_deadline;
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+bool ln_player_startup_disk(void){
+    return state.phase==LN_PLAYER_PRIME&&!seek_paused&&slots[feed].phase!=SLOT_EOF;
+}
+#endif
 uint32_t ln_player_background_frames(uint32_t rate){
     uint32_t frames=rate/4u*3u;
     if(frames<8192u)frames=8192u;
@@ -496,7 +501,13 @@ bool ln_player_pause(bool pause){
     }
     if(pause&&state.phase==LN_PLAYER_PLAY){pause_requested=true;eof_waiting=false;return true;}
     if(!pause&&state.phase==LN_PLAYER_PLAY&&pause_requested){pause_requested=false;return true;}
-    if(!pause&&state.phase==LN_PLAYER_PAUSE){if(!ln_audio_start())return false;eof_waiting=false;state.phase=LN_PLAYER_PLAY;return true;}return false;
+    if(!pause&&state.phase==LN_PLAYER_PAUSE){
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+        /* Preserve muted PCM and position while a rotating disk wakes. */
+        if(ln_storage_music_disk_ready()!=1){seek_paused=false;state.phase=LN_PLAYER_PRIME;return true;}
+#endif
+        if(!ln_audio_start())return false;eof_waiting=false;state.phase=LN_PLAYER_PLAY;return true;
+    }return false;
 }
 bool ln_player_toggle_pause(void){
     if(stop_requested||skip_requested)return false;
@@ -648,6 +659,12 @@ static void player_advance(void){
             /* A paused seek fills a fresh ring while muted. Resume starts DMA;
              * priming must not briefly expose audio before returning to pause. */
             if(seek_paused){seek_paused=false;state.phase=LN_PLAYER_PAUSE;return;}
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+            if(ln_player_startup_disk()){
+                int ready=ln_storage_music_disk_ready();
+                if(ready<0){fail(23);return;}if(!ready)return;
+            }
+#endif
             if(!ln_audio_start()){fail(15);return;}state.phase=LN_PLAYER_PLAY;
         }
     }
@@ -701,6 +718,11 @@ uint32_t ln_player_deadline(uint32_t now){
      * disk wait. A next-track read still permits the current decoder to use
      * its cached input, so do not defer that independent work. */
     if(io_owner&&(io_owner==&slots[feed]||interrupted()))return now+200000u;
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+    /* Full muted PCM cannot advance until storage's power transition completes. */
+    if(!interrupted()&&!pause_requested&&ln_player_startup_disk()&&ln_audio_capacity()<PLAYER_DECODE_FRAMES&&
+       ln_storage_music_disk_ready()==0)return now+200000u;
+#endif
     if(state.phase==LN_PLAYER_OPEN||state.phase==LN_PLAYER_HEADER||state.phase==LN_PLAYER_PRIME||io_owner)return now;
     /* Decode and drain are separate bounded steps. Sleeping between them
      * caps MP3 production below44.1kHz even before accounting for compute. */

@@ -58,6 +58,10 @@ uint32_t ln_player_background_frames(uint32_t rate);
  * to finish preparing the next track before the irreversible finish marker. */
 void ln_player_expect_next(bool expected);
 bool ln_player_prefetch_urgent(void);
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+/* Muted preparation shares the controller's bounded disk wake reservation. */
+bool ln_player_startup_disk(void);
+#endif
 #if !defined(LINNET_PROFILE_RELEASE)
 struct ln_player_timing {uint32_t decode_calls,decode_us,decode_max_us,dsp_calls,dsp_frames,dsp_us,dsp_max_us,runtime_calls,runtime_us,runtime_max_us,music_us,storage_us,link_us;};
 void ln_player_timing_snapshot(struct ln_player_timing *out);
