@@ -2,6 +2,7 @@
 #include "services/storage/storage.h"
 #include "boot/include/linnet_bytes.h"
 #include "boot/include/linnet_boot.h"
+#include <stddef.h>
 extern void ln_memory_copy(void *,const void *,uint32_t);
 /* Independent dual banks. Body first, header last; CRC covers the complete
  * snapshot. The previous bank remains intact until readback verifies its peer. */
@@ -11,12 +12,23 @@ extern void ln_memory_copy(void *,const void *,uint32_t);
 #define RECENT (LISTS+LN_COLLECTION_SLOTS*ENTRY)
 #define RECENT_MAX 256u
 /* Full-bank CRCs can use word loads only when both snapshots are aligned. */
-static uint8_t saved[LN_COLLECTION_BYTES] __attribute__((aligned(4)));
+/* Byte I/O accesses the object representation of this aligned native view. */
+struct saved_bank {
+    uint8_t prefix[LISTS];
+    struct ln_collection lists[LN_COLLECTION_SLOTS];
+    uint8_t suffix[LN_COLLECTION_BYTES-RECENT];
+};
+_Static_assert(__BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__,"Collections view requires little endian");
+_Static_assert(offsetof(struct ln_collection,count)==32u&&offsetof(struct ln_collection,ids)==40u&&
+               sizeof(struct ln_collection)==ENTRY,"Collections entry layout");
+_Static_assert(offsetof(struct saved_bank,lists)==LISTS&&offsetof(struct saved_bank,suffix)==RECENT&&
+               sizeof(struct saved_bank)==LN_COLLECTION_BYTES,"Collections bank layout");
+static struct saved_bank saved_bank;
+#define saved ((uint8_t *)&saved_bank)
 static uint8_t io[LN_COLLECTION_BYTES] __attribute__((aligned(4)));
 static uint32_t bank,generation,revision,durable,snapshot,snapshot_crc,phase,offset,ticket,loading;
 static uint32_t running_crc;
 static bool ready,pending,failed,available,stepping;
-static struct ln_collection entry;
 static uint32_t crc_chunk(uint8_t *p,uint32_t bytes,bool header){
     uint32_t old=header?ln_read_le32(p+12):0;if(header)ln_write_le32(p+12,0);
     uint32_t value=ln_crc32_update(running_crc,p,bytes);if(header)ln_write_le32(p+12,old);return value;
@@ -37,16 +49,16 @@ const char *ln_collection_name(uint32_t slot){
     return ready&&slot<LN_COLLECTION_SLOTS?(const char *)(saved+LISTS+slot*ENTRY):0;
 }
 const struct ln_collection *ln_collection_get(uint32_t slot){
-    if(!ready||slot>=LN_COLLECTION_SLOTS)return 0;const uint8_t *p=saved+LISTS+slot*ENTRY;
-    for(uint32_t i=0;i<32;i++)entry.name[i]=(char)p[i];entry.count=ln_read_le32(p+32);
-    for(uint32_t i=0;i<entry.count;i++)entry.ids[i]=ln_read_le64(p+40+8*i);return &entry;
+    return ready&&slot<LN_COLLECTION_SLOTS?&saved_bank.lists[slot]:0;
 }
 int ln_collection_free(void){if(!ready)return -1;for(uint32_t i=0;i<LN_COLLECTION_SLOTS;i++)if(!saved[LISTS+i*ENTRY])return (int)i;return -1;}
 bool ln_collection_put(uint32_t slot,const struct ln_collection *value){
     if(!ready||!available||failed||slot>=LN_COLLECTION_SLOTS||!value||value->name[31]||value->count>LINNET_QUEUE_CAPACITY||(!value->name[0]&&value->count))return false;
-    uint8_t *p=saved+LISTS+slot*ENTRY;for(uint32_t i=0;i<ENTRY;i++)p[i]=0;
-    for(uint32_t i=0;i<32;i++)p[i]=(uint8_t)value->name[i];ln_write_le32(p+32,value->count);
-    for(uint32_t i=0;i<value->count;i++)ln_write_le64(p+40+8*i,value->ids[i]);++revision;return true;
+    uint32_t count=value->count;uint8_t *p=saved+LISTS+slot*ENTRY;
+    /* Copy before clearing the unused tail so put(get(slot)) remains valid. */
+    for(uint32_t i=0;i<32;i++)p[i]=(uint8_t)value->name[i];ln_write_le32(p+32,count);ln_write_le32(p+36,0);
+    for(uint32_t i=0;i<count;i++)ln_write_le64(p+40+8*i,value->ids[i]);
+    __builtin_memset(p+40u+8u*count,0,ENTRY-40u-8u*count);++revision;return true;
 }
 bool ln_collections_resume_set(const uint8_t *p,uint32_t n){
     if(!ready||!available||failed||n>LN_COLLECTION_RESUME)return false;
