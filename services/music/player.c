@@ -34,7 +34,7 @@ struct player_slot {
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
     struct player_cache_window cache[2];
     uint32_t cache_current;
-    bool cache_enabled,cache_initial,cache_pending,cache_pause_canceling,cache_codec_checked;
+    bool cache_enabled,cache_initial,cache_pending,cache_pause_canceling,cache_codec_checked,cache_demand_pending;
 #endif
 };
 static struct player_slot slots[2];
@@ -184,6 +184,9 @@ static bool cache_begin(struct player_slot *s,uint32_t window,uint32_t at,bool i
     w->filling=true;return true;
 }
 static int cache_progress(struct player_slot *s){
+    /* A demanded decoder read keeps its exact buffer until its callback takes
+     * completion. Do not poll that owner through a speculative cache tuple. */
+    if(s->cache_demand_pending)return 0;
     for(uint32_t i=0;i<2u;++i){
         struct player_cache_window *w=&s->cache[i];
         if(!w->filling)continue;
@@ -196,6 +199,11 @@ static int cache_progress(struct player_slot *s){
         return 1;
     }
     return 1;
+}
+static int cache_demand_read(struct player_slot *s,uint32_t at,uint8_t *buffer,uint32_t length){
+    int result=read_disk(s,at,buffer,length);
+    s->cache_demand_pending=result==0;
+    return result;
 }
 static int cache_copy(struct player_slot *s,uint32_t window,uint32_t at,uint8_t *buffer,uint32_t length){
     struct player_cache_window *w=&s->cache[window];
@@ -236,12 +244,25 @@ static int read_media(void *context,uint64_t offset,uint8_t *buffer,uint32_t len
     if(s->cache_enabled&&length<=LN_STORAGE_MEDIA_MAX_READ){
         uint32_t at=(uint32_t)offset;
         if(length>UINT32_MAX-at)return read_disk(s,at,buffer,length);
+        if(s->cache_demand_pending)return cache_demand_read(s,at,buffer,length);
         int hit=cache_cached(s,at,buffer,length);
         if(hit)return hit;
-        if(cache_progress(s)<0)return -1;
+        /* Muted preparation and a healthy PCM runway keep the sequential fill.
+         * Prioritize a missing region only before the active feed runs low. */
+        bool demand_priority=audio_ready&&state.phase==LN_PLAYER_PLAY&&s==&slots[feed]&&
+            ln_audio_capacity()>LINNET_AUDIO_RING_FRAMES-ln_player_background_frames(s->rate)/2u;
+        /* Poll only an already admitted chunk; a required miss must get the
+         * next admission before another speculative chunk can start. */
+        if((io_owner==s||!demand_priority)&&cache_progress(s)<0)return -1;
         hit=cache_cached(s,at,buffer,length);
         if(hit)return hit;
-        if(s->cache[0].filling||s->cache[1].filling)return 0;
+        if(s->cache[0].filling||s->cache[1].filling){
+            /* Finish an admitted cache chunk before servicing another region.
+             * Retain its validated prefix and resume the same large fill once
+             * the demanded read has retired, rather than waiting for its tail. */
+            if(io_owner||!demand_priority)return 0;
+            return cache_demand_read(s,at,buffer,length);
+        }
         if(at>s->media.size||length>s->media.size-at)return -1;
         uint32_t window=s->cache_current^1u;
         uint32_t begin=at;
@@ -262,7 +283,7 @@ static int read_media(void *context,uint64_t offset,uint8_t *buffer,uint32_t len
 static void clear_slot(struct player_slot *s){
     ln_decoder_close(&s->decoder);s->phase=SLOT_EMPTY;s->buffered=0;
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
-    s->cache_enabled=s->cache_pending=s->cache_pause_canceling=false;
+    s->cache_enabled=s->cache_pending=s->cache_pause_canceling=s->cache_demand_pending=false;
     s->cache[0].filling=s->cache[1].filling=false;
 #endif
 }
@@ -286,7 +307,7 @@ static bool cache_supported(const struct player_slot *s){
 }
 static void activate_cache(struct player_slot *s){
     if(io_owner==s){s->cache_pending=true;return;}
-    s->cache_enabled=cache_supported(s);s->cache_pending=false;
+    s->cache_enabled=cache_supported(s);s->cache_pending=s->cache_demand_pending=false;
     s->cache_initial=true;s->cache_current=1u;
     for(uint32_t i=0;i<2u;++i)s->cache[i]=(struct player_cache_window){0};
 }
@@ -302,7 +323,7 @@ static bool start_slot(struct player_slot *s,const char *name,uint64_t expected,
     s->expected=expected;s->initial=position;s->position_base=0;s->submitted=0;s->token=token;
     s->generation=generation();s->buffered=0;s->rate=0;s->seek_initial=position!=0;
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
-    s->cache_enabled=s->cache_pending=s->cache_pause_canceling=s->cache_codec_checked=false;
+    s->cache_enabled=s->cache_pending=s->cache_pause_canceling=s->cache_codec_checked=s->cache_demand_pending=false;
     s->cache_initial=true;s->cache_current=1u;
     for(uint32_t i=0;i<2u;++i)s->cache[i]=(struct player_cache_window){0};
 #endif
@@ -531,6 +552,9 @@ bool ln_player_seek(uint64_t frame){
 }
 static bool drain_canceled(void){
     if(!io_owner)return true;int r=ln_storage_media_poll(io_owner->generation,0,0);if(!r)return false;
+#if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
+    io_owner->cache_demand_pending=false;
+#endif
     ln_decoder_read_drained(&io_owner->decoder);io_owner=0;return true;
 }
 static void player_advance(void){
@@ -567,7 +591,7 @@ static void player_advance(void){
         clear_slot(&slots[audible^1u]);have_next=cancel_next=join_pending=event_pending=false;state.next_phase=LN_PLAYER_NEXT_NONE;
         struct player_slot *s=&slots[audible];feed=audible;ln_decoder_read_drained(&s->decoder);
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
-        s->cache_initial=true;s->cache_current=1u;
+        s->cache_demand_pending=false;s->cache_initial=true;s->cache_current=1u;
         for(uint32_t i=0;i<2u;++i)s->cache[i]=(struct player_cache_window){0};
 #endif
         if(!ln_decoder_seek(&s->decoder,seek_target)||!initialize_audio(s->rate)){fail(21);return;}

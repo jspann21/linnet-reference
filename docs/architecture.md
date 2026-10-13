@@ -69,6 +69,14 @@ Audible startup and resume wait for fresh disk readiness, including any power
 transition; paused preparation and decoded EOF retain their memory-only path.
 The reservation ends after preparation, restoring the normal storage idle policy. A
 full muted PCM ring yields to storage deadlines while wake completes.
+Rotating-media compressed caches keep their sequential fills during preparation
+and while the PCM buffer has sufficient audio. If the active playback feed falls
+below half its background reserve, a required decoder region can use the next
+free read admission before the remaining speculative fill. An admitted chunk
+still completes or drains with its original buffer; validated cache prefixes
+remain available and filling resumes after the demanded read retires. This
+priority does not change cache capacity, next-track thresholds, or drive idle
+policy.
 
 | Service | Runtime approach |
 | --- | --- |
