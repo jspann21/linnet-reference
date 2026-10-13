@@ -60,6 +60,10 @@ The executive schedules bounded work around audio, input, and watchdog deadlines
 Storage retains buffer ownership until completion or drained cancellation.
 Filesystem validation and write barriers remain active during media work.
 
+Before idle, PP502x rechecks the wake deadline and pending interrupts. It reuses
+an earlier timer only while that timer and its CPU interrupt are enabled and
+the deadline is still in the future.
+
 M25 overlaps a bounded wake of known storage with muted file and header preparation.
 Audible startup and resume wait for fresh disk readiness, including any power
 transition; paused preparation and decoded EOF retain their memory-only path.
