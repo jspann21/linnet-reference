@@ -507,6 +507,20 @@ static uint8_t *packed_location(uint32_t offset,uint32_t *available){
     *available=packed_extra_bytes-offset;return packed_extra+offset;
 }
 #if LINNET_TARGET_NUMBER==25u
+static const uint8_t *packed_input(uint32_t offset,uint32_t bytes){
+    if(packed_bytes<512u||!bytes||bytes>PACKED_INPUT_MAX||offset>packed_bytes-512u||bytes>packed_bytes-512u-offset)return 0;
+    uint32_t available;const uint8_t *source=packed_location(offset,&available);
+    /* The decoder reads byte-aligned tokens and its literal copier accepts
+     * unaligned sources. A complete block in one bank needs no staging copy. */
+    if(source&&bytes<=available)return source;
+    uint32_t copied=0;
+    while(copied<bytes){
+        source=packed_location(offset+copied,&available);
+        uint32_t n=bytes-copied;if(n>available)n=available;if(!source||!n)return 0;
+        __builtin_memcpy(textures.packed.input+copied,source,n);copied+=n;
+    }
+    return textures.packed.input;
+}
 static bool decode_early_packed(bool allow_read){
     if(!early_index_ready||early_reads>=3u||!visible||!allow_read||ln_player_busy()||
        packed_stage_inhibited||packed_checked||packed_mode||packed_pixels||!identity())return false;
@@ -520,16 +534,10 @@ static bool decode_early_packed(bool allow_read){
         const uint8_t *entry=art_low+id*8u;
         uint32_t offset=ln_read_le32(entry),bytes=ln_read_le32(entry+4);
         if(offset<arts*8u||!bytes||bytes>PACKED_INPUT_MAX||offset>packed_offset||bytes>packed_offset-offset)continue;
-        uint32_t copied=0;
-        while(copied<bytes){
-            uint32_t available;const uint8_t *source=packed_location(offset+copied,&available);
-            uint32_t n=bytes-copied;if(n>available)n=available;
-            if(!source||!n){fail();return false;}
-            __builtin_memcpy(textures.packed.input+copied,source,n);copied+=n;
-        }
+        const uint8_t *input=packed_input(offset,bytes);if(!input){fail();return false;}
         uint32_t slot=early_reads;uint8_t *tile=(uint8_t*)textures.pixels+EARLY_RAW_AT+slot*TILE_RECORD;
         uint32_t began=ln_time_us();
-        int result=ln_video_lz_decode_block(textures.packed.input,bytes,tile,TILE_RECORD);
+        int result=ln_video_lz_decode_block(input,bytes,tile,TILE_RECORD);
         uint32_t elapsed=ln_time_us()-began;if(elapsed>packed_decode_max_us)packed_decode_max_us=elapsed;
         uint32_t end=512u+TEXTURE_WIDTH*TEXTURE_HEIGHT;
         if(result!=1||ln_crc32(tile,end)!=ln_read_le32(tile+end)){fail();return false;}
@@ -570,14 +578,20 @@ static int32_t decode_packed(uint32_t id){
     if(victim==NONE)return -1;
     cache[victim].id=0;
     const uint8_t *entry=art_low+id*8u;
-    uint32_t offset=ln_read_le32(entry),bytes=ln_read_le32(entry+4),copied=0;
+    uint32_t offset=ln_read_le32(entry),bytes=ln_read_le32(entry+4);
+#if LINNET_TARGET_NUMBER==25u
+    const uint8_t *input=packed_input(offset,bytes);if(!input)return -1;
+#else
+    uint32_t copied=0;
     while(copied<bytes){
         uint32_t available;const uint8_t *source=packed_location(offset+copied,&available);
         uint32_t n=bytes-copied;if(n>available)n=available;if(!source||!n)return -1;
         __builtin_memcpy(textures.packed.input+copied,source,n);copied+=n;
     }
+    const uint8_t *input=textures.packed.input;
+#endif
     uint32_t began=ln_time_us();uint8_t *tile=textures.packed.tiles[victim];
-    int result=ln_video_lz_decode_block(textures.packed.input,bytes,tile,TILE_RECORD);
+    int result=ln_video_lz_decode_block(input,bytes,tile,TILE_RECORD);
     uint32_t elapsed=ln_time_us()-began;if(elapsed>packed_decode_max_us)packed_decode_max_us=elapsed;
     uint32_t end=512u+TEXTURE_WIDTH*TEXTURE_HEIGHT;
     if(result!=1||ln_crc32(tile,end)!=ln_read_le32(tile+end)){fail();return -1;}
