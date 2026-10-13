@@ -492,12 +492,16 @@ bool ln_music_library_cached_group(uint32_t index,struct ln_music_group *out,con
     }
     *out=g;return true;
 }
+bool ln_music_library_cached_member_at(uint32_t member,uint32_t *out){
+    if(!out||!ready()||member>=library.db.members)return false;
+    const uint8_t *p=resident_metadata(library.db.member_offset+member*4u,4u);
+    if(!p)return false;uint32_t index=ln_read_le32(p);if(index>=library.db.tracks)return false;
+    *out=index;return true;
+}
 bool ln_music_library_cached_member(uint32_t group,uint32_t ordinal,uint32_t *out){
     struct ln_music_group g;
     if(!out||!ln_music_library_cached_group(group,&g,0)||ordinal>=g.count)return false;
-    const uint8_t *p=resident_metadata(library.db.member_offset+(g.first+ordinal)*4u,4u);
-    if(!p)return false;uint32_t index=ln_read_le32(p);if(index>=library.db.tracks)return false;
-    *out=index;return true;
+    return ln_music_library_cached_member_at(g.first+ordinal,out);
 }
 uint8_t *ln_music_library_catalog_memory(uint32_t *bytes){
     if(!bytes||!ready())return 0;

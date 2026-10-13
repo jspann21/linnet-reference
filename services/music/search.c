@@ -113,7 +113,12 @@ bool ln_music_search_prepare(uint32_t visible_rows){
     for(uint32_t i=0;i<visible_rows&&first+i<group_count&&
         (uint32_t)(ln_time_us()-started)<250u;++i){
         uint32_t ordinal=first+i,track;
-        if(row_ready(ordinal)||!ln_music_library_cached_member(group_index,ordinal,&track))continue;
+        if(row_ready(ordinal))continue;
+#if LINNET_TARGET_NUMBER==25u
+        if(!ln_music_library_cached_member_at(group.first+ordinal,&track))continue;
+#else
+        if(!ln_music_library_cached_member(group_index,ordinal,&track))continue;
+#endif
         const char *title=ln_music_library_title(track);if(!title)continue;
         struct cached_row *cached=row_slot(ordinal);
         cached->value=(struct ln_music_library_search_row){.index=track};

@@ -51,6 +51,9 @@ const char *ln_music_library_title(uint32_t track_index);
  * Returned name pointers remain valid until library reload/cancel. */
 bool ln_music_library_cached_group(uint32_t group,struct ln_music_group *out,const char **name);
 bool ln_music_library_cached_member(uint32_t group,uint32_t ordinal,uint32_t *track);
+/* Absolute member-table entry; callers with a freshly validated group may
+ * reuse its bounded first/count within the same synchronous operation. */
+bool ln_music_library_cached_member_at(uint32_t member,uint32_t *track);
 /* Cover Flow alone may use the aligned, unoccupied tail after verification
  * and browse-index loading. Reacquire after reload; never access it while the
  * library is not READY or its identity differs from the catalog identity. */
