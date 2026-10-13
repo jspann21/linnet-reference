@@ -114,7 +114,14 @@ static bool pinned_slot(uint32_t slot){
 }
 bool ln_paged_history_record_ready(uint64_t id){return location(id)>=0;}
 int ln_paged_history_record_error(uint64_t id){return h.full&&h.full_id==id?LN_HISTORY_CAPACITY:0;}
-const struct ln_music_journal_record *ln_paged_history_get(uint64_t id){int slot=location(id);return slot<0?0:ln_history_page_get(&h.cache[slot],id);}
+const struct ln_music_journal_record *ln_paged_history_get(uint64_t id){
+    if(!h.loaded)return 0;
+    for(uint32_t i=0;i<4u;++i){
+        const struct ln_music_journal_record *record=ln_history_page_get(&h.cache[i],id);
+        if(record)return record;
+    }
+    return 0;
+}
 bool ln_paged_history_prefetch(uint64_t id){
     if(h.error||!h.loaded)return false;int slot=location(id);if(slot>=0){h.age[slot]=++h.clock;return true;}
     if(h.full&&h.full_id==id)return false;

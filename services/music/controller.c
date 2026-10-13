@@ -428,7 +428,7 @@ uint32_t ln_music_queue_action(uint32_t row){
 }
 uint32_t ln_music_playback_modes(void){return (queue.shuffled?1u:0u)|(queue.repeat<<1);}
 const char *ln_music_option_label(uint32_t index){
-    const struct ln_music_journal_record *record=have_current?ln_music_history_get(current.track.id):0;
+    const struct ln_music_journal_record *record=have_current&&index>=2u&&index<=4u?ln_music_history_get(current.track.id):0;
     if(index==2||index==3){
         if(ln_music_history_error())return "History unavailable";
         if(!ln_music_history_ready())return "History loading";
