@@ -906,9 +906,17 @@ void ln_coverflow_step(bool allow_read){
             if(packed_offset==packed_bytes-512u){
                 if((~packed_crc)!=ln_read_le32(packed_header+24)){fail();return;}
 #if LINNET_TARGET_NUMBER==25u
-                packed_index_crc=UINT32_MAX;
+                /* Later DMA starts beyond the completed prefix and cannot
+                 * replace its sealed index. Reuse that admitted proof, while
+                 * retaining the final payload and index comparisons. */
+                if(!early_index_ready){
+                    packed_index_crc=UINT32_MAX;
+                    packed_index=0;packed_previous=arts*8u;
+                }
+#else
+                packed_index=0;packed_previous=arts*8u;
 #endif
-                packed_index=0;packed_previous=arts*8u;phase=PACKED_CHECK;
+                phase=PACKED_CHECK;
             }
 #if LINNET_TARGET_NUMBER==25u
             else if(!packed_first_done){
