@@ -681,12 +681,13 @@ static void expand_art(const uint8_t *packed,uint16_t *pixels){
     }
 }
 #if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
-static void raw_rgb_prepare(uint32_t id){
+static bool raw_rgb_prepare(uint32_t id){
     struct ln_fat32_file root;
     if(!raw_rgb||id>=arts||!art_ready(id)||!identity()||
-       !ln_storage_media_root(&root)||root.epoch!=file.epoch)return;
+       !ln_storage_media_root(&root)||root.epoch!=file.epoch)return false;
     expand_art(art_record(id),(uint16_t*)(raw_rgb+id*EXTRA_RGB_STRIDE));
     art_tags[ART_CAPACITY+id]=id+1u;
+    return true;
 }
 #endif
 static int32_t decode_art(uint32_t id){
@@ -1041,7 +1042,7 @@ void ln_coverflow_step(bool allow_read){
 #endif
                 if((visible||packed_mode)&&d<decode_limit&&!ready){
 #if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
-                    if(raw_rgb)raw_rgb_prepare(art);else
+                    if(raw_rgb){if(!raw_rgb_prepare(art))continue;}else
 #endif
                     (void)decode_art(art);
 #if !LINNET_COVERFLOW_SCANLINE
