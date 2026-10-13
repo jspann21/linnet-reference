@@ -49,6 +49,7 @@ uint32_t ln_crc32_progress(const uint8_t *bytes, size_t length,
 /* Early C entry and post-quiesce handoff only. Ordinary CRC calls dispatch
  * without rewriting code; a failed copy leaves the full SDRAM fallback active. */
 int ln_crc32_os_iram_init(void);
+int ln_crc32_os_iram_ready(void);
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_crc32_os_iram_diagnostics(uint32_t words[8]);
 #endif

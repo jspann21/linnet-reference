@@ -1,4 +1,10 @@
 #include "boot/include/linnet_bytes.h"
+#include "boot/include/linnet_boot.h"
+#if defined(LINNET_OS_CRC_IRAM)
+#define LN_LZ_COPY_ATTR __attribute__((section(".audio_icode.lz4.copy"),noinline))
+#else
+#define LN_LZ_COPY_ATTR __attribute__((noinline))
+#endif
 static void copy(void *out,const void *in,uint32_t bytes){
 #if defined(__arm__)
     extern void ln_memory_copy(void *,const void *,uint32_t);ln_memory_copy(out,in,bytes);
@@ -6,7 +12,7 @@ static void copy(void *out,const void *in,uint32_t bytes){
     __builtin_memcpy(out,in,bytes);
 #endif
 }
-__attribute__((noinline)) void ln_video_lz_copy_long(uint8_t*write,uint32_t offset,uint32_t remaining){
+LN_LZ_COPY_ATTR void ln_video_lz_copy_long(uint8_t*write,uint32_t offset,uint32_t remaining){
         /* ARM7 cannot load unaligned words. Align only the destination,
          * then use aligned loads or explicit byte assembly for the source.
          * Each four-byte load completes before its store: offsets >=4 may
