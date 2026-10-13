@@ -181,7 +181,14 @@ static uint32_t divide(uint32_t numerator,uint32_t denominator){
 /* Every mix caller supplies alpha 0..255. RGB565's largest rounded channel
  * numerator is 63*255+127=16192; this shift/add quotient is exact on that range. */
 static uint32_t blend_div255(uint32_t value){return (value+1u+(value>>8))>>8;}
-static uint16_t mix(uint16_t a,uint16_t b,uint32_t alpha){uint32_t z=255u-alpha;return(uint16_t)((blend_div255((a>>11)*alpha+(b>>11)*z+127u)<<11)|(blend_div255(((a>>5)&63u)*alpha+((b>>5)&63u)*z+127u)<<5)|blend_div255((a&31u)*alpha+(b&31u)*z+127u));}
+static uint16_t mix(uint16_t a,uint16_t b,uint32_t alpha){
+    uint32_t ar=((a&0xf800u)<<5)|(a&31u),br=((b&0xf800u)<<5)|(b&31u);
+    uint32_t rb=br*255u+(ar-br)*alpha+0x007f007fu;
+    rb+=0x00010001u+((rb>>8)&0x00ff00ffu);
+    uint32_t ag=(a>>5)&63u,bg=(b>>5)&63u;
+    uint32_t g=blend_div255(bg*255u+(ag-bg)*alpha+127u);
+    return(uint16_t)(((rb>>13)&0xf800u)|(g<<5)|((rb>>8)&31u));
+}
 /* Album palette: bounded histogram and artwork-revision cache. Inspired by
  * RockboxPhoto's dominant/accent extraction and 250 ms transition approach.
  * https://github.com/jspann21/rockbox-ipod-photo/blob/main/apps/gui/skin_engine/skin_albumart_color.c

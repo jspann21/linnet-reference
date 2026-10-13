@@ -91,6 +91,9 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r,uint8_t *ln_s
 #endif
 #if defined(LINNET_AUDIO)
         else if(q->length==4u&&ln_read_le32(q->payload)==17u){ln_music_budget_diagnostics(words);count=12u;}
+#if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
+        else if(q->length==4u&&ln_read_le32(q->payload)==26u){ln_player_cache_diagnostics(words);count=32u;}
+#endif
 #if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
         else if(q->length==4u&&ln_read_le32(q->payload)==20u){ln_paged_history_window_diagnostics(words);count=8u;}
 #if defined(LINNET_OS_CRC_IRAM)

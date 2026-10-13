@@ -50,6 +50,9 @@ bool ln_player_busy(void);
 uint8_t *ln_player_art_memory(uint32_t *bytes);
 #endif
 uint32_t ln_player_deadline(uint32_t now);
+#if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS) && !defined(LINNET_PROFILE_RELEASE)
+void ln_player_cache_diagnostics(uint32_t words[32]);
+#endif
 void ln_player_snapshot(struct ln_player_status *out);
 /* Background reads get three quarters of a second of PCM where ring size
  * permits; writes keep their separate near-full policy. */

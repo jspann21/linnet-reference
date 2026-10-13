@@ -8,6 +8,9 @@
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
 #define PLAYER_COMPRESSED_CACHE_BYTES 0x300000u
 #define PLAYER_COMPRESSED_CACHE(window) ((uint8_t *)(uintptr_t)(LINNET_STAGE_ADDRESS+0x100000u+(window)*PLAYER_COMPRESSED_CACHE_BYTES))
+#define PLAYER_TABLE_CACHE_BYTES 0x80000u
+#define PLAYER_TABLE_CACHE(table) ((uint8_t *)(uintptr_t)(LINNET_STAGE_ADDRESS+(table)*PLAYER_TABLE_CACHE_BYTES))
+_Static_assert(2u*PLAYER_TABLE_CACHE_BYTES<=0x100000u,"table cache overlaps compressed windows");
 _Static_assert(0x100000u+2u*PLAYER_COMPRESSED_CACHE_BYTES+
     (LINNET_AUDIO_RING_FRAMES+1152u)*4u<=LINNET_STAGE_CAPACITY,
     "compressed read cache overlaps PCM staging");
@@ -25,6 +28,7 @@ static bool effect_pending;
 enum slot_phase {SLOT_EMPTY,SLOT_OPEN,SLOT_DECODE,SLOT_EOF,SLOT_FAILED};
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
 struct player_cache_window {uint32_t start,valid,target;bool filling;};
+struct player_table_cache {uint32_t start,valid,target;};
 #endif
 struct player_slot {
     struct ln_decoder decoder;struct ln_dsp dsp;struct ln_fat32_file media;
@@ -33,6 +37,7 @@ struct player_slot {
     uint32_t phase,generation,token,buffered,rate,config_rate;bool seek_initial;
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
     struct player_cache_window cache[2];
+    struct player_table_cache tables[2];
     uint32_t cache_current;
     bool cache_enabled,cache_initial,cache_pending,cache_pause_canceling,cache_codec_checked,cache_demand_pending;
 #endif
@@ -148,6 +153,51 @@ static bool cache_metadata(const struct player_slot *s,uint32_t at){
     return m->mdat_end>m->mdat_start&&
         ((uint64_t)at<m->mdat_start||(uint64_t)at>=m->mdat_end);
 }
+static bool cache_retain_tables(struct player_slot *s,uint32_t replacing){
+    if(s->decoder.kind!=LN_DEC_AAC_M4A)return true;
+    const struct ln_alac *m=&s->decoder.data->m4a.container;
+    struct ln_fat32_file root;
+    if(!m->opened||!ln_storage_media_root(&root)||root.epoch!=s->media.epoch)return true;
+    /* The rotating-media owner can retain tables in the unused STAGE prefix.
+     * Copy only a complete resident range; oversized/nonresident tables keep
+     * the ordinary read path. AAC's source reads include up to 16383 bytes
+     * beyond the logical table, so retain actual file bytes there as well. */
+    bool ready=true;
+    for(uint32_t i=0;i<2u;i++){
+        struct player_table_cache *t=&s->tables[i];
+        if((t->target&&t->valid==t->target)||(i&&m->default_size))continue;
+        uint64_t start=i?m->sizes_offset:m->chunks_offset;
+        uint64_t bytes=i?(uint64_t)m->packets*4u:(uint64_t)m->chunks*m->chunk_width;
+        if(start>UINT32_MAX||start>=s->media.size||bytes>s->media.size-start)continue;
+        uint64_t tail=s->media.size-start-bytes;
+        if(tail>16383u)tail=16383u;
+        bytes+=tail;
+        if(!bytes||bytes>PLAYER_TABLE_CACHE_BYTES)continue;
+        int hit=cache_hit(s,(uint32_t)start,(uint32_t)bytes);
+        if(hit<0)continue;
+        if(t->start!=(uint32_t)start||t->target!=(uint32_t)bytes)
+            *t=(struct player_table_cache){(uint32_t)start,0,(uint32_t)bytes};
+        uint32_t copy=t->target-t->valid;if(copy>32768u)copy=32768u;
+        __builtin_memcpy(PLAYER_TABLE_CACHE(i)+t->valid,PLAYER_COMPRESSED_CACHE((uint32_t)hit)+
+            ((uint32_t)start-s->cache[hit].start)+t->valid,copy);
+        t->valid+=copy;
+        /* Postpone speculative bank reuse until its resident table is safe.
+         * Each admission attempt copies at most 32 KiB per table. */
+        if((uint32_t)hit==replacing&&t->valid!=t->target)ready=false;
+    }
+    return ready;
+}
+static bool cache_table_copy(struct player_slot *s,uint32_t at,uint8_t *buffer,uint32_t length){
+    for(uint32_t i=0;i<2u;i++){
+        const struct player_table_cache *t=&s->tables[i];
+        if(t->target&&t->valid==t->target&&at>=t->start&&at-t->start<=t->valid&&length<=t->valid-(at-t->start)){
+            struct ln_fat32_file root;
+            if(!ln_storage_media_root(&root)||root.epoch!=s->media.epoch)return false;
+            __builtin_memcpy(buffer,PLAYER_TABLE_CACHE(i)+(at-t->start),length);return true;
+        }
+    }
+    return false;
+}
 uint8_t *ln_player_art_memory(uint32_t *bytes){
     if(!bytes)return 0;
     struct ln_ata_state disk;ln_ata_state_snapshot(&disk);
@@ -162,6 +212,7 @@ uint8_t *ln_player_art_memory(uint32_t *bytes){
 }
 static bool cache_begin(struct player_slot *s,uint32_t window,uint32_t at,bool initial,uint32_t minimum){
     if(at>=s->media.size)return false;
+    if(!cache_retain_tables(s,window))return false;
     uint64_t available=s->media.size-at;
     if(s->decoder.kind==LN_DEC_AAC_M4A){
         const struct ln_alac *m=&s->decoder.data->m4a.container;
@@ -212,11 +263,12 @@ static int cache_copy(struct player_slot *s,uint32_t window,uint32_t at,uint8_t 
     if(cache_progress(s)<0)return -1;
     uint32_t consumed=at-w->start+length;
     uint32_t threshold=w->target/2u;if(threshold>524288u)threshold=524288u;
-    /* A metadata window must not prefetch a distant media region. */
-    if(!w->filling&&!cache_metadata(s,w->start)&&w->target-consumed<=threshold){
+    /* A window opened before AAC resolves mdat can contain tables and audio.
+     * Classify the consumed range and its next start, retaining the filled prefix. */
+    if(!w->filling&&!cache_metadata(s,at)&&w->target-consumed<=threshold){
         uint32_t next=w->start+w->target,other=window^1u;
         struct player_cache_window *candidate=&s->cache[other];
-        if(next<s->media.size&&!candidate->filling&&
+        if(next<s->media.size&&!cache_metadata(s,next)&&!candidate->filling&&
            (candidate->start!=next||candidate->valid!=candidate->target)&&
            cache_begin(s,other,next,false,0)&&cache_progress(s)<0)return -1;
     }
@@ -245,6 +297,7 @@ static int read_media(void *context,uint64_t offset,uint8_t *buffer,uint32_t len
         uint32_t at=(uint32_t)offset;
         if(length>UINT32_MAX-at)return read_disk(s,at,buffer,length);
         if(s->cache_demand_pending)return cache_demand_read(s,at,buffer,length);
+        if(cache_table_copy(s,at,buffer,length))return 1;
         int hit=cache_cached(s,at,buffer,length);
         if(hit)return hit;
         /* Muted preparation and a healthy PCM runway keep the sequential fill.
@@ -272,7 +325,7 @@ static int read_media(void *context,uint64_t offset,uint8_t *buffer,uint32_t len
             if(m->mdat_end>m->mdat_start&&begin<m->mdat_start)begin=(uint32_t)m->mdat_start;
         }
         if(!cache_begin(s,window,begin,s->cache_initial,length+(at-begin)))
-            return read_disk(s,at,buffer,length);
+            return cache_demand_read(s,at,buffer,length);
         s->cache_initial=false;
         if(cache_progress(s)<0)return -1;
         return cache_cached(s,at,buffer,length);
@@ -285,6 +338,7 @@ static void clear_slot(struct player_slot *s){
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
     s->cache_enabled=s->cache_pending=s->cache_pause_canceling=s->cache_demand_pending=false;
     s->cache[0].filling=s->cache[1].filling=false;
+    for(uint32_t i=0;i<2u;i++)s->tables[i]=(struct player_table_cache){0};
 #endif
 }
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
@@ -310,6 +364,7 @@ static void activate_cache(struct player_slot *s){
     s->cache_enabled=cache_supported(s);s->cache_pending=s->cache_demand_pending=false;
     s->cache_initial=true;s->cache_current=1u;
     for(uint32_t i=0;i<2u;++i)s->cache[i]=(struct player_cache_window){0};
+    for(uint32_t i=0;i<2u;++i)s->tables[i]=(struct player_table_cache){0};
 }
 #endif
 static bool name_copy(char *out,const char *name){
@@ -326,6 +381,7 @@ static bool start_slot(struct player_slot *s,const char *name,uint64_t expected,
     s->cache_enabled=s->cache_pending=s->cache_pause_canceling=s->cache_codec_checked=s->cache_demand_pending=false;
     s->cache_initial=true;s->cache_current=1u;
     for(uint32_t i=0;i<2u;++i)s->cache[i]=(struct player_cache_window){0};
+    for(uint32_t i=0;i<2u;++i)s->tables[i]=(struct player_table_cache){0};
 #endif
     s->phase=SLOT_OPEN;s->dsp=*dsp;s->config_rate=config_rate;return true;
 }
@@ -759,6 +815,34 @@ uint32_t ln_player_deadline(uint32_t now){
     return ln_player_busy()?now+10000u:now+200000u;
 }
 void ln_player_snapshot(struct ln_player_status *out){if(out)*out=state;}
+#if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS) && !defined(LINNET_PROFILE_RELEASE)
+/* Requested snapshots only: no playback hooks, counters or cache ownership changes. */
+void ln_player_cache_diagnostics(uint32_t words[32]){
+    const struct player_slot *s=&slots[feed];
+    for(uint32_t i=0;i<32u;++i)words[i]=0;
+    words[0]=0x48434350u;words[1]=1u;words[2]=ln_time_us();words[3]=state.phase;
+    words[4]=audible|(feed<<8)|((io_owner==&slots[0]?1u:io_owner==&slots[1]?2u:0u)<<16)|((uint32_t)io_open<<24);
+    words[5]=(uint32_t)s->cache_enabled|((uint32_t)s->cache_pending<<1)|((uint32_t)s->cache_initial<<2)|
+        ((uint32_t)s->cache_codec_checked<<3)|((uint32_t)s->cache_demand_pending<<4)|((uint32_t)s->cache_pause_canceling<<5)|
+        ((uint32_t)(s->tables[0].target&&s->tables[0].valid==s->tables[0].target)<<6)|
+        ((uint32_t)(s->tables[1].target&&s->tables[1].valid==s->tables[1].target)<<7)|(s->cache_current<<8);
+    words[6]=(uint32_t)(uintptr_t)io_buffer;words[7]=io_offset;words[8]=io_length;words[9]=s->generation;
+    words[14]=s->media.size;words[15]=s->buffered;
+    for(uint32_t i=0;i<2u;++i){
+        words[16u+i*4u]=s->cache[i].start;words[17u+i*4u]=s->cache[i].valid;
+        words[18u+i*4u]=s->cache[i].target;words[19u+i*4u]=s->cache[i].filling;
+    }
+    words[27]=(s->decoder.kind<<16)|(s->phase<<24);
+    if(s->decoder.kind==LN_DEC_AAC_M4A&&s->decoder.data){
+        const struct ln_aac_m4a *a=&s->decoder.data->m4a;const struct ln_alac *m=&a->container;
+        words[10]=(uint32_t)m->mdat_start;words[11]=(uint32_t)(m->mdat_start>>32);
+        words[12]=(uint32_t)m->mdat_end;words[13]=(uint32_t)(m->mdat_end>>32);
+        words[24]=(uint32_t)a->cache_request_offset;words[25]=(uint32_t)(a->cache_request_offset>>32);
+        words[26]=a->cache_request_bytes;words[27]|=(uint32_t)a->cache_pending|((m->decode_phase&15u)<<4)|((uint32_t)a->cache_filling<<8);
+        words[28]=(uint32_t)m->read_offset;words[29]=(uint32_t)(m->read_offset>>32);words[30]=m->read_total;words[31]=m->packet;
+    }
+}
+#endif
 uint64_t ln_player_position(void){
     uint64_t rendered=consumed-audible_origin;if(rendered>slots[audible].submitted)rendered=slots[audible].submitted;
     return slots[audible].position_base+rendered;
