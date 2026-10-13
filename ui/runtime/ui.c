@@ -352,6 +352,7 @@ static void border(struct painter*p,struct rect r,uint16_t c){fill(p,(struct rec
  * byte, so a following ASCII character is never lost. */
 static uint32_t text_character(const char*s,uint32_t remaining,uint32_t*bytes){
     uint32_t ch=(uint8_t)s[0],count=1;*bytes=1;
+    if(ch<0x80u)return remaining?ch:'?';
     if(ch>=0xc2u&&ch<=0xdfu){count=2;ch&=0x1fu;}
     else if(ch>=0xe0u&&ch<=0xefu){count=3;ch&=0x0fu;}
     else if(ch>=0xf0u&&ch<=0xf4u){count=4;ch&=7u;}
