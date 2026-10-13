@@ -607,7 +607,6 @@ static bool decode_early_packed(bool allow_read){
 #endif
 static void packed_frame_begin(int32_t center){
     packed_drawing=packed_mode;
-    if(!packed_drawing)return;
     for(int32_t d=-3;d<=3;d++){
         int32_t index=center+d;uint8_t *r=index<0?0:row((uint32_t)index);
         packed_frame_art[d+3]=r?ln_read_le32(r+248):NONE;

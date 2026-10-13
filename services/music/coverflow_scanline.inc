@@ -19,7 +19,7 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
 #if !defined(LINNET_PROFILE_RELEASE)
     uint32_t began=ln_time_us();
 #endif
-    struct card {int32_t x,width;const struct ln_coverflow_scanline *rows;bool mirror,preview,decoded,flat;
+    struct card {int32_t x,width;uint32_t pose;bool mirror,preview,decoded;
 #if defined(LINNET_SOC_S5L8702)
         const uint16_t *palette;const uint8_t *pixels,*indices,*sources;
 #else
@@ -47,19 +47,9 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
         card_map[index-center+3]=(int16_t)(card_count-1u);
 #endif
         int32_t distance=index*256-position,ad=distance<0?-distance:distance;
-        uint32_t pose=ad>=256?32u:(uint32_t)(ad+4)/8u;
-        card->rows=ln_coverflow_rows[pose];card->flat=pose==0;
-        card->width=ln_coverflow_widths[pose];card->mirror=distance>=0;
+        card->pose=ad>=256?32u:(uint32_t)(ad+4)/8u;
+        card->width=ln_coverflow_widths[card->pose];card->mirror=distance>=0;
         card->x=160+(distance<0?-1:1)*(ad<=256?ad*69/256:69+(ad-256)*25/256)*320/220-card->width/2;
-#if defined(LINNET_SOC_S5L8702)
-        card->sources=card->mirror?ln_coverflow_mirror_sources[pose]:ln_coverflow_sources[pose];
-#else
-        for(int32_t x=0;x<card->width;x++){
-            uint32_t sx=ln_coverflow_sources[pose][card->mirror?card->width-1-x:x];
-            if(card->mirror)sx=TEXTURE_WIDTH-1u-sx;
-            card->sources[x]=(uint8_t)sx;
-        }
-#endif
         const uint8_t *r=row((uint32_t)index),*packed=0;
         const uint16_t *pixels=0;
         if(r){uint32_t art=ln_read_le32(r+248);packed=retained_art(art);
@@ -74,6 +64,15 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
         card->decoded=pixels!=0;
         card->preview=!packed;
         card->palette=packed?(const uint16_t*)packed:r?(const uint16_t*)(header+512):0;
+#if defined(LINNET_SOC_S5L8702)
+        card->sources=card->mirror?ln_coverflow_mirror_sources[card->pose]:ln_coverflow_sources[card->pose];
+#else
+        for(int32_t x=0;x<card->width;x++){
+            uint32_t sx=ln_coverflow_sources[card->pose][card->mirror?card->width-1-x:x];
+            if(card->mirror)sx=TEXTURE_WIDTH-1u-sx;
+            card->sources[x]=(uint8_t)sx;
+        }
+#endif
     }
     uint32_t ambient[3]={0};
     if(count){
@@ -115,7 +114,7 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
         }else
 #endif
         for(uint32_t n=0;n<card_count;n++){
-            const struct card *card=&cards[n];const struct ln_coverflow_scanline *line=&card->rows[y];
+            const struct card *card=&cards[n];const struct ln_coverflow_scanline *line=&ln_coverflow_rows[card->pose][y];
             if(!line->width)continue;
             int32_t left=card->x+(card->mirror?card->width-line->left-line->width:line->left),right=left+line->width;
             for(uint32_t j=0;j<spans_count;j++){
@@ -150,7 +149,7 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
                 if(x<span->right)*(uint16_t *)output=(uint16_t)palette[*mask];
             }else{
                 const struct card *card=&cards[span->card];
-                const struct ln_coverflow_scanline *line=&card->rows[y];
+                const struct ln_coverflow_scanline *line=&ln_coverflow_rows[card->pose][y];
                 int32_t x=span->left-card->x,end=span->right-card->x;
                 const uint8_t *samples=ln_coverflow_samples+line->offset;
                 int32_t u=card->mirror?card->width-1-x:x,run;
@@ -165,7 +164,7 @@ void ln_coverflow_draw(const struct ln_ui_canvas_context *c){
                     int32_t limit=x+length;uint32_t sy=samples[run*2+1];
                     if(card->decoded){
                         const uint16_t *source=(const uint16_t *)card->pixels+sy*TEXTURE_WIDTH;
-                        if(card->flat){
+                        if(card->pose==0){
 #if defined(__arm__)
                             extern void ln_memory_copy(void *,const void *,uint32_t);
                             ln_memory_copy(dest,source+x,(uint32_t)(limit-x)*2u);
