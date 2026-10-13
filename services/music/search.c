@@ -191,9 +191,10 @@ bool ln_music_search_busy(void){return closing||pending||(opened&&results&&lengt
 bool ln_music_search_query_pending(void){return pending;}
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_music_search_diagnostics(uint32_t out[16]){
-    uint32_t words[16]={0x48435253u,0,opened,results,ln_music_search_busy(),first,known,total,
-        revision,query_started_us,first_ready_us,window_ready_us,ln_time_us(),in_group,complete,window_ready};
-    for(uint32_t i=0;i<16u;i++)out[i]=words[i];
+    out[0]=0x48435253u;out[1]=0;out[2]=opened;out[3]=results;
+    out[4]=ln_music_search_busy();out[5]=first;out[6]=known;out[7]=total;
+    out[8]=revision;out[9]=query_started_us;out[10]=first_ready_us;out[11]=window_ready_us;
+    out[12]=ln_time_us();out[13]=in_group;out[14]=complete;out[15]=window_ready;
 }
 #endif
 bool ln_music_search_active(void){return opened||closing;}

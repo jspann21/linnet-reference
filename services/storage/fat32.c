@@ -658,7 +658,7 @@ set_chain_cached:
             if(sectors){
                 result=f->config.sectors_io(f->config.context,(enum ln_fat32_io)(f->operation-(OP_READ-LN_FAT32_READ)),f->io_lba,
                     f->buffer+f->transferred,sectors,f->generation);
-                if(result!=1)break;
+                if(result!=1){if(result)result=LN_FAT32_IO;break;}
                 bytes=sectors*512u;f->transferred+=bytes;f->within+=bytes;return 0;
             }
         }
