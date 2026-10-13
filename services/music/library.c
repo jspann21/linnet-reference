@@ -1047,11 +1047,12 @@ static void query_step(void)
         query_complete(count);return;
     }
     if(!library.stage){
-        if(library.job==JOB_VIEW){
-            const char *title=ln_music_library_title(library.query_index);
-            if(title){text_copy(library.group_name,title);query_complete(library.query_index);return;}
-        }
-        if(library.job==JOB_VIEW||library.job==JOB_TRACK_RECORD){
+        /* Resident titles share the ordinary query completion path. A cached
+         * group member avoids parsing the same verified records again. */
+        if(library.job==JOB_VIEW){library.query_result=library.query_index;goto view_title;}
+        if(library.job==JOB_VIEW_GROUP&&
+           ln_music_library_cached_member(library.query_index,library.query_ordinal,&library.query_result))goto view_title;
+        if(library.job==JOB_TRACK_RECORD){
             library.query_result=library.query_index;library.group_name[0]=0;
             if(request(LN_DB_TRACK,library.query_index))library.stage=2;
             return;
@@ -1076,6 +1077,8 @@ static void query_step(void)
     }
     if(library.job==JOB_VIEW_GROUP&&library.stage==4){
         library.query_result=library.db.member;
+view_title:
+        library.group_name[0]=0;
         const char *title=ln_music_library_title(library.query_result);
         if(title){text_copy(library.group_name,title);query_complete(library.query_result);return;}
         if(request(LN_DB_TRACK,library.query_result))library.stage=2;
