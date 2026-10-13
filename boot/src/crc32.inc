@@ -4,7 +4,16 @@ static LN_CRC_ATTR uint32_t LN_CRC_NAME(uint32_t crc, const uint8_t *bytes, size
 {
     /* Host-generated reflected ISO-HDLC byte table. One lookup per byte;
      * complete coverage and the existing 4096-byte progress boundary remain. */
-    static const uint32_t byte_table[256] LN_CRC_TABLE_ATTR = {
+#if defined(LN_CRC_EXTERNAL_BYTE_TABLE)
+    const uint32_t *const byte_table=LN_CRC_EXTERNAL_BYTE_TABLE;
+#else
+    static const uint32_t byte_table[256]
+#if defined(LN_CRC_BYTE_TABLE_ATTR)
+        LN_CRC_BYTE_TABLE_ATTR
+#else
+        LN_CRC_TABLE_ATTR
+#endif
+        = {
         0x00000000u, 0x77073096u, 0xee0e612cu, 0x990951bau, 0x076dc419u, 0x706af48fu, 0xe963a535u, 0x9e6495a3u,
         0x0edb8832u, 0x79dcb8a4u, 0xe0d5e91eu, 0x97d2d988u, 0x09b64c2bu, 0x7eb17cbdu, 0xe7b82d07u, 0x90bf1d91u,
         0x1db71064u, 0x6ab020f2u, 0xf3b97148u, 0x84be41deu, 0x1adad47du, 0x6ddde4ebu, 0xf4d4b551u, 0x83d385c7u,
@@ -38,6 +47,7 @@ static LN_CRC_ATTR uint32_t LN_CRC_NAME(uint32_t crc, const uint8_t *bytes, size
         0xbdbdf21cu, 0xcabac28au, 0x53b39330u, 0x24b4a3a6u, 0xbad03605u, 0xcdd70693u, 0x54de5729u, 0x23d967bfu,
         0xb3667a2eu, 0xc4614ab8u, 0x5d681b02u, 0x2a6f2b94u, 0xb40bbe37u, 0xc30c8ea1u, 0x5a05df1bu, 0x2d02ef8du
     };
+#endif
 #if !defined(LN_CRC_NO_SLICE4) && defined(LINNET_IMAGE_OS) && defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && \
     __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #include "crc32_slice4.inc"

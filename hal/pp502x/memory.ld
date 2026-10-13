@@ -5,6 +5,9 @@
 #error Boot hash IRAM and audio IRAM cannot coexist
 #endif
 #endif
+#if defined(LINNET_IMAGE_OS) && defined(LINNET_PLATFORM_CORE) && defined(LINNET_AUDIO) && defined(LINNET_TARGET_VIDEO5G_M25)
+#define LINNET_USE_OS_CRC_IRAM 1
+#endif
 ENTRY(ln_start)
 MEMORY {
   SDRAM (rwx) : ORIGIN = LINNET_LOAD_ADDRESS, LENGTH = LINNET_OS_CAPACITY
@@ -69,12 +72,29 @@ SECTIONS {
    * the COP's downward-growing stack, and below development USB DMA. */
   .audio_icode ORIGIN(AUDIO_IRAM) : ALIGN(4) {
     __audio_icode_begin = .;
+#ifdef LINNET_USE_OS_CRC_IRAM
+    /* Keep the CRC code/table order while giving the fallback a checked
+     * alias into this image's immutable SDRAM load copy. */
+    *(.audio_icode.crc.text)
+    __os_crc_byte_begin = .;
+    *(.audio_icode.crc.byte)
+    __os_crc_byte_end = .;
+#endif
     *(.audio_icode*)
     . = ALIGN(4);
     __audio_icode_end = .;
   } > AUDIO_IRAM AT> SDRAM
   __audio_icode_load = LOADADDR(.audio_icode);
   __image_end = LOADADDR(.audio_icode) + SIZEOF(.audio_icode);
+#ifdef LINNET_USE_OS_CRC_IRAM
+  __os_crc_byte_load = ABSOLUTE(LOADADDR(.audio_icode) + (__os_crc_byte_begin - ADDR(.audio_icode)));
+  ASSERT(__os_crc_byte_end - __os_crc_byte_begin == 1024, "OS CRC byte table size")
+  ASSERT(((ABSOLUTE(__os_crc_byte_begin) | ABSOLUTE(__os_crc_byte_load)) & 3) == 0, "OS CRC byte table alignment")
+  ASSERT(__os_crc_byte_begin >= ADDR(.audio_icode) && __os_crc_byte_end <= ADDR(.audio_icode) + SIZEOF(.audio_icode), "OS CRC byte table IRAM bounds")
+  ASSERT(__os_crc_byte_load >= LOADADDR(.audio_icode) && __os_crc_byte_load + 1024 <= __image_end, "OS CRC byte table load bounds")
+  ASSERT(__os_crc_byte_load >= ORIGIN(SDRAM) && __os_crc_byte_load + 1024 <= ORIGIN(SDRAM) + LENGTH(SDRAM), "OS CRC byte table SDRAM bounds")
+  ASSERT(__os_crc_byte_load + 1024 <= __bss_start, "OS CRC byte table overlaps BSS")
+#endif
   ASSERT(ORIGIN(AUDIO_IRAM) + LENGTH(AUDIO_IRAM) <= 0x4000c000, "Audio IRAM overlaps USB DMA")
   ASSERT(SIZEOF(.audio_icode) <= LENGTH(AUDIO_IRAM), "Audio IRAM code and veneers exceed target budget")
   ASSERT(((ABSOLUTE(__audio_icode_begin) | ABSOLUTE(__audio_icode_end) | ABSOLUTE(__audio_icode_load)) & 3) == 0, "Audio IRAM copy must be word aligned")

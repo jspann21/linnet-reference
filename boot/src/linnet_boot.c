@@ -13,12 +13,16 @@ static int zeroes(const uint8_t *p, size_t length)
 #define LN_CRC_NAME crc32_sdram
 #if defined(LINNET_OS_CRC_IRAM)
 /* Keep the complete byte implementation as fallback without duplicating
- * the three slicing tables now retained in internal memory. */
+ * tables. Its byte table comes from the immutable SDRAM load copy, available
+ * before internal-memory preparation and after failed copy/readback. */
+extern const uint32_t __os_crc_byte_load[];
+#define LN_CRC_EXTERNAL_BYTE_TABLE __os_crc_byte_load
 #define LN_CRC_NO_SLICE4
 #endif
 #include "crc32.inc"
 #if defined(LINNET_OS_CRC_IRAM)
 #undef LN_CRC_NO_SLICE4
+#undef LN_CRC_EXTERNAL_BYTE_TABLE
 #endif
 #undef LN_CRC_ATTR
 #undef LN_CRC_TABLE_ATTR
@@ -27,10 +31,12 @@ static int zeroes(const uint8_t *p, size_t length)
 #include "linnet_target.h"
 #define LN_CRC_ATTR __attribute__((section(".audio_icode.crc.text"),noinline))
 #define LN_CRC_TABLE_ATTR __attribute__((section(".audio_icode.crc.rodata"),aligned(4)))
+#define LN_CRC_BYTE_TABLE_ATTR __attribute__((section(".audio_icode.crc.byte"),aligned(4)))
 #define LN_CRC_NAME crc32_os_iram
 #include "crc32.inc"
 #undef LN_CRC_NAME
 #undef LN_CRC_TABLE_ATTR
+#undef LN_CRC_BYTE_TABLE_ATTR
 #undef LN_CRC_ATTR
 static volatile uint32_t os_crc_iram_ready;
 #if !defined(LINNET_PROFILE_RELEASE)
