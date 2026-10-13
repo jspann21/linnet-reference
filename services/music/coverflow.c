@@ -1063,7 +1063,12 @@ void ln_coverflow_step(bool allow_read){
             }
             if(decoded){io_due=now+1000u;return;}
         }
-        if(phase==READY){
+        if(phase==READY
+#if LINNET_TARGET_NUMBER==25u
+           /* A complete resident catalog cannot evict its validated pages. */
+           &&(count>catalog_capacity||catalog_loaded<count)
+#endif
+        ){
             uint32_t base=count<=catalog_capacity?0u:(selected>128u?((selected-128u)/PAGE)*PAGE:0u);
             uint32_t end=count<=catalog_capacity?count:selected+128u;if(end>count)end=count;
             if(warm<base||warm>=end)warm=base;
