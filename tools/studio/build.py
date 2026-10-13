@@ -17,6 +17,12 @@ from tools.inspect.image import pack, inspect, verify_release
 from tools.studio.object_cache import file_stamp as _tool_stamp
 from tools.studio.targets import LCD_FORMATS, ROOT, RUNTIME_POLICIES, presentation_defines, resolved_target_spec, target_id
 
+SERVICE_LINK_SOURCES = (
+    'services/music/database.c', 'services/music/library.c',
+    'services/music/browser.c', 'services/music/search.c',
+    'services/music/queue.c', 'services/music/queue_view.c',
+)
+
 def run(args):
     result = subprocess.run([str(a) for a in args], cwd=ROOT, text=True, encoding="utf-8",
                             capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
@@ -141,7 +147,7 @@ def memory_budget(sections, spec, resident_limit):
                       linked_section_bytes=sum(item['bytes'] for item in retained)))
 
 def build(profile, target, verify=False, kind="os", probe="frame", device_serial="", system_config=None,
-          boot_selector="none", jobs=2):
+          boot_selector="none", jobs=2, link_optimization="none"):
     target = target_id(target)
     spec = resolved_target_spec(target)
     if not spec["build_enabled"]:
@@ -166,9 +172,22 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         raise ValueError("a startup selector is valid only for Boot images")
     if type(jobs) is not int or not 1 <= jobs <= 4:
         raise ValueError("build jobs must be an integer from 1 to 4")
+    if link_optimization not in ('none', 'services-size', 'services-thin-lto'):
+        raise ValueError('link optimization must be none, services-size or services-thin-lto')
+    if link_optimization != 'none' and (target != 'video5g-m25' or kind != 'os'):
+        raise ValueError('service link optimization requires a video5g-m25 OS image')
+    service_sources = SERVICE_LINK_SOURCES if link_optimization != 'none' else ()
+    service_flags = ['-Oz'] if service_sources else []
+    lto_link_flags = []
+    if link_optimization == 'services-thin-lto':
+        service_flags += ['-flto=thin']
+        lto_link_flags = ['--lto-O1', f'--thinlto-jobs={jobs}']
     chain = toolchain()
     configuration = dict(profile=profile, target_id=target, kind=kind,
                           probe=probe, device_serial=device_serial)
+    if service_sources:
+        configuration['link_optimization'] = dict(mode=link_optimization,
+            sources=list(service_sources), compiler_flags=service_flags, linker_flags=lto_link_flags)
     if kind == "boot":
         configuration["boot_selector"] = boot_selector
         configuration["apple_firmware_fallback"] = True
@@ -291,7 +310,9 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
             raise ValueError(f"no build sources selected for {origin}")
         sources.extend(paths)
         source_origins.extend([origin] * len(paths))
-        source_flags.extend([list(extra_flags) for _ in paths])
+        source_flags.extend([list(extra_flags) +
+                            (service_flags if path.relative_to(ROOT).as_posix() in service_sources else [])
+                            for path in paths])
     add_sources([ROOT / target_sources["startup"], hal / "entry.S",
                  ROOT / target_sources["platform"], ROOT / target_sources["lcd"],
                  ROOT / "kernel/main.c", ROOT / "kernel/memory.S"], "base startup")
@@ -516,7 +537,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     run([chain['compiler']['path'], "-E", "-P", "-x", "c", "-I" + str(ROOT), "-I" + str(generated), f"-DLINNET_PROFILE_{profile.upper()}=1", f"-DLINNET_IMAGE_{kind.upper()}=1", *memory_flags, ROOT / target_sources["linker"], "-o", script])
     response = generated / "objects.rsp"
     response.write_text("\n".join('"' + path.as_posix() + '"' for path in objects) + "\n", encoding="utf-8")
-    run([chain['linker']['path'], '-m', 'armelf', "-T", script, "--gc-sections", "-Map=" + str(mapfile), "-o", elf, "@" + str(response)])
+    run([chain['linker']['path'], '-m', 'armelf', "-T", script, "--gc-sections", *lto_link_flags,
+         "-Map=" + str(mapfile), "-o", elf, "@" + str(response)])
     raw = dest / (prefix + ".bin")
     run([chain['objcopy']['path'], "-O", "binary", elf, raw])
     symbols = run([chain['nm']['path'], "-S", "--size-sort", elf])

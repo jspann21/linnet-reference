@@ -31,6 +31,16 @@ to boot, storage, power or installation need matching device and recovery checks
 Documentation-only changes should verify commands against CLI help and ensure
 relative links resolve.
 
+M25 OS compiler experiments can opt into `--link-optimization services-size`
+or `--link-optimization services-thin-lto`; the default is `none`. Both use
+`-Oz` for an explicit music database, library, browser, Search and Queue source
+list. The latter also uses ThinLTO with bounded linker jobs. The build report
+records the source list and compiler/linker flags in its identity. Hardware,
+startup, codecs and generated presentation retain their existing compilation.
+Compare final image size, memory sections, symbols and native timing before
+using an experimental image; source tuning alone does not establish a speed
+or battery improvement.
+
 ## Describe the contribution or issue
 
 Explain the problem, the resulting behavior and any remaining limitations.
