@@ -391,7 +391,7 @@ int ln_storage_music_disk_ready(void){
     struct ln_block_info block;ln_block_snapshot(&block);
     if(!ln_storage_mounted()||device.failed||block.quarantined)return -1;
     if(device.initialized&&device.powered&&!device.sleeping&&!device.initializing&&!block.power_transition)return 1;
-    return !media_wake_ticket&&media_wake_status!=LN_ATA_OK?-1:0;
+    return music_wake_requested&&!media_wake_ticket&&media_wake_status!=LN_ATA_OK?-1:0;
 }
 #endif
 void ln_storage_video_browse(bool active,bool activity){
