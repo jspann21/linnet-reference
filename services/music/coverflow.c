@@ -288,9 +288,12 @@ static uint32_t *catalog_tag(uint32_t index){
     uint32_t slot=index%catalog_capacity;
     return slot<CATALOG_SLOTS?tags+slot:catalog_extra_tags+slot-CATALOG_SLOTS;
 }
+static uint8_t *row_checked(uint32_t index){
+    return index<count&&*catalog_tag(index)==index+1u?catalog_record(index):0;
+}
 static uint8_t *row(uint32_t index){
     if(catalog_extra&&!identity())return 0;
-    return index<count&&*catalog_tag(index)==index+1u?catalog_record(index):0;
+    return row_checked(index);
 }
 static void catalog_extend(void){
     uint32_t bytes=0;uint8_t *memory=ln_music_library_catalog_memory(&bytes);
@@ -734,7 +737,9 @@ const uint16_t *ln_coverflow_playback_preview(const char *path,uint32_t crc){
     }
     const char *tail=path+sizeof prefix-1u+8u;
     if(tail[0]!='.'||tail[1]!='R'||tail[2]!='G'||tail[3]!='B'||tail[4])return 0;
-    uint8_t *r=row(selected);int32_t slot=-1;
+    /* The entry identity check owns this non-yielding lookup. Keep normal
+     * row() guarded, but avoid repeating the same identity for every album. */
+    uint8_t *r=row_checked(selected);int32_t slot=-1;
     if(r&&ln_read_le32(r+240)==hash&&ln_read_le32(r+244)==crc){
         uint32_t id=ln_read_le32(r+248);const uint16_t *pixels=raw_rgb_pixels(id);
         if(pixels)return pixels;slot=decode_art(id);}
@@ -742,7 +747,7 @@ const uint16_t *ln_coverflow_playback_preview(const char *path,uint32_t crc){
      * published catalog rows may bind its exact playback path and checksum. */
     for(uint32_t i=0;slot<0&&i<catalog_capacity;i++){
         uint32_t tag=*catalog_tag(i);if(!tag||tag>count)continue;
-        r=row(tag-1u);if(!r)continue;
+        r=row_checked(tag-1u);if(!r)continue;
         if(ln_read_le32(r+240)==hash&&ln_read_le32(r+244)==crc){
             uint32_t id=ln_read_le32(r+248);const uint16_t *pixels=raw_rgb_pixels(id);
             if(pixels)return pixels;slot=decode_art(id);}
