@@ -26,6 +26,22 @@ static struct {
 #define LN_SAMPLE_RTC_MAX_AGE_US 60000u
 #define LN_SAMPLE_AGE_ADC 0u
 #define LN_SAMPLE_AGE_RTC 1u
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS) && !defined(LINNET_PROFILE_RELEASE)
+#define LN_SAMPLE_DIAGNOSTICS 1
+static struct {uint32_t reason,stage,age,active_late,idle_late;} ln_sample_diagnostics;
+static void ln_sample_failure(uint32_t reason){
+    ln_sample_diagnostics.reason=reason;ln_sample_diagnostics.stage=ln_sampler.stage;
+    ln_sample_diagnostics.age=ln_time_us()-ln_sampler.started_us;
+}
+void ln_power_sampler_diagnostics(uint32_t words[16]){
+    uint32_t now=ln_time_us();
+    uint32_t values[16]={0x53554d50u,ln_sampler.stage,ln_sampler.age_phase,ln_sampler.age_valid,
+        now,ln_sampler.started_us,ln_power.next_sample_us,ln_power.samples,ln_power.failures,
+        ln_power.bus_resets,ln_sample_diagnostics.reason,ln_sample_diagnostics.stage,
+        ln_sample_diagnostics.age,ln_sample_diagnostics.active_late,ln_sample_diagnostics.idle_late,ln_power.flags};
+    for(uint32_t i=0;i<16u;i++)words[i]=values[i];
+}
+#endif
 uint8_t ln_power_sources(void)
 {
     return ln_target_power_sources();
@@ -99,6 +115,11 @@ static void ln_sample_adc_failed(void)
     ++ln_power.failures;++ln_power.samples;ln_power.sampled_us=ln_time_us();
     ln_clock.valid=false;ln_sample_next_cycle();
 }
+#if defined(LN_SAMPLE_DIAGNOSTICS)
+static void ln_sample_fail(uint32_t reason){ln_sample_failure(reason);ln_sample_adc_failed();}
+#else
+#define ln_sample_fail(reason) ln_sample_adc_failed()
+#endif
 /* Any foreground bus owner cancels an unfinished pointer/data sequence first.
  * A completed battery publication remains valid; partial ADC/RTC bytes are
  * never published. The aggregate age and logical phase survive cancellation.
@@ -301,6 +322,11 @@ bool ln_power_poll(uint32_t now, struct ln_power_state *out)
 {
     if (!ln_power_ready || !out) return false;
     if ((int32_t)(now - ln_power.next_sample_us) < 0) { *out = ln_power; return false; }
+#if defined(LN_SAMPLE_DIAGNOSTICS)
+    uint32_t late=now-ln_power.next_sample_us;
+    uint32_t *maximum=ln_sampler.age_valid?&ln_sample_diagnostics.active_late:&ln_sample_diagnostics.idle_late;
+    if(late>*maximum)*maximum=late;
+#endif
     uint8_t old_flags = ln_power.flags;
     uint16_t old_mv = ln_power.battery_mv;
     struct ln_clock_state old_clock=ln_clock;
@@ -327,7 +353,7 @@ bool ln_power_poll(uint32_t now, struct ln_power_state *out)
             ln_clock.valid=false;ln_sample_next_cycle();goto complete;
         }
     }else if(ln_sample_expired(LN_SAMPLE_ADC_MAX_AGE_US)){
-        ln_sample_adc_failed();goto complete;
+        ln_sample_fail(1u);goto complete;
     }
     switch(ln_sampler.stage){
     case LN_SAMPLE_ADC_COMMAND:
@@ -346,7 +372,7 @@ bool ln_power_poll(uint32_t now, struct ln_power_state *out)
         if(transfer==LN_SAMPLE_TRANSFER_OK){
             if(ln_sample_expired(ln_sampler.age_phase==LN_SAMPLE_AGE_RTC?
                 LN_SAMPLE_RTC_MAX_AGE_US:LN_SAMPLE_ADC_MAX_AGE_US)){
-                ln_sample_adc_failed();break;
+                ln_sample_fail(2u);break;
             }
             uint16_t raw=(uint16_t)(((uint16_t)ln_sampler.data[0]<<2)|(ln_sampler.data[1]&3u));
             uint16_t mv=(uint16_t)(((uint32_t)raw*6000u)>>10);
@@ -354,7 +380,12 @@ bool ln_power_poll(uint32_t now, struct ln_power_state *out)
             if(mv>=2500u&&mv<=5000u){
                 ln_power.battery_mv=mv;ln_power.battery_percent=ln_battery_percent(mv);
                 ln_power.flags|=LINNET_POWER_BATTERY_VALID;
-            }else ++ln_power.failures;
+            }else {
+#if defined(LN_SAMPLE_DIAGNOSTICS)
+                ln_sample_failure(4u);
+#endif
+                ++ln_power.failures;
+            }
             ++ln_power.samples;ln_power.sampled_us=ln_time_us();
             ln_sampler.stage=LN_SAMPLE_RTC_POINTER_TIME;
             if(ln_sampler.age_phase==LN_SAMPLE_AGE_ADC){
@@ -401,7 +432,7 @@ bool ln_power_poll(uint32_t now, struct ln_power_state *out)
         break;
     }
     if(transfer==LN_SAMPLE_TRANSFER_FAILED){
-        if(ln_sampler.age_phase==LN_SAMPLE_AGE_ADC)ln_sample_adc_failed();
+        if(ln_sampler.age_phase==LN_SAMPLE_AGE_ADC)ln_sample_fail(3u);
         else {ln_clock.valid=false;ln_sample_next_cycle();}
     }else if(ln_sampler.stage!=LN_SAMPLE_IDLE)ln_sample_next_step();
 complete:

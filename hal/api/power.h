@@ -40,6 +40,10 @@ bool ln_power_init(void);
  * complete ADC result (success or terminal invalid/fault outcome) is published. */
 bool ln_power_poll(uint32_t now, struct ln_power_state *out);
 void ln_power_snapshot(struct ln_power_state *out);
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS) && !defined(LINNET_PROFILE_RELEASE)
+/* Read-only sampler timing and last ADC failure; no bus transaction. */
+void ln_power_sampler_diagnostics(uint32_t words[16]);
+#endif
 uint32_t ln_power_next_deadline(void);
 uint8_t ln_power_sources(void); /* Current USB/FireWire presence, without I2C. */
 void ln_power_backlight(bool on, uint8_t brightness);

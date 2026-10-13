@@ -11,6 +11,7 @@
 #endif
 #include "hal/api/recovery.h"
 #include "hal/api/platform.h"
+#include "hal/api/power.h"
 #if defined(LINNET_IMAGE_OS)
 #include "services/update/native.h"
 #include "kernel/runtime.h"
@@ -71,6 +72,9 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r,uint8_t *ln_s
         else if(q->length==4u&&ln_read_le32(q->payload)==13u){ln_block_workload_diagnostics(words);count=8u;}
 #if defined(LINNET_IMAGE_OS)
         else if(q->length==4u&&ln_read_le32(q->payload)==4u){ln_runtime_render_timing(words);count=16u;}
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+        else if(q->length==4u&&ln_read_le32(q->payload)==22u){ln_power_sampler_diagnostics(words);count=16u;}
+#endif
 #if defined(LINNET_FILES)
         else if(q->length==4u&&ln_read_le32(q->payload)==19u){ln_files_diagnostics(words);count=16u;}
 #endif
