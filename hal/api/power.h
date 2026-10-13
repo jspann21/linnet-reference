@@ -43,9 +43,8 @@ void ln_power_snapshot(struct ln_power_state *out);
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS) && !defined(LINNET_PROFILE_RELEASE)
 /* Read-only sampler timing and last ADC failure; no bus transaction. */
 void ln_power_sampler_diagnostics(uint32_t words[16]);
-/* Attribute a completed development reply wait to the active ADC attempt.
- * These helpers only observe clocks and cached state; they perform no I2C. */
-void ln_power_sampler_link_wait(uint32_t command,uint32_t began);
+/* PTI1: per-attempt CPU idle time and lifetime timer lateness. Current idle is
+ * UINT32_MAX outside an active ADC; failed idle remains frozen. No I2C. */
 void ln_power_sampler_trace(uint32_t words[16]);
 #endif
 uint32_t ln_power_next_deadline(void);
