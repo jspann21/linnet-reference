@@ -5,6 +5,9 @@ const struct ln_history_page *ln_paged_history_page(uint32_t index);
 #if LINNET_TARGET_NUMBER==25u
 /* Pure readiness query; never requests a page or changes cache age. */
 bool ln_paged_history_page_waiting(uint32_t index);
+/* Pure, synchronous snapshot of a fully covered resident played set. The
+ * caller owns both outputs and the shared 250us foreground budget. */
+bool ln_paged_history_played_cached(uint64_t *ids,uint32_t *scores,uint32_t capacity,uint32_t *count,uint32_t began);
 #endif
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_COVERFLOW_PACKED)
 void ln_paged_history_scan_policy(bool active,bool bulk_allowed);

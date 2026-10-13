@@ -143,6 +143,33 @@ bool ln_paged_history_page_waiting(uint32_t index){
     for(uint32_t i=0;i<4;i++)if(h.cache[i].ready&&h.cache[i].index==index)return false;
     return h.ticket||h.wanted||h.phase!=IDLE;
 }
+bool ln_paged_history_played_cached(uint64_t *ids,uint32_t *scores,uint32_t capacity,uint32_t *count,uint32_t began){
+    if(!h.loaded||h.error||h.wanted||h.ticket||h.phase!=IDLE||
+       h.seen_count!=LN_HISTORY_PAGE_COUNT||!ids||!scores||!count)return false;
+    *count=0;
+    /* Unknown or evicted positive pages must take the original scan path. */
+    for(uint32_t word=0;word<32u;++word){
+        uint32_t covered=0;
+        for(uint32_t slot=0;slot<4u;++slot){
+            const struct ln_history_page *p=&h.cache[slot];
+            if(p->ready&&p->index/32u==word)covered|=1u<<(p->index&31u);
+        }
+        if((h.played_pages[word]&~covered)||(uint32_t)(ln_time_us()-began)>=250u)return false;
+    }
+    for(uint32_t slot=0;slot<4u;++slot){
+        const struct ln_history_page *p=&h.cache[slot];
+        if(!p->ready)continue;
+        for(uint32_t at=0;at<p->count;++at){
+            if((uint32_t)(ln_time_us()-began)>=250u)return false;
+            const struct ln_music_journal_record *r=&p->records[at];
+            if(!r->play_count)continue;
+            if(*count==capacity||ln_paged_history_get(r->id)!=r)return false;
+            for(uint32_t n=0;n<*count;++n)if(ids[n]==r->id)return false;
+            ids[*count]=r->id;scores[*count]=r->play_count;++*count;
+        }
+    }
+    return (uint32_t)(ln_time_us()-began)<250u;
+}
 #endif
 static void resolve(void){
     if(h.scanning){h.scanning=h.wanted=false;return;}

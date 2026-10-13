@@ -90,6 +90,27 @@ static bool recent_cached(void){
     else changed();
     return true;
 }
+#if LINNET_TARGET_NUMBER==25u
+static bool most_played_cached(void){
+    if(!b.activity_scanning||b.activity_kind!=12u||b.job!=NONE||
+       b.choosing||b.exporting||b.expanding||b.resolving||
+       ln_music_library_status()!=LN_LIBRARY_READY||ln_music_history_error())return false;
+    uint32_t began=ln_time_us(),count;
+    /* This call never yields: the existing playlist scratch is consumed before
+     * another foreground action can acquire it or change history/library. */
+    if(!ln_paged_history_played_cached(b.draft.ids,b.mapped,16u,&count,began))return false;
+    for(uint32_t n=0;n<count;++n){
+        uint32_t track;
+        if((uint32_t)(ln_time_us()-began)>=250u||
+           !ln_music_library_track_id_lookup(b.draft.ids[n],&track))goto fallback;
+        if(track!=UINT32_MAX)activity_insert(track,b.mapped[n]);
+    }
+    if((uint32_t)(ln_time_us()-began)>=250u)goto fallback;
+    b.here.count=b.activity_count;b.activity_scanning=false;invalidate();return true;
+fallback:
+    b.activity_count=0;b.activity_overflow=false;return false;
+}
+#endif
 static uint32_t ordinal(uint32_t n);
 static struct row *row(uint32_t n){
     if(n==UINT32_MAX)return 0;
@@ -311,8 +332,12 @@ bool ln_music_browser_select(uint32_t n){
          * that placement when a cached jump finishes before its first frame. */
         b.first=b.here.first=0;
         b.jump_binary=n&&(b.here.view==GROUPS||b.here.view==ALBUM_ARTISTS||(b.here.view==TRACKS&&!b.here.kind)||(b.here.view==ACTIVITY&&(b.activity_kind==9||b.activity_kind==10)));(void)jump_cached();changed();return true;}
-    if(b.here.view==CATEGORIES||b.here.view==MORE){n=ln_music_menu_category(b.here.view==MORE,n);if(n==LN_MUSIC_COVER_FLOW){b.coverflow=true;return true;}if(n==LN_MUSIC_MORE){if(!push())return false;enter(MORE,"More Music");return true;}if(n>=15)return false;if(n==14){if(!push())return false;enter(ALBUM_ARTISTS,"Album Artists");catalog_begin(true);return true;}if(n>=9&&n<=12){if(!push())return false;enter(ACTIVITY,categories[n]);b.activity_kind=n;b.activity_count=b.activity_scan=b.activity_page=b.scan_id_count=b.scan_id_at=0;b.activity_scanning=!activity_empty();if(n!=11u&&b.activity_scanning)__builtin_memset(activity_data.filter,0,sizeof activity_data.filter);b.activity_indexed=b.activity_waiting=b.activity_overflow=false;
+    if(b.here.view==CATEGORIES||b.here.view==MORE){n=ln_music_menu_category(b.here.view==MORE,n);if(n==LN_MUSIC_COVER_FLOW){b.coverflow=true;return true;}if(n==LN_MUSIC_MORE){if(!push())return false;enter(MORE,"More Music");return true;}if(n>=15)return false;if(n==14){if(!push())return false;enter(ALBUM_ARTISTS,"Album Artists");catalog_begin(true);return true;}if(n>=9&&n<=12){if(!push())return false;enter(ACTIVITY,categories[n]);b.activity_kind=n;b.activity_count=b.activity_scan=b.activity_page=b.scan_id_count=b.scan_id_at=0;b.activity_scanning=!activity_empty();b.activity_indexed=b.activity_waiting=b.activity_overflow=false;
         b.activity_id_index_tried=false;
+#if LINNET_TARGET_NUMBER==25u
+        if(most_played_cached())return true;
+#endif
+        if(n!=11u&&b.activity_scanning)__builtin_memset(activity_data.filter,0,sizeof activity_data.filter);
         (void)recent_cached();
         return true;}if(n==13){if(!push())return false;groups(8);copy(b.here.title,"Recently Added");return true;}if(n==8){b.search=true;return true;}if(!push())return false;
         if(n==7)enter(PLAYLISTS,"Playlists");else if(n)groups(n);else{enter(TRACKS,"Songs");b.here.count=ln_music_library_count();}return true;}
