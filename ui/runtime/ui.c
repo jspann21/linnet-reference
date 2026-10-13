@@ -246,7 +246,7 @@ static union {
 static void album_extract(const struct ln_ui_asset*a,uint16_t*out){
     /* Static workspace avoids placing 8 KiB on the device's runtime stack. */
     uint16_t *histogram=ui_workspace.histogram;
-    for(uint32_t i=0;i<4096u;++i)histogram[i]=0;
+    __builtin_memset(ui_workspace.histogram,0,sizeof ui_workspace.histogram);
     for(uint32_t i=0;i<a->width*a->height;i+=4u)++histogram[album_bucket(a->pixels[i])];
     uint32_t dominant=0,best=0,fallback=0;
     for(uint32_t i=0;i<4096u;++i){
