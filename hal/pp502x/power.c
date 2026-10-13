@@ -31,11 +31,14 @@ static struct {
 static struct {uint32_t reason,stage,age,active_late,idle_late;} ln_sample_diagnostics;
 static struct ln_adc_trace {uint32_t started,command_age,pointer_age,idle_us,deadline_late,cancels;}
     ln_adc_current,ln_adc_failed;
+static struct ln_adc_idle_trace {uint32_t requested,actual,power_delta;}
+    ln_adc_idle_current,ln_adc_idle_failed;
 static void ln_sample_failure(uint32_t reason){
     ln_sample_diagnostics.reason=reason;ln_sample_diagnostics.stage=ln_sampler.stage;
     ln_sample_diagnostics.age=ln_time_us()-ln_sampler.started_us;
     struct ln_core_status core;ln_core_snapshot(&core);
     ln_adc_failed=ln_adc_current;
+    ln_adc_idle_failed=ln_adc_idle_current;
     ln_adc_failed.idle_us=core.idle_us-ln_adc_current.idle_us;
     ln_adc_failed.deadline_late=core.deadline_late_us;
 }
@@ -55,6 +58,21 @@ void ln_power_sampler_trace(uint32_t words[16]){
         ln_adc_current.pointer_age,idle,core.deadline_late_us,ln_adc_current.cancels,
         ln_adc_failed.started,ln_adc_failed.command_age,ln_adc_failed.pointer_age,ln_adc_failed.idle_us,
         ln_adc_failed.deadline_late,ln_adc_failed.cancels,ln_sample_diagnostics.reason,ln_sample_diagnostics.age};
+    for(uint32_t i=0;i<16u;i++)words[i]=values[i];
+}
+void ln_power_idle_observe(uint32_t requested,uint32_t actual,uint32_t power_delta){
+    if(!ln_sampler.age_valid||ln_sampler.age_phase!=LN_SAMPLE_AGE_ADC)return;
+    if(requested>ln_adc_idle_current.requested){
+        ln_adc_idle_current.requested=requested;ln_adc_idle_current.power_delta=power_delta;
+    }
+    if(actual>ln_adc_idle_current.actual)ln_adc_idle_current.actual=actual;
+}
+void ln_power_sampler_idle_trace(uint32_t words[16]){
+    uint32_t values[16]={0x4c444950u,ln_time_us(),ln_adc_current.started,
+        ln_adc_idle_current.requested,ln_adc_idle_current.actual,ln_adc_idle_current.power_delta,
+        ln_adc_failed.started,ln_adc_idle_failed.requested,ln_adc_idle_failed.actual,
+        ln_adc_idle_failed.power_delta,ln_sample_diagnostics.reason,ln_sample_diagnostics.age,
+        ln_sampler.stage,ln_sampler.age_phase,ln_sampler.age_valid,ln_power.failures};
     for(uint32_t i=0;i<16u;i++)words[i]=values[i];
 }
 #endif
@@ -361,6 +379,7 @@ bool ln_power_poll(uint32_t now, struct ln_power_state *out)
 #if defined(LN_SAMPLE_DIAGNOSTICS)
             struct ln_core_status core;ln_core_snapshot(&core);
             ln_adc_current=(struct ln_adc_trace){.started=ln_sampler.started_us,.idle_us=core.idle_us};
+            ln_adc_idle_current=(struct ln_adc_idle_trace){0};
 #endif
         }
         if(ln_sampler.age_phase==LN_SAMPLE_AGE_RTC){

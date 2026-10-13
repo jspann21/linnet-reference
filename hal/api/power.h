@@ -46,6 +46,9 @@ void ln_power_sampler_diagnostics(uint32_t words[16]);
 /* PTI1: per-attempt CPU idle time and lifetime timer lateness. Current idle is
  * UINT32_MAX outside an active ADC; failed idle remains frozen. No I2C. */
 void ln_power_sampler_trace(uint32_t words[16]);
+/* Pure diagnostic observation after CPU idle; safe with interrupts masked. */
+void ln_power_idle_observe(uint32_t requested,uint32_t actual,uint32_t power_delta);
+void ln_power_sampler_idle_trace(uint32_t words[16]);
 #endif
 uint32_t ln_power_next_deadline(void);
 uint8_t ln_power_sources(void); /* Current USB/FireWire presence, without I2C. */

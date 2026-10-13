@@ -1,6 +1,9 @@
 #include "hal/pp502x/soc.h"
 #include "hal/api/core.h"
 #include "hal/api/platform.h"
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS) && !defined(LINNET_PROFILE_RELEASE)
+#include "hal/api/power.h"
+#endif
 #if defined(LINNET_IMAGE_OS)
 #include "hal/api/display.h"
 #endif
@@ -214,12 +217,19 @@ void ln_core_idle_until(uint32_t deadline_us)
     }
     /* Keep watchdog progress available; this is a maximum sleep, not a poll. */
     if (delta > 200000) delta = 200000;
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS) && !defined(LINNET_PROFILE_RELEASE)
+    uint32_t power_delta=ln_power_next_deadline()-now;
+#endif
     ln_core_wake_at(now+(uint32_t)delta);
     uint32_t control = LINNET_MMIO(0x60007000u);
     LINNET_MMIO(0x60007000u) = 0x80000000u;
     __asm__ volatile("nop\n\tnop\n\tnop" ::: "memory");
     LINNET_MMIO(0x60007000u) = control & ~0x80000000u;
-    ln_status.idle_us += ln_time_us() - now;
+    uint32_t elapsed=ln_time_us()-now;
+    ln_status.idle_us += elapsed;
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS) && !defined(LINNET_PROFILE_RELEASE)
+    ln_power_idle_observe((uint32_t)delta,elapsed,power_delta);
+#endif
     ++ln_status.idle_count;
     ln_core_irq_restore(flags);
 }
