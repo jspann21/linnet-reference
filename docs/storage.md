@@ -26,6 +26,13 @@ Unexpected identity or geometry changes reject access. Idle power work is
 serialized with the block queue and excluded from filesystem transactions.
 Failed write/flush barriers prevent further writes until recovery.
 
+Full-sector file data can use contiguous writes of up to eight logical sectors,
+bounded by the current request and cluster. The block queue snapshots those bytes
+in its existing buffers and requires exact completion. Partial-sector data and
+allocation/directory metadata retain individual sector I/O. Save headers remain
+last, with the existing flush barriers, complete checksum, and readback checks.
+Transfer failures quarantine the filesystem until explicit recovery.
+
 ATA identity does not measure current draw or establish charging limits.
 Replacement storage needs its own power and reliability checks.
 

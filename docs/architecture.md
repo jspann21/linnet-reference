@@ -93,6 +93,10 @@ from resident members before drawing. It validates the group once per bounded
 preparation slice and reuses those bounds for each member. Partial cached work
 continues in another slice before admitting a metadata query; cache misses retain
 the asynchronous path and playback keeps its existing work budget.
+Completed Search windows skip repeated row preparation and readiness scans.
+Result, viewport, and library changes invalidate that readiness; admitted queries
+still drain before closing or returning. Group-title queries also resolve verified
+resident members through the ordinary query owner before parsing database records.
 Jump to letter also consumes ready labels before its first frame, within a
 250-microsecond slice. Missing labels retain the existing asynchronous lookup;
 long scans yield between slices and preserve reverse-order and cancellation rules.
