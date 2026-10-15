@@ -43,14 +43,12 @@ static const char *const paths[STORAGE_FILE_COUNT]={"/.LINNET/OS0.LOS","/.LINNET
 };
 static uint8_t mbr[512] __attribute__((aligned(32)));
 static uint32_t phase,error,found,opening,epoch=1,request,request_generation,request_sectors;
-static bool pending,locked,media_realtime;
+static bool pending,locked,media_realtime,media_realtime_wake_requested;
 static uint32_t partition_scale;
 static uint32_t media_owner;
 #define MEDIA_WAKE_GENERATION 0x76000001u
 static uint32_t video_browse_until,media_wake_ticket;
-#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
 static uint32_t media_wake_status;
-#endif
 static bool video_browse,video_wake_requested,music_boundary,music_wake_requested;
 static uint32_t fixed_owner,fixed_started;
 static uint32_t media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
@@ -248,9 +246,7 @@ void ln_storage_progress(void *context){
         struct ln_block_completion completion;
         if(ln_block_take(MEDIA_WAKE_GENERATION,&completion)){
             media_wake_ticket=0;
-#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
             media_wake_status=completion.status;
-#endif
         }
     }
     ln_block_allow_idle(phase==6&&!locked&&!pending&&!media_realtime&&!music_boundary&&
@@ -277,10 +273,8 @@ void ln_storage_progress(void *context){
     ln_core_watchdog_feed();
 #endif
 }
-void ln_storage_init(void){phase=1;partition_scale=1;error=found=opening=0;pending=locked=media_realtime=music_boundary=music_wake_requested=false;media_wake_ticket=0;media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
-#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+void ln_storage_init(void){phase=1;partition_scale=1;error=found=opening=0;pending=locked=media_realtime=media_realtime_wake_requested=music_boundary=music_wake_requested=false;media_wake_ticket=0;media_read_ahead=LN_BLOCK_READ_AHEAD_DEFAULT;
     media_wake_status=LN_ATA_OK;
-#endif
 #if !defined(LINNET_PROFILE_RELEASE)
     uint32_t timing_flags=(poll_timing.depth[0]||poll_timing.depth[1])?1u<<29:0u;
     if(poll_timing.epoch==UINT32_MAX)timing_flags|=1u<<31;
@@ -373,7 +367,21 @@ void ln_storage_step(void){storage_step(false);}
 void ln_storage_step_deferred(void){storage_step(true);}
 bool ln_storage_busy(void){return locked||background_running||(phase>=1&&phase<6)||phase==7||phase==10;}
 bool ln_storage_mounted(void){return phase==6&&volume.mounted;}
-void ln_storage_media_realtime(bool active){media_realtime=active;}
+int ln_storage_media_realtime(bool active){
+    struct ln_ata_state device;ln_ata_state_snapshot(&device);
+    media_realtime=active&&device.media_kind==LN_ATA_MEDIA_ROTATING;
+    if(!media_realtime){media_realtime_wake_requested=false;return 1;}
+    struct ln_block_info block;ln_block_snapshot(&block);
+    if(!ln_storage_mounted()||device.failed||block.quarantined)return -1;
+    if(device.initialized&&device.powered&&!device.sleeping&&!device.initializing&&!block.power_transition)return 1;
+    if(media_realtime_wake_requested)
+        return !media_wake_ticket&&media_wake_status!=LN_ATA_OK?-1:0;
+    /* A cached stream may never issue a physical read during startup. Wake
+     * once in parallel with preparation, before its PCM reserve is consumed. */
+    if(!media_wake_ticket&&ln_block_submit(LN_BLOCK_WAKE,0,0,0,MEDIA_WAKE_GENERATION,
+        ln_time_us()+30000000u,&media_wake_ticket))media_realtime_wake_requested=true;
+    return 0;
+}
 void ln_storage_music_boundary(uint32_t intents){
     if(!intents||!ln_storage_mounted()){
         music_boundary=music_wake_requested=false;return;

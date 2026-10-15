@@ -74,6 +74,11 @@ and seek reserves preserve at least the original 32,768 / 44,100 second duration
 rounded up to a whole 1,024-frame AAC block. Higher rates retain 32,768 frames;
 steady playback retains its 49,152-frame target.
 
+Rotating storage wakes asynchronously when video preparation begins, even if
+all initial reads hit RAM. Playback waits for drive readiness before `mp_play`,
+so a later cache miss cannot spend the PCM reserve on a cold spin-up. The wake
+is attempted once per playback; stopping releases the existing standby hint.
+
 Native firmware and read-through decoder-library bytes borrow an idle music
 decoder workspace. The lease ends before returning to idle UI or music. Only
 completed reads from the five qualified immutable native libraries enter the

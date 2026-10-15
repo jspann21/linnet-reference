@@ -49,8 +49,9 @@ bool ln_storage_mounted(void);
 /* Wake the disk when the video library opens, then defer standby for at most
  * one minute after entering or navigating the list. Leaving releases the hint. */
 void ln_storage_video_browse(bool active, bool activity);
-/* A streaming owner can defer standby across reads satisfied from RAM. */
-void ln_storage_media_realtime(bool active);
+/* An active rotating stream wakes once and defers standby across RAM hits.
+ * Returns 1 ready/inactive/nonrotating, 0 wake pending, -1 unavailable. */
+int ln_storage_media_realtime(bool active);
 /* Preparation wakes known media; the join hint applies only to rotating media. */
 enum {LN_STORAGE_MUSIC_BOUNDARY=1u,LN_STORAGE_MUSIC_PREPARE=2u};
 void ln_storage_music_boundary(uint32_t intents);

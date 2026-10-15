@@ -1093,6 +1093,9 @@ bool ln_m25_coprocessor_step(void){
     if(vc.phase==PLAYER_SETTLE){
         if(!service_resets()||!file_service()||!audio_service()||!stream_service()){recover(36);return false;}
         if(vc.normal&&vc.command_index==6u){
+            int disk=ln_storage_media_realtime(true);
+            if(disk<0){recover(49u);return false;}
+            if(!disk){if(expired())recover(49u);return false;}
             /* mp_region has acknowledged completion. Wait for useful work,
              * not an unconditional two seconds with the display hidden. */
             if(!vc.seek_stage&&(!vc.audio_ready||vc.audio_frames>=audio_prime_frames()||vc.audio_eof)){
