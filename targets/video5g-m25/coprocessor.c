@@ -32,6 +32,7 @@ static uint32_t fault_mode,fault_deadline;
 static uint32_t rom_check_us,rom_check_max_us,rom_check_calls;
 static uint32_t picture_cookie;
 static uint32_t picture_probe[8];
+static uint32_t idle_probe[8],player_reuses,player_unloads;
 #endif
 enum { IDLE,OPEN,READ,HASH,ACQUIRE,POWER_OFF,POWER_ON,BUS_READY,BUS_SETUP,
        BUS_LATCH,UPLOAD,VALIDATE_BEGIN,VALIDATE_WAIT,EXECUTE,READY_WAIT,
@@ -66,6 +67,8 @@ static struct {
     uint32_t stream_packet[332],stream_phase,stream_at,stream_wr,stream_address,stream_capacity,stream_frames;
     bool mapped,stream_waiting,display_blanked;
     bool resident,display_attempted,stopping,picture_pending;uint32_t player_task,stop_deadline,stop_events;
+    bool player_retained,reuse_pending,retaining,retention_revoked;
+    uint32_t retained_epoch,retain_quiet_at,retain_deadline;
     uint32_t picture_sequence,picture_polls;
     struct ln_fat32_file file;
     struct ln_sha256 hash;
@@ -307,6 +310,55 @@ static int picture_committed(void){
     if(cookie!=context||task!=vc.player_task||again[1]!=array||again[4]!=count||
        sequence_after!=sequence||after[0]!=before[0]||after[1]!=before[1]||after[3]!=frame||after[5]!=before[5])return 0;
     vc.picture_sequence=sent_sequence;return 1;
+}
+static bool player_native_files_closed(void){
+    for(uint32_t i=0;i<8u;++i)if(vc.files[i].open)return false;
+    return !vc.fs_phase;
+}
+static bool player_files_closed(void){
+    return player_native_files_closed()&&!vc.fs_canceling&&!vc.read_active&&!vc.read_io&&!vc.io;
+}
+/* Never follow the freed codec frame array after native stop. The surviving
+ * application owns only this fixed context and its inline display state.
+ * -2 means identity was lost, -1 transport failure, 0 dirty, 1 stopped. */
+static int player_stopped(void){
+    if((vc.player_task&255u)!=4u)return -2;
+    uint32_t context,cookie,task,state,before[4],after[4],again;
+    if(!ln_m25_bcm_read(0x2f8d0u,&context,1u))return -1;
+    if(!native_range(context,0x14f8u))return -2;
+    if(!ln_m25_bcm_read(context,&task,1u))return -1;
+    if(task!=vc.player_task)return -2;
+    if(!ln_m25_bcm_read(context+0x108u,&state,1u)||
+       !ln_m25_bcm_read(context+0x13b8u,before,4u)||
+       !ln_m25_bcm_read(context+0x13b8u,after,4u)||
+       !ln_m25_bcm_read(context+0x108u,&again,1u)||
+       !ln_m25_bcm_read(0x2f8d0u,&cookie,1u)||
+       !ln_m25_bcm_read(context,&task,1u))return -1;
+    if(cookie!=context||task!=vc.player_task)return -2;
+#if !defined(LINNET_PROFILE_RELEASE)
+    idle_probe[0]=context;idle_probe[1]=task;idle_probe[6]=state;
+    for(uint32_t i=0;i<4u;++i)idle_probe[2u+i]=before[i];
+#endif
+    if((state&255u)||(again&255u))return 0;
+    for(uint32_t i=0;i<4u;++i)if(before[i]||after[i])return 0;
+    return 1;
+}
+static int player_rings_idle(void){
+    uint32_t stream=0;
+    while(stream<8u&&halfword(vc.channel[stream],4u)!=7u)++stream;
+    if(vc.file_slot>=8u||stream==8u||stream==vc.file_slot)return -1;
+    for(uint32_t i=0;i<2u;++i){
+        uint32_t slot=i?stream:vc.file_slot,words[20];
+        uint32_t off=halfword(vc.directory,slot*2u);
+        if(!ln_m25_bcm_read(vc.header[3]+off,words,20u))return -1;
+        if(halfword(words,4u)!=halfword(vc.channel[slot],4u))return -1;
+        uint32_t txlo=halfword(words,6u),txhi=halfword(words,8u),txrd=halfword(words,16u),txwr=halfword(words,32u);
+        uint32_t rxlo=halfword(words,10u),rxhi=halfword(words,12u),rxrd=halfword(words,48u),rxwr=halfword(words,64u);
+        if(!ring_valid(txlo,txhi,txrd)||!ring_valid(txlo,txhi,txwr)||
+           !ring_valid(rxlo,rxhi,rxrd)||!ring_valid(rxlo,rxhi,rxwr))return -1;
+        if(txrd!=txwr||rxrd!=rxwr)return 0;
+    }
+    return 1;
 }
 static void picture_wait(void){
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -700,6 +752,8 @@ static void recover(uint32_t error){
         return;
     }
     if(vc.resident)vc.owned=true;
+    vc.player_retained=vc.reuse_pending=vc.retaining=false;
+    vc.retained_epoch=0;
     vc.resident=false;nd.enabled=false;
     vc.clock_ms=ln_m25_coprocessor_position();vc.clock_us=ln_time_us();vc.clock_valid=true;vc.paused=true;
     if(vc.audio_ready){ln_audio_snapshot(&vc.audio_status);if(!ln_audio_stop()&&!error)error=49u;vc.audio_ready=false;}
@@ -728,13 +782,15 @@ static void stop_drain(void){
 static bool unselected_application(void){
     /* A delayed stream request is not evidence that selectplay was never
      * sent. Only these command states prove it has not been published. */
-    return !vc.stream_phase&&!vc.control&&(vc.command_index<4u||
+    return !vc.stream_phase&&(!vc.control||vc.control==12u||vc.control==13u)&&(vc.command_index<4u||
         (vc.command_index==4u&&vc.phase==VERSION_SEND));
 }
 static bool direct_file;
 bool ln_m25_coprocessor_begin(uint32_t operation){
     if(vc.owned||vc.fs_canceling||(vc.resident&&nd.mode)||(vc.phase!=IDLE&&vc.phase!=FAILED&&vc.phase!=RESTORED&&vc.phase!=NATIVE_IDLE))return false;
     if(vc.resident&&operation!=2u)return false;
+    if(vc.player_retained&&!player_files_closed())return false;
+    bool reuse=vc.resident&&vc.player_retained;
     {
         uint32_t image_generation;
         uint8_t *image=ln_player_video_firmware_memory(&image_generation);
@@ -771,7 +827,8 @@ bool ln_m25_coprocessor_begin(uint32_t operation){
         nd=(__typeof__(nd)){.slot=8u};vc.command_slot=vc.file_slot=8u;
     }
     vc.slot=0;
-    vc.reply_bytes=0;vc.stopping=vc.picture_pending=false;vc.player_task=vc.stop_events=0;
+    vc.reply_bytes=0;vc.stopping=vc.picture_pending=vc.retaining=false;vc.stop_events=0;
+    vc.reuse_pending=reuse;vc.player_retained=false;if(!reuse)vc.player_task=vc.retained_epoch=0;
     vc.picture_sequence=vc.picture_polls=0;
     vc.command_index=vc.reply_parsed=0;
     vc.operation=operation;vc.control=vc.seek_stage=0;
@@ -918,6 +975,27 @@ bool ln_m25_coprocessor_step(void){
         if(vc.fs_canceling)return false;
         if(!service_resets()||!file_service()){recover(36u);return false;}
         if(vc.fs_phase)return false;
+        if(vc.retaining){
+            int stopped=player_stopped(),rings=player_rings_idle();
+            if(stopped<0||rings<0){recover(54u);return false;}
+            struct ln_fat32_file root;
+            bool quiet=stopped&&rings&&player_files_closed()&&ln_storage_media_root(&root)&&root.epoch;
+#if !defined(LINNET_PROFILE_RELEASE)
+            idle_probe[7]=quiet;
+#endif
+            uint32_t now=ln_time_us();
+            if(!quiet)vc.retain_quiet_at=0;
+            else if(!vc.retain_quiet_at)vc.retain_quiet_at=now;
+            else if(now-vc.retain_quiet_at>=10000u){
+                vc.player_retained=true;vc.retained_epoch=root.epoch;vc.retaining=false;
+            }
+            if(vc.retaining){
+                if((int32_t)(now-vc.retain_deadline)>=0){
+                    vc.retaining=false;vc.control=8u;phase(VERSION_SEND,5000000u);
+                }
+                return false;
+            }
+        }
         if(nd.visible){native_idle();++vc.revision;return true;}
         if(!native_display_begin(4u)){recover(54u);return false;}
         phase(DISPLAY_RETURN,2000000u);return false;
@@ -1199,7 +1277,10 @@ bool ln_m25_coprocessor_step(void){
         static const char *const lcd_region="mp_region display=0 dest=\"0 0 320 240\" mode=fill";
         char seek_command[32]="mp_seek ";
         if(vc.control==4u){vc.seek_seen=false;uint32_t n=vc.seek_ms,at=8u,divisor=1000000000u;while(divisor>1u&&n<divisor)divisor/=10u;do{seek_command[at++]=(char)('0'+n/divisor);n%=divisor;divisor/=10u;}while(divisor);seek_command[at]=0;}
-        if(vc.control==8u){
+        if(vc.control==8u||vc.control==12u){
+            /* A retained token predates this open. Validate its generation
+             * again before unloading, including cancellation before status. */
+            if(vc.retained_epoch&&player_stopped()<0){recover(54u);break;}
             static const char prefix[]="end_application ";uint32_t at=0;
             while(prefix[at]){seek_command[at]=prefix[at];++at;}
             uint32_t n=vc.player_task,divisor=1000000000u;while(divisor>1u&&n<divisor)divisor/=10u;
@@ -1207,7 +1288,8 @@ bool ln_m25_coprocessor_step(void){
         }
         bool tv=(vc.options&32u)!=0,wide=(vc.options&8u)!=0,svideo=(vc.options&16u)!=0,pal=(vc.options&4u)!=0;
         const char *native=vc.command_index==1u?tv?tv_encoding[pal?1u:0u]:(vc.board_revision&0xffffu)<0x10u?"display_control 0 model=1 power=2":native_commands[1u]:vc.command_index==2u&&tv?tv_shape[(svideo?2u:0u)|(wide?1u:0u)]:vc.command_index==6u?lcd_region:native_commands[vc.command_index];
-        const char *command=vc.control==4u||vc.control==8u?seek_command:vc.control==7u?"mp_stop":vc.control==10u?"pm_get_status":vc.control==11u?"display_control 2 dac=0":vc.control?(vc.control==1u?"mp_pause":vc.control==2u?"mp_play":"mp_get_status"):vc.operation==2u||vc.operation==3u?native:!vc.operation?"version":vc.command_index==0u?"load_application mplayer":vc.command_index==2u?"mp_selectplay passthru:linnet 0":"mp_get_status";
+        if(vc.reuse_pending&&!vc.control&&!vc.command_index)vc.control=13u;
+        const char *command=vc.control==4u||vc.control==8u||vc.control==12u?seek_command:vc.control==7u?"mp_stop":vc.control==10u?"pm_get_status":vc.control==11u?"display_control 2 dac=0":vc.control?(vc.control==1u?"mp_pause":vc.control==2u?"mp_play":"mp_get_status"):vc.operation==2u||vc.operation==3u?native:!vc.operation?"version":vc.command_index==0u?"load_application mplayer":vc.command_index==2u?"mp_selectplay passthru:linnet 0":"mp_get_status";
         uint32_t message[32]={0xf1a55a1fu,vc.command_index+1u,1u,0},length=0;
         while(command[length]){((uint8_t *)(message+4))[length]=(uint8_t)command[length];++length;}
         message[3]=length+1u;length=16u+((length+16u)&~15u);
@@ -1291,20 +1373,53 @@ bool ln_m25_coprocessor_step(void){
                     break;
                 }
                 if(vc.control==9u){
-                    if(vc.stop_events&&status_field(response,bytes,"state=idle",false)){vc.control=8u;phase(VERSION_SEND,5000000u);}
+                    if(vc.stop_events&&status_field(response,bytes,"state=idle",false)){
+                        if(vc.normal&&!(vc.options&32u)){
+                            vc.control=0;vc.retaining=true;vc.retain_quiet_at=0;
+                            vc.retain_deadline=ln_time_us()+250000u;stop_drain();
+                        }else{vc.control=8u;phase(VERSION_SEND,5000000u);}
+                    }
                     else phase(STOP_HANDSHAKE,10000u);
                     break;
                 }
                 if(vc.control==10u){vc.control=0;native_idle();break;}
                 if(vc.control==11u){vc.control=0;stop_drain();break;}
                 if(vc.control==8u){
-                    vc.player_task=0;
+                    vc.player_task=vc.retained_epoch=0;vc.player_retained=vc.reuse_pending=vc.retaining=vc.retention_revoked=false;
+#if !defined(LINNET_PROFILE_RELEASE)
+                    if(player_unloads!=UINT32_MAX)++player_unloads;
+#endif
                     if(vc.options&32u){vc.control=11u;phase(VERSION_SEND,5000000u);}
                     else{vc.control=0;stop_drain();}break;
+                }
+                if(vc.control==12u){
+                    vc.player_task=vc.retained_epoch=0;vc.player_retained=vc.reuse_pending=vc.retaining=vc.retention_revoked=false;
+#if !defined(LINNET_PROFILE_RELEASE)
+                    if(player_unloads!=UINT32_MAX)++player_unloads;
+#endif
+                    vc.control=0;
+                    if(vc.stopping)stop_drain();else phase(VERSION_SEND,5000000u);
+                    break;
                 }
                 if(vc.resident&&vc.stopping){
                     if(vc.player_task){vc.control=unselected_application()?8u:7u;phase(VERSION_SEND,5000000u);}else stop_drain();
                     break;
+                }
+                if(vc.control==13u){
+                    int stopped=player_stopped(),rings=player_rings_idle();
+                    if(stopped<0||rings<0){recover(54u);break;}
+                    struct ln_fat32_file root;
+                    bool bound=ln_storage_media_root(&root)&&root.epoch==vc.retained_epoch;
+                    bool reusable=status_field(response,bytes,"state=idle",false)&&stopped&&rings&&
+                        player_native_files_closed()&&bound&&!vc.retention_revoked&&!(vc.options&32u);
+                    vc.reuse_pending=false;
+                    if(reusable){
+#if !defined(LINNET_PROFILE_RELEASE)
+                        if(player_reuses!=UINT32_MAX)++player_reuses;
+#endif
+                        vc.control=0;vc.command_index=4u;
+                    }else vc.control=12u;
+                    phase(VERSION_SEND,5000000u);break;
                 }
                 if(vc.control){
                     uint32_t position=ln_m25_coprocessor_position();
@@ -1358,7 +1473,7 @@ bool ln_m25_coprocessor_step(void){
                      * object and rejects a second call. Resident boot already
                      * initialized it; TV only needs encoding and shape here. */
                     vc.command_index=4u;phase(VERSION_SEND,5000000u);
-                }else if(vc.normal&&vc.command_index==0u){vc.command_index=vc.resident&&(vc.options&32u)?1u:4u;phase(VERSION_SEND,5000000u);
+                }else if(vc.normal&&vc.command_index==0u){vc.retention_revoked=false;vc.command_index=vc.resident&&(vc.options&32u)?1u:4u;phase(VERSION_SEND,5000000u);
                 }else if(vc.operation==2u&&vc.command_index==6u)phase(PLAYER_SETTLE,vc.normal?30000000u:2000000u);
                 else if(vc.operation==1u&&vc.command_index==2u)phase(PLAYER_SETTLE,2000000u);
                 else if(vc.operation&&vc.command_index<(vc.operation==2u?8u:vc.operation==3u?3u:2u)){++vc.command_index;phase(VERSION_SEND,5000000u);}
@@ -1382,6 +1497,7 @@ bool ln_m25_coprocessor_prepare_display(void){
     return !ln_m25_coprocessor_active();
 }
 void ln_m25_coprocessor_storage_invalidated(void){
+    vc.retention_revoked=true;
     resources.initialized=false;resources.epoch=0;vc.image_valid=false;
     for(uint32_t i=0;i<5u;++i)resources.file[i].ready=false;
     /* Recovery can reuse FAT's mount-local epoch. An active media task must
@@ -1407,7 +1523,25 @@ bool ln_m25_coprocessor_display_commit(void){
 }
 bool ln_m25_coprocessor_quiesce_display(void){
     if(!vc.resident)return !vc.owned;
-    if(vc.phase!=NATIVE_IDLE||nd.mode||vc.player_task||vc.fs_canceling)return false;
+    if(vc.phase!=NATIVE_IDLE||nd.mode||vc.fs_canceling)return false;
+    if(vc.player_task){
+        if(!vc.player_retained||!player_files_closed()||player_stopped()!=1||player_rings_idle()!=1)return false;
+        vc.player_retained=false;vc.retaining=vc.reuse_pending=false;
+        /* The old video staging arena may now belong to music or an upload.
+         * Unloading the idle shell must never run its former packet producer. */
+        vc.operation=3u;vc.normal=false;
+        vc.stopping=true;vc.stop_deadline=ln_time_us()+15000000u;vc.control=8u;phase(VERSION_SEND,5000000u);
+        uint32_t unload_started=ln_time_us();
+        while(vc.phase!=NATIVE_IDLE||vc.player_task){
+            (void)ln_m25_coprocessor_step();
+#if !defined(LINNET_PROFILE_RELEASE)
+            ln_recovery_feed();
+#else
+            ln_core_watchdog_feed();
+#endif
+            if(!vc.resident||vc.error||ln_time_us()-unload_started>=5000000u)return false;
+        }
+    }
     vc.resident=false;vc.owned=true;recover(0);
     uint32_t started=ln_time_us();
     while(vc.owned){
@@ -1463,6 +1597,9 @@ uint32_t ln_m25_coprocessor_channel(uint32_t slot,uint32_t out[32]){
         out[14]=vc.picture_pending;out[15]=vc.seek_frames;out[16]=vc.stream_frames;
 #if !defined(LINNET_PROFILE_RELEASE)
         out[10]=rom_check_us;out[11]=rom_check_max_us;out[12]=rom_check_calls;out[13]=vc.rom_bytes;
+        out[17]=vc.player_retained;out[18]=vc.reuse_pending;out[19]=vc.retention_revoked;
+        out[20]=player_reuses;out[21]=player_unloads;out[22]=vc.retained_epoch;out[23]=vc.retaining;
+        for(uint32_t i=0;i<8u;++i)out[24u+i]=idle_probe[i];
 #endif
         return 32u;}
     if(slot==11u&&out){for(uint32_t i=0;i<32u;++i)out[i]=vc.host_channel[i];return 32u;}

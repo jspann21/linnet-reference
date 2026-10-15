@@ -35,13 +35,26 @@ retain the existing transfer size; small updates can repair an additional prior
 row span. The second surface costs 153,600 bytes of coprocessor memory.
 
 Stopping waits for a fresh native stream-stop request and its published host
-reply, then verifies idle before unloading the exact application task returned
-by the native loader. TV output disables its DAC before releasing ownership.
+reply, then verifies idle. LCD playback can retain the idle application shell
+after ARM audio and I/O drain, all file handles close, and both native file and
+stream rings remain empty for ten milliseconds. The guarded native context
+must report idle with zero submitted/completed/selection counters and a null
+current-frame pointer; stopped codec frame arrays are never dereferenced.
+The proof has a 250 ms bound before falling back to unloading the exact task.
+Transport or task-identity failure uses display recovery instead.
+
+A repeat LCD start rechecks status, the full task token, zero/null display
+state, empty rings and mount binding before skipping application loading.
+Stream selection, codec setup and the current-frame presentation gate still
+run. Storage recovery revokes reuse even if an epoch repeats. An old task token
+is revalidated before unloading, including cancellation before selection.
+TV starts unload a retained LCD shell and retain their existing full lifecycle;
+TV output disables its DAC before releasing ownership.
 An early cancellation that loaded an application but never sent selectplay
 unloads that known task directly; no stream-stop handshake exists in that state.
 The UI layer returns through the same native display runtime. A bounded failure
-path restores the verified NOR display runtime. Handoffs to another image also
-restore that original runtime before leaving Linnet.
+path restores the verified NOR display runtime. Handoffs unload a retained idle
+shell with a bounded acknowledgement before restoring that original runtime.
 
 Completed BCM file-service responses copy in fragments of up to 512 bytes per
 service call. Ring reads stay limited to 128 bytes. Space is checked for the
