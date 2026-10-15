@@ -19,8 +19,9 @@ The player prioritizes audio and drains its final block at EOF. On a prepared
 M25 installation, the verified native display runtime starts once before Home.
 The UI and movies then share that runtime, avoiding a display reset at every
 video start. A separate native UI layer keeps the selected video's startup
-message visible until running, non-buffering playback and any saved-position
-seek have completed. Video startup does not turn the backlight off.
+message visible until the selected frame has a compositor acknowledgement,
+including after a saved-position seek. Audio waits for that same acknowledgement.
+Video startup does not turn the backlight off.
 The first selected frame already shows "Starting video...", including time
 spent draining prior media work. Its dim theme background remains visible;
 there is no initial empty black frame while waiting to admit the video open.
@@ -48,9 +49,24 @@ complete response, and its producer pointer publishes only after all fragments
 are copied. Normal playback prepares its PCM reserve while the native runtime
 starts. After the display-region command completes, playback waits for that
 reserve instead of an unconditional two-second settle. Running, non-buffering
-status and saved-position synchronization still gate audio start and removal of
-the startup message. This status is the qualified native readiness signal; it
-does not independently prove optical presentation of a particular frame.
+status permits checking the first picture; it does not by itself start audio
+or remove the startup message. The revision-specific check validates the full
+application task token, bounded native allocator extents, video descriptor and
+frame-array membership, completed update counters, and current stream sequence.
+The selected PASSTHRU admission path increments the host sequence once, so the
+comparison converts it back before checking the saved-seek floor and published
+frame ceiling. Repeated reads reject changing task, descriptor and frame state.
+This orders UI removal after the current movie object enters the compositor;
+it does not independently measure an LCD scanline. Optical qualification remains
+necessary, and black frames encoded in a video are separate from a display gap.
+
+Checks run only during the picture handoff, at most once per 10 ms, with an
+absolute five-second timeout and normal display restoration on failure. File,
+stream and audio preparation continue between checks. An unfinished picture
+requirement survives pause/resume during a seek. Audio and its playback clock
+start after the acknowledged frame, avoiding a soundtrack that advances during
+native decoder startup. Ordinary pause/resume after a committed frame retains
+its existing status synchronization.
 Preparation yields extra audio decoding once the startup reserve is ready so
 the native stream can produce its first picture. Running playback retains its
 normal, larger audio buffer target. For normal playback below 44.1 kHz, startup
