@@ -62,6 +62,10 @@ uint32_t ln_player_background_frames(uint32_t rate);
 void ln_player_expect_next(bool expected);
 bool ln_player_prefetch_urgent(void);
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+/* Native video may borrow an idle music decoder workspace. Its generation
+ * changes before music initializes either decoder, invalidating cached data. */
+uint8_t *ln_player_video_firmware_memory(uint32_t *generation);
+void ln_player_video_firmware_release(void);
 /* Muted preparation shares the controller's bounded disk wake reservation. */
 bool ln_player_startup_disk(void);
 #endif

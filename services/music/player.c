@@ -48,6 +48,20 @@ static bool (*file_configure)(uint32_t,struct ln_dsp_config *);
  * validity in zeroed BSS, avoiding a second multi-megabyte clear during boot. */
 static union ln_decoder_workspace decoder_workspaces[2]
     __attribute__((section(".media_workspace"),aligned(8)));
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+static uint32_t video_firmware_generation;
+static bool video_firmware_owned;
+_Static_assert(sizeof decoder_workspaces[1]>=0xa0000u,"native resource cache exceeds idle decoder workspace");
+uint8_t *ln_player_video_firmware_memory(uint32_t *generation){
+    if(!generation||video_firmware_owned||ln_player_busy())return 0;
+    video_firmware_owned=true;
+    *generation=video_firmware_generation;return (uint8_t *)&decoder_workspaces[1];
+}
+void ln_player_video_firmware_release(void){video_firmware_owned=false;}
+#define DECODER_WORKSPACE_CHANGED() (++video_firmware_generation)
+#else
+#define DECODER_WORKSPACE_CHANGED() ((void)0)
+#endif
 static struct ln_player_status state;
 #if !defined(LINNET_PROFILE_RELEASE)
 static struct ln_player_timing timing;
@@ -399,6 +413,7 @@ static int slot_step(struct player_slot *s){
         int r=poll_media(s,&s->media,0);if(!r)return 0;io_owner=0;
         if(interrupted())return 0;
         if(r<0||(s->expected&&s->expected!=s->media.size))return -1;
+        DECODER_WORKSPACE_CHANGED();
         ln_decoder_init(&s->decoder,&decoder_workspaces[s-slots],read_media,s,s->media.size);s->phase=SLOT_DECODE;return 0;
     }
     if(s->phase==SLOT_EOF)return 2;if(s->phase!=SLOT_DECODE||s->buffered)return 0;
@@ -507,6 +522,9 @@ bool ln_player_configure(const struct ln_dsp_config *config,uint32_t rate){
 }
 bool ln_player_open_configured(const char *name,uint64_t bytes,uint64_t position,
                                const struct ln_dsp_config *config,uint32_t config_rate){
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+    if(video_firmware_owned)return false;
+#endif
     if(state.phase!=LN_PLAYER_IDLE||ln_storage_busy()||!ln_storage_mounted())return false;
 #if !defined(LINNET_PROFILE_RELEASE)
     if(ln_development_stage_busy())return false;
@@ -528,6 +546,7 @@ bool ln_player_open_configured(const char *name,uint64_t bytes,uint64_t position
 bool ln_player_open_file(const struct ln_fat32_file *file,bool (*configure)(uint32_t,struct ln_dsp_config *)){
     if(!file||(file->attributes&24u)||!file->size||!ln_player_open("/FILE"))return false;
     struct player_slot*s=&slots[0];s->media=*file;file_configure=configure;
+    DECODER_WORKSPACE_CHANGED();
     ln_decoder_init(&s->decoder,&decoder_workspaces[0],read_media,s,file->size);s->phase=SLOT_DECODE;
     return true;
 }

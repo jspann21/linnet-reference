@@ -15,19 +15,62 @@ Native video owns the display. Play or Select pauses; Left/Right seeks to a
 keyframe; the wheel changes volume; Menu exits. Seeking aligns audio to the
 selected keyframe's timestamp rather than promising exact-frame access.
 
-The player prioritizes audio and drains its final block at EOF. Stopping video
-restores the display runtime before returning to the UI.
+The player prioritizes audio and drains its final block at EOF. On a prepared
+M25 installation, the verified native display runtime starts once before Home.
+The UI and movies then share that runtime, avoiding a display reset at every
+video start. A separate native UI layer keeps the selected video's startup
+message visible until running, non-buffering playback and any saved-position
+seek have completed. Video startup does not turn the backlight off.
+The first selected frame already shows "Starting video...", including time
+spent draining prior media work. Its dim theme background remains visible;
+there is no initial empty black frame while waiting to admit the video open.
+
+The native UI uses two independently allocated RGB565 surfaces and the existing
+ARM framebuffer. Only the inactive surface receives pixel uploads. Presentation
+swaps surfaces after the update acknowledgement. Partial uploads combine the
+previous committed frame's original damaged rows with the current frame's
+damage, matching the two-buffer scheme in the device's RetailOS. Full frames
+retain the existing transfer size; small updates can repair an additional prior
+row span. The second surface costs 153,600 bytes of coprocessor memory.
+
+Stopping waits for a fresh native stream-stop request and its published host
+reply, then verifies idle before unloading the exact application task returned
+by the native loader. TV output disables its DAC before releasing ownership.
+An early cancellation that loaded an application but never sent selectplay
+unloads that known task directly; no stream-stop handshake exists in that state.
+The UI layer returns through the same native display runtime. A bounded failure
+path restores the verified NOR display runtime. Handoffs to another image also
+restore that original runtime before leaving Linnet.
 
 Completed BCM file-service responses copy in fragments of up to 512 bytes per
 service call. Ring reads stay limited to 128 bytes. Space is checked for the
 complete response, and its producer pointer publishes only after all fragments
 are copied. Normal playback prepares its PCM reserve while the native runtime
 starts. After the display-region command completes, playback waits for that
-reserve instead of an unconditional two-second settle. First-picture status and
-saved-position synchronization still gate audio start and backlight restoration.
+reserve instead of an unconditional two-second settle. Running, non-buffering
+status and saved-position synchronization still gate audio start and removal of
+the startup message. This status is the qualified native readiness signal; it
+does not independently prove optical presentation of a particular frame.
 Preparation yields extra audio decoding once the startup reserve is ready so
 the native stream can produce its first picture. Running playback retains its
-normal, larger audio buffer target.
+normal, larger audio buffer target. For normal playback below 44.1 kHz, startup
+and seek reserves preserve at least the original 32,768 / 44,100 second duration,
+rounded up to a whole 1,024-frame AAC block. Higher rates retain 32,768 frames;
+steady playback retains its 49,152-frame target.
+
+Native firmware and read-through decoder-library bytes borrow an idle music
+decoder workspace. The lease ends before returning to idle UI or music. Only
+completed reads from the five qualified immutable native libraries enter the
+cache; no extra disk reads run to populate it. Byte coverage and file metadata
+bind the current mount, and music decoder reuse invalidates coverage. Accepted
+storage recovery explicitly invalidates it even if a new FAT mount reuses an
+epoch value. Cached responses retain the same complete-response publication
+and bounded BCM transfer rules.
+
+Idle native UI does not poll display rings without pending presentation work.
+Its native power policy is `min`; a foreground development query can inspect
+native power status. CPU-idle, drive-standby and power-fault measurements are
+regression checks, not a substitute for an unplugged battery-runtime test.
 
 ## Verified boundary
 
@@ -50,3 +93,11 @@ and the [Linnet TODO](../../docs/roadmap.md).
 
 Protocol observations must be checked against the device's resources.
 Emulator responses are not hardware evidence.
+
+The tag-2 protocol was additionally checked against the locally extracted,
+verified RetailOS: surface allocation at 0x286CA8, pixel upload at 0x287BE8,
+and two-surface presentation at 0x164F44. Its damage helper at 0x164D68 takes
+the minimum starting row and maximum ending row; presentation saves the current
+original damage for the next frame. Vendor binaries remain outside the source
+tree. The VMCS display-clear iterator returns its own fixed object at
+0xC000FB50 rather than traversing independently allocated tag-2 elements.

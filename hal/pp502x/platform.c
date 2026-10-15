@@ -191,6 +191,10 @@ uint32_t ln_platform_boot_clock_ready(void)
 
 void ln_platform_quiesce(void)
 {
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+    extern bool ln_m25_coprocessor_quiesce_display(void);
+    if(!ln_m25_coprocessor_quiesce_display())ln_panic(32u,0u,55u);
+#endif
 #if defined(LINNET_HARDWARE_CLICKER) && defined(LINNET_IMAGE_OS)
     ln_platform_click_stop();
 #endif

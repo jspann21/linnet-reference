@@ -62,12 +62,25 @@ bool ln_m25_lcd_init(void){
     uint32_t status;return read_word(0x1f8u,&status);
 }
 bool ln_m25_lcd_ready(bool *ready){
+#if defined(LINNET_IMAGE_OS)
+    if(ln_m25_coprocessor_display_address())return ln_m25_coprocessor_display_ready(ready);
+#endif
     uint32_t status;if(!ready||!read_word(0x1f8u,&status))return false;
     *ready=status!=0xffff0000u&&status!=0xffffu;return true;
 }
+bool ln_m25_lcd_prepare(void){
+#if defined(LINNET_IMAGE_OS)
+    if(ln_m25_coprocessor_display_address())return ln_m25_coprocessor_display_prepare();
+#endif
+    return true;
+}
 bool ln_m25_lcd_write(uint32_t pixel,const uint16_t *data,uint32_t count){
     if(!data||!count||(pixel&1u)||(count&1u)||pixel>=76800u||count>76800u-pixel)return false;
-    if(!address(0xe0000u+pixel*2u))return false;
+    uint32_t base=0xe0000u;
+#if defined(LINNET_IMAGE_OS)
+    uint32_t native=ln_m25_coprocessor_display_address();if(native)base=native;
+#endif
+    if(!address(base+pixel*2u))return false;
     if(!((uintptr_t)data&3u)){
         typedef uint32_t pixel_pair __attribute__((may_alias));
         const pixel_pair *pairs=(const pixel_pair *)data;
@@ -78,6 +91,9 @@ bool ln_m25_lcd_write(uint32_t pixel,const uint16_t *data,uint32_t count){
     writes+=count/2u;return true;
 }
 bool ln_m25_lcd_commit(void){
+#if defined(LINNET_IMAGE_OS)
+    if(ln_m25_coprocessor_display_address())return ln_m25_coprocessor_display_commit();
+#endif
     if(!address(0x1f8u))return false;
     REG(0x30000000u)=0xffff0000u;HALF(0x30030000u)=0x31u;++commands;return true;
 }
@@ -90,13 +106,13 @@ static bool await_ready(void){
     ++failures;last_error=2;return false;
 }
 bool ln_lcd_fill(uint16_t color){
-    if(!ln_m25_lcd_init()||!await_ready())return false;
+    if(!ln_m25_lcd_init()||!ln_m25_lcd_prepare()||!await_ready())return false;
     uint16_t row[320];for(uint32_t x=0;x<320u;++x)row[x]=color;
     for(uint32_t y=0;y<240u;++y)if(!ln_m25_lcd_write(y*320u,row,320u))return false;
     return ln_m25_lcd_commit()&&await_ready();
 }
 bool ln_target_disk_screen(bool symbol_visible){
-    if(!ln_m25_lcd_init()||!await_ready())return false;
+    if(!ln_m25_lcd_init()||!ln_m25_lcd_prepare()||!await_ready())return false;
     struct ln_color_disk_decoder decoder={0};
     uint16_t row[LINNET_LCD_WIDTH];
     for(uint32_t y=0;y<LINNET_LCD_HEIGHT;++y){
@@ -118,7 +134,7 @@ static void text_row(uint16_t row[320],uint32_t y,uint32_t top,const char *text,
     }
 }
 static bool message(const char *title,const char *detail,uint16_t accent){
-    if(!ln_m25_lcd_init()||!await_ready())return false;
+    if(!ln_m25_lcd_init()||!ln_m25_lcd_prepare()||!await_ready())return false;
     uint16_t row[320];
     for(uint32_t y=0;y<240u;++y){
         for(uint32_t x=0;x<320u;++x)row[x]=(y>=132u&&y<134u&&x>=40u&&x<280u)?accent:0x0841u;
@@ -129,7 +145,7 @@ static bool message(const char *title,const char *detail,uint16_t accent){
 }
 #if defined(LINNET_IMAGE_BOOT)
 bool ln_lcd_boot(void){
-    if(!ln_m25_lcd_init()||!await_ready())return false;
+    if(!ln_m25_lcd_init()||!ln_m25_lcd_prepare()||!await_ready())return false;
     uint16_t row[320],pixel=0;uint32_t run=0,left=0;
     for(uint32_t y=0;y<240u;++y){
         for(uint32_t x=0;x<320u;++x){
@@ -149,7 +165,7 @@ bool ln_lcd_boot(void){
 bool ln_lcd_boot_apple(void){return ln_lcd_fill(0xffffu);}
 bool ln_lcd_boot_menu(uint32_t available,uint32_t selected,bool starting){
     ln_target_backlight(true,128u);
-    if(!ln_m25_lcd_init()||!await_ready())return false;
+    if(!ln_m25_lcd_init()||!ln_m25_lcd_prepare()||!await_ready())return false;
     uint16_t row[LN_MENU_WIDTH];
     for(uint32_t y=0;y<LN_MENU_HEIGHT;++y){
         ln_menu_320_row(row,y,available,selected,starting);

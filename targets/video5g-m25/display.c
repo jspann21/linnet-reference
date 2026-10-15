@@ -26,6 +26,9 @@ static const uint16_t *presented=draw;
 static bool initialized,dirty,direct,queued;
 static uint32_t queued_started,queue_high_water=1u;
 static uint32_t dirty_first,dirty_end,queued_first,queued_end;
+#if defined(LINNET_IMAGE_OS)
+static uint32_t previous_first,previous_end,active_first,active_end;
+#endif
 static uint32_t phase,cursor,transfer_end,wait_started,poll_at,error,submitted,completed,failures,resets,generation,pairs;
 static uint32_t started __attribute__((unused)); /* Timing is read only by diagnostics. */
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -33,6 +36,19 @@ static uint32_t max_present_us;
 static uint32_t transfer_us,transfer_calls,transfer_max_us,last_present_us;
 #endif
 static void damage_full(void){dirty_first=0;dirty_end=LINNET_DISPLAY_PIXELS;dirty=true;}
+static void prepare_damage(void){
+#if defined(LINNET_IMAGE_OS)
+    active_first=cursor;active_end=transfer_end;
+    if(ln_m25_coprocessor_display_address()){
+        /* Back holds the frame before front. Repair both frames' damage;
+         * history advances only after acknowledged presentation. */
+        if(previous_end>previous_first){
+            if(previous_first<cursor)cursor=previous_first;
+            if(previous_end>transfer_end)transfer_end=previous_end;
+        }
+    }else previous_first=previous_end=0;
+#endif
+}
 bool ln_display_init(void){
     initialized=false;cop_capable=cop_probe();
     if(!pause_worker(true)){error=1;return false;}
@@ -78,7 +94,7 @@ bool ln_display_present(void){
     presented=draw;
     direct=false;dirty=false;++submitted;
     if(phase==3u){queued=true;queued_first=dirty_first;queued_end=dirty_end;queued_started=ln_time_us();queue_high_water=2u;return true;}
-    cursor=dirty_first;transfer_end=dirty_end;phase=1;started=wait_started=poll_at=ln_time_us();return true;
+    cursor=dirty_first;transfer_end=dirty_end;prepare_damage();phase=1;started=wait_started=poll_at=ln_time_us();return true;
 }
 static bool fail(uint32_t code){error=code;++failures;phase=0;queued=false;damage_full();return false;}
 bool ln_display_service(uint32_t max_pairs){
@@ -90,6 +106,7 @@ bool ln_display_service(uint32_t max_pairs){
     bool ready;
     if(phase==1||phase==3){
         if(max_pairs==LINNET_DISPLAY_SERVICE_PAIRS&&(int32_t)(ln_time_us()-poll_at)<0)return true;
+        if(phase==1u&&!ln_m25_lcd_prepare())return fail(7);
         if(!ln_m25_lcd_ready(&ready))return fail(5);
         /* A long foreground image hash can postpone this service. Only a
          * still-busy BCM transaction is a timeout, not the CPU's scheduling
@@ -106,10 +123,15 @@ bool ln_display_service(uint32_t max_pairs){
 #endif
             phase=0;++completed;
 #if defined(LINNET_IMAGE_OS)
+            if(ln_m25_coprocessor_display_address()){previous_first=active_first;previous_end=active_end;}
+            else previous_first=previous_end=0;
             ln_m25_coprocessor_display_presented();
 #endif
             if(!queued)return true;
-            queued=false;cursor=queued_first;transfer_end=queued_end;started=queued_started;
+            queued=false;cursor=queued_first;transfer_end=queued_end;prepare_damage();started=queued_started;
+#if defined(LINNET_IMAGE_OS)
+            if(ln_m25_coprocessor_display_address()){phase=1u;wait_started=poll_at=ln_time_us();return true;}
+#endif
         }
         phase=2;
     }
@@ -176,6 +198,7 @@ bool ln_display_diagnostic(uint32_t pattern){
 #if defined(LINNET_IMAGE_OS)
 #if !defined(LINNET_PROFILE_RELEASE)
     if(pattern==0x4d250028u){ln_platform_click(0u);return true;}
+    if(pattern==0x4d25002bu)return ln_m25_coprocessor_control(6u);
     if(pattern>=0x4d250015u&&pattern<=0x4d250016u)return ln_m25_coprocessor_fault(pattern-0x4d250014u);
 #endif
     if(pattern>=0x4d250010u&&pattern<=0x4d250014u)return ln_m25_coprocessor_control(pattern-0x4d25000fu);
@@ -251,6 +274,7 @@ uint32_t ln_display_target_diagnostics(uint32_t selector,uint32_t out[32]){
     if(selector==0x4d250022u)return ln_m25_coprocessor_channel(10u,out);
     if(selector==0x4d250023u)return ln_m25_coprocessor_channel(11u,out);
     if(selector==0x4d250026u)return ln_m25_coprocessor_channel(14u,out);
+    if(selector==0x4d25002au)return ln_m25_coprocessor_channel(15u,out);
     if(selector==0x4d250025u)return ln_m25_coprocessor_channel(13u,out);
     if(selector==0x4d250024u)return ln_m25_coprocessor_channel(12u,out);
 #endif

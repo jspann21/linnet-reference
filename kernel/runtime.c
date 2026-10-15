@@ -2,6 +2,9 @@
 #include "kernel/executive.h"
 #include "kernel/shell.h"
 #include "kernel/wheel_motion.h"
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+#include "targets/video5g-m25/coprocessor.h"
+#endif
 #if defined(LINNET_FILES)
 #include "services/files/files.h"
 #endif
@@ -314,6 +317,7 @@ static bool video_start(const char *path){
     (void)ln_ui_show(shell,"linnet.system.video-player");dirty=true;return true;
 }
 bool ln_runtime_video_open(const char *path){video_from_files=false;return video_start(path);}
+bool ln_runtime_video_requested(void){return video_requested;}
 bool ln_runtime_video_open_file(const struct ln_fat32_file*file,const char*title){
     if(!shell||!file||!title||ln_video_active()||ln_video_playback_pending())return false;
     char path[192];uint32_t n=0;path[n++]='/';
@@ -937,6 +941,9 @@ void ln_runtime_step(void){
     if(boot_theme_waiting){
         if(!ln_display_settings_boot_ready()&&
            !(ln_storage_startup_complete()&&!ln_storage_prepared()))return;
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+        if(ln_storage_prepared()&&!ln_m25_coprocessor_prepare_display())return;
+#endif
         boot_theme_waiting=false;
         ln_ui_refresh(shell);dirty=true;
     }

@@ -3,6 +3,9 @@
 #include "services/storage/storage.h"
 #include "services/storage/block.h"
 #include "services/storage/fat32.h"
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS) && defined(LINNET_VIDEO)
+#include "targets/video5g-m25/coprocessor.h"
+#endif
 #include "hal/api/platform.h"
 #include "hal/api/core.h"
 #include "hal/api/ata.h"
@@ -679,6 +682,9 @@ void ln_storage_maintenance_end(bool success){
 #endif
 int ln_storage_recover(void){
     if(locked||pending||ln_storage_busy()||!ln_block_recover(ln_time_us()))return 0;
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS) && defined(LINNET_VIDEO)
+    ln_m25_coprocessor_storage_invalidated();
+#endif
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
     media_wake_status=LN_ATA_OK;
 #endif

@@ -21,6 +21,9 @@
 #endif
 #if defined(LINNET_VIDEO)
 #include "services/video/video.h"
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+#include "kernel/runtime.h"
+#endif
 #endif
 static bool equal(const char*a,const char*b){if(!a||!b)return false;while(*a&&*a==*b){++a;++b;}return *a==*b;}
 static char *number_text(char *out,uint32_t value){
@@ -189,8 +192,13 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
     if(in_scene(n,LN_UI_SCENE_VIDEO_SETTINGS)&&n->kind==LN_UI_VIRTUAL_LIST&&item<4u)return ln_video_option_label(item);
     if(in_scene(n,LN_UI_SCENE_VIDEO_OUTPUT)&&n->kind==LN_UI_VIRTUAL_LIST&&item<2u)return item?"TV":"iPod";
     if(in_scene(n,LN_UI_SCENE_VIDEO_PLAYER)||in_scene(n,LN_UI_SCENE_VIDEO_CONTROLS)){
-        if(n->kind==LN_UI_VIDEO_SURFACE)return ln_video_asset()?"":ln_video_status();
-        if(n->kind==LN_UI_STATUS_BAR)return ln_video_status();
+        const char *status=ln_video_status();
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+        /* Selection can paint before stopped music/storage admits open(). */
+        if(ln_runtime_video_requested())status="Starting video...";
+#endif
+        if(n->kind==LN_UI_VIDEO_SURFACE)return ln_video_asset()?"":status;
+        if(n->kind==LN_UI_STATUS_BAR)return status;
     }
 #endif
 #if defined(LINNET_PHOTOS)

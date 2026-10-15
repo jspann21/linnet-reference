@@ -8,7 +8,7 @@
 static struct {char path[256],title[128];uint32_t identity,position,revision,backend_revision,resume[2];uint8_t options,output_once;bool active,resume_pending,headphone_known,headphones;} v;
 void ln_video_init(void){v.active=v.resume_pending=false;v.position=0;v.options=8u;v.output_once=0;v.headphone_known=false;}
 bool ln_video_open(const char *path){
-    if(v.active||ln_m25_coprocessor_active()||ln_video_catalog_pending()||!path)return false;
+    if(v.active||ln_m25_coprocessor_active()||ln_video_catalog_pending()||ln_display_busy()||!path)return false;
     uint32_t n=0,identity=2166136261u;while(path[n]&&n<255u){identity=(identity^(uint8_t)path[n])*16777619u;++n;}if(!n||n==255u)return false;
     bool television=(v.options&3u)==2u||((v.options&3u)==1u&&v.output_once==2u);
     uint8_t resolved=(uint8_t)(v.options|(television?32u:0u));v.output_once=0;

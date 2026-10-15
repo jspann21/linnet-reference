@@ -5,6 +5,13 @@
 /* Development qualification of the vendor media runtime. Automatic rollback
  * uses a bounds- and checksum-verified image in the device's own NOR. */
 bool ln_m25_coprocessor_begin(uint32_t operation);
+bool ln_m25_coprocessor_prepare_display(void);
+void ln_m25_coprocessor_storage_invalidated(void);
+bool ln_m25_coprocessor_quiesce_display(void);
+uint32_t ln_m25_coprocessor_display_address(void);
+bool ln_m25_coprocessor_display_prepare(void);
+bool ln_m25_coprocessor_display_ready(bool *ready);
+bool ln_m25_coprocessor_display_commit(void);
 bool ln_m25_coprocessor_control(uint32_t command);
 #if !defined(LINNET_PROFILE_RELEASE)
 bool ln_m25_coprocessor_fault(uint32_t mode);

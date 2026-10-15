@@ -1157,9 +1157,6 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
          * these writes is not a contract for framebuffer-inspecting overrides. */
         bool video=n->kind==LN_UI_VIDEO_SURFACE;
         if(video){bg=video_background(bg);fg=video_ink(fg);}
-#if LINNET_TARGET_NUMBER == 25u
-        if(video)bg=0; /* BCM playback takes over a black surface, never a pale flash. */
-#endif
         const struct ln_ui_asset*a=video?ln_ui_dynamic_asset(n,n->resource<ln_ui_asset_count?&ln_ui_assets[n->resource]:0):0;
         if(video&&image_independent(p,n,a)){
             /* Paint only the letterbox bars: the image overwrites the interior. */
