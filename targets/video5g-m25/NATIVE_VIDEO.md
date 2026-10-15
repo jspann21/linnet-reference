@@ -78,6 +78,9 @@ Rotating storage wakes asynchronously when video preparation begins, even if
 all initial reads hit RAM. Playback waits for drive readiness before `mp_play`,
 so a later cache miss cannot spend the PCM reserve on a cold spin-up. The wake
 is attempted once per playback; stopping releases the existing standby hint.
+Once the startup PCM reserve is ready and no transfer or control is runnable,
+startup status and picture waits use the existing one-millisecond ring polling
+interval. Their scheduling threshold matches the smaller startup reserve.
 
 Native firmware and read-through decoder-library bytes borrow an idle music
 decoder workspace. The lease ends before returning to idle UI or music. Only

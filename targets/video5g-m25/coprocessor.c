@@ -809,8 +809,9 @@ uint32_t ln_m25_coprocessor_deadline(uint32_t now){
     }
     /* Pre-play preparation uses the same bounded ring polling as playback.
      * Pending data, controls and low PCM still run immediately. */
-    if(vc.phase!=PLAYER_SETTLE||!vc.normal||
-       (vc.command_index!=8u&&vc.command_index!=6u)||vc.control||
+    bool startup_wait=vc.phase==PICTURE_WAIT||vc.phase==SYNC_WAIT;
+    if(!vc.normal||(!startup_wait&&(vc.phase!=PLAYER_SETTLE||
+       (vc.command_index!=8u&&vc.command_index!=6u)||vc.control))||
        vc.restore||vc.fs_canceling||vc.fs_phase||vc.read_active||vc.seek_pending||vc.seek_stage||
        vc.want_paused!=vc.paused||!vc.stream_waiting)return now;
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -818,7 +819,8 @@ uint32_t ln_m25_coprocessor_deadline(uint32_t now){
 #endif
     if(vc.audio_ready){
         struct ln_audio_status a;ln_audio_snapshot(&a);
-        if(a.fault||(!vc.audio_eof&&a.queued<AUDIO_BUFFER_FRAMES))return now;
+        uint32_t reserve=vc.audio_started?AUDIO_BUFFER_FRAMES:audio_prime_frames();
+        if(a.fault||(!vc.audio_eof&&a.queued<reserve))return now;
     }
     if((int32_t)(vc.deadline-now)<=0)return now;
     return (int32_t)(vc.deadline-now)<1000?vc.deadline:now+1000u;
