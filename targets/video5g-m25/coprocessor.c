@@ -243,7 +243,12 @@ static bool audio_service(void){
     if(!vc.audio_ready||vc.audio_eof||vc.fs_phase||(vc.seek_stage&&vc.seek_stage!=6u&&!(vc.seek_stage==1u&&vc.read_active)))return true;
     struct ln_audio_status status;ln_audio_snapshot(&status);
     if(status.fault)return false;
-    if(status.queued>=AUDIO_BUFFER_FRAMES&&!vc.read_active)return true;
+    /* Once the startup reserve is ready, let the native stream reach its
+     * first picture before decoding extra PCM. Running playback retains its
+     * normal buffer target; admitted reads still drain before yielding. */
+    bool priming=vc.normal&&!vc.audio_started;
+    uint32_t reserve=priming?AUDIO_PRIME_FRAMES:AUDIO_BUFFER_FRAMES;
+    if(status.queued>=reserve&&(!vc.read_active||(priming&&vc.read_kind!=1u)))return true;
     int result;
     if(vc.audio_phase==1u){
         result=ln_mp4_next(&vc.soundtrack,&vc.audio_packet);
@@ -654,9 +659,8 @@ uint32_t ln_m25_coprocessor_deadline(uint32_t now){
 #endif
         return (int32_t)(vc.deadline-now)>0?vc.deadline:now;
     }
-    /* A quiet pre-play settle window needs the same bounded ring polling as
-     * playback. Pending data, controls and low PCM still run immediately;
-     * the fixed settle deadline continues to govern the play command. */
+    /* Pre-play preparation uses the same bounded ring polling as playback.
+     * Pending data, controls and low PCM still run immediately. */
     if(vc.phase!=PLAYER_SETTLE||!vc.normal||
        (vc.command_index!=8u&&vc.command_index!=6u)||vc.control||
        vc.restore||vc.fs_canceling||vc.fs_phase||vc.read_active||vc.seek_pending||vc.seek_stage||
@@ -842,7 +846,10 @@ bool ln_m25_coprocessor_step(void){
         else if(result<0)recover(0x400u+(uint32_t)-result);
         else if(result>0){
             if(ln_aac_raw_init(&audio_decoder,vc.soundtrack.config,vc.soundtrack.config_bytes)!=1||audio_decoder.rate!=vc.soundtrack.rate||!ln_audio_init(audio_decoder.rate)){recover(48);return false;}
-            vc.audio_ready=true;vc.audio_phase=1u;vc.audio_skip=vc.soundtrack.lead;phase(AUDIO_PRIME,30000000u);
+            vc.audio_ready=true;vc.audio_phase=1u;vc.audio_skip=vc.soundtrack.lead;
+            /* Normal playback primes PCM while the native runtime starts.
+             * Command 6 still gates mp_play on the complete audio reserve. */
+            phase(vc.normal?ACQUIRE:AUDIO_PRIME,vc.normal?1000000u:30000000u);
         }
         return false;
     }
@@ -871,7 +878,13 @@ bool ln_m25_coprocessor_step(void){
     }
     if(vc.phase==PLAYER_SETTLE){
         if(!service_resets()||!file_service()||!audio_service()||!stream_service()){recover(36);return false;}
-        if(vc.normal&&vc.command_index==8u){
+        if(vc.normal&&vc.command_index==6u){
+            /* mp_region has acknowledged completion. Wait for useful work,
+             * not an unconditional two seconds with the display hidden. */
+            if(!vc.seek_stage&&(!vc.audio_ready||vc.audio_frames>=AUDIO_PRIME_FRAMES||vc.audio_eof)){
+                ++vc.command_index;phase(VERSION_SEND,5000000u);
+            }else if(expired())recover(49);
+        }else if(vc.normal&&vc.command_index==8u){
             uint32_t command=0;
             if(vc.seek_pending&&vc.paused)command=2u;
             else if(vc.seek_pending){
@@ -1061,7 +1074,7 @@ bool ln_m25_coprocessor_step(void){
                     if(vc.audio_ready&&!ln_audio_start()){recover(49);break;}vc.audio_started=vc.audio_ready;
                     if(!vc.seek_pending&&!vc.seek_stage)display_blank(false);
                     ++vc.revision;phase(PLAYER_SETTLE,vc.normal?500000u:30000000u);
-                }else if(vc.operation==2u&&vc.command_index==6u)phase(PLAYER_SETTLE,2000000u);
+                }else if(vc.operation==2u&&vc.command_index==6u)phase(PLAYER_SETTLE,vc.normal?30000000u:2000000u);
                 else if(vc.operation==1u&&vc.command_index==2u)phase(PLAYER_SETTLE,2000000u);
                 else if(vc.operation&&vc.command_index<(vc.operation==2u?8u:2u)){++vc.command_index;phase(VERSION_SEND,5000000u);}
                 else phase(OBSERVE,1000000u);

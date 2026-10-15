@@ -21,7 +21,13 @@ restores the display runtime before returning to the UI.
 Completed BCM file-service responses copy in fragments of up to 512 bytes per
 service call. Ring reads stay limited to 128 bytes. Space is checked for the
 complete response, and its producer pointer publishes only after all fragments
-are copied. The existing pre-play settle and audio reserve remain in place.
+are copied. Normal playback prepares its PCM reserve while the native runtime
+starts. After the display-region command completes, playback waits for that
+reserve instead of an unconditional two-second settle. First-picture status and
+saved-position synchronization still gate audio start and backlight restoration.
+Preparation yields extra audio decoding once the startup reserve is ready so
+the native stream can produce its first picture. Running playback retains its
+normal, larger audio buffer target.
 
 ## Verified boundary
 
