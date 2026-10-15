@@ -76,7 +76,8 @@ void ln_video_headphones(bool connected){
 }
 uint32_t ln_video_progress(void){uint32_t duration=ln_m25_coprocessor_duration(),position=v.position>duration?duration:v.position;if(!duration)return 0;while(duration>0x3fffffu){duration>>=1;position>>=1;}return position*1000u/duration;}
 const char *ln_video_title(void){return v.title;}
-const char *ln_video_status(void){return ln_m25_coprocessor_error()?"Video unavailable":v.active?(ln_video_paused()?"Paused":"Playing"):"Stopped";}
+/* BCM owns the actual picture. Its preparatory UI surface stays quiet. */
+const char *ln_video_status(void){return ln_m25_coprocessor_error()?"Video unavailable":"";}
 const struct ln_ui_asset *ln_video_asset(void){return 0;}
 uint32_t ln_video_revision(void){return v.revision;}
 void ln_video_presented(void){}

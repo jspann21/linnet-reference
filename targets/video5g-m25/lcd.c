@@ -7,6 +7,9 @@
 #include "ui/profiles/color320/disk_screen.h"
 #include "ui/profiles/color320/boot_font.h"
 #include "ui/profiles/color320/boot_menu.h"
+#if defined(LINNET_IMAGE_OS)
+#include "targets/video5g-m25/coprocessor.h"
+#endif
 #if defined(LINNET_IMAGE_BOOT)
 #include "boot/include/linnet_boot_wordmark_320.h"
 #endif
@@ -158,7 +161,12 @@ bool ln_lcd_boot_menu(uint32_t available,uint32_t selected,bool starting){
 bool ln_lcd_fault(uint32_t reason,const uint8_t build[32]){
     (void)build;char detail[]="Fault 00000000";const char digits[]="0123456789ABCDEF";
     for(uint32_t i=0;i<8u;++i)detail[6u+i]=digits[(reason>>((7u-i)*4u))&15u];
-    return message("Linnet",detail,0xf800u);
+    bool visible=message("Linnet",detail,0xf800u);
+#if defined(LINNET_IMAGE_OS)
+    /* Fault rendering bypasses the normal completed-frame acknowledgement. */
+    if(visible)ln_m25_coprocessor_display_presented();
+#endif
+    return visible;
 }
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_lcd_diagnostics(uint32_t out[8]){

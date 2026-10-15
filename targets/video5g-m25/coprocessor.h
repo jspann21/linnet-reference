@@ -10,6 +10,9 @@ bool ln_m25_coprocessor_control(uint32_t command);
 bool ln_m25_coprocessor_fault(uint32_t mode);
 #endif
 bool ln_m25_coprocessor_owned(void);
+/* Hide display-runtime resets without changing the requested backlight policy. */
+bool ln_m25_coprocessor_display_blanked(void);
+void ln_m25_coprocessor_display_presented(void);
 bool ln_m25_coprocessor_step(void);
 uint32_t ln_m25_coprocessor_snapshot(uint32_t output[32]);
 uint32_t ln_m25_coprocessor_channel(uint32_t slot,uint32_t output[32]);

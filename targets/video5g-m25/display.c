@@ -105,6 +105,9 @@ bool ln_display_service(uint32_t max_pairs){
             if(elapsed>max_present_us)max_present_us=elapsed;
 #endif
             phase=0;++completed;
+#if defined(LINNET_IMAGE_OS)
+            ln_m25_coprocessor_display_presented();
+#endif
             if(!queued)return true;
             queued=false;cursor=queued_first;transfer_end=queued_end;started=queued_started;
         }

@@ -5,6 +5,9 @@
 #include "hal/api/core.h"
 #include "hal/api/input.h"
 #include "hal/api/platform.h"
+#if defined(LINNET_IMAGE_OS)
+#include "targets/video5g-m25/coprocessor.h"
+#endif
 #define REG(a) (*(volatile uint32_t *)(uintptr_t)(a))
 bool ln_target_battery_charging(void){return !(REG(0x6000d034u)&1u);}
 uint8_t ln_target_power_sources(void){
@@ -121,6 +124,9 @@ bool ln_input_boot_menu_held(void) {
 }
 #endif
 void ln_target_backlight(bool on,uint8_t brightness){
+#if defined(LINNET_IMAGE_OS)
+    if(ln_m25_coprocessor_display_blanked())on=false;
+#endif
     static bool initialized,enabled;
     static uint8_t level=16;
     REG(0x6000d004u)|=8u;REG(0x6000d014u)|=8u;

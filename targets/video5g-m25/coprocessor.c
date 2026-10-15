@@ -55,11 +55,21 @@ static struct {
     uint64_t read_offset;void *read_buffer;uint32_t read_bytes,read_at,read_requested;
     bool read_active,read_io;
     uint32_t stream_packet[332],stream_phase,stream_at,stream_wr,stream_address,stream_capacity,stream_frames;
-    bool mapped,stream_waiting;
+    bool mapped,stream_waiting,display_blanked;
     struct ln_fat32_file file;
     struct ln_sha256 hash;
     uint8_t image[201376] __attribute__((aligned(32)));
 } vc;
+static void display_blank(bool blanked){
+    if(vc.display_blanked==blanked)return;
+    vc.display_blanked=blanked;
+    struct ln_power_state power;ln_power_snapshot(&power);
+    ln_power_backlight(power.backlight_on,power.brightness);
+}
+bool ln_m25_coprocessor_display_blanked(void){return vc.display_blanked&&vc.phase!=FAILED;}
+void ln_m25_coprocessor_display_presented(void){
+    if(!vc.owned&&(vc.phase==RESTORED||vc.phase==FAILED))display_blank(false);
+}
 /* This revision has been extracted from the device's checksum-verified rsrc.
  * Other vendor revisions need their own qualification before admission. */
 static const uint8_t expected_sha[32]={
@@ -584,7 +594,7 @@ static void recover(uint32_t error){
          * platform recovery path, which resets if presentation cannot drain. */
         ln_panic(32u,0,error);
     }
-    vc.restore=1u;vc.at=0;REG(0x70000080u)&=~0x4000u;phase(POWER_OFF,50000u);
+    vc.restore=1u;vc.at=0;display_blank(true);REG(0x70000080u)&=~0x4000u;phase(POWER_OFF,50000u);
 }
 static bool direct_file;
 bool ln_m25_coprocessor_begin(uint32_t operation){
@@ -790,7 +800,7 @@ bool ln_m25_coprocessor_step(void){
     }
     if(vc.phase==ACQUIRE){
         if(ln_display_busy()){if(expired())recover(7);return false;}
-        vc.owned=true;vc.at=0;REG(0x70000080u)&=~0x4000u;phase(POWER_OFF,50000u);return false;
+        vc.owned=true;vc.at=0;display_blank(true);REG(0x70000080u)&=~0x4000u;phase(POWER_OFF,50000u);return false;
     }
     if(vc.phase==MEDIA_OPEN){
         if(direct_file){direct_file=false;ln_mp4_init(&vc.movie,video_read,0,vc.video_file.size);phase(MEDIA_SCAN,60000000u);return false;}
@@ -1033,6 +1043,7 @@ bool ln_m25_coprocessor_step(void){
                         if(waiting){if((int32_t)(ln_time_us()-vc.sync_deadline)>=0){recover(50);break;}phase(SYNC_WAIT,10000u);break;}
                         vc.start_elapsed=elapsed;vc.paused=false;
                         if(vc.audio_ready&&!ln_audio_start()){recover(49);break;}vc.audio_started=vc.audio_ready;
+                        display_blank(false);
                     }
                     uint32_t elapsed=elapsed_value(response,bytes);
                     if(vc.control==6u&&vc.syncing_seek)elapsed=vc.seek_ms;
@@ -1048,6 +1059,7 @@ bool ln_m25_coprocessor_step(void){
                     if(!playback_running(response,bytes)){if((int32_t)(ln_time_us()-vc.sync_deadline)>=0){recover(50);break;}phase(SYNC_WAIT,10000u);break;}
                     vc.start_elapsed=elapsed;vc.clock_ms=elapsed;vc.clock_us=ln_time_us();vc.clock_valid=true;
                     if(vc.audio_ready&&!ln_audio_start()){recover(49);break;}vc.audio_started=vc.audio_ready;
+                    if(!vc.seek_pending&&!vc.seek_stage)display_blank(false);
                     ++vc.revision;phase(PLAYER_SETTLE,vc.normal?500000u:30000000u);
                 }else if(vc.operation==2u&&vc.command_index==6u)phase(PLAYER_SETTLE,2000000u);
                 else if(vc.operation==1u&&vc.command_index==2u)phase(PLAYER_SETTLE,2000000u);
@@ -1073,7 +1085,13 @@ uint32_t ln_m25_coprocessor_snapshot(uint32_t out[32]){
     return 32u;
 }
 uint32_t ln_m25_coprocessor_channel(uint32_t slot,uint32_t out[32]){
-    if(slot==14u&&out){struct ln_audio_status a=vc.audio_status;if(vc.audio_ready)ln_audio_snapshot(&a);for(uint32_t i=0;i<32u;++i)out[i]=0;out[0]=vc.audio_phase;out[1]=vc.audio_frames;out[2]=vc.soundtrack.samples;out[3]=vc.soundtrack.lead;out[4]=vc.soundtrack.error;out[5]=vc.audio_phase?audio_decoder.error:0u;out[6]=a.rate;out[7]=a.queued;out[8]=a.consumed;out[9]=a.underruns;out[10]=a.fault;out[11]=vc.audio_eof;out[12]=a.silence_frames;out[13]=vc.start_elapsed;out[14]=vc.seek_stage;out[15]=vc.seek_ms;out[16]=vc.board_revision;out[17]=REG(0x4001ff1cu);out[18]=REG(0x4001ff18u);return 32u;}
+    if(slot==14u&&out){struct ln_audio_status a=vc.audio_status;if(vc.audio_ready)ln_audio_snapshot(&a);for(uint32_t i=0;i<32u;++i)out[i]=0;out[0]=vc.audio_phase;out[1]=vc.audio_frames;out[2]=vc.soundtrack.samples;out[3]=vc.soundtrack.lead;out[4]=vc.soundtrack.error;out[5]=vc.audio_phase?audio_decoder.error:0u;out[6]=a.rate;out[7]=a.queued;out[8]=a.consumed;out[9]=a.underruns;out[10]=a.fault;out[11]=vc.audio_eof;out[12]=a.silence_frames;out[13]=vc.start_elapsed;out[14]=vc.seek_stage;out[15]=vc.seek_ms;out[16]=vc.board_revision;out[17]=REG(0x4001ff1cu);out[18]=REG(0x4001ff18u);
+#if !defined(LINNET_PROFILE_RELEASE)
+        struct ln_power_state power;ln_power_snapshot(&power);
+        out[19]=vc.display_blanked;out[20]=(REG(0x6000d024u)&8u)!=0;
+        out[21]=power.backlight_on;out[22]=power.brightness;out[23]=vc.clock_valid;
+#endif
+        return 32u;}
     if(slot==13u&&out){for(uint32_t i=0;i<32u;++i)out[i]=vc.host_event[i];return 32u;}
     if(slot>=16u&&slot<24u&&out){for(uint32_t i=0;i<32u;++i)out[i]=vc.reply[(slot-16u)*32u+i];return 32u;}
     if(slot==8u&&out){for(uint32_t i=0;i<32u;++i)out[i]=vc.reply[i];return 32u;}
