@@ -129,13 +129,18 @@ static void native_idle(void){
     if(vc.image_leased&&!vc.fs_canceling){ln_player_video_firmware_release();vc.image_leased=false;}
 }
 static bool expired(void){return (int32_t)(ln_time_us()-vc.deadline)>=0;}
+static bool startup_transfers(void){
+    /* The first committed picture closes this window even for silent clips.
+     * Its sequence survives seeks, so later preparation keeps normal slices. */
+    return vc.normal&&!(vc.options&32u)&&!vc.picture_sequence&&!vc.audio_started&&!vc.stopping&&!vc.restore;
+}
 static bool put(uint32_t address,uint32_t value){return ln_m25_bcm_write(address,&value,1u);}
 static uint32_t halfword(const uint32_t *words,uint32_t byte){return (words[byte/4u]>>((byte&2u)*8u))&0xffffu;}
 static bool ring_valid(uint32_t lo,uint32_t hi,uint32_t at){
     return !(lo&15u)&&!(hi&15u)&&!(at&15u)&&hi>lo&&at>=lo&&at<hi&&vc.header[3]<=0xffffffffu-hi;
 }
 static bool ring_transfer(bool write,uint32_t lo,uint32_t hi,uint32_t *at,uint32_t *words,uint32_t bytes){
-    if(!ring_valid(lo,hi,*at)||(bytes&15u)||bytes>(write?512u:128u)||bytes>hi-lo-16u)return false;
+    if(!ring_valid(lo,hi,*at)||(bytes&15u)||bytes>(write?4096u:128u)||bytes>hi-lo-16u)return false;
     uint32_t first=hi-*at;if(first>bytes)first=bytes;
     if(write?!ln_m25_bcm_write(vc.header[3]+*at,words,first/4u):!ln_m25_bcm_read(vc.header[3]+*at,words,first/4u))return false;
     *at+=first;if(*at==hi)*at=lo;
@@ -481,7 +486,8 @@ static bool stream_service(void){
         uint32_t used=wr>=rd?wr-rd:hi-rd+wr-lo;
         if(sizeof vc.stream_packet>hi-lo-used-16u)return true;
         if(!vc.stream_at)vc.stream_wr=wr;
-        uint32_t count=sizeof vc.stream_packet-vc.stream_at;if(count>128u)count=128u;
+        uint32_t limit=startup_transfers()?512u:128u;
+        uint32_t count=sizeof vc.stream_packet-vc.stream_at;if(count>limit)count=limit;
         if(!ring_transfer(true,lo,hi,&vc.stream_wr,vc.stream_packet+vc.stream_at/4u,count))return false;
         vc.stream_at+=count;
         if(vc.stream_at==sizeof vc.stream_packet){
@@ -667,8 +673,11 @@ static bool file_service(void){
         uint32_t used=wr>=rd?wr-rd:hi-rd+wr-lo;
         if(vc.fs_tx_bytes>hi-lo-16u-used)return true;
         if(!vc.fs_tx_at)vc.fs_wr=wr;
-        /* Copy one bounded fragment; publish the producer only at completion. */
-        n=vc.fs_tx_bytes-vc.fs_tx_at;if(n>512u)n=512u;
+        /* Startup has no audible DMA deadline. Use the same 4 KiB bus bound
+         * as video payloads, retaining small slices once audio has started.
+         * The complete response remains unpublished until its final byte. */
+        uint32_t limit=startup_transfers()?4096u:512u;
+        n=vc.fs_tx_bytes-vc.fs_tx_at;if(n>limit)n=limit;
         if(!ring_transfer(true,lo,hi,&vc.fs_wr,vc.fs_packet+vc.fs_tx_at/4u,n))return false;
         vc.fs_tx_at+=n;
         if(vc.fs_tx_at==vc.fs_tx_bytes){

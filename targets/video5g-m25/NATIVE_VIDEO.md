@@ -56,8 +56,12 @@ The UI layer returns through the same native display runtime. A bounded failure
 path restores the verified NOR display runtime. Handoffs unload a retained idle
 shell with a bounded acknowledgement before restoring that original runtime.
 
-Completed BCM file-service responses copy in fragments of up to 512 bytes per
-service call. Ring reads stay limited to 128 bytes. Space is checked for the
+Before the first LCD picture, completed BCM file-service responses copy in
+fragments of up to 4 KiB per service call, matching the existing video-payload
+bus bound. Playback after that picture, including silent clips and later seeks,
+retains 512-byte file-service fragments. TV output, stopping and recovery also
+keep those smaller fragments. Initial LCD stream metadata uses 512-byte writes.
+Ring reads stay limited to 128 bytes. Space is checked for the
 complete response, and its producer pointer publishes only after all fragments
 are copied. Normal playback prepares its PCM reserve while the native runtime
 starts. After the display-region command completes, playback waits for that
