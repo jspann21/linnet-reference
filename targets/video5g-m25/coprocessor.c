@@ -35,7 +35,7 @@ static uint32_t picture_cookie;
 static uint32_t picture_probe[8];
 static uint32_t idle_probe[8],player_reuses,player_unloads;
 static uint32_t prefetch_reads,prefetch_bytes;
-static uint32_t scan_service[2][4],stream_batch[8];
+static uint32_t scan_service[2][4],stream_batch[8],stream_prepare[8];
 #endif
 enum { IDLE,OPEN,READ,HASH,ACQUIRE,POWER_OFF,POWER_ON,BUS_READY,BUS_SETUP,
        BUS_LATCH,UPLOAD,VALIDATE_BEGIN,VALIDATE_WAIT,EXECUTE,READY_WAIT,
@@ -620,12 +620,32 @@ static bool stream_step(uint32_t bulk_limit){
     p[53]=vc.movie.nal_bytes?vc.movie.nal_bytes-1u:0u;
     vc.stream_phase=1u;vc.stream_at=0;return true;
 }
-/* Fuse only the callback-free response to one already prepared frame. Packet
- * parsing, storage work, initial metadata and subsequent native requests retain
- * their separate executive turns. Bulk bytes exclude ring control traffic. */
+/* Join one frame response, optionally after its ordinary packet step and a
+ * fully cached payload copy. Additional preparation never starts storage work.
+ * Initial metadata and subsequent native requests retain their own executive
+ * turns. Bulk bytes exclude ring control traffic. */
+/* Pure coverage probe: additional preparation never creates a read/fill. */
+static bool stream_payload_cached(void){
+    uint64_t at=vc.packet.offset;uint32_t bytes=vc.packet.bytes,covered=0;
+    if(!bytes||bytes>16384u||at>vc.video_file.size||bytes>vc.video_file.size-at||vc.cache[0].pending)return false;
+    while(covered<bytes){
+        uint64_t position=at+covered;bool found=false;
+        for(uint32_t i=0;i<3u;++i)if(vc.cache[0].bytes[i]&&position>=vc.cache[0].offset[i]&&
+            position-vc.cache[0].offset[i]<vc.cache[0].bytes[i]){
+            uint32_t count=vc.cache[0].bytes[i]-(uint32_t)(position-vc.cache[0].offset[i]);
+            if(count>bytes-covered)count=bytes-covered;covered+=count;found=true;break;
+        }
+        if(!found)return false;
+    }
+    return true;
+}
+static bool stream_preparation_pending(void){
+    return vc.read_active||vc.read_io||vc.cache[0].pending||vc.cache[1].pending||
+        vc.fs_phase||vc.prefetch_io||vc.io;
+}
 static bool stream_batch_ready(void){
     return startup_transfers()&&!vc.seek_pending&&!vc.seek_stage&&!vc.want_paused&&
-        !vc.fs_canceling&&vc.stream_phase>=2u&&vc.stream_phase<=4u;
+        !vc.fs_canceling&&vc.stream_phase>=2u&&vc.stream_phase<=6u;
 }
 static bool stream_service(void){
     if(!stream_batch_ready())return stream_step(4096u);
@@ -635,10 +655,32 @@ static bool stream_service(void){
 #if !defined(LINNET_PROFILE_RELEASE)
     bool time_stop=false,byte_stop=false;
 #endif
-    while(steps<3u){
+    while(steps<5u){
         uint32_t previous=vc.stream_phase,at=vc.stream_at;
+        bool preparation=previous==5u||previous==6u;
+        bool pending=preparation&&stream_preparation_pending();
+#if !defined(LINNET_PROFILE_RELEASE)
+        uint32_t preparation_started=ln_time_us();
+        if(previous==5u)++stream_prepare[0];
+#endif
         ++steps;if(!stream_step(4096u-bulk)){ok=false;break;}
         if(vc.generation!=generation||vc.phase!=owner)break;
+#if !defined(LINNET_PROFILE_RELEASE)
+        if(previous==5u&&vc.stream_phase==6u)++stream_prepare[1];
+        if(previous==6u&&vc.stream_phase==2u&&!pending&&!stream_preparation_pending())++stream_prepare[2];
+        if(preparation&&steps>1u){
+            uint32_t elapsed=ln_time_us()-preparation_started;stream_prepare[5]+=elapsed;
+            if(elapsed>stream_prepare[6])stream_prepare[6]=elapsed;
+        }
+#endif
+        /* An ordinary pending step still runs once. It cannot drain and then
+         * advance another stage in this invocation, even after completion. */
+        if(preparation&&(pending||stream_preparation_pending())){
+#if !defined(LINNET_PROFILE_RELEASE)
+            if(pending)++stream_prepare[3];
+#endif
+            break;
+        }
         if(previous==3u){
             uint32_t sent=vc.stream_at-at;
             if(sent>4096u-bulk){ok=false;break;}bulk+=sent;
@@ -648,17 +690,23 @@ static bool stream_service(void){
             bulk+=64u;break;
         }
         if(!stream_batch_ready())break;
-        if(!((previous==2u&&vc.stream_phase==3u)||(previous==3u&&vc.stream_phase==4u)))break;
+        if(!((previous==5u&&vc.stream_phase==6u)||(previous==6u&&vc.stream_phase==2u)||
+             (previous==2u&&vc.stream_phase==3u)||(previous==3u&&vc.stream_phase==4u)))break;
         if(vc.stream_phase==4u&&bulk>4032u){
 #if !defined(LINNET_PROFILE_RELEASE)
             byte_stop=true;
 #endif
             break;
         }
-        /* Admission bound: one original BCM access may exceed this interval. */
         if(ln_time_us()-started>=250u){
 #if !defined(LINNET_PROFILE_RELEASE)
             time_stop=true;
+#endif
+            break;
+        }
+        if(vc.stream_phase==6u&&(stream_preparation_pending()||!stream_payload_cached())){
+#if !defined(LINNET_PROFILE_RELEASE)
+            ++stream_prepare[4];
 #endif
             break;
         }
@@ -670,6 +718,7 @@ static bool stream_service(void){
     if(initial==2u&&vc.stream_frames==frames+1u)++stream_batch[4];
     if(bulk>stream_batch[5])stream_batch[5]=bulk;
     if(time_stop)++stream_batch[6];if(byte_stop)++stream_batch[7];
+    if((initial==5u||initial==6u)&&vc.stream_frames==frames+1u)++stream_prepare[7];
 #else
     (void)initial;
 #endif
@@ -1024,7 +1073,7 @@ bool ln_m25_coprocessor_begin(uint32_t operation){
     rom_burst_max_us=rom_bursts=0;
     prefetch_reads=prefetch_bytes=0;
     for(uint32_t i=0;i<2u;++i)for(uint32_t j=0;j<4u;++j)scan_service[i][j]=0;
-    for(uint32_t i=0;i<8u;++i)stream_batch[i]=0;
+    for(uint32_t i=0;i<8u;++i)stream_batch[i]=stream_prepare[i]=0;
 #endif
     phase(ROM_CHECK,30000000u);return true;
 }
@@ -1832,6 +1881,7 @@ uint32_t ln_m25_coprocessor_channel(uint32_t slot,uint32_t out[32]){
     if(slot==2u){out[24]=rom_burst_max_us;out[25]=rom_bursts;}
     if(slot==1u)for(uint32_t i=0;i<2u;++i)for(uint32_t j=0;j<4u;++j)out[24u+i*4u+j]=scan_service[i][j];
     if(slot==3u)for(uint32_t i=0;i<8u;++i)out[24u+i]=stream_batch[i];
+    if(slot==4u)for(uint32_t i=0;i<8u;++i)out[24u+i]=stream_prepare[i];
 #endif
     return 32u;
 }

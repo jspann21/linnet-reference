@@ -210,17 +210,30 @@ full mirror comparisons occur during admission. Consecutive edges in the
 same pinned FAT sector reuse its completed mirror comparison. The focused host check is
 `python -m tools.qualification.cache_lease`, in development and release modes.
 
-Startup may also join the callback-free steps of one prepared frame response:
-accept its native request, transfer one payload chunk, then publish its descriptor.
-Only exact 2-to-3 and 3-to-4 progress may continue, with at most three substeps,
+Startup may join the ready steps of one frame: finish its existing packet
+metadata step, copy a fully cached payload, accept one native frame request,
+transfer one payload chunk, then publish its descriptor. Only exact 5-to-6,
+6-to-2, 2-to-3 and 3-to-4 progress may continue, with at most five substeps,
 one payload transfer and 4,096 bulk bytes including the final 64-byte descriptor.
 Ring control traffic is additional. A 250 microsecond admission budget does not
-preempt an existing individual BCM access. Publication ends the batch; another
-request, packet parsing, storage work, initial metadata, seeking and steady
-playback retain their existing separate service steps. The first-picture fence,
-ring validation, response sequence and decoder buffers are unchanged.
+preempt an existing individual parser, copy or BCM access. Publication ends the
+batch. Initial metadata, seeks, storage misses and steady playback retain their
+existing service steps. The first-picture fence, ring validation, response
+sequence and decoder buffers are unchanged.
+
+An additional payload preparation requires complete coverage in the three
+video cache windows, at most 16 KiB, valid file bounds and quiet media/library
+owners. Its coverage probe performs no copies, cache-age changes or reads.
+An ordinary preparation call that entered with pending work returns to the
+executive even when that work completes. A parser that remains pending is not
+retried. Proven callback-free response steps retain their original batching
+when unrelated audio I/O is pending.
 
 Development channel 3 words 24 through 31 report stream batch service microseconds,
 maximum invocation, invocations, additional substeps, responses published in their
 accepting invocation, maximum bulk bytes, time-limit stops and byte-limit stops.
-These counters reset for each video open and are absent from release images.
+Channel 4's corresponding tail reports phase-5 calls, 5-to-6 completions, quiet
+phase-6 completions, pending-entry stops, uncovered/oversize extra-payload stops,
+additional preparation microseconds, maximum additional preparation and responses
+published by batches starting at preparation. All counters reset for each video
+open and are absent from release images.
