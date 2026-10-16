@@ -1208,6 +1208,7 @@ def _coalesce_lz4_matches(packed: bytes, raw: bytes, minimum: int = 8) -> bytes:
     """Replace short matches with exact literals, retaining longer match offsets."""
     output = bytearray()
     cursor = position = anchor = 0
+    packed_size = len(packed)
 
     def length(value: int) -> None:
         if value >= 15:
@@ -1218,7 +1219,7 @@ def _coalesce_lz4_matches(packed: bytes, raw: bytes, minimum: int = 8) -> bytes:
             output.append(value)
 
     # The caller supplies the exact raw payload for this bounded block.
-    while cursor < len(packed):
+    while cursor < packed_size:
         token = packed[cursor]
         cursor += 1
         literals = token >> 4
@@ -1231,9 +1232,9 @@ def _coalesce_lz4_matches(packed: bytes, raw: bytes, minimum: int = 8) -> bytes:
                     break
         cursor += literals
         position += literals
-        if cursor == len(packed):
+        if cursor == packed_size:
             break
-        offset = struct.unpack_from("<H", packed, cursor)[0]
+        match_at = cursor
         cursor += 2
         match = (token & 15) + 4
         if token & 15 == 15:
@@ -1245,16 +1246,19 @@ def _coalesce_lz4_matches(packed: bytes, raw: bytes, minimum: int = 8) -> bytes:
                     break
         if match >= minimum:
             literals = position - anchor
-            output.append((min(literals, 15) << 4) | min(match - 4, 15))
-            length(literals)
+            output.append(((literals if literals < 15 else 15) << 4) | (token & 15))
+            if literals >= 15:
+                length(literals)
             output.extend(raw[anchor:position])
-            output.extend(struct.pack("<H", offset))
-            length(match - 4)
+            # Offset and match-length extension bytes remain valid: only
+            # the preceding literal run changed, not this match or its position.
+            output.extend(packed[match_at:cursor])
             anchor = position + match
         position += match
     literals = position - anchor
-    output.append(min(literals, 15) << 4)
-    length(literals)
+    output.append((literals if literals < 15 else 15) << 4)
+    if literals >= 15:
+        length(literals)
     output.extend(raw[anchor:])
     return bytes(output)
 
