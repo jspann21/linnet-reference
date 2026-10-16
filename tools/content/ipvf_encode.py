@@ -148,6 +148,9 @@ def encode_ipvf(source, destination, *, title=None, cancelled=None,
     destination is replaced atomically only after complete strict validation.
     Cancellation raises media_manager.Cancelled (also a RuntimeError); conversion failures raise ValueError.
     FFmpeg and FFprobe are required; liblz4 is optional (built-in fallback).
+    Long conversions may spawn validation workers. Script callers must use an
+    if __name__ == "__main__" guard; frozen entry points must call
+    multiprocessing.freeze_support() before dispatch.
     """
     source, destination = Path(source).resolve(), Path(destination).resolve()
     if type(fps) is not int or not 4 <= fps <= 30:
@@ -250,7 +253,8 @@ def encode_ipvf(source, destination, *, title=None, cancelled=None,
                 last_update = now
         result = inspect_file(encoded, cancelled=cancelled, on_frame=checked,
                               expected_width=width, expected_height=height,
-                              max_record_sectors=max_record_sectors)
+                              max_record_sectors=max_record_sectors,
+                              worker_limit=4 if (os.cpu_count() or 1) >= 8 else 1)
         if cancelled():
             raise Cancelled("Update cancelled")
         os.replace(encoded, destination)
