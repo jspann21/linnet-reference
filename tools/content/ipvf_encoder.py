@@ -16,6 +16,8 @@ from operator import sub
 import struct
 import subprocess
 import zlib
+from collections import deque
+from concurrent.futures import ProcessPoolExecutor
 from fractions import Fraction
 from functools import lru_cache
 from pathlib import Path
@@ -1373,6 +1375,45 @@ def choose_video_record(
     return selected
 
 
+def _encoded_records(source, fps, keyint, ffmpeg, video_mode, max_rects,
+                     lz4_mode, color_depth, audio_file, audio_process):
+    # Each video record depends only on two source frames. Keep audio state
+    # sequential and retire bounded host jobs in source order, so scheduling
+    # cannot change the bitstream or its audio/video timing.
+    workers = min(4, os.cpu_count() or 1)
+    pending = deque()
+    previous = None
+    left_index = right_index = 0
+
+    def retire():
+        future, audio, kind, missing = pending.popleft()
+        video_kind, rects, payload, decoded = future.result()
+        return (video_kind, rects, payload, audio, decoded), kind, missing
+
+    with ProcessPoolExecutor(max_workers=workers, initializer=configure_geometry,
+                             initargs=(W, H, MAX_RECORD_SECTORS)) as pool:
+        for frame, current in enumerate(ffmpeg_frames(source, fps, ffmpeg, color_depth)):
+            samples = audio_boundary(frame + 1, fps) - audio_boundary(frame, fps)
+            size = samples * AUDIO_FRAME_BYTES
+            if audio_file is None:
+                pcm, missing = bytes(size), size
+            else:
+                pcm, missing = read_audio_slice(audio_file, size)
+                if missing and audio_process.wait():
+                    raise RuntimeError("ffmpeg could not decode the first audio stream")
+            audio, left_index, right_index, kind = encode_adaptive_ima(
+                pcm, samples, left_index, right_index)
+            future = pool.submit(choose_video_record, previous, current, len(audio),
+                                 previous is None or (keyint > 0 and frame % keyint == 0),
+                                 video_mode, max_rects, lz4_mode)
+            pending.append((future, audio, kind, missing))
+            previous = current
+            if len(pending) >= workers * 2:
+                yield retire()
+        while pending:
+            yield retire()
+
+
 def encode(
     source: Path,
     output: Path,
@@ -1411,13 +1452,10 @@ def encode(
     audio_padding_total = 0
     record_total = 0
     padding_total = 0
-    prev = None
     pending = None
     pending_frame: int | None = None
     index_entries: list[tuple[int, int, int, int]] = []
     first_record_sectors = 0
-    ima_left_index = 0
-    ima_right_index = 0
     n = 0
 
     try:
@@ -1427,38 +1465,12 @@ def encode(
 
         with temporary.open("wb+") as f:
             f.write(bytes(DATA_OFFSET))
-            for cur in ffmpeg_frames(source, fps, ffmpeg, color_depth):
-                force_key = prev is None or (keyint > 0 and n % keyint == 0)
-                audio_start = audio_boundary(n, fps)
-                audio_end = audio_boundary(n + 1, fps)
-                audio_frames = audio_end - audio_start
-                audio_bytes = audio_frames * AUDIO_FRAME_BYTES
-                if audio_file is None:
-                    audio_pcm, missing = bytes(audio_bytes), audio_bytes
-                else:
-                    audio_pcm, missing = read_audio_slice(audio_file, audio_bytes)
-                    if missing and audio_process.wait():
-                        raise RuntimeError("ffmpeg could not decode the first audio stream")
-                audio_payload, ima_left_index, ima_right_index, audio_kind = (
-                    encode_adaptive_ima(
-                        audio_pcm, audio_frames,
-                        ima_left_index, ima_right_index,
-                    )
-                )
+            for current, audio_kind, missing in _encoded_records(
+                    source, fps, keyint, ffmpeg, video_mode, max_rects,
+                    lz4_mode, color_depth, audio_file, audio_process):
                 audio_counts[audio_kind] += 1
                 audio_padding_total += missing
-
-                kind, rects, video_payload, decoded_video_bytes = (
-                    choose_video_record(
-                        prev, cur, len(audio_payload), force_key,
-                        video_mode, max_rects, lz4_mode,
-                    )
-                )
-
-                current = (
-                    kind, rects, video_payload, audio_payload,
-                    decoded_video_bytes,
-                )
+                kind, rects, video_payload, audio_payload, decoded_video_bytes = current
                 current_sectors = record_sectors(
                     len(video_payload), len(audio_payload)
                 )
@@ -1493,7 +1505,6 @@ def encode(
                 counts[kind] += 1
                 video_payload_total += len(video_payload)
                 audio_payload_total += len(audio_payload)
-                prev = cur
                 n += 1
                 if n % 24 == 0:
                     print(f"IPVF_PROGRESS:{n}", flush=True)
