@@ -624,7 +624,7 @@ static void step(void){
 #if !defined(LINNET_PROFILE_RELEASE)
             v.index_ready_us=ln_time_us()-v.measurement_opened;
 #endif
-            bool resume=saved_resume[0]==v.identity&&saved_resume[1]<v.count;
+            bool resume=saved_resume[0]==v.identity&&saved_resume[1]>0u&&saved_resume[1]<v.count;
 #if !defined(LINNET_PROFILE_RELEASE)
             if(v.measurement)resume=false;
 #endif
