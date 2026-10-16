@@ -276,3 +276,20 @@ still need to drain: the nonexpanded iFlash chunk is bounded to 93,184 bytes.
 The service's per-call polling budget bounds CPU work rather than total storage
 latency. First-picture, audio reserve, native response and power policies retain
 their existing behavior.
+
+Development selector `0x4d25002c` observes M25 video scheduling without
+changing it. Its eight words are selector, fresh ARM microsecond timestamp,
+music deadline, Cover Flow I/O deadline (or UINT32_MAX when disabled), video
+deadline, video-active flag, playback-pending flag and storage-busy flag.
+Compare deadlines with the timestamp using wrapping signed subtraction.
+It adds no storage or native-bus reads and is absent from release images.
+
+During active or pending M25 video playback, the music deadline matches the
+executive's volume-only music service. It retains an earlier pending volume
+retry within the existing 200 ms idle ceiling. Suspended browser, library,
+history and artwork deadlines no longer keep the CPU awake after they expire.
+The native video, storage, input and power deadlines still apply independently.
+A queued video request keeps the full music deadline until playback activates,
+so accepted music I/O continues draining before ownership changes. Stopping
+restores the full deadline and resumes the existing music and artwork work.
+This changes neither native polling intervals nor audio-buffer reserves.

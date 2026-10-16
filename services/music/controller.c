@@ -24,6 +24,9 @@
 #include "hal/api/platform.h"
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
 #include "kernel/runtime.h"
+#if defined(LINNET_VIDEO)
+#include "services/video/video.h"
+#endif
 #endif
 static struct ln_queue queue;
 /* Selection and resume decoding finish synchronously before yielding; neither
@@ -391,6 +394,15 @@ bool ln_music_sound_adjust(uint32_t row,int32_t direction){
     profile=next;++revision;return true;
 }
 uint32_t ln_music_deadline(uint32_t now){
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS) && defined(LINNET_VIDEO)
+    /* Match the executive's suspended music service during video playback.
+     * Its old metadata deadlines cannot advance; volume sync still runs. */
+    if(ln_video_active()||ln_video_playback_pending()){
+        uint32_t next=now+200000u;
+        if(volume_retry_pending&&(int32_t)(volume_retry_at-next)<0)next=volume_retry_at;
+        return next;
+    }
+#endif
     /* Library and history deadlines own admitted metadata reads. A browser
      * waiting for one must not keep the executive on its immediate path. */
     bool browser_query_idle=ln_music_browser_query_idle();

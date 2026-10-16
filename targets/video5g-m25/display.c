@@ -9,6 +9,10 @@
 #if defined(LINNET_IMAGE_OS)
 #include "targets/video5g-m25/coprocessor.h"
 #include "services/music/player.h"
+#if !defined(LINNET_PROFILE_RELEASE) && defined(LINNET_VIDEO) && defined(LINNET_AUDIO)
+#include "services/music/controller.h"
+#include "services/storage/storage.h"
+#endif
 #include "services/storage/block.h"
 #include "services/video/video.h"
 #include "services/photos/photos.h"
@@ -252,6 +256,17 @@ int ln_recovery_presentation_stop(void){return ln_display_quiesce();}
 uint32_t ln_display_target_diagnostics(uint32_t selector,uint32_t out[32]){
     if(!out)return 0;
 #if defined(LINNET_IMAGE_OS)
+#if !defined(LINNET_PROFILE_RELEASE) && defined(LINNET_VIDEO) && defined(LINNET_AUDIO)
+    if(selector==0x4d25002cu){
+        uint32_t now=ln_time_us();out[0]=selector;out[1]=now;
+        out[2]=ln_music_deadline(now);out[3]=UINT32_MAX;
+#if defined(LINNET_COVERFLOW)
+        out[3]=ln_coverflow_io_deadline();
+#endif
+        out[4]=ln_video_deadline(now);out[5]=ln_video_active();
+        out[6]=ln_video_playback_pending();out[7]=ln_storage_busy();return 8u;
+    }
+#endif
     if(selector==0x4d250028u){out[0]=selector;ln_platform_click_diagnostics(out+1);return 5u;}
     if(selector==0x4d250029u){
         struct ln_power_state p;ln_power_snapshot(&p);
