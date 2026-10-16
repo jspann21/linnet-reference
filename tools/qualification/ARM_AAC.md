@@ -1,0 +1,47 @@
+# Linked ARM AAC experiment
+
+This host-only qualification tool runs the AAC functions from a supplied
+firmware ELF at their linked addresses. It uses Unicorn 2.1.4's TI925T ARMv4T
+instruction model. It does not model the iPod's hardware or measure device
+timing, power use, or end-to-end video startup.
+
+Install the optional dependency in an experiment directory, then run from the
+repository root in PowerShell:
+
+```powershell
+.venv/Scripts/python.exe -m pip install --target out/experiments/arm-aac-deps unicorn==2.1.4
+$env:PYTHONPATH='out/experiments/arm-aac-deps;.'
+$env:ARM_AAC_REPORT='path/to/verified-build-report.json'
+$env:ARM_AAC_ADTS='path/to/extracted-aac-lc.aac'
+$env:ARM_AAC_ABI_MANIFEST='out/object-cache-v1/.../matching-aac-object-manifest.json'
+.venv/Scripts/python.exe -m tools.qualification.test_arm_aac
+```
+
+The ADTS stream must contain at least 66 access units. Extract it with stream
+copy from the same media under investigation; do not substitute a re-encoded
+copy for a device comparison. Generated streams can exercise additional codec
+inputs. Existing Media Manager dependencies and media publication stay intact.
+The ABI manifest must be the compiler-cache dependency manifest matching the
+AAC object retained beside the verified ELF. Its header hash must match the
+header compiled by the ABI check. The tests emit the build, ELF, model, object,
+header, manifest and ABI-check hashes. The ELF/object link relationship requires
+the supplied build report and artifacts to have been independently verified.
+
+The focused tests compare fresh decoding and uninterrupted decoding, then
+check continuation at AU boundaries 1, 2, 16, 32 and 64. Intermediate AUs skip
+synthesis; exactly one full discarded predecessor repairs overlap before PCM
+is exposed. Invalid overlap must be rejected. A malformed AU must latch an
+error until fresh initialization. The target compiler checks the structure
+offsets used by the experiment. Execution has instruction/time limits, mapped
+memory permissions, stack/decoder canaries and callee-saved register checks.
+These are limited corruption checks, not a proof of memory safety or device
+stack use. The emulator uses a separate 64 KiB host scratch stack.
+
+These checks establish consistency within the host execution model. Physical
+device PCM parity, container lead/duration trimming, source/build binding,
+handoff integrity, cache effects and measured startup savings remain required
+before designing or publishing prepared audio for device playback. No prepared
+audio format or playback fallback is enabled by this tool.
+
+API references: [Unicorn tutorial](https://www.unicorn-engine.org/docs/tutorial.html)
+and [official ARM sample](https://github.com/unicorn-engine/unicorn/blob/master/samples/sample_arm.c).
