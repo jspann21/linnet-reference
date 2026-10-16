@@ -237,3 +237,26 @@ phase-6 completions, pending-entry stops, uncovered/oversize extra-payload stops
 additional preparation microseconds, maximum additional preparation and responses
 published by batches starting at preparation. All counters reset for each video
 open and are absent from release images.
+
+The native file service may send the first reply fragment in the same
+invocation that accepts one synchronous successful request during LCD startup.
+Only entry phase zero can join a ready phase-three response. Asynchronous
+open/read completions, library warming, errors and steady playback retain
+their original steps. The extra call never accepts another request and keeps
+the existing 4,096-byte fragment limit, whole-response ring-space check and
+final-only write-pointer publication. Ring wrap may split that fragment into
+two underlying bus writes.
+
+Both admission checks require quiet media/library owners, unchanged generation,
+outer phase, channel, workspace pointer/generation and resource epoch. Pending
+seek or pause controls, cancellation, stop and restore prohibit joining. A
+250-microsecond admission bound permits one existing bus operation to exceed
+it. No decoder buffers, storage requests or native acknowledgements change.
+
+Development channel 5 words 24 through 31 report eligible phase-zero service
+microseconds, maximum invocation, synchronous successful replies passing the
+owner checks, additional transmit attempts, replies completed by those attempts,
+response bytes copied by the additional attempts, maximum fragment and time
+budget stops. Bytes reflect completed fragment progress, including a copied
+fragment whose later publication fails. These counters reset at video open
+and are absent from release images.

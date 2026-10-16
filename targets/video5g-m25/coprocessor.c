@@ -35,7 +35,7 @@ static uint32_t picture_cookie;
 static uint32_t picture_probe[8];
 static uint32_t idle_probe[8],player_reuses,player_unloads;
 static uint32_t prefetch_reads,prefetch_bytes;
-static uint32_t scan_service[2][4],stream_batch[8],stream_prepare[8];
+static uint32_t scan_service[2][4],stream_batch[8],stream_prepare[8],file_batch[8];
 #endif
 enum { IDLE,OPEN,READ,HASH,ACQUIRE,POWER_OFF,POWER_ON,BUS_READY,BUS_SETUP,
        BUS_LATCH,UPLOAD,VALIDATE_BEGIN,VALIDATE_WAIT,EXECUTE,READY_WAIT,
@@ -800,7 +800,7 @@ unavailable:ln_resident_end(&vc.cached);vc.cached.failure=67u;
 }
 /* The VC file service owns no disk writes. Library names map to an explicit
  * local resource set; handles and offsets are bounded independently of VC. */
-static bool file_service(void){
+static bool file_step(void){
     if(vc.read_active||vc.read_io)return true;
     if(vc.file_slot>=8u)return true;
     uint32_t *c=vc.channel[vc.file_slot],record=file_record(),n=0;
@@ -962,6 +962,55 @@ static bool file_service(void){
     }
     file_response(false,(uint32_t)-7002,4u);return true;
 }
+/* Additional service is limited to the first fragment of one synchronous,
+ * successful request. No pending open/read/warming completion is combined. */
+static bool file_batch_ready(void){
+    return startup_transfers()&&vc.operation==2u&&vc.file_slot<8u&&
+        !vc.seek_pending&&!vc.seek_stage&&!vc.want_paused&&!vc.fs_canceling&&
+        !vc.read_active&&!vc.read_io&&!vc.io&&!vc.prefetch_io&&
+        !vc.cache[0].pending&&!vc.cache[1].pending&&!ln_storage_busy()&&
+        vc.image_leased&&resources.initialized&&resources.epoch;
+}
+static bool file_service(void){
+    if(vc.fs_phase||!file_batch_ready())return file_step();
+    uint32_t started=ln_time_us(),generation=vc.generation,owner=vc.phase;
+    uint32_t slot=vc.file_slot,requests=vc.fs_count,epoch=resources.epoch;
+    uint32_t image_generation=vc.image_generation;
+    uint8_t *image=vc.image;
+    bool ok=file_step();
+    if(ok&&vc.generation==generation&&vc.phase==owner&&vc.file_slot==slot&&
+       vc.image==image&&vc.image_generation==image_generation&&resources.epoch==epoch&&
+       file_batch_ready()&&vc.fs_count==requests+1u&&vc.fs_phase==3u&&
+       !vc.fs_packet[2]&&!vc.fs_tx_at){
+#if !defined(LINNET_PROFILE_RELEASE)
+        ++file_batch[2];
+#endif
+        /* Admission bound only: one existing BCM transfer can exceed it.
+         * Phase 3 retains its original 4096-byte fragment/publication rules. */
+        if(ln_time_us()-started<250u){
+#if !defined(LINNET_PROFILE_RELEASE)
+            ++file_batch[3];
+#endif
+            ok=file_step();
+#if !defined(LINNET_PROFILE_RELEASE)
+            if(vc.generation==generation&&vc.phase==owner&&vc.file_slot==slot){
+                uint32_t sent=vc.fs_tx_at;
+                file_batch[5]+=sent;
+                if(sent>file_batch[6])file_batch[6]=sent;
+                if(ok&&!vc.fs_phase)++file_batch[4];
+            }
+#endif
+        }
+#if !defined(LINNET_PROFILE_RELEASE)
+        else ++file_batch[7];
+#endif
+    }
+#if !defined(LINNET_PROFILE_RELEASE)
+    uint32_t elapsed=ln_time_us()-started;file_batch[0]+=elapsed;
+    if(elapsed>file_batch[1])file_batch[1]=elapsed;
+#endif
+    return ok;
+}
 static void recover(uint32_t error){
     if(error||(vc.normal&&!vc.picture_sequence))ln_resident_forget(&vc.binding);
     vc.picture_pending=false;
@@ -1073,7 +1122,7 @@ bool ln_m25_coprocessor_begin(uint32_t operation){
     rom_burst_max_us=rom_bursts=0;
     prefetch_reads=prefetch_bytes=0;
     for(uint32_t i=0;i<2u;++i)for(uint32_t j=0;j<4u;++j)scan_service[i][j]=0;
-    for(uint32_t i=0;i<8u;++i)stream_batch[i]=stream_prepare[i]=0;
+    for(uint32_t i=0;i<8u;++i)stream_batch[i]=stream_prepare[i]=file_batch[i]=0;
 #endif
     phase(ROM_CHECK,30000000u);return true;
 }
@@ -1882,6 +1931,7 @@ uint32_t ln_m25_coprocessor_channel(uint32_t slot,uint32_t out[32]){
     if(slot==1u)for(uint32_t i=0;i<2u;++i)for(uint32_t j=0;j<4u;++j)out[24u+i*4u+j]=scan_service[i][j];
     if(slot==3u)for(uint32_t i=0;i<8u;++i)out[24u+i]=stream_batch[i];
     if(slot==4u)for(uint32_t i=0;i<8u;++i)out[24u+i]=stream_prepare[i];
+    if(slot==5u)for(uint32_t i=0;i<8u;++i)out[24u+i]=file_batch[i];
 #endif
     return 32u;
 }
