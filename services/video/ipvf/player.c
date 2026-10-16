@@ -241,9 +241,9 @@ static bool ipvf_header(void){
         if(tag==1u){uint32_t take=n<127u?n:127u;copy(v.title,b+at+2u,take);v.title[take]=0;}at+=2u+n;}
     if(!ln_bytes_zero(b+end,512u-end))return false;
     v.temporal=(flags&16u)!=0;v.width=LINNET_VIDEO_WIDTH;v.height=LINNET_VIDEO_HEIGHT;v.fps_num=ln_read_le16(b+10);v.fps_den=ln_read_le16(b+12);v.fps=v.fps_num/v.fps_den;
-    /* Keep a 1.5-second video cushion for expensive scenes; the audio
+    /* Keep a half-second video cushion; the audio
      * producer continues targeting four seconds independently. */
-    v.preroll=(3u*v.fps_num+2u*v.fps_den-1u)/(2u*v.fps_den);
+    v.preroll=(v.fps_num+2u*v.fps_den-1u)/(2u*v.fps_den);
     if(v.preroll>VIDEO_PREROLL)v.preroll=VIDEO_PREROLL;if(v.preroll<2u)v.preroll=2u;
     v.rate=44100;v.count=ln_read_le32(b+16);v.media_end=(uint32_t)media_end;v.index_at=(uint32_t)index_at;
     v.index_count=ln_read_le32(b+60);v.index_crc=ln_read_le32(b+72);v.identity=ln_read_le32(b+76);v.first_sectors=ln_read_le16(b+14);
@@ -542,7 +542,7 @@ bool ln_video_paused(void){return v.paused;}
 void ln_video_pause(bool pause){if(!v.active||v.stopping)return;v.paused=pause;if(v.started){if(pause)ln_audio_pause();else if(!ln_audio_start())fail(13);}++v.revision;}
 /* Seeking needs the same bounded cushion as startup on expensive scenes. */
 static void seek_preroll(void){
-    uint32_t frames=(3u*v.fps_num+2u*v.fps_den-1u)/(2u*v.fps_den);
+    uint32_t frames=(v.fps_num+2u*v.fps_den-1u)/(2u*v.fps_den);
     if(frames<2u)frames=2u;if(frames<v.preroll)v.preroll=frames;
 }
 bool ln_video_seek(int32_t seconds){
@@ -589,7 +589,9 @@ static void step(void){
     present(&a);
     /* Hand a due frame to the renderer before starting another read/decode. */
     if(v.offered)return;
-    if(v.ready&&!v.started&&!v.paused&&v.front!=NONE&&a.queued&&((v.qcount+1u)>=v.preroll||(!v.prefetching&&v.next==v.count))){
+    if(v.ready&&!v.started&&!v.paused&&v.front!=NONE&&a.queued&&
+       (a.queued+staged_pcm()>=v.rate||v.prefetched_frames==v.count)&&
+       ((v.qcount+1u)>=v.preroll||(!v.prefetching&&v.next==v.count))){
         if(!ln_audio_start()){fail(13);return;}v.started=true;++v.revision;
 #if !defined(LINNET_PROFILE_RELEASE)
         if(!v.measurement_started){v.measurement_started=ln_time_us();v.start_ready=v.qcount+1u;}
