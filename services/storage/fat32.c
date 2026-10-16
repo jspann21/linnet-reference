@@ -330,7 +330,14 @@ static void begin_allocation_scan(struct ln_fat32*f){
  * or allocation updates are attempted on inconsistent metadata. */
 static int next_cluster(struct ln_fat32*f){
     if(!f->fat_phase){
-        if(!cluster_valid(f,f->cluster)||++f->chain_steps>f->clusters||f->chain_steps>MAX_CHAIN)
+        uint32_t limit=MAX_CHAIN;
+#if defined(LINNET_TARGET_PHOTO4G_P98) && defined(LINNET_IMAGE_OS)
+        /* IPVF episodes can exceed 65,536 clusters on the Photo's FAT32
+         * volume. Keep mutation/directory limits; read proofs remain bounded
+         * by the volume and retain mirror and cycle validation. */
+        if(f->operation==OP_READ)limit=f->clusters;
+#endif
+        if(!cluster_valid(f,f->cluster)||++f->chain_steps>f->clusters||f->chain_steps>limit)
             return LN_FAT32_CORRUPT;
         struct ln_fat32_cache*c=&f->cache[f->cluster%LN_FAT32_CACHE_SIZE];
         if(c->cluster==f->cluster){f->fat_value=c->next;return 1;}
