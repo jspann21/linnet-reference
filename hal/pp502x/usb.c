@@ -109,7 +109,8 @@ static const uint8_t ln_usb_storage_product[] = {
 };
 
 static bool storage_high_speed_capable(void) {
-#if defined(LINNET_SOC_PP5022) || defined(LINNET_TARGET_IPOD4G_Q21)
+#if defined(LINNET_SOC_PP5022) || defined(LINNET_TARGET_IPOD4G_Q21) || \
+    (defined(LINNET_TARGET_PHOTO4G_P98) && defined(LINNET_IMAGE_OS))
     return ln_usb.storage_mode != 0;
 #else
     return false;

@@ -57,7 +57,7 @@ status certifies every build or the complete release workflow.
 | ATA addressing and sector geometry | LBA28 and LBA48 tested. PP502x physical-sector alignment and partial-sector read/modify/write tested at 512 and 1024 bytes; 2048/4096-byte physical sectors remain unqualified. Native logical sectors must be 512 bytes. |
 | Flash adapters | P98 `iFlash85` has tested CFA admission and DMA handling. M25 and N25 flash configurations have media checks; their drivers apply their own admission and transfer policies. Other adapter firmware and cards need separate qualification. |
 | Classic PATA and NOR | Native Boot, OS, storage, display, media, and power bring-up have physical evidence. The Toshiba MK3008GAL PATA path has also been exercised. NOR writes admit JEDEC `BF 25 8E` only. |
-| USB | Q21 and M25 use tested native high-speed paths; P98 retains its qualified full-speed path. Host USB sector geometry is separate from native ATA geometry. |
+| USB | Q21, M25, and P98 OS Disk Mode use tested native high-speed paths; P98 Boot and Link retain full speed. Host USB sector geometry is separate from native ATA geometry. |
 | Controls and headphone audio | Board-specific wheel, button, Hold, jack, clicker, and codec paths have physical evidence on the tested units. Replacement assemblies and sustained playback need their own checks. |
 | Power and charging | USB charging and bounded sleep/wake have been exercised. Negotiated current limits and diagnostics do not measure actual current, battery runtime, or FireWire charging. |
 
