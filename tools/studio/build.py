@@ -359,6 +359,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     # division, so this translation unit keeps -Os in a size-tuned Boot.
     add_sources([ROOT / "services/storage/block.c"], "storage block",
                 ['-Os'] if optimization == '-Oz' else ())
+    if target == 'video5g-m25' and kind == 'os':
+        add_sources([ROOT / 'services/storage/resident.c'], 'resident native media', ['-O2'])
     add_sources([ROOT / name for name in (
         "services/storage/fat32.c",
         "services/storage/storage.c", "services/state/store.c",

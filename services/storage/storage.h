@@ -46,6 +46,15 @@ bool ln_storage_busy(void);
 bool ln_storage_async_read_available(void);
 #endif
 bool ln_storage_mounted(void);
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+#include "services/storage/resident.h"
+bool ln_storage_resident_admit(struct ln_resident_media *,const char *const *paths,
+    uint32_t count,struct ln_fat32 *scratch,bool append);
+bool ln_storage_resident_admit_files(struct ln_resident_media *,const struct ln_fat32_file *,uint32_t count,bool append);
+bool ln_storage_resident_valid(const struct ln_resident_media *);
+int ln_storage_resident_read(const struct ln_resident_media *,const struct ln_fat32_file *,
+    uint32_t offset,void *buffer,uint32_t bytes);
+#endif
 /* Wake the disk when the video library opens, then defer standby for at most
  * one minute after entering or navigating the list. Leaving releases the hint. */
 void ln_storage_video_browse(bool active, bool activity);

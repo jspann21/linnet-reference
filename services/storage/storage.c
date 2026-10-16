@@ -367,6 +367,31 @@ void ln_storage_step(void){storage_step(false);}
 void ln_storage_step_deferred(void){storage_step(true);}
 bool ln_storage_busy(void){return locked||background_running||(phase>=1&&phase<6)||phase==7||phase==10;}
 bool ln_storage_mounted(void){return phase==6&&volume.mounted;}
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
+static bool resident_ready(struct ln_resident_media *r){
+    struct ln_ata_state device;ln_ata_state_snapshot(&device);
+    if(device.media_kind!=LN_ATA_MEDIA_ROTATING||!ln_storage_mounted()||volume.mounted!=1u||
+       ln_storage_busy()||pending||media_owner||fixed_owner||media_wake_ticket){
+        ln_resident_end(r);r->failure=64u;return false;
+    }
+    return true;
+}
+bool ln_storage_resident_admit(struct ln_resident_media *r,const char *const *paths,
+    uint32_t count,struct ln_fat32 *scratch,bool append){
+    if(!resident_ready(r))return false;
+    return append?ln_resident_append(r,&volume,paths,count,scratch):ln_resident_admit(r,&volume,paths,count,scratch);
+}
+bool ln_storage_resident_admit_files(struct ln_resident_media *r,const struct ln_fat32_file *files,uint32_t count,bool append){
+    return resident_ready(r)&&ln_resident_admit_files(r,&volume,files,count,append);
+}
+bool ln_storage_resident_valid(const struct ln_resident_media *r){
+    return ln_storage_mounted()&&volume.mounted==1u&&ln_resident_valid(r,volume.epoch);
+}
+int ln_storage_resident_read(const struct ln_resident_media *r,const struct ln_fat32_file *file,
+    uint32_t offset,void *buffer,uint32_t bytes){
+    return ln_storage_resident_valid(r)?ln_resident_read(r,file,offset,buffer,bytes):-1;
+}
+#endif
 int ln_storage_media_realtime(bool active){
     struct ln_ata_state device;ln_ata_state_snapshot(&device);
     media_realtime=active&&device.media_kind==LN_ATA_MEDIA_ROTATING;

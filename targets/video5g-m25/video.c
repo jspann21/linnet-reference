@@ -26,7 +26,7 @@ void ln_video_step(void){
     struct ln_ata_state disk;ln_ata_state_snapshot(&disk);
     /* A cold HDD wake can exceed the PCM reserve. Keep it ready even when
      * extended RAM temporarily supplies every packet and index read. */
-    ln_storage_media_realtime(v.active&&disk.media_kind==LN_ATA_MEDIA_ROTATING);
+    ln_storage_media_realtime(v.active&&disk.media_kind==LN_ATA_MEDIA_ROTATING&&ln_m25_coprocessor_disk_required());
     ln_video_catalog_step(ln_m25_coprocessor_active());
     if(v.active&&ln_m25_coprocessor_active())v.position=ln_m25_coprocessor_position();
     /* Repaint current UI state after restoration before enabling its light;

@@ -23,14 +23,39 @@ _Static_assert(sizeof(struct extra_tag)*4096u==65536u,"Extended cache tag reserv
 static struct extra_tag *extra_tags;
 static uint8_t *extra_data;
 static uint32_t extra_hits,extra_misses,extra_stores;
-static uint32_t extra_slot(uint64_t page){return ((uint32_t)page^(uint32_t)(page>>32))&4095u;}
-static void extra_invalidate(void){if(extra_tags)for(uint32_t i=0;i<4096u;i++)extra_tags[i].valid=0;}
+static uint32_t extra_cookie,extra_serial;
+/* Two adjacent ways share each set. The existing 4096 tags and 16 MiB payload
+ * reservation stay fixed; one victim bit per set costs 256 bytes. */
+static uint8_t extra_victim[256];
+static uint32_t extra_slot(uint64_t page){return (((uint32_t)page^(uint32_t)(page>>32))&2047u)*2u;}
+static uint32_t extra_find(uint64_t page){
+    uint32_t slot=extra_slot(page);
+    for(uint32_t way=0;way<2u;++way)if(extra_tags[slot+way].valid&&extra_tags[slot+way].page==page)return slot+way;
+    return UINT32_MAX;
+}
+static void extra_touch(uint32_t slot){
+    uint32_t set=slot>>1,bit=1u<<(set&7u);
+    if(slot&1u)extra_victim[set>>3]&=(uint8_t)~bit;else extra_victim[set>>3]|=(uint8_t)bit;
+}
+static uint32_t extra_choose(uint64_t page){
+    uint32_t slot=extra_find(page);if(slot!=UINT32_MAX)return slot;
+    slot=extra_slot(page);
+    for(uint32_t way=0;way<2u;++way)if(!extra_tags[slot+way].valid&&
+       (!extra_cookie||extra_tags[slot+way].reserved!=extra_cookie))return slot+way;
+    uint32_t victim=(extra_victim[(slot>>1)>>3]>>((slot>>1)&7u))&1u;
+    for(uint32_t n=0;n<2u;++n){uint32_t at=slot+(victim^n);
+        if(!extra_cookie||extra_tags[at].reserved!=extra_cookie)return at;
+    }
+    return UINT32_MAX;
+}
+static void extra_invalidate(void){extra_cookie=0;if(extra_tags)for(uint32_t i=0;i<4096u;i++){extra_tags[i].valid=0;extra_tags[i].reserved=0;}}
 static void extra_written(uint64_t lba,uint32_t sectors){
     if(!extra_tags)return;
     uint64_t last=(lba+sectors-1u)>>3;
     for(uint64_t page=lba>>3;page<=last;page++){
-        struct extra_tag *tag=&extra_tags[extra_slot(page)];
-        if(tag->page==page)tag->valid=0;
+        uint32_t slot=extra_find(page);if(slot==UINT32_MAX)continue;
+        struct extra_tag *tag=&extra_tags[slot];
+        if(extra_cookie&&tag->reserved==extra_cookie)extra_cookie=0;tag->valid=0;
     }
 }
 #endif
@@ -93,26 +118,40 @@ static void copy(uint8_t *to,const uint8_t *from,uint32_t bytes) {
 static bool extra_read(uint64_t lba,uint32_t sectors,uint8_t *to){
     if(!extra_tags)return false;
     /* Prove the entire request before modifying the caller's buffer. */
-    for(uint32_t at=0;at<sectors;at++){
-        uint64_t sector=lba+at,page=sector>>3;struct extra_tag *tag=&extra_tags[extra_slot(page)];
-        if(tag->page!=page||!(tag->valid&(1u<<(sector&7u)))){++extra_misses;return false;}
+    for(uint32_t at=0;at<sectors;){
+        uint64_t sector=lba+at;uint32_t within=(uint32_t)sector&7u,n=8u-within;
+        if(n>sectors-at)n=sectors-at;
+        uint32_t slot=extra_find(sector>>3),mask=((1u<<n)-1u)<<within;
+        if(slot==UINT32_MAX||(extra_tags[slot].valid&mask)!=mask){++extra_misses;return false;}at+=n;
     }
     for(uint32_t at=0;at<sectors;){
         uint64_t sector=lba+at;uint32_t within=(uint32_t)sector&7u,n=8u-within;
         if(n>sectors-at)n=sectors-at;
-        copy(to+at*512u,extra_data+extra_slot(sector>>3)*4096u+within*512u,n*512u);at+=n;
+        uint32_t slot=extra_find(sector>>3);extra_touch(slot);
+        copy(to+at*512u,extra_data+slot*4096u+within*512u,n*512u);at+=n;
     }
     ++extra_hits;return true;
 }
 static void extra_store(uint64_t lba,uint32_t sectors,const uint8_t *from){
     if(!extra_tags)return;
     for(uint32_t at=0;at<sectors;){
-        uint64_t sector=lba+at,page=sector>>3;uint32_t slot=extra_slot(page),within=(uint32_t)sector&7u,n=8u-within;
+        uint64_t sector=lba+at,page=sector>>3;uint32_t slot=extra_choose(page),within=(uint32_t)sector&7u,n=8u-within;
         if(n>sectors-at)n=sectors-at;
+        if(slot==UINT32_MAX){at+=n;continue;}
         struct extra_tag *tag=&extra_tags[slot];
+        if(extra_cookie&&tag->reserved==extra_cookie){
+            if(tag->page==page)for(uint32_t i=0;i<n;++i){
+                uint32_t bit=1u<<(within+i);
+                if(!(tag->valid&bit)){
+                    copy(extra_data+slot*4096u+(within+i)*512u,from+(at+i)*512u,512u);
+                    tag->valid|=bit;
+                }
+            }
+            extra_touch(slot);at+=n;continue;
+        }
         if(tag->page!=page){tag->valid=0;tag->page=page;}
         copy(extra_data+slot*4096u+within*512u,from+at*512u,n*512u);
-        tag->valid|=((1u<<n)-1u)<<within;at+=n;
+        tag->valid|=((1u<<n)-1u)<<within;extra_touch(slot);at+=n;
     }
     extra_stores+=sectors;
 }
@@ -120,6 +159,102 @@ void ln_block_extended_diagnostics(uint32_t out[4]){
     out[0]=extra_data?16u*1024u*1024u:0;out[1]=extra_hits;out[2]=extra_misses;out[3]=extra_stores;
 }
 #endif
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+static bool cache_quiet(void){
+    if(!extra_tags||!window_count||active_count||
+       power_task||recovering||frozen||quiesce_state||barrier_failed||idle_retry_active||metrics.quarantined)return 0;
+    for(uint32_t i=0;i<8u;++i)if(slots[i].state!=FREE)return 0;
+    struct ln_ata_state device;ln_ata_state_snapshot(&device);
+    if(!device.sectors||device.failed||device.initializing||device.busy||
+       (!device.initialized&&device.powered))return 0;
+    return true;
+}
+#endif
+uint32_t ln_block_cache_begin(void){
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+    if(extra_cookie||extra_serial==UINT32_MAX||!cache_quiet())return 0;
+    extra_cookie=++extra_serial;return extra_cookie;
+#else
+    return 0;
+#endif
+}
+bool ln_block_cache_extend(uint32_t cookie){
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+    return cookie&&cookie==extra_cookie&&cache_quiet();
+#else
+    (void)cookie;return false;
+#endif
+}
+bool ln_block_cache_valid(uint32_t cookie){
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+    struct ln_ata_state device;ln_ata_state_snapshot(&device);
+    return cookie&&cookie==extra_cookie&&!device.failed&&!metrics.quarantined&&
+        !recovering&&!frozen&&!quiesce_state&&!barrier_failed;
+#else
+    (void)cookie;return false;
+#endif
+}
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+/* Callers validate ownership and bounds before entering this synchronous
+ * walk. No callback or executive service can mutate the cache within it. */
+static const uint8_t *cache_sector(uint32_t cookie,uint64_t lba){
+    uint64_t page=lba>>3;uint32_t slot=extra_find(page);
+    if(slot==UINT32_MAX||!(extra_tags[slot].valid&(1u<<(lba&7u)))){
+        /* Small-window hits need not have revisited the extended cache since
+         * its last eviction. Promote their already clean RAM bytes, respecting
+         * pinned collisions, before declining a cache-only admission. */
+        for(uint32_t way=0;way<2u;++way)if(cache_sectors[way]&&lba>=cache_lba[way]&&lba-cache_lba[way]<cache_sectors[way]){
+            extra_store(lba,1u,cache[way]+(uint32_t)(lba-cache_lba[way])*512u);break;
+        }
+        slot=extra_find(page);if(slot==UINT32_MAX||!(extra_tags[slot].valid&(1u<<(lba&7u))))return 0;
+    }
+    struct extra_tag *tag=&extra_tags[slot];extra_touch(slot);
+    tag->reserved=cookie;return extra_data+slot*4096u+(uint32_t)(lba&7u)*512u;
+}
+#endif
+const uint8_t *ln_block_cache_sector(uint32_t cookie,uint64_t lba){
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+    if(!ln_block_cache_valid(cookie)||lba<window_first||lba-window_first>=window_count)return 0;
+    return cache_sector(cookie,lba);
+#else
+    (void)cookie;(void)lba;return 0;
+#endif
+}
+bool ln_block_cache_pin(uint32_t cookie,uint64_t lba,uint32_t sectors){
+    if(!sectors||sectors>32768u||lba>UINT64_MAX-sectors)return false;
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+    if(!ln_block_cache_valid(cookie)||lba<window_first||lba-window_first>=window_count||
+       sectors>window_count-(lba-window_first))return false;
+    for(uint32_t at=0;at<sectors;){
+        uint64_t sector=lba+at;uint32_t within=(uint32_t)sector&7u,n=8u-within;
+        if(n>sectors-at)n=sectors-at;
+        uint32_t slot=extra_find(sector>>3),mask=((1u<<n)-1u)<<within;
+        if(slot!=UINT32_MAX&&(extra_tags[slot].valid&mask)==mask){
+            extra_tags[slot].reserved=cookie;extra_touch(slot);
+        }else for(uint32_t i=0;i<n;++i)if(!cache_sector(cookie,sector+i))return false;
+        at+=n;
+    }
+    return true;
+#else
+    (void)cookie;return false;
+#endif
+}
+bool ln_block_cache_copy(uint32_t cookie,uint64_t lba,uint32_t sectors,void *output){
+    if(!output||sectors>32u||!ln_block_cache_pin(cookie,lba,sectors))return false;
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+    for(uint32_t i=0;i<sectors;++i)copy((uint8_t *)output+i*512u,cache_sector(cookie,lba+i),512u);
+    return true;
+#else
+    return false;
+#endif
+}
+void ln_block_cache_end(uint32_t cookie){
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+    if(cookie&&cookie==extra_cookie)extra_cookie=0;
+#else
+    (void)cookie;
+#endif
+}
 static void complete(struct slot *s,uint32_t status,uint32_t sectors) {
     bool issued=s->state==ACTIVE;
     s->status=s->canceled?LN_ATA_CANCELED:status;s->transferred=sectors;s->state=DONE;
@@ -141,6 +276,7 @@ void ln_block_init(uint32_t now) {
     uint32_t bytes;uint8_t *extra=ln_platform_extended_memory(&bytes);
     extra_tags=extra?(struct extra_tag *)extra:0;extra_data=extra?extra+16u*1024u*1024u:0;
     extra_hits=extra_misses=extra_stores=0;
+    extra_cookie=extra_serial=0;for(uint32_t i=0;i<sizeof(extra_victim);++i)extra_victim[i]=0;
 #endif
     for(uint32_t i=0;i<8u;++i)slots[i].state=FREE;
     metrics=(struct ln_block_info){0};invalidate_cache();next_id=active_count=streak=quiesce_state=0;
@@ -173,7 +309,17 @@ static bool submit(enum ln_block_op op,uint64_t lba,uint32_t sectors,void *bytes
         s->op=op;s->lba=lba;s->sectors=sectors;s->generation=generation;s->deadline=limit;
         s->read_ahead=read_ahead;
         s->id=next_id;s->caller=bytes;s->canceled=false;s->direct=direct;s->transferred=0;
-        if(op==LN_BLOCK_WRITE)copy(s->data,bytes,sectors*512u);
+        if(op==LN_BLOCK_WRITE){
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+            /* Revoke before publishing a queued mutation, retaining ordinary
+             * FIFO cache behavior until the write actually issues. */
+            if(extra_cookie)for(uint64_t page=lba>>3;page<=(lba+sectors-1u)>>3;++page){
+                uint32_t slot=extra_find(page);if(slot==UINT32_MAX)continue;
+                if(extra_tags[slot].reserved==extra_cookie){extra_cookie=0;break;}
+            }
+#endif
+            copy(s->data,bytes,sectors*512u);
+        }
         s->state=QUEUED;*id=s->id;++metrics.submitted;
 #if !defined(LINNET_PROFILE_RELEASE)
         if(op==LN_BLOCK_READ){perf_add(&perf.read_calls,1u);perf_add(&perf.requested_read_sectors,sectors);}
@@ -548,6 +694,9 @@ static int quiesce(uint32_t now,uint32_t limit,bool keep_awake) {
     if(!quiesce_state){
         if((int32_t)(limit-now)<=0||limit-now>30000000u)return -1;
         frozen=true;quiesce_state=1;quiesce_deadline=limit;
+#if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
+        extra_cookie=0;
+#endif
         quiesce_keep_awake=keep_awake;
     }
     /* Standby also satisfies a later flush-only handoff request. A prior

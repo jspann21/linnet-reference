@@ -30,9 +30,12 @@ _Static_assert(0x20000u+2u*49152u<=0x38000u,"BCM packet cache overlaps packed ar
 #if !defined(LINNET_PROFILE_RELEASE)
 static uint32_t fault_mode,fault_deadline;
 static uint32_t rom_check_us,rom_check_max_us,rom_check_calls;
+static uint32_t rom_burst_max_us,rom_bursts;
 static uint32_t picture_cookie;
 static uint32_t picture_probe[8];
 static uint32_t idle_probe[8],player_reuses,player_unloads;
+static uint32_t prefetch_reads,prefetch_bytes;
+static uint32_t scan_service[2][4];
 #endif
 enum { IDLE,OPEN,READ,HASH,ACQUIRE,POWER_OFF,POWER_ON,BUS_READY,BUS_SETUP,
        BUS_LATCH,UPLOAD,VALIDATE_BEGIN,VALIDATE_WAIT,EXECUTE,READY_WAIT,
@@ -55,9 +58,13 @@ static struct {
     uint32_t operation,host_request[32],file_slot,control,return_deadline,sync_deadline,start_elapsed,seek_ms,seek_stage,seek_sequence,seek_frames;
     struct {struct ln_fat32_file file;uint32_t position,resource;bool open;} files[8];
     uint32_t fs_phase,fs_fd,fs_count,fs_opcode,fs_requested,fs_bytes,fs_tx_bytes,fs_tx_at,fs_wr,fs_element_size,fs_resource;
+    uint32_t prefetch_at,prefetch_requested;bool prefetch_io;
     uint32_t fs_packet[2064] __attribute__((aligned(32)));
     struct ln_mp4 movie;struct ln_mp4_packet packet;struct ln_fat32_file video_file;
     uint8_t frame[65536] __attribute__((aligned(32)));
+    struct ln_resident_media cached;
+    struct ln_resident_binding binding;
+    uint32_t cache_resources,cache_requested,cache_unexpected;
     struct ln_mp4 soundtrack;struct ln_mp4_packet audio_packet;
     struct ln_audio_status audio_status;
     uint32_t audio_phase,audio_frames,read_kind;uint64_t audio_skip;bool audio_ready,audio_started,audio_eof;
@@ -126,6 +133,7 @@ static bool rom_image(void){
 static void phase(uint32_t next,uint32_t timeout){vc.phase=next;vc.deadline=ln_time_us()+timeout;}
 static void native_idle(void){
     vc.owned=vc.stopping=false;phase(NATIVE_IDLE,0);
+    ln_resident_end(&vc.cached);
     if(vc.image_leased&&!vc.fs_canceling){ln_player_video_firmware_release();vc.image_leased=false;}
 }
 static bool expired(void){return (int32_t)(ln_time_us()-vc.deadline)>=0;}
@@ -162,6 +170,9 @@ static bool notify_channel(uint32_t slot){
 #include "targets/video5g-m25/native_resources.inc"
 static int media_read(void *context,uint64_t at,void *buffer,uint32_t bytes){
     uint32_t kind=(uint32_t)(uintptr_t)context;
+    /* A seek may ask for data while native library warming owns storage.
+     * Leave its tuple unclaimed so file_service can drain that owner first. */
+    if(vc.prefetch_io&&!vc.read_active)return 0;
     if(vc.read_active&&vc.read_kind!=kind)return 0;
     if(!vc.read_active){vc.read_kind=kind;vc.read_offset=at;vc.read_buffer=buffer;vc.read_bytes=bytes;vc.read_at=0;vc.read_active=true;}
     if(at!=vc.read_offset||buffer!=vc.read_buffer||bytes!=vc.read_bytes||at>0xffffffffu)return -1;
@@ -173,6 +184,11 @@ static int media_read(void *context,uint64_t at,void *buffer,uint32_t bytes){
         if(vc.read_at==bytes){vc.read_active=false;return 1;}
     }
     uint32_t count=bytes-vc.read_at;if(count>16384u)count=16384u;
+    if(vc.cached.cookie){
+        int result=ln_storage_resident_read(&vc.cached,&vc.video_file,(uint32_t)at+vc.read_at,(uint8_t *)buffer+vc.read_at,count);
+        if(result<0){vc.read_active=false;return -1;}
+        vc.read_at+=count;if(vc.read_at==bytes){vc.read_active=false;return 1;}return 0;
+    }
     int result=ln_storage_media_read(&vc.video_file,(uint32_t)at+vc.read_at,(uint8_t *)buffer+vc.read_at,count,vc.generation);
     if(result<0){vc.read_active=false;return -1;}
     if(result>0){vc.read_requested=count;vc.read_io=true;}
@@ -210,6 +226,26 @@ static int video_read(void *context,uint64_t at,void *buffer,uint32_t bytes){
     uint32_t count=vc.video_file.size-(uint32_t)offset;if(count>16384u)count=16384u;
     cache->offset[slot]=offset;cache->bytes[slot]=count;cache->filling=slot;cache->pending=true;
     return 0;
+}
+static bool scan_open(struct ln_mp4 *movie,uint32_t kind,int *result){
+    uint32_t generation=vc.generation,initial_phase=vc.phase,started=ln_time_us(),calls=0;
+    bool valid=true;
+    for(;calls<8u;){
+        if(vc.generation!=generation||vc.phase!=initial_phase||vc.stopping||vc.restore||vc.fs_canceling){valid=false;break;}
+        bool pending=vc.read_active||vc.read_io||vc.cache[kind].pending;
+        *result=ln_mp4_open_step(movie);++calls;
+        /* A pending read may dispatch cancellation/recovery while draining.
+         * Its old parser result must never advance the replacement owner. */
+        if(vc.generation!=generation||vc.phase!=initial_phase||vc.stopping||vc.restore||vc.fs_canceling){valid=false;break;}
+        if(*result!=LN_MP4_PENDING||pending||vc.read_active||vc.read_io||vc.cache[kind].pending||
+           ln_time_us()-started>=250u||expired())break;
+    }
+#if !defined(LINNET_PROFILE_RELEASE)
+    uint32_t elapsed=ln_time_us()-started;scan_service[kind][0]+=elapsed;
+    if(elapsed>scan_service[kind][1])scan_service[kind][1]=elapsed;
+    ++scan_service[kind][2];scan_service[kind][3]+=calls;
+#endif
+    return valid;
 }
 static void seed_audio_cache(void){
     /* Both parsers validate the same file independently. Preserve completed
@@ -382,7 +418,8 @@ static uint32_t audio_prime_frames(void){
     return (frames+1023u)&~1023u;
 }
 static bool audio_service(void){
-    if(!vc.audio_ready||vc.audio_eof||vc.fs_phase||(vc.seek_stage&&vc.seek_stage!=6u&&!(vc.seek_stage==1u&&vc.read_active)))return true;
+    if(!vc.audio_ready||vc.audio_eof||(vc.fs_phase&&(vc.fs_phase!=4u||vc.prefetch_io))||
+       (vc.seek_stage&&vc.seek_stage!=6u&&!(vc.seek_stage==1u&&vc.read_active)))return true;
     struct ln_audio_status status;ln_audio_snapshot(&status);
     if(status.fault)return false;
     /* Once the startup reserve is ready, let the native stream reach its
@@ -640,12 +677,71 @@ static const char *codec_path(const char *name,uint32_t *resource){
     if(same_name(base,"PASSTHRUHANDLER.VLL")){*resource=5u;return "/.LINNET/BCM/PASSTHRU.VLL";}
     return 0;
 }
+static void cache_libraries(void){
+    if(!vc.cached.cookie)return;
+    uint32_t ids[3]={1u,5u,vc.movie.nal_bytes?2u:3u};
+    struct ln_fat32_file root;
+    if(!resource_binding()||!ln_storage_media_root(&root))goto unavailable;
+    for(uint32_t i=0;i<3u;++i){
+        const struct ln_fat32_file *file=&resources.file[ids[i]-1u].file;
+        if(!resource_file_matches(ids[i],file)||file->epoch!=root.epoch||file->size!=resource_layout[ids[i]-1u].bytes||
+           !resource_covered(ids[i],file->epoch,0,file->size))goto unavailable;
+    }
+    vc.cache_resources=0;
+    for(uint32_t i=0;i<3u;++i)vc.cache_resources|=1u<<ids[i];
+    return;
+unavailable:ln_resident_end(&vc.cached);vc.cached.failure=67u;
+}
 /* The VC file service owns no disk writes. Library names map to an explicit
  * local resource set; handles and offsets are bounded independently of VC. */
 static bool file_service(void){
     if(vc.read_active||vc.read_io)return true;
     if(vc.file_slot>=8u)return true;
     uint32_t *c=vc.channel[vc.file_slot],record=file_record(),n=0;
+    if(vc.fs_phase==4u){
+        struct ln_fat32_file *file=&vc.files[vc.fs_fd].file;uint32_t id=vc.files[vc.fs_fd].resource;
+        if(vc.cached.cookie||!resource_file_matches(id,file))return false;
+        if(vc.prefetch_io){
+            uint32_t generation=vc.generation;
+            int result=ln_storage_media_poll_deferred(generation,0,&n);
+            /* Progress can cancel or replace this owner before returning. */
+            if(vc.generation!=generation||vc.fs_phase!=4u||vc.restore||vc.fs_canceling)return true;
+            if(!result)return true;
+            vc.prefetch_io=false;
+            if(result<0||n!=vc.prefetch_requested||!resource_file_matches(id,file))return false;
+#if !defined(LINNET_PROFILE_RELEASE)
+            prefetch_bytes+=n;
+#endif
+            resource_publish(id,file->epoch,vc.prefetch_at,n);vc.prefetch_at+=n;
+            return true; /* Give AAC a turn before admitting another chunk. */
+        }
+        bool warming=startup_transfers();
+        if(vc.stopping||!warming||vc.prefetch_at==file->size){
+            n=vc.fs_requested;uint32_t position=vc.files[vc.fs_fd].position;
+            if(resource_read(id,file->epoch,position,vc.fs_packet+8,n)){
+                vc.files[vc.fs_fd].position+=n;vc.fs_bytes+=n;
+                for(uint32_t i=n;i<((n+15u)&~15u);++i)((uint8_t *)(vc.fs_packet+8))[i]=0;
+                file_response(true,n/vc.fs_element_size,16u+n);return true;
+            }
+            if(!vc.stopping&&warming)return false;
+            /* Finish only the original request when cancellation interrupts
+             * optional warming. Native stop may need that reply to drain. */
+            int result=ln_storage_media_read(file,position,vc.fs_packet+8,n,vc.generation);
+            if(result!=1)return false;vc.fs_phase=2u;return true;
+        }
+        n=file->size-vc.prefetch_at;if(n>16384u)n=16384u;
+        if(resource_covered(id,file->epoch,vc.prefetch_at,n)){vc.prefetch_at+=n;return true;}
+        /* DMA may partially overwrite a canceled request. Retire all previous
+         * coverage in its destination before exposing the buffer to storage. */
+        if(!resource_forget_span(id,file->epoch,vc.prefetch_at,n))return false;
+        int result=ln_storage_media_read(file,vc.prefetch_at,vc.image+resource_layout[id-1u].data+vc.prefetch_at,n,vc.generation);
+        if(result<0)return false;if(!result)return true;
+        vc.prefetch_requested=n;vc.prefetch_io=true;
+#if !defined(LINNET_PROFILE_RELEASE)
+        ++prefetch_reads;
+#endif
+        return true;
+    }
     if(vc.fs_phase==1u||vc.fs_phase==2u){
         int result=ln_storage_media_poll_deferred(vc.generation,&vc.files[vc.fs_fd].file,&n);
         if(!result)return true;
@@ -654,12 +750,13 @@ static bool file_service(void){
             vc.files[vc.fs_fd].open=true;vc.files[vc.fs_fd].position=0;vc.files[vc.fs_fd].resource=0;
             if(resource_binding()&&vc.fs_resource&&vc.fs_resource<=5u&&vc.files[vc.fs_fd].file.epoch==resources.epoch&&vc.files[vc.fs_fd].file.size==resource_layout[vc.fs_resource-1u].bytes){
                 vc.files[vc.fs_fd].resource=vc.fs_resource;
-                resources.file[vc.fs_resource-1u].file=vc.files[vc.fs_fd].file;resources.file[vc.fs_resource-1u].ready=true;
+                resource_opened(vc.fs_resource,&vc.files[vc.fs_fd].file);
             }
             file_response(true,vc.fs_fd+1u,4u);
         }
         else{
-            resource_store(vc.files[vc.fs_fd].resource,vc.files[vc.fs_fd].file.epoch,vc.files[vc.fs_fd].position,vc.fs_packet+8,n);
+            if(resource_file_matches(vc.files[vc.fs_fd].resource,&vc.files[vc.fs_fd].file))
+                resource_store(vc.files[vc.fs_fd].resource,vc.files[vc.fs_fd].file.epoch,vc.files[vc.fs_fd].position,vc.fs_packet+8,n);
             vc.files[vc.fs_fd].position+=n;vc.fs_bytes+=n;
             for(uint32_t i=n;i<((n+15u)&~15u);++i)((uint8_t *)(vc.fs_packet+8))[i]=0;
             file_response(true,n/vc.fs_element_size,16u+n);
@@ -710,6 +807,8 @@ static bool file_service(void){
         const char *path=terminated?codec_path(name,&vc.fs_resource):0;
         for(vc.fs_fd=0;vc.fs_fd<8u&&vc.files[vc.fs_fd].open;++vc.fs_fd){}
         if(!path||vc.fs_fd==8u){file_response(false,(uint32_t)-7001,4u);return true;}
+        vc.cache_requested|=1u<<vc.fs_resource;
+        if(vc.cached.cookie&&!(vc.cache_resources&(1u<<vc.fs_resource))){++vc.cache_unexpected;return false;}
         if(resource_binding()&&vc.fs_resource&&resources.file[vc.fs_resource-1u].ready&&resources.file[vc.fs_resource-1u].file.epoch==resources.epoch){
             vc.files[vc.fs_fd].file=resources.file[vc.fs_resource-1u].file;
             vc.files[vc.fs_fd].open=true;vc.files[vc.fs_fd].position=0;vc.files[vc.fs_fd].resource=vc.fs_resource;
@@ -739,10 +838,17 @@ static bool file_service(void){
         n=vc.files[vc.fs_fd].file.size-position;if(n>arg*arg2)n=arg*arg2;
         vc.fs_requested=n;vc.fs_element_size=arg;
         if(!n){vc.fs_packet[5]=vc.fs_packet[6]=vc.fs_packet[7]=0;file_response(true,0,16u);return true;}
-        if(resource_read(vc.files[vc.fs_fd].resource,vc.files[vc.fs_fd].file.epoch,position,vc.fs_packet+8,n)){
+        bool cache_file=resource_file_matches(vc.files[vc.fs_fd].resource,&vc.files[vc.fs_fd].file);
+        if(cache_file&&resource_read(vc.files[vc.fs_fd].resource,vc.files[vc.fs_fd].file.epoch,position,vc.fs_packet+8,n)){
             vc.files[vc.fs_fd].position+=n;vc.fs_bytes+=n;
             for(uint32_t i=n;i<((n+15u)&~15u);++i)((uint8_t *)(vc.fs_packet+8))[i]=0;
             file_response(true,n/vc.fs_element_size,16u+n);return true;
+        }
+        if(vc.cached.cookie){
+            vc.cached.failure=68u;return false;
+        }
+        if(cache_file&&startup_transfers()){
+            vc.prefetch_at=vc.prefetch_requested=0;vc.prefetch_io=false;vc.fs_phase=4u;return true;
         }
         int result=ln_storage_media_read(&vc.files[vc.fs_fd].file,position,vc.fs_packet+8,n,vc.generation);
         if(result!=1){file_response(false,(uint32_t)-7009,4u);return true;}
@@ -751,6 +857,7 @@ static bool file_service(void){
     file_response(false,(uint32_t)-7002,4u);return true;
 }
 static void recover(uint32_t error){
+    if(error||(vc.normal&&!vc.picture_sequence))ln_resident_forget(&vc.binding);
     vc.picture_pending=false;
     if(!error&&vc.resident&&!vc.restore){
         if(!vc.stopping){
@@ -766,8 +873,10 @@ static void recover(uint32_t error){
     vc.resident=false;nd.enabled=false;
     vc.clock_ms=ln_m25_coprocessor_position();vc.clock_us=ln_time_us();vc.clock_valid=true;vc.paused=true;
     if(vc.audio_ready){ln_audio_snapshot(&vc.audio_status);if(!ln_audio_stop()&&!error)error=49u;vc.audio_ready=false;}
+    ln_resident_end(&vc.cached);
     if(error)vc.image_valid=false;
-    if(vc.fs_phase==1u||vc.fs_phase==2u||vc.read_io||vc.io){ln_storage_media_cancel(vc.generation);vc.fs_canceling=true;}
+    if(vc.fs_phase==1u||vc.fs_phase==2u||vc.prefetch_io||vc.read_io||vc.io){ln_storage_media_cancel(vc.generation);vc.fs_canceling=true;}
+    vc.prefetch_io=false;
     vc.read_active=vc.read_io=vc.io=false;
     vc.fs_phase=0;
     if(!vc.error)vc.error=error;++vc.revision;
@@ -783,9 +892,11 @@ static void recover(uint32_t error){
 static void stop_drain(void){
     vc.clock_ms=ln_m25_coprocessor_position();vc.clock_us=ln_time_us();vc.clock_valid=true;vc.paused=true;
     if(vc.audio_ready){if(!ln_audio_stop()){recover(49u);return;}vc.audio_ready=false;}
-    if(vc.fs_phase==1u||vc.fs_phase==2u||vc.read_io||vc.io){
+    if(vc.fs_phase==1u||vc.fs_phase==2u||vc.prefetch_io||vc.read_io||vc.io){
         ln_storage_media_cancel(vc.generation);vc.fs_canceling=true;vc.fs_phase=0;
     }
+    vc.prefetch_io=false;
+    if(vc.fs_phase==4u)vc.fs_phase=0;
     vc.read_active=vc.read_io=vc.io=false;phase(STOP_DRAIN,5000000u);
 }
 static bool unselected_application(void){
@@ -810,6 +921,9 @@ bool ln_m25_coprocessor_begin(uint32_t operation){
         resource_reset(changed);
     }
     direct_file=false;
+    ln_resident_end(&vc.cached);vc.cached.failure=66u;vc.cached.elapsed=vc.cached.count=0;
+    vc.cache_resources=vc.cache_requested=vc.cache_unexpected=0;
+    vc.prefetch_at=vc.prefetch_requested=0;vc.prefetch_io=false;
     struct ln_calendar calendar;
     vc.epoch_valid=operation!=3u&&ln_power_calendar_read(&calendar);vc.epoch_at=ln_time_us();vc.epoch=0;
     if(vc.epoch_valid){
@@ -850,6 +964,9 @@ bool ln_m25_coprocessor_begin(uint32_t operation){
     /* Every open validates the full selected NOR extent in bounded slices. */
 #if !defined(LINNET_PROFILE_RELEASE)
     rom_check_us=rom_check_max_us=rom_check_calls=0;
+    rom_burst_max_us=rom_bursts=0;
+    prefetch_reads=prefetch_bytes=0;
+    for(uint32_t i=0;i<2u;++i)for(uint32_t j=0;j<4u;++j)scan_service[i][j]=0;
 #endif
     phase(ROM_CHECK,30000000u);return true;
 }
@@ -893,10 +1010,22 @@ uint32_t ln_m25_coprocessor_deadline(uint32_t now){
 }
 bool ln_m25_coprocessor_open(const char *path,uint8_t options){
     if(!path||path[0]!='/')return false;uint32_t n=0;while(path[n]&&n<255u)++n;if(!n||n==255u)return false;
+    struct ln_fat32_file root,prior;
+    bool bound=ln_storage_media_root(&root)&&ln_resident_match(&vc.binding,path,root.epoch,&prior);
     if(!ln_m25_coprocessor_begin(2u))return false;
-    for(uint32_t i=0;i<=n;++i)vc.path[i]=path[i];vc.normal=true;vc.options=options;return true;
+    for(uint32_t i=0;i<=n;++i)vc.path[i]=path[i];vc.normal=true;vc.options=options;
+    bool retained=false;
+    if(bound&&!(options&32u)&&vc.resident&&vc.image_valid){
+        if(ln_storage_resident_admit_files(&vc.cached,&prior,1u,false)){
+            vc.video_file=vc.cached.entry[0].file;direct_file=true;
+            retained=true;
+        }
+    }
+    if(!retained)ln_resident_forget(&vc.binding);
+    return true;
 }
-void ln_m25_coprocessor_file(const struct ln_fat32_file*file){vc.video_file=*file;direct_file=true;}
+void ln_m25_coprocessor_file(const struct ln_fat32_file*file){ln_resident_end(&vc.cached);ln_resident_forget(&vc.binding);vc.video_file=*file;direct_file=true;}
+bool ln_m25_coprocessor_disk_required(void){return !vc.cached.cookie;}
 void ln_m25_coprocessor_stop(void){if(ln_m25_coprocessor_active()&&!vc.restore)recover(0);}
 void ln_m25_coprocessor_pause(bool paused){vc.want_paused=paused;++vc.revision;}
 bool ln_m25_coprocessor_paused(void){return vc.want_paused;}
@@ -932,6 +1061,7 @@ bool ln_m25_coprocessor_fault(uint32_t mode){
  * bounded; disk waits, power delays and firmware waits return to the executive. */
 bool ln_m25_coprocessor_step(void){
     uint32_t value=0,n=0;int result;
+    if(vc.cached.cookie&&!ln_storage_resident_valid(&vc.cached)&&!vc.restore){recover(57u);return false;}
 #if !defined(LINNET_PROFILE_RELEASE)
     if(fault_mode&&(int32_t)(ln_time_us()-fault_deadline)>=0){
         uint32_t mode=fault_mode;fault_mode=0;
@@ -1024,23 +1154,33 @@ bool ln_m25_coprocessor_step(void){
     }
     if(vc.phase==ROM_CHECK){
         if(expired()){recover(16);return false;}
+        uint32_t burst_started=ln_time_us();
+        /* Keep the full fresh NOR proof. Batch only its short synchronous
+         * slices; no other startup phase runs before returning to the executive. */
+        for(uint32_t slices=0;slices<4u&&vc.rom_checked<vc.rom_bytes;++slices){
 #if !defined(LINNET_PROFILE_RELEASE)
-        uint32_t started=ln_time_us();
+            uint32_t started=ln_time_us();
 #endif
-        n=vc.rom_bytes-vc.rom_checked;if(n>512u)n=512u;
-        /* Directory admission and each slice preserve word alignment. The
-         * restore uploader already reads this NOR mapping as 32-bit words;
-         * sum every byte lane while retaining the full fresh checksum scan. */
-        const volatile uint32_t *words=(const volatile uint32_t *)(vc.rom+vc.rom_checked);
-        uint32_t sum=vc.rom_sum;
-        for(uint32_t i=0;i<n/4u;++i){uint32_t word=words[i];
-            sum+=(word&255u)+((word>>8)&255u)+((word>>16)&255u)+(word>>24);
-        }
-        vc.rom_sum=sum;
-        vc.rom_checked+=n;
+            n=vc.rom_bytes-vc.rom_checked;if(n>512u)n=512u;
+            /* Directory admission and each slice preserve word alignment. The
+             * restore uploader already reads this NOR mapping as 32-bit words;
+             * sum every byte lane while retaining the full fresh checksum scan. */
+            const volatile uint32_t *words=(const volatile uint32_t *)(vc.rom+vc.rom_checked);
+            uint32_t sum=vc.rom_sum;
+            for(uint32_t i=0;i<n/4u;++i){uint32_t word=words[i];
+                sum+=(word&255u)+((word>>8)&255u)+((word>>16)&255u)+(word>>24);
+            }
+            vc.rom_sum=sum;
+            vc.rom_checked+=n;
 #if !defined(LINNET_PROFILE_RELEASE)
-        uint32_t elapsed=ln_time_us()-started;rom_check_us+=elapsed;++rom_check_calls;
-        if(elapsed>rom_check_max_us)rom_check_max_us=elapsed;
+            uint32_t elapsed=ln_time_us()-started;rom_check_us+=elapsed;++rom_check_calls;
+            if(elapsed>rom_check_max_us)rom_check_max_us=elapsed;
+#endif
+            if(ln_time_us()-burst_started>=250u)break;
+        }
+#if !defined(LINNET_PROFILE_RELEASE)
+        uint32_t burst_elapsed=ln_time_us()-burst_started;++rom_bursts;
+        if(burst_elapsed>rom_burst_max_us)rom_burst_max_us=burst_elapsed;
 #endif
         if(vc.rom_checked==vc.rom_bytes){
             if(vc.rom_sum!=vc.rom_expected)recover(17);
@@ -1099,6 +1239,7 @@ bool ln_m25_coprocessor_step(void){
             result=ln_storage_media_poll_deferred(vc.generation,&vc.video_file,&n);
             if(!result)return false;vc.io=false;
             if(result<0){recover(40);return false;}
+            if(vc.normal)(void)ln_resident_remember(&vc.binding,vc.path,&vc.video_file);
             ln_mp4_init(&vc.movie,video_read,0,vc.video_file.size);phase(MEDIA_SCAN,60000000u);
         }else{
             result=ln_storage_media_open(vc.normal?vc.path:"/Videos/MOTION.mp4",vc.generation);
@@ -1109,12 +1250,12 @@ bool ln_m25_coprocessor_step(void){
     if(vc.phase==MEDIA_SCAN||vc.phase==MEDIA_PACKET||vc.phase==MEDIA_FRAME){
         if(expired()){recover(41);return false;}
         if(vc.phase==MEDIA_SCAN){
-            result=ln_mp4_open_step(&vc.movie);
+            if(!scan_open(&vc.movie,0u,&result))return false;
             if(result<0)recover(0x300u+(uint32_t)-result);
             else if(result>0){
                 if(vc.movie.config_bytes>256u||vc.movie.width>640u||vc.movie.height>480u||
                    (vc.movie.nal_bytes&&(vc.movie.config[1]!=66u||vc.movie.config[3]>13u||vc.movie.width>320u||vc.movie.height>240u)))recover(42);
-                else {seed_audio_cache();phase(MEDIA_PACKET,30000000u);}
+                else {cache_libraries();seed_audio_cache();phase(MEDIA_PACKET,30000000u);}
             }
         }else if(vc.phase==MEDIA_PACKET){
             result=ln_mp4_next(&vc.movie,&vc.packet);
@@ -1127,7 +1268,7 @@ bool ln_m25_coprocessor_step(void){
     }
     if(vc.phase==AUDIO_SCAN){
         if(expired()){recover(47);return false;}
-        result=ln_mp4_open_step(&vc.soundtrack);
+        if(!scan_open(&vc.soundtrack,1u,&result))return false;
         if(result==LN_MP4_EOF)phase(ACQUIRE,1000000u);
         else if(result<0)recover(0x400u+(uint32_t)-result);
         else if(result>0){
@@ -1182,7 +1323,7 @@ bool ln_m25_coprocessor_step(void){
     if(vc.phase==PLAYER_SETTLE){
         if(!service_resets()||!file_service()||!audio_service()||!stream_service()){recover(36);return false;}
         if(vc.normal&&vc.command_index==6u){
-            int disk=ln_storage_media_realtime(true);
+            int disk=vc.cached.cookie?1:ln_storage_media_realtime(true);
             if(disk<0){recover(49u);return false;}
             if(!disk){if(expired())recover(49u);return false;}
             /* mp_region has acknowledged completion. Wait for useful work,
@@ -1506,6 +1647,7 @@ bool ln_m25_coprocessor_prepare_display(void){
     return !ln_m25_coprocessor_active();
 }
 void ln_m25_coprocessor_storage_invalidated(void){
+    ln_resident_forget(&vc.binding);
     vc.retention_revoked=true;
     resources.initialized=false;resources.epoch=0;vc.image_valid=false;
     for(uint32_t i=0;i<5u;++i)resources.file[i].ready=false;
@@ -1612,11 +1754,25 @@ uint32_t ln_m25_coprocessor_channel(uint32_t slot,uint32_t out[32]){
 #endif
         return 32u;}
     if(slot==11u&&out){for(uint32_t i=0;i<32u;++i)out[i]=vc.host_channel[i];return 32u;}
-    if(slot==12u&&out){for(uint32_t i=0;i<32u;++i)out[i]=0;out[0]=vc.stream_phase;out[1]=vc.stream_address;out[2]=vc.stream_capacity;out[3]=vc.movie.codec;out[4]=vc.movie.width;out[5]=vc.movie.height;out[6]=vc.movie.timescale;out[7]=vc.movie.config_bytes;out[8]=vc.movie.nal_bytes;out[9]=vc.packet.bytes;out[10]=vc.movie.error;out[11]=vc.stream_frames;return 32u;}
+    if(slot==12u&&out){for(uint32_t i=0;i<32u;++i)out[i]=0;out[0]=vc.stream_phase;out[1]=vc.stream_address;out[2]=vc.stream_capacity;out[3]=vc.movie.codec;out[4]=vc.movie.width;out[5]=vc.movie.height;out[6]=vc.movie.timescale;out[7]=vc.movie.config_bytes;out[8]=vc.movie.nal_bytes;out[9]=vc.packet.bytes;out[10]=vc.movie.error;out[11]=vc.stream_frames;
+#if !defined(LINNET_PROFILE_RELEASE)
+        out[12]=vc.cached.cookie;out[13]=vc.cached.failure;out[14]=vc.cached.elapsed;out[15]=vc.cached.count;
+        out[16]=vc.cache_resources;out[17]=vc.cache_requested;out[18]=vc.cache_unexpected;
+        out[19]=ln_storage_resident_valid(&vc.cached);out[20]=sizeof(vc.cached);
+        out[22]=(uint32_t)vc.cached.missing_lba;out[23]=(uint32_t)(vc.cached.missing_lba>>32);out[24]=(uint32_t)vc.cached.result;
+        out[25]=vc.binding.file.epoch;out[26]=vc.binding.file.cluster;out[27]=vc.binding.file.size;
+        out[28]=vc.video_file.epoch;out[29]=vc.video_file.cluster;out[30]=vc.video_file.size;out[31]=vc.binding.path[0]!=0;
+#endif
+        return 32u;}
     if(slot>=8u||!out)return 0;
     for(uint32_t i=0;i<32u;++i)out[i]=0;
     out[0]=0x4d250010u+slot;out[1]=vc.phase;out[2]=vc.header[3];
     out[3]=(vc.directory[slot/2u]>>((slot&1u)*16u))&0xffffu;
     for(uint32_t i=0;i<20u;++i)out[4+i]=vc.channel[slot][i];
+#if !defined(LINNET_PROFILE_RELEASE)
+    if(!slot){out[24]=prefetch_reads;out[25]=prefetch_bytes;out[26]=vc.prefetch_at;out[27]=vc.prefetch_io;}
+    if(slot==2u){out[24]=rom_burst_max_us;out[25]=rom_bursts;}
+    if(slot==1u)for(uint32_t i=0;i<2u;++i)for(uint32_t j=0;j<4u;++j)out[24u+i*4u+j]=scan_service[i][j];
+#endif
     return 32u;
 }

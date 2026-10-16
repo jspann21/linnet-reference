@@ -24,6 +24,7 @@ bool ln_m25_coprocessor_step(void);
 uint32_t ln_m25_coprocessor_snapshot(uint32_t output[32]);
 uint32_t ln_m25_coprocessor_channel(uint32_t slot,uint32_t output[32]);
 bool ln_m25_coprocessor_open(const char *path,uint8_t options);
+bool ln_m25_coprocessor_disk_required(void);
 struct ln_fat32_file;
 void ln_m25_coprocessor_file(const struct ln_fat32_file *file);
 bool ln_m25_coprocessor_active(void);

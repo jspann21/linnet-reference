@@ -56,6 +56,17 @@ The UI layer returns through the same native display runtime. A bounded failure
 path restores the verified NOR display runtime. Handoffs unload a retained idle
 shell with a bounded acknowledgement before restoring that original runtime.
 
+Every start freshly checks the complete selected NOR image extent. Its
+512-byte checksum slices run in batches of at most four; a 250 microsecond
+work check stops admission of another slice. The checksum result and timeout
+checks remain unchanged, and the next startup phase waits for another turn.
+
+The video and audio MP4 opening scans may advance up to eight cached parser
+transitions per turn, checking a 250 microsecond work budget before continuing.
+Any existing or newly staged read ends the batch, including a completed read
+that was pending when the call began. Cancellation and ownership changes discard
+the old scan result. Parsing, validation and the file format remain unchanged.
+
 Before the first LCD picture, completed BCM file-service responses copy in
 fragments of up to 4 KiB per service call, matching the existing video-payload
 bus bound. Playback after that picture, including silent clips and later seeks,
@@ -142,3 +153,59 @@ the minimum starting row and maximum ending row; presentation saves the current
 original damage for the next frame. Vendor binaries remain outside the source
 tree. The VMCS display-clear iterator returns its own fixed object at
 0xC000FB50 rather than traversing independently allocated tag-2 elements.
+# Fully resident HDD playback
+
+The optional 64 MiB clean-cache lease can keep a fully resident LCD video on
+RAM reads while the HDD stays asleep. Admission reuses an owned exact path and
+complete handle captured only after an ordinary OPEN succeeds in the current
+exclusive mount. A cache hit never renews that provenance. A replacement that
+fails or is canceled before its first picture, a direct-file override and
+accepted storage invalidation clear it. FAT mutations retire epochs before
+writing; raw maintenance abandons the mount. Directory bytes need not remain
+in RAM, matching the existing authority of a current-epoch opened handle.
+Admission independently proves every published data sector, full mirrored
+FAT sector and exact file-chain end. It issues no
+disk reads to qualify a candidate. Missing bytes, an occupied owner or the
+20 ms admission budget select the existing early-wake path.
+
+After MP4 parsing, MPLAYER, PASSTHRU and the selected H264DEC or MPG4DEC must
+have complete byte coverage in the existing leased firmware workspace, bound
+to their complete previously opened file identities, live mount and expected
+sizes. This avoids requiring unused raw library-file sectors in the physical
+movie cache. The admitted resource mask is published after all three prove
+complete. Unexpected native library opens fail before either the
+resource-cache fast path or a disk open. AAC decoding remains on ARM. VMCS
+must already be verified in its current leased music workspace.
+
+The first uncached native-library read during LCD startup may fill that file's
+existing workspace allocation in asynchronous chunks of at most 16 KiB. AAC
+can run between chunks; it does not share a pending preload's storage owner.
+Exact successful completion and a fresh ownership check precede coverage
+publication. Warm reads perform no preload I/O. Stop ends optional warming,
+and cancellation drains an admitted read before releasing workspace memory.
+Changed file identities clear their old coverage. A leased replay never
+preloads or falls back to disk on a missing library byte; it stops through
+recovery. Missing complete coverage keeps the ordinary early-wake path.
+
+The existing 4,096 tags and 16 MiB payload use 2,048 two-way sets, allowing
+FAT metadata and colliding movie pages to coexist. One victim bit per set
+adds 256 bytes of bookkeeping. Replacement never moves a pinned payload.
+Pinned pages bypass collision fills and preserve existing bytes. An accepted
+write to any sector of a pinned page revokes the lease before queue publication;
+reset, window changes, failures and quiesce also revoke it. Every playback
+step and read checks the live mount epoch and cookie. Revocation stops audio
+through recovery instead of risking a late HDD wake during playback. Normal
+stop keeps the lease until native file replies drain, then releases it at idle.
+Files launches with externally supplied handles release any provisional lease.
+
+Admission may promote clean sectors already held in either ordinary small read
+window without disk I/O. Synchronous multi-sector checks validate ownership
+once before walking their bounded range; no callback runs inside that walk.
+Pinned payload addresses remain stable.
+
+Reads allocate no payload buffers, copy at most 16 KiB, and use 64 anchors per
+file. Admission caps each file at 4,096 clusters, bounding each residual seek
+walk to 63 edges. Read-time FAT edges use the already proved immutable bytes;
+full mirror comparisons occur during admission. Consecutive edges in the
+same pinned FAT sector reuse its completed mirror comparison. The focused host check is
+`python -m tools.qualification.cache_lease`, in development and release modes.

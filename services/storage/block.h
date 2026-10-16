@@ -12,6 +12,19 @@ struct ln_block_info {
     uint32_t idle_failures,power_transition;
 };
 void ln_block_init(uint32_t now);
+/* Optional immutable cache lease. Admission requires an entirely idle owner.
+ * Pin/read never issue I/O; a missing sector fails without touching output.
+ * Collision fills bypass pinned pages. Writes to any sector of a pinned page,
+ * recovery, window changes and quiesce revoke the lease synchronously.
+ * Cookies are never reused during a boot; release of an old cookie is inert. */
+uint32_t ln_block_cache_begin(void);
+bool ln_block_cache_valid(uint32_t cookie);
+/* Recheck the idle admission barrier before extending an existing lease. */
+bool ln_block_cache_extend(uint32_t cookie);
+const uint8_t *ln_block_cache_sector(uint32_t cookie,uint64_t lba);
+bool ln_block_cache_pin(uint32_t cookie,uint64_t lba,uint32_t sectors);
+bool ln_block_cache_copy(uint32_t cookie,uint64_t lba,uint32_t sectors,void *output);
+void ln_block_cache_end(uint32_t cookie);
 #if defined(LINNET_EXTENDED_RAM) && defined(LINNET_IMAGE_OS)
 void ln_block_extended_diagnostics(uint32_t output[4]);
 #endif

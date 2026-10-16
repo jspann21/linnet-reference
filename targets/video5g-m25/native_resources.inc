@@ -37,23 +37,53 @@ static void resource_reset(bool changed){
 static bool resource_span(uint32_t id,uint32_t epoch,uint32_t at,uint32_t bytes){
     return resource_binding()&&epoch==resources.epoch&&id&&id<=5u&&at<=resource_layout[id-1u].bytes&&bytes<=resource_layout[id-1u].bytes-at;
 }
-static bool resource_read(uint32_t id,uint32_t epoch,uint32_t at,void *output,uint32_t bytes){
+static bool resource_file_matches(uint32_t id,const struct ln_fat32_file *file){
+    if(!file||!resource_span(id,file->epoch,0,file->size)||!resources.file[id-1u].ready)return false;
+    const struct ln_fat32_file *known=&resources.file[id-1u].file;
+    return known->epoch==file->epoch&&known->size==file->size&&known->cluster==file->cluster&&
+        known->directory_sector==file->directory_sector&&known->directory_offset==file->directory_offset&&known->attributes==file->attributes;
+}
+static void resource_opened(uint32_t id,const struct ln_fat32_file *file){
+    if(!file||!resource_span(id,file->epoch,0,file->size)||file->size!=resource_layout[id-1u].bytes)return;
+    if(!resource_file_matches(id,file)){
+        uint8_t *map=vc.image+RESOURCE_MAP_AT+resource_layout[id-1u].map;
+        for(uint32_t i=0;i<(file->size+7u)/8u;++i)map[i]=0;
+    }
+    resources.file[id-1u].file=*file;resources.file[id-1u].ready=true;
+}
+static bool resource_covered(uint32_t id,uint32_t epoch,uint32_t at,uint32_t bytes){
     if(!resource_span(id,epoch,at,bytes))return false;
     const uint8_t *map=vc.image+RESOURCE_MAP_AT+resource_layout[id-1u].map;
     uint32_t end=at+bytes,cursor=at;
-    while(cursor<end&&(cursor&7u)){if(!(map[cursor>>3]&(1u<<(cursor&7u))))goto miss;++cursor;}
-    while(end-cursor>=8u){if(map[cursor>>3]!=255u)goto miss;cursor+=8u;}
-    while(cursor<end){if(!(map[cursor>>3]&(1u<<(cursor&7u))))goto miss;++cursor;}
+    while(cursor<end&&(cursor&7u)){if(!(map[cursor>>3]&(1u<<(cursor&7u))))return false;++cursor;}
+    while(end-cursor>=8u){if(map[cursor>>3]!=255u)return false;cursor+=8u;}
+    while(cursor<end){if(!(map[cursor>>3]&(1u<<(cursor&7u))))return false;++cursor;}
+    return true;
+}
+static bool resource_read(uint32_t id,uint32_t epoch,uint32_t at,void *output,uint32_t bytes){
+    if(!resource_covered(id,epoch,at,bytes)){++resources.misses;return false;}
     ln_memory_copy(output,vc.image+resource_layout[id-1u].data+at,bytes);
     ++resources.hits;resources.bytes+=bytes;return true;
-miss:++resources.misses;return false;
 }
-static void resource_store(uint32_t id,uint32_t epoch,uint32_t at,const void *input,uint32_t bytes){
+static bool resource_forget_span(uint32_t id,uint32_t epoch,uint32_t at,uint32_t bytes){
+    if(!resource_span(id,epoch,at,bytes))return false;
+    uint8_t *map=vc.image+RESOURCE_MAP_AT+resource_layout[id-1u].map;
+    uint32_t end=at+bytes;
+    while(at<end&&(at&7u)){map[at>>3]&=(uint8_t)~(1u<<(at&7u));++at;}
+    while(end-at>=8u){map[at>>3]=0;at+=8u;}
+    while(at<end){map[at>>3]&=(uint8_t)~(1u<<(at&7u));++at;}
+    return true;
+}
+static void resource_publish(uint32_t id,uint32_t epoch,uint32_t at,uint32_t bytes){
     if(!resource_span(id,epoch,at,bytes))return;
-    ln_memory_copy(vc.image+resource_layout[id-1u].data+at,input,bytes);
     uint8_t *map=vc.image+RESOURCE_MAP_AT+resource_layout[id-1u].map;
     uint32_t end=at+bytes;
     while(at<end&&(at&7u)){map[at>>3]|=1u<<(at&7u);++at;}
     while(end-at>=8u){map[at>>3]=255u;at+=8u;}
     while(at<end){map[at>>3]|=1u<<(at&7u);++at;}
+}
+static void resource_store(uint32_t id,uint32_t epoch,uint32_t at,const void *input,uint32_t bytes){
+    if(!resource_span(id,epoch,at,bytes))return;
+    ln_memory_copy(vc.image+resource_layout[id-1u].data+at,input,bytes);
+    resource_publish(id,epoch,at,bytes);
 }
