@@ -261,36 +261,45 @@ def index_flags_for_kind(kind: int) -> int:
     raise ValueError(f"record kind {kind} is not a keyframe")
 
 
+def _ima_encode_tables():
+    # Eight quantizer intervals per step, built in bulk on the host. Only
+    # differences below the final interval need a byte entry (616 KiB total).
+    tables = []
+    for index, step in enumerate(IMA_STEP_TABLE):
+        half, quarter = step >> 1, step >> 2
+        thresholds = (0, quarter, half, half + quarter, step,
+                      step + quarter, step + half, step + half + quarter)
+        levels = b"".join(bytes([code]) * (thresholds[code + 1] - thresholds[code])
+                          for code in range(7))
+        transitions = []
+        for code in range(16):
+            delta = ((step >> 3) + (quarter if code & 1 else 0) +
+                     (half if code & 2 else 0) + (step if code & 4 else 0))
+            transitions.append((-delta if code & 8 else delta,
+                                max(0, min(88, index + IMA_INDEX_TABLE[code]))))
+        tables.append((levels, len(levels), tuple(transitions)))
+    return tuple(tables)
+
+
+_IMA_ENCODE_TABLES = _ima_encode_tables()
+
+
 def _ima_encode_step(predictor: int, target: int, index: int) -> tuple[int, int, int]:
-    # Block entry points validate the index. Combine code selection and
-    # predictor reconstruction so their step arithmetic is only done once.
-    step = IMA_STEP_TABLE[index]
+    # Block entry points validate the index. Quantization and reconstruction
+    # use exactly the original thresholds, deltas and saturated index changes.
+    levels, cap, transitions = _IMA_ENCODE_TABLES[index]
     diff = target - predictor
-    code = 0
     if diff < 0:
-        code = 8
         diff = -diff
-    delta = step >> 3
-    if diff >= step:
-        code |= 4
-        diff -= step
-        delta += step
-    half = step >> 1
-    if diff >= half:
-        code |= 2
-        diff -= half
-        delta += half
-    quarter = step >> 2
-    if diff >= quarter:
-        code |= 1
-        delta += quarter
-    predictor += -delta if code & 8 else delta
+        code = (levels[diff] if diff < cap else 7) | 8
+    else:
+        code = levels[diff] if diff < cap else 7
+    delta, index = transitions[code]
+    predictor += delta
     if predictor < -32768:
         predictor = -32768
     elif predictor > 32767:
         predictor = 32767
-    index += IMA_INDEX_TABLE[code]
-    index = 0 if index < 0 else 88 if index > 88 else index
     return code, predictor, index
 
 
