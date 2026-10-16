@@ -12,6 +12,11 @@ enum { OP_MOUNT=1, OP_OPEN, OP_READ, OP_WRITE, OP_SYNC, OP_SET, OP_CREATE, OP_GR
 _Static_assert(OP_READ-LN_FAT32_READ==OP_WRITE-LN_FAT32_WRITE,"FAT transfer operation mapping");
 #define EOC 0x0ffffff8u
 #define MAX_CHAIN 65536u
+#if defined(LINNET_TARGET_PHOTO4G_P98) && defined(LINNET_IMAGE_OS)
+#define READ_PROOF_EDGES 16u
+#else
+#define READ_PROOF_EDGES 4u
+#endif
 static bool cluster_valid(const struct ln_fat32*f,uint32_t c){return c>=2&&c<f->clusters+2u;}
 static uint64_t cluster_sector(const struct ln_fat32*f,uint32_t c){
     return f->data_start+(uint64_t)(c-2u)*f->sectors_per_cluster;
@@ -564,7 +569,7 @@ int ln_fat32_poll(struct ln_fat32*f){
 verify_chain_cached:
         /* Brent's cycle detector needs constant memory. Complete the entire
          * chain before touching file data: a cycle cannot make a write alias
-         * an earlier logical offset. Chains longer than MAX_CHAIN are refused.
+         * an earlier logical offset. Traversal remains bounded by next_cluster.
          * Cache this proof only for the lifetime of this exclusive mount. */
         seek_map_record(f,f->verified_clusters-1u,f->cluster);
         result=next_cluster(f);if(result!=1)break;
@@ -583,7 +588,8 @@ verify_chain_cached:
             f->cycle_anchor=f->fat_value;f->cycle_power*=2u;f->cycle_distance=0;
         }
         f->cluster=f->fat_value;++f->verified_clusters;
-        if(++proof_edges<4u&&!f->fat_phase&&
+        /* Read proofs can drain one already cached edge group on the Photo. */
+        if(++proof_edges<(f->operation==OP_READ?READ_PROOF_EDGES:4u)&&!f->fat_phase&&
            f->cache[f->cluster%LN_FAT32_CACHE_SIZE].cluster==f->cluster)goto verify_chain_cached;
         return 0;
     case SET_BEGIN:

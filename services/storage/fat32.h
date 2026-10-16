@@ -165,8 +165,9 @@ bool ln_fat32_validate_set(struct ln_fat32 *,const struct ln_fat32_file *files,
 bool ln_fat32_proof_pending(const struct ln_fat32 *);
 bool ln_fat32_refresh_proof(struct ln_fat32 *,uint32_t generation);
 /* At most one I/O callback per poll. Read/write and set-proof polling may
- * evaluate up to four chain edges; additional edges must already be cached, and a terminal
- * or chain boundary always yields. Other states perform one metadata step.
+ * evaluate up to four chain edges (16 for Photo OS reads); additional edges
+ * must already be cached, and a terminal or chain boundary always yields.
+ * Other states perform one metadata step.
  * This bounds work count, not elapsed time; service runs between polls.
  * file holds the open result; transferred counts completed bytes after errors.
  * I/O failure quarantines writes until a successful remount. */
