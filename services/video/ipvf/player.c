@@ -589,8 +589,11 @@ static void step(void){
     present(&a);
     /* Hand a due frame to the renderer before starting another read/decode. */
     if(v.offered)return;
+    /* High-rate dense records can fill both queues before one second of PCM. */
     if(v.ready&&!v.started&&!v.paused&&v.front!=NONE&&a.queued&&
-       (a.queued+staged_pcm()>=v.rate||v.prefetched_frames==v.count)&&
+       (a.queued+staged_pcm()>=v.rate||v.prefetched_frames==v.count||
+        (v.phase==INDEX&&!v.prefetching&&!v.raw_view&&!v.raw_write&&
+         (v.qcount>=FRAME_SLOTS-1u||free_slot()==NONE)&&!raw_room(v.audio_sectors*512u)))&&
        ((v.qcount+1u)>=v.preroll||(!v.prefetching&&v.next==v.count))){
         if(!ln_audio_start()){fail(13);return;}v.started=true;++v.revision;
 #if !defined(LINNET_PROFILE_RELEASE)
