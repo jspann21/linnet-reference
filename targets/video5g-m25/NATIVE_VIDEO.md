@@ -260,3 +260,19 @@ response bytes copied by the additional attempts, maximum fragment and time
 budget stops. Bytes reflect completed fragment progress, including a copied
 fragment whose later publication fails. These counters reset at video open
 and are absent from release images.
+
+A queued foreground video request on M25 pauses new Cover Flow read admission.
+The artwork service continues polling any admitted read and processing its
+terminal result, then returns before requesting another chunk. This lets the
+runtime acquire storage
+for the selected video while music, settings and resume services continue.
+Completed artwork and partial warming progress remain valid. Warming resumes
+after cancellation or playback ends.
+
+The caller samples this permission immediately before servicing Cover Flow.
+Its deferred storage poll suppresses runtime and Link command dispatch, keeping
+that permission stable through the call. An existing packed-art request may
+still need to drain: the nonexpanded iFlash chunk is bounded to 93,184 bytes.
+The service's per-call polling budget bounds CPU work rather than total storage
+latency. First-picture, audio reserve, native response and power policies retain
+their existing behavior.

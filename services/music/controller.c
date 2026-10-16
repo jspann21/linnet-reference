@@ -927,6 +927,11 @@ static void music_step(void){
 #if defined(LINNET_PHOTOS)
     cover_read=cover_read&&!ln_photos_busy();
 #endif
+#if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS) && defined(LINNET_VIDEO)
+    /* Drain admitted artwork I/O, then let the queued foreground video
+     * acquire storage before admitting another optional artwork chunk. */
+    cover_read=cover_read&&!ln_runtime_video_requested();
+#endif
     ln_coverflow_step(cover_read);
 #endif
     if(!restored&&ln_collections_ready()&&ln_music_library_status()==LN_LIBRARY_READY&&!ln_storage_busy()&&
