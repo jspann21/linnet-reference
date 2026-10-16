@@ -92,11 +92,23 @@ class ArmAAC:
                 abi.get('dependencies', {}).get('source/services/audio/aac/aac.h') != header_digest or
                 hashlib.sha256(json.dumps(abi, sort_keys=True).encode()).hexdigest() != abi_path.stem):
             raise ValueError('Verified target object/ABI dependency binding required')
+        # Private workspace offsets also depend on FAAD/configuration headers.
+        # A supplied older ELF must not be inspected using newer definitions.
+        root = Path(__file__).resolve().parents[2]
+        abi_headers = 0
+        for name, digest in abi['dependencies'].items():
+            if not name.startswith('source/') or not name.endswith('.h'):
+                continue
+            dependency = (root / name[7:]).resolve()
+            if not dependency.is_relative_to(root) or not dependency.is_file() or hashlib.sha256(dependency.read_bytes()).hexdigest() != digest:
+                raise ValueError('Target ABI header dependency changed: ' + name)
+            abi_headers += 1
         self.binding = {'build_id': report['build_id'], 'elf_sha256': hashlib.sha256(image).hexdigest(),
                         'emulator': uc.__version__, 'isa_model': 'TI925T ARMv4T',
                         'aac_object_sha256': object_digest, 'abi_header_sha256': header_digest,
                         'abi_manifest_sha256': hashlib.sha256(abi_bytes).hexdigest(),
-                        'abi_check_sha256': hashlib.sha256(Path('tools/qualification/arm_aac_abi.c').read_bytes()).hexdigest()}
+                        'abi_check_sha256': hashlib.sha256(Path('tools/qualification/arm_aac_abi.c').read_bytes()).hexdigest(),
+                        'abi_headers_verified': abi_headers}
         segments, self.symbols = elf32(image)
         self.machine = m = uc.Uc(uc.UC_ARCH_ARM, uc.UC_MODE_ARM | uc.UC_MODE_LITTLE_ENDIAN)
         m.ctl_set_cpu_model(arm.UC_CPU_ARM_TI925T)

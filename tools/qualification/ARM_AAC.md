@@ -22,13 +22,14 @@ copy from the same media under investigation; do not substitute a re-encoded
 copy for a device comparison. Generated streams can exercise additional codec
 inputs. Existing Media Manager dependencies and media publication stay intact.
 The ABI manifest must be the compiler-cache dependency manifest matching the
-AAC object retained beside the verified ELF. Its header hash must match the
-header compiled by the ABI check. The tests emit the build, ELF, model, object,
+AAC object retained beside the verified ELF. Every retained header dependency,
+including the private workspace and FAAD configuration, must match the current
+definitions compiled by the ABI check. The tests emit the build, ELF, model, object,
 header, manifest and ABI-check hashes. The ELF/object link relationship requires
 the supplied build report and artifacts to have been independently verified.
 
 The focused tests compare fresh decoding and uninterrupted decoding, then
-check continuation at AU boundaries 1, 2, 16, 32 and 64. Intermediate AUs skip
+check continuation at AU boundaries 1, 2, 16, 32, 33, 49 and 64. Intermediate AUs skip
 synthesis; exactly one full discarded predecessor repairs overlap before PCM
 is exposed. Invalid overlap must be rejected. A malformed AU must latch an
 error until fresh initialization. The target compiler checks the structure
@@ -42,6 +43,13 @@ device PCM parity, container lead/duration trimming, source/build binding,
 handoff integrity, cache effects and measured startup savings remain required
 before designing or publishing prepared audio for device playback. No prepared
 audio format or playback fallback is enabled by this tool.
+
+The optional corpus tests also exercise the existing three-word recurrence
+checkpoint followed by one discarded predecessor. They reject malformed
+checkpoint words and check that fresh decoding remains usable. Passing these
+samples does not establish generic checkpoint eligibility: retained dynamic
+range extensions, for example, need state beyond those three words. A prepared
+prefix must prove its own continuation or use ordinary entropy advancement.
 
 API references: [Unicorn tutorial](https://www.unicorn-engine.org/docs/tutorial.html)
 and [official ARM sample](https://github.com/unicorn-engine/unicorn/blob/master/samples/sample_arm.c).

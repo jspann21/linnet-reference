@@ -4,10 +4,13 @@ ARM_AAC_REPORT names a verified target build report. ARM_AAC_ADTS names an
 existing/extracted AAC-LC stream. No files are published and no device changes.
 """
 import json
+import hashlib
 import os
+import struct
 from pathlib import Path
 import subprocess
 import unittest
+from unittest.mock import patch
 
 from tools.qualification.arm_aac import ArmAAC, adts_packets
 
@@ -30,9 +33,15 @@ class ExactInstructionContinuation(unittest.TestCase):
             raise ValueError('At least 66 real access units required')
         cls.packets = cls.packets[:66]
         report = json.loads(Path(cls.report).read_text())
-        subprocess.run([report['toolchain']['compiler']['path'], '--target=armv4t-none-eabi', '-mcpu=arm7tdmi', '-marm', '-ffreestanding', '-I.', '-fsyntax-only', 'tools/qualification/arm_aac_abi.c'], check=True, capture_output=True)
+        subprocess.run([report['toolchain']['compiler']['path'], '--target=armv4t-none-eabi', '-mcpu=arm7tdmi', '-marm', '-ffreestanding', '-I.', '-Ithird_party/aac', '-Ithird_party/aac/faad', '-DCPU_ARM=1', '-DARM_ARCH=4', '-fsyntax-only', 'tools/qualification/arm_aac_abi.c'], check=True, capture_output=True)
         decoder = cls.decoder()
-        cls.reference = [decoder.decode(packet) for packet in cls.packets]
+        cls.reference, cls.checkpoints, cls.retained_drc = [], [], []
+        for packet in cls.packets:
+            if decoder.call('ln_aac_checkpoint', decoder.DECODER, decoder.INPUT, 0) != 1:
+                raise ValueError('Target checkpoint export rejected')
+            cls.checkpoints.append(bytes(decoder.machine.mem_read(decoder.INPUT, 12)))
+            cls.retained_drc.append(bool(decoder.machine.mem_read(decoder.DECODER + 82384, 1)[0]))
+            cls.reference.append(decoder.decode(packet))
         cls.binding = decoder.binding
         print('ARM_AAC_BINDING=' + json.dumps(cls.binding, sort_keys=True), flush=True)
 
@@ -46,7 +55,7 @@ class ExactInstructionContinuation(unittest.TestCase):
             self.assertEqual(decoder.decode(packet), self.reference[index], index)
 
     def test_skip_then_one_full_predecessor(self):
-        for boundary in (1, 2, 16, 32, 64):
+        for boundary in (1, 2, 16, 32, 33, 49, 64):
             with self.subTest(boundary=boundary):
                 decoder = self.decoder()
                 for packet in self.packets[:boundary - 1]:
@@ -54,6 +63,37 @@ class ExactInstructionContinuation(unittest.TestCase):
                 decoder.decode(self.packets[boundary - 1], 'discard')
                 for index in range(boundary, min(boundary + 2, len(self.packets))):
                     self.assertEqual(decoder.decode(self.packets[index]), self.reference[index], (boundary, index))
+
+    def test_portable_checkpoint_then_one_predecessor(self):
+        # This qualifies the supplied corpus only. Retained codec extensions
+        # may need additional state; a three-word checkpoint is not universal.
+        for boundary in (1, 2, 16, 32, 33, 49, 64):
+            with self.subTest(boundary=boundary):
+                if self.retained_drc[boundary - 1]:
+                    self.skipTest('Three-word checkpoint excludes retained DRC state')
+                decoder = self.decoder()
+                decoder.machine.mem_write(decoder.INPUT, self.checkpoints[boundary - 1])
+                self.assertEqual(decoder.call('ln_aac_checkpoint', decoder.DECODER, decoder.INPUT, 1), 1)
+                decoder.decode(self.packets[boundary - 1], 'discard')
+                for index in range(boundary, boundary + 2):
+                    self.assertEqual(decoder.decode(self.packets[index]), self.reference[index], (boundary, index))
+
+    def test_invalid_checkpoint_leaves_fresh_pcm_usable(self):
+        decoder = self.decoder()
+        for words in ((0, 1, 0), (1, 0, 0), (1, 1, 2), (1, 1, 0x10000)):
+            decoder.machine.mem_write(decoder.INPUT, struct.pack('<3I', *words))
+            self.assertEqual(decoder.call('ln_aac_checkpoint', decoder.DECODER, decoder.INPUT, 1), 0)
+        self.assertEqual(decoder.decode(self.packets[0]), self.reference[0])
+
+    def test_stale_workspace_abi_manifest_rejected(self):
+        manifest = json.loads(Path(self.abi_manifest).read_text())
+        manifest['dependencies']['source/third_party/aac/workspace.h'] = '0' * 64
+        encoded = json.dumps(manifest, sort_keys=True).encode()
+        path = Path('out/qualification') / (hashlib.sha256(encoded).hexdigest() + '.json')
+        read_bytes = Path.read_bytes
+        with patch.object(Path, 'read_bytes', lambda candidate: encoded if candidate == path else read_bytes(candidate)):
+            with self.assertRaisesRegex(ValueError, 'Target ABI header dependency changed'):
+                ArmAAC(self.report, self.asc, abi_manifest=path)
 
     def test_skipped_overlap_cannot_be_exposed(self):
         decoder = self.decoder()
