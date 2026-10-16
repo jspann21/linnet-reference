@@ -331,7 +331,7 @@ bool ln_ata_power_on(uint32_t now) {
 static void transfer_begin(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *bytes){
 #if ATA_READ_DMA
     bool dma_transfer=dma_enabled&&op==LN_ATA_READ;
-#if defined(LINNET_SOC_PP5022)
+#if defined(LINNET_SOC_PP5022) || LINNET_TARGET_NUMBER == 98
     /* DMA writes are useful on this flash adapter. Keep rotating drives and
      * other adapters on the established PIO path. */
     if(dma_enabled&&op==LN_ATA_WRITE&&info.compact_flash&&(info.quirks&8u)&&
