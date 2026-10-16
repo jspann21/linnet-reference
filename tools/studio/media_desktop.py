@@ -1813,23 +1813,37 @@ class MediaWindow(QMainWindow):
             self.show_error('The selected iPod changed while preparing the plan. Review it again.')
             return
         copies = ', '.join(f'{kind}: {count}' for kind, count in result['copy_kinds'].items() if count)
-        preview = [f"Prepare: {', '.join(result['selected'])}",
-                   f"Add to iPod: {result['copies']:,} files ({size(result['bytes'])})" +
+        summary = [f"Prepare: {', '.join(result['selected'])}"]
+        if result['videos']:
+            noun = 'video' if result['videos'] == 1 else 'videos'
+            summary.append(f"Prepare {result['videos']:,} {noun} for playback on this iPod.")
+        if result['copies']:
+            noun = 'file' if result['copies'] == 1 else 'files'
+            summary.append(f"Copy {result['copies']:,} {noun} ({size(result['bytes'])}) · {copies}")
+        elif not result['videos']:
+            summary.append('Update the selected iPod libraries.')
+        preview = [f"File copies: {result['copies']:,} ({size(result['bytes'])})" +
                    (f' · {copies}' if copies else ''),
-                   f"iPod free before copying: {size(result['free'])}",
-                   f"Computer free for preparation: {size(result['computer_free'])}",
-                   f"Video jobs: {result['videos']:,}" +
-                   (' · conversion output size is unknown' if result['conversion'] else '')]
+                   'Videos are prepared separately from these file copies.',
+                   f"Videos to prepare: {result['videos']:,}"]
+        if result['conversion']:
+            preview.append('Video conversion is included. Final output sizes depend on encoding.')
+        profile = context['identity'].get('media_profile', {})
+        if result['videos'] and profile.get('video_backend') == 'ipvf':
+            preview.append(f"This iPod uses Linnet IPVF video ({profile['video_width']} × "
+                           f"{profile['video_height']}, {profile['video_fps']} fps).")
         if result.get('audio_conversions'):
             preview.append(f"Convert on computer: {result['audio_conversions']:,} music files; source files stay in place")
         if result.get('audio_unplayable'):
-            preview.append(f"Needs conversion: {result['audio_unplayable']:,} music files will be copied but skipped for playback")
+            summary.append(f"Needs conversion: {result['audio_unplayable']:,} music files will be copied but skipped for playback")
         for issue in result.get('audio_issues', []):
             preview.append(f"{Path(issue['source']).name}: {issue['reason']}")
         if 'device_peak_bytes' in result:
-            preview.append(f"Estimated peak iPod space needed: {size(result['device_peak_bytes'])}")
+            summary.append(f"iPod space budget: {size(result['device_peak_bytes'])} · {size(result['free'])} available")
         if 'computer_peak_bytes' in result:
-            preview.append(f"Estimated peak computer space needed: {size(result['computer_peak_bytes'])}")
+            summary.append(f"Computer space budget: {size(result['computer_peak_bytes'])} · {size(result['computer_free'])} available")
+        preview.append('Space budgets are conservative estimates for prepared media, temporary files, '
+                       'and recovery copies. Final media sizes may be smaller.')
         if result['reusable']:
             preview.append('Likely reusable prepared libraries: ' + ', '.join(result['reusable']))
         if result['existing_unverified']:
@@ -1842,8 +1856,9 @@ class MediaWindow(QMainWindow):
             preview.append(f"…and {len(result['previews']) - 5:,} more queued sources")
         preview.append('Sources, available space, and prepared outputs are checked again during preparation.')
         reconciliation = result.get('reconciliation', [])
+        changes = []
         if reconciliation:
-            preview.extend(('', f'{len(reconciliation)} changes to existing iPod content require approval:'))
+            changes.append(f'{len(reconciliation)} changes to existing iPod content require approval:')
             root = Path(context['identity']['root'])
             for action in reconciliation:
                 destination = Path(action['destination'])
@@ -1852,24 +1867,41 @@ class MediaWindow(QMainWindow):
                 except ValueError:
                     shown = destination.name
                 if action['action'] == 'replace':
-                    preview.append(f"Replace {action['kind']}: {shown} with {Path(action['source']).name} "
+                    changes.append(f"Replace {action['kind']}: {shown} with {Path(action['source']).name} "
                                    f"({size(action['old_bytes'])} → {size(action['new_bytes'])})")
                 elif action['action'] == 'retire-library':
-                    preview.append(f"Move empty {action['kind']} library to Trash: {shown}")
+                    changes.append(f"Move empty {action['kind']} library to Trash: {shown}")
                 elif action['action'] == 'prune-video':
-                    preview.append(f"Remove missing video entry: {action.get('title') or shown}")
-            dialog = QDialog(self); dialog.setWindowTitle('Review preparation changes'); dialog.resize(720, 500)
-            layout = box(dialog, margins=(20, 20, 20, 20))
+                    changes.append(f"Remove missing video entry: {action.get('title') or shown}")
+        title = 'Review preparation changes' if reconciliation else 'Review preparation plan'
+        dialog = QDialog(self); dialog.setWindowTitle(title); dialog.setMinimumWidth(580)
+        layout = box(dialog, margins=(28, 28, 28, 24), spacing=16)
+        layout.addWidget(label(title, 'section'))
+        layout.addWidget(label('\n'.join(summary), None, True))
+        layout.addWidget(label('Space budgets include temporary files and recovery copies.', 'muted', True))
+        if changes:
             layout.addWidget(label('Review changes to existing content', 'section'))
-            details = QTextEdit(); details.setReadOnly(True)
-            details.setAccessibleName('Preparation plan and reconciliation actions')
-            details.setPlainText('\n'.join(preview)); layout.addWidget(details)
-            actions = box(horizontal=True); actions.addWidget(button('Cancel', dialog.reject)); actions.addStretch()
-            actions.addWidget(button('Approve changes and prepare', dialog.accept, 'primary'))
-            layout.addLayout(actions)
-            accepted = dialog.exec() == QDialog.Accepted
-        else:
-            accepted = self.dialog('Review preparation plan', '\n'.join(preview), 'Start preparation')
+            review = QTextEdit(); review.setReadOnly(True)
+            review.setAccessibleName('Changes to existing iPod content')
+            review.setPlainText('\n'.join(changes)); review.setMinimumHeight(160)
+            layout.addWidget(review)
+        details = QTextEdit(); details.setReadOnly(True)
+        details.setAccessibleName('Preparation details')
+        details.setPlainText('\n'.join(preview)); details.setMinimumHeight(180)
+        details.hide()
+        toggle = button('Show details', lambda: None); toggle.setCheckable(True)
+        def show_details(visible):
+            details.setVisible(visible)
+            toggle.setText('Hide details' if visible else 'Show details')
+            dialog.adjustSize()
+        toggle.toggled.connect(show_details)
+        layout.addWidget(toggle, 0, Qt.AlignLeft); layout.addWidget(details)
+        actions = box(horizontal=True); actions.addStretch()
+        actions.addWidget(button('Cancel', dialog.reject))
+        actions.addWidget(button('Approve changes and prepare' if reconciliation else 'Start preparation',
+                                 dialog.accept, 'primary'))
+        layout.addLayout(actions)
+        accepted = dialog.exec() == QDialog.Accepted
         if accepted:
             context['approval']['actions'] = reconciliation
             self.submitted, self.submitted_videos = context['pending'], context['submitted_videos']

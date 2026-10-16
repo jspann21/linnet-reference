@@ -140,6 +140,13 @@ exact qualified FAT32 devices and file paths described below.
 3. Choose **Prepare selected media**, review the plan, and start.
 4. Review skipped files or errors, then **Eject safely** and restart Linnet.
 
+The preparation review counts videos separately from file copies. Videos are
+prepared for the selected iPod and saved for Linnet playback; a queue containing
+only videos does not need any other file copies. Space budgets include temporary
+files and recovery copies, so they can exceed the final media size. **Show details**
+lists queued sources and conversion information. Changes to existing iPod content
+are always shown for review before approval.
+
 | Media | Current behavior |
 | --- | --- |
 | Music | Indexes original audio and prepares artwork; up to 100,000 tracks. Playback depends on the target's native decoders. Artwork is 64 pixels on Photo/4G. Video/Classic use a 160 px cover with exact Now Playing renditions (112 px, plus 126 px on Classic) and native 130 px Cover Flow art. |

@@ -431,9 +431,12 @@ def plan(identity, pending, selected, videos, *, current_inventory=None,
         allowed = media.video_source_extensions(identity) if kind == 'Videos' else media.extensions(kind)
         supported = sum(p.suffix.lower() in allowed for p, _ in records)
         other = len(records) - supported
-        previews[name] = f'{supported} media files' + (f' · {other} supporting/other files' if other else '')
-        if kind == 'Videos' and other:
-            previews[name] = f'{supported} videos · {other} non-video files skipped'
+        if kind == 'Videos':
+            noun = 'video' if supported == 1 else 'videos'
+            previews[name] = f'{supported:,} {noun}' + (f' · {other:,} non-video files skipped' if other else '')
+        else:
+            noun = 'media file' if supported == 1 else 'media files'
+            previews[name] = f'{supported:,} {noun}' + (f' · {other:,} supporting/other files' if other else '')
     needed = sum(p.get('converted_bytes', p['bytes']) for p in copies)
     if 'Notes' in selected:
         replacing_notes = {action['destination'].casefold() for action in replacements
