@@ -301,7 +301,7 @@ def _worker(request):
     # Format metadata has byte limits; truncate on UTF-8 character boundaries.
     metadata = {key: value.encode("utf-8")[:120].decode("utf-8", "ignore")
                 for key, value in metadata.items() if value}
-    creator.encode(source, output, fps, fps * 5, data["ffmpeg"], video_mode="realtime",
+    creator.encode(source, output, fps, fps, data["ffmpeg"], video_mode="realtime",
                    color_depth=color_depth,
                    metadata=metadata,
                    source_has_audio=any(stream.get("codec_type") == "audio"
