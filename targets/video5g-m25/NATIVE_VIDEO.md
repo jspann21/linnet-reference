@@ -209,3 +209,18 @@ walk to 63 edges. Read-time FAT edges use the already proved immutable bytes;
 full mirror comparisons occur during admission. Consecutive edges in the
 same pinned FAT sector reuse its completed mirror comparison. The focused host check is
 `python -m tools.qualification.cache_lease`, in development and release modes.
+
+Startup may also join the callback-free steps of one prepared frame response:
+accept its native request, transfer one payload chunk, then publish its descriptor.
+Only exact 2-to-3 and 3-to-4 progress may continue, with at most three substeps,
+one payload transfer and 4,096 bulk bytes including the final 64-byte descriptor.
+Ring control traffic is additional. A 250 microsecond admission budget does not
+preempt an existing individual BCM access. Publication ends the batch; another
+request, packet parsing, storage work, initial metadata, seeking and steady
+playback retain their existing separate service steps. The first-picture fence,
+ring validation, response sequence and decoder buffers are unchanged.
+
+Development channel 3 words 24 through 31 report stream batch service microseconds,
+maximum invocation, invocations, additional substeps, responses published in their
+accepting invocation, maximum bulk bytes, time-limit stops and byte-limit stops.
+These counters reset for each video open and are absent from release images.

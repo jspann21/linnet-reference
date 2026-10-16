@@ -35,7 +35,7 @@ static uint32_t picture_cookie;
 static uint32_t picture_probe[8];
 static uint32_t idle_probe[8],player_reuses,player_unloads;
 static uint32_t prefetch_reads,prefetch_bytes;
-static uint32_t scan_service[2][4];
+static uint32_t scan_service[2][4],stream_batch[8];
 #endif
 enum { IDLE,OPEN,READ,HASH,ACQUIRE,POWER_OFF,POWER_ON,BUS_READY,BUS_SETUP,
        BUS_LATCH,UPLOAD,VALIDATE_BEGIN,VALIDATE_WAIT,EXECUTE,READY_WAIT,
@@ -450,7 +450,7 @@ static bool audio_service(void){
     }
     return true;
 }
-static bool stream_service(void){
+static bool stream_step(uint32_t bulk_limit){
     vc.stream_waiting=false;
     if(vc.operation!=2u)return true;
     uint32_t slot=0;while(slot<8u&&halfword(vc.channel[slot],4u)!=7u)++slot;
@@ -500,12 +500,14 @@ static bool stream_service(void){
     if(vc.stream_phase==3u){
         uint32_t total=(vc.packet.bytes+15u)&~15u,count=total-vc.stream_at;
         if(total>vc.stream_capacity)return false;
-        if(count>4096u)count=4096u;
+        if(count>bulk_limit)count=bulk_limit;
+        if(!count)return true;
         if(!ln_m25_bcm_write(vc.stream_address+vc.stream_at,(const uint32_t *)(vc.frame+vc.stream_at),count/4u))return false;
         vc.stream_at+=count;if(vc.stream_at==total)vc.stream_phase=4u;
         return true;
     }
     if(vc.stream_phase==4u){
+        if(bulk_limit<64u)return true;
         if(!ln_m25_bcm_read(record+16u,c+4,4u))return false;
         uint32_t lo=halfword(c,6),hi=halfword(c,8),rd=halfword(c,16),wr=halfword(c,32);
         if(!ring_valid(lo,hi,rd)||!ring_valid(lo,hi,wr))return false;
@@ -617,6 +619,61 @@ static bool stream_service(void){
     p+=5u+config_bytes;p[0]=vc.movie.width;p[1]=vc.movie.height;p[2]=1u;/* Retail ARM 0x1cab94 preserves avcC lengthSizeMinusOne. */
     p[53]=vc.movie.nal_bytes?vc.movie.nal_bytes-1u:0u;
     vc.stream_phase=1u;vc.stream_at=0;return true;
+}
+/* Fuse only the callback-free response to one already prepared frame. Packet
+ * parsing, storage work, initial metadata and subsequent native requests retain
+ * their separate executive turns. Bulk bytes exclude ring control traffic. */
+static bool stream_batch_ready(void){
+    return startup_transfers()&&!vc.seek_pending&&!vc.seek_stage&&!vc.want_paused&&
+        !vc.fs_canceling&&vc.stream_phase>=2u&&vc.stream_phase<=4u;
+}
+static bool stream_service(void){
+    if(!stream_batch_ready())return stream_step(4096u);
+    uint32_t started=ln_time_us(),generation=vc.generation,owner=vc.phase;
+    uint32_t steps=0,bulk=0,initial=vc.stream_phase,frames=vc.stream_frames;
+    bool ok=true;
+#if !defined(LINNET_PROFILE_RELEASE)
+    bool time_stop=false,byte_stop=false;
+#endif
+    while(steps<3u){
+        uint32_t previous=vc.stream_phase,at=vc.stream_at;
+        ++steps;if(!stream_step(4096u-bulk)){ok=false;break;}
+        if(vc.generation!=generation||vc.phase!=owner)break;
+        if(previous==3u){
+            uint32_t sent=vc.stream_at-at;
+            if(sent>4096u-bulk){ok=false;break;}bulk+=sent;
+        }
+        if(vc.stream_frames!=frames){
+            if(previous!=4u||vc.stream_frames!=frames+1u||bulk>4032u){ok=false;break;}
+            bulk+=64u;break;
+        }
+        if(!stream_batch_ready())break;
+        if(!((previous==2u&&vc.stream_phase==3u)||(previous==3u&&vc.stream_phase==4u)))break;
+        if(vc.stream_phase==4u&&bulk>4032u){
+#if !defined(LINNET_PROFILE_RELEASE)
+            byte_stop=true;
+#endif
+            break;
+        }
+        /* Admission bound: one original BCM access may exceed this interval. */
+        if(ln_time_us()-started>=250u){
+#if !defined(LINNET_PROFILE_RELEASE)
+            time_stop=true;
+#endif
+            break;
+        }
+    }
+#if !defined(LINNET_PROFILE_RELEASE)
+    uint32_t elapsed=ln_time_us()-started;stream_batch[0]+=elapsed;
+    if(elapsed>stream_batch[1])stream_batch[1]=elapsed;
+    ++stream_batch[2];stream_batch[3]+=steps-1u;
+    if(initial==2u&&vc.stream_frames==frames+1u)++stream_batch[4];
+    if(bulk>stream_batch[5])stream_batch[5]=bulk;
+    if(time_stop)++stream_batch[6];if(byte_stop)++stream_batch[7];
+#else
+    (void)initial;
+#endif
+    return ok;
 }
 static uint32_t file_record(void){return vc.header[3]+((vc.directory[vc.file_slot/2u]>>((vc.file_slot&1u)*16u))&0xffffu);}
 static bool service_resets(void){
@@ -967,6 +1024,7 @@ bool ln_m25_coprocessor_begin(uint32_t operation){
     rom_burst_max_us=rom_bursts=0;
     prefetch_reads=prefetch_bytes=0;
     for(uint32_t i=0;i<2u;++i)for(uint32_t j=0;j<4u;++j)scan_service[i][j]=0;
+    for(uint32_t i=0;i<8u;++i)stream_batch[i]=0;
 #endif
     phase(ROM_CHECK,30000000u);return true;
 }
@@ -1773,6 +1831,7 @@ uint32_t ln_m25_coprocessor_channel(uint32_t slot,uint32_t out[32]){
     if(!slot){out[24]=prefetch_reads;out[25]=prefetch_bytes;out[26]=vc.prefetch_at;out[27]=vc.prefetch_io;}
     if(slot==2u){out[24]=rom_burst_max_us;out[25]=rom_bursts;}
     if(slot==1u)for(uint32_t i=0;i<2u;++i)for(uint32_t j=0;j<4u;++j)out[24u+i*4u+j]=scan_service[i][j];
+    if(slot==3u)for(uint32_t i=0;i<8u;++i)out[24u+i]=stream_batch[i];
 #endif
     return 32u;
 }
