@@ -293,3 +293,15 @@ A queued video request keeps the full music deadline until playback activates,
 so accepted music I/O continues draining before ownership changes. Stopping
 restores the full deadline and resumes the existing music and artwork work.
 This changes neither native polling intervals nor audio-buffer reserves.
+
+A fully settled LCD pause may poll native receive queues every 10 ms. Native
+pause acknowledgement, stopped and paused ARM audio, the existing PCM reserve
+(or EOF), a committed selected picture and empty validated file/event/stream
+receive snapshots are required. Pending I/O, cache fills, display work, seeks
+or controls keep the shorter existing path. The check reads cached snapshots
+and adds no bus transactions. After a real service pass, a fixed deadline
+suppresses only native queue service on unrelated wakes. Skipped passes and
+deadline queries never extend that deadline. Native work arriving after a
+snapshot waits for this bounded poll; an earlier status deadline still wins.
+Input interrupts wake the CPU, and resume, seek and stop invalidate the pause
+conditions immediately. The existing native status cadence remains 500 ms.

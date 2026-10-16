@@ -36,6 +36,7 @@ static uint32_t picture_probe[8];
 static uint32_t idle_probe[8],player_reuses,player_unloads;
 static uint32_t prefetch_reads,prefetch_bytes;
 static uint32_t scan_service[2][4],stream_batch[8],stream_prepare[8],file_batch[8];
+static uint32_t paused_polls,paused_skips,paused_last_poll,paused_max_gap;
 #endif
 enum { IDLE,OPEN,READ,HASH,ACQUIRE,POWER_OFF,POWER_ON,BUS_READY,BUS_SETUP,
        BUS_LATCH,UPLOAD,VALIDATE_BEGIN,VALIDATE_WAIT,EXECUTE,READY_WAIT,
@@ -77,6 +78,7 @@ static struct {
     bool player_retained,reuse_pending,retaining,retention_revoked;
     uint32_t retained_epoch,retain_quiet_at,retain_deadline;
     uint32_t picture_sequence,picture_polls;
+    uint32_t paused_poll_at;bool paused_poll_armed;
     struct ln_fat32_file file;
     struct ln_sha256 hash;
     uint8_t *image;uint32_t image_generation;bool image_leased;
@@ -130,7 +132,8 @@ static bool rom_image(void){
     }
     unmap_rom();return false;
 }
-static void phase(uint32_t next,uint32_t timeout){vc.phase=next;vc.deadline=ln_time_us()+timeout;}
+static void paused_poll_clear(void){vc.paused_poll_armed=false;vc.paused_poll_at=0;}
+static void phase(uint32_t next,uint32_t timeout){paused_poll_clear();vc.phase=next;vc.deadline=ln_time_us()+timeout;}
 static void native_idle(void){
     vc.owned=vc.stopping=false;phase(NATIVE_IDLE,0);
     ln_resident_end(&vc.cached);
@@ -1012,6 +1015,7 @@ static bool file_service(void){
     return ok;
 }
 static void recover(uint32_t error){
+    paused_poll_clear();
     if(error||(vc.normal&&!vc.picture_sequence))ln_resident_forget(&vc.binding);
     vc.picture_pending=false;
     if(!error&&vc.resident&&!vc.restore){
@@ -1076,6 +1080,7 @@ bool ln_m25_coprocessor_begin(uint32_t operation){
         resource_reset(changed);
     }
     direct_file=false;
+    paused_poll_clear();
     ln_resident_end(&vc.cached);vc.cached.failure=66u;vc.cached.elapsed=vc.cached.count=0;
     vc.cache_resources=vc.cache_requested=vc.cache_unexpected=0;
     vc.prefetch_at=vc.prefetch_requested=0;vc.prefetch_io=false;
@@ -1119,6 +1124,7 @@ bool ln_m25_coprocessor_begin(uint32_t operation){
     /* Every open validates the full selected NOR extent in bounded slices. */
 #if !defined(LINNET_PROFILE_RELEASE)
     rom_check_us=rom_check_max_us=rom_check_calls=0;
+    paused_polls=paused_skips=paused_last_poll=paused_max_gap=0;
     rom_burst_max_us=rom_bursts=0;
     prefetch_reads=prefetch_bytes=0;
     for(uint32_t i=0;i<2u;++i)for(uint32_t j=0;j<4u;++j)scan_service[i][j]=0;
@@ -1135,6 +1141,37 @@ bool ln_m25_coprocessor_control(uint32_t command){
     vc.control=command;vc.return_deadline=vc.deadline;phase(VERSION_SEND,5000000u);return true;
 }
 bool ln_m25_coprocessor_active(void){return vc.fs_canceling||(vc.phase!=IDLE&&vc.phase!=RESTORED&&vc.phase!=FAILED&&vc.phase!=NATIVE_IDLE);}
+static bool paused_receives_empty(void){
+    uint32_t seen=0;
+    /* The completed service pass freshly validated these receive snapshots.
+     * Producer changes after that pass are picked up by the bounded poll. */
+    for(uint32_t slot=0;slot<8u;++slot){
+        uint32_t *c=vc.channel[slot],tag=halfword(c,4u);
+        if(tag<5u||tag>7u)continue;
+        uint32_t lo=halfword(c,10u),hi=halfword(c,12u),rd=halfword(c,48u),wr=halfword(c,64u);
+        if(!ring_valid(lo,hi,rd)||!ring_valid(lo,hi,wr)||rd!=wr)return false;
+        seen|=1u<<(tag-5u);
+    }
+    return seen==7u;
+}
+static bool paused_service_ready(void){
+    if(!vc.paused||!vc.want_paused||!vc.normal||vc.phase!=PLAYER_SETTLE||
+       vc.command_index!=8u||vc.control||vc.operation!=2u||(vc.options&32u)||!vc.owned||
+       vc.restore||vc.stopping||vc.fs_canceling||vc.fs_phase||vc.read_active||
+       vc.seek_pending||vc.seek_stage||!vc.stream_waiting||
+       vc.picture_sequence<=vc.seek_frames||vc.picture_pending||
+       vc.io||vc.read_io||vc.prefetch_io||vc.cache[0].pending||vc.cache[1].pending||
+       nd.mode||nd.pending||nd.visible)return false;
+#if !defined(LINNET_PROFILE_RELEASE)
+    if(fault_mode)return false;
+#endif
+    if(vc.audio_ready){
+        struct ln_audio_status a;ln_audio_snapshot(&a);
+        if(!vc.audio_started||a.fault||a.playing||!a.paused||
+           (!vc.audio_eof&&a.queued<AUDIO_BUFFER_FRAMES))return false;
+    }
+    return paused_receives_empty();
+}
 uint32_t ln_m25_coprocessor_deadline(uint32_t now){
     if(!ln_m25_coprocessor_active())return now+200000u;
     /* Both bus power transitions only act when their 50 ms timer expires.
@@ -1162,6 +1199,10 @@ uint32_t ln_m25_coprocessor_deadline(uint32_t now){
         if(a.fault||(!vc.audio_eof&&a.queued<reserve))return now;
     }
     if((int32_t)(vc.deadline-now)<=0)return now;
+    if(vc.paused_poll_armed&&paused_service_ready()){
+        if((int32_t)(vc.paused_poll_at-now)<=0)return now;
+        return (int32_t)(vc.deadline-vc.paused_poll_at)<0?vc.deadline:vc.paused_poll_at;
+    }
     return (int32_t)(vc.deadline-now)<1000?vc.deadline:now+1000u;
 }
 bool ln_m25_coprocessor_open(const char *path,uint8_t options){
@@ -1183,7 +1224,7 @@ bool ln_m25_coprocessor_open(const char *path,uint8_t options){
 void ln_m25_coprocessor_file(const struct ln_fat32_file*file){ln_resident_end(&vc.cached);ln_resident_forget(&vc.binding);vc.video_file=*file;direct_file=true;}
 bool ln_m25_coprocessor_disk_required(void){return !vc.cached.cookie;}
 void ln_m25_coprocessor_stop(void){if(ln_m25_coprocessor_active()&&!vc.restore)recover(0);}
-void ln_m25_coprocessor_pause(bool paused){vc.want_paused=paused;++vc.revision;}
+void ln_m25_coprocessor_pause(bool paused){paused_poll_clear();vc.want_paused=paused;++vc.revision;}
 bool ln_m25_coprocessor_paused(void){return vc.want_paused;}
 uint32_t ln_m25_coprocessor_position(void){
     uint32_t position=vc.clock_valid?vc.clock_ms+(!vc.paused?(ln_time_us()-vc.clock_us)/1000u:0u):vc.position_base;
@@ -1199,6 +1240,7 @@ uint32_t ln_m25_coprocessor_position(void){
 bool ln_m25_coprocessor_seek(uint32_t ms){
     if(!vc.normal||!vc.movie.opened||vc.restore||!ln_m25_coprocessor_active())return false;
     uint32_t duration=duration_ms(vc.movie.duration,vc.movie.timescale);if(!duration)return false;
+    paused_poll_clear();
     if(ms>=duration){recover(0);vc.clock_ms=duration;return true;}vc.requested_seek=ms;vc.seek_pending=vc.picture_pending=true;++vc.revision;return true;
 }
 uint32_t ln_m25_coprocessor_duration(void){return vc.movie.opened?duration_ms(vc.movie.duration,vc.movie.timescale):0u;}
@@ -1477,6 +1519,24 @@ bool ln_m25_coprocessor_step(void){
         return false;
     }
     if(vc.phase==PLAYER_SETTLE){
+        uint32_t now=ln_time_us(),generation=vc.generation;
+        bool quiet=paused_service_ready();
+        if(vc.paused_poll_armed&&quiet&&(int32_t)(vc.paused_poll_at-now)>0&&
+           (int32_t)(vc.deadline-now)>0){
+#if !defined(LINNET_PROFILE_RELEASE)
+            ++paused_skips;
+#endif
+            return false;
+        }
+#if !defined(LINNET_PROFILE_RELEASE)
+        if(quiet){
+            if(vc.paused_poll_armed&&paused_last_poll){
+                uint32_t gap=now-paused_last_poll;if(gap>paused_max_gap)paused_max_gap=gap;
+            }
+            ++paused_polls;paused_last_poll=now;
+        }
+#endif
+        paused_poll_clear();
         if(!service_resets()||!file_service()||!audio_service()||!stream_service()){recover(36);return false;}
         if(vc.normal&&vc.command_index==6u){
             int disk=vc.cached.cookie?1:ln_storage_media_realtime(true);
@@ -1506,6 +1566,13 @@ bool ln_m25_coprocessor_step(void){
             }
             if(command){vc.control=command;vc.return_deadline=vc.deadline;phase(VERSION_SEND,5000000u);}
         }else if(expired()){++vc.command_index;phase(VERSION_SEND,5000000u);}
+        if(generation==vc.generation&&paused_service_ready()){
+            now=ln_time_us();
+            if((int32_t)(vc.deadline-now)>0){
+                vc.paused_poll_at=(int32_t)(vc.deadline-now)<10000?vc.deadline:now+10000u;
+                vc.paused_poll_armed=true;
+            }
+        }
         return false;
     }
     if(expired()){recover(vc.phase==OBSERVE?0u:0x200u+vc.phase);return false;}
@@ -1756,7 +1823,7 @@ bool ln_m25_coprocessor_step(void){
                     bool picture=defer_picture&&!vc.seek_pending&&!vc.seek_stage;
                     vc.control=0;
                     if(picture)picture_wait();
-                    else{vc.phase=PLAYER_SETTLE;vc.deadline=vc.normal?ln_time_us()+500000u:vc.return_deadline;++vc.revision;}break;
+                    else{paused_poll_clear();vc.phase=PLAYER_SETTLE;vc.deadline=vc.normal?ln_time_us()+500000u:vc.return_deadline;++vc.revision;}break;
                 }
                 if(vc.operation==2u&&vc.command_index==7u)vc.sync_deadline=ln_time_us()+5000000u;
                 if(vc.operation==2u&&vc.command_index==8u){
@@ -1932,6 +1999,7 @@ uint32_t ln_m25_coprocessor_channel(uint32_t slot,uint32_t out[32]){
     if(slot==3u)for(uint32_t i=0;i<8u;++i)out[24u+i]=stream_batch[i];
     if(slot==4u)for(uint32_t i=0;i<8u;++i)out[24u+i]=stream_prepare[i];
     if(slot==5u)for(uint32_t i=0;i<8u;++i)out[24u+i]=file_batch[i];
+    if(slot==7u){out[24]=vc.paused_poll_armed;out[25]=vc.paused_poll_at;out[26]=paused_polls;out[27]=paused_skips;out[28]=paused_max_gap;out[29]=10000u;}
 #endif
     return 32u;
 }
