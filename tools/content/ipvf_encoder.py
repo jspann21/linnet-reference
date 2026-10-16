@@ -1195,7 +1195,7 @@ def _compress_record_if_smaller(
     return kind, rect_count, payload, decoded_size
 
 
-def _coalesce_lz4_matches(packed: bytes, raw: bytes, minimum: int = 12) -> bytes:
+def _coalesce_lz4_matches(packed: bytes, raw: bytes, minimum: int = 8) -> bytes:
     """Replace short matches with exact literals, retaining longer match offsets."""
     output = bytearray()
     cursor = position = anchor = 0

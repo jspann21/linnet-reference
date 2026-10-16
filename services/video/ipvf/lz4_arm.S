@@ -23,7 +23,11 @@ ln_video_lz_decode_block:
     mov r10, r9, lsr #4
     cmp r10, #2
     andls r0, r9, #15
+#if defined(LINNET_TARGET_PHOTO4G_P98)
+    cmpls r0, #8
+#else
     cmpls r0, #4
+#endif
     bhi .Llz_literal
     /* Both literals and the offset must be present. A match must start
      * at least twelve bytes before the decoded end (strict LZ4 rule). */
@@ -122,7 +126,11 @@ ln_video_lz_decode_block:
     cmp r10, r2
     bhi .Llz_bad
     add r10, r10, #4
+#if defined(LINNET_TARGET_PHOTO4G_P98)
+    cmp r10, #12
+#else
     cmp r10, #8
+#endif
     bls .Llz_short_match
     mov r0, r6
     mov r1, r11
@@ -146,7 +154,19 @@ ln_video_lz_decode_block:
     ldrhhs r0, [r1], #2
     strhhs r0, [r6], #2
     beq .Llz_next
+#if defined(LINNET_TARGET_PHOTO4G_P98)
     cmp r10, #8
+    ldrhhs r0, [r1], #2
+    strhhs r0, [r6], #2
+    beq .Llz_next
+    cmp r10, #10
+    ldrhhs r0, [r1], #2
+    strhhs r0, [r6], #2
+    beq .Llz_next
+    cmp r10, #12
+#else
+    cmp r10, #8
+#endif
     ldrheq r0, [r1], #2
     strheq r0, [r6], #2
     ldrbne r0, [r1]
@@ -170,6 +190,18 @@ ln_video_lz_decode_block:
     ldrhhs r0, [r1], #2
     strhhs r0, [r6], #2
     beq .Llz_next
+#if defined(LINNET_TARGET_PHOTO4G_P98)
+    cmp r10, #8
+    beq .Llz_short_peeled_tail
+    cmp r10, #9
+    ldrhhs r0, [r1], #2
+    strhhs r0, [r6], #2
+    beq .Llz_next
+    cmp r10, #11
+    ldrhhs r0, [r1], #2
+    strhhs r0, [r6], #2
+    beq .Llz_next
+#endif
 .Llz_short_peeled_tail:
     ldrb r0, [r1]
     strb r0, [r6], #1
@@ -197,8 +229,28 @@ ln_video_lz_decode_block:
     ldrb r0, [r1], #1
     strb r0, [r6], #1
     cmp r10, #7
+#if defined(LINNET_TARGET_PHOTO4G_P98)
+    ldrbhi r0, [r1], #1
+    strbhi r0, [r6], #1
+    cmp r10, #8
+    bls .Llz_next
+    ldrb r0, [r1], #1
+    strb r0, [r6], #1
+    cmp r10, #9
+    beq .Llz_next
+    ldrb r0, [r1], #1
+    strb r0, [r6], #1
+    cmp r10, #10
+    beq .Llz_next
+    ldrb r0, [r1], #1
+    strb r0, [r6], #1
+    cmp r10, #11
     ldrbhi r0, [r1]
     strbhi r0, [r6], #1
+#else
+    ldrbhi r0, [r1]
+    strbhi r0, [r6], #1
+#endif
 .Llz_next:
     cmp r4, r5
     blo .Llz_token
