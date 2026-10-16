@@ -11,6 +11,12 @@ from __future__ import annotations
 import struct
 from fractions import Fraction
 
+try:
+    from lz4.block import decompress as _native_lz4
+    from lz4.block import LZ4BlockError as _NativeLZ4Error
+except ImportError:
+    _native_lz4 = None
+
 W, H = 220, 176
 FRAME_BYTES = W * H * 2
 HEADER_SIZE = 80
@@ -197,11 +203,15 @@ def lz4_decompress(data: bytes, expected_size: int | None = None) -> bytes:
         raise ValueError("empty LZ4 block")
     if expected_size is not None and expected_size < 0:
         raise ValueError("negative expected LZ4 size")
-    output = bytearray()
+    # Keep the independent grammar walk even with the optional native decoder:
+    # liblz4 alone does not enforce all of our canonical block constraints.
+    native = _native_lz4 is not None and expected_size is not None
+    output = None if native else bytearray()
     position = 0
     data_size = len(data)
     output_size = 0
     last_match_start: int | None = None
+    terminal_seen = False
     while position < data_size:
         token = data[position]
         position += 1
@@ -219,13 +229,15 @@ def lz4_decompress(data: bytes, expected_size: int | None = None) -> bytes:
                 (expected_size is not None and
                  literal_length > expected_size - output_size)):
             raise ValueError("truncated LZ4 literals")
-        output.extend(data[position:position + literal_length])
+        if not native:
+            output.extend(data[position:position + literal_length])
         output_size += literal_length
         position += literal_length
         if position == data_size:
             if literal_length == 0 or (
                     literal_length < 5 and output_size >= 5):
                 raise ValueError("LZ4 block lacks canonical terminal literals")
+            terminal_seen = True
             break
         if position + 2 > data_size:
             raise ValueError("truncated LZ4 offset")
@@ -249,7 +261,9 @@ def lz4_decompress(data: bytes, expected_size: int | None = None) -> bytes:
             raise ValueError("LZ4 decoded size exceeds expected size")
         last_match_start = output_size
         source = output_size - offset
-        if match_length <= offset:
+        if native:
+            pass
+        elif match_length <= offset:
             output.extend(output[source:source + match_length])
         else:
             # An overlapping copy repeats the already decoded offset bytes.
@@ -258,10 +272,20 @@ def lz4_decompress(data: bytes, expected_size: int | None = None) -> bytes:
             output.extend(pattern * repeats)
             output.extend(pattern[:remainder])
         output_size += match_length
+    if not terminal_seen:
+        raise ValueError("LZ4 block lacks terminal literals")
     if expected_size is not None and output_size != expected_size:
         raise ValueError("LZ4 decoded size mismatch")
     if last_match_start is not None and output_size - last_match_start < 12:
         raise ValueError("LZ4 final match starts too near block end")
+    if native:
+        try:
+            decoded = _native_lz4(data, uncompressed_size=output_size)
+        except _NativeLZ4Error as error:
+            raise ValueError("Invalid LZ4 block") from error
+        if len(decoded) != output_size:
+            raise ValueError("LZ4 decoded size mismatch")
+        return decoded
     return bytes(output)
 
 
