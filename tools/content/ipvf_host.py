@@ -76,6 +76,16 @@ def _library():
                              ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
                              ctypes.c_uint32, ctypes.POINTER(ctypes.c_int32)]
         function.restype = ctypes.c_int32
+        function = library.ln_ipvf_frame_bounds
+        function.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32,
+                             ctypes.c_uint32, ctypes.c_uint32,
+                             ctypes.POINTER(ctypes.c_uint32)]
+        function.restype = ctypes.c_int32
+        function = library.ln_ipvf_rectangles
+        function.argtypes = [ctypes.c_char_p, ctypes.c_char_p,
+                             *([ctypes.c_uint32] * 6),
+                             ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32]
+        function.restype = ctypes.c_int32
         return library
     except (OSError, RuntimeError, AttributeError, subprocess.SubprocessError):
         return None
@@ -94,6 +104,57 @@ def configure_worker(path):
     global _worker_path
     _worker_path = path
     _library.cache_clear()
+
+
+def _frames_valid(previous, current, width, height):
+    return (type(previous) is bytes and type(current) is bytes and
+            type(width) is int and type(height) is int and
+            1 <= width <= 1024 and 1 <= height <= 1024 and
+            width * height <= 131072 and len(previous) == width * height * 2 and
+            len(current) == len(previous))
+
+
+def _rectangle_valid(rect, width, height):
+    x, y, w, h = rect
+    return x % 2 == 0 and w > 0 and h > 0 and x + w <= width and y + h <= height
+
+
+def frame_bounds(previous, current, width, height):
+    if not _frames_valid(previous, current, width, height):
+        return None
+    library = _library()
+    if library is None:
+        return None
+    output = (ctypes.c_uint32 * 4)()
+    count = library.ln_ipvf_frame_bounds(previous, current, len(current), width, height, output)
+    if count == 0:
+        return ()
+    rect = tuple(output)
+    if count != 1 or not _rectangle_valid(rect, width, height):
+        raise RuntimeError("IPVF native frame bounds are invalid")
+    return rect
+
+
+def rectangles(previous, current, width, height, maximum, tile_pairs, tile_rows):
+    if (not _frames_valid(previous, current, width, height) or width % 2 or
+            any(type(value) is not int for value in (maximum, tile_pairs, tile_rows)) or
+            not 1 <= maximum <= 255 or not 1 <= tile_pairs <= 1024 or
+            not 1 <= tile_rows <= 1024):
+        return None
+    library = _library()
+    if library is None:
+        return None
+    output = (ctypes.c_uint32 * 512)()
+    count = library.ln_ipvf_rectangles(previous, current, len(current), width, height,
+                                     maximum, tile_pairs, tile_rows, output, 128)
+    if count == -2:
+        return None  # Native workspace allocation failed; use Python's bounded path.
+    if not 0 <= count <= min(maximum, 128):
+        raise RuntimeError("IPVF native rectangle count is invalid")
+    result = [tuple(output[n * 4:n * 4 + 4]) for n in range(count)]
+    if any(not _rectangle_valid(rect, width, height) or rect[2] % 2 for rect in result):
+        raise RuntimeError("IPVF native rectangle bounds are invalid")
+    return result
 
 
 def coalesce(packed, raw, minimum):

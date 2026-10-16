@@ -613,6 +613,9 @@ def lz4_decompress(data: bytes, expected_size: int | None = None) -> bytes:
 
 
 def bbox_diff(prev: bytes, cur: bytes):
+    native = ipvf_host.frame_bounds(prev, cur, W, H)
+    if native is not None:
+        return native or None
     minx, miny = W, H
     maxx = maxy = -1
     for y in range(H):
@@ -676,6 +679,10 @@ def multi_rect_diff(
         raise ValueError("max_rects must be 1..255")
     if tile_pairs <= 0 or tile_rows <= 0:
         raise ValueError("tile dimensions must be positive")
+
+    native = ipvf_host.rectangles(prev, cur, W, H, max_rects, tile_pairs, tile_rows)
+    if native is not None:
+        return native
 
     pair_columns = W // 2
     changed = set()

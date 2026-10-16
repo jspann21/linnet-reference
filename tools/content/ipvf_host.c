@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <string.h>
+#include <stdlib.h>
 #include "services/video/ipvf/ima_lookup.h"
 #if defined(_WIN32)
 #define EXPORT __declspec(dllexport)
@@ -117,4 +118,77 @@ EXPORT int32_t ln_ipvf_estimate_translation(const uint8_t *prev,const uint8_t *c
  int x0=bx-2,x1=bx+2,y0=by-2,y1=by+2;if(x0<-(int)shift)x0=-(int)shift;if(y0<-(int)shift)y0=-(int)shift;if(x1>(int)shift)x1=(int)shift;if(y1>(int)shift)y1=(int)shift;
  for(int dy=y0;dy<=y1;++dy)for(int dx=x0;dx<=x1;++dx)consider(prev,cur,(int)w,(int)h,dx,dy,(int)step,&bx,&by,&best);
  state[0]=bx;state[1]=by;return 0;
+}
+
+
+
+static int rect_geometry(uint32_t bytes,uint32_t w,uint32_t h){return w&&h&&w<=1024&&h<=1024&&w*h<=131072&&bytes==w*h*2;}
+static int rect_bounds(const uint8_t *prev,const uint8_t *cur,uint32_t w,uint32_t h,uint32_t out[4]){
+ uint32_t minx=w,miny=h,maxx=0,maxy=0;
+ for(uint32_t y=0;y<h;++y){
+  const uint8_t *a=prev+y*w*2,*b=cur+y*w*2;if(!memcmp(a,b,w*2))continue;
+  uint32_t first=0,last=w-1;
+  while(first<w&&a[first*2]==b[first*2]&&a[first*2+1]==b[first*2+1])++first;
+  while(last>first&&a[last*2]==b[last*2]&&a[last*2+1]==b[last*2+1])--last;
+  if(first<minx)minx=first;if(last>maxx)maxx=last;if(y<miny)miny=y;maxy=y;
+ }
+ if(miny==h)return 0;minx&=~1u;maxx|=1u;if(maxx>=w)maxx=w-1;
+ out[0]=minx;out[1]=miny;out[2]=maxx-minx+1;out[3]=maxy-miny+1;return 1;
+}
+EXPORT int32_t ln_ipvf_frame_bounds(const uint8_t *prev,const uint8_t *cur,uint32_t bytes,uint32_t w,uint32_t h,uint32_t out[4]){
+ if(!prev||!cur||!out||!rect_geometry(bytes,w,h))return -1;return rect_bounds(prev,cur,w,h,out);
+}
+struct rect {uint32_t x,y,w,h;};
+static int pair_equal(const uint8_t *a,const uint8_t *b,uint32_t offset){return !memcmp(a+offset,b+offset,4);}
+static struct rect unite(struct rect a,struct rect b){
+ uint32_t x=a.x<b.x?a.x:b.x,y=a.y<b.y?a.y:b.y,right=a.x+a.w>b.x+b.w?a.x+a.w:b.x+b.w,bottom=a.y+a.h>b.y+b.h?a.y+a.h:b.y+b.h;
+ return (struct rect){x,y,right-x,bottom-y};
+}
+static int32_t cost(struct rect a){return (int32_t)(8+a.w*a.h*2);}
+EXPORT int32_t ln_ipvf_rectangles(const uint8_t *prev,const uint8_t *cur,uint32_t bytes,uint32_t w,uint32_t h,uint32_t maximum,uint32_t pairs,uint32_t rows,uint32_t *output,uint32_t capacity){
+ if(!prev||!cur||!output||!rect_geometry(bytes,w,h)||!maximum||maximum>255||!pairs||pairs>1024||!rows||rows>1024||capacity<128)return -1;
+ uint32_t columns=w/2;if(!columns)return 0;
+ uint32_t nx=(columns+pairs-1)/pairs,ny=(h+rows-1)/rows,cells=nx*ny;
+ uint8_t *grid=calloc(cells,1);uint32_t *stack=malloc(cells*sizeof(*stack));int32_t result=-2;
+ if(!grid||!stack)goto done;
+ uint32_t changed=0,min_tx=nx,max_tx=0,min_ty=ny,max_ty=0;
+ for(uint32_t ty=0;ty<ny;++ty)for(uint32_t tx=0;tx<nx;++tx){
+  uint32_t first=tx*pairs,end=first+pairs,y=ty*rows,yend=y+rows;if(end>columns)end=columns;if(yend>h)yend=h;
+  for(;y<yend;++y){uint32_t offset=(y*w+first*2)*2;if(memcmp(prev+offset,cur+offset,(end-first)*4)){grid[ty*nx+tx]=1;++changed;if(tx<min_tx)min_tx=tx;if(tx>max_tx)max_tx=tx;if(ty<min_ty)min_ty=ty;if(ty>max_ty)max_ty=ty;break;}}
+ }
+ result=0;if(!changed)goto done;
+ if(!(w&1u)&&changed==(max_tx-min_tx+1)*(max_ty-min_ty+1)){result=rect_bounds(prev,cur,w,h,output);goto done;}
+ struct rect rects[128];uint32_t count=0;
+ for(uint32_t seed_x=0;seed_x<nx;++seed_x)for(uint32_t seed_y=0;seed_y<ny;++seed_y){
+  uint32_t seed=seed_y*nx+seed_x;if(!grid[seed])continue;
+  if(count==128){result=rect_bounds(prev,cur,w,h,output);goto done;}
+  uint32_t top=0,x0=seed_x,x1=seed_x,y0=seed_y,y1=seed_y;stack[top++]=seed;grid[seed]=0;
+  while(top){
+   uint32_t at=stack[--top],x=at%nx,y=at/nx;if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;
+   if(x&&grid[at-1]){grid[at-1]=0;stack[top++]=at-1;}
+   if(x+1<nx&&grid[at+1]){grid[at+1]=0;stack[top++]=at+1;}
+   if(y&&grid[at-nx]){grid[at-nx]=0;stack[top++]=at-nx;}
+   if(y+1<ny&&grid[at+nx]){grid[at+nx]=0;stack[top++]=at+nx;}
+  }
+  uint32_t min_pair=columns,max_pair=0,min_y=h,max_y=0;
+  uint32_t start_pair=x0*pairs,end_pair=(x1+1)*pairs,end_y=(y1+1)*rows;if(end_pair>columns)end_pair=columns;if(end_y>h)end_y=h;
+  for(uint32_t y=y0*rows;y<end_y;++y){
+   uint32_t first=start_pair,last=end_pair-1,offset=y*w*2;
+   while(first<end_pair&&pair_equal(prev,cur,offset+first*4))++first;
+   if(first==end_pair)continue;
+   while(last>first&&pair_equal(prev,cur,offset+last*4))--last;
+   if(first<min_pair)min_pair=first;if(last>max_pair)max_pair=last;if(y<min_y)min_y=y;max_y=y;
+  }
+  if(min_y<h)rects[count++]=(struct rect){min_pair*2,min_y,(max_pair-min_pair+1)*2,max_y-min_y+1};
+ }
+ while(count>1){
+  int32_t best=INT32_MAX;uint32_t bi=0,bj=1;struct rect chosen={0};
+  for(uint32_t i=0;i+1<count;++i)for(uint32_t j=i+1;j<count;++j){struct rect merged=unite(rects[i],rects[j]);int32_t extra=cost(merged)-cost(rects[i])-cost(rects[j]);if(extra<best){best=extra;bi=i;bj=j;chosen=merged;}}
+  if(count<=maximum&&best>0)break;
+  rects[bi]=chosen;memmove(rects+bj,rects+bj+1,(count-bj-1)*sizeof(*rects));--count;
+ }
+ for(uint32_t i=1;i<count;++i){struct rect value=rects[i];uint32_t j=i;while(j&&(rects[j-1].y>value.y||(rects[j-1].y==value.y&&rects[j-1].x>value.x))){rects[j]=rects[j-1];--j;}rects[j]=value;}
+ for(uint32_t i=0;i<count;++i){output[i*4]=rects[i].x;output[i*4+1]=rects[i].y;output[i*4+2]=rects[i].w;output[i*4+3]=rects[i].h;}
+ result=(int32_t)count;
+done:free(stack);free(grid);return result;
 }
