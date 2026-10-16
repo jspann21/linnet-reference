@@ -279,6 +279,8 @@ static uint64_t divide_ticks(uint64_t ticks,uint32_t rate){
     return quotient;
 }
 static uint32_t duration_ms(uint64_t ticks,uint32_t rate){
+    /* Frequent PCM position queries usually fit a single 32-bit divide. */
+    if(rate&&ticks<=UINT32_MAX/1000u)return (uint32_t)ticks*1000u/rate;
     if(ticks>UINT64_MAX/1000u)return UINT32_MAX;
     uint64_t ms=divide_ticks(ticks*1000u,rate);
     return ms>UINT32_MAX?UINT32_MAX:(uint32_t)ms;

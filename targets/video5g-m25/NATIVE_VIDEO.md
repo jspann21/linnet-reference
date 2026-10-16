@@ -305,3 +305,9 @@ deadline queries never extend that deadline. Native work arriving after a
 snapshot waits for this bounded poll; an earlier status deadline still wins.
 Input interrupts wake the CPU, and resume, seek and stop invalidate the pause
 conditions immediately. The existing native status cadence remains 500 ms.
+
+Timeline conversion uses one 32-bit division when multiplying the tick count
+by 1000 fits in 32 bits and the rate is nonzero. It produces the same rounded
+down milliseconds as the existing 64-bit path. Larger tick counts, zero rates
+and overflow retain that path and its saturation behavior. This avoids the
+long conversion loop on frequent short PCM position queries, including pause.
