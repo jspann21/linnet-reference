@@ -1382,11 +1382,11 @@ def choose_video_record(
 
 
 def _encoded_records(source, fps, keyint, ffmpeg, video_mode, max_rects,
-                     lz4_mode, color_depth, audio_file, audio_process):
+                     lz4_mode, color_depth, audio_file, audio_process, worker_limit):
     # Each video record depends only on two source frames. Keep audio state
     # sequential and retire bounded host jobs in source order, so scheduling
     # cannot change the bitstream or its audio/video timing.
-    workers = min(4, os.cpu_count() or 1)
+    workers = min(worker_limit, os.cpu_count() or 1)
     pending = deque()
     previous = None
     left_index = right_index = 0
@@ -1433,8 +1433,11 @@ def encode(
     *,
     metadata: dict[str, str] | None = None,
     source_has_audio: bool | None = None,
+    worker_limit: int = 4,
 ) -> None:
     fps = frame_rate(fps)
+    if type(worker_limit) is not int or not 1 <= worker_limit <= 8:
+        raise ValueError("IPVF worker limit must be between one and eight")
     # Validate metadata before creating temporary PCM or walking any video
     # frames. Header finalization must not be the first point where a bad tag
     # can reject an otherwise complete long encode.
@@ -1473,7 +1476,7 @@ def encode(
             f.write(bytes(DATA_OFFSET))
             for current, audio_kind, missing in _encoded_records(
                     source, fps, keyint, ffmpeg, video_mode, max_rects,
-                    lz4_mode, color_depth, audio_file, audio_process):
+                    lz4_mode, color_depth, audio_file, audio_process, worker_limit):
                 audio_counts[audio_kind] += 1
                 audio_padding_total += missing
                 kind, rects, video_payload, audio_payload, decoded_video_bytes = current

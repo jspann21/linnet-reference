@@ -302,6 +302,7 @@ def _worker(request):
     metadata = {key: value.encode("utf-8")[:120].decode("utf-8", "ignore")
                 for key, value in metadata.items() if value}
     creator.encode(source, output, fps, fps, data["ffmpeg"], video_mode="realtime",
+                   worker_limit=8 if math.ceil(duration * fps) >= 720 and (os.cpu_count() or 1) >= 12 else 4,
                    color_depth=color_depth,
                    metadata=metadata,
                    source_has_audio=any(stream.get("codec_type") == "audio"
