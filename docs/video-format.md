@@ -21,7 +21,7 @@ IPVF host files use `.ipvf` or `.ipv`. The device catalog is
 The sector-aligned stream contains a header, bounded metadata, audio/video
 records, and a keyframe seek index. Video supports raw/LZ4 keyframes and temporal
 updates; audio supports stereo, mono, and silence. RGB565 frame words are
-big-endian. IPVF uses an MSB-first CRC32 without a final XOR, unlike the usual
+little-endian. IPVF uses an MSB-first CRC32 without a final XOR, unlike the usual
 Linnet record CRC.
 
 ```console

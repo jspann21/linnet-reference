@@ -431,13 +431,14 @@ static bool ipvf_record_header(void){
     return true;
 }
 #if defined(__arm__)
-extern void ln_video_copy_rgb565(uint16_t*,const uint8_t*,uint32_t);
 extern void ln_video_xor_rgb565(uint16_t*,const uint8_t*,const uint16_t*,uint32_t);
 #endif
 static int decode_ipvf(void){
     /* Repeat records retain immutable pixels; each queue entry owns its time. */
     if(v.type==2u){if(v.previous==NONE)return -1;v.building=v.previous;return 1;}
     bool compressed=v.source_type>=3u;if(compressed&&!v.at){
+        /* Full-frame records decode directly into their unpublished slot. */
+        if(v.type==0u)v.lz_output_slot=v.building;
 #if !defined(LINNET_PROFILE_RELEASE)
         uint32_t started=ln_time_us();
 #endif
@@ -446,37 +447,29 @@ static int decode_ipvf(void){
         v.lz_us+=ln_time_us()-started;
 #endif
         if(result<=0)return result;v.at=1;v.decode_at=v.decode_pixel=0;}
-    const uint8_t*payload=compressed?IPVF_LZ_SCRATCH:record_source()+16;uint16_t*out=frame_slot(v.building),*previous=frame_slot(v.previous);
+    const uint8_t*payload=compressed?(v.type==0u?(const uint8_t*)frame_slot(v.building):IPVF_LZ_SCRATCH):record_source()+16;uint16_t*out=frame_slot(v.building),*previous=frame_slot(v.previous);
     /* Rockbox completes one retained record in one decoder pass. IPVF's
      * target-native frame bound already limits this work; yielding for
      * every 2,048 pixels and every rectangle row inflated small updates into
      * dozens of runtime turns and prevented the audio cursor from advancing. */
     if(v.type==0u){
-        /* Full frames and the LZ scratch start on four-byte boundaries. Swap
-         * both big-endian RGB565 pixels in each ARM word without unaligned
-         * loads; may_alias also permits accessing the uint16_t render slots. */
+        /* Native pixels need no byte conversion. Full-frame LZ4 already
+         * owns out; XOR may consume its residual in place. */
         typedef uint32_t pixel_pair __attribute__((may_alias));
 #if !defined(__arm__)
         const pixel_pair*source=(const pixel_pair*)payload;
         pixel_pair*target=(pixel_pair*)out;
 #endif
-        /* Zero-displacement motion has the same prediction as XOR. Fuse
-         * byte swapping and prediction instead of walking the frame twice. */
         if(v.source_type==5u||(v.source_type==6u&&!v.motion_dx&&!v.motion_dy)){
 #if defined(__arm__)
             ln_video_xor_rgb565(out,payload,previous,PIXELS);
 #else
             const pixel_pair*prediction=(const pixel_pair*)previous;
             for(uint32_t pair=0;pair<PIXELS/2u;++pair){uint32_t word=source[pair];
-                target[pair]=prediction[pair]^((word&0x00ff00ffu)<<8)^((word&0xff00ff00u)>>8);}
+                target[pair]=prediction[pair]^word;}
 #endif
         }else{
-#if defined(__arm__)
-            ln_video_copy_rgb565(out,payload,PIXELS);
-#else
-            for(uint32_t pair=0;pair<PIXELS/2u;++pair){uint32_t word=source[pair];
-                target[pair]=((word&0x00ff00ffu)<<8)|((word&0xff00ff00u)>>8);}
-#endif
+            if(payload!=(const uint8_t*)out)copy(out,payload,FRAME_BYTES);
             if(v.source_type==6u){
                 /* Residual-only borders predict zero. Intersect translated
                  * source bounds once, then XOR only valid row spans. */
@@ -512,37 +505,12 @@ static int decode_ipvf(void){
         }else copy(out,previous,FRAME_BYTES);
         v.decode_pixel=PIXELS;
     }
-#if !defined(__arm__)
-    typedef uint16_t rect_pixel __attribute__((may_alias));
-    typedef uint32_t rect_pair __attribute__((may_alias));
-#endif
     while(v.tile_count){if(v.decode_at+8u>v.decoded_bytes)return -1;uint32_t x=payload[v.decode_at],y=payload[v.decode_at+1],w=payload[v.decode_at+2],h=payload[v.decode_at+3],bytes=ln_read_le32(payload+v.decode_at+4);
         if(!w||!h||x+w>v.width||y+h>v.height||bytes!=w*h*2u||bytes>v.decoded_bytes-v.decode_at-8u)return -1;
         const uint8_t*source=payload+v.decode_at+8u;
-#if defined(__arm__)
-        if(w==v.width)ln_video_copy_rgb565(out+y*v.width,source,w*h);
+        if(w==v.width)copy(out+y*v.width,source,bytes);
         else for(uint32_t row=0;row<h;++row)
-            ln_video_copy_rgb565(out+(y+row)*v.width+x,source+row*w*2u,w);
-#else
-        for(uint32_t row=0;row<h;++row){
-            uint16_t*target=out+(y+row)*v.width+x;
-            const rect_pixel*input=(const rect_pixel*)(source+row*w*2u);uint32_t remaining=w;
-            /* Rectangle headers and pixels preserve halfword alignment.
-             * Peel one destination pixel, then store aligned pixel pairs. */
-            if((uintptr_t)target&2u){uint32_t pixel=*input++;*target++=(uint16_t)((pixel>>8)|(pixel<<8));--remaining;}
-            rect_pair*pairs=(rect_pair*)target;
-            if(!((uintptr_t)input&3u)){
-                const rect_pair*words=(const rect_pair*)input;
-                while(remaining>=2u){uint32_t word=*words++;
-                    *pairs++=((word&0x00ff00ffu)<<8)|((word&0xff00ff00u)>>8);remaining-=2u;}
-                input=(const rect_pixel*)words;
-            }else{
-                while(remaining>=2u){uint32_t word=(uint32_t)input[0]|((uint32_t)input[1]<<16);
-                    *pairs++=((word&0x00ff00ffu)<<8)|((word&0xff00ff00u)>>8);input+=2u;remaining-=2u;}
-            }
-            if(remaining){uint32_t pixel=*input;*(uint16_t*)pairs=(uint16_t)((pixel>>8)|(pixel<<8));}
-        }
-#endif
+            copy(out+(y+row)*v.width+x,source+row*w*2u,w*2u);
         v.decode_at+=8u+bytes;--v.tile_count;
     }
     return v.decode_at==v.decoded_bytes?1:-1;

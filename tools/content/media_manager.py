@@ -2729,7 +2729,7 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                 record()
                 continue
             profile_key = (f"{media_profile['video_width']}x{media_profile['video_height']}-"
-                           f"{media_profile['video_fps']}-{media_profile['video_color']}-realtime")
+                           f"{media_profile['video_fps']}-{media_profile['video_color']}-realtime-native")
             fingerprint = hashlib.sha256(f"ipvf-{profile_key}:{source_key}:{source_stamp}".encode()).hexdigest()
             cached = video_state.get(relative, {})
             if not isinstance(cached, dict):
@@ -3128,6 +3128,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             option = preparation_option(kind, identity, photo_dimension, music_verification)
             video_version = 6 if media_profile.get("video_backend") == "native-mp4" else 5 if media_profile.get("video_backend") == "bcm-mp4" else 4
             video_mode = (':chunked' if (video_selection is None or video_selection) and (ffmpeg or shutil.which('ffmpeg')) else ':copy') if media_profile.get('video_backend') == 'bcm-mp4' else ''
+            if media_profile.get('video_backend') == 'ipvf':
+                video_mode = ':realtime-native'
             signature = (f"videos-v{video_version}{video_mode}-{json.dumps(media_profile, sort_keys=True)}:{item['fingerprint']}" if kind == "Videos"
                          else f"{option}:{item['fingerprint']}")
             saved = state.get(kind, {})

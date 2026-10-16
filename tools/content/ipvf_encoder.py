@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """Encode video and audio for Linnet's target-native IPVF viewer.
 
-IPVF stores target-sized RGB565 big-endian pixels, lossless bounding-rectangle
+IPVF stores target-sized RGB565 little-endian pixels, lossless bounding-rectangle
 deltas, and one independent
 44.1 kHz silence, mono IMA, or stereo IMA payload after each frame's video.
 Video and matching audio remain together in one sector-aligned disk read.
@@ -16,6 +16,7 @@ from operator import sub
 import struct
 import subprocess
 import zlib
+from array import array
 from collections import deque
 from concurrent.futures import ProcessPoolExecutor
 from fractions import Fraction
@@ -32,11 +33,11 @@ RECORD_HEADER_SIZE = 16
 MAX_RECORD_SECTORS = 192
 MOTION_MIN_SECTOR_SAVING = 10
 MAGIC = b"IPVF"
-FLAG_RGB565BE = 1
+FLAG_RGB565LE = 1
 FLAG_SECTOR_RECORDS = 2
 FLAG_IMA_ADPCM = 8
 FLAG_TEMPORAL_XOR = 16
-FLAGS = FLAG_RGB565BE | FLAG_SECTOR_RECORDS | FLAG_IMA_ADPCM
+FLAGS = FLAG_RGB565LE | FLAG_SECTOR_RECORDS | FLAG_IMA_ADPCM
 TYPE_KEY = 0
 TYPE_RECTS = 1
 TYPE_REPEAT = 2
@@ -1099,7 +1100,12 @@ def ffmpeg_frames(
                 # several adjacent RGB565 values for the same visible shade.
                 colors = struct.unpack(f">{W * H}H", frame)
                 frame = b"".join(map(_gray4_pixels().__getitem__, colors))
-            yield frame
+            # Keep FFmpeg's established RGB565 quantization, then prepare
+            # native pixel words on the host instead of swapping on the iPod.
+            pixels = array("H")
+            pixels.frombytes(frame)
+            pixels.byteswap()
+            yield pixels.tobytes()
     finally:
         if not exhausted and proc.poll() is None:
             proc.kill()
