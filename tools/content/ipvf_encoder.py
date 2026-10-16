@@ -24,6 +24,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import BinaryIO
 
+from .ipvf_audio import encode_audio as _native_ima_audio
+
 W, H = 220, 176
 FRAME_BYTES = W * H * 2
 HEADER_SIZE = 80
@@ -367,6 +369,9 @@ def encode_adaptive_ima(
         raise ValueError("PCM does not contain exactly the requested frames")
     if not 0 <= left_index <= 88 or not 0 <= right_index <= 88:
         raise ValueError("invalid initial IMA ADPCM index")
+    native = _native_ima_audio(pcm, frames, left_index, right_index)
+    if native is not None:
+        return native
     if pcm == bytes(len(pcm)):
         return b"", left_index, right_index, "silence"
     dual_mono = pcm[0::4] == pcm[2::4] and pcm[1::4] == pcm[3::4]
@@ -1449,8 +1454,8 @@ def encode(
     worker_limit: int = 4,
 ) -> None:
     fps = frame_rate(fps)
-    if type(worker_limit) is not int or not 1 <= worker_limit <= 8:
-        raise ValueError("IPVF worker limit must be between one and eight")
+    if type(worker_limit) is not int or not 1 <= worker_limit <= 12:
+        raise ValueError("IPVF worker limit must be between one and twelve")
     # Validate metadata before creating temporary PCM or walking any video
     # frames. Header finalization must not be the first point where a bad tag
     # can reject an otherwise complete long encode.

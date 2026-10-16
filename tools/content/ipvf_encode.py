@@ -305,8 +305,14 @@ def _worker(request):
     # Format metadata has byte limits; truncate on UTF-8 character boundaries.
     metadata = {key: value.encode("utf-8")[:120].decode("utf-8", "ignore")
                 for key, value in metadata.items() if value}
+    frames, cpus = math.ceil(duration * fps), os.cpu_count() or 1
+    workers = 8 if frames >= 720 and cpus >= 12 else 4
+    if frames >= 4320 and cpus >= 20:
+        from .ipvf_audio import available
+        if available():
+            workers = 12
     creator.encode(source, output, fps, fps, data["ffmpeg"], video_mode="realtime",
-                   worker_limit=8 if math.ceil(duration * fps) >= 720 and (os.cpu_count() or 1) >= 12 else 4,
+                   worker_limit=workers,
                    color_depth=color_depth,
                    metadata=metadata,
                    source_has_audio=any(stream.get("codec_type") == "audio"

@@ -52,6 +52,8 @@ def create(output):
         shutil.copy2(aac_executable(), work / 'dist/Linnet Media/_internal/aac-index.exe')
         from tools.content.mp3_index import executable as mp3_executable
         shutil.copy2(mp3_executable(), work / 'dist/Linnet Media/_internal/mp3-index.exe')
+        from tools.content.ipvf_audio import library_path as ipvf_audio_library
+        shutil.copy2(ipvf_audio_library(), work / 'dist/Linnet Media/_internal/ipvf-audio.dll')
         app = work / "dist/Linnet Media"
         shutil.copy2(ROOT / "docs/releases.md", app / "README.md")
         # Retain codec notices beside the native AAC/MP3 preparation helpers.
