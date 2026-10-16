@@ -529,6 +529,11 @@ static void step_inner(uint32_t now) {
         bool sequential=false;
         for(uint32_t way=0;way<2u;++way)
             if(cache_sectors[way]&&cache_lba[way]+cache_sectors[way]==s->lba)sequential=true;
+#if defined(LINNET_TARGET_PHOTO4G_P98) && defined(LINNET_IMAGE_OS)
+        /* Sequential FAT mirror walks otherwise pay a flash command per 4 KiB. */
+        if(sequential&&s->op==LN_BLOCK_READ&&device.media_kind==LN_ATA_MEDIA_SOLID_STATE)
+            capacity=LN_BLOCK_READ_AHEAD_DEFAULT;
+#endif
         uint32_t ceiling=sequential?capacity:8u;
         if(read_ahead>ceiling)read_ahead=ceiling;
         while(active_count<8u){
