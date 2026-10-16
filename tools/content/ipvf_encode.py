@@ -308,7 +308,7 @@ def _worker(request):
     frames, cpus = math.ceil(duration * fps), os.cpu_count() or 1
     workers = 8 if frames >= 720 and cpus >= 12 else 4
     if frames >= 4320 and cpus >= 20:
-        from .ipvf_audio import available
+        from .ipvf_host import available
         if available():
             workers = 12
     creator.encode(source, output, fps, fps, data["ffmpeg"], video_mode="realtime",

@@ -24,7 +24,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import BinaryIO
 
-from .ipvf_audio import encode_audio as _native_ima_audio
+from . import ipvf_host
 
 W, H = 220, 176
 FRAME_BYTES = W * H * 2
@@ -369,7 +369,7 @@ def encode_adaptive_ima(
         raise ValueError("PCM does not contain exactly the requested frames")
     if not 0 <= left_index <= 88 or not 0 <= right_index <= 88:
         raise ValueError("invalid initial IMA ADPCM index")
-    native = _native_ima_audio(pcm, frames, left_index, right_index)
+    native = ipvf_host.encode_audio(pcm, frames, left_index, right_index)
     if native is not None:
         return native
     if pcm == bytes(len(pcm)):
@@ -826,6 +826,10 @@ def estimate_translation(
     if not 0 <= max_shift < min(W, H) or sample_step <= 0:
         raise ValueError("invalid translation search bounds")
 
+    native = ipvf_host.estimate_translation(previous, current, W, H, max_shift, sample_step)
+    if native is not None:
+        return native
+
     score_cache: dict[tuple[int, int], tuple[int, int]] = {}
     current_samples = {}
     previous_samples = {}
@@ -1211,6 +1215,9 @@ def _compress_record_if_smaller(
 
 def _coalesce_lz4_matches(packed: bytes, raw: bytes, minimum: int = 8) -> bytes:
     """Replace short matches with exact literals, retaining longer match offsets."""
+    native = ipvf_host.coalesce(packed, raw, minimum)
+    if native is not None:
+        return native
     output = bytearray()
     cursor = position = anchor = 0
     packed_size = len(packed)
@@ -1399,6 +1406,11 @@ def choose_video_record(
     return selected
 
 
+def _configure_video_worker(width, height, sectors, host_library):
+    configure_geometry(width, height, sectors)
+    ipvf_host.configure_worker(host_library)
+
+
 def _encoded_records(source, fps, keyint, ffmpeg, video_mode, max_rects,
                      lz4_mode, color_depth, audio_file, audio_process, worker_limit):
     # Each video record depends only on two source frames. Keep audio state
@@ -1414,8 +1426,8 @@ def _encoded_records(source, fps, keyint, ffmpeg, video_mode, max_rects,
         video_kind, rects, payload, decoded = future.result()
         return (video_kind, rects, payload, audio, decoded), kind, missing
 
-    with ProcessPoolExecutor(max_workers=workers, initializer=configure_geometry,
-                             initargs=(W, H, MAX_RECORD_SECTORS)) as pool:
+    with ProcessPoolExecutor(max_workers=workers, initializer=_configure_video_worker,
+                             initargs=(W, H, MAX_RECORD_SECTORS, ipvf_host.worker_path())) as pool:
         for frame, current in enumerate(ffmpeg_frames(source, fps, ffmpeg, color_depth)):
             samples = audio_boundary(frame + 1, fps) - audio_boundary(frame, fps)
             size = samples * AUDIO_FRAME_BYTES
