@@ -2,6 +2,7 @@
 import hashlib
 import os
 import ctypes
+import shutil
 from pathlib import Path, PureWindowsPath
 import time
 import uuid
@@ -156,12 +157,18 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
             raise ValueError('existing video package exceeds the supported backup size')
         previous = dict(bytes=size, sha256=_hash(active, size))
     reuse_package = previous is not None and previous['bytes'] == candidate['bytes'] and previous['sha256'] == candidate['sha256']
-    needed = (0 if reuse_package else candidate['bytes'] + (previous['bytes'] if previous else 0)) + 3*65536 + 1024*1024
+    # Photo IPVF is prepared on this computer; keep its recovery bytes here too.
+    backup_on_host = not native
+    needed = (0 if reuse_package else candidate['bytes'] + (previous['bytes'] if previous and not backup_on_host else 0)) + 3*65536 + 1024*1024
     if identity['free_bytes'] < needed:
         raise ValueError('insufficient free space for new video package and retained backup')
-    _same_target(identity, inspect_target(number, serial, volume, drive))
     from .host_state import receipt_directory
-    receipt_path = receipt_directory(identity)/('publish-videos-'+uuid.uuid4().hex+'.json')
+    receipts = receipt_directory(identity)
+    host_root = receipts.parent
+    if backup_on_host and previous and not reuse_package and shutil.disk_usage(host_root).free < previous['bytes'] + 1024*1024:
+        raise ValueError('insufficient computer space for previous video package')
+    _same_target(identity, inspect_target(number, serial, volume, drive))
+    receipt_path = receipts/('publish-videos-'+uuid.uuid4().hex+'.json')
     receipt = dict(operation='publish-videos', passed=False, phase='preflight-complete',
                    identity=identity, candidate_sha256=candidate['sha256'], candidate_bytes=candidate['bytes'],
                    previous=previous, started_at=time.time(),
@@ -173,6 +180,12 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
 
     record()
     recovery_paths = []
+    host_recovery_paths = []
+    def finish_backups():
+        _finish_backups(receipt, recovery_paths, root, guard)
+        if host_recovery_paths:
+            _finish_backups(receipt, host_recovery_paths, root, guard, host_root=host_root)
+            receipt['backups_retained'] = [str(path) for path in recovery_paths + host_recovery_paths if path.exists()]
     try:
         for path in (linnet, metadata, directory.parent, directory):
             guard()
@@ -182,11 +195,19 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
         if previous and not reuse_package:
             receipt['phase'] = 'backing-up-previous'
             record()
-            backups.mkdir(exist_ok=True)
-            backup = backups/(previous['sha256'][:8].upper()+(active.suffix.upper() if native else '.IPV'))
-            _copy_verified(active, backup, previous, root, guard)
+            if backup_on_host:
+                backup = host_root/'recovery'/(uuid.uuid4().hex+'-'+previous['sha256'][:8].upper()+'.IPV')
+                _plain(backup.parent, host_root); backup.parent.mkdir(exist_ok=True)
+                host_recovery_paths.append(backup)
+                receipt['backup'] = str(backup); record()
+            else:
+                backups.mkdir(exist_ok=True)
+                backup = backups/(previous['sha256'][:8].upper()+active.suffix.upper())
+            _copy_verified(active, backup, previous, root, guard,
+                           destination_root=host_root if backup_on_host else None)
             receipt['backup'] = str(backup)
-            recovery_paths.append(backup)
+            if not backup_on_host:
+                recovery_paths.append(backup)
         if not reuse_package:
             temporary = directory/('P'+uuid.uuid4().hex[:7].upper()+'.TMP')
             receipt.update(phase='copying-candidate', temporary=str(temporary))
@@ -248,7 +269,7 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
                 'Published package fsynced and read back; existing catalog verified; '
                 'FAT rename is not a power-loss journal'
             )
-            _finish_backups(receipt, recovery_paths, root, guard)
+            finish_backups()
             receipt.update(passed=True, phase='published', finished_at=time.time(), package=str(active),
                            catalog=str(catalog), frames=candidate['frames'])
             record()
@@ -276,7 +297,7 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
         if catalog.read_bytes()!=catalog_bytes:
             raise OSError('published video catalog readback mismatch')
         receipt['catalog'] = str(catalog)
-        _finish_backups(receipt, recovery_paths, root, guard)
+        finish_backups()
         if reuse_package:
             receipt['durability'] = (
                 'Existing package verified; catalog fsynced and read back; '
@@ -296,6 +317,8 @@ def _publish(package, candidate, identity, root, number, serial, volume, drive,
         return receipt
     except Exception as exc:
         receipt.update(error=str(exc), finished_at=time.time())
+        if host_recovery_paths:
+            receipt['backups_retained'] = [str(path) for path in recovery_paths + host_recovery_paths if path.exists()]
         try:
             record()
         except OSError:
