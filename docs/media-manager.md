@@ -77,6 +77,14 @@ Media Manager saves the selected firmware and the current USB and disk identity,
 safely ejects, then asks you to hold **Menu + Select** for about 12 seconds.
 Release the buttons when Media Manager detects DFU and tells you to release.
 Keep USB connected throughout; subsequent restarts are automatic.
+These live hold/release instructions appear in a focused dialog that advances
+automatically. Turn the Hold switch off before following them.
+
+When Linnet Link is already connected, Media Manager recognizes the running OS
+or recovery connection. Choose **Open Disk Mode** to reconnect storage
+automatically. A saved, unfinished Classic setup instead offers **Resume Classic
+installation** for that device. During a hosted recovery connection, the iPod
+directs you to continue setup on the computer.
 
 Linnet Link then checks RAM, panel initialization, disk identity and partition
 access, reads and independently verifies the original NOR backup, authenticates

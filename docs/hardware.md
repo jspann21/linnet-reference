@@ -22,6 +22,7 @@ physical controls, power behavior, or recovery qualification.
 | iPod Video A1136 | `video5g-m25` | iFlash, 125 GB | 32 MiB | 320 × 240, RGB565 |
 | iPod Video A1136 | `video5g-m25` | Toshiba MK8010GAH, 80 GB; logical 512 / physical 1024-byte sectors | 64 MiB | 320 × 240, RGB565 |
 | iPod classic A1238 | `classic6g-n25` | iFlash, 125 GB | 64 MiB | 320 × 240, RGB565; LCD type 1 |
+| iPod classic A1238 | `classic6g-n25` | Toshiba MK1634GAL, 160 GB; logical 512 / physical 4096-byte sectors, 4200 rpm | 64 MiB, walking data/address checks passed | 320 × 240, RGB565; LCD type 2 |
 | iPod 4G monochrome A1059 | `ipod4g-q21` | Toshiba MK2006GAL, 20 GB; firmware `BY301A`, 4200 rpm, 512-byte sectors | 32 MiB | 160 × 128, 2-bit grayscale (four levels) |
 | iPod 4G monochrome MP102 | `ipod4g-q21` | Toshiba MK2006GAL, 20 GB; 512-byte sectors | 32 MiB | 160 × 128, 2-bit grayscale (four levels) |
 
@@ -51,7 +52,7 @@ status certifies every build or the complete release workflow.
 | M25 32 / 64 MiB boards | A preserving alias probe detects the upper bank; 64 MiB boards gain metadata and clean-read caches. Both sizes tested; the 60 GB configuration remains unqualified. |
 | M25 BCM revisions `0x000b0010` / `0x000b0011` | Both tested. Driver admission checks the board and firmware image; other revisions are rejected. The [M25 qualification record](../targets/video5g-m25/QUALIFICATION.md) covers the 30 GB / 32 MiB unit in more detail. |
 | P98 LCD types | Type 1 tested. Types 0/2/3 are implemented but unqualified. ROM revision `0x60000` forces type 0 because its straps are unreliable; that revision has no separate physical qualification. COP video blitting is limited to compatible even panel types. |
-| N25 LCD types | Type 1 has physical evidence. Type 0 and the 16-bit setup paths for types 2/3 need physical qualification. |
+| N25 LCD types | Types 1 and 2 have physical display evidence. Type 2 was checked on the MK1634GAL 160 GB unit. Types 0/3 need physical qualification. |
 | Q21 HD66753 panel | Wake, contrast, scanout, and grayscale conversion tested on A1059 and MP102. Replacement assemblies remain unqualified. |
 | Mechanical disks without rotation data | Exact model fallbacks report 4200 rpm. Q21 MK2004GAL/MK2006GAL and M25 MK3008GAL/MK8010GAH have physical checks. Q21 MK4004GAH, P98 factory-disk fallbacks, and M25 MK6008GAH remain unqualified. |
 | ATA addressing and sector geometry | LBA28 and LBA48 tested. PP502x physical-sector alignment and partial-sector read/modify/write tested at 512 and 1024 bytes; 2048/4096-byte physical sectors remain unqualified. Native logical sectors must be 512 bytes. |
@@ -60,6 +61,15 @@ status certifies every build or the complete release workflow.
 | USB | Q21, M25, and P98 OS Disk Mode use tested native high-speed paths; P98 Boot and Link retain full speed. Host USB sector geometry is separate from native ATA geometry. |
 | Controls and headphone audio | Board-specific wheel, button, Hold, jack, clicker, and codec paths have physical evidence on the tested units. Replacement assemblies and sustained playback need their own checks. |
 | Power and charging | USB charging and bounded sleep/wake have been exercised. Negotiated current limits and diagnostics do not measure actual current, battery runtime, or FireWire charging. |
+
+The N25 MK1634GAL unit passed screen, wheel, buttons, Hold, and audible clicker
+checks. Its drive powered off after idle and woke for a verified scratch
+write/read/restore crossing a 4 KiB boundary, without storage errors. MP3
+decoding and PCM playback ran without underruns or digital audio faults, but
+only the left headphone output was audible. A right-only PCM tone was silent
+with headphones whose right earpiece worked elsewhere. Stereo headphone output
+on this unit remains unqualified pending comparison with Apple OS or another
+headphone pair; symmetric codec readback alone does not establish analog output.
 
 ## Known limits
 
