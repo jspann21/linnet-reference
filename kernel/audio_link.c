@@ -115,6 +115,14 @@ int ln_audio_link_dispatch(const ln_link_frame *q,ln_link_frame *r,uint8_t *repl
             if(!ln_music_seek(frame))return 1;}else return 1;
         ln_write_le32(reply+4,action);
     }else if(q->command==112){
+#if defined(LINNET_SOC_S5L8702) && !defined(LINNET_PROFILE_RELEASE) && defined(LINNET_IMAGE_OS)
+        if(q->length==4u && ln_read_le32(q->payload)==1u){
+            extern void ln_s5l_audio_diagnostics(uint32_t out[16]);
+            uint32_t words[16];ln_s5l_audio_diagnostics(words);
+            for(uint32_t n=0;n<16u;++n)ln_write_le32(reply+n*4u,words[n]);
+            r->length=64;r->flags=LINNET_LINK_ACK;return 1;
+        }
+#endif
         if(q->length)return 1;
         uint32_t words[20]={0x53445541u,0,a.rate,a.queued,a.free_frames,a.consumed,a.submitted,
             a.interrupts,a.underruns,a.silence_frames,a.fault,a.playing,a.paused,a.initialized,

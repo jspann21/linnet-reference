@@ -176,6 +176,13 @@ Use the implementation for exact command IDs and record offsets:
 | Storage and updates | [Storage Link](../kernel/storage_link.h), [storage owner](../services/storage/storage.c) |
 | Media records | [Host decoders](../tools/link/music.py) |
 
+Classic development OS builds accept `AUDIO_STATE` with a little-endian
+`u32(1)` payload for a read-only codec snapshot. The 64-byte reply contains
+`AUDC`, a successful-read flag, the 32 bytes at CS42L55 addresses `01h..20h`,
+then six words: I2S clock control, transmit configuration, transmit command,
+clock divider, system audio clock, and codec-ready state. The I2C read has a
+20 ms deadline. An ordinary empty `AUDIO_STATE` request is unchanged.
+
 Release verification checks that developer transport, injection, capture, and
 related services are excluded. Keep ACK retirement, DMA quiescence, bounded
 waits, and buffer ownership intact when changing firmware transport code.

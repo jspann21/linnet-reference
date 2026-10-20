@@ -5,6 +5,10 @@
 #include "board.h"
 #include "irq.h"
 #include "pcm_dma.h"
+#if !defined(LINNET_PROFILE_RELEASE)
+#include "i2c.h"
+#include "registers.h"
+#endif
 extern void ln_memory_copy(void *,const void *,uint32_t);
 extern uint32_t ln_time_us(void);
 #ifdef LINNET_SRAM_MONITOR
@@ -224,3 +228,19 @@ void ln_audio_snapshot(struct ln_audio_status *out) {
     }
     ln_s5l_irq_restore(flags);
 }
+#if !defined(LINNET_PROFILE_RELEASE) && defined(LINNET_IMAGE_OS)
+void ln_s5l_audio_diagnostics(uint32_t out[16]) {
+    uint8_t registers[32]={0};
+    for(unsigned n=0;n<16u;++n)out[n]=0;
+    out[0]=0x43445541u; /* AUDC: read-only codec registers 01h..20h. */
+    /* MAP bit 7 enables CS42L55 address auto-increment. One transaction has
+     * the existing I2C driver's 20 ms deadline; no IRQ masking or writes. */
+    if(codec_ready && ln_s5l_i2c_read(0,0x4a,0x81,registers,sizeof(registers))) {
+        out[1]=1;
+        for(unsigned n=0;n<32u;++n)out[2u+n/4u]|=(uint32_t)registers[n]<<((n%4u)*8u);
+    }
+    out[10]=LN_REG(0x3ca00000u);out[11]=LN_REG(0x3ca00004u);
+    out[12]=LN_REG(0x3ca00008u);out[13]=LN_REG(0x3ca00040u);
+    out[14]=LN_REG(0x3c50000cu);out[15]=codec_ready;
+}
+#endif
