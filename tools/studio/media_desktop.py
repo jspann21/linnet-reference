@@ -999,6 +999,14 @@ class ScreensController:
         window.work('save_screens', lambda: screen_settings.save(identity, state), 'Saving screen settings…')
 
 
+class SetupInstructionDialog(QDialog):
+    """Keep the live button instructions visible until setup advances."""
+    def reject(self):
+        # Escape and the window close shortcut must not hide the release cue.
+        # The explicit Stop button requests cancellation through the worker.
+        pass
+
+
 class MediaWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1033,6 +1041,7 @@ class MediaWindow(QMainWindow):
         if self.view not in ('Songs', 'Albums', 'Artists', 'Genres'):
             self.view = 'Albums'
         self.busy = False
+        self.setup_instruction_dialog = None
         self.closed = False
         self.cache_info = None
         self.cache_library_dirty = False
@@ -1677,6 +1686,8 @@ class MediaWindow(QMainWindow):
             return
         self.active_operation = None
         tag, result, error = context.tag, outcome.value, outcome.error
+        if tag == 'classic_install':
+            self.close_setup_instruction()
         self.busy = False
         self.progress.hide()
         self.cancel_button.hide()
@@ -3229,11 +3240,45 @@ class MediaWindow(QMainWindow):
     def show_setup_instruction(self, event):
         if not self.busy or not self.active_operation or self.active_operation.tag!='classic_install':
             return
-        self.install_detail.setText(event['message']); self.install_detail.show()
+        if event.get('action') in ('hold','release'):
+            if self.setup_instruction_dialog is None:
+                dialog = SetupInstructionDialog(self)
+                dialog.setWindowTitle('Connect your Classic for installation')
+                dialog.setWindowFlag(Qt.WindowCloseButtonHint, False)
+                dialog.setWindowModality(Qt.WindowModal)
+                dialog.setMinimumWidth(480)
+                dialog.setMaximumWidth(600)
+                layout = box(dialog, margins=(28,28,28,28))
+                dialog.heading = label('', 'sectionTitle', True)
+                dialog.message = label('', None, True)
+                layout.addWidget(dialog.heading); layout.addWidget(dialog.message)
+                layout.addWidget(label('Media Manager detects this automatically. Keep USB connected.', None, True))
+                spinner = QProgressBar(); spinner.setRange(0,0); spinner.setTextVisible(False)
+                layout.addWidget(spinner)
+                dialog.stop_button = button('Stop installation', self.stop)
+                layout.addWidget(dialog.stop_button)
+                self.setup_instruction_dialog = dialog
+            dialog = self.setup_instruction_dialog
+            dialog.heading.setText('Release Menu + Select now' if event['action']=='release' else
+                                   'Hold Menu + Select')
+            dialog.message.setText(event['message'])
+            dialog.stop_button.setVisible(bool(event['can_stop']))
+            dialog.stop_button.setEnabled(bool(event['can_stop']) and not self.stop_event.is_set())
+            dialog.show(); dialog.raise_()
+            self.install_detail.hide()
+        else:
+            self.close_setup_instruction()
+            self.install_detail.setText(event['message']); self.install_detail.show()
         self.setup_progress.show()
         self.cancel_button.setVisible(bool(event['can_stop']))
         self.cancel_button.setEnabled(bool(event['can_stop']) and not self.stop_event.is_set())
         self.show_progress(event['message'])
+
+    def close_setup_instruction(self):
+        if self.setup_instruction_dialog is not None:
+            self.setup_instruction_dialog.done(QDialog.Accepted)
+            self.setup_instruction_dialog.deleteLater()
+            self.setup_instruction_dialog = None
 
     def resume_classic_setup(self):
         if self.busy:return
@@ -3442,6 +3487,8 @@ class MediaWindow(QMainWindow):
         context = self.active_operation
         if context and context.cancel_event:
             context.cancel_event.set()
+            if self.setup_instruction_dialog is not None:
+                self.setup_instruction_dialog.stop_button.setEnabled(False)
             self.cancel_button.setEnabled(False)
             self.show_progress('Stopping iPod reading…' if context.tag in ('scan', 'devices') else
                                'Stopping preparation checks…' if context.tag == 'plan' else

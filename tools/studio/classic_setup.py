@@ -153,7 +153,8 @@ def run(path, *, progress=lambda _message:None, instruction=lambda _message:None
         if _sha(bootstrap/name)!=digest:raise ValueError('Saved Classic bootstrap changed: '+name)
     artifacts=_artifacts(state)
     def save():installer._save(path,state,durable=True)
-    def guide(message):instruction(dict(message=message,can_stop=not state['persistent_writes']))
+    def guide(message, action=None):
+        instruction(dict(message=message,can_stop=not state['persistent_writes'],action=action))
     def check_cancel():
         if cancelled() and not state['persistent_writes']:
             state['phase']='cancelled';save();raise Cancelled('Classic setup stopped before bootloader installation. No flash was written.')
@@ -184,7 +185,7 @@ def run(path, *, progress=lambda _message:None, instruction=lambda _message:None
                         eject(current['disk_number'],current['disk_serial'])
                     state['phase']='waiting-dfu';save()
                     guide('Hold Menu + Select (the centre button) together for about 12 seconds, '
-                                'through the restart, until this screen tells you to release them. Keep USB connected.')
+                                'through the restart, until this screen tells you to release them. Keep USB connected.',action='hold')
                     deadline=time.monotonic()+180
                     device=json.loads(Path(state['device_plan']).read_text())
                     while True:
@@ -199,7 +200,7 @@ def run(path, *, progress=lambda _message:None, instruction=lambda _message:None
                             break
                         if time.monotonic()>=deadline:raise TimeoutError('DFU mode was not detected. Use Resume Classic installation to try the button step again.')
                         time.sleep(.2)
-                    guide('Release Menu + Select now. Your iPod’s screen will stay black briefly. Media Manager will continue automatically.')
+                    guide('Release Menu + Select now. Your iPod’s screen will stay black briefly. Media Manager will continue automatically.',action='release')
                     # A continued button hold resets DFU again after eight seconds.
                     # Allow release/reset to settle before loading or writing flash.
                     until=time.monotonic()+10
