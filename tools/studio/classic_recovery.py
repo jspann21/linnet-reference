@@ -283,13 +283,27 @@ def _enter_monitor(record, progress):
     from tools.link.session import DeviceError
 
     deadline = time.monotonic() + 45
+    restart_requested = False
+    last_error = ''
     while time.monotonic() < deadline:
-        session, endpoint, running = connect(serial_number=record['serial'], deadline_seconds=10)
+        try:
+            session, endpoint, running = connect(serial_number=record['serial'],
+                deadline_seconds=min(10, max(.001, deadline-time.monotonic())))
+        except (OSError, RuntimeError) as error:
+            # These are read-only connection attempts, not repeated restarts.
+            last_error = str(error)
+            time.sleep(min(.25, max(0, deadline-time.monotonic())))
+            continue
         try:
             if running['target_id'] != nor.TARGET:
                 raise ValueError('The reconnected Link target differs from the Classic')
-            if running['image_kind'] == 'boot' and running['build_id'] == record['monitor_build_id']:
+            if running['image_kind'] == 'boot':
+                if running['build_id'] != record['monitor_build_id']:
+                    raise ValueError('The connected recovery monitor differs from this Classic’s verified installation')
                 return
+            if restart_requested:
+                time.sleep(.25)
+                continue
             if not running['capabilities'] & 16:
                 raise ValueError('This Linnet build cannot enter Classic recovery through Link')
             state = session.storage_state()
@@ -299,7 +313,7 @@ def _enter_monitor(record, progress):
             progress('Restarting the Classic into its SRAM recovery monitor…')
             try:
                 session.reboot('recovery')
-                return
+                restart_requested = True
             except DeviceError:
                 # An explicit rejection makes no change. The session is poisoned:
                 # reconnect and inspect storage before asking again. An ambiguous
@@ -308,11 +322,19 @@ def _enter_monitor(record, progress):
                 time.sleep(.25)
         finally:
             session.close()
-    raise RuntimeError('Linnet is still using storage. Return to Disk Mode and retry removal when it is idle.')
+    raise RuntimeError('Linnet recovery did not become ready. Return to Disk Mode and retry removal when it is idle.' +
+                       (' ' + last_error if last_error else ''))
 
 
 def restore(identity, *, progress=lambda _message: None):
     """Restore flash through Link; return the same filesystem in Apple Disk Mode."""
+    from tools.content.publish import _exclusive
+    serial = _serial(identity.get('linnet_usb_serial'))
+    with _exclusive(dict(volume_unique_id='classic-setup:'+serial)):
+        return _restore(identity, progress=progress)
+
+
+def _restore(identity, *, progress):
     from tools.content.media_manager import discover, refresh
     from tools.content.guard import guard_volume
     from tools.content.publish import _exclusive
@@ -334,6 +356,14 @@ def restore(identity, *, progress=lambda _message: None):
         guard_volume(identity)
         marker['nor_restore_receipt'] = str(receipt_path)
         _save(Path(identity['root']) / JOURNAL, marker, durable=True)
+        # Disk Mode eject starts the saved default system. Recovery needs the
+        # installed Developer OS's Link endpoint even when Apple is the user's
+        # normal default. The setting disappears with Linnet on successful
+        # removal; if recovery stops, Linnet remains reachable for a retry.
+        from tools.studio.startup_default import _decode, set_default
+        if marker.get('startup_default_format') == 1 and _decode(Path(identity['root']), nor.TARGET) != 'linnet':
+            progress('Selecting Linnet for the automatic recovery restart…')
+            set_default(identity, 'linnet')
         progress('Safely ejecting Classic Disk Mode to enter bootloader recovery…')
         from tools.link.eject import eject
         eject(identity['disk_number'], identity['disk_serial'])
@@ -349,8 +379,15 @@ def restore(identity, *, progress=lambda _message: None):
                            progress=progress, mount_identity=identity)
     progress('Waiting for this iPod to reconnect in Apple Disk Mode…')
     deadline = time.monotonic() + 45
+    last_error = ''
     while time.monotonic() < deadline:
-        matches = [item for item in discover() if item.get('target_id') == nor.TARGET and
+        try:
+            devices = discover()
+        except (OSError, RuntimeError, ValueError) as error:
+            last_error = str(error)
+            time.sleep(.5)
+            continue
+        matches = [item for item in devices if item.get('target_id') == nor.TARGET and
                    item.get('linnet_usb_serial') == record['serial'] and item.get('native_target_id') != nor.TARGET]
         if len(matches) > 1:
             raise RuntimeError('More than one Apple disk has the reviewed Classic identity')
@@ -362,4 +399,5 @@ def restore(identity, *, progress=lambda _message: None):
                         linnet_files_preserved=True, requires_safe_eject=True)
         time.sleep(.5)
     raise RuntimeError('Apple boot flash was restored and verified. Reconnect this iPod in Apple Disk Mode, '
-                       'then choose Remove Linnet OS again to finish cleanup. Linnet files are still present.')
+                       'then choose Remove Linnet OS again to finish cleanup. Linnet files are still present.' +
+                       (' ' + last_error if last_error else ''))

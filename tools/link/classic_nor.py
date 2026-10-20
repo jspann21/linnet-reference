@@ -309,6 +309,8 @@ def restore(recovery, expected_sha, receipt_path, *, progress=print, mount_ident
     session=None;record_receipt()
     try:
         session,identity=_connect(record)
+        if identity['build_id'] != record['monitor_build_id']:
+            raise ValueError('The recovery monitor differs from the verified Classic installation')
         receipt['identity']=identity
         if _sign(session,original[START:START+64])!=original[START+64:START+80]:
             raise ValueError('Original NOR authentication does not match this device')

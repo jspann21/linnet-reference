@@ -153,6 +153,10 @@ Linnet files. Keep the iPod connected through these restarts. If Apple Disk Mode
 does not reconnect automatically, reconnect it and choose **Remove Linnet OS**
 again to finish cleanup. User builds need a Developer build before this Link
 recovery sequence; the original NOR backup remains the source of restoration.
+If Apple is the saved startup default, removal first selects Linnet for its
+automatic recovery restart. If recovery stops, Linnet remains selected so Link
+can reconnect for a retry. Removal holds exclusive access to this Classic
+through its restarts and verifies the recorded recovery monitor before flashing.
 If cleanup is interrupted, reconnect the same iPod and choose **Remove Linnet OS**
 again. Media Manager matches its host recovery copy to that iPod and resumes
 the removal.
