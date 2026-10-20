@@ -84,9 +84,11 @@ static bool decode(void) {
          * rail cycle. Its matched model, firmware, and capacity identify it. */
         if(!iflash)for(unsigned i=0;i<sizeof previous_serial;i++)if(info.serial[i]!=previous_serial[i])return false;
     }
-    static const char toshiba[]="TOSHIBA MK3008GAL";
-    unsigned match=0;while(toshiba[match]&&toshiba[match]==info.model[match])match++;
-    if(!toshiba[match]&&!info.model[match]&&info.media_kind==LN_ATA_MEDIA_UNKNOWN){
+    /* These mechanical drives omit IDENTIFY word 217's rotation rate.
+     * MK1634GAL: Toshiba's 2009-09-10 product specifications, 4,200 rpm:
+     * https://www.global.toshiba/ww/news/corporate/2009/09/pr1001.html */
+    if(info.media_kind==LN_ATA_MEDIA_UNKNOWN &&
+       (exact(info.model,"TOSHIBA MK3008GAL")||exact(info.model,"TOSHIBA MK1634GAL"))){
         info.media_kind=LN_ATA_MEDIA_ROTATING;info.rotation_rpm=4200;
     }
     info.can_power_off=info.media_kind!=LN_ATA_MEDIA_UNKNOWN&&info.can_flush&&
