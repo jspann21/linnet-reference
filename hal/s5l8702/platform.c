@@ -62,6 +62,9 @@ bool ln_platform_dma_idle(void){
     return !(LN_REG(0x3820001cu)|LN_REG(0x3990001cu));
 }
 void ln_platform_quiesce(void){
+#if defined(LINNET_HARDWARE_CLICKER) && defined(LINNET_IMAGE_OS)
+    ln_platform_click_stop();
+#endif
     (void)ln_s5l_pcm_stop();
 #ifdef LINNET_H264_VPU
     ln_vpu_close();

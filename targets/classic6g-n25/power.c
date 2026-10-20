@@ -192,6 +192,9 @@ void ln_power_backlight(bool on,uint8_t brightness) {
     else {state.failures++;state.flags|=LINNET_POWER_I2C_FAULT;}
 }
 bool ln_power_sleep(void){
+#if defined(LINNET_HARDWARE_CLICKER) && defined(LINNET_IMAGE_OS)
+    ln_platform_click_stop();
+#endif
     uint32_t failures=state.failures;
     ln_power_backlight(false,state.brightness);
     if(state.failures!=failures)return false;
@@ -205,6 +208,9 @@ bool ln_power_wake(void){
     state.sleeping=false;return true;
 }
 bool ln_power_shutdown(uint8_t sources) {
+#if defined(LINNET_HARDWARE_CLICKER) && defined(LINNET_IMAGE_OS)
+    ln_platform_click_stop();
+#endif
     if(!sources || (sources&~(LINNET_POWER_USB|LINNET_POWER_FIREWIRE)))return false;
     return write_pmu(0x0d,1u|((sources&LINNET_POWER_USB)?4u:0)|((sources&LINNET_POWER_FIREWIRE)?0x80u:0)) && write_pmu(0x0c,1);
 }

@@ -9,6 +9,7 @@
 #include "watchdog.h"
 #include "registers.h"
 #include "board.h"
+#include "clicker.h"
 static struct ln_core_status state;
 static volatile uint32_t wakes;
 static uint32_t clock_failure;
@@ -23,8 +24,15 @@ static uint32_t table[4096] __attribute__((aligned(16384)));
 #endif
 static void interrupt(uint32_t first,uint32_t second) {
     uint32_t started=ln_time_us();state.irq_count++;
-    if((first&(1u<<7)) && ln_s5l_deadline_pending()) {
-        ln_s5l_deadline_stop();wakes|=LINNET_WAKE_TIMER;first&=~(1u<<7);
+    if(first&(1u<<7)) {
+        bool handled=false;
+        if(ln_s5l_deadline_pending()){
+            ln_s5l_deadline_stop();wakes|=LINNET_WAKE_TIMER;handled=true;
+        }
+#if defined(LINNET_HARDWARE_CLICKER) && defined(LINNET_IMAGE_OS)
+        if(ln_s5l_click_irq())handled=true;
+#endif
+        if(handled)first&=~(1u<<7);
     }
 #if defined(LINNET_IMAGE_OS) && defined(LINNET_TARGET_CLASSIC6G_N25)
     if(first&(1u<<23)){
@@ -48,6 +56,9 @@ static void interrupt(uint32_t first,uint32_t second) {
 bool ln_core_init(void) {
     state=(struct ln_core_status){0};wakes=0;
     ln_s5l_irq_init(interrupt);ln_s5l_deadline_stop();ln_s5l_irq_enable(7,true);
+#if defined(LINNET_HARDWARE_CLICKER) && defined(LINNET_IMAGE_OS)
+    ln_platform_click_stop();
+#endif
 #ifndef LINNET_SRAM_MONITOR
     ln_core_watchdog_arm();
 #endif
