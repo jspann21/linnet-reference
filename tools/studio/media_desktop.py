@@ -2000,6 +2000,18 @@ class MediaWindow(QMainWindow):
         devices, errors = sorted(result['devices'], key=lambda item: item['drive']), result['errors']
         self.discovery_errors = errors
         self.link_connection = None
+        if devices and result.get('links'):
+            dialog = QDialog(self); dialog.setWindowTitle('Choose an iPod')
+            layout = box(dialog, margins=(24,24,24,24)); picker = ComboBox()
+            layout.addWidget(label('Choose an iPod', 'section'))
+            for item in devices:picker.addItem(self.device_title(item),('disk',item))
+            for item in result['links']:
+                picker.addItem(item['target_name']+' · Linnet Link · '+item['serial'][-6:],('link',item))
+            layout.addWidget(picker); layout.addWidget(button('Use this iPod',dialog.accept,'primary'))
+            if dialog.exec() != QDialog.Accepted:return
+            kind, selected = picker.currentData()
+            devices = [selected] if kind=='disk' else []
+            result = dict(result,links=[selected] if kind=='link' else [])
         if not devices and result.get('links'):
             links = result['links']
             selected = links[0]
@@ -2634,15 +2646,19 @@ class MediaWindow(QMainWindow):
         if not self.busy:
             from tools.studio.classic_setup import pending
             scope = dict(target_id=link['identity']['target_id'],linnet_usb_serial=link['serial']) if link else self.identity
-            self.resume_classic_button.setVisible(self.review is None and bool(pending(scope)))
+            resumable = self.review is None and bool(pending(scope))
+            self.resume_classic_button.setVisible(resumable)
+            if link and resumable:self.link_disk_button.hide()
         self.resume_classic_button.setEnabled(not self.busy)
         if self.review is not None:
             return
         if link:
             self.setup_device.setText(link['target_name'] + ' · ' + link['serial'][-6:])
             self.setup_software.setText('Connected through Linnet Link')
-            self.install_detail.setText('Your iPod is connected. Open Disk Mode to manage files. '
-                'If installation was interrupted, choose Resume Classic installation.')
+            self.install_detail.setText('Setup is continuing automatically. Keep USB connected.' if setting_up else
+                'Choose Resume Classic installation to continue the saved setup.' if self.resume_classic_button.isVisible() else
+                'Your iPod is connected. Open Disk Mode to manage files.' if link.get('can_open_disk') else
+                'Linnet Link is connected. This iPod’s storage is not available yet.')
             self.install_detail.show()
             return
         if self.identity:
@@ -3189,7 +3205,7 @@ class MediaWindow(QMainWindow):
                                    'Resume installation' if review and review['action'] == 'resume' else 'Install Linnet')
         self.uninstall_panel.setVisible(bool(review and (review['linnet']['state'] != 'absent' or
                                                         review['recovery'] or review['uninstall']['available'])))
-        if review is None and not (self.busy and self.active_operation and self.active_operation.tag=='classic_install'):
+        if review is None and not self.link_connection and not (self.busy and self.active_operation and self.active_operation.tag=='classic_install'):
             self.install_detail.hide()
         enabled = not self.busy and self.identity is not None and self.review is not None and bool(option and option.get('selectable'))
         linnet = option and option['kind'] == 'linnet'

@@ -66,7 +66,7 @@ bool ln_s5l_board_recovery_screen(bool connected){
     if(!ln_lcd_fill(0x0841))return false;
     text(44,"Linnet",0xffff);
     if(connected){
-        text(120,"Setup in Media Manager",0xad75);
+        text(120,"Setup on computer",0xad75);
     }else{
         text(94,"Select: Start",0xad75);
         text(134,"Play: Disk Mode",0xad75);

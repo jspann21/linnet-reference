@@ -195,7 +195,7 @@ _Noreturn void ln_bootstrap_main(void) {
          * minute without a Link frame, rebuild the USB connection. Active
          * uploads and diagnostics refresh this deadline on every request. */
         if(!ln_usb_poll() || ln_time_us()-last_request>=60000000u) {
-            if(host_connected){host_connected=false;(void)ln_s5l_board_recovery_screen(false);}
+            if(host_connected){host_connected=false;if(memory_ready)(void)ln_s5l_board_recovery_screen(false);}
             uint32_t diagnostic[8];ln_usb_diagnostics(diagnostic);
             usb_last_error=diagnostic[6]?diagnostic[6]:0x100u;
             if(usb_recoveries!=UINT32_MAX)usb_recoveries++;

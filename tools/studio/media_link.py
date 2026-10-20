@@ -1,5 +1,6 @@
 """Recognize and open an identified Linnet Link connection from Media Manager."""
 import time
+from contextlib import ExitStack
 
 
 def _classic_record(connection):
@@ -43,6 +44,14 @@ def discover():
 
 
 def open_disk(connection, *, progress=lambda _message: None):
+    from tools.content.publish import _exclusive
+    with ExitStack() as locks:
+        if connection['identity']['target_id'] == 'classic6g-n25':
+            locks.enter_context(_exclusive(dict(volume_unique_id='classic-setup:'+connection['serial'])))
+        return _open_disk(connection, progress=progress)
+
+
+def _open_disk(connection, *, progress):
     from tools.link.campaign import connect
     from tools.content.media_manager import discover as disks
     session, _, current = connect(serial_number=connection['serial'])
@@ -61,12 +70,21 @@ def open_disk(connection, *, progress=lambda _message: None):
     finally:
         session.close()
     deadline = time.monotonic() + 90
+    last_error = ''
     while time.monotonic() < deadline:
-        matches = [item for item in disks() if item.get('linnet_usb_serial') == connection['serial'] and
+        try:
+            result = disks(detailed=True)
+        except (OSError, RuntimeError, ValueError) as error:
+            last_error = str(error)
+            time.sleep(.5)
+            continue
+        last_error = '; '.join(result['errors'])
+        matches = [item for item in result['devices'] if item.get('linnet_usb_serial') == connection['serial'] and
                    item.get('native_target_id') == current['target_id']]
         if len(matches) > 1:
             raise ValueError('More than one mounted iPod matches this Link connection.')
         if matches:
             return dict(passed=True, reconnected_identity=matches[0], summary='Your iPod is ready for media management.')
         time.sleep(.5)
-    raise TimeoutError('Disk Mode has not reconnected. Keep USB connected and choose Refresh.')
+    raise TimeoutError('Disk Mode has not reconnected. Keep USB connected and choose Refresh.' +
+                       (' '+last_error if last_error else ''))
