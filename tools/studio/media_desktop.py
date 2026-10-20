@@ -759,45 +759,41 @@ def build_games_page(window):
 
 def build_setup_page(window):
     page, layout = window.scroll_page()
-    window.heading(layout, 'iPod setup', 'Choose your startup software and how your iPod starts.')
+    window.heading(layout, 'iPod setup', 'Install Linnet, then manage how your iPod starts.')
     card = QFrame(); card.setObjectName('card'); details = box(card, margins=(24, 24, 24, 24), spacing=12)
     details.addWidget(label('Connected device', 'section'))
     window.setup_device = label('Connect an iPod in Disk Mode.', 'muted', True); details.addWidget(window.setup_device)
     window.setup_software = label('', 'muted', True); details.addWidget(window.setup_software)
     window.install_detail = label('', 'notice', True); window.install_detail.hide(); details.addWidget(window.install_detail)
-    details.addSpacing(10)
-    details.addWidget(label('Remove Linnet OS', 'section'))
-    window.uninstall_detail = label('Connect an iPod to check removal options.', 'muted', True)
-    details.addWidget(window.uninstall_detail)
-    window.uninstall_button = button('Remove Linnet OS', window.uninstall_selected, 'danger')
-    details.addWidget(window.uninstall_button, 0, Qt.AlignLeft)
     window.setup_progress = QProgressBar(); window.setup_progress.setRange(0, 0)
     window.setup_progress.setTextVisible(False); window.setup_progress.hide(); details.addWidget(window.setup_progress)
     layout.addWidget(card)
-    layout.addSpacing(12); layout.addWidget(label('Firmware', 'section'))
+    window.install_panel = QWidget(); layout.addWidget(window.install_panel)
+    install = box(window.install_panel, spacing=14)
+    window.install_title = label('Install Linnet', 'section'); install.addWidget(window.install_title)
+    install.addWidget(label('1. Choose firmware', 'section'))
     window.firmware_path = str(window.settings.value('firmware_bundle', ''))
     window.firmware_label = label(window.firmware_path or 'Choose a downloaded Linnet firmware ZIP.', 'muted', True)
-    layout.addWidget(window.firmware_label)
-    layout.addWidget(label('Select the whole ZIP without extracting it. Linnet chooses the required files for your installation.', 'muted', True))
+    install.addWidget(window.firmware_label)
+    install.addWidget(label('Select the downloaded Linnet ZIP without extracting it. It must match your iPod model.', 'muted', True))
     window.firmware_button = button('Choose firmware ZIP', window.choose_firmware, None, 'folder')
-    layout.addWidget(window.firmware_button, 0, Qt.AlignLeft)
+    install.addWidget(window.firmware_button, 0, Qt.AlignLeft)
     window.build_from_source = CheckBox('Build from source (development)')
     window.build_from_source.setChecked(not getattr(sys, 'frozen', False) and
         window.settings.value('build_from_source', False, type=bool))
     window.build_from_source.setVisible(not getattr(sys, 'frozen', False))
     window.build_from_source.toggled.connect(window.firmware_source_changed)
-    layout.addWidget(window.build_from_source)
-    layout.addSpacing(12); layout.addWidget(label('Linnet version', 'section'))
-    layout.addWidget(label('Choose the Linnet build to install or update.', 'muted'))
-    window.boot_choice = ComboBox(); window.boot_choice.currentIndexChanged.connect(window.update_install_action); layout.addWidget(window.boot_choice)
-    window.boot_detail = label('', 'muted', True); layout.addWidget(window.boot_detail)
-    window.method_title = label('Installation method', 'section'); layout.addWidget(window.method_title)
-    window.method_choice = ComboBox(); window.method_choice.currentIndexChanged.connect(window.update_install_action); layout.addWidget(window.method_choice)
-    window.method_detail = label('', 'muted', True); layout.addWidget(window.method_detail)
-    window.selector_note = label('Hold Menu while starting the iPod to choose an installed system.', 'muted', True); layout.addWidget(window.selector_note)
-    layout.addSpacing(10)
-    window.install_button = button('Install Linnet', window.install_selected, 'primary'); layout.addWidget(window.install_button, 0, Qt.AlignLeft)
-    layout.addWidget(label('Your media is kept. Previous startup files are saved for recovery.', 'muted', True))
+    install.addWidget(window.build_from_source)
+    install.addSpacing(12); install.addWidget(label('2. Choose a build', 'section'))
+    install.addWidget(label('User build is recommended for everyday use. Developer build adds diagnostics and Linnet Link.', 'muted', True))
+    window.boot_choice = ComboBox(); window.boot_choice.currentIndexChanged.connect(window.update_install_action); install.addWidget(window.boot_choice)
+    window.boot_detail = label('', 'muted', True); install.addWidget(window.boot_detail)
+    window.method_title = label('3. Choose how your iPod starts', 'section'); install.addWidget(window.method_title)
+    window.method_choice = ComboBox(); window.method_choice.currentIndexChanged.connect(window.update_install_action); install.addWidget(window.method_choice)
+    window.method_detail = label('', 'muted', True); install.addWidget(window.method_detail)
+    install.addSpacing(10)
+    window.install_button = button('Install Linnet', window.install_selected, 'primary'); install.addWidget(window.install_button, 0, Qt.AlignLeft)
+    window.install_hint = label('', 'muted', True); install.addWidget(window.install_hint)
     layout.addSpacing(16); window.default_title = label('Default startup', 'section'); layout.addWidget(window.default_title)
     window.default_detail = label('Choose which installed system starts automatically. Hold Menu at startup to choose each time.', 'muted', True)
     layout.addWidget(window.default_detail)
@@ -808,6 +804,13 @@ def build_setup_page(window):
     window.boot_upgrade_button = button('Update startup selector', window.upgrade_startup_selector)
     layout.addWidget(window.boot_upgrade_button, 0, Qt.AlignLeft)
     window.boot_upgrade_detail = label('', 'muted', True); layout.addWidget(window.boot_upgrade_detail)
+    window.uninstall_panel = QFrame(); window.uninstall_panel.setObjectName('card')
+    removal = box(window.uninstall_panel, margins=(24, 24, 24, 24), spacing=12)
+    removal.addWidget(label('Remove Linnet OS', 'section'))
+    window.uninstall_detail = label('', 'muted', True); removal.addWidget(window.uninstall_detail)
+    window.uninstall_button = button('Remove Linnet OS', window.uninstall_selected, 'danger')
+    removal.addWidget(window.uninstall_button, 0, Qt.AlignLeft)
+    layout.addWidget(window.uninstall_panel)
     layout.addStretch()
     return page
 
@@ -1058,8 +1061,8 @@ class MediaWindow(QMainWindow):
         side.addWidget(label('LIBRARY', 'eyebrow')); side.addSpacing(7)
         self.navigation = {}
         for name, glyph in [('Music', 'music'), ('Photos', 'photos'), ('Videos', 'videos'), ('Notes', 'notes'),
-                            ('Preparation', 'prepare'), ('Games', 'setup'), ('Screens', 'settings'), ('iPod setup', 'setup'), ('Trash', 'trash'), ('Settings', 'settings')]:
-            if name == 'Preparation':
+                            ('iPod setup', 'setup'), ('Preparation', 'prepare'), ('Games', 'setup'), ('Screens', 'settings'), ('Trash', 'trash'), ('Settings', 'settings')]:
+            if name == 'iPod setup':
                 side.addSpacing(18); side.addWidget(label('DEVICE', 'eyebrow')); side.addSpacing(7)
             item = button(name, lambda _=False, n=name: self.navigate(n), 'nav')
             item.setIcon(icon(glyph, '#a8bbc1')); item.setIconSize(QSize(19, 19)); item.setCheckable(True)
@@ -3053,7 +3056,7 @@ class MediaWindow(QMainWindow):
                 self.boot_choice.setItemData(self.boot_choice.count() - 1, option.get('detail', ''), Qt.ToolTipRole)
             selected = next((i for i, option in enumerate(available_boot) if option.get('active')),
                             next((i for i, option in enumerate(available_boot) if option.get('selectable')), -1))
-            self.boot_choice.setPlaceholderText('No verified startup software')
+            self.boot_choice.setPlaceholderText('Installation is unavailable')
             self.boot_choice.setCurrentIndex(selected)
         with QSignalBlocker(self.method_choice):
             self.method_choice.clear()
@@ -3064,8 +3067,18 @@ class MediaWindow(QMainWindow):
                 self.method_choice.setItemData(self.method_choice.count() - 1, method['detail'], Qt.ToolTipRole)
                 if method['id'] == review.get('default_installation_method'):
                     self.method_choice.setCurrentIndex(self.method_choice.count() - 1)
-        self.install_detail.setText(review['summary'])
-        self.install_detail.setVisible(review['action'] not in ('install', 'replace', 'adopt') or review['linnet']['state'] in ('invalid', 'incomplete'))
+        summary = review['summary']
+        if (review['action'] == 'unsupported' and review['target']['boot_layout'] == 's5l-nor' and
+                review['linnet']['state'] == 'absent'):
+            summary = ('iPod Classic recognized. Install Linnet Boot first.\n\n'
+                       'Boot starts Linnet OS. First-time Boot setup on this model requires the separate developer '
+                       'DFU/NOR bootstrap workflow, which is not available in Media Manager yet. '
+                       'After that, reconnect in Linnet Disk Mode to install Linnet OS here. '
+                       'A firmware ZIP alone cannot complete Boot setup.')
+        elif review['action'] == 'install' and review['linnet']['state'] == 'absent':
+            summary = 'Ready to install Linnet. Choose firmware and a build below, then install and eject safely.'
+        self.install_detail.setText(summary)
+        self.install_detail.show()
         self.uninstall_detail.setText(review['uninstall']['detail'] + (' Music, Photos, Videos, and Notes folders are kept.' if review['uninstall']['available'] else ''))
         startup = startup_default.inspect(review)
         self.startup_state = startup
@@ -3081,6 +3094,17 @@ class MediaWindow(QMainWindow):
 
     def update_install_action(self):
         option = self.boot_choice.currentData(); method = self.method_choice.currentData()
+        review = self.review
+        can_install = bool(review and any(item.get('selectable') and item['kind'] == 'linnet'
+                                         for item in review['boot_options']) and
+                           any(item.get('enabled') for item in review['installation_methods']))
+        self.install_panel.setVisible(can_install or bool(review and getattr(self, 'boot_upgrade_available', False)))
+        self.install_title.setText('Update or reinstall Linnet' if review and review['linnet']['state'] == 'installed' else
+                                   'Resume installation' if review and review['action'] == 'resume' else 'Install Linnet')
+        self.uninstall_panel.setVisible(bool(review and (review['linnet']['state'] != 'absent' or
+                                                        review['recovery'] or review['uninstall']['available'])))
+        if review is None:
+            self.install_detail.hide()
         enabled = not self.busy and self.identity is not None and self.review is not None and bool(option and option.get('selectable'))
         linnet = option and option['kind'] == 'linnet'
         from_source = self.build_from_source.isChecked()
@@ -3092,8 +3116,9 @@ class MediaWindow(QMainWindow):
                                      'Choose a downloaded Linnet firmware ZIP.'))
         self.boot_detail.setText(option.get('detail', '') if option else '')
         show_methods = bool(linnet and option.get('selectable') and method)
-        for widget in (self.method_title, self.method_choice, self.method_detail, self.selector_note):
-            widget.setVisible(show_methods)
+        for widget in (self.method_title, self.method_choice):
+            widget.setVisible(show_methods and self.method_choice.count() > 1)
+        self.method_detail.setVisible(show_methods)
         self.method_detail.setText(method.get('detail', '') if method and linnet else '')
         enabled = enabled and bool(method and method.get('enabled')) if linnet else enabled and not bool(option and option.get('active'))
         if linnet and not resume and not from_source:
@@ -3104,6 +3129,10 @@ class MediaWindow(QMainWindow):
         self.method_choice.setEnabled(bool(linnet and method) and not self.busy)
         self.boot_choice.setEnabled(not self.busy and self.review is not None and self.boot_choice.count() > 0)
         self.install_button.setEnabled(enabled)
+        self.install_hint.setText(('Choose a firmware ZIP to continue.' if getattr(sys, 'frozen', False) else
+                                  'Choose a firmware ZIP or enable Build from source to continue.') if
+            can_install and not resume and not from_source and not self.firmware_path else
+            'Your media is kept. After installation, eject safely, then open Preparation to add media.')
         self.uninstall_button.setEnabled(not self.busy and bool(self.review and self.review['uninstall']['available']))
         show_default = bool(self.review and self.review['linnet']['state'] == 'installed')
         for widget in (self.default_title, self.default_detail, self.default_choice, self.default_button,
@@ -3133,7 +3162,9 @@ class MediaWindow(QMainWindow):
                                         'Choose on iPod at startup' if option.get('chooser_available') else
                                         'Startup change unavailable')
         else:
-            self.install_button.setText(('Reinstall ' if option.get('active') else 'Install ') + option['label'] if linnet else 'Set as default boot')
+            self.install_button.setText(('Resume installing ' if resume else 'Reinstall ' if option.get('active') else
+                                        'Update to ' if review and review['linnet']['state'] == 'installed' else
+                                        'Install ') + option['label'] if linnet else 'Set as default boot')
 
     def install_selected(self):
         if not self.device_connected or not self.install_button.isEnabled():

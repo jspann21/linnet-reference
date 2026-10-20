@@ -35,8 +35,16 @@ check, but video conversion remains unavailable until both tools pass.
 ## Install or restore firmware
 
 1. Connect the iPod in Disk Mode and choose **Find or switch iPod**.
-2. Open **iPod setup → Choose firmware ZIP** and select the whole ZIP **without extracting it**. Media Manager selects the required files. Source checkouts also offer a development build option.
-3. Choose the Linnet version and available installation method, install, then **Eject safely**.
+2. Open **iPod setup**, above **Preparation** in the sidebar. Check the connected
+   device and setup status first. If an installation prerequisite is missing,
+   the page explains it before offering firmware or build choices.
+3. When installation is available, choose **Choose firmware ZIP** and select the
+   whole ZIP **without extracting it**. Media Manager selects the required files.
+   Source checkouts also offer a development build option.
+4. Choose a build (**User build** for everyday use) and a startup method when
+   there is a choice, install, then **Eject safely**. Open **Preparation** to add
+   media. Existing installations also show default startup and removal options
+   below the installation controls.
 
 On a supported native Boot installation, **Default startup** chooses which
 installed system starts automatically. Hold **MENU** while the iPod starts to
@@ -54,7 +62,12 @@ firmware after administrator approval. Selecting a ZIP cannot override these
 checks. Automatic native installation is enabled for Photo P98,
 monochrome Q21, and Video M25. Classic N25 requires its separate
 [bootstrap procedure](bootstrap-tooling.md); building a Classic ZIP does not
-enable automatic installation.
+enable automatic installation. A Classic connected in Apple Disk Mode is
+recognized, but its initial Boot installation is unavailable in Media Manager.
+After the separate bootstrap, reconnect in Linnet Disk Mode to install the OS.
+The setup page hides firmware and build controls while this prerequisite blocks
+installation. Removal appears only when Linnet files or a recovery record are
+present, or interrupted removal can be completed.
 
 | Startup method | Behavior |
 | --- | --- |
