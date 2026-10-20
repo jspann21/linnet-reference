@@ -2239,11 +2239,17 @@ class MediaWindow(QMainWindow):
         self.navigate('iPod setup')
         self.cache_library_dirty = True
         target = self.default_title if result['section'] == 'startup' else self.boot_choice
-        if result['section'] == 'build':
-            self.boot_choice.setFocus()
-        elif self.default_choice.isVisible():
-            self.default_choice.setFocus()
-        self.setup.ensureWidgetVisible(target)
+        def reveal():
+            if self.closed or self.page != 'iPod setup' or self.review is not result['review']:
+                return
+            if result['section'] == 'build':
+                self.boot_choice.setFocus()
+            elif self.default_choice.isVisible():
+                self.default_choice.setFocus()
+            self.setup.ensureWidgetVisible(target)
+        # New sections change the scroll content height. Reveal only after
+        # Qt has laid them out, so the previous hidden geometry is not used.
+        QTimer.singleShot(0, reveal)
         self.show_progress('Choose the default system and use Menu at startup for a one-time choice.'
                            if result['section'] == 'startup' else
                            'Choose User or Developer build, then apply the update. Your media is kept.')
