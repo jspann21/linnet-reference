@@ -188,6 +188,7 @@ def _identify(identity, detected=None):
     if regulatory_model is None and len(regulatory_models) == 1:
         regulatory_model = regulatory_models[0]
     result = dict(identity, target_id=detected["target_id"], target_name=spec["name"],
+                usb_pnp_id=storage['usb_pnp_id'],
                 volume_label=storage.get("volume_label") or "",
                 linnet_usb_serial=detected["linnet_usb_serial"],
                 model_number=model_number,

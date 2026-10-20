@@ -253,8 +253,10 @@ def preserve(identity):
             source = Path(marker['nor_record'])
         record, original, installed = load(source)
         # Always retain a host copy before leaving Disk Mode or deleting files.
-        host = save_install(dict(target_id=nor.TARGET, serial=record['serial'], build_id=record['monitor_build_id'],
-                                 original_sha256=_sha(original), result_sha256=_sha(installed)),
+        host_plan=dict(target_id=nor.TARGET, serial=record['serial'], build_id=record['monitor_build_id'],
+                       original_sha256=_sha(original), result_sha256=_sha(installed))
+        if 'startup_default_format' in record:host_plan['startup_default_format']=record['startup_default_format']
+        host = save_install(host_plan,
                             original, installed, installed=True)
         root = Path(identity['root']).resolve(strict=True)
         if host.stat().st_dev == root.stat().st_dev:

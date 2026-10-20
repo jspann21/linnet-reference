@@ -226,9 +226,19 @@ def run(path, *, progress=lambda _message:None, instruction=lambda _message:None
                     diagnostic['disk'].get('sectors',0)*512<state['identity']['disk_bytes'] or
                     not diagnostic['display'].get('frame_transfer_complete')):
                     raise ValueError('This Classic did not pass its hardware checks; the original bootloader has not been changed')
-                backup=path.parent/'original-nor.bin'
-                if backup.exists():nor._backup(backup,state['serial'])
-                else:
+                backup=Path(state.get('original_backup',path.parent/'original-nor.bin'))
+                verified=False
+                if backup.exists() or backup.with_suffix(backup.suffix+'.json').exists():
+                    try:
+                        nor._backup(backup,state['serial']);verified=True
+                    except (OSError,ValueError):
+                        # Never replace an artifact referenced by a flash plan.
+                        # An incomplete read before planning gets a new name on
+                        # explicit resume, retaining the failed read and receipt.
+                        if state.get('nor_plan'):raise
+                        backup=path.parent/('original-nor-'+uuid.uuid4().hex+'.bin')
+                state['original_backup']=str(backup);save()
+                if not verified:
                     progress('Saving and independently checking the complete original boot flash…')
                     link.backup_nor(state['device_plan'],backup)
                 if not state.get('nor_plan'):
@@ -254,7 +264,7 @@ def run(path, *, progress=lambda _message:None, instruction=lambda _message:None
             system=Path(native['root'])/'.LINNET'
             guarded_path(system,Path(native['root']));guard_volume(native);system.mkdir(exist_ok=True)
             classic_recovery.preserve(native)
-            nor.preserve_apple(state['device_plan'],path.parent/'original-nor.bin',native['root'])
+            nor.preserve_apple(state['device_plan'],state['original_backup'],native['root'])
             from tools.studio.native_update import publish
             existing=installer.installed_state(native['root'],TARGET)
             if existing['state']=='installed':

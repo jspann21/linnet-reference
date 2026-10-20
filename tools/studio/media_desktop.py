@@ -1791,6 +1791,13 @@ class MediaWindow(QMainWindow):
         return
 
     def _complete_error(self, tag, error):
+        if tag == 'classic_install':
+            # The disk may have changed mode while setup was running. Keep the
+            # host transaction reachable without offering stale install choices.
+            self.review=None
+            with QSignalBlocker(self.boot_choice),QSignalBlocker(self.method_choice):
+                self.boot_choice.clear();self.method_choice.clear()
+            self.update_controls()
         if tag == 'plan':
             self.plan_context = None
         if tag == 'screens':
