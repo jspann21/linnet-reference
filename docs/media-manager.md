@@ -81,18 +81,21 @@ These live hold/release instructions appear in a focused dialog that advances
 automatically. Turn the Hold switch off before following them.
 
 When Linnet Link is already connected, Media Manager recognizes the running OS
-or recovery connection. Choose **Open Disk Mode** to reconnect storage
-automatically. A saved, unfinished Classic setup instead offers **Resume Classic
+or recovery connection. Choose **Manage media** from a running OS, or **Open Disk
+Mode** from recovery, to reconnect storage automatically. A saved, unfinished Classic setup instead offers **Resume Classic
 installation** for that device. During a hosted recovery connection, the iPod
 directs you to continue setup on the computer.
 
-For a running OS, iPod setup shows its build and offers **View or change startup**
-and **Change Linnet build**. These actions connect Disk Mode automatically, read
-the installed software, and open the selected controls. **Default startup** shows
-the verified saved default and explains holding Menu for a one-time startup
-choice. The build section marks the installed build and lets you switch between
-User and Developer builds. Choose a matching firmware ZIP for User firmware or
-build from source; Developer firmware requires a source checkout. Media is kept.
+For a running OS, iPod setup shows its build and offers **Read startup settings**
+and **Change build…**. These actions connect Disk Mode automatically, read the
+installed software, and open the selected controls. The **Startup** card shows
+the verified saved default in **Start automatically**, with **Save** beside it,
+and explains holding Menu for a one-time startup choice. The **Linnet** card shows
+the installed build. Choose **Change build or reinstall…** to open its build and
+firmware controls; first installations and interrupted setups open these controls
+automatically. Choose a matching firmware ZIP for User firmware or build from
+source; Developer firmware requires a source checkout. Pending updates show which
+build is ready to start and ask you to eject safely. Media is kept.
 
 Linnet Link then checks RAM, panel initialization, disk identity and partition
 access, reads and independently verifies the original NOR backup, authenticates
