@@ -426,15 +426,13 @@ if ([string]$volume.FileSystem -ne 'FAT32' -or $logical.VolumeSerialNumber.ToUpp
         identity.get("volume_serial") != volume_serial or not re.fullmatch(r"[A-Z]:\\", identity.get("root", "")) or
         not identity.get("disk_unique_id") or not identity.get("volume_unique_id")):
         raise RuntimeError("incomplete Windows disk/volume identity")
+    from tools.inspect.windows_pnp import usb_parent
+    identity["usb_pnp_id"] = usb_parent(identity["pnp_id"])
     if identity["native_target_id"]:
-        from tools.inspect.windows_pnp import usb_parent
         spec = TARGETS[identity["native_target_id"]]["native_storage"]
-        identity["usb_pnp_id"] = usb_parent(identity["pnp_id"])
         expected_usb = f"USB\\VID_{spec['usb_vid']:04X}&PID_{spec['usb_pid']:04X}\\{expected_disk_serial.strip()}"
         if identity["usb_pnp_id"] != expected_usb:
             raise RuntimeError("Native USB identity rejected")
-    else:
-        identity["usb_pnp_id"] = ""
     return identity
 
 
