@@ -162,8 +162,9 @@ _Noreturn void ln_bootstrap_main(void) {
         }
         (void)ln_usb_stop();transport_ready=false;
     }
-    if(memory_ready&&ln_s5l_board_recovery_screen()&&ln_power_init())ln_power_backlight(true,128);
+    if(memory_ready&&ln_s5l_board_recovery_screen(false)&&ln_power_init())ln_power_backlight(true,128);
     bool input_ready=ln_input_init(),input_released=false;
+    bool host_connected=false;
     uint32_t previous_buttons=0;
     if(!ln_usb_init(ln_bootstrap_serial)){
         uint32_t stage=((volatile uint32_t *)(uintptr_t)0x22017f00u)[1];
@@ -178,7 +179,7 @@ _Noreturn void ln_bootstrap_main(void) {
         struct ln_input_state input_state;
         if(input_ready&&ln_input_poll(&input_state)){
             if(!input_state.buttons)input_released=true;
-            if(memory_ready&&input_released&&input_state.buttons!=previous_buttons&&
+            if(!host_connected&&memory_ready&&input_released&&input_state.buttons!=previous_buttons&&
                (input_state.buttons==LINNET_BUTTON_SELECT||input_state.buttons==LINNET_BUTTON_PLAY)){
                 if(quiesce(0)){
                     ln_s5l_boot_request(input_state.buttons==LINNET_BUTTON_PLAY?LN_S5L_BOOT_DISK:LN_S5L_BOOT_NORMAL);
@@ -194,6 +195,7 @@ _Noreturn void ln_bootstrap_main(void) {
          * minute without a Link frame, rebuild the USB connection. Active
          * uploads and diagnostics refresh this deadline on every request. */
         if(!ln_usb_poll() || ln_time_us()-last_request>=60000000u) {
+            if(host_connected){host_connected=false;(void)ln_s5l_board_recovery_screen(false);}
             uint32_t diagnostic[8];ln_usb_diagnostics(diagnostic);
             usb_last_error=diagnostic[6]?diagnostic[6]:0x100u;
             if(usb_recoveries!=UINT32_MAX)usb_recoveries++;
@@ -212,6 +214,10 @@ _Noreturn void ln_bootstrap_main(void) {
             ln_link_frame request,response;
             if(ln_link_parser_feed(&parser,input[n],&request)!=1)continue;
             last_request=ln_time_us();
+            if(!host_connected && request.command==1u){
+                host_connected=true;
+                if(memory_ready)(void)ln_s5l_board_recovery_screen(true);
+            }
             if(request.command==0x7f00u) {
                 if(!ln_bootstrap_control(&request,&response,dispatcher.reply))continue;
             } else if(!ln_link_dispatch(&dispatcher,&request,&response))continue;

@@ -62,12 +62,17 @@ bool ln_s5l_board_disk_screen(bool symbol_visible){
        !ln_color_disk_finished(&decoder))return false;
     return present();
 }
-bool ln_s5l_board_recovery_screen(void){
+bool ln_s5l_board_recovery_screen(bool connected){
     if(!ln_lcd_fill(0x0841))return false;
-    text(44,"Linnet Recovery",0xffff);
-    text(94,"Select: start Linnet",0xad75);
-    text(134,"Play: Disk Mode",0xad75);
-    text(186,"Connect USB to repair",0xad75);return present();
+    text(44,"Linnet",0xffff);
+    if(connected){
+        text(120,"Setup in Media Manager",0xad75);
+    }else{
+        text(94,"Select: Start",0xad75);
+        text(134,"Play: Disk Mode",0xad75);
+        text(186,"Connect USB",0xad75);
+    }
+    return present();
 }
 bool ln_lcd_boot_menu(uint32_t available,uint32_t selected,bool starting){
     uint16_t *frame=ln_display_framebuffer();

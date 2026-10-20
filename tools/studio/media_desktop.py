@@ -768,6 +768,8 @@ def build_setup_page(window):
     window.install_detail = label('', 'notice', True); window.install_detail.hide(); details.addWidget(window.install_detail)
     window.setup_progress = QProgressBar(); window.setup_progress.setRange(0, 0)
     window.setup_progress.setTextVisible(False); window.setup_progress.hide(); details.addWidget(window.setup_progress)
+    window.link_disk_button = button('Open Disk Mode', window.open_link_disk, 'primary')
+    window.link_disk_button.hide(); details.addWidget(window.link_disk_button, 0, Qt.AlignLeft)
     window.connection_help = label('Connect your iPod with USB, then choose Find iPod.\n\n'
         'If it does not appear, enter Apple Disk Mode:\n'
         '1. Turn the Hold switch off.\n'
@@ -1042,6 +1044,7 @@ class MediaWindow(QMainWindow):
             self.view = 'Albums'
         self.busy = False
         self.setup_instruction_dialog = None
+        self.link_connection = None
         self.closed = False
         self.cache_info = None
         self.cache_library_dirty = False
@@ -1747,7 +1750,7 @@ class MediaWindow(QMainWindow):
             'device_details': self._complete_device_details,
         }
         for change in ('remove', 'restore', 'erase', 'sync', 'install', 'uninstall', 'skipped',
-                       'startup_default', 'boot_upgrade', 'restore_video_catalog', 'classic_install'):
+                       'startup_default', 'boot_upgrade', 'restore_video_catalog', 'classic_install', 'link_disk'):
             handlers[change] = self._complete_change
         handler = handlers.get(tag)
         if handler is None:
@@ -1996,6 +1999,25 @@ class MediaWindow(QMainWindow):
     def _complete_devices(self, result):
         devices, errors = sorted(result['devices'], key=lambda item: item['drive']), result['errors']
         self.discovery_errors = errors
+        self.link_connection = None
+        if not devices and result.get('links'):
+            links = result['links']
+            selected = links[0]
+            if len(links) > 1:
+                dialog = QDialog(self); dialog.setWindowTitle('Choose an iPod')
+                layout = box(dialog, margins=(24,24,24,24)); picker = ComboBox()
+                for item in links:
+                    picker.addItem(item['target_name'] + ' · ' + item['serial'][-6:], item)
+                layout.addWidget(picker); layout.addWidget(button('Use this iPod',dialog.accept,'primary'))
+                if dialog.exec() != QDialog.Accepted:return
+                selected = picker.currentData()
+            self.transition_device(None)
+            self.link_connection = selected
+            self.device_name.setText(selected['target_name'].replace('Linnet for ',''))
+            self.device_info.setText('Connected through Linnet Link')
+            self.show_progress('Linnet Link is connected. Open Disk Mode to manage media, or resume unfinished setup.')
+            self.navigate('iPod setup'); self.update_controls()
+            return
         if not devices:
             self.transition_device(None)
             self.device_name.setText('No iPod connected'); self.device_info.setText('Connect in Disk Mode')
@@ -2460,6 +2482,7 @@ class MediaWindow(QMainWindow):
 
     def transition_device(self, identity):
         """Clear device-derived state while retaining a draft for its own iPod."""
+        self.link_connection = None
         if self.same_device(self.identity, identity):
             self.identity = identity
             return
@@ -2602,14 +2625,25 @@ class MediaWindow(QMainWindow):
         loading = self.busy and self.review is None
         self.setup_progress.setVisible(loading)
         setting_up = bool(self.busy and self.active_operation and self.active_operation.tag=='classic_install')
-        self.connection_help.setVisible(self.identity is None and not setting_up)
-        self.setup_find_button.setVisible(self.identity is None and not setting_up)
+        link = self.link_connection
+        self.connection_help.setVisible(self.identity is None and link is None and not setting_up)
+        self.setup_find_button.setVisible(self.identity is None and link is None and not setting_up)
+        self.link_disk_button.setVisible(bool(link and link.get('can_open_disk')))
+        self.link_disk_button.setEnabled(bool(link and link.get('can_open_disk')) and not self.busy)
         self.setup_find_button.setEnabled(not self.busy)
         if not self.busy:
             from tools.studio.classic_setup import pending
-            self.resume_classic_button.setVisible(self.review is None and bool(pending(self.identity)))
+            scope = dict(target_id=link['identity']['target_id'],linnet_usb_serial=link['serial']) if link else self.identity
+            self.resume_classic_button.setVisible(self.review is None and bool(pending(scope)))
         self.resume_classic_button.setEnabled(not self.busy)
         if self.review is not None:
+            return
+        if link:
+            self.setup_device.setText(link['target_name'] + ' · ' + link['serial'][-6:])
+            self.setup_software.setText('Connected through Linnet Link')
+            self.install_detail.setText('Your iPod is connected. Open Disk Mode to manage files. '
+                'If installation was interrupted, choose Resume Classic installation.')
+            self.install_detail.show()
             return
         if self.identity:
             self.setup_device.setText(self.device_title(self.identity))
@@ -3291,7 +3325,9 @@ class MediaWindow(QMainWindow):
     def resume_classic_setup(self):
         if self.busy:return
         from tools.studio.classic_setup import pending, run
-        choices=pending(self.identity)
+        scope = dict(target_id=self.link_connection['identity']['target_id'],
+                     linnet_usb_serial=self.link_connection['serial']) if self.link_connection else self.identity
+        choices=pending(scope)
         if not choices:return
         selected=choices[0]
         if len(choices)>1:
@@ -3306,6 +3342,13 @@ class MediaWindow(QMainWindow):
         self.work('classic_install',lambda:run(selected['path'],progress=self.events.progress.emit,
             instruction=self.events.setup_instruction.emit,cancelled=self.stop_event.is_set()),
             'Resuming Classic installation…')
+
+    def open_link_disk(self):
+        if self.busy or not self.link_connection:return
+        from tools.studio.media_link import open_disk
+        connection = self.link_connection
+        self.work('link_disk',lambda:open_disk(connection,progress=self.events.progress.emit),
+                  'Opening Disk Mode automatically…')
 
     def save_default_startup(self):
         if not self.default_button.isEnabled():

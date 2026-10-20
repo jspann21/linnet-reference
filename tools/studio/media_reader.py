@@ -137,6 +137,9 @@ def main(arguments=None):
         from tools.content import media_manager as media, media_status, publish
         if options['action'] == 'devices':
             value = media.discover(detailed=True)
+            if not value['devices']:
+                from tools.studio.media_link import discover
+                value['links'] = discover()
         elif options['action'] == 'scan':
             identity = options['identity']
             media._volume_guard(identity)
