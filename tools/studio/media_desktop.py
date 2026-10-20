@@ -3331,10 +3331,9 @@ class MediaWindow(QMainWindow):
         self.method_choice.setEnabled(bool(linnet and method) and not self.busy)
         self.boot_choice.setEnabled(not self.busy and self.review is not None and self.boot_choice.count() > 0)
         self.install_button.setEnabled(enabled)
-        self.install_hint.setText(('Choose a firmware ZIP to continue.' if getattr(sys, 'frozen', False) else
-                                  'Choose a firmware ZIP or enable Build from source to continue.') if
-            can_install and not resume and not from_source and not self.firmware_path else
-            'Your media and settings are kept. Eject safely when the update finishes.')
+        self.install_hint.setText('Keep USB connected while installation resumes.' if resume else
+            'Your media and settings are kept. Eject safely when the update finishes.' if installed else
+            'Keep USB connected until installation finishes.')
         self.uninstall_button.setEnabled(not self.busy and bool(self.review and self.review['uninstall']['available']))
         show_default = bool(self.review and self.review['linnet']['state'] == 'installed')
         self.startup_panel.setVisible(show_default)
