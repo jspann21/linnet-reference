@@ -355,6 +355,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         add_sources([hal / "disk_mode.c"], "PP502x disk mode")
         if profile == "release":
             add_sources([hal / "usb.c"], "PP502x release USB")
+    if spec["hal_family"] == "s5l8702" and profile == "release":
+        add_sources([hal / "usb.c"], "Classic release Disk Mode USB")
     # -Oz emits an unavailable __aeabi_idiv helper for block's pointer-distance
     # division, so this translation unit keeps -Os in a size-tuned Boot.
     add_sources([ROOT / "services/storage/block.c"], "storage block",

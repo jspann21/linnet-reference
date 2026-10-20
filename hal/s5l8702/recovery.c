@@ -95,7 +95,7 @@ int ln_recovery_can_reboot(uint16_t command){return ready && !ln_storage_busy() 
 uint32_t ln_recovery_reboot_capabilities(void){return LINNET_LOADER_CAP_REBOOT_DISK|LINNET_LOADER_CAP_REBOOT_OS;}
 int ln_recovery_reboot(void *context,uint16_t command) {
     if(!ln_recovery_can_reboot(command) || !ln_recovery_quiesce(context))return 0;
-    if(command==34)ln_s5l_disk_mode(LINNET_USB_SERIAL,ln_storage_disk_sector_bytes(),true);
+    if(command==34)return ln_platform_enter_disk_mode(ln_storage_disk_sector_bytes());
     ln_s5l_boot_request(command==32?LN_S5L_BOOT_NORMAL:LN_S5L_BOOT_RECOVERY);
     ln_platform_hardware_reset();
 }

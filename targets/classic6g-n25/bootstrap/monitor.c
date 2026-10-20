@@ -19,7 +19,10 @@ static ln_link_dispatcher dispatcher;
 static struct ln_loader loader;
 static ln_link_backend backend;
 static uint8_t input[512],output[LINNET_LINK_MAX_FRAME];
-static const uint8_t build_id[32]=LINNET_BOOTSTRAP_BUILD_BYTES;
+/* Writable image data prevents constant propagation across the host's bounded
+ * serial/build binding step for precompiled installer templates. */
+static uint8_t build_id[32]=LINNET_BOOTSTRAP_BUILD_BYTES;
+char ln_bootstrap_serial[17]=LINNET_BOOTSTRAP_SERIAL;
 static bool memory_ready,transport_ready;
 static uint32_t memory_failure;
 static uint32_t usb_recoveries,usb_last_error;
@@ -135,6 +138,7 @@ _Noreturn void ln_bootstrap_main(void) {
     LN_TIMER_E(8)=UINT32_MAX;LN_TIMER_E(4)=3;
     (void)ln_s5l_pcm_stop();
     memory_ready=ln_n25_memory_init(&memory_failure);
+    if(!ln_s5l_boot_serial_save(ln_bootstrap_serial))for(;;)__asm__ volatile("nop");
     if(memory_ready)retain_watchdog_fault();
     (void)ln_arm926_instruction_cache(true);
     init_loader();ln_link_parser_init(&parser);
@@ -144,7 +148,7 @@ _Noreturn void ln_bootstrap_main(void) {
     bool ram_handoff=ln_read_le32(handoff)==0x484e494cu && ln_read_le32(handoff+72)==ln_crc32(handoff,72);
     if(memory_ready && (mode==LN_S5L_BOOT_NORMAL || mode==LN_S5L_BOOT_DISK || (mode<0 && !ram_handoff))) {
         startup_stage=1;
-        if(!ln_usb_init(LINNET_BOOTSTRAP_SERIAL))for(;;)__asm__ volatile("nop");
+        if(!ln_usb_init(ln_bootstrap_serial))for(;;)__asm__ volatile("nop");
         transport_ready=true;
         extern uint32_t ln_n25_persistent_load(uint8_t *,struct ln_image_info *,uint8_t[32]);
         struct ln_image_info info;uint8_t sha[32];
@@ -161,7 +165,7 @@ _Noreturn void ln_bootstrap_main(void) {
     if(memory_ready&&ln_s5l_board_recovery_screen()&&ln_power_init())ln_power_backlight(true,128);
     bool input_ready=ln_input_init(),input_released=false;
     uint32_t previous_buttons=0;
-    if(!ln_usb_init(LINNET_BOOTSTRAP_SERIAL)){
+    if(!ln_usb_init(ln_bootstrap_serial)){
         uint32_t stage=((volatile uint32_t *)(uintptr_t)0x22017f00u)[1];
         (void)ln_lcd_fault(0x55000000u|(stage&0xffffu),build_id);
         for(;;)__asm__ volatile("nop");
@@ -196,7 +200,7 @@ _Noreturn void ln_bootstrap_main(void) {
             (void)ln_usb_stop();
             ln_link_parser_init(&parser);ln_link_dispatch_init(&dispatcher,&backend);loader.verified=0;
             last_request=ln_time_us();
-            if(!ln_usb_init(LINNET_BOOTSTRAP_SERIAL))continue;
+            if(!ln_usb_init(ln_bootstrap_serial))continue;
             connection=ln_usb_generation();
         }
         if(connection!=ln_usb_generation()) {
@@ -221,7 +225,8 @@ _Noreturn void ln_bootstrap_main(void) {
             if(sent==length && ln_usb_flush(deadline)) {
                 (void)ln_link_dispatch_ack_sent(&dispatcher,request.sequence);
                 if(reset_requested && quiesce(0)) {
-                    ln_s5l_boot_request(reset_requested==4?LN_S5L_BOOT_NORMAL:LN_S5L_BOOT_RECOVERY);
+                    ln_s5l_boot_request(reset_requested==5?LN_S5L_BOOT_DISK:
+                                        reset_requested==4?LN_S5L_BOOT_NORMAL:LN_S5L_BOOT_RECOVERY);
                     if(reset_requested>1 && reset_requested<4) {
                         if(reset_requested==3)(void)ln_s5l_watchdog_timer(1000);
                         ln_s5l_watchdog_route(reset_requested==2);

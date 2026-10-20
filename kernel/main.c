@@ -4,6 +4,9 @@
 #include "hal/api/platform.h"
 #include "boot/include/linnet_boot.h"
 #include "linnet_build.h"
+#if defined(LINNET_TARGET_CLASSIC6G_N25) && defined(LINNET_IMAGE_BOOT) && defined(LINNET_PROFILE_RELEASE)
+#include "hal/s5l8702/boot_state.h"
+#endif
 #if defined(LINNET_IMAGE_BOOT) && (LINNET_BOOT_APPLE_FALLBACK || LINNET_BOOT_SELECTOR_ROCKBOX)
 #include "hal/api/input.h"
 #endif
@@ -207,6 +210,10 @@ _Noreturn void ln_main(void)
     bool initial_menu=false;
 #endif
     bool boot_decided=false,menu_open=false,menu_holding=false;
+#if defined(LINNET_TARGET_CLASSIC6G_N25) && defined(LINNET_PROFILE_RELEASE)
+    bool setup_disk=ln_s5l_boot_mode()==LN_S5L_BOOT_ATTEMPT_DISK;
+    if(setup_disk){boot_decided=true;ln_s5l_boot_request(LN_S5L_BOOT_ATTEMPT);}
+#endif
     uint32_t menu_started=0,menu_hold_started=0,menu_activity=0;
     uint32_t menu_options=0,menu_selected=1u,menu_buttons=0,menu_last_step=0;
     int32_t menu_wheel_accum=0;
@@ -396,6 +403,12 @@ _Noreturn void ln_main(void)
         LN_CACHE_FIRST_MARK(0xca14u);
         LN_TIMING_BEGIN(storage_started);
         ln_storage_step_deferred();
+#if defined(LINNET_TARGET_CLASSIC6G_N25) && defined(LINNET_IMAGE_BOOT) && defined(LINNET_PROFILE_RELEASE)
+        if(setup_disk && ln_storage_mounted() && !ln_storage_busy()){
+            if(!ln_storage_quiesce() || !ln_platform_enter_disk_mode(ln_storage_disk_sector_bytes()))
+                ln_panic(30,14,0);
+        }
+#endif
         ln_storage_boot();
 #if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_OS)
         first_frame=ln_runtime_first_frame_ready();

@@ -7,10 +7,14 @@ from tools.studio.build import ROOT, run, toolchain
 from tools.inspect.image import pack
 
 
-def build(serial):
+TEMPLATE_SERIAL = '0000000000000000'
+PAYLOADS = ('monitor.bin', 'rom_transfer.bin', 'probe.bin', 'sram_bridge.bin')
+
+
+def build(serial, output=None):
     if not re.fullmatch(r'[0-9A-F]{16}',serial):
         raise ValueError('Bootstrap requires the observed Classic USB serial')
-    chain=toolchain(); out=ROOT/'out/dev/classic6g-n25/bootstrap';out.mkdir(parents=True,exist_ok=True)
+    chain=toolchain(); out=Path(output) if output is not None else ROOT/'out/dev/classic6g-n25/bootstrap';out.mkdir(parents=True,exist_ok=True)
     board=ROOT/'targets/classic6g-n25/bootstrap'
     sources=[board.parent/'power.c',ROOT/'hal/s5l8702/core.c',ROOT/'hal/s5l8702/watchdog.c',ROOT/'hal/s5l8702/aes.c',ROOT/'hal/s5l8702/audio.c',ROOT/'hal/arm926/mmu.c',ROOT/'hal/s5l8702/timer.c',ROOT/'hal/s5l8702/irq.c',ROOT/'hal/s5l8702/irq.S',board/'start.S',board/'monitor.c',board/'persistent.c',board/'enter.S',board/'control.c',ROOT/'hal/codecs/cs42l55.c',ROOT/'hal/pmu/pcf50635.c',ROOT/'hal/arm926/cache.c',ROOT/'hal/s5l8702/pcm_dma.c',ROOT/'hal/s5l8702/ata.c',ROOT/'hal/s5l8702/input.c',board.parent/'panel.c',board.parent/'flash.c',ROOT/'hal/s5l8702/spi.c',board.parent/'display.c',ROOT/'hal/s5l8702/lcd_bus.c',board/'storage.c',ROOT/'hal/s5l8702/ata_pio.c',board.parent/'board.c',ROOT/'hal/s5l8702/i2c.c',ROOT/'hal/s5l8702/usb.c',ROOT/'hal/link/link.c',ROOT/'hal/link/dispatch.c',ROOT/'boot/src/linnet_boot.c',ROOT/'boot/src/loader.c',ROOT/'boot/src/sha256.c',ROOT/'kernel/memory.S']
     sources.append(board.parent/'lcd.c')
@@ -37,7 +41,8 @@ def build(serial):
     if not bss_end or int(bss_end[1],16)>0x22016000:
         raise ValueError('Monitor leaves insufficient bounded SRAM upload staging')
     run([chain['objcopy']['path'],'-O','binary',out/'monitor.elf',out/'monitor.bin'])
-    run([chain['compiler']['path'],*flags,'-c',board/'sram_bridge.S','-o',out/'sram_bridge.o'])
+    run([chain['compiler']['path'],*flags,'-DLINNET_BOOTSTRAP_MONITOR_PATH="'+(out/'monitor.bin').resolve().as_posix()+'"',
+         '-c',board/'sram_bridge.S','-o',out/'sram_bridge.o'])
     run([chain['linker']['path'], '-m', 'armelf','-Ttext=0x08000000','-e','ln_sram_bridge','-o',out/'sram_bridge.elf',out/'sram_bridge.o'])
     run([chain['objcopy']['path'],'-O','binary',out/'sram_bridge.elf',out/'sram_bridge.bin'])
     run([chain['compiler']['path'],*flags,'-c',board/'rom_transfer.S','-o',out/'rom_transfer.o'])
@@ -58,5 +63,58 @@ def build(serial):
                 monitor_bytes=len(payload),monitor_sha256=hashlib.sha256(payload).hexdigest(),
                 bridge_bytes=len(bridge),bridge_sha256=hashlib.sha256(bridge_image).hexdigest(),
                 transfer_sha256=hashlib.sha256(transfer).hexdigest(),probe_sha256=hashlib.sha256(probe).hexdigest(),hardware_verified=False)
+    def offset(name, expected):
+        match=re.search(r'^([0-9a-fA-F]+) [rRtTdD] '+name+r'$',symbols,re.M)
+        if not match:raise ValueError('Bootstrap binding symbol missing: '+name)
+        at=int(match[1],16)-0x22000000
+        if at<0 or payload[at:at+len(expected)]!=expected:raise ValueError('Bootstrap binding symbol differs: '+name)
+        return at
+    report.update(serial_offset=offset('ln_bootstrap_serial',serial.encode()+b'\0'),
+                  build_id_offset=offset('build_id',bytes.fromhex(build_id)),
+                  bridge_payload_sha256=hashlib.sha256(bridge).hexdigest())
     (out/'manifest.json').write_text(json.dumps(report,indent=2)+'\n')
+    return report
+
+
+def bind(directory, serial, output):
+    """Bind a verified precompiled monitor template without a local compiler."""
+    if not re.fullmatch(r'[0-9A-F]{16}',serial) or serial==TEMPLATE_SERIAL:
+        raise ValueError('Expected the observed Classic USB serial')
+    directory=Path(directory);output=Path(output)
+    manifest=directory/'manifest.json'
+    if manifest.is_symlink() or manifest.stat().st_size>65536:raise ValueError('Invalid bootstrap manifest')
+    report=json.loads(manifest.read_text())
+    if report.get('target_id')!='classic6g-n25' or report.get('serial')!=TEMPLATE_SERIAL:
+        raise ValueError('Expected a portable Classic bootstrap template')
+    data={}
+    for name,key,limit in (('monitor.bin','monitor_sha256',0x10000),
+                           ('rom_transfer.bin','transfer_sha256',0x178),
+                           ('probe.bin','probe_sha256',0x10000),
+                           ('sram_bridge.bin','bridge_payload_sha256',0x10000)):
+        path=directory/name
+        if path.is_symlink() or not path.is_file() or not 1<=path.stat().st_size<=limit:
+            raise ValueError('Invalid bootstrap payload: '+name)
+        data[name]=path.read_bytes()
+        if hashlib.sha256(data[name]).hexdigest()!=report.get(key):raise ValueError('Bootstrap checksum mismatch: '+name)
+    original=data['monitor.bin'];payload=bytearray(original);old_build=bytes.fromhex(report['build_id'])
+    at,build_at=report['serial_offset'],report['build_id_offset']
+    if (type(at)is not int or type(build_at)is not int or at<0 or build_at<0 or
+        payload[at:at+17]!=TEMPLATE_SERIAL.encode()+b'\0' or payload[build_at:build_at+32]!=old_build or
+        not (at+17<=build_at or build_at+32<=at)):
+        raise ValueError('Invalid bootstrap template binding offsets')
+    build_id=hashlib.sha256(old_build+serial.encode()).hexdigest()
+    payload[at:at+16]=serial.encode();payload[build_at:build_at+32]=bytes.fromhex(build_id)
+    data['monitor.bin']=bytes(payload)
+    bridge=data['sram_bridge.bin']
+    if bridge.count(original)!=1:raise ValueError('Bootstrap bridge does not contain exactly one monitor')
+    data['sram_bridge.bin']=bridge.replace(original,bytes(payload))
+    data['monitor.lnos']=pack(payload,'dev',build_id,0x22000000,0x22000000,'classic6g-n25')
+    data['monitor-bridge.lnos']=pack(data['sram_bridge.bin'],'dev',build_id,0x08000000,0x08000000,'classic6g-n25')
+    report.update(serial=serial,build_id=build_id,template_build_id=old_build.hex(),
+                  monitor_sha256=hashlib.sha256(payload).hexdigest(),
+                  bridge_payload_sha256=hashlib.sha256(data['sram_bridge.bin']).hexdigest(),
+                  bridge_sha256=hashlib.sha256(data['monitor-bridge.lnos']).hexdigest())
+    output.mkdir(parents=True,exist_ok=False)
+    for name,content in data.items():(output/name).write_bytes(content)
+    (output/'manifest.json').write_text(json.dumps(report,indent=2)+'\n')
     return report

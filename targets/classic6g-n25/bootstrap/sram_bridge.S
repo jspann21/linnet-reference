@@ -29,5 +29,5 @@ ln_sram_bridge:
     .ltorg
     .balign 4
 monitor_start:
-    .incbin "out/dev/classic6g-n25/bootstrap/monitor.bin"
+    .incbin LINNET_BOOTSTRAP_MONITOR_PATH
 monitor_end:

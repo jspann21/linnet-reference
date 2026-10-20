@@ -15,6 +15,8 @@
 #include "pcm_dma.h"
 #include "registers.h"
 #include "boot_state.h"
+#include "disk_mode.h"
+#include "linnet_build.h"
 static uint32_t progress_time;
 uint32_t ln_time_us(void){return LN_TIMER_E(0x14);}
 uintptr_t ln_platform_uncached_address(uintptr_t address) {
@@ -26,9 +28,11 @@ _Noreturn void ln_platform_hardware_reset(void) {
 }
 bool ln_platform_set_disk_mode(bool enabled){ln_s5l_boot_request(enabled?LN_S5L_BOOT_DISK:LN_S5L_BOOT_NORMAL);return true;}
 bool ln_platform_enter_disk_mode(uint32_t sector_bytes){
-    (void)sector_bytes;
-    if(!ln_platform_set_disk_mode(true))return false;
-    ln_platform_hardware_reset();
+    const char *serial=ln_s5l_boot_serial();
+    if(!serial && ln_s5l_boot_serial_save(LINNET_USB_SERIAL))serial=ln_s5l_boot_serial();
+    if(!serial || !ln_arm926_mmu_disable())return false;
+    ln_s5l_boot_request(LN_S5L_BOOT_NORMAL);
+    ln_s5l_disk_mode(serial,sector_bytes?sector_bytes:512u,true);
 }
 bool ln_platform_decode_retail_payload(uint8_t *payload,uint32_t size){
     /* N25's original NOR body uses the device key and one complete CBC stream. */

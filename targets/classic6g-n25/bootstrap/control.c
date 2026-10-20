@@ -175,8 +175,8 @@ int ln_bootstrap_control(const ln_link_frame *request,ln_link_frame *response,ui
         for(unsigned i=0;i<sizeof(state);i++)reply[12+i]=data[i];
         response->length=12+sizeof(state);response->flags=LINNET_LINK_ACK;return 1;
     }
-    if((operation==53 || operation==56 || operation==57 || operation==66) && lba==0x52454254u) {
-        reset_requested=operation==53?1:operation==56?2:operation==57?3:4;
+    if((operation==53 || operation==56 || operation==57 || operation==66 || operation==67) && lba==0x52454254u) {
+        reset_requested=operation==53?1:operation==56?2:operation==57?3:operation==66?4:5;
         ln_write_le32(reply,0x4252504cu);ln_write_le32(reply+4,operation);ln_write_le32(reply+8,1);
         response->length=12;response->flags=LINNET_LINK_ACK;return 1;
     }
