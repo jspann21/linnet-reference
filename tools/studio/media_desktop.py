@@ -782,9 +782,26 @@ def build_setup_page(window):
     window.resume_classic_button = button('Resume Classic installation', window.resume_classic_setup, 'primary')
     window.resume_classic_button.hide(); details.addWidget(window.resume_classic_button,0,Qt.AlignLeft)
     layout.addWidget(card)
+    window.link_setup_panel = QWidget(); link_setup = box(window.link_setup_panel, spacing=14)
+    link_setup.addWidget(label('Startup settings', 'section'))
+    link_setup.addWidget(label('Check which system starts automatically, or choose another default. '
+        'With Linnet’s startup selector, hold Menu as the iPod starts to choose a system for that start.', 'muted', True))
+    window.link_startup_button = button('View or change startup', lambda: window.open_link_setup('startup'), 'primary')
+    link_setup.addWidget(window.link_startup_button, 0, Qt.AlignLeft)
+    link_setup.addSpacing(12); link_setup.addWidget(label('Linnet build', 'section'))
+    window.link_build_status = label('', 'muted', True); link_setup.addWidget(window.link_build_status)
+    link_setup.addWidget(label('User build is for everyday use. Developer build includes diagnostics and Linnet Link. '
+        'You can switch builds while keeping your media.', 'muted', True))
+    window.link_build_button = button('Change Linnet build', lambda: window.open_link_setup('build'))
+    link_setup.addWidget(window.link_build_button, 0, Qt.AlignLeft)
+    link_setup.addWidget(label('Media Manager connects Disk Mode automatically to read or change these settings.', 'muted', True))
+    window.link_setup_panel.hide(); layout.addWidget(window.link_setup_panel)
+    window.startup_panel = QWidget(); startup = box(window.startup_panel, spacing=14)
+    layout.addWidget(window.startup_panel)
     window.install_panel = QWidget(); layout.addWidget(window.install_panel)
     install = box(window.install_panel, spacing=14)
     window.install_title = label('Install Linnet', 'section'); install.addWidget(window.install_title)
+    window.installed_build = label('', 'muted', True); install.addWidget(window.installed_build)
     install.addWidget(label('1. Choose firmware', 'section'))
     window.firmware_path = str(window.settings.value('firmware_bundle', ''))
     window.firmware_label = label(window.firmware_path or 'Choose a downloaded Linnet firmware ZIP.', 'muted', True)
@@ -808,16 +825,17 @@ def build_setup_page(window):
     install.addSpacing(10)
     window.install_button = button('Install Linnet', window.install_selected, 'primary'); install.addWidget(window.install_button, 0, Qt.AlignLeft)
     window.install_hint = label('', 'muted', True); install.addWidget(window.install_hint)
-    layout.addSpacing(16); window.default_title = label('Default startup', 'section'); layout.addWidget(window.default_title)
+    window.default_title = label('Default startup', 'section'); startup.addWidget(window.default_title)
     window.default_detail = label('Choose which installed system starts automatically. Hold Menu at startup to choose each time.', 'muted', True)
-    layout.addWidget(window.default_detail)
+    startup.addWidget(window.default_detail)
+    window.default_current = label('', 'notice', True); startup.addWidget(window.default_current)
     window.default_choice = ComboBox(); window.default_choice.currentIndexChanged.connect(window.update_install_action)
-    layout.addWidget(window.default_choice)
+    startup.addWidget(window.default_choice)
     window.default_button = button('Save default startup', window.save_default_startup, 'primary')
-    layout.addWidget(window.default_button, 0, Qt.AlignLeft)
+    startup.addWidget(window.default_button, 0, Qt.AlignLeft)
     window.boot_upgrade_button = button('Update startup selector', window.upgrade_startup_selector)
-    layout.addWidget(window.boot_upgrade_button, 0, Qt.AlignLeft)
-    window.boot_upgrade_detail = label('', 'muted', True); layout.addWidget(window.boot_upgrade_detail)
+    startup.addWidget(window.boot_upgrade_button, 0, Qt.AlignLeft)
+    window.boot_upgrade_detail = label('', 'muted', True); startup.addWidget(window.boot_upgrade_detail)
     window.uninstall_panel = QFrame(); window.uninstall_panel.setObjectName('card')
     removal = box(window.uninstall_panel, margins=(24, 24, 24, 24), spacing=12)
     removal.addWidget(label('Remove Linnet OS', 'section'))
@@ -1746,6 +1764,7 @@ class MediaWindow(QMainWindow):
             'video_recovery_options': self._complete_video_recovery_options,
             'recover_publication': self._complete_recover_publication,
             'trash': self._complete_trash, 'setup': self._complete_setup,
+            'link_setup': self._complete_link_setup,
             'prepare': self._complete_prepare, 'eject': self._complete_eject,
             'device_details': self._complete_device_details,
         }
@@ -2027,7 +2046,7 @@ class MediaWindow(QMainWindow):
             self.link_connection = selected
             self.device_name.setText(selected['target_name'].replace('Linnet for ',''))
             self.device_info.setText('Connected through Linnet Link')
-            self.show_progress('Linnet Link is connected. Open Disk Mode to manage media, or resume unfinished setup.')
+            self.show_progress('Your iPod is connected. Manage startup settings and Linnet builds in iPod setup.')
             self.navigate('iPod setup'); self.update_controls()
             return
         if not devices:
@@ -2200,6 +2219,29 @@ class MediaWindow(QMainWindow):
 
     def _complete_setup(self, result):
         self.review = result; self.render_setup(); self.show_progress('Device setup is ready.')
+
+    def _complete_link_setup(self, result):
+        self.transition_device(result['reconnected_identity'])
+        self.device_name.setText(self.device_title(self.identity))
+        self.device_info.setText('Connected in Disk Mode')
+        self.cache_library_dirty = False
+        if result.get('setup_error'):
+            self.update_controls()
+            self.cache_library_dirty = True
+            self.show_error('Disk Mode connected, but setup could not be read: ' + result['setup_error'])
+            return
+        self.review = result['review']
+        self.navigate('iPod setup')
+        self.cache_library_dirty = True
+        target = self.default_title if result['section'] == 'startup' else self.install_title
+        if result['section'] == 'build':
+            self.boot_choice.setFocus()
+        elif self.default_choice.isVisible():
+            self.default_choice.setFocus()
+        self.setup.ensureWidgetVisible(target)
+        self.show_progress('Choose the default system and use Menu at startup for a one-time choice.'
+                           if result['section'] == 'startup' else
+                           'Choose User or Developer build, then apply the update. Your media is kept.')
 
     def _complete_prepare(self, result):
         failures = result.get('errors', [])
@@ -2638,6 +2680,10 @@ class MediaWindow(QMainWindow):
         self.setup_progress.setVisible(loading)
         setting_up = bool(self.busy and self.active_operation and self.active_operation.tag=='classic_install')
         link = self.link_connection
+        linked_os = bool(link and link['identity']['image_kind'] == 'os' and self.review is None)
+        self.link_setup_panel.setVisible(linked_os)
+        for action in (self.link_startup_button, self.link_build_button):
+            action.setEnabled(bool(linked_os and link.get('can_open_disk')) and not self.busy)
         self.connection_help.setVisible(self.identity is None and link is None and not setting_up)
         self.setup_find_button.setVisible(self.identity is None and link is None and not setting_up)
         self.link_disk_button.setVisible(bool(link and link.get('can_open_disk')))
@@ -2654,9 +2700,13 @@ class MediaWindow(QMainWindow):
             return
         if link:
             self.setup_device.setText(link['target_name'] + ' · ' + link['serial'][-6:])
-            self.setup_software.setText('Connected through Linnet Link')
+            build = installer.BUILD_LABELS[link['identity']['profile']]
+            self.setup_software.setText(('Linnet OS · ' + build + ' · ' if linked_os else 'Recovery · ') +
+                                        'Connected through Linnet Link')
+            self.link_build_status.setText('Running: ' + build)
             self.install_detail.setText('Setup is continuing automatically. Keep USB connected.' if setting_up else
                 'Choose Resume Classic installation to continue the saved setup.' if self.resume_classic_button.isVisible() else
+                'Choose a setup action below, or open Disk Mode to manage media.' if linked_os and link.get('can_open_disk') else
                 'Your iPod is connected. Open Disk Mode to manage files.' if link.get('can_open_disk') else
                 'Linnet Link is connected. This iPod’s storage is not available yet.')
             self.install_detail.show()
@@ -3185,6 +3235,10 @@ class MediaWindow(QMainWindow):
             return
         self.startup_state = startup
         labels = {'linnet': 'Linnet', 'rockbox': 'Rockbox', 'apple': 'Apple iPod software'}
+        self.default_current.setText('Starts automatically: ' + labels[startup['default']] if startup['supported'] else '')
+        self.default_detail.setText('Hold Menu as the iPod starts to open the startup menu and choose a system for that start. '
+            'Saving a default below changes what starts automatically.' if startup['supported'] else
+            'Check startup selector availability below before changing the default system.')
         with QSignalBlocker(self.default_choice):
             self.default_choice.clear()
             for choice in startup['choices'] if startup['supported'] else []:
@@ -3203,6 +3257,9 @@ class MediaWindow(QMainWindow):
         self.install_panel.setVisible(can_install or bool(review and getattr(self, 'boot_upgrade_available', False)))
         self.install_title.setText('Update or reinstall Linnet' if review and review['linnet']['state'] == 'installed' else
                                    'Resume installation' if review and review['action'] == 'resume' else 'Install Linnet')
+        installed = bool(review and review['linnet']['state'] == 'installed')
+        self.installed_build.setVisible(installed)
+        self.installed_build.setText('Installed: ' + installer.build_description(review['linnet']) if installed else '')
         self.uninstall_panel.setVisible(bool(review and (review['linnet']['state'] != 'absent' or
                                                         review['recovery'] or review['uninstall']['available'])))
         if review is None and not self.link_connection and not (self.busy and self.active_operation and self.active_operation.tag=='classic_install'):
@@ -3238,10 +3295,12 @@ class MediaWindow(QMainWindow):
             'Enter Linnet Disk Mode and reconnect, then open Preparation to add media.')
         self.uninstall_button.setEnabled(not self.busy and bool(self.review and self.review['uninstall']['available']))
         show_default = bool(self.review and self.review['linnet']['state'] == 'installed')
+        self.startup_panel.setVisible(show_default)
         for widget in (self.default_title, self.default_detail, self.default_choice, self.default_button,
                        self.boot_upgrade_button, self.boot_upgrade_detail):
             widget.setVisible(show_default)
         startup = getattr(self, 'startup_state', dict(supported=False, choices=[], default='linnet'))
+        self.default_current.setVisible(show_default and startup['supported'])
         self.default_choice.setVisible(show_default and startup['supported'])
         self.default_button.setVisible(show_default and startup['supported'])
         self.default_choice.setEnabled(not self.busy and startup['supported'])
@@ -3365,6 +3424,14 @@ class MediaWindow(QMainWindow):
         connection = self.link_connection
         self.work('link_disk',lambda:open_disk(connection,progress=self.events.progress.emit),
                   'Opening Disk Mode automatically…')
+
+    def open_link_setup(self, section):
+        if self.busy or not self.link_connection or not self.link_connection.get('can_open_disk'):
+            return
+        from tools.studio.media_link import open_setup
+        connection = self.link_connection
+        self.work('link_setup', lambda: open_setup(connection, section=section, progress=self.events.progress.emit),
+                  'Connecting your iPod’s setup settings…')
 
     def save_default_startup(self):
         if not self.default_button.isEnabled():

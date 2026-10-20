@@ -86,6 +86,14 @@ automatically. A saved, unfinished Classic setup instead offers **Resume Classic
 installation** for that device. During a hosted recovery connection, the iPod
 directs you to continue setup on the computer.
 
+For a running OS, iPod setup shows its build and offers **View or change startup**
+and **Change Linnet build**. These actions connect Disk Mode automatically, read
+the installed software, and open the selected controls. **Default startup** shows
+the verified saved default and explains holding Menu for a one-time startup
+choice. The build section marks the installed build and lets you switch between
+User and Developer builds. Choose a matching firmware ZIP for User firmware or
+build from source; Developer firmware requires a source checkout. Media is kept.
+
 Linnet Link then checks RAM, panel initialization, disk identity and partition
 access, reads and independently verifies the original NOR backup, authenticates
 the replacement on that device, and verifies the complete flash after writing.

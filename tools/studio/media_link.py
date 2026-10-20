@@ -51,6 +51,23 @@ def open_disk(connection, *, progress=lambda _message: None):
         return _open_disk(connection, progress=progress)
 
 
+def open_setup(connection, *, section, progress=lambda _message: None):
+    """Connect storage and read setup for the user's selected task."""
+    if section not in ('startup', 'build'):
+        raise ValueError('Unknown iPod setup section')
+    from tools.studio.installer import assess
+    result = open_disk(connection, progress=progress)
+    identity = result['reconnected_identity']
+    progress('Reading installed builds and startup choices…')
+    # Retain the mounted identity if assessment fails: storage has already
+    # changed mode and the old Link connection is no longer usable.
+    try:
+        review = assess(identity)
+    except (OSError, RuntimeError, ValueError) as error:
+        return dict(result, section=section, review=None, setup_error=str(error))
+    return dict(result, section=section, review=review)
+
+
 def _open_disk(connection, *, progress):
     from tools.link.campaign import connect
     from tools.content.media_manager import discover as disks

@@ -68,8 +68,9 @@ write/read/restore crossing a 4 KiB boundary, without storage errors. MP3
 decoding and PCM playback ran without underruns or digital audio faults, but
 only the left headphone output was audible. A right-only PCM tone was silent
 with headphones whose right earpiece worked elsewhere. Stereo headphone output
-on this unit remains unqualified pending comparison with Apple OS or another
-headphone pair; symmetric codec readback alone does not establish analog output.
+on this unit remains unqualified: the same right-channel failure was reported
+in Apple OS, pointing to the device's analog headphone path. Symmetric codec
+readback alone does not establish analog output.
 
 ## Known limits
 
