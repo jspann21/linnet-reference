@@ -485,9 +485,31 @@ def assess(identity, *, _validated_identity=False):
     native = identity.get("native_target_id") == target_id and (
         install_spec["boot_layout"] == "s5l-nor" or
         install_spec["boot_layout"] == "ipod-directory" and linnet["state"] == "installed")
+    classic_pending = None
+    classic_conflict = False
+    if install_spec['boot_layout'] == 's5l-nor':
+        from tools.studio.classic_setup import pending as pending_classic_setup
+        saved_setups = pending_classic_setup(identity)
+        if len(saved_setups) > 1:
+            classic_conflict = True
+        elif saved_setups:
+            classic_pending = saved_setups[0]
+    classic_initial = (install_spec['boot_layout'] == 's5l-nor' and not native and
+                       linnet['state'] == 'absent' and marker is None and not recovery_error and not classic_conflict)
     if marker and marker.get("phase") == "boot-upgrade-pending":
         action, strategy = "attention", None
         summary = "A startup upgrade was interrupted. Resume it before changing iPod setup."
+    elif classic_conflict:
+        action, strategy = 'attention', None
+        summary = 'Multiple unfinished Classic installations were found. Resolve their saved recovery records before continuing.'
+    elif classic_pending:
+        action, strategy = 'resume', 'classic-bootstrap'
+        resume = dict(build=classic_pending['build'], artifacts=classic_pending['artifacts'],
+                      transaction=str(Path(classic_pending['path']).parent), installation_method='native-preserve')
+        summary = 'A Classic installation is ready to resume. Media Manager will reconnect and continue the saved setup.'
+    elif classic_initial:
+        action, strategy = 'install', 'classic-bootstrap'
+        summary = 'Install Linnet Boot and OS together. Media Manager checks this Classic, saves its original startup software, and guides you through the one button step.'
     elif native and linnet["state"] == "installed":
         action, strategy = "replace", "native-volume"
         summary = "Linnet is installed. Update the OS through native Disk Mode, preserving the confirmed OS for rollback."
@@ -496,7 +518,7 @@ def assess(identity, *, _validated_identity=False):
         summary = "Native Boot is running. Install Linnet on this iPod; an interrupted initial installation requires the same build."
     elif not install_spec["enabled"]:
         action, strategy = "unsupported", None
-        summary = spec.get("bringup_blocker", "This target is recognized, but installation is not enabled for it.")
+        summary = recovery_error or spec.get("bringup_blocker", "This target is recognized, but installation is not enabled for it.")
     elif external_rockbox and linnet["state"] != "absent":
         action, strategy = "adopt", "rockbox-file"
         summary = ("Rockbox is the current default boot. The existing Linnet files can be "
@@ -530,7 +552,15 @@ def assess(identity, *, _validated_identity=False):
         linnet, rockbox, others, marker, action, resume,
         active_override="rockbox" if external_rockbox else None)
     installation_methods, default_method = _installation_methods(action, rockbox, marker, resume)
-    if native:
+    if classic_conflict:
+        installation_methods, default_method = [], None
+        for option in boot_options:option['selectable']=False
+    elif classic_initial or classic_pending:
+        installation_methods = [dict(id='native-preserve',label='Linnet with Apple fallback',
+            detail='Media Manager installs Boot and OS, preserves Apple startup software, and handles restarts automatically.',
+            strategy='classic-bootstrap',enabled=True,requires_admin=False)]
+        default_method = 'native-preserve'
+    elif native:
         available = (linnet["state"] in ("installed", "absent", "incomplete") and
                      not linnet.get("candidate_pending") and
                      not (marker and marker.get("phase") == "boot-upgrade-pending"))
@@ -560,7 +590,7 @@ def assess(identity, *, _validated_identity=False):
     pending_uninstall = _pending_uninstall(identity, root)
     return dict(checked_at=_now(), identity=identity,
                 target=dict(id=target_id, name=spec["name"],
-                            installer_enabled=install_spec["enabled"] or native, boot_layout=install_spec["boot_layout"],
+                            installer_enabled=install_spec["enabled"] or native or classic_initial or bool(classic_pending), boot_layout=install_spec["boot_layout"],
                             wrapper_model=expected_model),
                 retail_os=not native, linnet=linnet, rockbox=rockbox, other_installations=others,
                 boot_options=boot_options, installation_methods=installation_methods,
@@ -569,6 +599,7 @@ def assess(identity, *, _validated_identity=False):
                                             identity.get("native_target_id") == target_id,
                                             pending_uninstall, install_spec["boot_layout"], recovery_error),
                 recovery=marker, resume=resume, action=action, strategy=strategy, summary=summary,
+                classic_setup=classic_pending,
                 preservation=dict(formats_disk=False, repartitions_disk=False, deletes_media=False,
                                   overwrites_existing_linnet_files=native, archives_previous_linnet=not native,
                                   preserves_settings=True, preserves_media_libraries=True,
@@ -684,13 +715,16 @@ def _run_build(arguments):
 
 
 def build_artifacts(identity, progress=lambda _message: None, build="user",
-                    installation_method="rockbox-loader"):
+                    installation_method="rockbox-loader", *, boot_profile=None):
     if build not in ("user", "dev"):
         raise ValueError("installer build must be user or dev")
     if installation_method not in INSTALLATION_METHODS:
         raise ValueError("unsupported Linnet installation method")
     target, serial = identity["target_id"], identity["linnet_usb_serial"]
     os_profile = "release" if build == "user" else "dev"
+    boot_profile=boot_profile or os_profile
+    if boot_profile!=os_profile and not (target=='classic6g-n25' and boot_profile=='release' and installation_method=='native-preserve'):
+        raise ValueError('Only Classic native Boot may use a separate release profile')
     progress(f"Building the Linnet {build} OS for {TARGETS[target]['name']}…")
     os_arguments = ["--target", target, "--profile", os_profile,
                     "--kind", "os", "--verify"]
@@ -698,12 +732,12 @@ def build_artifacts(identity, progress=lambda _message: None, build="user",
         os_arguments += ["--device-serial", serial]
     os_report = _run_build(os_arguments)
     progress("Building the recoverable device loader…")
-    boot_arguments = ["--target", target, "--profile", os_profile,
+    boot_arguments = ["--target", target, "--profile", boot_profile,
                       "--kind", "boot", "--verify"]
     boot_selector = INSTALLATION_METHODS[installation_method]["boot_selector"]
     if boot_selector != "none":
         boot_arguments += ["--boot-selector", boot_selector]
-    if os_profile == "dev":
+    if boot_profile == "dev":
         boot_arguments += ["--device-serial", serial]
     boot_report = _run_build(boot_arguments)
     def artifact(report, name):
@@ -714,7 +748,7 @@ def build_artifacts(identity, progress=lambda _message: None, build="user",
     artifacts = dict(os_image=str(os_image), os_report=str(os_image.with_suffix(".json")),
                      boot_image=str(boot_image), boot_wrapper=str(boot_wrapper),
                       boot_report=str(boot_image.with_suffix(".json")),
-                      build=build, os_profile=os_profile, os_build_id=os_report["build_id"],
+                      build=build, os_profile=os_profile, boot_profile=boot_profile, os_build_id=os_report["build_id"],
                       boot_build_id=boot_report["build_id"],
                       installation_method=installation_method, boot_selector=boot_selector)
     _validate_artifacts(identity, artifacts)
@@ -740,10 +774,14 @@ def _validate_artifacts(identity, artifacts):
     expected_profile = "release" if build == "user" else "dev" if build == "dev" else None
     if expected_profile is None or expected_profile != artifacts.get("os_profile"):
         raise ValueError("installer artifact build selection is invalid")
+    boot_profile=artifacts.get('boot_profile',expected_profile)
+    if boot_profile!=expected_profile and not (identity['target_id']=='classic6g-n25' and
+            boot_profile=='release' and installation_method=='native-preserve'):
+        raise ValueError('Invalid installer Boot profile')
     if ((os_identity["target_id"], os_identity["profile"], os_identity["build_id"]) !=
             (identity["target_id"], expected_profile, artifacts["os_build_id"]) or
             (boot_identity["target_id"], boot_identity["profile"], boot_identity["build_id"]) !=
-            (identity["target_id"], expected_profile, artifacts["boot_build_id"])):
+            (identity["target_id"], boot_profile, artifacts["boot_build_id"])):
         raise ValueError("installer image identity does not match the detected iPod")
     from tools.studio.bootstrap import ipod_payload
     wrapped, _model = ipod_payload(paths["boot_wrapper"].read_bytes(),
@@ -756,9 +794,10 @@ def _validate_artifacts(identity, artifacts):
         if report_path.stat().st_size > 64 * 1024 * 1024:
             raise ValueError("installer build report exceeds its bound")
         report = json.loads(report_path.read_text(encoding="utf-8"))
-        expected_serial = "" if build == "user" else identity["linnet_usb_serial"]
+        profile=boot_profile if kind=='boot' else expected_profile
+        expected_serial = "" if profile == "release" else identity["linnet_usb_serial"]
         if (not isinstance(report, dict) or not isinstance(report.get("image"), dict) or
-                report.get("kind") != kind or report.get("profile") != expected_profile or
+                report.get("kind") != kind or report.get("profile") != profile or
                 report.get("probe") != "frame" or
                 report.get("target_id") != identity["target_id"] or
                 report.get("device_serial") != expected_serial or
@@ -771,7 +810,7 @@ def _validate_artifacts(identity, artifacts):
             raise ValueError("installer Boot report does not preserve the Apple firmware fallback")
         if kind == "boot" and report.get("startup_default_format") != 1:
             raise ValueError("installer Boot image does not support startup defaults")
-        if build == "user":
+        if profile == 'release':
             exclusion = report.get("release_exclusion")
             if not isinstance(exclusion, dict) or exclusion.get("passed") is not True:
                 raise ValueError("user installer artifacts require release exclusion verification")
@@ -1131,7 +1170,7 @@ def _restore_reinstall_data(root, archive):
 
 
 def install(identity, progress=lambda _message: None, build="user", installation_method=None,
-            firmware=None, from_source=False):
+            firmware=None, from_source=False, instruction=lambda _event: None, cancelled=lambda:False):
     """Keep file-bootloader transactions in the caller's publisher exclusion.
 
     Native directory transactions are owned by the elevated worker; holding the
@@ -1148,12 +1187,14 @@ def install(identity, progress=lambda _message: None, build="user", installation
                             (reviewed.get("recovery") or {}).get("strategy") == "native-directory")
     if method and method["strategy"] == "rockbox-file" and not mixed_native_restore:
         with _exclusive(reviewed["identity"]):
-            return _install(identity, progress, build, method_id, firmware, from_source, route)
-    return _install(identity, progress, build, method_id, firmware, from_source, route)
+            return _install(identity, progress, build, method_id, firmware, from_source, route,
+                            instruction=instruction,cancelled=cancelled)
+    return _install(identity, progress, build, method_id, firmware, from_source, route,
+                    instruction=instruction,cancelled=cancelled)
 
 
 def _install(identity, progress=lambda _message: None, build="user", installation_method=None,
-            firmware=None, from_source=False, reviewed_route=None):
+            firmware=None, from_source=False, reviewed_route=None, *, instruction=lambda _event:None, cancelled=lambda:False):
     if build not in ("user", "dev"):
         raise ValueError("installer build must be user or dev")
     if from_source and firmware is not None:
@@ -1173,6 +1214,12 @@ def _install(identity, progress=lambda _message: None, build="user", installatio
     if not method or not method["enabled"]:
         raise ValueError("the selected Linnet installation method is unavailable")
     strategy = method["strategy"]
+    if strategy == 'classic-bootstrap':
+        from tools.studio import classic_setup
+        pending=reviewed.get('classic_setup')
+        path=(pending['path'] if pending else classic_setup.prepare(reviewed['identity'],
+              firmware=firmware,from_source=from_source,build=build,progress=progress))
+        return classic_setup.run(path,progress=progress,instruction=instruction,cancelled=cancelled)
     if strategy == "native-volume":
         from tools.studio.native_update import publish
         if from_source:

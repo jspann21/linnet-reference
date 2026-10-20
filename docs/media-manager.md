@@ -34,7 +34,8 @@ check, but video conversion remains unavailable until both tools pass.
 
 ## Install or restore firmware
 
-1. Connect the iPod in Disk Mode and choose **Find or switch iPod**.
+1. Connect the iPod with USB and choose **Find or switch iPod**. If it does not
+   appear, **iPod setup** shows the Apple Disk Mode button sequence.
 2. Open **iPod setup**, above **Preparation** in the sidebar. Check the connected
    device and setup status first. If an installation prerequisite is missing,
    the page explains it before offering firmware or build choices.
@@ -42,8 +43,10 @@ check, but video conversion remains unavailable until both tools pass.
    whole ZIP **without extracting it**. Media Manager selects the required files.
    Source checkouts also offer a development build option.
 4. Choose a build (**User build** for everyday use) and a startup method when
-   there is a choice, install, then **Eject safely** to start Linnet. Enter Linnet
-   Disk Mode and reconnect before opening **Preparation** to add media. Existing
+   there is a choice, then install. A fresh Classic finishes connected in Linnet
+   Disk Mode: open **Preparation** to add media or **Eject safely** to start Linnet.
+   For other installation routes, eject safely to start Linnet, then enter Linnet
+   Disk Mode and reconnect before preparing media. Existing
    installations also show default startup and removal options below the
    installation controls.
 
@@ -60,15 +63,35 @@ storage identities, and a writable FAT32 iPod volume. Unknown devices and firmwa
 for another target are rejected. The installer rechecks the connected device and
 installation method before writing; the elevated worker also revalidates the
 firmware after administrator approval. Selecting a ZIP cannot override these
-checks. Automatic native installation is enabled for Photo P98,
-monochrome Q21, and Video M25. Classic N25 requires its separate
-[bootstrap procedure](bootstrap-tooling.md); building a Classic ZIP does not
-enable automatic installation. A Classic connected in Apple Disk Mode is
-recognized, but its initial Boot installation is unavailable in Media Manager.
-After the separate bootstrap, reconnect in Linnet Disk Mode to install the OS.
-The setup page hides firmware and build controls while this prerequisite blocks
-installation. Removal appears only when Linnet files or a recovery record are
-present, or interrupted removal can be completed.
+checks. Photo P98, monochrome Q21, and Video M25 use native directory
+installation. Classic N25 uses Media Manager's integrated NOR bootloader setup.
+Removal appears only when Linnet files or a recovery record are present, or
+interrupted removal can be completed.
+
+### First installation on a Classic
+
+Choose a current Classic firmware ZIP and **Install Linnet**. The ZIP includes
+the temporary bootstrap, so packaged installation needs no compiler. Older ZIPs
+can still update an installed OS but cannot start first-time Boot installation.
+Media Manager saves the selected firmware and the current USB and disk identity,
+safely ejects, then asks you to hold **Menu + Select** for about 12 seconds.
+Release the buttons when Media Manager detects DFU and tells you to release.
+Keep USB connected throughout; subsequent restarts are automatic.
+
+Linnet Link then checks RAM, panel initialization, disk identity and partition
+access, reads and independently verifies the original NOR backup, authenticates
+the replacement on that device, and verifies the complete flash after writing.
+Unsupported RAM, storage or NOR layouts stop setup before flashing. It reconnects
+through Linnet Disk Mode, preserves Apple startup and portable recovery files,
+and installs and verifies the OS. The iPod stays mounted so you can prepare media
+without another reboot. A successful automated check does not establish physical
+LCD appearance, controls, audible output or battery runtime.
+
+If interrupted, use **Resume Classic installation** in iPod setup. The saved
+transaction keeps the exact firmware, device identity, original flash and write
+receipts. Media Manager rechecks those records and the connected device before
+continuing; uncertain writes are not retried automatically. Source installations
+use the smaller User Boot with either User or Developer OS to fit the NOR archive.
 
 | Startup method | Behavior |
 | --- | --- |

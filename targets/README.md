@@ -14,7 +14,7 @@ scope, and variant limits.
 | [Photo P98](photo4g-p98/README.md) | A1099, PP5020, 32 MiB, 220 × 176 | Native directory installer and A/B OS updates |
 | [Video M25](video5g-m25/README.md) | A1136, PP5022, 32 / 64 MiB, 320 × 240 | Native directory installer and A/B updates; qualification follows the board/storage configuration |
 | [Monochrome Q21](ipod4g-q21/target.toml) | A1059 / MP102, PP5020, 32 MiB, 160 × 128 | Native directory installer; iPod Mono interface, no photo/video playback |
-| [Classic N25](classic6g-n25/target.toml) | A1238, S5L8702, 64 MiB, 320 × 240 | Separate NOR bootstrap; automatic installer disabled |
+| [Classic N25](classic6g-n25/target.toml) | A1238, S5L8702, 64 MiB, 320 × 240 | Media Manager guides initial DFU entry, then installs NOR Boot and OS through Link and native Disk Mode |
 
 ## Qualification record
 

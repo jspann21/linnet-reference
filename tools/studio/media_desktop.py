@@ -242,6 +242,7 @@ class Events(QObject):
     conversion = Signal(object)
     artwork = Signal(int, str, object)
     tools_checked = Signal(int, object)
+    setup_instruction = Signal(object)
 
 
 class Covers(QObject):
@@ -762,11 +763,22 @@ def build_setup_page(window):
     window.heading(layout, 'iPod setup', 'Install Linnet, then manage how your iPod starts.')
     card = QFrame(); card.setObjectName('card'); details = box(card, margins=(24, 24, 24, 24), spacing=12)
     details.addWidget(label('Connected device', 'section'))
-    window.setup_device = label('Connect an iPod in Disk Mode.', 'muted', True); details.addWidget(window.setup_device)
+    window.setup_device = label('Connect your iPod with USB.', 'muted', True); details.addWidget(window.setup_device)
     window.setup_software = label('', 'muted', True); details.addWidget(window.setup_software)
     window.install_detail = label('', 'notice', True); window.install_detail.hide(); details.addWidget(window.install_detail)
     window.setup_progress = QProgressBar(); window.setup_progress.setRange(0, 0)
     window.setup_progress.setTextVisible(False); window.setup_progress.hide(); details.addWidget(window.setup_progress)
+    window.connection_help = label('Connect your iPod with USB, then choose Find iPod.\n\n'
+        'If it does not appear, enter Apple Disk Mode:\n'
+        '1. Turn the Hold switch off.\n'
+        '2. Hold Menu + Select (the centre button) until the iPod restarts.\n'
+        '3. Immediately hold Select + Play/Pause until Disk Mode appears.\n\n'
+        'Keep USB connected, then choose Find iPod again.', 'notice', True)
+    details.addWidget(window.connection_help)
+    window.setup_find_button = button('Find iPod',window.discover,None,'refresh')
+    details.addWidget(window.setup_find_button,0,Qt.AlignLeft)
+    window.resume_classic_button = button('Resume Classic installation', window.resume_classic_setup, 'primary')
+    window.resume_classic_button.hide(); details.addWidget(window.resume_classic_button,0,Qt.AlignLeft)
     layout.addWidget(card)
     window.install_panel = QWidget(); layout.addWidget(window.install_panel)
     install = box(window.install_panel, spacing=14)
@@ -1037,6 +1049,7 @@ class MediaWindow(QMainWindow):
         self.events.stage.connect(self.show_operation_stage)
         self.events.conversion.connect(self.show_conversion_progress)
         self.events.tools_checked.connect(self.tools_checked)
+        self.events.setup_instruction.connect(self.show_setup_instruction)
         self.covers = Covers(self)
         self.ffmpeg = self.settings.value('ffmpeg', shutil.which('ffmpeg') or '')
         self.ffprobe = self.settings.value('ffprobe', shutil.which('ffprobe') or '')
@@ -1586,7 +1599,7 @@ class MediaWindow(QMainWindow):
         self.operation_id += 1
         context = OperationContext(self.operation_id, tag,
             dict(self.identity) if self.identity and tag != 'devices' and not tag.startswith('cache_') else None,
-            self.stop_event if tag in ('prepare', 'remove', 'restore', 'scan', 'plan', 'devices', 'apple_update') else None)
+            self.stop_event if tag in ('prepare', 'remove', 'restore', 'scan', 'plan', 'devices', 'apple_update', 'classic_install') else None)
         self.active_operation = context
         self.busy = True
         self.stop_event.clear()
@@ -1696,6 +1709,9 @@ class MediaWindow(QMainWindow):
             self.prep_results.setPlainText(message); self.prep_results.show()
             self.show_progress(message); self.refresh()
             return
+        if tag == 'classic_install' and outcome.status == 'cancelled':
+            self.show_progress(error or 'Classic setup stopped before bootloader installation.')
+            return
         if error:
             self.record_diagnostic(tag, outcome.error_type or 'Error', error, outcome.status,
                                    cancel_requested)
@@ -1720,7 +1736,7 @@ class MediaWindow(QMainWindow):
             'device_details': self._complete_device_details,
         }
         for change in ('remove', 'restore', 'erase', 'sync', 'install', 'uninstall', 'skipped',
-                       'startup_default', 'boot_upgrade', 'restore_video_catalog'):
+                       'startup_default', 'boot_upgrade', 'restore_video_catalog', 'classic_install'):
             handlers[change] = self._complete_change
         handler = handlers.get(tag)
         if handler is None:
@@ -1967,9 +1983,10 @@ class MediaWindow(QMainWindow):
             self.device_name.setText('No iPod connected'); self.device_info.setText('Connect in Disk Mode')
             if errors:
                 self.record_diagnostic('devices', 'DiscoveryError', '; '.join(errors), 'failed')
-                self.show_error('Could not read a connected iPod: ' + '; '.join(errors))
+                self.show_progress('The connected iPod’s storage could not be read. Follow the Disk Mode steps in iPod setup, then choose Refresh.')
             else:
                 self.show_progress('Connect your iPod, then choose Refresh.')
+            self.navigate('iPod setup')
             return
         if len(devices) > 1:
             dialog = QDialog(self); dialog.setWindowTitle('Choose an iPod'); layout = box(dialog, margins=(24, 24, 24, 24))
@@ -2079,6 +2096,9 @@ class MediaWindow(QMainWindow):
             self.games_controller.load_games()
         if self.page == 'iPod setup':
             self.render_setup()
+        elif self.review['linnet']['state']=='absent' and not self.settings.value('setup_seen/'+self.identity['linnet_usb_serial'],False,type=bool):
+            self.settings.setValue('setup_seen/'+self.identity['linnet_usb_serial'],True)
+            self.navigate('iPod setup')
         elif self.page == 'Trash':
             identity = self.identity
             self.work('trash', lambda: media_trash.removals(identity), 'Reading Trash…')
@@ -2563,13 +2583,21 @@ class MediaWindow(QMainWindow):
     def update_setup_status(self):
         loading = self.busy and self.review is None
         self.setup_progress.setVisible(loading)
+        setting_up = bool(self.busy and self.active_operation and self.active_operation.tag=='classic_install')
+        self.connection_help.setVisible(self.identity is None and not setting_up)
+        self.setup_find_button.setVisible(self.identity is None and not setting_up)
+        self.setup_find_button.setEnabled(not self.busy)
+        if not self.busy:
+            from tools.studio.classic_setup import pending
+            self.resume_classic_button.setVisible(self.review is None and bool(pending(self.identity)))
+        self.resume_classic_button.setEnabled(not self.busy)
         if self.review is not None:
             return
         if self.identity:
             self.setup_device.setText(self.device_title(self.identity))
             self.setup_software.setText('Checking iPod setup…' if loading else 'Choose Refresh to check installed software.')
         else:
-            self.setup_device.setText('Looking for your iPod…' if loading else 'Connect an iPod in Disk Mode.')
+            self.setup_device.setText('Looking for your iPod…' if loading else 'Connect your iPod with USB.')
             self.setup_software.setText('Device detection is in progress.' if loading else '')
 
     def queue_status(self, kind, path):
@@ -3073,13 +3101,7 @@ class MediaWindow(QMainWindow):
             if (review.get('recovery') or {}).get('strategy') == 'native-nor' and review['recovery'].get('phase') == 'installed':
                 summary = ('Linnet Boot is already installed. Start Linnet Boot, enter Linnet Disk Mode, '
                            'then reconnect and refresh to install Linnet OS. Another Boot installation is not needed.')
-            else:
-                summary = ('iPod Classic recognized. Install Linnet Boot first.\n\n'
-                           'Boot starts Linnet OS. First-time Boot setup on this model requires the separate developer '
-                           'DFU/NOR bootstrap workflow, which is not available in Media Manager yet. '
-                           'After that, reconnect in Linnet Disk Mode to install Linnet OS here. '
-                           'A firmware ZIP alone cannot complete Boot setup.')
-        elif review['action'] == 'install' and review['linnet']['state'] == 'absent':
+        elif review['action'] == 'install' and review['linnet']['state'] == 'absent' and review['strategy']!='classic-bootstrap':
             summary = 'Ready to install Linnet. Choose firmware and a build below, then install and eject safely.'
         self.install_detail.setText(summary)
         self.install_detail.show()
@@ -3107,7 +3129,7 @@ class MediaWindow(QMainWindow):
                                    'Resume installation' if review and review['action'] == 'resume' else 'Install Linnet')
         self.uninstall_panel.setVisible(bool(review and (review['linnet']['state'] != 'absent' or
                                                         review['recovery'] or review['uninstall']['available'])))
-        if review is None:
+        if review is None and not (self.busy and self.active_operation and self.active_operation.tag=='classic_install'):
             self.install_detail.hide()
         enabled = not self.busy and self.identity is not None and self.review is not None and bool(option and option.get('selectable'))
         linnet = option and option['kind'] == 'linnet'
@@ -3191,8 +3213,39 @@ class MediaWindow(QMainWindow):
             from_source, firmware = option['build'] == 'dev', None
         operation = (lambda: installer.install(identity, progress=self.events.progress.emit,
             build=option['build'], installation_method=method['id'], firmware=firmware,
-            from_source=from_source)) if option['kind'] == 'linnet' else lambda: installer.restore(identity, expected=option['id'])
-        self.work('install', operation, 'Updating your iPod setup…')
+            from_source=from_source,instruction=self.events.setup_instruction.emit,
+            cancelled=self.stop_event.is_set)) if option['kind'] == 'linnet' else lambda: installer.restore(identity, expected=option['id'])
+        self.work('classic_install' if method and method['strategy']=='classic-bootstrap' else 'install',
+                  operation, 'Updating your iPod setup…')
+
+    @Slot(object)
+    def show_setup_instruction(self, event):
+        if not self.busy or not self.active_operation or self.active_operation.tag!='classic_install':
+            return
+        self.install_detail.setText(event['message']); self.install_detail.show()
+        self.setup_progress.show()
+        self.cancel_button.setVisible(bool(event['can_stop']))
+        self.cancel_button.setEnabled(bool(event['can_stop']) and not self.stop_event.is_set())
+        self.show_progress(event['message'])
+
+    def resume_classic_setup(self):
+        if self.busy:return
+        from tools.studio.classic_setup import pending, run
+        choices=pending(self.identity)
+        if not choices:return
+        selected=choices[0]
+        if len(choices)>1:
+            dialog=QDialog(self); dialog.setWindowTitle('Resume Classic installation')
+            layout=box(dialog,margins=(24,24,24,24))
+            layout.addWidget(label('Choose the Classic installation to resume.',None,True))
+            picker=ComboBox()
+            for item in choices:picker.addItem('Classic · '+item['serial'][-6:]+' · '+item['phase'],item)
+            layout.addWidget(picker); layout.addWidget(button('Resume installation',dialog.accept,'primary'))
+            if dialog.exec()!=QDialog.Accepted:return
+            selected=picker.currentData()
+        self.work('classic_install',lambda:run(selected['path'],progress=self.events.progress.emit,
+            instruction=self.events.setup_instruction.emit,cancelled=self.stop_event.is_set()),
+            'Resuming Classic installation…')
 
     def save_default_startup(self):
         if not self.default_button.isEnabled():

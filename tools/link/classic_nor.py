@@ -126,7 +126,8 @@ def prepare(device_plan, backup, output, boot_image=None):
     before_path=output.with_suffix('.before.bin')
     if output.exists() or image_path.exists() or before_path.exists():raise ValueError('NOR preparation output already exists')
     original=_backup(backup,device['serial'])
-    base=ROOT/'out/dev/classic6g-n25/bootstrap'
+    from tools.link.s5l_bootstrap import artifacts_directory
+    base=artifacts_directory(device)
     manifest=json.loads((base/'manifest.json').read_text());payload=(base/'monitor.bin').read_bytes()
     if manifest['serial']!=device['serial'] or manifest['target_id']!=TARGET or _sha(payload)!=manifest['monitor_sha256']:
         raise ValueError('Monitor artifact identity/hash mismatch')
@@ -139,7 +140,8 @@ def prepare(device_plan, backup, output, boot_image=None):
         boot_image=Path(boot_image);boot=boot_image.read_bytes();boot_identity=inspect(boot)
         report=json.loads(boot_image.with_suffix('.json').read_text())
         if (report.get('kind')!='boot' or report.get('image')!=boot_identity or
-                boot_identity['target_id']!=TARGET or report.get('device_serial')!=device['serial'] or
+                boot_identity['target_id']!=TARGET or
+                report.get('device_serial')!=('' if boot_identity['profile']=='release' else device['serial']) or
                 boot_identity['load_address']!=0x08000000 or len(boot)>0x80000):
             raise ValueError('Expected a matching device-bound native Boot build')
         compressed=pack_hc(boot)
@@ -176,7 +178,8 @@ def prepare(device_plan, backup, output, boot_image=None):
                   base_path=str(before_path),base_sha256=_sha(current),
                   image_path=str(image_path),image_sha256=_sha(image),result_sha256=_sha(expected),
                   pages=pages,boot_offset=START,boot_limit=END,ram_identity=identity)
-        if boot_identity is not None:plan['boot_image']=boot_identity
+        if boot_identity is not None:
+            plan.update(boot_image=boot_identity,startup_default_format=report.get('startup_default_format',0))
         output.parent.mkdir(parents=True,exist_ok=True)
         with before_path.open('xb') as destination:destination.write(current)
         with image_path.open('xb') as destination:destination.write(image)
@@ -185,9 +188,12 @@ def prepare(device_plan, backup, output, boot_image=None):
     finally:session.close()
 
 
-def install(prepared, expected_plan_sha, *, progress=print):
+def install(prepared, expected_plan_sha, *, progress=print, reboot_mode='recovery'):
+    if reboot_mode not in ('recovery','disk'):raise ValueError('Invalid Classic installation reboot mode')
     prepared=Path(prepared).resolve()
     plan, original, before, image, expected, pages = load_prepared(prepared, expected_plan_sha)
+    if reboot_mode=='disk' and not plan.get('boot_image'):
+        raise ValueError('Native Disk Mode requires the prepared Boot archive')
     size=struct.unpack_from('<I',image,12)[0]
     from tools.studio.classic_recovery import save_install
     # Retain recovery independently of disposable build output before any flash write.
@@ -222,6 +228,12 @@ def install(prepared, expected_plan_sha, *, progress=print):
         receipt['phase']='verifying';record();actual=_read(session)
         if actual!=expected:raise RuntimeError('Complete NOR readback differs from the planned result')
         receipt.update(result_sha256=_sha(actual),phase='reboot-requested');record()
+        if reboot_mode=='disk':
+            save_install(plan, original, expected, installed=True)
+            receipt['phase']='flash-verified';record()
+            _operation(session,67,0x52454254,size=0)
+            receipt['phase']='disk-requested';record()
+            return receipt
         _operation(session,53,0x52454254,size=0)
         session.close();session=None;time.sleep(1)
         session,identity=_connect(plan)

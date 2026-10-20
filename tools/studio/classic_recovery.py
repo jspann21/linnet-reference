@@ -74,6 +74,7 @@ def save_install(plan, original, installed_image, *, installed: bool):
     value = dict(format=FORMAT, target_id=nor.TARGET, serial=serial,
                  original_sha256=_sha(original), installed_sha256=_sha(installed_image),
                  monitor_build_id=plan['build_id'], phase='installed' if installed else 'prepared')
+    if 'startup_default_format' in plan:value['startup_default_format']=plan['startup_default_format']
     if path.exists():
         previous = _json(path)
         if any(previous.get(key) != item for key, item in value.items() if key != 'phase'):
@@ -117,6 +118,7 @@ def _marker(identity, path, record):
                 linnet_usb_serial=record['serial'], strategy='native-nor', phase='installed',
                 previous_boot='apple', installation_method='native-nor',
                 nor_record=str(path), nor_record_sha256=_sha(Path(path).read_bytes()),
+                startup_default_format=record.get('startup_default_format',0),
                 original_sha256=record['original_sha256'], installed_sha256=record['installed_sha256'])
 
 

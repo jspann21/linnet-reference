@@ -30,14 +30,18 @@ def location(instance):
     return sorted(x.upper() for x in paths)
 
 
-def prepare(mount):
+def artifacts_directory(plan):
+    return Path(plan.get('bootstrap_artifacts', ROOT/'out/dev/classic6g-n25/bootstrap'))
+
+
+def prepare(mount, *, output=None, artifacts=None):
     from tools.inspect.retail_device import detect
     device=detect(mount)
     if device['target_id']!='classic6g-n25':raise ValueError('Expected a live Classic in Disk Mode')
     usb=device.get('retail_usb') or device.get('native_usb')
     if not usb:raise ValueError('Expected a Classic USB Disk Mode endpoint')
     usb_location=location(usb['pnp_id'])
-    destination=ROOT/'out/classic6g-n25/bootstrap-device.json'
+    destination=Path(output) if output is not None else ROOT/'out/classic6g-n25/bootstrap-device.json'
     disk_serial=device['device_id']
     if 'native_usb' in device and destination.exists():
         previous=json.loads(destination.read_text())
@@ -47,6 +51,7 @@ def prepare(mount):
             disk_serial=previous.get('disk_serial') or disk_serial
     plan=dict(target_id=device['target_id'],serial=device['linnet_usb_serial'],
               disk_serial=disk_serial,usb_location=usb_location)
+    if artifacts is not None:plan['bootstrap_artifacts']=str(Path(artifacts).resolve())
     destination.parent.mkdir(parents=True,exist_ok=True)
     destination.write_text(json.dumps(plan,indent=2)+'\n')
     return dict(plan,prepared=str(destination))
@@ -59,7 +64,7 @@ def update(prepared):
     from tools.link.session import Session
     from tools.link.identity import decode
     plan=json.loads(Path(prepared).read_text())
-    base=ROOT/'out/dev/classic6g-n25/bootstrap'
+    base=artifacts_directory(plan)
     report=json.loads((base/'manifest.json').read_text())
     payload=(base/'monitor.bin').read_bytes();image=(base/'monitor.lnos').read_bytes()
     bridge=(base/'monitor-bridge.lnos').read_bytes()
@@ -208,13 +213,21 @@ def diagnose(prepared, *, display=False):
         words=struct.unpack('<256H',raw)
         def ata_string(first,count):
             return b''.join(struct.pack('>H',word) for word in words[first:first+count]).decode('ascii',errors='replace').strip()
-        result['disk']=dict(model=ata_string(27,20),serial=ata_string(10,10),firmware=ata_string(23,4),
-                            sectors=words[60]|words[61]<<16,identify_sha256=hashlib.sha256(raw).hexdigest())
+        lba48=(words[83]&0xc400)==0x4400
+        sectors=sum(words[100+n]<<(16*n) for n in range(4)) if lba48 else words[60]|words[61]<<16
+        model,firmware=ata_string(27,20),ata_string(23,4)
+        iflash=(model=='iFlash-Platform iPod Adapters' and firmware=='iFlash85' and (words[83]&0xc004)==0x4004)
+        logical_512=not ((words[106]&0xd000)==0x5000 and (words[117]|words[118]<<16)!=256)
+        flush=(words[83]&0xd000)==0x5000
+        compatible=bool((words[49]&512 or iflash) and logical_512 and flush and 0<sectors<=1<<48)
+        result['disk']=dict(model=model,serial=ata_string(10,10),firmware=firmware,
+                            sectors=sectors,lba48=lba48,native_storage_compatible=compatible,
+                            logical_512=logical_512,can_flush=flush,identify_sha256=hashlib.sha256(raw).hexdigest())
         sector=operation(4)
         result['disk'].update(mbr_signature=sector[510:512].hex(),sector0_sha256=hashlib.sha256(sector).hexdigest(),
             partitions=[dict(type=sector[446+n*16+4],start_lba=struct.unpack_from('<I',sector,454+n*16)[0],
                              sectors=struct.unpack_from('<I',sector,458+n*16)[0]) for n in range(4)])
-        base=ROOT/'out/dev/classic6g-n25/bootstrap'
+        base=artifacts_directory(plan)
         (base/'link-diagnostics.json').write_text(json.dumps(result,indent=2)+'\n')
         return result
     finally:session.close()
@@ -244,7 +257,7 @@ def load(prepared, *, progress=print, wait_seconds=0, inspect_only=False, probe_
         raise ValueError('Invalid board probe operation')
     plan=json.loads(Path(prepared).read_text())
     if plan.get('target_id')!='classic6g-n25':raise ValueError('Invalid bootstrap device plan')
-    base=ROOT/'out/dev/classic6g-n25/bootstrap'
+    base=artifacts_directory(plan)
     report=json.loads((base/'manifest.json').read_text())
     kind='monitor' if probe_operation is None else 'probe'
     payload=(base/f'{kind}.bin').read_bytes();stub=(base/'rom_transfer.bin').read_bytes()

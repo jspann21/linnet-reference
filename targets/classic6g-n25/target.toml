@@ -18,7 +18,7 @@ sdram_address = 134217728
 sdram_bytes = 67108864
 build_enabled = true
 boot_size_optimization = true
-bringup_blocker = "Set up native Boot with the A1238 DFU and NOR bootstrap workflow first. Native Disk Mode then supports initial OS installation, updates, and media management."
+bringup_blocker = "Use iPod setup in Media Manager for Classic Boot and OS installation. Existing Boot installations should reconnect in Linnet Disk Mode."
 os_capacity_bytes = 8388608
 resident_limit_bytes = 8388608
 stage_address = 150994944
@@ -70,6 +70,8 @@ friendly_name = "LINNET IPOD CLASSIC"
 sector_bytes = [512, 2048, 4096]
 
 [installer]
+# The firmware-directory writer is for PortalPlayer. Classic setup uses its
+# separate device-authenticated NOR transaction in Media Manager.
 enabled = false
 boot_layout = "s5l-nor"
 file_loader = ".rockbox/rockbox.ipod"

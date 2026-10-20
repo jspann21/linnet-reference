@@ -13,7 +13,7 @@ after 14 days. Public release assets remain on the repository's Releases page.
 | `linnet-photo4g-p98.zip` | iPod Photo firmware |
 | `linnet-video5g-m25.zip` | iPod Video firmware; consult the target qualification guide for supported boards |
 | `linnet-ipod4g-q21.zip` | Monochrome fourth-generation iPod firmware |
-| `linnet-classic6g-n25.zip` | iPod Classic firmware; native Boot must already be set up through the Classic bootstrap workflow |
+| `linnet-classic6g-n25.zip` | iPod Classic firmware and initial Boot setup; follow Media Manager's connection and button prompts |
 | `linnet-source.zip` | Repository source at the exact commit used for these builds, including build scripts and vendor notices |
 | `SHA256SUMS.txt` | SHA-256 checksums of the downloads and these instructions |
 
@@ -30,11 +30,12 @@ folder containing `linnet-os`, `linnet-boot-standard`, and `linnet-boot-multiboo
 images and reports. Both bootloaders are Linnet software; the multiboot variant
 can also start a compatible Rockbox installation already on the device. The
 package does not install Rockbox. Packaging runs image verification and the installer's bundle
-validation. Release builds exclude the developer transport and device serials.
-Compilation does not establish hardware qualification. In particular, Classic
-automatic initial installation remains disabled; a ZIP does not replace its
-DFU/NOR bootstrap procedure. Consult the repository's hardware and recovery guides
-before installation.
+validation. Release OS/Boot images exclude the developer transport and device
+serials. The Classic ZIP additionally includes a precompiled bootstrap template;
+Media Manager binds it to the inspected iPod, prompts for DFU, then owns the
+remaining Link, NOR and native Disk Mode installation steps. Compilation does
+not establish hardware qualification; unsupported storage and flash layouts
+stop setup before flashing. Consult the hardware and recovery guides for coverage.
 
 ## Publish a version
 

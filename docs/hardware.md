@@ -31,7 +31,7 @@ physical controls, power behavior, or recovery qualification.
 | --- | --- | --- |
 | [Photo P98](../targets/photo4g-p98/README.md) | PP5020 / ARM7TDMI, WM8975 audio, PCF50605 power | Music, photos, prepared IPVF video, Cover Flow, and games. Native directory installer and A/B OS updates. |
 | [Video M25](../targets/video5g-m25/README.md) | PP5022 / ARM7TDMI, WM8758 audio, BCM2722 display/video, PCF50605 power | Music, photos, native H.264/MPEG-4, Cover Flow, and games. Native directory installer and A/B OS updates. |
-| [Classic N25](../targets/classic6g-n25/target.toml) | S5L8702 / ARM926EJ-S, CS42L55 audio, PCF50635 power | Music, photos, native MP4, Cover Flow, and games enabled in the manifest. Separate NOR bootstrap; automatic initial installation disabled. |
+| [Classic N25](../targets/classic6g-n25/target.toml) | S5L8702 / ARM926EJ-S, CS42L55 audio, PCF50635 power | Music, photos, native MP4, Cover Flow, and games enabled in the manifest. Media Manager installs Boot and OS after guided DFU entry, with device checks and original NOR recovery. |
 | [Monochrome Q21](../targets/ipod4g-q21/target.toml) | PP5020 / ARM7TDMI, WM8975 audio, PCF50605 power, HD66753 LCD | Music and the iPod Mono interface; RGB565 framebuffer converted to four gray levels. Photos, video, Cover Flow, and games disabled. Native directory installer and A/B OS updates. |
 
 All four targets provide native Disk Mode and development-build

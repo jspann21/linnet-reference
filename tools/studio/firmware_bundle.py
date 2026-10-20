@@ -17,6 +17,8 @@ BOOT_NAMES = {"none": "firmware/linnet-boot-standard",
 FILES = {OS_NAME + ".los", OS_NAME + ".json", "README.txt"} | {
     f"{name}.{extension}"
     for name in BOOT_NAMES.values() for extension in ("los", "json", "ipod")}
+CLASSIC_FILES = {'bootstrap/manifest.json'} | {
+    'bootstrap/' + name for name in ('monitor.bin', 'rom_transfer.bin', 'probe.bin', 'sram_bridge.bin')}
 PACKAGE_README = """Linnet firmware
 
 Select this entire ZIP in Linnet Media Manager:
@@ -30,9 +32,9 @@ The firmware folder contains Linnet OS and two Linnet bootloader variants:
 - multiboot: also allows starting a compatible, existing Rockbox installation.
 Both bootloaders are Linnet software. This package does not install Rockbox.
 
-The iPod Classic requires the separate native Boot bootstrap procedure before
-using its firmware package. See https://github.com/jspann21/linnet for setup
-instructions and hardware compatibility.
+For a fresh iPod Classic, Media Manager also installs Linnet Boot. Follow its
+on-screen connection instructions; it detects the device's mode and continues
+automatically. Original startup software and recovery backups are preserved.
 """
 MAX_BYTES = 64 * 1024 * 1024
 
@@ -57,6 +59,13 @@ def create(target, output, jobs=2):
             portable.update(boot_selector=selector, apple_firmware_fallback=report["apple_firmware_fallback"],
                             startup_default_format=report["startup_default_format"])
         payloads[name + ".json"] = (json.dumps(portable, indent=2) + "\n").encode("utf-8")
+    if target == 'classic6g-n25':
+        from tools.studio.s5l_bootstrap import build as build_bootstrap, TEMPLATE_SERIAL
+        with tempfile.TemporaryDirectory(prefix='classic-bootstrap-') as temporary:
+            directory=Path(temporary)
+            build_bootstrap(TEMPLATE_SERIAL,directory)
+            for name in CLASSIC_FILES:
+                payloads[name]=(directory/Path(name).name).read_bytes()
     manifest = dict(format=1, target_id=target,
                     files={name: dict(bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
                            for name, data in sorted(payloads.items())})
@@ -89,17 +98,19 @@ def load(path, identity, installation_method, *, verify_only=False):
     try:
         with zipfile.ZipFile(path) as bundle:
             entries = bundle.infolist()
-            if (len(entries) != len(FILES) + 1 or
-                    {item.filename for item in entries} != FILES | {"manifest.json"} or
+            names={item.filename for item in entries}
+            files=FILES | (CLASSIC_FILES if identity['target_id']=='classic6g-n25' and names & CLASSIC_FILES else set())
+            if (len(entries) != len(files) + 1 or
+                    names != files | {"manifest.json"} or
                     any(item.file_size > MAX_BYTES for item in entries) or
                     sum(item.file_size for item in entries) > MAX_BYTES):
                 raise ValueError("firmware bundle has unexpected files or sizes")
             manifest = json.loads(bundle.read("manifest.json"))
             if (not isinstance(manifest, dict) or manifest.get("format") != 1 or
                     manifest.get("target_id") != identity["target_id"] or
-                    not isinstance(manifest.get("files"), dict) or set(manifest["files"]) != FILES):
+                    not isinstance(manifest.get("files"), dict) or set(manifest["files"]) != files):
                 raise ValueError("firmware bundle does not match the detected iPod")
-            payloads = {name: bundle.read(name) for name in FILES}
+            payloads = {name: bundle.read(name) for name in files}
     except (zipfile.BadZipFile, KeyError, UnicodeError, RuntimeError) as error:
         raise ValueError("invalid firmware bundle") from error
     for name, data in payloads.items():
@@ -133,7 +144,9 @@ def load(path, identity, installation_method, *, verify_only=False):
             return None
         destination = parent / uuid.uuid4().hex
         destination.mkdir()
-        for name in FILES:
+        for name in files:
             (destination / name).parent.mkdir(parents=True, exist_ok=True)
             (staging / name).replace(destination / name)
-    return artifacts(destination)
+    result=artifacts(destination)
+    if CLASSIC_FILES<=files:result['bootstrap_template']=str(destination/'bootstrap')
+    return result

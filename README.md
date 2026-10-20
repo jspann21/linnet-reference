@@ -177,7 +177,7 @@ qualified.
 | --- | --- | --- | --- |
 | **iPod Photo · A1099** | 220 × 176 color | `photo4g-p98` | Primary development hardware. Music, photos, prepared IPVF video, games, and Link. [Target details](targets/photo4g-p98/README.md). |
 | **iPod Video · A1136, 30 GB** | 320 × 240 color | `video5g-m25` | The MA146 / 32 MiB board: native startup, Link, stereo audio, photos, games, native H.264/MPEG-4 video, and Disk Mode exercised. [Qualification and remaining checks](targets/video5g-m25/QUALIFICATION.md). |
-| **iPod classic · A1238 / N25** | 320 × 240 color | `classic6g-n25` | Native Boot, OS, Link, Disk Mode, and H.264 VGA playback verified. MPEG-4 qualification continues; automatic installation is disabled. |
+| **iPod classic · A1238 / N25** | 320 × 240 color | `classic6g-n25` | Native Boot, OS, Link, Disk Mode, and H.264 VGA playback verified. Media Manager guides first-time Boot and OS installation; hardware qualification follows the board/storage configuration. |
 | **iPod 4G monochrome · A1059 / MP102 / Q21** | 160 × 128 monochrome | `ipod4g-q21` | Native startup and return to the preserved Apple OS verified. The iPod Mono theme is enabled; photos, video, Cover Flow, and games are disabled. |
 
 Linnet is in active development. Feature coverage and hardware qualification vary
@@ -197,9 +197,9 @@ When release packages are available:
 
 1. Download the **Windows Media Manager ZIP** and the **firmware ZIP for your target** from [Releases](https://github.com/jspann21/linnet/releases).
 2. Extract the entire Media Manager ZIP and open **Linnet Media.exe**.
-3. Connect the iPod in **Disk Mode** and select **Find iPod**.
-4. Open **iPod setup → Choose firmware ZIP** and select the whole firmware ZIP **without extracting it**. Media Manager selects the required files for your installation. Review the options for the detected device. Classic uses a separate [bootstrap workflow](docs/bootstrap-tooling.md).
-5. Install, safely eject, and restart into Linnet.
+3. Connect the iPod with USB and select **Find or switch iPod**. If it does not appear, **iPod setup** shows how to enter Apple Disk Mode.
+4. Open **iPod setup → Choose firmware ZIP** and select the whole firmware ZIP **without extracting it**. Media Manager selects the required files. For a fresh Classic, follow its live button prompt; Link handles the remaining bootloader and OS setup automatically.
+5. Prepare media while connected in Disk Mode, then **Eject safely** to start Linnet.
 
 The native installer preserves the existing media and Apple firmware and saves
 recovery backups. It requests Windows administrator approval for the required
