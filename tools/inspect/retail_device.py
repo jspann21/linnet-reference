@@ -72,6 +72,24 @@ def detect(mount):
         raise ValueError("iPod USB identity is unavailable")
     vid, pid = int(match.group(1), 16), int(match.group(2), 16)
     usb_serial = match.group(3).upper()
+    serial_source = "usb"
+    if (vid, pid) == (0x05AC, 0x1261) and storage["model"] == "Apple iPod USB Device":
+        # Apple OS can enumerate this Classic with a Windows location-based USB
+        # instance. Its live USBSTOR node still carries the board serial, distinct
+        # from the product serial returned by the disk. Never use saved SysInfo or
+        # a historical device node to fill in the current hardware identity.
+        disk_instance = re.fullmatch(
+            r"USBSTOR\\DISK&VEN_APPLE&PROD_IPOD&REV_[0-9A-Z_.]+\\"
+            r"(?:[0-9A-F]+&[0-9A-F]+&[0-9A-F]+&)?([0-9A-F]{16})&0",
+            storage["pnp_id"], re.I)
+        if re.fullmatch(r"[0-9A-F]{16}", usb_serial):
+            if disk_instance and disk_instance.group(1).upper() != usb_serial:
+                raise ValueError("Classic USB and storage board identities disagree")
+        elif re.fullmatch(r"[0-9A-F]+&[0-9A-F]+&[0-9A-F]+&[0-9A-F]+", usb_serial) and disk_instance:
+            usb_serial = disk_instance.group(1).upper()
+            serial_source = "apple-usbstor"
+        else:
+            raise ValueError("iPod USB serial identity is unavailable")
     if not re.fullmatch(r"[0-9A-F]{6,16}", usb_serial):
         raise ValueError("iPod USB serial identity is unavailable")
     native = [target for target,spec in TARGETS.items() if
@@ -117,4 +135,4 @@ def detect(mount):
                                build=info.get("visibleBuildID"), family=info.get("iPodFamily"),
                                updater_family=info.get("updaterFamily"), region=info.get("RegionCode")),
                 storage=storage, sysinfo=info, read_only=True,
-                identity_source="usb" if live_identity else "usb-and-sysinfo")
+                identity_source=serial_source if live_identity else "usb-and-sysinfo")

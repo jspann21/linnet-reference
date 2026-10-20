@@ -379,14 +379,25 @@ def _restore(identity, *, progress):
                                'return to Linnet Disk Mode before retrying. ' + str(error)) from error
         # The low-level restore records the mounted identity alongside the durable
         # full-flash readback, before asking Apple to restart.
-        boot = nor.restore(host, marker['nor_record_sha256'], receipt_path,
-                           progress=progress, mount_identity=identity)
-    progress('Waiting for this iPod to reconnect in Apple Disk Mode…')
+        try:
+            boot = nor.restore(host, marker['nor_record_sha256'], receipt_path,
+                               progress=progress, mount_identity=identity)
+        except (OSError, RuntimeError):
+            # Full-flash verification is durable before the restart request. A
+            # lost restart acknowledgement must not cause another flash attempt
+            # or replay of an ambiguous reboot; continue read-only discovery.
+            boot = _restored(marker)
+            if boot is None:
+                raise
+    progress('Waiting for this iPod’s Apple USB storage to reconnect…')
     deadline = time.monotonic() + 45
     last_error = ''
     while time.monotonic() < deadline:
         try:
-            devices = discover()
+            discovery = discover(detailed=True)
+            devices = discovery['devices']
+            if discovery['errors']:
+                last_error = '; '.join(discovery['errors'])
         except (OSError, RuntimeError, ValueError) as error:
             last_error = str(error)
             time.sleep(.5)
@@ -402,6 +413,7 @@ def _restore(identity, *, progress):
             return dict(passed=True, boot=boot, identity=current, media_preserved=True,
                         linnet_files_preserved=True, requires_safe_eject=True)
         time.sleep(.5)
-    raise RuntimeError('Apple boot flash was restored and verified. Reconnect this iPod in Apple Disk Mode, '
-                       'then choose Remove Linnet OS again to finish cleanup. Linnet files are still present.' +
+    raise RuntimeError('Apple startup was restored and verified, but this iPod’s USB storage did not reconnect. '
+                       'Linnet files are still present. Keep USB connected, enter Apple Disk Mode, '
+                       'then choose Remove Linnet again to finish cleanup.' +
                        (' ' + last_error if last_error else ''))

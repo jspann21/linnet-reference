@@ -152,7 +152,9 @@ provides Linnet Link. Media Manager saves recovery, ejects the disk, enters the
 SRAM monitor, authenticates the backup with the device, and compares the entire
 flash against the saved snapshots. It restores only the original boot slot,
 verifies the complete NOR, and restarts into Apple software before removing
-Linnet files. Keep the iPod connected through these restarts. If Apple Disk Mode
+Linnet files. Restoration, reconnection, and cleanup run in the same removal
+operation; keep USB connected through the restarts. A verified restoration is
+not repeated when only file cleanup remains. If Apple Disk Mode
 does not reconnect automatically, reconnect it and choose **Remove Linnet OS**
 again to finish cleanup. User builds need a Developer build before this Link
 recovery sequence; the original NOR backup remains the source of restoration.

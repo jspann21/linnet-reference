@@ -204,6 +204,8 @@ def _identify(identity, detected=None):
                 media_profile=media_profile(detected["target_id"]))
     if identity.get("native_target_id"):
         result["media_cache_disk_serial"], result["media_cache_volume_scope"] = _retail_cache_identity(result)
+    if detected.get("identity_source") == "apple-usbstor":
+        result["usb_serial_source"] = "apple-usbstor"
     return result
 
 
