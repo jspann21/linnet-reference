@@ -3249,7 +3249,7 @@ class MediaWindow(QMainWindow):
                 dialog.setMinimumWidth(480)
                 dialog.setMaximumWidth(600)
                 layout = box(dialog, margins=(28,28,28,28))
-                dialog.heading = label('', 'sectionTitle', True)
+                dialog.heading = label('', 'section', True)
                 dialog.message = label('', None, True)
                 layout.addWidget(dialog.heading); layout.addWidget(dialog.message)
                 layout.addWidget(label('Media Manager detects this automatically. Keep USB connected.', None, True))
