@@ -838,9 +838,11 @@ static int open_stores(void){
     if(ln_state_open(&boot_store,&bio)!=1||ln_state_open(&settings_store,&sio)!=1){error=400;return 0;}
     struct ln_update_io io={0,image_read,image_write,flush_callback,image_capacity,ln_storage_progress};
     struct ln_image_policy policy={LINNET_TARGET_NUMBER,
-#if defined(LINNET_PROFILE_RELEASE)
+#if defined(LINNET_PROFILE_RELEASE) && !(defined(LINNET_TARGET_CLASSIC6G_N25) && defined(LINNET_IMAGE_BOOT))
         1,
 #else
+        /* Classic uses compact release Boot for both User and Developer OS
+         * installations. The OS profile does not require Link inside Boot. */
         7,
 #endif
         LINNET_LOAD_ADDRESS,LINNET_OS_CAPACITY};
@@ -1027,6 +1029,16 @@ static int selector_apple(void){
 }
 #endif
 #endif
+#if defined(LINNET_IMAGE_BOOT)
+static void boot_failure_recovery(void){
+#if defined(LINNET_TARGET_CLASSIC6G_N25) && defined(LINNET_IMAGE_BOOT) && defined(LINNET_PROFILE_RELEASE)
+    /* A release Boot has no Link endpoint. Return to the installed monitor
+     * after a terminal failure so Media Manager can repair the OS. */
+    ln_platform_boot_candidate(false);
+    ln_platform_hardware_reset();
+#endif
+}
+#endif
 void ln_storage_boot(void){
 #if defined(LINNET_IMAGE_BOOT)
 #if LINNET_BOOT_APPLE_FALLBACK || LINNET_BOOT_SELECTOR_ROCKBOX
@@ -1038,7 +1050,7 @@ void ln_storage_boot(void){
         /* Keep the original failure inspectable and leave Link able to launch
          * a corrected RAM image. Repeated automatic remounts never reach idle
          * on an incompatible drive; explicit storage recovery remains available. */
-        boot_choice=1u;return;
+        boot_choice=1u;boot_failure_recovery();return;
     }
     if(boot_choice==4u)boot_choice=ln_storage_boot_default(ln_storage_boot_options());
 #if LINNET_BOOT_SELECTOR_ROCKBOX
@@ -1062,10 +1074,10 @@ void ln_storage_boot(void){
 #endif
 #endif
     if(boot_checked||ln_storage_busy())return;boot_checked=true;
-    if(!open_stores())return;
+    if(!open_stores()){boot_failure_recovery();return;}
     LN_BOOT_STAMP(LN_BT_BOOT_STORES);
     uint32_t failed=updater.boot.candidate_slot,pending_attempt=updater.boot.attempt_pending;
-    if(!ln_update_after_reset(&updater))return;
+    if(!ln_update_after_reset(&updater)){boot_failure_recovery();return;}
     if(pending_attempt&&failed<=1u)history_save(1,failed,updater.boot.confirmed_slot,
         updater.boot.attempts,updater.boot.generation,updater.image[failed].build_id);
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -1077,7 +1089,7 @@ void ln_storage_boot(void){
     uint8_t slot=ln_update_prepare_boot(&updater,scratch,LINNET_STAGE_CAPACITY,&info);
     if(slot<=1u&&updater.ready&&!boot_store.poisoned&&updater.rejected_slot<=1u)history_save(2,updater.rejected_slot,slot,
         updater.boot.attempts,updater.boot.generation,updater.image[updater.rejected_slot].build_id);
-    if(slot>1){error=402;return;}
+    if(slot>1){error=402;boot_failure_recovery();return;}
     LN_BOOT_STAMP(LN_BT_BOOT_VALIDATED);
     uint8_t bytes[80]={0};
     for(uint32_t i=0;i<32;++i){bytes[8+i]=info.build_id[i];bytes[40+i]=updater.image[slot].sha256[i];}
@@ -1089,13 +1101,13 @@ void ln_storage_boot(void){
     if(!ln_recovery_chainload(0,scratch+128,info.payload_size,info.load_address,info.entry_address,
        info.build_id,updater.image[slot].sha256,ln_recovery_generation()+1u))error=403;
 #else
-    if(!ln_storage_handoff_quiesce()||!ln_platform_audio_idle()){handoff[0]=0;error=403;return;}
+    if(!ln_storage_handoff_quiesce()||!ln_platform_audio_idle()){handoff[0]=0;error=403;boot_failure_recovery();return;}
     ln_core_watchdog_disarm();ln_platform_quiesce();
-    if(!ln_platform_dma_idle()){handoff[0]=0;ln_core_watchdog_arm();error=403;return;}
+    if(!ln_platform_dma_idle()){handoff[0]=0;ln_core_watchdog_arm();error=403;boot_failure_recovery();return;}
     (void)ln_platform_enter(scratch+128,info.payload_size,info.load_address,info.entry_address);
     ln_core_watchdog_arm();error=403;
 #endif
-    handoff[0]=0;
+    handoff[0]=0;boot_failure_recovery();
 #else
     (void)boot_checked;
 #endif
