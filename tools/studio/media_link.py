@@ -62,6 +62,11 @@ def open_setup(connection, *, section, progress=lambda _message: None):
     # Retain the mounted identity if assessment fails: storage has already
     # changed mode and the old Link connection is no longer usable.
     try:
+        from tools.content.publish import pending_publications
+        groups = pending_publications(identity)
+        if groups:
+            return dict(result, section=section, publication_recovery_pending=True,
+                        identity=identity, groups=groups)
         review = assess(identity)
     except (OSError, RuntimeError, ValueError) as error:
         return dict(result, section=section, review=None, setup_error=str(error))

@@ -809,7 +809,7 @@ def build_setup_page(window):
     install.addWidget(label('Select the downloaded Linnet ZIP without extracting it. It must match your iPod model.', 'muted', True))
     window.firmware_button = button('Choose firmware ZIP', window.choose_firmware, None, 'folder')
     install.addWidget(window.firmware_button, 0, Qt.AlignLeft)
-    window.build_from_source = CheckBox('Build from source (development)')
+    window.build_from_source = CheckBox('Build from source')
     window.build_from_source.setChecked(not getattr(sys, 'frozen', False) and
         window.settings.value('build_from_source', False, type=bool))
     window.build_from_source.setVisible(not getattr(sys, 'frozen', False))
@@ -1842,7 +1842,7 @@ class MediaWindow(QMainWindow):
             self.game_read_failed = 'game selection is damaged' in error.casefold()
             self.games_status.setText('Game settings are damaged. Use Replace damaged game settings to choose a new selection.'
                                       if self.game_read_failed else 'Could not read game settings. Refresh or choose the iPod again.')
-        if tag in ('scan', 'devices'):
+        if tag in ('scan', 'devices', 'link_setup', 'link_disk'):
             self.transition_device(None)
             self.device_name.setText('Connection needs checking')
             self.device_info.setText('Connection needs checking · choose Refresh or Choose iPod')
@@ -2225,7 +2225,12 @@ class MediaWindow(QMainWindow):
         self.device_name.setText(self.device_title(self.identity))
         self.device_info.setText('Connected in Disk Mode')
         self.cache_library_dirty = False
+        if result.get('publication_recovery_pending'):
+            self._complete_scan(result)
+            self.navigate('Preparation')
+            return
         if result.get('setup_error'):
+            self.device_connected = False
             self.update_controls()
             self.cache_library_dirty = True
             self.show_error('Disk Mode connected, but setup could not be read: ' + result['setup_error'])
@@ -2233,7 +2238,7 @@ class MediaWindow(QMainWindow):
         self.review = result['review']
         self.navigate('iPod setup')
         self.cache_library_dirty = True
-        target = self.default_title if result['section'] == 'startup' else self.install_title
+        target = self.default_title if result['section'] == 'startup' else self.boot_choice
         if result['section'] == 'build':
             self.boot_choice.setFocus()
         elif self.default_choice.isVisible():
