@@ -3070,11 +3070,15 @@ class MediaWindow(QMainWindow):
         summary = review['summary']
         if (review['action'] == 'unsupported' and review['target']['boot_layout'] == 's5l-nor' and
                 review['linnet']['state'] == 'absent'):
-            summary = ('iPod Classic recognized. Install Linnet Boot first.\n\n'
-                       'Boot starts Linnet OS. First-time Boot setup on this model requires the separate developer '
-                       'DFU/NOR bootstrap workflow, which is not available in Media Manager yet. '
-                       'After that, reconnect in Linnet Disk Mode to install Linnet OS here. '
-                       'A firmware ZIP alone cannot complete Boot setup.')
+            if (review.get('recovery') or {}).get('strategy') == 'native-nor' and review['recovery'].get('phase') == 'installed':
+                summary = ('Linnet Boot is already installed. Start Linnet Boot, enter Linnet Disk Mode, '
+                           'then reconnect and refresh to install Linnet OS. Another Boot installation is not needed.')
+            else:
+                summary = ('iPod Classic recognized. Install Linnet Boot first.\n\n'
+                           'Boot starts Linnet OS. First-time Boot setup on this model requires the separate developer '
+                           'DFU/NOR bootstrap workflow, which is not available in Media Manager yet. '
+                           'After that, reconnect in Linnet Disk Mode to install Linnet OS here. '
+                           'A firmware ZIP alone cannot complete Boot setup.')
         elif review['action'] == 'install' and review['linnet']['state'] == 'absent':
             summary = 'Ready to install Linnet. Choose firmware and a build below, then install and eject safely.'
         self.install_detail.setText(summary)
@@ -3132,7 +3136,8 @@ class MediaWindow(QMainWindow):
         self.install_hint.setText(('Choose a firmware ZIP to continue.' if getattr(sys, 'frozen', False) else
                                   'Choose a firmware ZIP or enable Build from source to continue.') if
             can_install and not resume and not from_source and not self.firmware_path else
-            'Your media is kept. After installation, eject safely, then open Preparation to add media.')
+            'Your media is kept. After installation, eject safely to start Linnet. '
+            'Enter Linnet Disk Mode and reconnect, then open Preparation to add media.')
         self.uninstall_button.setEnabled(not self.busy and bool(self.review and self.review['uninstall']['available']))
         show_default = bool(self.review and self.review['linnet']['state'] == 'installed')
         for widget in (self.default_title, self.default_detail, self.default_choice, self.default_button,

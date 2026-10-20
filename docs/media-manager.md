@@ -42,9 +42,10 @@ check, but video conversion remains unavailable until both tools pass.
    whole ZIP **without extracting it**. Media Manager selects the required files.
    Source checkouts also offer a development build option.
 4. Choose a build (**User build** for everyday use) and a startup method when
-   there is a choice, install, then **Eject safely**. Open **Preparation** to add
-   media. Existing installations also show default startup and removal options
-   below the installation controls.
+   there is a choice, install, then **Eject safely** to start Linnet. Enter Linnet
+   Disk Mode and reconnect before opening **Preparation** to add media. Existing
+   installations also show default startup and removal options below the
+   installation controls.
 
 On a supported native Boot installation, **Default startup** chooses which
 installed system starts automatically. Hold **MENU** while the iPod starts to
