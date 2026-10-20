@@ -98,7 +98,8 @@ def bind(directory, serial, output):
         if hashlib.sha256(data[name]).hexdigest()!=report.get(key):raise ValueError('Bootstrap checksum mismatch: '+name)
     original=data['monitor.bin'];payload=bytearray(original);old_build=bytes.fromhex(report['build_id'])
     at,build_at=report['serial_offset'],report['build_id_offset']
-    if (type(at)is not int or type(build_at)is not int or at<0 or build_at<0 or
+    if (len(old_build)!=32 or type(at)is not int or type(build_at)is not int or
+        not 0<=at<=len(payload)-17 or not 0<=build_at<=len(payload)-32 or
         payload[at:at+17]!=TEMPLATE_SERIAL.encode()+b'\0' or payload[build_at:build_at+32]!=old_build or
         not (at+17<=build_at or build_at+32<=at)):
         raise ValueError('Invalid bootstrap template binding offsets')

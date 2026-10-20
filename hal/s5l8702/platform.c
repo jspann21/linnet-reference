@@ -30,7 +30,10 @@ bool ln_platform_set_disk_mode(bool enabled){ln_s5l_boot_request(enabled?LN_S5L_
 bool ln_platform_enter_disk_mode(uint32_t sector_bytes){
     const char *serial=ln_s5l_boot_serial();
     if(!serial && ln_s5l_boot_serial_save(LINNET_USB_SERIAL))serial=ln_s5l_boot_serial();
-    if(!serial || !ln_arm926_mmu_disable())return false;
+    /* Older installed monitors do not publish the retained serial. Their
+     * device-bound development Boot still owns the original reset handoff. */
+    if(!serial){ln_s5l_boot_request(LN_S5L_BOOT_DISK);ln_platform_hardware_reset();}
+    if(!ln_arm926_mmu_disable())return false;
     ln_s5l_boot_request(LN_S5L_BOOT_NORMAL);
     ln_s5l_disk_mode(serial,sector_bytes?sector_bytes:512u,true);
 }
