@@ -3124,7 +3124,15 @@ class MediaWindow(QMainWindow):
         self.install_detail.setText(summary)
         self.install_detail.show()
         self.uninstall_detail.setText(review['uninstall']['detail'] + (' Music, Photos, Videos, and Notes folders are kept.' if review['uninstall']['available'] else ''))
-        startup = startup_default.inspect(review)
+        try:
+            startup = startup_default.inspect(review)
+        except OSError:
+            # The volume can disappear between a completed scan and opening
+            # this page, including during Classic's automatic mode changes.
+            self.transition_device(None)
+            self.update_controls()
+            self.show_progress('The iPod disconnected. Reconnect it and choose Find iPod.')
+            return
         self.startup_state = startup
         labels = {'linnet': 'Linnet', 'rockbox': 'Rockbox', 'apple': 'Apple iPod software'}
         with QSignalBlocker(self.default_choice):
