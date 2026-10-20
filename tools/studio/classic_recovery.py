@@ -298,9 +298,13 @@ def _enter_monitor(record, progress):
             if running['target_id'] != nor.TARGET:
                 raise ValueError('The reconnected Link target differs from the Classic')
             if running['image_kind'] == 'boot':
-                if running['build_id'] != record['monitor_build_id']:
+                if running['build_id'] == record['monitor_build_id']:
+                    return
+                # A Developer native Boot can expose Link before its OS starts.
+                # It can restart into the recorded monitor; an SRAM monitor
+                # without that capability must match immediately.
+                if not running['capabilities'] & 16:
                     raise ValueError('The connected recovery monitor differs from this Classic’s verified installation')
-                return
             if restart_requested:
                 time.sleep(.25)
                 continue
