@@ -191,7 +191,9 @@ def diagnose(prepared, *, display=False):
                 magic,op,phase=struct.unpack('<3I',raw)
                 if magic!=0x4252504c or op not in (9,10):raise RuntimeError('Invalid panel progress marker')
                 if phase==3:break
-                if phase not in (1,2,5):raise RuntimeError(f'Panel startup failed: {phase:#x}')
+                # The 16-bit panel variants use phases 6–10 for their power
+                # sequence before joining the shared frame transfer (phase 2).
+                if phase not in (1,2,5,6,7,8,9,10):raise RuntimeError(f'Panel startup failed: {phase:#x}')
                 if time.monotonic()>=deadline:raise TimeoutError('Panel startup deadline expired')
                 raw=session.request(Command.BOOTSTRAP_CONTROL,struct.pack('<II',10,0))
             result['display'].update(frame_transfer_complete=True,physical_output_verified=False)
