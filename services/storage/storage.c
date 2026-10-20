@@ -1104,6 +1104,17 @@ void ln_storage_boot(void){
     if(!ln_storage_handoff_quiesce()||!ln_platform_audio_idle()){handoff[0]=0;error=403;boot_failure_recovery();return;}
     ln_core_watchdog_disarm();ln_platform_quiesce();
     if(!ln_platform_dma_idle()){handoff[0]=0;ln_core_watchdog_arm();error=403;boot_failure_recovery();return;}
+#if defined(LINNET_TARGET_CLASSIC6G_N25)
+    /* Compact Boot can launch a Developer OS. Preserve the validated image
+     * identity in the same retained record used by the SRAM monitor, so Link
+     * can identify a cold disk boot as precisely as a RAM transfer. */
+    uint8_t *identity=(uint8_t *)(uintptr_t)0x22017e00u;
+    ln_write_le32(identity,0);ln_write_le32(identity+4,0);
+    for(uint32_t i=0;i<32;++i){identity[8+i]=info.build_id[i];identity[40+i]=updater.image[slot].sha256[i];}
+    ln_write_le32(identity,0x484e494cu);
+    ln_write_le32(identity+72,ln_crc32(identity,72));
+    uint32_t barrier=0;__asm__ volatile("mcr p15,0,%0,c7,c10,4"::"r"(barrier):"memory");
+#endif
     (void)ln_platform_enter(scratch+128,info.payload_size,info.load_address,info.entry_address);
     ln_core_watchdog_arm();error=403;
 #endif
