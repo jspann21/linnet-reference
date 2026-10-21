@@ -267,7 +267,7 @@ def installed_state(root, target_id):
                 confirmed["sha256"] != expected_sha):
             raise ValueError("confirmed image differs from boot metadata")
         return dict(state="installed", present=len(present), required=len(CORE_FILES),
-                    build_id=build_id, profile=confirmed["profile"], build="user" if confirmed["profile"] == "release" else "dev", images=images,
+                    build_id=build_id, image_sha256=confirmed['sha256'], profile=confirmed["profile"], build="user" if confirmed["profile"] == "release" else "dev", images=images,
                     next_profile=next((item["profile"] for item in images if item["slot"] == selected[0][53]), confirmed["profile"]),
                     candidate_pending=selected[0][53] != 255 or bool(selected[3]))
     except (ValueError, OSError, KeyError, struct.error) as error:
@@ -275,6 +275,10 @@ def installed_state(root, target_id):
 
 
 def _resume_context(identity, linnet):
+    from tools.studio import native_recovery
+    initialized = native_recovery.pending(identity, linnet)
+    if initialized or native_recovery.eligible(identity):
+        return initialized
     if linnet["state"] not in ("incomplete", "installed"):
         return None
     transactions = cache_root(identity) / "transactions"
@@ -510,6 +514,9 @@ def assess(identity, *, _validated_identity=False):
     elif classic_initial:
         action, strategy = 'install', 'classic-bootstrap'
         summary = 'Install Linnet Boot and OS together. Media Manager checks this Classic, saves its original startup software, and guides you through the one button step.'
+    elif native and resume:
+        action, strategy = 'resume', resume['strategy']
+        summary = 'Finish verifying the interrupted installation through Linnet Disk Mode. Your installed software and media are kept.'
     elif native and linnet["state"] == "installed":
         action, strategy = "replace", "native-volume"
         summary = "Linnet is installed. Update the OS through native Disk Mode, preserving the confirmed OS for rollback."
@@ -560,7 +567,7 @@ def assess(identity, *, _validated_identity=False):
             detail='Media Manager installs Boot and OS, preserves Apple startup software, and handles restarts automatically.',
             strategy='classic-bootstrap',enabled=True,requires_admin=False)]
         default_method = 'native-preserve'
-    elif native:
+    elif native and action != 'resume':
         available = (linnet["state"] in ("installed", "absent", "incomplete") and
                      not linnet.get("candidate_pending") and
                      not (marker and marker.get("phase") == "boot-upgrade-pending"))
@@ -588,6 +595,8 @@ def assess(identity, *, _validated_identity=False):
             if option["id"] == "apple":
                 option["detail"] = "Apple Disk Mode detected; normal firmware startup has not been verified."
     pending_uninstall = _pending_uninstall(identity, root)
+    from tools.studio import native_recovery
+    native_directory_recovery = native_recovery.available(identity, marker)
     return dict(checked_at=_now(), identity=identity,
                 target=dict(id=target_id, name=spec["name"],
                             installer_enabled=install_spec["enabled"] or native or classic_initial or bool(classic_pending), boot_layout=install_spec["boot_layout"],
@@ -597,7 +606,8 @@ def assess(identity, *, _validated_identity=False):
                 default_installation_method=default_method,
                 uninstall=_uninstall_option(marker, linnet, root,
                                             identity.get("native_target_id") == target_id,
-                                            pending_uninstall, install_spec["boot_layout"], recovery_error),
+                                            pending_uninstall, install_spec["boot_layout"], recovery_error,
+                                            native_directory_recovery),
                 recovery=marker, resume=resume, action=action, strategy=strategy, summary=summary,
                 classic_setup=classic_pending,
                 preservation=dict(formats_disk=False, repartitions_disk=False, deletes_media=False,
@@ -650,10 +660,11 @@ def _pending_uninstall(identity, root):
     return max(matches, default=None, key=lambda item: item[0])[1:] if matches else None
 
 
-def _uninstall_option(marker, linnet, root, native, pending=None, boot_layout=None, recovery_error=None):
+def _uninstall_option(marker, linnet, root, native, pending=None, boot_layout=None, recovery_error=None,
+                      native_directory_recovery=False):
     if marker and marker.get("phase") in ("installed", "restored") or pending:
         classic = bool(marker and marker.get("strategy") == "native-nor")
-        if native and not classic:
+        if native and not classic and not native_directory_recovery:
             return dict(available=False, previous=None,
                         detail="Restart into Apple iPod software, reconnect in Apple Disk Mode, then refresh to remove Linnet OS. The saved boot backup is bound to the original Apple storage identity.")
         if classic and not native and marker["phase"] != "restored":
@@ -1445,6 +1456,10 @@ def _native_worker(job):
                     linnet_usb_serial=detected["linnet_usb_serial"])
     _same_device(expected, observed)
     current = assess(expected)
+    from tools.studio import native_recovery
+    if (job['mode'] == 'install' and job.get('reviewed_action') == 'resume' and
+            (current.get('resume') or {}).get('initialized_resume')):
+        return native_recovery.finish(job)
     if job["mode"] != "restore":
         # Recheck admission after UAC, before restoring old startup files or
         # writing any new files. The caller's earlier review is not sufficient.
@@ -1491,7 +1506,12 @@ def _native_worker(job):
     elif current["action"] != job["reviewed_action"]:
         raise RuntimeError("installation state changed before the worker acquired exclusivity")
     if job["mode"] == "restore":
-        result = native.execute("restore", Path(job["plan"]), job["plan_sha256"], expected["disk_number"])
+        path, digest = Path(job['plan']), job['plan_sha256']
+        if native_recovery.eligible(expected):
+            if not native_recovery.available(expected, marker):
+                raise ValueError('Original recovery plan does not match this native iPod')
+            path, digest = native_recovery.bind(expected, transaction, path, digest, marker['device_id'])
+        result = native.execute("restore", path, digest, expected["disk_number"])
         if not result.get("passed"):
             raise RuntimeError(result.get("failure", "native restore failed"))
         _save(Path(expected["root"]) / JOURNAL,
@@ -1752,9 +1772,6 @@ def uninstall(identity, progress=lambda _message: None, expected=None):
     from tools.content.media_manager import refresh
 
     identity = refresh(identity)
-    if (identity.get("native_target_id") == identity.get("target_id") and
-            TARGETS[identity["target_id"]]["installer"]["boot_layout"] != "s5l-nor"):
-        raise ValueError("Reconnect in Apple Disk Mode before removing Linnet OS so the saved firmware backup matches the original storage identity.")
     pending = _pending_uninstall(identity, Path(identity["root"]).resolve(strict=True))
     if pending:
         if expected is not None and expected != pending[0]["previous_boot"]:

@@ -1289,9 +1289,16 @@ def eject_device(identity):
     from .publish import _exclusive
     from .about import publish as publish_about
     from tools.studio.installer import installed_state
-    from tools.link.eject import eject
+    from tools.link.eject import eject, already_ejected
     with _exclusive(identity):
-        current = refresh(identity)
+        if already_ejected(identity):
+            return dict(ejected=True, already_ejected=True, about_warning=None)
+        try:
+            current = refresh(identity)
+        except (OSError, ValueError, RuntimeError):
+            if already_ejected(identity):
+                return dict(ejected=True, already_ejected=True, about_warning=None)
+            raise
         warning = None
         if installed_state(current['root'], current['target_id'])['state'] == 'installed':
             try:
