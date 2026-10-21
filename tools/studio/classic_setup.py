@@ -216,7 +216,7 @@ def run(path, *, progress=lambda _message:None, instruction=lambda _message:None
                 state['phase']='monitor';save()
                 guide('Linnet Link is connected. Checking this iPod’s hardware and saving recovery. No more buttons are needed.')
                 progress('Checking Classic RAM, display, disk identity, and partition layout…')
-                diagnostic=link.diagnose(state['device_plan'],display=True)
+                diagnostic=link.diagnose(state['device_plan'],display=True,setup_screen=True)
                 diagnostic_path=path.parent/'hardware.json'
                 installer._save(diagnostic_path,diagnostic,durable=True)
                 state['hardware']=str(diagnostic_path);save()

@@ -162,8 +162,10 @@ def backup_nor(prepared, output):
         with receipt_path.open('x') as destination:json.dump(receipt,destination,indent=2)
 
 
-def diagnose(prepared, *, display=False):
+def diagnose(prepared, *, display=False, setup_screen=False):
     """Read board status, ATA identity and sector zero through native Link."""
+    if setup_screen and not display:
+        raise ValueError('The setup screen requires a display check')
     from tools.link.transport import SerialTransport
     from tools.link.session import Session
     from tools.link.identity import decode
@@ -179,7 +181,25 @@ def diagnose(prepared, *, display=False):
             raise RuntimeError('Expected the Classic SRAM monitor')
         result=dict(identity=identity,persistent_writes=False,
                     board=session.request(Command.READ_LOG).decode('ascii'))
-        if display:
+        if display and setup_screen:
+            # HELLO presents the monitor's Linnet setup screen before replying.
+            # Verify that transfer without resetting the panel or overwriting
+            # the user's setup screen with an engineering test pattern.
+            raw=session.request(Command.BOOTSTRAP_CONTROL,struct.pack('<II',22,0))
+            deadline=time.monotonic()+20
+            while True:
+                if len(raw)!=24:raise RuntimeError('Invalid setup display progress response')
+                magic,op,ok,busy,completed,crc=struct.unpack('<6I',raw)
+                if magic!=0x4252504c or op!=22 or ok!=1:
+                    raise RuntimeError('Setup display transfer failed')
+                if not busy:
+                    if not completed:raise RuntimeError('Setup display did not complete a frame')
+                    break
+                if time.monotonic()>=deadline:raise TimeoutError('Setup display deadline expired')
+                raw=session.request(Command.BOOTSTRAP_CONTROL,struct.pack('<II',22,0))
+            result['display']=dict(screen='setup',frame_transfer_complete=True,
+                                   frame_crc32=f'{crc:08x}',physical_output_verified=False)
+        elif display:
             raw=session.request(Command.BOOTSTRAP_CONTROL,struct.pack('<II',8,0))
             if len(raw)!=20 or struct.unpack_from('<3I',raw)!=(0x4252504c,8,1):
                 raise RuntimeError('LCD command interface did not respond')
