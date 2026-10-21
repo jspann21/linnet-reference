@@ -9,7 +9,10 @@
 #endif
 #define WHEEL(offset) LN_REG(0x3c200000u+(offset))
 extern uint32_t ln_time_us(void);
-static struct ln_input_state state,reported;
+static struct ln_input_state state;
+/* Only buttons/contact/switches participate in change detection. Keep their
+ * published sample compact so the shared driver fits the NOR monitor. */
+static uint32_t reported;
 static uint32_t last_packet,last_events,switch_deadline,handshakes,seen_buttons,wheel_travel;
 static bool ready;
 static int previous=-1;
@@ -47,7 +50,7 @@ bool ln_input_irq(void) {
 }
 #endif
 bool ln_input_init(void) {
-    ready=false;state=reported=(struct ln_input_state){0};previous=-1;handshakes=seen_buttons=wheel_travel=0;
+    ready=false;state=(struct ln_input_state){0};reported=0;previous=-1;handshakes=seen_buttons=wheel_travel=0;
 #if LN_WHEEL_IRQ
     pending_wheel_delta=0;
 #endif
@@ -65,10 +68,10 @@ bool ln_input_init(void) {
 bool ln_input_poll(struct ln_input_state *out) {
     if(!ready || !out)return false;
     uint32_t now=ln_time_us();
-    bool switches=false,hold=false,headphones=false;
     if((int32_t)(now-switch_deadline)>=0) {
+        bool hold,headphones;
         if(!ln_s5l_board_switches(&hold,&headphones))return false;
-        switches=true;switch_deadline=now+20000u;
+        state.hold=hold;state.headphones=headphones;switch_deadline=now+20000u;
     }
 #if LN_WHEEL_IRQ
     uint32_t flags=ln_s5l_irq_save();
@@ -76,7 +79,6 @@ bool ln_input_poll(struct ln_input_state *out) {
 #else
     state.wheel_delta=0;wheel_packet(now);
 #endif
-    if(switches){state.hold=hold;state.headphones=headphones;}
     if(state.hold){state.buttons=0;state.touched=0;state.wheel_delta=0;previous=-1;}
     seen_buttons|=state.buttons;
     *out=state;
@@ -86,10 +88,10 @@ bool ln_input_poll(struct ln_input_state *out) {
      * published sample so idle timer polls do not masquerade as input and
      * immediately wake a sleeping system. Include the coalesced motion above
      * so its following release is still delivered. */
-    bool changed=out->buttons!=reported.buttons || out->wheel_delta ||
-        out->touched!=reported.touched || out->hold!=reported.hold ||
-        out->headphones!=reported.headphones;
-    reported=*out;
+    uint32_t sample=out->buttons|((uint32_t)out->touched<<5)|
+        ((uint32_t)out->hold<<6)|((uint32_t)out->headphones<<7);
+    bool changed=out->wheel_delta || sample!=reported;
+    reported=sample;
 #if LN_WHEEL_IRQ
     ln_s5l_irq_restore(flags);
 #endif

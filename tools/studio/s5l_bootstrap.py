@@ -55,8 +55,10 @@ def build(serial, output=None):
     run([chain['objcopy']['path'],'-O','binary',out/'probe.elf',out/'probe.bin'])
     probe=(out/'probe.bin').read_bytes()
     payload=(out/'monitor.bin').read_bytes();bridge=(out/'sram_bridge.bin').read_bytes();transfer=(out/'rom_transfer.bin').read_bytes()
-    if not 32<=len(payload)<=0xe800 or not len(transfer)<=0x178:
-        raise ValueError('Bootstrap exceeds the NOR monitor reservation or DFU bounds')
+    if not 32<=len(payload)<=0xe800:
+        raise ValueError(f'Bootstrap monitor is {len(payload)} bytes; the NOR reservation allows 32..{0xe800} bytes')
+    if len(transfer)>0x178:
+        raise ValueError(f'Bootstrap DFU transfer is {len(transfer)} bytes; the limit is {0x178} bytes')
     (out/'monitor.lnos').write_bytes(pack(payload,'dev',build_id,0x22000000,0x22000000,'classic6g-n25'))
     bridge_image=pack(bridge,'dev',build_id,0x08000000,0x08000000,'classic6g-n25')
     (out/'monitor-bridge.lnos').write_bytes(bridge_image)
