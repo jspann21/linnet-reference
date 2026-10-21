@@ -61,7 +61,10 @@ license and provenance files when changing vendored code.
 
 Keep project documentation about current behavior, usable instructions and open
 work. Session transcripts, machine-specific paths and build-by-build histories
-belong outside the public guides. Update hardware tables in place when a tested
-configuration changes; keep dates, serials, and raw measurements in local records.
+belong outside the public guides. Keep resolved incidents, personal reports, and
+troubleshooting narratives in local records. Qualification documentation describes
+supported configurations, exercised behavior, and remaining gaps. Update hardware
+tables in place when a tested configuration changes; keep dates, serials, and raw
+measurements in local records.
 Move completed roadmap work into the relevant reference instead of appending a
 history of intermediate results.

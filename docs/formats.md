@@ -43,7 +43,8 @@ payload checksum, and full-image hash have distinct meanings.
 
 When changing a format, update its producer, validator, device reader, and
 publication path together. Check truncation, overflow, references, and unknown
-values. Unsupported data is rejected; test installations are replaced with fresh firmware. Hashes and CRCs provide integrity, not authentication.
+values. Unsupported layouts are rejected. Hashes and CRCs provide integrity,
+not authentication.
 
 The optional font is exactly 8,570 bytes, little-endian: an eight-byte
 `LNFONT1\0` magic, six 32-bit values (width 15, height 17, advance 14, first

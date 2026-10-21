@@ -25,12 +25,6 @@ These results are sample coverage, not exhaustive codec or physical acceptance.
 
 ## Remaining qualification
 
-Earlier Windows USB descriptor loss during **Apple Disk Mode** was reported with
-a cable that has since been replaced. The user reports no recurrence; three
-additional native Disk Mode roundtrips returned to the same healthy OS. Direct
-Apple-mode cold/manual entry comparison and recovery injection were not
-performed.
-
 Charging current/source transitions, dock output, release-image operation, and
 long-duration or large-library workloads remain open. The complete actionable
 list is the [roadmap](../../docs/roadmap.md); the native video boundary is in

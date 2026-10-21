@@ -62,16 +62,6 @@ status certifies every build or the complete release workflow.
 | Controls and headphone audio | Board-specific wheel, button, Hold, jack, clicker, and codec paths have physical evidence on the tested units. Replacement assemblies and sustained playback need their own checks. |
 | Power and charging | USB charging and bounded sleep/wake have been exercised. Negotiated current limits and diagnostics do not measure actual current, battery runtime, or FireWire charging. |
 
-The N25 MK1634GAL unit passed screen, wheel, buttons, Hold, and audible clicker
-checks. Its drive powered off after idle and woke for a verified scratch
-write/read/restore crossing a 4 KiB boundary, without storage errors. MP3
-decoding and PCM playback ran without underruns or digital audio faults, but
-only the left headphone output was audible. A right-only PCM tone was silent
-with headphones whose right earpiece worked elsewhere. Stereo headphone output
-on this unit remains unqualified: the same right-channel failure was reported
-in Apple OS, pointing to the device's analog headphone path. Symmetric codec
-readback alone does not establish analog output.
-
 ## Known limits
 
 - **Classic storage:** CE-ATA is detected and rejected before PATA setup; the
@@ -79,8 +69,8 @@ readback alone does not establish analog output.
   handling, but does not inherit PP502x physical-sector edge handling.
 - **Classic variants:** the A1238 label spans different board populations.
   Alternative LCD, RAM, disk, and NOR combinations need separate qualification.
-  Classic MPEG-4 samples have played, but broader playback and physical A/V sync
-  acceptance remain open.
+  Stereo headphone output on the 160 GB configuration, broader MPEG-4 playback,
+  and physical A/V sync still need qualification.
 - **Accessories:** headset inline buttons and Classic Mikey controls are not
   implemented. Dock audio, recording, TV output, remotes, and FM accessories need
   separate electrical and protocol work; headphone playback does not qualify them.

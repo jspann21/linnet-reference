@@ -35,8 +35,8 @@ Use the [Windows setup](../../README.md#develop-on-windows), then build with
 Upload the resulting `.los` envelope, not its raw `.bin` payload.
 
 [Linnet Link](../../docs/device-link.md) supports RAM boot, persistent updates,
-input, and screenshots. Native Disk Mode handles library transfers. Older Apple
-Disk Mode installations may need the reviewed refresh-session path.
+input, and screenshots. Native Disk Mode handles library transfers. When using
+Apple Disk Mode, follow the reviewed refresh-session workflow in that guide.
 
 The battery percentage curve is an estimate, not a capacity measurement.
 Replacement storage uses its own identified capabilities; the target's narrow
