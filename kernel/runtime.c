@@ -396,7 +396,7 @@ static void apply(uint32_t kind,int32_t value){
         scene_is(LN_UI_SCENE_MUSIC_SOUND)&&ln_music_sound_action(shell->selected)==13u&&
         ((uint32_t)value&~shell->buttons&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV));
     if(kind==LN_INPUT_HOLD&&value)ln_platform_click_stop();
-    else if(!changing_click&&!shell->hold&&
+    else if(!changing_click&&!scene_is(LN_UI_SCENE_GAME_PLAY)&&!shell->hold&&
             kind==LN_INPUT_BUTTON&&((uint32_t)value&~shell->buttons))
         ln_platform_click(ln_display_click_tone());
 #endif
@@ -627,7 +627,7 @@ static void apply(uint32_t kind,int32_t value){
     /* A batched/accelerated move is one accepted action. Rejected movement
      * stays silent; the platform coalesces overlapping pulses without delaying
      * input or queuing sounds for the rows skipped by a fast turn. */
-    if(wheel_changed)ln_platform_click(ln_display_click_tone());
+    if(wheel_changed&&!scene_is(LN_UI_SCENE_GAME_PLAY))ln_platform_click(ln_display_click_tone());
 #else
     (void)wheel_changed;
 #endif
@@ -637,6 +637,10 @@ static void apply(uint32_t kind,int32_t value){
 #endif
 #if defined(LINNET_NATIVE_UI)
     if(before!=shell->scene){
+#if defined(LINNET_HARDWARE_CLICKER)
+        /* Do not carry a menu click into gameplay. */
+        if(scene_is(LN_UI_SCENE_GAME_PLAY))ln_platform_click_stop();
+#endif
 #if defined(LINNET_AUDIO) && defined(LINNET_COVERFLOW)
         /* A ready Cover Flow revision belongs to this transition's frame.
          * Preserve the animation deadline when revisiting a moving view. */
