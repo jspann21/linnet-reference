@@ -2312,6 +2312,12 @@ class MediaWindow(QMainWindow):
 
     def _complete_eject(self, result):
         self.transition_device(None)
+        if result.get('disconnected'):
+            self.device_name.setText('iPod disconnected')
+            self.device_info.setText('Choose Find iPod after reconnecting.')
+            self.capacity.setValue(0)
+            self.show_progress('The previous iPod connection has closed. Choose Find iPod after reconnecting.')
+            return
         self.device_name.setText('Safely ejected'); self.device_info.setText('You can disconnect your iPod.'); self.capacity.setValue(0)
         if result.get('already_ejected'):
             self.show_progress('Your iPod was already ejected in Windows. It is safe to disconnect, even if its screen still shows Disk Mode.')

@@ -1289,15 +1289,24 @@ def eject_device(identity):
     from .publish import _exclusive
     from .about import publish as publish_about
     from tools.studio.installer import installed_state
-    from tools.link.eject import eject, already_ejected
-    with _exclusive(identity):
-        if already_ejected(identity):
+    from tools.link.eject import eject, connection_state
+    def closed_connection():
+        state = connection_state(identity)
+        if state == 'ejected':
             return dict(ejected=True, already_ejected=True, about_warning=None)
+        if state == 'disconnected':
+            return dict(ejected=False, disconnected=True, about_warning=None)
+        return None
+    with _exclusive(identity):
+        closed = closed_connection()
+        if closed:
+            return closed
         try:
             current = refresh(identity)
         except (OSError, ValueError, RuntimeError):
-            if already_ejected(identity):
-                return dict(ejected=True, already_ejected=True, about_warning=None)
+            closed = closed_connection()
+            if closed:
+                return closed
             raise
         warning = None
         if installed_state(current['root'], current['target_id'])['state'] == 'installed':

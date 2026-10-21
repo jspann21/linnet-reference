@@ -11,33 +11,40 @@ import re
 from pathlib import Path
 
 
-def already_ejected(identity):
-    """Recognize Windows' completed eject for this exact still-plugged USB node."""
+def connection_state(identity):
+    """Distinguish a proven Windows eject from a vanished prior connection."""
     if os.name != 'nt' or not identity.get('usb_pnp_id'):
-        return False
+        return None
     config = base64.b64encode(json.dumps(dict(serial=identity['disk_serial'],
         usb=identity['usb_pnp_id'], volume=identity['volume_unique_id'])).encode()).decode()
     script = r'''
 $ErrorActionPreference = 'Stop'
 $cfg = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('CONFIG')) | ConvertFrom-Json
 $nodes = @(Get-PnpDevice -PresentOnly -InstanceId $cfg.usb -ErrorAction SilentlyContinue)
-$removed = $false
+$state = ''
+$disks = @(Get-Disk | Where-Object { $_.SerialNumber -and $_.SerialNumber.Trim() -ceq $cfg.serial })
+$volumes = @(Get-Volume | Where-Object { $_.UniqueId -ceq $cfg.volume -and $_.DriveLetter })
 if ($nodes.Count -eq 1 -and $nodes[0].InstanceId -ceq $cfg.usb) {
     $problem = Get-PnpDeviceProperty -InstanceId $nodes[0].InstanceId -KeyName 'DEVPKEY_Device_ProblemCode'
-    $disks = @(Get-Disk | Where-Object { $_.SerialNumber -and $_.SerialNumber.Trim() -ceq $cfg.serial })
-    $volumes = @(Get-Volume | Where-Object { $_.UniqueId -ceq $cfg.volume -and $_.DriveLetter })
-    $removed = $problem.Data -eq 47 -and $disks.Count -eq 0 -and $volumes.Count -eq 0
+    if ($problem.Data -eq 47 -and $disks.Count -eq 0 -and $volumes.Count -eq 0) { $state = 'ejected' }
+} elseif ($nodes.Count -eq 0 -and $disks.Count -eq 0 -and $volumes.Count -eq 0) {
+    $state = 'disconnected'
 }
-@{ already_ejected=$removed } | ConvertTo-Json -Compress
+@{ state=$state } | ConvertTo-Json -Compress
 '''.replace('CONFIG', config)
     result = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', script],
         text=True, capture_output=True, timeout=20, creationflags=subprocess.CREATE_NO_WINDOW)
     if result.returncode:
-        return False
+        return None
     try:
-        return json.loads(result.stdout).get('already_ejected') is True
+        state = json.loads(result.stdout).get('state')
+        return state if state in ('ejected', 'disconnected') else None
     except (ValueError, AttributeError):
-        return False
+        return None
+
+
+def already_ejected(identity):
+    return connection_state(identity) == 'ejected'
 
 
 def _token_elevated() -> bool:
