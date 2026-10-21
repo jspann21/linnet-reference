@@ -117,7 +117,7 @@ bool ln_display_settings_adjust(int32_t direction){
     mark_record_dirty();++revision;return true;
 }
 /* Wait for the saved choice before allowing feedback, including saved Off. */
-const char *ln_display_click_label(void){return click_labels[click_tone];}
+const char *ln_display_click_label(void){return loaded||click_fallback_ready||click_changed?click_labels[click_tone]:"Clicker: Loading...";}
 uint8_t ln_display_click_tone(void){return loaded||click_fallback_ready||click_changed?click_tone:1u;}
 bool ln_display_click_adjust(int32_t direction){
     if(!direction)return false;
@@ -157,12 +157,13 @@ static bool valid_photo(const uint8_t *resume){
     uint32_t flags=ln_read_le32(resume+8);
     return ln_read_le32(resume+4)<=65535u&&(flags&255u)<=5u&&((flags>>8)&255u)<=3u&&(flags>>16)<=2u;
 }
-static int malformed_record(void){click_fallback_ready=true;return -1;}
+static void click_defaults_ready(void){if(!click_fallback_ready){click_fallback_ready=true;++revision;}}
+static int malformed_record(void){click_defaults_ready();return -1;}
 static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
     uint32_t bytes=480;
     if(ln_storage_busy()||!ln_storage_mounted()||!ln_storage_settings(false,raw,&bytes))return 0;
     if(bytes>480)return malformed_record();
-    if(!bytes){*offset=*length=0;loaded=true;return 1;}
+    if(!bytes){*offset=*length=0;if(!loaded)++revision;loaded=true;return 1;}
     if(bytes<36||ln_read_le32(raw)!=0x54544553u||ln_read_le32(raw+bytes-4)!=ln_crc32(raw,bytes-4))return malformed_record();
     uint32_t n=(uint32_t)raw[4]|((uint32_t)raw[5]<<8),f=raw[14];
     if(n!=bytes-36||((raw[7]>>1)&3u)>2u||raw[6]>BACKLIGHT_OFF||(raw[15]&15u)>8u||(raw[15]>>4)>8u||(f&7u)>5||((f>>5)&3u)>2||(f&128u))return malformed_record();
@@ -177,6 +178,7 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
     if(saved_capacity<50u||saved_capacity>10000u||saved_capacity%50u)return malformed_record();
     /* Commit only after the complete envelope has passed validation. */
     if(!loaded){
+        ++revision;
         if(!dirty&&(choice!=saved_choice||battery_capacity!=saved_capacity||clock_12!=saved_clock_12||shutdown_choice[0]!=(raw[15]&15u)||shutdown_choice[1]!=(raw[15]>>4))){
             shutdown_choice[0]=raw[15]&15u;shutdown_choice[1]=raw[15]>>4;choice=saved_choice;battery_capacity=saved_capacity;clock_12=saved_clock_12;++revision;
         }
@@ -440,7 +442,11 @@ const char *ln_display_about_row(uint32_t item){
     return item<about_ata_count?about_ata_rows[item]:"";
 }
 static void settings_work(bool may_write,bool presented,uint32_t presented_revision,bool flush){
-    if(!may_write||((loaded&&!dirty)&&(theme_loaded&&!theme_dirty))||ln_storage_busy()||!ln_storage_mounted())return;
+    if(!may_write||((loaded&&!dirty)&&(theme_loaded&&!theme_dirty))||ln_storage_busy())return;
+    if(!ln_storage_mounted()){
+        if(ln_storage_startup_complete())click_defaults_ready();
+        return;
+    }
     if(!flush&&loaded&&dirty&&theme_loaded&&!theme_dirty&&!record_publish_due())return;
     /* Once loading is complete, a theme waiting for its first frame must not
      * start disk write preparation. Independent settings work may still proceed. */
@@ -451,12 +457,19 @@ static void settings_work(bool may_write,bool presented,uint32_t presented_revis
     if(!theme_loaded&&(ln_storage_capacity(LN_STORAGE_THEME0)!=512u||ln_storage_capacity(LN_STORAGE_THEME1)!=512u)){
         theme_loaded=true;theme_available=theme_dirty=false;++revision;
     }
-    if(!ln_storage_prepared()&&ln_storage_prepare_writes()!=1)return;
+    if(!ln_storage_prepared()){
+        int prepared=ln_storage_prepare_writes();
+        if(prepared!=1){if(prepared<0)click_defaults_ready();return;}
+    }
     theme_step(presented,presented_revision,flush);
     if(loaded&&!dirty)return;
     if(!flush&&dirty&&!record_publish_due())return;
     uint8_t raw[480];uint32_t offset,bytes;
-    if(read_record(raw,&offset,&bytes)!=1||!dirty||!may_write)return;
+    int result=read_record(raw,&offset,&bytes);
+    /* A failed store read after preparation is not a pending saved Off choice.
+     * Enable session defaults, leaving the unread records untouched. */
+    if(!result&&!ln_storage_busy())click_defaults_ready();
+    if(result!=1||!dirty||!may_write)return;
     /* Preparation can yield to other owners; re-read before publication. */
     if(read_record(raw,&offset,&bytes)!=1)return;
     (void)write_record(raw,raw+offset,bytes,offset==32u);

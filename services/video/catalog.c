@@ -58,7 +58,7 @@ static const uint8_t *catalog_row(uint32_t row){
 }
 const char *ln_video_library_label(uint32_t row){
     if(catalog.phase<4)return "Loading videos...";
-    if(!catalog.count)return catalog.phase==5?"Video library unavailable":"Add videos with Linnet Sync";
+    if(!catalog.count)return catalog.phase==5?"Video library unavailable":"No videos. Use Media Manager.";
     if(row>=catalog.count)return "";
     const uint8_t*entry=catalog_row(row);
     return entry?(const char*)entry+288u:"Loading videos...";
@@ -85,6 +85,12 @@ void ln_video_catalog_step(bool busy){
     }
 #endif
     if(!catalog.phase||catalog.phase==5||busy)return;
+    /* A terminal mount failure cannot admit an open. Do not leave the
+     * placeholder loading forever; admitted I/O still drains below first. */
+    if(!catalog.pending&&ln_storage_startup_complete()&&!ln_storage_mounted()){
+        catalog.phase=5;catalog.count=0;catalog.warming=catalog.want_page=false;
+        ++catalog.revision;return;
+    }
     int result;
     if(catalog.pending){
         uint32_t transferred=0;

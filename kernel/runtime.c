@@ -966,7 +966,7 @@ void ln_runtime_step(void){
         backlight_timeout=ln_display_backlight_timeout_us();
         backlight_off=ln_display_backlight_off();
         if(!sleeping)backlight_activity();
-        if(scene_is(LN_UI_SCENE_DISPLAY)||scene_is(LN_UI_SCENE_BATTERY)||scene_is(LN_UI_SCENE_SHUTDOWN)||scene_is(LN_UI_SCENE_THEMES)||scene_is(LN_UI_SCENE_HOME)||scene_is(LN_UI_SCENE_GAMES)||scene_is(LN_UI_SCENE_ABOUT)||shell->drawn_theme!=ln_ui_theme_index()){ln_ui_refresh(shell);dirty=true;}
+        if(scene_is(LN_UI_SCENE_DISPLAY)||scene_is(LN_UI_SCENE_BATTERY)||scene_is(LN_UI_SCENE_SHUTDOWN)||scene_is(LN_UI_SCENE_THEMES)||scene_is(LN_UI_SCENE_HOME)||scene_is(LN_UI_SCENE_GAMES)||scene_is(LN_UI_SCENE_ABOUT)||scene_is(LN_UI_SCENE_MUSIC_SOUND)||shell->drawn_theme!=ln_ui_theme_index()){ln_ui_refresh(shell);dirty=true;}
     }
     theme_frame_request();
 #endif
