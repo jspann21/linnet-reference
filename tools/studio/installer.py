@@ -274,11 +274,11 @@ def installed_state(root, target_id):
         return dict(state="invalid", present=len(present), required=len(CORE_FILES), detail=str(error))
 
 
-def _resume_context(identity, linnet):
+def _resume_context(identity, linnet, *, initialized=True):
     from tools.studio import native_recovery
-    initialized = native_recovery.pending(identity, linnet)
-    if initialized or native_recovery.eligible(identity):
-        return initialized
+    booted = native_recovery.pending(identity, linnet) if initialized else None
+    if booted or native_recovery.eligible(identity):
+        return booted
     if linnet["state"] not in ("incomplete", "installed"):
         return None
     transactions = cache_root(identity) / "transactions"
@@ -478,7 +478,7 @@ def assess(identity, *, _validated_identity=False):
             root / ".LINNET" / "RECOVERY" / "ORIGINAL.IPOD", spec)
     rockbox["supersedes_linnet_recovery"] = external_rockbox
     if marker is None or marker.get("phase") == "restored":
-        resume = _resume_context(identity, linnet)
+        resume = _resume_context(identity, linnet, initialized=marker is None)
     others = []
     for name, paths in (("iPodLinux", ("iPodLinux", "linux.bin", "loader2")),
                         ("Podzilla", ("podzilla", ".podzilla"))):
@@ -1364,6 +1364,8 @@ def _install(identity, progress=lambda _message: None, build="user", installatio
                        transaction=str(transaction), installation_method=method_id,
                        previous_boot=previous_boot, reviewed_action=reviewed["action"],
                        result=str(receipt_path.with_suffix(".result.json")))
+            if reviewed['action'] == 'resume' and reviewed['resume'].get('initialized_resume'):
+                job.update(initialized_resume=True, recovery_cache_root=str(transaction.parent.parent))
             if reviewed["action"] == "replace":
                 marker = reviewed["recovery"]
                 job["restoration"] = (dict(
@@ -1458,7 +1460,7 @@ def _native_worker(job):
     current = assess(expected)
     from tools.studio import native_recovery
     if (job['mode'] == 'install' and job.get('reviewed_action') == 'resume' and
-            (current.get('resume') or {}).get('initialized_resume')):
+            job.get('initialized_resume')):
         return native_recovery.finish(job)
     if job["mode"] != "restore":
         # Recheck admission after UAC, before restoring old startup files or
@@ -1508,9 +1510,10 @@ def _native_worker(job):
     if job["mode"] == "restore":
         path, digest = Path(job['plan']), job['plan_sha256']
         if native_recovery.eligible(expected):
-            if not native_recovery.available(expected, marker):
+            scope = job['recovery_cache_root']
+            if not native_recovery.available(expected, marker, cache_scope=scope):
                 raise ValueError('Original recovery plan does not match this native iPod')
-            path, digest = native_recovery.bind(expected, transaction, path, digest, marker['device_id'])
+            path, digest = native_recovery.bind(expected, transaction, path, digest, marker['device_id'], cache_scope=scope)
         result = native.execute("restore", path, digest, expected["disk_number"])
         if not result.get("passed"):
             raise RuntimeError(result.get("failure", "native restore failed"))
@@ -1673,6 +1676,9 @@ def _restore(identity, expected=None, reviewed_strategy=None):
         job = dict(mode="restore", identity=reviewed["identity"],
                    transaction=str(transaction), plan=marker["plan"], plan_sha256=marker["plan_sha256"],
                    result=str(result_path))
+        from tools.studio import native_recovery
+        if native_recovery.eligible(reviewed['identity']):
+            job['recovery_cache_root'] = str(transaction.parent.parent)
         job_path = transaction / ("restore-worker-" + uuid.uuid4().hex + ".json")
         _save(job_path, job, replace=False)
         result = _run_elevated(job_path)

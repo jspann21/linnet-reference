@@ -415,6 +415,9 @@ if ([string]$volume.FileSystem -ne 'FAT32' -or $logical.VolumeSerialNumber.ToUpp
   volume_serial=$logical.VolumeSerialNumber.ToUpper();filesystem=[string]$volume.FileSystem;
   pnp_id=[string]$physical.PNPDeviceID;native_target_id=$target;free_bytes=[uint64]$volume.FreeSpace} | ConvertTo-Json -Compress
 '''.replace("CONFIG", config)
+    # EncodedCommand otherwise serializes errors as CLIXML, which is not a
+    # readable explanation when storage was removed outside Media Manager.
+    script = "try {\n" + script + "\n} catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }"
     encoded = base64.b64encode(script.encode("utf-16-le")).decode()
     result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
                             capture_output=True, text=True, timeout=30,

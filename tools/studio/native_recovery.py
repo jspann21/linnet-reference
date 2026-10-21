@@ -20,13 +20,16 @@ def _directory_target(identity):
     return spec['enabled'] and spec['boot_layout'] == 'ipod-directory'
 
 
-def _inputs(identity, transaction, path, digest, device_id):
+def _inputs(identity, transaction, path, digest, device_id, *, cache_scope=None):
     from tools.studio import installer
 
     transaction = Path(transaction).resolve(strict=True)
     path = Path(path).resolve(strict=True)
     original_identity = dict(identity, disk_serial=device_id)
-    if (not _directory_target(identity) or transaction.parent.parent != installer.cache_root(original_identity) or
+    expected_scope = installer.cache_root(original_identity)
+    scope = Path(cache_scope).resolve(strict=True) if cache_scope is not None else expected_scope
+    if (scope.name != expected_scope.name or scope.parent.name != expected_scope.parent.name or
+            not _directory_target(identity) or transaction.parent.parent != scope or
             path not in (transaction / 'native-plan/plan.json', transaction / 'apple-recovery-plan/plan.json')):
         raise ValueError('Native recovery record is outside this iPod’s original transaction')
     manifest, artifacts, firmware = native.load_plan(path, digest)
@@ -64,10 +67,24 @@ def _inputs(identity, transaction, path, digest, device_id):
     return manifest, artifacts, firmware
 
 
-def _context(identity, linnet, transaction):
+def _context(identity, linnet, transaction, *, cache_scope=None):
     from tools.studio import installer
+    from tools.studio.storage import SCRATCH_BYTES
+    from tools.studio.update_history import _read_record
+    from tools.content.publish import _plain
 
     transaction = Path(transaction).resolve(strict=True)
+    root = Path(identity['root']).resolve(strict=True)
+    capacity = TARGETS[identity['target_id']]['os_capacity_bytes']
+    for name in installer.CORE_FILES:
+        path = root / '.LINNET' / name
+        _plain(path, root)
+        size = capacity if name.startswith('OS') else SCRATCH_BYTES if name == 'SCRATCH.BIN' else 512
+        if not path.is_file() or path.is_symlink() or path.stat().st_size != size:
+            raise ValueError('Installed system file has an invalid type or capacity: ' + name)
+    states = [_read_record(root / '.LINNET' / name) for name in ('STATE0.BIN', 'STATE1.BIN')]
+    if states[0][1] == states[1][1] and states[0][0] != states[1][0]:
+        raise ValueError('Conflicting installed state records at the same generation')
     context = json.loads((transaction / 'context.json').read_text(encoding='utf-8'))
     if (context.get('target_id') != identity['target_id'] or
             context.get('strategy') != 'native-directory' or context.get('build') not in ('user', 'dev') or
@@ -82,7 +99,8 @@ def _context(identity, linnet, transaction):
     installer._validate_artifacts(identity, artifacts)
     path = transaction / 'native-plan/plan.json'
     digest = (transaction / 'native-plan.sha256').read_text(encoding='ascii').strip()
-    manifest, plan_artifacts, _firmware = _inputs(identity, transaction, path, digest, context['device_id'])
+    manifest, plan_artifacts, _firmware = _inputs(identity, transaction, path, digest, context['device_id'],
+                                               cache_scope=cache_scope)
     if (artifacts['build'] != context['build'] or linnet.get('build') != context['build'] or
             linnet.get('build_id') != artifacts['os_build_id'] or
             linnet.get('image_sha256') != installer.inspect_image(Path(artifacts['os_image']).read_bytes())['sha256'] or
@@ -110,19 +128,19 @@ def pending(identity, linnet):
     return matches[0] if matches else None
 
 
-def available(identity, marker):
+def available(identity, marker, *, cache_scope=None):
     if not eligible(identity) or not marker or marker.get('strategy') != 'native-directory':
         return False
     try:
         manifest, _artifacts, _firmware = _inputs(identity, marker['transaction'], marker['plan'],
-                                                marker['plan_sha256'], marker['device_id'])
+                                                marker['plan_sha256'], marker['device_id'], cache_scope=cache_scope)
         return (manifest['image']['build_id'] == marker['boot_build_id'] and
                 manifest['firmware_backup_sha256'] == marker['firmware_backup_sha256'])
     except (OSError, ValueError, KeyError, TypeError):
         return False
 
 
-def bind(identity, transaction, path, digest, device_id):
+def bind(identity, transaction, path, digest, device_id, *, cache_scope=None):
     """Derive an execution descriptor; retain original plan and every raw byte."""
     from tools.inspect.retail_device import detect
     from tools.studio import installer
@@ -130,7 +148,8 @@ def bind(identity, transaction, path, digest, device_id):
 
     current = refresh(identity)
     installer._same_device(identity, current)
-    manifest, artifacts, _firmware = _inputs(current, transaction, path, digest, device_id)
+    manifest, artifacts, _firmware = _inputs(current, transaction, path, digest, device_id,
+                                           cache_scope=cache_scope)
     detected = detect(current['root'])
     storage = detected['storage']
     if (detected['target_id'] != current['target_id'] or
@@ -164,20 +183,22 @@ def finish(job):
     root = Path(identity['root'])
     if (root / installer.JOURNAL).exists():
         raise ValueError('Installation recovery changed before verification')
-    context = _context(identity, installer.installed_state(root, identity['target_id']), job['transaction'])
+    cache_scope = job['recovery_cache_root']
+    context = _context(identity, installer.installed_state(root, identity['target_id']), job['transaction'],
+                       cache_scope=cache_scope)
     if (context['artifacts'] != job['artifacts'] or context['installation_method'] != job['installation_method'] or
             installer._saved_previous_boot(context) != job['previous_boot']):
         raise ValueError('The saved installation changed before verification')
     transaction = Path(context['transaction'])
     path = transaction / 'native-plan/plan.json'
     digest = (transaction / 'native-plan.sha256').read_text(encoding='ascii').strip()
-    bound_path, bound_sha = bind(identity, transaction, path, digest, context['device_id'])
+    bound_path, bound_sha = bind(identity, transaction, path, digest, context['device_id'], cache_scope=cache_scope)
     applied = native.execute('apply', bound_path, bound_sha, identity['disk_number'])
     if not applied.get('passed'):
         raise RuntimeError(applied.get('failure', 'Native installation verification failed'))
     # Initial provisioning must not overwrite metadata updated by a successful
     # first boot. Validate the current confirmed image again instead.
-    _context(identity, installer.installed_state(root, identity['target_id']), transaction)
+    _context(identity, installer.installed_state(root, identity['target_id']), transaction, cache_scope=cache_scope)
     apple = installer._install_apple_firmware(identity, path, digest)
     manifest, _artifacts, firmware = native.load_plan(path, digest)
     if identity['target_id'] == 'video5g-m25':
