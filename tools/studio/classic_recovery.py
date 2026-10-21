@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import struct
+import subprocess
 import time
 import uuid
 
@@ -15,6 +16,20 @@ from tools.studio.targets import ROOT
 
 FORMAT = 'linnet-classic-nor-recovery-v1'
 FILES = ('ORIGINAL.BIN', 'ORIGINAL.BIN.json', 'INSTALLED.BIN', 'NOR.JSON')
+APPLE_DISK_INSTRUCTIONS = (
+    'Unplug and reconnect this same iPod. If its disk does not appear, turn Hold off, '
+    'hold Menu + Select until the Apple logo appears, then immediately hold '
+    'Select + Play/Pause until Disk Mode appears. Keep USB connected.'
+)
+
+
+class AppleStoragePending(RuntimeError):
+    """Verified Apple restoration succeeded; guarded file cleanup must resume."""
+    def __init__(self, reason):
+        super().__init__(
+            'Apple startup was restored and verified. Linnet file cleanup is unfinished. '
+            + APPLE_DISK_INSTRUCTIONS + ' Choose Find iPod, then Remove Linnet OS to finish. '
+            'The verified flash restoration will not be repeated.\n\n' + str(reason))
 
 
 def _sha(data):
@@ -330,25 +345,85 @@ def _enter_monitor(record, progress):
                        (' ' + last_error if last_error else ''))
 
 
-def restore(identity, *, progress=lambda _message: None):
+def restore(identity, *, progress=lambda _message: None, instruction=lambda _event: None):
     """Restore flash through Link; return the same filesystem in Apple Disk Mode."""
     from tools.content.publish import _exclusive
     serial = _serial(identity.get('linnet_usb_serial'))
     with _exclusive(dict(volume_unique_id='classic-setup:'+serial)):
-        return _restore(identity, progress=progress)
+        return _restore(identity, progress=progress, instruction=instruction)
 
 
-def _restore(identity, *, progress):
+def _wait_apple_storage(identity, *, progress, instruction, timeout=180):
+    """Retry only read-only discovery and mount checks across Windows enumeration."""
     from tools.content.media_manager import discover, refresh
+    from tools.content.guard import guard_volume
+
+    progress('Apple startup is restored and verified. Waiting for its USB storage…')
+    started = time.monotonic()
+    deadline = started + timeout
+    last_error = 'Windows has not mounted this iPod’s Apple USB storage.'
+    guided = False
+    try:
+        while time.monotonic() < deadline:
+            try:
+                discovery = discover(detailed=True)
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+                last_error = str(error)
+                discovery = dict(devices=[], errors=[])
+            matches = [item for item in discovery['devices'] if item.get('target_id') == nor.TARGET and
+                       item.get('linnet_usb_serial') == identity['linnet_usb_serial'] and
+                       item.get('native_target_id') != nor.TARGET]
+            if len(matches) > 1:
+                raise ValueError('More than one Apple disk has the reviewed Classic identity')
+            if matches:
+                # A different filesystem or geometry is a rejection, not a
+                # mounting delay. Never weaken this check while reconnecting.
+                _same_volume(identity, matches[0])
+                try:
+                    current = refresh(matches[0])
+                    guard_volume(current)
+                except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+                    # Enumeration can precede a writable mount. Discard this
+                    # identity and discover again; no file or flash write ran.
+                    last_error = str(error)
+                else:
+                    _same_volume(identity, current)
+                    return current
+            elif discovery['errors']:
+                last_error = '; '.join(discovery['errors'])
+            if not guided and time.monotonic() - started >= 10:
+                message = ('Apple startup is restored and verified. Windows is still connecting its disk. '
+                           + APPLE_DISK_INSTRUCTIONS + ' Removal continues automatically when it mounts.')
+                progress(message)
+                instruction(dict(action='apple-disk', message=message, can_stop=False))
+                guided = True
+            time.sleep(min(.5, max(0, deadline - time.monotonic())))
+        raise TimeoutError(last_error)
+    finally:
+        if guided:
+            instruction(dict(action=None, message='Finished waiting for Apple USB storage.', can_stop=False))
+
+
+def _restore(identity, *, progress, instruction):
+    from tools.content.media_manager import refresh
     from tools.content.guard import guard_volume
     from tools.content.publish import _exclusive
     from tools.studio.installer import JOURNAL, _save
     identity = refresh(identity)
-    marker = preserve(identity)
-    receipt = _restored(marker)
-    if marker['phase'] == 'restored' and receipt:
+    marker = find(identity)
+    receipt = _restored(marker) if marker else None
+    if receipt:
+        # A lost reboot acknowledgement or stale native mount must never send
+        # a verified restoration back through the flash path on a later retry.
+        if marker['phase'] != 'restored':
+            try:
+                identity = _wait_apple_storage(receipt['mount_identity'], progress=progress,
+                                               instruction=instruction)
+            except (OSError, RuntimeError, ValueError) as error:
+                raise AppleStoragePending(error) from error
         return dict(passed=True, boot=receipt, identity=identity, media_preserved=True,
                     linnet_files_preserved=True, requires_safe_eject=True)
+    marker = preserve(identity)
     if identity.get('native_target_id') != nor.TARGET:
         raise ValueError('Start Linnet, open Disk Mode, and reconnect this Classic to restore its NOR bootloader')
     record, _, _ = load(marker['nor_record'], marker['nor_record_sha256'])
@@ -389,31 +464,12 @@ def _restore(identity, *, progress):
             boot = _restored(marker)
             if boot is None:
                 raise
-    progress('Waiting for this iPod’s Apple USB storage to reconnect…')
-    deadline = time.monotonic() + 45
-    last_error = ''
-    while time.monotonic() < deadline:
-        try:
-            discovery = discover(detailed=True)
-            devices = discovery['devices']
-            if discovery['errors']:
-                last_error = '; '.join(discovery['errors'])
-        except (OSError, RuntimeError, ValueError) as error:
-            last_error = str(error)
-            time.sleep(.5)
-            continue
-        matches = [item for item in devices if item.get('target_id') == nor.TARGET and
-                   item.get('linnet_usb_serial') == record['serial'] and item.get('native_target_id') != nor.TARGET]
-        if len(matches) > 1:
-            raise RuntimeError('More than one Apple disk has the reviewed Classic identity')
-        if matches:
-            current = matches[0]
-            _same_volume(identity, current)
-            preserve(current)
-            return dict(passed=True, boot=boot, identity=current, media_preserved=True,
-                        linnet_files_preserved=True, requires_safe_eject=True)
-        time.sleep(.5)
-    raise RuntimeError('Apple startup was restored and verified, but this iPod’s USB storage did not reconnect. '
-                       'Linnet files are still present. Keep USB connected, enter Apple Disk Mode, '
-                       'then choose Remove Linnet again to finish cleanup.' +
-                       (' ' + last_error if last_error else ''))
+    try:
+        current = _wait_apple_storage(identity, progress=progress, instruction=instruction)
+        # Recovery copies and the receipt reference were saved before flashing.
+        # find() derives the restored phase from that durable receipt; rewriting
+        # the portable copies here adds a write during USB enumeration for no gain.
+        return dict(passed=True, boot=boot, identity=current, media_preserved=True,
+                    linnet_files_preserved=True, requires_safe_eject=True)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise AppleStoragePending(error) from error

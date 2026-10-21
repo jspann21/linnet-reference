@@ -1720,7 +1720,7 @@ class MediaWindow(QMainWindow):
             return
         self.active_operation = None
         tag, result, error = context.tag, outcome.value, outcome.error
-        if tag == 'classic_install':
+        if tag in ('classic_install', 'uninstall'):
             self.close_setup_instruction()
         self.busy = False
         self.progress.hide()
@@ -1764,7 +1764,7 @@ class MediaWindow(QMainWindow):
             self._complete_queue(result, error)
             return
         if error:
-            self._complete_error(tag, error)
+            self._complete_error(tag, error, outcome.error_type)
             return
         handlers = {
             'cache_size': self._complete_cache, 'cache_clear': self._complete_cache, 'cache_move': self._complete_cache,
@@ -1836,7 +1836,13 @@ class MediaWindow(QMainWindow):
                            'These sources are already queued. Review them in Preparation.')
         return
 
-    def _complete_error(self, tag, error):
+    def _complete_error(self, tag, error, error_type=''):
+        if tag == 'uninstall' and error_type == 'AppleStoragePending':
+            # The saved identity belongs to the ejected Linnet connection. Do
+            # not leave removal enabled against its old disk serial or volume.
+            self.transition_device(None)
+            self.device_name.setText('Apple restored · cleanup pending')
+            self.device_info.setText('Reconnect in Apple Disk Mode, then choose Find iPod')
         if tag == 'classic_install':
             # The disk may have changed mode while setup was running. Keep the
             # host transaction reachable without offering stale install choices.
@@ -3435,12 +3441,13 @@ class MediaWindow(QMainWindow):
 
     @Slot(object)
     def show_setup_instruction(self, event):
-        if not self.busy or not self.active_operation or self.active_operation.tag!='classic_install':
+        if not self.busy or not self.active_operation or self.active_operation.tag not in ('classic_install', 'uninstall'):
             return
-        if event.get('action') in ('hold','release'):
+        removing = self.active_operation.tag == 'uninstall'
+        if event.get('action') in ('hold','release','apple-disk'):
             if self.setup_instruction_dialog is None:
                 dialog = SetupInstructionDialog(self)
-                dialog.setWindowTitle('Connect your Classic for installation')
+                dialog.setWindowTitle('Finish removing Linnet' if removing else 'Connect your Classic for installation')
                 dialog.setWindowFlag(Qt.WindowCloseButtonHint, False)
                 dialog.setWindowModality(Qt.WindowModal)
                 dialog.setMinimumWidth(480)
@@ -3456,17 +3463,21 @@ class MediaWindow(QMainWindow):
                 layout.addWidget(dialog.stop_button)
                 self.setup_instruction_dialog = dialog
             dialog = self.setup_instruction_dialog
-            dialog.heading.setText('Release Menu + Select now' if event['action']=='release' else
+            dialog.heading.setText('Connect Apple Disk Mode' if event['action']=='apple-disk' else
+                                   'Release Menu + Select now' if event['action']=='release' else
                                    'Hold Menu + Select')
             dialog.message.setText(event['message'])
             dialog.stop_button.setVisible(bool(event['can_stop']))
             dialog.stop_button.setEnabled(bool(event['can_stop']) and not self.stop_event.is_set())
             dialog.show(); dialog.raise_()
-            self.install_detail.hide()
+            if not removing:
+                self.install_detail.hide()
         else:
             self.close_setup_instruction()
-            self.install_detail.setText(event['message']); self.install_detail.show()
-        self.setup_progress.show()
+            if not removing:
+                self.install_detail.setText(event['message']); self.install_detail.show()
+        if not removing:
+            self.setup_progress.show()
         self.cancel_button.setVisible(bool(event['can_stop']))
         self.cancel_button.setEnabled(bool(event['can_stop']) and not self.stop_event.is_set())
         self.show_progress(event['message'])
@@ -3558,7 +3569,8 @@ class MediaWindow(QMainWindow):
         if not self.dialog('Remove Linnet OS?', message, 'Restore and remove Linnet', danger=True):
             return
         self.work('uninstall', lambda: installer.uninstall(identity, progress=self.events.progress.emit,
-                                                         expected=startup), 'Removing Linnet OS…')
+                                                         expected=startup,
+                                                         instruction=self.events.setup_instruction.emit), 'Removing Linnet OS…')
 
     def choose_firmware(self):
         path, _ = QFileDialog.getOpenFileName(self, 'Choose Linnet firmware', self.firmware_path,

@@ -1770,7 +1770,7 @@ def _repair_uninstall_recovery(identity, pending):
                 restore_file(source, target)
 
 
-def uninstall(identity, progress=lambda _message: None, expected=None):
+def uninstall(identity, progress=lambda _message: None, expected=None, *, instruction=lambda _event: None):
     """Verify the saved previous boot, then remove only Linnet's private directory."""
     from tools.content.guard import guarded_path, guard_volume
     from tools.content.publish import _exclusive
@@ -1806,9 +1806,15 @@ def uninstall(identity, progress=lambda _message: None, expected=None):
             path = Path(base) / name
             guarded_path(path, root)
     if (reviewed["recovery"] or {}).get("strategy") == "native-nor" and reviewed["recovery"]["phase"] != "restored":
-        from tools.studio.classic_recovery import restore as restore_classic
-        boot = restore_classic(reviewed["identity"], progress=progress)
-        result = uninstall(boot["identity"], progress=progress, expected=previous)
+        from tools.studio.classic_recovery import AppleStoragePending, restore as restore_classic
+        boot = restore_classic(reviewed["identity"], progress=progress, instruction=instruction)
+        try:
+            result = uninstall(boot["identity"], progress=progress, expected=previous,
+                               instruction=instruction)
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+            # USB storage may disappear even after it passed reconnection checks.
+            # Cleanup is never replayed automatically after it may have written.
+            raise AppleStoragePending(error) from error
         result["reconnected_identity"] = boot["identity"]
         return result
     media_folders = {name: (root / name).exists() for name in ("Music", "Photos", "Videos", "Notes")}

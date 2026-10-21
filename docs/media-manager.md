@@ -153,11 +153,16 @@ SRAM monitor, authenticates the backup with the device, and compares the entire
 flash against the saved snapshots. It restores only the original boot slot,
 verifies the complete NOR, and restarts into Apple software before removing
 Linnet files. Restoration, reconnection, and cleanup run in the same removal
-operation; keep USB connected through the restarts. A verified restoration is
-not repeated when only file cleanup remains. If Apple Disk Mode
-does not reconnect automatically, reconnect it and choose **Remove Linnet OS**
-again to finish cleanup. User builds need a Developer build before this Link
-recovery sequence; the original NOR backup remains the source of restoration.
+operation; keep USB connected through the restarts. Media Manager allows three
+minutes for a fresh, verified Apple disk mount and continues cleanup
+automatically. If Windows has not mounted it, a dialog guides reconnection and
+the Apple Disk Mode button step: turn Hold off, hold Menu + Select until the
+Apple logo appears, then immediately hold Select + Play/Pause until Disk Mode
+appears. A verified restoration is not repeated when only file cleanup remains.
+If the wait expires, reconnect this same iPod in Apple Disk Mode, choose **Find
+iPod**, then **Remove Linnet OS** again to finish cleanup. User builds need a
+Developer build before this Link recovery sequence; the original NOR backup
+remains the source of restoration.
 If Apple is the saved startup default, removal first selects Linnet for its
 automatic recovery restart. If recovery stops, Linnet remains selected so Link
 can reconnect for a retry. Removal holds exclusive access to this Classic
