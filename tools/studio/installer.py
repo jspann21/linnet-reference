@@ -1551,7 +1551,22 @@ def _native_worker(job):
                                       transaction, Path(job["archive"]))
             result["restored_boot"] = reinstall["restored_boot"]
             return result
-    mbr, firmware = _read_raw_backup(expected, transaction)
+    plan_dir = transaction / "native-plan"
+    hash_path = transaction / "native-plan.sha256"
+    if job["reviewed_action"] == "resume" and plan_dir.exists():
+        # A verified boot write can finish before the final full-device read or
+        # journal publication fails. Keep the original backup: the live boot
+        # partition may already contain the reviewed candidate. execute() below
+        # validates every current byte and skips completed writes before resuming.
+        plan_sha = hash_path.read_text(encoding="ascii").strip()
+        manifest, plan_artifacts, _original = native.load_plan(plan_dir / "plan.json", plan_sha)
+        mbr, firmware = transaction / "backup/mbr.bin", transaction / "backup/firmware.bin"
+        if (Path(manifest["firmware_backup"]).resolve(strict=True) != firmware.resolve(strict=True) or
+                mbr.read_bytes() != plan_artifacts["mbr.bin"]):
+            raise ValueError("saved native plan differs from its original backup")
+        del _original, plan_artifacts
+    else:
+        mbr, firmware = _read_raw_backup(expected, transaction)
     device_path = transaction / "device.json"
     device_value = detected
     if device_path.exists():
@@ -1559,8 +1574,6 @@ def _native_worker(job):
             raise ValueError("saved device identity differs")
     else:
         _save(device_path, device_value, replace=False)
-    plan_dir = transaction / "native-plan"
-    hash_path = transaction / "native-plan.sha256"
     if plan_dir.exists():
         plan_path = plan_dir / "plan.json"
         plan_sha = hash_path.read_text(encoding="ascii").strip()
