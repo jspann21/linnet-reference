@@ -31,7 +31,7 @@ static int (*verify_image)(void *,uint32_t,const uint8_t[32]);
 static int (*read_loader)(void *,uint16_t,uint8_t *,uint32_t *);
 static int read_status(void *context,uint16_t command,uint8_t *output,uint32_t *size) {
     if(command!=48)return read_loader(context,command,output,size);
-    static const char names[][20]={"ram_ready=", "ram_failure=", "panel_type=", "gpio6=", "pmu_identity=",
+    static const char names[][16]={"ram_ready=", "ram_failure=", "panel_type=", "gpio6=", "pmu_identity=",
         "usb_recoveries=", "usb_last_error=", "startup_mode=", "startup_stage=", "startup_size="};
     struct ln_n25_power_identity identity={0};
     bool pmu=ln_n25_power_identify(&identity);
@@ -214,7 +214,9 @@ _Noreturn void ln_bootstrap_main(void) {
             ln_link_frame request,response;
             if(ln_link_parser_feed(&parser,input[n],&request)!=1)continue;
             last_request=ln_time_us();
-            if(!host_connected && request.command==1u){
+            /* A new host session can follow a manual display diagnostic.
+             * Restore setup on every HELLO, even without a USB bus reset. */
+            if(request.command==1u){
                 host_connected=true;
                 if(memory_ready)(void)ln_s5l_board_recovery_screen(true);
             }
