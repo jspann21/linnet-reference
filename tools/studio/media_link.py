@@ -53,7 +53,7 @@ def open_disk(connection, *, progress=lambda _message: None):
 
 def open_setup(connection, *, section, progress=lambda _message: None):
     """Connect storage and read setup for the user's selected task."""
-    if section not in ('startup', 'build'):
+    if section not in ('startup', 'build', 'remove'):
         raise ValueError('Unknown iPod setup section')
     from tools.studio.installer import assess
     result = open_disk(connection, progress=progress)

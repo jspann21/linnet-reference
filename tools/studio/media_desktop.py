@@ -799,7 +799,12 @@ def build_setup_page(window):
     window.link_build_button = button('Change build…', lambda: window.open_link_setup('build'))
     row.addWidget(window.link_build_button); link_build.addLayout(row)
     window.link_build_status = label('', 'muted', True); link_build.addWidget(window.link_build_status)
-    linked.addWidget(label('Media Manager opens Disk Mode automatically to read these settings.', 'muted', True))
+    _, link_removal = card(linked)
+    row = box(horizontal=True); row.addWidget(label('Remove Linnet', 'cardTitle'), 1)
+    window.link_uninstall_button = button('Remove…', lambda: window.open_link_setup('remove'), 'danger')
+    row.addWidget(window.link_uninstall_button); link_removal.addLayout(row)
+    window.link_uninstall_detail = label('', 'muted', True); link_removal.addWidget(window.link_uninstall_detail)
+    linked.addWidget(label('Media Manager opens Disk Mode automatically for these actions.', 'muted', True))
     window.link_setup_panel.hide(); layout.addWidget(window.link_setup_panel)
 
     window.startup_panel, startup = card(layout)
@@ -2248,20 +2253,27 @@ class MediaWindow(QMainWindow):
             self.build_editor_open = True
         self.navigate('iPod setup')
         self.cache_library_dirty = True
-        target = self.default_title if result['section'] == 'startup' else self.boot_choice
+        section = result['section']
+        target = (self.default_title if section == 'startup' else
+                  self.uninstall_panel if section == 'remove' else self.boot_choice)
         def reveal():
             if self.closed or self.page != 'iPod setup' or self.review is not result['review']:
                 return
-            if result['section'] == 'build':
+            if section == 'build':
                 self.boot_choice.setFocus()
+            elif section == 'remove':
+                self.uninstall_button.setFocus()
             elif self.default_choice.isVisible():
                 self.default_choice.setFocus()
             self.setup.ensureWidgetVisible(target)
+            if section == 'remove' and self.uninstall_button.isEnabled():
+                self.uninstall_selected()
         # New sections change the scroll content height. Reveal only after
         # Qt has laid them out, so the previous hidden geometry is not used.
         QTimer.singleShot(0, reveal)
         self.show_progress('Choose the default system and use Menu at startup for a one-time choice.'
-                           if result['section'] == 'startup' else
+                           if section == 'startup' else
+                           'Review removal options below.' if section == 'remove' else
                            'Choose User or Developer build, then apply the update. Your media is kept.')
 
     def _complete_prepare(self, result):
@@ -2724,8 +2736,13 @@ class MediaWindow(QMainWindow):
             if link and resumable:self.link_disk_button.hide()
         show_link_actions = linked_os and self.resume_classic_button.isHidden() and not setting_up
         self.link_setup_panel.setVisible(show_link_actions)
-        for action in (self.link_startup_button, self.link_build_button):
+        for action in (self.link_startup_button, self.link_build_button, self.link_uninstall_button):
             action.setEnabled(bool(show_link_actions and link.get('can_open_disk')) and not self.busy)
+        self.link_uninstall_detail.setText(
+            'Opens Disk Mode automatically, then asks you to confirm removal. Your media folders are kept.'
+            if link and link.get('can_open_disk') else
+            'Enter Apple Disk Mode, then choose Find iPod to review removal: hold Menu + Select until restart, '
+            'then immediately hold Select + Play/Pause until Disk Mode appears.')
         self.resume_classic_button.setEnabled(not self.busy)
         if self.review is not None:
             return
