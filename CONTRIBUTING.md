@@ -6,6 +6,10 @@ map and [open work](docs/roadmap.md) for known limitations.
 
 ## Choose a starting point
 
+Unless otherwise stated, contributions are licensed under the project's
+[GNU GPL version 3 or later](LICENSE). Preserve separate licenses and copyright
+notices for third-party material.
+
 - **New iPod model:** follow [Adding support for an iPod model](targets/README.md).
   A port needs native hardware support, a target manifest, display configuration and
   physical-device checks.

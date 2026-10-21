@@ -334,6 +334,21 @@ references.
 | Contribute or find open work | [Contributing](CONTRIBUTING.md) · [Roadmap](docs/roadmap.md) |
 | Understand generated files and recovery artifacts | [Local artifacts](docs/local-artifacts.md) |
 
+## License
+
+Copyright (C) 2026 jspann21 and Linnet contributors.
+
+Unless otherwise stated, Linnet's original code, documentation, and assets are
+licensed under the GNU General Public License, version 3 or (at your option) any
+later version ([GPL-3.0-or-later](LICENSE)). You may use, modify, and redistribute
+them under those terms. Linnet comes without any warranty; see the license for
+details.
+
+Third-party code, fonts, and artwork retain their own licenses and copyright
+notices. The project license does not grant rights to Apple-derived assets;
+see the [font and theme notes](sdk/README.md) and the
+[Podium Sans notice](sdk/assets/PODIUM-SANS-NOTICE.txt).
+
 ## Credits
 
 Linnet's native architecture and application code are developed for this project.

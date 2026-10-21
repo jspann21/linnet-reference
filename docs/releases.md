@@ -41,8 +41,10 @@ stop setup before flashing. Consult the hardware and recovery guides for coverag
 
 1. Review the successful build from the commit to release. Check the packaged
    Windows app and the relevant hardware qualification results.
-2. Resolve the project's license before public distribution; preserve vendor
-   notices and provide corresponding source alongside binaries.
+2. Preserve the [GPLv3 license](../LICENSE), copyright notices, and vendor
+   notices, and provide complete corresponding source alongside binaries.
+   Confirm redistribution rights for included fonts and other assets before
+   public distribution.
 3. Push a version tag such as `v0.1.0` on that commit. This starts a fresh build
    and creates a **draft GitHub Release** containing all downloads and checksums.
 4. Review the draft's downloads and edit its notes to describe that version and
