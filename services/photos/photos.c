@@ -692,7 +692,20 @@ static void photo_step(void){
         if(r!=LN_FAT32_NOT_FOUND){fail(PHOTO_RECOVERY_REQUIRED);return;}
         p.phase=OPEN;return;
     }
-    if(p.phase==OPEN){r=open_file(package,&p.file);if(!r)return;if(r<0){fail(1);return;}p.phase=HEADER;return;}
+    if(p.phase==OPEN){
+        r=open_file(package,&p.file);if(!r)return;
+        /* A device with no prepared photos has no catalog. Publish the same
+         * settled empty list as an empty catalog, after the transaction guard
+         * has ruled out an interrupted publication. Other open failures remain
+         * errors, so a damaged or unreadable library is never hidden. */
+        if(r==LN_FAT32_NOT_FOUND){
+            clear(&p.header,sizeof p.header);clear(&p.file,sizeof p.file);
+            p.first=p.count=p.photo_index=p.window_first=0;p.view=LN_PHOTOS_LIST;
+            p.ready=p.pim_verified=true;p.metadata_valid=p.grid_available=p.grid_cache=false;
+            p.resume_pending=p.prefetching=p.prefetch_job=false;p.phase=IDLE;++p.revision;return;
+        }
+        if(r<0){fail(1);return;}p.phase=HEADER;return;
+    }
     if(p.phase==HEADER){r=read_at(&p.file,0,photo_scratch,512);if(!r)return;if(r<0){fail(2);return;}
         copy(p.pim_header,photo_scratch,512u);if(!ln_pimg_header(p.pim_header,p.file.size,&p.header)){fail(2);return;}
         p.grid_available=p.pim_verified=false;verify_begin(false);

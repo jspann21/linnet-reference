@@ -543,6 +543,16 @@ class Session:
     def ata_capabilities(self) -> dict:
         """Read cached IDENTIFY and passive controller/clock registers."""
         words = self._diagnostic_words(3, 16, 'ATA capabilities')
+        # S5L8702 publishes version 1 with media capability bits, without
+        # the PP502x IDENTIFY/timing snapshot. Do not interpret its flags
+        # as PP502x snapshot-valid bits or fabricate missing register data.
+        if (words[0] == int.from_bytes(b'ACAP', 'little') and words[1] == 1 and
+                not words[2] and not words[3] & ~31 and not any(words[4:])):
+            return dict(magic=words[0], version=1, format='s5l8702', capabilities=words[3],
+                        capability_names=[name for bit, name in enumerate(
+                            ('lba48', 'flush', 'power_management', 'apm', 'write_cache_enabled'))
+                            if words[3] & (1 << bit)],
+                        identify_available=False, timing_available=False)
         if (words[0] != int.from_bytes(b'ACAP', 'little') or words[1] or
                 words[3] & ~63 or any(value > 65535 for value in words[4:8])):
             raise ProtocolError('invalid ATA capabilities header')

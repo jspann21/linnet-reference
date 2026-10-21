@@ -96,6 +96,10 @@ update and recovery services, including `crash-info`. Compare performance
 counters on the same image, boot generation and counter epoch; saturated counters
 are unusable, and overlapping timings must not be added.
 
+Classic `ata-capabilities` reports its S5L8702 version 1 media capability bits.
+Its IDENTIFY and controller timing snapshots are unavailable in this record;
+`media-info` provides the cached drive identity and sector geometry.
+
 Send input and capture its result without maintaining a Python script:
 
 ```console
