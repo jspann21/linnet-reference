@@ -27,6 +27,9 @@ $volumes = @(Get-Volume | Where-Object { $_.UniqueId -ceq $cfg.volume -and $_.Dr
 if ($nodes.Count -eq 1 -and $nodes[0].InstanceId -ceq $cfg.usb) {
     $problem = Get-PnpDeviceProperty -InstanceId $nodes[0].InstanceId -KeyName 'DEVPKEY_Device_ProblemCode'
     if ($problem.Data -eq 47 -and $disks.Count -eq 0 -and $volumes.Count -eq 0) { $state = 'ejected' }
+    # Windows can retain CM_PROB_WILL_BE_REMOVED after the storage and volume
+    # have gone. Treat it as a closed connection without claiming a flush.
+    elseif ($problem.Data -eq 21 -and $disks.Count -eq 0 -and $volumes.Count -eq 0) { $state = 'disconnected' }
 } elseif ($nodes.Count -eq 0 -and $disks.Count -eq 0 -and $volumes.Count -eq 0) {
     $state = 'disconnected'
 }
