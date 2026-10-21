@@ -19,7 +19,7 @@ bool ln_music_profile_valid(const struct ln_music_profile *);
 /* Native rates only; selected ReplayGain is Q16 dB, INT32_MIN means unity. */
 bool ln_music_profile_configure(const struct ln_music_profile *,uint32_t rate,
                                int32_t replaygain_db_q16,struct ln_dsp_config *out);
-/* 32-byte PROF v2; decode also accepts v0/v1. CRC32 covers bytes 0..27.
+/* 32-byte PROF v2. CRC32 covers bytes 0..27.
  * Flags: track/crossfeed/album bits 0..2, five gain+6 nibbles at 3..22,
  * maximum attenuation in dB at 23..29 and dock line-out at bit 30. */
 bool ln_music_profile_encode(const struct ln_music_profile *,uint8_t out[LN_MUSIC_PROFILE_BYTES]);

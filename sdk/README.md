@@ -109,8 +109,17 @@ are not recolored.
 
 Assets use repository-contained paths and bounded PPM inputs. Fonts are baked
 alpha glyphs with optional proportional advances. Keep each font's own notice
-with it; [DejaVu](assets/FONT-LICENSE.txt) and
-[Podium Sans](assets/PODIUM-SANS-NOTICE.txt) have different provenance.
+with it. Bundled fonts use the [DejaVu notices](assets/FONT-LICENSE.txt).
+Themes with `font_source = "apple-podium-sans16"` can use an optional,
+locally extracted [Podium Sans font](assets/PODIUM-SANS-NOTICE.txt); their `font`
+and `font_license` fields describe the bundled fallback. Apple glyphs are not
+stored in the source tree or release packages. Use Media Manager's
+[iPod theme font option](../docs/media-manager.md#ipod-theme-font) to prepare
+the optional file. Missing or invalid files use the bundled font.
+
+The simulator also accepts `--apple-font path/to/PODIUM.FNT` for local previews.
+It validates and loads the same packed font format as firmware. Its output may
+contain the extracted font and should remain local.
 
 To bake a suitably licensed replacement font:
 

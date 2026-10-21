@@ -396,7 +396,7 @@ void ln_files_step(struct ln_ui_state*s){
         else if(f.phase==CATALOG_HEADER){
             f.records=ln_read_le32(f.io+8);
             uint32_t version=ln_read_le32(f.io+4);
-            if(bytes!=512u||ln_read_le32(f.io)!=0x534c4946u||(version!=1u&&version!=2u)||!f.records||f.records>1000000u||
+            if(bytes!=512u||ln_read_le32(f.io)!=0x534c4946u||version!=2u||!f.records||f.records>1000000u||
                ln_read_le32(f.io+12)!=RECORD||f.catalog.size!=512u+f.records*RECORD||ln_crc32(f.io,508)!=ln_read_le32(f.io+508))live_folder();
             else {f.phase=CATALOG_ROOT;}
         }else if(f.phase==CATALOG_ROOT){

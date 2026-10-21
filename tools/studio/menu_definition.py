@@ -1,6 +1,6 @@
 """Stable editable-menu IDs shared by host settings and generated firmware data.
 
-The numeric IDs and group order are the MENUS.BIN version-one wire format.
+The numeric IDs and group order are the MENUS.BIN version-three wire format.
 Changing a label or target never renumbers an existing saved choice.
 """
 from __future__ import annotations
@@ -27,7 +27,7 @@ GROUPS = (
         Item('now_playing', 'Now Playing', 'linnet.system.now-playing'),
         Item('settings', 'Settings', 'linnet.system.settings'),
         Item('showcase', 'UI Demo', 'local.example.notes', 'demo_or_games'),
-        Item('legacy_extras', 'Extras', 'linnet.system.extras'),
+        Item('extras', 'Extras', 'linnet.system.extras'),
         Item('notes', 'Notes', 'linnet.system.notes'),
         Item('shuffle_all', 'Shuffle Songs', '@shuffle-all'),
     ), (0, 3, 2, 4, 8, 6, 10, 5), (6,)),
@@ -55,7 +55,7 @@ GROUPS = (
         Item('home', 'Back to Home', 'linnet.system.home'),
         Item('video_settings', 'Video Settings', 'linnet.system.video-settings', 'video_settings'),
         Item('sound', 'Sound', 'linnet.system.music-sound'),
-    ), (11, 0, 10, 2, 4, 6, 7, 8), (6,)),
+    ), (11, 0, 10, 2, 4, 6, 7, 8), (6, 11)),
     ('Extras', (
         Item('clock', 'Date & Time', 'linnet.system.clock'),
         Item('notes', 'Notes', 'linnet.system.notes'),
@@ -66,19 +66,6 @@ GROUPS = (
         Item('sleep_timer', 'Sleep Timer', 'linnet.system.sleep-timer'),
     ), (5, 1, 0, 6), ()),
 )
-
-LEGACY_DEFAULTS = {
-    'Home': (0, 1, 2, 3, 9, 5, 6),
-    'Music': (0, 1, 2, 7, 9, 11, 8),
-    'Settings': (0, 10, 1, 2, 3, 4, 5, 6, 7, 8, 9),
-}
-
-PREVIOUS_DEFAULTS = {
-    'Home': (0, 10, 3, 2, 1, 9, 7, 6, 5),
-    'Music': (15, 7, 1, 2, 0, 3, 4, 14, 5, 6, 9, 10, 11, 12, 13, 8),
-    'Settings': (11, 0, 1, 10, 2, 5, 4, 3, 6, 7, 8),
-    'Extras': (0, 1, 2, 3),
-}
 
 SCREENS = {name: tuple(item.label for item in items) for name, items, _, _ in GROUPS}
 DEFAULTS = {name: tuple(defaults) for name, _, defaults, _ in GROUPS}
@@ -109,12 +96,6 @@ def render_firmware_header() -> str:
             '#ifndef LINNET_MENU_DEFINITION_H\n#define LINNET_MENU_DEFINITION_H\n'
             f'#define LN_MENU_DEFAULT_ORDER {{{orders}}}\n'
             f'#define LN_MENU_DEFAULT_COUNTS {counts}\n'
-            f'static const uint8_t ln_menu_legacy[3][16]={{{",".join(_numbers(v) for v in LEGACY_DEFAULTS.values())}}};\n'
-            f'static const uint8_t ln_menu_legacy_counts[3]={_numbers(len(v) for v in LEGACY_DEFAULTS.values())};\n'
-            f'static const uint8_t ln_menu_previous[LN_MENU_GROUPS][16]={{{",".join(_numbers(v) for v in PREVIOUS_DEFAULTS.values())}}};\n'
-            f'static const uint8_t ln_menu_previous_counts[LN_MENU_GROUPS]={_numbers(len(v) for v in PREVIOUS_DEFAULTS.values())};\n'
-            'static const uint8_t ln_menu_defaults[LN_MENU_GROUPS][16]=LN_MENU_DEFAULT_ORDER;\n'
-            'static const uint8_t ln_menu_default_counts[LN_MENU_GROUPS]=LN_MENU_DEFAULT_COUNTS;\n'
             f'static const uint8_t ln_menu_limits[LN_MENU_GROUPS]={limits};\n'
             f'static const uint32_t ln_menu_required[LN_MENU_GROUPS]={required};\n'
             f'static const char *const ln_menu_targets[LN_MENU_GROUPS][16]={{\n    {targets}\n}};\n'

@@ -21,7 +21,7 @@ same version field or that every reserved field is a version.
 | `SETT`, `THMS` | User settings and stable theme selection | [Display settings](../services/display/settings.c), [storage owner](../services/storage/storage.c) |
 | `MENUS.BIN` | Saved menu order and shortcuts | [Host menu settings](../tools/studio/screen_settings.py), [device menus](navigation.md#saved-customization) |
 | `HIST`, `HPGE` | Redundant paged playback history | [History records](../services/music/history_record.h), [page owner](../services/music/history_pages.c) |
-| `MSET`, `QUEU`, `PROF` | Music queue and sound state | [Music settings](../services/music/settings.c), [queue](../services/music/queue.c), [profile](../services/music/profile.c) |
+| `MST3`, `QUEU`, `PROF` | Music queue and sound state | [Music settings](../services/music/settings.c), [queue](../services/music/queue.c), [profile](../services/music/profile.c) |
 
 State generations order publications; they are not product versions. A valid
 checksum does not make an incompatible layout acceptable. Build identity,
@@ -38,9 +38,18 @@ payload checksum, and full-image hash have distinct meanings.
 | `FILS` directory index and `FIMG` previews | [Files formats](files.md#on-disk-formats) |
 | `NOTE` notes and `LDSP` DSP profiles | [Notes compiler](../tools/content/notes.py), [DSP compiler](../tools/content/dsp.py) |
 | `FONT`, `LNUI`, `APPL`, `THME`, `CNTN` | [UI compiler](ui-compiler.md); these are host artifacts |
+| `LNFONT1` / `PODIUM.FNT` | Optional locally extracted Podium Sans: [producer and host validator](../tools/content/apple_font.py), [native validator](../ui/runtime/ui.c), [startup reader](../services/display/settings.c) |
 | `LINK` USB frames and diagnostic records | [Linnet Link](device-link.md#protocol-reference) |
 
 When changing a format, update its producer, validator, device reader, and
 publication path together. Check truncation, overflow, references, and unknown
-values. Existing data must either remain supported or be rejected with a clear
-rebuild/recovery path. Hashes and CRCs provide integrity, not authentication.
+values. Unsupported data is rejected; test installations are replaced with fresh firmware. Hashes and CRCs provide integrity, not authentication.
+
+The optional font is exactly 8,570 bytes, little-endian: an eight-byte
+`LNFONT1\0` magic, six 32-bit values (width 15, height 17, advance 14, first
+character 32, count 95, packed alpha bytes 7,678), 95 one-byte advances, one
+zero byte, 95 eight-byte glyph records, packed alpha coverage at byte 888, and
+a CRC32 of all preceding bytes. Glyph records contain a 32-bit coverage offset
+and one-byte x, y, width, and height. The reader bounds every glyph and keeps
+the validated buffer for the session. Missing, truncated, incompatible, or
+damaged files leave the included font active.

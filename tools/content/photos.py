@@ -296,9 +296,7 @@ class _PhotoCache:
             tile_end = len(payload)-grid_bytes
             thumb, tiles, grid = (payload[:THUMB*THUMB*2],
                                   payload[THUMB*THUMB*2:tile_end], payload[tile_end:])
-            if metadata.get('cache_format') == 'packed-v1':
-                return (metadata, thumb, b'', grid), tiles, metadata['packed_lengths']
-            return (metadata, thumb, tiles, grid), None, None
+            return (metadata, thumb, b'', grid), tiles, metadata['packed_lengths']
         except (OSError, ValueError, TypeError, KeyError, UnicodeError):
             return None
 
@@ -380,25 +378,22 @@ def _cached_photo_valid(meta, payload, checkpoint):
         return False
     if counts != len(meta['tile_crcs']) or _crc(payload[:THUMB*THUMB*2]) != meta.get('thumb_crc'):
         return False
-    packed = meta.get('cache_format') == 'packed-v1'
-    if packed:
-        lengths = meta.get('packed_lengths')
-        if (not isinstance(lengths, list) or len(lengths) != counts or
-                any(type(length) is not int or not 1 <= length <= 2048 for length in lengths) or
-                len(payload) != THUMB*THUMB*2 + sum(lengths) + grid_bytes):
-            return False
-        from lz4.block import decompress as lz4_decompress, LZ4BlockError
-    elif (meta.get('cache_format') is not None or
-          len(payload) != THUMB*THUMB*2 + counts*EDGE*EDGE*2 + grid_bytes):
+    if meta.get('cache_format') != 'packed-v1':
         return False
+    lengths = meta.get('packed_lengths')
+    if (not isinstance(lengths, list) or len(lengths) != counts or
+            any(type(length) is not int or not 1 <= length <= 2048 for length in lengths) or
+            len(payload) != THUMB*THUMB*2 + sum(lengths) + grid_bytes):
+        return False
+    from lz4.block import decompress as lz4_decompress, LZ4BlockError
     offset = THUMB*THUMB*2
     for index, expected in enumerate(meta['tile_crcs']):
         if index % 256 == 0:
             checkpoint()
-        length = lengths[index] if packed else 2048
+        length = lengths[index]
         tile = payload[offset:offset + length]
         offset += length
-        if packed and length < 2048:
+        if length < 2048:
             try:
                 tile = lz4_decompress(tile, uncompressed_size=2048)
             except LZ4BlockError:
@@ -655,13 +650,9 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                 rendered = _render_photo(path, fallback, max_dimension,
                                          viewport_width, viewport_height, worker_check, grid_shape)
                 packed, lengths = _pack_photo_tiles(rendered[2], rendered[0]['tile_crcs'], worker_check)
-                migrate = False
             else:
                 rendered, packed, lengths = cached
-                migrate = packed is None
-                if migrate:
-                    packed, lengths = _pack_photo_tiles(rendered[2], rendered[0]['tile_crcs'], worker_check)
-            return before, key, reused, migrate, rendered, packed, lengths
+            return before, key, reused, rendered, packed, lengths
 
         pending = deque()
         upcoming = iter(enumerate(paths))
@@ -695,7 +686,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                     while True:
                         check()
                         try:
-                            before, key, reused, migrate, rendered, packed, lengths = future.result(timeout=0.1)
+                            before, key, reused, rendered, packed, lengths = future.result(timeout=0.1)
                             break
                         except FutureTimeout:
                             if future.done():
@@ -710,7 +701,7 @@ def compile_photos(source, output, *, max_dimension=640, viewport_width=220,
                     else:
                         cache_rendered += 1
                     image_meta, raw_thumb, _, raw_grid = rendered
-                    if cache is not None and (not reused or migrate):
+                    if cache is not None and not reused:
                         cache.put(key, image_meta, raw_thumb, packed, lengths, raw_grid)
                     title = string(title_text)
                     if grid_shape is not None:

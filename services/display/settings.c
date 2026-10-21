@@ -16,7 +16,7 @@ static const char *const shutdown_labels[]={"Off","1 min","2 min","5 min","10 mi
 static uint8_t shutdown_choice[2];
 static char shutdown_label[2][32];
 static uint32_t choice=4,revision,record_revision,battery_capacity=1200;
-/* SETT bits 6..7: 0 Classic (also the legacy default), 1 Off, 2 Low, 3 High. */
+/* SETT bits 6..7: 0 Classic, 1 Off, 2 Low, 3 High. */
 static uint8_t click_tone;
 static bool click_fallback_ready,click_changed;
 static const char *const click_labels[]={"Clicker: Classic","Clicker: Off","Clicker: Low","Clicker: High"};
@@ -40,6 +40,15 @@ static uint8_t about_data[1024]
 #endif
 ;
 static struct ln_fat32_file about_file;
+/* The optional Apple font is read once before the first normal UI frame. */
+#if LINNET_UI_WIDTH!=160u
+static uint8_t apple_font_data[LN_UI_APPLE_FONT_BYTES] __attribute__((aligned(4)));
+static struct ln_fat32_file apple_font_file;
+static uint32_t apple_font_phase;
+static bool apple_font_loaded;
+#else
+#define apple_font_loaded true
+#endif
 static char about_build[20];
 static char about_version[40];
 static bool about_ata_ready;
@@ -50,7 +59,7 @@ static char about_ata_rows[8][64]
 #endif
 ;
 extern void ln_games_configure(uint32_t mask);
-bool ln_display_settings_boot_ready(void){return theme_loaded&&menus_loaded&&games_loaded&&about_loaded;}
+bool ln_display_settings_boot_ready(void){return theme_loaded&&menus_loaded&&games_loaded&&about_loaded&&apple_font_loaded;}
 static bool step_busy;
 static char battery_label[25];
 static char update_labels[5][32];
@@ -81,6 +90,10 @@ void ln_display_settings_diagnostics(uint32_t words[8]){
 }
 #endif
 void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loaded=false;games_phase=0;about_loaded=false;about_phase=about_count=about_percent=0;about_ata_ready=false;about_ata_count=0;for(uint32_t i=0;i<LN_GAME_COUNT;++i)game_best[i]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;click_tone=0;click_fallback_ready=click_changed=false;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;record_first_dirty_at=record_last_dirty_at=0;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;
+    (void)ln_ui_apple_font_load(0,0);
+#if LINNET_UI_WIDTH!=160u
+    apple_font_loaded=false;apple_font_phase=0;
+#endif
     const char *build=LINNET_BUILD_ID;const char *prefix="Build ";uint32_t at=0;
     while(*prefix&&at<sizeof about_build-1u)about_build[at++]=*prefix++;
     for(uint32_t i=0;i<12u&&build[i]&&at<sizeof about_build-1u;++i)about_build[at++]=build[i];
@@ -282,8 +295,7 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
         uint32_t saved=UINT32_MAX;
         if(theme_available&&length){
             uint32_t version=length>=8u?ln_read_le32(payload+4):UINT32_MAX;
-            uint32_t suffix=version==0u?1u:version==1u?5u:version==2u?7u:version==3u?25u:
-                version==4u?27u:version==5u?37u:0u;
+            uint32_t suffix=version==0u?1u:version==5u?1u+LN_GAME_COUNT*2u:0u;
             uint32_t id_length=length>=8u+suffix?length-8u-suffix:0u;
             if(length<9u||length>sizeof payload||(version==0u&&length>89u)||!suffix||length<8u+suffix||
                ln_read_le32(payload)!=0x534d4854u||payload[8u+id_length]||
@@ -295,10 +307,9 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
                     if(at==id_length&&!id[at]){saved=i;break;}
                 }
             }
-            if(theme_available&&(version>=1u&&version<=5u)){
-                uint32_t stored=version==1u?2u:version==2u?3u:version==3u?12u:version==4u?13u:18u;
-                uint32_t scores=length-stored*2u;
-                for(uint32_t i=0;i<stored;++i){game_best[i]=ln_read_le16(payload+scores+i*2u);ln_games_best_set(i,game_best[i]);}
+            if(theme_available&&version==5u){
+                uint32_t scores=length-LN_GAME_COUNT*2u;
+                for(uint32_t i=0;i<LN_GAME_COUNT;++i){game_best[i]=ln_read_le16(payload+scores+i*2u);ln_games_best_set(i,game_best[i]);}
             }
         }
         if(!theme_dirty)theme_index=saved;
@@ -359,20 +370,9 @@ static void games_step(void){
     if(games_phase==2){result=ln_storage_media_read(&games_file,0,games_data,sizeof games_data,generation);if(!result)return;if(result<0){games_loaded=true;return;}games_phase=3;return;}
     result=ln_storage_media_poll_deferred(generation,0,&transferred);if(!result)return;
     if(result>0&&transferred==sizeof games_data&&ln_read_le32(games_data)==0x454d4147u&&
-       games_data[4]>=1u&&games_data[4]<=4u&&
-       (games_data[4]!=1u||!(games_data[5]&~7u))&&
-       (games_data[4]>=3u||!games_data[6])&&
-       (games_data[4]!=3u||!(games_data[6]&~31u))&&
-       (games_data[4]==4u?!(games_data[7]&~(LN_GAME_MASK>>16)):!games_data[7])&&
+       games_data[4]==4u&&!(games_data[7]&~(LN_GAME_MASK>>16))&&
        ln_read_le32(games_data+8)==ln_crc32(games_data,8u))
-        {uint32_t mask=games_data[5];if(games_data[4]>=3u)mask|=(uint32_t)games_data[6]<<8;
-         if(games_data[4]==4u)mask|=(uint32_t)games_data[7]<<16;
-          else if((games_data[4]==1u&&mask==7u)||(games_data[4]==2u&&mask==15u)||
-                  (games_data[4]==3u&&mask==8191u)
-#if LINNET_GAME_PRESENTATION_PHOTO220
-                  ||(games_data[4]==3u&&mask==4095u)
-#endif
-                  )mask=LN_GAME_MASK;
+        {uint32_t mask=games_data[5]|(uint32_t)games_data[6]<<8|(uint32_t)games_data[7]<<16;
          ln_games_configure(mask);}
     games_loaded=true;++revision;
 }
@@ -399,6 +399,18 @@ static void about_step(void){
         if(valid){about_count=about_data[5];about_percent=about_data[6];}
     }
     about_loaded=true;++revision;
+}
+static void apple_font_step(void){
+#if LINNET_UI_WIDTH!=160u
+    if(apple_font_loaded||!about_loaded||!ln_storage_mounted())return;
+    const uint32_t generation=0x464f4e54u;int result;uint32_t transferred=0;
+    if(apple_font_phase==0){result=ln_storage_media_open("/.LINNET/PODIUM.FNT",generation);if(!result)return;if(result<0){apple_font_loaded=true;return;}apple_font_phase=1;return;}
+    if(apple_font_phase==1){result=ln_storage_media_poll_deferred(generation,&apple_font_file,0);if(!result)return;if(result<0||apple_font_file.size!=sizeof apple_font_data){apple_font_loaded=true;return;}apple_font_phase=2;}
+    if(apple_font_phase==2){result=ln_storage_media_read(&apple_font_file,0,apple_font_data,sizeof apple_font_data,generation);if(!result)return;if(result<0){apple_font_loaded=true;return;}apple_font_phase=3;return;}
+    result=ln_storage_media_poll_deferred(generation,0,&transferred);if(!result)return;
+    if(result>0&&transferred==sizeof apple_font_data)(void)ln_ui_apple_font_load(apple_font_data,sizeof apple_font_data);
+    apple_font_loaded=true;++revision;
+#endif
 }
 static void about_ata_text(const char *prefix,const char *value){
     if(!value)return;
@@ -476,7 +488,7 @@ static void settings_work(bool may_write,bool presented,uint32_t presented_revis
 }
 static void settings_step(bool may_write,bool presented,uint32_t presented_revision,bool flush){
     if(step_busy)return;
-    step_busy=true;if(may_write){menus_step();games_step();about_step();}about_ata_step();settings_work(may_write,presented,presented_revision,flush);step_busy=false;
+    step_busy=true;if(may_write){menus_step();games_step();about_step();apple_font_step();}about_ata_step();settings_work(may_write,presented,presented_revision,flush);step_busy=false;
 }
 void ln_display_settings_step_ready(bool may_write,bool theme_presented,uint32_t presented_revision){
     settings_step(may_write,theme_presented,presented_revision,false);

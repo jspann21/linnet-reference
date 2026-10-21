@@ -142,7 +142,7 @@ Implementation entry points: [music compiler](../tools/content/music.py),
 | Accessories and TV output | Physically qualify M25 TV commands. Scope dock/car/remote protocols, radio accessories, and recording separately. |
 | Hardware variants | Qualify the additional boards, storage, panels, and NOR chips listed in [hardware support](hardware.md), and Classic installation before enabling its automatic installer. |
 | Classic games | Physical layout, input, and playback acceptance on Classic hardware. |
-| Apple interoperability | Expand exact-device database qualification and music/path support; consider desktop iTunes-library/playlist migration. |
+| Apple interoperability | Expand exact-device database qualification and music/path support. |
 | Optional expansion | Assess local recommendations, proprietary stock features, protected purchases/Audible, and commercial iPod games separately. Consider macOS/Linux packaging and CD ripping. |
 
 ## Maintaining the roadmap

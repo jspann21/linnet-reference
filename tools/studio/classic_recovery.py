@@ -12,7 +12,6 @@ import time
 import uuid
 
 from tools.link import classic_nor as nor
-from tools.studio.targets import ROOT
 
 FORMAT = 'linnet-classic-nor-recovery-v1'
 FILES = ('ORIGINAL.BIN', 'ORIGINAL.BIN.json', 'INSTALLED.BIN', 'NOR.JSON')
@@ -182,7 +181,7 @@ def _same_volume(before, after):
 
 
 def find(identity):
-    """Discover portable records, durable host records, or verified legacy plans."""
+    """Discover portable recovery records and durable host copies."""
     if identity.get('target_id') != nor.TARGET:
         return None
     from tools.content.guard import guarded_path
@@ -225,28 +224,6 @@ def find(identity):
                 candidates.append((path.stat().st_mtime_ns, _marker(identity, path, record)))
         except (OSError, ValueError, TypeError, KeyError):
             continue
-    # Older developer bootstraps predate Media Manager's recovery journal.
-    # Reconstruct only completed, hash-matched NOR transactions for this board.
-    for receipt_path in (ROOT / 'out' / nor.TARGET).glob('*.receipt.json'):
-        try:
-            receipt = _json(receipt_path)
-            if (receipt.get('target_id') != nor.TARGET or receipt.get('serial') != serial or
-                    receipt.get('phase') != 'persistent-link-verified'):
-                continue
-            path = receipt_path.with_name(receipt_path.name.removesuffix('.receipt.json') + '.json')
-            digest = _sha(nor._read_file(path, 65536))
-            plan, original, _, _, installed, _ = nor.load_prepared(path, digest)
-            if (plan['serial'] != serial or receipt.get('build_id') != plan['build_id'] or
-                    receipt.get('result_sha256') != _sha(installed)):
-                continue
-            marker = dict(target_id=nor.TARGET, device_id=identity['disk_serial'],
-                          linnet_usb_serial=serial, strategy='native-nor', phase='installed',
-                          previous_boot='apple', installation_method='native-nor',
-                          legacy_plan=str(path), legacy_plan_sha256=digest,
-                          original_sha256=_sha(original), installed_sha256=_sha(installed))
-            candidates.append((receipt_path.stat().st_mtime_ns, marker))
-        except (OSError, ValueError, TypeError, KeyError, struct.error):
-            continue
     return max(candidates, key=lambda item: item[0])[1] if candidates else None
 
 
@@ -260,12 +237,8 @@ def preserve(identity):
         identity = refresh(identity)
         marker = find(identity)
         if marker is None:
-            raise ValueError('This Classic needs its verified original NOR backup and completed bootstrap plan')
-        if 'legacy_plan' in marker:
-            plan, original, _, _, installed, _ = nor.load_prepared(marker['legacy_plan'], marker['legacy_plan_sha256'])
-            source = save_install(plan, original, installed, installed=True)
-        else:
-            source = Path(marker['nor_record'])
+            raise ValueError('This Classic needs its verified original NOR backup and completed installation record')
+        source = Path(marker['nor_record'])
         record, original, installed = load(source)
         # Always retain a host copy before leaving Disk Mode or deleting files.
         host_plan=dict(target_id=nor.TARGET, serial=record['serial'], build_id=record['monitor_build_id'],

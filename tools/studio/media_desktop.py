@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox,
     QStyleOptionButton, QSizePolicy)
 
 from tools.content import apple_os, games, media_manager as media, media_library, media_status, media_trash
-from tools.content import publish, host_cache
+from tools.content import publish, host_cache, apple_font
 from tools.content.media_manager import format_size as size
 from tools.content.music import COVER_NAMES, EXTENSIONS as MUSIC_EXTENSIONS
 from tools.studio import installer, screen_settings, startup_default, boot_upgrade, media_reader
@@ -866,6 +866,16 @@ def build_settings_page(window):
     window.photo_detail = ComboBox(); window.photo_detail.addItems(['Standard · 640 px', 'High detail · 2048 px']); window.photo_detail.setCurrentIndex(int(window.settings.value('photo_detail', 0)))
     window.photo_detail.currentIndexChanged.connect(lambda value: window.settings.setValue('photo_detail', value)); layout.addWidget(window.photo_detail)
     layout.addWidget(label('High detail uses more storage and takes longer to prepare.', 'muted'))
+    layout.addSpacing(20); layout.addWidget(label('iPod theme font', 'section'))
+    layout.addWidget(label('Use Apple Podium Sans in supported color themes. Downloads 3.8 MB directly from Apple and extracts the font on this computer. Apple software license terms apply.', 'muted', True))
+    window.apple_font_status = label('Connect a color iPod in Disk Mode to choose its font.', 'muted', True)
+    layout.addWidget(window.apple_font_status)
+    actions = box(horizontal=True, spacing=8)
+    window.apple_font_install = button('Download and use Apple font', window.install_apple_font)
+    window.apple_font_remove = button('Use included font', window.remove_apple_font)
+    actions.addWidget(window.apple_font_install); actions.addWidget(window.apple_font_remove); actions.addStretch()
+    layout.addLayout(actions)
+    layout.addWidget(button('Apple software license', lambda: QDesktopServices.openUrl(QUrl(apple_font.LICENSE_URL)), 'quiet'), 0, Qt.AlignLeft)
     layout.addSpacing(20); layout.addWidget(label('Computer storage', 'section'))
     window.cache_size = label('Open Settings to measure reusable cache files.', 'muted', True)
     layout.addWidget(window.cache_size)
@@ -1067,6 +1077,7 @@ class MediaWindow(QMainWindow):
         self.game_dirty = False
         self.game_read_failed = False
         self.apple_info = None
+        self.apple_font_result = None
         self._library_source, self._library_cache, self._library_stats = None, {}, {}
         self._library_search = None
         self.video_selection, self.video_mode, self.stop_event = set(), 'all', threading.Event()
@@ -1642,7 +1653,7 @@ class MediaWindow(QMainWindow):
         self.operation_id += 1
         context = OperationContext(self.operation_id, tag,
             dict(self.identity) if self.identity and tag != 'devices' and not tag.startswith('cache_') else None,
-            self.stop_event if tag in ('prepare', 'remove', 'restore', 'scan', 'plan', 'devices', 'apple_update', 'classic_install') else None)
+            self.stop_event if tag in ('prepare', 'remove', 'restore', 'scan', 'plan', 'devices', 'apple_update', 'classic_install', 'apple_font_install') else None)
         self.active_operation = context
         self.busy = True
         self.stop_event.clear()
@@ -1659,8 +1670,6 @@ class MediaWindow(QMainWindow):
         def run():
             try:
                 with host_cache.activity():
-                    if not tag.startswith('cache_'):
-                        host_cache.organize(progress=self.events.progress.emit)
                     value = operation()
                 outcome = OperationOutcome(context, value, status=operation_status(value),
                     cancel_requested=bool(context.cancel_event and context.cancel_event.is_set()))
@@ -1757,6 +1766,9 @@ class MediaWindow(QMainWindow):
         if tag == 'classic_install' and outcome.status == 'cancelled':
             self.show_progress(error or 'Classic setup stopped before bootloader installation.')
             return
+        if tag == 'apple_font_install' and outcome.status == 'cancelled':
+            self.show_progress('Apple font download stopped. The iPod font was not changed.')
+            return
         if error:
             self.record_diagnostic(tag, outcome.error_type or 'Error', error, outcome.status,
                                    cancel_requested)
@@ -1780,6 +1792,8 @@ class MediaWindow(QMainWindow):
             'link_setup': self._complete_link_setup,
             'prepare': self._complete_prepare, 'eject': self._complete_eject,
             'device_details': self._complete_device_details,
+            'apple_font_install': self._complete_apple_font,
+            'apple_font_remove': self._complete_apple_font,
         }
         for change in ('remove', 'restore', 'erase', 'sync', 'install', 'uninstall', 'skipped',
                        'startup_default', 'boot_upgrade', 'restore_video_catalog', 'classic_install', 'link_disk'):
@@ -2584,6 +2598,7 @@ class MediaWindow(QMainWindow):
     def transition_device(self, identity):
         """Clear device-derived state while retaining a draft for its own iPod."""
         self.link_connection = None
+        self.apple_font_result = None
         if self.same_device(self.identity, identity):
             self.identity = identity
             return
@@ -2661,6 +2676,13 @@ class MediaWindow(QMainWindow):
 
     def update_controls(self):
         ready = self.identity is not None and self.device_connected and not self.busy
+        font_ready = ready and apple_font.supported(self.identity) and not self.publication_recovery_pending
+        self.apple_font_install.setEnabled(font_ready)
+        self.apple_font_remove.setEnabled(font_ready)
+        if not apple_font.supported(self.identity):
+            self.apple_font_status.setText('Connect a color iPod in Disk Mode to choose its font.')
+        elif not self.busy:
+            self.apple_font_status.setText(self.apple_font_result or 'Safely eject and restart after changing the font.')
         for item in (*self.cache_buttons, self.backups_open, self.recovery_open):
             item.setEnabled(not self.busy)
         self.cache_clear.setEnabled(not self.busy and bool(self.cache_info and self.cache_info['files']))
@@ -3571,6 +3593,24 @@ class MediaWindow(QMainWindow):
         self.work('uninstall', lambda: installer.uninstall(identity, progress=self.events.progress.emit,
                                                          expected=startup,
                                                          instruction=self.events.setup_instruction.emit), 'Removing Linnet OS…')
+
+    def install_apple_font(self):
+        if not self.apple_font_install.isEnabled():
+            return
+        identity = dict(self.identity)
+        self.work('apple_font_install', lambda: apple_font.install(identity,
+            progress=self.events.progress.emit, cancelled=self.stop_event.is_set), 'Preparing Apple Podium Sans…')
+
+    def remove_apple_font(self):
+        if not self.apple_font_remove.isEnabled():
+            return
+        identity = dict(self.identity)
+        self.work('apple_font_remove', lambda: apple_font.remove(identity), 'Selecting the included theme font…')
+
+    def _complete_apple_font(self, result):
+        self.apple_font_result = result['summary']
+        self.apple_font_status.setText(result['summary'])
+        self.show_progress(result['summary'])
 
     def choose_firmware(self):
         path, _ = QFileDialog.getOpenFileName(self, 'Choose Linnet firmware', self.firmware_path,

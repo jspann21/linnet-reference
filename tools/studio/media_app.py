@@ -1,4 +1,4 @@
-"""Compatibility launcher for the native Media Manager."""
+"""Platform and dependency checks for the native Media Manager."""
 import os
 
 

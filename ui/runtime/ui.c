@@ -5,6 +5,27 @@
 #define UI_Y(value) ((int32_t)((value)*LINNET_UI_HEIGHT/176u))
 static uint32_t session_theme=UINT32_MAX,active_theme;
 static bool theme_ready;
+static struct ln_ui_font apple_font;
+static bool apple_font_ready;
+bool ln_ui_apple_font_load(const uint8_t *data,uint32_t length){
+    const uint32_t alpha_at=888u,alpha_bytes=7678u;
+    if(!data){apple_font_ready=false;theme_ready=false;return true;}
+    if(length!=LN_UI_APPLE_FONT_BYTES||((uintptr_t)data&3u))return false;
+    static const uint8_t magic[8]={'L','N','F','O','N','T','1',0};
+    for(uint32_t i=0;i<8u;++i)if(data[i]!=magic[i])return false;
+    const uint32_t *header=(const uint32_t *)(const void *)(data+8u);
+    if(header[0]!=15u||header[1]!=17u||header[2]!=14u||header[3]!=32u||header[4]!=95u||header[5]!=alpha_bytes||data[127])return false;
+    uint32_t crc=~0u;
+    for(uint32_t i=0;i<length-4u;++i){crc^=data[i];for(uint32_t bit=0;bit<8u;++bit)crc=(crc>>1)^((0u-(crc&1u))&0xedb88320u);}
+    uint32_t saved=(uint32_t)data[length-4u]|((uint32_t)data[length-3u]<<8)|((uint32_t)data[length-2u]<<16)|((uint32_t)data[length-1u]<<24);
+    if(~crc!=saved)return false;
+    const struct ln_ui_glyph *glyphs=(const struct ln_ui_glyph *)(const void *)(data+128u);
+    for(uint32_t i=0;i<95u;++i){const struct ln_ui_glyph *g=glyphs+i;
+        if(!data[32u+i]||data[32u+i]>14u||(uint32_t)g->x+g->w>15u||(uint32_t)g->y+g->h>17u||g->offset>alpha_bytes||(uint32_t)g->w*g->h>alpha_bytes-g->offset)return false;
+    }
+    apple_font=(struct ln_ui_font){data+alpha_at,15u,17u,14u,32u,95u,data+32u,glyphs};
+    apple_font_ready=true;theme_ready=false;return true;
+}
 static bool session_clock_12;
 __attribute__((weak)) bool ln_ui_clock_12(void){return session_clock_12;}
 __attribute__((weak)) void ln_ui_clock_toggle(void){session_clock_12=!session_clock_12;}
@@ -44,7 +65,8 @@ __attribute__((weak)) bool ln_ui_now_playing_art_loading(void){return false;}
 uint16_t ln_ui_color(uint32_t value){return value>=LN_UI_COLOR_TOKEN&&value<LN_UI_COLOR_TOKEN+LN_UI_COLOR_COUNT?((ln_ui_themes[active_theme].flags&LN_UI_THEME_ALBUM_ART)&&album_colors_valid?album_colors[value-LN_UI_COLOR_TOKEN]:ln_ui_themes[active_theme].colors[value-LN_UI_COLOR_TOKEN]):(uint16_t)value;}
 static void theme_sync(void){
     uint32_t next=ln_ui_theme_index();if(theme_ready&&next==active_theme)return;
-    active_theme=next;ln_ui_scenes=ln_ui_themes[active_theme].scenes;ln_ui_font=*ln_ui_themes[active_theme].font;theme_ready=true;
+    active_theme=next;ln_ui_scenes=ln_ui_themes[active_theme].scenes;
+    ln_ui_font=apple_font_ready&&(ln_ui_themes[active_theme].flags&LN_UI_THEME_APPLE_FONT)?apple_font:*ln_ui_themes[active_theme].font;theme_ready=true;
 }
 static uint32_t layout(void){return ln_ui_themes[active_theme].layout;}
 static bool classic_layout(void){return layout()==LN_UI_LAYOUT_IPOD_CLASSIC||layout()==LN_UI_LAYOUT_CLASSIC_SPLIT;}
@@ -64,7 +86,7 @@ static struct {
 uint32_t ln_ui_menu_count(uint32_t group){return group<LN_MENU_GROUPS?menu_counts[group]:0;}
 uint32_t ln_ui_menu_item(uint32_t group,uint32_t row){return group<LN_MENU_GROUPS&&row<menu_counts[group]?menu_order[group][row]:UINT32_MAX;}
 bool ln_ui_menu_load(const uint8_t *data,uint32_t length){
-    if(length!=80||data[0]!='M'||data[1]!='E'||data[2]!='N'||data[3]!='U'||(data[4]!=1&&data[4]!=2&&data[4]!=3)||data[5]||data[6]||data[7])return false;
+    if(length!=80||data[0]!='M'||data[1]!='E'||data[2]!='N'||data[3]!='U'||data[4]!=3||data[5]||data[6]||data[7])return false;
     uint32_t crc=~0u;for(uint32_t i=0;i<76;++i){crc^=data[i];for(uint32_t bit=0;bit<8;++bit)crc=(crc>>1)^((0u-(crc&1u))&0xedb88320u);}
     uint32_t saved=(uint32_t)data[76]|((uint32_t)data[77]<<8)|((uint32_t)data[78]<<16)|((uint32_t)data[79]<<24);
     if(~crc!=saved)return false;
@@ -75,46 +97,6 @@ bool ln_ui_menu_load(const uint8_t *data,uint32_t length){
     }
     menu_cache.node=0;
     for(uint32_t g=0;g<LN_MENU_GROUPS;++g){menu_counts[g]=data[8+g*17];for(uint32_t i=0;i<menu_counts[g];++i)menu_order[g][i]=data[9+g*17+i];}
-    /* Upgrade only recognizable stock menus. Keep custom ordering and shortcuts. */
-    if(data[4]<3)for(uint32_t g=0;g<LN_MENU_GROUPS;++g){
-        bool stock=false;
-        for(uint32_t variant=0;variant<3u&&!stock;++variant){
-            if(variant&&!(data[4]==1&&g<3u))continue;
-            const uint8_t *order=variant?ln_menu_legacy[g]:ln_menu_previous[g];
-            uint32_t length=variant?ln_menu_legacy_counts[g]:ln_menu_previous_counts[g];
-            if(variant==2u&&g!=LN_MENU_HOME)continue;
-            for(uint32_t filtered=0;filtered<2u&&!stock;++filtered){
-                uint32_t at=0;bool match=true;
-                for(uint32_t i=0;i<length+(variant==2u);++i){
-                    uint32_t id=i<length?order[i]:7u;
-                    const char *target=ln_menu_targets[g][id];
-                    if(g==LN_MENU_HOME&&id==7u)target="linnet.system.games";
-                    if(filtered&&target&&target[0]!='@'){
-                        bool enabled=false;
-                        for(uint32_t j=0;j<ln_ui_scene_count;++j)
-                            if(same(target,ln_ui_scenes[j].id)&&(ln_ui_enabled_scenes&(UINT64_C(1)<<j)))enabled=true;
-                        if(!enabled)continue;
-                    }
-                    if(at>=menu_counts[g]||menu_order[g][at]!=id)match=false;
-                    ++at;
-                }
-                stock=match&&at==menu_counts[g];
-            }
-        }
-        if(stock){menu_counts[g]=ln_menu_default_counts[g];
-            for(uint32_t i=0;i<menu_counts[g];++i)menu_order[g][i]=ln_menu_defaults[g][i];}
-    }
-    static const uint8_t before_files[]={0,3,2,8,6,10,5};
-    bool stock=menu_counts[LN_MENU_HOME]==sizeof before_files;
-    for(uint32_t i=0;i<sizeof before_files&&stock;++i)if(menu_order[LN_MENU_HOME][i]!=before_files[i])stock=false;
-    uint32_t at=0;bool filtered=true;
-    for(uint32_t i=0;i<sizeof before_files;++i){uint32_t id=before_files[i];const char*target=ln_menu_targets[LN_MENU_HOME][id];
-        bool enabled=target[0]=='@';for(uint32_t j=0;j<ln_ui_scene_count;++j)if(same(target,ln_ui_scenes[j].id)&&(ln_ui_enabled_scenes&(UINT64_C(1)<<j)))enabled=true;
-        if(!enabled)continue;if(at>=menu_counts[LN_MENU_HOME]||menu_order[LN_MENU_HOME][at]!=id)filtered=false;++at;}
-    if(stock||(filtered&&at==menu_counts[LN_MENU_HOME])){menu_counts[LN_MENU_HOME]=ln_menu_default_counts[LN_MENU_HOME];for(uint32_t i=0;i<menu_counts[LN_MENU_HOME];++i)menu_order[LN_MENU_HOME][i]=ln_menu_defaults[LN_MENU_HOME][i];}
-    bool sound=false;
-    for(uint32_t i=0;i<menu_counts[LN_MENU_SETTINGS];++i)if(menu_order[LN_MENU_SETTINGS][i]==11u)sound=true;
-    if(!sound)menu_order[LN_MENU_SETTINGS][menu_counts[LN_MENU_SETTINGS]++]=11u;
     return true;
 }
 static const char *const menu_scenes[]={"linnet.system.home","linnet.system.music","linnet.system.settings","linnet.system.extras"};

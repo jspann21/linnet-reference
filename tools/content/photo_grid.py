@@ -134,14 +134,14 @@ def inspect_grid(path, *, package=None, target=None, checkpoint=None):
             raise ValueError('invalid native grid header')
         version, header_bytes = struct.unpack_from('<HH', own, 4)
         if (own[:4] != b'LPGR' or
-                version not in (1, 2) or header_bytes != 1024 or any(own[44:508]) or
+                version != 2 or header_bytes != 1024 or any(own[44:508]) or
                 _crc(own[:508]) != struct.unpack_from('<I', own, 508)[0]):
             raise ValueError('invalid native grid header')
         total, model, w, height, count, prefix_bytes, string_bytes, data_at, crc, pim_size = struct.unpack_from('<IIHH6I', own, 8)
         shape = next((name for name, values in GRID_SHAPES.items() if values == (model,w,height)), None)
         h = _pim_header(binding)
         stride = w*height*2+4
-        checksums_bytes = count*4 if version == 2 else 0
+        checksums_bytes = count*4
         if (shape is None or (target is not None and shape != target) or total != size or count != h['photos'] or
                 pim_size != h['size'] or prefix_bytes != h['level_at']-512 or
                 string_bytes != h['data_at']-h['string_at'] or
@@ -157,7 +157,7 @@ def inspect_grid(path, *, package=None, target=None, checkpoint=None):
         if len(metadata) != data_at-1024 or _crc(metadata) != crc or any(metadata[metadata_end:]):
             raise ValueError('native grid catalog CRC/padding mismatch')
         _catalog(metadata[:prefix_bytes], metadata[prefix_bytes:prefix_bytes+string_bytes], h)
-        if version == 2 and package is not None:
+        if package is not None:
             with package.open('rb') as pim:
                 if pim.read(512) != binding:
                     raise ValueError('native grid LPIC changed')

@@ -37,6 +37,11 @@ remaining Link, NOR and native Disk Mode installation steps. Compilation does
 not establish hardware qualification; unsupported storage and flash layouts
 stop setup before flashing. Consult the hardware and recovery guides for coverage.
 
+Firmware and Media Manager packages include licensed fallback fonts. Optional
+Apple Podium Sans is downloaded directly from Apple and extracted on the user's
+computer through [Settings → iPod theme font](media-manager.md#ipod-theme-font).
+Keep that font and the downloaded Apple firmware out of release assets and source.
+
 ## Publish a version
 
 1. Review the successful build from the commit to release. Check the packaged

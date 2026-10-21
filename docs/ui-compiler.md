@@ -23,6 +23,12 @@ Content identity excludes informational host paths. Normal builds use checked-in
 font data rather than discovering system fonts. Native generation packs glyphs
 losslessly and deduplicates identical immutable arrays.
 
+Themes may declare `font_source = "apple-podium-sans16"` alongside their
+bundled fallback font and its license. This sets the optional-font flag without
+embedding Apple glyphs. The compiler rejects baking the known extracted Apple
+font into generated C. Public packaging also checks recursively included assets
+for known Apple font files and firmware inputs.
+
 ## Runtime contract
 
 [ui.h](../ui/runtime/ui.h) defines node kinds, semantic colors, geometry flags,
@@ -36,6 +42,12 @@ enabled because it owns startup and Home.
 All bundled themes preserve scene identity and order. Switching themes changes
 the active scene table, font, palette, and metrics; media pixels retain their
 own colors. Native callbacks must obey their drawing bounds and work budget.
+
+On color targets, display settings read the optional `/.LINNET/PODIUM.FNT`
+once during startup. The renderer selects it only for marked themes after size,
+geometry, and CRC validation. Missing or invalid data leaves the bundled font
+active. The bounded packed buffer remains in RAM for the session; rendering
+performs no font I/O. See [the font format](formats.md#content-and-transport).
 
 Implementation: [compiler](../tools/content/compiler.py),
 [TSX parser](../tools/content/tsx.py), [layouts](../tools/content/layouts.py),

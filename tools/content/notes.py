@@ -76,6 +76,10 @@ def _display_recipe(target, scene_id='linnet.system.notes'):
         font_path = path.parent / metadata.get('font', '../../sdk/assets/font.json')
         font = load_font(font_path.read_bytes())
         advances = font.get('advances', [font['advance']] * 95)
+        # Optional Podium Sans uses advances up to 14 pixels. Prepare Notes
+        # conservatively so changing fonts never requires rewriting the library.
+        if metadata.get('font_source') == 'apple-podium-sans16':
+            advances = [max(14, value) for value in advances]
         widths = [max(a, b) for a, b in zip(widths, advances)]
         layout = ('default' if manifest['lcd_format'].startswith('gray') and metadata.get('layout') != 'classic-split' else
                   metadata.get('layout', 'default'))

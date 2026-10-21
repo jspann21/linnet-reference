@@ -114,23 +114,22 @@ def activity():
         _lock.release()
 
 
-# Only producer-owned names qualify, including older preview/pack layouts.
+# Only producer-owned reusable preview and pack data qualify.
 # Unknown files, journals, originals and backup directories never match.
 _DEVICE, _APPLE, _HASH, _SHORT = r'[0-9a-f]{24}', r'apple-os/[0-9a-f]{32}', r'[0-9a-f]{64}', r'[0-9A-F]{8}'
 _DISPOSABLE = re.compile('|'.join((
     rf'album-art/{_HASH}\.(png|json)',
     rf'retail/tracks-{_DEVICE}\.json',
     rf'retail/images-v2-{_HASH}/{_HASH}\.png',
-    rf'retail/{_HASH}/[0-9]+-[0-9]+-[0-9]+\.png',
     rf'{_APPLE}/apple-(library-verified|photo-verified|video-probes)\.json',
     rf'{_APPLE}/(artwork-sources|apple-photo-normalized)/(index\.json|{_HASH}\.(blob|png))',
     rf'{_DEVICE}/music-metadata\.sqlite3(-wal|-shm|-journal)?',
     rf'{_DEVICE}/(seek-checked\.json|verified-outputs\.json|photos\.(pimg|pgr)|notes\.pnot|files\.fil)',
     rf'{_DEVICE}/videos/{_SHORT}-[0-9a-f]{{16}}\.(mp4|ipvf)',
     rf'{_DEVICE}/photo-cache/(source-hashes\.json|{_HASH}\.bin)',
-    rf'{_DEVICE}/file-previews/(layout\.json|{_HASH}\.(FIM|TXT|FPK))',
+    rf'{_DEVICE}/file-previews/{_HASH}\.(FIM|TXT)',
     rf'{_DEVICE}/file-previews/packs/(layout\.json|{_HASH}\.FPK)',
-    rf'{_DEVICE}/(PACKS|photo-packs)/{_SHORT}/{_SHORT}\.PAK',
+    rf'{_DEVICE}/PACKS/{_SHORT}/{_SHORT}\.PAK',
     rf'{_DEVICE}/music/(LIBRARY\.PDB|BROWSE\.BIN|COVERS\.CFL|music-manifest\.json|ART/{_SHORT}\.RGB)',
 )))
 
@@ -144,7 +143,7 @@ def _roots(*, errors=None):
     previous = config.get('previous', [])
     if not isinstance(previous, list) or any(not isinstance(p, str) or not Path(p).is_absolute() for p in previous):
         raise ValueError('The saved cache folder history is invalid.')
-    roots = [media_state_root()]
+    roots = []
     try:
         roots.insert(0, _owned(cache_base()))
     except (OSError, ValueError) as error:
@@ -197,6 +196,8 @@ def overview():
                     files += 1
                 elif path.name != _MARKER:
                     retained += info.st_size
+        for _, info in _inventory(media_state_root(), errors, include_identity=False):
+            retained += info.st_size
         installer = storage_root() / 'Installer'
         for _, info in _inventory(installer, errors, include_identity=False):
             startup += info.st_size
@@ -273,7 +274,7 @@ def _copy(source, destination, info):
         _plain(destination)
         if destination.exists():
             # Prefer a cache already produced at the destination. Neither
-            # receipt paths nor unknown contents are overwritten by migration.
+            # receipt paths nor unknown contents are overwritten.
             return False
         temporary.replace(destination)
         return True
@@ -316,11 +317,3 @@ def relocate(destination, *, device_roots=(), progress=lambda message: None):
         result = overview()
         result.update(errors=list(dict.fromkeys(errors + result['errors'])))
         return result
-
-
-def organize(*, progress=lambda message: None):
-    """One-time migration of recognized legacy caches; all other bytes stay put."""
-    with activity():
-        if load_json_object(_config_path()).get('location'):
-            return
-        relocate(default_base(), progress=progress)

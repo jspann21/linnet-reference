@@ -63,6 +63,9 @@ def load_font(data):
         raise ContentError('font advances must contain 95 values in 1..24')
     if not isinstance(font['source_sha256'],str) or not re.fullmatch(r'[0-9a-f]{64}',font['source_sha256']):
         raise ContentError('font source hash required')
+    from .apple_font import FIRMWARE_SHA256
+    if font['source_sha256'] == FIRMWARE_SHA256:
+        raise ContentError('Use a locally extracted PODIUM.FNT instead of baking Apple glyphs into firmware')
     return font
 
 def crop_font(font):
@@ -268,8 +271,10 @@ def compile_system(root, output, configpath=None, target_override=None):
     themes=[]; theme_specs={}
     for name in ordered:
         spec=toml(theme_manifests[name]); metadata=spec['theme']
-        if set(spec)-{'theme','colors','metrics','assets'} or set(metadata)-{'id','font','font_license','name','style','layout','targets'}:
+        if set(spec)-{'theme','colors','metrics','assets'} or set(metadata)-{'id','font','font_license','font_source','name','style','layout','targets'}:
             raise ContentError('unknown theme field')
+        if metadata.get('font_source') not in (None, 'apple-podium-sans16'):
+            raise ContentError('unknown optional font source')
         label=metadata.get('name',{'linnet.theme.default':'Linnet','local.example.midnight':'Midnight'}.get(name,name.rsplit('.',1)[-1]))
         if not isinstance(label,str) or not 1<=len(label)<=24 or any(ord(c)<32 or ord(c)>126 for c in label):
             raise ContentError('theme name must be 1..24 printable ASCII characters')
@@ -300,6 +305,7 @@ def compile_system(root, output, configpath=None, target_override=None):
         # the LCD driver quantized them to four shades, producing ragged gray
         # fringes on the passive-matrix panel.
         flags=1 if monochrome else {'standard':0,'monochrome':1,'apple-photo':2,'album-art':4,'apple-classic':8}[style]
+        if not monochrome and metadata.get('font_source') == 'apple-podium-sans16': flags |= 16
         themes.append(dict(id=name,name=label,colors=palette,flags=flags,layout=layout,metrics=metrics))
         theme_specs[name]=spec
     theme_path=theme_manifests[theme_id]; theme=toml(theme_path)

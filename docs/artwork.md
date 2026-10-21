@@ -18,8 +18,8 @@ The [music format guide](music-format.md) describes how PODB references artwork.
 
 Playback files live under `/.LINNET/ART/`. PODB records their path, dimensions,
 encoding, byte length, and CRC. Encoding 2 identifies the Video/Classic bundles;
-encoding 1 square covers remain readable. Each bundled rendition is resized
-from the normalized source rather than from another small rendition.
+encoding 1 identifies the Photo/Monochrome square covers. Each bundled rendition
+is resized from the normalized source rather than from another small rendition.
 
 The 112 px and 126 px renditions match their Now Playing layouts. Classic's
 home artwork uses the 160 px source, scaled to fill the pane below the status
@@ -59,11 +59,11 @@ each draw. M25 can retain ten decoded RGB565 tiles when the existing spare-memor
 lease is available; three use texture workspace freed by sharing raw decode
 scratch. Playback and compressed-input buffers remain separate.
 
-New packed preparation also seals the block index with its own checksum. M25
+Packed preparation seals the block index with its own checksum. M25
 can validate that index and show individually checked covers from the completed
 prefix before the full set finishes loading. Full payload validation remains
 mandatory, and final publication reuses the verified index without rescanning
-it. Older unsealed preparation retains its compatible path.
+it.
 
 A small raw-only library on a qualified 64 MiB M25 can retain every decoded
 cover in an otherwise unused artwork array. Admission keeps the Files cache and
@@ -75,8 +75,7 @@ on a 32 MiB solid-state Video, the unused audio read-window area in STAGE. The
 AAC decoder, video packet caches, and PCM buffers retain their existing regions.
 Library reload drains readers before reclaiming either lease. Firmware upload
 drains artwork and inhibits further STAGE use until reboot. Libraries that do
-not fit retain the bounded native cache. New appended files require compatible
-Video firmware; older native files remain accepted.
+not fit retain the bounded native cache.
 
 ## Checking artwork changes
 

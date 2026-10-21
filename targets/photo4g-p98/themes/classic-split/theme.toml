@@ -4,8 +4,10 @@ name = "Classic Split"
 style = "apple-classic"
 layout = "classic-split"
 targets = ["photo4g-p98"]
-font = "../../../../sdk/assets/font-podium-sans16.json"
-font_license = "../../../../sdk/assets/PODIUM-SANS-NOTICE.txt"
+font = "../../../../sdk/assets/font-sans14.json"
+font_license = "../../../../sdk/assets/FONT-LICENSE.txt"
+
+font_source = "apple-podium-sans16"
 
 [colors]
 foreground = "#151515"

@@ -23,7 +23,7 @@ def png(raw,width,height):
     def chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
     return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',width,height,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(b''.join(rows),9))+chunk(b'IEND',b'')
 
-def simulate(root,output,tape=None,system=None,target=None,all_scenes=False):
+def simulate(root,output,tape=None,system=None,target=None,all_scenes=False,apple_font=None):
     root=Path(root).resolve();output=Path(output).resolve();output.mkdir(parents=True,exist_ok=True)
     if all_scenes and tape is not None:raise ValueError('All-scenes capture cannot use an input tape')
     if system is None and target is not None:
@@ -33,6 +33,15 @@ def simulate(root,output,tape=None,system=None,target=None,all_scenes=False):
     scenes=json.loads(Path(content['scenes']).read_text())
     width,height=scenes['width'],scenes['height']
     spec=target_spec(scenes['target'])
+    font_hash=None
+    if apple_font is not None:
+        from tools.content.apple_font import BYTES, decode, TARGETS
+        font_path=Path(apple_font)
+        if scenes['target'] not in TARGETS or font_path.stat().st_size!=BYTES:
+            raise ValueError('Optional Apple font is unsupported for this target or has an invalid size')
+        font_data=font_path.read_bytes();decode(font_data)
+        (output/'PODIUM.FNT').write_bytes(font_data)
+        font_hash=hashlib.sha256(font_data).hexdigest()
     if (width, height) != (spec['lcd_width'], spec['lcd_height']):
         raise ValueError('simulator scene dimensions differ from the target manifest')
     (output/'generated/linnet_target.h').write_text(
@@ -67,7 +76,7 @@ def simulate(root,output,tape=None,system=None,target=None,all_scenes=False):
         total+=repeat;captures+=capture
         if total>100000 or captures>512:raise ValueError('Input tape exceeds event/capture budget')
         lines.append(f'{kind} {value} {repeat} {int(capture)}\n')
-    run=subprocess.run([str(executable),str(output)]+(['--all-scenes'] if all_scenes else []),
+    run=subprocess.run([str(executable),str(output)]+(['--all-scenes'] if all_scenes else [])+(['--apple-font'] if apple_font is not None else []),
                        input=''.join(lines),capture_output=True,text=True,check=True,timeout=120)
     frames=[json.loads(line) for line in run.stdout.splitlines()]
     cards=[]
@@ -84,6 +93,7 @@ def simulate(root,output,tape=None,system=None,target=None,all_scenes=False):
     (output/'index.html').write_text(page)
     report=dict(target_id=content['report']['target'],content=content,events=total,frames=frames,preview=str(output/'index.html'),
                 native_oracle=True,
+                apple_font_sha256=font_hash,
                 native_source_hashes={name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in ('tools/simulator/native.c','ui/runtime/ui.c','ui/runtime/ui.h','tools/simulator/runner.py','tools/studio/menu_definition.py','services/music/menu.h','services/display/clock.c','services/display/clock.h')})
     (output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
     return report

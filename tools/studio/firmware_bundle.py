@@ -45,6 +45,8 @@ def create(target, output, jobs=2):
     output = Path(output).resolve()
     if output.exists():
         raise ValueError("firmware bundle output already exists")
+    from tools.content.apple_font import check_packaged_assets
+    check_packaged_assets(ROOT)
     payloads = {"README.txt": PACKAGE_README.encode("utf-8")}
     for kind, selector in (("os", "none"), ("boot", "none"), ("boot", "rockbox")):
         report = build("release", target, verify=True, kind=kind, boot_selector=selector, jobs=jobs)
@@ -99,7 +101,7 @@ def load(path, identity, installation_method, *, verify_only=False):
         with zipfile.ZipFile(path) as bundle:
             entries = bundle.infolist()
             names={item.filename for item in entries}
-            files=FILES | (CLASSIC_FILES if identity['target_id']=='classic6g-n25' and names & CLASSIC_FILES else set())
+            files=FILES | (CLASSIC_FILES if identity['target_id']=='classic6g-n25' else set())
             if (len(entries) != len(files) + 1 or
                     names != files | {"manifest.json"} or
                     any(item.file_size > MAX_BYTES for item in entries) or

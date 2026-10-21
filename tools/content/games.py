@@ -38,21 +38,12 @@ def encode(selected):
 
 
 def decode(data, identity=None):
-    if (len(data) != 12 or data[:4] != b'GAME' or data[4] not in (1, 2, 3, 4)
-            or (data[4] < 3 and (data[5] & ~(7 if data[4] == 1 else 15) or data[6]))
-            or (data[4] == 3 and (data[6] & ~31 or data[7]))
-            or (data[4] == 4 and data[7] & ~((1 << max(0, len(GAMES) - 16)) - 1))
-            or (data[4] < 4 and data[7])
+    if (len(data) != 12 or data[:4] != b'GAME' or data[4] != 4
+            or data[7] & ~((1 << max(0, len(GAMES) - 16)) - 1)
             or struct.unpack_from('<I', data, 8)[0] != zlib.crc32(data[:8])):
         raise ValueError("Game selection is damaged. Save a new selection to replace it.")
-    mask = data[5] | (data[6] << 8 if data[4] >= 3 else 0) | (data[7] << 16 if data[4] == 4 else 0)
+    mask = data[5] | (data[6] << 8) | (data[7] << 16)
     selected = {i for i in range(len(GAMES)) if mask & (1 << i)}
-    if ((data[4] == 1 and selected == {0, 1, 2})
-            or (data[4] == 2 and selected == {0, 1, 2, 3})
-            or (data[4] == 3 and selected == set(range(13)))
-            or (data[4] == 3 and selected == set(range(12)) and identity is not None
-                and target_spec(identity['target_id']).get('game_presentation') == 'photo220')):
-        selected = set(range(len(GAMES)))
     return selected
 
 

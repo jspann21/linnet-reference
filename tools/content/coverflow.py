@@ -18,7 +18,7 @@ PACKED_INPUT_MAX = NATIVE_RECORD + NATIVE_RECORD // 255 + 16
 PACKED_INDEX_CRC = 1
 
 
-def _packed_art(records, cache=None, *, index_crc=True):
+def _packed_art(records, cache=None):
     from lz4.block import compress
     if len(records) <= PACKED_NATIVE_SLOTS:
         return None
@@ -46,9 +46,8 @@ def _packed_art(records, cache=None, *, index_crc=True):
     header = bytearray(PACKED_HEADER)
     struct.pack_into('<4sIII', header, 0, b'LCZ1', len(chunks), NATIVE_RECORD, at)
     struct.pack_into('<I', header, 16, 1)  # LZ4 blocks, exact native tile bytes
-    if index_crc:
-        struct.pack_into('<I', header, 20, PACKED_INDEX_CRC)
-        struct.pack_into('<I', header, 28, zlib.crc32(table))
+    struct.pack_into('<I', header, 20, PACKED_INDEX_CRC)
+    struct.pack_into('<I', header, 28, zlib.crc32(table))
     crc = zlib.crc32(table)
     for chunk in chunks:
         crc = zlib.crc32(chunk, crc)
@@ -139,9 +138,9 @@ def validate(path: Path, database: bytes) -> None:
             if len(table) != arts * 8:
                 raise ValueError('Truncated packed artwork index')
             flags = struct.unpack_from('<I', packed_header, 20)[0]
-            if flags & ~PACKED_INDEX_CRC:
+            if flags != PACKED_INDEX_CRC:
                 raise ValueError('Unsupported packed artwork features')
-            if flags & PACKED_INDEX_CRC and zlib.crc32(table) != struct.unpack_from('<I', packed_header, 28)[0]:
+            if zlib.crc32(table) != struct.unpack_from('<I', packed_header, 28)[0]:
                 raise ValueError('Invalid packed artwork index checksum')
             at, crc = len(table), zlib.crc32(table)
             for i in range(arts):
@@ -185,11 +184,6 @@ def remove_tracks(source: Path, before: bytes, after: bytes, output: Path) -> No
             created = True
             header = bytearray(reader.read(1024))
             packed_at = struct.unpack_from('<I', header, 72)[0]
-            index_crc = False
-            if packed_at:
-                reader.seek(packed_at + 20)
-                index_crc = bool(struct.unpack('<I', reader.read(4))[0] & PACKED_INDEX_CRC)
-                reader.seek(1024)
             _, _, art_record = _layout(header)
             count = struct.unpack_from('<I', header, 4)[0]
             records, art_ids = [], {}
@@ -213,7 +207,7 @@ def remove_tracks(source: Path, before: bytes, after: bytes, output: Path) -> No
             for art in art_ids:
                 reader.seek(1024 + count * CATALOG + art * art_record)
                 artwork.append(reader.read(art_record))
-            packed_parts = _packed_art(artwork, index_crc=index_crc) if packed_at else None
+            packed_parts = _packed_art(artwork) if packed_at else None
             struct.pack_into('<II', header, 72, 0, 0)
             if packed_parts:
                 packed_header, table, chunks = packed_parts

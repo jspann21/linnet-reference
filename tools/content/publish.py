@@ -273,7 +273,7 @@ def validate_stage(stage: Path, *, device_root: Path | None = None,
                 entry["bytes"] != size or type(entry.get("mtime_ns")) is not int or entry["mtime_ns"] < 0):
             raise ValueError("invalid metadata-only music reference")
         if path.upper().startswith("/.LINNET/MUSIC/"):
-            raise ValueError("Music must be imported into /Music; rebuild this legacy music stage")
+            raise ValueError("Music must be imported into /Music; rebuild this music stage")
         for field, position in (("title", 52), ("artist", 56), ("album", 60)):
             if entry.get(field) != _pool_string(database, pool, struct.unpack_from("<I", database, offset + position)[0]):
                 raise ValueError("manifest text mismatch")
@@ -576,10 +576,7 @@ def _recover_group(root: Path, identity: dict, name: str) -> bool:
     guard = lambda: _volume_guard(identity)
     directory = _group_directory(root, name)
     marker = directory / 'STATE.TXN'
-    legacy = directory / 'STATE.JSON'
-    guard(); _plain(marker, root); _plain(legacy, root)
-    if legacy.exists():
-        raise RuntimeError(f'unsupported publication recovery record: {legacy}')
+    guard(); _plain(marker, root)
     if not marker.exists():
         _clear_group(root, directory, guard)
         return False
@@ -645,10 +642,7 @@ def pending_publications(identity: dict) -> list[str]:
         _volume_guard(identity)
         directory = _group_directory(root, name)
         marker = directory / 'STATE.TXN'
-        legacy = directory / 'STATE.JSON'
-        _plain(marker, root); _plain(legacy, root)
-        if legacy.exists():
-            raise RuntimeError(f'unsupported publication recovery record: {legacy}')
+        _plain(marker, root)
         if marker.exists():
             pending.append(name)
     return pending

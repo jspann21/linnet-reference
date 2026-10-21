@@ -80,10 +80,9 @@ attributes, source byte size, child range, prepared kind/size, fallback flags,
 native media kind, a 128-byte label, a 14-byte short alias, a 76-byte prepared
 path, and CRC32 at byte 252. Prepared kinds are image (1), text (2), and an existing
 video conversion (3). Records and headers use little-endian integers.
-Version 2 uses the formerly reserved 16-bit field at byte 174 for the preview's
-offset in 512-byte sectors within its pack. Prepared size bounds that slice.
-Version 1 remains readable with offset zero; older firmware falls back to live
-browsing when presented with version 2. Videos remain separate files at offset zero.
+The 16-bit field at byte 174 holds the preview's offset in 512-byte sectors
+within its pack. Prepared size bounds that slice. Videos remain separate files
+at offset zero.
 
 Image previews use a 512-byte `FIMG` version-one header containing width, height,
 payload CRC32, and header CRC32, followed by RGB565 little-endian pixels. Text

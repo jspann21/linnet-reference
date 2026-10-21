@@ -31,7 +31,9 @@ def create(output):
         for package in ("mutagen", "Pillow", "pyserial", "lz4", "PySide6",
                         "PySide6_Essentials", "PySide6_Addons", "shiboken6"):
             command += ["--copy-metadata", package]
-        for name in ("config", "targets", "hal", "services", "ui", "assets", "themes", "sdk/assets"):
+        from tools.content.apple_font import PACKAGE_DIRECTORIES, check_packaged_assets
+        check_packaged_assets(ROOT)
+        for name in PACKAGE_DIRECTORIES:
             command += ["--add-data", str(ROOT / name) + os.pathsep + name]
         # Photo cache recipes inspect their rendering functions' source.
         command += ["--add-data", str(ROOT / "tools/content/photos.py") + os.pathsep + "tools/content",

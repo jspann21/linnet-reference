@@ -131,16 +131,14 @@ Optional Home shortcuts such as Notes, Games, and Cover Flow remain available;
 the default Home menu groups them by purpose.
 
 Files and Extras are enabled in stock firmware. Defaults adapt to target
-capabilities; links to disabled utilities are omitted. Recognized older default
-menus adopt the current hierarchy. Customized menus retain their saved order
-and shortcuts; add Files through Screens if it is missing.
+capabilities; links to disabled utilities are omitted. Customized menus retain
+their saved order and shortcuts.
 
-Settings and USB Disk Mode remain required navigation anchors. Sound, Shuffle,
-and Repeat remain reachable in Settings.
+Settings, USB Disk Mode, and Sound are required menu items. Shuffle and Repeat
+remain reachable in Settings.
 
 Menu item IDs are stable. The version-three `MENUS.BIN` writer uses an 80-byte
-envelope and checksum; firmware and Media Manager accept versions one through
-three. See [binary contracts](formats.md) for the format owner.
+envelope and checksum; firmware and Media Manager require version three. See [binary contracts](formats.md) for the format owner.
 
 The structure draws on Apple's [iPod classic User Guide](https://cdsassets.apple.com/live/6GJYWVAV/user/ma1195_ipod_classic_160gb_user_guide.pdf),
 especially its Home ordering, Extras grouping, and Menu-to-parent navigation.

@@ -53,6 +53,7 @@ def register_primary(commands):
     simulator.add_argument("--all-scenes",action="store_true")
     simulator.add_argument("--tape",type=Path,help="JSON list of native input events")
     simulator.add_argument("--boot-menu",action="store_true",help="Render the native 320-pixel Boot chooser")
+    simulator.add_argument("--apple-font",type=Path,help="Preview a locally extracted PODIUM.FNT")
 
 
 def register_support(commands):
@@ -125,13 +126,13 @@ def run_studio(args, emit):
         emit(compile_system(ROOT,args.output,args.system))
     elif args.command == "simulator":
         if args.boot_menu:
-            if args.tape or args.system or args.all_scenes:
+            if args.tape or args.system or args.all_scenes or args.apple_font:
                 raise ValueError("Boot chooser simulation does not accept UI scene options")
             from tools.simulator.boot import simulate_boot
             emit(simulate_boot(args.output,args.target or "classic6g-n25"))
         else:
             from tools.simulator.runner import simulate
-            emit(simulate(ROOT,args.output,args.tape,args.system,args.target,args.all_scenes))
+            emit(simulate(ROOT,args.output,args.tape,args.system,args.target,args.all_scenes,args.apple_font))
     elif args.command == "inspect":
         emit(inspect(args.image.read_bytes()))
     elif args.command == "release":

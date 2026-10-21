@@ -136,10 +136,16 @@ Choose your games in Media Manager, save, eject, and restart Linnet.
 
 ### Make it feel like yours.
 
-Switch themes on the device, with palettes, fonts, and layouts compiled into the
-firmware. Choose a quiet dark interface, warm Graphite, bright Aurora, or a
+Switch themes on the device, with palettes, included fonts, and layouts compiled
+into the firmware. Choose a quiet dark interface, warm Graphite, bright Aurora, or a
 minimal look. **Album Colors** can follow the artwork of the current album across
 the interface.
+
+For the original Apple Podium Sans font in supported color themes, use
+**Media Manager → Settings → iPod theme font → Download and use Apple font**.
+The app downloads verified firmware directly from Apple and extracts the font
+locally. Safely eject and restart Linnet to apply it; public packages include
+a licensed fallback. See [font setup](docs/media-manager.md#ipod-theme-font).
 
 <table>
   <tr>

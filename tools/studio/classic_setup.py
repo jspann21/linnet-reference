@@ -90,8 +90,6 @@ def prepare(identity, *, firmware=None, from_source=False, build='user', progres
         from tools.studio.firmware_bundle import load
         progress('Checking the selected Classic firmware ZIP…')
         artifacts=load(firmware,identity,'native-preserve')
-        if not artifacts.get('bootstrap_template'):
-            raise ValueError('This older Classic ZIP contains OS updates only. Choose a current ZIP with initial setup support.')
     persisted=installer._persist_artifacts(artifacts,directory)
     bootstrap=directory/'bootstrap'
     from tools.studio import s5l_bootstrap

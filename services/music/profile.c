@@ -86,17 +86,14 @@ __attribute__((minsize)) bool ln_music_profile_encode(const struct ln_music_prof
 static int32_t signed32(uint32_t x){return x<=INT32_MAX?(int32_t)x:-1-(int32_t)(~x);}
 __attribute__((minsize)) bool ln_music_profile_decode(struct ln_music_profile *p,const uint8_t *data,uint32_t bytes){
     if(!p||!data||bytes!=32||ln_read_le32(data)!=0x464f5250u||
-       (ln_read_le32(data+4)!=0x00200000u&&ln_read_le32(data+4)!=0x00200001u&&ln_read_le32(data+4)!=0x00200002u)||ln_read_le32(data+28)!=ln_crc32(data,28))return false;
-    uint32_t version=ln_read_le32(data+4),flags=ln_read_le32(data+8);bool legacy=version==0x00200000u;
-    if(legacy?(flags&~3u):((flags&0x80000000u)||(flags&5u)==5u||(version==0x00200001u&&(flags&0x40000000u))))return false;
+       ln_read_le32(data+4)!=0x00200002u||ln_read_le32(data+28)!=ln_crc32(data,28))return false;
+    uint32_t flags=ln_read_le32(data+8);
+    if((flags&0x80000000u)||(flags&5u)==5u)return false;
     struct ln_music_profile candidate={.preset=ln_read_le32(data+12),.mode=ln_read_le32(data+16),
         .balance=signed32(ln_read_le32(data+20)),.preamp_db_q16=signed32(ln_read_le32(data+24)),
         .replaygain=(flags&4u)?2u:flags&1u,.crossfeed=(flags&2u)!=0};
-    if(!legacy){
-        uint32_t bands=version==0x00200001u?2u:5u;
-        for(uint32_t i=0;i<bands;i++)candidate.eq_db[i]=(int8_t)((flags>>(3+i*4))&15u)-6;
-        candidate.max_volume_db_tenths=-(int32_t)((flags>>23)&127u)*10;
-        candidate.lineout=version==0x00200002u&&(flags&(1u<<30));
-    }
+    for(uint32_t i=0;i<5;i++)candidate.eq_db[i]=(int8_t)((flags>>(3+i*4))&15u)-6;
+    candidate.max_volume_db_tenths=-(int32_t)((flags>>23)&127u)*10;
+    candidate.lineout=(flags&(1u<<30))!=0;
     if(!ln_music_profile_valid(&candidate))return false;*p=candidate;return true;
 }

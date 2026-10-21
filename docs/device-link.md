@@ -59,8 +59,8 @@ can have different representations. Native eject flushes and returns to Linnet.
 `--wait-link` allows up to 60 seconds for a handshake; use `wait-ready` afterward
 when the running image, health or library matters.
 
-Older installations using **Apple Disk Mode** may require a plan-bound directory
-refresh before eject. Prepare that return path before switching modes:
+When using **Apple Disk Mode**, a plan-bound directory refresh may be required
+before eject. Prepare that return path before switching modes:
 
 ```console
 python linnet device refresh-session prepare --plan path/to/installed-plan.json --plan-sha256 PLAN_SHA256 --hours 8 > out/refresh-session.json
@@ -71,7 +71,7 @@ python linnet device refresh-session stop
 ```
 
 The finite elevated helper accepts only its reviewed operations. A new plan needs
-a new session. Plain eject on these older installations may leave the device in
+a new session. Plain eject from Apple Disk Mode may leave the device in
 Disk Mode with **No Media** reported by Windows. Retain the matching backup,
 plan, and receipts; see [local artifacts](local-artifacts.md).
 
@@ -130,8 +130,7 @@ Hashes provide integrity checks, not signature authentication.
 A missing, corrupt, extra or mismatched acknowledgement poisons the session and may
 raise `AmbiguousCommand`. Close it, rediscover, and inspect state before deciding
 what to do. Never automatically replay input, reboot, crash-clear, or a write.
-An interrupted transaction also poisons its session. A rejected input batch on
-older firmware may already have applied a prefix; inspect before another action.
+An interrupted transaction also poisons its session.
 Offset-based upload resume is not implemented.
 
 Persistent OS updates can re-admit an explicitly rejected CHUNK or FINISH within
@@ -141,7 +140,7 @@ unchanged offset and expected slot. It refreshes the read-only storage proof whe
 needed. An advanced offset, failed proof, write fault, or uncertain acknowledgement
 stops the transaction. BEGIN is never replayed.
 
-Legacy native Boot maintenance accepts a fixed reviewed package on explicitly
+Native Boot maintenance accepts a fixed reviewed package on explicitly
 admitted hardware. It is separate from ordinary A/B OS updates; use the
 [bootstrap map](bootstrap-tooling.md) and matching recovery artifacts.
 
@@ -155,13 +154,6 @@ admitted hardware. It is separate from ordinary A/B OS updates; use the
 Use each command's `--help` for required images, scenarios, and identities.
 Receipts go under `out/runs`. Injected software faults do not qualify electrical
 failures; physical controls, sound, current, and panel quality need observation.
-
-During crash rollback, `update-cycle` records an older Boot's latched optional
-selector-file `NOT_FOUND` diagnostic when storage is prepared, drained and
-unquarantined, with no failed, retried or canceled requests. It still requires
-the expected crash identity, retained confirmed slot and a newer boot attempt
-before explicitly restarting the confirmed OS. OS write admission requires
-clean storage and updater diagnostics.
 
 ## Protocol reference
 

@@ -53,10 +53,9 @@ check, but video conversion remains unavailable until both tools pass.
 On a supported native Boot installation, **Default startup** chooses which
 installed system starts automatically. Hold **MENU** while the iPod starts to
 open the selector and choose a different installed system. The default can be
-changed without reinstalling Linnet. Older native installations offer **Update
-startup selector** first; that guarded update keeps the saved Apple firmware
-and recovery plan. Finish an interrupted update with **Resume startup selector
-update** before making other setup changes.
+changed without reinstalling Linnet. **Update startup selector** replaces Boot
+while keeping the saved Apple firmware and recovery plan. Finish an interrupted
+update with **Resume startup selector update** before making other setup changes.
 
 Firmware installation requires a recognized target, matching USB and mounted
 storage identities, and a writable FAT32 iPod volume. Unknown devices and firmware
@@ -71,8 +70,7 @@ interrupted removal can be completed.
 ### First installation on a Classic
 
 Choose a current Classic firmware ZIP and **Install Linnet**. The ZIP includes
-the temporary bootstrap, so packaged installation needs no compiler. Older ZIPs
-can still update an installed OS but cannot start first-time Boot installation.
+the temporary bootstrap, so packaged installation needs no compiler.
 Media Manager saves the selected firmware and the current USB and disk identity,
 safely ejects, then asks you to hold **Menu + Select** for about 12 seconds.
 Release the buttons when Media Manager detects DFU and tells you to release.
@@ -144,8 +142,7 @@ storage identity.
 
 Classic A1238/N25 installations use a separate NOR flash bootloader. Media
 Manager recognizes their completed bootstrap records and verified original NOR
-backups, including older developer installations in the source checkout. OS
-updates preserve portable recovery copies under `.LINNET/RECOVERY/NOR` and on
+backups. OS updates preserve portable recovery copies under `.LINNET/RECOVERY/NOR` and on
 the computer. Reinstalling the OS cannot recreate a missing original NOR backup.
 For Classic removal, connect in Linnet Disk Mode with a Developer build that
 provides Linnet Link. Media Manager saves recovery, ejects the disk, enters the
@@ -318,6 +315,32 @@ FFprobe checks their codecs and dimensions. Choose existing folders under
 `/Music`, `/Photos`, or `/Videos`; Notes are read directly by Apple OS.
 Unsupported paths or formats need attention, and the normal workflow does not
 rewrite FAT aliases. See [Apple database behavior](apple-stock-music.md).
+
+## iPod theme font
+
+Install current Linnet firmware, then connect a color iPod in Disk Mode and open
+**Settings → iPod theme font → Download and use Apple font**. Media Manager
+downloads the 3.8 MB iPod Photo 1.2.1 archive directly from Apple's server,
+checks the pinned archive and firmware SHA-256 values, and extracts Podium Sans
+on your computer. It installs only the optional font file in
+`/.LINNET/PODIUM.FNT`. Safely eject and restart Linnet to apply it.
+
+The font applies to iPod Photo, iPod Classic, Classic Split, Video Paper,
+Video Night, and Video Copper themes on the supported color targets. Other
+themes keep their bundled fonts. The monochrome iPod keeps its own font.
+Choose **Use included font**, safely eject, and restart to remove the optional
+font. Missing or damaged font files fall back to the included licensed font.
+
+The verified archive and extracted font are cached under
+`%LOCALAPPDATA%/Linnet/Fonts`, allowing later installations without downloading
+again. The download runs only when requested, can be stopped before publication,
+and never runs the Apple updater. Regular Linnet firmware updates and reinstalls
+preserve the optional font file. Preparing Notes accounts for both font choices.
+
+Apple's software license terms apply to extraction and reuse. The Settings page
+links to those terms. Apple font data is excluded from public source and
+packages; keep downloaded firmware, extracted fonts, and local simulator copies
+private. See the [source and provenance notice](../sdk/assets/PODIUM-SANS-NOTICE.txt).
 
 ## Removal, recovery, and caching
 

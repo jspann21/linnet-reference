@@ -813,7 +813,7 @@ static void photo_step(void){
         }
         r=read_at(&p.file,row->data.p.thumb,photo_scratch,8192);
         if(!r)return;if(r<0||ln_crc32(photo_scratch,8192)!=row->data.p.thumb_crc){fail(8);return;}
-        /* Legacy packages keep square, letterboxed previews. Crop their fitted
+        /* The LPIC fallback keeps square, letterboxed previews. Crop their fitted
          * image before scaling into the native grid cell, preserving aspect. */
         /* Thumbnail pixels overlap viewer tiles, so their metadata can no
          * longer certify the cached tile contents after this write. */

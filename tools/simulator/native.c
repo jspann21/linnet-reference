@@ -207,7 +207,20 @@ static void menu_input(struct ln_ui_state *s,uint32_t kind,int32_t value){
     if(handled){s->buttons=(uint32_t)value;ln_ui_refresh(s);}else ln_ui_input(s,kind,value);
 }
 int main(int argc,char **argv){
-    if(argc!=2&&(argc!=3||strcmp(argv[2],"--all-scenes")))return 2;
+    if(argc<2||argc>4)return 2;
+    bool all_scenes=false,optional_font=false;
+    for(int i=2;i<argc;++i){
+        if(!strcmp(argv[i],"--all-scenes")&&!all_scenes)all_scenes=true;
+        else if(!strcmp(argv[i],"--apple-font")&&!optional_font)optional_font=true;
+        else return 2;
+    }
+    if(optional_font){
+        static uint8_t font[LN_UI_APPLE_FONT_BYTES] __attribute__((aligned(4)));
+        char path[4096];if(snprintf(path,sizeof path,"%s/PODIUM.FNT",argv[1])>=(int)sizeof path)return 8;
+        FILE *input=fopen(path,"rb");if(!input)return 8;
+        size_t bytes=fread(font,1,sizeof font,input);int extra=fgetc(input),failed=ferror(input);fclose(input);
+        if(failed||bytes!=sizeof font||extra!=EOF||!ln_ui_apple_font_load(font,sizeof font))return 8;
+    }
     for(uint32_t y=0;y<LINNET_UI_HEIGHT;++y)for(uint32_t x=0;x<LINNET_UI_WIDTH;++x)
         sample_video_pixels[y*LINNET_UI_WIDTH+x]=(uint16_t)(((x*31u/LINNET_UI_WIDTH)<<11)|((y*63u/LINNET_UI_HEIGHT)<<5)|10u);
     struct ln_ui_state state;ln_ui_init(&state);ln_ui_render(&state,pixels,damage);
@@ -238,7 +251,7 @@ int main(int argc,char **argv){
         if(capture){if(++index>512u||!snapshot(&state,argv[1],index))return 5;}
     }
     if(!feof(stdin))return 6;
-    if(argc==3){
+    if(all_scenes){
         for(uint32_t theme=0;theme<ln_ui_theme_count;++theme){
             ln_ui_theme_changed(theme);ln_ui_init(&state);
             for(uint32_t scene=0;scene<ln_ui_scene_count&&scene<LINNET_UI_MAX_SCENES;++scene){

@@ -676,9 +676,9 @@ bool ln_music_quiesce(bool save_settings){
     /* No accepted history events exist before ready; shutdown must not start
      * a new load after closing the library. Crash recovery never calls here. */
     if(!ln_music_history_ready()){
-        /* Missing banks and legacy bank sizes cannot accept events before
-         * ready. Neither has pending history to flush, and both must permit
-         * Sync so the host can provision or migrate the optional banks.
+        /* Missing or unusable banks cannot accept events before ready.
+         * Neither has pending history to flush, and both must permit Sync
+         * so the host can prepare the optional history storage.
          * Errors after a successful load still take the flush path below. */
         int error=ln_music_history_error();
         return error==LN_HISTORY_OK||error==LN_HISTORY_MISSING||error==LN_HISTORY_CAPACITY;

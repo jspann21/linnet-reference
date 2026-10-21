@@ -18,6 +18,8 @@ enum ln_ui_kind { LN_UI_SCREEN=1,LN_UI_VIEW,LN_UI_TEXT,LN_UI_ICON,LN_UI_IMAGE,
 #define LN_UI_THEME_APPLE_PHOTO 2u
 #define LN_UI_THEME_ALBUM_ART 4u
 #define LN_UI_THEME_APPLE_CLASSIC 8u
+#define LN_UI_THEME_APPLE_FONT 16u
+#define LN_UI_APPLE_FONT_BYTES 8570u
 #define LN_UI_CANVAS_OPAQUE 64u
 /* Host-baked list geometry. Low six flags retain their existing meanings.
  * Unmarked, reserved-bit, or incomplete encodings use runtime geometry. */
@@ -82,6 +84,7 @@ struct ln_ui_asset {uint32_t width,height;const uint16_t *pixels;};
 /* Memory-only per-row assets for virtualized image grids. */
 const struct ln_ui_asset *ln_ui_dynamic_item_asset(const struct ln_ui_node *,uint32_t,const struct ln_ui_asset *);
 struct ln_ui_glyph {uint32_t offset;uint8_t x,y,w,h;};
+_Static_assert(sizeof(struct ln_ui_glyph)==8u,"packed glyph layout differs from the optional font format");
 struct ln_ui_font {const uint8_t *alpha;uint32_t width,height,advance,first,count;const uint8_t *advances;const struct ln_ui_glyph *glyphs;};
 extern const struct ln_ui_scene *ln_ui_scenes;
 extern const uint32_t ln_ui_scene_count;
@@ -91,6 +94,8 @@ extern const uint32_t ln_ui_asset_count;
 extern struct ln_ui_font ln_ui_font;
 extern const struct ln_ui_font ln_ui_hint_font;
 extern const struct ln_ui_font ln_ui_clock_font;
+/* Caller retains the validated, aligned optional font buffer for the session. */
+bool ln_ui_apple_font_load(const uint8_t *data,uint32_t length);
 /* Text-only flag; list nodes use these bits for baked geometry. */
 #define LN_UI_FOOTER 64u
 struct ln_ui_state {

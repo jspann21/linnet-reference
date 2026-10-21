@@ -10,7 +10,7 @@ from tools.studio.targets import target_spec
 from tools.content.compiler import resolve_features
 from tools.content.layouts import feature_enabled
 from tools.content.guard import guarded_path as _plain, guard_volume as _volume_guard
-from tools.studio.menu_definition import SCREENS, DEFAULTS, REQUIRED, ITEMS, LEGACY_DEFAULTS, PREVIOUS_DEFAULTS
+from tools.studio.menu_definition import SCREENS, DEFAULTS, REQUIRED, ITEMS
 
 HINTS = {**{label: 'Shown under Music > More, in the order chosen here.' for label in ('Album Artists', 'Years', 'Folders', 'Bookmarks', 'Recently Added', 'Recently Played', 'Most Played')}, 'Artists': 'Performers credited on individual tracks.', 'Album Artists': 'Music > More: main artist credited for each album; useful for compilations.', 'Composers': 'Writers of the music; useful for classical collections.'}
 
@@ -52,11 +52,8 @@ def available_items(name, identity=None):
 
 
 def locked_items(name):
-    """Items firmware restores automatically in addition to navigation anchors."""
-    locked = set(REQUIRED.get(name, ()))
-    if name == 'Settings':
-        locked.add(11)
-    return locked
+    """Required navigation and settings items."""
+    return set(REQUIRED.get(name, ()))
 
 
 def defaults(identity=None):
@@ -80,31 +77,12 @@ def encode(state):
 
 
 def decode(data, identity=None):
-    if len(data) != 80 or data[:4] != b'MENU' or struct.unpack_from('<I', data, 4)[0] not in (1, 2, 3) or zlib.crc32(data[:76]) != struct.unpack_from('<I', data, 76)[0]:
+    if len(data) != 80 or data[:4] != b'MENU' or struct.unpack_from('<I', data, 4)[0] != 3 or zlib.crc32(data[:76]) != struct.unpack_from('<I', data, 76)[0]:
         raise ValueError('Screen settings are damaged or from an unsupported version. Reset defaults to replace them.')
     state = {name: list(data[9 + g * 17:9 + g * 17 + data[8 + g * 17]]) for g, name in enumerate(SCREENS)}
     encode(state)
-    if data[4] < 3:
-        for name, previous in PREVIOUS_DEFAULTS.items():
-            candidates = [previous]
-            if data[4] == 1 and name in LEGACY_DEFAULTS:
-                candidates.append(LEGACY_DEFAULTS[name])
-                if name == 'Home':
-                    candidates.append(LEGACY_DEFAULTS[name] + (7,))
-            available = available_items(name, identity) if identity is not None else None
-            rows = tuple(state[name])
-            if any(rows == candidate or (available is not None and
-                   rows == tuple(i for i in candidate if i in available)) for candidate in candidates):
-                state[name] = defaults(identity)[name]
-    before_files = (0, 3, 2, 8, 6, 10, 5)
-    available = available_items('Home', identity) if identity is not None else None
-    if tuple(state['Home']) == before_files or (available is not None and tuple(state['Home']) == tuple(i for i in before_files if i in available)):
-        state['Home'] = defaults(identity)['Home']
-    settings = state['Settings']
-    if 11 not in settings:
-        settings.append(11)
     if identity is not None and 10 not in available_items('Settings', identity):
-        settings[:] = [item for item in settings if item != 10]
+        state['Settings'] = [item for item in state['Settings'] if item != 10]
     return state
 
 

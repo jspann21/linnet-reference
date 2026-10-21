@@ -50,7 +50,7 @@ extern int ln_video_lz_decode_block(const uint8_t *,uint32_t,uint8_t *,uint32_t)
 #define PACKED_INDEX_CRC 1u
 #define NONE UINT32_MAX
 #define COVER_WIDTH (96u*LINNET_UI_HEIGHT/176u)
-enum {CLOSED,OPEN,HEADER,READY,CATALOG,ART,PACKED_HEADER,PACKED_DATA,PACKED_CHECK,EARLY_ART,EARLY_INDEX};
+enum {CLOSED,OPEN,HEADER,READY,CATALOG,ART,PACKED_HEADER,PACKED_DATA,PACKED_CHECK,EARLY_INDEX};
 /* Valid IDs publish only after a complete decode; pixel storage needs no reset. */
 static union {
     uint16_t pixels[SLOTS][TEXTURE_WIDTH*TEXTURE_HEIGHT];
@@ -85,16 +85,13 @@ static uint8_t *packed_extra;
 static uint32_t packed_extra_bytes;
 static bool packed_uses_stage,packed_stage_inhibited;
 #if LINNET_TARGET_NUMBER==25u
-static uint32_t early_reads,early_id,early_resume,early_epoch,preview_epoch=1u;
-static uint32_t early_ids[3];
+static uint32_t early_reads;
 static bool packed_started,packed_first_done,early_index_ready;
 static uint32_t early_slots,packed_index_crc;
 #define EARLY_RAW_AT 135744u
 _Static_assert(EARLY_RAW_AT>=3u*sizeof textures.pixels[0],"Early raw tiles overlap RGB previews");
 _Static_assert(EARLY_RAW_AT%32u==0u,"Early raw tile alignment");
 _Static_assert(EARLY_RAW_AT+3u*TILE_RECORD<=__builtin_offsetof(__typeof__(textures),packed.input),"Early raw tiles overlap decoder input");
-_Static_assert(sizeof textures.pixels[4]>=TILE_RECORD,"Early cover scratch capacity");
-_Static_assert((4u*sizeof textures.pixels[0])%32u==0u,"Early cover scratch alignment");
 static uint8_t *metadata_lease;
 static uint32_t metadata_lease_bytes,metadata_lease_epoch=1u;
 static uint8_t *history_lease;
@@ -331,43 +328,6 @@ void ln_coverflow_preview_reset(void){
         for(uint32_t i=0;i<3u;i++)cache[i].id=0;
     early_reads=3u;
     early_slots=0;
-    if(++preview_epoch==0)++preview_epoch;
-    /* Revocation changes only validity. An admitted read owns its scratch
-     * through the terminal poll, even if mount-local epochs later repeat. */
-    if(phase==EARLY_ART&&!pending)phase=early_resume;
-}
-static bool request_early_art(bool allow_read){
-    if(!visible||!allow_read||ln_player_busy()||packed_stage_inhibited||packed_checked||
-       packed_mode||packed_pixels||!packed_at||!packed_started||ln_read_le32(packed_header+20)||early_reads>=3u||!identity())return false;
-    struct ln_fat32_file root;
-    if(!ln_storage_media_root(&root)||root.epoch!=file.epoch)return false;
-    static const int8_t ahead[]={0,1,-1};
-    for(uint32_t d=0;d<3u;d++){
-        int32_t index=(int32_t)selected+ahead[d]*direction;
-        uint8_t *r=index<0?0:row((uint32_t)index);if(!r)continue;
-        uint32_t id=ln_read_le32(r+248);bool seen=false;
-        for(uint32_t i=0;i<early_reads;i++)if(early_ids[i]==id)seen=true;
-        if(id>=arts||seen||find_art(id)>=0)continue;
-        early_id=id;early_resume=phase;early_epoch=preview_epoch;length=TILE_RECORD;phase=EARLY_ART;return true;
-    }
-    return false;
-}
-static void accept_early_art(bool allow_read){
-    phase=early_resume;
-    struct ln_fat32_file root;
-    if(early_epoch!=preview_epoch||!visible||!allow_read||ln_player_busy()||
-       packed_stage_inhibited||packed_checked||packed_mode||packed_pixels||
-       ln_music_library_status()!=LN_LIBRARY_READY||!identity()||
-       !ln_storage_media_root(&root)||root.epoch!=file.epoch)return;
-    const uint8_t *tile=(const uint8_t*)textures.pixels[4];
-    uint32_t end=512u+TEXTURE_WIDTH*TEXTURE_HEIGHT;
-    if(ln_crc32(tile,end)!=ln_read_le32(tile+end)){early_reads=3u;return;}
-    uint32_t slot=early_reads-1u;
-    const uint16_t *palette=(const uint16_t*)tile;const uint32_t *indices=(const uint32_t*)(tile+512u);
-    for(uint32_t i=0;i<TEXTURE_WIDTH*TEXTURE_HEIGHT;i+=4u){uint32_t p=*indices++;
-        textures.pixels[slot][i]=palette[p&255u];textures.pixels[slot][i+1u]=palette[(p>>8)&255u];
-        textures.pixels[slot][i+2u]=palette[(p>>16)&255u];textures.pixels[slot][i+3u]=palette[p>>24];}
-    cache[slot].id=early_id+1u;cache[slot].age=++age;++revision;
 }
 #endif
 static void invalidate(void){
@@ -602,7 +562,7 @@ static bool decode_early_packed(bool allow_read){
         for(uint32_t i=0;i<TEXTURE_WIDTH*TEXTURE_HEIGHT;i+=4u){uint32_t p=*indices++;
             textures.pixels[slot][i]=palette[p&255u];textures.pixels[slot][i+1u]=palette[(p>>8)&255u];
             textures.pixels[slot][i+2u]=palette[(p>>16)&255u];textures.pixels[slot][i+3u]=palette[p>>24];}
-        early_ids[early_reads++]=id;early_slots|=1u<<slot;
+        ++early_reads;early_slots|=1u<<slot;
         cache[slot].id=id+1u;cache[slot].age=++age;++revision;return true;
     }
     return false;
@@ -799,9 +759,6 @@ void ln_coverflow_step(bool allow_read){
         if(!result){io_due=ln_time_us()+1000u;return;}pending=false;
         if(result<0){
             if(canceling&&result==LN_FAT32_STALE){
-#if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
-                if(phase==EARLY_ART){canceling=false;phase=early_resume;io_due=ln_time_us();return;}
-#endif
                 canceling=false;rewind_art_warm();
                 phase=READY;io_due=ln_time_us();return;
             }
@@ -882,27 +839,16 @@ void ln_coverflow_step(bool allow_read){
             if(transferred!=length){fail();return;}
             accept_art();if(failed)return;phase=READY;
         }
-#if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
-        else if(phase==EARLY_ART){
-            if(transferred!=TILE_RECORD){fail();return;}
-            accept_early_art(allow_read);io_due=ln_time_us();return;
-        }
-#endif
 #if defined(LINNET_COVERFLOW_PACKED)
         else if(phase==PACKED_HEADER){
             if(transferred!=512u||ln_read_le32(packed_header)!=0x315a434cu||
                ln_read_le32(packed_header+4)!=arts||ln_read_le32(packed_header+8)!=TILE_RECORD||
                ln_read_le32(packed_header+12)!=packed_bytes-512u||ln_read_le32(packed_header+16)!=1u||
-               ln_crc32(packed_header,508)!=ln_read_le32(packed_header+508)
-#if LINNET_TARGET_NUMBER==25u
-               ||(ln_read_le32(packed_header+20)&~PACKED_INDEX_CRC)
-#endif
-               ){fail();return;}
+               ln_crc32(packed_header,508)!=ln_read_le32(packed_header+508)||
+               ln_read_le32(packed_header+20)!=PACKED_INDEX_CRC){fail();return;}
             packed_offset=0;packed_crc=UINT32_MAX;phase=PACKED_DATA;
 #if LINNET_TARGET_NUMBER==25u
             packed_started=true;
-            /* Legacy files keep the bounded raw bridge after discovery. */
-            if(!ln_read_le32(packed_header+20))phase=READY;
 #endif
         }else if(phase==PACKED_DATA){
             if(transferred!=length){fail();return;}
@@ -927,12 +873,12 @@ void ln_coverflow_step(bool allow_read){
 #if LINNET_TARGET_NUMBER==25u
             else if(!packed_first_done){
                 packed_first_done=true;
-                if((ln_read_le32(packed_header+20)&PACKED_INDEX_CRC)&&packed_offset>=arts*8u){
+                if(packed_offset>=arts*8u){
                     packed_index_crc=UINT32_MAX;
                     packed_index=0;packed_previous=arts*8u;phase=EARLY_INDEX;
                 }else phase=READY;
             }
-            else if(!early_index_ready&&(ln_read_le32(packed_header+20)&PACKED_INDEX_CRC)&&packed_offset>=arts*8u){
+            else if(!early_index_ready&&packed_offset>=arts*8u){
                 packed_index_crc=UINT32_MAX;
                 packed_index=0;packed_previous=arts*8u;phase=EARLY_INDEX;
             }
@@ -989,13 +935,12 @@ void ln_coverflow_step(bool allow_read){
             packed_previous+=size;
         }
 #if LINNET_TARGET_NUMBER==25u
-        if(ln_read_le32(packed_header+20)&PACKED_INDEX_CRC)
-            packed_index_crc=ln_crc32_update(packed_index_crc,art_low+first*8u,(packed_index-first)*8u);
+        packed_index_crc=ln_crc32_update(packed_index_crc,art_low+first*8u,(packed_index-first)*8u);
 #endif
         if(packed_index==arts){
             if(packed_previous!=packed_bytes-512u){fail();return;}
 #if LINNET_TARGET_NUMBER==25u
-            if((ln_read_le32(packed_header+20)&PACKED_INDEX_CRC)&&(~packed_index_crc)!=ln_read_le32(packed_header+28)){fail();return;}
+            if((~packed_index_crc)!=ln_read_le32(packed_header+28)){fail();return;}
 #endif
             /* Use a contiguous unoccupied lease tail for all seven decoded
              * cards. The compressed payload remains immutable underneath. */
@@ -1024,10 +969,6 @@ void ln_coverflow_step(bool allow_read){
 #if defined(LINNET_COVERFLOW_PACKED) && LINNET_TARGET_NUMBER==25u
     if((phase==READY||phase==PACKED_DATA)&&decode_early_packed(allow_read)){io_due=now+1000u;return;}
     if(failed)return;
-    /* A busy admission owns no buffer. Re-evaluate visibility, playback,
-     * selection, identity and revocation before offering the optional read. */
-    if(phase==EARLY_ART)phase=early_resume;
-    if((phase==READY||phase==PACKED_DATA)&&row(selected))request_early_art(allow_read);
 #endif
     if(phase==READY){
         if(count&&!row(selected))request_catalog(selected);
@@ -1127,16 +1068,9 @@ void ln_coverflow_step(bool allow_read){
         if(!destination||!length){fail();return;}
         result=ln_storage_media_read(&file,packed_at+512u+packed_offset,destination,length,generation);
     }
-#if LINNET_TARGET_NUMBER==25u
-    else if(phase==EARLY_ART){
-        result=ln_storage_media_read(&file,1024u+count*CATALOG_RECORD+early_id*TILE_RECORD,textures.pixels[4],TILE_RECORD,generation);
-        if(result>0)early_ids[early_reads++]=early_id;
-        else if(result<0){ln_coverflow_preview_reset();io_due=now+1000u;return;}
-    }
-#endif
 #endif
     else result=ln_storage_media_read(&file,1024+count*CATALOG_RECORD+loading*TILE_RECORD,art_record(loading),length,generation);
-    if(result>0){pending=true;if(phase==ART||phase==PACKED_DATA||phase==EARLY_ART){++full_reads;read_bytes+=length;}else if(phase==CATALOG)read_bytes+=length;}
+    if(result>0){pending=true;if(phase==ART||phase==PACKED_DATA){++full_reads;read_bytes+=length;}else if(phase==CATALOG)read_bytes+=length;}
     else if(result<0){fail();return;}
     io_due=now+1000u;
 }

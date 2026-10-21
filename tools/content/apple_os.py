@@ -20,7 +20,6 @@ import tempfile
 import uuid
 from contextlib import closing
 from fractions import Fraction
-from functools import lru_cache
 from types import SimpleNamespace
 
 from . import media_manager as media
@@ -133,53 +132,6 @@ def _read_apple_state(path):
     return value
 
 
-@lru_cache(maxsize=32)
-def _legacy_apple_cache(base, binding_text):
-    """Find legacy ownership only when a saved session proves the full volume."""
-    binding = json.loads(binding_text)
-    matches = []
-    base = Path(base)
-    if not base.is_dir():
-        return None
-    directories = 0
-    receipts = 0
-    for directory in base.iterdir():
-        if not re.fullmatch(r'[0-9a-f]{24}', directory.name) or directory.is_symlink():
-            continue
-        directories += 1
-        if directories > 4096:
-            raise ValueError('Saved Apple library states need review before updating.')
-        try:
-            value = _read_apple_state(directory / 'apple-os.json')
-        except FileNotFoundError:
-            continue
-        except (OSError, ValueError):
-            continue
-        if (str(value.get('volume_serial', '')).casefold() != binding['volume_serial'] or
-                value.get('target_id') != binding['target_id'] or
-                not isinstance(value.get('device_serial'), str)):
-            continue
-        for receipt in directory.glob('session-*.json'):
-            receipts += 1
-            if receipts > 4096:
-                raise ValueError('Saved Apple library identities need review before updating.')
-            try:
-                if receipt.is_symlink() or receipt.stat().st_size > 1024 * 1024:
-                    continue
-                record = json.loads(receipt.read_text(encoding='utf-8'))
-                saved = record.get('identity') if isinstance(record, dict) else None
-                if (not isinstance(saved, dict) or _apple_binding(saved) != binding or
-                        saved.get('disk_serial') != value['device_serial']):
-                    continue
-            except (OSError, ValueError):
-                continue
-            matches.append(directory)
-            break
-    if len(matches) > 1:
-        raise ValueError('Multiple saved Apple library ownership records match this volume; review them before updating.')
-    return str(matches[0]) if matches else None
-
-
 def _load(identity):
     serial = identity.get('media_cache_disk_serial') or identity['disk_serial']
     binding = {'device_serial': serial, 'volume_serial': identity['volume_serial'],
@@ -192,13 +144,6 @@ def _load(identity):
         if value.get('volume_binding') != binding['volume_binding']:
             raise ValueError('The saved Apple library belongs to a different volume; review it before updating.')
         value.update(binding)
-        return value
-    legacy = _legacy_apple_cache(str(cache_root(identity).parent),
-                                json.dumps(binding['volume_binding'], sort_keys=True))
-    if legacy:
-        value = _read_apple_state(Path(legacy) / 'apple-os.json')
-        value.update(binding, legacy_cache_key=Path(legacy).name)
-        save_json(_state_path(identity), value)
         return value
     return dict(binding, folders=[], configured=False, published=None)
 
@@ -834,12 +779,6 @@ def pending_recovery(identity):
     """Surface interrupted transactions before another writer reads mixed files."""
     cache = _apple_cache(identity)
     caches = {cache, cache_root(identity)}
-    state = _load(identity)
-    legacy_key = state.get('legacy_cache_key')
-    if legacy_key is not None:
-        if not isinstance(legacy_key, str) or not re.fullmatch(r'[0-9a-f]{24}', legacy_key):
-            return 'Saved Apple library recovery locations need review before updating.'
-        caches.add(cache_root(identity).parent / legacy_key)
     count = 0
     for directory in (directory / folder for directory in sorted(caches)
                       for folder in ('apple-database-recovery', 'apple-photo-recovery')):
