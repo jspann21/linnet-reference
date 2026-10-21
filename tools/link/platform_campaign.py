@@ -207,6 +207,7 @@ def cycle(root, image_path, scenario_path, port, progress=None):
             base=settled(); admission_deadline=time.monotonic()+15; retries=0
             while True:
                 try:
+                    sleep_started=time.monotonic()
                     control(1,suite['sleep_ms']);break
                 except DeviceError:
                     session.close();session=None
@@ -223,8 +224,14 @@ def cycle(root, image_path, scenario_path, port, progress=None):
                             time.monotonic()>=admission_deadline):
                         raise
                     retries+=1;time.sleep(.05)
+            asleep=_state(session,generation)
+            if not asleep['flags']&2 or asleep['sleep_count']!=base['sleep_count']+1 or asleep['wake_count']!=base['wake_count']:
+                raise RuntimeError('system did not remain asleep after acceptance')
             awake=wait(lambda s:s['sleep_count']>base['sleep_count'] and s['wake_count']>base['wake_count'] and not s['flags']&2,5)
-            record('sleep-auto-wake',index=index+1,before=base,after=awake,admission_retries=retries,physical_wake_verified=False)
+            elapsed_ms=(time.monotonic()-sleep_started)*1000
+            if elapsed_ms<suite['sleep_ms']-min(20,suite['sleep_ms']/10):
+                raise RuntimeError('system woke before the requested sleep interval')
+            record('sleep-auto-wake',index=index+1,before=base,asleep=asleep,after=awake,elapsed_ms=elapsed_ms,admission_retries=retries,physical_wake_verified=False)
         control(2); control(7); base=settled()
         time.sleep(suite['idle_observe_ms']/1000)
         idle=_state(session,generation)

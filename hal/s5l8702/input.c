@@ -9,7 +9,7 @@
 #endif
 #define WHEEL(offset) LN_REG(0x3c200000u+(offset))
 extern uint32_t ln_time_us(void);
-static struct ln_input_state state;
+static struct ln_input_state state,reported;
 static uint32_t last_packet,last_events,switch_deadline,handshakes,seen_buttons,wheel_travel;
 static bool ready;
 static int previous=-1;
@@ -47,7 +47,7 @@ bool ln_input_irq(void) {
 }
 #endif
 bool ln_input_init(void) {
-    ready=false;state=(struct ln_input_state){0};previous=-1;handshakes=seen_buttons=wheel_travel=0;
+    ready=false;state=reported=(struct ln_input_state){0};previous=-1;handshakes=seen_buttons=wheel_travel=0;
 #if LN_WHEEL_IRQ
     pending_wheel_delta=0;
 #endif
@@ -82,10 +82,18 @@ bool ln_input_poll(struct ln_input_state *out) {
     *out=state;
     /* A release may arrive before the foreground consumes its last motion. */
     if(out->wheel_delta&&!out->hold)out->touched=1;
+    /* IRQ packets update state before this poll. Compare with the last
+     * published sample so idle timer polls do not masquerade as input and
+     * immediately wake a sleeping system. Include the coalesced motion above
+     * so its following release is still delivered. */
+    bool changed=out->buttons!=reported.buttons || out->wheel_delta ||
+        out->touched!=reported.touched || out->hold!=reported.hold ||
+        out->headphones!=reported.headphones;
+    reported=*out;
 #if LN_WHEEL_IRQ
     ln_s5l_irq_restore(flags);
 #endif
-    return true;
+    return changed;
 }
 void ln_input_snapshot(struct ln_input_state *out){if(out)*out=state;}
 void ln_input_diagnostics(uint32_t out[16]) {

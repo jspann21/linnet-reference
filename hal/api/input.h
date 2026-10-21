@@ -22,6 +22,8 @@ bool ln_input_boot_menu_held(void);
 void ln_input_boot_menu_diagnostics(uint32_t output[4]);
 #endif
 #endif
+/* Return whether user-visible input changed. Successful unchanged polls still
+ * fill out; sampling a sensor or receiving an idle packet is not activity. */
 bool ln_input_poll(struct ln_input_state *out);
 void ln_input_snapshot(struct ln_input_state *out);
 #if defined(LINNET_IMAGE_OS) && defined(LINNET_TARGET_CLASSIC6G_N25)
