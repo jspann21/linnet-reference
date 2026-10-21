@@ -40,7 +40,8 @@ static int extra_wheel(int32_t value){
     if(!value)return 3;bool changed=false;
     if(ex_phase==EX_LEVEL){uint8_t next=(uint8_t)((ex_choice+value%3+3)%3);changed=next!=ex_choice;ex_choice=next;}
     else if(game==BRICK&&(ex_phase==EX_READY||ex_phase==EX_PLAY)){
-        int64_t target=(int64_t)br_target+(int64_t)value*3;
+        /* About three quarters of a wheel turn covers the full paddle range. */
+        int64_t target=(int64_t)br_target+(int64_t)value*12;
         if(target<27)target=27;if(target>229)target=229;
         changed=target!=br_target;br_target=(int16_t)target;
         if(changed&&ex_phase==EX_READY){br_paddle=br_target;br_ball_x=(int32_t)br_paddle<<8;}
