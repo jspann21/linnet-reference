@@ -1,13 +1,8 @@
 # iPod Video M25
 
-This target covers the qualified **A1136 MA146, 30 GB, 32 MiB RAM** board:
-PP5022, WM8758 audio, BCM2722 video/display, and a 320 × 240 LCD. Other A1136
-capacities and board revisions need their own identity and memory qualification.
-
-Native startup, Link, storage, audio, photos, games, and native video have been
-exercised. Remaining physical and release checks are recorded in
-[qualification](QUALIFICATION.md) and tracked in the
-[Linnet TODO](../../docs/roadmap.md).
+The `video5g-m25` target uses PP5022, WM8758 audio, BCM2722 video/display,
+and a 320 × 240 LCD. See [hardware support](../../docs/hardware.md) for tested
+configurations and features.
 
 ## Source ownership
 

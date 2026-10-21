@@ -4,28 +4,8 @@ A target owns hardware identity, memory, display, media, discovery, and installe
 policy. Start with a manifest and native adapters; do not infer support from an
 iPod's marketing name alone.
 
-## Current targets
-
-See [hardware support](../docs/hardware.md) for tested configurations, feature
-scope, and variant limits.
-
-| Target | Hardware | Installation scope |
-| --- | --- | --- |
-| [Photo P98](photo4g-p98/README.md) | A1099, PP5020, 32 MiB, 220 × 176 | Native directory installer and A/B OS updates |
-| [Video M25](video5g-m25/README.md) | A1136, PP5022, 32 / 64 MiB, 320 × 240 | Native directory installer and A/B updates; qualification follows the board/storage configuration |
-| [Monochrome Q21](ipod4g-q21/target.toml) | A1059 / MP102, PP5020, 32 MiB, 160 × 128 | Native directory installer; iPod Mono interface, no photo/video playback |
-| [Classic N25](classic6g-n25/target.toml) | A1238, S5L8702, 64 MiB, 320 × 240 | Media Manager guides initial DFU entry, then installs NOR Boot and OS through Link and native Disk Mode |
-
-## Qualification record
-
-Build and simulator success establish host-side behavior only. Record the model,
-board/RAM/storage configuration, checked behavior, recovery requirements, and
-remaining limits. Keep serials, firmware backups, and detailed receipts local.
-
-M25's [qualification record](video5g-m25/QUALIFICATION.md) distinguishes device
-counters from physical observations. For other targets, the hardware reference
-states the current scope; do not extend it to every accepted USB identity or
-storage variant. Apple database qualification is separately gated.
+See [hardware support](../docs/hardware.md) for current targets, tested devices,
+and features.
 
 ## Inspect or scaffold a target
 
@@ -92,7 +72,7 @@ remain under the invocation's `out/` directory.
 ## Discovery and installation
 
 Populate `[retail]` from observed USB and device records. Labels and volume names
-alone are insufficient. Keep unit identities out of examples and documentation.
+alone are insufficient.
 
 The automatic installer currently enables only the `ipod-directory` layout.
 Classic's `s5l-nor` path is separate. A target-specific maintenance writer must

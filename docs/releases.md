@@ -11,7 +11,7 @@ after 14 days. Public release assets remain on the repository's Releases page.
 | --- | --- |
 | `linnet-media-windows.zip` | Windows x64 Media Manager, including `Linnet Media.exe`, Python, Qt, media preparation helpers, and Apple database helpers |
 | `linnet-photo4g-p98.zip` | iPod Photo firmware |
-| `linnet-video5g-m25.zip` | iPod Video firmware; consult the target qualification guide for supported boards |
+| `linnet-video5g-m25.zip` | iPod Video firmware |
 | `linnet-ipod4g-q21.zip` | Monochrome fourth-generation iPod firmware |
 | `linnet-classic6g-n25.zip` | iPod Classic firmware and initial Boot setup; follow Media Manager's connection and button prompts |
 | `linnet-source.zip` | Repository source at the exact commit used for these builds, including build scripts and vendor notices |
@@ -30,12 +30,10 @@ folder containing `linnet-os`, `linnet-boot-standard`, and `linnet-boot-multiboo
 images and reports. Both bootloaders are Linnet software; the multiboot variant
 can also start a compatible Rockbox installation already on the device. The
 package does not install Rockbox. Packaging runs image verification and the installer's bundle
-validation. Release OS/Boot images exclude the developer transport and device
-serials. The Classic ZIP additionally includes a precompiled bootstrap template;
-Media Manager binds it to the inspected iPod, prompts for DFU, then owns the
-remaining Link, NOR and native Disk Mode installation steps. Compilation does
-not establish hardware qualification; unsupported storage and flash layouts
-stop setup before flashing. Consult the hardware and recovery guides for coverage.
+validation. Release OS/Boot images exclude the developer transport. The Classic
+ZIP additionally includes a precompiled bootstrap template; Media Manager binds it to the inspected iPod, prompts for DFU, then owns the
+remaining Link, NOR and native Disk Mode installation steps. See
+[hardware support](hardware.md) for tested configurations and compatibility.
 
 Firmware and Media Manager packages include licensed fallback fonts. Optional
 Apple Podium Sans is downloaded directly from Apple and extracted on the user's
@@ -45,7 +43,7 @@ Keep that font and the downloaded Apple firmware out of release assets and sourc
 ## Publish a version
 
 1. Review the successful build from the commit to release. Check the packaged
-   Windows app and the relevant hardware qualification results.
+   Windows app and firmware on the supported devices.
 2. Preserve the [GPLv3 license](../LICENSE), copyright notices, and vendor
    notices, and provide complete corresponding source alongside binaries.
    Confirm redistribution rights for included fonts and other assets before

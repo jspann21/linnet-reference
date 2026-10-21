@@ -25,14 +25,3 @@ receipts together in a separate local backup. They belong to the installation
 that produced them and may depend on absolute paths and pinned hashes.
 Relocation may require restoring those dependencies; do not edit hashes to make
 a different artifact fit a plan.
-
-## Before sharing
-
-Remove device/disk/volume serials, hardware GUIDs, personal paths, media titles,
-filenames, and library inventories from contributions and screenshots. Use
-clearly labeled placeholders in examples. Share model-level checks and limitations,
-not raw private receipts or firmware backups.
-
-Inspect the connected device before a firmware operation; a saved report does
-not prove what is installed now. See [Media Manager](media-manager.md),
-[Link](device-link.md), and [target qualification](../targets/README.md#qualification-record).

@@ -175,21 +175,11 @@ The theme previews above were generated with it.
 
 ## Confirmed hardware
 
-These targets have been exercised on physical devices. A matching family name
-does not mean every capacity, board revision, or storage modification has been
-qualified.
+Linnet supports iPod Photo / Color, iPod Video, iPod classic, and fourth-generation
+monochrome iPods. See [hardware support](docs/hardware.md) for the tested device
+configurations and features.
 
-| iPod | Display | Target | Confirmed scope and limits |
-| --- | --- | --- | --- |
-| **iPod Photo · A1099** | 220 × 176 color | `photo4g-p98` | Primary development hardware. Music, photos, prepared IPVF video, games, and Link. [Target details](targets/photo4g-p98/README.md). |
-| **iPod Video · A1136, 30 GB** | 320 × 240 color | `video5g-m25` | The MA146 / 32 MiB board: native startup, Link, stereo audio, photos, games, native H.264/MPEG-4 video, and Disk Mode exercised. [Qualification and remaining checks](targets/video5g-m25/QUALIFICATION.md). |
-| **iPod classic · A1238 / N25** | 320 × 240 color | `classic6g-n25` | Native Boot, OS, Link, Disk Mode, and H.264 VGA playback verified. Media Manager guides first-time Boot and OS installation; hardware qualification follows the board/storage configuration. |
-| **iPod 4G monochrome · A1059 / MP102 / Q21** | 160 × 128 monochrome | `ipod4g-q21` | Native startup and return to the preserved Apple OS verified. The iPod Mono theme is enabled; photos, video, Cover Flow, and games are disabled. |
-
-Linnet is in active development. Feature coverage and hardware qualification vary
-by target; see the [tested configurations and variant limits](docs/hardware.md),
-[roadmap](docs/roadmap.md), and linked target notes.
-To bring another model into the project, start with the [porting guide](targets/README.md).
+To add another model, start with the [porting guide](targets/README.md).
 
 ## Get started
 

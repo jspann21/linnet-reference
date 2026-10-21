@@ -1,7 +1,8 @@
 # iPod Photo A1099
 
 The `photo4g-p98` target has a 220 x 176 color display. Native games are included
-in its default system and appear under **Games** on Home.
+in its default system and appear under **Games** on Home. See
+[hardware support](../../docs/hardware.md) for tested configurations and features.
 
 ## Games
 

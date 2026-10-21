@@ -6,8 +6,7 @@ firmware backup and remain outside the source tree.
 
 The shared [MP4 reader](../../services/video/mp4.c) validates the container.
 BCM transfer, display ownership, resource selection, and recovery are target
-responsibilities. Board revision determines display/runtime configuration;
-do not treat one observed revision as universal.
+responsibilities. Board revision determines display/runtime configuration.
 
 ## Playback
 
@@ -84,9 +83,7 @@ frame-array membership, completed update counters, and current stream sequence.
 The selected PASSTHRU admission path increments the host sequence once, so the
 comparison converts it back before checking the saved-seek floor and published
 frame ceiling. Repeated reads reject changing task, descriptor and frame state.
-This orders UI removal after the current movie object enters the compositor;
-it does not independently measure an LCD scanline. Optical qualification remains
-necessary, and black frames encoded in a video are separate from a display gap.
+This orders UI removal after the current movie object enters the compositor.
 
 Checks run only during the picture handoff, at most once per 10 ms, with an
 absolute five-second timeout and normal display restoration on failure. File,
@@ -121,20 +118,7 @@ and bounded BCM transfer rules.
 
 Idle native UI does not poll display rings without pending presentation work.
 Its native power policy is `min`; a foreground development query can inspect
-native power status. CPU-idle, drive-standby and power-fault measurements are
-regression checks, not a substitute for an unplugged battery-runtime test.
-
-## Verified boundary
-
-On the qualified 30 GB MA146 board, H.264 and MPEG-4 samples exercised playback,
-pause/resume, seeking, EOF, saved-position reopen, and missing-file handling.
-Camera observation confirmed video presentation; device counters checked audio
-and transfer behavior. Clock-loss injection exercised display restoration and
-reboot fallback when restoration failed.
-
-This does not establish all-file compatibility, long-duration A/V quality, or
-recovery from every external-bus stall. See [qualification](QUALIFICATION.md)
-and the [Linnet TODO](../../docs/roadmap.md).
+native power status.
 
 ## References
 

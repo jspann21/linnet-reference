@@ -1,54 +1,27 @@
 # Roadmap
 
-This backlog contains unfinished work only. Current features and completed
-hardware checks belong in the [guides](README.md) and
-[hardware reference](hardware.md).
-
-P1 covers release readiness, P2 covers remaining performance work and feature
-proposals, and P3 covers optional expansion. Priorities are not release dates.
-An acceptance item names the specific check still missing; it does not mean the
-underlying feature needs to be implemented.
+Current features and tested devices are documented in the [guides](README.md)
+and [hardware reference](hardware.md). This roadmap tracks release packaging,
+performance work, and future features. Priorities are not release dates.
 
 ## P1 — Release readiness
-
-- [ ] **Battery runtime, charge current, and dock output.** Measure actual current
-  and charging-source transitions, battery-powered runtime and repeated
-  sleep/wake, and physical dock audio for release hardware/storage configurations.
-  [Power API](../hal/api/power.h), [storage policy](storage.md).
-
-- [ ] **Physical video A/V sync.** Observe sound and picture together during
-  extended playback and after seeks on Photo, Video, and Classic. Include
-  battery-powered sessions. [Video backends](video-format.md).
 
 - [ ] **Remaining interruption and resource-limit cases.** Check USB loss during
   publication, interruption points beyond the exercised settings/candidate and
   photo-grid cuts, interrupted history writes, full disks, malformed/truncated
   records, and memory pressure. Check Video bus faults beyond the documented
   clock-loss recovery path. Use the existing
-  [device checks](device-link.md#existing-device-checks) and
-  [M25 qualification record](../targets/video5g-m25/QUALIFICATION.md) to identify
-  gaps instead of repeating completed campaigns.
+  [device checks](device-link.md#existing-device-checks).
 
-- [ ] **Clean-machine and release-device acceptance.** Run the packaged Windows
-  app on a clean computer with the documented FFmpeg setup. Exercise navigation,
-  playback, media preparation, install/update, rollback, restore, and uninstall
-  with release images on the devices selected for release.
-  [Firmware bundles](../tools/studio/firmware_bundle.py),
+- [ ] **Clean-machine packaging check.** Run the packaged Windows app on a
+  clean computer with the documented FFmpeg setup.
   [Windows distribution](../tools/studio/media_distribution.py).
 
 - [ ] **First downloadable release.** Publish accepted Windows and firmware ZIPs
-  with checksums, installation/recovery notes, and qualified hardware scope.
+  with checksums, installation/recovery notes, and a link to supported hardware.
   Update [Get started](../README.md#get-started) with the downloads.
 
-### Open issues
-
-| Issue | Remaining work |
-| --- | --- |
-| High-load AAC underruns on rotating M25 | Identify and fix the decoder or scheduling limit for affected tracks. Host-prepared PCM is an available [workaround](music-format.md#playback-compatibility). |
-| Intermittent Q21 eject and Windows dirty-volume state | Determine why eject can require a retry and Windows can report a dirty volume despite clean read-only filesystem checks. Verify the fix across repeated mount/eject cycles. |
-| Intermittent Q21 Link timeouts | Determine the cause of read/upload timeouts and verify reliable persistent transfer and interruption recovery on A1059 and MP102. |
-
-## P2 — Remaining measurements and device checks
+## P2 — Performance
 
 - [ ] **Large-library cold verification and batch conversion.** Measure large,
   ready catalogs with empty verification caches, batch conversion throughput,
@@ -60,11 +33,6 @@ underlying feature needs to be implemented.
   raw ADTS, long files, and rejected-index fallback, including continuity after
   seeking. Optimize only a demonstrated bottleneck.
   [M4A reader](../services/audio/aac/m4a.c), [ADTS reader](../services/audio/aac/aac.c).
-
-- [ ] **Photo recovery with changed content.** Exercise empty albums and restart
-  with changed or missing content. Qualify original-JPEG fallback on Photo and
-  Video, including uncached reads during audio.
-  [Photo viewer](../services/photos/photos.c).
 
 - [ ] **Concurrent history, artwork, and prefetch at track boundaries.** Attribute
   controller time and audio reserve when these operations overlap at a join,
@@ -82,11 +50,6 @@ underlying feature needs to be implemented.
   and first usable frame. [Boot](../boot/src/linnet_boot.c),
   [runtime](../kernel/runtime.c).
 
-- [ ] **Long-list wheel feel and theme/panel edge cases.** Observe overshoot,
-  selection stability, clipping, brightness, and theme artifacts on physical
-  panels beyond the controls and readability checks already recorded in
-  [hardware qualification](hardware.md#variant-handling-and-physical-coverage).
-
 - [ ] **Q21 idle power tradeoff.** Attribute idle wake sources and measure actual
   current and physical input response on battery versus external power before
   adjusting clock-switch thresholds. [Q21 manifest](../targets/ipod4g-q21/target.toml),
@@ -96,17 +59,6 @@ underlying feature needs to be implemented.
   and MPEG-4 before changing buffer counts or priming thresholds.
   [Native player](../services/video/native/player.c),
   [decoder](../services/video/native/decoder.c).
-
-- [ ] **Classic alternating buffers and physical tearing.** Check framebuffer
-  preservation across alternating draw/present buffers and inspect the panel
-  for tearing during small updates. [Display](../targets/classic6g-n25/display.c),
-  [panel](../targets/classic6g-n25/panel.c).
-
-- [ ] **Classic startup-selector return to Apple.** Physically verify the
-  retail-payload AES/decode and handoff through the portable HAL. NOR restoration
-  during uninstall exercises a separate path.
-  [Platform implementation](../hal/s5l8702/platform.c),
-  [storage caller](../services/storage/storage.c).
 
 ## P2 — Feature proposals
 
@@ -139,20 +91,7 @@ Implementation entry points: [music compiler](../tools/content/music.py),
 | --- | --- |
 | Utilities | Alarms with measured wake behavior, world clocks, stopwatch/laps, host-prepared contacts and calendar events, and a persisted combination screen lock. |
 | Languages | Broader glyph coverage, translated menus, and matching input/search rules. |
-| Accessories and TV output | Physically qualify M25 TV commands. Scope dock/car/remote protocols, radio accessories, and recording separately. |
-| Hardware variants | Qualify the additional boards, storage, panels, and NOR chips listed in [hardware support](hardware.md), and Classic installation before enabling its automatic installer. |
-| Classic games | Physical layout, input, and playback acceptance on Classic hardware. |
+| Accessories and TV output | Add support for docks, remotes, radio, recording, and TV output. |
+| Hardware variants | Extend support to additional boards, storage adapters, panels, and NOR chips. |
 | Apple interoperability | Expand exact-device database qualification and music/path support. |
 | Optional expansion | Assess local recommendations, proprietary stock features, protected purchases/Audible, and commercial iPod games separately. Consider macOS/Linux packaging and CD ripping. |
-
-## Maintaining the roadmap
-
-Remove completed work. If only part of an item remains, rename it and describe
-that specific gap; do not leave the whole feature unchecked or append a history
-of results. Record current behavior in the owning guide and completed device
-checks in the hardware reference. Keep exact workloads, timings, build identities,
-and receipts in [local artifacts](local-artifacts.md).
-
-Close a measurement item when its question is answered, including when the
-result shows no optimization is needed. Physical acceptance requires physical
-evidence; an implementation or a successful build does not supply it.

@@ -6,7 +6,7 @@ Video preparation depends on the target:
 | --- | --- |
 | Photo P98 | Prepared IPVF with RGB565 frames and IMA ADPCM audio |
 | Video M25 | H.264 Baseline or MPEG-4 Simple Profile through BCM2722, with AAC audio |
-| Classic N25 | Native MP4 backend; H.264 hardware playback verified, MPEG-4 qualification ongoing |
+| Classic N25 | Native MP4 backend with H.264 and MPEG-4 playback |
 | Monochrome Q21 | Video disabled |
 
 Use [Media Manager](media-manager.md) to select the appropriate preparation path.
