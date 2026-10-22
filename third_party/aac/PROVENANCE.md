@@ -1,9 +1,9 @@
 # AAC-LC integration
 
-Imported from [Rockbox Photo](https://github.com/jspann21/rockbox-ipod-photo),
-commit `a0e9e0c700a51d685c704fa59a28dc859e6ee338`, from its `libfaad` and shared
+Based on [Rockbox](https://github.com/Rockbox/rockbox),
+commit `99c18f336c730f533d3b7d2d8951f5dc4a6da802`, from its `libfaad` and shared
 codec `lib` directories. [provenance.json](provenance.json) records original
-and adapted file hashes.
+and adapted file hashes, using CRLF checkout line endings.
 
 ## Licenses
 

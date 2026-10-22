@@ -1,4 +1,3 @@
-# Adapted from ../ipod/tools/ipvf/reference.py (Rockbox IPVF host tools).
 #!/usr/bin/env python3
 """Independent IPVF format constants and reference decoders.
 

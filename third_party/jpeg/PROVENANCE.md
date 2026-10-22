@@ -1,10 +1,10 @@
 # JPEG IDCT provenance
 
-The baseline 8 × 8 inverse DCT comes from Rockbox Photo:
+The baseline 8 × 8 inverse DCT comes from [Rockbox](https://github.com/Rockbox/rockbox):
 
 - Source: `apps/plugins/imageviewer/jpeg/jpeg_decoder.c`
-- Commit: `a0e9e0c700a51d685c704fa59a28dc859e6ee338`
-- Source SHA-256: `4dd6a9734d5b897fdca7da04db20896c5b027a277d8e101a26b56eb0b8ebcbe8`
+- Commit: `99c18f336c730f533d3b7d2d8951f5dc4a6da802`
+- Source SHA-256 (CRLF checkout line endings): `4dd6a9734d5b897fdca7da04db20896c5b027a277d8e101a26b56eb0b8ebcbe8`
 - License: [GPL-2.0-or-later](COPYING), with upstream notices retained.
 
 Upstream credits Jörg Hohensohn, Alexander Spyridakis, Thomas G. Lane, and

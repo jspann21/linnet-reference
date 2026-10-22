@@ -103,9 +103,8 @@ Target allowlists restrict availability. All themes preserve scene order and
 service bindings. Settings applies a selection immediately; optional theme
 state records persist it.
 
-**Album Colors** derives the palette from music artwork. Its histogram and
-contrast algorithm is adapted from Rockbox Photo; the original media pixels
-are not recolored.
+**Album Colors** derives the palette from music artwork using Linnet's histogram
+and contrast algorithm. The original media pixels are not recolored.
 
 Assets use repository-contained paths and bounded PPM inputs. Fonts are baked
 alpha glyphs with optional proportional advances. Keep each font's own notice

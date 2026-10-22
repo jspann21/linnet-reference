@@ -1,4 +1,3 @@
-# Adapted from ../ipod/tools/ipvf/validate.py (Rockbox IPVF host tools).
 #!/usr/bin/env python3
 """Strict streaming validator and reconstructor for IPVF files."""
 from __future__ import annotations

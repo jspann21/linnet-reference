@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
  * Accumulator ordering/register allocation adapted from Rockbox filter_process:
- * lib/rbcodec/dsp/dsp_arm.S, local rockbox-ipod-photo checkout
- * a0e9e0c700a51d685c704fa59a28dc859e6ee338, source SHA-256
+ * https://github.com/Rockbox/rockbox, lib/rbcodec/dsp/dsp_arm.S
+ * 99c18f336c730f533d3b7d2d8951f5dc4a6da802, CRLF source SHA-256
  * 4cd808d3e03981c5a4112fb7248626e5064dc7c8f7620b0d24cc003b3f76600b.
  * Copyright (C) 2006-2007 Thom Johansen
  * Copyright (C) 2010 Bertrik Sikken

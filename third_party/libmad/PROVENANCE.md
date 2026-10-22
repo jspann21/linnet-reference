@@ -1,9 +1,9 @@
 # libmad integration
 
-Imported from [Rockbox Photo](https://github.com/jspann21/rockbox-ipod-photo),
-commit `a0e9e0c700a51d685c704fa59a28dc859e6ee338`,
+Based on [Rockbox](https://github.com/Rockbox/rockbox),
+commit `99c18f336c730f533d3b7d2d8951f5dc4a6da802`,
 `lib/rbcodec/codecs/libmad`. [provenance.json](provenance.json) records original
-and adapted hashes. Original copyright notices and
+and adapted hashes, using CRLF checkout line endings. Original copyright notices and
 [GPL-2.0-or-later terms](COPYING) remain with the code.
 
 ## Linnet adaptations

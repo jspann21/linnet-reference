@@ -1591,7 +1591,7 @@ def encode(
                 raise RuntimeError("IPVF index offset does not follow media")
             if media_end_offset + len(index_data) > DEVICE_FILE_SIZE_MAX:
                 raise RuntimeError(
-                    "IPVF exceeds the current Rockbox 2-GiB file API; "
+                    "IPVF exceeds the supported 2-GiB file limit; "
                     "transparent segmentation is required"
                 )
             f.write(index_data)

@@ -1,8 +1,8 @@
 # FLAC decoder provenance
 
 `decoder.c`, `decoder.h`, and `COPYING` originate from
-[Rockbox Photo](https://github.com/jspann21/rockbox-ipod-photo), revision
-`a0e9e0c700`, at `lib/rbcodec/codecs/libffmpegFLAC/`.
+[Rockbox](https://github.com/Rockbox/rockbox), revision
+`99c18f336c730f533d3b7d2d8951f5dc4a6da802`, at `lib/rbcodec/codecs/libffmpegFLAC/`.
 Original notices and [LGPL-2.0-or-later terms](COPYING) remain intact.
 
 Linnet adds freestanding declarations, fixed LPC storage, predictor and bitstream

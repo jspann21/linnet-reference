@@ -181,18 +181,16 @@ static inline __attribute__((always_inline)) uint16_t text_mix(uint32_t ar,uint3
     uint32_t g=blend_div255(bg*255u+(ag-bg)*alpha+127u);
     return(uint16_t)(((rb>>13)&0xf800u)|(g<<5)|((rb>>8)&31u));
 }
-/* Album palette: bounded histogram and artwork-revision cache. Inspired by
- * RockboxPhoto's dominant/accent extraction and 250 ms transition approach.
- * https://github.com/jspann21/rockbox-ipod-photo/blob/main/apps/gui/skin_engine/skin_albumart_color.c
- * No storage access, allocations or floating point on the rendering path. */
+/* Linnet album palette: bounded histogram, artwork-revision cache and
+ * 250 ms transitions. No storage access, allocations or floating point
+ * on the rendering path. */
 static uint16_t album_from[LN_UI_COLOR_COUNT],album_target[LN_UI_COLOR_COUNT];
 static uint32_t album_revision,album_theme=UINT32_MAX,album_started;
 static bool album_fading,album_waiting;
 static uint32_t album_missing_at;
-/* Palette calculations adapted from Rockbox Photo skin_albumart_color.c.
- * Copyright (C) 2026 Rockbox contributors. GPL-2.0-or-later.
- * Keep 8-bit channel expansion, integer rounding and bucket traversal aligned
- * with that implementation; RGB565 packing happens after channel averaging. */
+/* Copyright (C) 2026 jspann21 and Linnet contributors. GPL-3.0-or-later.
+ * Palette calculations use 8-bit channel expansion, integer rounding and
+ * bounded bucket traversal; RGB565 packing happens after channel averaging. */
 struct album_rgb {uint32_t r,g,b;};
 static struct album_rgb album_unpack(uint16_t c){
     return (struct album_rgb){((c>>8)&248u)|(c>>13),((c>>3)&252u)|((c>>9)&3u),((c<<3)&248u)|((c>>2)&7u)};
@@ -295,9 +293,9 @@ static void album_extract(const struct ln_ui_asset*a,uint16_t*out){
         }else fg=(struct album_rgb){target,target,target};
     }
     uint16_t base=album_pack(bg),ink=album_pack(fg);
-    /* Rockbox maps canvas directly to dominant, text/selector to accent,
-     * selected text to dominant, separators to a quarter-strength accent.
-     * Its quiet widget surface is a 36/256 blend toward inverse canvas. */
+    /* Map canvas to dominant, text/selector to accent, selected text to
+     * dominant and separators to a quarter-strength accent. The widget
+     * surface is a 36/256 blend toward inverse canvas. */
     uint16_t panel=album_lerp(base,(uint16_t)~base,36u);
     out[LN_UI_BACKGROUND]=base;out[LN_UI_FOREGROUND]=ink;out[LN_UI_ACCENT]=ink;
     out[LN_UI_PANEL]=panel;out[LN_UI_MUTED]=ink;

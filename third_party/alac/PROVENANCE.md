@@ -1,11 +1,11 @@
 # ALAC decoder provenance
 
-Imported from [Rockbox Photo](https://github.com/jspann21/rockbox-ipod-photo),
-commit `a0e9e0c700a51d685c704fa59a28dc859e6ee338`,
+Based on [Rockbox](https://github.com/Rockbox/rockbox),
+commit `99c18f336c730f533d3b7d2d8951f5dc4a6da802`,
 `lib/rbcodec/codecs/libalac`. The original MIT notice remains in `alac.c`
 and [LICENSE](LICENSE).
 
-Original SHA-256 values:
+Source SHA-256 values (CRLF checkout line endings):
 
 | File | SHA-256 |
 | --- | --- |

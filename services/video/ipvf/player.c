@@ -448,10 +448,9 @@ static int decode_ipvf(void){
 #endif
         if(result<=0)return result;v.at=1;v.decode_at=v.decode_pixel=0;}
     const uint8_t*payload=compressed?(v.type==0u?(const uint8_t*)frame_slot(v.building):IPVF_LZ_SCRATCH):record_source()+16;uint16_t*out=frame_slot(v.building),*previous=frame_slot(v.previous);
-    /* Rockbox completes one retained record in one decoder pass. IPVF's
-     * target-native frame bound already limits this work; yielding for
-     * every 2,048 pixels and every rectangle row inflated small updates into
-     * dozens of runtime turns and prevented the audio cursor from advancing. */
+    /* Complete one retained record per decoder pass. The target-native
+     * frame bound limits this work and lets the audio cursor advance
+     * between records. */
     if(v.type==0u){
         /* Native pixels need no byte conversion. Full-frame LZ4 already
          * owns out; XOR may consume its residual in place. */
