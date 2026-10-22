@@ -67,6 +67,12 @@ bool ln_n25_panel_adopt(void) {
     panel_type=(LN_REG(0x3cf000c4u)>>4)&3u;
     phase=3;pixel=bar=bar_pixel=0;frame=0;color_bars=false;return true;
 }
+/* Panel initialization sequences/data adapted from stock Rockbox:
+ * firmware/target/arm/s5l8702/ipod6g/lcd-6g.c, revision
+ * 99c18f336c730f533d3b7d2d8951f5dc4a6da802.
+ * Copyright (C) 2009 Dave Chapman; GPL-2.0-or-later, see LICENSE.
+ * Register/gamma values describe the panels. Linnet's bounded polling, DMA
+ * ownership and deadline state machine implement their own transfer driver. */
 static bool configure(void) {
     /* N25 panel-1 electrical timing and gamma register values. These are
      * panel configuration data, separate from the S5L transfer driver. */

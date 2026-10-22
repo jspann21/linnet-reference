@@ -97,6 +97,8 @@ FILTER_LOOP .Lstereo,8
 
 
 /* Round a signed 64-bit accumulator by 16 with symmetric ties away. */
+/* The crossfeed and gain kernels below are Linnet implementations. The
+ * Rockbox accumulator/register adaptation credited above is in the filter. */
 .macro ROUND16 destination,lo,hi,scratch
     mov \scratch,\hi,lsr #31
     rsb \scratch,\scratch,#0x8000
