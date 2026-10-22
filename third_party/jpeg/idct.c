@@ -24,7 +24,7 @@
 *
 ****************************************************************************/
 
-#include <stdint.h>
+#include "services/photos/idct.h"
 /* Linnet: bounded baseline coefficients, signed64 intermediates and workspace.
  * Use multiplication for signed scaling; no overflowing signed shifts or
  * upstream short truncation. All intermediate magnitudes are below2^48 for
@@ -58,7 +58,7 @@ static unsigned range_limit(int64_t value){value+=128;return value<0?0:value>255
 
 
 
-void ln_jpeg_idct8(unsigned char* p_byte, int* inptr, int* quantptr, int skip_line)
+void ln_jpeg_idct8(uint8_t* p_byte, const int32_t* inptr, const uint16_t* quantptr, uint32_t skip_line)
 {
     int64_t tmp0, tmp1, tmp2, tmp3;
     int64_t tmp10, tmp11, tmp12, tmp13;

@@ -1,7 +1,7 @@
 #include "boot/include/linnet_bytes.h"
 #include "jpeg.h"
+#include "idct.h"
 #include "linnet_target.h"
-extern void ln_jpeg_idct8(unsigned char *,int *,int *,int);
 static const uint8_t zigzag[64]={0,1,8,16,9,2,3,10,17,24,32,25,18,11,4,5,
  12,19,26,33,40,48,41,34,27,20,13,6,7,14,21,28,35,42,49,56,
  57,50,43,36,29,22,15,23,30,37,44,51,58,59,52,45,38,31,39,46,53,60,61,54,47,55,62,63};
@@ -122,7 +122,7 @@ static int amplitude(struct ln_photo_jpeg*j,uint32_t n){
 }
 static int block_step(struct ln_photo_jpeg*j){
     struct ln_photo_jpeg_component*c=&j->channels[j->component];
-    int *b=j->coefficients;for(uint32_t i=0;i<64;++i)b[i]=0;
+    int32_t *b=j->coefficients;for(uint32_t i=0;i<64;++i)b[i]=0;
     int n=symbol(j,&j->huffman[0][c->dc]);if(n<0)return n;
     int dc=amplitude(j,(uint32_t)n);if(j->error)return j->error;
     c->predictor+=dc;if(c->predictor < -2048||c->predictor>2047)return fail(j,LN_PHOTO_JPEG_CORRUPT);b[0]=c->predictor;
@@ -133,8 +133,7 @@ static int block_step(struct ln_photo_jpeg*j){
         k+=run;if(k>=64)return fail(j,LN_PHOTO_JPEG_CORRUPT);
         b[zigzag[k++]]=amplitude(j,size);if(j->error)return j->error;
     }
-    int quant[64];for(uint32_t i=0;i<64;++i)quant[i]=j->quant[c->quant][i];
-    ln_jpeg_idct8(j->block_pixels,b,quant,8);
+    ln_jpeg_idct8(j->block_pixels,b,j->quant[c->quant],8);
     uint32_t bx=(j->block&(c->h-1u))*8u,by=(j->block>>(c->h-1u))*8u,stride=c->h*8u;
     for(uint32_t y=0;y<8;++y)for(uint32_t x=0;x<8;++x)j->planes[j->component][(by+y)*stride+bx+x]=j->block_pixels[y*8+x];
     if(++j->block==c->h*c->v){j->block=0;if(++j->component==j->components){j->component=0;j->phase=4;}}

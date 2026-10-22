@@ -12,6 +12,11 @@ Guido Vollbeding. Linnet retains transform ordering and constants, uses bounded
 signed 64-bit intermediates, and replaces negative signed shifts with
 multiplication.
 
+The integration implements Linnet's [IDCT interface](../../services/photos/idct.h)
+with immutable coefficient and 16-bit quantization inputs. The entropy driver
+passes its validated table directly, avoiding a 256-byte stack copy per block;
+the transform ordering, constants and rounding are unchanged.
+
 The bounded incremental marker/entropy driver in
 [services/photos/jpeg.c](../../services/photos/jpeg.c) is Linnet code.
 The upstream synchronous file parser was not imported. Prepared photos remain
