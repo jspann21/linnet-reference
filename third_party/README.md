@@ -7,6 +7,10 @@ Native integration flags and source selection live in
 each selected source and its extra compiler flags. The common OS build uses
 `-fwrapv` and freestanding `-fno-builtin` flags.
 
+Playback uses the Linnet [decoder interface](../services/music/decoder.h).
+Vendor types and fixed playback arenas are contained in its implementation and
+the codec facades; runtime callers do not include vendor decoder headers.
+
 | Dependency | Origin and license | Local adaptation and integration |
 | --- | --- | --- |
 | [AAC](aac/PROVENANCE.md) | FAAD and shared Rockbox codec helpers; GPL, LGPL, and Xiph BSD components have their respective notices under `aac/`. | Fixed-point AAC-LC and bounded decoder state; [`SOURCES`](aac/SOURCES) selects vendor files. ARM4 codec flags, include paths, and `-O3` are grouped in the build rule. |

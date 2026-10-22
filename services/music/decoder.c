@@ -1,4 +1,23 @@
 #include "decoder.h"
+#include "services/audio/mp3/mp3.h"
+#include "services/audio/flac/flac.h"
+#include "services/audio/alac/alac.h"
+#include "services/audio/aac/aac.h"
+#include "services/audio/aac/m4a.h"
+/* Keep incompatible vendor alignment macros inside the decoder integration.
+ * Already-declared codec structures retain their native layout. */
+#undef MEM_ALIGN_ATTR
+#include "services/audio/vorbis/vorbis.h"
+#undef MEM_ALIGN_ATTR
+union ln_decoder_workspace {struct ln_pcm pcm;struct ln_mp3 mp3;struct ln_flac flac;struct ln_alac alac;
+    struct ln_aac aac;struct ln_aac_m4a m4a;struct ln_vorbis vorbis;};
+/* Each codec initializes only its selected arena. Avoid clearing megabytes at
+ * boot; retain the same placement, alignment and two playback slots. */
+static union ln_decoder_workspace workspaces[LINNET_DECODER_SLOTS]
+    __attribute__((section(".media_workspace"),aligned(8)));
+union ln_decoder_workspace *ln_decoder_workspace_at(uint32_t slot)
+{return slot<LINNET_DECODER_SLOTS?&workspaces[slot]:0;}
+uint32_t ln_decoder_workspace_bytes(void){return sizeof workspaces[0];}
 static bool tag(const uint8_t *b,const char *s)
 {return b[0]==(uint8_t)s[0]&&b[1]==(uint8_t)s[1]&&b[2]==(uint8_t)s[2]&&b[3]==(uint8_t)s[3];}
 void ln_decoder_init(struct ln_decoder *d,union ln_decoder_workspace *workspace,ln_pcm_read_fn read,void *context,uint64_t size)
@@ -94,3 +113,25 @@ void ln_decoder_close(struct ln_decoder *d)
     if(d->kind==LN_DEC_VORBIS)ln_vorbis_close(&d->data->vorbis);
     d->kind=0;d->opened=false;
 }
+bool ln_decoder_cache_layout(const struct ln_decoder *d,struct ln_decoder_cache_layout *out)
+{
+    *out=(struct ln_decoder_cache_layout){0};
+    if(d->kind!=LN_DEC_AAC_M4A||!d->data)return false;
+    const struct ln_alac *m=&d->data->m4a.container;
+    out->media_start=m->mdat_start;out->media_end=m->mdat_end;out->tables_ready=m->opened;
+    out->tables[0]=(struct ln_decoder_range){m->chunks_offset,(uint64_t)m->chunks*m->chunk_width};
+    if(!m->default_size)out->tables[1]=(struct ln_decoder_range){m->sizes_offset,(uint64_t)m->packets*4u};
+    return true;
+}
+#if !defined(LINNET_PROFILE_RELEASE)
+bool ln_decoder_cache_status(const struct ln_decoder *d,struct ln_decoder_cache_status *out)
+{
+    *out=(struct ln_decoder_cache_status){0};
+    if(d->kind!=LN_DEC_AAC_M4A||!d->data)return false;
+    const struct ln_aac_m4a *a=&d->data->m4a;const struct ln_alac *m=&a->container;
+    out->request_offset=a->cache_request_offset;out->request_bytes=a->cache_request_bytes;
+    out->pending=a->cache_pending;out->phase=m->decode_phase;out->bank=a->cache_filling;
+    out->read_offset=m->read_offset;out->read_bytes=m->read_total;out->packet=m->packet;
+    return true;
+}
+#endif

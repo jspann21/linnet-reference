@@ -42,20 +42,15 @@ struct player_slot {
     bool cache_enabled,cache_initial,cache_pending,cache_pause_canceling,cache_codec_checked,cache_demand_pending;
 #endif
 };
-static struct player_slot slots[2];
+static struct player_slot slots[LINNET_DECODER_SLOTS];
 static bool (*file_configure)(uint32_t,struct ln_dsp_config *);
-/* Each codec initializes its own arena when selected. Keep only ownership and
- * validity in zeroed BSS, avoiding a second multi-megabyte clear during boot. */
-static union ln_decoder_workspace decoder_workspaces[2]
-    __attribute__((section(".media_workspace"),aligned(8)));
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
 static uint32_t video_firmware_generation;
 static bool video_firmware_owned;
-_Static_assert(sizeof decoder_workspaces[1]>=0xa0000u,"native resource cache exceeds idle decoder workspace");
 uint8_t *ln_player_video_firmware_memory(uint32_t *generation){
-    if(!generation||video_firmware_owned||ln_player_busy())return 0;
+    if(!generation||video_firmware_owned||ln_player_busy()||ln_decoder_workspace_bytes()<0xa0000u)return 0;
     video_firmware_owned=true;
-    *generation=video_firmware_generation;return (uint8_t *)&decoder_workspaces[1];
+    *generation=video_firmware_generation;return (uint8_t *)ln_decoder_workspace_at(1);
 }
 void ln_player_video_firmware_release(void){video_firmware_owned=false;}
 #define DECODER_WORKSPACE_CHANGED() (++video_firmware_generation)
@@ -162,16 +157,15 @@ static int cache_hit(struct player_slot *s,uint32_t at,uint32_t length){
 }
 static bool cache_metadata(const struct player_slot *s,uint32_t at){
     /* Indexed AAC seeks read small tables far from their media packets. */
-    if(s->decoder.kind!=LN_DEC_AAC_M4A)return false;
-    const struct ln_alac *m=&s->decoder.data->m4a.container;
-    return m->mdat_end>m->mdat_start&&
-        ((uint64_t)at<m->mdat_start||(uint64_t)at>=m->mdat_end);
+    struct ln_decoder_cache_layout layout;
+    return ln_decoder_cache_layout(&s->decoder,&layout)&&layout.media_end>layout.media_start&&
+        ((uint64_t)at<layout.media_start||(uint64_t)at>=layout.media_end);
 }
 static bool cache_retain_tables(struct player_slot *s,uint32_t replacing){
-    if(s->decoder.kind!=LN_DEC_AAC_M4A)return true;
-    const struct ln_alac *m=&s->decoder.data->m4a.container;
+    struct ln_decoder_cache_layout layout;
+    if(!ln_decoder_cache_layout(&s->decoder,&layout))return true;
     struct ln_fat32_file root;
-    if(!m->opened||!ln_storage_media_root(&root)||root.epoch!=s->media.epoch)return true;
+    if(!layout.tables_ready||!ln_storage_media_root(&root)||root.epoch!=s->media.epoch)return true;
     /* The rotating-media owner can retain tables in the unused STAGE prefix.
      * Copy only a complete resident range; oversized/nonresident tables keep
      * the ordinary read path. AAC's source reads include up to 16383 bytes
@@ -179,9 +173,9 @@ static bool cache_retain_tables(struct player_slot *s,uint32_t replacing){
     bool ready=true;
     for(uint32_t i=0;i<2u;i++){
         struct player_table_cache *t=&s->tables[i];
-        if((t->target&&t->valid==t->target)||(i&&m->default_size))continue;
-        uint64_t start=i?m->sizes_offset:m->chunks_offset;
-        uint64_t bytes=i?(uint64_t)m->packets*4u:(uint64_t)m->chunks*m->chunk_width;
+        if((t->target&&t->valid==t->target)||!layout.tables[i].bytes)continue;
+        uint64_t start=layout.tables[i].offset;
+        uint64_t bytes=layout.tables[i].bytes;
         if(start>UINT32_MAX||start>=s->media.size||bytes>s->media.size-start)continue;
         uint64_t tail=s->media.size-start-bytes;
         if(tail>16383u)tail=16383u;
@@ -228,11 +222,11 @@ static bool cache_begin(struct player_slot *s,uint32_t window,uint32_t at,bool i
     if(at>=s->media.size)return false;
     if(!cache_retain_tables(s,window))return false;
     uint64_t available=s->media.size-at;
-    if(s->decoder.kind==LN_DEC_AAC_M4A){
-        const struct ln_alac *m=&s->decoder.data->m4a.container;
-        if(m->mdat_end>m->mdat_start){
-            uint64_t end=(uint64_t)at<m->mdat_start?m->mdat_start:
-                (uint64_t)at<m->mdat_end?m->mdat_end:s->media.size;
+    struct ln_decoder_cache_layout layout;
+    if(ln_decoder_cache_layout(&s->decoder,&layout)){
+        if(layout.media_end>layout.media_start){
+            uint64_t end=(uint64_t)at<layout.media_start?layout.media_start:
+                (uint64_t)at<layout.media_end?layout.media_end:s->media.size;
             uint64_t region=end-(uint64_t)at;
             if(region<minimum)region=minimum;
             if(region<available)available=region;
@@ -335,8 +329,9 @@ static int read_media(void *context,uint64_t offset,uint8_t *buffer,uint32_t len
         uint32_t begin=at;
         if(s->cache_initial&&s->decoder.kind==LN_DEC_AAC_M4A&&!cache_metadata(s,at)){
             begin=at&~(131072u-1u);
-            const struct ln_alac *m=&s->decoder.data->m4a.container;
-            if(m->mdat_end>m->mdat_start&&begin<m->mdat_start)begin=(uint32_t)m->mdat_start;
+            struct ln_decoder_cache_layout layout;
+            if(ln_decoder_cache_layout(&s->decoder,&layout)&&layout.media_end>layout.media_start&&
+               begin<layout.media_start)begin=(uint32_t)layout.media_start;
         }
         if(!cache_begin(s,window,begin,s->cache_initial,length+(at-begin)))
             return cache_demand_read(s,at,buffer,length);
@@ -414,7 +409,7 @@ static int slot_step(struct player_slot *s){
         if(interrupted())return 0;
         if(r<0||(s->expected&&s->expected!=s->media.size))return -1;
         DECODER_WORKSPACE_CHANGED();
-        ln_decoder_init(&s->decoder,&decoder_workspaces[s-slots],read_media,s,s->media.size);s->phase=SLOT_DECODE;return 0;
+        ln_decoder_init(&s->decoder,ln_decoder_workspace_at((uint32_t)(s-slots)),read_media,s,s->media.size);s->phase=SLOT_DECODE;return 0;
     }
     if(s->phase==SLOT_EOF)return 2;if(s->phase!=SLOT_DECODE||s->buffered)return 0;
     uint32_t frames=0;
@@ -547,7 +542,7 @@ bool ln_player_open_file(const struct ln_fat32_file *file,bool (*configure)(uint
     if(!file||(file->attributes&24u)||!file->size||!ln_player_open("/FILE"))return false;
     struct player_slot*s=&slots[0];s->media=*file;file_configure=configure;
     DECODER_WORKSPACE_CHANGED();
-    ln_decoder_init(&s->decoder,&decoder_workspaces[0],read_media,s,file->size);s->phase=SLOT_DECODE;
+    ln_decoder_init(&s->decoder,ln_decoder_workspace_at(0),read_media,s,file->size);s->phase=SLOT_DECODE;
     return true;
 }
 bool ln_player_prepare_next_configured(const char *name,uint64_t bytes,uint32_t token,
@@ -852,13 +847,13 @@ void ln_player_cache_diagnostics(uint32_t words[32]){
         words[18u+i*4u]=s->cache[i].target;words[19u+i*4u]=s->cache[i].filling;
     }
     words[27]=(s->decoder.kind<<16)|(s->phase<<24);
-    if(s->decoder.kind==LN_DEC_AAC_M4A&&s->decoder.data){
-        const struct ln_aac_m4a *a=&s->decoder.data->m4a;const struct ln_alac *m=&a->container;
-        words[10]=(uint32_t)m->mdat_start;words[11]=(uint32_t)(m->mdat_start>>32);
-        words[12]=(uint32_t)m->mdat_end;words[13]=(uint32_t)(m->mdat_end>>32);
-        words[24]=(uint32_t)a->cache_request_offset;words[25]=(uint32_t)(a->cache_request_offset>>32);
-        words[26]=a->cache_request_bytes;words[27]|=(uint32_t)a->cache_pending|((m->decode_phase&15u)<<4)|((uint32_t)a->cache_filling<<8);
-        words[28]=(uint32_t)m->read_offset;words[29]=(uint32_t)(m->read_offset>>32);words[30]=m->read_total;words[31]=m->packet;
+    struct ln_decoder_cache_layout layout;struct ln_decoder_cache_status status;
+    if(ln_decoder_cache_layout(&s->decoder,&layout)&&ln_decoder_cache_status(&s->decoder,&status)){
+        words[10]=(uint32_t)layout.media_start;words[11]=(uint32_t)(layout.media_start>>32);
+        words[12]=(uint32_t)layout.media_end;words[13]=(uint32_t)(layout.media_end>>32);
+        words[24]=(uint32_t)status.request_offset;words[25]=(uint32_t)(status.request_offset>>32);
+        words[26]=status.request_bytes;words[27]|=(uint32_t)status.pending|((status.phase&15u)<<4)|(status.bank<<8);
+        words[28]=(uint32_t)status.read_offset;words[29]=(uint32_t)(status.read_offset>>32);words[30]=status.read_bytes;words[31]=status.packet;
     }
 }
 #endif

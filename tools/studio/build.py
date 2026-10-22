@@ -400,10 +400,19 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         add_sources([ROOT/'services/audio/mp3/mp3.c'], "MP3 service", backend_flags['mp3'])
         add_sources([ROOT/'services/music/history.c'], "music history")
         add_sources([ROOT/'services/music/history_pages.c',ROOT/'services/music/journal_pages.c'], "music history pages")
-        add_sources([ROOT/'services/audio/flac/flac.c',ROOT/'third_party/flac/decoder.c'], "FLAC backend")
-        add_sources([ROOT/'services/audio/alac/alac.c',ROOT/'third_party/alac/alac.c'], "ALAC backend")
+        add_sources([ROOT/'services/audio/flac/flac.c'], "FLAC service")
+        add_sources([ROOT/'third_party/flac/decoder.c'], "FLAC backend")
+        add_sources([ROOT/'services/audio/alac/alac.c'], "ALAC service")
+        add_sources([ROOT/'third_party/alac/alac.c'], "ALAC backend")
         add_sources([ROOT/'services/audio/aac/aac.c',ROOT/'services/audio/aac/m4a.c'], "AAC service", backend_flags['aac'])
-        add_sources([ROOT/'third_party/aac'/name for name in (ROOT/'third_party/aac/SOURCES').read_text().splitlines() if name], "third_party/aac/SOURCES", backend_flags['aac'])
+        aac_sources = [ROOT/'third_party/aac'/name for name in (ROOT/'third_party/aac/SOURCES').read_text().splitlines() if name]
+        add_sources([source for source in aac_sources if source.parent.name != 'lib'],
+                    "third_party/aac/SOURCES (FAAD)", backend_flags['aac'])
+        # Shared transforms remain vendored with their provenance and retain
+        # the same ARM tuning. Link once for both AAC and Tremor; they are not
+        # Linnet runtime code or a second copy of either decoder.
+        add_sources([source for source in aac_sources if source.parent.name == 'lib'],
+                    "third_party/aac/SOURCES (shared AAC/Vorbis FFT/MDCT)", backend_flags['aac'])
         add_sources([ROOT/'services/audio/vorbis'/name for name in ('vorbis.c','pool.c','division.c')], "Vorbis service", backend_flags['vorbis'])
         add_sources([ROOT/'third_party/vorbis'/name for name in ('bitwise.c','block.c','codebook.c','floor0.c','floor1.c','info.c','mapping0.c','registry.c','res012.c','sharedbook.c','synthesis.c','window.c')], "Vorbis backend", backend_flags['vorbis'])
         add_sources([ROOT/'third_party/libmad'/name for name in ('bit.c','frame.c','huffman.c','layer12.c','layer3.c','stream.c','synth.c','imdct_l_arm.S','synth_full_arm.S')], "MP3 backend", backend_flags['mp3'])

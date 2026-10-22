@@ -30,6 +30,8 @@ the current paths and required read ownership.
 [SOURCES](SOURCES) selects vendor code. Current flags and includes are owned by
 [build.py](../../tools/studio/build.py), not copied into this document. Shared
 FFT/MDCT symbols must be linked once when another codec uses them.
+The build report identifies FAAD sources separately from the shared AAC/Vorbis
+transforms, preserving the same compiler flags and one linked implementation.
 
 APIs: [raw/ADTS AAC](../../services/audio/aac/aac.h),
 [M4A AAC](../../services/audio/aac/m4a.h), and
