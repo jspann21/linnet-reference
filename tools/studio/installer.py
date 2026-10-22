@@ -34,18 +34,18 @@ REINSTALL_SYSTEM_ENTRIES = {
     "WORK.BIN", "RBPATH.CFG", "APPLE.CFG", "APPLE.BIN", "RECOVERY", "LNETOLD0",
 }
 INSTALLATION_METHODS = {
-    "rockbox-loader": dict(
-        label="Use the existing Rockbox bootloader",
-        detail="Replace Rockbox’s boot file reversibly; Linnet depends on the Rockbox bootloader.",
-        strategy="rockbox-file", boot_selector="none", requires_admin=False),
     "native-preserve": dict(
         label="Linnet with Apple fallback",
         detail="Linnet starts normally; hold MENU during power-on to choose Linnet or the preserved Apple software.",
         strategy="native-directory", boot_selector="none", requires_admin=True),
     "native-selector": dict(
-        label="Keep existing Rockbox available at startup",
-        detail="Hold MENU during power-on to choose Linnet, Apple software, or the verified Rockbox image.",
+        label="Native Linnet with Apple and Rockbox fallback",
+        detail="Linnet starts normally; hold MENU during power-on to choose Linnet, Apple software, or the verified Rockbox image.",
         strategy="native-directory", boot_selector="rockbox", requires_admin=True),
+    "rockbox-loader": dict(
+        label="Use the existing Rockbox bootloader",
+        detail="Replace Rockbox’s boot file reversibly; Linnet depends on the Rockbox bootloader.",
+        strategy="rockbox-file", boot_selector="none", requires_admin=False),
 }
 
 
@@ -173,7 +173,6 @@ def _installation_methods(action, rockbox, marker, resume):
         option.update(id=method_id, enabled=enabled, detail=detail)
         options.append(option)
     default = selected if selected in INSTALLATION_METHODS else (
-        "rockbox-loader" if rockbox.get("compatible") and rockbox.get("loader_available") else
         "native-selector" if selector_compatible else "native-preserve")
     return options, default
 
@@ -549,9 +548,6 @@ def assess(identity, *, _validated_identity=False):
     elif not install_spec["enabled"]:
         action, strategy = "unsupported", None
         summary = "This target is recognized, but installation is not enabled for it."
-    elif rockbox["compatible"]:
-        action, strategy = "install", "rockbox-file"
-        summary = "Choose whether Linnet uses Rockbox’s loader, boots natively, or offers both systems at startup."
     else:
         action, strategy = "install", "native-directory"
         summary = "Ready for a native, reversible installation with an original firmware backup."
@@ -726,7 +722,7 @@ def _run_build(arguments):
 
 
 def build_artifacts(identity, progress=lambda _message: None, build="user",
-                    installation_method="rockbox-loader", *, boot_profile=None):
+                    installation_method="native-preserve", *, boot_profile=None):
     if build not in ("user", "dev"):
         raise ValueError("installer build must be user or dev")
     if installation_method not in INSTALLATION_METHODS:
@@ -776,6 +772,8 @@ def _validate_artifacts(identity, artifacts):
     if len(os_data) > spec["os_capacity_bytes"] or len(boot_data) > spec["os_capacity_bytes"]:
         raise ValueError("installer image exceeds the target OS capacity")
     build = artifacts.get("build")
+    # Old artifact records predate method selection and used the file loader.
+    # New builders and bundle consumers always record the selected method.
     installation_method = artifacts.get("installation_method", "rockbox-loader")
     if installation_method not in INSTALLATION_METHODS:
         raise ValueError("installer artifact installation method is invalid")
@@ -1931,7 +1929,8 @@ def main():
         if name in ("install", "upgrade-boot"):
             command.add_argument("--build", choices=("user", "dev"), default="user")
             if name == "install":
-                command.add_argument("--method", choices=tuple(INSTALLATION_METHODS))
+                command.add_argument("--method", choices=tuple(INSTALLATION_METHODS),
+                                     help="default: native for fresh installs, saved method for reinstall/resume")
             source = command.add_mutually_exclusive_group()
             source.add_argument("--firmware", type=Path, help="prebuilt firmware ZIP")
             source.add_argument("--from-source", action="store_true", help="compile fresh firmware locally")

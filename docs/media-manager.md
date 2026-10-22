@@ -116,6 +116,12 @@ use the smaller User Boot with either User or Developer OS to fit the NOR archiv
 | Native Linnet with Apple fallback | Boots Linnet directly. Hold **MENU** during power-on to choose the preserved Apple OS. Existing Rockbox files remain dormant. |
 | Native startup selector | Adds a compatible Rockbox image to the native chooser alongside Linnet and Apple OS. |
 
+Fresh installations default to native Linnet, including when a Rockbox bootloader
+is installed. A verified compatible Rockbox image is kept available in the native
+startup chooser; otherwise Linnet uses Apple fallback. Reinstalls and resumes
+retain their saved method. You can explicitly select the existing Rockbox loader
+when it is available.
+
 Only methods valid for the detected installation are available. Detection of
 iPodLinux or other files does not imply a supported boot path.
 

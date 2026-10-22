@@ -24,8 +24,8 @@ def register_primary(commands):
             entry.add_argument("--build", choices=("user", "dev"), default="user",
                                help="OS build to install (default: user)")
             if action == "install":
-                entry.add_argument("--method", choices=("rockbox-loader", "native-preserve", "native-selector"),
-                                   help="boot installation method (default: recommended detected method)")
+                entry.add_argument("--method", choices=("native-preserve", "native-selector", "rockbox-loader"),
+                                   help="boot installation method (default: native for fresh installs, saved method for reinstall/resume)")
             source = entry.add_mutually_exclusive_group()
             source.add_argument("--firmware", type=Path, help="prebuilt firmware ZIP")
             source.add_argument("--from-source", action="store_true", help="compile fresh firmware locally")

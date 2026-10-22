@@ -31,6 +31,9 @@ The firmware folder contains Linnet OS and two Linnet bootloader variants:
 - standard: Linnet with Apple software fallback.
 - multiboot: also allows starting a compatible, existing Rockbox installation.
 Both bootloaders are Linnet software. This package does not install Rockbox.
+Fresh installations use native Linnet by default, keeping a verified Rockbox
+image available in the startup chooser when compatible. Reinstalls and resumes
+retain the saved installation method; the existing Rockbox loader is optional.
 
 For a fresh iPod Classic, Media Manager also installs Linnet Boot. Follow its
 on-screen connection instructions; it detects the device's mode and continues
