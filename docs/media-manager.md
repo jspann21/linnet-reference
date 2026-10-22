@@ -130,6 +130,8 @@ It preserves media, partitions, and the original Apple payload, and saves
 recovery backups under `%LOCALAPPDATA%/Linnet/Installer`. Firmware hashes provide
 integrity checks, not signature authentication.
 
+### Reinstall or remove Linnet
+
 **Fresh reinstall** uses the saved recovery record, replaces system files, and
 retains settings and prepared media. **Restore previous boot** restores the
 recorded predecessor while leaving Linnet files and media in place. **Remove

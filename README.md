@@ -199,8 +199,18 @@ When release packages are available:
 
 The native installer preserves the existing media and Apple firmware and saves
 recovery backups. It requests Windows administrator approval for the required
-device writes. With native Linnet and Apple fallback installed, hold **MENU**
-during power-on to choose the preserved Apple software.
+device writes.
+
+### Choose what starts
+
+Hold **MENU** while the iPod starts to open Linnet's boot selection menu. Turn
+the wheel to choose **Linnet**, **Apple iPod software**, or a compatible installed
+**Rockbox**, then press the center button to start it. The menu shows the systems
+available on your native Linnet installation.
+
+To change the automatic startup choice, open **iPod setup → Startup** in Media
+Manager, choose a system under **Start automatically**, and select **Save**. You
+can change the default without reinstalling Linnet.
 
 ### Add your library
 
@@ -212,6 +222,14 @@ On the iPod, a short **Play/Pause** press toggles playback or a photo slideshow.
 Hold **Play/Pause alone for two seconds** to shut down; the Hold switch locks input.
 
 [Installation, media preparation, and recovery →](docs/media-manager.md)
+
+### Uninstall Linnet
+
+In Media Manager, open **iPod setup → Remove Linnet OS**. This restores the saved
+previous startup software and removes Linnet's system files, settings, and
+prepared libraries. Your **Music**, **Photos**, **Videos**, and **Notes** folders
+remain. Follow the [removal instructions](docs/media-manager.md#reinstall-or-remove-linnet)
+for recovery requirements and the Classic's additional steps.
 
 ## Develop on Windows
 
