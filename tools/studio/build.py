@@ -397,7 +397,6 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         add_sources([ROOT/'services/music/decoder.c'], "music decoder")
         add_sources([ROOT/'services/audio/dsp.c'], "audio DSP", ['-O2'])
         add_sources([ROOT/'services/audio/dsp_arm.S'], "audio DSP assembly")
-        add_sources([ROOT/'third_party/dsp/filter_arm.S'], "DSP filter backend")
         add_sources([ROOT/'services/audio/mp3/mp3.c'], "MP3 service", backend_flags['mp3'])
         add_sources([ROOT/'services/music/history.c'], "music history")
         add_sources([ROOT/'services/music/history_pages.c',ROOT/'services/music/journal_pages.c'], "music history pages")
@@ -483,7 +482,6 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     if kind == 'os' and ui_report['features'].get('photos', True):
         flags += ['-DLINNET_PHOTOS=1']
         add_sources(sorted((ROOT/'services/photos').glob('*.c')), "Photos service")
-        add_sources(sorted((ROOT/'third_party/jpeg').glob('*.c')), "JPEG backend")
     seen_sources = {}
     source_selections = []
     for source, origin, extra_flags in zip(sources, source_origins, source_flags):

@@ -20,7 +20,6 @@ the codec facades; runtime callers do not include vendor decoder headers.
 | [ALAC](alac/PROVENANCE.md) | libalac from Rockbox; [MIT](alac/LICENSE). | Exact-length bit reader and bounded mono/stereo decoding. The build links the vendor decoder with Linnet's ALAC wrapper and M4A demux. |
 | [h264bsd](h264bsd/LICENSE.md) | Android Open Source Project H.264 decoder, as stated in its [Apache-2.0 notice](h264bsd/LICENSE.md); no exact upstream revision is recorded here. | Linnet's native decoder wrapper and compatibility header constrain the feature set. The build selects H.264 C sources with `-O3`, compatibility include, and narrow warning exceptions on native MP4 targets. |
 | [PacketVideo MPEG-4](pvmp4/NOTICE) | AOSP OpenCORE, with exact revision and security backports in [UPSTREAM](pvmp4/UPSTREAM); [Apache-2.0 license](pvmp4/LICENSE) and [notice](pvmp4/NOTICE). | Freestanding C++ compatibility and bounded decoder integration; [SOURCES](pvmp4/SOURCES) selects vendor files. |
-| [JPEG IDCT](jpeg/PROVENANCE.md) | Rockbox JPEG inverse DCT; [GPL-2.0-or-later](jpeg/COPYING). | Bounded inverse DCT and a new incremental Linnet marker/entropy driver. The build includes the JPEG sources only when Photos is enabled. |
 
 The source lists and per-backend flags are part of build identity. Keep notices
 with imported files, update the corresponding provenance record when changing

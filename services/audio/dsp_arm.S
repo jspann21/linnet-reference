@@ -1,8 +1,76 @@
-/* Linnet crossfeed and gain kernels. */
+/* Linnet fixed-point audio kernels. */
 .syntax unified
 .cpu arm7tdmi
 .arm
 .text
+/* Direct-form biquad from dsp.c: five signed products, one Q30 rounding,
+ * then a Q8 headroom clamp. Histories advance only after their products.
+ * r0=coefficients, r1=history, r2=samples, r3=count; stack=stride,clips.
+ * The internal caller supplies stride 1 or 2 and stable coefficients.
+ * One end-pointer loop handles both layouts without duplicating the kernel.
+ */
+.align 2
+.global ln_dsp_filter_arm
+.type ln_dsp_filter_arm,%function
+ln_dsp_filter_arm:
+    cmp r3,#0
+    bxeq lr
+    push {r4-r11,lr}
+    sub sp,sp,#12
+    str r1,[sp]
+    ldr r12,[sp,#52]
+    str r12,[sp,#4]
+    ldm r0,{r4-r8}
+    /* Stable coefficients exclude INT_MIN, so feedback negation is exact. */
+    rsb r7,r7,#0
+    rsb r8,r8,#0
+    ldm r1,{r9-r12}
+    mov r0,r2
+    ldr r2,[sp,#48]
+    mul r1,r2,r3
+    add r1,r0,r1,lsl #2
+    mov r2,r2,lsl #2
+.Lbiquad:
+    smull lr,r3,r6,r10
+    smlal lr,r3,r5,r9
+    mov r10,r9
+    ldr r9,[r0]
+    smlal lr,r3,r4,r9
+    smlal lr,r3,r8,r12
+    mov r12,r11
+    smlal lr,r3,r7,r11
+    /* Bias 2^29 for nonnegative sums, 2^29-1 for negative sums. */
+    mov r11,r3,lsr #31
+    rsb r11,r11,#0x20000000
+    adds lr,lr,r11
+    adc r3,r3,#0
+    mov r11,lr,lsr #30
+    orr r11,r11,r3,lsl #2
+    cmp r11,#0x08000000
+    bgt .Lbiquad_high
+    cmn r11,#0x08000000
+    bge .Lbiquad_store
+    mov r11,#0xf8000000
+    b .Lbiquad_clip
+.Lbiquad_high:
+    mov r11,#0x08000000
+.Lbiquad_clip:
+    ldr lr,[sp,#4]
+    ldr r3,[lr]
+    cmn r3,#1
+    addne r3,r3,#1
+    str r3,[lr]
+.Lbiquad_store:
+    str r11,[r0],r2
+    cmp r0,r1
+    bne .Lbiquad
+    ldr r0,[sp]
+    stm r0,{r9-r12}
+    add sp,sp,#12
+    pop {r4-r11,lr}
+    bx lr
+.size ln_dsp_filter_arm,.-ln_dsp_filter_arm
+
 /* Round a signed 64-bit accumulator by 16 with symmetric ties away. */
 .macro ROUND16 destination,lo,hi,scratch
     mov \scratch,\hi,lsr #31
