@@ -15,8 +15,7 @@ and adapted hashes, using CRLF checkout line endings. Original copyright notices
 - Requantization-cache validity is tracked separately from values; synthesis stays out of line.
 - `MAD_OPTION_SCAN` maintains Layer III reservoir state while skipping spectral work during resume.
 
-The [MP3 facade](../../services/audio/mp3/mp3.c) exposes Layer III. Upstream
-Layer I/II objects remain linked for core dispatch dependencies. Current source
+The [MP3 facade](../../services/audio/mp3/mp3.c) exposes Layer III. Current source
 selection and flags live in [build.py](../../tools/studio/build.py).
 
 ## Playback contract

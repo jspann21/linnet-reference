@@ -315,6 +315,7 @@ int ln_mp3_decode(struct ln_mp3 *d,int16_t *output,uint32_t capacity,uint32_t *f
     int frame_result=mad_frame_decode(&d->frame,&d->stream);
     MP3_TIME_END(frame_started,timing.frame_calls,timing.frame_us,timing.frame_max_us);
     if(frame_result){
+        if(d->stream.error==MAD_ERROR_UNSUPPORTED_LAYER)return fail(d,LN_MP3_UNSUPPORTED);
         if(d->stream.error==MAD_ERROR_BUFLEN){
             if(d->eof)return finish(d);
             d->need_input=true;return 0;

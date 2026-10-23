@@ -4,18 +4,6 @@
   "source_directory": "lib/rbcodec/codecs/libmad",
   "files": [
     {
-      "file": "bit.c",
-      "source_sha256": "2f5fdaf3823dd8aa930ec85c382a1ae04955b2f191b8f13ae66678ebc89594c8",
-      "import_sha256": "2f5fdaf3823dd8aa930ec85c382a1ae04955b2f191b8f13ae66678ebc89594c8",
-      "modified": false
-    },
-    {
-      "file": "bit.h",
-      "source_sha256": "049d982639c2b3b1cfc3e8c790c93501b959ddc5a7f1e59fb2a4db40514a10c3",
-      "import_sha256": "049d982639c2b3b1cfc3e8c790c93501b959ddc5a7f1e59fb2a4db40514a10c3",
-      "modified": false
-    },
-    {
       "file": "COPYING",
       "source_sha256": "da0eca0fb517ac939d167924c9d4b3f8750a6b7191932ef2cb145acfa624ac7e",
       "import_sha256": "da0eca0fb517ac939d167924c9d4b3f8750a6b7191932ef2cb145acfa624ac7e",
@@ -36,7 +24,7 @@
     {
       "file": "frame.c",
       "source_sha256": "e219d963761fe3b68121bb746c3b48016ec70513a5716e52b2391cfeef133d15",
-      "import_sha256": "27653fa122f9248c21ba90fa6a4ca10b811bcd563812fe6bf7be7563503131f9",
+      "import_sha256": "2bf85af5cf2a655fb86cc6988b15dbb8d49ebf7dc435aaf51270ed6f324c17b5",
       "modified": true
     },
     {
@@ -70,18 +58,6 @@
       "modified": false
     },
     {
-      "file": "layer12.c",
-      "source_sha256": "b15d0faf03b181d413a89c1726d6dfcb98b9058818ffb59f3e75b32feb42ba6a",
-      "import_sha256": "bcbf8abd53ed6c85243b41e8d9728fecc973b7edf89ef55b1230156360bb43d5",
-      "modified": true
-    },
-    {
-      "file": "layer12.h",
-      "source_sha256": "c15270fa964bb0cb0bdd588204a9b016875b7133aa997603e22474cd246f60c2",
-      "import_sha256": "c15270fa964bb0cb0bdd588204a9b016875b7133aa997603e22474cd246f60c2",
-      "modified": false
-    },
-    {
       "file": "layer3.c",
       "source_sha256": "bf69354414c9be0c3bb3574baba8ec155838b612da24e3b8c7e9b3a7dd9340e7",
       "import_sha256": "24ff823ec158eb0367b2991ff85141a5035fe522233d4f8a40f7b73027c1dad1",
@@ -106,34 +82,22 @@
       "modified": false
     },
     {
-      "file": "qc_table.dat",
-      "source_sha256": "f004e1817cf0a1e5424348b15409b12b28636e5635b9312087428ff66c4d4b9a",
-      "import_sha256": "f004e1817cf0a1e5424348b15409b12b28636e5635b9312087428ff66c4d4b9a",
-      "modified": false
-    },
-    {
       "file": "rq_table.dat",
       "source_sha256": "caffecbae8d81003b57fbacd52096c77dba142f41698e19aa46067a63078aaa8",
       "import_sha256": "caffecbae8d81003b57fbacd52096c77dba142f41698e19aa46067a63078aaa8",
       "modified": false
     },
     {
-      "file": "sf_table.dat",
-      "source_sha256": "e199e6986507671f2a63cc8bc128ca98432134770eded057f2b6765dfe17035b",
-      "import_sha256": "e199e6986507671f2a63cc8bc128ca98432134770eded057f2b6765dfe17035b",
-      "modified": false
-    },
-    {
       "file": "stream.c",
       "source_sha256": "fb8c4a4385834d1266a4ce1cef1f78d0cefaefda6be8e76af9817466b23ee99d",
-      "import_sha256": "fb8c4a4385834d1266a4ce1cef1f78d0cefaefda6be8e76af9817466b23ee99d",
-      "modified": false
+      "import_sha256": "a06d84c191191e32aa81e575a84c20ff1701269518aa5ec899bcfd42b1d62254",
+      "modified": true
     },
     {
       "file": "stream.h",
       "source_sha256": "ada008870fb85de052779f99e7963a497f19d940af9c620fa727b22a944a906b",
-      "import_sha256": "ada008870fb85de052779f99e7963a497f19d940af9c620fa727b22a944a906b",
-      "modified": false
+      "import_sha256": "f13cdafa7f385fc94875372f792108cdde7c48ba5572cf16e8aec076b594e2c1",
+      "modified": true
     },
     {
       "file": "synth.c",

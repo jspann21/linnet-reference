@@ -29,7 +29,6 @@
 # include "bit.h"
 # include "stream.h"
 # include "frame.h"
-# include "layer12.h"
 # include "layer3.h"
 # include "codeclib.h"
 
@@ -52,13 +51,6 @@ unsigned long const bitrate_table[5][15] = {
 
 static
 unsigned int const samplerate_table[3] = { 44100, 48000, 32000 };
-
-static
-int (*const decoder_table[3])(struct mad_stream *, struct mad_frame *) = {
-  mad_layer_I,
-  mad_layer_II,
-  mad_layer_III
-};
 
 /*
  * NAME:        header->init()
@@ -454,32 +446,24 @@ int mad_frame_decode(struct mad_frame *frame, struct mad_stream *stream)
       mad_header_decode(&frame->header, stream) == -1)
     goto fail;
 
+  /* Linnet exposes Layer III only. Reject other layers before any spectral
+   * decoding; the facade maps this distinct error to UNSUPPORTED. */
+  if (frame->header.layer != MAD_LAYER_III) {
+    stream->error = MAD_ERROR_UNSUPPORTED_LAYER;
+    goto fail;
+  }
+
   /* audio_data() */
 
   frame->header.flags &= ~MAD_FLAG_INCOMPLETE;
 
-  if (decoder_table[frame->header.layer - 1](stream, frame) == -1) {
+  if (mad_layer_III(stream, frame) == -1) {
     if (!MAD_RECOVERABLE(stream->error))
       stream->next_frame = stream->this_frame;
 
     goto fail;
   }
 
-  /* ancillary_data() */
-
-  if (frame->header.layer != MAD_LAYER_III) {
-    struct mad_bitptr next_frame;
-
-    mad_bit_init(&next_frame, stream->next_frame);
-
-    stream->anc_ptr    = stream->ptr;
-    stream->anc_bitlen = mad_bit_length(&stream->ptr, &next_frame);
-
-    mad_bit_finish(&next_frame);
-  }
-    
- 
-    
   return 0;
 
  fail:

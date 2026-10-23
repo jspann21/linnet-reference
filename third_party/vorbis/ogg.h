@@ -23,21 +23,14 @@ extern "C" {
 #include <stddef.h>
 #include "os_types.h"
 
-extern const unsigned long mask[] ICONST_ATTR;
+#include "services/audio/vorbis/bits.h"
 
 typedef struct {
   void *iov_base;
   size_t iov_len;
 } ogg_iovec_t;
 
-typedef struct {
-  long endbyte;
-  int  endbit;
-
-  unsigned char *buffer;
-  unsigned char *ptr;
-  long storage;
-} oggpack_buffer;
+typedef struct ln_vorbis_bits oggpack_buffer;
 
 /* ogg_page is used to encapsulate the data in one Ogg bitstream page *****/
 
@@ -115,106 +108,12 @@ typedef struct {
   int bodybytes;
 } ogg_sync_state;
 
-/* Ogg BITSTREAM PRIMITIVES: bitstream ************************/
-/*
-extern void  oggpack_writeinit(oggpack_buffer *b);
-extern int   oggpack_writecheck(oggpack_buffer *b);
-extern void  oggpack_writetrunc(oggpack_buffer *b,long bits);
-extern void  oggpack_writealign(oggpack_buffer *b);
-extern void  oggpack_writecopy(oggpack_buffer *b,void *source,long bits);
-extern void  oggpack_reset(oggpack_buffer *b);
-extern void  oggpack_writeclear(oggpack_buffer *b); */
-extern void  oggpack_readinit(oggpack_buffer *b,unsigned char *buf,int bytes);
-/*
-extern void  oggpack_write(oggpack_buffer *b,unsigned long value,int bits);
-extern long  oggpack_look(oggpack_buffer *b,int bits);
-*/
-
-static inline long oggpack_look(oggpack_buffer *b,int bits){
-  unsigned long ret;
-  unsigned long m;
-
-  if(bits<0 || bits>32) return -1;
-  m=mask[bits];
-  bits+=b->endbit;
-
-  if(b->endbyte >= b->storage-4){
-    /* not the main path */
-    if(b->endbyte > b->storage-((bits+7)>>3)) return -1;
-    /* special case to avoid reading b->ptr[0], which might be past the end of
-        the buffer; also skips some useless accounting */
-    else if(!bits)return(0L);
-  }
-
-  ret=b->ptr[0]>>b->endbit;
-  if(bits>8){
-    ret|=b->ptr[1]<<(8-b->endbit);  
-    if(bits>16){
-      ret|=b->ptr[2]<<(16-b->endbit);  
-      if(bits>24){
-        ret|=b->ptr[3]<<(24-b->endbit);  
-        if(bits>32 && b->endbit)
-          ret|=b->ptr[4]<<(32-b->endbit);
-      }
-    }
-  }
-  return(m&ret);
-}
-/*
-extern long  oggpack_look1(oggpack_buffer *b);
-extern void  oggpack_adv(oggpack_buffer *b,int bits);
-*/
-
-static inline void oggpack_adv(oggpack_buffer *b, unsigned int bits){
-  bits+=b->endbit;
-
-  if(b->endbyte > b->storage-(int)((bits+7)>>3)) goto overflow;
-
-  b->ptr+=bits/8;
-  b->endbyte+=bits/8;
-  b->endbit=bits&7;
-  return;
-
- overflow:
-  b->ptr=NULL;
-  b->endbyte=b->storage;
-  b->endbit=1;
-}
-
-/*
-extern void  oggpack_adv1(oggpack_buffer *b);
-*/
-extern long  oggpack_read(oggpack_buffer *b,int bits);
-/*
-extern long  oggpack_read1(oggpack_buffer *b);
-extern long  oggpack_bytes(oggpack_buffer *b);
-*/
-static inline long oggpack_bytes(oggpack_buffer *b){
-  return(b->endbyte+(b->endbit+7)/8);
-}
-#if 0
-extern long  oggpack_bits(oggpack_buffer *b);
-extern unsigned char *oggpack_get_buffer(oggpack_buffer *b);
-
-extern void  oggpackB_writeinit(oggpack_buffer *b);
-extern int   oggpackB_writecheck(oggpack_buffer *b);
-extern void  oggpackB_writetrunc(oggpack_buffer *b,long bits);
-extern void  oggpackB_writealign(oggpack_buffer *b);
-extern void  oggpackB_writecopy(oggpack_buffer *b,void *source,long bits);
-extern void  oggpackB_reset(oggpack_buffer *b);
-extern void  oggpackB_writeclear(oggpack_buffer *b);
-extern void  oggpackB_readinit(oggpack_buffer *b,unsigned char *buf,int bytes);
-extern void  oggpackB_write(oggpack_buffer *b,unsigned long value,int bits);
-extern long  oggpackB_look(oggpack_buffer *b,int bits);
-extern long  oggpackB_look1(oggpack_buffer *b);
-extern void  oggpackB_adv(oggpack_buffer *b,int bits);
-extern void  oggpackB_adv1(oggpack_buffer *b);
-extern long  oggpackB_read(oggpack_buffer *b,int bits);
-extern long  oggpackB_read1(oggpack_buffer *b);
-extern long  oggpackB_bytes(oggpack_buffer *b);
-extern long  oggpackB_bits(oggpack_buffer *b);
-extern unsigned char *oggpackB_get_buffer(oggpack_buffer *b);
-# endif
+/* Linnet packet reader behind the decoder's existing private API. */
+#define oggpack_readinit ln_vorbis_bits_init
+#define oggpack_look ln_vorbis_bits_look
+#define oggpack_adv ln_vorbis_bits_advance
+#define oggpack_read ln_vorbis_bits_read
+#define oggpack_bytes ln_vorbis_bits_bytes
 /* Ogg BITSTREAM PRIMITIVES: encoding **************************/
 #if 0
 extern int      ogg_stream_packetin(ogg_stream_state *os, ogg_packet *op);

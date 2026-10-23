@@ -132,6 +132,7 @@ int mad_stream_sync(struct mad_stream *stream)
 char const *mad_stream_errorstr(struct mad_stream const *stream)
 {
   switch (stream->error) {
+  case MAD_ERROR_UNSUPPORTED_LAYER: return "unsupported MPEG layer";
   case MAD_ERROR_NONE:           return "no error";
 
   case MAD_ERROR_BUFLEN:         return "input buffer too small (or EOF)";
