@@ -406,7 +406,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         add_sources([ROOT/'services/audio/m4a/demux.c'], "M4A container")
         add_sources([ROOT/'services/audio/alac/alac.c'], "ALAC service")
         add_sources([ROOT/'third_party/alac/alac.c'], "ALAC backend")
-        add_sources([ROOT/'services/audio/aac/aac.c',ROOT/'services/audio/aac/m4a.c'], "AAC service", backend_flags['aac'])
+        add_sources([ROOT/'services/audio/aac/aac.c'], "AAC service", backend_flags['aac'])
+        add_sources([ROOT/'services/audio/aac/m4a.c'], "AAC M4A container")
         aac_sources = [ROOT/'third_party/aac'/name for name in (ROOT/'third_party/aac/SOURCES').read_text().splitlines() if name]
         add_sources([source for source in aac_sources if source.parent.name != 'lib'],
                     "third_party/aac/SOURCES (FAAD)", backend_flags['aac'])
