@@ -147,6 +147,13 @@ admitted hardware. It is separate from ordinary A/B OS updates; use the
 - `update-cycle`: candidate confirmation, rollback, and publication cuts.
 - `storage-sync-cycle`: guarded Disk Mode roundtrip and return to the expected OS.
 
+The host sync check reads partition LBAs using the reviewed USB sector size,
+including factory 2048-byte Video layouts. It rediscovers the same logic-board
+serial after the mode change and pins the fresh disk and volume identity for
+file writes and readback. Native Disk Mode returns through its own safe eject;
+Apple Disk Mode requires the matching directory-refresh session or an elevated
+process. The check never requests UAC automatically.
+
 Use each command's `--help` for required images, scenarios, and identities.
 Receipts go under `out/runs`. Injected software faults do not qualify electrical
 failures; physical controls, sound, current, and panel quality need observation.

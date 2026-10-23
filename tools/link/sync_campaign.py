@@ -9,13 +9,14 @@ import json
 import os
 from pathlib import Path
 import struct
-import subprocess
+import time
 
 from tools.inspect.image import inspect
 from tools.studio.native_bootstrap import load_plan
-from tools.studio.storage import _mount_identity
-from .campaign import connect, _check_healthy_identity, _run_directory, _save
-from .eject import eject_reboot, _token_elevated
+from tools.content import media_manager
+from tools.content.guard import guard_volume, guarded_path, require_same_target
+from .campaign import connect, wait_ready, _check_healthy_identity, _run_directory, _save
+from .eject import eject, eject_reboot, _token_elevated
 from .identity import decode
 from .storage_observation import wait_for_disk
 
@@ -23,18 +24,10 @@ FILE_BYTES = 1024 * 1024
 FILE_NAME = 'HOSTSYNC.BIN'
 
 
-def _mounted_root(disk_number):
-    # disk_number has already been checked as a nonnegative integer.
-    script = ("$ErrorActionPreference='Stop'; "
-              f"$parts=@(Get-Partition -DiskNumber {disk_number} | Where-Object {{$_.DriveLetter}}); "
-              "if($parts.Count -ne 1){throw 'Expected exactly one mounted partition'}; "
-              "@{drive=([string]$parts[0].DriveLetter + ':\\')} | ConvertTo-Json -Compress")
-    result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script],
-                            capture_output=True, text=True, timeout=15, check=True)
-    return Path(json.loads(result.stdout)['drive'])
-
-
-def _fat_partition(mbr):
+def _fat_partition(mbr, sector_bytes=512):
+    if (sector_bytes not in (512, 2048, 4096) or len(mbr) != sector_bytes or
+            mbr[510:512] != b'\x55\xaa'):
+        raise ValueError('reviewed MBR has invalid sector geometry or signature')
     entries = []
     for index in range(4):
         entry = mbr[446 + index*16:462 + index*16]
@@ -42,7 +35,7 @@ def _fat_partition(mbr):
             start, count = struct.unpack_from('<II', entry, 8)
             if not start or not count:
                 raise ValueError('reviewed MBR has an empty FAT32 partition')
-            entries.append((start*512, count*512))
+            entries.append((start*sector_bytes, count*sector_bytes))
     if len(entries) != 1:
         raise ValueError('reviewed MBR must identify exactly one FAT32 partition')
     return entries[0]
@@ -55,10 +48,8 @@ def _pattern():
 
 
 def cycle(root, image_path, port, disk_number, plan_path, plan_sha256, progress=None):
-    from .refresh_session import active
-    if os.name!='nt' or (not _token_elevated() and active(plan_path, plan_sha256) is None):
-        raise RuntimeError('Unattended Disk Mode sync/restart requires a live matching refresh session or an elevated process; no UAC prompt will be requested')
     """Run only when explicitly invoked with an identified disk and pinned plan."""
+    from .refresh_session import active
     if os.name != 'nt' or type(disk_number) is not int or disk_number < 0:
         raise ValueError('host sync campaign requires Windows and an explicit disk number')
     root, image_path, plan_path = Path(root), Path(image_path), Path(plan_path).resolve(strict=True)
@@ -73,7 +64,8 @@ def cycle(root, image_path, port, disk_number, plan_path, plan_sha256, progress=
     plan_sha256 = plan_sha256.lower()
     if image_id['target_id'] != plan['image']['target_id']:
         raise ValueError('expected OS target differs from reviewed native Boot plan')
-    partition_offset, partition_size = _fat_partition(artifacts['mbr.bin'])
+    sector_bytes = plan.get('sector_bytes', 512)
+    partition_offset, partition_size = _fat_partition(artifacts['mbr.bin'], sector_bytes)
     pattern = _pattern()
     expected_hash = hashlib.sha256(pattern).hexdigest()
     run_id, directory = _run_directory(root, image_id)
@@ -96,14 +88,29 @@ def cycle(root, image_path, port, disk_number, plan_path, plan_sha256, progress=
         if progress:
             progress(dict(run_id=run_id, **event))
 
+    mounted_identity = None
+
     def mounted():
-        mount, identity = _mount_identity(_mounted_root(disk_number), plan['expected_storage_serial'])
-        if (identity.get('disk_number') != disk_number or identity.get('serial') != plan['expected_storage_serial'] or
-            identity.get('size') != plan['expected_device_bytes'] or
-            identity.get('partition_offset') != partition_offset or identity.get('partition_size') != partition_size or
-            not identity.get('volume_id')):
+        # Native Disk Mode uses the board serial; Apple uses the product serial.
+        # Resolve a new disk number/letter after the transition, then pin that
+        # full identity for every subsequent file operation.
+        matches = [item for item in media_manager.discover() if
+                   item.get('linnet_usb_serial') == plan['expected_linnet_usb_serial'] and
+                   item.get('target_id') == image_id['target_id']]
+        if len(matches) != 1:
+            raise RuntimeError('reviewed iPod is not uniquely mounted')
+        identity = media_manager.refresh(matches[0])
+        native = identity.get('native_target_id') == image_id['target_id']
+        serial = plan['expected_linnet_usb_serial'] if native else plan['expected_storage_serial']
+        if (identity.get('disk_serial') != serial or
+            identity.get('disk_bytes') != plan['expected_device_bytes'] or
+            identity.get('sector_bytes') != sector_bytes or
+            identity.get('partition_offset') != partition_offset or identity.get('partition_bytes') != partition_size or
+            not identity.get('volume_unique_id')):
             raise RuntimeError('mounted disk/partition identity differs from reviewed plan')
-        return mount, identity
+        if mounted_identity is not None:
+            require_same_target(mounted_identity, identity)
+        return Path(identity['root']).resolve(strict=True), identity
 
     try:
         session, device, observed = connect(port=port, serial_number=plan['expected_linnet_usb_serial'])
@@ -118,14 +125,27 @@ def cycle(root, image_path, port, disk_number, plan_path, plan_sha256, progress=
         session.reboot('disk')  # Never replay this command after an uncertain ACK.
         session.close()
         session = None
-        observation = wait_for_disk(plan['expected_storage_serial'], 30)
-        mount, identity = mounted()
+        observation = wait_for_disk(plan['expected_linnet_usb_serial'], 30)
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                mount, identity = mounted()
+                break
+            except (OSError, RuntimeError, ValueError):
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(.5)  # Read-only mount discovery; never repeat reboot.
+        mounted_identity = identity
+        native = identity.get('native_target_id') == image_id['target_id']
+        if not native and not _token_elevated() and active(plan_path, plan_sha256) is None:
+            raise RuntimeError('Apple Disk Mode return requires a matching refresh session or elevated process; no UAC prompt will be requested')
         record('mounted', observation=observation, identity=identity, mount=str(mount))
         destination = mount / '.LINNET'
         if (not destination.is_dir() or destination.is_symlink() or
             destination.resolve(strict=True).parent != mount.resolve(strict=True)):
             raise ValueError('expected existing LINNET directory on identified volume')
         target = destination / FILE_NAME
+        guarded_path(target, mount)
         if target.exists() or target.is_symlink():
             raise FileExistsError('HOSTSYNC.BIN already exists; campaign never overwrites or deletes evidence')
         checked_mount, checked_identity = mounted()
@@ -133,6 +153,7 @@ def cycle(root, image_path, port, disk_number, plan_path, plan_sha256, progress=
             raise RuntimeError('mounted identity changed before file creation')
         receipt['device_write_attempted'] = True
         record('host-write-started', path=str(target))
+        guard_volume(identity)
         with target.open('xb') as stream:
             for offset in range(0, len(pattern), 65536):
                 block = pattern[offset:offset+65536]
@@ -157,7 +178,14 @@ def cycle(root, image_path, port, disk_number, plan_path, plan_sha256, progress=
         # Reload pinned artifacts immediately before the reviewed refresh/eject.
         load_plan(plan_path, plan_sha256)
         record('eject-requested')
-        result = eject_reboot(disk_number, plan_path, plan_sha256, expected_os=image_id, allow_prompt=False)
+        if native:
+            # Native eject flushes and resets into persistent Linnet itself.
+            # Apple's raw directory refresh is unnecessary on this connection.
+            result = eject(identity['disk_number'], identity['disk_serial'])
+            ready = wait_ready(plan['expected_linnet_usb_serial'], expected=image_id, timeout=180)
+            result.update(identity=ready['identity'], link_reconnected=True, reboot_verified=True)
+        else:
+            result = eject_reboot(identity['disk_number'], plan_path, plan_sha256, expected_os=image_id, allow_prompt=False)
         _check_healthy_identity(result['identity'], image_id)
         if result.get('reboot_verified') is not True or result.get('link_reconnected') is not True:
             raise RuntimeError('eject did not prove expected OS reconnection')
