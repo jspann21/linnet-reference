@@ -3,8 +3,7 @@
 Sources originate from `lib/rbcodec/codecs/libtremor/` in
 [Rockbox](https://github.com/Rockbox/rockbox), revision
 `99c18f336c730f533d3b7d2d8951f5dc4a6da802`. Original notices and the [Xiph BSD license](COPYING) remain.
-`ffmpeg_stuff.h` carries an LGPL-2.1-or-later notice; shared FFT/MDCT sources
-retain their notices under [AAC](../aac/PROVENANCE.md).
+Shared FFT/MDCT sources retain their notices under [AAC](../aac/PROVENANCE.md).
 
 Linnet omits the upstream file/Ogg allocation layer. Its facade owns asynchronous
 reads, Ogg CRC/sequence checks, packet assembly, and source positions. PCM scratch

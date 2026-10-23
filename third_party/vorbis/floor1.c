@@ -24,7 +24,7 @@
 #include "registry.h"
 #include "codebook.h"
 #include "misc.h"
-#include "ffmpeg_stuff.h"
+#include "services/audio/vorbis/reconstruct.h"
 
 #define floor1_rangedB 140 /* floor 1 fixed at -140dB to 0dB range */
 
@@ -405,7 +405,7 @@ static int floor1_inverse2(vorbis_block *vb,vorbis_look_floor *in,void *memo,
         /* guard lookup against out-of-range values */
         hy=(hy<0?0:hy>255?255:hy);
 
-        render_line(lx, ly, hx, hy, FLOOR_fromdB_LOOKUP, out);
+        ln_vorbis_floor_line(lx, ly, hx, hy, FLOOR_fromdB_LOOKUP, out, (unsigned)n);
         
         lx=hx;
         ly=hy;

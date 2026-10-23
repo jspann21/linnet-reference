@@ -25,7 +25,7 @@
 #include "window.h"
 #include "registry.h"
 #include "misc.h"
-#include "ffmpeg_stuff.h"
+#include "services/audio/vorbis/reconstruct.h"
 //#include "codeclib.h"
 
 static int ilog(unsigned int v){
@@ -362,7 +362,7 @@ int vorbis_synthesis_blockin(vorbis_dsp_state *v,vorbis_block *vb){
   
   if(LIKELY(vb->pcmend != 0)){ /* no pcm to process if vorbis_synthesis_trackonly 
                                   was called on block */
-    window_overlap_add(ci->blocksizes[v->W], ci->blocksizes[v->lW],
+    ln_vorbis_overlap(ci->blocksizes[v->W], ci->blocksizes[v->lW],
                        ci->blocksizes[0], ci->blocksizes[1], vi->channels,
                        b->window[v->W & v->lW], v);
     /* deal with initial packet state; we do this using the explicit
