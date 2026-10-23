@@ -11,7 +11,6 @@ struct ln_faad_workspace {
     int16_t spec[FRAME_LEN],spec1[FRAME_LEN],spec2[FRAME_LEN],coupling[FRAME_LEN];
     element sce,cpe;drc_info drc;
     uint32_t random1,random2;
-    uint8_t bits[8192+12] MEM_ALIGN_ATTR;
     bool discard_output; /* Synchronous LC decode; zero preserves PCM output. */
     bool skip_synthesis; /* Internal intermediate-AU request; no saved spectra. */
 };

@@ -95,6 +95,10 @@ enum {
 # endif
 };
 
+#define mad_stream_init ln_mp3_stream_init
+#define mad_stream_buffer ln_mp3_stream_buffer
+#define mad_stream_sync ln_mp3_stream_sync
+
 void mad_stream_init(struct mad_stream *);
 /* rockbox: not used
 void mad_stream_finish(struct mad_stream *); */
@@ -109,6 +113,5 @@ void mad_stream_skip(struct mad_stream *, unsigned long); */
 
 int mad_stream_sync(struct mad_stream *);
 
-char const *mad_stream_errorstr(struct mad_stream const *);
 
 # endif

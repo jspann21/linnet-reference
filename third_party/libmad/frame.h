@@ -105,6 +105,12 @@ enum {
   MAD_PRIVATE_III       = 0x001f        /* Layer III private bits (up to 5) */
 };
 
+#define mad_header_init ln_mp3_header_init
+#define mad_header_decode ln_mp3_header_decode
+#define mad_frame_init ln_mp3_frame_init
+#define mad_frame_decode ln_mp3_frame_decode
+#define mad_frame_mute ln_mp3_frame_mute
+
 void mad_header_init(struct mad_header *);
 
 # define mad_header_finish(header)  /* nothing */

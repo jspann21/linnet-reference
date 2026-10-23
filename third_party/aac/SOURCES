@@ -1,4 +1,3 @@
-faad/bits.c
 faad/common.c
 faad/decoder.c
 faad/drc.c

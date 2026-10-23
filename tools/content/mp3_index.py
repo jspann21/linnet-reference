@@ -30,9 +30,9 @@ def executable():
     from tools.studio.build import toolchain
     compiler = toolchain()['compiler']
     sources = ['tools/content/mp3_index.c', 'services/audio/mp3/mp3.c',
-               'services/audio/mp3/bits.c', 'boot/src/linnet_boot.c']
+               'services/audio/mp3/bits.c', 'services/audio/mp3/framing.c', 'boot/src/linnet_boot.c']
     sources += ['third_party/libmad/' + name + '.c' for name in
-                ('frame', 'huffman', 'layer3', 'stream', 'synth')]
+                ('huffman', 'layer3', 'synth')]
     flags = ['-O3', '-fwrapv', '-fno-strict-aliasing', '-DLINNET_PROFILE_RELEASE=1',
              '-I.', '-Iboot/include']
     digest = hashlib.sha256(compiler['sha256'].encode())
