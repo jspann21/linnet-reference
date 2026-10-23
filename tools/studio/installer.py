@@ -1768,14 +1768,52 @@ def _repair_uninstall_recovery(identity, pending):
                 restore_file(source, target)
 
 
+def _uninstall_identity(identity, progress):
+    """Reacquire this iPod only before removal has attempted any writes."""
+    from tools.content import media_manager as media
+
+    try:
+        return media.refresh(identity)
+    except (OSError, RuntimeError, ValueError):
+        serial = identity.get("linnet_usb_serial", "")
+        if not re.fullmatch(r"[0-9A-F]{16}", serial):
+            raise
+    # Disk numbers, letters and USB storage serials can change across a reboot.
+    # Pin the board and original FAT geometry before accepting a new connection;
+    # all later write guards continue to use its complete current identity.
+    fields = ("target_id", "linnet_usb_serial", "disk_bytes", "sector_bytes",
+              "partition_offset", "partition_bytes", "volume_serial", "filesystem")
+
+    def checked(current):
+        if any(not identity.get(key) or current.get(key) != identity[key] for key in fields):
+            raise ValueError("The reconnected iPod or its volume differs from the reviewed removal.")
+        return media.refresh(current)
+
+    progress("Reconnecting the same iPod before removal…")
+    mounted = [item for item in media.discover(detailed=True)["devices"]
+               if item.get("linnet_usb_serial") == serial]
+    if len(mounted) > 1:
+        raise ValueError("More than one mounted iPod matches the reviewed removal.")
+    if mounted:
+        return checked(mounted[0])
+    from tools.studio import media_link
+    connections = [item for item in media_link.discover() if item["serial"] == serial]
+    if len(connections) != 1:
+        raise RuntimeError("The reviewed iPod is not connected. Reconnect it in Disk Mode, then choose Find iPod.")
+    connection = connections[0]
+    if (connection["identity"]["target_id"] != identity["target_id"] or
+            not connection.get("can_open_disk")):
+        raise ValueError("The connected iPod cannot open Disk Mode for this removal.")
+    opened = media_link.open_disk(connection, progress=progress)
+    return checked(opened["reconnected_identity"])
+
+
 def uninstall(identity, progress=lambda _message: None, expected=None, *, instruction=lambda _event: None):
     """Verify the saved previous boot, then remove only Linnet's private directory."""
     from tools.content.guard import guarded_path, guard_volume
     from tools.content.publish import _exclusive
 
-    from tools.content.media_manager import refresh
-
-    identity = refresh(identity)
+    identity = _uninstall_identity(identity, progress)
     pending = _pending_uninstall(identity, Path(identity["root"]).resolve(strict=True))
     if pending:
         if expected is not None and expected != pending[0]["previous_boot"]:
@@ -1885,6 +1923,7 @@ def uninstall(identity, progress=lambda _message: None, expected=None, *, instru
         if private.exists() or any((root / name).exists() != existed for name, existed in media_folders.items()):
             raise RuntimeError("Linnet removal or media-folder verification failed")
         receipt.update(passed=True, phase="complete", media_preserved=True,
+                       reconnected_identity=reviewed["identity"],
                        requires_safe_eject=True,
                        summary=f"Linnet removed. {option['previous']} is the default startup software. Your Music, Photos, Videos, and Notes folders remain on the iPod.")
     except BaseException as error:

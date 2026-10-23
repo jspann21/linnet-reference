@@ -1875,7 +1875,8 @@ class MediaWindow(QMainWindow):
             self.game_read_failed = 'game selection is damaged' in error.casefold()
             self.games_status.setText('Game settings are damaged. Use Replace damaged game settings to choose a new selection.'
                                       if self.game_read_failed else 'Could not read game settings. Refresh or choose the iPod again.')
-        if tag in ('scan', 'devices', 'link_setup', 'link_disk'):
+        if (tag in ('scan', 'devices', 'link_setup', 'link_disk', 'uninstall') and
+                error_type != 'AppleStoragePending'):
             self.transition_device(None)
             self.device_name.setText('Connection needs checking')
             self.device_info.setText('Connection needs checking · choose Refresh or Choose iPod')
@@ -3387,7 +3388,8 @@ class MediaWindow(QMainWindow):
         self.install_hint.setText('Keep USB connected while installation resumes.' if resume else
             'Your media and settings are kept. Eject safely when the update finishes.' if installed else
             'Keep USB connected until installation finishes.')
-        self.uninstall_button.setEnabled(not self.busy and bool(self.review and self.review['uninstall']['available']))
+        self.uninstall_button.setEnabled(not self.busy and self.device_connected and bool(
+            self.identity and self.review and self.review['uninstall']['available']))
         show_default = bool(self.review and self.review['linnet']['state'] == 'installed')
         self.startup_panel.setVisible(show_default)
         for widget in (self.default_title, self.default_detail, self.default_choice, self.default_button,

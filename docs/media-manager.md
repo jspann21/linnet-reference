@@ -143,10 +143,13 @@ identifies Apple, or Rockbox when the iPod was installed using its loader. Media
 that was prepared only for Linnet may need an Apple library sync before it appears
 in Apple OS. Removal is unavailable without a verified recovery record.
 Restore or empty Media Manager Trash before removal, since it can contain
-original media files. Photo, monochrome, and Video iPods connected through
-Linnet's native Disk Mode must restart into Apple iPod software and reconnect
-in Apple Disk Mode so the saved firmware backup can be matched to the original
-storage identity.
+original media files. If the iPod has restarted since removal was reviewed,
+Media Manager reconnects the same board through Linnet Link and checks its FAT
+volume and disk geometry again before restoring startup software. A failed
+removal clears the old connection; choose **Find iPod** to review it again.
+Photo, monochrome, and Video iPods can restore through Linnet's native Disk Mode
+when the verified original installation record matches. Otherwise, reconnect in
+Apple Disk Mode so the saved backup can be matched to the original storage identity.
 
 Classic A1238/N25 installations use a separate NOR flash bootloader. Media
 Manager recognizes their completed bootstrap records and verified original NOR
