@@ -1,7 +1,8 @@
 # Hardware support
 
-All features available for each target have been tested and work on the
-configurations below. Accessories have not been tested.
+The configurations below have been tested on-device. Physical controls,
+audible output and panel appearance require observation in addition to automated
+checks. Accessories have not been tested.
 
 For installation, use [Media Manager](media-manager.md). For a new model, use
 the [porting guide](../targets/README.md).
@@ -12,6 +13,7 @@ the [porting guide](../targets/README.md).
 | --- | --- | --- | --- | --- |
 | iPod Photo / Color A1099 | `photo4g-p98` | iFlash, 64 GB | 32 MiB | 220 × 176 color |
 | iPod Video A1136 | `video5g-m25` | Toshiba MK3008GAL, 30 GB | 32 MiB | 320 × 240 color |
+| iPod Video A1136 | `video5g-m25` | Hitachi HTC426030G5CE00, 30 GB | 32 MiB | 320 × 240 color |
 | iPod Video A1136 | `video5g-m25` | iFlash, 125 GB | 32 MiB | 320 × 240 color |
 | iPod Video A1136 | `video5g-m25` | Toshiba MK8010GAH, 80 GB | 64 MiB | 320 × 240 color |
 | iPod classic A1238 | `classic6g-n25` | iFlash, 125 GB | 64 MiB | 320 × 240 color |

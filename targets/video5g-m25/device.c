@@ -45,7 +45,8 @@ void ln_target_ata_power(bool on){
 }
 void ln_target_ata_classify(const char *model,uint32_t *kind,uint32_t *rpm){
     /* Older IDENTIFY data omits rotation rate; match only the documented model. */
-    static const char *const models[]={"TOSHIBA MK3008GAL","TOSHIBA MK6008GAH","TOSHIBA MK8010GAH"};
+    static const char *const models[]={"TOSHIBA MK3008GAL","TOSHIBA MK6008GAH","TOSHIBA MK8010GAH",
+        "HTC426030G5CE00"};
     if(!model||!kind||!rpm)return;
     for(uint32_t n=0;n<sizeof(models)/sizeof(models[0]);++n){
         uint32_t i=0;while(models[n][i]&&model[i]==models[n][i])++i;

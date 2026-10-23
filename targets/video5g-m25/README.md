@@ -37,11 +37,17 @@ The battery percentage curve is an estimate, not a capacity measurement.
 Replacement storage uses its own identified capabilities; the target's narrow
 factory partition-tail exception does not relax general FAT checks.
 
+The Hitachi HTC426030G5CE00 omits the later ATA rotation-rate field. The exact
+model is classified as a 4200 RPM mechanical drive using Hitachi's specification.
+This fallback does not authorize supply removal or add the drive to the DMA
+allowlist. Native capability checks and conservative PIO transfers still apply.
+
 ## Hardware references
 
 - [Original firmware research](https://github.com/giek2000/ipod-classic-firmware-research/blob/main/specs/iPod_5th_Gen_Video_13_1_2_1.md)
 - [BCM display protocol](https://github.com/Rockbox/rockbox/blob/master/firmware/target/arm/ipod/video/lcd-video.c)
 - [M25 board configuration](https://github.com/Rockbox/rockbox/blob/master/firmware/export/config/ipodvideo.h)
 - [WM8758 definitions](https://github.com/Rockbox/rockbox/blob/master/firmware/export/wm8758.h)
+- [Hitachi C4K60 Slim manufacturer datasheet](https://datasheet.datasheetarchive.com/originals/crawler/hgst.com/d92c3aab98e4baa4c9cb67c57fa9e796.pdf)
 
 Imported codecs retain their own [licenses and provenance](../../third_party/README.md).

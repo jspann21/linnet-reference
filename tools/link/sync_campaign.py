@@ -148,8 +148,8 @@ def cycle(root, image_path, port, disk_number, plan_path, plan_sha256, progress=
         guarded_path(target, mount)
         if target.exists() or target.is_symlink():
             raise FileExistsError('HOSTSYNC.BIN already exists; campaign never overwrites or deletes evidence')
-        checked_mount, checked_identity = mounted()
-        if checked_mount != mount or checked_identity != identity:
+        checked_mount, _ = mounted()
+        if checked_mount != mount:
             raise RuntimeError('mounted identity changed before file creation')
         receipt['device_write_attempted'] = True
         record('host-write-started', path=str(target))
@@ -171,8 +171,10 @@ def cycle(root, image_path, port, disk_number, plan_path, plan_sha256, progress=
                 digest.update(block)
         if received != FILE_BYTES or digest.hexdigest() != expected_hash:
             raise OSError('host file readback mismatch')
-        checked_mount, checked_identity = mounted()
-        if checked_mount != mount or checked_identity != identity:
+        # mounted() already compares the pinned identity fields. Free space
+        # legitimately changed by this file and is not an identity field.
+        checked_mount, _ = mounted()
+        if checked_mount != mount:
             raise RuntimeError('mounted identity changed during write/readback')
         record('host-readback', bytes=received, sha256=digest.hexdigest())
         # Reload pinned artifacts immediately before the reviewed refresh/eject.
