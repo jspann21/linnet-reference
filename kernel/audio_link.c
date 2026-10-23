@@ -10,7 +10,7 @@
 #include "services/music/library.h"
 #include "services/music/search.h"
 #include "services/music/controller.h"
-#include "services/audio/mp3/mp3.h"
+#include "services/audio/mp3/timing.h"
 #if defined(LINNET_PHOTOS)
 #include "services/photos/photos.h"
 #endif

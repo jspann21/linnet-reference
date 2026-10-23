@@ -1,6 +1,7 @@
 #include "boot/include/linnet_bytes.h"
 #include "boot/include/linnet_boot.h"
 #include "mp3.h"
+#include "timing.h"
 #include "third_party/libmad/codeclib.h"
 #include <stddef.h>
 #if !defined(LINNET_PROFILE_RELEASE)
