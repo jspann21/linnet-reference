@@ -7,7 +7,7 @@ extern void ln_memory_clear(void *,uint32_t);
 #endif
 static int fail(struct ln_aac_m4a *d,int error){d->error=error;return error;}
 static int demux_result(int result)
-{if(result==LN_ALAC_UNSUPPORTED)return LN_AAC_UNSUPPORTED;if(result==LN_ALAC_ARGUMENT)return LN_AAC_ARGUMENT;return result;}
+{if(result==LN_M4A_UNSUPPORTED)return LN_AAC_UNSUPPORTED;if(result==LN_M4A_ARGUMENT)return LN_AAC_ARGUMENT;return result;}
 #define TAG(a,b,c,e) ((uint32_t)(a)<<24|(uint32_t)(b)<<16|(uint32_t)(c)<<8|(uint32_t)(e))
 static bool text_is(const uint8_t *p,uint32_t n,const char *s){
     uint32_t i=0;while(i<n&&s[i]&&p[i]==(uint8_t)s[i])++i;return i==n&&!s[i];

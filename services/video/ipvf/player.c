@@ -119,9 +119,9 @@ static void copy(void*d,const void*s,uint32_t n){
 #endif
 }
 static uint16_t *frame_slot(uint32_t slot){return slot<2u?buffers.frame[slot]:slot==2u?buffers.third.pixels:slot<FRAME_SLOTS?VIDEO_BASE+(slot-3u)*PIXELS:0;}
-/* IPVF uses Rockbox's MSB-first CRC-32 state without a final XOR. */
-#include "rockbox_crc_table.h"
-static uint32_t rockbox_crc(uint32_t crc,const uint8_t*b,uint32_t n){return rockbox_crc_slice4(crc,b,n);}
+/* IPVF uses MSB-first CRC-32 state without a final XOR. */
+#include "crc_table.h"
+static uint32_t ipvf_crc(uint32_t crc,const uint8_t*b,uint32_t n){return ipvf_crc_slice4(crc,b,n);}
 static uint64_t divide64(uint64_t numerator,uint32_t denominator){
     uint64_t quotient=0;uint32_t remainder=0;if(!denominator)return 0;
     for(uint32_t bit=64;bit;--bit){uint32_t carry=remainder>>31;remainder=(remainder<<1)|(uint32_t)((numerator>>(bit-1u))&1u);if(carry||remainder>=denominator){remainder-=denominator;quotient|=(uint64_t)1u<<(bit-1u);}}return quotient;
@@ -426,7 +426,7 @@ static bool ipvf_record_header(void){
     if(temporal){const uint8_t*p=b+16;if(v.source_type==6u){v.motion_dx=(int8_t)p[0];v.motion_dy=(int8_t)p[1];
             if(v.motion_dx<=-(int32_t)v.width||v.motion_dx>=(int32_t)v.width||v.motion_dy<=-(int32_t)v.height||v.motion_dy>=(int32_t)v.height)return false;v.lz_input_offset+=2u;v.lz_input_bytes-=2u;p+=2;}
         uint32_t expected=ln_read_le32(p);v.lz_input_offset+=4u;v.lz_input_bytes-=4u;/* The FIFO retains immutable bytes already checked by the audio scan. */
-        if(v.prefetching&&rockbox_crc(~0u,b+v.lz_input_offset,v.lz_input_bytes)!=expected)return false;}
+        if(v.prefetching&&ipvf_crc(~0u,b+v.lz_input_offset,v.lz_input_bytes)!=expected)return false;}
     v.decode_at=v.decode_pixel=v.rect_row=0;v.rect_data_at=NONE;v.at=compressed?0u:1u;
     return true;
 }
@@ -613,7 +613,7 @@ static void step(void){
         audio_cursor_reset();v.startup_preview=true;v.phase=INDEX;
         v.verify_crc=~0u;return;
     case VERIFY:{uint32_t end=v.file.size,n=end-v.verify_at;if(n>4096)n=4096;r=io(v.verify_at,b,n,false);if(r<0){fail(4);return;}if(!r)return;
-        v.verify_crc=rockbox_crc(v.verify_crc,b,n);
+        v.verify_crc=ipvf_crc(v.verify_crc,b,n);
         for(uint32_t at=0;at<n;at+=16u){if(!ipvf_index_record(b+at)){fail(5);return;}uint32_t frame=ln_read_le32(b+at);uint64_t offset=ln_read_le64(b+at+4);
             if((!v.verify_frame&&(frame||offset!=512u))||(v.verify_frame&&(frame<=v.verify_key||offset<=v.verify_end))){fail(5);return;}
             v.verify_key=frame;v.verify_end=(uint32_t)offset;++v.verify_frame;

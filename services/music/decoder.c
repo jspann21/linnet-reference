@@ -61,7 +61,7 @@ int ln_decoder_decode(struct ln_decoder *d,int16_t *out,uint32_t capacity,uint32
     case LN_DEC_ALAC:
         r=d->opened?ln_alac_decode(&d->data->alac,out,capacity,frames):ln_alac_open_step(&d->data->alac);
         if(!d->opened&&r==1)d->opened=true;
-        d->rate=d->data->alac.rate;d->total_frames=d->data->alac.total_frames;break;
+        d->rate=d->data->alac.container.rate;d->total_frames=d->data->alac.container.total_frames;break;
     case LN_DEC_ADTS:
         r=ln_aac_decode(&d->data->aac,out,capacity,frames);d->opened=d->data->aac.configured;
         d->rate=d->data->aac.rate;break;
@@ -86,10 +86,10 @@ void ln_decoder_read_drained(struct ln_decoder *d)
     case LN_DEC_PCM:d->data->pcm.pending=false;break;
     case LN_DEC_MP3:d->data->mp3.pending=false;break;
     case LN_DEC_FLAC:d->data->flac.pending=false;break;
-    case LN_DEC_ALAC:d->data->alac.pending=d->data->alac.cache_pending=false;break;
+    case LN_DEC_ALAC:d->data->alac.container.pending=d->data->alac.cache_pending=false;break;
     case LN_DEC_ADTS:d->data->aac.pending=false;break;
     case LN_DEC_AAC_M4A:d->data->m4a.pending=d->data->m4a.container.pending=d->data->m4a.core.pending=false;
-        d->data->m4a.cache_pending=d->data->m4a.container.cache_pending=false;break;
+        d->data->m4a.cache_pending=false;break;
     case LN_DEC_VORBIS:d->data->vorbis.pending=false;break;
     default:break;
     }
@@ -117,7 +117,7 @@ bool ln_decoder_cache_layout(const struct ln_decoder *d,struct ln_decoder_cache_
 {
     *out=(struct ln_decoder_cache_layout){0};
     if(d->kind!=LN_DEC_AAC_M4A||!d->data)return false;
-    const struct ln_alac *m=&d->data->m4a.container;
+    const struct ln_m4a *m=&d->data->m4a.container;
     out->media_start=m->mdat_start;out->media_end=m->mdat_end;out->tables_ready=m->opened;
     out->tables[0]=(struct ln_decoder_range){m->chunks_offset,(uint64_t)m->chunks*m->chunk_width};
     if(!m->default_size)out->tables[1]=(struct ln_decoder_range){m->sizes_offset,(uint64_t)m->packets*4u};
@@ -128,7 +128,7 @@ bool ln_decoder_cache_status(const struct ln_decoder *d,struct ln_decoder_cache_
 {
     *out=(struct ln_decoder_cache_status){0};
     if(d->kind!=LN_DEC_AAC_M4A||!d->data)return false;
-    const struct ln_aac_m4a *a=&d->data->m4a;const struct ln_alac *m=&a->container;
+    const struct ln_aac_m4a *a=&d->data->m4a;const struct ln_m4a *m=&a->container;
     out->request_offset=a->cache_request_offset;out->request_bytes=a->cache_request_bytes;
     out->pending=a->cache_pending;out->phase=m->decode_phase;out->bank=a->cache_filling;
     out->read_offset=m->read_offset;out->read_bytes=m->read_total;out->packet=m->packet;

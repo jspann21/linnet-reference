@@ -37,7 +37,7 @@ int ENTRY {
      * use normal seeking: an appended sibling would be hidden inside it. */
     if(r!=1||decoder.index_offset||decoder.container.extends_to_eof)return 4;
     if(argc==2){fclose(source);return 0;}
-    struct ln_alac *a=&decoder.container;
+    struct ln_m4a *a=&decoder.container;
     uint32_t count=(a->packets+15u)/16u,bytes=72u+count*32u;
     uint8_t *output=calloc(1,bytes);if(!output)return 5;
     output[0]=bytes>>24;output[1]=bytes>>16;output[2]=bytes>>8;output[3]=bytes;

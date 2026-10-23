@@ -1,9 +1,9 @@
 #ifndef LINNET_AAC_M4A_H
 #define LINNET_AAC_M4A_H
 #include "aac.h"
-#include "services/audio/alac/alac.h"
+#include "services/audio/m4a/demux.h"
 struct ln_aac_m4a {
-    struct ln_aac core;struct ln_alac container;
+    struct ln_aac core;struct ln_m4a container;
     uint64_t total_frames,frame,seek_target;
     uint32_t rate,channels,lead_remaining;
     bool opened,seeking,pending,packet_ready;int error;

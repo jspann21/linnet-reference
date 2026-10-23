@@ -1,13 +1,13 @@
-#ifndef LINNET_VIDEO_ROCKBOX_CRC_TABLE_H
-#define LINNET_VIDEO_ROCKBOX_CRC_TABLE_H
+#ifndef LINNET_VIDEO_IPVF_CRC_TABLE_H
+#define LINNET_VIDEO_IPVF_CRC_TABLE_H
 
 #include <stdint.h>
 
 /* MSB-first polynomial 0x04c11db7, with caller-supplied state and no
- * final XOR, matching Rockbox crc_32. Slice k advances a byte by k+1
+ * final XOR. Slice k advances a byte by k+1
  * positions. The video CRC table uses 4 KiB of the reserved audio IRAM.
  */
-static const uint32_t rockbox_crc_slice4_table[4][256]
+static const uint32_t ipvf_crc_slice4_table[4][256]
 #if defined(__arm__)
     __attribute__((section(".audio_icode.video_ipvf_crc_table"),aligned(4)))
 #else
@@ -151,11 +151,11 @@ static const uint32_t rockbox_crc_slice4_table[4][256]
         0x93e25e10u,0x4f8fc4a7u,0x2ff876c9u,0xf395ec7eu,0xef171215u,0x337a88a2u,0x530d3accu,0x8f60a07bu,
     },
 };
-_Static_assert(sizeof(rockbox_crc_slice4_table)==4096u,"IPVF CRC table budget");
+_Static_assert(sizeof(ipvf_crc_slice4_table)==4096u,"IPVF CRC table budget");
 
-static uint32_t rockbox_crc_slice4(uint32_t crc,const uint8_t *bytes,uint32_t count){
+static uint32_t ipvf_crc_slice4(uint32_t crc,const uint8_t *bytes,uint32_t count){
     while(count&&((uintptr_t)bytes&3u)){
-        crc=(crc<<8)^rockbox_crc_slice4_table[0][(crc>>24)^*bytes++];
+        crc=(crc<<8)^ipvf_crc_slice4_table[0][(crc>>24)^*bytes++];
         --count;
     }
     while(count>=4u){
@@ -166,13 +166,13 @@ static uint32_t rockbox_crc_slice4(uint32_t crc,const uint8_t *bytes,uint32_t co
         word=(uint32_t)bytes[0]|((uint32_t)bytes[1]<<8)|
             ((uint32_t)bytes[2]<<16)|((uint32_t)bytes[3]<<24);
 #endif
-        crc=rockbox_crc_slice4_table[3][((crc>>24)^word)&255u]^
-            rockbox_crc_slice4_table[2][((crc>>16)^(word>>8))&255u]^
-            rockbox_crc_slice4_table[1][((crc>>8)^(word>>16))&255u]^
-            rockbox_crc_slice4_table[0][(crc^(word>>24))&255u];
+        crc=ipvf_crc_slice4_table[3][((crc>>24)^word)&255u]^
+            ipvf_crc_slice4_table[2][((crc>>16)^(word>>8))&255u]^
+            ipvf_crc_slice4_table[1][((crc>>8)^(word>>16))&255u]^
+            ipvf_crc_slice4_table[0][(crc^(word>>24))&255u];
         bytes+=4;count-=4;
     }
-    while(count--)crc=(crc<<8)^rockbox_crc_slice4_table[0][(crc>>24)^*bytes++];
+    while(count--)crc=(crc<<8)^ipvf_crc_slice4_table[0][(crc>>24)^*bytes++];
     return crc;
 }
 #endif

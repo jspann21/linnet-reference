@@ -191,8 +191,8 @@ IMA_STEP_TABLE = (
 _REVERSE_BITS = bytes(int(f"{value:08b}"[::-1], 2) for value in range(256))
 
 
-def rockbox_crc32(data: bytes, crc: int = 0xFFFFFFFF) -> int:
-    """Match Rockbox's non-reflected crc_32 with no final XOR."""
+def ipvf_crc32(data: bytes, crc: int = 0xFFFFFFFF) -> int:
+    """IPVF CRC-32: polynomial 0x04c11db7, MSB-first, no final XOR."""
     # Conjugate zlib's reflected CRC with bit reversal, including the seed
     # and final state, so chunked media identities retain the exact contract.
     seed = int.from_bytes(crc.to_bytes(4, "little").translate(_REVERSE_BITS), "big")
@@ -200,7 +200,7 @@ def rockbox_crc32(data: bytes, crc: int = 0xFFFFFFFF) -> int:
     return int.from_bytes(value.to_bytes(4, "little").translate(_REVERSE_BITS), "big")
 
 
-def rockbox_crc32_file_range(
+def ipvf_crc32_file_range(
     stream: BinaryIO,
     start: int,
     end: int,
@@ -217,7 +217,7 @@ def rockbox_crc32_file_range(
         block = stream.read(min(remaining, chunk_size))
         if not block:
             raise RuntimeError("short read while calculating media identity")
-        crc = rockbox_crc32(block, crc)
+        crc = ipvf_crc32(block, crc)
         remaining -= len(block)
     return crc
 
@@ -1296,7 +1296,7 @@ def _realtime_record(record, raw=None):
         return record
     header = (payload[:2] if kind == TYPE_MOTION_LZ4 else b"")
     if prefix:
-        header += struct.pack("<I", rockbox_crc32(coalesced))
+        header += struct.pack("<I", ipvf_crc32(coalesced))
     return kind, rectangles, header + coalesced, decoded
 
 
@@ -1376,7 +1376,7 @@ def choose_video_record(
         residual = compress_lz4(residual_raw, lz4_mode)
         motion_kind = TYPE_MOTION_LZ4 if dx or dy else TYPE_XOR_LZ4
         motion_payload = (struct.pack("<bb", dx, dy) if dx or dy else b"") + \
-            struct.pack("<I", rockbox_crc32(residual)) + residual
+            struct.pack("<I", ipvf_crc32(residual)) + residual
         motion_sectors = record_sectors(len(motion_payload), audio_size)
         if ((video_mode in ("balanced", "motion") or (dx, dy) != (0, 0)) and
                 len(motion_payload) < FRAME_BYTES and
@@ -1390,7 +1390,7 @@ def choose_video_record(
             record_sectors(4, audio_size) < selected_sectors):
         temporal = compress_lz4(xor_frames(prev, cur), lz4_mode)
         temporal_payload = struct.pack(
-            "<I", rockbox_crc32(temporal)
+            "<I", ipvf_crc32(temporal)
         ) + temporal
         temporal_sectors = record_sectors(len(temporal_payload), audio_size)
         if (len(temporal_payload) < FRAME_BYTES and
@@ -1407,7 +1407,7 @@ def choose_video_record(
             residual = compress_lz4(residual_raw, lz4_mode)
             if len(residual) + 4 < FRAME_BYTES:
                 candidate = _realtime_record((TYPE_XOR_LZ4, 0,
-                    struct.pack("<I", rockbox_crc32(residual)) + residual, FRAME_BYTES), residual_raw)
+                    struct.pack("<I", ipvf_crc32(residual)) + residual, FRAME_BYTES), residual_raw)
                 if record_sectors(len(candidate[2]), audio_size) + 4 <= record_sectors(len(selected[2]), audio_size):
                     selected = candidate
     return selected
@@ -1576,7 +1576,7 @@ def encode(
             record_total += sectors * RECORD_SECTOR_SIZE
             padding_total += padding
             media_end_offset = f.tell()
-            media_id = rockbox_crc32_file_range(
+            media_id = ipvf_crc32_file_range(
                 f, DATA_OFFSET, media_end_offset
             )
             f.seek(media_end_offset)
@@ -1606,7 +1606,7 @@ def encode(
                 flags,
                 media_end_offset,
                 len(index_entries),
-                rockbox_crc32(index_data),
+                ipvf_crc32(index_data),
                 media_id,
                 metadata,
             )

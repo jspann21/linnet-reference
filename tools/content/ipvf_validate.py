@@ -26,7 +26,7 @@ TYPE_NAMES = {
 
 
 # zlib uses the reflected polynomial. Reverse each input byte and the CRC
-# state to retain Rockbox's MSB-first polynomial and no-final-XOR contract.
+# state to retain IPVF's MSB-first polynomial and no-final-XOR contract.
 _REVERSE_BITS = bytes(int(f"{value:08b}"[::-1], 2) for value in range(256))
 
 
@@ -34,7 +34,7 @@ def _reverse_crc(value):
     return int.from_bytes(value.to_bytes(4, "little").translate(_REVERSE_BITS), "big")
 
 
-def rockbox_crc32(data: bytes, crc: int = 0xFFFFFFFF) -> int:
+def ipvf_crc32(data: bytes, crc: int = 0xFFFFFFFF) -> int:
     return _reverse_crc(zlib.crc32(data.translate(_REVERSE_BITS),
                                   _reverse_crc(crc) ^ 0xFFFFFFFF) ^ 0xFFFFFFFF)
 
@@ -136,7 +136,7 @@ def _decode_record(record, frame, frame_count, current_sectors, frame_bytes, rat
             )[0]
             compressed_payload = stored[crc_offset + 4:]
             _require(
-                rockbox_crc32(compressed_payload) ==
+                ipvf_crc32(compressed_payload) ==
                 expected_temporal_crc,
                 f"frame {frame}: temporal payload CRC mismatch",
             )
@@ -347,7 +347,7 @@ def inspect_file(
             frame_bytes, rate, temporal_flag, workers, cancelled)))
         for frame, record_offset, current_sectors, record, decoded in decoded_records:
             record_size = len(record)
-            calculated_media_id = rockbox_crc32(
+            calculated_media_id = ipvf_crc32(
                 record, calculated_media_id
             )
             kind, rect_count, next_sectors, stored_size, decoded_size, \
@@ -360,7 +360,7 @@ def inspect_file(
             used_size = ipvf.RECORD_HEADER_SIZE + stored_size + audio_size
             stored = record[ipvf.RECORD_HEADER_SIZE:ipvf.RECORD_HEADER_SIZE + stored_size]
             decoded_audio, payload = decoded
-            decoded_audio_crc = rockbox_crc32(decoded_audio, decoded_audio_crc)
+            decoded_audio_crc = ipvf_crc32(decoded_audio, decoded_audio_crc)
 
             if kind in (ipvf.TYPE_KEY, ipvf.TYPE_KEY_LZ4):
                 _require(rect_count == 0 and decoded_size == frame_bytes,
@@ -418,12 +418,12 @@ def inspect_file(
         _require(calculated_media_id == media_id,
                  "media identity CRC mismatch")
         assert previous is not None
-        final_crc = rockbox_crc32(previous)
+        final_crc = ipvf_crc32(previous)
 
         stream.seek(index_offset)
         index_data = stream.read(index_bytes)
         _require(len(index_data) == index_bytes, "truncated index")
-        _require(rockbox_crc32(index_data) == index_crc,
+        _require(ipvf_crc32(index_data) == index_crc,
                  "index CRC mismatch")
 
         # The verified frame walk already establishes every keyframe's offset,

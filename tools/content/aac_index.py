@@ -30,7 +30,7 @@ def executable():
     from tools.studio.build import toolchain
     compiler = toolchain()['compiler']
     sources = ['tools/content/aac_index.c', 'services/audio/aac/aac.c',
-               'services/audio/aac/m4a.c', 'services/audio/alac/alac.c', 'third_party/alac/alac.c']
+               'services/audio/aac/m4a.c', 'services/audio/m4a/demux.c']
     sources += ['third_party/aac/' + name for name in (ROOT / 'third_party/aac/SOURCES').read_text().splitlines() if name]
     flags = ['-O3', '-fwrapv', '-fno-strict-aliasing', '-I.',
              '-Ithird_party/aac', '-Ithird_party/aac/faad', '-Ithird_party/aac/lib']
@@ -39,7 +39,7 @@ def executable():
     digest = hashlib.sha256(compiler['sha256'].encode())
     digest.update('\0'.join(flags).encode())
     inputs = set(sources)
-    for folder in ('services/audio/aac', 'services/audio/alac', 'third_party/aac', 'third_party/alac', 'boot/include'):
+    for folder in ('services/audio/aac', 'services/audio/m4a', 'third_party/aac', 'boot/include'):
         inputs.update(p.relative_to(ROOT).as_posix() for p in (ROOT / folder).rglob('*.h'))
     for name in sorted(inputs):
         digest.update(name.encode()); digest.update((ROOT / name).read_bytes())
