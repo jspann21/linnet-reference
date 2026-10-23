@@ -1,9 +1,5 @@
 # Hardware support
 
-The configurations below have been tested on-device. Physical controls,
-audible output and panel appearance require observation in addition to automated
-checks. Accessories have not been tested.
-
 For installation, use [Media Manager](media-manager.md). For a new model, use
 the [porting guide](../targets/README.md).
 
