@@ -313,28 +313,3 @@ csa:
     .word -0x003a2847  
     .word +0x0ffff8d3
     .word -0x000f27b4
-
-    .global III_overlap
-III_overlap:
-    stmdb   sp!, {r4-r7, lr}
-    add     r2, r2, r3, lsl #2
-    mov     r3, #6
-.ol:
-    ldmia r0!, {r4, r5, r6}
-    ldmia r1!, {r7, r12, lr}
-    add   r4, r4, r7
-    add   r5, r5, r12
-    add   r6, r6, lr
-    str   r4, [r2], #128
-    str   r5, [r2], #128
-    str   r6, [r2], #128
-    subs  r3, r3, #1
-    bne   .ol
-    sub   r1, r1, #72
-    ldmia r0!, {r4, r5, r6, r7, r12, lr}
-    stmia r1!, {r4, r5, r6, r7, r12, lr}
-    ldmia r0!, {r4, r5, r6, r7, r12, lr}
-    stmia r1!, {r4, r5, r6, r7, r12, lr}
-    ldmia r0!, {r4, r5, r6, r7, r12, lr}
-    stmia r1!, {r4, r5, r6, r7, r12, lr}
-    ldmia sp!, {r4-r7, pc}

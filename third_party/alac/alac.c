@@ -32,15 +32,13 @@
 
 #include <stdint.h>
 #include <stddef.h>
-static void *ln_alac_copy(void *to,const void *from,size_t count)
-{uint8_t *d=to;const uint8_t *s=from;for(size_t i=0;i<count;i++)d[i]=s[i];return to;}
 static void *ln_alac_fill(void *to,int value,size_t count)
 {uint8_t *d=to;for(size_t i=0;i<count;i++)d[i]=(uint8_t)value;return to;}
-#define memcpy ln_alac_copy
 #define memset ln_alac_fill
 #define IBSS_ATTR
 #define ICODE_ATTR
 #include "decomp.h"
+#include "services/audio/alac/predict.h"
 
 #define SIGNEXTEND24(val) (((signed)val<<8)>>8)
 
@@ -230,278 +228,6 @@ static void entropy_rice_decode(alac_file* alac,
 
 #define SIGN_EXTENDED32(val, bits) ((val << (32 - bits)) >> (32 - bits))
 
-#define SIGN_ONLY(v) \
-                     ((v < 0) ? (-1) : \
-                                ((v > 0) ? (1) : \
-                                           (0)))
-
-static void predictor_decompress_fir_adapt(int32_t *error_buffer,
-                                           int32_t *buffer_out,
-                                           int output_size,
-                                           int readsamplesize,
-                                           int16_t *predictor_coef_table,
-                                           int predictor_coef_num,
-                                           int predictor_quantitization) ICODE_ATTR_ALAC;
-static void predictor_decompress_fir_adapt(int32_t *error_buffer,
-                                           int32_t *buffer_out,
-                                           int output_size,
-                                           int readsamplesize,
-                                           int16_t *predictor_coef_table,
-                                           int predictor_coef_num,
-                                           int predictor_quantitization)
-{
-    int i;
-
-    /* first sample always copies */
-    *buffer_out = *error_buffer;
-
-    if (!predictor_coef_num)
-    {
-        if (output_size <= 1) return;
-        memcpy(buffer_out+1, error_buffer+1, (output_size-1) * 4);
-        return;
-    }
-
-    if (predictor_coef_num == 0x1f) /* 11111 - max value of predictor_coef_num */
-    { /* second-best case scenario for fir decompression,
-       * error describes a small difference from the previous sample only
-       */
-        if (output_size <= 1) return;
-        for (i = 0; i < output_size - 1; i++)
-        {
-            int32_t prev_value;
-            int32_t error_value;
-
-            prev_value = buffer_out[i];
-            error_value = error_buffer[i+1];
-            buffer_out[i+1] = SIGN_EXTENDED32((prev_value + error_value), readsamplesize);
-        }
-        return;
-    }
-
-    /* read warm-up samples */
-    if (predictor_coef_num > 0)
-    {
-        int i;
-        for (i = 0; i < predictor_coef_num; i++)
-        {
-            int32_t val;
-
-            val = buffer_out[i] + error_buffer[i+1];
-
-            val = SIGN_EXTENDED32(val, readsamplesize);
-
-            buffer_out[i+1] = val;
-        }
-    }
-
-    /* 4 and 8 are very common cases (the only ones i've seen).
-
-      The following code is an initial attempt to unroll and optimise
-      these two cases by the Rockbox project.  More work is needed. 
-     */
-
-    /* optimised case: 4 */
-    if (predictor_coef_num == 4)
-    {
-        /* Linnet: retain the five-sample window and four adaptive coefficients
-         * locally. Explicit signed16 stores preserve upstream coefficient wrap;
-         * each adaptation still stops as soon as its residual crosses zero. */
-        int16_t c0=predictor_coef_table[0],c1=predictor_coef_table[1];
-        int16_t c2=predictor_coef_table[2],c3=predictor_coef_table[3];
-        int32_t x0=buffer_out[0],x1=buffer_out[1],x2=buffer_out[2];
-        int32_t x3=buffer_out[3],x4=buffer_out[4];
-        for (i = 4 + 1; i < output_size; i++)
-        {
-            int sum = 0;
-            int outval;
-            int error_val = error_buffer[i];
-
-            sum = (x4-x0)*c0+(x3-x0)*c1+(x2-x0)*c2+(x1-x0)*c3;
-
-            outval = (1 << (predictor_quantitization-1)) + sum;
-            outval = outval >> predictor_quantitization;
-            outval = outval + x0 + error_val;
-            outval = SIGN_EXTENDED32(outval, readsamplesize);
-
-            buffer_out[4+1] = outval;
-
-            if (error_val > 0)
-            {
-#define ADAPT_POS(c,x,n) do { if(error_val>0){int val=x0-(x);if(val){ \
-                if(val<0){(c)=(int16_t)((c)+1);val=-val;}else (c)=(int16_t)((c)-1); \
-                error_val-=(val>>predictor_quantitization)*(n);}} } while(0)
-                ADAPT_POS(c3,x1,1);ADAPT_POS(c2,x2,2);
-                ADAPT_POS(c1,x3,3);ADAPT_POS(c0,x4,4);
-#undef ADAPT_POS
-            }
-            else if (error_val < 0)
-            {
-#define ADAPT_NEG(c,x,n) do { if(error_val<0){int val=x0-(x);if(val){ \
-                if(val>0){(c)=(int16_t)((c)+1);val=-val;}else (c)=(int16_t)((c)-1); \
-                error_val-=(val>>predictor_quantitization)*(n);}} } while(0)
-                ADAPT_NEG(c3,x1,1);ADAPT_NEG(c2,x2,2);
-                ADAPT_NEG(c1,x3,3);ADAPT_NEG(c0,x4,4);
-#undef ADAPT_NEG
-            }
-
-            x0=x1;x1=x2;x2=x3;x3=x4;x4=outval;buffer_out++;
-        }
-        predictor_coef_table[0]=c0;predictor_coef_table[1]=c1;
-        predictor_coef_table[2]=c2;predictor_coef_table[3]=c3;
-        return;
-    }
-
-    /* optimised case: 8 */
-    if (predictor_coef_num == 8)
-    {
-        for (i = 8 + 1;
-             i < output_size;
-             i++)
-        {
-            int sum;
-            int outval;
-            int error_val = error_buffer[i];
-
-            sum = (buffer_out[8] - buffer_out[0]) * predictor_coef_table[0]
-                + (buffer_out[7] - buffer_out[0]) * predictor_coef_table[1]
-                + (buffer_out[6] - buffer_out[0]) * predictor_coef_table[2]
-                + (buffer_out[5] - buffer_out[0]) * predictor_coef_table[3]
-                + (buffer_out[4] - buffer_out[0]) * predictor_coef_table[4]
-                + (buffer_out[3] - buffer_out[0]) * predictor_coef_table[5]
-                + (buffer_out[2] - buffer_out[0]) * predictor_coef_table[6]
-                + (buffer_out[1] - buffer_out[0]) * predictor_coef_table[7];
-
-            outval = (1 << (predictor_quantitization-1)) + sum;
-            outval = outval >> predictor_quantitization;
-            outval = outval + buffer_out[0] + error_val;
-            outval = SIGN_EXTENDED32(outval, readsamplesize);
-
-            buffer_out[8+1] = outval;
-
-            if (error_val > 0)
-            {
-                int predictor_num = 8 - 1;
-
-                while (predictor_num >= 0 && error_val > 0)
-                {
-                    int val = buffer_out[0] - buffer_out[8 - predictor_num];
-
-                    if (val!=0) {
-                       if (val < 0) {
-                         predictor_coef_table[predictor_num]++;
-                         val=-val;
-                       } else {
-                         predictor_coef_table[predictor_num]--;
-                       }
-                       error_val -= ((val >> predictor_quantitization) * (8 - predictor_num));
-                    }                      
-                    predictor_num--;
-                }
-            }
-            else if (error_val < 0)
-            {
-                int predictor_num = 8 - 1;
-
-                while (predictor_num >= 0 && error_val < 0)
-                {
-                    int val = buffer_out[0] - buffer_out[8 - predictor_num];
-                    if (val != 0) {
-                      if (val > 0) {
-                        predictor_coef_table[predictor_num]++;
-                        val=-val; /* neg value */
-                      } else {
-                        predictor_coef_table[predictor_num]--;
-                      }
-                      error_val -= ((val >> predictor_quantitization) * (8 - predictor_num));
-                    }
-                    predictor_num--;
-                }
-            }
-
-            buffer_out++;
-        }
-        return;
-    } 
-
-    /* general case */
-    if (predictor_coef_num > 0)
-    {
-        for (i = predictor_coef_num + 1;
-             i < output_size;
-             i++)
-        {
-            int j;
-            int sum = 0;
-            int outval;
-            int error_val = error_buffer[i];
-
-            if (predictor_coef_num == 6)
-            {
-                sum = (buffer_out[6] - buffer_out[0]) * predictor_coef_table[0]
-                    + (buffer_out[5] - buffer_out[0]) * predictor_coef_table[1]
-                    + (buffer_out[4] - buffer_out[0]) * predictor_coef_table[2]
-                    + (buffer_out[3] - buffer_out[0]) * predictor_coef_table[3]
-                    + (buffer_out[2] - buffer_out[0]) * predictor_coef_table[4]
-                    + (buffer_out[1] - buffer_out[0]) * predictor_coef_table[5];
-            }
-            else for (j = 0; j < predictor_coef_num; j++)
-            {
-                sum += (buffer_out[predictor_coef_num-j] - buffer_out[0]) *
-                       predictor_coef_table[j];
-            }
-
-            outval = (1 << (predictor_quantitization-1)) + sum;
-            outval = outval >> predictor_quantitization;
-            outval = outval + buffer_out[0] + error_val;
-            outval = SIGN_EXTENDED32(outval, readsamplesize);
-
-            buffer_out[predictor_coef_num+1] = outval;
-
-            if (error_val > 0)
-            {
-                int predictor_num = predictor_coef_num - 1;
-
-                while (predictor_num >= 0 && error_val > 0)
-                {
-                    int val = buffer_out[0] - buffer_out[predictor_coef_num - predictor_num];
-                    int sign = SIGN_ONLY(val);
-
-                    predictor_coef_table[predictor_num] -= sign;
-
-                    val *= sign; /* absolute value */
-
-                    error_val -= ((val >> predictor_quantitization) *
-                                  (predictor_coef_num - predictor_num));
-
-                    predictor_num--;
-                }
-            }
-            else if (error_val < 0)
-            {
-                int predictor_num = predictor_coef_num - 1;
-
-                while (predictor_num >= 0 && error_val < 0)
-                {
-                    int val = buffer_out[0] - buffer_out[predictor_coef_num - predictor_num];
-                    int sign = - SIGN_ONLY(val);
-
-                    predictor_coef_table[predictor_num] -= sign;
-
-                    val *= sign; /* neg value */
-
-                    error_val -= ((val >> predictor_quantitization) *
-                                  (predictor_coef_num - predictor_num));
-
-                    predictor_num--;
-                }
-            }
-
-            buffer_out++;
-        }
-    }
-}
-
 static inline int decode_frame_mono(
                     alac_file *alac,
                     int32_t outputbuffer[ALAC_MAX_CHANNELS][ALAC_BLOCKSIZE],
@@ -591,13 +317,12 @@ static inline int decode_frame_mono(
 
         if (prediction_type == 0)
         { /* adaptive fir */
-            predictor_decompress_fir_adapt(outputbuffer[0],
-                                           outputbuffer[0],
-                                           outputsamples,
-                                           readsamplesize,
-                                           predictor_coef_table,
-                                           predictor_coef_num,
-                                           prediction_quantitization);
+            ln_alac_predict(outputbuffer[0],
+                            outputsamples,
+                            readsamplesize,
+                            predictor_coef_table,
+                            predictor_coef_num,
+                            prediction_quantitization);
         }
         else
         {
@@ -762,13 +487,12 @@ static inline int decode_frame_stereo(
         yield();
         if (prediction_type_a == 0)
         { /* adaptive fir */
-            predictor_decompress_fir_adapt(outputbuffer[0],
-                                           outputbuffer[0],
-                                           outputsamples,
-                                           readsamplesize,
-                                           predictor_coef_table_a,
-                                           predictor_coef_num_a,
-                                           prediction_quantitization_a);
+            ln_alac_predict(outputbuffer[0],
+                            outputsamples,
+                            readsamplesize,
+                            predictor_coef_table_a,
+                            predictor_coef_num_a,
+                            prediction_quantitization_a);
         }
         else
         { /* see mono case */
@@ -790,13 +514,12 @@ static inline int decode_frame_stereo(
         yield();
         if (prediction_type_b == 0)
         { /* adaptive fir */
-            predictor_decompress_fir_adapt(outputbuffer[1],
-                                           outputbuffer[1],
-                                           outputsamples,
-                                           readsamplesize,
-                                           predictor_coef_table_b,
-                                           predictor_coef_num_b,
-                                           prediction_quantitization_b);
+            ln_alac_predict(outputbuffer[1],
+                            outputsamples,
+                            readsamplesize,
+                            predictor_coef_table_b,
+                            predictor_coef_num_b,
+                            prediction_quantitization_b);
         }
         else
         {

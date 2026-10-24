@@ -1,4 +1,5 @@
 #include "services/audio/mp3/reorder.h"
+#include "services/audio/mp3/overlap.h"
 /* Modified for Linnet, 2026-09-06: freestanding fixed-point integration.
  * See PROVENANCE.md for changes; original licensing follows. */
 /*
@@ -2646,54 +2647,6 @@ void III_imdct_s(mad_fixed_t const X[18], mad_fixed_t z[36])
 
 #endif
 
-#if defined(CPU_ARM_CLASSIC)
-void III_overlap(mad_fixed_t const output[36], mad_fixed_t overlap[18],
-                 mad_fixed_t sample[18][32], unsigned int sb);
-#else
-
-/*
- * NAME:        III_overlap()
- * DESCRIPTION: perform overlap-add of windowed IMDCT outputs
- */
-static
-void III_overlap(mad_fixed_t const output[36], mad_fixed_t overlap[18],
-                 mad_fixed_t sample[18][32], unsigned int sb)
-{
-  unsigned int i;
-  for (i = 0; i < 18; ++i) {
-    sample[i][sb] = output[i +  0] + overlap[i];
-    overlap[i]    = output[i + 18];
-  }
-}
-#endif
-
-/*
- * NAME:        III_overlap_z()
- * DESCRIPTION: perform "overlap-add" of zero IMDCT outputs
- */
-static inline
-void III_overlap_z(mad_fixed_t overlap[18],
-                   mad_fixed_t sample[18][32], unsigned int sb)
-{
-  unsigned int i;
-  for (i = 0; i < 18; ++i) {
-    sample[i][sb] = overlap[i];
-    overlap[i]    = 0;
-  }
-}
-
-/*
- * NAME:        III_freqinver()
- * DESCRIPTION: perform subband frequency inversion for odd sample lines
- */
-static
-void III_freqinver(mad_fixed_t sample[18][32], unsigned int sb)
-{
-  unsigned int i;
-   for (i = 1; i < 18; i += 2)
-     sample[i][sb] = -sample[i][sb];
-}
-
 /*
  * NAME:        III_decode()
  * DESCRIPTION: decode frame main_data
@@ -2805,18 +2758,17 @@ enum mad_error III_decode(struct mad_bitptr *ptr, struct mad_frame *frame,
         /* long blocks */
         for (sb = 0; sb < 2; ++sb, l += 18) {
           III_imdct_l(&xr[ch][l], output, block_type);
-          III_overlap(output, (*frame->overlap)[ch][sb], sample, sb);
+          ln_mp3_overlap(output, (*frame->overlap)[ch][sb], sample, sb);
         }
       }
       else {
         /* short blocks */
         for (sb = 0; sb < 2; ++sb, l += 18) {
           III_imdct_s(&xr[ch][l], output);
-          III_overlap(output, (*frame->overlap)[ch][sb], sample, sb);
+          ln_mp3_overlap(output, (*frame->overlap)[ch][sb], sample, sb);
         }
       }
 
-      III_freqinver(sample, 1);
 
       /* (nonzero) subbands 2-31 */
 
@@ -2841,30 +2793,24 @@ enum mad_error III_decode(struct mad_bitptr *ptr, struct mad_frame *frame,
         /* long blocks */
         for (sb = 2; sb < sblimit; ++sb, l += 18) {
           III_imdct_l(&xr[ch][l], output, channel->block_type);
-          III_overlap(output, (*frame->overlap)[ch][sb], sample, sb);
+          ln_mp3_overlap(output, (*frame->overlap)[ch][sb], sample, sb);
 
-          if (sb & 1)
-            III_freqinver(sample, sb);
         }
       }
       else {
         /* short blocks */
         for (sb = 2; sb < sblimit; ++sb, l += 18) {
           III_imdct_s(&xr[ch][l], output);
-          III_overlap(output, (*frame->overlap)[ch][sb], sample, sb);
+          ln_mp3_overlap(output, (*frame->overlap)[ch][sb], sample, sb);
 
-          if (sb & 1)
-            III_freqinver(sample, sb);
         }
       }
 
       /* remaining (zero) subbands */
 
       for (sb = sblimit; sb < 32; ++sb) {
-        III_overlap_z((*frame->overlap)[ch][sb], sample, sb);
+        ln_mp3_overlap(0, (*frame->overlap)[ch][sb], sample, sb);
 
-        if (sb & 1)
-          III_freqinver(sample, sb);
       }
     }
   }
