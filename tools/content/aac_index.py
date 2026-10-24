@@ -30,6 +30,9 @@ def executable():
     from tools.studio.build import toolchain
     compiler = toolchain()['compiler']
     sources = ['tools/content/aac_index.c', 'services/audio/aac/aac.c',
+               'services/audio/aac/bits.c', 'services/audio/aac/stereo.c',
+               'services/audio/aac/reconstruct.c', 'services/audio/aac/tns.c',
+               'services/audio/aac/gain.c', 'services/audio/aac/window.c',
                'services/audio/aac/m4a.c', 'services/audio/m4a/demux.c']
     sources += ['third_party/aac/' + name for name in (ROOT / 'third_party/aac/SOURCES').read_text().splitlines() if name]
     flags = ['-O3', '-fwrapv', '-fno-strict-aliasing', '-I.',
