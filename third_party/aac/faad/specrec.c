@@ -42,7 +42,7 @@
 #include "filtbank.h"
 #include "syntax.h"
 #include "iq_table.h"
-#include "ms.h"
+#include "services/audio/aac/stereo.h"
 #include "is.h"
 #include "pns.h"
 #include "tns.h"
@@ -1091,7 +1091,7 @@ uint8_t reconstruct_channel_pair(NeAACDecHandle hDecoder, ic_stream *ics1, ic_st
 
     /* mid/side decoding */
     if (!skip_synthesis)
-        ms_decode(ics1, ics2, spec_coef1, spec_coef2, hDecoder->frameLength);
+        ln_aac_mid_side(ics1, ics2, spec_coef1, spec_coef2, hDecoder->frameLength);
 
 #if 0
     {

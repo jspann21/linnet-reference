@@ -236,7 +236,7 @@ typedef struct
 } ssr_info;
 #endif
 
-typedef struct
+typedef struct ic_stream
 {
     uint8_t max_sfb;
 

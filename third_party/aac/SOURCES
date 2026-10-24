@@ -6,7 +6,6 @@ faad/filtbank.c
 faad/huffman.c
 faad/is.c
 faad/mp4.c
-faad/ms.c
 faad/pns.c
 faad/pulse.c
 faad/specrec.c

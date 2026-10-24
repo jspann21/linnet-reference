@@ -407,7 +407,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         add_sources([ROOT/'services/audio/m4a/demux.c'], "M4A container")
         add_sources([ROOT/'services/audio/alac/alac.c'], "ALAC service")
         add_sources([ROOT/'third_party/alac/alac.c'], "ALAC backend")
-        add_sources([ROOT/'services/audio/aac/aac.c',ROOT/'services/audio/aac/bits.c'], "AAC service", backend_flags['aac'])
+        add_sources([ROOT/'services/audio/aac/aac.c',ROOT/'services/audio/aac/bits.c',ROOT/'services/audio/aac/stereo.c'], "AAC service", backend_flags['aac'])
         add_sources([ROOT/'services/audio/aac/window_arm.S'], "AAC window arithmetic")
         add_sources([ROOT/'services/audio/aac/m4a.c'], "AAC M4A container")
         aac_sources = [ROOT/'third_party/aac'/name for name in (ROOT/'third_party/aac/SOURCES').read_text().splitlines() if name]
@@ -421,6 +421,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         add_sources([ROOT/'services/audio/vorbis'/name for name in ('vorbis.c','pool.c','division.c','bits.c')], "Vorbis service", backend_flags['vorbis'])
         add_sources([ROOT/'services/audio/vorbis'/name for name in ('reconstruct.c','overlap.c')], "Vorbis reconstruction", ['-O3','-Ithird_party/vorbis'])
         add_sources([ROOT/'third_party/vorbis'/name for name in ('block.c','codebook.c','floor0.c','floor1.c','info.c','mapping0.c','registry.c','res012.c','sharedbook.c','synthesis.c','window.c')], "Vorbis backend", backend_flags['vorbis'])
+        add_sources([ROOT/'services/audio/vorbis/coupling.c'], "Vorbis channel reconstruction", ['-O3'])
         add_sources([ROOT/'third_party/libmad'/name for name in ('huffman.c','layer3.c','synth.c','imdct_l_arm.S','synth_full_arm.S')], "MP3 backend", backend_flags['mp3'])
         flags += ['-fwrapv']
         if profile!='release':
