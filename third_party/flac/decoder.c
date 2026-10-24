@@ -42,6 +42,7 @@
 
 #include "decoder.h"
 #include "services/audio/flac/framing.h"
+#include "services/audio/flac/fixed.h"
 
 #if defined(CPU_COLDFIRE)
 #include "coldfire.h"
@@ -102,7 +103,6 @@ int decode_subframe_fixed(FLACContext *s, int32_t* decoded, int pred_order, int 
 {
     const int blocksize = s->blocksize;
     if (pred_order > blocksize) return -4;
-    unsigned a, b, c, d;
     int i;
 
     /* warm up samples */
@@ -114,41 +114,7 @@ int decode_subframe_fixed(FLACContext *s, int32_t* decoded, int pred_order, int 
     if (decode_residuals(s, decoded, pred_order) < 0)
         return -4;
 
-    switch(pred_order)
-    {
-        case 0:
-            break;
-        case 1:
-            a = decoded[pred_order-1];
-            for (i = pred_order; i < blocksize; i++)
-                decoded[i] = a += decoded[i];
-            break;
-        case 2:
-            a = decoded[pred_order-1];
-            b = a - decoded[pred_order-2];
-            for (i = pred_order; i < blocksize; i++)
-                decoded[i] = a += b += decoded[i];
-            break;
-        case 3:
-            a = decoded[pred_order-1];
-            b = a - decoded[pred_order-2];
-            c = b - decoded[pred_order-2] + decoded[pred_order-3];
-            for (i = pred_order; i < blocksize; i++)
-                decoded[i] = a += b += c += decoded[i];
-            break;
-        case 4:
-            a = decoded[pred_order-1];
-            b = a - decoded[pred_order-2];
-            c = b - decoded[pred_order-2] + decoded[pred_order-3];
-            d = c - decoded[pred_order-2] + 2U*decoded[pred_order-3] - decoded[pred_order-4];
-            for (i = pred_order; i < blocksize; i++)
-                decoded[i] = a += b += c += d += decoded[i];
-            break;
-        default:
-            return -5;
-    }
-
-    return 0;
+    return pred_order?ln_flac_fixed(decoded,(unsigned)blocksize,(unsigned)pred_order):0;
 }
 
 #if !defined(CPU_COLDFIRE)

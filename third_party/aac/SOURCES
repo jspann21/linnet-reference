@@ -4,10 +4,8 @@ faad/drc.c
 faad/error.c
 faad/filtbank.c
 faad/huffman.c
-faad/is.c
 faad/mp4.c
 faad/pns.c
-faad/pulse.c
 faad/specrec.c
 faad/syntax.c
 faad/tns.c

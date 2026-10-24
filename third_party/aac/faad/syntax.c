@@ -41,7 +41,7 @@
 #include "specrec.h"
 #include "huffman.h"
 #include "bits.h"
-#include "pulse.h"
+#include "services/audio/aac/reconstruct.h"
 #include "analysis.h"
 #include "drc.h"
 #ifdef ERROR_RESILIENCE
@@ -1589,7 +1589,7 @@ static uint8_t individual_channel_stream(NeAACDecHandle hDecoder, element *ele,
     {
         if (ics->window_sequence != EIGHT_SHORT_SEQUENCE)
         {
-            if ((result = pulse_decode(ics, spec_data, hDecoder->frameLength)) > 0)
+            if ((result = ln_aac_pulse(ics, spec_data, hDecoder->frameLength)) > 0)
                 return result;
         } else {
             return 2; /* pulse coding not allowed for short blocks */

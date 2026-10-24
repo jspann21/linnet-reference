@@ -43,7 +43,7 @@
 #include "syntax.h"
 #include "iq_table.h"
 #include "services/audio/aac/stereo.h"
-#include "is.h"
+#include "services/audio/aac/reconstruct.h"
 #include "pns.h"
 #include "tns.h"
 #include "drc.h"
@@ -1111,7 +1111,7 @@ uint8_t reconstruct_channel_pair(NeAACDecHandle hDecoder, ic_stream *ics1, ic_st
 
     /* intensity stereo decoding */
     if (!skip_synthesis)
-        is_decode(ics1, ics2, spec_coef1, spec_coef2, hDecoder->frameLength);
+        ln_aac_intensity(ics1, ics2, spec_coef1, spec_coef2, hDecoder->frameLength);
 
 #if 0
     {
