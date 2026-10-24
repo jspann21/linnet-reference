@@ -9,10 +9,7 @@
 #define ICODE_ATTR_ALAC ICODE_ATTR
 #endif
 
-/* Always output samples shifted to 28 bits + sign*/
-#define ALAC_OUTPUT_DEPTH 29
-#define SCALE16 (ALAC_OUTPUT_DEPTH - 16)
-#define SCALE24 (ALAC_OUTPUT_DEPTH - 24)
+/* Internal predictor samples remain unscaled; Linnet reconstructs PCM. */
 #define ALAC_MAX_CHANNELS 2
 #define ALAC_BLOCKSIZE 4096  /* Number of samples per channel per block */
 
@@ -29,6 +26,7 @@ typedef struct
     int bytespersample; */
 
     int bytes_consumed;
+    uint8_t output_channels,output_shift,output_weight;
 
     /* stuff from setinfo */
     uint32_t setinfo_max_samples_per_frame; /* 0x1000 = 4096 */    /* max samples per frame? */

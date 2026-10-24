@@ -1,4 +1,5 @@
 #include "services/audio/flac/flac.h"
+#include "services/audio/flac/output.h"
 static uint32_t be(const uint8_t*p,uint32_t n){uint32_t v=0;while(n--)v=(v<<8)|*p++;return v;}
 static uint64_t be64(const uint8_t*p){return ((uint64_t)be(p,4)<<32)|be(p+4,4);}
 static int fail(struct ln_flac*s,int e){return s->error=e;}
@@ -59,16 +60,6 @@ int ln_flac_open_step(struct ln_flac*s)
     }return fail(s,LN_PCM_FORMAT);
 }
 static void yield_decoder(void){}
-static int16_t pcm16(int32_t raw)
-{
-#if (-8193 >> 13) == -2
-    int32_t sample=raw>>13;
-#else
-    int32_t sample=raw>=0?raw/8192:-(int32_t)(((uint32_t)(-(int64_t)raw)+8191u)/8192u);
-#endif
-    if(sample>32767)sample=32767;if(sample<-32768)sample=-32768;
-    return (int16_t)sample;
-}
 static uint16_t crc16(const uint8_t*p,uint32_t n)
 {
     static const uint16_t table[256]={
@@ -117,13 +108,8 @@ int ln_flac_decode(struct ln_flac*s,int16_t*out,uint32_t capacity,uint32_t*frame
     if(s->error)return s->error;if(s->phase!=4)return LN_PCM_PENDING;
     if(s->decoded_cursor<s->decoded_frames){
         uint32_t n=s->decoded_frames-s->decoded_cursor;if(n>capacity)n=capacity;
-        if(s->channels==1){
-            for(uint32_t i=0;i<n;++i){int16_t sample=pcm16(s->samples[0][s->decoded_cursor+i]);
-                out[2u*i]=sample;out[2u*i+1u]=sample;}
-        }else{
-            for(uint32_t i=0;i<n;++i){uint32_t index=s->decoded_cursor+i;
-                out[2u*i]=pcm16(s->samples[0][index]);out[2u*i+1u]=pcm16(s->samples[1][index]);}
-        }
+        ln_flac_output(out,s->samples[0]+s->decoded_cursor,s->samples[1]+s->decoded_cursor,
+                       n,s->channels,s->bits,(unsigned)s->decoder.ch_mode);
         s->decoded_cursor+=n;s->frame+=n;*frames=n;return LN_PCM_READY;
     }
     if(s->total_frames&&s->frame>=s->total_frames)return LN_PCM_EOF;

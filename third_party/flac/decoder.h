@@ -10,8 +10,6 @@
 #define MAX_FRAMESIZE  65536  /* Maxsize in bytes of one compressed frame */
 #define MIN_FRAME_SIZE 11     /* smallest valid FLAC frame possible */
 
-#define FLAC_OUTPUT_DEPTH 29 /* Provide samples left-shifted to 28 bits+sign */
-
 enum decorrelation_type {
     INDEPENDENT,
     LEFT_SIDE,

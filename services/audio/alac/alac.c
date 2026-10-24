@@ -1,4 +1,5 @@
 #include "alac.h"
+#include "services/audio/alac/output.h"
 #if defined(__arm__)
 extern void ln_memory_clear(void *,uint32_t);
 #endif
@@ -73,10 +74,8 @@ int ln_alac_decode(struct ln_alac *a,int16_t *out,uint32_t capacity,uint32_t *fr
     if(a->container.error)return a->container.error;
     if(a->pcm_cursor<a->pcm_count){
         uint32_t count=a->pcm_count-a->pcm_cursor;if(count>capacity)count=capacity;
-        for(uint32_t i=0;i<count;i++)for(uint32_t channel=0;channel<2;channel++){
-            int32_t value=a->pcm[channel][a->pcm_cursor+i]>>SCALE16;
-            if(value>32767)value=32767;if(value<-32768)value=-32768;out[i*2+channel]=(int16_t)value;
-        }
+        ln_alac_output(out,a->pcm[0]+a->pcm_cursor,a->pcm[1]+a->pcm_cursor,count,
+                       a->core.output_channels,a->core.output_shift,a->core.output_weight);
         a->pcm_cursor+=count;a->frame+=count;*frames=count;return 1;
     }
     if(!a->container.opened){int result=ln_alac_open_step(a);return result==1?0:result;}

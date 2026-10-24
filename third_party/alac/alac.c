@@ -502,114 +502,6 @@ static void predictor_decompress_fir_adapt(int32_t *error_buffer,
     }
 }
 
-static void deinterlace_16(int32_t* buffer0,
-                           int32_t* buffer1,
-                           int numsamples,
-                           uint8_t interlacing_shift,
-                           uint8_t interlacing_leftweight) ICODE_ATTR_ALAC;
-static void deinterlace_16(int32_t* buffer0,
-                           int32_t* buffer1,
-                           int numsamples,
-                           uint8_t interlacing_shift,
-                           uint8_t interlacing_leftweight)
-{
-    int i;
-    if (numsamples <= 0) return;
-
-    /* weighted interlacing */
-    if (interlacing_leftweight)
-    {
-        for (i = 0; i < numsamples; i++)
-        {
-            int32_t difference, midright;
-
-            midright = buffer0[i];
-            difference = buffer1[i];
-
-            buffer0[i] = ((midright - ((difference * interlacing_leftweight)
-                            >> interlacing_shift)) + difference) << SCALE16;
-            buffer1[i] = (midright - ((difference * interlacing_leftweight) 
-                            >> interlacing_shift)) << SCALE16;
-        }
-
-        return;
-    }
-
-    /* otherwise basic interlacing took place */
-    for (i = 0; i < numsamples; i++)
-    {
-        buffer0[i] = buffer0[i] << SCALE16;
-        buffer1[i] = buffer1[i] << SCALE16;
-    }
-}
-
-static void deinterlace_24(int32_t *buffer0, int32_t *buffer1,
-                           int uncompressed_bytes,
-                           int32_t *uncompressed_bytes_buffer0,
-                           int32_t *uncompressed_bytes_buffer1,
-                           int numsamples,
-                           uint8_t interlacing_shift,
-                           uint8_t interlacing_leftweight) ICODE_ATTR_ALAC;
-static void deinterlace_24(int32_t *buffer0, int32_t *buffer1,
-                           int uncompressed_bytes,
-                           int32_t *uncompressed_bytes_buffer0,
-                           int32_t *uncompressed_bytes_buffer1,
-                           int numsamples,
-                           uint8_t interlacing_shift,
-                           uint8_t interlacing_leftweight)
-{
-    int i;
-    if (numsamples <= 0) return;
-    
-    /* weighted interlacing */
-    if (interlacing_leftweight)
-    {
-        for (i = 0; i < numsamples; i++)
-        {
-            int32_t difference, midright;
-            
-            midright = buffer0[i];
-            difference = buffer1[i];
-            
-            buffer0[i] = ((midright - ((difference * interlacing_leftweight)
-                            >> interlacing_shift)) + difference) << SCALE24;
-            buffer1[i] = (midright - ((difference * interlacing_leftweight) 
-                            >> interlacing_shift)) << SCALE24;
-            
-            if (uncompressed_bytes)
-            {
-                uint32_t mask = ~(0xFFFFFFFF << (uncompressed_bytes * 8));
-                buffer0[i] <<= (uncompressed_bytes * 8);
-                buffer1[i] <<= (uncompressed_bytes * 8);
-                
-                buffer0[i] |= uncompressed_bytes_buffer0[i] & mask;
-                buffer1[i] |= uncompressed_bytes_buffer1[i] & mask;
-            }
-
-        }
-        
-        return;
-    }
-    
-    /* otherwise basic interlacing took place */
-    for (i = 0; i < numsamples; i++)
-    {
-        if (uncompressed_bytes)
-        {
-            uint32_t mask = ~(0xFFFFFFFF << (uncompressed_bytes * 8));
-            buffer0[i] <<= (uncompressed_bytes * 8);
-            buffer1[i] <<= (uncompressed_bytes * 8);
-            
-            buffer0[i] |= uncompressed_bytes_buffer0[i] & mask;
-            buffer1[i] |= uncompressed_bytes_buffer1[i] & mask;
-        }
-        
-        buffer0[i] = buffer0[i] << SCALE24;
-        buffer1[i] = buffer1[i] << SCALE24;
-    }
-    
-}
-
 static inline int decode_frame_mono(
                     alac_file *alac,
                     int32_t outputbuffer[ALAC_MAX_CHANNELS][ALAC_BLOCKSIZE],
@@ -755,46 +647,7 @@ static inline int decode_frame_mono(
 
     yield();
 
-    switch(infosamplesize)
-    {
-    case 16:
-    {
-        int i;
-        for (i = 0; i < outputsamples; i++)
-        {
-            /* Output mono data as stereo */
-            outputbuffer[0][i] = outputbuffer[0][i] << SCALE16;
-            outputbuffer[1][i] = outputbuffer[0][i];
-        }
-        break;
-    }
-    case 24:
-    {
-        int i;
-        for (i = 0; i < outputsamples; i++)
-        {
-            int32_t sample = outputbuffer[0][i];
-            
-            if (uncompressed_bytes)
-            {
-                uint32_t mask;
-                sample = sample << (uncompressed_bytes * 8);
-                mask = ~(0xFFFFFFFF << (uncompressed_bytes * 8));
-                sample |= outputbuffer[0][i] & mask;
-            }
-            
-            outputbuffer[0][i] = sample << SCALE24;
-            outputbuffer[1][i] = outputbuffer[0][i];
-        }
-        break;
-    }
-    case 20:
-    case 32:
-        //fprintf(stderr, "FIXME: unimplemented sample size %i\n", infosamplesize);
-        break;
-    default:
-        break;
-    }
+    alac->output_channels=1;alac->output_shift=0;alac->output_weight=0;
 
     return alac->failed?-1:outputsamples;
 }
@@ -997,36 +850,9 @@ static inline int decode_frame_stereo(
 
     yield();
 
-    switch(infosamplesize)
-    {
-    case 16:
-    {
-        deinterlace_16(outputbuffer[0],
-                       outputbuffer[1],
-                       outputsamples,
-                       interlacing_shift,
-                       interlacing_leftweight);
-        break;
-    }
-    case 24:
-    {
-        deinterlace_24(outputbuffer[0],
-                       outputbuffer[1],
-                       uncompressed_bytes,
-                       outputbuffer[0],
-                       outputbuffer[1],
-                       outputsamples,
-                       interlacing_shift,
-                       interlacing_leftweight);            
-        break;
-    }
-    case 20:
-    case 32:
-        //fprintf(stderr, "FIXME: unimplemented sample size %i\n", infosamplesize);
-        break;
-    default:
-        break;
-    }
+    alac->output_channels=2;
+    alac->output_shift=interlacing_shift;alac->output_weight=interlacing_leftweight;
+
     return alac->failed?-1:outputsamples;
 }
 
