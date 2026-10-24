@@ -402,12 +402,12 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         add_sources([ROOT/'services/music/history_pages.c',ROOT/'services/music/journal_pages.c'], "music history pages")
         add_sources([ROOT/'services/audio/flac/flac.c'], "FLAC service")
         add_sources([ROOT/'services/audio/flac/framing.c'], "FLAC framing", ['-O3'])
-        add_sources([ROOT/'services/audio/flac/fixed.c',ROOT/'services/audio/flac/output.c',ROOT/'services/audio/alac/output.c'], "lossless PCM output", ['-O3'])
+        add_sources([ROOT/'services/audio/flac/lpc.c',ROOT/'services/audio/flac/fixed.c',ROOT/'services/audio/flac/output.c',ROOT/'services/audio/alac/output.c'], "lossless PCM output", ['-O3'])
         add_sources([ROOT/'third_party/flac/decoder.c'], "FLAC backend")
         add_sources([ROOT/'services/audio/m4a/demux.c'], "M4A container")
         add_sources([ROOT/'services/audio/alac/alac.c'], "ALAC service")
         add_sources([ROOT/'third_party/alac/alac.c'], "ALAC backend")
-        add_sources([ROOT/'services/audio/aac/aac.c',ROOT/'services/audio/aac/bits.c',ROOT/'services/audio/aac/stereo.c',ROOT/'services/audio/aac/reconstruct.c'], "AAC service", backend_flags['aac'])
+        add_sources([ROOT/'services/audio/aac/aac.c',ROOT/'services/audio/aac/bits.c',ROOT/'services/audio/aac/stereo.c',ROOT/'services/audio/aac/reconstruct.c',ROOT/'services/audio/aac/tns.c'], "AAC service", backend_flags['aac'])
         add_sources([ROOT/'services/audio/aac/window_arm.S'], "AAC window arithmetic")
         add_sources([ROOT/'services/audio/aac/m4a.c'], "AAC M4A container")
         aac_sources = [ROOT/'third_party/aac'/name for name in (ROOT/'third_party/aac/SOURCES').read_text().splitlines() if name]
@@ -422,6 +422,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         add_sources([ROOT/'services/audio/vorbis'/name for name in ('reconstruct.c','overlap.c')], "Vorbis reconstruction", ['-O3','-Ithird_party/vorbis'])
         add_sources([ROOT/'third_party/vorbis'/name for name in ('block.c','codebook.c','floor0.c','floor1.c','info.c','mapping0.c','registry.c','res012.c','sharedbook.c','synthesis.c','window.c')], "Vorbis backend", backend_flags['vorbis'])
         add_sources([ROOT/'services/audio/vorbis/coupling.c'], "Vorbis channel reconstruction", ['-O3'])
+        add_sources([ROOT/'services/audio/mp3/reorder.c'], "MP3 spectral order", ['-O3'])
         add_sources([ROOT/'third_party/libmad'/name for name in ('huffman.c','layer3.c','synth.c','imdct_l_arm.S','synth_full_arm.S')], "MP3 backend", backend_flags['mp3'])
         flags += ['-fwrapv']
         if profile!='release':

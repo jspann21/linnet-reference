@@ -1,3 +1,4 @@
+#include "services/audio/mp3/reorder.h"
 /* Modified for Linnet, 2026-09-06: freestanding fixed-point integration.
  * See PROVENANCE.md for changes; original licensing follows. */
 /*
@@ -1305,54 +1306,6 @@ enum mad_error III_huffdecode(struct mad_bitptr *ptr, mad_fixed_t xrarr[576],
 
 # undef MASK
 # undef MASK1BIT
-
-/*
- * NAME:        III_reorder()
- * DESCRIPTION: reorder frequency lines of a short block into subband order
- */
-static
-void III_reorder(mad_fixed_t xr[576], struct channel const *channel,
-                 unsigned char const sfbwidth[39])
-{
-  mad_fixed_t tmp[32][3][6];
-  unsigned int sb, l, f, w, sbw[3], sw[3];
-
-  /* this is probably wrong for 8000 Hz mixed blocks */
-
-  sb = 0;
-  if (channel->flags & mixed_block_flag) {
-    sb = 2;
-
-    l = 0;
-    while (l < 36)
-      l += *sfbwidth++;
-  }
-
-  for (w = 0; w < 3; ++w) {
-    sbw[w] = sb;
-    sw[w]  = 0;
-  }
-
-  f = *sfbwidth++;
-  w = 0;
-
-  for (l = 18 * sb; l < 576; ++l) {
-    if (f-- == 0) {
-      f = *sfbwidth++ - 1;
-      w = (w + 1) % 3;
-    }
-
-    unsigned int sbww = sbw[w];
-    tmp[sbww][w][sw[w]++] = xr[l];
-
-    if (sw[w] == 6) {
-      sw[w] = 0;
-      ++sbw[w];
-    }
-  }
-
-  memcpy(&xr[18 * sb], &tmp[sb], (576 - 18 * sb) * sizeof(mad_fixed_t));
-}
 
 /*
  * NAME:        III_stereo()
@@ -2821,7 +2774,7 @@ enum mad_error III_decode(struct mad_bitptr *ptr, struct mad_frame *frame,
       mad_fixed_t output[36];
 
       if (channel->block_type == 2) {
-        III_reorder(xr[ch], channel, sfbwidth[ch]);
+        ln_mp3_reorder(xr[ch], sfbwidth[ch], channel->flags & mixed_block_flag);
 
 # if !defined(OPT_STRICT)
         /*

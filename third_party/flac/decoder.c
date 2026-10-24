@@ -43,6 +43,7 @@
 #include "decoder.h"
 #include "services/audio/flac/framing.h"
 #include "services/audio/flac/fixed.h"
+#include "services/audio/flac/lpc.h"
 
 #if defined(CPU_COLDFIRE)
 #include "coldfire.h"
@@ -117,56 +118,10 @@ int decode_subframe_fixed(FLACContext *s, int32_t* decoded, int pred_order, int 
     return pred_order?ln_flac_fixed(decoded,(unsigned)blocksize,(unsigned)pred_order):0;
 }
 
-#if !defined(CPU_COLDFIRE)
-static void flac_lpc_32_c(int32_t *decoded, int coeffs[],
-                          int pred_order, int qlevel, int len) ICODE_ATTR_FLAC;
-static void flac_lpc_32_c(int32_t *decoded, int coeffs[],
-                          int pred_order, int qlevel, int len)
-{
-    int i, j;
-    /*NOTE coeffs[] is in reverse order compared to upstream*/
-    for (i = pred_order; i < len; i++, decoded++) {
-        int64_t sum = 0;
-        for (j = 0; j < pred_order; j++)
-            sum += (int64_t)coeffs[pred_order-j-1] * decoded[j];
-        decoded[j] += sum >> qlevel;
-    }
-
-}
-
-static void lpc_analyze_remodulate(int32_t *decoded, int coeffs[],
-                                   int order, int qlevel, int len, int bps)
-{
-    /*NOTE coeffs[] is in reverse order compared to upstream*/
-    int i, j;
-    int ebps = 1 << (bps-1);
-    unsigned sigma = 0;
-
-    for (i = order; i < len; i++)
-        sigma |= decoded[i] + ebps;
-
-    if (sigma < 2U*ebps)
-        return;
-
-    for (i = len - 1; i >= order; i--) {
-        int64_t p = 0;
-        for (j = 0; j < order; j++)
-            p += coeffs[order-j-1] * (int64_t)(int32_t)decoded[i-order+j];
-        decoded[i] -= p >> qlevel;
-    }
-    for (i = order; i < len; i++, decoded++) {
-        int32_t p = 0;
-        for (j = 0; j < order; j++)
-            p += coeffs[order-j-1] * (uint32_t)decoded[j];
-        decoded[j] += p >> qlevel;
-    }
-}
-#endif
-
 static int decode_subframe_lpc(FLACContext *s, int32_t* decoded, int pred_order, int bps) ICODE_ATTR_FLAC;
 static int decode_subframe_lpc(FLACContext *s, int32_t* decoded, int pred_order, int bps)
 {
-    int sum, i, j;
+    int i, j;
     int coeff_prec, qlevel;
     int coeffs[32];
     if (pred_order < 1 || pred_order > 32 || pred_order > s->blocksize) return -6;
@@ -198,35 +153,8 @@ static int decode_subframe_lpc(FLACContext *s, int32_t* decoded, int pred_order,
     if (decode_residuals(s, decoded, pred_order) < 0)
         return -8;
 
-    if ((s->bps + coeff_prec + av_log2(pred_order)) <= 32) {
-        #if defined(CPU_COLDFIRE)
-        (void)sum;
-        lpc_decode_emac(s->blocksize - pred_order, qlevel, pred_order,
-                        decoded + pred_order, coeffs);
-        #elif defined(CPU_ARM_CLASSIC)
-        (void)sum;
-        lpc_decode_arm(s->blocksize - pred_order, qlevel, pred_order,
-                       decoded + pred_order, coeffs);
-        #else
-        for (i = pred_order; i < s->blocksize; i++)
-        {
-            sum = 0;
-            for (j = 0; j < pred_order; j++)
-                sum += coeffs[j] * decoded[i-j-1];
-            decoded[i] += sum >> qlevel;
-        }
-        #endif
-    } else {
-        #if defined(CPU_COLDFIRE)
-        lpc_decode_emac_wide(s->blocksize - pred_order, qlevel, pred_order,
-                             decoded + pred_order, coeffs);
-        #else
-        flac_lpc_32_c(decoded, coeffs, pred_order, qlevel, s->blocksize);
-
-        if (bps <= 16)
-            lpc_analyze_remodulate(decoded, coeffs, pred_order, qlevel, s->blocksize, bps);
-        #endif
-    }
+    ln_flac_lpc(decoded,(unsigned)s->blocksize,coeffs,(unsigned)pred_order,
+                (unsigned)qlevel,s->bps+coeff_prec+av_log2(pred_order)>32,(unsigned)bps);
 
     return 0;
 }

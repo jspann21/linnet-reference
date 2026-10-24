@@ -31,13 +31,12 @@
 
 #include "syntax.h"
 #include "tns.h"
+#include "services/audio/aac/tns.h"
 
 
 /* static function declarations */
 static void tns_decode_coef(uint8_t order, uint8_t coef_res_bits, uint8_t coef_compress,
                             uint8_t *coef, real_t *a);
-static void tns_ar_filter(real_t *spectrum, uint16_t size, int8_t inc, real_t *lpc,
-                          int8_t order);
 #ifdef LTP_DEC
 static void tns_ma_filter(real_t *spectrum, uint16_t size, int8_t inc, real_t *lpc,
                           int8_t order);
@@ -127,7 +126,7 @@ void tns_decode_frame(ic_stream *ics, tns_info *tns, uint8_t sr_index,
                 inc = 1;
             }
 
-            tns_ar_filter(&spec[(w*nshort)+start], size, inc, lpc, tns_order);
+            ln_aac_tns(&spec[(w*nshort)+start], size, inc, lpc, tns_order);
         }
     }
 }
@@ -227,50 +226,6 @@ static void tns_decode_coef(uint8_t order, uint8_t coef_res_bits, uint8_t coef_c
             a[i] = b[i];
 
         a[m] = tmp2[m-1]; /* changed */
-    }
-}
-
-static void tns_ar_filter(real_t *spectrum, uint16_t size, int8_t inc, real_t *lpc,
-                          int8_t order)
-{
-    /*
-     - Simple all-pole filter of order "order" defined by
-       y(n) = x(n) - lpc[1]*y(n-1) - ... - lpc[order]*y(n-order)
-     - The state variables of the filter are initialized to zero every time
-     - The output data is written over the input data ("in-place operation")
-     - An input vector of "size" samples is processed and the index increment
-       to the next data sample is given by "inc"
-    */
-
-    uint8_t j;
-    uint16_t i;
-    real_t y;
-    /* state is stored as a double ringbuffer */
-    real_t state[2*TNS_MAX_ORDER];
-    memset(state,0,sizeof(state));
-    int8_t state_index = 0;
-
-    for (i = 0; i < size; i++)
-    {
-        y = *spectrum;
-
-        for (j = 0; j < order; j++)
-            y -= MUL_C(state[state_index+j], lpc[j+1]);
-
-        /* double ringbuffer state */
-        state_index--;
-        if (state_index < 0)
-            state_index = order-1;
-        state[state_index] = state[state_index + order] = y;
-
-        *spectrum = y;
-        spectrum += inc;
-
-//#define TNS_PRINT
-#ifdef TNS_PRINT
-        //printf("%d\n", y);
-        printf("0x%.8X\n", y);
-#endif
     }
 }
 
