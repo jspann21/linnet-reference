@@ -9,7 +9,8 @@ after 14 days. Public release assets remain on the repository's Releases page.
 
 | File | Purpose |
 | --- | --- |
-| `linnet-media-windows.zip` | Windows x64 Media Manager, including `Linnet Media.exe`, Python, Qt, media preparation helpers, and Apple database helpers |
+| `LinnetSetup.exe` | Recommended Windows x64 installer: installs Media Manager, adds a Start menu shortcut, and provides an uninstall entry |
+| `linnet-media-windows.zip` | Optional portable Media Manager, including `Linnet Media.exe`, Python, Qt, media preparation helpers, and Apple database helpers |
 | `linnet-photo4g-p98.zip` | iPod Photo firmware |
 | `linnet-video5g-m25.zip` | iPod Video firmware |
 | `linnet-ipod4g-q21.zip` | Monochrome fourth-generation iPod firmware |
@@ -17,11 +18,22 @@ after 14 days. Public release assets remain on the repository's Releases page.
 | `linnet-source.zip` | Repository source at the exact commit used for these builds, including build scripts and vendor notices |
 | `SHA256SUMS.txt` | SHA-256 checksums of the downloads and these instructions |
 
-Extract the entire Media Manager ZIP, then open `Linnet Media/Linnet Media.exe`.
-Keep `_internal` beside the executable. This is a portable app, without an MSI or
-setup wizard. End users do not need Python, a compiler, or WSL. FFmpeg and FFprobe
-are installed separately and selected in Settings; see the Media Manager guide.
-The executable is currently unsigned.
+Download **LinnetSetup.exe**, run it, and install. Open **Linnet** from the Start
+menu. The installer supports Windows 10 and later with x64 application support.
+It installs for the current user under `%LOCALAPPDATA%/Programs/Linnet` without
+requesting administrator access. A desktop shortcut is optional. Close Linnet
+before installing or uninstalling; setup will not close a running app for you.
+
+Remove the desktop app through **Windows Settings → Apps → Installed apps →
+Linnet → Uninstall**. Saved settings, caches, and recovery backups are retained.
+This removes the computer app; iPod firmware is managed separately inside Linnet.
+
+For portable use, extract the entire optional ZIP, then open
+`Linnet Media/Linnet Media.exe`. Keep `_internal` beside the executable. Both
+packages include the same app and helpers. End users do not need Python, a
+compiler, or WSL. FFmpeg and FFprobe are installed separately and selected in
+Settings; see the Media Manager guide. The installer and app are currently
+unsigned.
 
 Select the whole firmware ZIP for the detected target inside Media Manager
 **without extracting it**. Media Manager selects the required files for your
@@ -69,10 +81,15 @@ python -m venv .venv
 .\.venv\Scripts\python.exe linnet setup
 .\.venv\Scripts\python.exe linnet doctor
 .\.venv\Scripts\python.exe linnet release bundle --target photo4g-p98 --output out/releases/linnet-photo4g-p98.zip
-.\.venv\Scripts\python.exe linnet release media --output out/releases/linnet-media-windows.zip
+.\.venv\Scripts\python.exe linnet release media --output out/releases/linnet-media-windows.zip --installer-output out/releases/LinnetSetup.exe
 ```
 
-Repeat the bundle command for the other target IDs in the table. Output ZIPs
-must not already exist; choose a fresh output directory when rebuilding. Local
+Repeat the bundle command for the other target IDs in the table. Installer
+packaging downloads and verifies the pinned Inno Setup compiler, then prepares
+it in portable mode under `out/toolchains/`. Its version and checksum are in
+[`config/inno-setup.json`](../config/inno-setup.json). The installed app version
+comes from `config/system.toml`. Omit `--installer-output` to build only the
+portable ZIP. Output files must not already exist; choose a fresh output
+directory when rebuilding. Local
 builds use the current working files, while GitHub uses the checked-out commit.
 Keep generated artifacts in `out/`, which is excluded from Git.

@@ -69,6 +69,7 @@ def register_support(commands):
     bundle.add_argument("--jobs", type=int, choices=range(1, 5), default=2)
     media = releases.add_parser("media", help="Package the standalone Windows Media Manager")
     media.add_argument("--output", required=True, type=Path)
+    media.add_argument("--installer-output", type=Path, help="Also build a Windows setup EXE")
     storage=commands.add_parser("storage").add_subparsers(dest="action",required=True)
     package=storage.add_parser("package")
     package.add_argument("--image",type=Path,required=True)
@@ -141,7 +142,7 @@ def run_studio(args, emit):
             emit(create(args.target, args.output, args.jobs))
         elif args.action == "media":
             from tools.studio.media_distribution import create
-            emit(create(args.output))
+            emit(create(args.output, args.installer_output))
         else:
             emit(verify_release(args.image.read_bytes(), args.symbols.read_text()))
     elif args.command == "storage" and args.action in ("package", "provision"):

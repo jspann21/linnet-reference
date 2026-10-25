@@ -3,6 +3,10 @@
 Manage libraries, firmware, games, and screen menus from Windows. For packaged
 installation and source setup, start with the [main README](../README.md#get-started).
 
+Use **LinnetSetup.exe** for the standard Windows installation, then open
+**Linnet** from the Start menu. The optional portable ZIP runs after extraction.
+See [builds and downloads](releases.md) for installation and desktop removal.
+
 The packaged app includes Python and the native Apple database helpers.
 Prebuilt firmware installation needs no compiler or WSL. Media conversion
 requires FFmpeg and FFprobe; select their folder in **Settings**.
@@ -353,6 +357,25 @@ links to those terms. Apple font data is excluded from public source and
 packages; keep downloaded firmware, extracted fonts, and local simulator copies
 private. See the [source and provenance notice](../sdk/assets/PODIUM-SANS-NOTICE.txt).
 
+## Computer storage settings
+
+**Settings → Computer storage** shows the reusable cache size and location.
+The default is `%LOCALAPPDATA%/Linnet/Cache/Media`. **Change location…** moves
+reusable data to a dedicated local folder, verifies each copy, and saves the
+choice in `%LOCALAPPDATA%/Linnet/media-cache.json`. **Open cache folder** opens
+the selected location; **Refresh size** measures it again.
+
+**Clear cache…** removes recognized reusable thumbnails, metadata, and prepared
+media. They are recreated when needed. Unknown files, saved selections, recovery
+records, and startup backups are kept. Moving or clearing the cache is blocked
+while another Media Manager operation uses computer storage.
+
+Saved state and receipts stay under `%LOCALAPPDATA%/Linnet/Media`; startup
+backups stay under `%LOCALAPPDATA%/Linnet/Installer`. Settings provides buttons
+to open both locations. Changing the cache folder does not move those records.
+Removing the desktop app retains the chosen cache, recovery data, FFmpeg paths,
+and other saved preferences.
+
 ## Removal, recovery, and caching
 
 Use the library's removal controls and **Trash** to restore removed content or
@@ -376,8 +399,8 @@ recovery. Videos added after that backup may need preparation again. If no
 complete backup is available, the app keeps the damaged catalog and prepared
 videos in place for manual recovery.
 
-Caches and receipts live under `%LOCALAPPDATA%/Linnet/Media`. Fast music
-verification checks file identity, size, and timestamps; full verification also
+Reusable data uses the [configured cache folder](#computer-storage-settings).
+Fast music verification checks file identity, size, and timestamps; full verification also
 reads media hashes. Cached readiness is not proof of unchanged file contents.
 
 Use the skipped-file controls to retry repaired sources. Preserve installation
@@ -402,8 +425,9 @@ rescans the collection. Leave the recovery files on the iPod for the app to
 inspect; an invalid record needs manual attention.
 
 After preparation, open **Preparation details** to see completed, skipped, and
-failed steps and open the saved receipt. Receipts and cache data are stored under
-`%LOCALAPPDATA%/Linnet/Media`; installation backups are separate under
+failed steps and open the saved receipt. Receipts are stored under
+`%LOCALAPPDATA%/Linnet/Media`; reusable data uses the configured cache folder.
+Installation backups are separate under
 `%LOCALAPPDATA%/Linnet/Installer`. **Diagnostics** in the footer shows the last
 50 recorded operation errors on this computer. **Export support file** saves
 that history as JSON with device serials, recognized paths, and email addresses

@@ -191,8 +191,8 @@ To add another model, start with the [porting guide](targets/README.md).
 
 When release packages are available:
 
-1. Download the **Windows Media Manager ZIP** and the **firmware ZIP for your target** from [Releases](https://github.com/jspann21/linnet/releases).
-2. Extract the entire Media Manager ZIP and open **Linnet Media.exe**.
+1. Download **LinnetSetup.exe** and the **firmware ZIP for your target** from [Releases](https://github.com/jspann21/linnet/releases).
+2. Run **LinnetSetup.exe**, install, and open **Linnet** from the Start menu. The optional portable ZIP can be extracted and run without installation.
 3. Connect the iPod with USB and select **Find or switch iPod**. If it does not appear, **iPod setup** shows how to enter Apple Disk Mode.
 4. Open **iPod setup → Choose firmware ZIP** and select the whole firmware ZIP **without extracting it**. Media Manager selects the required files. For a fresh Classic, follow its live button prompt; Link handles the remaining bootloader and OS setup automatically.
 5. Prepare media while connected in Disk Mode, then **Eject safely** to start Linnet.
@@ -316,12 +316,14 @@ the host headers and libraries supplied with LLVM-MinGW.
 ```powershell
 .\.venv\Scripts\python.exe linnet release bundle --target photo4g-p98 --output out/releases/linnet-photo4g-p98.zip
 .\.venv\Scripts\python.exe -m pip install pyinstaller==6.22.3
-.\.venv\Scripts\python.exe linnet release media --output out/releases/linnet-media-windows.zip
+.\.venv\Scripts\python.exe linnet release media --output out/releases/linnet-media-windows.zip --installer-output out/releases/LinnetSetup.exe
 ```
 
 Repeat `release bundle` for each supported target. Firmware ZIPs include verified
 release OS and Boot images, including both startup-selector variants. Build the
-Media Manager package on Windows; its ZIP includes the runtime and dependencies.
+Media Manager packages on Windows. The installer and optional portable ZIP both
+include the runtime and dependencies. Installer packaging automatically prepares
+the pinned Inno Setup compiler in portable mode under `out/toolchains/`.
 
 GitHub's **Build downloads** workflow builds the Windows app and all four firmware
 bundles on pushes to `main`, pull requests, and manual runs. Version tags (`v*`)

@@ -1,21 +1,46 @@
 """Package the Windows Media Manager with its Python runtime and dependencies."""
 import os
+import hashlib
+import re
 import shutil
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import tomllib
 import zipfile
 
 from tools.studio.targets import ROOT
 
 
-def create(output):
+def _publish(source, output):
+    """Stage beside the destination so publication works across volumes."""
+    with tempfile.TemporaryDirectory(prefix='.linnet-package-', dir=output.parent) as temporary:
+        staged = Path(temporary) / output.name
+        shutil.copyfile(source, staged)
+        with source.open('rb') as original, staged.open('rb') as copied:
+            if hashlib.file_digest(original, 'sha256').digest() != hashlib.file_digest(copied, 'sha256').digest():
+                raise OSError('Package copy failed verification.')
+        # Windows rename refuses to replace an output created by another build.
+        staged.rename(output)
+
+
+def create(output, installer_output=None):
     if os.name != "nt":
         raise ValueError("Build the Windows Media Manager on Windows.")
     output = Path(output).resolve()
     if output.exists():
         raise ValueError("Media Manager output already exists")
+    if output.suffix.lower() != '.zip':
+        raise ValueError('The portable Media Manager output must be a ZIP.')
+    iscc = None
+    if installer_output is not None:
+        installer_output = Path(installer_output).resolve()
+        if installer_output.suffix.lower() != '.exe' or installer_output.exists():
+            raise ValueError('Choose a new EXE path for the Windows installer.')
+        from tools.studio.inno_setup import compiler
+        iscc = compiler()
+        installer_output.parent.mkdir(parents=True, exist_ok=True)
     try:
         import PyInstaller  # noqa: F401
     except ImportError as error:
@@ -68,10 +93,27 @@ def create(output):
                 shutil.copy2(path, destination)
         if (ROOT / "LICENSE").is_file():
             shutil.copy2(ROOT / "LICENSE", app / "LICENSE")
+        installer = None
+        if installer_output is not None:
+            version = tomllib.loads((ROOT / 'config/system.toml').read_text(encoding='utf-8'))['system']['version']
+            if not isinstance(version, str) or not re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?', version):
+                raise ValueError('The system version is not a supported installer version.')
+            installer_dir = work / 'installer'
+            command = [str(iscc), '/Qp', '/DPackageDir=' + str(app),
+                '/DOutputDir=' + str(installer_dir), '/DOutputName=' + installer_output.stem,
+                '/DAppVersion=' + version, str(ROOT / 'tools/studio/linnet_setup.iss')]
+            result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True,
+                encoding='utf-8', timeout=300, creationflags=subprocess.CREATE_NO_WINDOW)
+            installer = installer_dir / installer_output.name
+            if result.returncode or not installer.is_file():
+                raise RuntimeError('Windows installer compilation failed:\n' + result.stdout + result.stderr)
         archive = work / "media.zip"
         with zipfile.ZipFile(archive, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
             for path in sorted((work / "dist").rglob("*")):
                 if path.is_file():
                     bundle.write(path, path.relative_to(work / "dist").as_posix())
-        archive.rename(output)
-    return dict(archive=str(output), executable="Linnet Media/Linnet Media.exe")
+        _publish(archive, output)
+        if installer is not None:
+            _publish(installer, installer_output)
+    return dict(archive=str(output), executable="Linnet Media/Linnet Media.exe",
+                **(dict(installer=str(installer_output)) if installer_output is not None else {}))
