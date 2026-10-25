@@ -11,6 +11,9 @@
 #ifndef AppVersion
   #error AppVersion is required
 #endif
+#ifndef AppUserModelID
+  #error AppUserModelID is required
+#endif
 
 [Setup]
 AppId=Linnet.MediaManager
@@ -30,8 +33,11 @@ OutputBaseFilename={#OutputName}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile={#PackageDir}\_internal\assets\linnet.ico
+WizardSmallImageFile={#PackageDir}\_internal\assets\linnet-icon.png
+WizardImageFile={#PackageDir}\_internal\assets\linnet-setup.png
 LicenseFile={#PackageDir}\LICENSE
-UninstallDisplayIcon={app}\Linnet Media.exe
+UninstallDisplayIcon={app}\Linnet Media.exe,0
 UninstallDisplayName=Linnet
 ; Kept in sync with the lifetime guard in media_app.py.
 AppMutex=Local\Linnet.MediaManager.Running
@@ -46,8 +52,8 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 Source: "{#PackageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\Linnet"; Filename: "{app}\Linnet Media.exe"; WorkingDir: "{app}"; AppUserModelID: "Linnet.MediaManager"
-Name: "{autodesktop}\Linnet"; Filename: "{app}\Linnet Media.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\Linnet"; Filename: "{app}\Linnet Media.exe"; WorkingDir: "{app}"; IconFilename: "{app}\Linnet Media.exe"; IconIndex: 0; AppUserModelID: "{#AppUserModelID}"
+Name: "{autodesktop}\Linnet"; Filename: "{app}\Linnet Media.exe"; WorkingDir: "{app}"; IconFilename: "{app}\Linnet Media.exe"; IconIndex: 0; AppUserModelID: "{#AppUserModelID}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\Linnet Media.exe"; Description: "Open Linnet"; Flags: nowait postinstall skipifsilent

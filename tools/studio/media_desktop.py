@@ -32,6 +32,7 @@ from tools.content import publish, host_cache, apple_font
 from tools.content.media_manager import format_size as size
 from tools.content.music import COVER_NAMES, EXTENSIONS as MUSIC_EXTENSIONS
 from tools.studio import installer, screen_settings, startup_default, boot_upgrade, media_reader
+from tools.studio.media_identity import ICON_PATH, configure_taskbar
 
 
 UI_FONT = 'Century Gothic'
@@ -1056,7 +1057,7 @@ class MediaWindow(QMainWindow):
         self.setWindowTitle('Linnet · Media Manager')
         self.resize(1280, 860)
         self.setMinimumSize(780, 540)
-        self.setWindowIcon(QIcon(boot_artwork((594, 180, 310, 445), 32, 32)))
+        self.setWindowIcon(QIcon(str(ICON_PATH)))
         self.settings = QSettings('Linnet', 'MediaManager')
         self.identity, self.inventory, self.review = None, None, None
         self.last_preparation = None
@@ -3858,10 +3859,12 @@ class MediaWindow(QMainWindow):
 
 
 def launch():
+    configure_taskbar()
     # Qt still decodes photos with malformed ICC metadata; avoid repeating
     # profile diagnostics as their previews enter and leave the artwork cache.
     QLoggingCategory.setFilterRules('qt.gui.icc.warning=false')
     app = QApplication.instance() or QApplication(sys.argv[:1])
+    app.setWindowIcon(QIcon(str(ICON_PATH)))
     app.setStyle('Fusion'); app.setFont(QFont(UI_FONT, 10))
     window = MediaWindow(); window.show()
     app.exec()

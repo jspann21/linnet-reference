@@ -11,6 +11,7 @@ import tomllib
 import zipfile
 
 from tools.studio.targets import ROOT
+from tools.studio.media_identity import APP_USER_MODEL_ID, ICON_PATH
 
 
 def _publish(source, output):
@@ -33,6 +34,9 @@ def create(output, installer_output=None):
         raise ValueError("Media Manager output already exists")
     if output.suffix.lower() != '.zip':
         raise ValueError('The portable Media Manager output must be a ZIP.')
+    if not all(path.is_file() for path in (ICON_PATH,
+            ICON_PATH.with_name('linnet-icon.png'), ICON_PATH.with_name('linnet-setup.png'))):
+        raise ValueError('Generate the app icon with: python -m tools.studio.media_icon')
     iscc = None
     if installer_output is not None:
         installer_output = Path(installer_output).resolve()
@@ -52,7 +56,7 @@ def create(output, installer_output=None):
         command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed",
                    "--onedir", "--name", "Linnet Media", "--paths", str(ROOT),
                    "--distpath", str(work / "dist"), "--workpath", str(work / "build"),
-                   "--specpath", str(work), "--collect-all", "lz4"]
+                   "--specpath", str(work), "--collect-all", "lz4", "--icon", str(ICON_PATH)]
         for package in ("mutagen", "Pillow", "pyserial", "lz4", "PySide6",
                         "PySide6_Essentials", "PySide6_Addons", "shiboken6"):
             command += ["--copy-metadata", package]
@@ -101,7 +105,8 @@ def create(output, installer_output=None):
             installer_dir = work / 'installer'
             command = [str(iscc), '/Qp', '/DPackageDir=' + str(app),
                 '/DOutputDir=' + str(installer_dir), '/DOutputName=' + installer_output.stem,
-                '/DAppVersion=' + version, str(ROOT / 'tools/studio/linnet_setup.iss')]
+                '/DAppVersion=' + version, '/DAppUserModelID=' + APP_USER_MODEL_ID,
+                str(ROOT / 'tools/studio/linnet_setup.iss')]
             result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True,
                 encoding='utf-8', timeout=300, creationflags=subprocess.CREATE_NO_WINDOW)
             installer = installer_dir / installer_output.name

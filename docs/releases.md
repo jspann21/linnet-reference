@@ -93,3 +93,8 @@ portable ZIP. Output files must not already exist; choose a fresh output
 directory when rebuilding. Local
 builds use the current working files, while GitHub uses the checked-out commit.
 Keep generated artifacts in `out/`, which is excluded from Git.
+
+Desktop branding uses `assets/linnet.ico` for the app, installer, uninstaller,
+and shortcuts, with matching PNG artwork in the setup wizard. Regenerate these
+assets from the boot artwork with `python -m tools.studio.media_icon`.
+The running app and both shortcuts share the `Linnet.MediaManager` taskbar ID.
