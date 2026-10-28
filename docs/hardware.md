@@ -20,14 +20,6 @@ the [porting guide](../targets/README.md).
 
 Storage capacities describe the tested configurations, not capacity limits.
 
-Apple identifies the 120 GB Classic as the September 2008 A1238 revision;
-it is commonly called the 6.5th generation. Apple's
-[model identification guide](https://support.apple.com/en-us/103823) distinguishes
-it from the 2007 and Late 2009 Classics, and its
-[December 2008 price list](https://images.apple.com/education/nys/pdf/120908EducationPriceList.pdf)
-lists MB562LL/A as the silver 120 GB configuration. The `classic6g-n25` target
-name covers supported Classic revisions; it does not identify their release year.
-
 ## Features
 
 | Target | Features |
