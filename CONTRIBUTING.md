@@ -19,6 +19,9 @@ notices for third-party material.
 - **Documentation:** update the guide that owns the topic and list new guides in
   the [documentation index](docs/README.md). Link new starting points from the
   project README when needed. Prefer links to repeating the same reference data.
+  Keep [hardware support](docs/hardware.md) summaries brief and about the
+  hardware configuration. Keep individual device serials, test dates, detailed
+  test results and bring-up logs in local artifacts rather than documentation.
 
 ## Check your changes
 
