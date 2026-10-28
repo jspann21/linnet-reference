@@ -1,0 +1,29 @@
+name: iPod compatibility or installation
+description: Get help identifying an iPod, installing Linnet, or reporting a hardware problem.
+title: "[Hardware] iPod compatibility or installation"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        In Media Manager, open **iPod setup → Save hardware report…**.
+        Review the report, then save the JSON file or choose **Copy report**.
+        Attach the file below or paste the copied report. No pull request is needed.
+
+        The report excludes device serial numbers, volume labels, computer/user names,
+        local paths and media contents. It includes model, firmware, disk geometry and
+        connection status. This issue and anything you attach will be public.
+        Your GitHub account is separate from the report.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe what you tried and the message or screen you saw. Mention storage replacements or other modifications if you know them.
+    validations:
+      required: true
+  - type: textarea
+    id: hardware-report
+    attributes:
+      label: Hardware report
+      description: Drag linnet-hardware-report.json into this box, or paste the report copied from Media Manager. If collection failed, tell us what happened instead.
+    validations:
+      required: true

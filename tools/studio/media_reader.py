@@ -70,7 +70,7 @@ def read(action, *, identity=None, photo_dimension=640, verification='metadata',
     from tools.content.media_manager import Cancelled
     from tools.studio.targets import ROOT
 
-    if action not in ('devices', 'scan'):
+    if action not in ('devices', 'scan', 'support'):
         raise ValueError('Unknown device read operation')
     if cancelled():
         raise Cancelled()
@@ -136,9 +136,22 @@ def main(arguments=None):
         options = json.loads(request.read_text(encoding='utf-8'))
         from tools.content import media_manager as media, media_status, publish
         if options['action'] == 'devices':
-            value = media.discover(detailed=True)
+            try:
+                value = media.discover(detailed=True)
+            except (OSError,RuntimeError,ValueError) as error:
+                value = dict(devices=[],errors=[str(error)])
             from tools.studio.media_link import discover
-            value['links'] = discover()
+            try:
+                value['links'] = discover()
+            except (OSError,RuntimeError,ValueError) as error:
+                value['links'] = []
+                value['errors'].append(str(error))
+            if not value['devices'] and not value['links']:
+                from tools.studio.device_support import collect
+                value['hardware_report'] = collect(discovery=value)
+        elif options['action'] == 'support':
+            from tools.studio.device_support import collect
+            value = collect(identity=options['identity'])
         elif options['action'] == 'scan':
             identity = options['identity']
             media._volume_guard(identity)

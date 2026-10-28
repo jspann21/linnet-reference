@@ -15,6 +15,8 @@ def register_primary(commands):
     target_report = commands.add_parser("target-report", help="Inspect resolved target inputs without building")
     target_report.add_argument("--target", required=True, type=target_id)
     commands.add_parser("media", help="Open the desktop iPod media manager")
+    support=commands.add_parser('hardware-report',help='Read hardware information for support without installing or uploading')
+    support.add_argument('--output',type=Path,help='Save a shareable JSON report on this computer')
     installer = commands.add_parser("installer", help="Inspect, install, restore, or remove Linnet without erasing media")
     installer_actions = installer.add_subparsers(dest="installer_action", required=True)
     for action in ("inspect", "install", "restore", "uninstall", "upgrade-boot"):
@@ -101,6 +103,12 @@ def run_studio(args, emit):
     elif args.command == "media":
         from tools.studio.media_app import launch
         launch()
+    elif args.command == 'hardware-report':
+        from tools.studio.device_support import collect
+        result=collect()
+        if args.output:
+            args.output.write_text(json.dumps(result,indent=2)+'\n',encoding='utf-8')
+        emit(result)
     elif args.command == "installer":
         from tools.studio.installer import assess, identity_for_mount, install, restore, uninstall
         identity = identity_for_mount(args.mount)

@@ -768,6 +768,9 @@ def build_setup_page(window):
     details = box(header, margins=(20, 18, 20, 18), spacing=8)
     window.setup_device = label('Connect your iPod', 'cardTitle', True); details.addWidget(window.setup_device)
     window.setup_software = label('Connect with USB to get started.', 'muted', True); details.addWidget(window.setup_software)
+    window.support_status = label('', 'muted', True); details.addWidget(window.support_status)
+    window.hardware_report_button = button('Save hardware report…', window.collect_hardware_report)
+    details.addWidget(window.hardware_report_button, 0, Qt.AlignLeft)
     window.install_detail = label('', 'notice', True); window.install_detail.hide(); details.addWidget(window.install_detail)
     window.setup_progress = QProgressBar(); window.setup_progress.setRange(0, 0)
     window.setup_progress.setTextVisible(False); window.setup_progress.hide(); details.addWidget(window.setup_progress)
@@ -1068,6 +1071,7 @@ class MediaWindow(QMainWindow):
         self.stale_videos = 0
         self.queue_context = None
         self.discovery_errors = []
+        self.hardware_report = None
         self.device_connected = False
         self.publication_recovery_pending = False
         self.publication_recovery_groups = []
@@ -1653,8 +1657,8 @@ class MediaWindow(QMainWindow):
             return
         self.operation_id += 1
         context = OperationContext(self.operation_id, tag,
-            dict(self.identity) if self.identity and tag != 'devices' and not tag.startswith('cache_') else None,
-            self.stop_event if tag in ('prepare', 'remove', 'restore', 'scan', 'plan', 'devices', 'apple_update', 'classic_install', 'apple_font_install') else None)
+            dict(self.identity) if self.identity and tag not in ('devices','hardware_report') and not tag.startswith('cache_') else None,
+            self.stop_event if tag in ('prepare', 'remove', 'restore', 'scan', 'plan', 'devices', 'hardware_report', 'apple_update', 'classic_install', 'apple_font_install') else None)
         self.active_operation = context
         self.busy = True
         self.stop_event.clear()
@@ -1662,7 +1666,7 @@ class MediaWindow(QMainWindow):
         self.progress.show()
         self.cancel_button.setEnabled(True)
         self.cancel_button.setText('Stop')
-        self.cancel_button.setToolTip('Stop reading the iPod' if tag in ('scan', 'devices') else
+        self.cancel_button.setToolTip('Stop reading the iPod' if tag in ('scan', 'devices', 'hardware_report') else
                                       'Stop checking the preparation plan' if tag == 'plan' else
                                       'Stop after the current step finishes')
         self.cancel_button.setVisible(context.can_cancel)
@@ -1737,6 +1741,9 @@ class MediaWindow(QMainWindow):
         self.cancel_button.hide()
         self.update_controls()
         cancel_requested = outcome.cancel_requested or bool(context.cancel_event and context.cancel_event.is_set())
+        if cancel_requested and tag == 'hardware_report' and outcome.status != 'failed':
+            self.show_progress('Stopped collecting the hardware report.')
+            return
         if cancel_requested and tag in ('scan', 'plan', 'devices') and outcome.status != 'failed':
             if tag == 'plan':
                 self.plan_context = None
@@ -1787,6 +1794,7 @@ class MediaWindow(QMainWindow):
             'playlists': self._complete_playlists, 'save_playlists': self._complete_save_playlists,
             'apple_selection': self._complete_apple_selection, 'apple_update': self._complete_apple_update,
             'devices': self._complete_devices, 'scan': self._complete_scan,
+            'hardware_report': self._complete_hardware_report,
             'video_recovery_options': self._complete_video_recovery_options,
             'recover_publication': self._complete_recover_publication,
             'trash': self._complete_trash, 'setup': self._complete_setup,
@@ -2053,6 +2061,7 @@ class MediaWindow(QMainWindow):
     def _complete_devices(self, result):
         devices, errors = sorted(result['devices'], key=lambda item: item['drive']), result['errors']
         self.discovery_errors = errors
+        self.hardware_report = result.get('hardware_report')
         self.link_connection = None
         if devices and result.get('links'):
             dialog = QDialog(self); dialog.setWindowTitle('Choose an iPod')
@@ -2087,7 +2096,12 @@ class MediaWindow(QMainWindow):
         if not devices:
             self.transition_device(None)
             self.device_name.setText('No iPod connected'); self.device_info.setText('Connect in Disk Mode')
-            if errors:
+            if self.hardware_report:
+                self.device_name.setText('Compatibility needs checking' if self.hardware_report['usb'] else 'No iPod connection verified')
+                self.device_info.setText('See iPod setup for details')
+                self.show_progress(self.hardware_report['summary'])
+                if errors:self.record_diagnostic('devices', 'DiscoveryError', '; '.join(errors), 'failed')
+            elif errors:
                 self.record_diagnostic('devices', 'DiscoveryError', '; '.join(errors), 'failed')
                 self.show_progress('The connected iPod’s storage could not be read. Follow the Disk Mode steps in iPod setup, then choose Refresh.')
             else:
@@ -2749,6 +2763,12 @@ class MediaWindow(QMainWindow):
 
     def update_setup_status(self):
         loading = self.busy and self.review is None
+        from tools.studio.device_support import describe
+        support_identity = self.identity or (self.link_connection or {}).get('identity')
+        support = describe(support_identity, self.review)
+        self.support_status.setText(self.hardware_report['summary'] if not support_identity and self.hardware_report else
+                                   support['title'] + ' — ' + support['detail'])
+        self.hardware_report_button.setEnabled(not self.busy)
         self.setup_progress.setVisible(loading)
         setting_up = bool(self.busy and self.active_operation and self.active_operation.tag=='classic_install')
         link = self.link_connection
@@ -3800,6 +3820,36 @@ class MediaWindow(QMainWindow):
         self.settings.setValue('diagnostics/history/v1', json.dumps(history[-50:]))
         self.settings.sync()
 
+    def collect_hardware_report(self):
+        if self.busy:return
+        self.work('hardware_report', lambda: media_reader.read('support', identity=self.identity,
+            cancelled=self.stop_event.is_set), 'Reading hardware information for a support report…')
+
+    def _complete_hardware_report(self, report):
+        from tools.studio.device_support import sharing, contact_link
+        contact=sharing()
+        self.hardware_report = report
+        dialog = QDialog(self); dialog.setWindowTitle('Hardware support report'); dialog.resize(700, 500)
+        layout = box(dialog, margins=(20,20,20,20))
+        layout.addWidget(label(report['summary'], 'section', True))
+        layout.addWidget(label(report['privacy'], 'muted', True))
+        layout.addWidget(label(contact['instructions'], 'muted', True))
+        details = QTextEdit(); details.setReadOnly(True)
+        details.setPlainText(json.dumps(report, indent=2)); layout.addWidget(details)
+        def save():
+            path, _ = QFileDialog.getSaveFileName(dialog, 'Save hardware report', 'linnet-hardware-report.json', 'JSON files (*.json)')
+            if path:
+                try:
+                    Path(path).write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8')
+                    self.show_progress('Hardware report saved. Attach it when asking for Linnet support.')
+                except OSError as error:self.show_error(f'Could not save hardware report: {error}')
+        actions=box(horizontal=True);actions.addWidget(button('Save report…',save,'primary'))
+        actions.addWidget(button('Copy report',lambda: QApplication.clipboard().setText(json.dumps(report,indent=2))))
+        if contact_link():
+            actions.addWidget(button('Contact Linnet support',lambda: QDesktopServices.openUrl(QUrl(contact_link()))))
+        actions.addStretch();actions.addWidget(button('Close',dialog.reject));layout.addLayout(actions)
+        dialog.exec()
+
     def show_diagnostics(self):
         try:
             entries = json.loads(self.settings.value('diagnostics/history/v1', '[]'))
@@ -3825,6 +3875,7 @@ class MediaWindow(QMainWindow):
                 except OSError as error:
                     self.show_error(f'Could not export diagnostics: {error}')
         actions.addWidget(button('Export support file', export)); actions.addStretch()
+        actions.addWidget(button('Hardware report…', lambda: (dialog.accept(), self.collect_hardware_report())))
         actions.addWidget(button('Close', dialog.accept, 'primary'))
         layout.addLayout(actions); dialog.exec()
 
