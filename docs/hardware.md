@@ -13,12 +13,20 @@ the [porting guide](../targets/README.md).
 | iPod Video A1136 | `video5g-m25` | iFlash, 125 GB | 32 MiB | 320 × 240 color |
 | iPod Video A1136 | `video5g-m25` | Toshiba MK8010GAH, 80 GB | 64 MiB | 320 × 240 color |
 | iPod classic A1238 | `classic6g-n25` | iFlash, 125 GB | 64 MiB | 320 × 240 color |
-| iPod classic A1238 | `classic6g-n25` | Toshiba MK1231GAL, 120 GB | 64 MiB | 320 × 240 color |
+| iPod classic 120 GB (2008), A1238, MB562LL/A (silver) | `classic6g-n25` | Toshiba MK1231GAL, 120 GB | 64 MiB | 320 × 240 color |
 | iPod classic A1238 | `classic6g-n25` | Toshiba MK1634GAL, 160 GB | 64 MiB | 320 × 240 color |
 | iPod 4G monochrome A1059 | `ipod4g-q21` | Toshiba MK2006GAL, 20 GB | 32 MiB | 160 × 128 grayscale |
 | iPod 4G monochrome MP102 | `ipod4g-q21` | Toshiba MK2006GAL, 20 GB | 32 MiB | 160 × 128 grayscale |
 
 Storage capacities describe the tested configurations, not capacity limits.
+
+Apple identifies the 120 GB Classic as the September 2008 A1238 revision;
+it is commonly called the 6.5th generation. Apple's
+[model identification guide](https://support.apple.com/en-us/103823) distinguishes
+it from the 2007 and Late 2009 Classics, and its
+[December 2008 price list](https://images.apple.com/education/nys/pdf/120908EducationPriceList.pdf)
+lists MB562LL/A as the silver 120 GB configuration. The `classic6g-n25` target
+name covers supported Classic revisions; it does not identify their release year.
 
 ## Features
 
