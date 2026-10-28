@@ -19,6 +19,7 @@ static enum ln_ata_op operation;
 static bool result_ready,identifying,lba_probe_required;
 static uint64_t previous_sectors;
 static uint32_t previous_physical_sector_bytes;
+static uint32_t physical_sectors;
 static char previous_model[41],previous_serial[21],previous_firmware[9];
 #if defined(LINNET_SRAM_MONITOR)
 static uint8_t physical_buffer[4096] __attribute__((section(".dram.flash"),aligned(32)));
@@ -83,10 +84,14 @@ static bool decode(void) {
        ((uint32_t)identity[117]|((uint32_t)identity[118]<<16))!=256)return false;
     info.physical_sector_bytes=512;
     if((identity[106]&0xe000u)==0x6000u)info.physical_sector_bytes=512u<<(identity[106]&15);
-    /* This firmware exposes 512-byte LBAs but rejects commands smaller than
-     * one aligned physical sector with IDNF. Other drives retain their path. */
-    if(exact(info.model,"TOSHIBA MK1231GAL")&&exact(info.firmware,"VP211A")&&
-       info.physical_sector_bytes==4096u&&!(info.sectors&7u))info.quirks|=16u;
+    /* IDENTIFY words 106/209 describe size and alignment independently of
+     * model names. Use bounded whole physical sectors even when a drive can
+     * emulate smaller I/O itself; some iPod drives require this in the host. */
+    if(info.physical_sector_bytes>sizeof physical_buffer||
+       ((identity[209]&0xc000u)==0x4000u&&(identity[209]&0x3fffu)))return false;
+    physical_sectors=info.physical_sector_bytes>>9;
+    if(info.sectors&(physical_sectors-1u))return false;
+    if(physical_sectors>1u)info.quirks|=16u;
     info.can_flush=(identity[83]&0xd000u)==0x5000u;
     info.standby_supported=(identity[82]&8)!=0;
     info.apm_supported=(identity[83]&0xc008u)==0x4008u;
@@ -331,16 +336,17 @@ static void step_io(uint32_t now) {
 }
 #if !defined(LINNET_SRAM_MONITOR)
 static bool physical_read(void){
-    physical_offset=(uint32_t)(physical_sector&7u)*512u;
-    physical_count=8u-(uint32_t)(physical_sector&7u);
+    uint32_t mask=physical_sectors-1u;
+    physical_offset=(uint32_t)(physical_sector&mask)*512u;
+    physical_count=physical_sectors-(uint32_t)(physical_sector&mask);
     if(physical_count>physical_remaining)physical_count=physical_remaining;
-    return start_io(LN_ATA_READ,physical_sector&~(uint64_t)7u,8,physical_buffer,physical_deadline);
+    return start_io(LN_ATA_READ,physical_sector&~(uint64_t)mask,physical_sectors,physical_buffer,physical_deadline);
 }
 bool ln_ata_start(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *buffer,uint32_t deadline){
     if(physical_active)return false;
     if((op!=LN_ATA_READ&&op!=LN_ATA_WRITE)||!(info.quirks&16u))
         return start_io(op,lba,sectors,buffer,deadline);
-    if(!(lba&7u)&&!(sectors&7u))return start_io(op,lba,sectors,buffer,deadline);
+    if(!(lba&(physical_sectors-1u))&&!(sectors&(physical_sectors-1u)))return start_io(op,lba,sectors,buffer,deadline);
     physical_writing=false;
     if(!buffer||!sectors||sectors>(op==LN_ATA_WRITE?LINNET_ATA_MAX_WRITE_SECTORS:LINNET_ATA_MAX_READ_SECTORS)||
        lba>=info.sectors||sectors>info.sectors-lba||(op==LN_ATA_WRITE&&!info.can_flush))return false;
@@ -352,14 +358,14 @@ void ln_ata_step(uint32_t now){
     step_io(now);
     if(!physical_active||!result_ready)return;
     uint32_t status=result.status;
-    if(!status&&result.sectors_done!=8u){finish(LN_ATA_IO);status=LN_ATA_IO;}
+    if(!status&&result.sectors_done!=physical_sectors){finish(LN_ATA_IO);status=LN_ATA_IO;}
     result_ready=false;
     if(status)goto complete;
     if(physical_operation==LN_ATA_WRITE&&!physical_writing){
         extern void ln_memory_copy(void *,const void *,uint32_t);
         ln_memory_copy(physical_buffer+physical_offset,physical_data+physical_done*512u,physical_count*512u);
         physical_writing=true;
-        if(start_io(LN_ATA_WRITE,physical_sector&~(uint64_t)7u,8,physical_buffer,physical_deadline))return;
+        if(start_io(LN_ATA_WRITE,physical_sector&~(uint64_t)(physical_sectors-1u),physical_sectors,physical_buffer,physical_deadline))return;
         goto failed;
     }
     if(physical_operation==LN_ATA_READ){
@@ -385,9 +391,9 @@ bool ln_ata_start(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *buffe
     if(physical_active)return false;
     if((info.quirks&16u)&&op==LN_ATA_WRITE)return false;
     if((info.quirks&16u)&&op==LN_ATA_READ){
-        if(sectors!=1||!buffer)return false;
-        physical_offset=(uint32_t)(lba&7u)*512u;physical_data=buffer;
-        physical_active=start_io(op,lba&~(uint64_t)7u,8,physical_buffer,deadline);return physical_active;
+        if(sectors!=1||!buffer||lba>=info.sectors)return false;
+        physical_offset=(uint32_t)(lba&(physical_sectors-1u))*512u;physical_data=buffer;
+        physical_active=start_io(op,lba&~(uint64_t)(physical_sectors-1u),physical_sectors,physical_buffer,deadline);return physical_active;
     }
     return start_io(op,lba,sectors,buffer,deadline);
 }
@@ -395,7 +401,7 @@ void ln_ata_step(uint32_t now){
     step_io(now);
     if(!physical_active||!result_ready)return;
     physical_active=false;
-    if(!result.status&&result.sectors_done==8){
+    if(!result.status&&result.sectors_done==physical_sectors){
         extern void ln_memory_copy(void *,const void *,uint32_t);
         ln_memory_copy(physical_data,physical_buffer+physical_offset,512);result.sectors_done=1;
     }else{

@@ -29,7 +29,7 @@ struct ln_ata_info {
     uint32_t media_kind,rotation_rpm,logical_sector_bytes,physical_sector_bytes,compact_flash;
     /* Capabilities: LBA48, FLUSH, PM enabled, APM supported, write cache enabled.
      * Quirks: bit0 missing-LBA CFA probe, bit1 optional APM ABRT, bit2 CFA claim,
-     * bit3 exact iFlash platform model, bit4 aligned 4 KiB PATA transfers. */
+     * bit3 exact iFlash platform model, bit4 host-aligned physical PATA transfers. */
     uint32_t capabilities,quirks,powered,standby_supported,apm_supported,write_cache_enabled,can_power_off,power_safe;
     uint32_t idle_timeout_us,wake_timeout_us,poweroffs,spinups;
     char model[41],serial[21],firmware[9];
