@@ -7,16 +7,16 @@ the [porting guide](../targets/README.md).
 
 | Device | Target | Storage | RAM | Display |
 | --- | --- | --- | --- | --- |
-| iPod Photo / Color A1099 | `photo4g-p98` | iFlash, 64 GB | 32 MiB | 220 × 176 color |
-| iPod Video A1136 | `video5g-m25` | Toshiba MK3008GAL, 30 GB | 32 MiB | 320 × 240 color |
+| iPod Photo / Color A1099 (M9829) | `photo4g-p98` | iFlash, 64 GB | 32 MiB | 220 × 176 color |
+| iPod Video A1136 (MA146) | `video5g-m25` | Toshiba MK3008GAL, 30 GB | 32 MiB | 320 × 240 color |
 | iPod Video A1136 | `video5g-m25` | Hitachi HTC426030G5CE00, 30 GB | 32 MiB | 320 × 240 color |
 | iPod Video A1136 | `video5g-m25` | iFlash, 125 GB | 32 MiB | 320 × 240 color |
 | iPod Video A1136 | `video5g-m25` | Toshiba MK8010GAH, 80 GB | 64 MiB | 320 × 240 color |
-| iPod classic A1238 | `classic6g-n25` | iFlash, 125 GB | 64 MiB | 320 × 240 color |
-| iPod classic A1238 (MB562LL/A) | `classic6g-n25` | Toshiba MK1231GAL, 120 GB | 64 MiB | 320 × 240 color |
+| iPod classic A1238 (MB147) | `classic6g-n25` | iFlash, 125 GB | 64 MiB | 320 × 240 color |
+| iPod classic A1238 (MB562) | `classic6g-n25` | Toshiba MK1231GAL, 120 GB | 64 MiB | 320 × 240 color |
 | iPod classic A1238 | `classic6g-n25` | Toshiba MK1634GAL, 160 GB | 64 MiB | 320 × 240 color |
-| iPod 4G monochrome A1059 | `ipod4g-q21` | Toshiba MK2006GAL, 20 GB | 32 MiB | 160 × 128 grayscale |
-| iPod 4G monochrome MP102 | `ipod4g-q21` | Toshiba MK2006GAL, 20 GB | 32 MiB | 160 × 128 grayscale |
+| iPod 4G monochrome A1059 (M9282) | `ipod4g-q21` | Toshiba MK2006GAL, 20 GB | 32 MiB | 160 × 128 grayscale |
+| iPod 4G monochrome MP102 (PE435A) | `ipod4g-q21` | Toshiba MK2006GAL, 20 GB | 32 MiB | 160 × 128 grayscale |
 
 Storage capacities describe the tested configurations, not capacity limits.
 
