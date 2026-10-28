@@ -396,8 +396,7 @@ def load(prepared, *, progress=print, wait_seconds=0, inspect_only=False, probe_
                     raise RuntimeError('Unexpected image on bootstrap Link')
                 receipt.update(phase='link-verified',port=ports[0]['port'],identity=identity);record();return receipt
             time.sleep(.25)
-        raise TimeoutError('SRAM monitor did not enumerate a verified Linnet Link endpoint. '
-                           'Connect this same iPod directly to a computer USB port without a hub or dock, '
-                           'then choose Resume Classic installation. This RAM load did not write boot flash.')
+        raise TimeoutError('Setup connection failed. Connect this iPod directly to the computer, '
+                           'then choose Resume Classic installation. Boot flash was not changed.')
     except Exception as error:
         receipt['error']=str(error);record();raise

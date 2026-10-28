@@ -13,51 +13,26 @@ requires FFmpeg and FFprobe; select their folder in **Settings**.
 
 ## Will this iPod work?
 
-**iPod setup** shows whether Media Manager recognizes a supported model family,
-whether Linnet is already installed, or whether setup needs attention. A family
-match does not claim that every replacement drive or board revision has been
-tested. The supported Video and Classic targets identify the family from live
-USB identity, rather than requiring an entry for every capacity or drive model.
+**iPod setup** identifies your iPod and shows whether installation is available.
+Setup checks the device before writing. See [tested models](hardware.md) and
+[storage requirements](storage.md); Classic CE-ATA drives are not supported.
 
-For a Video, installation verifies the disk layout and original firmware backup.
-Classic setup additionally checks the BootROM, RAM, display, PATA storage and
-supported NOR flash before changing boot flash. CE-ATA storage is not supported.
-Both drivers use reported ATA geometry for supported physical sector sizes;
-see [storage compatibility](storage.md) and [tested hardware](hardware.md).
-
-If detection fails, the app distinguishes an observed USB connection from a
-verified usable disk. Enter Disk Mode, check the cable/port, and follow the
-reported drive-letter or filesystem instructions. An unknown identity does not
-enable installation or bypass the existing disk and firmware checks.
+If detection fails, enter Disk Mode, try a direct USB port, and follow the
+message shown. Save a hardware report if you still need help.
 
 ### Send a hardware report
 
-1. Open **iPod setup → Save hardware report…**, or **Diagnostics → Hardware report…**.
-2. Review the report. Choose **Save report…** to save its JSON file on your
-   computer, or **Copy report**.
-3. Choose **Contact Linnet support**. In the GitHub support form, describe what
-   happened and attach the JSON file or paste the report. Mention storage
-   replacements if you know them. Submit the issue when ready. No PR is needed.
+1. Open **iPod setup → Save hardware report…**.
+2. Review it, then **Save report…** or **Copy report**.
+3. Choose **Contact Linnet support**, describe the problem and any storage changes,
+   and attach or paste the report in the GitHub issue.
 
-The report includes model/firmware information, USB driver status, partition and
-sector geometry, and bounded Linnet runtime diagnostics when available. It
-excludes serial numbers, device-bound build hashes, volume labels, computer/user
-names, local paths, media filenames and media contents. Collection does not
-write to the iPod, change boot mode, flash firmware, or upload anything. GitHub
-receives what the user chooses to attach or submit; the user's GitHub account is
-separate from the hardware report.
+Reports contain hardware and connection details, excluding serial numbers,
+usernames, local paths and media. Collection is read-only; nothing uploads
+automatically. GitHub issues and attachments are public and show your account.
+Some hardware details require further checks outside Apple Disk Mode.
 
-The public support destination is configured in `config/support.toml`. The
-repository must be public with Issues enabled and the issue form published
-before public distribution. With no destination configured, the dialog offers
-manual save/copy instructions. There is no automatic report-upload service.
-
-Apple Disk Mode hides many internal details, so a report may establish the
-connection problem without identifying the drive, panel or codec. Supporting
-new hardware may still require a guided RAM-only investigation and driver work;
-sending a report does not automatically make an unknown iPod installable.
-
-The same read-only report is available from source:
+From source:
 
 ```console
 python linnet hardware-report --output linnet-hardware-report.json
@@ -131,11 +106,9 @@ Media Manager saves the selected firmware and the current USB and disk identity,
 safely ejects, then asks you to hold **Menu + Select** for about 12 seconds.
 Release the buttons when Media Manager detects DFU and tells you to release.
 Keep USB connected throughout; subsequent restarts are automatic.
-If the temporary setup connection fails through a hub or dock, connect this same
-iPod directly to the computer and choose **Resume Classic installation**. Before
-flash preparation, Media Manager can verify the same board on its new port and
-retain the saved installation. A missing Windows drive letter is reported
-separately; assign one to the existing iPod FAT32 volume in Disk Management.
+If setup fails through a hub or dock, connect the same iPod directly and choose
+**Resume Classic installation**. If prompted, assign its existing FAT32 volume
+a drive letter in Windows Disk Management.
 These live hold/release instructions appear in a focused dialog that advances
 automatically. Turn the Hold switch off before following them.
 

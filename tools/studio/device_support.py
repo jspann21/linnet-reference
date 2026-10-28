@@ -20,8 +20,8 @@ def describe(identity=None, review=None):
     if target not in TARGETS:
         return dict(
             status="unidentified",
-            title="Compatibility not established",
-            detail="Find iPod to identify it. If detection fails, save a hardware report below.",
+            title="iPod not identified",
+            detail="Choose Find iPod. If it fails, save a hardware report.",
         )
     spec = TARGETS[target]
     if not spec.get("build_enabled", True):
@@ -45,18 +45,16 @@ def describe(identity=None, review=None):
         return dict(
             status="installed",
             title="Linnet installed",
-            detail="This model family is supported. Installed software and recovery information have been read.",
+            detail="Software and recovery records found.",
         )
     classic = spec["installer"]["boot_layout"] == "s5l-nor"
     return dict(
         status="supported-family",
-        title="Supported model family",
+        title="Supported iPod family",
         detail=(
-            "Classic setup checks the BootROM, RAM, display, PATA storage and supported boot flash before writing boot flash. "
-            "CE-ATA storage is not supported."
+            "Setup checks hardware before installation. CE-ATA drives are not supported."
             if classic
-            else "Installation requires a supported disk layout and a verified backup of the original startup software. "
-            "Drive geometry and other hardware are also checked when Linnet starts."
+            else "Setup checks the disk and backs up the original startup software."
         ),
     )
 
@@ -193,16 +191,16 @@ def collect(discovery=None, identity=None):
                 "version"
             ]
         ),
-        privacy="The report includes model, firmware, disk geometry and connection status. Device serial numbers, "
-        "volume labels, computer/user names, local paths and media contents are excluded. "
-        "Collection does not write to the iPod or upload anything. Review the report before sharing it.",
+        privacy="Hardware and connection details only. No serial numbers, volume labels, "
+        "computer/user names, local paths or media. Read-only; nothing uploads automatically. "
+        "Review before sharing.",
         usb=[],
         disks=[],
         recognized=[],
         runtime=[],
         limitations=[
-            "Apple Disk Mode normally hides the internal ATA drive and other board components.",
-            "A report does not prove that an untested device is safe to install or add firmware support automatically.",
+            "Apple Disk Mode hides some hardware details.",
+            "New hardware may need further checks and driver changes.",
         ],
         errors=[],
     )
@@ -357,35 +355,35 @@ def collect(discovery=None, identity=None):
     known = bool(devices or report["runtime"])
     if known:
         report["summary"] = (
-            "Supported model family detected. Review iPod setup for installation and recovery checks."
+            "Supported iPod family found. Open iPod setup to continue."
         )
     elif any(item["targets"] for item in report["usb"]):
         report["summary"] = (
-            "A supported USB family is present, but a usable iPod disk was not verified. Check Disk Mode, the drive letter and FAT32 formatting. Save this report if detection still fails."
+            "iPod detected; disk unavailable. Check Disk Mode, its drive letter and FAT32 filesystem."
         )
     elif any(item["mode"] == "linnet-link" for item in report["usb"]):
         report["summary"] = (
-            "Linnet USB is present, but Link did not answer. Reconnect directly to the computer, then choose Find iPod. Save this report if it still fails."
+            "Linnet is not responding. Reconnect directly, then choose Find iPod."
         )
     elif any(item["mode"] == "dfu" for item in report["usb"]):
         report["summary"] = (
-            "Apple DFU mode is present. Resume the saved Classic installation for this iPod, or return to Disk Mode to begin setup. A device identity has not been verified yet."
+            "DFU mode detected. Resume Classic installation, or enter Disk Mode to start setup."
         )
     elif any(item["mode"] == "unidentified" for item in report["usb"]):
         report["summary"] = (
-            "Windows sees a USB connection with an unreadable identity. Try a direct computer port and another cable, then choose Find iPod. Installation is unavailable until the iPod is identified."
+            "USB device not identified. Try a direct port or another cable, then choose Find iPod."
         )
     elif report["usb"]:
         report["summary"] = (
-            "An Apple USB device is present, but its model is not identified as a supported iPod. Installation is unavailable. Save this report for investigation."
+            "Apple device detected; supported iPod not identified. Save this report for help."
         )
     elif report["errors"]:
         report["summary"] = (
-            "Windows device inspection did not finish. Save this partial report and retry detection."
+            "Device check incomplete. Save this report and try Find iPod again."
         )
     else:
         report["summary"] = (
-            "No Apple iPod or Linnet USB connection was found. Connect the iPod in Disk Mode and choose Find iPod."
+            "No iPod found. Connect in Disk Mode and choose Find iPod."
         )
     report["how_to_share"] = sharing()["instructions"]
     return report
@@ -416,19 +414,17 @@ def sharing():
         url=url,
         email=email,
         instructions=(
-            "1. Save the report on your computer, or copy it below.\n"
-            "2. Contact Linnet support and attach the JSON file or paste the report.\n"
-            "3. Describe your iPod, storage modifications, what you tried, and the message or screen you saw.\n"
-            "No code changes or pull request are needed. "
+            "1. Save or copy the report.\n"
+            "2. Contact Linnet support and attach or paste it.\n"
+            "3. Describe the problem and any storage changes.\n"
             + (
-                "GitHub issues and attachments are public; your GitHub account is separate from this report."
+                "GitHub issues and attachments are public and show your account."
                 if url and urlsplit(url).hostname == "github.com"
-                else "Your support account or email address is separate from this report."
+                else "Your support account or email address is visible to the recipient."
             )
             if url or email
-            else "1. Save the report on your computer, or copy it below.\n"
-            "2. Send it to the person helping you with Linnet, along with what you tried and the message or screen you saw.\n"
-            "This build has no public support address configured and cannot send the report automatically."
+            else "Save or copy the report and send it to the person helping you. "
+            "Include the problem and any storage changes. No support address is configured."
         ),
     )
 

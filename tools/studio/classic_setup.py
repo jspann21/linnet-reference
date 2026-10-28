@@ -149,7 +149,7 @@ def _rebind_usb_location(state, path, usb_location, progress):
         previous_sha256=state['device_plan_sha256'], usb_location=usb_location))
     state.update(device_plan=str(destination), device_plan_sha256=_sha(destination))
     installer._save(path, state, durable=True)
-    progress('The same Classic was verified on its new USB port. Continuing the saved installation…')
+    progress('iPod verified on the new USB port. Resuming installation…')
 
 
 def run(path, *, progress=lambda _message:None, instruction=lambda _message:None,

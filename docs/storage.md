@@ -36,32 +36,15 @@ Transfer failures quarantine the filesystem until explicit recovery.
 ATA identity does not measure current draw or establish charging limits.
 Replacement storage needs its own power and reliability checks.
 
-Both ATA drivers use IDENTIFY word 106 to read physical sector size, accepting
-512, 1024, 2048, or 4096 bytes with 512-byte logical sectors. They reject a
-reported nonzero logical-to-physical alignment offset (word 209), physical
-sectors larger than their buffers, and capacities that end inside a physical
-sector. This is independent of the drive's model and firmware strings. The
-Classic reports `pata_physical_transfers` when this adaptation is active.
+Both ATA drivers read sector sizes from the drive: 512-byte logical sectors and
+512, 1024, 2048 or 4096-byte physical sectors. Transfers use whole physical blocks;
+partial writes preserve neighboring data. Unsupported alignment or geometry is
+rejected, and Classic rechecks it after wake. USB sector sizes may differ.
 
-Smaller reads extract the requested sectors from an aligned physical block;
-partial writes read the complete block, preserve its other sectors, then write
-it back. Aligned complete blocks use the normal transfer path. The Classic
-also rechecks physical sector size after wake. This covers drives that require
-host alignment as well as drives that already emulate smaller transfers.
-USB and FAT32 sector sizes are separate: an iPod can expose 4096-byte USB
-sectors while its ATA logical sectors remain 512 bytes.
-
-The geometry fields are defined in the [T13 ACS-3 working draft, sections
-4.13, 7.12.7.56, and 7.12.7.75](https://read.seas.harvard.edu/cs161/2024/pdf/ata-atapi-8.pdf).
-[Rockbox's ATA implementation](https://github.com/Rockbox/rockbox/blob/master/firmware/drivers/ata-common.c)
-also derives physical alignment from IDENTIFY and handles partial blocks.
-Linnet keeps bounded host alignment enabled rather than probing an unaligned
-read and disabling it on success.
-
-Rotation rate and power policy are separate from transfer geometry. When an
-older drive omits its rotation rate, a documented exact-model fallback supplies
-that value. An unknown drive does not inherit another model's RPM or power
-classification merely because its name or capacity looks similar.
+Geometry follows [ATA IDENTIFY](https://read.seas.harvard.edu/cs161/2024/pdf/ata-atapi-8.pdf),
+as in [Rockbox](https://github.com/Rockbox/rockbox/blob/master/firmware/drivers/ata-common.c).
+Classic reports `pata_physical_transfers` when alignment is active. Model-specific
+fallbacks supply missing rotation rates only; power policies remain separate.
 
 ## Diagnostics and implementation
 

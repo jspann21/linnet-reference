@@ -3823,7 +3823,7 @@ class MediaWindow(QMainWindow):
     def collect_hardware_report(self):
         if self.busy:return
         self.work('hardware_report', lambda: media_reader.read('support', identity=self.identity,
-            cancelled=self.stop_event.is_set), 'Reading hardware information for a support report…')
+            cancelled=self.stop_event.is_set), 'Collecting hardware report…')
 
     def _complete_hardware_report(self, report):
         from tools.studio.device_support import sharing, contact_link
@@ -3841,7 +3841,7 @@ class MediaWindow(QMainWindow):
             if path:
                 try:
                     Path(path).write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8')
-                    self.show_progress('Hardware report saved. Attach it when asking for Linnet support.')
+                    self.show_progress('Report saved. Attach it to your support request.')
                 except OSError as error:self.show_error(f'Could not save hardware report: {error}')
         actions=box(horizontal=True);actions.addWidget(button('Save report…',save,'primary'))
         actions.addWidget(button('Copy report',lambda: QApplication.clipboard().setText(json.dumps(report,indent=2))))
