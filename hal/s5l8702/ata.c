@@ -18,7 +18,20 @@ static uint8_t *data;
 static enum ln_ata_op operation;
 static bool result_ready,identifying,lba_probe_required;
 static uint64_t previous_sectors;
+static uint32_t previous_physical_sector_bytes;
 static char previous_model[41],previous_serial[21],previous_firmware[9];
+#if defined(LINNET_SRAM_MONITOR)
+static uint8_t physical_buffer[4096] __attribute__((section(".dram.flash"),aligned(32)));
+#else
+static uint8_t physical_buffer[4096] __attribute__((aligned(32)));
+static bool physical_writing;
+static enum ln_ata_op physical_operation;
+static uint64_t physical_sector;
+static uint32_t physical_remaining,physical_done,physical_count,physical_deadline;
+#endif
+static bool physical_active;
+static uint8_t *physical_data;
+static uint32_t physical_offset;
 enum { OFF,RESET_ON,RESET_OFF,SOFT_ON,SOFT_OFF,CONFIGURE,IDENTIFY,TRANSFER,FINISH,PIO_MODE,DMA_MODE,DMA_WAIT,STANDBY_FLUSH,LBA_PROBE };
 static void finish(uint32_t status) {
 #if !defined(LINNET_SRAM_MONITOR)
@@ -54,6 +67,7 @@ static bool exact(const char *left,const char *right){
 }
 static bool decode(void) {
     text(info.model,27,20);text(info.serial,10,10);text(info.firmware,23,4);
+    info.quirks=0;
     bool iflash=exact(info.model,"iFlash-Platform iPod Adapters")&&
         exact(info.firmware,"iFlash85")&&(identity[83]&0xc004u)==0x4004u;
     lba_probe_required=!(identity[49]&(1u<<9));
@@ -69,6 +83,10 @@ static bool decode(void) {
        ((uint32_t)identity[117]|((uint32_t)identity[118]<<16))!=256)return false;
     info.physical_sector_bytes=512;
     if((identity[106]&0xe000u)==0x6000u)info.physical_sector_bytes=512u<<(identity[106]&15);
+    /* This firmware exposes 512-byte LBAs but rejects commands smaller than
+     * one aligned physical sector with IDNF. Other drives retain their path. */
+    if(exact(info.model,"TOSHIBA MK1231GAL")&&exact(info.firmware,"VP211A")&&
+       info.physical_sector_bytes==4096u&&!(info.sectors&7u))info.quirks|=16u;
     info.can_flush=(identity[83]&0xd000u)==0x5000u;
     info.standby_supported=(identity[82]&8)!=0;
     info.apm_supported=(identity[83]&0xc008u)==0x4008u;
@@ -77,20 +95,27 @@ static bool decode(void) {
     info.media_kind=iflash||identity[217]==1?LN_ATA_MEDIA_SOLID_STATE:
         info.rotation_rpm?LN_ATA_MEDIA_ROTATING:LN_ATA_MEDIA_UNKNOWN;
     if(previous_sectors){
-        if(info.sectors!=previous_sectors)return false;
+        if(info.sectors!=previous_sectors||info.physical_sector_bytes!=previous_physical_sector_bytes)return false;
         for(unsigned i=0;i<sizeof previous_model;i++)if(info.model[i]!=previous_model[i])return false;
         for(unsigned i=0;i<sizeof previous_firmware;i++)if(info.firmware[i]!=previous_firmware[i])return false;
         /* This exact adapter reports a different synthetic serial after a
          * rail cycle. Its matched model, firmware, and capacity identify it. */
         if(!iflash)for(unsigned i=0;i<sizeof previous_serial;i++)if(info.serial[i]!=previous_serial[i])return false;
     }
+    /* The SRAM monitor does not remove the disk supply. Keep its media kind
+     * conservative and leave the model fallback to persistent Boot and OS. */
+#if !defined(LINNET_SRAM_MONITOR)
     /* These mechanical drives omit IDENTIFY word 217's rotation rate.
+     * MK1231GAL: Toshiba's 2008-09-10 product specifications, 4,200 rpm:
+     * https://www.global.toshiba/ww/news/corporate/2008/09/pr1001.html
      * MK1634GAL: Toshiba's 2009-09-10 product specifications, 4,200 rpm:
      * https://www.global.toshiba/ww/news/corporate/2009/09/pr1001.html */
     if(info.media_kind==LN_ATA_MEDIA_UNKNOWN &&
-       (exact(info.model,"TOSHIBA MK3008GAL")||exact(info.model,"TOSHIBA MK1634GAL"))){
+       (exact(info.model,"TOSHIBA MK3008GAL")||exact(info.model,"TOSHIBA MK1231GAL")||
+        exact(info.model,"TOSHIBA MK1634GAL"))){
         info.media_kind=LN_ATA_MEDIA_ROTATING;info.rotation_rpm=4200;
     }
+#endif
     info.can_power_off=info.media_kind!=LN_ATA_MEDIA_UNKNOWN&&info.can_flush&&
         (info.standby_supported||iflash);
     info.capabilities=info.lba48|(info.can_flush<<1)|(info.standby_supported<<2)|
@@ -99,6 +124,7 @@ static bool decode(void) {
     return true;
 }
 static void reset(uint32_t now) {
+    physical_active=false;
 #if !defined(LINNET_SRAM_MONITOR)
     if(dma_active){ATA(8)=2;ATA(0x18)&=~0x100cu;ATA(0x14)=0;}
     dma_enabled=dma_active=dma_request=false;
@@ -109,16 +135,17 @@ static void reset(uint32_t now) {
     info.powered=info.initializing=1;
     ATA(0x18)=1;due=now+10000;expires=now+15000000;phase=RESET_ON;
 }
-void ln_ata_init(uint32_t now){info=(struct ln_ata_info){0};previous_sectors=0;info.spinups=1;reset(now);}
+void ln_ata_init(uint32_t now){info=(struct ln_ata_info){0};previous_sectors=0;previous_physical_sector_bytes=0;info.spinups=1;reset(now);}
 void ln_ata_recover(uint32_t now){
     previous_sectors=info.sectors;
+    previous_physical_sector_bytes=info.physical_sector_bytes;
     for(unsigned i=0;i<sizeof previous_model;i++)previous_model[i]=info.model[i];
     for(unsigned i=0;i<sizeof previous_serial;i++)previous_serial[i]=info.serial[i];
     for(unsigned i=0;i<sizeof previous_firmware;i++)previous_firmware[i]=info.firmware[i];
     reset(now);
 }
 bool ln_ata_power_off(void){
-    if(!info.initialized||info.busy||info.initializing||result_ready||phase!=OFF||!info.power_safe||!info.can_power_off)return false;
+    if(!info.initialized||info.busy||physical_active||info.initializing||result_ready||phase!=OFF||!info.power_safe||!info.can_power_off)return false;
     if(!ln_s5l_board_disk_power_off()){ln_ata_recover(ln_time_us());return false;}
     info.powered=info.initialized=0;++info.poweroffs;return true;
 }
@@ -148,7 +175,7 @@ static bool issue(void) {
     if(!put(0x70,command))return false;
     info.commands++;word=0;phase=TRANSFER;return true;
 }
-bool ln_ata_start(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *buffer,uint32_t deadline) {
+static bool start_io(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *buffer,uint32_t deadline) {
     uint32_t now=ln_time_us();
     if(!info.initialized || info.failed || info.busy || result_ready || (int32_t)(deadline-now)<=0 ||
        deadline-now>30000000u || op<LN_ATA_READ || op>LN_ATA_WAKE)return false;
@@ -172,7 +199,7 @@ bool ln_ata_start(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *buffe
     }
     return true;
 }
-void ln_ata_step(uint32_t now) {
+static void step_io(uint32_t now) {
     if(phase==OFF)return;
     if((int32_t)(now-expires)>=0){finish(LN_ATA_TIMEOUT);return;}
     if(phase<IDENTIFY && (int32_t)(now-due)<0)return;
@@ -302,7 +329,86 @@ void ln_ata_step(uint32_t now) {
     else if(operation==LN_ATA_WAKE)info.sleeping=0;
     finish(LN_ATA_OK);
 }
-bool ln_ata_take(struct ln_ata_result *out){if(!out || !result_ready)return false;*out=result;result_ready=false;return true;}
+#if !defined(LINNET_SRAM_MONITOR)
+static bool physical_read(void){
+    physical_offset=(uint32_t)(physical_sector&7u)*512u;
+    physical_count=8u-(uint32_t)(physical_sector&7u);
+    if(physical_count>physical_remaining)physical_count=physical_remaining;
+    return start_io(LN_ATA_READ,physical_sector&~(uint64_t)7u,8,physical_buffer,physical_deadline);
+}
+bool ln_ata_start(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *buffer,uint32_t deadline){
+    if(physical_active)return false;
+    if((op!=LN_ATA_READ&&op!=LN_ATA_WRITE)||!(info.quirks&16u))
+        return start_io(op,lba,sectors,buffer,deadline);
+    if(!(lba&7u)&&!(sectors&7u))return start_io(op,lba,sectors,buffer,deadline);
+    physical_writing=false;
+    if(!buffer||!sectors||sectors>(op==LN_ATA_WRITE?LINNET_ATA_MAX_WRITE_SECTORS:LINNET_ATA_MAX_READ_SECTORS)||
+       lba>=info.sectors||sectors>info.sectors-lba||(op==LN_ATA_WRITE&&!info.can_flush))return false;
+    physical_operation=op;physical_sector=lba;physical_data=buffer;
+    physical_remaining=sectors;physical_done=0;physical_deadline=deadline;
+    physical_active=physical_read();return physical_active;
+}
+void ln_ata_step(uint32_t now){
+    step_io(now);
+    if(!physical_active||!result_ready)return;
+    uint32_t status=result.status;
+    if(!status&&result.sectors_done!=8u){finish(LN_ATA_IO);status=LN_ATA_IO;}
+    result_ready=false;
+    if(status)goto complete;
+    if(physical_operation==LN_ATA_WRITE&&!physical_writing){
+        extern void ln_memory_copy(void *,const void *,uint32_t);
+        ln_memory_copy(physical_buffer+physical_offset,physical_data+physical_done*512u,physical_count*512u);
+        physical_writing=true;
+        if(start_io(LN_ATA_WRITE,physical_sector&~(uint64_t)7u,8,physical_buffer,physical_deadline))return;
+        goto failed;
+    }
+    if(physical_operation==LN_ATA_READ){
+        extern void ln_memory_copy(void *,const void *,uint32_t);
+        ln_memory_copy(physical_data+physical_done*512u,physical_buffer+physical_offset,physical_count*512u);
+    }
+    physical_done+=physical_count;physical_remaining-=physical_count;physical_sector+=physical_count;
+    if(physical_remaining){
+        physical_writing=false;
+        if(physical_read())return;
+        goto failed;
+    }
+    goto complete;
+failed:
+    status=(int32_t)(ln_time_us()-physical_deadline)>=0?LN_ATA_TIMEOUT:LN_ATA_IO;finish(status);
+complete:
+    physical_active=false;result=(struct ln_ata_result){status,physical_done};result_ready=true;
+}
+#else
+/* SRAM exposes only bounded single-sector read diagnostics; its aligned read
+ * adapter needs no disk-writing state or filesystem transaction machinery. */
+bool ln_ata_start(enum ln_ata_op op,uint64_t lba,uint32_t sectors,uint8_t *buffer,uint32_t deadline){
+    if(physical_active)return false;
+    if((info.quirks&16u)&&op==LN_ATA_WRITE)return false;
+    if((info.quirks&16u)&&op==LN_ATA_READ){
+        if(sectors!=1||!buffer)return false;
+        physical_offset=(uint32_t)(lba&7u)*512u;physical_data=buffer;
+        physical_active=start_io(op,lba&~(uint64_t)7u,8,physical_buffer,deadline);return physical_active;
+    }
+    return start_io(op,lba,sectors,buffer,deadline);
+}
+void ln_ata_step(uint32_t now){
+    step_io(now);
+    if(!physical_active||!result_ready)return;
+    physical_active=false;
+    if(!result.status&&result.sectors_done==8){
+        extern void ln_memory_copy(void *,const void *,uint32_t);
+        ln_memory_copy(physical_data,physical_buffer+physical_offset,512);result.sectors_done=1;
+    }else{
+        if(!result.status)finish(LN_ATA_IO);
+        result.sectors_done=0;
+    }
+}
+bool ln_s5l_ata_identify_copy(uint16_t out[256]){
+    if(!out||!info.initialized||info.failed)return false;
+    for(unsigned i=0;i<256;i++)out[i]=identity[i];return true;
+}
+#endif
+bool ln_ata_take(struct ln_ata_result *out){if(!out || physical_active || !result_ready)return false;*out=result;result_ready=false;return true;}
 void ln_ata_snapshot(struct ln_ata_info *out){if(out)*out=info;}
 void ln_ata_state_snapshot(struct ln_ata_state *out) {
     if(out)*out=(struct ln_ata_state){info.sectors,info.initialized,info.initializing,info.busy,info.sleeping,info.failed,

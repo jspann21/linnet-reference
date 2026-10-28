@@ -66,7 +66,13 @@ $names=ConvertFrom-Json 'NATIVE_NAMES'
 $items=@()
 $errors=@()
 foreach ($disk in @(Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Disk -Filter 'BusType=7' | Where-Object {$_.FriendlyName -in $names})) {
- try {$partitions=@(Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Partition -Filter ('DiskNumber='+$disk.Number) | Where-Object {$_.DriveLetter})}
+ try {
+  $allPartitions=@(Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Partition -Filter ('DiskNumber='+$disk.Number))
+  $partitions=@($allPartitions | Where-Object {$_.DriveLetter})
+  if (!$partitions.Count -and @($allPartitions | Where-Object {$_.MbrType -in @(11,12)}).Count) {
+   $errors+=@{drive="Disk $($disk.Number)";message='The iPod FAT32 volume has no Windows drive letter. Assign one in Windows Disk Management, then choose Find iPod.'}
+  }
+ }
  catch {$errors+=@{drive="Disk $($disk.Number)";message=[string]$_};continue}
  foreach ($partition in $partitions) {
   $drive=[string]$partition.DriveLetter+':'

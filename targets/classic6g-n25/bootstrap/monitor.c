@@ -31,8 +31,8 @@ static int (*verify_image)(void *,uint32_t,const uint8_t[32]);
 static int (*read_loader)(void *,uint16_t,uint8_t *,uint32_t *);
 static int read_status(void *context,uint16_t command,uint8_t *output,uint32_t *size) {
     if(command!=48)return read_loader(context,command,output,size);
-    static const char names[][16]={"ram_ready=", "ram_failure=", "panel_type=", "gpio6=", "pmu_identity=",
-        "usb_recoveries=", "usb_last_error=", "startup_mode=", "startup_stage=", "startup_size="};
+    static const char names[]="ram_ready=\0ram_failure=\0panel_type=\0gpio6=\0pmu_identity=\0"
+        "usb_recoveries=\0usb_last_error=\0startup_mode=\0startup_stage=\0startup_size=";
     struct ln_n25_power_identity identity={0};
     bool pmu=ln_n25_power_identify(&identity);
     uint32_t gpio=*(volatile uint32_t *)(uintptr_t)0x3cf000c4u;
@@ -40,9 +40,10 @@ static int read_status(void *context,uint16_t command,uint8_t *output,uint32_t *
         (uint32_t)identity.version|((uint32_t)identity.variant<<8)|((uint32_t)identity.status<<16)|((uint32_t)pmu<<24),
         usb_recoveries,usb_last_error,startup_mode,startup_stage,startup_size};
     if(*size<320)return 0;
-    unsigned used=0;
+    unsigned used=0;const char *name=names;
     for(unsigned i=0;i<10;i++) {
-        for(unsigned j=0;names[i][j];j++)output[used++]=(uint8_t)names[i][j];
+        while(*name)output[used++]=(uint8_t)*name++;
+        name++;
         for(unsigned j=0;j<8;j++)output[used++]=(uint8_t)"0123456789abcdef"[(values[i]>>(28-4*j))&15];
         output[used++]='\n';
     }

@@ -50,7 +50,7 @@ def build(serial, output=None):
     run([chain['objcopy']['path'],'-O','binary',out/'rom_transfer.elf',out/'rom_transfer.bin'])
     probe_objects=[]
     for index,source in enumerate(probe_sources):
-        obj=out/f'probe-{index}.o';run([chain['compiler']['path'],*flags,'-c',source,'-o',obj]);probe_objects.append(obj)
+        obj=out/f'probe-{index}.o';run([chain['compiler']['path'],*flags,'-DLINNET_DFU_PROBE=1','-c',source,'-o',obj]);probe_objects.append(obj)
     run([chain['linker']['path'], '-m', 'armelf','-T',board/'memory.ld','--gc-sections','-o',out/'probe.elf',*probe_objects])
     run([chain['objcopy']['path'],'-O','binary',out/'probe.elf',out/'probe.bin'])
     probe=(out/'probe.bin').read_bytes()

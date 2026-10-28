@@ -61,8 +61,7 @@ def update(prepared):
     """Enter or replace the SRAM monitor through ordinary Linnet Link."""
     from tools.inspect.image import pack
     from tools.link.transport import SerialTransport
-    from tools.link.session import Session
-    from tools.link.identity import decode
+    from tools.link.campaign import connect
     plan=json.loads(Path(prepared).read_text())
     base=artifacts_directory(plan)
     report=json.loads((base/'manifest.json').read_text())
@@ -75,14 +74,14 @@ def update(prepared):
         raise ValueError('Bootstrap update identity/hash mismatch')
     ports=[p for p in SerialTransport.discover() if p['vid']==0x1209 and p['pid']==0x504a and p['serial_number']==plan['serial']]
     if len(ports)!=1:raise RuntimeError('Expected one Linnet Link endpoint for the recorded Classic')
-    session=Session(SerialTransport.reconnect(plan['serial'],timeout=10))
+    session=None
     receipt=dict(target_id=plan['target_id'],serial=plan['serial'],build_id=report['build_id'],
                  persistent_writes=False,phase='opening')
     destination=base/'update-receipt.json'
     def record():destination.write_text(json.dumps(receipt,indent=2)+'\n')
     record()
     try:
-        before=decode(session.hello())
+        session,_,before=connect(serial_number=plan['serial'],deadline_seconds=15)
         if before['target_id']!=plan['target_id'] or before['capabilities']&3!=3:
             raise RuntimeError('Running monitor does not support verified RAM updates')
         for stage in range(2):
@@ -96,7 +95,6 @@ def update(prepared):
             receipt['phase']='handoff-requested';record()
             session.boot_ram();session.close();session=None
             time.sleep(.3)
-            from tools.link.campaign import connect
             session, _, after=connect(serial_number=plan['serial'],deadline_seconds=20)
             if (after['target_id']==plan['target_id'] and after['build_id']==report['build_id'] and
                 after['image_sha256']==digest.hex() and after['generation']==before['generation']+1):
@@ -398,6 +396,8 @@ def load(prepared, *, progress=print, wait_seconds=0, inspect_only=False, probe_
                     raise RuntimeError('Unexpected image on bootstrap Link')
                 receipt.update(phase='link-verified',port=ports[0]['port'],identity=identity);record();return receipt
             time.sleep(.25)
-        raise TimeoutError('SRAM monitor did not enumerate a verified Linnet Link endpoint')
+        raise TimeoutError('SRAM monitor did not enumerate a verified Linnet Link endpoint. '
+                           'Connect this same iPod directly to a computer USB port without a hub or dock, '
+                           'then choose Resume Classic installation. This RAM load did not write boot flash.')
     except Exception as error:
         receipt['error']=str(error);record();raise

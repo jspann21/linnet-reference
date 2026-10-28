@@ -79,6 +79,11 @@ Media Manager saves the selected firmware and the current USB and disk identity,
 safely ejects, then asks you to hold **Menu + Select** for about 12 seconds.
 Release the buttons when Media Manager detects DFU and tells you to release.
 Keep USB connected throughout; subsequent restarts are automatic.
+If the temporary setup connection fails through a hub or dock, connect this same
+iPod directly to the computer and choose **Resume Classic installation**. Before
+flash preparation, Media Manager can verify the same board on its new port and
+retain the saved installation. A missing Windows drive letter is reported
+separately; assign one to the existing iPod FAT32 volume in Disk Management.
 These live hold/release instructions appear in a focused dialog that advances
 automatically. Turn the Hold switch off before following them.
 

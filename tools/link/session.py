@@ -575,7 +575,7 @@ class Session:
                 'capabilities','quirks','power_state','idle_timeout_us','wake_timeout_us',
                 'poweroffs','spinups','idlefailures')
         result=dict(zip(fields,struct.unpack_from('<12I',reply,16)))
-        if result['capabilities']&~31 or result['power_state']>3 or result['media_kind']>2 or result['quirks']&~15:
+        if result['capabilities']&~31 or result['power_state']>3 or result['media_kind']>2 or result['quirks']&~31:
             raise ProtocolError('invalid media capability/power flags')
         for key,offset,length in (('model',64,40),('serial',104,20),('firmware',124,8)):
             raw=reply[offset:offset+length]
@@ -588,7 +588,7 @@ class Session:
                       media_kind_name=('unknown','rotating','solid_state')[result['media_kind']],
                       capability_names=[name for bit,name in enumerate(('lba48','flush','power_management','apm','write_cache_enabled'))
                                         if result['capabilities']&(1<<bit)],
-                      quirk_names=[name for bit,name in enumerate(('cfa_missing_lba_probe','optional_apm_rejected','cfa_identify_claim','iflash_platform'))
+                      quirk_names=[name for bit,name in enumerate(('cfa_missing_lba_probe','optional_apm_rejected','cfa_identify_claim','iflash_platform','pata_physical_transfers'))
                                    if result['quirks']&(1<<bit)])
         return result
 

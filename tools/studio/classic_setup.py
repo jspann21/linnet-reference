@@ -133,6 +133,25 @@ def _wait_disk(state, progress):
     raise RuntimeError('Linnet Boot was installed, but its disk did not reconnect. Keep this iPod connected and use Resume Classic installation.')
 
 
+def _rebind_usb_location(state, path, usb_location, progress):
+    """Move a pre-flash plan only after the board identity has been verified."""
+    from tools.studio import installer
+    device = json.loads(Path(state['device_plan']).read_text())
+    if device['usb_location'] == usb_location:
+        return
+    if (state['persistent_writes'] or state.get('nor_plan') or
+            device.get('target_id') != TARGET or device.get('serial') != state['serial'] or
+            device.get('disk_serial') != state['identity']['disk_serial']):
+        raise ValueError('The Classic moved to a different USB port after its flash plan was prepared')
+    destination = Path(path).parent / ('device-' + uuid.uuid4().hex + '.json')
+    installer._save(destination, dict(device, usb_location=usb_location), replace=False, durable=True)
+    state.setdefault('usb_relocations', []).append(dict(previous_plan=state['device_plan'],
+        previous_sha256=state['device_plan_sha256'], usb_location=usb_location))
+    state.update(device_plan=str(destination), device_plan_sha256=_sha(destination))
+    installer._save(path, state, durable=True)
+    progress('The same Classic was verified on its new USB port. Continuing the saved installation…')
+
+
 def run(path, *, progress=lambda _message:None, instruction=lambda _message:None,
         cancelled=lambda:False):
     """Run or explicitly resume the exact saved installation, with no write retries."""
@@ -175,9 +194,7 @@ def run(path, *, progress=lambda _message:None, instruction=lambda _message:None
                     if retail:
                         current=refresh(retail[0])
                         classic_recovery._same_volume(state['identity'],current)
-                        device=json.loads(Path(state['device_plan']).read_text())
-                        if link.location(current['usb_pnp_id'])!=device['usb_location']:
-                            raise ValueError('The Classic moved to a different USB port before DFU')
+                        _rebind_usb_location(state, path, link.location(current['usb_pnp_id']), progress)
                         locks.enter_context(_exclusive(current))
                         progress('Safely ejecting the Classic before bootloader setup…')
                         eject(current['disk_number'],current['disk_serial'])
@@ -209,8 +226,12 @@ def run(path, *, progress=lambda _message:None, instruction=lambda _message:None
                     session,_,running=connect(serial_number=state['serial'],deadline_seconds=15)
                     session.close()
                     manifest=json.loads((link.artifacts_directory(json.loads(Path(state['device_plan']).read_text()))/'manifest.json').read_text())
-                    if running['image_kind']!='boot' or running['build_id']!=manifest['build_id']:
+                    if (running['target_id']!=TARGET or running['image_kind']!='boot' or
+                            running['build_id']!=manifest['build_id'] or
+                            running['image_sha256']!=_sha(bootstrap/'monitor.lnos')):
                         raise ValueError('The connected Link image differs from this installation’s monitor')
+                    _rebind_usb_location(state, path,
+                        link.location('USB\\VID_1209&PID_504A\\' + state['serial']), progress)
                 state['phase']='monitor';save()
                 guide('Linnet Link is connected. Checking this iPod’s hardware and saving recovery. No more buttons are needed.')
                 progress('Checking Classic RAM, display, disk identity, and partition layout…')

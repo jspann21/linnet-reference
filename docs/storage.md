@@ -36,6 +36,13 @@ Transfer failures quarantine the filesystem until explicit recovery.
 ATA identity does not measure current draw or establish charging limits.
 Replacement storage needs its own power and reliability checks.
 
+The Classic's Toshiba MK1231GAL with VP211A firmware reports 512-byte logical
+sectors but requires aligned 4096-byte ATA transfers. Linnet identifies this
+exact configuration and reports `pata_physical_transfers`. Smaller reads extract
+the requested sectors from an aligned block; partial writes read the complete
+block, preserve its other sectors, then write it back. Aligned complete blocks
+use the normal transfer path. Wake rechecks the physical sector geometry too.
+
 ## Diagnostics and implementation
 
 In a development build:
