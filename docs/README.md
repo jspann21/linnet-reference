@@ -13,6 +13,7 @@ work remaining before release and possible future features.
 | [Device menus](navigation.md) | Menu organization, playback controls, and saved customization |
 | [Files](files.md) | Browse the disk, open media and text, and understand prepared previews |
 | [Hardware support](hardware.md) | Tested device configurations, features, and compatibility |
+| [Classic headset remote](headset-remote.md) | Cord buttons, supported Classic revisions, and input diagnostics |
 | [Storage compatibility](storage.md) | Filesystems, disk geometry, storage power, and diagnostics |
 | [Apple OS library updates](apple-stock-music.md) | Qualification and path restrictions for sharing media with Apple's original software |
 

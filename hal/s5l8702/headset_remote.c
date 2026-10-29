@@ -7,8 +7,8 @@
  * The optional controller is fitted to the 2008 and 2009 Classic boards.
  * Never infer its presence from disk size or fail clickwheel initialization
  * when it is absent. All bus work runs in the foreground, outside the wheel IRQ. */
-#define JACK_ADDRESS 0x72u
-#define SAMPLE_US 20000u
+/* Literature uses the on-wire write address 0x72. This HAL takes seven bits. */
+#define JACK_ADDRESS (0x72u >> 1)
 #define INSERT_US 150000u
 #define RETRY_US 2000000u
 #define CLICK_GAP_US 350000u
@@ -65,14 +65,16 @@ void ln_s5l_remote_poll(uint32_t now,bool headphones,uint8_t *actions,int8_t *vo
     if(due(now,mode_at)){
         if(!read_register(0,&mode)){failed(now);return;}
         mode_at=now+100000u;
-        /* Bits 7 and 3 do not read back. Unplug/reset loses remote mode. */
+        /* Tolerate mode readback with reserved bits omitted. A reset loses it. */
         if((mode&0x77u)!=0x27u){armed=false;clear_keys();next_probe=now+INSERT_US;return;}
     }
     if(!read_register(4,&r4)||!read_register(5,&r5)||!read_register(6,&r6)){
         failed(now);return;
     }
     ++samples;raw=mode|((uint32_t)r4<<8)|((uint32_t)r5<<16)|((uint32_t)r6<<24);
-    bool pressed=(r4&0x40u)&&(r4&5u);
+    /* The idle marker differs between controller revisions (0x40/0x80).
+     * On the measured 2009 unit: idle 0x80, center pressed 0x85. */
+    bool pressed=(r4&5u)!=0;
     if(pressed){
         release_tracking=false;
         if(!center){

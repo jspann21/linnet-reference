@@ -28,12 +28,18 @@ clicks and held keys. Microphone recording is separate work.
 This is an original Linnet implementation; it incorporates no Rockbox source.
 Hardware facts come from the author's
 [Mikey reverse-engineering measurements](https://terminalbytes.com/reverse-engineering-ipod-classic-mikey-chip/):
-I2C bus 0, seven-bit address `0x72`; register 0 mode `0x2f` (readback omits bits
-7 and 3); register 4 center indication on bits 0/2 with base bit 6; register 5
+I2C bus 0, on-wire write address `0x72` (HAL seven-bit address `0x39`);
+register 0 mode `0x2f` (reserved readback bits are masked);
+register 4 center indication on bits 0/2; register 5
 volume edge pairs (up `0x04`/`0x08`, down `0x01`/`0x02`). Accessory identification
 uses bits 4/5, not volume buttons. Unplugging resets the controller. Center
 release timing can lag after inactivity, so Linnet counts debounced rises
 instead of treating duration as a physical hold.
+
+Linnet measurements on a 2009 controller found mode readback `0x2f`, center idle
+`0x80` and center pressed `0x85`. The driver accepts both `0x40` and `0x80` idle
+markers; neither marker is itself a button. The HAL address is `0x39`, confirmed
+by successful reads and button transitions on the device.
 
 The driver samples every 20 ms in the foreground, with interrupts enabled.
 Insertion has two settling intervals, and failed transfers clear all pending
