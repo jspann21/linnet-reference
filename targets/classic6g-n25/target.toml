@@ -1,6 +1,6 @@
 id = "classic6g-n25"
 name = "Linnet for iPod Classic"
-aliases = ["classic6g", "ipod-classic", "a1238", "n25"]
+aliases = ["classic6g", "classic7g", "classic65g", "ipod-classic", "a1238", "n25"]
 image_target = 1238
 board_id = "n25"
 model_alias = "a1238"
@@ -59,7 +59,7 @@ usb_pid = 4705
 usb_identity_only = true
 sector_bytes = [512, 2048, 4096]
 board_names = []
-model_numbers = []
+model_numbers = ["MB029", "MB147", "MB145", "MB150", "MB562", "MB565", "MC293", "MC297"]
 regulatory_models = ["A1238"]
 
 [native_storage]

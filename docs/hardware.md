@@ -35,6 +35,44 @@ installation; Classic requires guided DFU entry for its initial Boot setup.
 
 ## Compatibility
 
+### Classic revisions and identification
+
+All Classic revisions use the shared `classic6g-n25` S5L8702 firmware family.
+`classic6g`, `classic65g`, and `classic7g` are build aliases for that target;
+the target ID does not identify the retail generation.
+
+| Apple order numbers | Retail revision | Original capacity |
+| --- | --- | --- |
+| MB029, MB147 | 2007 / 6th generation | 80 GB |
+| MB145, MB150 | 2007 / 6th generation, thick enclosure | 160 GB |
+| MB562, MB565 | 2008 / 6.5th generation | 120 GB |
+| MC293, MC297 | Late 2009 / 7th generation, thin enclosure | 160 GB |
+
+Media Manager normalizes regional order numbers such as `MC297LL/A` and uses
+the live Apple product serial when SysInfo is empty. Reports include the model,
+revision, original capacity, and identification source without including the
+serial. Capacity changes do not change the identified product generation.
+Unknown identifiers and ambiguous suffixes remain unknown. Native Classic
+Disk Mode and Link can recover the original product metadata from the host's
+setup record bound to the current logic-board USB identity.
+
+The [historical model catalogue](../third_party/ipod_models/PROVENANCE.md)
+also identifies known variants of the other supported families and contains
+metadata for unsupported iPods. Identification does not grant firmware support.
+The catalogue can be extended as additional model numbers are verified.
+
+Classic setup saves `hardware.json` and `hardware-attestation.json` with its
+host recovery records before flashing. The attestation checks the target,
+64 MiB RAM initialization/address tests, panel transfer, supported PMU revision,
+PATA compatibility, disk capacity and partition-table signature. NOR installation
+separately requires its supported JEDEC identity, two matching complete original
+flash reads, a device-bound write plan, and installed-image readback. Unknown
+storage, panel output quality, audio quality, physical controls and power behavior
+still require physical qualification; a model match or frame-transfer completion
+does not establish those results.
+
+### Storage and flash
+
 Classic requires PATA storage; CE-ATA is not supported. Its NOR writer supports
 JEDEC `BF 25 8E`. Native storage uses 512-byte logical sectors.
 See [storage compatibility](storage.md) for filesystem and disk requirements,

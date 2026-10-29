@@ -43,6 +43,60 @@ def _load(path):
     return value
 
 
+def product_identity(serial):
+    """Recover display metadata from the setup bound to this live logic board.
+
+    Native USB exposes the board ID instead of Apple's product serial. Never
+    guess the revision from that hexadecimal ID or from disk capacity.
+    """
+    from tools.inspect.ipod_models import identify
+    from tools.studio.classic_recovery import _serial
+    _serial(serial)
+    candidates = []
+    for path in _scope(serial).glob('*/setup.json'):
+        try:
+            state = _load(path)
+            original = state['identity']
+            if (state['serial'] != serial or original.get('linnet_usb_serial') != serial or
+                    original.get('target_id') != TARGET):
+                continue
+            product = identify(product_serial=original.get('disk_serial'), target=TARGET)
+            if product.get('model_identity_status') == 'identified':
+                candidates.append(product)
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    if not candidates or len({item['model_number'] for item in candidates}) != 1:
+        return None
+    return dict(candidates[0], model_identity_source='saved-live-product-serial')
+
+
+def attest_hardware(diagnostic, identity):
+    """Record the observed hardware gates; model metadata never passes them."""
+    from tools.studio.targets import TARGETS
+    spec = TARGETS[TARGET]
+    board = dict(line.split('=', 1) for line in diagnostic['board'].splitlines() if '=' in line)
+    pmu = int(board.get('pmu_identity', '0'), 16)
+    panel = int(board.get('panel_type', 'ffffffff'), 16)
+    disk = diagnostic['disk']
+    checks = dict(
+        target=diagnostic['identity'].get('target_id') == identity['target_id'] == TARGET,
+        ram=int(board.get('ram_ready', '0'), 16) == 1 and int(board.get('ram_failure', '1'), 16) == 0,
+        pmu=(pmu >> 24) == 1 and (pmu & 0xffff) == 0x0312,
+        panel=panel in (0, 1, 2, 3) and diagnostic['display'].get('frame_transfer_complete') is True,
+        pata=disk.get('native_storage_compatible') is True,
+        disk_capacity=disk.get('sectors', 0) * 512 >= identity['disk_bytes'],
+        partition_table=disk.get('mbr_signature') == '55aa',
+    )
+    return dict(format='linnet-classic-hardware-attestation-v1', passed=all(checks.values()),
+                checks=checks, target_id=TARGET, model_number=identity.get('model_number'),
+                generation=identity.get('generation'), model_identity_source=identity.get('model_identity_source'),
+                linnet_usb_serial=identity['linnet_usb_serial'],
+                ram_bytes=spec['sdram_bytes'], panel_type=panel, pmu_version=pmu & 255,
+                pmu_variant=(pmu >> 8) & 255, disk=disk,
+                physical_output_verified=diagnostic['display'].get('physical_output_verified', False),
+                nor=dict(status='pending', requirement='Verified JEDEC identity and two matching full original reads'))
+
+
 def pending(identity=None):
     """Find unfinished host transactions; no device reads or writes."""
     from tools.studio.installer import cache_root
@@ -112,7 +166,7 @@ def _mounted(state):
     from tools.link.s5l_bootstrap import location
     from tools.studio.classic_recovery import _same_volume
     device=json.loads(Path(state['device_plan']).read_text())
-    matches=[item for item in discover() if item.get('native_target_id')==TARGET and
+    matches=[item for item in discover(detailed=True)['devices'] if item.get('native_target_id')==TARGET and
              item.get('linnet_usb_serial')==state['serial']]
     if len(matches)>1:raise ValueError('More than one native disk matches this Classic')
     if not matches:return None
@@ -188,7 +242,7 @@ def run(path, *, progress=lambda _message:None, instruction=lambda _message:None
                 if len(ports)>1:raise ValueError('Classic Link identity is ambiguous')
                 if not ports:
                     from tools.content.media_manager import discover, refresh
-                    retail=[item for item in discover() if item.get('target_id')==TARGET and
+                    retail=[item for item in discover(detailed=True)['devices'] if item.get('target_id')==TARGET and
                             item.get('linnet_usb_serial')==state['serial'] and not item.get('native_target_id')]
                     if len(retail)>1:raise ValueError('Classic Apple storage identity is ambiguous')
                     if retail:
@@ -239,12 +293,11 @@ def run(path, *, progress=lambda _message:None, instruction=lambda _message:None
                 diagnostic_path=path.parent/'hardware.json'
                 installer._save(diagnostic_path,diagnostic,durable=True)
                 state['hardware']=str(diagnostic_path);save()
-                board=dict(line.split('=',1) for line in diagnostic['board'].splitlines() if '=' in line)
-                if (int(board.get('ram_ready','0'),16)!=1 or int(board.get('ram_failure','1'),16) or
-                    diagnostic['disk'].get('mbr_signature')!='55aa' or
-                    diagnostic['disk'].get('native_storage_compatible') is not True or
-                    diagnostic['disk'].get('sectors',0)*512<state['identity']['disk_bytes'] or
-                    not diagnostic['display'].get('frame_transfer_complete')):
+                attestation=attest_hardware(diagnostic,state['identity'])
+                attestation_path=path.parent/'hardware-attestation.json'
+                installer._save(attestation_path,attestation,durable=True)
+                state['hardware_attestation']=str(attestation_path);save()
+                if not attestation['passed']:
                     raise ValueError('This Classic did not pass its hardware checks; the original bootloader has not been changed')
                 backup=Path(state.get('original_backup',path.parent/'original-nor.bin'))
                 verified=False
@@ -266,11 +319,17 @@ def run(path, *, progress=lambda _message:None, instruction=lambda _message:None
                     planned=nor.prepare(state['device_plan'],backup,path.parent/'nor.json',boot_image=artifacts['boot_image'])
                     state.update(nor_plan=planned['prepared'],nor_plan_sha256=planned['plan_sha256'])
                     save()
+                original=nor._backup(backup,state['serial'])
+                attestation['nor']=dict(status='original-and-plan-verified', jedec='bf258e',
+                    bytes=len(original), original_sha256=_sha(backup), plan_sha256=state['nor_plan_sha256'])
+                installer._save(attestation_path,attestation,durable=True)
                 check_cancel()
                 # From this point the guarded flash transaction must finish.
                 state.update(phase='installing-boot',persistent_writes=True);save()
                 guide('Installing and verifying Linnet Boot. Keep the iPod connected; Media Manager will restart it automatically.')
                 nor.install(state['nor_plan'],state['nor_plan_sha256'],progress=progress,reboot_mode='disk')
+                attestation['nor']['status']='installed-and-readback-verified'
+                installer._save(attestation_path,attestation,durable=True)
                 state['phase']='waiting-native-disk';save()
                 native=_wait_disk(state,progress)
             locks.enter_context(_exclusive(native))
@@ -298,7 +357,8 @@ def run(path, *, progress=lambda _message:None, instruction=lambda _message:None
             state.update(phase='complete',result=result);state.pop('error',None);save()
             guide('Linnet is installed. Open Preparation to add media, or choose Eject safely to start your iPod.')
             return dict(passed=True,reconnected_identity=native,summary='Linnet Boot and OS installed and verified. Add media in Preparation, or eject safely to start Linnet.',
-                        setup_receipt=str(path),hardware=state.get('hardware'))
+                        setup_receipt=str(path),hardware=state.get('hardware'),
+                        hardware_attestation=state.get('hardware_attestation'))
         except Exception as error:
             state['error']=str(error);save()
             raise

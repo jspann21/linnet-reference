@@ -13,6 +13,7 @@ the codec facades; runtime callers do not include vendor decoder headers.
 
 | Dependency | Origin and license | Local adaptation and integration |
 | --- | --- | --- |
+| [iPod model catalogue](ipod_models/PROVENANCE.md) | libgpod model/serial tables; [LGPL-2.1-or-later](ipod_models/COPYING). | Desktop identification metadata with regional model normalization and ambiguity preserved. Hardware admission remains separate. |
 | [AAC](aac/PROVENANCE.md) | FAAD and shared Rockbox codec helpers; GPL, LGPL, and Xiph BSD components have their respective notices under `aac/`. | Fixed-point AAC-LC and bounded decoder state; [`SOURCES`](aac/SOURCES) selects vendor files. ARM4 codec flags, include paths, and `-O3` are grouped in the build rule. |
 | [libmad MP3](libmad/PROVENANCE.md) | libmad from Rockbox; [GPL-2.0-or-later](libmad/COPYING). | Freestanding memory shim and ARM fixed-point path. The build keeps the ordered libmad source set and its `-O3`, ARM, and include flags. |
 | [Tremor Vorbis](vorbis/README.linnet.md) | Xiph Tremor from Rockbox; [Xiph BSD](vorbis/COPYING). | Caller-owned pool and bounded Ogg handling. The build selects service and vendor sources with Tremor and shared AAC FFT include paths; it does not enable the AAC ARM define for Tremor. |

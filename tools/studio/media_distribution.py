@@ -64,6 +64,7 @@ def create(output, installer_output=None):
         check_packaged_assets(ROOT)
         for name in PACKAGE_DIRECTORIES:
             command += ["--add-data", str(ROOT / name) + os.pathsep + name]
+        command += ["--add-data", str(ROOT / "third_party/ipod_models") + os.pathsep + "third_party/ipod_models"]
         # Photo cache recipes inspect their rendering functions' source.
         command += ["--add-data", str(ROOT / "tools/content/photos.py") + os.pathsep + "tools/content",
                     "--add-data", str(ROOT / "tools/studio/media_desktop.qss") + os.pathsep + "tools/studio",

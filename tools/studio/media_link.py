@@ -31,6 +31,12 @@ def discover():
             identity = decode(session.hello())
             connection = dict(serial=port['serial_number'], identity=identity,
                               target_name=TARGETS[identity['target_id']]['name'])
+            if identity['target_id'] == 'classic6g-n25':
+                from .classic_setup import product_identity
+                product = product_identity(port['serial_number'])
+                if product:
+                    connection['product'] = {key: value for key, value in product.items() if key != 'target_id'}
+                    connection['target_name'] = 'Linnet for ' + product['product_name']
             connection['can_open_disk'] = bool(identity['capabilities'] & 32 or
                 identity['target_id'] == 'classic6g-n25' and identity['image_kind'] == 'boot' and
                 _classic_record(connection))

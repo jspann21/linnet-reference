@@ -48,11 +48,16 @@ def describe(identity=None, review=None):
             detail="Software and recovery records found.",
         )
     classic = spec["installer"]["boot_layout"] == "s5l-nor"
+    model = identity or {}
+    if model.get('model_identity_status') == 'conflict' or model.get('model_identity_conflict'):
+        return dict(status='attention', title='Model identity needs checking',
+                    detail='Live hardware and saved model information disagree. Setup must verify the board before installation.')
     return dict(
         status="supported-family",
         title="Supported iPod family",
         detail=(
-            "Setup checks hardware before installation. CE-ATA drives are not supported."
+            (model.get('product_name', 'Classic revision unknown') + '. '
+             'Setup verifies RAM, display, PATA storage and boot flash before installation. CE-ATA drives are not supported.')
             if classic
             else "Setup checks the disk and backs up the original startup software."
         ),
@@ -86,7 +91,7 @@ $disks=@(Get-CimInstance Win32_DiskDrive | Where-Object {
     drive=$letter;filesystem=[string]$v.FileSystemType;
     volume_id=[string]$v.UniqueId}
  })
- @{pnp_id=$w.PNPDeviceID;bytes=[long]$d.Size;logical_sector_bytes=[int]$d.LogicalSectorSize;
+ @{pnp_id=$w.PNPDeviceID;product_serial=([string]$w.SerialNumber).Trim();bytes=[long]$d.Size;logical_sector_bytes=[int]$d.LogicalSectorSize;
    physical_sector_bytes=[int]$d.PhysicalSectorSize;read_only=[bool]$d.IsReadOnly;
    offline=[bool]$d.IsOffline;partitions=$parts}
  } catch {@{pnp_id=$w.PNPDeviceID;error='storage-query-failed'}}
@@ -262,6 +267,9 @@ def collect(discovery=None, identity=None):
                 )
                 try:
                     entry["sysinfo"] = _sysinfo(partition)
+                    from tools.inspect.ipod_models import identify as identify_model
+                    entry['product'] = identify_model(entry['sysinfo'].get('ModelNumStr'),
+                                                     product_serial=item.get('product_serial'))
                 except (OSError, RuntimeError, ValueError, UnicodeError) as error:
                     entry["sysinfo_error"] = type(error).__name__
                 disk["partitions"].append(entry)
@@ -295,6 +303,13 @@ def collect(discovery=None, identity=None):
                         "partition_offset",
                         "partition_bytes",
                         "filesystem",
+                        "product_name",
+                        "generation",
+                        "original_capacity_gb",
+                        "color",
+                        "model_identity_status",
+                        "model_identity_source",
+                        "model_identity_conflict",
                     ),
                 ),
                 compatibility=describe(device),
@@ -317,6 +332,9 @@ def collect(discovery=None, identity=None):
                 ("target_id", "profile", "image_kind", "healthy", "health_flags"),
             )
         )
+        entry['product'] = _fields(connection.get('product', {}),
+            ('model_number', 'product_name', 'generation', 'original_capacity_gb',
+             'color', 'model_identity_status', 'model_identity_source', 'model_identity_conflict'))
         if current["image_kind"] == "os":
             from tools.link.campaign import connect
 
@@ -354,8 +372,10 @@ def collect(discovery=None, identity=None):
         report["runtime"].append(entry)
     known = bool(devices or report["runtime"])
     if known:
+        products = sorted({item['product_name'] for item in report['recognized'] if item.get('product_name')})
+        found = products[0] + ' found.' if len(products) == 1 else 'Supported iPod family found.'
         report["summary"] = (
-            "Supported iPod family found. Open iPod setup to continue."
+            found + " Open iPod setup to continue."
         )
     elif any(item["targets"] for item in report["usb"]):
         report["summary"] = (

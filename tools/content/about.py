@@ -145,7 +145,7 @@ def make_record(identity, *, ipod_name=None):
 
     rows = [
         detail("Name", name, truncate=True),
-        f"Device  {identity['target_name']}",
+        detail("Device", identity.get('product_name') or identity['target_name'], truncate=True),
         f"Model no.  {model}",
         detail("Regulatory", identity.get("regulatory_model")
                if identity.get("regulatory_model") != model else None),

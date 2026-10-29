@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import subprocess
 from tools.studio.targets import TARGETS
+from .ipod_models import identify as identify_model, normalize_model, model_info
 
 
 def _sysinfo(root):
@@ -108,6 +109,8 @@ def detect(mount):
     if storage["model"] != "Apple iPod USB Device":
         raise ValueError("unrecognized native storage USB identity")
     info = _sysinfo(root)
+    model_number = normalize_model(info.get("ModelNumStr"))
+    catalog_model = model_info(model_number)
     firewire = info.get("FirewireGuid", "").removeprefix("0x").upper()
     matches = []
     for target, spec in TARGETS.items():
@@ -116,7 +119,8 @@ def detect(mount):
         models = retail["model_numbers"]
         if (retail["usb_vid"], retail["usb_pid"]) == (vid, pid) and (
                 retail.get("usb_identity_only", False) or
-                info.get("BoardHwName") in boards or info.get("ModelNumStr") in models):
+                info.get("BoardHwName") in boards or model_number in models or
+                catalog_model is not None and catalog_model['target_id'] == target):
             matches.append(target)
     if len(matches) != 1:
         raise ValueError("RetailOS identity does not resolve to exactly one Linnet target")
@@ -129,10 +133,11 @@ def detect(mount):
         raise ValueError("RetailOS FirewireGuid is unavailable")
     if not storage["disk_serial"] or (not live_identity and not retail_serial) or (retail_serial and storage["disk_serial"].upper() != retail_serial):
         raise ValueError("SysInfo and mounted iPod serial identities disagree")
+    product = identify_model(info.get("ModelNumStr"), product_serial=storage["disk_serial"], target=matches[0])
     return dict(target_id=matches[0], device_id=storage["disk_serial"],
                 linnet_usb_serial=usb_serial, retail_usb=dict(vid=vid, pid=pid, pnp_id=pnp),
                 retail_os=dict(board=info.get("BoardHwName"), model_number=info.get("ModelNumStr"),
                                build=info.get("visibleBuildID"), family=info.get("iPodFamily"),
                                updater_family=info.get("updaterFamily"), region=info.get("RegionCode")),
-                storage=storage, sysinfo=info, read_only=True,
+                storage=storage, sysinfo=info, product=product, read_only=True,
                 identity_source=serial_source if live_identity else "usb-and-sysinfo")

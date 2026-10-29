@@ -189,11 +189,18 @@ def _identify(identity, detected=None):
         except (OSError, ValueError, UnicodeError):
             pass
     model_number = retail.get("model_number")
+    from tools.inspect.ipod_models import identify as identify_model, normalize_model
+    product = detected.get('product') or identify_model(model_number, target=detected['target_id'])
+    if native_target == 'classic6g-n25':
+        from tools.studio.classic_setup import product_identity
+        product = product_identity(detected['linnet_usb_serial']) or product
+    model_number = product.get('model_number') or normalize_model(model_number) or model_number
     regulatory_models = spec["retail"]["regulatory_models"]
     regulatory_model = spec["retail"].get("regulatory_model_by_model", {}).get(model_number)
     if regulatory_model is None and len(regulatory_models) == 1:
         regulatory_model = regulatory_models[0]
-    result = dict(identity, target_id=detected["target_id"], target_name=spec["name"],
+    result = dict(identity, target_id=detected["target_id"],
+                target_name=('Linnet for ' + product['product_name'] if product.get('product_name') else spec['name']),
                 usb_pnp_id=storage['usb_pnp_id'],
                 volume_label=storage.get("volume_label") or "",
                 linnet_usb_serial=detected["linnet_usb_serial"],
@@ -208,6 +215,7 @@ def _identify(identity, detected=None):
                              if "native_usb" in detected else
                              f"{detected['retail_usb']['vid']:04X}:{detected['retail_usb']['pid']:04X}"),
                 media_profile=media_profile(detected["target_id"]))
+    result.update({key: value for key, value in product.items() if key != 'target_id'})
     if identity.get("native_target_id"):
         result["media_cache_disk_serial"], result["media_cache_volume_scope"] = _retail_cache_identity(result)
     if detected.get("identity_source") == "apple-usbstor":
