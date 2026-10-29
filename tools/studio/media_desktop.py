@@ -778,7 +778,7 @@ def build_setup_page(window):
     window.link_disk_button.hide(); details.addWidget(window.link_disk_button, 0, Qt.AlignLeft)
     window.connection_help = label('If your iPod does not appear, enter Apple Disk Mode:\n'
         '1. Turn the Hold switch off.\n'
-        '2. Hold Menu + Select (the centre button) until the iPod restarts.\n'
+        '2. Hold Menu + Select (the center button) until the iPod restarts.\n'
         '3. Immediately hold Select + Play/Pause until Disk Mode appears.\n'
         'Keep USB connected, then choose Find iPod.', 'muted', True)
     details.addWidget(window.connection_help)

@@ -199,7 +199,7 @@ def run(path, *, progress=lambda _message:None, instruction=lambda _message:None
                         progress('Safely ejecting the Classic before bootloader setup…')
                         eject(current['disk_number'],current['disk_serial'])
                     state['phase']='waiting-dfu';save()
-                    guide('Turn the Hold switch off. Hold Menu + Select (the centre button) together for about 12 seconds, '
+                    guide('Turn the Hold switch off. Hold Menu + Select (the center button) together for about 12 seconds, '
                                 'through the restart, until this screen tells you to release them. Keep USB connected.',action='hold')
                     deadline=time.monotonic()+180
                     device=json.loads(Path(state['device_plan']).read_text())
