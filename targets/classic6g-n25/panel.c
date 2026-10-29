@@ -59,7 +59,10 @@ bool ln_n25_panel_start(bool diagnostic) {
     color_bars=diagnostic;
     phase=0;pixel=0;bar=0;bar_pixel=0;frame=0;setup_index=0;
     panel_type=(LN_REG(0x3cf000c4u)>>4)&3u;
-    if(!ln_n25_lcd_power())return false;
+    /* A warm restart can inherit an enabled backlight and stale panel RAM.
+     * Hide reset/configuration until phase 2 finishes the full-screen clear.
+     * A verified Boot-to-OS handoff uses adopt() and preserves its artwork. */
+    if(!pmu(0x29,0) || !ln_n25_lcd_power())return false;
     LN_REG(0x38300020u)=0x33;
     if(panel_type>=2u){
         if(!ln_s5l_lcd_mode(0x80000da8u))return false;
