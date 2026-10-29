@@ -336,6 +336,26 @@ class Session:
                  'flags', 'battery_percent', 'sleeping')
         return dict(zip(names, struct.unpack('<12I', payload)))
 
+    def input_state(self) -> dict:
+        payload = self.request(Command.INPUT_STATE)
+        if len(payload) != 64:
+            raise ProtocolError('invalid input state size')
+        words = struct.unpack('<16I', payload)
+        result = dict(ready=bool(words[0]), last_packet=words[1], events=words[2],
+                      handshakes=words[3], wheel_registers=list(words[4:8]),
+                      seen_buttons=words[8], wheel_travel=words[9], remote=None)
+        if words[10] >> 16 == 0x524d:
+            flags = words[10] & 0xffff
+            result['remote'] = dict(present=bool(flags & 1), armed=bool(flags & 2),
+                headphones=bool(flags & 4), bus_fault=bool(flags & 8),
+                volume_up_held=bool(flags & 16), volume_down_held=bool(flags & 32),
+                center_latched=bool(flags & 64), repeat_limited=bool(flags & 128),
+                registers=dict(zip(('mode', 'center', 'volume', 'event'),
+                                   struct.pack('<I', words[11]))),
+                samples=words[12], failures=words[13], center_presses=words[14],
+                volume_up_presses=words[15] & 0xffff, volume_down_presses=words[15] >> 16)
+        return result
+
     def platform_input(self, generation: int, events: list[tuple[int, int, int]]) -> None:
         if type(generation) is not int or not 0 <= generation <= 0xffffffff:
             raise ValueError('invalid synthetic input boot generation')

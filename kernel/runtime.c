@@ -1080,6 +1080,29 @@ void ln_runtime_step(void){
         if(!(override_mask&1u))apply(LN_INPUT_HOLD,input.hold);
         if(!(override_mask&2u))apply(LN_INPUT_HEADPHONE,input.headphones);
         apply(LN_INPUT_BUTTON,(int32_t)buttons(input.buttons));
+#if defined(LINNET_INPUT_REMOTE) && defined(LINNET_AUDIO)
+        /* Headset media keys bypass menu navigation and the physical Play
+         * shutdown gesture. They remain usable with the Hold switch locked. */
+        if(input.remote_actions||input.remote_volume){
+#if defined(LINNET_NATIVE_UI)
+            shutdown_activity();
+#endif
+            if(input.remote_volume)(void)ln_music_volume(input.remote_volume);
+#if defined(LINNET_VIDEO)
+            if(ln_video_active()){
+                if(input.remote_actions&LINNET_REMOTE_PLAY_PAUSE)ln_video_pause(!ln_video_paused());
+                if(input.remote_actions&LINNET_REMOTE_NEXT)(void)ln_video_seek(10);
+                if(input.remote_actions&LINNET_REMOTE_PREVIOUS)(void)ln_video_seek(-10);
+            }else
+#endif
+            {
+                if(input.remote_actions&LINNET_REMOTE_PLAY_PAUSE)ln_music_toggle();
+                if(input.remote_actions&(LINNET_REMOTE_NEXT|LINNET_REMOTE_PREVIOUS))
+                    (void)ln_music_next((input.remote_actions&LINNET_REMOTE_PREVIOUS)!=0);
+            }
+            ln_ui_refresh(shell);dirty=true;
+        }
+#endif
         uint32_t epoch=0,count=0;
 #if defined(LINNET_NATIVE_UI)
         epoch=shell->scene_epoch;count=ln_ui_focused_count(shell);

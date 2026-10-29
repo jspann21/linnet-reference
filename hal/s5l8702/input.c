@@ -1,6 +1,9 @@
 #include "hal/api/input.h"
 #include "board.h"
 #include "registers.h"
+#if defined(LINNET_INPUT_REMOTE)
+#include "headset_remote.h"
+#endif
 #if defined(LINNET_IMAGE_OS) && defined(LINNET_TARGET_CLASSIC6G_N25)
 #define LN_WHEEL_IRQ 1
 #include "irq.h"
@@ -53,6 +56,7 @@ bool ln_input_init(void) {
     ready=false;state=(struct ln_input_state){0};reported=0;previous=-1;handshakes=seen_buttons=wheel_travel=0;
 #if LN_WHEEL_IRQ
     pending_wheel_delta=0;
+    ln_s5l_remote_init();
 #endif
     if(!ln_s5l_board_input_power())return false;
     LN_CLOCK_GATE1&=~2u;
@@ -68,10 +72,16 @@ bool ln_input_init(void) {
 bool ln_input_poll(struct ln_input_state *out) {
     if(!ready || !out)return false;
     uint32_t now=ln_time_us();
+#if defined(LINNET_INPUT_REMOTE)
+    state.remote_actions=0;state.remote_volume=0;
+#endif
     if((int32_t)(now-switch_deadline)>=0) {
         bool hold,headphones;
         if(!ln_s5l_board_switches(&hold,&headphones))return false;
         state.hold=hold;state.headphones=headphones;switch_deadline=now+20000u;
+#if defined(LINNET_INPUT_REMOTE)
+        ln_s5l_remote_poll(now,headphones,&state.remote_actions,&state.remote_volume);
+#endif
     }
 #if LN_WHEEL_IRQ
     uint32_t flags=ln_s5l_irq_save();
@@ -91,6 +101,9 @@ bool ln_input_poll(struct ln_input_state *out) {
     uint32_t sample=out->buttons|((uint32_t)out->touched<<5)|
         ((uint32_t)out->hold<<6)|((uint32_t)out->headphones<<7);
     bool changed=out->wheel_delta || sample!=reported;
+#if defined(LINNET_INPUT_REMOTE)
+    changed=changed||out->remote_actions||out->remote_volume;
+#endif
     reported=sample;
 #if LN_WHEEL_IRQ
     ln_s5l_irq_restore(flags);
@@ -102,5 +115,8 @@ void ln_input_diagnostics(uint32_t out[16]) {
     for(unsigned i=0;i<16;i++)out[i]=0;
     out[0]=ready;out[1]=last_packet;out[2]=last_events;out[3]=handshakes;
     out[8]=seen_buttons;out[9]=wheel_travel;
+#if defined(LINNET_INPUT_REMOTE)
+    ln_s5l_remote_diagnostics(out+10);
+#endif
     if(ready){out[4]=WHEEL(0);out[5]=WHEEL(4);out[6]=WHEEL(0x14);out[7]=WHEEL(0x18);}
 }

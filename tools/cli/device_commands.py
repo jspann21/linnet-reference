@@ -10,6 +10,7 @@ from tools.studio.build import ROOT
 
 
 DIAGNOSTICS = {
+    'input-state': 'input_state',
     'power-state': 'power_state',
     'storage-performance': 'storage_performance',
     'storage-schedule': 'storage_schedule_diagnostics',

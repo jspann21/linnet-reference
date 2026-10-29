@@ -8,10 +8,21 @@
 #define LINNET_BUTTON_LEFT 4u
 #define LINNET_BUTTON_PLAY 8u
 #define LINNET_BUTTON_MENU 16u
+#if defined(LINNET_IMAGE_OS) && defined(LINNET_TARGET_CLASSIC6G_N25)
+#define LINNET_INPUT_REMOTE 1
+#define LINNET_REMOTE_PLAY_PAUSE 1u
+#define LINNET_REMOTE_NEXT 2u
+#define LINNET_REMOTE_PREVIOUS 4u
+#endif
 struct ln_input_state {
     uint32_t buttons, timestamp_us, packets, invalid_packets;
     int32_t wheel_delta;
     uint8_t wheel_position, touched, hold, headphones;
+#if defined(LINNET_INPUT_REMOTE)
+    /* One-shot media commands, independent of clickwheel keys and Hold. */
+    uint8_t remote_actions;
+    int8_t remote_volume;
+#endif
 };
 bool ln_input_init(void);
 #if defined(LINNET_IMAGE_BOOT) && LINNET_BOOT_APPLE_FALLBACK && \
