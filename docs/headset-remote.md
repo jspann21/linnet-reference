@@ -52,6 +52,10 @@ Link `INPUT_STATE` retains its 16-word layout. Classic OS words 10–15 add:
 
 Use `python linnet device input-state --serial <Linnet-USB-serial>` to read the
 named counters and raw register values. Older firmware reports `remote: null`.
+Media Manager's shareable hardware report includes driver availability,
+controller presence, armed mode, headphone connection and bus failures. It
+omits pressed keys and command history. A controller is probed when headphones
+are connected; absence before that probe does not establish a hardware limit.
 
 | Word | Meaning |
 | --- | --- |

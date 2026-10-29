@@ -364,6 +364,17 @@ def collect(discovery=None, identity=None):
                     session.power_state(),
                     ("failures", "bus_resets", "battery_mv", "charge_limit_ma"),
                 )
+                if current['target_id'] == 'classic6g-n25':
+                    try:
+                        remote = session.input_state()['remote']
+                        entry['headset_remote'] = dict(driver_available=remote is not None)
+                        if remote is not None:
+                            # Hardware only: omit pressed keys and command history.
+                            entry['headset_remote'].update(_fields(remote,
+                                ('present', 'armed', 'headphones', 'bus_fault', 'failures')))
+                            entry['headset_remote']['mode'] = remote['registers']['mode']
+                    except (OSError, RuntimeError, ValueError) as error:
+                        entry['headset_remote_error'] = type(error).__name__
             except (OSError, RuntimeError, ValueError) as error:
                 entry["runtime_error"] = type(error).__name__
             finally:

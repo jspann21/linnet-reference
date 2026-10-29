@@ -71,6 +71,11 @@ storage, panel output quality, audio quality, physical controls and power behavi
 still require physical qualification; a model match or frame-transfer completion
 does not establish those results.
 
+The 2008 and 2009 Classics also have an optional headphone-jack controller for
+[three-button headset remotes](headset-remote.md). Linnet probes it independently
+of the model catalogue; live hardware reports include controller observations
+when the running OS exposes the driver.
+
 ### Storage and flash
 
 Classic requires PATA storage; CE-ATA is not supported. Its NOR writer supports
