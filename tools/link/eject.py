@@ -319,13 +319,7 @@ $originalPartition = $parts[0]
 $originalVolume = Get-Volume -Partition $originalPartition
 if ([string]$originalVolume.FileSystemType -eq 'Unknown') { throw 'Selected volume media is already unavailable' }
 $drive = [string]$parts[0].DriveLetter + ':'
-$native = $disk.FriendlyName -like 'LINNET IPOD*'
-$method = 'windows-shell'
-if (!$native) {
-    $shell = New-Object -ComObject Shell.Application
-    $item = $shell.Namespace(17).ParseName($drive)
-    if ($null -eq $item) { throw 'Windows Shell could not resolve the selected volume' }
-}
+$method = 'locked-volume'
 # Recheck the identity immediately before the single eject request.
 $check = Get-Disk -Number $cfg.number -ErrorAction Stop
 if ($check.UniqueId -cne $disk.UniqueId -or $check.SerialNumber.Trim() -cne $cfg.serial) {
@@ -334,10 +328,9 @@ if ($check.UniqueId -cne $disk.UniqueId -or $check.SerialNumber.Trim() -cne $cfg
 $checkPartition = Get-Partition -DiskNumber $check.Number -PartitionNumber $originalPartition.PartitionNumber
 if ($checkPartition.Offset -ne $originalPartition.Offset -or $checkPartition.Size -ne $originalPartition.Size -or
     $checkPartition.DriveLetter -ne $originalPartition.DriveLetter) { throw 'Partition changed during eject preparation' }
-if ($native) {
-    # Shell InvokeVerb can silently do nothing. Native Disk Mode supports a
-    # checked media-eject request, after Windows has flushed and locked FAT.
-    Add-Type -TypeDefinition @'
+# Shell InvokeVerb can silently do nothing in Apple or Linnet Disk Mode.
+# Flush and lock the verified volume before issuing a checked media eject.
+Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
@@ -388,12 +381,8 @@ public static class LinnetVolumeEject {
     }
 }
 '@
-    [LinnetVolumeEject]::Eject($originalVolume.UniqueId, $disk.Number,
-        $originalPartition.PartitionNumber, $cfg.serial)
-    $method = 'locked-volume'
-} else {
-    $item.InvokeVerb('Eject')
-}
+[LinnetVolumeEject]::Eject($originalVolume.UniqueId, $disk.Number,
+    $originalPartition.PartitionNumber, $cfg.serial)
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $confirmationState = 'Storage is still mounted'
 do {

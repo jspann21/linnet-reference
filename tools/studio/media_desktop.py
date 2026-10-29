@@ -3551,7 +3551,7 @@ class MediaWindow(QMainWindow):
             if dialog.exec()!=QDialog.Accepted:return
             selected=picker.currentData()
         self.work('classic_install',lambda:run(selected['path'],progress=self.events.progress.emit,
-            instruction=self.events.setup_instruction.emit,cancelled=self.stop_event.is_set()),
+            instruction=self.events.setup_instruction.emit,cancelled=self.stop_event.is_set),
             'Resuming Classic installation…')
 
     def open_link_disk(self):
