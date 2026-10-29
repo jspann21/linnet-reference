@@ -1,4 +1,4 @@
-"""Guarded Windows Shell eject for an explicitly identified iPod disk."""
+"""Guarded Windows eject for an explicitly identified iPod disk."""
 import base64
 import json
 import os
@@ -319,9 +319,13 @@ $originalPartition = $parts[0]
 $originalVolume = Get-Volume -Partition $originalPartition
 if ([string]$originalVolume.FileSystemType -eq 'Unknown') { throw 'Selected volume media is already unavailable' }
 $drive = [string]$parts[0].DriveLetter + ':'
-$shell = New-Object -ComObject Shell.Application
-$item = $shell.Namespace(17).ParseName($drive)
-if ($null -eq $item) { throw 'Windows Shell could not resolve the selected volume' }
+$native = $disk.FriendlyName -like 'LINNET IPOD*'
+$method = 'windows-shell'
+if (!$native) {
+    $shell = New-Object -ComObject Shell.Application
+    $item = $shell.Namespace(17).ParseName($drive)
+    if ($null -eq $item) { throw 'Windows Shell could not resolve the selected volume' }
+}
 # Recheck the identity immediately before the single eject request.
 $check = Get-Disk -Number $cfg.number -ErrorAction Stop
 if ($check.UniqueId -cne $disk.UniqueId -or $check.SerialNumber.Trim() -cne $cfg.serial) {
@@ -330,7 +334,66 @@ if ($check.UniqueId -cne $disk.UniqueId -or $check.SerialNumber.Trim() -cne $cfg
 $checkPartition = Get-Partition -DiskNumber $check.Number -PartitionNumber $originalPartition.PartitionNumber
 if ($checkPartition.Offset -ne $originalPartition.Offset -or $checkPartition.Size -ne $originalPartition.Size -or
     $checkPartition.DriveLetter -ne $originalPartition.DriveLetter) { throw 'Partition changed during eject preparation' }
-$item.InvokeVerb('Eject')
+if ($native) {
+    # Shell InvokeVerb can silently do nothing. Native Disk Mode supports a
+    # checked media-eject request, after Windows has flushed and locked FAT.
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+public static class LinnetVolumeEject {
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    static extern SafeFileHandle CreateFileW(string name, uint access, uint share,
+        IntPtr security, uint creation, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError=true)]
+    static extern bool DeviceIoControl(SafeFileHandle handle, uint code,
+        byte[] input, uint inputBytes, byte[] output, uint outputBytes,
+        out uint returned, IntPtr overlapped);
+    static uint Control(SafeFileHandle handle, uint code, byte[] input, byte[] output, string stage) {
+        uint returned;
+        if (!DeviceIoControl(handle, code, input, input == null ? 0u : (uint)input.Length,
+                output, output == null ? 0u : (uint)output.Length, out returned, IntPtr.Zero))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), stage);
+        return returned;
+    }
+    static void Verify(SafeFileHandle handle, uint disk, uint partition, string serial) {
+        var number = new byte[12];
+        if (Control(handle, 0x2d1080, null, number, "Cannot identify iPod volume") != 12 ||
+                BitConverter.ToUInt32(number, 0) != 7 ||
+                BitConverter.ToUInt32(number, 4) != disk ||
+                BitConverter.ToUInt32(number, 8) != partition)
+            throw new InvalidOperationException("iPod volume identity changed");
+        var descriptor = new byte[4096];
+        uint bytes = Control(handle, 0x2d1400, new byte[12], descriptor, "Cannot identify iPod disk");
+        if (bytes < 36) throw new InvalidOperationException("Incomplete iPod disk identity");
+        uint offset = BitConverter.ToUInt32(descriptor, 24);
+        if (offset < 36 || offset >= bytes) throw new InvalidOperationException("iPod serial unavailable");
+        int end = Array.IndexOf(descriptor, (byte)0, (int)offset, (int)(bytes-offset));
+        if (end < 0 || Encoding.ASCII.GetString(descriptor, (int)offset, end-(int)offset).Trim() != serial)
+            throw new InvalidOperationException("iPod disk serial changed");
+    }
+    public static void Eject(string volume, uint disk, uint partition, string serial) {
+        using (var handle = CreateFileW(volume.TrimEnd('\\'), 0xc0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
+            if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot open iPod volume");
+            Verify(handle, disk, partition, serial);
+            // A failed lock leaves other applications and the filesystem alone.
+            // A successful lock flushes cached writes and proves no files are open.
+            Control(handle, 0x90018, null, null, "iPod is busy or could not be flushed; close apps using it and try again");
+            Verify(handle, disk, partition, serial);
+            Control(handle, 0x90020, null, null, "Could not dismount iPod");
+            Control(handle, 0x2d4808, null, null, "Windows could not eject iPod");
+        }
+    }
+}
+'@
+    [LinnetVolumeEject]::Eject($originalVolume.UniqueId, $disk.Number,
+        $originalPartition.PartitionNumber, $cfg.serial)
+    $method = 'locked-volume'
+} else {
+    $item.InvokeVerb('Eject')
+}
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $confirmationState = 'Storage is still mounted'
 do {
@@ -339,7 +402,7 @@ do {
         $_.SerialNumber -and $_.SerialNumber.Trim() -ceq $cfg.serial
     })
     if ($remaining.Count -eq 0) {
-        @{ ejected=$true; disk_number=$cfg.number; disk_serial=$cfg.serial;
+        @{ ejected=$true; method=$method; disk_number=$cfg.number; disk_serial=$cfg.serial;
            drive=$drive; storage_disappeared=$true } | ConvertTo-Json -Compress
         exit 0
     }
@@ -348,7 +411,7 @@ do {
     }
     $diskOperational = @($remaining[0].OperationalStatus | ForEach-Object { [string]$_ })
     if ($diskOperational -contains 'No Media') {
-        @{ ejected=$true; disk_number=$cfg.number; disk_serial=$cfg.serial;
+        @{ ejected=$true; method=$method; disk_number=$cfg.number; disk_serial=$cfg.serial;
            drive=$drive; storage_disappeared=$false; media_unavailable=$true;
            operational_status=$diskOperational } | ConvertTo-Json -Compress
         exit 0
@@ -375,7 +438,7 @@ do {
     $operational = @($volume.OperationalStatus | ForEach-Object { [string]$_ })
     if ($operational -contains 'Offline' -or
         ([string]$volume.FileSystemType -eq 'Unknown' -and $operational -contains 'Unknown')) {
-        @{ ejected=$true; disk_number=$cfg.number; disk_serial=$cfg.serial;
+        @{ ejected=$true; method=$method; disk_number=$cfg.number; disk_serial=$cfg.serial;
            drive=$drive; storage_disappeared=$false; media_unavailable=$true;
            filesystem=[string]$volume.FileSystemType; operational_status=$operational } | ConvertTo-Json -Compress
         exit 0
@@ -385,16 +448,20 @@ do {
         continue
     }
 } while ($clock.Elapsed.TotalSeconds -lt 20)
-throw ('Eject requested once, but storage removal or media unavailability was not confirmed. ' + $confirmationState)
+throw ('Windows did not confirm eject. ' + $confirmationState + '. Recheck the connection before trying again.')
 } catch {
-    @{ error=$_.Exception.Message } | ConvertTo-Json -Compress
+    $reason = $_.Exception
+    while ($reason.InnerException) { $reason = $reason.InnerException }
+    $detail = $reason.Message
+    if ($reason -is [ComponentModel.Win32Exception]) { $detail += ' (Windows error ' + $reason.NativeErrorCode + ')' }
+    @{ error=$detail } | ConvertTo-Json -Compress
     exit 1
 }
 '''.replace("CONFIG", config)
     encoded = base64.b64encode(script.encode("utf-16-le")).decode()
     result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive",
                              "-EncodedCommand", encoded], capture_output=True,
-                            text=True, timeout=35,
+                            text=True, timeout=90,
                             creationflags=subprocess.CREATE_NO_WINDOW)
     if result.returncode:
         try:
