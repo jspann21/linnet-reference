@@ -43,6 +43,58 @@ def discover():
     return connections
 
 
+def read_details(connection):
+    """Read live Link telemetry without mounting storage or changing boot mode."""
+    from tools.link.campaign import connect
+    from tools.link.identity import decode
+    from tools.studio.targets import TARGETS
+
+    fields = ('target_id', 'image_kind', 'profile', 'build_id', 'image_sha256', 'generation')
+
+    def verify(current):
+        if any(current[key] != connection['identity'][key] for key in fields):
+            raise ValueError('The connected software changed. Choose Refresh before reading device details.')
+
+    session, _, current = connect(serial_number=connection['serial'], deadline_seconds=10)
+    try:
+        verify(current)
+        spec = TARGETS[current['target_id']]
+        name = spec['name'].removeprefix('Linnet for ')
+        models = ' / '.join(spec['retail']['regulatory_models'])
+        rows = [f'Device  {name}', f'Model  {models}', 'Connection  Linnet Link',
+                f"USB serial  {connection['serial']}",
+                'Software  ' + ('Linnet OS' if current['image_kind'] == 'os' else 'Linnet recovery'),
+                'Build  ' + {'release': 'User', 'dev': 'Developer', 'trace': 'Trace'}[current['profile']],
+                'Health  ' + ('Ready' if current['healthy'] else 'Checks incomplete'),
+                f"Build ID  {current['build_id']}"]
+        if current['image_kind'] == 'os':
+            try:
+                media = session.media_info()
+            except (OSError, RuntimeError, ValueError):
+                rows.append('Storage details unavailable')
+            else:
+                rows += [f"Drive  {media['model']}", f"Drive firmware  {media['firmware']}",
+                         f"Drive serial  {media['serial'].strip()}",
+                         f"Disk size  {media['sectors'] * media['logical_sector_bytes'] / 1_000_000_000:.1f} GB",
+                         f"Logical sector  {media['logical_sector_bytes']} B",
+                         f"Physical sector  {media['physical_sector_bytes']} B",
+                         f"Storage power  {media['power_state_name']}"]
+            try:
+                power = session.power_state()
+            except (OSError, RuntimeError, ValueError):
+                rows.append('Battery details unavailable')
+            else:
+                if power['flags'] & 8:
+                    rows.append(f"Battery  {power['battery_percent']}% ({power['battery_mv']} mV)")
+                if power['flags'] & 1:
+                    rows.append(f"USB charge limit  {power['charge_limit_ma']} mA")
+        verify(decode(session.status()))
+        return dict(name=name, rows=rows, used_percent=None, link_connection=connection,
+                    subtitle='Live details over Linnet Link.')
+    finally:
+        session.close()
+
+
 def open_disk(connection, *, progress=lambda _message: None):
     from tools.content.publish import _exclusive
     with ExitStack() as locks:

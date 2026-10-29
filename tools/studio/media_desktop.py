@@ -2376,12 +2376,16 @@ class MediaWindow(QMainWindow):
             self.show_progress('Your iPod is safe to disconnect.')
 
     def _complete_device_details(self, result):
+        if result.get('link_connection') is not None and result['link_connection'] != self.link_connection:
+            self.show_error('The selected iPod changed. Read device details again.')
+            return
         dialog = QDialog(self); dialog.setWindowTitle('iPod details'); dialog.resize(540, 560)
         layout = box(dialog, margins=(26, 24, 26, 22), spacing=14)
         layout.addWidget(label(result['name'], 'section'))
-        layout.addWidget(label('Storage and hardware information read from this iPod.', 'subtitle', True))
-        usage = QProgressBar(); usage.setRange(0, 100); usage.setValue(result['used_percent'])
-        usage.setFormat(f"{result['used_percent']}% used"); layout.addWidget(usage)
+        layout.addWidget(label(result.get('subtitle', 'Storage and hardware information read from this iPod.'), 'subtitle', True))
+        if result['used_percent'] is not None:
+            usage = QProgressBar(); usage.setRange(0, 100); usage.setValue(result['used_percent'])
+            usage.setFormat(f"{result['used_percent']}% used"); layout.addWidget(usage)
         details = QTextEdit(); details.setReadOnly(True); details.setPlainText('\n'.join(result['rows']))
         layout.addWidget(details, 1)
         layout.addWidget(button('Close', dialog.accept, 'primary'), 0, Qt.AlignRight)
@@ -2737,8 +2741,9 @@ class MediaWindow(QMainWindow):
         self.screen_save.setEnabled(ready and all(self.screen_state.values()))
         self.screen_items.setEnabled(not self.busy)
         self.screen_picker.setEnabled(not self.busy)
-        for item in (self.eject_button, self.device_details_button, self.add_button, self.playlists_button, self.sync_button, self.choose_videos_button, self.queue_add, self.folder_button):
+        for item in (self.eject_button, self.add_button, self.playlists_button, self.sync_button, self.choose_videos_button, self.queue_add, self.folder_button):
             item.setEnabled(ready)
+        self.device_details_button.setEnabled(ready or bool(self.link_connection and not self.busy))
         music_root = Path(self.identity['root']) / 'Music' if ready else None
         convertible = ready and any(row['kind'] == 'Music' and row['category'] == 'original' and
                                     str(row['status']).startswith('Needs conversion:') and
@@ -3771,7 +3776,14 @@ class MediaWindow(QMainWindow):
         self.work('eject', run, 'Safely ejecting your iPod…')
 
     def device_details(self):
-        if not self.identity or self.busy:
+        if self.busy:
+            return
+        if self.link_connection:
+            from tools.studio.media_link import read_details
+            connection = dict(self.link_connection, identity=dict(self.link_connection['identity']))
+            self.work('device_details', lambda: read_details(connection), 'Reading iPod details…')
+            return
+        if not self.identity or not self.device_connected:
             return
         from tools.content import about
         identity = self.identity
