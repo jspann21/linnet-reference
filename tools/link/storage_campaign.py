@@ -257,6 +257,13 @@ def update_cycle(root, image_path, crash_path, port, progress=None):
             if expected_kind=='os' and observed['image_kind']=='os':
                 observed=_wait_healthy_os(session,observed,identity,deadline=deadline)
                 return
+            if (expected_kind=='boot' and identity['target_id']=='classic6g-n25' and
+                    observed['image_kind']=='os'):
+                # Native Classic Boot automatically returns to its confirmed
+                # OS after rejecting a crashed candidate. The retained crash
+                # and slot/attempt checks below still have to prove rollback.
+                observed=_wait_healthy_os(session,observed,identity,deadline=deadline)
+                return
             if (observed['image_kind']==expected_kind and (expected_kind!='boot' or observed['generation']>0) and
                 (expected_sha is None or observed['image_sha256']==expected_sha)):
                 return
@@ -295,7 +302,8 @@ def update_cycle(root, image_path, crash_path, port, progress=None):
         if (crash['build_id']!=crash_identity['build_id'] or rollback[5]!=confirmed[5] or
                 rollback[6]!=255 or rollback[7] or rollback[8]<=confirmed[8]):
             raise RuntimeError('crash candidate rollback identity/state mismatch')
-        record('crash-rollback-observed',crash=crash,identity=observed,update=list(rollback))
+        record('crash-rollback-observed',crash=crash,identity=observed,update=list(rollback),
+               recovery_endpoint=observed['image_kind'])
         # Fresh explicit recovery action, after inspecting the crashed candidate.
         restart();reconnect('os',good_sha);ready()
         record('last-known-good-boot',identity=observed)
