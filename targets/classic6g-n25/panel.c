@@ -19,32 +19,42 @@ static bool reg16(uint16_t reg,uint16_t value) {
     return ln_s5l_lcd_command(reg) && ln_s5l_lcd_data(value);
 }
 uint32_t ln_n25_panel_type(void){return panel_type;}
-static bool begin_frame(void) {
-    static const uint8_t columns[]={0,0,1,0x3f},rows[]={0,0,0,0xef};
+static bool begin_window(uint32_t first,uint32_t end) {
+    static const uint8_t columns[]={0,0,1,0x3f};
+    uint8_t rows[]={(uint8_t)(first>>8),(uint8_t)first,(uint8_t)((end-1u)>>8),(uint8_t)(end-1u)};
     if(panel_type<2u){
         if(!ln_s5l_lcd_mode(0x80000c20u) || !send(0x2a,columns,4) ||
            !send(0x2b,rows,4) || !send(0x2c,0,0))return false;
     }else{
         if(!ln_s5l_lcd_mode(0x80000da8u) ||
            !reg16(0x210,0) || !reg16(0x211,319) ||
-           !reg16(0x212,0) || !reg16(0x213,239) ||
-           !reg16(0x200,0) || !reg16(0x201,0) || !ln_s5l_lcd_command(0x202))return false;
+           !reg16(0x212,(uint16_t)first) || !reg16(0x213,(uint16_t)(end-1u)) ||
+           !reg16(0x200,0) || !reg16(0x201,(uint16_t)first) || !ln_s5l_lcd_command(0x202))return false;
     }
     if(!ln_s5l_lcd_mode(0x80100db0u))return false;
-    pixel=0;phase=2;return true;
+    pixel=first*320u;phase=2;return true;
 }
-bool ln_n25_panel_present(const uint16_t *pixels) {
+static bool begin_frame(void){return begin_window(0,240);}
+static bool present_window(const uint16_t *pixels,uint32_t first,uint32_t end) {
     if(phase!=3 || !pixels)return false;
     frame=pixels;
-    if(begin_frame()){
+    if(begin_window(first,end)){
 #if defined(LINNET_IMAGE_OS)
-        if(!ln_s5l_lcd_dma_begin(pixels,320u*240u)){phase=0xffffffffu;return false;}
+        if(!ln_s5l_lcd_dma_begin(pixels+first*320u,320u*(end-first))){phase=0xffffffffu;return false;}
         phase=4;
 #endif
         return true;
     }
     phase=0xffffffffu;return false;
 }
+bool ln_n25_panel_present(const uint16_t *pixels){return present_window(pixels,0,240);}
+#if defined(LINNET_IMAGE_OS)
+bool ln_n25_panel_present_rows(const uint16_t *pixels,uint32_t first,uint32_t end){
+    if(first>=end||end>240u)return false;
+    if(panel_type!=1u&&panel_type!=2u){first=0;end=240;}
+    return present_window(pixels,first,end);
+}
+#endif
 bool ln_n25_panel_start(bool diagnostic) {
     color_bars=diagnostic;
     phase=0;pixel=0;bar=0;bar_pixel=0;frame=0;setup_index=0;
