@@ -98,10 +98,11 @@ def read_details(connection):
     try:
         verify(current)
         spec = TARGETS[current['target_id']]
-        family = spec['name'].removeprefix('Linnet for ')
+        product = connection.get('product', {})
+        family = product.get('product_name') or spec['name'].removeprefix('Linnet for ')
         saved_name = _saved_name(connection)
         name = saved_name or family
-        models = ' / '.join(spec['retail']['regulatory_models'])
+        models = product.get('model_number') or ' / '.join(spec['retail']['regulatory_models'])
         rows = [f'Device  {family}', f'Model  {models}', 'Connection  Linnet Link',
                 f"USB serial  {connection['serial']}",
                 'Software  ' + ('Linnet OS' if current['image_kind'] == 'os' else 'Linnet recovery'),

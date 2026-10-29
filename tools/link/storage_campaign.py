@@ -251,6 +251,7 @@ def update_cycle(root, image_path, crash_path, port, progress=None):
     def reconnect(expected_kind,expected_sha=None):
         nonlocal session,observed
         deadline=time.monotonic()+120
+        classic_recovery_requested=False
         while time.monotonic()<deadline:
             try:session,_,observed=connect(serial_number=serial,deadline_seconds=min(15,max(.1,deadline-time.monotonic())))
             except TimeoutError:continue
@@ -264,6 +265,21 @@ def update_cycle(root, image_path, crash_path, port, progress=None):
                 # and slot/attempt checks below still have to prove rollback.
                 observed=_wait_healthy_os(session,observed,identity,deadline=deadline)
                 return
+            if (expected_kind=='os' and identity['target_id']=='classic6g-n25' and
+                    observed['target_id']==identity['target_id'] and observed['image_kind']=='boot' and
+                    not classic_recovery_requested):
+                # An intentional publication cut leaves Classic in its SRAM
+                # recovery monitor. Admit one explicit restart only after its
+                # identity matches the verified installed NOR recovery record.
+                from tools.studio.media_link import _classic_record
+                from tools.link.classic_nor import _operation
+                if not _classic_record(dict(serial=serial,identity=observed)):
+                    raise RuntimeError('Classic cut returned an unverified recovery monitor')
+                record('classic-publication-recovery',identity=observed)
+                classic_recovery_requested=True
+                _operation(session,66,0x52454254,size=0)
+                session.close();session=None
+                continue
             if (observed['image_kind']==expected_kind and (expected_kind!='boot' or observed['generation']>0) and
                 (expected_sha is None or observed['image_sha256']==expected_sha)):
                 return
