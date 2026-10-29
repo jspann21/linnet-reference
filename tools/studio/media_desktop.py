@@ -22,7 +22,7 @@ from PySide6.QtGui import (QColor, QDesktopServices, QFont, QIcon, QImage, QImag
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox,
     QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QListView, QListWidget, QListWidgetItem, QMainWindow, QProgressBar, QPushButton, QScrollArea,
+    QLineEdit, QListView, QListWidget, QListWidgetItem, QMainWindow, QProgressBar, QPushButton, QScrollArea, QGridLayout,
     QStackedWidget, QStyledItemDelegate, QStyle,
     QTableView, QTextEdit, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
     QStyleOptionButton, QSizePolicy)
@@ -2379,15 +2379,68 @@ class MediaWindow(QMainWindow):
         if result.get('link_connection') is not None and result['link_connection'] != self.link_connection:
             self.show_error('The selected iPod changed. Read device details again.')
             return
-        dialog = QDialog(self); dialog.setWindowTitle('iPod details'); dialog.resize(540, 560)
-        layout = box(dialog, margins=(26, 24, 26, 22), spacing=14)
-        layout.addWidget(label(result['name'], 'section'))
-        layout.addWidget(label(result.get('subtitle', 'Storage and hardware information read from this iPod.'), 'subtitle', True))
+        fields = dict(row.split('  ', 1) for row in result['rows'] if '  ' in row)
+        linked = result.get('link_connection') is not None
+        dialog = QDialog(self); dialog.setWindowTitle('iPod details'); dialog.resize(580, 760)
+        layout = box(dialog, margins=(26, 24, 26, 22), spacing=16)
+
+        def value(text, style=None):
+            shown = '\n'.join(text[at:at + 32] for at in range(0, len(text), 32)) if len(text) > 40 and not any(c.isspace() for c in text) else text
+            item = label(shown, style, True)
+            item.setTextFormat(Qt.PlainText)
+            item.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+            return item
+
+        layout.addWidget(value(result['name'], 'section'))
+        model = fields.get('Model') or fields.get('Model no.') or fields.get('Device', '')
+        if fields.get('Device') and fields['Device'] not in (result['name'], model):
+            model = fields['Device'] + ' · ' + model
+        layout.addWidget(value(model, 'muted'))
+        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        body = QWidget(); content = box(body, margins=(0, 0, 8, 0), spacing=18)
+        scroll.setWidget(body); body.setAutoFillBackground(False)
+        scroll.viewport().setAutoFillBackground(False); layout.addWidget(scroll, 1)
+
+        def section(title, entries):
+            if not entries:
+                return
+            content.addWidget(label(title, 'cardTitle'))
+            grid = QGridLayout(); grid.setHorizontalSpacing(22); grid.setVerticalSpacing(10)
+            grid.setColumnStretch(1, 1)
+            for row, (caption, text) in enumerate(entries):
+                grid.addWidget(label(caption, 'muted'), row, 0, Qt.AlignTop)
+                grid.addWidget(value(text), row, 1)
+            content.addLayout(grid)
+
+        def entries(pairs):
+            return [(caption, fields[key]) for caption, key in pairs if fields.get(key)]
+
+        section('Device', [(caption, text) for caption, text in (
+            ('Serial number', result.get('device_serial')),
+            ('Connection', 'Linnet Link' if linked else 'Disk Mode')) if text] + entries((
+                ('USB serial', 'USB serial'), ('Disk ID', 'Disk ID'), ('USB model', 'USB model'),
+                ('USB', 'USB'), ('Volume ID', 'Volume ID'), ('Regulatory model', 'Regulatory'),
+                ('Board', 'Board'), ('Family', 'Family'), ('Region', 'Region'))))
         if result['used_percent'] is not None:
+            content.addWidget(label('Storage', 'cardTitle'))
             usage = QProgressBar(); usage.setRange(0, 100); usage.setValue(result['used_percent'])
-            usage.setFormat(f"{result['used_percent']}% used"); layout.addWidget(usage)
-        details = QTextEdit(); details.setReadOnly(True); details.setPlainText('\n'.join(result['rows']))
-        layout.addWidget(details, 1)
+            usage.setFormat(f"{result['used_percent']}% used"); content.addWidget(usage)
+            stats = box(horizontal=True, spacing=20)
+            for caption, key in (('Used', 'Used'), ('Available', 'Free'), ('Total', 'Capacity')):
+                column = box(spacing=4); column.addWidget(label(caption, 'muted'))
+                column.addWidget(value(fields.get(key))); stats.addLayout(column, 1)
+            content.addLayout(stats)
+        section('Storage details', entries((('Drive', 'Drive'), ('Capacity', 'Disk size'),
+            ('Drive firmware', 'Drive firmware'), ('Drive serial', 'Drive serial'),
+            ('Partition', 'Partition'), ('Sector size', 'Sector'), ('Logical sector', 'Logical sector'),
+            ('Physical sector', 'Physical sector'), ('Power state', 'Storage power'),
+            ('Audio', 'Audio'), ('Video', 'Video'), ('Photos', 'Photos'), ('Data', 'Data'),
+            ('Trash', 'Trash'), ('Other', 'Other'))))
+        section('Software and power', entries((('Software', 'Software'), ('Apple software', 'Apple OS'),
+            ('Build', 'Build'), ('Health', 'Health'), ('Build ID', 'Build ID'),
+            ('Battery', 'Battery'), ('USB charge limit', 'USB charge limit'), ('Read', 'Read'))))
+        content.addStretch()
         layout.addWidget(button('Close', dialog.accept, 'primary'), 0, Qt.AlignRight)
         dialog.exec()
 

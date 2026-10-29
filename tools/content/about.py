@@ -230,8 +230,16 @@ def read_details(identity, verify):
     current = verify(identity)
     name = _apple_name(Path(current["root"]).resolve(strict=True)) or current.get("volume_label") or "Unnamed iPod"
     data = make_record(current, ipod_name=name)
-    require_same_target(current, verify(current))
     rows = [data[16 + i * ROW_BYTES:16 + (i + 1) * ROW_BYTES].split(b"\0", 1)[0].decode("ascii")
             for i in range(data[5])]
     rows[-1] = rows[-1].replace("Synced", "Read", 1)
-    return dict(name=name, rows=rows, used_percent=data[6])
+    serial = _device_serial(Path(current['root']))
+    if not serial and str(current.get('usb_vid_pid', '')).startswith('05AC:'):
+        candidate = current.get('disk_serial', '')
+        if re.fullmatch(r'[A-Z0-9]{6,16}', candidate) and candidate != current.get('linnet_usb_serial'):
+            serial = candidate
+    rows = [row for row in rows if not row.startswith('Serial  ')]
+    if serial:
+        rows.insert(2, 'Serial  ' + serial)
+    require_same_target(current, verify(current))
+    return dict(name=name, rows=rows, used_percent=data[6], device_serial=serial)
