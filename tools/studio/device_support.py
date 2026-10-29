@@ -372,7 +372,8 @@ def collect(discovery=None, identity=None):
         report["runtime"].append(entry)
     known = bool(devices or report["runtime"])
     if known:
-        products = sorted({item['product_name'] for item in report['recognized'] if item.get('product_name')})
+        observations = [*report['recognized'], *(item.get('product', {}) for item in report['runtime'])]
+        products = sorted({item['product_name'] for item in observations if item.get('product_name')})
         found = products[0] + ' found.' if len(products) == 1 else 'Supported iPod family found.'
         report["summary"] = (
             found + " Open iPod setup to continue."

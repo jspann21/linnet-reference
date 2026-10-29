@@ -14,7 +14,7 @@ the [porting guide](../targets/README.md).
 | iPod Video A1136 | `video5g-m25` | Toshiba MK8010GAH, 80 GB | 64 MiB | 320 × 240 color |
 | iPod classic A1238 (MB147) | `classic6g-n25` | iFlash, 125 GB | 64 MiB | 320 × 240 color |
 | iPod classic A1238 (MB562) | `classic6g-n25` | Toshiba MK1231GAL, 120 GB | 64 MiB | 320 × 240 color |
-| iPod classic A1238 | `classic6g-n25` | Toshiba MK1634GAL, 160 GB | 64 MiB | 320 × 240 color |
+| iPod classic A1238 (MC297, Late 2009 / 7th generation) | `classic6g-n25` | Toshiba MK1634GAL, 160 GB | 64 MiB | 320 × 240 color |
 | iPod 4G monochrome A1059 (M9282) | `ipod4g-q21` | Toshiba MK2006GAL, 20 GB | 32 MiB | 160 × 128 grayscale |
 | iPod 4G monochrome MP102 (PE435A) | `ipod4g-q21` | Toshiba MK2006GAL, 20 GB | 32 MiB | 160 × 128 grayscale |
 
