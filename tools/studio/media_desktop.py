@@ -2391,7 +2391,10 @@ class MediaWindow(QMainWindow):
             item.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
             return item
 
-        layout.addWidget(value(result['name'], 'section'))
+        heading = value(result['name'], 'section')
+        if result.get('name_saved'):
+            heading.setToolTip('Last saved iPod name')
+        layout.addWidget(heading)
         model = fields.get('Model') or fields.get('Model no.') or fields.get('Device', '')
         if fields.get('Device') and fields['Device'] not in (result['name'], model):
             model = fields['Device'] + ' · ' + model
@@ -2402,6 +2405,8 @@ class MediaWindow(QMainWindow):
         scroll.setWidget(body); body.setAutoFillBackground(False)
         scroll.viewport().setAutoFillBackground(False); layout.addWidget(scroll, 1)
 
+        captions = []
+
         def section(title, entries):
             if not entries:
                 return
@@ -2409,7 +2414,8 @@ class MediaWindow(QMainWindow):
             grid = QGridLayout(); grid.setHorizontalSpacing(22); grid.setVerticalSpacing(10)
             grid.setColumnStretch(1, 1)
             for row, (caption, text) in enumerate(entries):
-                grid.addWidget(label(caption, 'muted'), row, 0, Qt.AlignTop)
+                caption_label = label(caption, 'muted'); captions.append(caption_label)
+                grid.addWidget(caption_label, row, 0, Qt.AlignTop)
                 grid.addWidget(value(text), row, 1)
             content.addLayout(grid)
 
@@ -2440,6 +2446,9 @@ class MediaWindow(QMainWindow):
         section('Software and power', entries((('Software', 'Software'), ('Apple software', 'Apple OS'),
             ('Build', 'Build'), ('Health', 'Health'), ('Build ID', 'Build ID'),
             ('Battery', 'Battery'), ('USB charge limit', 'USB charge limit'), ('Read', 'Read'))))
+        caption_width = max((item.sizeHint().width() for item in captions), default=0)
+        for item in captions:
+            item.setFixedWidth(caption_width)
         content.addStretch()
         layout.addWidget(button('Close', dialog.accept, 'primary'), 0, Qt.AlignRight)
         dialog.exec()

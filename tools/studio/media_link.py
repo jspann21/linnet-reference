@@ -43,6 +43,39 @@ def discover():
     return connections
 
 
+def _saved_name(connection):
+    """Use a saved name only when its target and board USB identity both match."""
+    import json
+    from tools.content.guard import guarded_path
+    from tools.content.host_state import media_state_root
+
+    root = media_state_root()
+    candidates = []
+    for path in root.glob('*/session-*.json'):
+        try:
+            info = guarded_path(path, root)
+            if info is not None and info.st_size <= 1048576:
+                candidates.append((info.st_mtime_ns, path))
+        except (OSError, ValueError):
+            continue
+    for _, path in sorted(candidates, reverse=True)[:256]:
+        try:
+            with path.open('rb') as reader:
+                raw = reader.read(1048577)
+            if len(raw) > 1048576:
+                continue
+            record = json.loads(raw)
+            identity = record.get('identity', {})
+            name = identity.get('volume_label')
+            if (identity.get('target_id') == connection['identity']['target_id'] and
+                    identity.get('linnet_usb_serial') == connection['serial'] and
+                    isinstance(name, str) and name.strip() and len(name) <= 128 and name.isprintable()):
+                return name.strip()
+        except (OSError, ValueError, AttributeError, TypeError):
+            continue
+    return None
+
+
 def read_details(connection):
     """Read live Link telemetry without mounting storage or changing boot mode."""
     from tools.link.campaign import connect
@@ -59,9 +92,11 @@ def read_details(connection):
     try:
         verify(current)
         spec = TARGETS[current['target_id']]
-        name = spec['name'].removeprefix('Linnet for ')
+        family = spec['name'].removeprefix('Linnet for ')
+        saved_name = _saved_name(connection)
+        name = saved_name or family
         models = ' / '.join(spec['retail']['regulatory_models'])
-        rows = [f'Device  {name}', f'Model  {models}', 'Connection  Linnet Link',
+        rows = [f'Device  {family}', f'Model  {models}', 'Connection  Linnet Link',
                 f"USB serial  {connection['serial']}",
                 'Software  ' + ('Linnet OS' if current['image_kind'] == 'os' else 'Linnet recovery'),
                 'Build  ' + {'release': 'User', 'dev': 'Developer', 'trace': 'Trace'}[current['profile']],
@@ -89,7 +124,7 @@ def read_details(connection):
                 if power['flags'] & 1:
                     rows.append(f"USB charge limit  {power['charge_limit_ma']} mA")
         verify(decode(session.status()))
-        return dict(name=name, rows=rows, used_percent=None, link_connection=connection,
+        return dict(name=name, name_saved=bool(saved_name), rows=rows, used_percent=None, link_connection=connection,
                     subtitle='Live details over Linnet Link.')
     finally:
         session.close()
