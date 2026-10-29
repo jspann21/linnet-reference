@@ -886,7 +886,16 @@ static void music_step(void){
             uint32_t ordinal;if(ln_queue_current(&queue,&ordinal)&&ordinal==resolver_ordinal)(void)select_index(resolved);
         }else {next_index=resolved;prefetching=ln_music_library_prefetch(resolved);}
     }
-    ln_collections_step(!audio.playing||audio.queued>=read_runway,!audio.playing||audio.queued>=LINNET_AUDIO_RING_FRAMES-2048u);
+    bool collections_write=!audio.playing||audio.queued>=LINNET_AUDIO_RING_FRAMES-2048u;
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    /* Admitted tickets still drain while foreground preparation defers new work. */
+    struct ln_player_status collections_player;
+    ln_player_snapshot(&collections_player);
+    collections_write=collections_write&&!ln_music_loading()&&
+        collections_player.phase!=LN_PLAYER_OPEN&&collections_player.phase!=LN_PLAYER_HEADER&&
+        collections_player.phase!=LN_PLAYER_PRIME;
+#endif
+    ln_collections_step(!audio.playing||audio.queued>=read_runway,collections_write);
     if(!quiz_active&&have_current&&!selecting&&!have_waiting&&ln_collections_writable()&&(!recent_recorded||recent_id!=current.track.id)){ln_collections_played(current.track.id);recent_id=current.track.id;recent_recorded=true;}
     ln_music_browser_step();
     ln_music_search_step();
