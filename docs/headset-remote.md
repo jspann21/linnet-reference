@@ -16,7 +16,7 @@ Apple three-button 3.5 mm headsets use these commands in music playback:
 | + / − | Change volume by 1 dB |
 | Hold + / − | Repeat volume changes after half a second |
 
-Center clicks are grouped with a 350 ms gap. Holding center has no shutdown or
+Center clicks are grouped with a 450 ms gap after release. Holding center has no shutdown or
 voice-command action. Volume repeats stop after five seconds; release and press
 again to continue. This bounds gain changes if a release event is lost. Video
 uses center for play/pause and double/triple clicks for ten-second forward/back
@@ -30,16 +30,16 @@ Hardware facts come from the author's
 [Mikey reverse-engineering measurements](https://terminalbytes.com/reverse-engineering-ipod-classic-mikey-chip/):
 I2C bus 0, on-wire write address `0x72` (HAL seven-bit address `0x39`);
 register 0 mode `0x2f` (reserved readback bits are masked);
-register 4 center indication on bits 0/2; register 5
+register 4 center indications; register 5
 volume edge pairs (up `0x04`/`0x08`, down `0x01`/`0x02`). Accessory identification
 uses bits 4/5, not volume buttons. Unplugging resets the controller. Center
-release timing can lag after inactivity, so Linnet counts debounced rises
-instead of treating duration as a physical hold.
+release timing can lag after inactivity. Linnet has no center hold commands.
 
-Linnet measurements on a 2009 controller found mode readback `0x2f`, center idle
-`0x80` and center pressed `0x85`. The driver accepts both `0x40` and `0x80` idle
-markers; neither marker is itself a button. The HAL address is `0x39`, confirmed
-by successful reads and button transitions on the device.
+Linnet measurements on both 2008 and 2009 controllers found mode readback `0x2f`,
+center idle `0x80` and center pressed `0x85`. Bit 2 sometimes appears alone after
+release (`0x84`), so Linnet counts bit 0 and requires a released interval before
+another press. The high idle markers are not buttons. The HAL address is `0x39`,
+confirmed by successful reads and button transitions on both devices.
 
 The driver samples every 20 ms in the foreground, with interrupts enabled.
 Insertion has two settling intervals, and failed transfers clear all pending
@@ -55,7 +55,7 @@ named counters and raw register values. Older firmware reports `remote: null`.
 
 | Word | Meaning |
 | --- | --- |
-| 10 | `0x524d0000` signature; bits 0 present, 1 armed, 2 headphones, 3 bus fault, 4/5 up/down held, 6 center latched, 7 repeat limit |
+| 10 | `0x524d0000` signature; bits 0 present, 1 armed, 2 headphones, 3 bus fault, 4/5 up/down held, 6 center latched, 7 repeat limit; bits 8–10 last command (1 play/pause, 2 next, 4 previous), bits 11–12 pending click count |
 | 11 | Registers 0, 4, 5, 6, in successive bytes |
 | 12 | Successful samples |
 | 13 | Failed transfers |

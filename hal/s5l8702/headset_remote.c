@@ -11,15 +11,15 @@
 #define JACK_ADDRESS (0x72u >> 1)
 #define INSERT_US 150000u
 #define RETRY_US 2000000u
-#define CLICK_GAP_US 350000u
-#define RELEASE_US 60000u
+#define CLICK_GAP_US 450000u
+#define RELEASE_US 40000u
 #define REPEAT_DELAY_US 500000u
 #define REPEAT_US 120000u
 #define VOLUME_LIMIT_US 5000000u
 static uint32_t next_probe,settle_at,mode_at,release_at,click_at,repeat_at,volume_at;
 static uint32_t samples,failures,center_presses,raw;
 static uint16_t up_presses,down_presses;
-static uint8_t volume_keys,clicks;
+static uint8_t volume_keys,clicks,last_action;
 static bool connected,present,armed,center,release_tracking,volume_limited,fault;
 
 static bool due(uint32_t now,uint32_t at){return (int32_t)(now-at)>=0;}
@@ -31,6 +31,7 @@ static void clear_keys(void){
 }
 void ln_s5l_remote_init(void){
     connected=present=armed=fault=false;clear_keys();
+    last_action=0;
     samples=failures=center_presses=raw=0;up_presses=down_presses=0;
     next_probe=settle_at=mode_at=release_at=click_at=repeat_at=volume_at=0;
 }
@@ -72,26 +73,28 @@ void ln_s5l_remote_poll(uint32_t now,bool headphones,uint8_t *actions,int8_t *vo
         failed(now);return;
     }
     ++samples;raw=mode|((uint32_t)r4<<8)|((uint32_t)r5<<16)|((uint32_t)r6<<24);
-    /* The idle marker differs between controller revisions (0x40/0x80).
-     * On the measured 2009 unit: idle 0x80, center pressed 0x85. */
-    bool pressed=(r4&5u)!=0;
+    /* Bit 0 is the pressed level on both measured revisions. Bit 2 can
+     * reappear alone (0x84) after release: counting it creates phantom clicks
+     * and can hide the released interval before the next real press. */
+    bool pressed=(r4&1u)!=0;
     if(pressed){
         release_tracking=false;
         if(!center){
             center=true;++center_presses;
             if(clicks<3u)++clicks;
-            click_at=now+CLICK_GAP_US;
         }
+        if(clicks)click_at=now+CLICK_GAP_US;
     }else if(center){
         if(!release_tracking){release_tracking=true;release_at=now+RELEASE_US;}
         else if(due(now,release_at)){center=false;release_tracking=false;}
     }
-    /* A center press can outlive its physical release in this controller.
-     * Commands depend on counted rises, never the reported hold duration. */
-    if(clicks&&due(now,click_at)){
+    /* Group by the released gap, not press-to-press time: a longer press
+     * must not consume the user's entire double/triple-click window. Never
+     * publish a shorter gesture while another click is still down. */
+    if(clicks&&!center&&due(now,click_at)){
         *actions=clicks==1u?LINNET_REMOTE_PLAY_PAUSE:
             clicks==2u?LINNET_REMOTE_NEXT:LINNET_REMOTE_PREVIOUS;
-        clicks=0;
+        last_action=*actions;clicks=0;
     }
     uint8_t before=volume_keys;
     /* Accessory-ID bits 4..5 are deliberately excluded from button decoding.
@@ -117,7 +120,8 @@ void ln_s5l_remote_poll(uint32_t now,bool headphones,uint8_t *actions,int8_t *vo
 }
 void ln_s5l_remote_diagnostics(uint32_t words[6]){
     words[0]=0x524d0000u|(present?1u:0u)|(armed?2u:0u)|(connected?4u:0u)|
-        (fault?8u:0u)|((uint32_t)volume_keys<<4)|(center?64u:0u)|(volume_limited?128u:0u);
+        (fault?8u:0u)|((uint32_t)volume_keys<<4)|(center?64u:0u)|(volume_limited?128u:0u)|
+        ((uint32_t)last_action<<8)|((uint32_t)clicks<<11);
     words[1]=raw;words[2]=samples;words[3]=failures;words[4]=center_presses;
     words[5]=up_presses|((uint32_t)down_presses<<16);
 }

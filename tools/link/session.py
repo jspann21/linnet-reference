@@ -350,6 +350,7 @@ class Session:
                 headphones=bool(flags & 4), bus_fault=bool(flags & 8),
                 volume_up_held=bool(flags & 16), volume_down_held=bool(flags & 32),
                 center_latched=bool(flags & 64), repeat_limited=bool(flags & 128),
+                last_action=(flags >> 8) & 7, pending_clicks=(flags >> 11) & 3,
                 registers=dict(zip(('mode', 'center', 'volume', 'event'),
                                    struct.pack('<I', words[11]))),
                 samples=words[12], failures=words[13], center_presses=words[14],
