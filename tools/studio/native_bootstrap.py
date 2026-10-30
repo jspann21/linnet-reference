@@ -520,6 +520,7 @@ def _prior_restore_hints(plan_path, expected_sha, disk, manifest, artifacts, cur
 
 def execute(mode, plan_path, expected_sha, disk_number):
     """Own the media publisher mutex for direct raw apply and restore calls."""
+    from tools.content.guard import require_same_target
     from tools.content.publish import _exclusive
     from tools.content.media_manager import discover, refresh
     manifest, artifacts, _original = load_plan(plan_path, expected_sha)
@@ -528,15 +529,31 @@ def execute(mode, plan_path, expected_sha, disk_number):
     volume_id = storage.get("volume_id")
     if not isinstance(volume_id, str) or not volume_id:
         raise ValueError("native plan lacks a mounted volume identity for publisher exclusion")
-    with _exclusive({"volume_unique_id": volume_id}):
-        matches = [item for item in discover()
-                   if item["volume_unique_id"].casefold() == volume_id.casefold()]
-        if len(matches) != 1:
-            raise RuntimeError("native plan volume is not uniquely mounted")
-        observed = refresh(matches[0])
-        if (observed["disk_number"] != disk_number or
-                observed["disk_serial"] != manifest["expected_storage_serial"] or
-                observed["target_id"] != planned_device["target_id"]):
+    if (manifest['target_id'] != planned_device['target_id'] or
+            manifest['expected_linnet_usb_serial'] != planned_device['linnet_usb_serial'] or
+            manifest['expected_device_bytes'] != storage['disk_bytes']):
+        raise ValueError('native plan hardware identity differs from its device record')
+    # Windows assigns different volume IDs to Apple and Linnet Disk Mode, and
+    # may assign another after reconnecting. Bind the current mount to the
+    # reviewed board, mode-specific serial and complete partition geometry.
+    expected = dict(disk_number=disk_number, target_id=manifest['target_id'],
+                    linnet_usb_serial=manifest['expected_linnet_usb_serial'],
+                    disk_serial=manifest['expected_storage_serial'],
+                    disk_bytes=manifest['expected_device_bytes'],
+                    sector_bytes=manifest.get('sector_bytes', SECTOR),
+                    partition_offset=storage['partition_offset'],
+                    partition_bytes=storage['partition_bytes'])
+    matches = [item for item in discover()
+               if all(item.get(key) == value for key, value in expected.items())]
+    if len(matches) != 1:
+        raise RuntimeError("native plan volume is not uniquely mounted")
+    mounted = matches[0]
+    if not mounted.get('volume_unique_id'):
+        raise ValueError('mounted iPod lacks a volume identity for publisher exclusion')
+    with _exclusive(mounted):
+        observed = refresh(mounted)
+        require_same_target(mounted, observed)
+        if any(observed.get(key) != value for key, value in expected.items()):
             raise RuntimeError("native plan no longer matches the mounted iPod volume")
         return _execute(mode, plan_path, expected_sha, disk_number)
 
