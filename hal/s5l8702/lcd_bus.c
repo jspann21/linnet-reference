@@ -59,10 +59,12 @@ bool ln_s5l_lcd_dma_begin(const uint16_t *pixels,uint32_t count){
 }
 int ln_s5l_lcd_dma_poll(void){
     if(!dma_owned)return -1;
-    bool failed=(DMA(0x18)&LCD_CHANNEL)||ln_time_us()-dma_started>=500000u;
-    if(!failed){
-        if((DMA(0x1c)&LCD_CHANNEL)||!(DMA(0x14)&LCD_CHANNEL)||!(LCD(0x1c)&2u))return 0;
-    }else {
+    bool complete=!(DMA(0x1c)&LCD_CHANNEL)&&(DMA(0x14)&LCD_CHANNEL)&&(LCD(0x1c)&2u);
+    /* A long foreground hash can postpone this poll after DMA has completed.
+     * Expire only an unfinished transfer; a late successful poll is valid. */
+    bool failed=(DMA(0x18)&LCD_CHANNEL)||(!complete&&ln_time_us()-dma_started>=500000u);
+    if(!failed&&!complete)return 0;
+    if(failed){
         DMA(0x190)|=1u<<18;uint32_t began=ln_time_us();
         while(DMA(0x190)&(1u<<17))if(ln_time_us()-began>=20000u)break;
     }
