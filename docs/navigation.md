@@ -45,12 +45,12 @@ Home
 │   ├── Shuffle: Off / Songs
 │   ├── Repeat: Off / All / One
 │   ├── Sound
-│   │   ├── EQ: Off / Presets / Custom
 │   │   ├── Sound Check or ReplayGain: Off / Track / Album
 │   │   ├── Volume limit
+│   │   ├── EQ: Off / Presets / Custom
+│   │   ├── Custom EQ → Bass / Treble, or five bands
 │   │   ├── Clicker: Classic / Off / Low / High
 │   │   ├── Click volume: 0% / 25% / 50% / 75% / 100%
-│   │   ├── Custom EQ → Bass / Treble, or five bands
 │   │   └── Advanced
 │   │       ├── Balance
 │   │       ├── Channels
