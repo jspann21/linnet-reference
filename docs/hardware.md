@@ -26,7 +26,7 @@ Storage capacities describe the tested configurations, not capacity limits.
 | --- | --- |
 | [Photo P98](../targets/photo4g-p98/README.md) | Music, photos, prepared IPVF video, Cover Flow, and games |
 | [Video M25](../targets/video5g-m25/README.md) | Music, photos, native H.264/MPEG-4 video, Cover Flow, and games |
-| [Classic N25](../targets/classic6g-n25/target.toml) | Music, photos, native MP4 video, Cover Flow, and games |
+| [Classic N25](../targets/classic6g-n25/target.toml) | Music, photos, native MP4 video, Cover Flow, games, and [headset remote controls](headset-remote.md) on 2008/2009 models |
 | [Monochrome Q21](../targets/ipod4g-q21/target.toml) | Music and the iPod Mono interface; photos, video, Cover Flow, and games are disabled |
 
 All four targets support native Disk Mode, A/B OS updates, and
