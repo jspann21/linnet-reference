@@ -139,7 +139,10 @@ void ln_runtime_power_begin(void){
     if(player.phase==LN_PLAYER_PLAY&&audio.playing&&!audio.paused)work.flags|=LN_POWER_WORK_PLAYING;
     if((player.phase==LN_PLAYER_IDLE||player.phase==LN_PLAYER_ERROR||player.phase==LN_PLAYER_PAUSE)&&!audio.playing)
         work.flags|=LN_POWER_WORK_SETTLED;
-    if(player.next_phase!=LN_PLAYER_NEXT_NONE)work.flags|=LN_POWER_WORK_NEXT_PENDING;
+    /* A prepared next track is buffered state, not foreground work. Keeping
+     * READY busy would hold the CPU at its normal clock for most playlists. */
+    if(player.next_phase==LN_PLAYER_NEXT_OPENING||player.next_phase==LN_PLAYER_NEXT_COMMITTED||
+       player.next_phase==LN_PLAYER_NEXT_CANCELING)work.flags|=LN_POWER_WORK_NEXT_PENDING;
     if(audio.fault)work.flags|=LN_POWER_WORK_AUDIO_FAULT;
 #else
     work.flags|=LN_POWER_WORK_SETTLED;
