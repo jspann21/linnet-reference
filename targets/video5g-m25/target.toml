@@ -81,6 +81,8 @@ music_titles_bytes = 851968
 coverflow_catalog_slots = 1024
 
 [native_video]
+normalize = true
+h264_deblock = false
 sample_bytes = 65536
 h264_width = 320
 h264_height = 240

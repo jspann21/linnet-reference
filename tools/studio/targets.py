@@ -364,11 +364,19 @@ def _validate_media(path, spec):
               "max_fps", "video_kbps", "max_video_kbps", "buffer_kbits", "audio_kbps", "sample_bytes"}
     if backend in ("bcm-mp4", "native-mp4"):
         _require(path, spec, 'native_video', isinstance(native, dict), 'be a table', value=native)
-        _require(path, spec, 'native_video fields', set(native) == fields,
-                 f'contain exactly {sorted(fields)}', value=sorted(native))
-        for field, value in native.items():
+        optional = {'normalize', 'h264_deblock'}
+        _require(path, spec, 'native_video fields', fields <= set(native) <= fields | optional,
+                 f'contain {sorted(fields)} and optional {sorted(optional)}', value=sorted(native))
+        for field in fields:
+            value = native[field]
             _require(path, spec, f'native_video.{field}', type(value) is int and value > 0,
                      'be a positive integer', value=value)
+        for field in optional & set(native):
+            _require(path, spec, f'native_video.{field}', type(native[field]) is bool,
+                     'be a boolean', value=native[field])
+        _require(path, spec, 'native_video.h264_deblock',
+                 native.get('h264_deblock', True) or native.get('normalize', False),
+                 'require normalization when disabled', value=native.get('h264_deblock', True))
         _require(path, spec, 'native_video.sample_bytes', native['sample_bytes'] in (65536, 262144),
                  'be 65536 or 262144', value=native['sample_bytes'])
         for axis in ('width', 'height'):

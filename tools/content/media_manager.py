@@ -1573,6 +1573,8 @@ def _video_is_native(source, identity, *, ffprobe=None, cancelled=None, details=
     if source.suffix.lower() not in native_video_extensions(identity):
         return False
     profile = identity['media_profile']
+    if profile.get('native_video', {}).get('normalize', False):
+        return False
     try:
         if profile['video_backend'] in ('bcm-mp4', 'native-mp4'):
             from .native_video import inspect_file
@@ -1958,6 +1960,8 @@ def preparation_space(identity, copies, jobs, selected, cache, *, photo_dimensio
                     if not native:
                         native = _video_is_native(source, identity, ffprobe=ffprobe,
                                                   cancelled=cancelled)
+                if identity['media_profile'].get('native_video', {}).get('normalize', False):
+                    native = False
                 encoder = ffmpeg or shutil.which('ffmpeg')
                 if native:
                     if backend in ('bcm-mp4', 'native-mp4'):
@@ -2635,7 +2639,12 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                 from .native_video import inspect_file as inspect_native, prepare as prepare_native
                 from .publish_video import device_video_path, index_video
                 native_version = 5 if media_profile["video_backend"] == "native-mp4" else 4
-                native_mode = (':chunked' if not no_conversions and (ffmpeg or shutil.which('ffmpeg')) else ':copy') if media_profile['video_backend'] == 'bcm-mp4' else ''
+                normalize = media_profile['native_video'].get('normalize', False)
+                native_mode = ''
+                if normalize:
+                    native_mode = ':normalized'
+                elif media_profile['video_backend'] == 'bcm-mp4':
+                    native_mode = ':chunked' if not no_conversions and (ffmpeg or shutil.which('ffmpeg')) else ':copy'
                 fingerprint = hashlib.sha256(f"native-mp4-v{native_version}{native_mode}:{json.dumps(media_profile, sort_keys=True)}:{source_key}:{source_stamp}".encode()).hexdigest()
                 cached = video_state.get(relative, {})
                 if not isinstance(cached, dict):
@@ -2677,6 +2686,8 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                                                         status="catalog-updated", publication=result))
                             record()
                             continue
+                if normalize and no_conversions:
+                    raise ValueError('This iPod needs prepared video. Choose a video conversion mode.')
                 compatible = False
                 # Native preparation checks conversion-enabled host sources.
                 # No-conversion planning supplies a short-lived proof for host
@@ -2687,7 +2698,8 @@ def _prepare_videos(root, cache, identity, media_profile, state, state_path, vid
                          (no_conversions and not _native_check_reusable(job, source, media_profile)))):
                     try:
                         native_info = inspect_native(source, ffprobe=ffprobe, profile=media_profile, cancelled=cancelled)
-                        compatible = (no_conversions or (native_info['fast_start'] and media_profile['video_backend'] != 'bcm-mp4') or
+                        compatible = not normalize and (no_conversions or
+                                      (native_info['fast_start'] and media_profile['video_backend'] != 'bcm-mp4') or
                                       not (ffmpeg or shutil.which('ffmpeg')))
                     except ValueError:
                         pass
@@ -3161,6 +3173,8 @@ def _run(identity, selected, pending=(), *, progress=lambda message: None, cance
             option = preparation_option(kind, identity, photo_dimension, music_verification)
             video_version = 6 if media_profile.get("video_backend") == "native-mp4" else 5 if media_profile.get("video_backend") == "bcm-mp4" else 4
             video_mode = (':chunked' if (video_selection is None or video_selection) and (ffmpeg or shutil.which('ffmpeg')) else ':copy') if media_profile.get('video_backend') == 'bcm-mp4' else ''
+            if media_profile.get('native_video', {}).get('normalize', False):
+                video_mode = ':normalized'
             if media_profile.get('video_backend') == 'ipvf':
                 video_mode = ':realtime-native-key1s'
             signature = (f"videos-v{video_version}{video_mode}-{json.dumps(media_profile, sort_keys=True)}:{item['fingerprint']}" if kind == "Videos"

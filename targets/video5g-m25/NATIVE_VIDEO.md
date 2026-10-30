@@ -8,6 +8,20 @@ The shared [MP4 reader](../../services/video/mp4.c) validates the container.
 BCM transfer, display ownership, resource selection, and recovery are target
 responsibilities. Board revision determines display/runtime configuration.
 
+## Host preparation
+
+The target manifest requires host normalization to H.264 Baseline at the display
+size. The encoder disables in-loop deblocking for BCM2722 playback.
+This setting must be applied while encoding;
+changing slice flags in an existing stream would change its reference pictures.
+
+Compatible MP4 inputs are also normalized. Prepared copies remain cached on the
+computer, and a changed target profile invalidates older preparations. Selecting
+no conversions leaves source videos needing preparation; it does not index them
+as prepared output. Container inspection reports decoder limits separately from
+this preparation policy. One-second MP4 chunks reduce index and storage work on
+the iPod.
+
 ## Playback
 
 Native video owns the display. Play or Select pauses; Left/Right seeks to a

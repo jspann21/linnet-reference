@@ -159,7 +159,7 @@ def _video_readiness(inventory, published, identity, state=None, verified=None):
                 ('VMCS.BIN', 'MPLAYER.VLL', 'H264DEC.VLL', 'MPG4DEC.VLL',
                  'AACDEC.VLL', 'PASSTHRU.VLL'))):
         return 'Video resources missing on iPod'
-    if compatible_files and video_state.get('media_profile') != identity['media_profile']:
+    if (compatible_files or published) and video_state.get('media_profile') != identity['media_profile']:
         return 'Needs update'
     ready = [row for row in published if row['status'] == 'Ready on iPod']
     missing = [row for row in published if row['status'] != 'Ready on iPod']
