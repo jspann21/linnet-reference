@@ -110,15 +110,6 @@ def read_details(connection):
                 'Health  ' + ('Ready' if current['healthy'] else 'Checks incomplete'),
                 f"Build ID  {current['build_id']}"]
         if current['image_kind'] == 'os':
-            if current['target_id'] == 'video5g-m25':
-                try:
-                    from tools.link.m25_hardware import read as read_hardware
-                    hardware = read_hardware(session, current)
-                except (OSError, RuntimeError, ValueError):
-                    rows.append('Board and memory details unavailable')
-                else:
-                    rows += [f"Board revision  {hardware['board_revision']}",
-                             f"Usable RAM  {hardware['usable_ram_bytes'] // (1024 * 1024)} MiB"]
             try:
                 media = session.media_info()
             except (OSError, RuntimeError, ValueError):
@@ -139,6 +130,22 @@ def read_details(connection):
                     rows.append(f"Battery  {power['battery_percent']}% ({power['battery_mv']} mV)")
                 if power['flags'] & 1:
                     rows.append(f"USB charge limit  {power['charge_limit_ma']} mA")
+            if current['target_id'] == 'video5g-m25':
+                try:
+                    from tools.link.m25_hardware import read as read_hardware
+                    hardware = read_hardware(session, current)
+                except (OSError, RuntimeError, ValueError):
+                    rows.append('Board and memory details unavailable')
+                    # Older development firmware may reject these optional
+                    # reads. Keep established telemetry and verify identity on
+                    # a fresh transport after a rejection poisons the session.
+                    if session.poisoned:
+                        session.close()
+                        session, _, observed = connect(serial_number=connection['serial'], deadline_seconds=10)
+                        verify(observed)
+                else:
+                    rows += [f"Board revision  {hardware['board_revision']}",
+                             f"Usable RAM  {hardware['usable_ram_bytes'] // (1024 * 1024)} MiB"]
         verify(decode(session.status()))
         return dict(name=name, name_saved=bool(saved_name), rows=rows, used_percent=None, link_connection=connection,
                     subtitle='Live details over Linnet Link.')
