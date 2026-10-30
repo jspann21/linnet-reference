@@ -95,6 +95,9 @@ Click volume sits beside Clicker (pitch). Left/Right lower or raise the saved
 level; Select raises it. Each adjustment immediately previews the current pitch
 and volume. Clicker Off or 0% volume keeps feedback silent. Existing settings
 default to 100%. The level controls piezo duty cycle independently of music volume.
+Wheel feedback follows changes to the selected list item or Cover Flow album;
+touching the wheel, reaching a list boundary, and adjusting playback volume or
+photo zoom stay silent.
 
 Power's auto-off timers include time spent playing music. Battery Capacity sets
 the installed battery's nominal rating in 50 mAh steps; it is not a charge reading.
