@@ -672,6 +672,9 @@ def _uninstall_option(marker, linnet, root, native, pending=None, boot_layout=No
         if (root / "LNETPEND").exists() or (root / "LNETPEND").is_symlink():
             return dict(available=False, previous=None,
                         detail="An unfinished Linnet reinstall archive (LNETPEND) is on this iPod. Resolve that archive before removing Linnet OS so its saved media is not lost.")
+        previous = ("Rockbox" if pending and pending[0]["previous_boot"] == "rockbox" or
+                    marker and (marker.get("strategy") == "rockbox-file" or _saved_previous_boot(marker) == "rockbox")
+                    else "Apple iPod software")
         trash = root / ".LINNET" / "TRASH"
         if trash.exists() or trash.is_symlink():
             from tools.content.guard import guarded_path
@@ -680,14 +683,11 @@ def _uninstall_option(marker, linnet, root, native, pending=None, boot_layout=No
                 if not trash.is_dir():
                     raise ValueError("Trash is not a directory")
                 if any(trash.iterdir()):
-                    return dict(available=False, previous=None, blocker="trash",
+                    return dict(available=False, previous=previous, blocker="trash",
                                 detail="Trash isn't empty. Empty Trash before removing Linnet. Choose Review Trash to check its contents first.")
             except (OSError, ValueError):
                 return dict(available=False, previous=None,
                             detail="Could not inspect Trash. Reconnect the iPod and refresh before removing Linnet OS.")
-        previous = ("Rockbox" if pending and pending[0]["previous_boot"] == "rockbox" or
-                    marker and (marker.get("strategy") == "rockbox-file" or _saved_previous_boot(marker) == "rockbox")
-                    else "Apple iPod software")
         return dict(available=True, previous=previous,
                     detail=(f"Finish removing Linnet after the interrupted cleanup. The verified {previous} startup backup is saved on this computer."
                             if pending else

@@ -177,9 +177,9 @@ identifies Apple, or Rockbox when the iPod was installed using its loader. Media
 that was prepared only for Linnet may need an Apple library sync before it appears
 in Apple OS. Removal is unavailable without a verified recovery record.
 Restore or empty Media Manager Trash before removal, since it can contain
-original media files. If Trash is blocking removal, **iPod setup** offers
-**Review Trash** and **Empty Trash…**. Emptying requires confirmation of permanent
-deletion; removal becomes available after Trash is empty.
+original media files. Choose **Remove…** to review removal. If Trash contains
+items, the confirmation offers **Review Trash** or **Empty Trash and remove
+Linnet**. Continuing permanently empties Trash before removing Linnet.
 If the iPod has restarted since removal was reviewed,
 Media Manager reconnects the same board through Linnet Link and checks its FAT
 volume and disk geometry again before restoring startup software. A failed
