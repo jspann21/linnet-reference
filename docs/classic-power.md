@@ -73,5 +73,5 @@ headphone listening must check active output, full stop and restart separately.
 Register facts are described in the public
 [S5L clock register definitions](https://raw.githubusercontent.com/Rockbox/rockbox/master/firmware/export/s5l87xx.h)
 and [clock-domain notes](https://raw.githubusercontent.com/Rockbox/rockbox/master/firmware/target/arm/s5l8702/clocking-s5l8702.h).
-These references describe hardware; Linnet's policy and implementation are
-original and incorporate no Rockbox implementation code.
+These hardware references inform Linnet's original power policy and
+implementation.
