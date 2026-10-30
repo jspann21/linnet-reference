@@ -862,7 +862,15 @@ static int open_stores(void){
 void ln_storage_boot_choice(uint32_t choice){if(!boot_choice&&choice>=1u&&choice<=4u)boot_choice=choice;}
 static int selector_open(const char *path,struct ln_fat32_file *file){
     if(!ln_fat32_open(&volume,path,next_generation()))return 0;
-    locked=true;if(!finish())return 0;*file=volume.file;return 1;
+    uint32_t previous_error=error;
+    locked=true;if(!finish()){
+        /* Startup choices and their configuration are optional. Absence must
+         * not leave healthy recovery Boot with a persistent storage fault.
+         * Preserve actual I/O, format and allocation failures. */
+        if(error==300u-LN_FAT32_NOT_FOUND)error=previous_error;
+        return 0;
+    }
+    *file=volume.file;return 1;
 }
 static int selector_read(const struct ln_fat32_file *file,uint32_t offset,uint8_t *data,uint32_t length){
     if(!length||length>LN_STORAGE_MEDIA_MAX_READ||!ln_fat32_read(&volume,file,offset,data,length,next_generation()))return 0;
