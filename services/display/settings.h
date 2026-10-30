@@ -38,6 +38,10 @@ bool ln_display_settings_adjust(int32_t direction);
 uint8_t ln_display_click_tone(void);
 const char *ln_display_click_label(void);
 bool ln_display_click_adjust(int32_t direction);
+/* Independent piezo level: 0 muted, 1..4 increasing loudness. */
+uint8_t ln_display_click_volume(void);
+const char *ln_display_click_volume_label(void);
+bool ln_display_click_volume_adjust(int32_t direction);
 /* User supplied nominal capacity; does not alter charge limits or gauge voltage. */
 uint32_t ln_auto_shutdown_seconds(bool headphones);
 bool ln_auto_shutdown_adjust(bool headphones,int32_t direction);

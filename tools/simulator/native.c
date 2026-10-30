@@ -122,6 +122,7 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
         if(!strcmp(n->text,"Sound ")){
             uint32_t action=sound_action(item);
             if(action==LN_SOUND_CLICKER)return "Clicker: Classic";
+            if(action==LN_SOUND_CLICK_VOLUME)return "Click volume: 100%";
             if(action==LN_SOUND_CUSTOM_EQ)return "Custom EQ";
             if(action==LN_SOUND_MORE)return "Advanced";
             if(LINNET_EXTENDED_SOUND&&action<13u)return extended_sound[action];

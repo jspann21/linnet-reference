@@ -13,8 +13,9 @@ uintptr_t ln_platform_uncached_address(uintptr_t address);
 void *ln_platform_extended_memory(uint32_t *bytes);
 #endif
 #if defined(LINNET_HARDWARE_CLICKER) && defined(LINNET_IMAGE_OS)
-/* Executive-owned PWM pulse; no waits or audio DMA ownership. */
-void ln_platform_click(uint8_t tone);
+/* Executive-owned PWM pulse; volume 0 mutes, 1..4 adjust duty cycle.
+ * No waits or audio DMA ownership. */
+void ln_platform_click(uint8_t tone,uint8_t volume);
 void ln_platform_click_stop(void);
 void ln_platform_click_poll(uint32_t now);
 bool ln_platform_click_deadline(uint32_t *deadline);

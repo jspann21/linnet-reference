@@ -49,6 +49,7 @@ Home
 │   │   ├── Sound Check or ReplayGain: Off / Track / Album
 │   │   ├── Volume limit
 │   │   ├── Clicker: Classic / Off / Low / High
+│   │   ├── Click volume: 0% / 25% / 50% / 75% / 100%
 │   │   ├── Custom EQ → Bass / Treble, or five bands
 │   │   └── Advanced
 │   │       ├── Balance
@@ -89,6 +90,11 @@ Shuffle Songs starts the entire library in random order. Shuffle in Settings or
 Playback Options changes the current playback queue. Sound and Sleep Timer open
 the same controls wherever they are accessed. Menu returns to the menu that
 opened them. Custom EQ changes select the Custom preset automatically.
+
+Click volume sits beside Clicker (pitch). Left/Right lower or raise the saved
+level; Select raises it. Each adjustment immediately previews the current pitch
+and volume. Clicker Off or 0% volume keeps feedback silent. Existing settings
+default to 100%. The level controls piezo duty cycle independently of music volume.
 
 Power's auto-off timers include time spent playing music. Battery Capacity sets
 the installed battery's nominal rating in 50 mAh steps; it is not a charge reading.

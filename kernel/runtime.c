@@ -40,6 +40,7 @@ static bool photo_resume_loaded;
 #include "hal/api/audio.h"
 #include "services/music/player.h"
 #include "services/music/controller.h"
+#include "services/music/menu.h"
 #include "services/music/artwork.h"
 #include "services/music/coverflow.h"
 #include "services/music/browser.h"
@@ -440,12 +441,12 @@ static void apply(uint32_t kind,int32_t value){
 #endif
 #if defined(LINNET_HARDWARE_CLICKER)
     bool changing_click=kind==LN_INPUT_BUTTON&&!shell->hold&&
-        scene_is(LN_UI_SCENE_MUSIC_SOUND)&&ln_music_sound_action(shell->selected)==13u&&
+        scene_is(LN_UI_SCENE_MUSIC_SOUND)&&ln_sound_menu_click(ln_music_sound_action(shell->selected))&&
         ((uint32_t)value&~shell->buttons&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV));
     if(kind==LN_INPUT_HOLD&&value)ln_platform_click_stop();
     else if(!changing_click&&!scene_is(LN_UI_SCENE_GAME_PLAY)&&!shell->hold&&
             kind==LN_INPUT_BUTTON&&((uint32_t)value&~shell->buttons))
-        ln_platform_click(ln_display_click_tone());
+        ln_platform_click(ln_display_click_tone(),ln_display_click_volume());
 #endif
     if((kind==LN_INPUT_WHEEL&&value&&!shell->hold)||
        (kind==LN_INPUT_BUTTON&&!shell->hold&&(uint32_t)value!=shell->buttons)||
@@ -618,13 +619,15 @@ static void apply(uint32_t kind,int32_t value){
             if(pressed&LN_BUTTON_MENU){
                 if(ln_music_sound_back(&row)){shell->selected=row;shell->first_visible[shell->scene]=0;}
                 else (void)ln_ui_back(shell);
-            }else if(ln_music_sound_action(row)>=14u){
+            }else if(ln_music_sound_action(row)>=LN_SOUND_CUSTOM_EQ){
                 if(pressed&LN_BUTTON_PREV){if(!ln_music_sound_back(&row))(void)ln_ui_back(shell);else shell->selected=row;}
                 else if(ln_music_sound_enter(row)){shell->selected=0;shell->first_visible[shell->scene]=0;}
             }else{
                 (void)ln_music_sound_adjust(row,(pressed&LN_BUTTON_PREV)?-1:1);
 #if defined(LINNET_HARDWARE_CLICKER)
-                if(ln_music_sound_action(row)==13u){ln_platform_click_stop();ln_platform_click(ln_display_click_tone());}
+                if(ln_sound_menu_click(ln_music_sound_action(row))){
+                    ln_platform_click_stop();ln_platform_click(ln_display_click_tone(),ln_display_click_volume());
+                }
 #endif
             }
             ln_ui_refresh(shell);dirty=true;handled=true;
@@ -674,7 +677,7 @@ static void apply(uint32_t kind,int32_t value){
     /* A batched/accelerated move is one accepted action. Rejected movement
      * stays silent; the platform coalesces overlapping pulses without delaying
      * input or queuing sounds for the rows skipped by a fast turn. */
-    if(wheel_changed&&!scene_is(LN_UI_SCENE_GAME_PLAY))ln_platform_click(ln_display_click_tone());
+    if(wheel_changed&&!scene_is(LN_UI_SCENE_GAME_PLAY))ln_platform_click(ln_display_click_tone(),ln_display_click_volume());
 #else
     (void)wheel_changed;
 #endif

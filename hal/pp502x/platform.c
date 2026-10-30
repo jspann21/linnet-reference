@@ -23,17 +23,18 @@ void ln_platform_click_stop(void){
     click_active=false;
     ln_core_irq_restore(flags);
 }
-void ln_platform_click(uint8_t tone){
+void ln_platform_click(uint8_t tone,uint8_t volume){
     /* PWM0 drives the piezo on PP5020/PP5022; PWM1 remains the 4G backlight.
      * Keep the pulse independent of codec, I2S, and audio DMA. */
     static const uint8_t periods[4]={91u,0u,120u,60u};
-    if(tone>3u||tone==1u)return;
+    static const uint8_t duty[5]={0u,16u,32u,64u,128u};
+    if(tone>3u||tone==1u||!volume||volume>4u)return;
     uint32_t flags=ln_core_irq_save();
     if(click_active){ln_core_irq_restore(flags);return;}
     LINNET_REG(0x70000010u)&=~0xcu;
     LINNET_REG(0x6000600cu)|=0x20000u;
     click_started=ln_time_us();click_active=true;++click_count;
-    LINNET_REG(0x7000a000u)=0x80800000u|periods[tone];
+    LINNET_REG(0x7000a000u)=0x80000000u|((uint32_t)duty[volume]<<16)|periods[tone];
     ln_core_wake_at(click_started+4000u);
     ln_core_irq_restore(flags);
 }
