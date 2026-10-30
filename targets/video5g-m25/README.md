@@ -37,6 +37,14 @@ The battery percentage curve is an estimate, not a capacity measurement.
 Replacement storage uses its own identified capabilities; the target's narrow
 factory partition-tail exception does not relax general FAT checks.
 
+Original and Late 2006 Video models share this target. Retail model metadata
+identifies the original product; live SysCfg revision selects the BCM display
+configuration. The OS starts with a 32 MiB memory layout and admits an upper
+bank only for supported revisions after its address-independence probe passes.
+Link device details and hardware reports include the live board revision and
+usable RAM. Usable RAM describes memory admitted by the OS; it does not infer
+physical chip capacity from the original drive size or a replacement drive.
+
 The Hitachi HTC426030G5CE00 omits the later ATA rotation-rate field. The exact
 model is classified as a 4200 RPM mechanical drive using Hitachi's specification.
 This fallback does not authorize supply removal or add the drive to the DMA

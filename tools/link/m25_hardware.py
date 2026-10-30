@@ -32,7 +32,9 @@ def read(session, identity):
             memory[2] != (0x12000000 if memory[3] else 0) or
             board[18] != 0x53797349 or board[16] >> 16 != 0xb):
         raise ProtocolError('Invalid M25 board or memory observation')
+    # This is OS-admitted memory, not a physical chip inventory. An unadmitted
+    # upper bank keeps the 32 MiB baseline regardless of original disk capacity.
     # Copy only hardware facts. Other words include runtime addresses and media
     # state, which do not belong in a shareable hardware inventory.
-    return dict(board_revision=f'0x{board[16]:08X}', ram_bytes=memory[1],
+    return dict(board_revision=f'0x{board[16]:08X}', usable_ram_bytes=memory[1],
                 extended_ram_bytes=memory[3])

@@ -118,7 +118,7 @@ def read_details(connection):
                     rows.append('Board and memory details unavailable')
                 else:
                     rows += [f"Board revision  {hardware['board_revision']}",
-                             f"RAM  {hardware['ram_bytes'] // (1024 * 1024)} MiB"]
+                             f"Usable RAM  {hardware['usable_ram_bytes'] // (1024 * 1024)} MiB"]
             try:
                 media = session.media_info()
             except (OSError, RuntimeError, ValueError):
