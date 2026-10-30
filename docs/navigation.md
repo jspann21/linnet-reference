@@ -75,10 +75,10 @@ Home
 └── Now Playing → Playback Options
     ├── Shuffle
     ├── Repeat
-    ├── Play Queue → Song → Play / Move up / Move down / Remove / Clear queue
-    ├── Save queue as playlist
     ├── Sound
     ├── Sleep Timer
+    ├── Play Queue → Song → Play / Move up / Move down / Remove / Clear queue
+    ├── Save queue as playlist
     ├── Favorite
     ├── Save / Update bookmark
     ├── Resume bookmark
@@ -91,7 +91,36 @@ Home
 Shuffle Songs starts the entire library in random order. Shuffle in Settings or
 Playback Options changes the current playback queue. Sound and Sleep Timer open
 the same controls wherever they are accessed. Menu returns to the menu that
-opened them. Custom EQ changes select the Custom preset automatically.
+opened them. The default Settings order is Shuffle, Repeat, Sound, Display,
+Date & Time, Power, USB Disk Mode, Firmware Info, and About Linnet. iPod Video
+adds Video Settings immediately after Display; Photo and Classic support video
+playback but do not expose this TV-output menu.
+
+### Sound during playback
+
+From **Now Playing**, press **Select** to open **Playback Options**, then choose
+**Sound** (the third row, after Shuffle and Repeat). Sound and Sleep Timer come
+before queue actions so playback settings are together. Audio opened from Files
+has a shorter Playback Options menu, starting with Sound and Sleep Timer.
+
+In Sound, **EQ** is an inline preset choice: Select or Right advances the preset,
+and Left goes to the previous one. **Custom EQ** opens the band controls;
+**Advanced** opens Balance, Channels, Crossfeed, Preamp, and, where supported,
+Dock line out. These are the only Sound submenus. EQ and Custom EQ stay together,
+followed by the click controls, directly above Advanced.
+
+Menu returns from Custom EQ or Advanced to the same Sound row and scroll
+position. A second Menu returns to Playback Options or Settings, whichever
+opened Sound. Custom EQ adjustments select the Custom preset automatically.
+Sound changes can be made while music is playing; opening these menus does not
+pause playback.
+
+| Targets | Loudness setting | EQ choices | Advanced |
+| --- | --- | --- | --- |
+| iPod Video and Classic | Sound Check: Off / Track / Album | Off, 11 named presets, Custom; five bands at 100 Hz, 250 Hz, 1 kHz, 4 kHz, 8 kHz | Balance, Channels, Crossfeed, Preamp, Dock line out |
+| iPod Photo and 4G monochrome | ReplayGain: Off / Track / Album | Off, Bass Booster, Vocal Booster, Custom; Bass 100 Hz and Treble 8 kHz | Balance, Channels, Crossfeed, Preamp |
+
+All four targets include the click controls below.
 
 Clicker turns feedback on or off while preserving output, pitch and volume.
 Click output selects Both, Speaker, Headphones, or Auto. Both uses the speaker
@@ -142,7 +171,9 @@ the photo hierarchy. Notes and games keep their own reading and game controls.
 
 ## Saved customization
 
-Media Manager's **Screens** page can reorder or hide supported shortcuts.
+Media Manager's **Screens** page can reorder or hide supported Home, Music,
+Settings, and Extras shortcuts. Playback Options, Sound, and its submenus keep
+the fixed order shown above. Shuffle and Repeat stay first in Settings.
 Less frequently used music categories appear under More in the saved order.
 Optional Home shortcuts such as Notes, Games, and Cover Flow remain available;
 the default Home menu groups them by purpose.
