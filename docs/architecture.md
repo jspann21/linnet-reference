@@ -23,6 +23,13 @@ Targets select their HAL, memory layout, capabilities, and presentation through
 manifests. Photo, Video, and monochrome 4G use PP502x; Classic uses S5L8702.
 See the [porting guide](../targets/README.md) for source resolution and validation.
 
+Optional runtime power policies consume workload hints through
+`hal/api/power_policy.h`. The executive reports pending work and audio headroom;
+the selected target owns frequency thresholds and fallback decisions. Classic
+selects its implementation in `targets/classic6g-n25/SOURCES` and enables it in
+that directory's `hardware.h`. Register transitions remain in the S5L8702 HAL.
+See [Classic runtime power](classic-power.md) for the policy and its diagnostics.
+
 ## Boot and updates
 
 Boot validates the image's target, bounds, and integrity before entry. CRC and

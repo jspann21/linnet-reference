@@ -1,6 +1,7 @@
 #include "boot/include/linnet_bytes.h"
 #include "boot/include/linnet_boot.h"
 #include "kernel/storage_link.h"
+#include "hal/api/power_policy.h"
 #include "services/storage/storage.h"
 #if LINNET_TARGET_NUMBER==25u && defined(LINNET_COVERFLOW_PACKED)
 #include "services/music/history_pages.h"
@@ -124,6 +125,9 @@ int ln_storage_link_dispatch(const ln_link_frame*q,ln_link_frame*r,uint8_t *ln_s
 #endif
         else if(q->length==4u&&ln_read_le32(q->payload)==5u){ln_storage_schedule_performance(words);count=24u;}
         else if(q->length==4u&&ln_read_le32(q->payload)==6u){ln_ata_clock_diagnostics(words);count=8u;}
+#if LINNET_RUNTIME_POWER_POLICY && defined(LINNET_IMAGE_OS)
+        else if(q->length==4u&&ln_read_le32(q->payload)==27u){ln_power_policy_diagnostics(words);count=32u;}
+#endif
 #endif
         else return 1;
         for(uint32_t i=0;i<count;++i)ln_write_le32(ln_storage_reply+i*4,words[i]);r->length=(uint16_t)(count*4u);break;}

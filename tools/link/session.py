@@ -428,6 +428,26 @@ class Session:
             raise ProtocolError(f'invalid {label} length')
         return struct.unpack(f'<{count}I', raw)
 
+    def classic_power_state(self) -> dict:
+        words = self._diagnostic_words(27, 32, 'Classic power state')
+        if words[0] != int.from_bytes(b'PWRC', 'little') or words[1] != 1:
+            raise ProtocolError('invalid Classic power state header')
+        names = ('magic', 'version', 'clock_hz', 'fast_reason', 'transitions', 'failures',
+                 'low_us_low', 'low_us_high', 'normal_us_low', 'normal_us_high',
+                 'video_us_low', 'video_us_high', 'low_work_max_us', 'normal_work_max_us',
+                 'low_loops', 'normal_loops', 'heavy_fallbacks', 'underrun_fallbacks',
+                 'queued_frames', 'rate', 'clock_source', 'clock_dividers', 'pll0',
+                 'pll2', 'pll_mode', 'ahb_gates', 'apb_gates', 'i2s_clock', 'i2s_tx',
+                 'cpu_voltage_selector', 'input_deadline_us', 'disabled_flags')
+        result = dict(zip(names, words))
+        for kind in ('low', 'normal', 'video'):
+            result[kind + '_us'] = result.pop(kind + '_us_low') | (result.pop(kind + '_us_high') << 32)
+        if result['cpu_voltage_selector'] == 0xffffffff:
+            result['cpu_voltage_selector'] = None
+        result['i2s_gated'] = bool(words[26] & (1 << 7))
+        result['dma0_gated'] = bool(words[25] & (1 << 25))
+        return result
+
     def storage_performance(self) -> dict:
         """Read storage performance; no I/O, reset or arming. Timings overlap, not additive.
 

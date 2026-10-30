@@ -10,6 +10,7 @@ from tools.studio.build import ROOT
 
 
 DIAGNOSTICS = {
+    'classic-power-state': 'classic_power_state',
     'input-state': 'input_state',
     'power-state': 'power_state',
     'storage-performance': 'storage_performance',

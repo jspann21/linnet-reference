@@ -67,6 +67,11 @@ int ln_recovery_cop_active(void){return 0;}
 int ln_recovery_quiesce(void *context) {
     (void)context;
     if(quiesced)return 1;
+#if defined(LINNET_IMAGE_OS) && LINNET_RUNTIME_POWER_POLICY
+    /* Development RAM boot has its own quiesce path, separate from the
+     * platform shutdown hook. Restore clocks before its MMU/cache handoff. */
+    if(!ln_core_clock_set(LINNET_ACTIVE_CLOCK_HZ))return 0;
+#endif
     timeline[6]=1;
     if(!ln_storage_quiesce())return 0;
     timeline[6]=2;

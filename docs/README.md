@@ -25,6 +25,7 @@ work remaining before release and possible future features.
 | [SDK](../sdk/README.md) | Build apps, themes, and screens; use the simulator |
 | [UI compiler](ui-compiler.md) | Static TSX compilation and the native renderer contract |
 | [Linnet Link](device-link.md) | USB diagnostics, input, captures, RAM boot, and persistent updates |
+| [Classic runtime power](classic-power.md) | Clock selection, idle deadlines, peripheral states, and qualification |
 | [Adding an iPod target](../targets/README.md) | Manifests, HAL integration, installation policy, and physical qualification |
 | [Bootstrap tooling](bootstrap-tooling.md) | PortalPlayer directory installation and Classic NOR recovery |
 | [Local artifacts](local-artifacts.md) | Build outputs and recovery backups |

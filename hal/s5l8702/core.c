@@ -80,10 +80,10 @@ void ln_core_idle_until(uint32_t deadline) {
     if(!initialized)return;
     uint32_t flags=ln_s5l_irq_save(),start=ln_time_us();
     int32_t delay=(int32_t)(deadline-start);
-    /* The A1238 OS clickwheel wakes by IRQ. Release has no foreground Link
-     * USB poller; 5 ms still bounds hold/headphone switch polling. */
-#if defined(LINNET_PROFILE_RELEASE) && defined(LINNET_IMAGE_OS) && defined(LINNET_TARGET_CLASSIC6G_N25)
-    if(delay>5000)delay=5000;
+    /* The OS schedules its 20 ms switch sample explicitly; wheel IRQs and
+     * audio completions wake earlier. Release has no Link USB poller. */
+#if defined(LINNET_PROFILE_RELEASE) && defined(LINNET_IMAGE_OS) && defined(LINNET_IDLE_POLL_MAX_US)
+    if(delay>(int32_t)LINNET_IDLE_POLL_MAX_US)delay=LINNET_IDLE_POLL_MAX_US;
 #else
     /* Development Link and other targets retain their 1 ms poll bound. */
     if(delay>1000)delay=1000;
@@ -107,8 +107,17 @@ void ln_core_snapshot(struct ln_core_status *out) {
 bool ln_core_clock_set(uint32_t hz) {
     uint32_t source=LN_REG(0x3c500000u)&0xffffu,divs=LN_REG(0x3c500004u);
     bool normal=source==0x1000u&&divs==0x00404101u;
+    uint32_t normal_divs=0x00404101u;
+    bool allowed=hz==108000000u||hz==216000000u;
+#if defined(LINNET_IMAGE_OS) && LINNET_RUNTIME_POWER_POLICY
+    /* CPU divisor enable (bit 30), count 0: divide PLL0's 108 MHz by 2.
+     * AHB stays 54 MHz, APB 27 MHz; SDRAM, I2S and ECLK are untouched.
+     * Keep this OS-only: Boot and the resident monitor retain their clocks. */
+    normal=normal||(source==0x1000u&&divs==0x40404101u);
+    if(hz==54000000u){normal_divs|=1u<<30;allowed=true;}
+#endif
     bool boosted=source==0x3000u&&(divs==0x00414301u||divs==0x00404303u)&&LN_REG(0x3c500028u)==0x01002401u;
-    if((hz!=108000000u&&hz!=216000000u)||LN_REG(0x3c500020u)!=0x01002402u||(!normal&&!boosted)){clock_failure=1;return false;}
+    if(!allowed||LN_REG(0x3c500020u)!=0x01002402u||(!normal&&!boosted)){clock_failure=1;return false;}
     if(hz==216000000u&&!boosted){
         uint32_t mode=LN_REG(0x3c500044u);
         if((mode&4u)&&(LN_REG(0x3c500028u)!=0x01002401u||(mode&64u))){clock_failure=1;return false;}
@@ -134,7 +143,7 @@ bool ln_core_clock_set(uint32_t hz) {
         LN_REG(0x3c500004u)=0x00404303u;
         LN_REG(0x3c500000u)=(LN_REG(0x3c500000u)&0xffff0000u)|0x3000u;
         ln_s5l_irq_restore(flags);
-    }else if(hz==108000000u&&boosted){
+    }else if(hz!=216000000u&&boosted){
         uint32_t flags=ln_s5l_irq_save();
         LN_REG(0x3c500000u)=(LN_REG(0x3c500000u)&0xffff0000u)|0x1000u;
         LN_REG(0x3c500004u)=0x00404101u;
@@ -147,8 +156,13 @@ bool ln_core_clock_set(uint32_t hz) {
         if(pll2_owned){LN_REG(0x3c500044u)&=~(1u<<18);LN_REG(0x3c500044u)&=~4u;pll2_owned=false;}
         if(!ln_s5l_board_cpu_voltage(false)){state.clock_hz=108000000u;clock_failure=2;return false;}
     }
-    bool valid=(LN_REG(0x3c500000u)&0xffffu)==(hz==108000000u?0x1000u:0x3000u)&&
-        LN_REG(0x3c500004u)==(hz==108000000u?0x00404101u:0x00404303u);
+#if defined(LINNET_IMAGE_OS) && LINNET_RUNTIME_POWER_POLICY
+    if(hz!=216000000u&&LN_REG(0x3c500004u)!=normal_divs){
+        uint32_t flags=ln_s5l_irq_save();LN_REG(0x3c500004u)=normal_divs;ln_s5l_irq_restore(flags);
+    }
+#endif
+    bool valid=(LN_REG(0x3c500000u)&0xffffu)==(hz==216000000u?0x3000u:0x1000u)&&
+        LN_REG(0x3c500004u)==(hz==216000000u?0x00404303u:normal_divs);
     clock_failure=valid?0:5;if(valid)state.clock_hz=hz;return valid;
 }
 uint32_t ln_core_clock_failure(void){return clock_failure;}

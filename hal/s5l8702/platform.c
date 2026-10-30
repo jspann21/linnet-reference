@@ -62,6 +62,10 @@ bool ln_platform_dma_idle(void){
     return !(LN_REG(0x3820001cu)|LN_REG(0x3990001cu));
 }
 void ln_platform_quiesce(void){
+#if defined(LINNET_IMAGE_OS) && LINNET_RUNTIME_POWER_POLICY
+    /* Every Boot/monitor handoff inherits the original normal clock layout. */
+    (void)ln_core_clock_set(LINNET_ACTIVE_CLOCK_HZ);
+#endif
 #if defined(LINNET_HARDWARE_CLICKER) && defined(LINNET_IMAGE_OS)
     ln_platform_click_stop();
 #endif

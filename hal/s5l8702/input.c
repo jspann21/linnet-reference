@@ -46,6 +46,7 @@ static void wheel_packet(uint32_t now) {
     } else {state.invalid_packets++;state.buttons=0;state.touched=0;previous=-1;}
 }
 #if LN_WHEEL_IRQ
+uint32_t ln_input_deadline(uint32_t now){return ready?switch_deadline:now;}
 bool ln_input_irq(void) {
     if(!ready)return false;
     wheel_packet(ln_time_us());

@@ -2,6 +2,7 @@
 #include "kernel/executive.h"
 #include "kernel/shell.h"
 #include "kernel/wheel_motion.h"
+#include "hal/api/power_policy.h"
 #if defined(LINNET_TARGET_VIDEO5G_M25)
 #include "targets/video5g-m25/coprocessor.h"
 #endif
@@ -104,6 +105,49 @@ static uint32_t shutdown_deadline;
 static bool shutdown_tracking;
 #define LINNET_SHUTDOWN_HOLD_US 2000000u
 static bool sleeping, dirty, ready;
+#if LINNET_RUNTIME_POWER_POLICY
+void ln_runtime_power_begin(void){
+    bool busy=!ready||!first_frame_ready||dirty||executive.used||ln_display_busy()||animation_left||shutdown_tracking;
+#if defined(LINNET_STORAGE)
+    busy=busy||restart_requested||ln_storage_busy();
+#endif
+#if defined(LINNET_AUDIO)
+    enum ln_music_library_status library=ln_music_library_status();
+    busy=busy||ln_music_loading()||(library!=LN_LIBRARY_READY&&library!=LN_LIBRARY_ERROR);
+#endif
+#if defined(LINNET_NATIVE_UI)
+    busy=busy||(shell&&shell->scene==LN_UI_SCENE_GAME_PLAY);
+#endif
+#if defined(LINNET_VIDEO)
+    busy=busy||video_requested||ln_video_active()||ln_video_pending();
+#endif
+#if defined(LINNET_PHOTOS)
+    busy=busy||ln_photos_active()||ln_photos_pending();
+#endif
+#if defined(LINNET_FILES)
+    busy=busy||ln_files_pending();
+#endif
+#if defined(LINNET_NOTES)
+    busy=busy||ln_notes_pending();
+#endif
+    struct ln_power_workload work={.flags=busy?LN_POWER_WORK_BUSY:0u};
+#if defined(LINNET_AUDIO)
+    struct ln_audio_status audio;ln_audio_snapshot(&audio);
+    struct ln_player_status player;ln_player_snapshot(&player);
+    work.queued_frames=audio.queued;work.rate=audio.rate;work.underruns=audio.underruns;
+    work.playback_generation=player.generation;
+    if(player.phase==LN_PLAYER_PLAY&&audio.playing&&!audio.paused)work.flags|=LN_POWER_WORK_PLAYING;
+    if((player.phase==LN_PLAYER_IDLE||player.phase==LN_PLAYER_ERROR||player.phase==LN_PLAYER_PAUSE)&&!audio.playing)
+        work.flags|=LN_POWER_WORK_SETTLED;
+    if(player.next_phase!=LN_PLAYER_NEXT_NONE)work.flags|=LN_POWER_WORK_NEXT_PENDING;
+    if(audio.fault)work.flags|=LN_POWER_WORK_AUDIO_FAULT;
+#else
+    work.flags|=LN_POWER_WORK_SETTLED;
+#endif
+    if(!ln_power_policy_begin(&work))ln_panic(30,14,ln_core_clock_failure());
+}
+void ln_runtime_power_end(void){ln_power_policy_end();}
+#endif
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
 void ln_runtime_power_checkpoint(void){
     if(!ready)return;
@@ -1065,7 +1109,16 @@ void ln_runtime_step(void){
     uint32_t previous_buttons=input.buttons;
 #endif
     bool previous_touch=input.touched;
-    if((wakes&(LINNET_WAKE_INPUT|LINNET_WAKE_GPIO|LINNET_WAKE_TIMER))&&ln_input_poll(&input)){
+    bool poll_input=(wakes&(LINNET_WAKE_INPUT|LINNET_WAKE_GPIO|LINNET_WAKE_TIMER))!=0;
+#if LINNET_RUNTIME_POWER_POLICY
+    /* A due sample must advance even before the first timer/wheel IRQ. An
+     * expired unsampled deadline would otherwise prevent the first WFI. */
+    poll_input=poll_input||(int32_t)(ln_time_us()-ln_input_deadline(now))>=0;
+#endif
+    if(poll_input&&ln_input_poll(&input)){
+#if LINNET_RUNTIME_POWER_POLICY
+        if(!ln_power_policy_fast(true))ln_panic(30,14,ln_core_clock_failure());
+#endif
         /* Count contact and sub-menu-step motion, but not idle sensor packets. */
         if(!input.hold&&((input.touched&&!previous_touch)||input.wheel_delta))backlight_activity();
 #if defined(LINNET_STORAGE) && !defined(LINNET_NATIVE_UI)
@@ -1252,6 +1305,9 @@ void ln_runtime_step(void){
         uint32_t rendered_theme_revision=ln_display_theme_revision();
 #endif
         if(dirty){
+#if LINNET_RUNTIME_POWER_POLICY
+            if(!ln_power_policy_fast(false))ln_panic(30,14,ln_core_clock_failure());
+#endif
 #if !defined(LINNET_PROFILE_RELEASE)
             struct rnd_span render_span=rnd_enter();
 #endif
@@ -1361,6 +1417,9 @@ void ln_runtime_idle(void){
     /* CPU fallback must service its bounded worker; a live COP owns the LCD. */
     if(ln_display_busy()&&!display.cop_active&&!display_wait)return;
     uint32_t next=now+200000u;
+#if LINNET_RUNTIME_POWER_POLICY
+    uint32_t input_due=ln_input_deadline(now);if((int32_t)(input_due-next)<0)next=input_due;
+#endif
     if(search_wait&&(int32_t)(search_due-next)<0)next=search_due;
 #if defined(LINNET_HARDWARE_CLICKER)
     uint32_t click_due;

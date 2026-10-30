@@ -2,6 +2,7 @@
 #define LINNET_RUNTIME_H
 #include <stdint.h>
 #include <stdbool.h>
+#include "linnet_target.h"
 enum { LN_INPUT_WHEEL=1, LN_INPUT_BUTTON=2, LN_INPUT_HOLD=3, LN_INPUT_HEADPHONE=4 };
 enum { LN_CONTROL_SLEEP=1,LN_CONTROL_WAKE=2,LN_CONTROL_BACKLIGHT=3,LN_CONTROL_COP_RESET=4,LN_CONTROL_ANIMATION=5,LN_CONTROL_CLEAR_SYNTHETIC=6,LN_CONTROL_RESET_SHELL=7,LN_CONTROL_DISPLAY_DIAGNOSTIC=8 };
 bool ln_runtime_init(void);
@@ -11,6 +12,10 @@ struct ln_fat32_file;
 bool ln_runtime_video_open_file(const struct ln_fat32_file *,const char *title);
 bool ln_runtime_first_frame_ready(void);
 void ln_runtime_step(void);
+#if LINNET_RUNTIME_POWER_POLICY && defined(LINNET_IMAGE_OS)
+void ln_runtime_power_begin(void);
+void ln_runtime_power_end(void);
+#endif
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
 /* Foreground checkpoint only; preserves runtime power/status ownership without
  * dispatching input, storage, music, or shutdown while a decoder is unwinding. */

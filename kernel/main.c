@@ -267,6 +267,9 @@ _Noreturn void ln_main(void)
     LN_CACHE_FIRST_MARK(0xca11u);
 #endif
     for (;;) {
+#if LINNET_RUNTIME_POWER_POLICY && defined(LINNET_IMAGE_OS)
+        ln_runtime_power_begin();
+#endif
 #if defined(LINNET_IMAGE_BOOT) && (LINNET_BOOT_APPLE_FALLBACK || LINNET_BOOT_SELECTOR_ROCKBOX)
         if(!boot_decided){
             struct ln_input_state input;
@@ -450,6 +453,9 @@ _Noreturn void ln_main(void)
 #endif
 #if defined(LINNET_PLATFORM_CORE) && defined(LINNET_IMAGE_OS)
         LN_CACHE_FIRST_MARK(0xca1au);
+#if LINNET_RUNTIME_POWER_POLICY
+        ln_runtime_power_end();
+#endif
         ln_runtime_idle();
         LN_CACHE_FIRST_MARK(0xca1bu);
 #endif
