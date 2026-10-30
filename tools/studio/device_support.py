@@ -54,10 +54,10 @@ def describe(identity=None, review=None):
                     detail='Live hardware and saved model information disagree. Setup must verify the board before installation.')
     return dict(
         status="supported-family",
-        title="Supported iPod family",
+        title="iPod recognized",
         detail=(
-            (model.get('product_name', 'Classic revision unknown') + '. '
-             'Setup verifies RAM, display, PATA storage and boot flash before installation. CE-ATA drives are not supported.')
+            ((model.get('product_name') or 'iPod classic') + '. '
+             'Setup will check your iPod before installing Linnet.')
             if classic
             else "Setup checks the disk and backs up the original startup software."
         ),
