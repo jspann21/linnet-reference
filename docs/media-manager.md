@@ -49,28 +49,6 @@ Screenshots capture the iPod's native screen pixels. They require a running OS
 with Linnet Link; the button is disabled in Disk Mode, recovery, and User builds.
 The image remains available in the preview if the iPod disconnects.
 
-### Screen recording exploration
-
-The existing screenshot protocol can support short, silent recordings by
-capturing successive frames over one persistent Linnet Link connection.
-Initial read-only checks on idle Classic and Video devices support prototyping
-at **1 frame per second**. Transfer speed varies by target; sustained playback
-and video capture still need qualification. Recording controls are proposed work.
-
-The proposed first version is **Record screen → Stop → Preview → Save GIF**,
-using Pillow already bundled with Media Manager. Limit a clip to 60 seconds,
-preserve actual elapsed time between captures, and bound memory and temporary
-storage. Capture one frame at a time and slow sampling when transfers take
-longer than the requested interval. Keep one connection open, check boot identity,
-and support cancellation between screenshot chunk batches. Disconnects or boot
-changes must stop the session rather than silently reconnecting into another clip.
-
-Before adding the control, verify responsiveness and audio underruns during
-playback, moving video and fast navigation; also check Stop, unplug, preview,
-save failure, and partial-clip recovery. GIF would have no audio and a limited
-color palette. Higher frame rates or full video recording need further work on
-transport performance and encoding. Detailed local measurements belong in `out/`.
-
 ## Set up FFmpeg on Windows
 
 1. Obtain a Windows FFmpeg build and extract it to a folder you can keep. Find
