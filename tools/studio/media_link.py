@@ -110,6 +110,15 @@ def read_details(connection):
                 'Health  ' + ('Ready' if current['healthy'] else 'Checks incomplete'),
                 f"Build ID  {current['build_id']}"]
         if current['image_kind'] == 'os':
+            if current['target_id'] == 'video5g-m25':
+                try:
+                    from tools.link.m25_hardware import read as read_hardware
+                    hardware = read_hardware(session, current)
+                except (OSError, RuntimeError, ValueError):
+                    rows.append('Board and memory details unavailable')
+                else:
+                    rows += [f"Board revision  {hardware['board_revision']}",
+                             f"RAM  {hardware['ram_bytes'] // (1024 * 1024)} MiB"]
             try:
                 media = session.media_info()
             except (OSError, RuntimeError, ValueError):

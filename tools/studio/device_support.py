@@ -364,6 +364,12 @@ def collect(discovery=None, identity=None):
                     session.power_state(),
                     ("failures", "bus_resets", "battery_mv", "charge_limit_ma"),
                 )
+                if current['target_id'] == 'video5g-m25':
+                    try:
+                        from tools.link.m25_hardware import read as read_hardware
+                        entry['hardware'] = read_hardware(session, current)
+                    except (OSError, RuntimeError, ValueError) as error:
+                        entry['hardware_error'] = type(error).__name__
                 if current['target_id'] == 'classic6g-n25':
                     try:
                         remote = session.input_state()['remote']
