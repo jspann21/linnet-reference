@@ -99,7 +99,15 @@ bool ln_audio_halt(void) {
 bool ln_audio_stop(void) {
     if(!owned)return true;
     if(!ln_audio_halt())return false;
-    bool ok=!codec_ready || ln_codec_off(ln_s5l_board_codec_write);
+    bool ok;
+#if defined(LINNET_IMAGE_OS) && LINNET_AUDIO_CLOCK_GATING
+    /* Even a partially initialized codec must acknowledge power-down before
+     * its MCLK can stop. A failed stop preserves ownership for recovery. */
+    ok=ln_codec_off(ln_s5l_board_codec_write);
+    if(!ok||!ln_s5l_board_audio_clock_off())return false;
+#else
+    ok=!codec_ready || ln_codec_off(ln_s5l_board_codec_write);
+#endif
     codec_ready=owned=amplifier_open=false;return ok;
 }
 bool ln_audio_init(uint32_t rate) {
@@ -127,6 +135,9 @@ bool ln_audio_init(uint32_t rate) {
     status.rate=rate;status.initialized=1;return true;
 failed:
     (void)ln_s5l_pcm_stop();(void)ln_codec_mute(ln_s5l_board_codec_write,true);
+#if defined(LINNET_IMAGE_OS) && LINNET_AUDIO_CLOCK_GATING
+    if(ln_codec_off(ln_s5l_board_codec_write))(void)ln_s5l_board_audio_clock_off();
+#endif
     codec_ready=amplifier_open=false;status.fault=4;return false;
 }
 uint32_t ln_audio_capacity(void) {
@@ -239,8 +250,10 @@ void ln_s5l_audio_diagnostics(uint32_t out[16]) {
         out[1]=1;
         for(unsigned n=0;n<32u;++n)out[2u+n/4u]|=(uint32_t)registers[n]<<((n%4u)*8u);
     }
-    out[10]=LN_REG(0x3ca00000u);out[11]=LN_REG(0x3ca00004u);
-    out[12]=LN_REG(0x3ca00008u);out[13]=LN_REG(0x3ca00040u);
+    if(!(LN_CLOCK_GATE1&(1u<<7))){
+        out[10]=LN_REG(0x3ca00000u);out[11]=LN_REG(0x3ca00004u);
+        out[12]=LN_REG(0x3ca00008u);out[13]=LN_REG(0x3ca00040u);
+    }
     out[14]=LN_REG(0x3c50000cu);out[15]=codec_ready;
 }
 #endif

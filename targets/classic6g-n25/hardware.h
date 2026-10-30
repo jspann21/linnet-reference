@@ -7,3 +7,4 @@
 /* OS workload policy is implemented by this target's runtime_power.c. */
 #define LINNET_RUNTIME_POWER_POLICY 1
 #define LINNET_IDLE_POLL_MAX_US 20000u
+#define LINNET_AUDIO_CLOCK_GATING 1

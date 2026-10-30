@@ -36,6 +36,9 @@ static bool begin_buffer(const int16_t *samples,uint32_t frames,bool continuing)
     LN_CLOCK_GATE0&=~(1u<<25);
     if(continuing){if(!owned || (DMA(0x1c)&1u))return false;DMA(0x110)=0;}
     else if(!ln_s5l_pcm_stop() || (DMA(0x1c)&1u))return false;
+#if defined(LINNET_IMAGE_OS) && LINNET_AUDIO_CLOCK_GATING
+    LN_CLOCK_GATE1&=~(1u<<7);
+#endif
     ln_arm926_data_clean_range(samples,frames*4u);
     unsigned index=0;
     while(frames) {

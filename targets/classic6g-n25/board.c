@@ -2,6 +2,9 @@
 #include "hal/s5l8702/i2c.h"
 #include "hal/s5l8702/registers.h"
 #include "hal/s5l8702/board.h"
+#if defined(LINNET_IMAGE_OS) && LINNET_AUDIO_CLOCK_GATING
+#include "hal/s5l8702/clock_resources.h"
+#endif
 #define MIU(offset) LN_REG(0x38100000u+(offset))
 extern uint32_t ln_time_us(void);
 static bool pmu_write(uint8_t reg,uint8_t value) {
@@ -53,6 +56,9 @@ bool ln_s5l_board_audio_clock(uint32_t rate,uint32_t *codec_rate) {
     default:return false;
     }
     if(rate==32000) {
+#if defined(LINNET_IMAGE_OS) && LINNET_AUDIO_CLOCK_GATING
+        if(!ln_s5l_pll2_acquire(LN_S5L_PLL2_AUDIO))return false;
+#else
         /* CS42L55 uses its 48 kHz mode with an 8 MHz MCLK on N25.
          * PLL2 = 216 MHz, divided by 3 and 9. PLL0/USB are untouched. */
         if(LN_REG(0x3c500028u)!=0x04004800u)return false;
@@ -61,13 +67,34 @@ bool ln_s5l_board_audio_clock(uint32_t rate,uint32_t *codec_rate) {
         uint32_t start=ln_time_us(),budget=1000000;
         while(!(LN_REG(0x3c500040u)&4u))if(!budget-- || ln_time_us()-start>=10000u)return false;
         LN_REG(0x3c500044u)|=1u<<18;
+#endif
     }
     LN_REG(0x3c50000cu)=(LN_REG(0x3c50000cu)&0xffff0000u)|clock|0x8000u;
     uint32_t started=ln_time_us(),budget=1000000;
     while(ln_time_us()-started<100u)if(!budget--)return false;
     LN_REG(0x3c50000cu)&=~0x8000u;LN_REG(0x3ca00040u)=divider;
-    *codec_rate=rate==32000?48000:rate;return true;
+    *codec_rate=rate==32000?48000:rate;
+#if defined(LINNET_IMAGE_OS) && LINNET_AUDIO_CLOCK_GATING
+    if(rate!=32000&&!ln_s5l_pll2_release(LN_S5L_PLL2_AUDIO))return false;
+#endif
+    return true;
 }
+#if defined(LINNET_IMAGE_OS) && LINNET_AUDIO_CLOCK_GATING
+bool ln_s5l_board_audio_clock_off(void){
+    /* Called only after PCM has drained and the codec acknowledged power-down.
+     * CS42L55 DS773F1 4.11.1 also requires RESET low. PDN acknowledgement
+     * alone does not put the external analog circuitry in its reset state.
+     * Assert the board's GPIO C3 before removing MCLK, and keep it asserted
+     * until the next cold audio initialization. Keep PMU rails intact so
+     * headset sensing remains available at idle. */
+    LN_REG(0x3cf00064u)&=~8u;
+    if(LN_REG(0x3cf00064u)&8u)return false;
+    LN_REG(0x3ca00000u)=0;
+    /* Bit 1 is status and remains set after disabling the clock. */
+    if((LN_REG(0x3ca00000u)&1u)||!ln_s5l_pll2_release(LN_S5L_PLL2_AUDIO))return false;
+    LN_CLOCK_GATE1|=1u<<7;return true;
+}
+#endif
 bool ln_s5l_board_switches(bool *hold,bool *headphones) {
     uint8_t value;
     if(!hold || !headphones || !ln_s5l_i2c_read(0,0x73,0x87,&value,1))return false;

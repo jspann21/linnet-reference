@@ -446,6 +446,9 @@ class Session:
             result['cpu_voltage_selector'] = None
         result['i2s_gated'] = bool(words[26] & (1 << 7))
         result['dma0_gated'] = bool(words[25] & (1 << 25))
+        result['pll2_users'] = (words[31] >> 8) & 3
+        result['pll2_owned'] = bool(words[31] & (1 << 16))
+        result['disabled_flags'] &= 3
         return result
 
     def storage_performance(self) -> dict:

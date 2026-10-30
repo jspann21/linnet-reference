@@ -2,10 +2,13 @@
 #if defined(LINNET_IMAGE_OS)
 #include "hal/api/power_policy.h"
 #include "hal/api/core.h"
+#include "hal/api/audio.h"
+#include "hal/api/display.h"
 #include "hal/api/input.h"
 #include "hal/api/platform.h"
 #include "hal/s5l8702/registers.h"
 #include "hal/s5l8702/i2c.h"
+#include "hal/s5l8702/clock_resources.h"
 
 /* Original foreground policy; register facts and limits: docs/classic-power.md.
  * CPU-only division preserves the 54/27 MHz AHB/APB buses and independent audio
@@ -74,6 +77,8 @@ void ln_power_policy_end(void){
         if(elapsed>max_work[slot])max_work[slot]=elapsed;
         if(!slot&&elapsed>12000u){fast_until=now+2000000u;++heavy_fallbacks;}
     }
+    struct ln_audio_status audio;ln_audio_snapshot(&audio);
+    if(!audio.playing&&!ln_display_busy())(void)ln_s5l_dma_idle_gate();
 }
 void ln_power_policy_diagnostics(uint32_t words[32]){
     uint32_t hz=account();for(unsigned n=0;n<32u;n++)words[n]=0;
@@ -87,6 +92,7 @@ void ln_power_policy_diagnostics(uint32_t words[32]){
     words[25]=LN_CLOCK_GATE0;words[26]=LN_CLOCK_GATE1;
     if(!(words[26]&(1u<<7))){words[27]=LN_REG(0x3ca00000u);words[28]=LN_REG(0x3ca00004u);}
     uint8_t voltage;words[29]=ln_s5l_i2c_read(0,0x73,0x1e,&voltage,1)?voltage:UINT32_MAX;
-    words[30]=ln_input_deadline(ln_time_us());words[31]=(disabled?1u:0u)|(playback_disabled?2u:0u);
+    words[30]=ln_input_deadline(ln_time_us());words[31]=(disabled?1u:0u)|(playback_disabled?2u:0u)|
+        (ln_s5l_clock_resource_flags()<<8);
 }
 #endif

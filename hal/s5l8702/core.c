@@ -10,11 +10,16 @@
 #include "registers.h"
 #include "board.h"
 #include "clicker.h"
+#if defined(LINNET_IMAGE_OS) && LINNET_AUDIO_CLOCK_GATING
+#include "clock_resources.h"
+#endif
 static struct ln_core_status state;
 static volatile uint32_t wakes;
 static uint32_t clock_failure;
 static bool initialized;
+#if !defined(LINNET_IMAGE_OS) || !LINNET_AUDIO_CLOCK_GATING
 static bool pll2_owned;
+#endif
 static uint32_t saved_sm1;
 static bool saved_sm1_valid;
 #ifdef LINNET_SRAM_MONITOR
@@ -116,13 +121,24 @@ bool ln_core_clock_set(uint32_t hz) {
     normal=normal||(source==0x1000u&&divs==0x40404101u);
     if(hz==54000000u){normal_divs|=1u<<30;allowed=true;}
 #endif
-    bool boosted=source==0x3000u&&(divs==0x00414301u||divs==0x00404303u)&&LN_REG(0x3c500028u)==0x01002401u;
+    bool pll2_valid=LN_REG(0x3c500028u)==0x01002401u;
+#if defined(LINNET_IMAGE_OS) && LINNET_AUDIO_CLOCK_GATING
+    pll2_valid=(pll2_valid||LN_REG(0x3c500028u)==0x04004800u)&&!(LN_REG(0x3c500044u)&64u);
+#endif
+    bool boosted=source==0x3000u&&(divs==0x00414301u||divs==0x00404303u)&&pll2_valid;
     if(!allowed||LN_REG(0x3c500020u)!=0x01002402u||(!normal&&!boosted)){clock_failure=1;return false;}
     if(hz==216000000u&&!boosted){
+#if !defined(LINNET_IMAGE_OS) || !LINNET_AUDIO_CLOCK_GATING
         uint32_t mode=LN_REG(0x3c500044u);
         if((mode&4u)&&(LN_REG(0x3c500028u)!=0x01002401u||(mode&64u))){clock_failure=1;return false;}
+#endif
         uint32_t sm1=LN_REG(0x38501000u);if((sm1&15u)>7u){clock_failure=1;return false;}
         if(!ln_s5l_board_cpu_voltage(true)){(void)ln_s5l_board_cpu_voltage(false);clock_failure=2;return false;}
+#if defined(LINNET_IMAGE_OS) && LINNET_AUDIO_CLOCK_GATING
+        if(!ln_s5l_pll2_acquire(LN_S5L_PLL2_CPU)){
+            (void)ln_s5l_board_cpu_voltage(false);clock_failure=4;return false;
+        }
+#else
         if(!(mode&4u)){
             LN_REG(0x3c500028u)=0x01002401u;LN_REG(0x3c500038u)=32400u;
             LN_REG(0x3c500044u)=(mode&~64u)|4u;pll2_owned=true;
@@ -135,6 +151,7 @@ bool ln_core_clock_set(uint32_t hz) {
             }
         }
         LN_REG(0x3c500044u)|=1u<<18;
+#endif
         /* CPU=216 MHz, HClk=108 MHz, PClk=27 MHz. Raise APB and SRAM
          * dividers before switching sources; preserve their original rates. */
         uint32_t flags=ln_s5l_irq_save();
@@ -153,7 +170,11 @@ bool ln_core_clock_set(uint32_t hz) {
             saved_sm1_valid=false;
         }
         ln_s5l_irq_restore(flags);
+#if defined(LINNET_IMAGE_OS) && LINNET_AUDIO_CLOCK_GATING
+        if(!ln_s5l_pll2_release(LN_S5L_PLL2_CPU)){state.clock_hz=108000000u;clock_failure=4;return false;}
+#else
         if(pll2_owned){LN_REG(0x3c500044u)&=~(1u<<18);LN_REG(0x3c500044u)&=~4u;pll2_owned=false;}
+#endif
         if(!ln_s5l_board_cpu_voltage(false)){state.clock_hz=108000000u;clock_failure=2;return false;}
     }
 #if defined(LINNET_IMAGE_OS) && LINNET_RUNTIME_POWER_POLICY
