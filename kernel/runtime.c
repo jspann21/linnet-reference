@@ -74,6 +74,9 @@ static struct ln_input_state input;
 static struct ln_power_state power;
 static uint32_t last_injection, synthetic_flags, override_mask;
 static uint32_t sleep_count,wake_count,wake_at,animation_left,animation_at;
+#if defined(LINNET_AUDIO)
+static uint32_t sound_parent_first;
+#endif
 #if defined(LINNET_NATIVE_UI)
 /* Accumulate across the 32-bit microsecond clock wrap for long timeouts. */
 static uint64_t shutdown_idle_us;
@@ -635,11 +638,12 @@ static void apply(uint32_t kind,int32_t value){
         }else if(scene_is(LN_UI_SCENE_MUSIC_SOUND)&&(pressed&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV|LN_BUTTON_MENU))){
             uint32_t row=shell->selected;
             if(pressed&LN_BUTTON_MENU){
-                if(ln_music_sound_back(&row)){shell->selected=row;shell->first_visible[shell->scene]=0;}
+                if(ln_music_sound_back(&row)){shell->selected=row;shell->first_visible[shell->scene]=sound_parent_first;}
                 else (void)ln_ui_back(shell);
             }else if(ln_music_sound_action(row)>=LN_SOUND_CUSTOM_EQ){
-                if(pressed&LN_BUTTON_PREV){if(!ln_music_sound_back(&row))(void)ln_ui_back(shell);else shell->selected=row;}
-                else if(ln_music_sound_enter(row)){shell->selected=0;shell->first_visible[shell->scene]=0;}
+                if(pressed&LN_BUTTON_PREV){if(!ln_music_sound_back(&row))(void)ln_ui_back(shell);else {shell->selected=row;shell->first_visible[shell->scene]=sound_parent_first;}}
+                else {uint32_t first=ln_ui_first_visible(shell);
+                    if(ln_music_sound_enter(row)){sound_parent_first=first;shell->selected=0;shell->first_visible[shell->scene]=0;}}
             }else{
                 (void)ln_music_sound_adjust(row,(pressed&LN_BUTTON_PREV)?-1:1);
 #if defined(LINNET_HARDWARE_CLICKER)
@@ -726,7 +730,7 @@ static void apply(uint32_t kind,int32_t value){
            scene_is(LN_UI_SCENE_GAME_PLAY)==false){ln_games_audio_stop();}
 #if defined(LINNET_AUDIO)
         if(scene_is(LN_UI_SCENE_MUSIC_SOUND)){uint32_t row;
-            if(ln_music_sound_back(&row)){shell->selected=row;ln_ui_refresh(shell);}}
+            if(ln_music_sound_back(&row)){shell->selected=row;shell->first_visible[shell->scene]=sound_parent_first;ln_ui_refresh(shell);}}
 #endif
         retain_scene();
     }

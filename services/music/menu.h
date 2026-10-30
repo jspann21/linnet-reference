@@ -38,6 +38,14 @@ static inline uint32_t ln_music_menu_count(bool more){
     return count;
 }
 enum { LN_SOUND_ROOT, LN_SOUND_EQ, LN_SOUND_ADVANCED };
+/* Playback row ordering maps to stable service actions in each mode. */
+static inline uint32_t ln_music_menu_option_action(bool file_mode,uint32_t row){
+    static const uint8_t file_actions[]={8,12,5,9,10,6};
+    static const uint8_t actions[]={0,1,8,12,7,11,2,3,4,5,9,10,6};
+    return file_mode?(row<sizeof(file_actions)?file_actions[row]:UINT32_MAX):
+        (row<sizeof(actions)?actions[row]:UINT32_MAX);
+}
+static inline uint32_t ln_music_menu_option_count(bool file_mode){return file_mode?6u:13u;}
 enum { LN_SOUND_CLICKER=13, LN_SOUND_CLICK_VOLUME, LN_SOUND_CLICK_ENABLE, LN_SOUND_CLICK_OUTPUT, LN_SOUND_CUSTOM_EQ, LN_SOUND_MORE };
 static inline bool ln_sound_menu_click(uint32_t action){
     return action>=LN_SOUND_CLICKER&&action<=LN_SOUND_CLICK_OUTPUT;

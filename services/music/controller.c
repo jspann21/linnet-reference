@@ -438,13 +438,9 @@ uint32_t ln_music_deadline(uint32_t now){
 }
 /* Menu rows map to stable service actions, shared by labels and selection. */
 uint32_t ln_music_option_action(uint32_t row){
-    static const uint8_t file_actions[]={8,12,5,9,10,6};
-    if(file_mode)return row<sizeof(file_actions)?file_actions[row]:UINT32_MAX;
-    /* Queue, playback settings, favorites/bookmarks, transport, stop. */
-    static const uint8_t actions[]={0,1,7,11,8,12,2,3,4,5,9,10,6};
-    return row<sizeof(actions)?actions[row]:UINT32_MAX;
+    return ln_music_menu_option_action(file_mode,row);
 }
-uint32_t ln_music_option_count(void){return file_mode?6u:13u;}
+uint32_t ln_music_option_count(void){return ln_music_menu_option_count(file_mode);}
 uint32_t ln_music_queue_action(uint32_t row){
     /* Play, move up/down, remove, clear. */
     static const uint8_t actions[]={0,2,3,1,4};
