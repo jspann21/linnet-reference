@@ -38,6 +38,17 @@ From source:
 python linnet hardware-report --output linnet-hardware-report.json
 ```
 
+## Take an iPod screenshot
+
+When your iPod is running a **Developer** or **Trace** build through Linnet Link,
+choose **Screenshot…** in the device card at the bottom of the sidebar. The
+preview offers **Copy image** to paste into another app and **Save PNG…** to
+choose a file on your computer. Copy and Save also support Ctrl+C and Ctrl+S.
+
+Screenshots capture the iPod's native screen pixels. They require a running OS
+with Linnet Link; the button is disabled in Disk Mode, recovery, and User builds.
+The image remains available in the preview if the iPod disconnects.
+
 ## Set up FFmpeg on Windows
 
 1. Obtain a Windows FFmpeg build and extract it to a folder you can keep. Find

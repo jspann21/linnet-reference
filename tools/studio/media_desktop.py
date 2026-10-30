@@ -52,6 +52,7 @@ ICONS = {
     'back': '<path d="m14 5-7 7 7 7"/>',
     'eject': '<path d="m5 14 7-10 7 10ZM5 19h14"/>',
     'check': '<path d="m5 12 4 4L19 6"/>',
+    'camera': '<path d="M3 7h4l2-3h6l2 3h4v14H3Z"/><circle cx="12" cy="13" r="4"/>',
 }
 
 
@@ -1047,6 +1048,59 @@ class ScreensController:
         window.work('save_screens', lambda: screen_settings.save(identity, state), 'Saving screen settings…')
 
 
+class ScreenshotPreview(QLabel):
+    def __init__(self, image):
+        super().__init__()
+        self.original = QPixmap.fromImage(image)
+        self.setAlignment(Qt.AlignCenter); self.setMinimumSize(160,128)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.setPixmap(self.original.scaled(self.contentsRect().size(), Qt.KeepAspectRatio, Qt.FastTransformation))
+
+
+class ScreenshotDialog(QDialog):
+    """Keep a captured image available even if the iPod disconnects."""
+    def __init__(self, result, parent):
+        super().__init__(parent)
+        self.setWindowTitle('iPod screenshot')
+        self.resize(720, 620); self.setMinimumSize(400, 360)
+        self.image = QImage.fromData(result['png'], 'PNG')
+        if self.image.isNull():
+            raise ValueError('The screenshot could not be opened.')
+        self.settings = parent.settings
+        self.filename = 'linnet-screenshot-' + datetime.now().strftime('%Y%m%d-%H%M%S') + '.png'
+        layout = box(self, margins=(24,24,24,24), spacing=14)
+        layout.addWidget(label('iPod screenshot', 'section'))
+        layout.addWidget(label(f'{self.image.width()} × {self.image.height()} pixels · PNG', 'muted'))
+        layout.addWidget(ScreenshotPreview(self.image), 1)
+        self.message = label('', 'muted', True); layout.addWidget(self.message)
+        actions = box(horizontal=True)
+        actions.addWidget(button('Copy image', self.copy_image))
+        actions.addWidget(button('Save PNG…', self.save_image, 'primary'))
+        actions.addStretch(); actions.addWidget(button('Close', self.accept)); layout.addLayout(actions)
+        QShortcut(QKeySequence.Copy, self, activated=self.copy_image)
+        QShortcut(QKeySequence.Save, self, activated=self.save_image)
+
+    def copy_image(self):
+        QApplication.clipboard().setImage(self.image)
+        self.message.setText('Screenshot copied to the clipboard.')
+
+    def save_image(self):
+        folder = Path(str(self.settings.value('screenshots/folder', str(Path.home() / 'Pictures'))))
+        if not folder.is_dir():folder = Path.home()
+        picker = QFileDialog(self, 'Save screenshot', str(folder / self.filename), 'PNG image (*.png)')
+        picker.setAcceptMode(QFileDialog.AcceptSave); picker.setDefaultSuffix('png')
+        if picker.exec() != QDialog.Accepted:return
+        path = Path(picker.selectedFiles()[0])
+        if not self.image.save(str(path), 'PNG'):
+            self.message.setText('Could not save the screenshot. Choose another folder and try again.')
+            return
+        self.settings.setValue('screenshots/folder', str(path.parent))
+        self.message.setText(f'Saved {path.name}.')
+
+
 class SetupInstructionDialog(QDialog):
     """Keep the live button instructions visible until setup advances."""
     def reject(self):
@@ -1160,6 +1214,9 @@ class MediaWindow(QMainWindow):
         layout.addWidget(self.device_name); layout.addWidget(self.device_info); layout.addWidget(self.capacity)
         self.device_details_button = button('Device details', self.device_details, 'sidebarAction', 'setup')
         layout.addWidget(self.device_details_button)
+        self.screenshot_button = button('Screenshot…', self.capture_screenshot, 'sidebarAction', 'camera')
+        self.screenshot_button.setEnabled(False)
+        layout.addWidget(self.screenshot_button)
         self.choose_device_button = button('Find or switch iPod', self.discover, 'sidebarAction', 'refresh')
         layout.addWidget(self.choose_device_button)
         self.eject_button = button('Eject safely', self.eject, 'sidebarAction', 'eject'); layout.addWidget(self.eject_button)
@@ -1820,6 +1877,7 @@ class MediaWindow(QMainWindow):
             'link_setup': self._complete_link_setup,
             'prepare': self._complete_prepare, 'eject': self._complete_eject,
             'device_details': self._complete_device_details,
+            'screenshot': self._complete_screenshot,
             'apple_font_install': self._complete_apple_font,
             'apple_font_remove': self._complete_apple_font,
         }
@@ -2814,6 +2872,10 @@ class MediaWindow(QMainWindow):
 
     def update_controls(self):
         ready = self.identity is not None and self.device_connected and not self.busy
+        from tools.studio.media_capture import available
+        self.screenshot_button.setEnabled(not self.busy and available(self.link_connection))
+        self.screenshot_button.setToolTip('Capture the screen currently shown on your iPod.' if available(self.link_connection) else
+            'Requires Linnet running with a Developer or Trace build over Linnet Link. Unavailable in Disk Mode and recovery.')
         self.update_trash_badge(self.trash_summary)
         font_ready = ready and apple_font.supported(self.identity) and not self.publication_recovery_pending
         self.apple_font_install.setEnabled(font_ready)
@@ -3935,6 +3997,26 @@ class MediaWindow(QMainWindow):
         def run():
             return media.eject_device(identity)
         self.work('eject', run, 'Safely ejecting your iPod…')
+
+    def capture_screenshot(self):
+        from tools.studio.media_capture import available, capture
+        if self.busy or not available(self.link_connection):return
+        connection = dict(self.link_connection, identity=dict(self.link_connection['identity']))
+        self.work('screenshot', lambda: capture(connection), 'Taking an iPod screenshot…')
+
+    def _complete_screenshot(self, result):
+        if result['connection'] != self.link_connection:
+            self.show_error('The selected iPod changed. Refresh before taking another screenshot.')
+            return
+        try:
+            dialog = ScreenshotDialog(result, self)
+        except ValueError as error:
+            self.show_error(str(error)); return
+        self.show_progress('Screenshot ready. Copy it or save a PNG.')
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
     def device_details(self):
         if self.busy:
