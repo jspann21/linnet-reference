@@ -77,6 +77,7 @@ These additions are proposed work, not promises for the first release.
 | Smart playlists and larger saved lists | Host-evaluated playlist rules and a bounded design beyond 16 saved lists / 1,024 entries each. |
 | Saved sync policies | Persistent folder/playlist selections that determine future syncs. |
 | Desktop playback preview | Audio/video playback within Media Manager. |
+| Screen recording | Short, silent GIF clips over Linnet Link, starting at 1 fps with bounded duration, Stop, preview and Save. Qualify playback, cancellation and disconnect behavior; see [capture exploration](media-manager.md#screen-recording-exploration). |
 | Video categories | Movie, show/season/episode, and music-video metadata, editing, and browsing. |
 
 Implementation entry points: [music compiler](../tools/content/music.py),
