@@ -673,13 +673,15 @@ def _uninstall_option(marker, linnet, root, native, pending=None, boot_layout=No
             return dict(available=False, previous=None,
                         detail="An unfinished Linnet reinstall archive (LNETPEND) is on this iPod. Resolve that archive before removing Linnet OS so its saved media is not lost.")
         trash = root / ".LINNET" / "TRASH"
-        if trash.exists():
+        if trash.exists() or trash.is_symlink():
             from tools.content.guard import guarded_path
             try:
                 guarded_path(trash, root)
-                if not trash.is_dir() or any(trash.iterdir()):
-                    return dict(available=False, previous=None,
-                                detail="Restore or empty the items in Trash before removing Linnet OS. Trash can contain original media files.")
+                if not trash.is_dir():
+                    raise ValueError("Trash is not a directory")
+                if any(trash.iterdir()):
+                    return dict(available=False, previous=None, blocker="trash",
+                                detail="Trash isn't empty. Empty Trash before removing Linnet. Choose Review Trash to check its contents first.")
             except (OSError, ValueError):
                 return dict(available=False, previous=None,
                             detail="Could not inspect Trash. Reconnect the iPod and refresh before removing Linnet OS.")

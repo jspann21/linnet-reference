@@ -856,6 +856,10 @@ def build_setup_page(window):
 
     window.uninstall_panel, removal = card(layout)
     row = box(horizontal=True); row.addWidget(label('Remove Linnet', 'cardTitle'), 1)
+    window.uninstall_review_trash = button('Review Trash', lambda: window.navigate('Trash'), None, 'trash')
+    window.uninstall_review_trash.hide(); row.addWidget(window.uninstall_review_trash)
+    window.uninstall_empty_trash = button('Empty Trash…', window.empty_uninstall_trash)
+    window.uninstall_empty_trash.hide(); row.addWidget(window.uninstall_empty_trash)
     window.uninstall_button = button('Remove…', window.uninstall_selected, 'danger'); row.addWidget(window.uninstall_button)
     removal.addLayout(row)
     window.uninstall_detail = label('', 'muted', True); removal.addWidget(window.uninstall_detail)
@@ -1798,6 +1802,7 @@ class MediaWindow(QMainWindow):
             'video_recovery_options': self._complete_video_recovery_options,
             'recover_publication': self._complete_recover_publication,
             'trash': self._complete_trash, 'setup': self._complete_setup,
+            'uninstall_trash': self._complete_uninstall_trash,
             'link_setup': self._complete_link_setup,
             'prepare': self._complete_prepare, 'eject': self._complete_eject,
             'device_details': self._complete_device_details,
@@ -2226,6 +2231,18 @@ class MediaWindow(QMainWindow):
     def _complete_trash(self, result):
         self.trash_rows = result; self.render_library(); self.show_progress('Trash uses storage until files are permanently deleted.')
 
+    def _complete_uninstall_trash(self, result):
+        if result['unrecognized']:
+            if self.dialog('Trash needs review',
+                    'Some Trash entries could not be read. Review them in the Trash folder before removing Linnet.',
+                    'Open Trash folder'):
+                self.open_folder(Path(self.identity['root']) / '.LINNET' / 'TRASH')
+        elif result['rows']:
+            self.erase_trash(result['rows'], for_uninstall=True)
+        else:
+            identity = self.identity
+            self.work('setup', lambda: installer.assess(identity), 'Checking removal options…')
+
     def _complete_video_recovery_options(self, review):
         options = review.get('options', [])
         if review.get('status') != 'damaged':
@@ -2298,7 +2315,8 @@ class MediaWindow(QMainWindow):
             if section == 'build':
                 self.boot_choice.setFocus()
             elif section == 'remove':
-                self.uninstall_button.setFocus()
+                (self.uninstall_review_trash if self.review['uninstall'].get('blocker') == 'trash'
+                 else self.uninstall_button).setFocus()
             elif self.default_choice.isVisible():
                 self.default_choice.setFocus()
             self.setup.ensureWidgetVisible(target)
@@ -3299,12 +3317,7 @@ class MediaWindow(QMainWindow):
             self.work('skipped', exclude_photos, 'Excluding selected photos from preparation…')
             return
         if self.page == 'Trash':
-            if self.dialog('Delete permanently?', f'Permanently delete {len(rows)} removals and free {size(sum(r["bytes"] for r in rows))}? These files cannot be restored afterward.', 'Delete permanently', True):
-                def erase():
-                    for row in rows:
-                        media_trash.recover(identity, row['id'], erase=True)
-                    return dict(summary='Trash deleted. Storage is now available.')
-                self.work('erase', erase, 'Freeing iPod storage…')
+            self.erase_trash(rows)
             return
         if not self.confirm_trash(rows):
             return
@@ -3345,6 +3358,40 @@ class MediaWindow(QMainWindow):
                         summary='Files restored. Playback needs preparation: ' + '; '.join(e['message'] for e in prepared['errors']))
             return dict(complete=True, summary='Files and playback libraries restored.')
         self.work('restore', restore, 'Restoring your files…')
+
+    def empty_uninstall_trash(self):
+        if self.busy or not self.identity or not self.device_connected or not self.review or self.review['uninstall'].get('blocker') != 'trash':
+            return
+        identity = self.identity
+        def inspect_trash():
+            from tools.content.guard import guarded_path
+            current = media.refresh(identity)
+            rows = media_trash.removals(current)
+            trash = Path(current['root']) / '.LINNET' / 'TRASH'
+            guarded_path(trash, Path(current['root']))
+            known = {row['id'] for row in rows}
+            unrecognized = sum(entry.name not in known for entry in trash.iterdir()) if trash.is_dir() else 0
+            return dict(rows=rows, unrecognized=unrecognized)
+        self.work('uninstall_trash', inspect_trash, 'Reading Trash before removal…')
+
+    def erase_trash(self, rows, *, for_uninstall=False):
+        if self.busy or not self.identity or not self.device_connected or not rows:
+            return
+        identity = self.identity
+        selection = 'everything in Trash' if for_uninstall else 'the selected items from Trash'
+        message = (f'Permanently delete {selection} and free {size(sum(r["bytes"] for r in rows))}? '
+                   'These files cannot be restored afterward.')
+        if for_uninstall:
+            message += '\n\nAfter Trash is empty, choose Remove to uninstall Linnet.'
+        if not self.dialog('Empty Trash?' if for_uninstall else 'Delete permanently?', message,
+                           'Empty Trash' if for_uninstall else 'Delete permanently', danger=True):
+            return
+        def erase():
+            for row in rows:
+                media_trash.recover(identity, row['id'], erase=True)
+            return dict(summary='Trash emptied. You can now remove Linnet.' if for_uninstall else
+                        'Trash deleted. Storage is now available.')
+        self.work('erase', erase, 'Emptying iPod Trash…')
 
     def sync_videos(self):
         if self.identity and self.device_connected and not self.busy:
@@ -3478,6 +3525,10 @@ class MediaWindow(QMainWindow):
             'Keep USB connected until installation finishes.')
         self.uninstall_button.setEnabled(not self.busy and self.device_connected and bool(
             self.identity and self.review and self.review['uninstall']['available']))
+        trash_blocked = bool(self.identity and self.review and self.review['uninstall'].get('blocker') == 'trash')
+        for action in (self.uninstall_review_trash, self.uninstall_empty_trash):
+            action.setVisible(trash_blocked)
+            action.setEnabled(trash_blocked and not self.busy and self.device_connected)
         show_default = bool(self.review and self.review['linnet']['state'] == 'installed')
         self.startup_panel.setVisible(show_default)
         for widget in (self.default_title, self.default_detail, self.default_choice, self.default_button,
