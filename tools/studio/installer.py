@@ -593,6 +593,7 @@ def assess(identity, *, _validated_identity=False):
     pending_uninstall = _pending_uninstall(identity, root)
     from tools.studio import native_recovery
     native_directory_recovery = native_recovery.available(identity, marker)
+    from tools.content.media_trash import summary as trash_summary
     return dict(checked_at=_now(), identity=identity,
                 target=dict(id=target_id, name=spec["name"],
                             installer_enabled=install_spec["enabled"] or native or classic_initial or bool(classic_pending), boot_layout=install_spec["boot_layout"],
@@ -605,6 +606,7 @@ def assess(identity, *, _validated_identity=False):
                                             pending_uninstall, install_spec["boot_layout"], recovery_error,
                                             native_directory_recovery),
                 recovery=marker, resume=resume, action=action, strategy=strategy, summary=summary,
+                trash=trash_summary(identity),
                 classic_setup=classic_pending,
                 preservation=dict(formats_disk=False, repartitions_disk=False, deletes_media=False,
                                   overwrites_existing_linnet_files=native, archives_previous_linnet=not native,

@@ -230,20 +230,49 @@ def _photo_pack_requirements(package):
     return result, fallbacks
 
 
-def _removal(identity, root, token):
+def _read_manifest(root, token):
+    """Read recovery metadata without traversing or opening removed media."""
     if len(token) != 32 or any(c not in '0123456789abcdef' for c in token):
-        return None
+        raise ValueError('Invalid Trash entry')
+    trash = root / '.LINNET' / 'TRASH' / token
+    _plain(trash, root)
+    if not trash.is_dir():
+        raise ValueError('Missing Trash entry')
+    manifest = trash / _MANIFEST
+    _plain(manifest, root)
+    with manifest.open('rb') as reader:
+        raw = reader.read(_MAX_MANIFEST + 1)
+    if len(raw) > _MAX_MANIFEST:
+        raise ValueError('Oversized Trash metadata')
+    return _validate_manifest(json.loads(raw.decode('utf-8')), token)
+
+
+def summary(identity):
+    """Count recoverable removal groups, excluding their internal backup files."""
+    count, unreadable = 0, 0
+    try:
+        root = Path(identity['root']).resolve(strict=True)
+        trash = root / '.LINNET' / 'TRASH'
+        _plain(trash, root)
+        if trash.exists() and not trash.is_dir():
+            raise ValueError('Trash is not a directory')
+        if trash.is_dir():
+            for entry in trash.iterdir():
+                try:
+                    _read_manifest(root, entry.name)
+                    count += 1
+                except (OSError, ValueError, TypeError, KeyError, OverflowError):
+                    unreadable += 1
+    except (OSError, ValueError):
+        unreadable += 1
+    return dict(count=count, unreadable=unreadable)
+
+
+def _removal(identity, root, token):
     receipt = cache_root(identity) / f'remove-{token}.json'
     try:
         trash = root / '.LINNET' / 'TRASH' / token
-        _plain(trash, root)
-        if not trash.is_dir():
-            return None
-        manifest = trash / _MANIFEST
-        _plain(manifest, root)
-        if manifest.stat().st_size > _MAX_MANIFEST:
-            return None
-        report = _validate_manifest(json.loads(manifest.read_text(encoding='utf-8')), token)
+        report = _read_manifest(root, token)
         title = ', '.join(row['title'] for row in report['selected'][:3])
         files = file_records(trash)
         return (dict(id=token, receipt=str(receipt), path=str(trash), bytes=sum(i.st_size for _, i in files),
@@ -265,6 +294,14 @@ def removals(identity):
         if removal is not None:
             found.append(removal[0])
     return sorted(found, key=lambda r: r['started'], reverse=True)
+
+
+def inventory(identity):
+    rows = removals(identity)
+    status = summary(identity)
+    status['unreadable'] += max(0, status['count'] - len(rows))
+    status['count'] = len(rows)
+    return dict(rows=rows, summary=status)
 
 
 def recover(identity, token, *, erase=False):

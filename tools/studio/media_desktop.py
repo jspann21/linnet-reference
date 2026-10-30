@@ -1065,6 +1065,7 @@ class MediaWindow(QMainWindow):
         self.identity, self.inventory, self.review = None, None, None
         self.last_preparation = None
         self.rows, self.readiness, self.pending, self.trash_rows = [], {}, [], []
+        self.trash_summary = None
         self.pending_keys = set()
         self.queue_outcomes = {}
         self.draft_issues = {}
@@ -1141,6 +1142,14 @@ class MediaWindow(QMainWindow):
             item.toggled.connect(lambda checked, glyph=glyph, item=item:
                                  item.setIcon(icon(glyph, '#102b32' if checked else '#a8bbc1')))
             self.navigation[name] = item; side.addWidget(item)
+            if name == 'Trash':
+                self.trash_badge = label('', 'trashBadge')
+                self.trash_badge.setAlignment(Qt.AlignCenter)
+                self.trash_badge.setAttribute(Qt.WA_TransparentForMouseEvents)
+                self.trash_badge.setFixedHeight(20); self.trash_badge.setMinimumWidth(22)
+                badge_layout = box(item, horizontal=True, margins=(0, 0, 10, 0), spacing=0)
+                badge_layout.addStretch(); badge_layout.addWidget(self.trash_badge)
+                self.trash_badge.hide()
         side.addStretch()
         device = QFrame(); device.setObjectName('deviceCard')
         layout = box(device, margins=(13, 17, 13, 15), spacing=9)
@@ -1207,7 +1216,7 @@ class MediaWindow(QMainWindow):
             self.render_library()
             if page == 'Trash' and self.identity and self.device_connected and not self.busy:
                 identity = self.identity
-                self.work('trash', lambda: media_trash.removals(identity), 'Reading Trash…')
+                self.work('trash', lambda: media_trash.inventory(identity), 'Reading Trash…')
         elif page == 'Preparation':
             self.stack.setCurrentWidget(self.preparation)
         elif page == 'Screens':
@@ -1308,6 +1317,8 @@ class MediaWindow(QMainWindow):
             self.refresh()
         elif self.library_rows():
             self.clear_filters()
+        elif self.page == 'Trash' and self.trash_summary and self.trash_summary.get('unreadable'):
+            self.open_folder(Path(self.identity['root']) / '.LINNET' / 'TRASH')
         elif self.page != 'Trash':
             self.add_media()
 
@@ -1348,6 +1359,7 @@ class MediaWindow(QMainWindow):
     def render_library(self):
         if self.page not in (*media.KINDS, 'Trash'):
             return
+        trash_attention = self.page == 'Trash' and bool(self.trash_summary and self.trash_summary.get('unreadable'))
         context = (self.page, self.view, (self.group['group_kind'], self.group['group_key']) if self.group else None)
         active = self.views.currentWidget()
         previous_rows, previous_ranges = None, []
@@ -1452,10 +1464,10 @@ class MediaWindow(QMainWindow):
         self.views.setCurrentWidget(self.grid if grid else self.table)
         if not rows:
             self.views.setCurrentWidget(self.empty)
-            self.empty_title.setText('Reading your collection…' if self.busy else 'Connect your iPod' if not self.identity else 'No matches' if all_rows else 'Trash is empty' if self.page == 'Trash' else f'No {self.page.lower()} yet')
-            self.empty_detail.setText('Your collection will appear here when reading finishes.' if self.busy else 'Connect an iPod in Disk Mode, then find it to browse and add media.' if not self.identity else 'Try another search or clear your filters.' if all_rows else 'Removed files appear here until you restore or permanently delete them.' if self.page == 'Trash' else 'Add files from your computer to get started.')
-        self.empty_action.setText('Find iPod' if not self.identity else 'Clear filters' if all_rows else 'Add media')
-        self.empty_action.setVisible(not self.busy and (not self.identity or bool(all_rows) or self.page != 'Trash'))
+            self.empty_title.setText('Reading your collection…' if self.busy else 'Connect your iPod' if not self.identity else 'No matches' if all_rows else 'Trash needs review' if trash_attention else 'Trash is empty' if self.page == 'Trash' else f'No {self.page.lower()} yet')
+            self.empty_detail.setText('Your collection will appear here when reading finishes.' if self.busy else 'Connect an iPod in Disk Mode, then find it to browse and add media.' if not self.identity else 'Try another search or clear your filters.' if all_rows else 'Some Trash entries could not be read. Open the folder to review them.' if trash_attention else 'Removed files appear here until you restore or permanently delete them.' if self.page == 'Trash' else 'Add files from your computer to get started.')
+        self.empty_action.setText('Find iPod' if not self.identity else 'Clear filters' if all_rows else 'Open Trash folder' if trash_attention else 'Add media')
+        self.empty_action.setVisible(not self.busy and (not self.identity or bool(all_rows) or self.page != 'Trash' or trash_attention))
         count, total_bytes, albums = ((len(all_rows), sum(r['bytes'] for r in all_rows), 0)
                                       if self.page == 'Trash' else self._library_stats[self.page])
         self.subtitle.setText(f'{count:,} songs  ·  {albums:,} albums  ·  {size(total_bytes)}' if music else
@@ -2153,6 +2165,7 @@ class MediaWindow(QMainWindow):
             self.inventory = self.review = self.apple_info = None
             self.rows = []; self.readiness = {}
             self.trash_rows = []
+            self.update_trash_badge(None)
             self.group = None
             self._selection_context = None
             self.clear_selection()
@@ -2178,6 +2191,7 @@ class MediaWindow(QMainWindow):
                 missing_covers.add(row['path'])
         self.identity, self.inventory, self.rows, self.readiness, self.apple_info, self.review = result
         self.device_connected = True
+        self.update_trash_badge(self.review.get('trash'))
         changed = []
         if cached_photos:
             current_photos = {row['path']: (row['bytes'], row['mtime_ns'], row.get('artwork')) for row in self.rows
@@ -2227,10 +2241,26 @@ class MediaWindow(QMainWindow):
             self.navigate('iPod setup')
         elif self.page == 'Trash':
             identity = self.identity
-            self.work('trash', lambda: media_trash.removals(identity), 'Reading Trash…')
+            self.work('trash', lambda: media_trash.inventory(identity), 'Reading Trash…')
 
     def _complete_trash(self, result):
-        self.trash_rows = result; self.render_library(); self.show_progress('Trash uses storage until files are permanently deleted.')
+        self.trash_rows = result['rows']; self.update_trash_badge(result['summary'])
+        self.render_library(); self.show_progress('Trash uses storage until files are permanently deleted.')
+
+    def update_trash_badge(self, summary):
+        self.trash_summary = summary
+        count = summary.get('count', 0) if summary else 0
+        unreadable = summary.get('unreadable', 0) if summary else 0
+        self.trash_badge.setText(('99+' if count > 99 else str(count)) if count else '!')
+        self.trash_badge.setVisible(bool(self.identity and self.device_connected and (count or unreadable)))
+        noun = 'entry' if count == 1 else 'entries'
+        detail = (f'{count:,} recoverable {noun} in Trash. Restore removed files or empty Trash to free space.' if count else
+                  'Removed media can be restored from Trash until you empty it.')
+        if unreadable:
+            detail += ' Some Trash entries need review.'
+        self.navigation['Trash'].setToolTip(detail)
+        self.navigation['Trash'].setAccessibleName(
+            f'Trash, {count:,} {noun}' + (', needs review' if unreadable else '') if summary else 'Trash')
 
     def _complete_uninstall_trash(self, result):
         self.review = result['review']; self.render_setup()
@@ -2286,7 +2316,8 @@ class MediaWindow(QMainWindow):
                 'Restoring the reviewed video catalog backup…')
 
     def _complete_setup(self, result):
-        self.review = result; self.render_setup(); self.show_progress('Device setup is ready.')
+        self.review = result; self.update_trash_badge(result.get('trash'))
+        self.render_setup(); self.show_progress('Device setup is ready.')
 
     def _complete_link_setup(self, result):
         self.transition_device(result['reconnected_identity'])
@@ -2304,6 +2335,7 @@ class MediaWindow(QMainWindow):
             self.show_error('Disk Mode connected, but setup could not be read: ' + result['setup_error'])
             return
         self.review = result['review']
+        self.update_trash_badge(self.review.get('trash'))
         if result['section'] == 'build':
             self.build_editor_open = True
         self.navigate('iPod setup')
@@ -2727,6 +2759,7 @@ class MediaWindow(QMainWindow):
         self.uninstall_detail.setText('Checking removal options…' if identity else 'Connect an iPod to check removal options.')
         self.rows = []
         self.trash_rows = []
+        self.update_trash_badge(None)
         self.readiness = {}
         self.group = None
         self.video_selection.clear()
@@ -2777,6 +2810,7 @@ class MediaWindow(QMainWindow):
 
     def update_controls(self):
         ready = self.identity is not None and self.device_connected and not self.busy
+        self.update_trash_badge(self.trash_summary)
         font_ready = ready and apple_font.supported(self.identity) and not self.publication_recovery_pending
         self.apple_font_install.setEnabled(font_ready)
         self.apple_font_remove.setEnabled(font_ready)

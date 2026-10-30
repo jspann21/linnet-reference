@@ -7,6 +7,8 @@ QLabel#eyebrow { font-size: 10px; font-weight: 600; color: #849296; letter-spaci
 QPushButton#nav { text-align: left; background: transparent; color: #c1c9cc; border: none; border-radius: 9px; padding: 7px 9px; font-size: 13px; }
 QPushButton#nav:hover { background: #232a2d; color: white; }
 QPushButton#nav:checked { background: #66d9ef; color: #102b32; font-weight: 600; }
+QWidget#sidebar QLabel#trashBadge { color: #102b32; background: #66d9ef; border-radius: 10px; padding: 0 6px; font-size: 11px; font-weight: 600; }
+QPushButton#nav:checked QLabel#trashBadge { color: #e0faff; background: #174651; }
 QFrame#deviceCard { background: #1b2023; border: 1px solid #333e42; border-radius: 13px; }
 QLabel#deviceName { color: white; font-weight: 600; font-size: 14px; }
 QLabel#deviceInfo { color: #9ba9ad; font-size: 11px; }

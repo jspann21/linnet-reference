@@ -416,6 +416,12 @@ permanently delete it. Moving files to `.LINNET/TRASH` is recoverable and does
 not free space. Removing a prepared library does not necessarily remove originals;
 preparing those originals again can recreate it.
 
+Trash provides undo for media removals, including the library information needed
+to restore playback. Each removal appears as one recoverable entry. The sidebar
+badge counts those entries on the selected iPod, hides when Trash is empty, and
+updates after removals, restores and permanent deletion. Internal recovery files
+do not increase the count. Firmware recovery backups have their own lifecycle.
+
 After source changes, prepare the affected library again. When a same-name
 source would replace an existing file, an empty source folder would retire a
 published library, or a video catalog contains a missing entry, the
