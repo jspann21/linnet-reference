@@ -1097,6 +1097,10 @@ void ln_runtime_step(void){
         if(!a.initialized&&video_resume_loaded&&(video_from_files?ln_video_open_file(&video_file,video_selected_path):ln_video_open(video_selected_path)))video_requested=false;
     }
     ln_video_step();
+    if(video_scene()&&!video_requested&&ln_video_completed()){
+        video_save();
+        (void)ln_ui_show(shell,"linnet.system.videos");dirty=true;
+    }
     if(video_scene()){
         uint32_t revision=ln_video_revision();
         if(revision!=video_revision){video_revision=revision;ln_ui_refresh(shell);dirty=true;}

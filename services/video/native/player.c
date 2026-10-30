@@ -32,7 +32,7 @@ static struct {
     uint32_t opened_us,first_present_us,index_ready_us,audio_start_us,start_ready_frames;
 #endif
     uint32_t io_kind,io_bytes,io_requested,io_at,read_bytes,reads;uint64_t io_offset;void *io_buffer;
-    bool active,io,reading,stepping,paused,started,audio,audio_eof,video_eof,offered,frame_ready,stop;
+    bool active,io,reading,stepping,paused,started,audio,audio_eof,video_eof,offered,frame_ready,stop,completed;
     bool tail,headphone_known,headphones,boosted;
     uint8_t options;
     char path[256],title[128];
@@ -250,7 +250,7 @@ static void step(void){
         }
         if(v.frame_ready&&(v.video_phase==3||!ln_video_decoder_async()))return;
     }
-    if(v.video_eof){if(!v.frame_ready&&!v.offered&&(!v.audio||(v.audio_eof&&!a.queued))&&now>=v.duration){v.resume[0]=v.identity;v.resume[1]=0;v.stop=true;}return;}
+    if(v.video_eof){if(!v.frame_ready&&!v.offered&&(!v.audio||(v.audio_eof&&!a.queued))&&now>=v.duration){v.resume[0]=v.identity;v.resume[1]=0;v.completed=true;v.stop=true;}return;}
     if(!v.video_phase){r=ln_mp4_next(&v.movie,&v.video_packet);
         if(r==LN_MP4_EOF){v.video_eof=true;return;}if(r<0){fail(9);return;}
         if(r>0){if(v.video_packet.bytes>LINNET_VIDEO_PACKET_BYTES){fail(10);return;}v.video_phase=1;}
@@ -306,8 +306,9 @@ void ln_video_step(void){ln_video_catalog_step(v.active||v.io);if(!v.active||v.s
         if(!v.active||v.io||v.reading||v.offered||v.paused||v.phase==OPEN_WAIT||ln_time_us()-began>2000)break;
     }v.stepping=false;
 }
-void ln_video_stop(void){if(v.active){v.resume[0]=v.identity;v.resume[1]=clock_ms();v.stop=true;}}
+void ln_video_stop(void){v.completed=false;if(v.active){v.resume[0]=v.identity;v.resume[1]=clock_ms();v.stop=true;}}
 bool ln_video_active(void){return v.active;}
+bool ln_video_completed(void){return v.completed&&!v.active&&!v.io&&!v.error;}
 bool ln_video_pending(void){return v.io||ln_video_catalog_pending();}
 bool ln_video_playback_pending(void){return v.io;}
 void ln_video_pause(bool pause){if(!v.active||v.paused==pause)return;

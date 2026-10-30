@@ -5,8 +5,8 @@
 #include "hal/api/platform.h"
 #include "hal/api/ata.h"
 #include "services/storage/storage.h"
-static struct {char path[256],title[128];uint32_t identity,position,revision,backend_revision,resume[2];uint8_t options,output_once;bool active,resume_pending,headphone_known,headphones;} v;
-void ln_video_init(void){v.active=v.resume_pending=false;v.position=0;v.options=8u;v.output_once=0;v.headphone_known=false;}
+static struct {char path[256],title[128];uint32_t identity,position,revision,backend_revision,resume[2];uint8_t options,output_once;bool active,completed,resume_pending,headphone_known,headphones;} v;
+void ln_video_init(void){v.active=v.completed=v.resume_pending=false;v.position=0;v.options=8u;v.output_once=0;v.headphone_known=false;}
 bool ln_video_open(const char *path){
     if(v.active||ln_m25_coprocessor_active()||ln_video_catalog_pending()||ln_display_busy()||!path)return false;
     uint32_t n=0,identity=2166136261u;while(path[n]&&n<255u){identity=(identity^(uint8_t)path[n])*16777619u;++n;}if(!n||n==255u)return false;
@@ -16,7 +16,7 @@ bool ln_video_open(const char *path){
     for(uint32_t i=0;i<=n;++i)v.path[i]=path[i];const char *name=path;
     for(uint32_t i=0;i<n;++i)if(path[i]=='/')name=path+i+1u;
     uint32_t i=0;while(name[i]&&i<127u){v.title[i]=name[i];++i;}v.title[i]=0;
-    v.identity=identity;v.position=0;v.resume_pending=v.resume[0]==identity&&v.resume[1]>0u;v.active=opened;++v.revision;return true;
+    v.identity=identity;v.position=0;v.completed=false;v.resume_pending=v.resume[0]==identity&&v.resume[1]>0u;v.active=opened;++v.revision;return true;
 }
 bool ln_video_open_file(const struct ln_fat32_file*file,const char*title){
     if(!file||!title||!ln_video_open(title))return false;
@@ -40,14 +40,16 @@ void ln_video_step(void){
             if(ln_m25_coprocessor_seek(v.resume[1]))v.resume_pending=false;
         }
         if(!ln_m25_coprocessor_active()){
-            if(!ln_m25_coprocessor_error()&&v.position+100u>=ln_m25_coprocessor_duration())v.position=0;
+            v.completed=ln_m25_coprocessor_completed();
+            if(v.completed)v.position=0;
             v.resume[0]=v.identity;v.resume[1]=v.position;v.active=false;++v.revision;
         }
     }
     uint32_t revision=ln_m25_coprocessor_revision();if(revision!=v.backend_revision){v.backend_revision=revision;++v.revision;}
 }
-void ln_video_stop(void){if(v.active){v.resume[0]=v.identity;v.resume[1]=v.position;v.resume_pending=false;ln_m25_coprocessor_stop();}}
+void ln_video_stop(void){v.completed=false;if(v.active){v.resume[0]=v.identity;v.resume[1]=v.position;v.resume_pending=false;ln_m25_coprocessor_stop();}}
 bool ln_video_active(void){return v.active;}
+bool ln_video_completed(void){return v.completed&&!v.active;}
 bool ln_video_pending(void){return ln_video_catalog_pending();}
 bool ln_video_playback_pending(void){return false;}
 void ln_video_pause(bool paused){if(v.active)ln_m25_coprocessor_pause(paused);}

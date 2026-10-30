@@ -19,6 +19,9 @@ bool ln_video_open_file(const struct ln_fat32_file *,const char *title);
 void ln_video_step(void);
 void ln_video_stop(void);
 bool ln_video_active(void);
+/* Successful end of playback, after its resources have drained. Cleared by
+ * the next open or an explicit stop; failures do not count as completion. */
+bool ln_video_completed(void);
 bool ln_video_pending(void);
 /* Playback I/O owns video navigation; catalog prefetch remains independently
  * pending for shutdown/drain without intercepting unrelated button events. */

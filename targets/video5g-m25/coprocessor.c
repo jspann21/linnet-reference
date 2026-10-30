@@ -73,7 +73,7 @@ static struct {
     uint64_t read_offset;void *read_buffer;uint32_t read_bytes,read_at,read_requested;
     bool read_active,read_io;
     uint32_t stream_packet[332],stream_phase,stream_at,stream_wr,stream_address,stream_capacity,stream_frames;
-    bool mapped,stream_waiting,display_blanked;
+    bool mapped,stream_waiting,display_blanked,completed;
     bool resident,display_attempted,stopping,picture_pending;uint32_t player_task,stop_deadline,stop_events;
     bool player_retained,reuse_pending,retaining,retention_revoked;
     uint32_t retained_epoch,retain_quiet_at,retain_deadline;
@@ -1103,6 +1103,7 @@ bool ln_m25_coprocessor_begin(uint32_t operation){
     if(!vc.mapped&&!rom_image()){vc.error=18u;phase(FAILED,0);return false;}
     vc.rom_sum=vc.rom_checked=0;
     vc.error=vc.restore_error=vc.restore=vc.at=vc.hash_at=vc.requested=0;vc.io=false;
+    vc.completed=false;
     vc.normal=vc.paused=vc.want_paused=vc.seek_pending=vc.clock_valid=vc.syncing_seek=vc.seek_seen=false;vc.seek_ms=vc.position_base=vc.seek_frames=0;++vc.revision;
     vc.audio_ready=vc.audio_started=vc.audio_eof=false;vc.audio_phase=vc.audio_frames=vc.start_elapsed=0;vc.audio_status=(struct ln_audio_status){0};
     for(uint32_t i=0;i<2u;++i)vc.cache[i]=(__typeof__(vc.cache[0])){0};
@@ -1225,7 +1226,8 @@ bool ln_m25_coprocessor_open(const char *path,uint8_t options){
 }
 void ln_m25_coprocessor_file(const struct ln_fat32_file*file){ln_resident_end(&vc.cached);ln_resident_forget(&vc.binding);vc.video_file=*file;direct_file=true;}
 bool ln_m25_coprocessor_disk_required(void){return !vc.cached.cookie;}
-void ln_m25_coprocessor_stop(void){if(ln_m25_coprocessor_active()&&!vc.restore)recover(0);}
+void ln_m25_coprocessor_stop(void){vc.completed=false;if(ln_m25_coprocessor_active()&&!vc.restore)recover(0);}
+bool ln_m25_coprocessor_completed(void){return vc.completed&&!ln_m25_coprocessor_active()&&!ln_m25_coprocessor_error();}
 void ln_m25_coprocessor_pause(bool paused){paused_poll_clear();vc.want_paused=paused;++vc.revision;}
 bool ln_m25_coprocessor_paused(void){return vc.want_paused;}
 uint32_t ln_m25_coprocessor_position(void){
@@ -1243,7 +1245,7 @@ bool ln_m25_coprocessor_seek(uint32_t ms){
     if(!vc.normal||!vc.movie.opened||vc.restore||!ln_m25_coprocessor_active())return false;
     uint32_t duration=duration_ms(vc.movie.duration,vc.movie.timescale);if(!duration)return false;
     paused_poll_clear();
-    if(ms>=duration){recover(0);vc.clock_ms=duration;return true;}vc.requested_seek=ms;vc.seek_pending=vc.picture_pending=true;++vc.revision;return true;
+    if(ms>=duration){vc.completed=true;recover(0);vc.clock_ms=duration;return true;}vc.requested_seek=ms;vc.seek_pending=vc.picture_pending=true;++vc.revision;return true;
 }
 uint32_t ln_m25_coprocessor_duration(void){return vc.movie.opened?duration_ms(vc.movie.duration,vc.movie.timescale):0u;}
 uint32_t ln_m25_coprocessor_revision(void){return vc.revision;}
@@ -1563,7 +1565,7 @@ bool ln_m25_coprocessor_step(void){
                 /* The video completion tolerance must not discard the final
                  * PCM block. Wait for the soundtrack and DMA queue to drain. */
                 if(vc.stream_phase==8u&&ln_m25_coprocessor_position()+80u>=duration&&
-                   (!vc.audio_ready||(vc.audio_eof&&!audio.queued&&!audio.playing))){recover(0);return false;}
+                   (!vc.audio_ready||(vc.audio_eof&&!audio.queued&&!audio.playing))){vc.completed=true;recover(0);return false;}
                 command=3u;
             }
             if(command){vc.control=command;vc.return_deadline=vc.deadline;phase(VERSION_SEND,5000000u);}

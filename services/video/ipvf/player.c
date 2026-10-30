@@ -532,8 +532,9 @@ bool ln_video_open_file(const struct ln_fat32_file*file,const char*title){
     if(!file||!title||!ln_video_open(title))return false;
     v.file=*file;v.phase=HEADER;return true;
 }
-void ln_video_stop(void){if(v.active&&!v.stopping){v.stopping=true;++v.epoch;}}
+void ln_video_stop(void){v.completed=false;if(v.active&&!v.stopping){v.stopping=true;++v.epoch;}}
 bool ln_video_active(void){return v.active;}
+bool ln_video_completed(void){return v.completed&&!v.active&&!v.pending&&!v.error;}
 bool ln_video_pending(void){return v.pending||ln_video_catalog_pending();}
 bool ln_video_playback_pending(void){return v.pending;}
 bool ln_video_controls(bool show){(void)show;return true;}

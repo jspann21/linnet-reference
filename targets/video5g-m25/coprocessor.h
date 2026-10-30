@@ -28,6 +28,7 @@ bool ln_m25_coprocessor_disk_required(void);
 struct ln_fat32_file;
 void ln_m25_coprocessor_file(const struct ln_fat32_file *file);
 bool ln_m25_coprocessor_active(void);
+bool ln_m25_coprocessor_completed(void);
 uint32_t ln_m25_coprocessor_deadline(uint32_t now);
 void ln_m25_coprocessor_stop(void);
 void ln_m25_coprocessor_pause(bool paused);
