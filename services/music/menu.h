@@ -38,16 +38,16 @@ static inline uint32_t ln_music_menu_count(bool more){
     return count;
 }
 enum { LN_SOUND_ROOT, LN_SOUND_EQ, LN_SOUND_ADVANCED };
-enum { LN_SOUND_CLICKER=13, LN_SOUND_CLICK_VOLUME, LN_SOUND_CUSTOM_EQ, LN_SOUND_MORE };
+enum { LN_SOUND_CLICKER=13, LN_SOUND_CLICK_VOLUME, LN_SOUND_CLICK_ENABLE, LN_SOUND_CLICK_OUTPUT, LN_SOUND_CUSTOM_EQ, LN_SOUND_MORE };
 static inline bool ln_sound_menu_click(uint32_t action){
-    return action==LN_SOUND_CLICKER||action==LN_SOUND_CLICK_VOLUME;
+    return action>=LN_SOUND_CLICKER&&action<=LN_SOUND_CLICK_OUTPUT;
 }
 static inline uint32_t ln_sound_menu_action(uint32_t view,uint32_t row,bool extended,bool clicker){
-    static const uint8_t root[]={1,6,0,LN_SOUND_CUSTOM_EQ,LN_SOUND_CLICKER,LN_SOUND_CLICK_VOLUME,LN_SOUND_MORE};
+    static const uint8_t root[]={1,6,0,LN_SOUND_CUSTOM_EQ,LN_SOUND_CLICK_ENABLE,LN_SOUND_CLICK_OUTPUT,LN_SOUND_CLICKER,LN_SOUND_CLICK_VOLUME,LN_SOUND_MORE};
     static const uint8_t advanced[]={3,4,2,5,7};
     if(view==LN_SOUND_ROOT){
-        if(row>=sizeof(root)-(clicker?0u:2u))return UINT32_MAX;
-        if(!clicker&&row>=4u)row+=2u;
+        if(row>=sizeof(root)-(clicker?0u:4u))return UINT32_MAX;
+        if(!clicker&&row>=4u)row+=4u;
         return root[row];
     }
     if(view==LN_SOUND_ADVANCED)return row<(extended?5u:4u)?advanced[row]:UINT32_MAX;
@@ -55,6 +55,6 @@ static inline uint32_t ln_sound_menu_action(uint32_t view,uint32_t row,bool exte
     return UINT32_MAX;
 }
 static inline uint32_t ln_sound_menu_count(uint32_t view,bool extended,bool clicker){
-    return view==LN_SOUND_ROOT?(clicker?7u:5u):view==LN_SOUND_EQ?(extended?5u:2u):(extended?5u:4u);
+    return view==LN_SOUND_ROOT?(clicker?9u:5u):view==LN_SOUND_EQ?(extended?5u:2u):(extended?5u:4u);
 }
 #endif

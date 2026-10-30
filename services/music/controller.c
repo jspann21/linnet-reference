@@ -303,6 +303,8 @@ const char *ln_music_sound_label(uint32_t row){
     if(index==LN_SOUND_MORE)return "Advanced";
     if(index==LN_SOUND_CLICKER)return ln_display_click_label();
     if(index==LN_SOUND_CLICK_VOLUME)return ln_display_click_volume_label();
+    if(index==LN_SOUND_CLICK_ENABLE)return ln_display_click_enabled_label();
+    if(index==LN_SOUND_CLICK_OUTPUT)return ln_display_click_output_label();
     static char balance[24],preamp[24],levels[7][24];
     static const char *const modes[]={"Channels: Stereo","Channels: Mono","Channels: Left","Channels: Right","Channels: Karaoke"};
     if(index==0&&profile.preset==LN_MUSIC_EQ_CUSTOM)return "EQ: Custom";
@@ -356,6 +358,8 @@ bool ln_music_sound_adjust(uint32_t row,int32_t direction){
     if(shutting_down||manual_next_pending||index>=LN_SOUND_CUSTOM_EQ||!direction)return false;
     if(index==LN_SOUND_CLICKER)return ln_display_click_adjust(direction);
     if(index==LN_SOUND_CLICK_VOLUME)return ln_display_click_volume_adjust(direction);
+    if(index==LN_SOUND_CLICK_ENABLE)return ln_display_click_enabled_adjust(direction);
+    if(index==LN_SOUND_CLICK_OUTPUT)return ln_display_click_output_adjust(direction);
     struct ln_music_profile next=profile;bool up=direction>0;
     if(index==0){
 #if LINNET_EXTENDED_SOUND

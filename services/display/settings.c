@@ -16,14 +16,18 @@ static const char *const shutdown_labels[]={"Off","1 min","2 min","5 min","10 mi
 static uint8_t shutdown_choice[2];
 static char shutdown_label[2][32];
 static uint32_t choice=4,revision,record_revision,battery_capacity=1200;
-/* SETT bits 6..7: 0 Classic, 1 Off, 2 Low, 3 High. */
+/* SETT byte 7 bits 6..7: 0 Classic, 1 legacy Off, 2 Low, 3 High. */
 static uint8_t click_tone;
-/* SETT capacity word: low 16 bits mAh, high 16 bits attenuation (0..4).
- * Zero attenuation preserves the original full-volume click for older records. */
+/* SETT capacity word: bits 0..15 mAh, 16..18 attenuation (0..4),
+ * 19..20 output (Auto/Both/Speaker/Headphones), 21 disabled. Zero extension
+ * preserves full volume, Auto routing and enabled feedback for older records. */
 static uint8_t click_volume=4;
-static bool click_fallback_ready,click_changed,click_volume_changed;
-static const char *const click_labels[]={"Clicker: Classic","Clicker: Off","Clicker: Low","Clicker: High"};
+static uint8_t click_output;
+static bool click_enabled=true;
+static bool click_fallback_ready,click_changed,click_volume_changed,click_output_changed,click_enabled_changed;
+static const char *const click_labels[]={"Click pitch: Classic","Click pitch: Classic","Click pitch: Low","Click pitch: High"};
 static const char *const click_volume_labels[]={"Click volume: 0%","Click volume: 25%","Click volume: 50%","Click volume: 75%","Click volume: 100%"};
+static const char *const click_output_labels[]={"Click output: Auto","Click output: Both","Click output: Speaker","Click output: Headphones"};
 static uint32_t theme_index=UINT32_MAX,theme_revision;
 static bool theme_loaded,theme_dirty,theme_available;
 static uint16_t game_best[LN_GAME_COUNT];
@@ -93,7 +97,7 @@ void ln_display_settings_diagnostics(uint32_t words[8]){
     words[7]=(loaded?1u:0u)|(theme_loaded?2u:0u);
 }
 #endif
-void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loaded=false;games_phase=0;about_loaded=false;about_phase=about_count=about_percent=0;about_ata_ready=false;about_ata_count=0;for(uint32_t i=0;i<LN_GAME_COUNT;++i)game_best[i]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;click_tone=0;click_volume=4;click_fallback_ready=click_changed=click_volume_changed=false;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;record_first_dirty_at=record_last_dirty_at=0;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;
+void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loaded=false;games_phase=0;about_loaded=false;about_phase=about_count=about_percent=0;about_ata_ready=false;about_ata_count=0;for(uint32_t i=0;i<LN_GAME_COUNT;++i)game_best[i]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;click_tone=0;click_volume=4;click_output=LN_CLICK_AUTO;click_enabled=true;click_fallback_ready=click_changed=click_volume_changed=click_output_changed=click_enabled_changed=false;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;record_first_dirty_at=record_last_dirty_at=0;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;
     (void)ln_ui_apple_font_load(0,0);
 #if LINNET_UI_WIDTH!=160u
     apple_font_loaded=false;apple_font_phase=0;
@@ -134,8 +138,26 @@ bool ln_display_settings_adjust(int32_t direction){
     mark_record_dirty();++revision;return true;
 }
 /* Wait for the saved choice before allowing feedback, including saved Off. */
-const char *ln_display_click_label(void){return loaded||click_fallback_ready||click_changed?click_labels[click_tone]:"Clicker: Loading...";}
-uint8_t ln_display_click_tone(void){return loaded||click_fallback_ready||click_changed?click_tone:1u;}
+const char *ln_display_click_label(void){return loaded||click_fallback_ready||click_changed?click_labels[click_tone]:"Click pitch: Loading...";}
+uint8_t ln_display_click_tone(void){return (loaded||click_fallback_ready||click_enabled_changed)&&click_enabled?click_tone:1u;}
+uint8_t ln_display_click_output(void){return click_output;}
+const char *ln_display_click_output_label(void){
+    return loaded||click_fallback_ready||click_output_changed?click_output_labels[click_output]:"Click output: Loading...";
+}
+bool ln_display_click_output_adjust(int32_t direction){
+    if(!direction)return false;
+    click_output=(uint8_t)((click_output+(direction<0?3u:1u))&3u);click_output_changed=true;
+    mark_record_dirty();++revision;return true;
+}
+const char *ln_display_click_enabled_label(void){
+    if(!loaded&&!click_fallback_ready&&!click_enabled_changed)return "Clicker: Loading...";
+    return click_enabled?"Clicker: On":"Clicker: Off";
+}
+bool ln_display_click_enabled_adjust(int32_t direction){
+    if(!direction)return false;
+    click_enabled=!click_enabled;click_enabled_changed=true;
+    mark_record_dirty();++revision;return true;
+}
 uint8_t ln_display_click_volume(void){return loaded||click_fallback_ready||click_volume_changed?click_volume:0u;}
 const char *ln_display_click_volume_label(void){
     return loaded||click_fallback_ready||click_volume_changed?click_volume_labels[click_volume]:"Click volume: Loading...";
@@ -148,6 +170,7 @@ bool ln_display_click_volume_adjust(int32_t direction){
 bool ln_display_click_adjust(int32_t direction){
     if(!direction)return false;
     click_tone=(uint8_t)((click_tone+(direction<0?3u:1u))&3u);
+    if(click_tone==1u)click_tone=direction<0?0u:2u;
     click_changed=true;
     mark_record_dirty();++revision;return true;
 }
@@ -200,29 +223,34 @@ static int read_record(uint8_t raw[480],uint32_t *offset,uint32_t *length){
     ln_write_le32(saved_photo+8,(f&7u)|(((f>>3)&3u)<<8)|(((f>>5)&3u)<<16));ln_write_le32(saved_photo+12,ln_read_le32(raw+16));
     uint32_t saved_video[2]={ln_read_le32(raw+20),ln_read_le32(raw+24)};
     if(!valid_photo(saved_photo))return malformed_record();
-    uint32_t saved_capacity=ln_read_le32(raw+28)&65535u,attenuation=ln_read_le32(raw+28)>>16;
-    if(saved_capacity<50u||saved_capacity>10000u||saved_capacity%50u||attenuation>4u)return malformed_record();
+    uint32_t packed_capacity=ln_read_le32(raw+28),saved_capacity=packed_capacity&65535u,attenuation=(packed_capacity>>16)&7u;
+    if(saved_capacity<50u||saved_capacity>10000u||saved_capacity%50u||attenuation>4u||(packed_capacity>>22))return malformed_record();
+    uint8_t saved_tone=raw[7]>>6,saved_output=(packed_capacity>>19)&3u;
+    bool saved_enabled=saved_tone!=1u&&!(packed_capacity&(1u<<21));
+    if(saved_tone==1u)saved_tone=0;
     /* Commit only after the complete envelope has passed validation. */
     if(!loaded){
         ++revision;
         if(!dirty&&(choice!=saved_choice||battery_capacity!=saved_capacity||clock_12!=saved_clock_12||shutdown_choice[0]!=(raw[15]&15u)||shutdown_choice[1]!=(raw[15]>>4))){
             shutdown_choice[0]=raw[15]&15u;shutdown_choice[1]=raw[15]>>4;choice=saved_choice;battery_capacity=saved_capacity;clock_12=saved_clock_12;++revision;
         }
-        if(!click_changed&&click_tone!=(raw[7]>>6)){click_tone=raw[7]>>6;++revision;}
+        if(!click_changed&&click_tone!=saved_tone){click_tone=saved_tone;++revision;}
         if(!click_volume_changed&&click_volume!=4u-attenuation){click_volume=(uint8_t)(4u-attenuation);++revision;}
+        if(!click_output_changed&&click_output!=saved_output){click_output=saved_output;++revision;}
+        if(!click_enabled_changed&&click_enabled!=saved_enabled){click_enabled=saved_enabled;++revision;}
         for(uint32_t i=0;i<16;++i)photo_resume[i]=saved_photo[i];
         video_resume[0]=saved_video[0];video_resume[1]=saved_video[1];video_options=saved_video_options;
     }
     *offset=32;*length=bytes-36;loaded=true;return 1;
 }
 static int write_record(uint8_t raw[480],const uint8_t *data,uint32_t length,bool existing){
-    if(length>444||!valid_photo(photo_resume)||battery_capacity<50u||battery_capacity>10000u||battery_capacity%50u||click_volume>4u)return 0;
+    if(length>444||!valid_photo(photo_resume)||battery_capacity<50u||battery_capacity>10000u||battery_capacity%50u||click_volume>4u||click_output>LN_CLICK_HEADPHONES)return 0;
     uint32_t index=ln_read_le32(photo_resume+4),flags=ln_read_le32(photo_resume+8);
     if(index>65535u||(flags&255u)>5u||((flags>>8)&255u)>3u||(flags>>16)>2u)return 0;
     uint8_t packed7=(uint8_t)((clock_12?1u:0u)|((video_options&3u)<<1)|(((video_options>>2)&1u)<<3)|(((video_options&8u)?0u:1u)<<4)|(((video_options>>4)&1u)<<5)|(click_tone<<6));
     uint8_t packed14=(uint8_t)((flags&7u)|(((flags>>8)&3u)<<3)|(((flags>>16)&3u)<<5));
     uint8_t packed15=(uint8_t)(shutdown_choice[0]|(shutdown_choice[1]<<4));
-    uint32_t packed_capacity=battery_capacity|((4u-click_volume)<<16);
+    uint32_t packed_capacity=battery_capacity|((4u-click_volume)<<16)|((uint32_t)click_output<<19)|(click_enabled?0u:1u<<21);
     uint32_t snapshot_revision=record_revision;
     bool unchanged=existing&&raw[4]==(uint8_t)length&&raw[5]==(uint8_t)(length>>8)&&raw[6]==choice&&
         raw[7]==packed7&&ln_read_le32(raw+8)==ln_read_le32(photo_resume)&&

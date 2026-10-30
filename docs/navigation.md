@@ -49,7 +49,9 @@ Home
 │   │   ├── Volume limit
 │   │   ├── EQ: Off / Presets / Custom
 │   │   ├── Custom EQ → Bass / Treble, or five bands
-│   │   ├── Clicker: Classic / Off / Low / High
+│   │   ├── Clicker: On / Off
+│   │   ├── Click output: Auto / Both / Speaker / Headphones
+│   │   ├── Click pitch: Classic / Low / High
 │   │   ├── Click volume: 0% / 25% / 50% / 75% / 100%
 │   │   └── Advanced
 │   │       ├── Balance
@@ -91,11 +93,14 @@ Playback Options changes the current playback queue. Sound and Sleep Timer open
 the same controls wherever they are accessed. Menu returns to the menu that
 opened them. Custom EQ changes select the Custom preset automatically.
 
-Click volume sits beside Clicker (pitch). Left/Right lower or raise the saved
-level; Select raises it. Each adjustment immediately previews the current pitch
-and volume. Clicker Off or 0% volume keeps feedback silent. Existing settings
-default to 100%. Clicks use the internal piezo without headphones and switch to
-headphones when connected. Both outputs obey Clicker Off and 0% click volume.
+Clicker turns feedback on or off while preserving output, pitch and volume.
+Click output selects Both, Speaker, Headphones, or Auto. Both uses the speaker
+and connected headphones; Speaker always uses the internal piezo; Headphones
+stays silent when unplugged. Auto uses the speaker without headphones and
+switches to headphones when inserted. Existing settings default to Auto and
+100% volume; a saved Off choice stays off. Left/Right change a setting, and
+Select advances it. Each adjustment immediately previews the new settings.
+Clicker Off or 0% click volume silences both outputs.
 Headphone clicks work during playback, pause, and idle; they also follow music
 volume and its configured limit. Piezo loudness remains independent of music volume.
 Wheel feedback follows changes to the selected list item or Cover Flow album;

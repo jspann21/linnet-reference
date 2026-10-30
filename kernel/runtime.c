@@ -89,11 +89,14 @@ static void click_feedback_stop(void){
 }
 static void click_feedback(void){
     uint8_t tone=ln_display_click_tone(),volume=ln_display_click_volume();
-    if(shell->headphones){
-        ln_platform_click_stop();ln_audio_click(tone,volume,ln_music_output_volume());
-    }else{
-        ln_audio_click_stop();ln_platform_click(tone,volume);
-    }
+    if(tone==1u||!volume){click_feedback_stop();return;}
+    uint8_t output=ln_display_click_output();
+    bool speaker=output==LN_CLICK_BOTH||output==LN_CLICK_SPEAKER||
+        (output==LN_CLICK_AUTO&&!shell->headphones);
+    bool headphones=shell->headphones&&(output==LN_CLICK_BOTH||output==LN_CLICK_HEADPHONES||output==LN_CLICK_AUTO);
+    /* A cold headphone sink may need codec setup; start it before the piezo. */
+    if(headphones)ln_audio_click(tone,volume,ln_music_output_volume());else ln_audio_click_stop();
+    if(speaker)ln_platform_click(tone,volume);else ln_platform_click_stop();
 }
 #endif
 static uint32_t backlight_deadline,backlight_timeout=30000000u;
