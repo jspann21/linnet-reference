@@ -98,6 +98,10 @@ installation. Classic N25 uses Media Manager's integrated NOR bootloader setup.
 Removal appears only when Linnet files or a recovery record are present, or
 interrupted removal can be completed.
 
+If an iPod is detected over USB but Windows has not mounted its storage,
+**iPod setup** shows the storage problem even when another iPod is connected.
+Assign the existing volume a Windows drive letter, then choose **Find iPod**.
+
 ### First installation on a Classic
 
 Choose a current Classic firmware ZIP and **Install Linnet**. The ZIP includes

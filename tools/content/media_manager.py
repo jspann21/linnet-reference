@@ -70,7 +70,7 @@ foreach ($disk in @(Get-CimInstance -Namespace root/Microsoft/Windows/Storage -C
   $allPartitions=@(Get-CimInstance -Namespace root/Microsoft/Windows/Storage -ClassName MSFT_Partition -Filter ('DiskNumber='+$disk.Number))
   $partitions=@($allPartitions | Where-Object {$_.DriveLetter})
   if (!$partitions.Count -and @($allPartitions | Where-Object {$_.MbrType -in @(11,12)}).Count) {
-   $errors+=@{drive="Disk $($disk.Number)";message='The iPod FAT32 volume has no Windows drive letter. Assign one in Windows Disk Management, then choose Find iPod.'}
+   $errors+=@{drive="Disk $($disk.Number)";message='Windows has not mounted this iPod. Assign its existing volume a drive letter in Disk Management, then choose Find iPod.'}
   }
  }
  catch {$errors+=@{drive="Disk $($disk.Number)";message=[string]$_};continue}

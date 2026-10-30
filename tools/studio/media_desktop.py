@@ -769,6 +769,7 @@ def build_setup_page(window):
     window.setup_device = label('Connect your iPod', 'cardTitle', True); details.addWidget(window.setup_device)
     window.setup_software = label('Connect with USB to get started.', 'muted', True); details.addWidget(window.setup_software)
     window.support_status = label('', 'muted', True); details.addWidget(window.support_status)
+    window.discovery_issue = label('', 'notice', True); window.discovery_issue.hide(); details.addWidget(window.discovery_issue)
     window.hardware_report_button = button('Save hardware report…', window.collect_hardware_report)
     details.addWidget(window.hardware_report_button, 0, Qt.AlignLeft)
     window.install_detail = label('', 'notice', True); window.install_detail.hide(); details.addWidget(window.install_detail)
@@ -2110,6 +2111,9 @@ class MediaWindow(QMainWindow):
             self.device_info.setText('Connected through Linnet Link')
             self.show_progress('Your iPod is connected. Manage startup settings and Linnet builds in iPod setup.')
             self.navigate('iPod setup'); self.update_controls()
+            if errors:
+                self.record_diagnostic('devices', 'DiscoveryError', '; '.join(errors), 'partial')
+                self.show_progress('A connected iPod needs attention. See the message in iPod setup.')
             return
         if not devices:
             self.transition_device(None)
@@ -2883,6 +2887,8 @@ class MediaWindow(QMainWindow):
 
     def update_setup_status(self):
         loading = self.busy and self.review is None
+        self.discovery_issue.setText('A connected iPod needs attention: ' + '; '.join(self.discovery_errors))
+        self.discovery_issue.setVisible(bool(self.discovery_errors))
         from tools.studio.device_support import describe
         support_identity = self.identity or (self.link_connection or {}).get('identity')
         support = describe(support_identity, self.review)
