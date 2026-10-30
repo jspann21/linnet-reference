@@ -1,4 +1,5 @@
 #include "hal/api/audio.h"
+#include "hal/api/click_pcm.h"
 #include "hal/api/core.h"
 #include "hal/codecs/codec.h"
 #include "hal/arm926/cache.h"
@@ -20,6 +21,12 @@ extern uint32_t ln_time_us(void);
 #define BLOCK 1024u
 #define MASK (LINNET_AUDIO_RING_FRAMES-1u)
 static uint32_t ring[LINNET_AUDIO_RING_FRAMES] AUDIO_MEMORY;
+static uint32_t click_pcm[BLOCK] AUDIO_MEMORY;
+static volatile struct ln_pcm_click click;
+static bool click_owned;
+static volatile bool click_block,click_draining;
+static uint32_t click_last;
+static volatile uint32_t click_drain_until;
 static void copy_frames(uint32_t offset,const int16_t *samples,uint32_t frames) {
     if(frames>=8u && !((uintptr_t)samples&3u))ln_memory_copy(ring+offset,samples,frames*4u);
     else for(uint32_t i=0;i<frames;i++)ring[offset+i]=(uint16_t)samples[i*2u]|
@@ -50,17 +57,21 @@ static void fault(uint32_t reason) {
     ln_s5l_irq_enable(16,false);status.playing=0;
 }
 static bool arm(bool continuing) {
-    uint32_t count=head-tail,offset=tail&MASK;
-    if(count>LINNET_AUDIO_RING_FRAMES){fault(1);return false;}
+    uint32_t queued=head-tail,count=status.playing?queued:0,offset=tail&MASK;
+    if(queued>LINNET_AUDIO_RING_FRAMES){fault(1);return false;}
+    click_block=!status.playing;
     real=count!=0;
     if(count) {
         if(count>BLOCK)count=BLOCK;
         if(count>LINNET_AUDIO_RING_FRAMES-offset)count=LINNET_AUDIO_RING_FRAMES-offset;
         starved=false;
     } else {
-        count=BLOCK;if(!starved)status.underruns++;starved=true;
+        count=click_block?click.left:BLOCK;
+        if(!click_block){if(!starved)status.underruns++;starved=true;}
     }
+    if(!count)return false;
     const int16_t *samples=(const int16_t *)(real?ring+offset:silence);
+    if(ln_pcm_click_mix(&click,click_pcm,(const uint32_t *)samples,count))samples=(const int16_t *)click_pcm;
     bool ok=continuing?ln_s5l_pcm_rearm(samples,count):ln_s5l_pcm_begin(samples,count);
     if(!ok){fault(2);return false;}
     inflight=count;active=true;armed=ln_time_us();expected=(count*frame_q12+4095u)>>12;
@@ -75,8 +86,13 @@ bool ln_audio_lineout(bool enabled) {
     lineout=enabled;return true;
 }
 bool ln_audio_halt(void) {
+    ln_audio_click_stop();click_draining=false;
     if(!owned)return true;
     bool ok=true;
+    if(codec_ready&&!muted&&!status.playing){
+        muted=ln_codec_digital_mute(ln_s5l_board_codec_write,true);
+        if(!muted||!ln_core_delay_us(10000u))return false;
+    }
     if(status.playing && !status.fault) {
         /* A manual track change must drain through silence like Pause.
          * Aborting a live I2S FIFO makes an audible output transient. */
@@ -97,6 +113,7 @@ bool ln_audio_halt(void) {
     ln_s5l_irq_restore(flags);return ok && stopped;
 }
 bool ln_audio_stop(void) {
+    click_owned=false;
     if(!owned)return true;
     if(!ln_audio_halt())return false;
     bool ok;
@@ -111,6 +128,7 @@ bool ln_audio_stop(void) {
     codec_ready=owned=amplifier_open=false;return ok;
 }
 bool ln_audio_init(uint32_t rate) {
+    click_owned=false;
     uint32_t period=frame_period(rate),codec_rate;
     if(!period || !ln_codec_rate_supported(rate))return false;
     bool warm=owned && codec_ready && !status.fault;
@@ -139,6 +157,22 @@ failed:
     if(ln_codec_off(ln_s5l_board_codec_write))(void)ln_s5l_board_audio_clock_off();
 #endif
     codec_ready=amplifier_open=false;status.fault=4;return false;
+}
+void ln_audio_click_stop(void){
+    uint32_t flags=ln_s5l_irq_save();ln_pcm_click_clear(&click);ln_s5l_irq_restore(flags);
+}
+void ln_audio_click(uint8_t tone,uint8_t volume,int32_t output_db_tenths){
+    if(tone>3u||tone==1u||!volume||volume>4u)return;
+    if(!status.initialized){
+        if(!ln_audio_init(44100u))return;
+        click_owned=true;
+        if(!ln_audio_volume(output_db_tenths)){(void)ln_audio_stop();return;}
+    }
+    if(status.fault)return;
+    uint32_t flags=ln_s5l_irq_save();
+    ln_pcm_click_request(&click,status.rate,tone,volume);click_last=ln_time_us();
+    ln_s5l_irq_restore(flags);
+    ln_audio_service(ln_time_us());
 }
 uint32_t ln_audio_capacity(void) {
     uint32_t queued=head-tail;
@@ -174,11 +208,12 @@ bool ln_audio_rewrite(uint32_t frame,const int16_t *samples,uint32_t frames) {
 }
 bool ln_audio_start(void) {
     if(!status.initialized || status.fault || head==tail)return false;
-    uint32_t flags=ln_s5l_irq_save();pause_pending=draining=false;status.paused=0;status.playing=1;
+    uint32_t flags=ln_s5l_irq_save();pause_pending=draining=click_draining=false;status.paused=0;status.playing=1;
     if(!active)previous=0;
     bool ok=active || arm(false);ln_s5l_irq_restore(flags);
     if(ok)ok=amplifier_open?ln_codec_digital_mute(ln_s5l_board_codec_write,false):
         ln_codec_mute(ln_s5l_board_codec_write,false);
+    click_owned=false;
     if(!ok){fault(4);return false;}muted=false;amplifier_open=true;return true;
 }
 void ln_audio_pause(void) {
@@ -201,9 +236,11 @@ void ln_audio_irq(void) {
     previous=started;
     uint32_t elapsed=started-armed;
     if(elapsed>expected && elapsed-expected>status.max_completion_late_us)status.max_completion_late_us=elapsed-expected;
-    if(real){tail+=inflight;status.consumed+=inflight;}else status.silence_frames+=inflight;
+    if(real){tail+=inflight;status.consumed+=inflight;}else if(!click_block)status.silence_frames+=inflight;
     active=false;inflight=0;status.last_irq_us=started;
-    if(pause_pending) {
+    if(click_block&&!status.playing){
+        click_draining=true;click_drain_until=started+10000u;ln_s5l_pcm_interrupt(false);
+    } else if(pause_pending) {
         pause_pending=false;draining=true;drain_until=0;
         if(!ln_s5l_pcm_rearm((const int16_t *)silence,BLOCK)){fault(2);return;}
         real=false;inflight=BLOCK;active=true;armed=ln_time_us();
@@ -224,10 +261,26 @@ void ln_audio_service(uint32_t now) {
         draining=false;status.playing=0;status.paused=1;
         if(!ln_s5l_pcm_stop())fault(3);
     }
-    bool needs_mute=codec_ready && !muted && (!status.playing || status.fault);
+    bool start_click=status.initialized&&!status.fault&&!status.playing&&!active&&!draining&&click.left;
+    if(start_click){click_draining=false;start_click=arm(false);}
+    if(click_draining&&!active&&!click.left&&(int32_t)(now-click_drain_until)>=0){
+        click_draining=click_block=false;if(!ln_s5l_pcm_stop())fault(3);
+    }
+    bool needs_mute=codec_ready && !muted && ((!status.playing&&!active&&!click_draining) || status.fault);
     ln_s5l_irq_restore(flags);
+    if(start_click){
+        bool ok=amplifier_open?ln_codec_digital_mute(ln_s5l_board_codec_write,false):ln_codec_mute(ln_s5l_board_codec_write,false);
+        if(!ok)fault(4);else {muted=false;amplifier_open=true;}
+    }
     if(needs_mute){muted=ln_codec_digital_mute(ln_s5l_board_codec_write,true);if(!muted)fault(4);}
     if(status.fault && active){(void)ln_s5l_pcm_stop();active=false;}
+    if(click_owned&&(status.fault||(!active&&!click_draining&&!click.left&&(int32_t)(now-click_last)>=500000)))(void)ln_audio_stop();
+}
+uint32_t ln_audio_deadline(uint32_t now){
+    if(status.fault)return UINT32_MAX;
+    if(click_draining)return click_drain_until;
+    if(click_owned)return (int32_t)(now-(click_last+500000u))>=0?now:click_last+500000u;
+    return UINT32_MAX;
 }
 void ln_audio_snapshot(struct ln_audio_status *out) {
     if(!out)return;

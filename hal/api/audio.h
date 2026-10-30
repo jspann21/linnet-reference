@@ -30,6 +30,13 @@ bool ln_audio_stop(void);
 bool ln_audio_halt(void);
 bool ln_audio_volume(int32_t db_tenths);
 bool ln_audio_lineout(bool enabled);
+/* Short UI feedback, mixed into the next safe DMA block or played alone.
+ * The level is 0..4; output gain follows music volume and its configured limit.
+ * Standalone clicks never consume queued music or advance its frame counters. */
+void ln_audio_click(uint8_t tone,uint8_t volume,int32_t output_db_tenths);
+void ln_audio_click_stop(void);
+/* UINT32_MAX when no feedback drain or idle power-down needs a wake. */
+uint32_t ln_audio_deadline(uint32_t now);
 void ln_audio_irq(void);
 void ln_audio_service(uint32_t now);
 void ln_audio_snapshot(struct ln_audio_status *out);

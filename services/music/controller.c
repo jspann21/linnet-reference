@@ -183,6 +183,9 @@ static int32_t output_volume(void){
     int32_t value=queue.volume_db_tenths-(int32_t)sleep_attenuation;
     return value< -730?-730:value;
 }
+int32_t ln_music_output_volume(void){
+    int32_t value=output_volume();return value>profile.max_volume_db_tenths?profile.max_volume_db_tenths:value;
+}
 const char *ln_music_notice(void){return notice;}
 __attribute__((noinline)) bool ln_music_loading(void){return file_waiting||selecting||have_waiting||manual_next_pending||resolver_kind==1;}
 static void remember_position(void);

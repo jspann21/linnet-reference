@@ -94,7 +94,10 @@ opened them. Custom EQ changes select the Custom preset automatically.
 Click volume sits beside Clicker (pitch). Left/Right lower or raise the saved
 level; Select raises it. Each adjustment immediately previews the current pitch
 and volume. Clicker Off or 0% volume keeps feedback silent. Existing settings
-default to 100%. The level controls piezo duty cycle independently of music volume.
+default to 100%. Clicks use the internal piezo without headphones and switch to
+headphones when connected. Both outputs obey Clicker Off and 0% click volume.
+Headphone clicks work during playback, pause, and idle; they also follow music
+volume and its configured limit. Piezo loudness remains independent of music volume.
 Wheel feedback follows changes to the selected list item or Cover Flow album;
 touching the wheel, reaching a list boundary, and adjusting playback volume or
 photo zoom stay silent.
