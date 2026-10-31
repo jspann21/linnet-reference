@@ -211,9 +211,11 @@ from this editor; their saved selections are preserved.
 Under **Settings → Display → Brightness**, turn the wheel to adjust from 5% to
 100% in 5% steps. The backlight changes immediately and the value is saved for
 restart. Backlight timeout remains a separate control under Display. The footer
-shows whether settings are saved, saving, or unavailable for saving.
+shows whether settings are saved, queued, saving, or unavailable for saving.
 Saving can wait for playback to pause or stop so settings writes do not compete
-with audio; the footer stays at Saving until publication completes.
+with audio; the footer shows **Save when idle** while waiting, then **Saved**
+after publication completes. A storage preparation failure shows **Saving
+unavailable** rather than leaving a save pending indefinitely.
 
 Media Manager's **Screens** page edits the same saved shortcuts and ordering.
 Use matching updated firmware and Media Manager for on-device menu sync. Reconnect

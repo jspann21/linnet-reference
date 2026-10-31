@@ -32,6 +32,7 @@ static const char *const click_output_labels[]={"Click output: Auto","Click outp
 static uint32_t theme_index=UINT32_MAX,theme_revision;
 static bool theme_loaded,theme_dirty,theme_available,prefs_dirty,prefs_menus;
 static uint32_t prefs_revision;
+static bool save_deferred,save_unavailable;
 static uint8_t saved_menus[80];
 static uint16_t game_best[LN_GAME_COUNT];
 extern void ln_games_best_set(uint32_t index,uint16_t value);
@@ -116,6 +117,7 @@ void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loade
 #if !defined(LINNET_PROFILE_RELEASE)
     record_publishes=theme_publishes=0;
 #endif
+    save_deferred=save_unavailable=false;
 }
 bool ln_display_clock_12(void){return clock_12;}
 void ln_display_clock_toggle(void){clock_12=!clock_12;mark_record_dirty();++revision;}
@@ -133,7 +135,7 @@ const char *ln_display_theme_status(void){
     if(theme_index==UINT32_MAX&&!theme_dirty)return "Default";
     return theme_available?(theme_dirty?"Saving...":"Saved"):"This session";
 }
-bool ln_display_settings_pending(void){return dirty||((theme_dirty||prefs_dirty)&&(!theme_loaded||theme_available));}
+bool ln_display_settings_pending(void){return !save_unavailable&&(dirty||((theme_dirty||prefs_dirty)&&(!theme_loaded||theme_available)));}
 const char *ln_display_settings_label(void){return labels[choice];}
 bool ln_display_settings_adjust(int32_t direction){
     if(!direction)return false;
@@ -409,7 +411,7 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
 }
 void ln_preferences_changed(void){prefs_dirty=true;++prefs_revision;++revision;}
 bool ln_preferences_editable(void){return theme_loaded&&menus_loaded;}
-const char *ln_preferences_status(void){return !theme_loaded||!menus_loaded?"Loading settings...":!theme_available?"Saving unavailable":prefs_dirty||dirty||theme_dirty?"Saving...":"Saved";}
+const char *ln_preferences_status(void){return save_unavailable?"Saving unavailable":!theme_loaded||!menus_loaded?"Loading settings...":!theme_available?"Saving unavailable":prefs_dirty||dirty||theme_dirty?(save_deferred?"Save when idle":"Saving..."):"Saved";}
 bool ln_preferences_timeout_adjust(int32_t direction){return ln_display_settings_adjust(direction);}
 const char *ln_preferences_timeout_label(void){return ln_display_settings_label();}
 static void menus_finished(void){menus_loaded=true;if(prefs_menus&&!ln_ui_menu_load(saved_menus,80u))theme_available=false;++revision;}
@@ -532,8 +534,9 @@ static void settings_work(bool may_write,bool presented,uint32_t presented_revis
     }
     if(!ln_storage_prepared()){
         int prepared=ln_storage_prepare_writes();
-        if(prepared!=1){if(prepared<0)click_defaults_ready();return;}
+        if(prepared!=1){if(prepared<0){click_defaults_ready();if(!save_unavailable){save_unavailable=true;++revision;}}return;}
     }
+    if(save_unavailable){save_unavailable=false;++revision;}
     theme_step(presented,presented_revision,flush);
     if(loaded&&!dirty)return;
     if(!flush&&dirty&&!record_publish_due())return;
@@ -549,6 +552,10 @@ static void settings_work(bool may_write,bool presented,uint32_t presented_revis
 }
 static void settings_step(bool may_write,bool presented,uint32_t presented_revision,bool flush){
     if(step_busy)return;
+    /* Admission can remain closed for an entire song or photo session. Tell
+     * the UI this is queued work, rather than an in-progress disk write. */
+    bool deferred=!may_write&&ln_display_settings_pending();
+    if(deferred!=save_deferred){save_deferred=deferred;++revision;}
     step_busy=true;if(may_write){menus_step();games_step();about_step();apple_font_step();}about_ata_step();settings_work(may_write,presented,presented_revision,flush);step_busy=false;
 }
 void ln_display_settings_step_ready(bool may_write,bool theme_presented,uint32_t presented_revision){
