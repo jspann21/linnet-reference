@@ -84,7 +84,12 @@ def publish(identity, image_path):
             verified=installed_state(root,identity['target_id'])
             if verified.get('build_id')!=info['build_id'] or verified['state']!='installed':
                 raise OSError('Initial OS installation readback failed')
+            # Native Classic setup bypasses the generic package provisioner.
+            # Create the shared brightness/menu store before reporting success.
+            from tools.studio.theme_settings import provision as provision_preferences
+            preferences=provision_preferences(root,current['disk_serial'],current['disk_bytes'],info['build_id'])
             return dict(passed=True,initial_installation=True,requires_safe_eject=True,image=info,slot=0,
+                        preferences=preferences,
                         summary='Linnet is installed. Safely eject the iPod to start it.')
         if state['state'] != 'installed':
             raise ValueError('native update requires a valid confirmed installation')
