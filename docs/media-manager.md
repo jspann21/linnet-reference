@@ -343,6 +343,13 @@ When upgrading older firmware, install matching firmware and save Games before
 ejecting. The old `GAMES.BIN` mask is read for migration only; older firmware
 cannot load external packages. Explicit damaged-catalogue recovery archives
 metadata and preserves package and save files.
+In the iPod's **Games** browser, **Play/Pause** starts/resumes or pauses your
+current music. The hint shows the available action. Launching a game keeps that
+playback running; game controls retain their normal meaning once inside a game.
+Choose a song or queue in Music (or audio in Files) first. Music Quiz uses its
+own clues and restores the previous Music queue when it exits; a Files audio
+session is not restored by the quiz. Other games preserve Files playback. Game
+effects yield to music playback.
 **Screens** configures supported menus.
 See the [device menu hierarchy](navigation.md) for the default organization and
 controls. Save changes, eject, and restart to apply them. Game availability

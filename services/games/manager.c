@@ -18,6 +18,7 @@ static uint32_t phase,cat_copy,cat_length,cat_generation,cat_count,cat_row,cat_b
 static uint32_t selected,offset,chunk,crc,file_crc,io_generation=0x474d0000u,requested=UINT32_MAX;
 static uint32_t revision,paused_at,paused_us,zero_at,legacy_best[LN_GAME_COUNT];
 static bool pending,ready,conflict,reentrant,held,save_can_write,exit_requested;
+static bool background_music;
 static uint8_t catalogue[LN_GAME_CATALOGUE_BYTES] __attribute__((aligned(32)));
 static uint8_t header_data[256] __attribute__((aligned(32)));
 static struct ln_fat32_file source;
@@ -77,7 +78,11 @@ void ln_games_configure(uint32_t mask){(void)mask; /* Catalogue, not legacy mask
 void ln_games_best_set(uint32_t index,uint16_t score){if(index<LN_GAME_COUNT&&score>legacy_best[index])legacy_best[index]=score;}
 uint32_t ln_games_hud_revision(void){return revision+(phase==ACTIVE?active.revision():0);}
 bool ln_games_playing(void){return phase==ACTIVE&&!held&&active.playing();}
-const char *ln_games_text(const char *key){(void)key;return notice;}
+const char *ln_games_text(const char *key){
+    if(key&&same(key,"Game music"))return music_playing()?"Play: Pause music":"Play: Start/resume music";
+    return ""; /* The canvas owns loading, error and gameplay text. */
+}
+void ln_games_music_toggle(void){ln_music_toggle();++revision;}
 void ln_games_start(uint32_t index){
     if(!ready||index>=cat_count||conflict)return;
     if(phase!=IDLE){requested=index;return;}
@@ -116,6 +121,7 @@ static bool exports(const struct ln_game_module *module){
 }
 void ln_games_step(uint32_t now,bool visible,bool hold,bool may_write){
     if(reentrant)return;reentrant=true;
+    bool playing=music_playing();if(playing!=background_music){background_music=playing;++revision;}
     save_can_write=may_write;
     if(!visible){requested=UINT32_MAX;ln_games_stop();}
     if(phase==ACTIVE&&hold!=held){

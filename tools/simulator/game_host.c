@@ -30,6 +30,8 @@ static bool write_save(uint32_t schema,const void *data,uint32_t bytes){
 }
 static const char *titles[]={"Amber Sky","Blue River","Copper Moon","Distant Shore"};
 static uint32_t song=UINT32_MAX;
+static bool quiz_active,saved_music;
+static uint32_t saved_song;
 static uint32_t music_count(void){return 4u;}
 static bool title(uint32_t index,char *out,uint32_t capacity){
     if(index>=4u||!capacity)return false;
@@ -38,13 +40,18 @@ static bool title(uint32_t index,char *out,uint32_t capacity){
 static uint32_t music_current(void){return song;}
 static bool loading(void){return false;}
 static bool select_song(uint32_t index){if(index>=4u)return false;song=index;music_on=true;return true;}
-static void end_song(void){song=UINT32_MAX;music_on=false;}
+static bool begin_song(uint32_t index){
+    if(index>=4u)return false;
+    if(!quiz_active){saved_song=song;saved_music=music_on;quiz_active=true;}
+    return select_song(index);
+}
+static void end_song(void){if(quiz_active){song=saved_song;music_on=saved_music;quiz_active=false;}}
 static bool pause_song(bool paused){music_on=!paused;return true;}
 static void toggle_song(void){music_on=!music_on;}
 static bool music_playing(void){return music_on;}
 static struct ln_game_host host={LN_GAME_ABI,sizeof host,0,
     &ln_ui_font,&ln_ui_hint_font,&ln_ui_clock_font,time_us,best,record,read_save,write_save,
-    music_count,title,music_current,loading,select_song,select_song,end_song,pause_song,toggle_song,music_playing};
+    music_count,title,music_current,loading,begin_song,select_song,end_song,pause_song,toggle_song,music_playing};
 bool ln_game_preview_init(const char *path){
     for(uint32_t i=0;i<GAME_PREVIEW_COUNT;++i)schemas[i]=game_previews[i].schema;
     int size=snprintf(directory,sizeof directory,"%s",path);return size>=0&&size<(int)sizeof directory;
@@ -104,7 +111,8 @@ uint32_t ln_games_deadline(uint32_t value){
 bool ln_games_playing(void){return module&&module->playing();}
 uint32_t ln_games_hud_revision(void){return revision+(module?module->revision():0);}
 void ln_games_draw(const struct ln_ui_canvas_context *context){if(module)module->draw(context);}
-const char *ln_games_text(const char *key){(void)key;return module?"":"Game preview unavailable";}
+const char *ln_games_text(const char *key){return key&&!strcmp(key,"Game music")?(music_on?"Play: Pause music":"Play: Start/resume music"):"";}
+void ln_games_music_toggle(void){toggle_song();++revision;}
 void ln_games_configure(uint32_t mask){(void)mask;}
 void ln_games_best_set(uint32_t index,uint16_t value){if(index<128u&&value>scores[index])scores[index]=value;}
 void ln_games_audio_step(void){}

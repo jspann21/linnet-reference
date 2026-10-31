@@ -52,6 +52,7 @@ __attribute__((weak)) void ln_games_best_set(uint32_t index,uint16_t value){(voi
 __attribute__((weak)) bool ln_games_playing(void){return false;}
 __attribute__((weak)) void ln_games_audio_step(void){}
 __attribute__((weak)) void ln_games_audio_stop(void){}
+__attribute__((weak)) void ln_games_music_toggle(void){}
 __attribute__((weak)) void ln_games_step(uint32_t now,bool visible,bool hold,bool may_write){(void)now;(void)visible;(void)hold;(void)may_write;}
 __attribute__((weak)) void ln_games_stop(void){}
 __attribute__((weak)) bool ln_games_quiesce(bool publish){(void)publish;return true;}
@@ -918,7 +919,8 @@ static void draw_node(struct painter*p,const struct ln_ui_node*n,struct ln_ui_st
     uint16_t fg=ln_ui_color(n->fg),bg=ln_ui_color(n->bg);int32_t row_h=(int32_t)row_height(n);
     if(s->scene==LN_UI_SCENE_VIDEO_CONTROLS&&n->kind==LN_UI_TEXT)fg=video_ink(fg);
     const char *node_text=s->scene==LN_UI_SCENE_GAMES&&same(n->text,"Game description")?
-        ln_games_description(s->selected):s->scene==LN_UI_SCENE_GAME_PLAY&&n->text&&
+        ln_games_description(s->selected):s->scene==LN_UI_SCENE_GAMES&&same(n->text,"Game music")?
+        ln_games_text("Game music"):s->scene==LN_UI_SCENE_GAME_PLAY&&n->text&&
         (same(n->text,"Game title")||same(n->text,"Game score")||same(n->text,"Game hint")||
          same(n->text,"Game overlay")||same(n->text,"Game detail"))?
         ln_games_text(n->text):ln_ui_clock_text(n,UINT32_MAX,ln_display_settings_text(n,UINT32_MAX,ln_ui_dynamic_text(n,UINT32_MAX,n->text)));
@@ -1204,6 +1206,9 @@ bool ln_ui_input(struct ln_ui_state*s,uint32_t kind,int32_t value){if(!s)return 
         if(result==3)return false;
         if(result==2){(void)ln_ui_show(s,"linnet.system.games");return true;}
         if(result){s->dirty|=8u;if(kind==2u)ln_ui_refresh(s);return true;}
+    }
+    if(!s->hold&&kind==2u&&s->scene==LN_UI_SCENE_GAMES&&((uint32_t)value&~s->buttons&2u)){
+        ln_games_music_toggle();s->buttons=(uint32_t)value;ln_ui_refresh(s);return true;
     }
     if(!s->hold&&kind==2u&&s->scene==LN_UI_SCENE_GAMES&&((uint32_t)value&~s->buttons&16u)&&ln_games_count()){
         ln_games_start(s->selected);s->buttons=(uint32_t)value;return ln_ui_show(s,"linnet.system.game-play");

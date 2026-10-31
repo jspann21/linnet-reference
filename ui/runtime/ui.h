@@ -45,6 +45,7 @@ uint32_t ln_games_hud_revision(void);
 bool ln_games_playing(void);
 void ln_games_audio_step(void);
 void ln_games_audio_stop(void);
+void ln_games_music_toggle(void);
 void ln_games_step(uint32_t now,bool visible,bool hold,bool may_write);
 void ln_games_stop(void);
 bool ln_games_quiesce(bool publish);

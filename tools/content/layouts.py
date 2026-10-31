@@ -244,9 +244,13 @@ def refine_scene(scene,theme,body):
         place(listing,12,126,196,26)
     elif sid=='games':
         footer_h=24 if style=='aurora' else 12
+        music_h=max(12,fh+1)
         if style=='aurora':y=34;bottom=172;h=bottom-y
-        place(listing,x,y,w-10,max(rh,h-footer_h-2))
-        for n in texts:place(n,x,bottom-footer_h,w,footer_h);n['flags']=64
+        place(listing,x,y,w-10,max(rh,h-footer_h-music_h-4))
+        for n in texts:
+            if n['text']=='Game music':place(n,x,bottom-footer_h-music_h,w,music_h)
+            else:place(n,x,bottom-footer_h,w,footer_h)
+            n['flags']=64
     elif sid=='clock':
         clock_h=2*fh+4
         row_h=max(20,fh+6)

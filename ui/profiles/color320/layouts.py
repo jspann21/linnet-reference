@@ -107,10 +107,13 @@ def apply_layout(scenes, theme):
         elif sid == 'games':
             # Menu rows use the theme metric, unlike VirtualList rows.
             step = 46 if style == 'blueprint' else theme['metrics']['row_height']
-            listing['h'] = ((h - 18) // step) * step
+            line = max(14, fh + 1)
+            listing['h'] = ((h - 2 * line - 4) // step) * step
             for node in texts:
                 if node['text'] == 'Game description':
-                    place(node, x, bottom - 14, w, 14); node['flags'] = 64
+                    place(node, x, bottom - line, w, line); node['flags'] = 64
+                elif node['text'] == 'Game music':
+                    place(node, x, bottom - 2 * line, w, line); node['flags'] = 64
                 else:
                     node['flags'] |= 2
         elif sid == 'music-search':
@@ -277,12 +280,14 @@ def apply_ipod_classic(scenes, theme):
             for n in texts:
                 place(n, 8, 217, 304, fh); n['flags'] = 0
         elif sid == 'games' and listing:
-            list_h = ((216 - fh - 8) // row) * row
+            list_h = ((216 - 2 * fh - 10) // row) * row
             place(listing, 0, 24, 312, list_h)
             place(scroll, 312, 24, 8, list_h)
             for n in texts:
                 if n['text'] == 'Game description':
                     place(n, 8, 240 - fh - 4, 304, fh); n['flags'] = 64
+                elif n['text'] == 'Game music':
+                    place(n, 8, 240 - 2 * fh - 6, 304, fh); n['flags'] = 64
                 else:
                     n['flags'] |= 2
         elif sid == 'clock' and listing:

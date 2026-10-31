@@ -22,6 +22,7 @@ uint32_t ln_games_hud_revision(void);
 bool ln_games_playing(void);
 void ln_games_audio_step(void);
 void ln_games_audio_stop(void);
+void ln_games_music_toggle(void);
 const char *ln_games_text(const char *key);
 void ln_games_configure(uint32_t mask);
 void ln_games_best_set(uint32_t index,uint16_t value);
