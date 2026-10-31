@@ -87,19 +87,22 @@ static void arm(bool drain)
     else {source=native(silence);count=click_block?click.left:CHUNK;real_block=false;
         if(!click_block){if(!starved)++state.underruns;starved=true;}}
     if(!count)return;
+    /* A short feedback tone needs no copy of the following unmodified music
+     * in IRQ context. Resume directly from the ring on the next completion. */
+    if(!drain&&click.left&&count>click.left)count=click.left;
 #if defined(LINNET_TARGET_VIDEO5G_M25)
     if(real_block&&fade_remaining){
-        uint32_t fade=count<fade_remaining?count:fade_remaining;
+        /* Arm only the onset. Copying the remainder of a 1024-frame block
+         * here can exhaust the 16-frame FIFO before DMA is rearmed. */
+        if(count>fade_remaining)count=fade_remaining;
         for(uint32_t i=0;i<count;i++){
             uint32_t sample=source[i];
-            if(i<fade){
-                int32_t gain=(int32_t)(64u-fade_remaining+i);
-                int32_t left=(int16_t)sample,right=(int16_t)(sample>>16);
-                sample=(uint16_t)(left*gain/64)|((uint32_t)(uint16_t)(right*gain/64)<<16);
-            }
+            int32_t gain=(int32_t)(64u-fade_remaining+i);
+            int32_t left=(int16_t)sample,right=(int16_t)(sample>>16);
+            sample=(uint16_t)(left*gain/64)|((uint32_t)(uint16_t)(right*gain/64)<<16);
             native(onset)[i]=sample;
         }
-        fade_remaining-=fade;source=native(onset);
+        fade_remaining-=count;source=native(onset);
     }
 #endif
     /* Never mix clicks into the zeros used for analog mute settling. */
@@ -171,6 +174,7 @@ bool ln_audio_init(uint32_t rate)
     click_owned=false;
     if(!ln_codec_rate_supported(rate))return false;
     bool warm=owned&&codec_ready&&!state.fault;
+    uint32_t old_rate=state.rate;
     int32_t volume=state.volume_db_tenths;
     if(warm){if(!ln_audio_halt())return false;}
     else if(!ln_audio_stop())return false;
@@ -181,7 +185,7 @@ bool ln_audio_init(uint32_t rate)
     if(warm){
         /* Analog paths and headphone gain remain latched across tracks. */
         state.volume_db_tenths=volume;
-        if(!ln_codec_rate(codec,rate))goto failed;
+        if(old_rate!=rate&&!ln_codec_rate(codec,rate))goto failed;
         goto stream_ready;
     }
     REG(0x70000020u)&=~0x300u;REG(0x70000010u)&=~0x03000000u;
@@ -347,7 +351,7 @@ void ln_audio_irq(void)
     if(tail_ramp){for(uint32_t i=0;i<64u;i++)native(silence)[i]=0;tail_ramp=false;}
     active=false;inflight=0;state.last_irq_us=started;
     if(draining)drain_ready=true;
-    else if(!warming&&((pause_pending&&(int32_t)(started-mute_until)>=0)||(finishing&&tail==head)||(click_block&&!state.playing))){
+    else if(!warming&&((pause_pending&&(int32_t)(started-mute_until)>=0)||(state.playing&&finishing&&tail==head)||(click_block&&!state.playing))){
         pause_pending=false;draining=true;drain_ready=false;drain_until=started;
 #if defined(LINNET_TARGET_VIDEO5G_M25)
         /* Even if soft mute has not settled, the last PCM sample reaches
