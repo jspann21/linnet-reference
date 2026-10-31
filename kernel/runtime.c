@@ -41,6 +41,7 @@ static bool photo_resume_loaded;
 #include "hal/api/audio.h"
 #include "services/music/player.h"
 #include "services/music/controller.h"
+#include "services/music/menu.h"
 #include "services/music/artwork.h"
 #include "services/music/coverflow.h"
 #include "services/music/browser.h"
@@ -74,6 +75,9 @@ static struct ln_input_state input;
 static struct ln_power_state power;
 static uint32_t last_injection, synthetic_flags, override_mask;
 static uint32_t sleep_count,wake_count,wake_at,animation_left,animation_at;
+#if defined(LINNET_AUDIO)
+static uint32_t sound_parent_first;
+#endif
 #if defined(LINNET_NATIVE_UI)
 /* Accumulate across the 32-bit microsecond clock wrap for long timeouts. */
 static uint64_t shutdown_idle_us;
@@ -83,6 +87,22 @@ static void shutdown_activity(void){shutdown_idle_us=0;shutdown_sample_at=ln_tim
 static uint32_t text_scroll_at=UINT32_MAX,palette_at=UINT32_MAX;
 #endif
 static uint32_t brightness=100;
+#if defined(LINNET_HARDWARE_CLICKER)
+static void click_feedback_stop(void){
+    ln_platform_click_stop();ln_audio_click_stop();
+}
+static void click_feedback(void){
+    uint8_t tone=ln_display_click_tone(),volume=ln_display_click_volume();
+    if(tone==1u||!volume){click_feedback_stop();return;}
+    uint8_t output=ln_display_click_output();
+    bool speaker=output==LN_CLICK_BOTH||output==LN_CLICK_SPEAKER||
+        (output==LN_CLICK_AUTO&&!shell->headphones);
+    bool headphones=shell->headphones&&(output==LN_CLICK_BOTH||output==LN_CLICK_HEADPHONES||output==LN_CLICK_AUTO);
+    /* A cold headphone sink may need codec setup; start it before the piezo. */
+    if(headphones)ln_audio_click(tone,volume,ln_music_output_volume());else ln_audio_click_stop();
+    if(speaker)ln_platform_click(tone,volume);else ln_platform_click_stop();
+}
+#endif
 static uint32_t backlight_deadline,backlight_timeout=30000000u;
 static bool backlight_idle,backlight_off;
 static bool first_frame_ready;
@@ -442,12 +462,13 @@ static void apply(uint32_t kind,int32_t value){
 #endif
 #if defined(LINNET_HARDWARE_CLICKER)
     bool changing_click=kind==LN_INPUT_BUTTON&&!shell->hold&&
-        scene_is(LN_UI_SCENE_MUSIC_SOUND)&&ln_music_sound_action(shell->selected)==13u&&
+        scene_is(LN_UI_SCENE_MUSIC_SOUND)&&ln_sound_menu_click(ln_music_sound_action(shell->selected))&&
         ((uint32_t)value&~shell->buttons&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV));
-    if(kind==LN_INPUT_HOLD&&value)ln_platform_click_stop();
+    if((kind==LN_INPUT_HOLD&&value)||
+       (kind==LN_INPUT_HEADPHONE&&((value!=0)!=(shell->headphones!=0))))click_feedback_stop();
     else if(!changing_click&&!scene_is(LN_UI_SCENE_GAME_PLAY)&&!shell->hold&&
             kind==LN_INPUT_BUTTON&&((uint32_t)value&~shell->buttons))
-        ln_platform_click(ln_display_click_tone());
+        click_feedback();
 #endif
     if((kind==LN_INPUT_WHEEL&&value&&!shell->hold)||
        (kind==LN_INPUT_BUTTON&&!shell->hold&&(uint32_t)value!=shell->buttons)||
@@ -457,6 +478,7 @@ static void apply(uint32_t kind,int32_t value){
        (kind==LN_INPUT_BUTTON&&!shell->hold&&((uint32_t)value&~shell->buttons)))shutdown_activity();
     uint32_t before=shell->scene;
 #endif
+    uint32_t wheel_selection=shell->selected,wheel_scene=shell->scene;
     bool handled=false,wheel_changed=false;
 #if defined(LINNET_NOTES)
     handled=ln_notes_input(shell,kind,value);
@@ -495,7 +517,7 @@ static void apply(uint32_t kind,int32_t value){
                 else if(pressed&LN_BUTTON_SELECT){bool show=scene_is(LN_UI_SCENE_VIDEO_PLAYER);if(ln_video_controls(show))(void)ln_ui_show(shell,show?"linnet.system.video-controls":"linnet.system.video-player");}
                 shell->buttons=(uint32_t)value;handled=true;dirty=true;ln_ui_refresh(shell);
             }
-        }else if(kind==LN_INPUT_WHEEL&&video_scene()){wheel_changed=ln_music_volume(value);handled=true;}
+        }else if(kind==LN_INPUT_WHEEL&&video_scene()){(void)ln_music_volume(value);handled=true;}
     }
     if((video_requested||ln_video_active()||ln_video_playback_pending())&&!video_scene()&&!scene_is(LN_UI_SCENE_VIDEOS)){
         video_requested=false;video_save();ln_video_stop();if(kind==LN_INPUT_BUTTON){shell->buttons=(uint32_t)value;handled=true;}
@@ -531,9 +553,9 @@ static void apply(uint32_t kind,int32_t value){
                 photo_navigation_update();photo_save();
             }
         }else if(kind==LN_INPUT_WHEEL&&scene_is(LN_UI_SCENE_PHOTOS_VIEWER)){
-            if(photo_wheel_mode==1u)wheel_changed=ln_photos_pan((int64_t)value*16,0);
-            else if(photo_wheel_mode==2u)wheel_changed=ln_photos_pan(0,(int64_t)value*16);
-            else wheel_changed=ln_photos_zoom(value);
+            if(photo_wheel_mode==1u)(void)ln_photos_pan((int64_t)value*16,0);
+            else if(photo_wheel_mode==2u)(void)ln_photos_pan(0,(int64_t)value*16);
+            else (void)ln_photos_zoom(value);
             photo_save();handled=true;
         }
     }
@@ -615,15 +637,18 @@ static void apply(uint32_t kind,int32_t value){
         }else if(scene_is(LN_UI_SCENE_MUSIC_SOUND)&&(pressed&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV|LN_BUTTON_MENU))){
             uint32_t row=shell->selected;
             if(pressed&LN_BUTTON_MENU){
-                if(ln_music_sound_back(&row)){shell->selected=row;shell->first_visible[shell->scene]=0;}
+                if(ln_music_sound_back(&row)){shell->selected=row;shell->first_visible[shell->scene]=sound_parent_first;}
                 else (void)ln_ui_back(shell);
-            }else if(ln_music_sound_action(row)>=14u){
-                if(pressed&LN_BUTTON_PREV){if(!ln_music_sound_back(&row))(void)ln_ui_back(shell);else shell->selected=row;}
-                else if(ln_music_sound_enter(row)){shell->selected=0;shell->first_visible[shell->scene]=0;}
+            }else if(ln_music_sound_action(row)>=LN_SOUND_CUSTOM_EQ){
+                if(pressed&LN_BUTTON_PREV){if(!ln_music_sound_back(&row))(void)ln_ui_back(shell);else {shell->selected=row;shell->first_visible[shell->scene]=sound_parent_first;}}
+                else {uint32_t first=ln_ui_first_visible(shell);
+                    if(ln_music_sound_enter(row)){sound_parent_first=first;shell->selected=0;shell->first_visible[shell->scene]=0;}}
             }else{
                 (void)ln_music_sound_adjust(row,(pressed&LN_BUTTON_PREV)?-1:1);
 #if defined(LINNET_HARDWARE_CLICKER)
-                if(ln_music_sound_action(row)==13u){ln_platform_click_stop();ln_platform_click(ln_display_click_tone());}
+                if(ln_sound_menu_click(ln_music_sound_action(row))){
+                    click_feedback_stop();click_feedback();
+                }
 #endif
             }
             ln_ui_refresh(shell);dirty=true;handled=true;
@@ -657,10 +682,9 @@ static void apply(uint32_t kind,int32_t value){
 #if defined(LINNET_COVERFLOW)
     if(kind==LN_INPUT_WHEEL&&!shell->hold&&scene_is(LN_UI_SCENE_COVER_FLOW)){wheel_changed=ln_coverflow_move(value);handled=true;}
 #endif
-    if(kind==LN_INPUT_WHEEL&&!shell->hold&&scene_is(LN_UI_SCENE_NOW_PLAYING)){wheel_changed=ln_music_volume(value);handled=true;}
+    if(kind==LN_INPUT_WHEEL&&!shell->hold&&scene_is(LN_UI_SCENE_NOW_PLAYING)){(void)ln_music_volume(value);handled=true;}
 #endif
     if(!handled&&ln_shell_input(shell,kind,value)){
-        wheel_changed=kind==LN_INPUT_WHEEL;
         dirty=true;
 #if defined(LINNET_AUDIO)
         /* Bind a newly selected music page before this input's frame renders.
@@ -670,11 +694,14 @@ static void apply(uint32_t kind,int32_t value){
 #endif
     }
 #if defined(LINNET_HARDWARE_CLICKER)
-    /* A batched/accelerated move is one accepted action. Rejected movement
-     * stays silent; the platform coalesces overlapping pulses without delaying
-     * input or queuing sounds for the rows skipped by a fast turn. */
-    if(wheel_changed&&!scene_is(LN_UI_SCENE_GAME_PLAY))ln_platform_click(ln_display_click_tone());
+    /* Feedback follows a changed selection, including service-owned lists.
+     * Contact, clamped movement and handled wheel events without navigation
+     * (clock editing, music volume, photo zoom) do not count as scrolled items. */
+    wheel_changed=wheel_changed||(kind==LN_INPUT_WHEEL&&!shell->hold&&
+        shell->scene==wheel_scene&&shell->selected!=wheel_selection);
+    if(wheel_changed&&!scene_is(LN_UI_SCENE_GAME_PLAY))click_feedback();
 #else
+    (void)wheel_selection;(void)wheel_scene;
     (void)wheel_changed;
 #endif
 #if defined(LINNET_PHOTOS)
@@ -685,7 +712,7 @@ static void apply(uint32_t kind,int32_t value){
     if(before!=shell->scene){
 #if defined(LINNET_HARDWARE_CLICKER)
         /* Do not carry a menu click into gameplay. */
-        if(scene_is(LN_UI_SCENE_GAME_PLAY))ln_platform_click_stop();
+        if(scene_is(LN_UI_SCENE_GAME_PLAY))click_feedback_stop();
 #endif
 #if defined(LINNET_AUDIO) && defined(LINNET_COVERFLOW)
         /* A ready Cover Flow revision belongs to this transition's frame.
@@ -702,7 +729,7 @@ static void apply(uint32_t kind,int32_t value){
            scene_is(LN_UI_SCENE_GAME_PLAY)==false){ln_games_audio_stop();}
 #if defined(LINNET_AUDIO)
         if(scene_is(LN_UI_SCENE_MUSIC_SOUND)){uint32_t row;
-            if(ln_music_sound_back(&row)){shell->selected=row;ln_ui_refresh(shell);}}
+            if(ln_music_sound_back(&row)){shell->selected=row;shell->first_visible[shell->scene]=sound_parent_first;ln_ui_refresh(shell);}}
 #endif
         retain_scene();
     }
@@ -1476,6 +1503,7 @@ void ln_runtime_idle(void){
     if(!sleeping&&!backlight_idle&&backlight_timeout&&(int32_t)(backlight_deadline-next)<0)next=backlight_deadline;
 #if defined(LINNET_AUDIO)
     uint32_t music_due=ln_music_deadline(now);if((int32_t)(music_due-next)<0)next=music_due;
+    uint32_t audio_due=ln_audio_deadline(now);if(audio_due!=UINT32_MAX&&(int32_t)(audio_due-next)<0)next=audio_due;
 #endif
     if(shutdown_tracking&&(int32_t)(shutdown_deadline-next)<0)next=shutdown_deadline;
     uint32_t power_due=ln_power_next_deadline();if((int32_t)(power_due-next)<0)next=power_due;

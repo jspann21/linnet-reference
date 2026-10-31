@@ -201,7 +201,7 @@ bool ln_display_reset(void){
 bool ln_display_diagnostic(uint32_t pattern){
 #if defined(LINNET_IMAGE_OS)
 #if !defined(LINNET_PROFILE_RELEASE)
-    if(pattern==0x4d250028u){ln_platform_click(0u);return true;}
+    if(pattern==0x4d250028u){ln_platform_click(0u,4u);return true;}
     if(pattern==0x4d25002bu)return ln_m25_coprocessor_control(6u);
     if(pattern>=0x4d250015u&&pattern<=0x4d250016u)return ln_m25_coprocessor_fault(pattern-0x4d250014u);
 #endif

@@ -22,7 +22,7 @@ def build(serial, output=None):
     inputs=[*sources,*probe_sources,ROOT/'hal/api/power.h',ROOT/'hal/s5l8702/watchdog.h',ROOT/'hal/s5l8702/aes.h',ROOT/'hal/api/audio.h',ROOT/'hal/arm926/mmu.h',ROOT/'hal/s5l8702/usb.h',ROOT/'hal/s5l8702/boot_state.h',ROOT/'hal/s5l8702/timer.h',ROOT/'hal/s5l8702/irq.h',board.parent/'flash.h',ROOT/'hal/s5l8702/spi.h',ROOT/'hal/arm926/cache.h',ROOT/'hal/pmu/pcf50635.h',ROOT/'hal/s5l8702/pcm_dma.h',board.parent/'board.h',ROOT/'hal/api/input.h',ROOT/'hal/api/display.h',ROOT/'hal/api/ata.h',ROOT/'hal/api/core.h',ROOT/'hal/codecs/codec.h',ROOT/'hal/s5l8702/board.h',board.parent/'panel.h',ROOT/'hal/s5l8702/lcd_bus.h',ROOT/'hal/s5l8702/i2c.h',ROOT/'hal/s5l8702/ata_pio.h',ROOT/'services/storage/fat32.h',board/'memory.ld',board/'rom_transfer.S',board/'sram_bridge.S',ROOT/'hal/s5l8702/registers.h',
             ROOT/'hal/api/usb.h',ROOT/'hal/link/link.h',ROOT/'boot/include/linnet_bytes.h',
             ROOT/'boot/include/linnet_boot.h',ROOT/'boot/include/loader.h',ROOT/'boot/include/sha256.h',ROOT/'hal/link/dispatch.h',ROOT/'boot/src/crc32.inc',Path(__file__)]
-    inputs.extend([ROOT/'hal/api/platform.h',ROOT/'ui/profiles/color320/boot_font.h'])
+    inputs.extend([ROOT/'hal/api/platform.h',ROOT/'hal/api/click_pcm.h',ROOT/'ui/profiles/color320/boot_font.h'])
     digest=hashlib.sha256(serial.encode())
     for path in inputs:digest.update(path.read_bytes())
     digest.update(json.dumps({k:v['sha256'] for k,v in chain.items()},sort_keys=True).encode())
@@ -32,9 +32,11 @@ def build(serial, output=None):
     flags=['-DLINNET_SRAM_MONITOR=1','--target=arm-none-eabi','-mcpu=arm926ej-s','-marm','-Oz','-ffreestanding','-fno-builtin',
            '-fdata-sections','-ffunction-sections','-fno-unwind-tables','-fno-asynchronous-unwind-tables',
            '-Wall','-Wextra','-Werror','-I'+str(ROOT),'-I'+str(ROOT/'boot/include'),'-I'+str(out)]
+    # Full LTO keeps the shared audio/control code inside the fixed NOR slot.
+    # Assembly retains its explicit ABI; the same SRAM and payload bounds apply.
     objects=[]
     for index,source in enumerate(sources):
-        obj=out/f'{index}.o';run([chain['compiler']['path'],*flags,'-c',source,'-o',obj]);objects.append(obj)
+        obj=out/f'{index}.o';run([chain['compiler']['path'],*flags,*(['-flto'] if source.suffix=='.c' else []),'-c',source,'-o',obj]);objects.append(obj)
     run([chain['linker']['path'], '-m', 'armelf','-T',board/'memory.ld','--gc-sections','-o',out/'monitor.elf',*objects])
     symbols=run([chain['nm']['path'],'-n',out/'monitor.elf'])
     bss_end=re.search(r'^([0-9a-fA-F]+) B __bss_end$',symbols,re.M)
@@ -50,7 +52,7 @@ def build(serial, output=None):
     run([chain['objcopy']['path'],'-O','binary',out/'rom_transfer.elf',out/'rom_transfer.bin'])
     probe_objects=[]
     for index,source in enumerate(probe_sources):
-        obj=out/f'probe-{index}.o';run([chain['compiler']['path'],*flags,'-DLINNET_DFU_PROBE=1','-c',source,'-o',obj]);probe_objects.append(obj)
+        obj=out/f'probe-{index}.o';run([chain['compiler']['path'],*flags,*(['-flto'] if source.suffix=='.c' else []),'-DLINNET_DFU_PROBE=1','-c',source,'-o',obj]);probe_objects.append(obj)
     run([chain['linker']['path'], '-m', 'armelf','-T',board/'memory.ld','--gc-sections','-o',out/'probe.elf',*probe_objects])
     run([chain['objcopy']['path'],'-O','binary',out/'probe.elf',out/'probe.bin'])
     probe=(out/'probe.bin').read_bytes()
@@ -63,7 +65,7 @@ def build(serial, output=None):
     bridge_image=pack(bridge,'dev',build_id,0x08000000,0x08000000,'classic6g-n25')
     (out/'monitor-bridge.lnos').write_bytes(bridge_image)
     report=dict(target_id='classic6g-n25',serial=serial,build_id=build_id,load_address=0x22000000,
-                monitor_bytes=len(payload),monitor_sha256=hashlib.sha256(payload).hexdigest(),
+                link_time_optimization='full',monitor_bytes=len(payload),monitor_sha256=hashlib.sha256(payload).hexdigest(),
                 bridge_bytes=len(bridge),bridge_sha256=hashlib.sha256(bridge_image).hexdigest(),
                 transfer_sha256=hashlib.sha256(transfer).hexdigest(),probe_sha256=hashlib.sha256(probe).hexdigest(),hardware_verified=False)
     def offset(name, expected):

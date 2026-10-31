@@ -68,7 +68,7 @@ def create(output, installer_output=None):
         from tools.studio.targets import TARGETS
         prepared_games=work/'prepared-games'
         for target,spec in TARGETS.items():
-            if not spec['capabilities']['games']:continue
+            if not spec['capabilities'].get('games',False):continue
             built=ROOT/'out/game-packages'/target;build_library(target,built)
             destination=prepared_games/target;destination.mkdir(parents=True)
             for path in library_files(built,target):

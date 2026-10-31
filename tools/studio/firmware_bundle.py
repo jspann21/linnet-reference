@@ -51,7 +51,7 @@ def create(target, output, jobs=2):
     from tools.content.apple_font import check_packaged_assets
     check_packaged_assets(ROOT)
     payloads = {"README.txt": PACKAGE_README.encode("utf-8")}
-    if target_spec(target)['capabilities']['games']:
+    if target_spec(target)['capabilities'].get('games',False):
         from tools.studio.game_build import build_library,library_files
         prepared=ROOT/'out/game-packages'/target
         build_library(target,prepared)

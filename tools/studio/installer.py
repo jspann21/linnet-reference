@@ -763,7 +763,7 @@ def build_artifacts(identity, progress=lambda _message: None, build="user",
                       boot_build_id=boot_report["build_id"],
                       installation_method=installation_method, boot_selector=boot_selector)
     _validate_artifacts(identity, artifacts)
-    if TARGETS[target]['capabilities']['games']:
+    if TARGETS[target]['capabilities'].get('games',False):
         from tools.studio.game_build import build_library
         progress('Preparing native game packages…')
         artifacts['game_library']=build_library(target,ROOT/'out/game-packages'/target)['directory']
@@ -941,7 +941,7 @@ def _package_storage(identity, artifacts, transaction, archive=None):
         if current.get("size") != identity["disk_bytes"]:
             raise ValueError("disk changed during playlist provisioning")
     provision_collections(Path(identity["root"]) / ".LINNET", guard_collections)
-    if TARGETS[identity['target_id']]['capabilities']['games'] and artifacts.get('game_library'):
+    if TARGETS[identity['target_id']]['capabilities'].get('games',False) and artifacts.get('game_library'):
         from tools.content import games
         selected=games.read(identity)
         games.save(identity,selected,library=artifacts['game_library'])
@@ -1269,7 +1269,7 @@ def _install(identity, progress=lambda _message: None, build="user", installatio
             report = _run_build(arguments)
             image = ROOT / report["artifacts"]["los"]
             game_library=None
-            if TARGETS[reviewed['identity']['target_id']]['capabilities']['games']:
+            if TARGETS[reviewed['identity']['target_id']]['capabilities'].get('games',False):
                 from tools.studio.game_build import build_library
                 game_library=build_library(reviewed['identity']['target_id'],ROOT/'out/game-packages'/reviewed['identity']['target_id'])['directory']
         else:

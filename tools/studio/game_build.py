@@ -105,7 +105,7 @@ def build(manifest, target, output):
     if target not in game['targets'] or set(game['capabilities'])-{'music'}:
         raise ValueError('Game does not support the requested target/capabilities')
     spec=target_spec(target)
-    if not spec['capabilities']['games']:
+    if not spec['capabilities'].get('games',False):
         raise ValueError('Games are unsupported on this target')
     output=Path(output).resolve();output.mkdir(parents=True,exist_ok=True)
     from tools.content.game_assets import prepare

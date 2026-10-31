@@ -50,7 +50,7 @@ def package(payload, *, target, game_id, title, description='', bss=0, entry=0,
             capabilities=0, legacy=0xffffffff, stack=8192, text=None, schema=1, version=1):
     spec = target_spec(target)
     identity(game_id); _legacy(game_id, legacy)
-    if not spec['capabilities']['games'] or spec['endianness'] != 'little':
+    if not spec['capabilities'].get('games',False) or spec['endianness'] != 'little':
         raise ValueError('Target does not support native games')
     text=len(payload) if text is None else text
     if (len(payload)<32 or len(payload)&31 or len(payload) > SLOT_BYTES
@@ -94,7 +94,7 @@ def inspect(data, target=None):
         raise ValueError('Game title is empty')
     if target is not None:
         spec=target_spec(target)
-        if not spec['capabilities']['games'] or number != spec['image_target'] or load != spec['load_address']+SLOT_OFFSET:
+        if not spec['capabilities'].get('games',False) or number != spec['image_target'] or load != spec['load_address']+SLOT_OFFSET:
             raise ValueError('Game package belongs to a different device')
     return dict(id=game_id,title=title,description=description,target=number,load=load,
                 payload=length,bss=bss,entry=entry,capabilities=caps,legacy=legacy,
@@ -104,7 +104,7 @@ def inspect(data, target=None):
 
 def catalogue(rows, *, generation, target):
     spec=target_spec(target)
-    if not spec['capabilities']['games'] or type(generation) is not int or not 0 < generation < 0xffffffff or len(rows)>CATALOGUE_MAX:
+    if not spec['capabilities'].get('games',False) or type(generation) is not int or not 0 < generation < 0xffffffff or len(rows)>CATALOGUE_MAX:
         raise ValueError('Game catalogue exceeds generation or count limits')
     data=bytearray(struct.pack('<8I',0x43474e4c,1,generation,spec['image_target'],len(rows),ROW_BYTES,0,0))
     seen=set();names=set();slots=set()

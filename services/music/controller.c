@@ -189,6 +189,9 @@ static int32_t output_volume(void){
     if(value>profile.max_volume_db_tenths)value=profile.max_volume_db_tenths;
     return value< -730?-730:value;
 }
+int32_t ln_music_output_volume(void){
+    int32_t value=output_volume();return value>profile.max_volume_db_tenths?profile.max_volume_db_tenths:value;
+}
 const char *ln_music_notice(void){return notice;}
 __attribute__((noinline)) bool ln_music_loading(void){return file_waiting||selecting||have_waiting||manual_next_pending||resolver_kind==1
 #if defined(LINNET_FILES)
@@ -313,6 +316,9 @@ const char *ln_music_sound_label(uint32_t row){
     if(index==LN_SOUND_CUSTOM_EQ)return "Custom EQ";
     if(index==LN_SOUND_MORE)return "Advanced";
     if(index==LN_SOUND_CLICKER)return ln_display_click_label();
+    if(index==LN_SOUND_CLICK_VOLUME)return ln_display_click_volume_label();
+    if(index==LN_SOUND_CLICK_ENABLE)return ln_display_click_enabled_label();
+    if(index==LN_SOUND_CLICK_OUTPUT)return ln_display_click_output_label();
     static char balance[24],preamp[24],levels[7][24];
     static const char *const modes[]={"Channels: Stereo","Channels: Mono","Channels: Left","Channels: Right","Channels: Karaoke"};
     if(index==0&&profile.preset==LN_MUSIC_EQ_CUSTOM)return "EQ: Custom";
@@ -407,6 +413,9 @@ bool ln_music_sound_adjust(uint32_t row,int32_t direction){
     uint32_t index=ln_music_sound_action(row);
     if(shutting_down||index>=LN_SOUND_CUSTOM_EQ||!direction)return false;
     if(index==LN_SOUND_CLICKER)return ln_display_click_adjust(direction);
+    if(index==LN_SOUND_CLICK_VOLUME)return ln_display_click_volume_adjust(direction);
+    if(index==LN_SOUND_CLICK_ENABLE)return ln_display_click_enabled_adjust(direction);
+    if(index==LN_SOUND_CLICK_OUTPUT)return ln_display_click_output_adjust(direction);
     struct ln_music_profile next=profile;bool up=direction>0;
     if(index==0){
 #if LINNET_EXTENDED_SOUND
@@ -489,13 +498,9 @@ uint32_t ln_music_deadline(uint32_t now){
 }
 /* Menu rows map to stable service actions, shared by labels and selection. */
 uint32_t ln_music_option_action(uint32_t row){
-    static const uint8_t file_actions[]={8,12,5,9,10,6};
-    if(file_mode)return row<sizeof(file_actions)?file_actions[row]:UINT32_MAX;
-    /* Queue, playback settings, favorites/bookmarks, transport, stop. */
-    static const uint8_t actions[]={0,1,7,11,8,12,2,3,4,5,9,10,6};
-    return row<sizeof(actions)?actions[row]:UINT32_MAX;
+    return ln_music_menu_option_action(file_mode,row);
 }
-uint32_t ln_music_option_count(void){return file_mode?6u:13u;}
+uint32_t ln_music_option_count(void){return ln_music_menu_option_count(file_mode);}
 uint32_t ln_music_queue_action(uint32_t row){
     /* Play, move up/down, remove, clear. */
     static const uint8_t actions[]={0,2,3,1,4};
