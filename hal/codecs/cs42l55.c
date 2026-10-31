@@ -4,7 +4,7 @@
 #include "hal/api/core.h"
 static bool output_muted=true,lineout_enabled;
 static bool lineout(ln_codec_writer write,bool enabled,bool mute) {
-    uint16_t value=enabled&&!mute?0:0xc0;
+    uint16_t value=enabled&&!mute?0:0x80;
     bool left=write(0x1c,value),right=write(0x1d,value);return left&&right;
 }
 static uint8_t rate_value(uint32_t rate) {
@@ -32,7 +32,9 @@ bool ln_codec_lineout(ln_codec_writer write,bool enabled) {
 bool ln_codec_analog_mute(ln_codec_writer write,bool mute) {
     if(mute){
         output_muted=true;
-        bool left=write(0x1a,0xc0),right=write(0x1b,0xc0);
+        /* Bit 7 mutes; bits 0..6 are signed gain. Keep unity while muted,
+         * avoiding an extra -64 dB zero-cross gain change on every restart. */
+        bool left=write(0x1a,0x80),right=write(0x1b,0x80);
         bool dock=lineout(write,lineout_enabled,true);return left&&right&&dock;
     }
     if(!write(0x1a,0)||!write(0x1b,0)||!lineout(write,lineout_enabled,false))return false;

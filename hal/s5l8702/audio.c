@@ -36,6 +36,7 @@ static void copy_frames(uint32_t offset,const int16_t *samples,uint32_t frames) 
 static uint32_t silence[BLOCK] AUDIO_MEMORY;
 static volatile struct ln_audio_status status;
 static volatile uint32_t head,tail,inflight,armed,expected,previous,drain_until;
+static volatile uint32_t inflight_last;
 static volatile bool active,real,finishing,pause_pending,draining,starved,warming,start_armed,drain_ready,tail_ramp;
 static bool owned,codec_ready,lineout,muted,amplifier_open;
 static uint32_t frame_q12;
@@ -79,6 +80,7 @@ static bool arm(bool continuing) {
     if(!count)return false;
     const int16_t *samples=(const int16_t *)(real?ring+offset:silence);
     if(!silence_only&&ln_pcm_click_mix(&click,click_pcm,(const uint32_t *)samples,count))samples=(const int16_t *)click_pcm;
+    inflight_last=real?((const uint32_t *)samples)[count-1u]:0;
     bool ok=continuing?ln_s5l_pcm_rearm(samples,count):ln_s5l_pcm_begin(samples,count);
     if(!ok){fault(2);return false;}
     inflight=count;active=true;armed=ln_time_us();expected=(count*frame_q12+4095u)>>12;
@@ -289,12 +291,12 @@ void ln_audio_irq(void) {
     uint32_t elapsed=started-armed;
     if(elapsed>expected && elapsed-expected>status.max_completion_late_us)status.max_completion_late_us=elapsed-expected;
     uint32_t last_sample=0;
-    if(real){tail+=inflight;status.consumed+=inflight;last_sample=ring[(tail-1u)&MASK];}
+    if(real){tail+=inflight;status.consumed+=inflight;last_sample=inflight_last;}
     else if(!click_block)status.silence_frames+=inflight;
     if(tail_ramp){for(uint32_t i=0;i<64u;i++)silence[i]=0;tail_ramp=false;}
     active=false;inflight=0;status.last_irq_us=started;
     if(draining)drain_ready=true;
-    else if(!warming&&((pause_pending&&(int32_t)(started-mute_until)>=0)||(finishing&&head==tail)||(click_block&&!status.playing))){
+    else if(!warming&&((pause_pending&&(int32_t)(started-mute_until)>=0)||(status.playing&&finishing&&head==tail)||(click_block&&!status.playing))){
         /* The first deadline is "now", not zero: zero is in the future for
          * signed wrap-safe comparisons during the timer's upper half. */
         pause_pending=false;draining=true;drain_ready=false;drain_until=started;
