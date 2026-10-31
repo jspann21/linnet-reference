@@ -23,6 +23,7 @@ work remaining before release and possible future features.
 | --- | --- |
 | [Architecture](architecture.md) | Source map, boot/update model, and runtime services |
 | [SDK](../sdk/README.md) | Build apps, themes, and screens; use the simulator |
+| [Creating games](game-authoring.md) | Proposed game project layout, native interface, host preparation, and performance requirements |
 | [UI compiler](ui-compiler.md) | Static TSX compilation and the native renderer contract |
 | [Linnet Link](device-link.md) | USB diagnostics, input, captures, RAM boot, and persistent updates |
 | [Classic runtime power](classic-power.md) | Clock selection, idle deadlines, peripheral states, and qualification |

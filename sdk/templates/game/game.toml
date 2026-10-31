@@ -1,0 +1,14 @@
+[game]
+id = "example.wheel-counter"
+title = "Wheel Counter"
+description = "A native SDK starter game."
+author = "Example"
+license = "MIT"
+version = 1
+schema = 1
+targets = ["photo4g-p98", "video5g-m25", "classic6g-n25"]
+capabilities = []
+stack_bytes = 2048
+
+[build]
+sources = ["src/game.c"]
