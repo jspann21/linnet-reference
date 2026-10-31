@@ -329,6 +329,20 @@ Blocks, Reversi, Snake, Word Search, Scrub, Dial Heist, Mixtape, Signal,
 Clockwork City, and Pocket Pinball. Each game has its own on-device controls and
 best score. The Photo uses artwork drawn for its 220 × 176 display; Video and
 Classic use artwork drawn for 320 × 240.
+Games are independent target-specific `.LGM` packages. Saving choices installs
+selected packages; unchecked games leave the active catalogue. Their files are
+retired once neither retained catalogue references them. Game code and artwork
+are absent from base firmware and load only when launched. The fixed 256 KiB
+execution slot remains reserved even with no games installed.
+**Install game file…** adds a compatible custom package; **Remove selected game**
+removes it while retaining scores/progress. New games require no firmware rebuild.
+Firmware ZIPs and packaged Media Manager include prepared built-in packages.
+Source users can run `python linnet games build-library --target video5g-m25 --output out/game-packages/video5g-m25`
+for their target. See [game creation](game-authoring.md).
+When upgrading older firmware, install matching firmware and save Games before
+ejecting. The old `GAMES.BIN` mask is read for migration only; older firmware
+cannot load external packages. Explicit damaged-catalogue recovery archives
+metadata and preserves package and save files.
 **Screens** configures supported menus.
 See the [device menu hierarchy](navigation.md) for the default organization and
 controls. Save changes, eject, and restart to apply them. Game availability

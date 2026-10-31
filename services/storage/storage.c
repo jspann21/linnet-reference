@@ -32,14 +32,15 @@
 #endif
 
 static struct ln_fat32 volume;
-#define STORAGE_FILE_COUNT 16u
+#define STORAGE_FILE_COUNT 18u
 static struct ln_fat32_file files[STORAGE_FILE_COUNT],proof_files[STORAGE_FILE_COUNT];
 static const char *const paths[STORAGE_FILE_COUNT]={"/.LINNET/OS0.LOS","/.LINNET/OS1.LOS",
     "/.LINNET/BOOT0.BIN","/.LINNET/BOOT1.BIN","/.LINNET/STATE0.BIN",
     "/.LINNET/STATE1.BIN","/.LINNET/SCRATCH.BIN","/.LINNET/WORK.BIN",
     "/.LINNET/MUSIC0.BIN","/.LINNET/MUSIC1.BIN",
     "/.LINNET/UPDATE0.BIN","/.LINNET/UPDATE1.BIN",
-    "/.LINNET/THEME0.BIN","/.LINNET/THEME1.BIN", "/.LINNET/LISTS0.BIN", "/.LINNET/LISTS1.BIN"
+    "/.LINNET/THEME0.BIN","/.LINNET/THEME1.BIN", "/.LINNET/LISTS0.BIN", "/.LINNET/LISTS1.BIN",
+    "/.LINNET/GMSAVE0.BIN","/.LINNET/GMSAVE1.BIN"
 };
 static uint8_t mbr[512] __attribute__((aligned(32)));
 static uint32_t phase,error,found,opening,epoch=1,request,request_generation,request_sectors;
@@ -456,6 +457,17 @@ bool ln_storage_startup_complete(void){return phase==6||phase==9;}
 bool ln_storage_prepared(void){return ln_storage_mounted()&&volume.mounted==1&&volume.write_proven&&(found&127u)==127u&&files[0].size==LINNET_OS_CAPACITY&&files[1].size==LINNET_OS_CAPACITY&&
     files[2].size==512&&files[3].size==512&&files[4].size==512&&files[5].size==512&&files[6].size==0x400000u;}
 uint32_t ln_storage_capacity(uint32_t file){return file<STORAGE_FILE_COUNT&&(found&(1u<<file))?files[file].size:0;}
+bool ln_storage_game_saves_available(void){
+    if(!ln_storage_prepared()||ln_storage_capacity(LN_STORAGE_GAMESAVE0)!=524288u||
+       ln_storage_capacity(LN_STORAGE_GAMESAVE1)!=524288u)return false;
+    struct ln_ata_info info;ln_ata_snapshot(&info);
+    uint32_t unit=info.physical_sector_bytes;
+    if(unit<512u||unit>4096u||(unit&(unit-1u)))return false;
+    uint32_t sectors=unit>>9;
+    return volume.write_proven&&volume.sectors_per_cluster>=sectors&&
+        !(volume.sectors_per_cluster&(sectors-1u))&&!(volume.data_start&(sectors-1u));
+}
+
 int ln_storage_prepare_writes(void){
     if(ln_storage_busy())return 0;
     if(ln_storage_prepared())return 1;

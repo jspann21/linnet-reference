@@ -8,6 +8,10 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#ifdef LN_GAME_PREVIEWS
+extern bool ln_game_preview_init(const char *path);
+extern bool ln_game_preview_ready(void);
+#endif
 static uint32_t sample_battery=80u,sample_clock=9u*3600u+41u*60u,sample_playback,sample_modes;
 static bool sample_art,sample_more;
 static bool sample_video_frame;
@@ -207,11 +211,12 @@ static void menu_input(struct ln_ui_state *s,uint32_t kind,int32_t value){
     if(handled){s->buttons=(uint32_t)value;ln_ui_refresh(s);}else ln_ui_input(s,kind,value);
 }
 int main(int argc,char **argv){
-    if(argc<2||argc>4)return 2;
-    bool all_scenes=false,optional_font=false;
+    if(argc<2||argc>5)return 2;
+    bool all_scenes=false,optional_font=false,game_preview=false;
     for(int i=2;i<argc;++i){
         if(!strcmp(argv[i],"--all-scenes")&&!all_scenes)all_scenes=true;
         else if(!strcmp(argv[i],"--apple-font")&&!optional_font)optional_font=true;
+        else if(!strcmp(argv[i],"--game")&&!game_preview)game_preview=true;
         else return 2;
     }
     if(optional_font){
@@ -223,9 +228,21 @@ int main(int argc,char **argv){
     }
     for(uint32_t y=0;y<LINNET_UI_HEIGHT;++y)for(uint32_t x=0;x<LINNET_UI_WIDTH;++x)
         sample_video_pixels[y*LINNET_UI_WIDTH+x]=(uint16_t)(((x*31u/LINNET_UI_WIDTH)<<11)|((y*63u/LINNET_UI_HEIGHT)<<5)|10u);
-    struct ln_ui_state state;ln_ui_init(&state);ln_ui_render(&state,pixels,damage);
+#ifdef LN_GAME_PREVIEWS
+    if(!ln_game_preview_init(argv[1]))return 8;
+#endif
+    struct ln_ui_state state;ln_ui_init(&state);
+    if(game_preview){if(!ln_games_count())return 8;(void)ln_ui_show(&state,"linnet.system.game-play");ln_games_start(0);
+#ifdef LN_GAME_PREVIEWS
+        if(!ln_game_preview_ready()){fprintf(stderr,"Game preview could not load or start the native module\n");return 8;}
+#endif
+    }
+    ln_ui_render(&state,pixels,damage);
     if(!snapshot(&state,argv[1],0))return 3;
     uint32_t kind,repeat,capture,index=0,total=0,simulated_us=0;int32_t value;
+#ifdef LN_GAME_PREVIEWS
+    uint32_t game_revision=ln_games_hud_revision();
+#endif
     while(scanf("%u %d %u %u",&kind,&value,&repeat,&capture)==4){
         if(kind>12u||!repeat||repeat>100000u||total>100000u-repeat||capture>1u)return 4;
         for(uint32_t i=0;i<repeat;++i){if(kind<=4u&&kind)menu_input(&state,kind,value);
@@ -243,7 +260,14 @@ int main(int argc,char **argv){
                 sample_modes=action==LINNET_UI_ACTION_SHUFFLE?sample_modes^1u:(sample_modes&1u)|((((sample_modes>>1)+1u)%3u)<<1);
                 ln_ui_refresh(&state);
             }
-            simulated_us+=33333u;if(ln_games_tick(simulated_us))ln_ui_refresh(&state);
+            simulated_us+=33333u;
+#ifdef LN_GAME_PREVIEWS
+            ln_games_step(simulated_us,state.scene==LN_UI_SCENE_GAME_PLAY,state.hold,true);
+            if(ln_games_take_exit())(void)ln_ui_show(&state,"linnet.system.games");
+            uint32_t next_game_revision=ln_games_hud_revision();
+            if(next_game_revision!=game_revision){game_revision=next_game_revision;ln_ui_refresh(&state);}
+#endif
+            if(ln_games_tick(simulated_us))ln_ui_refresh(&state);
             clock_step(&state);(void)ln_ui_scroll_tick(&state,simulated_us);
             (void)ln_ui_palette_tick(&state,simulated_us);
             ln_ui_render(&state,pixels,damage);save_presented=ln_clock_editor_pending();}

@@ -8,7 +8,7 @@ import uuid
 import zipfile
 
 from tools.inspect.image import inspect, verify_release
-from tools.studio.targets import ROOT, target_id
+from tools.studio.targets import ROOT, target_id, target_spec
 
 
 OS_NAME = "firmware/linnet-os"
@@ -51,6 +51,13 @@ def create(target, output, jobs=2):
     from tools.content.apple_font import check_packaged_assets
     check_packaged_assets(ROOT)
     payloads = {"README.txt": PACKAGE_README.encode("utf-8")}
+    if target_spec(target)['capabilities']['games']:
+        from tools.studio.game_build import build_library,library
+        prepared=ROOT/'out/game-packages'/target
+        build_library(target,prepared)
+        paths=library(prepared,target)
+        payloads['games/library.json']=(prepared/'library.json').read_bytes()
+        for path in paths.values():payloads['games/'+path.name]=path.read_bytes()
     for kind, selector in (("os", "none"), ("boot", "none"), ("boot", "rockbox")):
         report = build("release", target, verify=True, kind=kind, boot_selector=selector, jobs=jobs)
         name = OS_NAME if kind == "os" else BOOT_NAMES[selector]
@@ -104,7 +111,13 @@ def load(path, identity, installation_method, *, verify_only=False):
         with zipfile.ZipFile(path) as bundle:
             entries = bundle.infolist()
             names={item.filename for item in entries}
-            files=FILES | (CLASSIC_FILES if identity['target_id']=='classic6g-n25' else set())
+            game_files={name for name in names if name.startswith('games/')}
+            from tools.content.game_package import FILE_PATTERN,CATALOGUE_MAX
+            if (len(game_files)>CATALOGUE_MAX+1 or any(name!='games/library.json' and
+                    not FILE_PATTERN.fullmatch(name.removeprefix('games/')) for name in game_files)
+                    or game_files and 'games/library.json' not in game_files):
+                raise ValueError('Invalid prepared games in firmware bundle')
+            files=FILES | (CLASSIC_FILES if identity['target_id']=='classic6g-n25' else set()) | game_files
             if (len(entries) != len(files) + 1 or
                     names != files | {"manifest.json"} or
                     any(item.file_size > MAX_BYTES for item in entries) or
@@ -135,6 +148,11 @@ def load(path, identity, installation_method, *, verify_only=False):
         for name, data in payloads.items():
             (staging / name).parent.mkdir(parents=True, exist_ok=True)
             (staging / name).write_bytes(data)
+        if game_files:
+            from tools.studio.game_build import library
+            prepared=library(staging/'games',identity['target_id'])
+            if game_files!={'games/library.json'}|{'games/'+p.name for p in prepared.values()}:
+                raise ValueError('Firmware game library contains unlisted files')
         def artifacts(directory):
             return dict(os_image=str(directory / (OS_NAME + ".los")), os_report=str(directory / (OS_NAME + ".json")),
                         boot_image=str(directory / (boot_name + ".los")),
@@ -143,7 +161,8 @@ def load(path, identity, installation_method, *, verify_only=False):
                         build="user", os_profile="release",
                         os_build_id=inspect(payloads[OS_NAME + ".los"])["build_id"],
                         boot_build_id=inspect(payloads[boot_name + ".los"])["build_id"],
-                        installation_method=method, boot_selector=selector)
+                        installation_method=method, boot_selector=selector,
+                        game_library=str(directory/'games') if game_files else None)
         _validate_artifacts(identity, artifacts(staging))
         if verify_only:
             return None

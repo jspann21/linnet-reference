@@ -12,3 +12,7 @@ stack_bytes = 2048
 
 [build]
 sources = ["src/game.c"]
+
+[[build.assets]]
+name = "counter_marker"
+source = "assets/marker.ppm"

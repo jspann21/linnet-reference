@@ -50,3 +50,31 @@ bool ln_game_header_decode(const uint8_t p[256],uint32_t target,uint32_t load,
        !text(h.title,p+128,40)||!h.title[0]||!text(h.description,p+168,48))return false;
     *out=h;return true;
 }
+bool ln_game_catalogue_header(const uint8_t *p,uint32_t bytes,uint32_t target,
+                             uint32_t *generation,uint32_t *count){
+    if(!p||bytes<36u||bytes>LN_GAME_CATALOGUE_BYTES||ln_read_le32(p)!=0x43474e4cu||
+       ln_read_le32(p+4)!=1u||ln_read_le32(p+12)!=target||ln_read_le32(p+20)!=256u||
+       !ln_bytes_zero(p+24,8))return false;
+    uint32_t n=ln_read_le32(p+16),g=ln_read_le32(p+8);
+    if(n>LN_GAME_CATALOGUE_MAX||bytes!=36u+n*256u||!g||g==UINT32_MAX)return false;
+    *generation=g;*count=n;return true;
+}
+static bool padded(const uint8_t *p,uint32_t bytes){
+    bool ended=false;for(uint32_t i=0;i<bytes;++i){
+        if(!p[i])ended=true;else if(ended||p[i]<32u||p[i]>126u)return false;
+    }return ended;
+}
+bool ln_game_catalogue_row(const uint8_t *data,uint32_t index){
+    if(!data||index>=ln_read_le32(data+16)||index>=LN_GAME_CATALOGUE_MAX)return false;
+    const uint8_t *p=data+32u+index*256u;
+    if(!padded(p,64)||!ln_game_identity((const char *)p)||!ln_game_legacy_identity((const char *)p,ln_read_le32(p+208))||
+       !padded(p+64,40)||!p[64]||!padded(p+104,80)||!ln_bytes_zero(p+197,3)||!ln_bytes_zero(p+220,36))return false;
+    for(uint32_t i=0;i<8u;++i)if(!((p[184+i]>='A'&&p[184+i]<='Z')||(p[184+i]>='0'&&p[184+i]<='9')))return false;
+    if(p[192]!='.'||p[193]!='L'||p[194]!='G'||p[195]!='M'||p[196])return false;
+    uint32_t bytes=ln_read_le32(p+200),slot=ln_read_le32(p+216);
+    if(bytes<288u||bytes>256u+LN_GAME_SLOT_BYTES||((bytes-256u)&31u)||
+       (ln_read_le32(p+212)&~LN_GAME_CAP_ALL)||slot>=LN_GAME_CATALOGUE_MAX)return false;
+    for(uint32_t i=0;i<index;++i){const uint8_t *q=data+32u+i*256u;
+        if(ln_bytes_equal(p,q,64)||ln_bytes_equal(p+184,q+184,13)||slot==ln_read_le32(q+216))return false;}
+    return true;
+}

@@ -14,6 +14,7 @@ import subprocess
 import tomllib
 import uuid
 from tools.inspect.image import pack, inspect, verify_release
+from tools.content.game_package import SLOT_OFFSET as GAME_SLOT_OFFSET, SLOT_BYTES as GAME_SLOT_BYTES
 from tools.studio.object_cache import file_stamp as _tool_stamp
 from tools.studio.targets import LCD_FORMATS, ROOT, RUNTIME_POLICIES, presentation_defines, resolved_target_spec, target_id
 
@@ -122,7 +123,9 @@ def memory_budget(sections, spec, resident_limit):
     """Report linked placement and separate manifest reservations, not a sum of lifetimes."""
     base = spec['load_address']
     capacity = spec['os_capacity_bytes']
-    resident = [item for item in sections if base <= item['address'] < base + capacity]
+    slot = [item for item in sections if item['name'] == '.game_slot']
+    if slot:resident_limit=min(resident_limit,GAME_SLOT_OFFSET)
+    resident = [item for item in sections if base <= item['address'] < base + capacity and item['name'] != '.game_slot']
     extent = max((item['address'] + item['bytes'] - base for item in resident), default=0)
     artwork = [item for item in sections if item['name'] in
                ('.cover_low', '.cover_high', '.cover_catalog')]
@@ -132,7 +135,10 @@ def memory_budget(sections, spec, resident_limit):
                 spec['mailbox_address'] + spec['mailbox_bytes']]
     return dict(
         basis='linked sections and manifest reservations; runtime high-water is not measured',
-        resident=dict(address=base, capacity_bytes=capacity, limit_bytes=resident_limit,
+        game_overlay=dict(reserved_bytes=sum(item['bytes'] for item in slot),
+                          address=slot[0]['address'] if slot else None,
+                          active_package_bytes='Reported separately by game loader; reservation is not heap'),
+        resident=dict(address=base, capacity_bytes=GAME_SLOT_OFFSET if slot else capacity, limit_bytes=resident_limit,
                       linked_extent_bytes=extent, headroom_bytes=resident_limit - extent,
                       linked_section_bytes=sum(item['bytes'] for item in resident),
                       stack_bytes=sum(item['bytes'] for item in resident if item['name'] == '.stacks')),
@@ -251,6 +257,8 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         f'#define LINNET_LOAD_ADDRESS {spec["load_address"]}',
         f'#define LINNET_ENTRY_ADDRESS {spec["entry_address"]}',
         f'#define LINNET_OS_CAPACITY {spec["os_capacity_bytes"]}',
+        f'#define LINNET_GAME_SLOT_OFFSET {GAME_SLOT_OFFSET}',
+        f'#define LINNET_GAME_SLOT_BYTES {GAME_SLOT_BYTES}',
         f'#define LINNET_STAGE_ADDRESS {spec["stage_address"]}',
         f'#define LINNET_STAGE_CAPACITY {spec["stage_bytes"]}',
         f'#define LINNET_LOADER_SNAPSHOT {spec["recovery_snapshot_address"]}',
@@ -380,6 +388,10 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
         add_sources([generated/"linnet_ui.c"], "generated OS UI",
                     ('-O2',) if ui_report['features'].get('cover_flow', False) else ())
         add_sources([ROOT/"services/display/settings.c"], "OS display settings")
+        if ui_report.get('native_linked'):
+            add_sources([ROOT/name for name in ui_report['native_linked']], 'linked native canvas services')
+        if 'services/games/manager.c' in ui_report.get('native_linked',[]):
+            add_sources([ROOT/'services/games/package.c',ROOT/'services/games/saves.c'], 'native game format and saves')
     compiler_target = "arm-none-eabi" if spec["endianness"] == "little" else "armeb-none-eabi"
     flags = [f"--target={compiler_target}", f'-mcpu={spec["cpu"]}', f'-march={spec["architecture"]}', "-marm", "-mfloat-abi=soft", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-fno-unwind-tables", "-fno-asynchronous-unwind-tables", "-ffunction-sections", "-fdata-sections", optimization, "-Wall", "-Wextra", "-Werror", "-I.", "-Iboot/include", f"-DLINNET_PROFILE_{profile.upper()}=1", f"-DLINNET_IMAGE_{kind.upper()}=1", f'-D{spec["target_define"]}=1']
     flags += ["-I" + str(generated), f"-DLINNET_PROBE_CRASH={int(probe == 'crash')}", f"-DLINNET_PROBE_HANG={int(probe == 'hang')}"]

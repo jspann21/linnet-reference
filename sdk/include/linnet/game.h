@@ -79,5 +79,10 @@ struct ln_game_module {
 };
 typedef const struct ln_game_module *(*ln_game_entry)(const struct ln_game_host *);
 /* The package entry is linked at a fixed, versioned target slot by the SDK. */
-const struct ln_game_module *ln_game_entry_point(const struct ln_game_host *host);
+#if defined(_WIN32)
+#define LN_GAME_EXPORT __declspec(dllexport)
+#else
+#define LN_GAME_EXPORT
+#endif
+LN_GAME_EXPORT const struct ln_game_module *ln_game_entry_point(const struct ln_game_host *host);
 #endif

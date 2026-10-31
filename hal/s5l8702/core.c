@@ -194,6 +194,12 @@ bool ln_core_cache_enable(void) {
     ln_s5l_irq_restore(flags);return ok;
 }
 bool ln_core_cache_clean(void){ln_arm926_data_clean();return true;}
+bool ln_core_code_publish(const void *address,uint32_t bytes){
+    uintptr_t at=(uintptr_t)address;
+    if(!bytes||(at&31u)||(bytes&31u)||at>UINT32_MAX-bytes)return false;
+    ln_arm926_data_clean_range(address,bytes);
+    return ln_arm926_instruction_cache((ln_arm926_cache_control()&0x1000u)!=0);
+}
 bool ln_core_cache_disable(void) {
     uint32_t flags=ln_s5l_irq_save();bool ok=ln_arm926_mmu_disable();
     ln_s5l_irq_restore(flags);return ok;

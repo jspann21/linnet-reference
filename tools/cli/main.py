@@ -12,6 +12,8 @@ def parser():
     commands = cli.add_subparsers(dest="command", required=True)
     from tools.cli.studio_commands import register_primary, register_support, register_report
     register_primary(commands)
+    from tools.cli.game_commands import register as register_games
+    register_games(commands)
     from tools.cli.media_commands import register_media
     register_media(commands)
     register_support(commands)
@@ -31,6 +33,9 @@ def main():
         if args.command == 'device':
             from tools.cli.device_commands import run_device
             return run_device(args, emit)
+        if args.command == 'games':
+            from tools.cli.game_commands import run
+            return run(args,emit)
         from tools.cli.studio_commands import run_studio
         return run_studio(args, emit)
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:

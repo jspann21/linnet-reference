@@ -4,6 +4,8 @@ Author static screens in constrained TSX and compile them to native C. Native
 services own playback and behavior; TSX describes presentation. There is no
 JavaScript runtime, CSS engine, or device-side app loader.
 
+For native game projects and prepared assets, see [Creating Linnet games](../docs/game-authoring.md).
+
 For environment setup, see [Develop on Windows](../README.md#develop-on-windows).
 
 ## Compile and preview

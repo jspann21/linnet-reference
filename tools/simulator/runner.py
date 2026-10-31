@@ -23,7 +23,7 @@ def png(raw,width,height):
     def chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
     return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',width,height,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(b''.join(rows),9))+chunk(b'IEND',b'')
 
-def simulate(root,output,tape=None,system=None,target=None,all_scenes=False,apple_font=None):
+def simulate(root,output,tape=None,system=None,target=None,all_scenes=False,apple_font=None,game_manifest=None):
     root=Path(root).resolve();output=Path(output).resolve();output.mkdir(parents=True,exist_ok=True)
     if all_scenes and tape is not None:raise ValueError('All-scenes capture cannot use an input tape')
     if system is None and target is not None:
@@ -53,8 +53,25 @@ def simulate(root,output,tape=None,system=None,target=None,all_scenes=False,appl
     write_firmware_header(output/'generated')
     executable=output/('linnet-simulator.exe' if os.name == 'nt' else 'linnet-simulator')
     chain=toolchain()
+    game_sources=[]
+    if content.get('native_linked'):
+        from tools.studio.game_build import build_preview
+        import shutil
+        manifests=[Path(game_manifest)] if game_manifest else sorted((root/'games').glob('linnet.*/game.toml'))
+        entries=[]
+        for index,manifest in enumerate(manifests):
+            preview=build_preview(manifest,scenes['target'],output/'game-build'/str(index))
+            name=f'game-{index}'+Path(preview['path']).suffix
+            shutil.copyfile(preview['path'],output/name)
+            entries.append('{'+','.join(json.dumps(preview[key]) for key in ('title','description'))+','+json.dumps(name)+f', {preview["schema"]}u, {preview["capabilities"]}u'+'}')
+        (output/'generated/game_previews.h').write_text(
+            '#define LN_GAME_PREVIEWS 1\n#define GAME_PREVIEW_COUNT '+str(len(entries))+'u\n'
+            'static const struct {const char *title,*description,*file;unsigned schema,capabilities;} game_previews[]={'+','.join(entries)+'};\n',encoding='utf-8')
+        game_sources=[str(root/'tools/simulator/game_host.c')]
     command=[chain['compiler']['path'],'-std=c11','-O2','-Wall','-Wextra','-Werror','-I'+str(output/'generated'),'-I'+str(root),
+             *(['-DLN_GAME_PREVIEWS=1'] if game_sources else []),*game_sources,
              str(root/'tools/simulator/native.c'),str(root/'ui/runtime/ui.c'),str(root/'services/display/clock.c'),str(output/'generated/linnet_ui.c'),'-o',str(executable)]
+    if os.name!='nt' and game_sources:command+=['-ldl']
     compiled=subprocess.run(command,capture_output=True,text=True)
     if compiled.returncode:raise RuntimeError('Simulator compilation failed:\n'+compiled.stdout+compiled.stderr)
     events=json.loads(Path(tape).read_text()) if tape else []
@@ -76,8 +93,9 @@ def simulate(root,output,tape=None,system=None,target=None,all_scenes=False,appl
         total+=repeat;captures+=capture
         if total>100000 or captures>512:raise ValueError('Input tape exceeds event/capture budget')
         lines.append(f'{kind} {value} {repeat} {int(capture)}\n')
-    run=subprocess.run([str(executable),str(output)]+(['--all-scenes'] if all_scenes else [])+(['--apple-font'] if apple_font is not None else []),
-                       input=''.join(lines),capture_output=True,text=True,check=True,timeout=120)
+    run=subprocess.run([str(executable),str(output)]+(['--all-scenes'] if all_scenes else [])+(['--apple-font'] if apple_font is not None else [])+(['--game'] if game_manifest is not None else []),
+                       input=''.join(lines),capture_output=True,text=True,timeout=120)
+    if run.returncode:raise RuntimeError('Simulator execution failed:\n'+run.stdout+run.stderr)
     frames=[json.loads(line) for line in run.stdout.splitlines()]
     cards=[]
     for frame in frames:

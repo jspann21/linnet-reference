@@ -47,11 +47,16 @@ __attribute__((weak)) bool ln_games_tick(uint32_t now){(void)now;return false;}
 __attribute__((weak)) uint32_t ln_games_deadline(uint32_t now){(void)now;return UINT32_MAX;}
 __attribute__((weak)) uint32_t ln_games_hud_revision(void){return 0;}
 __attribute__((weak)) const char *ln_games_text(const char *key){return key;}
-__attribute__((weak)) void ln_games_configure(uint16_t mask){(void)mask;}
+__attribute__((weak)) void ln_games_configure(uint32_t mask){(void)mask;}
 __attribute__((weak)) void ln_games_best_set(uint32_t index,uint16_t value){(void)index;(void)value;}
 __attribute__((weak)) bool ln_games_playing(void){return false;}
 __attribute__((weak)) void ln_games_audio_step(void){}
 __attribute__((weak)) void ln_games_audio_stop(void){}
+__attribute__((weak)) void ln_games_step(uint32_t now,bool visible,bool hold,bool may_write){(void)now;(void)visible;(void)hold;(void)may_write;}
+__attribute__((weak)) void ln_games_stop(void){}
+__attribute__((weak)) bool ln_games_quiesce(bool publish){(void)publish;return true;}
+__attribute__((weak)) bool ln_games_pending(void){return false;}
+__attribute__((weak)) bool ln_games_take_exit(void){return false;}
 static void theme_sync(void);
 __attribute__((weak)) uint32_t ln_ui_theme_preference(void){return session_theme;}
 __attribute__((weak)) void ln_ui_theme_changed(uint32_t index){session_theme=index;}
@@ -1169,6 +1174,7 @@ uint32_t ln_ui_focused_count(const struct ln_ui_state*s){
     theme_sync();const struct ln_ui_node*n=focus(s);return n&&(n->kind==LN_UI_MENU||n->kind==LN_UI_VIRTUAL_LIST||n->kind==LN_UI_GRID)?total(n):0;
 }
 static bool change_scene_to(struct ln_ui_state*s,uint32_t target,bool remember){if(target>=ln_ui_scene_count||target>=LINNET_UI_MAX_SCENES||!(ln_ui_enabled_scenes&(UINT64_C(1)<<target))||target==s->scene)return false;bool editor=target==LN_UI_SCENE_CLOCK_EDIT;if(editor&&!ln_ui_clock_begin()){s->dirty|=1u;return false;}
+    if(s->scene==LN_UI_SCENE_GAME_PLAY)ln_games_stop();
     if(!target)s->history_count=0;
     else if(remember){
         /* Explicit Menu handlers return to the parent with ln_ui_show().

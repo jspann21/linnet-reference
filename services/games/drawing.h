@@ -5,7 +5,11 @@ static uint16_t arcade_mix(uint16_t a,uint16_t b,uint32_t t){
         (((((a>>5)&63u)*t+((b>>5)&63u)*z)/255u)<<5)|(((a&31u)*t+(b&31u)*z)/255u));
 }
 static void arcade_type(const struct ln_ui_canvas_context *c,int32_t x,int32_t y,const char *s,uint16_t ink,bool small,uint32_t size){
+#if defined(LN_GAME_PACKAGE_ID)
+    const struct ln_ui_font *f=size>1u?package_host->clock_font:small?package_host->hint_font:package_host->font;
+#else
     const struct ln_ui_font *f=size>1u?&ln_ui_clock_font:small?&ln_ui_hint_font:&ln_ui_font;
+#endif
     for(;*s;++s){uint32_t ch=(uint8_t)*s;if(ch<f->first||ch-f->first>=f->count)continue;
         uint32_t n=ch-f->first,w=f->width,h=f->height,offset=n*w*h;int32_t gx=x,gy=y;
         if(f->glyphs){const struct ln_ui_glyph *g=&f->glyphs[n];w=g->w;h=g->h;offset=g->offset;gx+=g->x;gy+=g->y;}
@@ -25,7 +29,12 @@ static void arcade_score_line(char out[32],bool round){
     *p=0;
 }
 static __attribute__((noinline)) void arcade_center(const struct ln_ui_canvas_context *c,int32_t center,int32_t y,const char *s,uint16_t ink,bool small,uint32_t size){
-    const struct ln_ui_font *f=size>1u?&ln_ui_clock_font:small?&ln_ui_hint_font:&ln_ui_font;int32_t width=0;
+#if defined(LN_GAME_PACKAGE_ID)
+    const struct ln_ui_font *f=size>1u?package_host->clock_font:small?package_host->hint_font:package_host->font;
+#else
+    const struct ln_ui_font *f=size>1u?&ln_ui_clock_font:small?&ln_ui_hint_font:&ln_ui_font;
+#endif
+    int32_t width=0;
     for(const char *p=s;*p;++p){uint32_t ch=(uint8_t)*p;if(ch>=f->first&&ch-f->first<f->count)width+=(int32_t)(f->advances?f->advances[ch-f->first]:f->advance);}
     arcade_type(c,center-width/2,y,s,ink,small,size);
 }

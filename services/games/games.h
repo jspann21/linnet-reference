@@ -26,4 +26,9 @@ const char *ln_games_text(const char *key);
 void ln_games_configure(uint32_t mask);
 void ln_games_best_set(uint32_t index,uint16_t value);
 void ln_games_draw(const struct ln_ui_canvas_context *context);
+void ln_games_step(uint32_t now,bool visible,bool hold,bool may_write);
+void ln_games_stop(void);
+bool ln_games_quiesce(bool publish);
+bool ln_games_pending(void);
+bool ln_games_take_exit(void);
 #endif

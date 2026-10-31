@@ -19,4 +19,7 @@ bool ln_game_header_decode(const uint8_t data[256],uint32_t target,uint32_t load
 #define LN_GAME_CATALOGUE_HEADER 32u
 #define LN_GAME_CATALOGUE_ROW 256u
 #define LN_GAME_CATALOGUE_BYTES (32u+LN_GAME_CATALOGUE_MAX*256u+4u)
+bool ln_game_catalogue_header(const uint8_t *data,uint32_t bytes,uint32_t target,
+                             uint32_t *generation,uint32_t *count);
+bool ln_game_catalogue_row(const uint8_t *data,uint32_t index);
 #endif

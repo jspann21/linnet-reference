@@ -759,6 +759,9 @@ static bool stop_documents(void){
 #if defined(LINNET_STORAGE)
 static _Noreturn void restart(bool disk_mode){
     ready=false;shutdown_tracking=false;animation_left=0;
+#if defined(LINNET_NATIVE_UI)
+    if(!ln_games_quiesce(true))ln_panic(34,7,0);
+#endif
 #if defined(LINNET_VIDEO)
     if(!stop_video())ln_panic(34,5,0);
 #endif
@@ -789,6 +792,9 @@ void ln_runtime_restart_step(void){
 static _Noreturn void shutdown(bool save_settings){
     (void)save_settings;
     ready=false;shutdown_tracking=false;animation_left=0;
+#if defined(LINNET_NATIVE_UI)
+    if(!ln_games_quiesce(save_settings))ln_panic(34,7,0);
+#endif
 #if defined(LINNET_NOTES) || defined(LINNET_FILES)
     if(!stop_documents())shutdown_failed(14);
 #endif
@@ -941,7 +947,7 @@ void ln_runtime_step(void){
 #if defined(LINNET_NATIVE_UI)
     if(scene_is(LN_UI_SCENE_GAME_PLAY)){
         static uint32_t drawn_game_hud;
-        if(ln_games_tick(now)){shell->dirty|=8u;dirty=true;}
+        if(!shell->hold&&ln_games_tick(now)){shell->dirty|=8u;dirty=true;}
         uint32_t game_hud=ln_games_hud_revision();
         if(game_hud!=drawn_game_hud){drawn_game_hud=game_hud;ln_ui_refresh(shell);dirty=true;}
         if(ln_games_playing())backlight_activity();
@@ -988,6 +994,14 @@ void ln_runtime_step(void){
 #endif
     bool theme_presented=settings_io&&!sleeping&&theme_frame_ready();
     ln_display_settings_step_ready(settings_io&&!sleeping,theme_presented,theme_frame.revision);
+    ln_games_step(now,scene_is(LN_UI_SCENE_GAME_PLAY),shell->hold!=0,settings_io&&!sleeping);
+    if(ln_games_take_exit()&&scene_is(LN_UI_SCENE_GAME_PLAY)){(void)ln_ui_show(shell,"linnet.system.games");dirty=true;}
+    static uint32_t game_revision;
+    uint32_t next_game_revision=ln_games_hud_revision();
+    if(game_revision!=next_game_revision){game_revision=next_game_revision;
+        if(scene_is(LN_UI_SCENE_GAMES)||scene_is(LN_UI_SCENE_GAME_PLAY)||scene_is(LN_UI_SCENE_HOME)||scene_is(LN_UI_SCENE_EXTRAS)){
+            ln_ui_refresh(shell);dirty=true;}}
+
 #if defined(LINNET_STORAGE)
     if(boot_theme_waiting){
         if(!ln_display_settings_boot_ready()&&
@@ -1433,7 +1447,7 @@ void ln_runtime_idle(void){
     if(ln_platform_click_deadline(&click_due)&&(int32_t)(click_due-next)<0)next=click_due;
 #endif
 #if defined(LINNET_NATIVE_UI)
-    if(scene_is(LN_UI_SCENE_GAME_PLAY)&&ln_games_playing()){
+    if(true){
         uint32_t game_due=ln_games_deadline(now);
         if(game_due!=UINT32_MAX&&(int32_t)(game_due-next)<0)next=game_due;
     }
@@ -1510,6 +1524,9 @@ int ln_runtime_control(uint32_t command,uint32_t argument){
     if(!ready)return 0;
     switch(command){
     case LN_CONTROL_SLEEP:
+#if defined(LINNET_NATIVE_UI)
+        if(ln_games_pending())return 0;
+#endif
 #if defined(LINNET_NOTES)
         if(ln_notes_pending())return 0;
 #endif

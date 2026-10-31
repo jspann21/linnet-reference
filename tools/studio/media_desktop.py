@@ -756,6 +756,17 @@ def build_games_page(window):
     layout.addWidget(window.games_recover, 0, Qt.AlignLeft)
     window.games_save = button('Update games on iPod', window.games_controller.save_games, 'primary')
     layout.addWidget(window.games_save, 0, Qt.AlignLeft)
+    layout.addWidget(label('Independent game packages', 'section'))
+    layout.addWidget(label('Install a prepared game file for this iPod. Removing a game preserves its saved progress.', 'muted', True))
+    window.custom_games = QListWidget(); window.custom_games.setMinimumHeight(100)
+    window.custom_games.currentItemChanged.connect(lambda *_: window.update_controls())
+    layout.addWidget(window.custom_games)
+    package_controls=box(horizontal=True)
+    window.game_import=button('Install game file…', window.games_controller.import_game)
+    window.game_remove=button('Remove selected game', window.games_controller.remove_game)
+    package_controls.addWidget(window.game_import);package_controls.addWidget(window.game_remove);package_controls.addStretch()
+    layout.addLayout(package_controls)
+    window.game_recover_requested=False
     layout.addStretch()
     return page
 
@@ -944,6 +955,7 @@ class GamesController:
         window.game_saved = None
         window.game_dirty = True
         window.game_read_failed = False
+        window.game_recover_requested=True
         for index, check in enumerate(window.game_checks):
             with QSignalBlocker(check):
                 check.setChecked(index in games.supported(window.identity))
@@ -957,7 +969,7 @@ class GamesController:
         if (window.identity and window.device_connected and games.available(window.identity) and not window.busy
                 and window.games_loaded_for != window.identity['root']):
             identity = window.identity
-            window.work('games', lambda: games.read(identity), 'Reading installed games…')
+            window.work('games', lambda: games.choices(identity), 'Reading installed games…')
 
     def save_games(self):
         window = self.window
@@ -965,7 +977,22 @@ class GamesController:
             return
         selected = {index for index, check in enumerate(window.game_checks) if check.isChecked()}
         identity = window.identity
-        window.work('save_games', lambda: games.save(identity, selected), 'Updating games on iPod…')
+        recover=window.game_recover_requested
+        window.work('save_games', lambda: games.save(identity, selected, recover=recover), 'Updating games on iPod…')
+
+    def import_game(self):
+        window=self.window
+        if not window.identity or window.busy:return
+        path,_=QFileDialog.getOpenFileName(window,'Install prepared game','','Linnet game (*.LGM *.lgm)')
+        if not path:return
+        identity=window.identity
+        window.work('import_game',lambda:games.import_package(identity,path),'Installing game package…')
+
+    def remove_game(self):
+        window=self.window;item=window.custom_games.currentItem()
+        if not item or not window.identity or window.busy:return
+        identity=window.identity;game_id=item.data(Qt.UserRole)
+        window.work('remove_game',lambda:games.remove_package(identity,game_id),'Removing game package…')
 
 class ScreensController:
     def __init__(self, window):
@@ -1809,6 +1836,7 @@ class MediaWindow(QMainWindow):
             'screens': self._complete_screens, 'plan': self._complete_plan,
             'save_screens': self._complete_save_screens, 'games': self._complete_games,
             'save_games': self._complete_save_games, 'review_skipped': self._complete_review_skipped,
+            'import_game': self._complete_installed_game, 'remove_game': self._complete_installed_game,
             'playlists': self._complete_playlists, 'save_playlists': self._complete_save_playlists,
             'apple_selection': self._complete_apple_selection, 'apple_update': self._complete_apple_update,
             'devices': self._complete_devices, 'scan': self._complete_scan,
@@ -1842,7 +1870,7 @@ class MediaWindow(QMainWindow):
             QTimer.singleShot(0, self.refresh_cache)
         if tag == 'scan':
             self.cache_library_dirty = False
-        if tag not in ('screens', 'plan', 'save_screens', 'games', 'save_games',
+        if tag not in ('screens', 'plan', 'save_screens', 'games', 'save_games', 'import_game', 'remove_game',
                        'review_skipped', 'playlists', 'save_playlists',
                        'apple_selection', 'apple_update'):
             self.update_controls()
@@ -1900,7 +1928,7 @@ class MediaWindow(QMainWindow):
             self.screens_controller.render_screen_items()
             self.screen_status.setText('Could not read settings. Showing defaults for this iPod; saving will replace its screen settings.')
         if tag == 'games':
-            self.game_read_failed = 'game selection is damaged' in error.casefold()
+            self.game_read_failed = error_type=='GameCatalogueRecovery' or 'game selection is damaged' in error.casefold()
             self.games_status.setText('Game settings are damaged. Use Replace damaged game settings to choose a new selection.'
                                       if self.game_read_failed else 'Could not read game settings. Refresh or choose the iPod again.')
         if (tag in ('scan', 'devices', 'link_setup', 'link_disk', 'uninstall') and
@@ -2037,21 +2065,31 @@ class MediaWindow(QMainWindow):
         self.screen_status.setText('Saved to iPod. Eject safely to apply on startup.'); return
 
     def _complete_games(self, result):
+        selected=result['selected'] if isinstance(result,dict) else result
+        self.custom_games.clear()
+        for row in result.get('custom',[]) if isinstance(result,dict) else []:
+            item=QListWidgetItem(row['title']);item.setData(Qt.UserRole,row['id'])
+            item.setToolTip(row['id']+'\n'+row['description']);self.custom_games.addItem(item)
         for index, check in enumerate(self.game_checks):
             with QSignalBlocker(check):
-                check.setChecked(index in result)
+                check.setChecked(index in selected)
         self.games_loaded_for = self.identity['root']
-        self.game_saved = set(result); self.game_read_failed = False
+        self.game_saved = set(selected); self.game_read_failed = False;self.game_recover_requested=False
         self.load_choices_draft('games')
         self.games_status.setText('Unsaved game choices restored for this iPod. Update to apply them.' if self.game_dirty else
-                                  'Loaded from iPod. Uncheck a game to remove it from the Games menu.')
+                                  'Loaded from iPod. Uncheck a game to remove its installed package. Saved progress is retained.')
         self.update_controls(); return
 
     def _complete_save_games(self, result):
         self.game_saved = {i for i, check in enumerate(self.game_checks) if check.isChecked()}
-        self.game_dirty = False; self.save_choices_draft()
+        self.game_dirty = False;self.game_recover_requested=False; self.save_choices_draft()
         self.games_status.setText('Games updated. Eject safely and restart Linnet to apply.')
         self.update_controls(); return
+
+    def _complete_installed_game(self, result):
+        self.games_loaded_for=None
+        self.games_status.setText('Game packages updated. Eject safely to apply them.')
+        self.games_controller.load_games()
 
     def _complete_review_skipped(self, result):
         identity, rows = result
@@ -2776,6 +2814,8 @@ class MediaWindow(QMainWindow):
         self.screen_loaded_for = self.games_loaded_for = None
         self.screen_saved = self.game_saved = None
         self.screen_dirty = self.game_dirty = self.game_read_failed = False
+        self.game_recover_requested=False
+        self.custom_games.clear()
         self.screen_state = screen_settings.defaults(identity)
         self.screens_controller.render_screen_items()
         self.screen_status.setText('Loading screen settings…' if identity else
@@ -2839,6 +2879,9 @@ class MediaWindow(QMainWindow):
             card.setVisible(games_available)
         games_ready = ready and games.available(self.identity)
         self.games_save.setEnabled(games_ready and self.games_loaded_for == self.identity['root'])
+        packages_ready=games_ready and self.games_loaded_for==self.identity['root']
+        self.game_import.setEnabled(packages_ready)
+        self.game_remove.setEnabled(packages_ready and self.custom_games.currentItem() is not None)
         self.games_recover.setVisible(bool(self.identity and self.game_read_failed and games.available(self.identity)))
         self.games_recover.setEnabled(ready and self.game_read_failed)
         self.publication_recovery_button.setVisible(self.publication_recovery_pending)

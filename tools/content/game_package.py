@@ -114,6 +114,7 @@ def catalogue(rows, *, generation, target):
         if (game_id in seen or filename in names or not FILE_PATTERN.fullmatch(filename)
                 or type(slot) is not int or not 0 <= slot < CATALOGUE_MAX or slot in slots
                 or not HEADER_BYTES+32 <= row['bytes'] <= HEADER_BYTES+SLOT_BYTES or not row['title']
+                or (row['bytes']-HEADER_BYTES)&31
                 or row['capabilities'] & ~1 or not 0 <= row['file_crc'] <= 0xffffffff):
             raise ValueError('Invalid or duplicate game catalogue entry')
         seen.add(game_id);names.add(filename);slots.add(slot)

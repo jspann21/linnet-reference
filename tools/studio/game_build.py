@@ -96,7 +96,7 @@ def build(manifest, target, output):
         raise ValueError('Game manifest requires [game] and [build] only')
     game=config['game'];settings=config['build']
     required={'id','title','description','author','license','version','schema','targets','capabilities','stack_bytes'}
-    if set(game)!=required or set(settings)-{'sources','legacy','assembly_stack_bytes'} or not settings.get('sources'):
+    if set(game)!=required or set(settings)-{'sources','legacy','assembly_stack_bytes','assets','tables'} or not settings.get('sources'):
         raise ValueError('Unexpected or missing game manifest fields')
     fmt.identity(game['id'])
     if not isinstance(game['author'],str) or not game['author'].strip() or not isinstance(game['license'],str) or not game['license'].strip():
@@ -108,6 +108,8 @@ def build(manifest, target, output):
     if not spec['capabilities']['games']:
         raise ValueError('Games are unsupported on this target')
     output=Path(output).resolve();output.mkdir(parents=True,exist_ok=True)
+    from tools.content.game_assets import prepare
+    prepared,asset_report=prepare(project,settings,output/'prepared')
     sources=[];assembly=settings.get('assembly_stack_bytes',{})
     for name in settings['sources']:
         source=(project/name).resolve(strict=True)
@@ -116,12 +118,13 @@ def build(manifest, target, output):
         if source.suffix=='.S' and (name not in assembly or type(assembly[name]) is not int or not 0<=assembly[name]<=game['stack_bytes']):
             raise ValueError('Handwritten assembly requires an audited fixed stack bound')
         sources.append(source)
+    if asset_report:sources.append(prepared)
     chain=toolchain();address=spec['load_address']+fmt.SLOT_OFFSET
     flags=['--target=arm-none-eabi',f'-mcpu={spec["cpu"]}',f'-march={spec["architecture"]}',
            '-marm','-mfloat-abi=soft','-ffreestanding','-fno-builtin','-fno-stack-protector',
            '-fno-unwind-tables','-fno-asynchronous-unwind-tables','-ffunction-sections',
            '-fdata-sections','-fstack-usage','-O2','-Wall','-Wextra','-Werror',
-           '-I'+str(ROOT/'sdk/include'),'-I'+str(project),
+           '-I'+str(ROOT/'sdk/include'),'-I'+str(project),'-I'+str(output/'prepared'),
            f'-DLINNET_UI_WIDTH={spec["lcd_width"]}u',f'-DLINNET_UI_HEIGHT={spec["lcd_height"]}u']
     flags.extend(f'-D{name}={value}' for name,value in presentation_defines(spec).items())
     if legacy!=0xffffffff:
@@ -174,10 +177,81 @@ def build(manifest, target, output):
     if package.exists() and package.read_bytes()!=data:
         raise ValueError('Short package filename collision')
     package.write_bytes(data)
-    report=dict(**details,author=game['author'],license=game['license'],package=str(package),filename=filename,file_crc=__import__('zlib').crc32(data),
+    report=dict(**details,author=game['author'],license=game['license'],prepared_assets=asset_report,package=str(package),filename=filename,file_crc=__import__('zlib').crc32(data),
                 sha256=digest,sections=sections,stack_frames=frames,
                 assembly_stack_bytes=assembly,
                 stack_note='Static C frames only; SDK memory assembly uses at most32 bytes. Author assembly needs audited bounds; cumulative/indirect calls require hardware qualification',
                 symbols=symbols,toolchain=chain)
     (output/'game-report.json').write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8')
     return report
+
+
+def build_library(target, output):
+    """Release-time built-ins; players consume these files without a compiler."""
+    output=Path(output).resolve();output.mkdir(parents=True,exist_ok=True)
+    games=[];manifests=sorted((ROOT/'games').glob('linnet.*/game.toml'))
+    identities=[tomllib.loads(p.read_text(encoding='utf-8'))['game']['id'] for p in manifests]
+    if len(identities)!=len(fmt.LEGACY_IDS) or set(identities)!={'linnet.'+name for name in fmt.LEGACY_IDS}:
+        raise ValueError('Built-in game library must contain every reserved legacy identity exactly once')
+    for manifest in manifests:
+        report=build(manifest,target,output/'build'/manifest.parent.name)
+        source=Path(report['package']);destination=output/report['filename'];data=source.read_bytes()
+        if destination.exists() and destination.read_bytes()!=data:
+            raise ValueError('Prepared game filename collision')
+        destination.write_bytes(data)
+        games.append({key:report[key] for key in ('id','filename','sha256','author','license','legacy')})
+    metadata=dict(format='LNGAMES',version=1,target=target,games=games)
+    (output/'library.json').write_text(json.dumps(metadata,sort_keys=True,indent=2)+'\n',encoding='utf-8')
+    return dict(directory=str(output),games=games)
+
+
+def library(directory,target):
+    directory=Path(directory).resolve(strict=True);manifest=directory/'library.json'
+    if manifest.is_symlink() or not manifest.is_file() or manifest.stat().st_size>65536:
+        raise ValueError('Invalid prepared game library')
+    value=json.loads(manifest.read_text(encoding='utf-8'))
+    if (not isinstance(value,dict) or set(value)!={'format','version','target','games'}
+            or value['format']!='LNGAMES' or value['version']!=1 or value['target']!=target
+            or not isinstance(value['games'],list) or len(value['games'])>128):
+        raise ValueError('Incompatible prepared game library')
+    result={};filenames=set()
+    for item in value['games']:
+        if not isinstance(item,dict) or set(item)!={'id','filename','sha256','author','license','legacy'}:
+            raise ValueError('Invalid prepared game manifest')
+        filename=item['filename']
+        if not isinstance(filename,str) or not fmt.FILE_PATTERN.fullmatch(filename) or filename in filenames:
+            raise ValueError('Invalid prepared game filename')
+        path=directory/filename
+        if path.is_symlink() or not path.is_file() or path.stat().st_size>256+fmt.SLOT_BYTES:
+            raise ValueError('Missing or unsafe prepared game')
+        data=path.read_bytes();header=fmt.inspect(data,target)
+        if (header['id']!=item['id'] or header['legacy']!=item['legacy']
+                or hashlib.sha256(data).hexdigest()!=item['sha256'] or item['id'] in result):
+            raise ValueError('Prepared game checksum/identity mismatch')
+        filenames.add(filename);result[item['id']]=path
+    return result
+
+
+def build_preview(manifest,target,output):
+    """Compile the same source for the desktop ABI, after validating its ARM build."""
+    import os
+    manifest=Path(manifest).resolve(strict=True);output=Path(output).resolve()
+    report=build(manifest,target,output/'arm')
+    config=tomllib.loads(manifest.read_text(encoding='utf-8'))
+    settings=config['build'];spec=target_spec(target);project=manifest.parent
+    if any(Path(name).suffix!='.c' for name in settings['sources']):
+        raise ValueError('Desktop preview requires portable C sources; qualify ARM assembly on hardware')
+    prepared,assets=__import__('tools.content.game_assets',fromlist=['prepare']).prepare(project,settings,output/'prepared')
+    sources=[project/name for name in settings['sources']]
+    if assets:sources.append(prepared)
+    destination=output/('game.dll' if os.name=='nt' else 'game.so')
+    flags=['-std=c11','-shared','-O2','-Wall','-Wextra','-Werror','-I'+str(ROOT/'sdk/include'),
+           '-I'+str(project),'-I'+str(output/'prepared'),
+           f'-DLINNET_UI_WIDTH={spec["lcd_width"]}u',f'-DLINNET_UI_HEIGHT={spec["lcd_height"]}u']
+    if os.name!='nt':flags+=['-fPIC']
+    flags.extend(f'-D{name}={value}' for name,value in presentation_defines(spec).items())
+    if settings.get('legacy',0xffffffff)!=0xffffffff:
+        flags+=['-I'+str(ROOT),f'-DLN_GAME_PACKAGE_ID={settings["legacy"]}',
+                '-DLINNET_AUDIO=1','-DLINNET_STORAGE=1','-Wno-unused-function','-Wno-unused-variable']
+    run([toolchain()['compiler']['path'],*flags,*sources,'-o',destination])
+    return dict(path=str(destination),id=report['id'],title=report['title'],description=report['description'],schema=report['schema'],capabilities=report['capabilities'])

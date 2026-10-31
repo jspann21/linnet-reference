@@ -763,11 +763,18 @@ def build_artifacts(identity, progress=lambda _message: None, build="user",
                       boot_build_id=boot_report["build_id"],
                       installation_method=installation_method, boot_selector=boot_selector)
     _validate_artifacts(identity, artifacts)
+    if TARGETS[target]['capabilities']['games']:
+        from tools.studio.game_build import build_library
+        progress('Preparing native game packages…')
+        artifacts['game_library']=build_library(target,ROOT/'out/game-packages'/target)['directory']
     return artifacts
 
 
 def _validate_artifacts(identity, artifacts):
     spec = TARGETS[identity["target_id"]]
+    if artifacts.get('game_library'):
+        from tools.studio.game_build import library
+        library(artifacts['game_library'],identity['target_id'])
     install_spec = spec["installer"]
     paths = {key: Path(artifacts[key]).resolve(strict=True) for key in
              ("os_image", "os_report", "boot_image", "boot_wrapper", "boot_report")}
@@ -897,6 +904,19 @@ def _persist_artifacts(artifacts, transaction):
             if target.read_bytes() != data:
                 raise OSError("saved installer artifact failed verification: " + name)
         persisted[key] = str(target.resolve())
+    if artifacts.get('game_library'):
+        from tools.studio.game_build import library
+        target_id=inspect_image(Path(artifacts['os_image']).read_bytes())['target_id']
+        source=Path(artifacts['game_library']);packages=library(source,target_id)
+        game_destination=destination/'games';game_destination.mkdir(exist_ok=True)
+        for path in [*packages.values(),source/'library.json']:
+            target=game_destination/path.name;data=path.read_bytes()
+            if target.exists():
+                if target.is_symlink() or target.read_bytes()!=data:raise ValueError('Saved game artifact differs')
+            else:
+                with target.open('xb') as stream:stream.write(data);stream.flush();os.fsync(stream.fileno())
+        library(game_destination,target_id)
+        persisted['game_library']=str(game_destination.resolve())
     return persisted
 
 
@@ -921,6 +941,11 @@ def _package_storage(identity, artifacts, transaction, archive=None):
         if current.get("size") != identity["disk_bytes"]:
             raise ValueError("disk changed during playlist provisioning")
     provision_collections(Path(identity["root"]) / ".LINNET", guard_collections)
+    if TARGETS[identity['target_id']]['capabilities']['games'] and artifacts.get('game_library'):
+        from tools.content import games
+        selected=games.read(identity)
+        games.save(identity,selected,library=artifacts['game_library'])
+        receipt['games']=dict(installed=len(selected),format=1)
     return receipt
 
 
@@ -1243,12 +1268,25 @@ def _install(identity, progress=lambda _message: None, build="user", installatio
             progress("Building Linnet for this iPod…")
             report = _run_build(arguments)
             image = ROOT / report["artifacts"]["los"]
+            game_library=None
+            if TARGETS[reviewed['identity']['target_id']]['capabilities']['games']:
+                from tools.studio.game_build import build_library
+                game_library=build_library(reviewed['identity']['target_id'],ROOT/'out/game-packages'/reviewed['identity']['target_id'])['directory']
         else:
             if firmware is None:
                 raise ValueError("Choose a prebuilt Linnet firmware ZIP before installing.")
             from tools.studio.firmware_bundle import load
             progress("Verifying the selected firmware bundle…")
-            image = Path(load(firmware, reviewed["identity"], method_id)["os_image"])
+            artifacts=load(firmware, reviewed["identity"], method_id)
+            image = Path(artifacts["os_image"])
+            game_library=artifacts.get('game_library')
+        if game_library:
+            from tools.content import games
+            from tools.content.guard import guarded_path,guard_volume
+            system=Path(reviewed['identity']['root'])/'.LINNET'
+            guarded_path(system,Path(reviewed['identity']['root']));guard_volume(reviewed['identity']);system.mkdir(exist_ok=True)
+            progress('Installing selected game packages…')
+            games.save(reviewed['identity'],games.read(reviewed['identity']),library=game_library)
         progress("Writing and verifying Linnet…")
         return publish(reviewed["identity"], image)
     previous_boot = _previous_boot(reviewed)

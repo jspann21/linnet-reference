@@ -64,6 +64,16 @@ def create(output, installer_output=None):
         check_packaged_assets(ROOT)
         for name in PACKAGE_DIRECTORIES:
             command += ["--add-data", str(ROOT / name) + os.pathsep + name]
+        from tools.studio.game_build import build_library,library
+        from tools.studio.targets import TARGETS
+        prepared_games=work/'prepared-games'
+        for target,spec in TARGETS.items():
+            if not spec['capabilities']['games']:continue
+            built=ROOT/'out/game-packages'/target;build_library(target,built)
+            destination=prepared_games/target;destination.mkdir(parents=True)
+            for path in [*library(built,target).values(),built/'library.json']:
+                shutil.copy2(path,destination/path.name)
+        command += ['--add-data',str(prepared_games)+os.pathsep+'resources/games']
         command += ["--add-data", str(ROOT / "third_party/ipod_models") + os.pathsep + "third_party/ipod_models"]
         # Photo cache recipes inspect their rendering functions' source.
         command += ["--add-data", str(ROOT / "tools/content/photos.py") + os.pathsep + "tools/content",

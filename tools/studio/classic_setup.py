@@ -345,6 +345,9 @@ def run(path, *, progress=lambda _message:None, instruction=lambda _message:None
             classic_recovery.preserve(native)
             nor.preserve_apple(state['device_plan'],state['original_backup'],native['root'])
             from tools.studio.native_update import publish
+            if artifacts.get('game_library'):
+                from tools.content import games
+                games.save(native,games.read(native),library=artifacts['game_library'])
             existing=installer.installed_state(native['root'],TARGET)
             if existing['state']=='installed':
                 if existing.get('build_id')!=artifacts['os_build_id'] or existing.get('candidate_pending'):

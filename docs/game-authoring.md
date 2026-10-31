@@ -1,97 +1,99 @@
 # Creating Linnet games
 
-**Status:** proposed standard. The external game loader and SDK are not implemented
-yet; exact package fields, interface signatures, and budgets need pilot validation.
+Games are native ARM `.LGM` files, loaded individually from `/.LINNET/GAMES`.
+Photo, Video and Classic use separate target builds. Adding a game requires no
+firmware registry entry or rebuild. Performance takes priority over author
+convenience: there is no interpreter or general game engine.
 
-Performance comes first. Standardize layout, interfaces, and build tools without
-adding runtime overhead for author convenience.
+## Start a project
 
-## Project layout
+Copy `sdk/templates/game` into your project:
 
 ```text
-games/author.game/
-  game.toml             # Identity, compatibility, capabilities, budgets
-  README.md             # Gameplay, controls, build/preparation notes
+author.game/
+  game.toml       # Identity, version, targets, capabilities, stack and schema
+  README.md       # Gameplay, controls and preparation instructions
   LICENSE
-  src/                  # Native game logic and drawing
-  assets/               # Source artwork, fonts, sound definitions
-  levels/               # Authored levels and other source data
-  tools/                # Optional host preparation scripts
-  out/                  # Generated target packages/reports; ignored
+  src/game.c      # Native callbacks and state
+  assets/         # Source artwork, kept on the host
+  levels/         # Source tables or authored levels
+  tools/          # Optional author-run preparation scripts
 ```
 
-Use one source project with target-specific artwork or code where beneficial.
-Install runtime code, prepared data/assets, and required notices. Keep source
-assets, preparation scripts, and debugging symbols on the host.
+Change the template's ID, author, license and description. IDs are permanent,
+lowercase ASCII dot names such as `author.game`, at most 63 bytes. Versions and
+device variants share an ID; forks use a new one. Built-in `linnet.*` IDs are
+reserved. The catalogue holds at most 128 games and retains save slots after
+removal. Keep `build.legacy` out of new projects.
 
-## Required metadata
+From the Linnet checkout with development dependencies installed:
 
-- Permanent lowercase ASCII namespaced ID, such as `author.game`; name,
-  description, version, author, and license. Versions/device variants share an ID;
-  forks receive a new one. Define identity bounds and reject duplicates.
-- Supported devices/display sizes, interface/layout versions, and required
-  services such as music-library access.
-- Code/data, zeroed state, assets, stack, temporary-memory limits, and update/frame
-  budgets for each target.
-- Score/progress schema version and maximum record size, when used.
+```powershell
+python linnet games build --manifest path/to/game.toml --target video5g-m25 --output out/my-game
+python linnet games inspect out/my-game/XXXXXXXX.LGM --target video5g-m25
+python linnet games preview --manifest path/to/game.toml --target video5g-m25 --output out/my-preview
+```
 
-New games must add no firmware registry entry or per-game firmware dependency.
-The catalogue supports bounded, extensible identities; preserve legacy IDs/scores.
+The report identifies the actual hash-named package. View the preview's
+`index.html`; optional `--tape path.json` supplies simulator input events.
+Preview compiles portable C for the desktop after validating its ARM build.
+It cannot qualify ARM execution, caches, timing or storage. Preview saves live
+only in memory, and music uses four sample titles.
 
-## Native interface
+## Interface and limits
 
-Keep state inside the game. Use bounded initialization, input, update/deadline,
-draw, and shutdown callbacks. Firmware owns scheduling and provides a small
-versioned service table for drawing, input, time, audio, and saved state.
+Implement `ln_game_entry_point` using [game.h](../sdk/include/linnet/game.h).
+Return every callback: start, input, tick, deadline, draw, playing, revision,
+take_cue and stop. Use SDK input/result constants. MENU should return
+`LN_GAME_EXIT`. Hold suspends input/ticks and the game clock. Deadlines use
+wrapping microseconds; return `LN_GAME_NO_DEADLINE` when idle. Callbacks must
+return promptly and never wait for I/O.
 
-Use the SDK's target linker layout and public services. Compatible firmware must
-preserve both the layout and interface contracts. Avoid private firmware
-addresses, shared game globals, and arbitrary background callbacks.
+ABI 1/layout 1 reserves one 256 KiB slot including code, assets and zero-filled
+state. Unloading does not return this reservation to the heap. BSS is omitted
+from the file. Stack budget is at most 8 KiB. Builds require ARM-only soft-float
+code and the SDK linker layout. Unresolved symbols, relocations, incompatible
+CPU instructions and dynamic stack frames are rejected. Static frame reports
+do not prove cumulative stack use; qualify call chains and assembly on hardware.
+Keep private firmware addresses out of games.
 
-Declare optional services. Release effects/music sessions on exit. Firmware owns
-bounded, identity-bound save records and pending save copies, and drains storage
-work before unloading game memory.
+Fonts and the clipped RGB565 canvas are borrowed. Use direct bounded loops or
+inline bulk helpers in [draw.h](../sdk/include/linnet/draw.h). Retain no borrowed
+framebuffer or service pointers beyond their lifetime. Declare
+`capabilities = ["music"]` when needed and release sessions in stop.
+
+Progress is limited to 256 bytes with a positive schema. Read old schemas
+explicitly for migration; write only the current schema. Saves copy buffers
+immediately. Success means accepted into the bounded queue, not durable yet.
+Best scores and progress are bound to the permanent ID and survive removal.
+Handle unavailable storage or a full queue.
 
 ## Prepare on the host
 
-- Compile target-specific native code; remove unused code and resources.
-- Crop, scale, and pack artwork for the actual display. Prepare palettes,
-  transparency spans, glyph subsets, and text metrics where useful.
-- Validate levels; prepare paths, lookup tables, collision/spatial data, and audio
-  cues when measurements justify the storage and memory cost.
-- Generate resource offsets, metadata, and the Games catalogue in advance.
+The build converts source images to ready-to-draw RGB565 or visible spans and
+JSON integer tables to native arrays:
 
-Keep input-dependent gameplay on-device. Precomputation must improve the result;
-oversized tables can increase loading time and memory use.
+```toml
+[[build.assets]]
+name = "ship"
+source = "assets/ship.png"
+size = [24, 24]                  # Optional host resize
+background = [0, 0, 0]          # Flatten partial alpha on host
 
-## Performance requirements
+[[build.tables]]
+name = "level_cells"
+source = "levels/cells.json"
+type = "u8"                    # u8, u16 or s16
+```
 
-- Use native code and prepared binary data. Keep source parsing, asset conversion,
-  font generation, and level preprocessing off the device.
-- Pre-size state/buffers. Avoid per-frame allocation and blocking reads in
-  input/update/draw callbacks.
-- Prefer integer/fixed-point hot paths. Select compiler settings using measured
-  speed and size, rather than minimizing bytes indiscriminately.
-- Draw changed regions, use deadlines, and sleep when idle. Use bulk drawing
-  operations instead of per-pixel indirect service calls.
-- Measure asset encodings and compression, including decode time, scratch RAM,
-  and launch latency. Smaller files do not justify slower gameplay. Keep hot code
-  and frequently drawn assets ready to use.
-- Respect audio deadlines and buffer ownership. Add no interpreter, general engine,
-  or dependency layer solely to simplify authoring.
-- Enforce target memory/performance limits; author convenience cannot waive them.
+Include generated `game_assets.h`; use `ln_game_blit(canvas,x,y,&ship)` or the
+native table array. Binary transparency needs no background. Optional `crop`
+is `[x,y,width,height]`. The linker removes unused assets. Source assets,
+scripts, symbols and reports stay on the host. Media Manager installs matching
+prepared packages; players need no compiler. Installation never runs game scripts.
 
-## Build and acceptance
-
-1. Author the project, run host preparation, and build the target variants.
-2. Inspect compatibility, dependencies, and download/installed/resident/peak-memory
-   reports. Do not serialize zero-filled state or unused load-slot padding.
-3. Preview gameplay/rendering, then measure worst-case frames, launch, RAM, and
-   playback coexistence on hardware. Desktop previews cannot validate ARM loading
-   or executable caches.
-4. Install prepared files through Media Manager. Players need no compiler. A host
-   archive may contain multiple variants; install only the matching one and its
-   assets. Installation never runs package-supplied preparation scripts.
-5. Verify a new game uses only the public layout/interface, installs and removes
-   with unchanged firmware, preserves scores on reinstall, and works across a
-   compatible firmware rebuild.
+Precompute authored boards, text metrics, paths and lookup data where useful;
+keep input-dependent gameplay native. Avoid per-frame allocation, source parsing,
+asset conversion and per-pixel indirect calls. Measure worst-case frames, launch,
+stack/RAM and music coexistence on hardware. Smaller files must not compromise
+performance. Native games execute with firmware privileges; install trusted code.

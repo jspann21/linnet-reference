@@ -32,6 +32,8 @@ payload checksum, and full-image hash have distinct meanings.
 | Format | Guide or implementation |
 | --- | --- |
 | `PODB` music index | [Music library](music-format.md) |
+| `LNGM` / `.LGM`, `LNGC` game catalogues | [Package encoder](../tools/content/game_package.py), [native validator](../services/games/package.c), [loader](../services/games/manager.c), [authoring](game-authoring.md) |
+| `GMSAVE0.BIN` / `GMSAVE1.BIN` | Retained identity/schema-bound `STAT` records in fixed cells: [publisher](../tools/content/game_install.py), [save owner](../services/games/saves.c) |
 | RGB565 artwork, `LCF2` / `LCFN` Cover Flow | [Album artwork](artwork.md) |
 | `LPIC` prepared photos | [Prepared photos](photo-format.md) |
 | `IPVF` and native MP4 video | [Video formats](video-format.md) |

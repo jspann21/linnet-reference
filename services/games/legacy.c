@@ -1,10 +1,15 @@
+#if defined(LN_GAME_PACKAGE_ID)
+#define LN_GAME_COUNT 18u
+#define LN_GAME_SUPPORTED_MASK ((1u<<LN_GAME_COUNT)-1u)
+#else
 #include "services/games/games.h"
-#if defined(LINNET_AUDIO)
+#endif
+#if defined(LINNET_AUDIO) && !defined(LN_GAME_PACKAGE_ID)
 #include "hal/api/audio.h"
 #include "services/music/controller.h"
 #include "services/music/player.h"
 #endif
-#if defined(LINNET_STORAGE)
+#if defined(LINNET_STORAGE) && !defined(LN_GAME_PACKAGE_ID)
 #include "services/display/settings.h"
 #endif
 #if LINNET_GAME_PRESENTATION_PHOTO220
@@ -23,7 +28,12 @@ enum { PLAY=1u, PAUSED, LOST, WATCH, MISTAKE, WON, ARCADE_READY, SOL_CONFIRM,
        SUDOKU_LEVEL, SUDOKU_PICK, SUDOKU_MENU, SUDOKU_CONFIRM, SCR_INTRO, SCR_CLEAR,
        CW_INTRO, CW_CLEAR, PP_SERVE };
 static uint32_t installed=LN_GAME_SUPPORTED_MASK;
-static uint8_t game,games_phase,paused_phase,hearts,focus,sequence[24],entered,level,flash;
+#if defined(LN_GAME_PACKAGE_ID)
+static const uint8_t game=LN_GAME_PACKAGE_ID;
+#else
+static uint8_t game;
+#endif
+static uint8_t games_phase,paused_phase,hearts,focus,sequence[24],entered,level,flash;
 static uint16_t ship=160,energy,score,best[LN_GAME_COUNT];
 static uint16_t cw_award;
 static uint32_t random_state=0x9e3779b9u,last_tick,spawn_at,flash_until,invulnerable_until,hud_revision,energy_carry;
@@ -268,7 +278,11 @@ static void new_pulse(void){
     flash=0;entered=255u;flash_until=last_tick+700000u;games_phase=WATCH;
 }
 void ln_games_start(uint32_t row){
+#if !defined(LN_GAME_PACKAGE_ID)
     for(uint32_t i=0;i<LN_GAME_COUNT;++i)if(installed&(1u<<i)){if(!row){game=(uint8_t)i;break;}--row;}
+#else
+    (void)row;
+#endif
     random_state^=last_tick+0x6d2b79f5u;games_phase=paused_phase=PLAY;score=0;hearts=3u;focus=0u;sound_pending=1u;
     resume_pending=false;
     hit_until=shield_notice_until=burst_until=0;shield_failed=false;previous_best=best[game];
@@ -586,7 +600,7 @@ void ln_games_draw(const struct ln_ui_canvas_context *c){
 
 #endif /* native display presentation */
 
-#if defined(LINNET_AUDIO)
+#if defined(LINNET_AUDIO) && !defined(LN_GAME_PACKAGE_ID)
 static bool games_audio_owned;
 void ln_games_audio_stop(void){if(games_audio_owned){(void)ln_audio_stop();games_audio_owned=false;}sound_pending=0;}
 void ln_games_audio_step(void){

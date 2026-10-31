@@ -5,7 +5,7 @@
 
 #define LN_FAT32_PATH_MAX 255u
 #define LN_FAT32_CACHE_SIZE 16u
-#define LN_FAT32_SET_MAX 16u
+#define LN_FAT32_SET_MAX 18u
 #define LN_FAT32_DIR_MAX 32u
 /* Classic OS alternates photo, music and library files through one reader.
  * Match the proof cache capacity so active files retain their proven seek

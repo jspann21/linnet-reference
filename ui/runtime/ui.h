@@ -45,6 +45,11 @@ uint32_t ln_games_hud_revision(void);
 bool ln_games_playing(void);
 void ln_games_audio_step(void);
 void ln_games_audio_stop(void);
+void ln_games_step(uint32_t now,bool visible,bool hold,bool may_write);
+void ln_games_stop(void);
+bool ln_games_quiesce(bool publish);
+bool ln_games_pending(void);
+bool ln_games_take_exit(void);
 struct ln_ui_scene;
 struct ln_ui_font;
 struct ln_ui_theme {
@@ -66,12 +71,7 @@ uint32_t ln_ui_playback_status(void); /*0 stopped,1 playing,2 paused*/
 uint32_t ln_ui_theme_preference(void);
 void ln_ui_theme_changed(uint32_t index);
 const char *ln_ui_theme_status(void);
-struct ln_ui_canvas_context {
-    uint16_t *pixels;
-    int32_t x,y,w,h,clip_x,clip_y,clip_w,clip_h;
-    uint32_t frame;
-    uint16_t fg,bg;
-};
+#include "sdk/include/linnet/graphics.h"
 typedef void (*ln_ui_canvas_fn)(const struct ln_ui_canvas_context *context);
 struct ln_ui_node {
     uint32_t kind;int32_t x,y,w,h;uint32_t fg,bg,flags,count,resource,index;
@@ -83,9 +83,7 @@ struct ln_ui_scene {const char *id,*title;const struct ln_ui_node *nodes;uint32_
 struct ln_ui_asset {uint32_t width,height;const uint16_t *pixels;};
 /* Memory-only per-row assets for virtualized image grids. */
 const struct ln_ui_asset *ln_ui_dynamic_item_asset(const struct ln_ui_node *,uint32_t,const struct ln_ui_asset *);
-struct ln_ui_glyph {uint32_t offset;uint8_t x,y,w,h;};
-_Static_assert(sizeof(struct ln_ui_glyph)==8u,"packed glyph layout differs from the optional font format");
-struct ln_ui_font {const uint8_t *alpha;uint32_t width,height,advance,first,count;const uint8_t *advances;const struct ln_ui_glyph *glyphs;};
+
 extern const struct ln_ui_scene *ln_ui_scenes;
 extern const uint32_t ln_ui_scene_count;
 extern const uint64_t ln_ui_enabled_scenes;

@@ -1,7 +1,8 @@
 #include <linnet/game.h>
+#include "game_assets.h"
 static const struct ln_game_host *host;
 static uint32_t value,revision,buttons;
-static bool start(void){value=host->best();revision=1;buttons=0;return true;}
+static bool start(void){value=host->best();if(value>100u)value=100u;revision=1;buttons=0;return true;}
 static int32_t input(uint32_t kind,int32_t amount){
     if(kind==2u){uint32_t pressed=(uint32_t)amount&~buttons;buttons=(uint32_t)amount;
         if(pressed&LN_GAME_BUTTON_MENU)return 2;
@@ -22,6 +23,7 @@ static void draw(const struct ln_ui_canvas_context *c){
     for(int32_t y=c->clip_y;y<c->clip_y+c->clip_h;++y)
         for(int32_t x=c->clip_x;x<c->clip_x+c->clip_w;++x)
             c->pixels[y*LINNET_UI_WIDTH+x]=(x<(int32_t)(value*LINNET_UI_WIDTH/100u))?0x07e0u:0x0841u;
+    ln_game_blit(c,8,8,&counter_marker);
 }
 static const struct ln_game_module module={LN_GAME_ABI,sizeof module,start,input,tick,deadline,draw,playing,changed,cue,stop};
 const struct ln_game_module *ln_game_entry_point(const struct ln_game_host *api){

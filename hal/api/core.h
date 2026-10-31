@@ -31,6 +31,8 @@ bool ln_core_cop_pause(bool paused);
 bool ln_core_cache_enable(void);
 bool ln_core_cache_clean(void);
 bool ln_core_cache_disable(void);
+/* Publish newly written, caller-owned ARM code before its first dispatch. */
+bool ln_core_code_publish(const void *address,uint32_t bytes);
 uint32_t ln_core_irq_save(void);
 void ln_core_irq_restore(uint32_t flags);
 bool ln_core_delay_us(uint32_t delay);

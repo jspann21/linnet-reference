@@ -1,12 +1,10 @@
 """Guarded selection of firmware games on capable targets."""
-import os
 from pathlib import Path
 import struct
-import uuid
 import zlib
 
 from . import media_manager as media
-from .publish import _plain, _volume_guard
+from .publish import _plain
 from tools.studio.targets import target_spec
 
 GAMES = (("Comet Run", "Steer through a rising meteor storm."),
@@ -71,6 +69,10 @@ def _path(identity):
 def read(identity):
     identity = media.refresh(identity)
     _, path = _path(identity)
+    from .game_install import inventory
+    snapshot=inventory(Path(identity['root']),identity['target_id'])
+    if snapshot['valid']:
+        return {r['legacy'] for r in snapshot['rows'] if r['legacy']!=0xffffffff}
     selected = set(range(len(GAMES)))
     if path.exists():
         with path.open('rb') as reader:
@@ -78,29 +80,62 @@ def read(identity):
     return selected & supported(identity)
 
 
-def save(identity, selected):
+def prepared(target, directory=None):
+    from tools.studio.game_build import library
+    from tools.studio.targets import ROOT
+    candidates=[Path(directory)] if directory is not None else [ROOT/'resources/games'/target,ROOT/'out/game-packages'/target]
+    for path in candidates:
+        if (path/'library.json').is_file():return library(path,target)
+    raise ValueError('Prepared game packages are missing. Install the matching Media Manager release or build the game library from source.')
+
+
+def custom(identity):
+    identity=media.refresh(identity)
+    from .game_install import inventory
+    return [r for r in inventory(identity['root'],identity['target_id'])['rows'] if r['legacy']==0xffffffff]
+
+
+def choices(identity):
+    identity=media.refresh(identity)
+    from .game_install import inventory
+    snapshot=inventory(identity['root'],identity['target_id'])
+    return dict(selected={r['legacy'] for r in snapshot['rows'] if r['legacy']!=0xffffffff} if snapshot['valid'] else read(identity),
+                custom=[r for r in snapshot['rows'] if r['legacy']==0xffffffff])
+
+
+def save(identity, selected, library=None, recover=False):
+    encode(selected)  # Preserve strict legacy selection validation during migration.
     if set(selected) - supported(identity):
         raise ValueError("This game is unavailable on this iPod.")
-    data = encode(selected)
     identity = media.refresh(identity)
-    root, path = _path(identity)
-    temporary = path.with_name('GAME-' + uuid.uuid4().hex[:8] + '.TMP')
-    _plain(temporary, root)
-    owned = False
-    try:
-        with temporary.open('xb') as stream:
-            owned = True
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-        _volume_guard(identity)
-        _plain(path, root)
-        os.replace(temporary, path)
-        if path.read_bytes() != data:
-            raise IOError("Game selection could not be verified on the iPod.")
-    finally:
-        if owned and temporary.exists():
-            _volume_guard(identity)
-            _plain(temporary, root)
-            temporary.unlink()
+    from . import game_install,game_package
+    if recover:game_install.recover_catalogues(identity)
+    root,_=_path(identity)
+    available=prepared(identity['target_id'],library) if selected else {}
+    if any('linnet.'+game_package.LEGACY_IDS[i] not in available for i in selected):
+        raise ValueError('The prepared library is missing a selected built-in game')
+    packages=[available['linnet.'+game_package.LEGACY_IDS[i]] for i in sorted(set(selected))]
+    # Changing built-in choices must preserve independently installed games.
+    snapshot=game_install.inventory(root,identity['target_id'])
+    packages.extend(root/'.LINNET/GAMES'/r['filename'] for r in snapshot['rows'] if r['legacy']==0xffffffff)
+    game_install.install(identity,packages,expected=snapshot['tokens'])
     return set(selected)
+
+
+def import_package(identity, path):
+    identity=media.refresh(identity)
+    from . import game_install,game_package
+    candidate=Path(path)
+    if candidate.stat().st_size>256+game_package.SLOT_BYTES:raise ValueError('Game package is too large')
+    info=game_package.inspect(candidate.read_bytes(),identity['target_id'])
+    snapshot=game_install.inventory(identity['root'],identity['target_id']);rows=snapshot['rows']
+    paths=[Path(identity['root'])/'.LINNET/GAMES'/r['filename'] for r in rows if r['id']!=info['id']]
+    return game_install.install(identity,[*paths,candidate],expected=snapshot['tokens'])
+
+
+def remove_package(identity, game_id):
+    identity=media.refresh(identity)
+    from . import game_install
+    snapshot=game_install.inventory(identity['root'],identity['target_id']);rows=snapshot['rows']
+    paths=[Path(identity['root'])/'.LINNET/GAMES'/r['filename'] for r in rows if r['id']!=game_id]
+    return game_install.install(identity,paths,expected=snapshot['tokens'])

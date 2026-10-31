@@ -12,23 +12,17 @@ static const char *const ws_words[3][9]={
     {"PODCAST","ALBUM","ARTIST","SHUFFLE","TRACK","PHOTO","VIDEO",0,0},
     {"PLAYLIST","HEADPHONE","CLASSIC","LIBRARY","COVERFLOW","BATTERY","SCREEN","WHEEL","LINNET"}};
 static uint8_t ws_len(const char *s){uint8_t n=0;while(s[n])++n;return n;}
-static bool ws_place(const char *word,uint8_t slot){
-    uint8_t len=ws_len(word);static const int8_t dx[8]={1,1,0,-1,-1,-1,0,1},dy[8]={0,1,1,1,0,-1,-1,-1};
-    for(uint16_t tries=0;tries<512u;++tries){
-        uint8_t d=(uint8_t)(random_next()&7u),x=(uint8_t)(random_next()%ws_w),y=(uint8_t)(random_next()%ws_h);
-        int16_t endx=x+dx[d]*(len-1u),endy=y+dy[d]*(len-1u);
-        if(endx<0||endy<0||endx>=ws_w||endy>=ws_h)continue;bool ok=true;
-        for(uint8_t i=0;i<len;++i){char c=ws_grid[(y+dy[d]*i)*ws_w+x+dx[d]*i];if(c&&c!=word[i])ok=false;}
-        if(!ok)continue;for(uint8_t i=0;i<len;++i)ws_grid[(y+dy[d]*i)*ws_w+x+dx[d]*i]=word[i];
-        ws_begin[slot]=(uint8_t)(y*ws_w+x);ws_end[slot]=(uint8_t)(endy*ws_w+endx);return true;
-    }
-    return false;
-}
+#if LN_GAME_PACKAGE_ID==11
+#include "game_assets.h"
+typedef char ws_prepared_size[(sizeof word_boards==3u*8u*138u)?1:-1];
+#endif
 static void ws_start_level(uint8_t level){
     ws_level=level;ws_w=level==0?8u:level==1?10u:12u;ws_h=level==0?8u:10u;ws_count=level==0?5u:level==1?7u:9u;
-    bool complete=false;for(uint8_t board=0;board<12u&&!complete;++board){for(uint8_t i=0;i<120u;++i)ws_grid[i]=0;complete=true;for(uint8_t i=0;i<ws_count;++i)if(!ws_place(ws_words[level][i],i)){complete=false;break;}}
-    if(!complete){for(uint8_t i=0;i<120u;++i)ws_grid[i]=0;for(uint8_t i=0;i<ws_count;++i){uint8_t len=ws_len(ws_words[level][i]),y=i,x=(i&1u)?ws_w-len:0;ws_begin[i]=(uint8_t)(y*ws_w+x);ws_end[i]=(uint8_t)(y*ws_w+x+len-1u);for(uint8_t n=0;n<len;++n)ws_grid[y*ws_w+x+n]=ws_words[level][i][n];}}
-    for(uint8_t i=0;i<ws_w*ws_h;++i)if(!ws_grid[i])ws_grid[i]=(char)('A'+random_next()%26u);
+#if LN_GAME_PACKAGE_ID==11
+    const uint8_t *board=word_boards+((uint32_t)level*8u+(random_next()&7u))*138u;
+    for(uint8_t i=0;i<120u;++i)ws_grid[i]=(char)board[i];
+    for(uint8_t i=0;i<9u;++i){ws_begin[i]=board[120u+i];ws_end[i]=board[129u+i];}
+#endif
     ws_found_mask=0;ws_found=0;ws_cursor=0;ws_anchor=255;ws_elapsed=0;ws_started_at=0;ex_phase=EX_PLAY;
 }
 static bool ws_cell_found(uint8_t at){

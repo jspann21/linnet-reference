@@ -10,7 +10,12 @@
 #endif
 ENTRY(ln_start)
 MEMORY {
-  SDRAM (rwx) : ORIGIN = LINNET_LOAD_ADDRESS, LENGTH = LINNET_OS_CAPACITY
+#if defined(LINNET_IMAGE_OS) && LINNET_HAS_GAMES
+ SDRAM (rwx) : ORIGIN = LINNET_LOAD_ADDRESS, LENGTH = LINNET_GAME_SLOT_OFFSET
+ GAME (rwx) : ORIGIN = LINNET_LOAD_ADDRESS + LINNET_GAME_SLOT_OFFSET, LENGTH = LINNET_GAME_SLOT_BYTES
+#else
+ SDRAM (rwx) : ORIGIN = LINNET_LOAD_ADDRESS, LENGTH = LINNET_OS_CAPACITY
+#endif
 #if defined(LINNET_COVERFLOW)
   COVER_LOW (rw) : ORIGIN = 0x00800000, LENGTH = 0x00800000
   COVER_HIGH (rw) : ORIGIN = 0x01800000, LENGTH = 0x00600000
@@ -166,6 +171,12 @@ SECTIONS {
   .dev_control (NOLOAD) : { . += 0x1000; } > CONTROL
 #elif defined(LINNET_PLATFORM_CORE)
   .platform_control (NOLOAD) : { . += 0x1000; } > CONTROL
+#endif
+
+#if defined(LINNET_IMAGE_OS) && LINNET_HAS_GAMES
+ .game_slot (NOLOAD) : { __game_slot = .; . += LINNET_GAME_SLOT_BYTES; __game_slot_end = .; } > GAME
+ ASSERT(__stack_top <= ORIGIN(GAME), "Firmware overlaps executable game slot")
+ ASSERT(ORIGIN(GAME)+LENGTH(GAME) <= LINNET_LOAD_ADDRESS+LINNET_OS_CAPACITY, "Game slot exceeds OS allocation")
 #endif
   /DISCARD/ : { *(.comment) *(.ARM.exidx*) *(.ARM.extab*) *(.note*) }
 #ifdef LINNET_AUDIO

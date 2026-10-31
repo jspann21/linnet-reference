@@ -316,6 +316,7 @@ __asm__(
     "ldr r6,=0x6000c000\nldr r7,=0xf000f044\nldr r8,=0x60005010\n"
     "ldr r0,[r6]\ntst r0,#1\nbeq 1f\nbl 8f\ncmp r0,#0\nbeq 7f\n"
     "1: cmp r4,#0\nbeq 6f\nbl 12f\ncmp r0,#0\nbeq 7f\n"
+    "cmp r4,#3\nbeq 6f\n"
     "mov r0,#0\nstr r0,[r6]\nnop\nnop\nnop\nnop\n"
     "cmp r4,#1\nbeq 6f\n"
     "mov r0,#4\nstr r0,[r6]\nldr r1,=0x60006044\nldr r0,[r1]\n"
@@ -403,7 +404,18 @@ static __attribute__((naked,noinline)) bool ln_cache_transaction(uint32_t operat
 bool ln_core_cache_clean(void){return ln_cache_transaction(0);}
 bool ln_core_cache_disable(void){return ln_cache_transaction(1);}
 bool ln_core_cache_enable(void){return ln_cache_transaction(2);}
+bool ln_core_code_publish(const void *address,uint32_t bytes){
+    uintptr_t at=(uintptr_t)address;
+    if(!bytes||(at&31u)||(bytes&31u)||at>UINT32_MAX-bytes)return false;
+    /* Clean and replace unified CPU tags entirely from IRAM; retain enable. */
+    return ln_cache_transaction(3);
+}
 #else
+bool ln_core_code_publish(const void *address,uint32_t bytes){
+    uintptr_t at=(uintptr_t)address;
+    if(!bytes||(at&31u)||(bytes&31u)||at>UINT32_MAX-bytes)return false;
+    return ln_core_cache_disable()&&ln_core_cache_enable();
+}
 bool ln_core_cache_clean(void)
 {
     if (!(LINNET_MMIO(0x6000c000u) & 1u)) return true;
