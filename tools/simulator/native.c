@@ -3,6 +3,7 @@
 #include "linnet_target.h"
 #include "services/music/menu.h"
 #include "services/display/clock.h"
+#include "services/display/preferences.h"
 #include "services/games/games.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -184,8 +185,13 @@ static int snapshot(const struct ln_ui_state *state,const char *directory,uint32
     FILE *file=fopen(name,"wb");if(!file)return 0;
     for(uint32_t i=0;i<LINNET_UI_WIDTH*LINNET_UI_HEIGHT;++i){unsigned char p[2]={(unsigned char)pixels[i],(unsigned char)(pixels[i]>>8)};if(fwrite(p,1,2,file)!=2){fclose(file);return 0;}}
     if(fclose(file))return 0;
-    printf("{\"frame\":%u,\"theme\":%u,\"battery\":%u,\"clock\":%u,\"playback\":%u,\"scene\":%u,\"selected\":%u,\"crc32\":%u,\"paint_count\":%u,\"painted_pixels\":%u,\"visible_items\":%u,\"scene_epoch\":%u,\"transitions\":%u,\"damage_count\":%u,\"action\":%u,\"clock_save_calls\":%u}\n",
-        index,ln_ui_theme_index(),sample_battery,sample_clock,sample_playback,state->scene,state->selected,crc(),state->paint_count,state->painted_pixels,state->visible_items,state->scene_epoch,state->transitions,damage_count,state->action,save_calls);
+    uint8_t menu_data[80];ln_ui_menu_encode(menu_data);
+    if(snprintf(name,sizeof name,"%s/frame-%05u.menus.bin",directory,index)>=(int)sizeof name)return 0;
+    file=fopen(name,"wb");if(!file)return 0;
+    if(fwrite(menu_data,1,sizeof menu_data,file)!=sizeof menu_data){fclose(file);return 0;}
+    if(fclose(file))return 0;
+    printf("{\"frame\":%u,\"theme\":%u,\"battery\":%u,\"clock\":%u,\"playback\":%u,\"scene\":%u,\"selected\":%u,\"crc32\":%u,\"paint_count\":%u,\"painted_pixels\":%u,\"visible_items\":%u,\"scene_epoch\":%u,\"transitions\":%u,\"damage_count\":%u,\"action\":%u,\"clock_save_calls\":%u,\"brightness\":%u}\n",
+        index,ln_ui_theme_index(),sample_battery,sample_clock,sample_playback,state->scene,state->selected,crc(),state->paint_count,state->painted_pixels,state->visible_items,state->scene_epoch,state->transitions,damage_count,state->action,save_calls,ln_preferences_brightness());
     return 1;
 }
 static void menu_input(struct ln_ui_state *s,uint32_t kind,int32_t value){
@@ -205,19 +211,27 @@ static void menu_input(struct ln_ui_state *s,uint32_t kind,int32_t value){
             else if((pressed&16u)&&(action==LN_SOUND_CUSTOM_EQ||action==LN_SOUND_MORE)){
                 sample_sound_parent=s->selected;sample_sound_view=action==LN_SOUND_CUSTOM_EQ?LN_SOUND_EQ:LN_SOUND_ADVANCED;s->selected=0;s->first_visible[s->scene]=0;handled=true;
             }
-        }else if((pressed&16u)&&!strcmp(id,"linnet.system.display")&&s->selected==1u){(void)ln_ui_show(s,"linnet.system.themes");handled=true;}
+        }
         else if((pressed&16u)&&!strcmp(id,"linnet.system.shutdown")&&s->selected==2u){(void)ln_ui_show(s,"linnet.system.battery");handled=true;}
     }
     if(handled){s->buttons=(uint32_t)value;ln_ui_refresh(s);}else ln_ui_input(s,kind,value);
 }
 int main(int argc,char **argv){
-    if(argc<2||argc>5)return 2;
-    bool all_scenes=false,optional_font=false,game_preview=false;
+    if(argc<2||argc>6)return 2;
+    bool all_scenes=false,optional_font=false,optional_menus=false,game_preview=false;
     for(int i=2;i<argc;++i){
         if(!strcmp(argv[i],"--all-scenes")&&!all_scenes)all_scenes=true;
         else if(!strcmp(argv[i],"--apple-font")&&!optional_font)optional_font=true;
+        else if(!strcmp(argv[i],"--menus")&&!optional_menus)optional_menus=true;
         else if(!strcmp(argv[i],"--game")&&!game_preview)game_preview=true;
         else return 2;
+    }
+    if(optional_menus){
+        uint8_t menus[80];char path[4096];
+        if(snprintf(path,sizeof path,"%s/MENUS.BIN",argv[1])>=(int)sizeof path)return 8;
+        FILE *input=fopen(path,"rb");if(!input)return 8;
+        size_t bytes=fread(menus,1,sizeof menus,input);int extra=fgetc(input),failed=ferror(input);fclose(input);
+        if(failed||bytes!=sizeof menus||extra!=EOF||!ln_ui_menu_load(menus,sizeof menus))return 8;
     }
     if(optional_font){
         static uint8_t font[LN_UI_APPLE_FONT_BYTES] __attribute__((aligned(4)));

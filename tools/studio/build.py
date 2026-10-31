@@ -348,7 +348,7 @@ def build(profile, target, verify=False, kind="os", probe="frame", device_serial
     if kind == "os":
         add_sources([ROOT / name for name in
                      ("kernel/executive.c", "kernel/runtime.c", "kernel/wheel_motion.c")], "OS runtime")
-        add_sources([ROOT / "ui/runtime/shell_adapter.c", ROOT / "services/display/clock.c"], "OS display")
+        add_sources([ROOT / "ui/runtime/shell_adapter.c", ROOT / "services/display/clock.c", ROOT / "services/display/preferences.c"], "OS display")
     if profile != "release":
         add_sources(sorted((ROOT / "hal/link").glob("*.c")), "development link")
         add_sources([ROOT / "boot/src/loader.c"], "development loader")

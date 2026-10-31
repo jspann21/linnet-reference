@@ -19,16 +19,34 @@
 /* Cleared cursors publish only submitted PCM; DMA never reads unused slots. */
 static uint32_t ring[LINNET_AUDIO_RING_FRAMES] __attribute__((section(".media_workspace"),aligned(32)));
 static uint32_t silence[CHUNK] __attribute__((aligned(32)));
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+/* Fade a resume without modifying queued media or the DMA-owned ring. */
+static uint32_t onset[CHUNK] __attribute__((aligned(32)));
+static volatile uint32_t fade_remaining;
+#endif
 static volatile struct ln_audio_status state;
 static volatile uint32_t head,tail,inflight;
-static volatile bool real_block,active,pause_pending,owned,starved;
+static volatile uint32_t inflight_last;
+static volatile bool real_block,active,pause_pending,owned,starved,draining,warming,start_armed,drain_ready,tail_ramp;
 static volatile bool finishing;
 static bool codec_ready,halted,dma_quiet,lineout_enabled;
+static bool digital_muted,output_muted;
+static volatile uint32_t mute_until;
+static volatile uint32_t drain_until;
 static uint32_t frame_us_q12;
 static volatile uint32_t armed_us, expected_us, previous_completion_us;
 static volatile bool completion_seen;
 static volatile uint32_t *native(uint32_t *p)
 { return (volatile uint32_t *)((uintptr_t)p|0x10000000u); }
+static void ramp_to_silence(uint32_t sample)
+{
+    int32_t left=(int16_t)sample,right=(int16_t)(sample>>16);
+    for(uint32_t i=0;i<64u;i++){
+        int32_t gain=(int32_t)(64u-i);
+        native(silence)[i]=(uint16_t)(left*gain/64)|((uint32_t)(uint16_t)(right*gain/64)<<16);
+    }
+    tail_ramp=true;
+}
 static bool codec(uint8_t reg,uint16_t value)
 { return ln_power_i2c_write(0x1au,(uint8_t)((reg<<1)|(value>>8)),(uint8_t)value); }
 static void mask_irq(void) { REG(0x60004028u)=IRQ; }
@@ -49,7 +67,7 @@ static bool quiesce(void)
     }
     fault(1);return false;
 }
-static void arm(void)
+static void arm(bool drain)
 {
     uint32_t queued=head-tail,count=queued;
     if(queued>LINNET_AUDIO_RING_FRAMES){fault(2);return;}
@@ -57,10 +75,28 @@ static void arm(void)
     uint32_t offset=tail&MASK;
     if(count>LINNET_AUDIO_RING_FRAMES-offset)count=LINNET_AUDIO_RING_FRAMES-offset;
     volatile uint32_t *source;
-    if(count){source=native(ring)+offset;real_block=true;starved=false;}
+    if(drain){source=native(silence);count=CHUNK;real_block=false;}
+    else if(count){source=native(ring)+offset;real_block=true;starved=false;}
     else {source=native(silence);count=CHUNK;real_block=false;
         if(!starved)++state.underruns;starved=true;}
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    if(real_block&&fade_remaining){
+        uint32_t fade=count<fade_remaining?count:fade_remaining;
+        for(uint32_t i=0;i<count;i++){
+            uint32_t sample=source[i];
+            if(i<fade){
+                int32_t gain=(int32_t)(64u-fade_remaining+i);
+                int32_t left=(int16_t)sample,right=(int16_t)(sample>>16);
+                sample=(uint16_t)(left*gain/64)|((uint32_t)(uint16_t)(right*gain/64)<<16);
+            }
+            native(onset)[i]=sample;
+        }
+        fade_remaining-=fade;source=native(onset);
+    }
+#endif
+    inflight_last=real_block?source[count-1u]:0;
     inflight=count;active=true;dma_quiet=false;
+    if(real_block)start_armed=true;
     state.last_irq_us=ln_time_us();
     armed_us=state.last_irq_us;
     /* Rates are >=8kHz and count<=1024: both products fit uint32_t.
@@ -78,20 +114,27 @@ bool ln_audio_volume(int32_t value)
 }
 bool ln_audio_lineout(bool enabled)
 {
-    lineout_enabled=enabled;
-    return !codec_ready||ln_codec_lineout(codec,enabled);
+    if(codec_ready&&!ln_codec_lineout(codec,enabled))return false;
+    lineout_enabled=enabled;return true;
 }
 bool ln_audio_halt(void)
 {
     if(!owned)return true;
     if(halted)return true;
-    bool muted=ln_codec_mute(codec,true);
-    /* Leave stream clocks running during this bounded mute-settle window.
-     * This is a conservative delay, not a measured analog settling guarantee. */
-    bool settled=muted&&ln_core_delay_us(10000);
+    bool settled=true;
+    if(state.playing&&!state.fault){
+        ln_audio_pause();
+        uint32_t began=ln_time_us(),timeout=4u*((CHUNK*frame_us_q12+4095u)>>12)+40000u;
+        while(state.playing&&!state.fault&&ln_time_us()-began<timeout){
+            uint32_t now=ln_time_us();ln_audio_service(now);
+            if(state.playing)ln_core_idle_until(now+1000u);
+        }
+        settled=!state.playing&&!state.fault;
+    }
+    bool muted=ln_codec_mute(codec,true);output_muted=digital_muted=muted;
     uint32_t flags=ln_core_irq_save();
     bool idle=quiesce();
-    state.playing=0;state.paused=0;pause_pending=false;
+    state.playing=0;state.paused=0;pause_pending=draining=warming=false;
     ln_core_irq_restore(flags);
     if(!idle)return false; /* Never reuse a DMA source until BUSY clears. */
     IIS&=~(1u<<29);FIFO|=1u<<8;
@@ -120,7 +163,7 @@ bool ln_audio_init(uint32_t rate)
     else if(!ln_audio_stop())return false;
     owned=true;
     if(!quiesce())return false;
-    state=(struct ln_audio_status){0};head=tail=0;pause_pending=false;starved=false;finishing=false;
+    state=(struct ln_audio_status){0};head=tail=0;pause_pending=draining=warming=drain_ready=false;starved=false;finishing=false;
     frame_us_q12=4096000000u/rate;completion_seen=false;
     if(warm){
         /* Analog paths and headphone gain remain latched across tracks. */
@@ -140,7 +183,12 @@ bool ln_audio_init(uint32_t rate)
     if(!ln_codec_init(codec,rate)||!ln_codec_lineout(codec,lineout_enabled)||!ln_audio_volume(-400))goto failed;
     codec_ready=true;
 stream_ready:
+    digital_muted=output_muted=true;mute_until=0;drain_until=0;
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    fade_remaining=0;
+#endif
     for(uint32_t i=0;i<CHUNK;++i)native(silence)[i]=0;
+    tail_ramp=false;
     REG(0x6000a000u)|=1u<<31;
     REG(0x6000b018u)=0x70002840u;REG(0x6000b014u)=1u<<26;
     REG(0x6000b01cu)=0x20010000u;
@@ -179,23 +227,69 @@ bool ln_audio_rewrite(uint32_t frame,const int16_t *pcm,uint32_t frames){
         (uint16_t)pcm[2*i]|((uint32_t)(uint16_t)pcm[2*i+1]<<16);
     ln_core_irq_restore(flags);return allowed;
 }
+static bool startup_wait(uint32_t began,uint32_t timeout)
+{
+    uint32_t now=ln_time_us();
+    if(state.fault)return false;
+    if(now-began>=timeout){fault(5);return false;}
+    ln_core_idle_until(now+1000u);return true;
+}
 bool ln_audio_start(void)
 {
     if(!state.initialized||state.fault||head==tail)return false;
+    if(state.playing&&!pause_pending&&!draining&&!digital_muted)return true;
     uint32_t flags=ln_core_irq_save();
-    pause_pending=false;state.paused=0;state.playing=1;
+    bool continuing=active&&real_block&&!output_muted;
+    pause_pending=draining=false;state.paused=0;state.playing=1;
+    if(continuing){
+        ln_core_irq_restore(flags);
+        if(!ln_codec_digital_mute(codec,false)){fault(3);goto failed;}
+        digital_muted=false;return true;
+    }
+    warming=true;start_armed=false;
+    uint32_t zeros=state.silence_frames;
     REQUEST|=4u;IIS|=1u<<29;
-    if(!active){completion_seen=false;arm();}
+    if(!active){completion_seen=false;arm(true);}
     REG(0x60004024u)=IRQ;
     ln_core_irq_restore(flags);
-    if(state.fault)return false;
-    if(!ln_codec_mute(codec,false)){fault(3);return false;}
+    uint32_t began=ln_time_us(),timeout=3u*((CHUNK*frame_us_q12+4095u)>>12)+30000u;
+    while(state.silence_frames==zeros)if(!startup_wait(began,timeout))goto failed;
+    /* Output gain is restored immediately under digital mute after a zero
+     * block has flushed the FIFO, rather than waiting for a zero crossing. */
+    output_muted=false;
+    if(!ln_codec_analog_mute(codec,false)){fault(3);goto failed;}
+    uint32_t ready=ln_time_us()+1000u;
+    while((int32_t)(ln_time_us()-ready)<0)if(!startup_wait(began,timeout))goto failed;
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+    /* WM8758 documents a soft ramp but no maximum ramp time. Release it on
+     * zero data, then make the PCM onset itself continuous at the next IRQ. */
+    digital_muted=false;
+    if(!ln_codec_digital_mute(codec,false)){fault(3);goto failed;}
+    ready=ln_time_us()+10000u;
+    while((int32_t)(ln_time_us()-ready)<0)if(!startup_wait(began,timeout))goto failed;
+    fade_remaining=64u;
+#endif
+    warming=false;
+    while(!start_armed)if(!startup_wait(began,timeout))goto failed;
+#if !defined(LINNET_TARGET_VIDEO5G_M25)
+    if(!draining){
+        digital_muted=false;
+        if(!ln_codec_digital_mute(codec,false)){fault(3);goto failed;}
+    }
+#endif
     return true;
+failed:
+    warming=false;ln_audio_service(ln_time_us());return false;
 }
 void ln_audio_pause(void)
 {
+    if(!state.playing||pause_pending||draining)return;
+    /* The serial clock must keep running for the DAC soft ramp. The next
+     * completion drains silence without consuming any further queued PCM. */
+    if(!ln_codec_digital_mute(codec,true)){fault(3);return;}
+    digital_muted=true;mute_until=ln_time_us()+10000u;
     uint32_t flags=ln_core_irq_save();
-    if(state.playing){if(active)pause_pending=true;else{state.playing=0;state.paused=1;}}
+    if(state.playing){if(active)pause_pending=true;else{draining=true;drain_ready=false;drain_until=ln_time_us();arm(true);}}
     ln_core_irq_restore(flags);
 }
 void ln_audio_finish(void){uint32_t flags=ln_core_irq_save();finishing=true;ln_core_irq_restore(flags);}
@@ -213,18 +307,53 @@ void ln_audio_irq(void)
     if(duration>expected_us&&duration-expected_us>state.max_completion_late_us)
         state.max_completion_late_us=duration-expected_us;
     ++state.interrupts;
-    if(real_block){tail+=inflight;state.consumed+=inflight;}
+    uint32_t last_sample=0;
+    if(real_block){tail+=inflight;state.consumed+=inflight;last_sample=inflight_last;}
     else state.silence_frames+=inflight;
+    if(tail_ramp){for(uint32_t i=0;i<64u;i++)native(silence)[i]=0;tail_ramp=false;}
     active=false;inflight=0;state.last_irq_us=started;
-    if(pause_pending||(finishing&&tail==head)){pause_pending=false;state.playing=0;state.paused=1;}
-    else if(state.playing)arm();
+    if(draining)drain_ready=true;
+    else if(!warming&&((pause_pending&&(int32_t)(started-mute_until)>=0)||(finishing&&tail==head))){
+        pause_pending=false;draining=true;drain_ready=false;drain_until=started;
+#if defined(LINNET_TARGET_VIDEO5G_M25)
+        /* Even if soft mute has not settled, the last PCM sample reaches
+         * zero continuously. Natural EOF and pause share this short tail. */
+        if(last_sample)ramp_to_silence(last_sample);
+#else
+        if(finishing&&tail==head&&last_sample)ramp_to_silence(last_sample);
+#endif
+    }
+    if(state.playing)arm(draining||warming);
     uint32_t elapsed=ln_time_us()-started;if(elapsed>state.max_irq_us)state.max_irq_us=elapsed;
 }
 void ln_audio_service(uint32_t now)
 {
     uint32_t flags=ln_core_irq_save();
     if(active&&(int32_t)(now-state.last_irq_us)>=250000)fault(5);
+    bool needs_digital=codec_ready&&!digital_muted&&(draining||!state.playing||state.fault);
     ln_core_irq_restore(flags);
+    /* I2C belongs to the foreground, including natural end-of-track mute. */
+    if(needs_digital){
+        if(!ln_codec_digital_mute(codec,true))fault(3);
+        else{digital_muted=true;mute_until=ln_time_us()+10000u;}
+    }
+    if(!state.fault&&draining&&drain_ready&&(int32_t)(now-drain_until)>=0&&(int32_t)(now-mute_until)>=0){
+        if(!output_muted){
+            if(!ln_codec_analog_mute(codec,true))fault(3);
+            else{output_muted=true;drain_until=ln_time_us()+1000u;}
+        }else{
+            flags=ln_core_irq_save();
+            if(quiesce()){
+                IIS&=~(1u<<29);FIFO|=1u<<8;
+                draining=false;state.playing=0;state.paused=1;
+            }
+            ln_core_irq_restore(flags);
+        }
+    }
+    if(state.fault){
+        if(codec_ready&&!output_muted)output_muted=ln_codec_mute(codec,true);
+        flags=ln_core_irq_save();if(active)(void)quiesce();ln_core_irq_restore(flags);
+    }
 }
 void ln_audio_snapshot(struct ln_audio_status *out)
 {

@@ -18,6 +18,10 @@ struct ln_dsp_config {
     /* Zero amount bypasses crossfeed. Low-pass update coefficient is Q0.16;
      * host chooses it for the actual stream sample rate. */
     uint32_t crossfeed_amount_q16,crossfeed_coefficient_q16;
+    /* Automatic DSP reserve only; the player compensates at the output after
+     * matching PCM is audible. Manual gain/ReplayGain are never compensated.
+     * Runtime metadata, absent from the LDSP file format. */
+    uint32_t headroom_db_tenths;
 };
 struct ln_dsp_history { int32_t x1,x2,y1,y2; };
 struct ln_dsp {

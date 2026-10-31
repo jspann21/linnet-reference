@@ -13,6 +13,13 @@ performance work, and future features. Priorities are not release dates.
   clock-loss recovery path. Use the existing
   [device checks](device-link.md#existing-device-checks).
 
+- [ ] **Brightness and menu sync on hardware.** Qualify immediate brightness,
+  saved brightness/timeout after restart, native menu edits, and Media Manager
+  reconciliation on the supported physical targets. Check startup/menu response,
+  restoring hidden shortcuts, and preservation of Media Manager's game choices.
+  Implementation and host verification are complete.
+  [Controls](navigation.md#saved-customization).
+
 - [ ] **Clean-machine packaging check.** Run the packaged Windows app on a
   clean computer with the documented FFmpeg setup.
   [Windows distribution](../tools/studio/media_distribution.py).
@@ -34,8 +41,8 @@ performance work, and future features. Priorities are not release dates.
   seeking. Optimize only a demonstrated bottleneck.
   [M4A reader](../services/audio/aac/m4a.c), [ADTS reader](../services/audio/aac/aac.c).
 
-- [ ] **Concurrent history, artwork, and prefetch at track boundaries.** Attribute
-  controller time and audio reserve when these operations overlap at a join,
+- [ ] **Concurrent history, artwork, and prefetch at automatic track boundaries.** Attribute
+  controller time and audio reserve when these operations overlap at a gapless join,
   especially on rotating storage. Tune only if measurements identify starvation
   or a missed deadline. [Music controller](../services/music/controller.c),
   [player](../services/music/player.c).
@@ -70,7 +77,6 @@ These additions are proposed work, not promises for the first release.
 | Lyrics | Host-prepared embedded/sidecar lyrics and a bounded Now Playing view. |
 | Star ratings and desktop history access | 0–5 ratings, device rating controls, and desktop access to listening history, preserving stable track IDs. |
 | Album shuffle | Random album order with disc/track order retained within each album, including repeat and resume. |
-| Device settings | Saved wheel-adjustable brightness, device-side menu customization, and Reset Settings with explicit treatment of history. |
 | Slideshow settings | Saved interval, repeat/shuffle, and optional music-playlist choices. |
 | Sound Check compatibility | Import Apple `iTunNORM` values or consistently label normalization as ReplayGain. Consider host loudness analysis for untagged music. |
 | Metadata and artwork editing | Single/batch tag overrides and cover replacement, with explicit file-tag write policy, asset invalidation, and track-identity preservation. |
@@ -91,7 +97,7 @@ Implementation entry points: [music compiler](../tools/content/music.py),
 | --- | --- |
 | Utilities | Alarms with measured wake behavior, world clocks, stopwatch/laps, host-prepared contacts and calendar events, and a persisted combination screen lock. |
 | Languages | Broader glyph coverage, translated menus, and matching input/search rules. |
-| Accessories and TV output | Add support for docks, remotes, radio, recording, and TV output. |
+| Accessories and TV output | Physically qualify M25 TV output; add TV output on other backends and support for additional dock/car/remote protocols, radio accessories, and recording. |
 | Hardware variants | Extend support to additional boards, storage adapters, panels, and NOR chips. |
 | Apple interoperability | Expand exact-device database qualification and music/path support. |
 | Optional expansion | Assess local recommendations, proprietary stock features, protected purchases/Audible, and commercial iPod games separately. Consider macOS/Linux packaging and CD ripping. |

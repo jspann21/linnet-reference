@@ -53,6 +53,37 @@ static struct {
 #endif
 ;
 static bool initialized;
+/* Retain the playing folder independently of later Files navigation. Skip
+ * walks its existing paged reader, keeping the current song until a validated
+ * audio neighbor is ready. It never materializes an unbounded folder queue. */
+static struct {
+    struct folder folder,parents[DEPTH];
+    uint32_t depth,selected;
+    int32_t row;
+    bool valid,pending,starting,previous,last;
+} audio;
+bool ln_files_audio_pending(void){return audio.pending;}
+void ln_files_audio_cancel(void){
+    bool pending=audio.pending;audio.pending=audio.starting=false;
+    if(pending){
+        ln_files_close();f.folder=audio.folder;f.depth=audio.depth;f.selected=audio.selected;
+        for(uint32_t i=0;i<audio.depth;i++)f.parents[i]=audio.parents[i];
+        f.done=f.replaying=f.restoring=false;f.validate=0;f.returning=true;f.view=DIRECTORY;
+    }
+}
+bool ln_files_audio_next(bool previous){
+    struct ln_fat32_file root;
+    if(!initialized||!audio.valid||!ln_storage_media_root(&root)||root.epoch!=audio.folder.file.epoch)return false;
+    if(audio.pending)return true;
+    audio.pending=audio.starting=true;audio.previous=previous;
+    if(f.pending){f.discard=true;ln_storage_media_cancel(GENERATION);}
+    return true;
+}
+static void audio_remember(void){
+    audio.folder=f.folder;audio.depth=f.depth;audio.selected=f.selected;
+    for(uint32_t i=0;i<f.depth;i++)audio.parents[i]=f.parents[i];
+    audio.valid=true;audio.pending=audio.starting=false;
+}
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_COVERFLOW)
 /* Retain validated host pages and the live handles used to reach them. This
  * bounded reservation fits the unused tail of the existing artwork bank. */
@@ -149,7 +180,8 @@ void ln_files_diagnostics(uint32_t words[16]){
 #else
 #define FILES_DIAG(code) do {} while(0)
 #endif
-void ln_files_init(void){uint8_t*p=(uint8_t*)&f;for(uint32_t i=0;i<sizeof f;++i)p[i]=0;pages_clear();initialized=true;}
+void ln_files_init(void){uint8_t*p=(uint8_t*)&f;for(uint32_t i=0;i<sizeof f;++i)p[i]=0;
+    audio.valid=audio.pending=audio.starting=false;pages_clear();initialized=true;}
 
 static void text(char*out,const char*in,uint32_t capacity){uint32_t n=0;while(in[n]&&n+1u<capacity){out[n]=in[n];++n;}out[n]=0;}
 static char *number(char*out,uint32_t n){char digits[10];uint32_t count=0;do{digits[count++]=(char)('0'+n%10u);n/=10u;}while(n);while(count)*out++=digits[--count];*out=0;return out;}
@@ -198,6 +230,14 @@ static void live_folder(void){
     pages_clear();
     f.folder.indexed=false;f.folder.page=0;f.folder.position=(struct position){.cursor={.cluster=f.folder.file.cluster,.epoch=f.folder.file.epoch}};
     f.checkpoints[0]=f.folder.position;f.checkpoint_cluster[0]=f.folder.file.cluster;f.checkpoint_page[0]=0;load_page();
+}
+static void audio_finish(bool found){
+    audio.pending=audio.starting=false;
+    if(!found){
+        f.folder=audio.folder;f.depth=audio.depth;f.selected=audio.selected;
+        f.done=f.replaying=f.restoring=false;f.validate=0;f.phase=READY;f.returning=true;f.view=DIRECTORY;
+    }
+    ln_music_file_transport_finished(found);
 }
 static bool record_valid(const uint8_t*r){
     if(ln_read_le32(r+252)!=ln_crc32(r,252)||r[159]||r[173]||!r[32]||!r[160]||r[251])return false;
@@ -265,6 +305,7 @@ static uint32_t kind(void){
     return suffix("jpg")||suffix("jpeg")?3u:0u;
 }
 static void open_chosen(struct ln_ui_state*s){
+    bool transport=audio.pending;
     if(f.chosen.attributes&16u){
         if(f.depth==DEPTH){fail("Folder depth limit (16)");return;}
         f.folder.selected=f.selected;f.parents[f.depth++]=f.folder;
@@ -273,12 +314,19 @@ static void open_chosen(struct ln_ui_state*s){
         f.folder=next;if(next.indexed)load_page();else live_folder();reset_selection(s,0);return;
     }
     f.original=f.chosen;f.prepared_text=false;f.prepared_kind=0;f.preview_base=0;f.preview_size=f.chosen.size;
-    f.view=DETAILS;f.message=0;f.offset=0;f.phase=READY;reset_selection(s,0);changed();
+    f.view=DETAILS;f.message=0;f.offset=0;f.phase=READY;if(!transport)reset_selection(s,0);changed();
     if(f.info_only){f.info_only=false;return;}
     if(f.folder.indexed&&(f.prepared_kind=ln_read_le32(record(f.selected)+16))!=0){f.phase=PREPARED_OPEN;return;}
     if(kind()==1u){
-        if(ln_music_open_file(&f.chosen,f.chosen_name)){f.view=DIRECTORY;f.returning=true;(void)ln_ui_show(s,"linnet.system.now-playing");return;}
-        f.message="Audio unavailable";
+        /* Replacement now owns a validated file. Its normal music Stop must
+         * not cancel this completed lookup and restore the previous row. */
+        if(transport)audio.pending=false;
+        if(ln_music_open_file(&f.chosen,f.chosen_name)){
+            audio_remember();ln_music_file_transport_finished(true);
+            f.view=DIRECTORY;f.returning=true;if(!transport)(void)ln_ui_show(s,"linnet.system.now-playing");return;
+        }
+        if(transport)audio_finish(false);else f.message="Audio unavailable";
+        return;
     }
 #if defined(LINNET_VIDEO)
     if(kind()==2u){
@@ -295,8 +343,54 @@ static void open_chosen(struct ln_ui_state*s){
      * retain a byte viewer rather than attempting to execute their contents. */
     f.view=TEXT;preview();
 }
+static void choose_row(struct ln_ui_state*s,uint32_t row,bool info){
+    f.info_only=info&&!directory(row);f.selected=row;
+    text(f.chosen_name,name(row),sizeof f.chosen_name);
+    if(f.folder.indexed){
+        if(ln_read_le32(record(row)+24)==1u){
+            if(audio.pending)audio_finish(false);else{live_folder();reset_selection(s,0);}
+            return;
+        }
+        if(directory(row)&&ln_read_le32(record(row)+24)==0u&&pages_folder(f.folder.first+f.folder.page*ROWS+row,&f.chosen)){open_chosen(s);return;}
+        f.leaf[0]='/';text(f.leaf+1,(const char*)record(row)+160,sizeof f.leaf-1u);
+        f.phase=ENTRY_OPEN;FILES_DIAG(begin_timing());
+    }else{
+        f.chosen=f.rows.live[row].file;text(f.extension,f.rows.live[row].extension,sizeof f.extension);open_chosen(s);
+    }
+}
+static void audio_advance(struct ln_ui_state*s){
+    if(!audio.pending||audio.starting||f.pending||f.phase!=READY||!f.done||f.validate||f.replaying)return;
+    if(f.message){audio_finish(false);return;}
+    if(audio.last){audio.row=(int32_t)f.count-1;audio.last=false;}
+    for(uint32_t n=0;n<ROWS;n++){
+        if(audio.row<0){
+            if(!f.folder.page){audio_finish(false);return;}
+            --f.folder.page;audio.last=true;
+            if(!f.folder.indexed){
+                uint32_t at=f.folder.page%16u;
+                if(f.checkpoint_cluster[at]==f.folder.file.cluster&&f.checkpoint_page[at]==f.folder.page)f.folder.position=f.checkpoints[at];
+                else{f.target_page=f.folder.page;live_folder();f.replaying=true;return;}
+            }
+            load_page();return;
+        }
+        if((uint32_t)audio.row>=f.count){
+            if(!f.more){audio_finish(false);return;}
+            ++f.folder.page;audio.row=0;
+            if(!f.folder.indexed){
+                f.folder.position=f.next_page;uint32_t at=f.folder.page%16u;
+                f.checkpoints[at]=f.next_page;f.checkpoint_cluster[at]=f.folder.file.cluster;f.checkpoint_page[at]=f.folder.page;
+            }
+            load_page();return;
+        }
+        uint32_t row=(uint32_t)audio.row;f.selected=row;
+        if(!f.folder.indexed)text(f.extension,f.rows.live[row].extension,sizeof f.extension);
+        if(!directory(row)&&kind()==1u){choose_row(s,row,false);return;}
+        audio.row+=audio.previous?-1:1;
+    }
+}
 void ln_files_close(void){
     if(!initialized)return;FILES_DIAG(timing.measuring=false);
+    audio.pending=audio.starting=false;
     /* A canceled hidden first-page load must not masquerade as a live folder
      * on the next open. Its I/O buffer still belongs to the drain below. */
     if(f.warming&&!f.done){
@@ -308,6 +402,7 @@ void ln_files_close(void){
 }
 bool ln_files_pending(void){return initialized&&(f.pending||(f.active&&(f.phase!=READY||f.validate)));}
 uint32_t ln_files_deadline(uint32_t now){
+    if(audio.pending&&!f.pending)return now;
     if(!initialized||(!f.active&&!f.warming)||f.pending)return now+200000u;
     if(f.warming&&!f.warm_eligible&&!f.validate)return now+200000u;
     if(f.validate||(f.phase==LIVE&&f.sector_loaded)||(f.phase!=READY&&allowed()))return now;
@@ -346,14 +441,26 @@ static void go_back(struct ln_ui_state*s){
     else{ln_files_close();(void)ln_ui_back(s);}
 }
 void ln_files_step(struct ln_ui_state*s){
+    if(audio.pending&&!ln_music_file_mode())ln_files_audio_cancel();
+    if(audio.pending&&scene(s))ln_files_audio_cancel();
     /* Recovery can remount storage without leaving Files. Drain the old read
      * before dropping handles or reusing a directory buffer. */
     struct ln_fat32_file root;
     if(!f.pending&&f.folder.file.epoch&&ln_storage_media_root(&root)&&f.folder.file.epoch!=root.epoch){
+        if(audio.pending)audio_finish(false);audio.valid=false;
         f.folder=(struct folder){0};f.depth=0;f.view=DIRECTORY;f.count=f.validate=0;
         f.done=f.more=f.returning=f.replaying=f.restoring=false;f.message=0;pages_clear();
         for(uint32_t i=0;i<16u;++i)f.checkpoint_cluster[i]=0;
         f.active=f.warming=f.warm_eligible=false;
+    }
+    if(audio.pending&&audio.starting&&!f.pending){
+        f.folder=audio.folder;f.depth=audio.depth;
+        for(uint32_t i=0;i<audio.depth;i++)f.parents[i]=audio.parents[i];
+        for(uint32_t i=0;i<16u;i++)f.checkpoint_cluster[i]=0;
+        uint32_t at=f.folder.page%16u;
+        f.checkpoints[at]=f.folder.position;f.checkpoint_cluster[at]=f.folder.file.cluster;f.checkpoint_page[at]=f.folder.page;
+        audio.row=(int32_t)audio.selected+(audio.previous?-1:1);audio.last=false;audio.starting=false;
+        f.active=true;f.warming=f.restoring=f.replaying=f.returning=false;load_page();
     }
     f.warm_eligible=false;
     if(scene(s)&&f.warming){f.warming=false;f.active=true;}
@@ -373,7 +480,7 @@ void ln_files_step(struct ln_ui_state*s){
             }
         }
     }
-    if(!scene(s)){if(f.active)ln_files_close();}
+    if(!scene(s)){if(f.active&&!audio.pending)ln_files_close();}
     else if(!f.active&&!f.pending){
         struct ln_fat32_file root;
         if(ln_storage_media_root(&root)&&f.folder.file.epoch!=root.epoch){f.folder=(struct folder){0};f.depth=0;f.view=DIRECTORY;
@@ -391,7 +498,7 @@ void ln_files_step(struct ln_ui_state*s){
     if(f.pending){uint32_t bytes=0;struct ln_fat32_file opened;int r=ln_storage_media_poll_deferred(GENERATION,&opened,&bytes);if(!r)return;f.pending=false;
         FILES_DIAG(timing.bytes+=bytes);
         if(f.discard||(!f.active&&!f.warming)){f.discard=false;f.phase=READY;if(f.back_pending){f.back_pending=false;go_back(s);}return;}
-        if(r<0){if(f.phase<=CATALOG_PAGE){live_folder();}else if(f.phase==ENTRY_OPEN){live_folder();reset_selection(s,0);}else fail("Read failed - reopen Files");}
+        if(r<0){if(audio.pending)audio_finish(false);else if(f.phase<=CATALOG_PAGE){live_folder();}else if(f.phase==ENTRY_OPEN){live_folder();reset_selection(s,0);}else fail("Read failed - reopen Files");}
         else if(f.phase==CATALOG_OPEN){f.catalog=opened;f.phase=CATALOG_HEADER;}
         else if(f.phase==CATALOG_HEADER){
             f.records=ln_read_le32(f.io+8);
@@ -402,9 +509,11 @@ void ln_files_step(struct ln_ui_state*s){
         }else if(f.phase==CATALOG_ROOT){
             if(bytes!=RECORD||!record_valid(f.io)||!(ln_read_le32(f.io)&16u))live_folder();
             else{f.folder.first=ln_read_le32(f.io+8);f.folder.count=ln_read_le32(f.io+12);f.folder.indexed=true;load_page();}
-        }else if(f.phase==CATALOG_PAGE){if(bytes!=f.request_bytes)live_folder();else {f.validate=bytes/RECORD;f.phase=READY;}}
+        }else if(f.phase==CATALOG_PAGE){if(bytes!=f.request_bytes){if(audio.pending)audio_finish(false);else live_folder();}else {f.validate=bytes/RECORD;f.phase=READY;}}
         else if(f.phase==ENTRY_OPEN){
-            if(((opened.attributes^ln_read_le32(record(f.selected)))&16u)||(!(opened.attributes&16u)&&opened.size!=ln_read_le32(record(f.selected)+4))){live_folder();reset_selection(s,0);}
+            if(((opened.attributes^ln_read_le32(record(f.selected)))&16u)||(!(opened.attributes&16u)&&opened.size!=ln_read_le32(record(f.selected)+4))){
+                if(audio.pending)audio_finish(false);else{live_folder();reset_selection(s,0);}
+            }
             else{f.chosen=opened;open_chosen(s);}
         }else if(f.phase==PREPARED_OPEN){
             uint32_t base=(uint32_t)ln_read_le16(record(f.selected)+174)*512u,size=ln_read_le32(record(f.selected)+20);
@@ -428,7 +537,7 @@ void ln_files_step(struct ln_ui_state*s){
     }
     if(!f.active&&!f.warming)return;
     if(f.validate){for(uint32_t step=0;step<4u&&f.validate;++step){uint32_t row=f.count;
-        if(!record_valid(record(row))){f.validate=0;live_folder();break;}
+        if(!record_valid(record(row))){f.validate=0;if(audio.pending)audio_finish(false);else live_folder();break;}
         ++f.count;--f.validate;if(!f.validate){f.done=true;f.more=f.folder.page*ROWS+f.count<f.folder.count;pages_save();changed();}}}
     else if(f.phase==LIVE&&f.sector_loaded){for(uint32_t i=0;i<16u&&f.phase==LIVE&&f.sector_loaded;++i)live_entry();}
     /* Check after validation too: a bad page must not admit even the first
@@ -451,12 +560,13 @@ void ln_files_step(struct ln_ui_state*s){
         else if(f.phase==LIVE&&!f.sector_loaded){f.sector_start=f.cursor;r=ln_storage_media_list(&f.cursor.cursor,f.io,GENERATION);}
         else if(f.phase==PREVIEW){uint32_t n=f.preview_size-f.offset;if(n>480u)n=480u;
             if(n)r=ln_storage_media_read(&f.chosen,f.preview_base+f.offset,f.io,n,GENERATION);else{f.phase=READY;changed();}}
-        if(r>0){f.pending=true;FILES_DIAG(++timing.reads);}else if(r<0){if(f.phase<=CATALOG_PAGE)live_folder();else fail("File unavailable");}
+        if(r>0){f.pending=true;FILES_DIAG(++timing.reads);}else if(r<0){if(audio.pending)audio_finish(false);else if(f.phase<=CATALOG_PAGE)live_folder();else fail("File unavailable");}
     }
     if(f.replaying&&f.done){
         if(f.folder.page<f.target_page&&f.more){++f.folder.page;f.folder.position=f.next_page;f.checkpoints[f.folder.page%16u]=f.next_page;f.checkpoint_cluster[f.folder.page%16u]=f.folder.file.cluster;f.checkpoint_page[f.folder.page%16u]=f.folder.page;load_page();}
-        else{f.replaying=false;reset_selection(s,f.folder.selected);}
+        else{f.replaying=false;if(!audio.pending)reset_selection(s,f.folder.selected);}
     }
+    audio_advance(s);
     if(f.restoring&&f.phase==READY&&!f.validate&&scene(s)){f.restoring=false;s->selected=f.restore_row;ln_ui_refresh(s);}
     if(scene(s)&&f.drawn!=f.revision){f.drawn=f.revision;ln_ui_refresh(s);}
     FILES_DIAG(if(timing.measuring&&f.phase==READY&&!f.pending&&!f.validate){timing.last_us=ln_time_us()-timing.started;++timing.loads;timing.measuring=false;});
@@ -465,6 +575,9 @@ void ln_files_step(struct ln_ui_state*s){
 bool ln_files_input(struct ln_ui_state*s,uint32_t kind,int32_t value){
     if(!initialized||!scene(s)||s->hold||kind!=2u)return false;
     uint32_t pressed=(uint32_t)value&~s->buttons;if(!(pressed&29u))return false;s->buttons=(uint32_t)value;
+    /* A transport lookup shares this paged reader. Cancel it before accepting
+     * browsing changes; an admitted read must drain before buffer reuse. */
+    if(audio.pending)ln_files_audio_cancel();
     /* Cancel and drain before reusing either the directory or preview buffer. */
     if(f.pending){if(pressed&1u){f.discard=f.back_pending=true;ln_storage_media_cancel(GENERATION);}return true;}
     if(pressed&1u){go_back(s);return true;}
@@ -487,10 +600,5 @@ bool ln_files_input(struct ln_ui_state*s,uint32_t kind,int32_t value){
     if(f.folder.page)--row;
     if(row==f.count&&f.more){++f.folder.page;if(!f.folder.indexed){f.folder.position=f.next_page;f.checkpoints[f.folder.page%16u]=f.next_page;f.checkpoint_cluster[f.folder.page%16u]=f.folder.file.cluster;f.checkpoint_page[f.folder.page%16u]=f.folder.page;}load_page();reset_selection(s,0);return true;}
     if(row>=f.count)return true;
-    f.info_only=(pressed&8u)&&!directory(row);
-    f.selected=row;text(f.chosen_name,name(row),sizeof f.chosen_name);
-    if(f.folder.indexed){if(ln_read_le32(record(row)+24)==1u){live_folder();reset_selection(s,0);return true;}
-        if(directory(row)&&ln_read_le32(record(row)+24)==0u&&pages_folder(f.folder.first+f.folder.page*ROWS+row,&f.chosen)){open_chosen(s);return true;}
-        f.leaf[0]='/';text(f.leaf+1,(const char*)record(row)+160,sizeof f.leaf-1u);f.phase=ENTRY_OPEN;FILES_DIAG(begin_timing());}
-    else{f.chosen=f.rows.live[row].file;text(f.extension,f.rows.live[row].extension,sizeof f.extension);open_chosen(s);}return true;
+    choose_row(s,row,(pressed&8u)!=0);return true;
 }

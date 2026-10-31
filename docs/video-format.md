@@ -35,15 +35,14 @@ applicable target limits.
 
 ## Native MP4
 
-The M25 CLI preparation path produces compatible MP4/M4V output. Native
-inspection requires the target:
+The Video M25 and Classic N25 CLI preparation paths produce compatible MP4/M4V
+output. Select the target with `video compile --target`; native inspection also
+requires the target:
 
 ```console
 python linnet video inspect path/to/prepared.mp4 --target video5g-m25
 ```
 
-For Classic preparation, use Media Manager: the standalone `video compile`
-command currently routes only the BCM backend to native conversion.
 [M25 video notes](../targets/video5g-m25/NATIVE_VIDEO.md) describe its controls
 and hardware boundary.
 

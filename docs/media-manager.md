@@ -117,8 +117,8 @@ These live hold/release instructions appear in a focused dialog that advances
 automatically. Turn the Hold switch off before following them.
 
 When Linnet Link is already connected, Media Manager recognizes the running OS
-or recovery connection. Choose **Manage media** from a running OS, or **Open Disk
-Mode** from recovery, to reconnect storage automatically. A saved, unfinished Classic setup instead offers **Resume Classic
+or recovery connection. Choose **Open Disk Mode** in **iPod setup** to reconnect
+storage automatically. A saved, unfinished Classic setup instead offers **Resume Classic
 installation** for that device. During a hosted recovery connection, the iPod
 directs you to continue setup on the computer.
 
@@ -246,6 +246,11 @@ The CLI equivalent is `installer install --mount X:/ --from-source`; add
 
 ## Prepare your library
 
+Preparation needs Disk Mode to read and write media. If your iPod is connected
+through Linnet Link, choose **Preparation → Open Disk Mode** and keep USB connected.
+Media Manager reconnects storage and reads the libraries automatically. If Disk
+Mode is unavailable, the connection notice directs you to **iPod setup**.
+
 If you need the same files in Apple's original OS, check **Preparation →
 Available in Apple OS** before copying media. That update is limited to the
 exact qualified FAT32 devices and file paths described below.
@@ -351,6 +356,16 @@ own clues and restores the previous Music queue when it exits; a Files audio
 session is not restored by the quiz. Other games preserve Files playback. Game
 effects yield to music playback.
 **Screens** configures supported menus.
+It shares Home, Music, Settings, and Extras choices with the iPod's
+**Settings → Edit Menus** editor. Saves merge edits to different menus and stop
+for review if both interfaces changed the same menu differently. Choose
+**Reload from iPod** to discard the desktop draft and read current device choices;
+unsaved edits require confirmation before reload. Theme, brightness, and game
+scores are preserved when saving menus.
+Supported shortcuts unchecked here remain available as unchecked items in the
+iPod editor. Device edits change shortcut visibility and order only; media
+preparation and feature availability remain controlled by Media Manager and the
+firmware build. Games and UI Demo selections are editable only in Media Manager.
 See the [device menu hierarchy](navigation.md) for the default organization and
 controls. Save changes, eject, and restart to apply them. Game availability
 follows the target manifest; it is not enabled on every color iPod. If game

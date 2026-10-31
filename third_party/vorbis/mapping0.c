@@ -205,10 +205,7 @@ static int mapping0_inverse(vorbis_block *vb,vorbis_look_mapping *l){
   int   nonzero[CHANNELS];
   void *floormemo[CHANNELS];
 
-  /* time domain information decode (note that applying the
-     information would have to happen later; we'll probably add a
-     function entry to the harness for that later */
-  /* NOT IMPLEMENTED */
+  /* Setup admits only time type 0; there is no time-domain decode stage. */
 
   /* recover the spectral envelope; store it in the PCM vector for now */
   for(i=0;i<vi->channels;i++){

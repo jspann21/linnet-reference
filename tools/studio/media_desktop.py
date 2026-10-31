@@ -635,6 +635,14 @@ def build_preparation_page(window):
     window.preparation_scroll = scroll
     outer.addWidget(scroll, 1)
     window.heading(layout, 'Prepare your media', 'Turn your files into an iPod-ready collection. Your originals stay on the device.')
+    window.prep_connection = QFrame(); window.prep_connection.setObjectName('recoveryNote')
+    connection = box(window.prep_connection, margins=(20, 18, 20, 18), spacing=9)
+    window.prep_connection_title = label('Disk Mode needed to prepare media', 'cardTitle', True)
+    window.prep_connection_detail = label('', 'muted', True)
+    connection.addWidget(window.prep_connection_title); connection.addWidget(window.prep_connection_detail)
+    window.prep_connection_button = button('Open Disk Mode', window.connect_preparation, 'primary')
+    connection.addWidget(window.prep_connection_button, 0, Qt.AlignLeft)
+    layout.addWidget(window.prep_connection)
     window.prep_unavailable = label('', 'notice', True)
     window.prep_unavailable.hide(); layout.addWidget(window.prep_unavailable)
     window.prep_checks, window.prep_labels, window.prep_cards = {}, {}, {}
@@ -644,7 +652,7 @@ def build_preparation_page(window):
         window.prep_cards[kind] = card
         check = CheckBox(kind); check.setChecked(True); check.setMinimumWidth(110); window.prep_checks[kind] = check; row.addWidget(check)
         text = box(spacing=5); text.addWidget(label(descriptions[kind], 'cardTitle'))
-        state = label('Connect an iPod to check this library.', 'muted', True); window.prep_labels[kind] = state; text.addWidget(state); row.addLayout(text, 1)
+        state = label('Connect an iPod in Disk Mode to check this library.', 'muted', True); window.prep_labels[kind] = state; text.addWidget(state); row.addLayout(text, 1)
         if kind == 'Videos':
             window.choose_videos_button = button('Choose videos', window.choose_videos); row.addWidget(window.choose_videos_button)
             window.video_repair_button = button('Review catalog backups', window.review_video_catalog)
@@ -681,7 +689,7 @@ def build_preparation_page(window):
     apple_layout = box(apple_card, margins=(20, 18, 20, 18), spacing=9)
     apple_layout.addWidget(label('Available in Apple OS', 'cardTitle'))
     apple_layout.addWidget(label('Use media from your own iPod folders in Apple OS too. Choose folders outside the Apple-managed library, then update the Apple library whenever their files change.', 'muted', True))
-    window.apple_status = label('Connect an iPod to check Apple OS availability.', 'muted', True)
+    window.apple_status = label('Connect an iPod in Disk Mode to check Apple OS availability.', 'muted', True)
     apple_layout.addWidget(window.apple_status)
     window.apple_eligibility = label('', 'muted', True)
     apple_layout.addWidget(window.apple_eligibility)
@@ -704,12 +712,13 @@ def build_screens_page(window):
     page, layout = window.scroll_page()
     window.heading(layout, 'Screens', 'Choose what appears on your iPod and arrange it in your preferred order.')
     window.screen_state = screen_settings.defaults()
+    window.screen_base = None
     window.screen_loaded_for = None
-    window.screen_picker = ComboBox(); window.screen_picker.addItems(['Home', 'Music', 'Settings'])
+    window.screen_picker = ComboBox(); window.screen_picker.addItems(['Home', 'Music', 'Settings', 'Extras'])
     window.screen_picker.currentTextChanged.connect(window.screens_controller.render_screen_items)
     layout.addWidget(window.screen_picker)
     layout.addWidget(label('Check items to include them. Drag to reorder, or use the move buttons.', 'muted', True))
-    window.screen_fixed = label('Shuffle and Repeat always appear first in Settings. Adjust them on your iPod.', 'muted', True)
+    window.screen_fixed = label('Shuffle, Repeat, and Edit Menus are always available in Settings.', 'muted', True)
     layout.addWidget(window.screen_fixed)
     window.screen_items = QListWidget(); window.screen_items.setObjectName('screenItems'); window.screen_items.setMinimumHeight(350)
     window.screen_items.setDragDropMode(QAbstractItemView.InternalMove)
@@ -730,6 +739,7 @@ def build_screens_page(window):
     layout.addWidget(window.screen_status)
     window.screen_save = button('Save to iPod', window.screens_controller.save_screens, 'primary')
     layout.addWidget(window.screen_save)
+    layout.addWidget(button('Reload from iPod', window.screens_controller.reload_screens))
     window.screens_controller.render_screen_items()
     return page
 
@@ -1061,6 +1071,17 @@ class ScreensController:
             identity = window.identity
             window.work('screens', lambda: screen_settings.read(identity), 'Reading screen settings…')
 
+    def reload_screens(self):
+        window = self.window
+        if not window.identity or not window.device_connected or window.busy:
+            return
+        if window.screen_dirty and not window.dialog('Reload screen settings', 'Discard unsaved desktop menu edits and load the current iPod menus?', 'Reload'):
+            return
+        window.screen_dirty = False
+        window.save_choices_draft()
+        window.screen_loaded_for = None
+        self.load_screens()
+
     def save_screens(self):
         window = self.window
         if not window.identity or not window.device_connected or window.busy:
@@ -1071,7 +1092,8 @@ class ScreensController:
         except ValueError as error:
             window.show_error(str(error)); return
         identity = window.identity
-        window.work('save_screens', lambda: screen_settings.save(identity, state), 'Saving screen settings…')
+        base = {name: list(rows) for name, rows in window.screen_base.items()} if window.screen_base is not None else None
+        window.work('save_screens', lambda: screen_settings.save(identity, state, base), 'Saving screen settings…')
 
 
 class SetupInstructionDialog(QDialog):
@@ -1948,6 +1970,7 @@ class MediaWindow(QMainWindow):
 
     def _complete_screens(self, result):
         self.screen_state = result; self.screen_saved = {name: list(rows) for name, rows in result.items()}
+        self.screen_base = {name: list(rows) for name, rows in result.items()}
         self.screen_loaded_for = self.identity['root']
         self.load_choices_draft('screens')
         self.screens_controller.render_screen_items()
@@ -2059,6 +2082,9 @@ class MediaWindow(QMainWindow):
         return
 
     def _complete_save_screens(self, result):
+        self.screen_state = result
+        self.screen_base = {name: list(rows) for name, rows in result.items()}
+        self.screens_controller.render_screen_items()
         self.screen_loaded_for = self.identity['root']
         self.screen_saved = {name: list(rows) for name, rows in self.screen_state.items()}
         self.screen_dirty = False; self.save_choices_draft()
@@ -2147,6 +2173,7 @@ class MediaWindow(QMainWindow):
             self.link_connection = selected
             self.device_name.setText(selected['target_name'].replace('Linnet for ',''))
             self.device_info.setText('Connected through Linnet Link')
+            self.update_preparation()
             self.show_progress('Your iPod is connected. Manage startup settings and Linnet builds in iPod setup.')
             self.navigate('iPod setup'); self.update_controls()
             if errors:
@@ -2628,8 +2655,10 @@ class MediaWindow(QMainWindow):
         draft['version'] = 1
         if self.screen_dirty:
             draft['screens'] = {name: list(rows) for name, rows in self.screen_state.items()}
+            draft['screens_base'] = self.screen_base
         elif self.screen_loaded_for == self.identity['root']:
             draft.pop('screens', None)
+            draft.pop('screens_base', None)
         if self.game_dirty:
             draft['games'] = [i for i, check in enumerate(self.game_checks) if check.isChecked()]
         elif self.games_loaded_for == self.identity['root']:
@@ -2655,7 +2684,11 @@ class MediaWindow(QMainWindow):
                         for item in rows)
                     for name, rows in state.items()):
                     raise ValueError('Saved screen choices are invalid.')
+                base = draft.get('screens_base')
+                if base is not None:
+                    screen_settings.encode(base)
                 self.screen_state = {name: list(rows) for name, rows in state.items()}
+                self.screen_base = base
                 self.screen_dirty = self.screen_state != self.screen_saved
             elif section == 'games' and isinstance(draft.get('games'), list):
                 chosen = draft['games']
@@ -2813,6 +2846,7 @@ class MediaWindow(QMainWindow):
             self.draft_issues, self.stale_videos, self.queue_outcomes = {}, 0, {}
         self.screen_loaded_for = self.games_loaded_for = None
         self.screen_saved = self.game_saved = None
+        self.screen_base = None
         self.screen_dirty = self.game_dirty = self.game_read_failed = False
         self.game_recover_requested=False
         self.custom_games.clear()
@@ -2855,6 +2889,7 @@ class MediaWindow(QMainWindow):
     def update_controls(self):
         ready = self.identity is not None and self.device_connected and not self.busy
         self.update_trash_badge(self.trash_summary)
+        self.update_preparation_connection()
         font_ready = ready and apple_font.supported(self.identity) and not self.publication_recovery_pending
         self.apple_font_install.setEnabled(font_ready)
         self.apple_font_remove.setEnabled(font_ready)
@@ -2934,6 +2969,8 @@ class MediaWindow(QMainWindow):
         self.discovery_issue.setVisible(bool(self.discovery_errors))
         from tools.studio.device_support import describe
         support_identity = self.identity or (self.link_connection or {}).get('identity')
+        if self.identity is None and self.link_connection:
+            support_identity = dict(support_identity, **self.link_connection.get('product', {}))
         support = describe(support_identity, self.review)
         self.support_status.setText(self.hardware_report['summary'] if not support_identity and self.hardware_report else
                                    support['title'] + ' — ' + support['detail'])
@@ -2969,7 +3006,7 @@ class MediaWindow(QMainWindow):
             self.setup_device.setText(link['target_name'].replace('Linnet for ', '') + ' · …' + link['serial'][-6:])
             build = installer.BUILD_LABELS[link['identity']['profile']]
             self.setup_software.setText('Connected through Linnet Link' if linked_os else 'Recovery connected')
-            self.link_disk_button.setText('Manage media' if linked_os else 'Open Disk Mode')
+            self.link_disk_button.setText('Open Disk Mode')
             self.link_build_status.setText(build + ' running')
             self.install_detail.setText('Setup is continuing automatically. Keep USB connected.' if setting_up else
                 'Choose Resume Classic installation to continue the saved setup.' if self.resume_classic_button.isVisible() else
@@ -3009,7 +3046,9 @@ class MediaWindow(QMainWindow):
             if self.identity and kind not in supported:
                 text.setText(f'{kind} playback is unavailable on this iPod model.')
             elif not info:
-                text.setText('Connect an iPod to check this library.')
+                text.setText('Open Disk Mode to check this library.' if self.link_connection else
+                             'Reading this library…' if self.identity else
+                             'Connect an iPod in Disk Mode to check this library.')
             elif kind == 'Videos':
                 scope = ('All existing videos included' if self.video_mode == 'all' else
                          f'{len(self.video_selection)} selected for conversion' if self.video_mode == 'selected' else
@@ -3040,6 +3079,7 @@ class MediaWindow(QMainWindow):
         self.queue_open.setVisible(bool(self.pending)); self.update_queue_controls()
         self.queue_table.setFixedHeight(min(200, max(75, self.queue_table.horizontalHeader().height() + len(self.pending) * self.queue_table.verticalHeader().defaultSectionSize() + 4)))
         summary = (f'{len(self.pending):,} files or folders queued. Unchanged media is reused.' if self.pending else
+                   'Open Disk Mode to prepare existing iPod files or add media from your computer.' if self.link_connection else
                    'Nothing queued. You can prepare existing iPod files or add media from your computer.')
         if self.draft_issues:
             summary += f' {len(self.draft_issues):,} saved source(s) need attention.'
@@ -3064,7 +3104,35 @@ class MediaWindow(QMainWindow):
         else:
             self.apple_eligibility.setText('')
             self.apple_eligibility.setVisible(False)
-            self.apple_status.setText('Connect an iPod to check Apple OS availability.')
+            self.apple_status.setText('Open Disk Mode to check Apple OS availability.' if self.link_connection else
+                                      'Checking Apple OS availability…' if self.identity else
+                                      'Connect an iPod in Disk Mode to check Apple OS availability.')
+
+    def update_preparation_connection(self):
+        self.prep_connection.setVisible(self.identity is None)
+        link = self.link_connection
+        opening = bool(self.busy and self.active_operation and self.active_operation.tag == 'link_disk')
+        can_open = bool(link and link.get('can_open_disk'))
+        self.prep_connection_title.setText('Opening Disk Mode…' if opening else 'Disk Mode needed to prepare media')
+        self.prep_connection_detail.setText(
+            'Keep USB connected. Media Manager will read your libraries when the iPod reconnects.' if opening else
+            'Your iPod is connected through Linnet Link. Preparation needs Disk Mode to read and write media. '
+            'Choose Open Disk Mode and keep USB connected.' if can_open else
+            'Your iPod is connected through Linnet Link, but Disk Mode is not available yet. '
+            'Open iPod setup to review connection and setup options.' if link else
+            'Connect your iPod in Disk Mode to read its libraries and prepare media. '
+            'See iPod setup for connection steps.')
+        self.prep_connection_button.setText('Opening Disk Mode…' if opening else 'Open Disk Mode' if can_open else
+                                            'Open iPod setup' if link else 'View connection steps')
+        self.prep_connection_button.setEnabled(not self.busy)
+
+    def connect_preparation(self):
+        if self.busy:
+            return
+        if self.link_connection and self.link_connection.get('can_open_disk'):
+            self.open_link_disk()
+        else:
+            self.navigate('iPod setup')
 
     def choose_apple_folders(self):
         if self.busy or not self.apple_info or not self.apple_info['supported']:

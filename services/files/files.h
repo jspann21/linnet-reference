@@ -16,6 +16,9 @@ const char *ln_files_hint(void);
 uint32_t ln_files_cache_maximum_bytes(void);
 #endif
 bool ln_files_navigates(uint32_t row);
+bool ln_files_audio_next(bool previous);
+bool ln_files_audio_pending(void);
+void ln_files_audio_cancel(void);
 #if !defined(LINNET_PROFILE_RELEASE)
 void ln_files_diagnostics(uint32_t words[16]);
 #endif

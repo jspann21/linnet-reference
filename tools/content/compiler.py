@@ -386,7 +386,7 @@ def compile_system(root, output, configpath=None, target_override=None):
                 node['targets']=[target_id for _, target_id in pairs]
             targets=[]
             for navigation_target in node['targets']:
-                actions={'@sync':0xfffffffe,'@shuffle':0xfffffffd,'@repeat':0xfffffffc,'@shuffle-all':0xfffffffb}
+                actions={'@sync':0xfffffffe,'@shuffle':0xfffffffd,'@repeat':0xfffffffc,'@shuffle-all':0xfffffffb,'@menus':0xfffffffa}
                 if navigation_target not in actions and navigation_target not in selected: raise ContentError(f'unknown/unselected target {navigation_target}')
                 targets.append(actions[navigation_target] if navigation_target in actions else selected.index(navigation_target))
             node['targets']=targets; node['item_count']=len(node['items'])
@@ -487,6 +487,21 @@ def compile_system(root, output, configpath=None, target_override=None):
             place_classic_split_home(variant['scenes'],width,height)
         if monochrome:
             fit_monochrome_text(variant['scenes'],font,height)
+        # Display also hosts the native menu editor; reserve a full scrolling
+        # body and two independent footer lines on every target and theme.
+        for scene in variant['scenes']:
+            if scene['id'] != 'linnet.system.display':
+                continue
+            listing = next(n for n in scene['nodes'] if n['kind'] == 6)
+            texts = [n for n in scene['nodes'] if n['kind'] == 3]
+            bottom = min(height - 4, max(n['y'] + n['h'] for n in texts))
+            row = max(18, font['height'] + 5)
+            footer = 2 * (font['height'] + 4)
+            listing['h'] = max(row, ((bottom - footer - listing['y']) // row) * row)
+            listing['row_height'] = row
+            for i, node in enumerate(texts[:2]):
+                node.update(text='Display hint' if i == 0 else 'Display status', x=listing['x'],
+                            y=bottom-footer+i*(font['height']+4), w=listing['w'], h=font['height'], flags=64)
         enabled_scenes=gate_features(variant['scenes'],features)
         if not enabled_scenes&1:
             raise ContentError('the first UI scene must be enabled')

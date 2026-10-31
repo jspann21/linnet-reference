@@ -8,6 +8,7 @@
 #define LINNET_UI_ACTION_SHUFFLE 0xfffffffdu
 #define LINNET_UI_ACTION_REPEAT 0xfffffffcu
 #define LINNET_UI_ACTION_SHUFFLE_ALL 0xfffffffbu
+#define LINNET_UI_ACTION_MENUS 0xfffffffau
 enum ln_ui_kind { LN_UI_SCREEN=1,LN_UI_VIEW,LN_UI_TEXT,LN_UI_ICON,LN_UI_IMAGE,
     LN_UI_VIRTUAL_LIST,LN_UI_MENU,LN_UI_GRID,LN_UI_SCROLLBAR,LN_UI_PROGRESS_BAR,
     LN_UI_STATUS_BAR,LN_UI_DIALOG,LN_UI_TOAST,LN_UI_ALBUM_ART,LN_UI_PHOTO_SURFACE,
@@ -38,7 +39,16 @@ enum ln_ui_layout {LN_UI_LAYOUT_DEFAULT,LN_UI_LAYOUT_IPOD_PHOTO,LN_UI_LAYOUT_GRA
 enum ln_ui_menu_group { LN_MENU_HOME, LN_MENU_MUSIC, LN_MENU_SETTINGS, LN_MENU_EXTRAS, LN_MENU_GROUPS };
 uint32_t ln_ui_menu_count(uint32_t group);
 uint32_t ln_ui_menu_item(uint32_t group,uint32_t row);
+uint32_t ln_ui_menu_revision(void);
+bool ln_ui_menu_valid(const uint8_t *data,uint32_t length);
 bool ln_ui_menu_load(const uint8_t *data,uint32_t length);
+void ln_ui_menu_encode(uint8_t data[80]);
+uint32_t ln_ui_menu_limit(uint32_t group);
+const char *ln_ui_menu_label(uint32_t group,uint32_t item);
+bool ln_ui_menu_available(uint32_t group,uint32_t item);
+bool ln_ui_menu_required_item(uint32_t group,uint32_t item);
+bool ln_ui_menu_toggle(uint32_t group,uint32_t item);
+bool ln_ui_menu_move(uint32_t group,uint32_t item,int32_t direction);
 bool ln_games_tick(uint32_t now);
 uint32_t ln_games_deadline(uint32_t now);
 uint32_t ln_games_hud_revision(void);

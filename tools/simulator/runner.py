@@ -23,7 +23,7 @@ def png(raw,width,height):
     def chunk(kind,data):return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
     return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',width,height,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(b''.join(rows),9))+chunk(b'IEND',b'')
 
-def simulate(root,output,tape=None,system=None,target=None,all_scenes=False,apple_font=None,game_manifest=None):
+def simulate(root,output,tape=None,system=None,target=None,all_scenes=False,apple_font=None,menus=None,game_manifest=None):
     root=Path(root).resolve();output=Path(output).resolve();output.mkdir(parents=True,exist_ok=True)
     if all_scenes and tape is not None:raise ValueError('All-scenes capture cannot use an input tape')
     if system is None and target is not None:
@@ -51,6 +51,15 @@ def simulate(root,output,tape=None,system=None,target=None,all_scenes=False,appl
         ('#define LINNET_VIDEO 1\n' if spec.get('capabilities', {}).get('video', False) else '') +
         ''.join(f'#define {name} {value}\n' for name, value in presentation_defines(spec).items()))
     write_firmware_header(output/'generated')
+    menu_hash=None
+    if menus is not None:
+        from tools.studio.screen_settings import decode
+        menu_path=Path(menus)
+        if menu_path.stat().st_size!=80:
+            raise ValueError('Simulator menus must contain exactly 80 bytes')
+        menu_data=menu_path.read_bytes();decode(menu_data)
+        (output/'MENUS.BIN').write_bytes(menu_data)
+        menu_hash=hashlib.sha256(menu_data).hexdigest()
     executable=output/('linnet-simulator.exe' if os.name == 'nt' else 'linnet-simulator')
     chain=toolchain()
     game_sources=[]
@@ -70,7 +79,7 @@ def simulate(root,output,tape=None,system=None,target=None,all_scenes=False,appl
         game_sources=[str(root/'tools/simulator/game_host.c')]
     command=[chain['compiler']['path'],'-std=c11','-O2','-Wall','-Wextra','-Werror','-I'+str(output/'generated'),'-I'+str(root),
              *(['-DLN_GAME_PREVIEWS=1'] if game_sources else []),*game_sources,
-             str(root/'tools/simulator/native.c'),str(root/'ui/runtime/ui.c'),str(root/'services/display/clock.c'),str(output/'generated/linnet_ui.c'),'-o',str(executable)]
+             str(root/'tools/simulator/native.c'),str(root/'ui/runtime/ui.c'),str(root/'services/display/clock.c'),str(root/'services/display/preferences.c'),str(output/'generated/linnet_ui.c'),'-o',str(executable)]
     if os.name!='nt' and game_sources:command+=['-ldl']
     compiled=subprocess.run(command,capture_output=True,text=True)
     if compiled.returncode:raise RuntimeError('Simulator compilation failed:\n'+compiled.stdout+compiled.stderr)
@@ -93,7 +102,7 @@ def simulate(root,output,tape=None,system=None,target=None,all_scenes=False,appl
         total+=repeat;captures+=capture
         if total>100000 or captures>512:raise ValueError('Input tape exceeds event/capture budget')
         lines.append(f'{kind} {value} {repeat} {int(capture)}\n')
-    run=subprocess.run([str(executable),str(output)]+(['--all-scenes'] if all_scenes else [])+(['--apple-font'] if apple_font is not None else [])+(['--game'] if game_manifest is not None else []),
+    run=subprocess.run([str(executable),str(output)]+(['--all-scenes'] if all_scenes else [])+(['--apple-font'] if apple_font is not None else [])+(['--menus'] if menus is not None else [])+(['--game'] if game_manifest is not None else []),
                        input=''.join(lines),capture_output=True,text=True,timeout=120)
     if run.returncode:raise RuntimeError('Simulator execution failed:\n'+run.stdout+run.stderr)
     frames=[json.loads(line) for line in run.stdout.splitlines()]
@@ -111,7 +120,7 @@ def simulate(root,output,tape=None,system=None,target=None,all_scenes=False,appl
     (output/'index.html').write_text(page)
     report=dict(target_id=content['report']['target'],content=content,events=total,frames=frames,preview=str(output/'index.html'),
                 native_oracle=True,
-                apple_font_sha256=font_hash,
-                native_source_hashes={name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in ('tools/simulator/native.c','ui/runtime/ui.c','ui/runtime/ui.h','tools/simulator/runner.py','tools/studio/menu_definition.py','services/music/menu.h','services/display/clock.c','services/display/clock.h')})
+                apple_font_sha256=font_hash,menu_sha256=menu_hash,
+                native_source_hashes={name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in ('tools/simulator/native.c','ui/runtime/ui.c','ui/runtime/ui.h','tools/simulator/runner.py','tools/studio/menu_definition.py','services/music/menu.h','services/display/clock.c','services/display/clock.h','services/display/preferences.c','services/display/preferences.h')})
     (output/'report.json').write_text(json.dumps(report,indent=2)+'\n')
     return report

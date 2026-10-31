@@ -1,9 +1,7 @@
 """Device menu preferences shared by the screen editor and firmware."""
-import os
 from pathlib import Path
 import struct
 import tomllib
-import uuid
 import zlib
 from tools.content import media_manager as media
 from tools.studio.targets import target_spec
@@ -91,37 +89,46 @@ def read(identity):
     root = Path(identity['root'])
     path = root / '.LINNET' / 'MENUS.BIN'
     _plain(path, root)
-    if not path.exists():
-        return defaults(identity)
-    with path.open('rb') as reader:
-        return decode(reader.read(81), identity)
-
-
-def save(identity, state):
-    data = encode(state)
-    identity = media.refresh(identity)
-    root = Path(identity['root'])
-    path = root / '.LINNET' / 'MENUS.BIN'
-    _plain(path, root)
-    if not path.parent.is_dir():
-        raise ValueError('Install Linnet on this iPod first.')
-    temporary = path.with_name('MENU-' + uuid.uuid4().hex[:8] + '.TMP')
-    _plain(temporary, root)
-    temporary_owned = False
-    try:
-        with temporary.open('xb') as stream:
-            temporary_owned = True
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-        _volume_guard(identity)
-        _plain(path, root)
-        os.replace(temporary, path)
-        if path.read_bytes() != data:
-            raise IOError('Screen settings could not be verified on the iPod.')
-    finally:
-        if temporary_owned and temporary.exists():
-            _volume_guard(identity)
-            _plain(temporary, root)
-            temporary.unlink()
+    from . import device_preferences
+    saved = device_preferences.read(root)['value']['menus']
+    if saved is not None:
+        return decode(saved, identity)
+    state = defaults(identity)
+    if path.exists():
+        with path.open('rb') as reader:
+            state = decode(reader.read(81), identity)
     return state
+
+
+def reconcile(base, desired, current):
+    """Merge edits to separate groups; require review for competing group edits."""
+    if base is None:
+        raise ValueError('Reload screen settings from the iPod before saving.')
+    result = {}
+    for name in SCREENS:
+        if desired[name] == base[name]:
+            result[name] = list(current[name])
+        elif current[name] == base[name] or current[name] == desired[name]:
+            result[name] = list(desired[name])
+        else:
+            raise ValueError(f'{name} was edited on the iPod and in Media Manager. Reload from iPod, review the changes, then apply your edits again.')
+    encode(result)
+    return result
+
+
+def save(identity, state, expected=None):
+    from tools.content.publish import _exclusive
+    from . import device_preferences
+    encode(state)
+    identity = media.refresh(identity)
+    with _exclusive(identity):
+        root = Path(identity['root'])
+        snapshot = device_preferences.read(root)
+        saved = snapshot['value']['menus']
+        current = decode(saved, identity) if saved is not None else read(identity)
+        merged = reconcile(expected, state, current)
+        data = encode(merged)
+        # Preserve current theme, scores and brightness; publish the authoritative
+        # menus through the same A/B store the firmware uses.
+        device_preferences.publish(root, snapshot, data, lambda: _volume_guard(identity))
+        return merged

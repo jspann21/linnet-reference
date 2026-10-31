@@ -233,6 +233,7 @@ const char *ln_ui_dynamic_text(const struct ln_ui_node*n,uint32_t item,const cha
     }
     if(in_scene(n,LN_UI_SCENE_MUSIC_SOUND)){
         if(n->kind==LN_UI_STATUS_BAR)return ln_music_sound_title();
+        if(n->kind==LN_UI_TEXT)return ln_music_sound_status();
         if(n->kind==LN_UI_VIRTUAL_LIST&&item<ln_music_sound_count())return ln_music_sound_label(item);
     }
     if(in_scene(n,LN_UI_SCENE_MUSIC_QUEUE)){

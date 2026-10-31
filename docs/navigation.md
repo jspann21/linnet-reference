@@ -44,6 +44,7 @@ Home
 ├── Settings
 │   ├── Shuffle: Off / Songs
 │   ├── Repeat: Off / All / One
+│   ├── Edit Menus → Home / Music / Settings / Extras → Item → Show or Hide / Move up / Move down
 │   ├── Sound
 │   │   ├── EQ: Off / Presets / Custom
 │   │   ├── Sound Check or ReplayGain: Off / Track / Album
@@ -57,6 +58,7 @@ Home
 │   │       ├── Preamp
 │   │       └── Dock line out
 │   ├── Display
+│   │   ├── Brightness
 │   │   ├── Backlight timeout
 │   │   └── Themes
 │   ├── Video Settings → TV Out / TV Signal / Widescreen / TV Connection
@@ -89,6 +91,29 @@ Shuffle Songs starts the entire library in random order. Shuffle in Settings or
 Playback Options changes the current playback queue. Sound and Sleep Timer open
 the same controls wherever they are accessed. Menu returns to the menu that
 opened them. Custom EQ changes select the Custom preset automatically.
+
+In Sound, Select or Right increases a value and Left decreases it; the wheel
+chooses a row. Presets and Custom EQ affect music from both Music and Files.
+Changes made during a track transition show **Applying sound...** until playback
+can accept them. Saved sound settings restore independently of the saved queue;
+starting a song during startup preserves them, and explicit new edits win.
+
+Custom bands range from -6 to +6 dB at 100 Hz, 250 Hz, 1 kHz, 4 kHz and 8 kHz
+on Video/Classic; Photo/4G expose the 100 Hz and 8 kHz bands. Bands at or above
+half the track's sample rate are bypassed. Positive EQ reserves digital headroom
+for overlapping boosts and compensates at the headphone output: raising Bass or
+Treble increases that range while keeping other ranges at their previous level.
+Spare output gain is reserved before playback, keeping overall gain stable
+during band edits at normal listening levels. The reserve shrinks near the
+volume limit so flat playback keeps its full output range; boosts near that
+ceiling have less available output gain. Changes settle as buffered audio clears.
+Preamp provides additional attenuation and is kept independent of compensation.
+Off bypasses EQ bands; the other sound controls retain their own settings.
+Video's dock line out retains the equalizer's digital headroom.
+Classic's dock line out follows the shared output volume.
+
+Pause mutes both the digital signal and the analog output while retaining the
+playback position. Resume restores the output after queued audio and gain are ready.
 
 Power's auto-off timers include time spent playing music. Battery Capacity sets
 the installed battery's nominal rating in 50 mAh steps; it is not a charge reading.
@@ -125,7 +150,31 @@ the photo hierarchy. Notes and games keep their own reading and game controls.
 
 ## Saved customization
 
-Media Manager's **Screens** page can reorder or hide supported shortcuts.
+Open **Settings → Edit Menus** on the iPod, choose Home, Music, Settings, or
+Extras, then select an item to show/hide it or move it up/down. Changes apply
+immediately and save automatically. Required items stay included, and each menu
+keeps at least one item. Menu returns to the previous editor page.
+
+Supported shortcuts hidden in Media Manager still appear here as `[ ]` so they
+can be shown again. The editor changes only shortcut visibility and order, using
+compiled screen metadata and cached rows. It does not prepare media, rebuild
+libraries, load new screens, or enable features omitted from the firmware.
+Games and UI Demo choices stay under Media Manager's control and are excluded
+from this editor; their saved selections are preserved.
+
+Under **Settings → Display → Brightness**, turn the wheel to adjust from 5% to
+100% in 5% steps. The backlight changes immediately and the value is saved for
+restart. Backlight timeout remains a separate control under Display. The footer
+shows whether settings are saved, saving, or unavailable for saving.
+Saving can wait for playback to pause or stop so settings writes do not compete
+with audio; the footer stays at Saving until publication completes.
+
+Media Manager's **Screens** page edits the same saved shortcuts and ordering.
+Use matching updated firmware and Media Manager for on-device menu sync. Reconnect
+in Disk Mode or choose **Reload from iPod** to see device edits. Saving merges
+changes to different menus. If both interfaces changed the same menu differently,
+Media Manager stops the save and asks you to reload and review the changes.
+Reloading asks before discarding unsaved desktop edits.
 Less frequently used music categories appear under More in the saved order.
 Optional Home shortcuts such as Notes, Games, and Cover Flow remain available;
 the default Home menu groups them by purpose.
@@ -134,11 +183,14 @@ Files and Extras are enabled in stock firmware. Defaults adapt to target
 capabilities; links to disabled utilities are omitted. Customized menus retain
 their saved order and shortcuts.
 
-Settings, USB Disk Mode, and Sound are required menu items. Shuffle and Repeat
-remain reachable in Settings.
+Settings, USB Disk Mode, and Sound are required menu items. Shuffle, Repeat, and
+Edit Menus remain reachable in Settings.
 
-Menu item IDs are stable. The version-three `MENUS.BIN` writer uses an 80-byte
-envelope and checksum; firmware and Media Manager require version three. See [binary contracts](formats.md) for the format owner.
+Menu item IDs are stable. The 80-byte version-three menu envelope is shared by
+both editors and saved in the version-six `THMS` payload in the existing A/B
+theme records, together with brightness, theme selection, and game scores.
+`MENUS.BIN` remains the startup fallback for installations without saved shared
+menus. See [binary contracts](formats.md) for the format owners.
 
 The structure draws on Apple's [iPod classic User Guide](https://cdsassets.apple.com/live/6GJYWVAV/user/ma1195_ipod_classic_160gb_user_guide.pdf),
 especially its Home ordering, Extras grouping, and Menu-to-parent navigation.

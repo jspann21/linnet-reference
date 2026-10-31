@@ -10,17 +10,8 @@ from tools.studio.update_history import _boot_snapshot, _read_record
 
 def _theme_record(path):
     data, generation, payload = _read_record(path)
-    if payload:
-        header = struct.unpack_from('<4sI', payload) if len(payload) >= 8 else None
-        scores = {0: 0, 5: 18}
-        suffix = 1 + scores[header[1]] * 2 if header and header[0] == b'THMS' and header[1] in scores else 0
-        theme_id = payload[8:-suffix] if suffix else b''
-        if (not suffix or not 8 + suffix <= len(payload) <= 128
-                or (header[1] == 0 and len(payload) > 89)
-                or payload[-suffix] != 0
-                or (theme_id and not re.fullmatch(
-                    rb'[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+', theme_id))):
-            raise ValueError('invalid theme selection payload: ' + path.name)
+    from .device_preferences import decode_payload
+    decode_payload(payload)
     return data, generation
 
 

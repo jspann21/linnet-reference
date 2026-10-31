@@ -61,7 +61,7 @@ static bool valid_config(const struct ln_dsp_config *config)
        config->replaygain_q16>16u*LINNET_DSP_UNITY||config->balance < -1000||
        config->balance>1000||config->mode>LINNET_DSP_KARAOKE||
        config->band_count>LINNET_DSP_BANDS||config->crossfeed_amount_q16>32768u||
-       config->crossfeed_coefficient_q16>65535u||
+       config->crossfeed_coefficient_q16>65535u||config->headroom_db_tenths>90u||
        (config->crossfeed_amount_q16&&!config->crossfeed_coefficient_q16))return false;
     for(uint32_t i=0;i<config->band_count;++i){
         const struct ln_dsp_biquad *b=&config->bands[i];
@@ -97,6 +97,7 @@ bool ln_dsp_profile_decode(const uint8_t *data,uint32_t bytes,uint32_t rate,stru
         if(i>=config.band_count&&(b->b0||b->b1||b->b2||b->a1||b->a2))return false;
     }
     config.crossfeed_amount_q16=ln_read_le32(data+148);config.crossfeed_coefficient_q16=ln_read_le32(data+152);
+    config.headroom_db_tenths=0;
     if(!valid_config(&config))return false;
     *out=config;return true;
 }

@@ -25,17 +25,23 @@ static void copy_frames(uint32_t offset,const int16_t *samples,uint32_t frames) 
     else for(uint32_t i=0;i<frames;i++)ring[offset+i]=(uint16_t)samples[i*2u]|
         ((uint32_t)(uint16_t)samples[i*2u+1u]<<16);
 }
-#ifdef LINNET_SRAM_MONITOR
-/* The monitor clears BSS on entry; keep this zeroed DMA buffer out of NOR. */
+/* Initialized explicitly; the first 64 frames also carry the natural EOF
+ * ramp, then are cleared after that DMA completes. */
 static uint32_t silence[BLOCK] AUDIO_MEMORY;
-#else
-static const uint32_t silence[BLOCK] __attribute__((aligned(32)))={0};
-#endif
 static volatile struct ln_audio_status status;
 static volatile uint32_t head,tail,inflight,armed,expected,previous,drain_until;
-static volatile bool active,real,finishing,pause_pending,draining,starved;
+static volatile bool active,real,finishing,pause_pending,draining,starved,warming,start_armed,drain_ready,tail_ramp;
 static bool owned,codec_ready,lineout,muted,amplifier_open;
 static uint32_t frame_q12;
+static volatile uint32_t mute_until;
+static void ramp_to_silence(uint32_t sample) {
+    int32_t left=(int16_t)sample,right=(int16_t)(sample>>16);
+    for(uint32_t i=0;i<64u;i++){
+        int32_t gain=(int32_t)(64u-i);
+        silence[i]=(uint16_t)(left*gain/64)|((uint32_t)(uint16_t)(right*gain/64)<<16);
+    }
+    tail_ramp=true;
+}
 static uint32_t frame_period(uint32_t rate) {
     switch(rate) {
     case 8000:return 4096000000u/8000;case 11025:return 4096000000u/11025;
@@ -52,18 +58,21 @@ static void fault(uint32_t reason) {
 static bool arm(bool continuing) {
     uint32_t count=head-tail,offset=tail&MASK;
     if(count>LINNET_AUDIO_RING_FRAMES){fault(1);return false;}
+    bool silence_only=warming||draining;
+    if(silence_only)count=0;
     real=count!=0;
     if(count) {
         if(count>BLOCK)count=BLOCK;
         if(count>LINNET_AUDIO_RING_FRAMES-offset)count=LINNET_AUDIO_RING_FRAMES-offset;
         starved=false;
     } else {
-        count=BLOCK;if(!starved)status.underruns++;starved=true;
+        count=BLOCK;if(!silence_only){if(!starved)status.underruns++;starved=true;}
     }
     const int16_t *samples=(const int16_t *)(real?ring+offset:silence);
     bool ok=continuing?ln_s5l_pcm_rearm(samples,count):ln_s5l_pcm_begin(samples,count);
     if(!ok){fault(2);return false;}
     inflight=count;active=true;armed=ln_time_us();expected=(count*frame_q12+4095u)>>12;
+    if(real)start_armed=true;
     ln_s5l_pcm_interrupt(true);ln_s5l_irq_enable(16,true);return true;
 }
 bool ln_audio_volume(int32_t value) {
@@ -83,16 +92,20 @@ bool ln_audio_halt(void) {
         ln_audio_pause();
         uint32_t began=ln_time_us();
         uint32_t block_us=(BLOCK*frame_q12+4095u)>>12;
-        uint32_t timeout=2u*block_us+20000u;
+        uint32_t timeout=5u*block_us+30000u;
         while(status.playing && !status.fault && ln_time_us()-began<timeout) {
             uint32_t now=ln_time_us();ln_audio_service(now);
             if(status.playing)ln_core_idle_until(now+1000u);
         }
         if(status.playing || status.fault)ok=false;
     }
+    if(codec_ready && amplifier_open){
+        if(ln_codec_mute(ln_s5l_board_codec_write,true)){amplifier_open=false;muted=true;}
+        else ok=false;
+    }
     uint32_t flags=ln_s5l_irq_save();ln_s5l_irq_enable(16,false);
     bool stopped=ln_s5l_pcm_stop();
-    if(stopped){active=draining=pause_pending=false;head=tail=inflight=0;status.initialized=status.playing=status.paused=0;}
+    if(stopped){active=draining=pause_pending=warming=false;head=tail=inflight=0;status.initialized=status.playing=status.paused=0;}
     else fault(3);
     ln_s5l_irq_restore(flags);return ok && stopped;
 }
@@ -117,8 +130,10 @@ bool ln_audio_init(uint32_t rate) {
     uint32_t old_rate=status.rate;
     int32_t volume=warm?status.volume_db_tenths:-400;
     if(!ln_audio_halt())return false;
-    status=(struct ln_audio_status){0};head=tail=inflight=0;active=draining=finishing=pause_pending=starved=false;
-    owned=true;previous=0;frame_q12=period;
+    status=(struct ln_audio_status){0};head=tail=inflight=0;active=draining=finishing=pause_pending=starved=warming=drain_ready=false;
+    for(uint32_t i=0;i<BLOCK;i++)silence[i]=0;
+    tail_ramp=false;
+    owned=true;previous=0;frame_q12=period;mute_until=0;
     if(!warm) {
         codec_ready=false;
         if(!ln_s5l_board_audio_power(true) || !ln_core_delay_us(1000) ||
@@ -172,21 +187,56 @@ bool ln_audio_rewrite(uint32_t frame,const int16_t *samples,uint32_t frames) {
     }
     ln_s5l_irq_restore(flags);return ok;
 }
+static bool startup_wait(uint32_t began,uint32_t timeout) {
+    uint32_t now=ln_time_us();
+    if(status.fault)return false;
+    if(now-began>=timeout){fault(6);return false;}
+    ln_core_idle_until(now+1000u);return true;
+}
 bool ln_audio_start(void) {
     if(!status.initialized || status.fault || head==tail)return false;
-    uint32_t flags=ln_s5l_irq_save();pause_pending=draining=false;status.paused=0;status.playing=1;
+    if(status.playing&&!pause_pending&&!draining&&!muted)return true;
+    uint32_t flags=ln_s5l_irq_save();
+    bool continuing=active&&real&&amplifier_open;
+    pause_pending=draining=false;status.paused=0;status.playing=1;
+    if(continuing){
+        ln_s5l_irq_restore(flags);
+        if(!ln_codec_digital_mute(ln_s5l_board_codec_write,false)){fault(4);goto failed;}
+        muted=false;return true;
+    }
+    /* Flush the serial FIFO with real zero transfers before opening analog
+     * outputs. Keep rearming zeros throughout the zero-cross settling time. */
+    warming=true;start_armed=false;
+    uint32_t zeros=status.silence_frames;
     if(!active)previous=0;
-    bool ok=active || arm(false);ln_s5l_irq_restore(flags);
-    if(ok)ok=amplifier_open?ln_codec_digital_mute(ln_s5l_board_codec_write,false):
-        ln_codec_mute(ln_s5l_board_codec_write,false);
-    if(!ok){fault(4);return false;}muted=false;amplifier_open=true;return true;
+    bool ok=active||arm(false);ln_s5l_irq_restore(flags);
+    if(!ok)goto failed;
+    uint32_t block_us=(BLOCK*frame_q12+4095u)>>12;
+    uint32_t began=ln_time_us(),timeout=4u*block_us+30000u;
+    while(status.silence_frames==zeros)if(!startup_wait(began,timeout))goto failed;
+    /* A partial unmute counts as open until a complete mute is acknowledged. */
+    amplifier_open=true;
+    if(!ln_codec_analog_mute(ln_s5l_board_codec_write,false)){fault(4);goto failed;}
+    uint32_t ready=ln_time_us()+block_us+1000u;
+    while((int32_t)(ln_time_us()-ready)<0)if(!startup_wait(began,timeout))goto failed;
+    warming=false;
+    while(!start_armed)if(!startup_wait(began,timeout))goto failed;
+    /* Release the digital ramp only once real PCM is clocking, so its fade
+     * cannot finish on silence before the first nonzero sample arrives. */
+    if(!draining){
+        muted=false;
+        if(!ln_codec_digital_mute(ln_s5l_board_codec_write,false)){fault(4);goto failed;}
+    }
+    return true;
+failed:
+    warming=false;ln_audio_service(ln_time_us());return false;
 }
 void ln_audio_pause(void) {
-    if(!status.playing || pause_pending)return;
-    /* Keep LRCK running while the digital soft ramp settles. The headphone
-     * amplifier stays on across routine pause/resume transitions. */
+    if(!status.playing || pause_pending || draining)return;
+    /* Keep LRCK running while the digital soft ramp settles. Headphone
+     * amplifier power stays on while its output is subsequently muted. */
     if(!ln_codec_digital_mute(ln_s5l_board_codec_write,true)){fault(4);return;}
-    muted=true;
+    muted=true;mute_until=ln_time_us()+((BLOCK*frame_q12+4095u)>>12);
     uint32_t flags=ln_s5l_irq_save();if(status.playing)pause_pending=true;ln_s5l_irq_restore(flags);
 }
 void ln_audio_finish(void) {
@@ -201,32 +251,53 @@ void ln_audio_irq(void) {
     previous=started;
     uint32_t elapsed=started-armed;
     if(elapsed>expected && elapsed-expected>status.max_completion_late_us)status.max_completion_late_us=elapsed-expected;
-    if(real){tail+=inflight;status.consumed+=inflight;}else status.silence_frames+=inflight;
+    uint32_t last_sample=0;
+    if(real){tail+=inflight;status.consumed+=inflight;last_sample=ring[(tail-1u)&MASK];}
+    else status.silence_frames+=inflight;
+    if(tail_ramp){for(uint32_t i=0;i<64u;i++)silence[i]=0;tail_ramp=false;}
     active=false;inflight=0;status.last_irq_us=started;
-    if(pause_pending) {
-        pause_pending=false;draining=true;drain_until=0;
-        if(!ln_s5l_pcm_rearm((const int16_t *)silence,BLOCK)){fault(2);return;}
-        real=false;inflight=BLOCK;active=true;armed=ln_time_us();
-        expected=(BLOCK*frame_q12+4095u)>>12;
-        ln_s5l_pcm_interrupt(true);ln_s5l_irq_enable(16,true);
-    } else if(draining || (finishing && head==tail)) {
-        draining=true;drain_until=started+10000u;
-        ln_s5l_pcm_interrupt(false);
-    } else if(status.playing)(void)arm(true);
+    if(draining)drain_ready=true;
+    else if(!warming&&((pause_pending&&(int32_t)(started-mute_until)>=0)||(finishing&&head==tail))){
+        /* The first deadline is "now", not zero: zero is in the future for
+         * signed wrap-safe comparisons during the timer's upper half. */
+        pause_pending=false;draining=true;drain_ready=false;drain_until=started;
+        /* Finish may arrive after the final real block is armed. Extend its
+         * actual final stereo sample into a short fade, without touching the
+         * DMA-owned ring or consuming/discarding any additional media. */
+        if(finishing&&head==tail&&last_sample)ramp_to_silence(last_sample);
+    }
+    if(status.playing)(void)arm(true);
     elapsed=ln_time_us()-started;if(elapsed>status.max_irq_us)status.max_irq_us=elapsed;
 }
 void ln_audio_service(uint32_t now) {
     uint32_t flags=ln_s5l_irq_save();
     /* Completion may arm a new block after the executive sampled now. */
     if(active && (int32_t)(now-armed)>250000)fault(6);
-    /* The final IRQ leaves DMA inactive. A wrapped deadline may be zero. */
-    if(draining && !active && (int32_t)(now-drain_until)>=0) {
-        draining=false;status.playing=0;status.paused=1;
-        if(!ln_s5l_pcm_stop())fault(3);
-    }
-    bool needs_mute=codec_ready && !muted && (!status.playing || status.fault);
+    bool needs_mute=codec_ready && !muted && (draining || !status.playing || status.fault);
     ln_s5l_irq_restore(flags);
-    if(needs_mute){muted=ln_codec_digital_mute(ln_s5l_board_codec_write,true);if(!muted)fault(4);}
+    if(needs_mute){
+        muted=ln_codec_digital_mute(ln_s5l_board_codec_write,true);
+        if(!muted)fault(4);
+        else mute_until=ln_time_us()+((BLOCK*frame_q12+4095u)>>12);
+    }
+    /* I2C remains in foreground. Close the analog path after the digital
+     * ramp, then leave LRCK running for its zero-cross timeout (1024 frames).
+     * Keeping codec bias powered avoids a fresh power-up on every resume. */
+    if(!status.fault && draining && drain_ready && (int32_t)(now-drain_until)>=0 &&
+       (int32_t)(now-mute_until)>=0) {
+        if(amplifier_open){
+            if(!ln_codec_analog_mute(ln_s5l_board_codec_write,true))fault(4);
+            else{amplifier_open=false;drain_until=ln_time_us()+((BLOCK*frame_q12+4095u)>>12)+1000u;}
+        }else{
+            flags=ln_s5l_irq_save();
+            draining=false;status.playing=0;status.paused=1;
+            if(!ln_s5l_pcm_stop())fault(3);else{active=false;inflight=0;}
+            ln_s5l_irq_restore(flags);
+        }
+    }
+    if(status.fault && codec_ready && amplifier_open){
+        if(ln_codec_mute(ln_s5l_board_codec_write,true)){amplifier_open=false;muted=true;}
+    }
     if(status.fault && active){(void)ln_s5l_pcm_stop();active=false;}
 }
 void ln_audio_snapshot(struct ln_audio_status *out) {

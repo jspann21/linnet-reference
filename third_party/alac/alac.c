@@ -326,13 +326,7 @@ static inline int decode_frame_mono(
         }
         else
         {
-            //fprintf(stderr, "FIXME: unhandled predicition type: %i\n", prediction_type);
-            /* i think the only other prediction type (or perhaps this is just a
-             * boolean?) runs adaptive fir twice.. like:
-             * predictor_decompress_fir_adapt(predictor_error, tempout, ...)
-             * predictor_decompress_fir_adapt(predictor_error, outputsamples ...)
-             * little strange..
-             */
+            /* Nonzero prediction types are rejected before entropy decoding. */
         }
 
     }
@@ -496,7 +490,7 @@ static inline int decode_frame_stereo(
         }
         else
         { /* see mono case */
-            //fprintf(stderr, "FIXME: unhandled predicition type: %i\n", prediction_type_a);
+            /* Nonzero prediction types are rejected before entropy decoding. */
         }
 
         yield();
@@ -523,7 +517,7 @@ static inline int decode_frame_stereo(
         }
         else
         {
-            //fprintf(stderr, "FIXME: unhandled predicition type: %i\n", prediction_type_b);
+            /* Nonzero prediction types are rejected before entropy decoding. */
         }
     }
     else

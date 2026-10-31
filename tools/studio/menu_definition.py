@@ -2,6 +2,8 @@
 
 The numeric IDs and group order are the MENUS.BIN version-three wire format.
 Changing a label or target never renumbers an existing saved choice.
+Device editing controls shortcuts only. Entries marked device_editable=False
+remain host-controlled without changing their wire IDs or host availability.
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ class Item:
     label: str
     target: str | None = None
     feature: str | None = None
+    device_editable: bool = True
 
 
 GROUPS = (
@@ -26,7 +29,7 @@ GROUPS = (
         Item('files', 'Files', 'linnet.system.files', 'files'),
         Item('now_playing', 'Now Playing', 'linnet.system.now-playing'),
         Item('settings', 'Settings', 'linnet.system.settings'),
-        Item('showcase', 'UI Demo', 'local.example.notes', 'demo_or_games'),
+        Item('showcase', 'UI Demo', 'local.example.notes', 'demo_or_games', False),
         Item('extras', 'Extras', 'linnet.system.extras'),
         Item('notes', 'Notes', 'linnet.system.notes'),
         Item('shuffle_all', 'Shuffle Songs', '@shuffle-all'),
@@ -61,8 +64,8 @@ GROUPS = (
         Item('notes', 'Notes', 'linnet.system.notes'),
         Item('videos', 'Videos', 'linnet.system.videos', 'video'),
         Item('files', 'Files', 'linnet.system.files', 'files'),
-        Item('demo', 'UI Demo', 'local.example.notes', 'demo'),
-        Item('games', 'Games', 'linnet.system.games', 'games'),
+        Item('demo', 'UI Demo', 'local.example.notes', 'demo', False),
+        Item('games', 'Games', 'linnet.system.games', 'games', False),
         Item('sleep_timer', 'Sleep Timer', 'linnet.system.sleep-timer'),
     ), (5, 1, 0, 6), ()),
 )
@@ -92,12 +95,29 @@ def render_firmware_header() -> str:
     required = _numbers(sum(1 << index for index in indices) for _, _, _, indices in GROUPS)
     targets = ',\n    '.join('{' + ','.join('0' if item.target is None else '"' + item.target + '"'
                                        for item in items) + '}' for _, items, _, _ in GROUPS)
+    labels = ',\n    '.join('{' + ','.join('"' + item.label + '"' for item in items) + '}' for _, items, _, _ in GROUPS)
+    editable = _numbers(sum(1 << index for index, item in enumerate(items) if item.device_editable)
+                        for _, items, _, _ in GROUPS)
+
+    def scene_index(item):
+        if item.target is None or item.target.startswith('@'):
+            return '64u'  # Native action/category, independent of a scene.
+        if item.target.startswith('linnet.system.'):
+            return 'LN_UI_SCENE_' + item.target.removeprefix('linnet.system.').replace('-', '_').upper()
+        return 'UINT32_MAX'
+
+    scenes = ',\n    '.join('{' + ','.join(scene_index(item) for item in items) + '}'
+                           for _, items, _, _ in GROUPS)
     return ('/* Generated from tools/studio/menu_definition.py. */\n'
             '#ifndef LINNET_MENU_DEFINITION_H\n#define LINNET_MENU_DEFINITION_H\n'
+            '#include "linnet_scene_ids.h"\n'
             f'#define LN_MENU_DEFAULT_ORDER {{{orders}}}\n'
             f'#define LN_MENU_DEFAULT_COUNTS {counts}\n'
             f'static const uint8_t ln_menu_limits[LN_MENU_GROUPS]={limits};\n'
             f'static const uint32_t ln_menu_required[LN_MENU_GROUPS]={required};\n'
+            f'static const uint32_t ln_menu_device_editable[LN_MENU_GROUPS]={editable};\n'
+            f'static const uint32_t ln_menu_scene_ids[LN_MENU_GROUPS][16]={{\n    {scenes}\n}};\n'
+            f'static const char *const ln_menu_labels[LN_MENU_GROUPS][16]={{\n    {labels}\n}};\n'
             f'static const char *const ln_menu_targets[LN_MENU_GROUPS][16]={{\n    {targets}\n}};\n'
             '#endif\n')
 

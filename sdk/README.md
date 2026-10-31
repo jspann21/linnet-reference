@@ -122,6 +122,10 @@ The simulator also accepts `--apple-font path/to/PODIUM.FNT` for local previews.
 It validates and loads the same packed font format as firmware. Its output may
 contain the extracted font and should remain local.
 
+Use `--menus path/to/MENUS.BIN` to preview an encoded Media Manager menu selection
+and exercise the on-device editor with hidden shortcuts. The simulator validates
+the 80-byte menu envelope before loading it.
+
 To bake a suitably licensed replacement font:
 
 ```console

@@ -1,3 +1,4 @@
+#include "services/display/preferences.h"
 #include "kernel/runtime.h"
 #include "kernel/executive.h"
 #include "kernel/shell.h"
@@ -189,6 +190,7 @@ static void backlight_activity(void){
 #if defined(LINNET_AUDIO)
 static uint32_t sleep_timer_revision;
 static uint32_t music_revision,music_phase,music_generation,music_progress_at,music_navigation;
+static bool music_sound_applying;
 static uint32_t music_queue_drawn_revision;
 static const char *music_queue_drawn_notice;
 static uint32_t music_window_epoch=UINT32_MAX,music_window_selection=UINT32_MAX,music_window_navigation=UINT32_MAX;
@@ -537,7 +539,7 @@ static void apply(uint32_t kind,int32_t value){
     }
 #endif
 #if defined(LINNET_NATIVE_UI)
-    if(kind==LN_INPUT_BUTTON&&!shell->hold&&(scene_is(LN_UI_SCENE_DISPLAY)||scene_is(LN_UI_SCENE_BATTERY)||scene_is(LN_UI_SCENE_SHUTDOWN))){
+    if(kind==LN_INPUT_BUTTON&&!shell->hold&&(scene_is(LN_UI_SCENE_BATTERY)||scene_is(LN_UI_SCENE_SHUTDOWN))){
         uint32_t pressed=(uint32_t)value&~shell->buttons;
         if(pressed&(LN_BUTTON_SELECT|LN_BUTTON_NEXT|LN_BUTTON_PREV)){
             if(scene_is(LN_UI_SCENE_BATTERY))(void)ln_battery_capacity_adjust((pressed&LN_BUTTON_PREV)?-1:1);
@@ -545,10 +547,7 @@ static void apply(uint32_t kind,int32_t value){
                 if(shell->selected<2u)(void)ln_auto_shutdown_adjust(shell->selected==1u,(pressed&LN_BUTTON_PREV)?-1:1);
                 else if(pressed&LN_BUTTON_PREV)(void)ln_ui_back(shell);
                 else (void)ln_ui_show(shell,"linnet.system.battery");
-            }else if(shell->selected==1u){
-                if(pressed&LN_BUTTON_PREV)(void)ln_ui_back(shell);
-                else (void)ln_ui_show(shell,"linnet.system.themes");
-            }else (void)ln_display_settings_adjust((pressed&LN_BUTTON_PREV)?-1:1);
+            }
             shell->buttons=(uint32_t)value;ln_ui_refresh(shell);dirty=true;handled=true;
         }else if(pressed&LN_BUTTON_MENU){
             (void)ln_ui_back(shell);
@@ -854,7 +853,8 @@ bool ln_runtime_init(void){
     display_settings_revision=ln_display_settings_revision();
     shutdown_activity();auto_shutdown_timeout=0;auto_shutdown_headphones=false;
     update_status_at=0;
-    backlight_timeout=ln_display_backlight_timeout_us();
+    brightness=ln_preferences_brightness();
+        backlight_timeout=ln_display_backlight_timeout_us();
     backlight_off=ln_display_backlight_off();
 #endif
     ln_exec_init(&executive);ln_arena_init(&scene_arena,scene_memory,sizeof scene_memory);
@@ -1028,9 +1028,10 @@ void ln_runtime_step(void){
     uint32_t settings_revision=ln_display_settings_revision();
     if(display_settings_revision!=settings_revision){
         display_settings_revision=settings_revision;
+        brightness=ln_preferences_brightness();
         backlight_timeout=ln_display_backlight_timeout_us();
         backlight_off=ln_display_backlight_off();
-        if(!sleeping)backlight_activity();
+        if(!sleeping){backlight_restore();backlight_activity();}
         if(scene_is(LN_UI_SCENE_DISPLAY)||scene_is(LN_UI_SCENE_BATTERY)||scene_is(LN_UI_SCENE_SHUTDOWN)||scene_is(LN_UI_SCENE_THEMES)||scene_is(LN_UI_SCENE_HOME)||scene_is(LN_UI_SCENE_GAMES)||scene_is(LN_UI_SCENE_ABOUT)||scene_is(LN_UI_SCENE_MUSIC_SOUND)||shell->drawn_theme!=ln_ui_theme_index()){ln_ui_refresh(shell);dirty=true;}
     }
     theme_frame_request();
@@ -1074,11 +1075,14 @@ void ln_runtime_step(void){
         ln_ui_refresh(shell);dirty=true;
     }
     uint32_t revision=ln_music_library_revision()+ln_music_art_revision()+ln_music_browser_revision()+ln_music_revision()+ln_music_search_revision()+ln_music_queue_view_revision();
-    if(revision!=music_revision||music.phase!=music_phase||music.generation!=music_generation){
+    bool applying=ln_music_sound_pending();
+    if(revision!=music_revision||music.phase!=music_phase||music.generation!=music_generation||
+       (scene_is(LN_UI_SCENE_MUSIC_SOUND)&&applying!=music_sound_applying)){
         if(scene_is(LN_UI_SCENE_MUSIC)){ln_ui_refresh_content(shell);dirty=true;}
         else if(scene_is(LN_UI_SCENE_NOW_PLAYING)||scene_is(LN_UI_SCENE_MUSIC_OPTIONS)||scene_is(LN_UI_SCENE_MUSIC_SOUND)||scene_is(LN_UI_SCENE_MUSIC_QUEUE_ACTIONS)){ln_ui_refresh(shell);dirty=true;}
         music_revision=revision;music_phase=music.phase;music_generation=music.generation;
     }
+    music_sound_applying=applying;
     /* Elapsed time stays valid after long periods away from playback. */
     if(scene_is(LN_UI_SCENE_NOW_PLAYING)&&(music.phase==LN_PLAYER_PLAY||music.phase==LN_PLAYER_DRAIN)&&
        (uint32_t)(now-music_progress_at)>=250000u){

@@ -52,6 +52,9 @@ def describe(identity=None, review=None):
     if model.get('model_identity_status') == 'conflict' or model.get('model_identity_conflict'):
         return dict(status='attention', title='Model identity needs checking',
                     detail='Live hardware and saved model information disagree. Setup must verify the board before installation.')
+    if model.get('image_kind') == 'os':
+        return dict(status='running', title='Linnet is running',
+                    detail='Open Disk Mode to manage media and check installed software.')
     return dict(
         status="supported-family",
         title="iPod recognized",

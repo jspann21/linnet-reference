@@ -397,7 +397,7 @@ _Noreturn void ln_main(void)
 #endif
         ln_music_step();
 #if defined(LINNET_VIDEO)
-        else {extern void ln_music_volume_sync(void);ln_music_volume_sync();}
+        else {extern bool ln_music_volume_sync(void);ln_music_volume_sync();}
 #endif
         LN_TIMING_END(music_started,0);
         LN_CACHE_FIRST_MARK(0xca13u);

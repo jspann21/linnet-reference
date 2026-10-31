@@ -29,6 +29,11 @@ transport, sound, and sleep controls; library-only queue/bookmark/favorite actio
 are omitted for unindexed files. Playback of a directly opened file is not saved
 as a library queue entry.
 
+In Now Playing, Right advances to the next audio file in the source folder;
+Left restarts after three seconds, or selects the previous audio file near the
+beginning. Navigation crosses folder pages and skips directories and other file
+types. If there is no neighbor, the current song keeps its playback state.
+
 ## Preparation and performance
 
 Every Media Manager preparation builds a snapshot after media publication. The

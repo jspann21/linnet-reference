@@ -24,6 +24,13 @@ static const int8_t preset_gains[11][5]={
     {5,3,0,2,3},{5,3,0,3,5},{-2,1,3,1,-2},{-4,-2,2,4,5},
     {-3,-1,4,3,-2},{0,0,0,4,6},{-2,0,4,3,0}
 };
+/* Rounded-up peak responses of these original Q=1 filter cascades across all
+ * native rates. Adjacent bands overlap: the largest slider alone is not enough
+ * headroom (Bass Booster reaches 6.78 dB; all +6 reaches 8.06 dB).
+ * Custom bounds use all five bands at the largest positive gain, which bounds
+ * any smaller boosts/cuts. Also cap attenuation at the sum of active boosts. */
+static const uint8_t preset_headroom[]={4,7,4,5,6,6,4,7,5,8,5};
+static const uint8_t custom_headroom[]={0,2,3,5,6,7,9};
 static __attribute__((minsize)) int32_t ratio(int64_t numerator,uint32_t denominator){
     bool negative=numerator<0;uint64_t value=(uint64_t)(negative?-numerator:numerator)+denominator/2u;
     uint64_t divisor=(uint64_t)denominator<<31;uint32_t result=0;
@@ -58,15 +65,19 @@ __attribute__((minsize)) bool ln_music_profile_configure(const struct ln_music_p
     if(!entry)return false;
     struct ln_dsp dsp;ln_dsp_init(&dsp);struct ln_dsp_config c=dsp.config;
     static const uint32_t frequencies[]={100,250,1000,4000,8000};
-    int32_t headroom=0;
+    int32_t headroom=0,boost_sum=0;
     if(p->preset){
         const int8_t *gains=p->preset==LN_MUSIC_EQ_CUSTOM?p->eq_db:preset_gains[p->preset-1u];
         for(uint32_t i=0;i<5;i++)if(gains[i]&&frequencies[i]<rate/2){
             c.bands[c.band_count++]=custom_band((uint32_t)(entry-presets),i,gains[i]);
             if(gains[i]>headroom)headroom=gains[i];
+            if(gains[i]>0)boost_sum+=gains[i];
         }
+        headroom=p->preset==LN_MUSIC_EQ_CUSTOM?custom_headroom[headroom]:preset_headroom[p->preset-1u];
+        if(headroom>boost_sum)headroom=boost_sum;
     }
     c.gain_q16=ln_dsp_gain_from_db(p->preamp_db_q16-headroom*65536);
+    c.headroom_db_tenths=(uint32_t)headroom*10u;
     uint32_t replaygain=p->replaygain?ln_dsp_gain_from_db(replaygain_db_q16):LINNET_DSP_UNITY;
     c.gain_q16=(uint32_t)(((uint64_t)c.gain_q16*replaygain+32768u)>>16);
     if(!c.gain_q16)c.gain_q16=1;

@@ -25,11 +25,12 @@ bool ln_music_quiz_begin(uint32_t index);
 bool ln_music_quiz_select(uint32_t index);
 void ln_music_quiz_end(void);
 bool ln_music_next(bool previous);
+void ln_music_file_transport_finished(bool found);
 void ln_music_toggle(void);
 void ln_music_stop(void);
 bool ln_music_seek(uint64_t frame);
 bool ln_music_volume(int32_t steps);
-void ln_music_volume_sync(void);
+bool ln_music_volume_sync(void);
 void ln_music_headphones(bool connected);
 /* Terminal normal shutdown / Disk Mode only. Caller must admit with storage
  * idle; freezes intents, drains read owners and bounds persistence work. Never
@@ -45,6 +46,8 @@ uint32_t ln_music_revision(void);
 uint32_t ln_music_sound_count(void);
 uint32_t ln_music_sound_action(uint32_t row);
 const char *ln_music_sound_title(void);
+bool ln_music_sound_pending(void);
+const char *ln_music_sound_status(void);
 bool ln_music_sound_enter(uint32_t row);
 bool ln_music_sound_back(uint32_t *row);
 const char *ln_music_sound_label(uint32_t index);

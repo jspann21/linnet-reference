@@ -23,6 +23,12 @@ bool ln_player_open_configured(const char *path,uint64_t expected_bytes,uint64_t
                                const struct ln_dsp_config *config,uint32_t config_rate);
 /* Reprocess queued PCM in bounded steps without seeking or moving the playhead. */
 bool ln_player_configure(const struct ln_dsp_config *config,uint32_t rate);
+/* Boot-time output owner. False keeps lower-headroom PCM from being admitted
+ * or playback from starting until the requested codec gain is acknowledged. */
+void ln_player_set_gain_sync(bool (*sync)(void));
+/* Safe compensation for currently queued PCM, in tenths of a dB. */
+uint32_t ln_player_headroom(void);
+bool ln_player_sound_pending(void);
 bool ln_player_pause(bool pause);
 /* Toggle the latest accepted intent, including pending pause/seek and priming. */
 bool ln_player_toggle_pause(void);

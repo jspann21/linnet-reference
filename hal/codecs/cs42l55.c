@@ -2,6 +2,11 @@
  * Register compensation is manufacturer-specified data. */
 #include "codec.h"
 #include "hal/api/core.h"
+static bool output_muted=true,lineout_enabled;
+static bool lineout(ln_codec_writer write,bool enabled,bool mute) {
+    uint16_t value=enabled&&!mute?0:0xc0;
+    bool left=write(0x1c,value),right=write(0x1d,value);return left&&right;
+}
 static uint8_t rate_value(uint32_t rate) {
     switch(rate) {
     case 8000:return 0x1d;case 11025:return 0x1b;case 12000:return 0x19;
@@ -21,11 +26,22 @@ bool ln_codec_volume(ln_codec_writer write,int32_t value) {
     return write(0x18,(uint8_t)steps) && write(0x19,(uint8_t)steps);
 }
 bool ln_codec_lineout(ln_codec_writer write,bool enabled) {
-    return write(0x1c,enabled?0:0xc0) && write(0x1d,enabled?0:0xc0) && write(3,enabled?0xaa:0xaf);
+    if(!lineout(write,enabled,output_muted)||!write(3,enabled?0xaa:0xaf))return false;
+    lineout_enabled=enabled;return true;
+}
+bool ln_codec_analog_mute(ln_codec_writer write,bool mute) {
+    if(mute){
+        output_muted=true;
+        bool left=write(0x1a,0xc0),right=write(0x1b,0xc0);
+        bool dock=lineout(write,lineout_enabled,true);return left&&right&&dock;
+    }
+    if(!write(0x1a,0)||!write(0x1b,0)||!lineout(write,lineout_enabled,false))return false;
+    output_muted=false;return true;
 }
 bool ln_codec_mute(ln_codec_writer write,bool mute) {
-    if(mute)return write(0x0f,3) && write(0x1a,0xc0) && write(0x1b,0xc0);
-    return write(0x1a,0) && write(0x1b,0) && write(0x0f,0);
+    if(mute){bool digital=ln_codec_digital_mute(write,true),analog=ln_codec_analog_mute(write,true);
+        return digital&&analog;}
+    return ln_codec_analog_mute(write,false)&&ln_codec_digital_mute(write,false);
 }
 bool ln_codec_digital_mute(ln_codec_writer write,bool mute) {
     return write(0x0f,mute?3:0);
@@ -35,6 +51,7 @@ bool ln_codec_off(ln_codec_writer write) {
     return muted && line && power;
 }
 bool ln_codec_init(ln_codec_writer write,uint32_t rate) {
+    output_muted=true;lineout_enabled=false;
     if(!ln_codec_rate_supported(rate) || !write(2,0x0f))return false;
     static const uint8_t compensation[][2]={
         {0,0x99},{0x2e,0x30},{0x32,7},{0x33,0xff},{0x34,0xf8},{0x35,0xdc},

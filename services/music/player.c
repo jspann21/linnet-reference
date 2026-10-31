@@ -25,6 +25,10 @@ _Static_assert(0x100000u+2u*PLAYER_COMPRESSED_CACHE_BYTES+
 _Static_assert((LINNET_AUDIO_RING_FRAMES+PLAYER_DECODE_FRAMES)*4u<=LINNET_STAGE_CAPACITY,"PCM cache exceeds staging");
 static uint32_t raw_head,effect_cursor;
 static bool effect_pending;
+static bool effect_paused_full;
+static uint32_t output_headroom,pending_headroom,headroom_boundary;
+static bool headroom_pending,gain_waiting;
+static bool (*gain_sync)(void);
 enum slot_phase {SLOT_EMPTY,SLOT_OPEN,SLOT_DECODE,SLOT_EOF,SLOT_FAILED};
 #if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
 struct player_cache_window {uint32_t start,valid,target;bool filling;};
@@ -72,11 +76,28 @@ static uint32_t audible,feed,generation_counter,last_consumed,join_underruns;
 uint32_t ln_player_decoder_kind(void){return slots[audible].decoder.kind;}
 static uint64_t consumed,submitted,audible_origin,join_boundary;
 static bool stop_requested,seek_requested,pause_requested,have_next,cancel_next;
+static bool pause_io_canceling;
 static bool skip_requested,seek_paused;
 static bool audio_ready,join_pending,join_gapless,event_pending,finish_sent,stepping;
 static uint64_t seek_target;
 static bool next_expected,eof_waiting;
 static uint32_t eof_deadline;
+void ln_player_set_gain_sync(bool (*sync)(void)){gain_sync=sync;}
+uint32_t ln_player_headroom(void){
+    if(!audio_ready)return 0;
+    struct ln_audio_status audio;ln_audio_snapshot(&audio);
+    if(!audio.initialized)return 0;
+    /* Old PCM can remain in the skipped DMA prefix or in a rewrite overtaken
+     * by playback. Increasing gain waits past ALL previously submitted PCM. */
+    if(headroom_pending&&(int32_t)(audio.consumed-headroom_boundary)>=0){
+        output_headroom=pending_headroom;headroom_pending=false;
+    }
+    return output_headroom;
+}
+bool ln_player_sound_pending(void){return effect_pending||headroom_pending||gain_waiting;}
+static bool synchronize_gain(void){
+    gain_waiting=gain_sync?!gain_sync():output_headroom!=0;return !gain_waiting;
+}
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
 bool ln_player_startup_disk(void){
     return state.phase>=LN_PLAYER_OPEN&&state.phase<=LN_PLAYER_PRIME&&
@@ -457,7 +478,9 @@ static void advance_next(void){
     else if(s->phase==SLOT_EOF)next_failure(-2);
 }
 static bool initialize_audio(uint32_t rate){
-    if(!ln_audio_init(rate))return false;last_consumed=raw_head=0;effect_pending=false;submitted=consumed;audio_ready=true;finish_sent=false;eof_waiting=false;return true;
+    if(!ln_audio_init(rate))return false;last_consumed=raw_head=0;effect_pending=effect_paused_full=false;
+    output_headroom=slots[feed].dsp.config.headroom_db_tenths;headroom_pending=gain_waiting=false;
+    submitted=consumed;audio_ready=true;finish_sent=false;eof_waiting=false;return true;
 }
 static void process_pcm(struct player_slot *s,int16_t *pcm,uint32_t frames){
 #if !defined(LINNET_PROFILE_RELEASE)
@@ -501,7 +524,14 @@ bool ln_player_open_at(const char *name,uint64_t bytes,uint64_t position){
     return ln_player_open_configured(name,bytes,position,0,0);
 }
 static bool prepare_dsp(struct ln_dsp *dsp,const struct ln_dsp_config *config,uint32_t rate){
-    ln_dsp_init(dsp);return !config||(supported_rate(rate)&&ln_dsp_configure(dsp,config));
+    ln_dsp_init(dsp);return !config||((!config->headroom_db_tenths||gain_sync)&&
+        supported_rate(rate)&&ln_dsp_configure(dsp,config));
+}
+static uint32_t effect_start(const struct ln_audio_status *audio){
+    /* Leave two DMA blocks ahead of the foreground copy. Recheck on every
+     * step: input, display and storage work can consume this reserve. */
+    uint32_t skip=audio->playing?2048u:0u;if(skip>audio->queued)skip=audio->queued;
+    return audio->consumed+skip;
 }
 bool ln_player_configure(const struct ln_dsp_config *config,uint32_t rate){
     if(stop_requested||skip_requested||join_pending||event_pending)return false;
@@ -509,9 +539,22 @@ bool ln_player_configure(const struct ln_dsp_config *config,uint32_t rate){
     struct player_slot *s=&slots[audible];struct ln_dsp candidate;
     if(!config||!prepare_dsp(&candidate,config,rate)||(s->rate&&s->rate!=rate))return false;
     if(audio_ready){
+        /* A previous lower-gain write may still be unacknowledged. A newer
+         * edit must not mistake its conservative target for actual codec gain. */
+        if(gain_waiting&&!synchronize_gain())return false;
+        /* Lower gain before admitting PCM with less automatic attenuation.
+         * A failed codec write leaves the old DSP in place for a later retry. */
+        headroom_pending=false;
+        if(config->headroom_db_tenths<=output_headroom){
+            output_headroom=config->headroom_db_tenths;
+            if(!synchronize_gain())return false;
+        }else{
+            pending_headroom=config->headroom_db_tenths;
+            headroom_boundary=raw_head;headroom_pending=true;
+        }
         struct ln_audio_status audio;ln_audio_snapshot(&audio);
-        uint32_t skip=audio.playing?2048u:0u;if(skip>audio.queued)skip=audio.queued;
-        effect_cursor=audio.consumed+skip;effect_pending=effect_cursor!=raw_head;
+        effect_cursor=effect_start(&audio);effect_pending=effect_cursor!=raw_head;
+        effect_paused_full=!audio.playing&&!audio.fault;
     }
     s->dsp=candidate;s->config_rate=rate;return true;
 }
@@ -536,7 +579,8 @@ bool ln_player_open_configured(const char *name,uint64_t bytes,uint64_t position
     activate_cache(&slots[0]);
 #endif
     skip_requested=seek_paused=false;
-    effect_pending=audio_ready=join_pending=event_pending=finish_sent=next_expected=eof_waiting=false;consumed=submitted=audible_origin=0;last_consumed=0;return true;
+    effect_pending=effect_paused_full=headroom_pending=gain_waiting=pause_io_canceling=audio_ready=join_pending=event_pending=finish_sent=next_expected=eof_waiting=false;
+    output_headroom=0;consumed=submitted=audible_origin=0;last_consumed=0;return true;
 }
 bool ln_player_open_file(const struct ln_fat32_file *file,bool (*configure)(uint32_t,struct ln_dsp_config *)){
     if(!file||(file->attributes&24u)||!file->size||!ln_player_open("/FILE"))return false;
@@ -594,10 +638,21 @@ bool ln_player_pause(bool pause){
     if(pause&&state.phase==LN_PLAYER_PLAY){pause_requested=true;eof_waiting=false;return true;}
     if(!pause&&state.phase==LN_PLAYER_PLAY&&pause_requested){pause_requested=false;return true;}
     if(!pause&&state.phase==LN_PLAYER_PAUSE){
+        struct ln_audio_status audio;ln_audio_snapshot(&audio);
+        /* The fade can consume the final queued block. Refill through PRIME
+         * rather than asking the sink to start an empty ring. */
+        if(!audio.queued){
+            seek_paused=false;
+            state.phase=slots[feed].phase==SLOT_EOF?LN_PLAYER_DRAIN:LN_PLAYER_PRIME;
+            return true;
+        }
 #if defined(LINNET_TARGET_VIDEO5G_M25) && defined(LINNET_IMAGE_OS)
         /* Preserve muted PCM and position while storage wakes. */
         if(ln_storage_music_disk_ready()!=1){seek_paused=false;state.phase=LN_PLAYER_PRIME;return true;}
 #endif
+        if(!synchronize_gain()){
+            seek_paused=false;state.phase=LN_PLAYER_PRIME;return true;
+        }
         if(!ln_audio_start())return false;eof_waiting=false;state.phase=LN_PLAYER_PLAY;return true;
     }return false;
 }
@@ -633,7 +688,8 @@ static void player_advance(void){
         if(!drain_canceled())return;clear_slot(&slots[0]);clear_slot(&slots[1]);
         if(state.error)(void)ln_audio_stop();
         state.phase=state.error?LN_PLAYER_ERROR:LN_PLAYER_IDLE;stop_requested=seek_requested=pause_requested=false;
-        effect_pending=have_next=cancel_next=join_pending=event_pending=audio_ready=skip_requested=seek_paused=false;state.next_phase=LN_PLAYER_NEXT_NONE;return;
+        effect_pending=effect_paused_full=headroom_pending=gain_waiting=pause_io_canceling=have_next=cancel_next=join_pending=event_pending=audio_ready=skip_requested=seek_paused=false;
+        output_headroom=0;state.next_phase=LN_PLAYER_NEXT_NONE;return;
     }
     if(skip_requested){
         if(!drain_canceled())return;
@@ -668,6 +724,10 @@ static void player_advance(void){
         s->phase=SLOT_DECODE;s->buffered=0;s->submitted=0;s->position_base=seek_target;audible_origin=consumed;
         state.decoded=state.rendered=0;state.phase=LN_PLAYER_PRIME;seek_requested=pause_requested=false;
         (void)ln_dsp_configure(&s->dsp,&s->dsp.config);return;
+    }
+    if(pause_io_canceling){
+        if(!drain_canceled())return;
+        pause_io_canceling=false;
     }
     if(cancel_next){
         if(!drain_canceled())return;clear_slot(&slots[audible^1u]);have_next=cancel_next=false;
@@ -743,14 +803,15 @@ static void player_advance(void){
         int r=slot_step(s);if(interrupted())return;if(r<0){fail(13);return;}if(s->buffered&&!submit_slot(s))return;
     }
     if(state.phase==LN_PLAYER_PRIME){
+        ln_audio_snapshot(&audio);
         uint32_t prime_frames=startup_frames(s->rate);
 #if defined(LINNET_SOC_PP5022)
         /* A drained rate change needs more runway for its first cold disk read. */
         if(join_pending&&!join_gapless&&s->rate!=slots[audible].rate)
             prime_frames=prefetch_frames(s->rate);
 #endif
-        if(s->submitted>=prime_frames||s->phase==SLOT_EOF){
-            if(submitted==consumed){stop_player(false);return;}
+        if(audio.queued>=prime_frames||s->phase==SLOT_EOF){
+            if(!audio.queued){stop_player(false);return;}
             /* A paused seek fills a fresh ring while muted. Resume starts DMA;
              * priming must not briefly expose audio before returning to pause. */
             if(seek_paused){seek_paused=false;state.phase=LN_PLAYER_PAUSE;return;}
@@ -760,6 +821,7 @@ static void player_advance(void){
                 if(ready<0){fail(23);return;}if(!ready)return;
             }
 #endif
+            if(!synchronize_gain())return;
             if(!ln_audio_start()){fail(15);return;}state.phase=LN_PLAYER_PLAY;
         }
     }
@@ -779,7 +841,8 @@ static void player_advance(void){
     if(have_next&&!join_pending&&state.next_phase==LN_PLAYER_NEXT_OPENING){
         if(io_owner==&slots[audible^1u]||(!io_owner&&state.phase==LN_PLAYER_PLAY&&runway)){advance_next();return;}
     }
-    if(have_next&&!join_pending&&state.next_phase==LN_PLAYER_NEXT_READY&&slots[audible^1u].rate==s->rate){
+    if(have_next&&!join_pending&&state.next_phase==LN_PLAYER_NEXT_READY&&slots[audible^1u].rate==s->rate&&
+       slots[audible^1u].dsp.config.headroom_db_tenths==s->dsp.config.headroom_db_tenths){
         struct player_slot *next=&slots[audible^1u];ln_audio_snapshot(&audio);if(audio.free_frames<next->buffered)return;
         join_boundary=submitted;join_gapless=audio.queued>0&&!finish_sent;join_underruns=audio.underruns;
         feed=audible^1u;join_pending=true;state.next_phase=LN_PLAYER_NEXT_COMMITTED;
@@ -790,22 +853,98 @@ static void player_advance(void){
     if(next_expected&&!have_next&&!join_pending&&runway)return;
     if(!finish_sent){ln_audio_finish();finish_sent=true;}state.phase=LN_PLAYER_DRAIN;
 }
+static bool effect_yield_to_decode(const struct ln_audio_status *audio){
+    uint32_t reserve=ln_player_background_frames(audio->rate);
+    if(!audio->playing||audio->queued>=reserve)return false;
+    /* Replacing queued PCM must not consume the decoder's remaining runway.
+     * The untouched tail keeps its old effects until it plays; start fresh
+     * histories for newly decoded PCM, and retain its gain boundary. */
+    effect_pending=effect_paused_full=false;effect_cursor=raw_head;
+    (void)ln_dsp_configure(&slots[audible].dsp,&slots[audible].dsp.config);
+    if(!headroom_pending){
+        pending_headroom=output_headroom;headroom_boundary=raw_head;
+        headroom_pending=audio->queued!=0;
+    }
+    return true;
+}
 void ln_player_step(void){
     if(stepping)return;stepping=true;
+    /* A pending media read must not delay muting or consume the queued pause
+     * position. Its cancellation/completion can drain while audio is paused. */
+    if(pause_requested&&audio_ready&&state.phase==LN_PLAYER_PLAY&&
+       !stop_requested&&!seek_requested&&!skip_requested){
+        pause_requested=false;ln_audio_pause();state.phase=LN_PLAYER_PAUSE;
+        if(io_owner){
+            pause_io_canceling=true;ln_storage_media_cancel(io_owner->generation);
+#if defined(LINNET_SOC_PP5022) && defined(LINNET_IMAGE_OS)
+            if(io_owner==&slots[audible]&&io_owner->cache_enabled)io_owner->cache_pause_canceling=true;
+#endif
+        }
+    }
+    /* A low-runway edit may leave an old tail awaiting playback. A settled
+     * pause can safely replace all of it, including the former DMA prefix. */
+    if(!effect_pending&&headroom_pending&&!join_pending&&!event_pending&&state.phase==LN_PLAYER_PAUSE&&
+       !stop_requested&&!seek_requested&&!skip_requested){
+        struct ln_audio_status audio;ln_audio_snapshot(&audio);
+        if(!audio.playing&&!audio.fault){
+            effect_cursor=audio.consumed;effect_pending=effect_cursor!=raw_head;
+            effect_paused_full=true;
+            (void)ln_dsp_configure(&slots[audible].dsp,&slots[audible].dsp.config);
+            if(!effect_pending){output_headroom=pending_headroom;headroom_pending=false;}
+        }
+    }
     if(effect_pending&&!stop_requested&&!seek_requested&&!skip_requested&&!pause_requested){
+        struct ln_audio_status audio;ln_audio_snapshot(&audio);
+        if(effect_yield_to_decode(&audio)){
+            player_advance();stepping=false;return;
+        }
+        /* A job begun during playback skipped a DMA prefix. If Pause settles,
+         * restart from the stopped cursor before permitting early gain makeup. */
+        if(!audio.playing&&!audio.fault&&!effect_paused_full){
+            effect_cursor=audio.consumed;effect_paused_full=true;
+            (void)ln_dsp_configure(&slots[audible].dsp,&slots[audible].dsp.config);
+        }
+        if(audio.playing)effect_paused_full=false;
+        uint32_t first=effect_start(&audio);
+        if((int32_t)(first-effect_cursor)>0){
+            effect_cursor=first;
+            (void)ln_dsp_configure(&slots[audible].dsp,&slots[audible].dsp.config);
+        }
         uint32_t count=raw_head-effect_cursor;if(count>PLAYER_DECODE_FRAMES)count=PLAYER_DECODE_FRAMES;
         for(uint32_t i=0;i<count;i++){
             uint32_t at=(effect_cursor+i)&(LINNET_AUDIO_RING_FRAMES-1u);
             __builtin_memcpy(EFFECT_PCM+2*i,RAW_PCM+2*at,4);
         }
         process_pcm(&slots[audible],EFFECT_PCM,count);
-        (void)ln_audio_rewrite(effect_cursor,EFFECT_PCM,count);
-        effect_cursor+=count;effect_pending=effect_cursor!=raw_head;
+        bool rewritten=ln_audio_rewrite(effect_cursor,EFFECT_PCM,count);
+        effect_cursor+=count;
+        if(!rewritten){
+            effect_paused_full=false;
+            /* DMA may advance during DSP. Its owned PCM cannot be replaced;
+             * resume at writable audio, without processing an obsolete backlog. */
+            ln_audio_snapshot(&audio);first=effect_start(&audio);
+            if((int32_t)(first-effect_cursor)>0){
+                effect_cursor=first;
+                (void)ln_dsp_configure(&slots[audible].dsp,&slots[audible].dsp.config);
+            }
+        }
+        effect_pending=effect_cursor!=raw_head;
+        if(!effect_pending&&effect_paused_full&&headroom_pending){
+            ln_audio_snapshot(&audio);
+            if(!audio.playing&&!audio.fault){
+                output_headroom=pending_headroom;headroom_pending=false;
+            }
+        }
+        if(effect_pending){
+            ln_audio_snapshot(&audio);
+            if(effect_yield_to_decode(&audio))player_advance();
+        }
     }else player_advance();
     stepping=false;
 }
 bool ln_player_busy(void){return state.phase!=LN_PLAYER_IDLE&&state.phase!=LN_PLAYER_ERROR;}
 uint32_t ln_player_deadline(uint32_t now){
+    if(gain_waiting&&!stop_requested&&!seek_requested&&!skip_requested)return now+1000u;
     if(effect_pending)return now;
     /* An admitted read for the feeding decoder owns its input buffer until
      * storage completes. Another player turn cannot produce PCM from it.

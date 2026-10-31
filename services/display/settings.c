@@ -1,3 +1,4 @@
+#include "preferences.h"
 #include "boot/include/linnet_bytes.h"
 #include "settings.h"
 #include "services/storage/storage.h"
@@ -21,7 +22,9 @@ static uint8_t click_tone;
 static bool click_fallback_ready,click_changed;
 static const char *const click_labels[]={"Clicker: Classic","Clicker: Off","Clicker: Low","Clicker: High"};
 static uint32_t theme_index=UINT32_MAX,theme_revision;
-static bool theme_loaded,theme_dirty,theme_available;
+static bool theme_loaded,theme_dirty,theme_available,prefs_dirty,prefs_menus;
+static uint32_t prefs_revision;
+static uint8_t saved_menus[80];
 static uint16_t game_best[LN_GAME_COUNT];
 extern void ln_games_best_set(uint32_t index,uint16_t value);
 static bool menus_loaded;
@@ -89,7 +92,7 @@ void ln_display_settings_diagnostics(uint32_t words[8]){
     words[7]=(loaded?1u:0u)|(theme_loaded?2u:0u);
 }
 #endif
-void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loaded=false;games_phase=0;about_loaded=false;about_phase=about_count=about_percent=0;about_ata_ready=false;about_ata_count=0;for(uint32_t i=0;i<LN_GAME_COUNT;++i)game_best[i]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;click_tone=0;click_fallback_ready=click_changed=false;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;record_first_dirty_at=record_last_dirty_at=0;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=false;for(uint32_t i=0;i<16;++i)photo_resume[i]=0;
+void ln_display_settings_init(void){menus_loaded=false;menus_phase=0;games_loaded=false;games_phase=0;about_loaded=false;about_phase=about_count=about_percent=0;about_ata_ready=false;about_ata_count=0;for(uint32_t i=0;i<LN_GAME_COUNT;++i)game_best[i]=0;shutdown_choice[0]=shutdown_choice[1]=0;clock_12=false;update_known=false;for(uint32_t i=0;i<5;++i)update_labels[i][0]=0;battery_capacity=1200;choice=4;click_tone=0;click_fallback_ready=click_changed=false;video_resume[0]=video_resume[1]=0;video_options=8u;revision=record_revision=0;loaded=dirty=false;record_first_dirty_at=record_last_dirty_at=0;theme_index=UINT32_MAX;theme_revision=0;theme_loaded=theme_dirty=theme_available=step_busy=prefs_dirty=prefs_menus=false;prefs_revision=0;ln_preferences_restore_brightness(100);for(uint32_t i=0;i<16;++i)photo_resume[i]=0;
     (void)ln_ui_apple_font_load(0,0);
 #if LINNET_UI_WIDTH!=160u
     apple_font_loaded=false;apple_font_phase=0;
@@ -122,7 +125,7 @@ const char *ln_display_theme_status(void){
     if(theme_index==UINT32_MAX&&!theme_dirty)return "Default";
     return theme_available?(theme_dirty?"Saving...":"Saved"):"This session";
 }
-bool ln_display_settings_pending(void){return dirty||(theme_dirty&&(!theme_loaded||theme_available));}
+bool ln_display_settings_pending(void){return dirty||((theme_dirty||prefs_dirty)&&(!theme_loaded||theme_available));}
 const char *ln_display_settings_label(void){return labels[choice];}
 bool ln_display_settings_adjust(int32_t direction){
     if(!direction)return false;
@@ -215,7 +218,7 @@ static int write_record(uint8_t raw[480],const uint8_t *data,uint32_t length,boo
         ln_read_le32(raw+16)==ln_read_le32(photo_resume+12)&&ln_read_le32(raw+20)==video_resume[0]&&
         ln_read_le32(raw+24)==video_resume[1]&&ln_read_le32(raw+28)==battery_capacity;
     if(unchanged)for(uint32_t i=0;i<length;++i)if(raw[32+i]!=data[i]){unchanged=false;break;}
-    if(unchanged){if(record_revision==snapshot_revision)dirty=false;return 1;}
+    if(unchanged){if(record_revision==snapshot_revision&&dirty){dirty=false;++revision;}return 1;}
     for(uint32_t i=length;i;--i)raw[32+i-1]=data[i-1];
     ln_write_le32(raw,0x54544553u);raw[4]=(uint8_t)length;raw[5]=(uint8_t)(length>>8);raw[6]=(uint8_t)choice;
     raw[7]=packed7;
@@ -228,7 +231,7 @@ static int write_record(uint8_t raw[480],const uint8_t *data,uint32_t length,boo
 #if !defined(LINNET_PROFILE_RELEASE)
     if(record_publishes!=UINT32_MAX)++record_publishes;
 #endif
-    if(record_revision==snapshot_revision)dirty=false;return 1;
+    if(record_revision==snapshot_revision&&dirty){dirty=false;++revision;}return 1;
 }
 bool ln_display_settings_photo_get(uint8_t out[16]){
     if(!loaded||!out)return false;
@@ -287,7 +290,7 @@ static bool theme_id_valid(const uint8_t *id,uint32_t length){
     return dot&&!start;
 }
 static void theme_step(bool presented,uint32_t presented_revision,bool flush){
-    uint8_t payload[128];uint32_t length=sizeof(payload);
+    uint8_t payload[256];uint32_t length=sizeof(payload);
     if(!theme_loaded){
         int result=ln_storage_theme(false,payload,&length);
         if(!result)return;
@@ -295,11 +298,15 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
         uint32_t saved=UINT32_MAX;
         if(theme_available&&length){
             uint32_t version=length>=8u?ln_read_le32(payload+4):UINT32_MAX;
-            uint32_t suffix=version==0u?1u:version==5u?1u+LN_GAME_COUNT*2u:0u;
+            uint32_t suffix=version==0u?1u:version==5u?1u+LN_GAME_COUNT*2u:version==6u?119u:0u;
             uint32_t id_length=length>=8u+suffix?length-8u-suffix:0u;
             if(length<9u||length>sizeof payload||(version==0u&&length>89u)||!suffix||length<8u+suffix||
                ln_read_le32(payload)!=0x534d4854u||payload[8u+id_length]||
-               !theme_id_valid(payload+8,id_length))theme_available=false;
+               (id_length>80u)||!theme_id_valid(payload+8,id_length))theme_available=false;
+            if(theme_available&&version==6u){
+                uint32_t at=45u+id_length;
+                if(payload[at]<5u||payload[at]>100u||payload[at+1u]!=1u||!ln_ui_menu_valid(payload+at+2u,80u))theme_available=false;
+            }
             if(theme_available&&length>8u+suffix){
                 for(uint32_t i=0;i<ln_ui_theme_count;++i){
                     const char *id=ln_ui_themes[i].id;uint32_t at=0;
@@ -307,60 +314,71 @@ static void theme_step(bool presented,uint32_t presented_revision,bool flush){
                     if(at==id_length&&!id[at]){saved=i;break;}
                 }
             }
-            if(theme_available&&version==5u){
-                uint32_t scores=length-LN_GAME_COUNT*2u;
+            if(theme_available&&(version==5u||version==6u)){
+                uint32_t scores=9u+id_length;
                 for(uint32_t i=0;i<LN_GAME_COUNT;++i){game_best[i]=ln_read_le16(payload+scores+i*2u);ln_games_best_set(i,game_best[i]);}
+            }
+        }
+        if(theme_available&&length>=127u&&ln_read_le32(payload+4)==6u){
+            uint32_t id_length=length-127u,at=45u+id_length;
+            if(payload[at]<5u||payload[at]>100u||payload[at+1u]!=1u)theme_available=false;
+            else if(!prefs_revision){
+                ln_preferences_restore_brightness(payload[at]);
+                for(uint32_t i=0;i<80u;++i)saved_menus[i]=payload[at+2u+i];
+                prefs_menus=true;
+                if(menus_loaded&&!ln_ui_menu_load(saved_menus,80u))theme_available=false;
             }
         }
         if(!theme_dirty)theme_index=saved;
         ++revision;
     }
-    if(!theme_dirty)return;
-    if(!theme_available){theme_dirty=false;++revision;return;}
+    if(!theme_dirty&&!prefs_dirty)return;
+    if(!theme_available){theme_dirty=prefs_dirty=false;++revision;return;}
     /* Loading and write preparation may run nested input callbacks. A token
      * for their former selection must not authorize the new selection. */
-    if(!flush&&(!presented||theme_revision!=presented_revision))return;
+    if(!flush&&theme_dirty&&(!presented||theme_revision!=presented_revision))return;
     /* Recovery may have closed the stores since this owner loaded its value.
      * Reopen them through a read before the final frame check, so callbacks in
      * open_stores/theme_open cannot invalidate readiness inside publication. */
     length=sizeof(payload);int probe=ln_storage_theme(false,payload,&length);
     if(!probe)return;
-    if(probe<0){theme_available=theme_dirty=false;++revision;return;}
-    if(!flush&&(!presented||theme_revision!=presented_revision||
+    if(probe<0){theme_available=theme_dirty=prefs_dirty=false;++revision;return;}
+    if(!flush&&theme_dirty&&(!presented||theme_revision!=presented_revision||
        !ln_display_theme_presented(presented_revision)))return;
     const char *id=theme_index==UINT32_MAX?"":ln_ui_themes[theme_index].id;
     uint32_t count=0;while(id[count]&&count<80u&&theme_id_char((uint8_t)id[count]))++count;
-    if(id[count]){theme_available=false;theme_dirty=false;++revision;return;}
+    if(id[count]){theme_available=false;theme_dirty=prefs_dirty=false;++revision;return;}
     ln_write_le32(payload,0x534d4854u);
-#if LINNET_HAS_GAMES
-    ln_write_le32(payload+4,5u);
-#else
-    ln_write_le32(payload+4,0u);
-#endif
+    ln_write_le32(payload+4,6u);
     for(uint32_t i=0;i<count;++i)payload[8+i]=(uint8_t)id[i];payload[8+count]=0;
-#if LINNET_HAS_GAMES
     for(uint32_t i=0;i<LN_GAME_COUNT;++i)ln_write_le16(payload+9u+count+i*2u,game_best[i]);
-    length=9u+count+LN_GAME_COUNT*2u;
-#else
-    length=9u+count;
-#endif
+    payload[45u+count]=(uint8_t)ln_preferences_brightness();payload[46u+count]=1;
+    ln_ui_menu_encode(payload+47u+count);
+    length=127u+count;
+    uint32_t prefs_snapshot=prefs_revision;
     uint32_t snapshot_revision=theme_revision;
     int result=ln_storage_theme(true,payload,&length);
 #if !defined(LINNET_PROFILE_RELEASE)
     if(result==1&&theme_publishes!=UINT32_MAX)++theme_publishes;
 #endif
-    if(result<0){theme_available=false;theme_dirty=false;++revision;}
-    else if(result==1&&snapshot_revision==theme_revision){theme_dirty=false;++revision;}
+    if(result<0){theme_available=false;theme_dirty=prefs_dirty=false;++revision;}
+    else if(result==1){if(snapshot_revision==theme_revision)theme_dirty=false;if(prefs_snapshot==prefs_revision)prefs_dirty=false;++revision;}
 }
+void ln_preferences_changed(void){prefs_dirty=true;++prefs_revision;++revision;}
+bool ln_preferences_editable(void){return theme_loaded&&menus_loaded;}
+const char *ln_preferences_status(void){return !theme_loaded||!menus_loaded?"Loading settings...":!theme_available?"Saving unavailable":prefs_dirty||dirty||theme_dirty?"Saving...":"Saved";}
+bool ln_preferences_timeout_adjust(int32_t direction){return ln_display_settings_adjust(direction);}
+const char *ln_preferences_timeout_label(void){return ln_display_settings_label();}
+static void menus_finished(void){menus_loaded=true;if(prefs_menus&&!ln_ui_menu_load(saved_menus,80u))theme_available=false;++revision;}
 static void menus_step(void){
     if(menus_loaded||!ln_storage_mounted())return;
     const uint32_t generation=0x4d454e55u;int result;uint32_t transferred=0;
-    if(menus_phase==0){result=ln_storage_media_open("/.LINNET/MENUS.BIN",generation);if(!result)return;if(result<0){menus_loaded=true;return;}menus_phase=1;return;}
-    if(menus_phase==1){result=ln_storage_media_poll_deferred(generation,&menus_file,0);if(!result)return;if(result<0||menus_file.size!=sizeof menus_data){menus_loaded=true;return;}menus_phase=2;}
-    if(menus_phase==2){result=ln_storage_media_read(&menus_file,0,menus_data,sizeof menus_data,generation);if(!result)return;if(result<0){menus_loaded=true;return;}menus_phase=3;return;}
+    if(menus_phase==0){result=ln_storage_media_open("/.LINNET/MENUS.BIN",generation);if(!result)return;if(result<0){menus_finished();return;}menus_phase=1;return;}
+    if(menus_phase==1){result=ln_storage_media_poll_deferred(generation,&menus_file,0);if(!result)return;if(result<0||menus_file.size!=sizeof menus_data){menus_finished();return;}menus_phase=2;}
+    if(menus_phase==2){result=ln_storage_media_read(&menus_file,0,menus_data,sizeof menus_data,generation);if(!result)return;if(result<0){menus_finished();return;}menus_phase=3;return;}
     result=ln_storage_media_poll_deferred(generation,0,&transferred);if(!result)return;
     if(result>0&&transferred==sizeof menus_data)(void)ln_ui_menu_load(menus_data,sizeof menus_data);
-    menus_loaded=true;++revision;
+    menus_finished();
 }
 static void games_step(void){
     if(games_loaded||!menus_loaded||!ln_storage_mounted())return;
@@ -454,7 +472,7 @@ const char *ln_display_about_row(uint32_t item){
     return item<about_ata_count?about_ata_rows[item]:"";
 }
 static void settings_work(bool may_write,bool presented,uint32_t presented_revision,bool flush){
-    if(!may_write||((loaded&&!dirty)&&(theme_loaded&&!theme_dirty))||ln_storage_busy())return;
+    if(!may_write||((loaded&&!dirty)&&(theme_loaded&&!theme_dirty&&!prefs_dirty))||ln_storage_busy())return;
     if(!ln_storage_mounted()){
         if(ln_storage_startup_complete())click_defaults_ready();
         return;
@@ -467,7 +485,7 @@ static void settings_work(bool may_write,bool presented,uint32_t presented_revis
     /* Discovery is complete once mounted; absent optional records need no write
      * preparation and cannot hold shutdown waiting for required state files. */
     if(!theme_loaded&&(ln_storage_capacity(LN_STORAGE_THEME0)!=512u||ln_storage_capacity(LN_STORAGE_THEME1)!=512u)){
-        theme_loaded=true;theme_available=theme_dirty=false;++revision;
+        theme_loaded=true;theme_available=theme_dirty=prefs_dirty=false;++revision;
     }
     if(!ln_storage_prepared()){
         int prepared=ln_storage_prepare_writes();
