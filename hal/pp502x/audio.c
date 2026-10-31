@@ -89,7 +89,12 @@ static void arm(bool drain)
     if(!count)return;
     /* A short feedback tone needs no copy of the following unmodified music
      * in IRQ context. Resume directly from the ring on the next completion. */
-    if(!drain&&click.left&&count>click.left)count=click.left;
+    if(!drain&&click.left){
+        if(count>click.left)count=click.left;
+        /* Sine/envelope mixing must fit the16-frame FIFO runway too. Real
+         * Video traces exceeded it when an entire176-frame click ran here. */
+        if(count>64u)count=64u;
+    }
 #if defined(LINNET_TARGET_VIDEO5G_M25)
     if(real_block&&fade_remaining){
         /* Arm only the onset. Copying the remainder of a 1024-frame block
